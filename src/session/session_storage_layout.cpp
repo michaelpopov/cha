@@ -20,11 +20,6 @@ bool contains_legacy_database(const std::filesystem::path& directory) {
 
 } // namespace
 
-std::filesystem::path workspace_session_database_path(
-    const std::filesystem::path& workspace_root) {
-    return workspace_root / "workspace.sqlite3";
-}
-
 bool has_legacy_session_databases(
     const std::filesystem::path& workspace_root) {
     const std::filesystem::path forums = workspace_root / "forums";

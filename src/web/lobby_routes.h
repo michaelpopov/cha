@@ -11,6 +11,7 @@ class Server;
 
 namespace cha {
 class SessionRepository;
+class WorkspaceConfigStore;
 }
 
 namespace cha::web {
@@ -29,7 +30,8 @@ public:
         std::shared_ptr<const SessionRepository> sessions,
         InitialSelection initial,
         LiveSessionManager& live_sessions,
-        WebSettings settings);
+        WebSettings settings,
+        WorkspaceConfigStore& config);
 
     void install(httplib::Server& server) const;
 
@@ -38,6 +40,7 @@ private:
     InitialSelection initial_;
     LiveSessionManager& live_sessions_;
     WebSettings settings_;
+    WorkspaceConfigStore* config_;
 };
 
 } // namespace cha::web

@@ -1,6 +1,7 @@
 #include "workspace/session_open.h"
 
 #include "workspace/workspace.h"
+#include "workspace/workspace_config_store.h"
 #include "session/not_found_error.h"
 #include "session/session_controller.h"
 #include "session/session_repository.h"
@@ -19,29 +20,14 @@ std::shared_ptr<const Workspace> current_workspace() {
     return workspace;
 }
 
-void persist_default_character(
-    std::string forum_id,
-    std::string_view character_id) {
-    const std::shared_ptr<const Workspace> workspace = current_workspace();
-    workspace->write_forum_default_character(forum_id, character_id);
-    loadws(workspace->root());
-}
-
-void persist_default_persona(
-    std::string forum_id,
-    std::string_view persona_id) {
-    const std::shared_ptr<const Workspace> workspace = current_workspace();
-    workspace->write_forum_default_persona(forum_id, persona_id);
-    loadws(workspace->root());
-}
-
 } // namespace
 
 OpenedSession open_session(
     const SessionRepository& sessions,
     const FullSessionId& identity,
     Providers& providers,
-    std::shared_ptr<WakeNotifier> notifier) {
+    std::shared_ptr<WakeNotifier> notifier,
+    WorkspaceConfigStore& config) {
     const std::shared_ptr<const Workspace> workspace = current_workspace();
     const WorkspaceForum* const forum = workspace->find_forum(identity.forum_id);
     if (forum == nullptr) {
@@ -60,13 +46,13 @@ OpenedSession open_session(
             std::move(notifier),
             std::move(prepared.restore),
             prepared.identity),
-        .persist_default_character = [forum_id = forum->id](
+        .persist_default_character = [&config, forum_id = forum->id](
                                          std::string_view character_id) {
-            persist_default_character(forum_id, character_id);
+            (void)config.apply_forum_default_character(forum_id, character_id);
         },
-        .persist_default_persona = [forum_id = forum->id](
+        .persist_default_persona = [&config, forum_id = forum->id](
                                        std::string_view persona_id) {
-            persist_default_persona(forum_id, persona_id);
+            (void)config.apply_forum_default_persona(forum_id, persona_id);
         },
     };
 }

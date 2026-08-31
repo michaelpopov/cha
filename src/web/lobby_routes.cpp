@@ -1,6 +1,7 @@
 #include "web/lobby_routes.h"
 
 #include "workspace/workspace.h"
+#include "workspace/workspace_config_store.h"
 #include "session/not_found_error.h"
 #include "session/session_label.h"
 #include "session/session_repository.h"
@@ -136,24 +137,6 @@ CharacterDetail character_detail(
     return detail;
 }
 
-std::vector<std::string> forums_affected_by_save(
-    const Workspace& workspace,
-    std::string_view character_id,
-    bool changed) {
-    if (!changed) return {};
-    std::vector<std::string> result;
-    for (const WorkspaceForum& forum : workspace.forums()) {
-        if (std::ranges::any_of(
-                forum.members,
-                [character_id](const WorkspaceForumMember& member) {
-                    return member.character_id == character_id;
-                })) {
-            result.push_back(forum.id);
-        }
-    }
-    return result;
-}
-
 ForumSummary forum_summary(
     const WorkspaceForum& forum,
     const Workspace& workspace) {
@@ -238,10 +221,12 @@ LobbyRoutes::LobbyRoutes(
     std::shared_ptr<const SessionRepository> sessions,
     InitialSelection initial,
     LiveSessionManager& live_sessions,
-    WebSettings settings)
+    WebSettings settings,
+    WorkspaceConfigStore& config)
     : sessions_(std::move(sessions)),
       initial_(std::move(initial)), live_sessions_(live_sessions),
-      settings_(std::move(settings)) {
+      settings_(std::move(settings)),
+      config_(&config) {
     if (!sessions_) throw std::invalid_argument("Lobby routes need a session repository");
 }
 
@@ -250,6 +235,7 @@ void LobbyRoutes::install(httplib::Server& server) const {
     const InitialSelection initial = initial_;
     LiveSessionManager* const live_sessions = &live_sessions_;
     const WebSettings settings = settings_;
+    WorkspaceConfigStore* const config = config_;
     server.Get("/health", [live_sessions](const httplib::Request&, httplib::Response& response) {
         const LiveSessionManagerSnapshot snapshot = live_sessions->snapshot();
         set_json_response(response, 200, nlohmann::json{
@@ -276,7 +262,7 @@ void LobbyRoutes::install(httplib::Server& server) const {
     });
 
     server.Patch(R"(/api/v1/characters/([^/]+))",
-        [live_sessions, settings](const httplib::Request& request,
+        [live_sessions, settings, config](const httplib::Request& request,
                                   httplib::Response& response) {
         const auto workspace = published_workspace();
         const std::string id = request.matches[1];
@@ -303,18 +289,16 @@ void LobbyRoutes::install(httplib::Server& server) const {
             const std::optional<std::string_view> style = update.style
                 ? std::optional<std::string_view>(*update.style) : std::nullopt;
             if (changed) {
-                workspace->write_character_settings(id, update.provider, style);
-                loadws(workspace->root());
+                const WorkspaceConfigEditResult edited =
+                    config->apply_character_settings(id, update.provider, style);
+                request_reload(*live_sessions, edited.affected_forum_ids);
             }
         } catch (const std::invalid_argument&) {
             return set_error_response(response, 400,
                 {ErrorCode::bad_request, "Invalid provider or style."});
-        }
-        if (changed) {
-            request_reload(
-                *live_sessions,
-                forums_affected_by_save(
-                    *workspace, id, changed));
+        } catch (const WorkspaceRestartRequiredError& error) {
+            return set_error_response(response, 500,
+                {ErrorCode::internal_error, error.what()});
         }
         const auto current = published_workspace();
         const WorkspaceCharacter* updated = current->find_character(id);

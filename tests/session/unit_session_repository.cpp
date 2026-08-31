@@ -2,10 +2,11 @@
 
 #include "session/not_found_error.h"
 #include "session/session_database.h"
-#include "session/session_lease.h"
 #include "session/sqlite_storage.h"
+#include "session/workspace_session_database.h"
 #include "support/test_transcript.h"
 #include "support/test_workspace.h"
+#include "util/private_filesystem.h"
 #include "workspace/workspace.h"
 
 #include <gtest/gtest.h>
@@ -16,7 +17,6 @@
 #include <chrono>
 #include <ctime>
 #include <filesystem>
-#include <fstream>
 #include <future>
 #include <iomanip>
 #include <sstream>
@@ -83,10 +83,23 @@ void seed_session_id_collisions(
 
 class SessionRepositoryTest : public testing::Test {
 protected:
+    void SetUp() override {
+        welcome_ = fixture_.root() / "welcome";
+        create_private_directory(welcome_);
+        initialize_workspace_session_database_runtime(database_path());
+        loadws(fixture_.root());
+    }
+
+    std::filesystem::path database_path() const {
+        return fixture_.root() / "workspace.sqlite3";
+    }
+
     SessionRepository make_repository() const {
         loadws(fixture_.root());
         return SessionRepository(
+            database_path(),
             fixture_.root(),
+            welcome_,
             {{std::string(temporary_forum), std::string(temporary_session)},
              "Welcome"});
     }
@@ -119,15 +132,15 @@ protected:
     }
 
     test::TestWorkspace fixture_;
+    std::filesystem::path welcome_;
 };
 
 TEST_F(SessionRepositoryTest, CreatesOneWorkspaceDatabaseAndPreparesByKey) {
     const SessionRepository repository = make_repository();
     const StoredSession created = repository.create("lobby", "Stored");
 
-    EXPECT_TRUE(std::filesystem::is_regular_file(
-        fixture_.root() / "workspace.sqlite3"));
-    EXPECT_TRUE(std::filesystem::is_regular_file(
+    EXPECT_TRUE(std::filesystem::is_regular_file(database_path()));
+    EXPECT_FALSE(std::filesystem::exists(
         fixture_.root() / "workspace.sqlite3.cha-lock"));
     EXPECT_FALSE(std::filesystem::exists(
         fixture_.root() / "sessions.sqlite3"));
@@ -139,7 +152,7 @@ TEST_F(SessionRepositoryTest, CreatesOneWorkspaceDatabaseAndPreparesByKey) {
         (std::vector<StoredSession>{created}));
 
     const PreparedSession prepared = repository.prepare(created.identity);
-    EXPECT_EQ(prepared.database_path, fixture_.root() / "workspace.sqlite3");
+    EXPECT_EQ(prepared.database_path, database_path());
     EXPECT_GT(prepared.session_key, 0);
     EXPECT_EQ(prepared.label, "Stored");
     EXPECT_TRUE(prepared.restore.entries.empty());
@@ -349,45 +362,8 @@ TEST_F(SessionRepositoryTest, WelcomeUsesTheSameSchemaInAPrivateFile) {
         EXPECT_EQ(info.st_mode & 0777, static_cast<mode_t>(0700));
 #endif
     }
-    EXPECT_FALSE(std::filesystem::exists(welcome_path.parent_path()));
-}
-
-TEST_F(SessionRepositoryTest, HoldsOneLeaseForTheWorkspaceLifetime) {
-    loadws(fixture_.root());
-    {
-        const SessionRepository first(
-            fixture_.root(), {temporary_identity(), "Welcome"});
-        EXPECT_THROW(
-            (void)SessionRepository(
-                fixture_.root(), {temporary_identity(), "Welcome"}),
-            SessionBusyError);
-    }
-    EXPECT_NO_THROW(
-        (void)SessionRepository(
-            fixture_.root(), {temporary_identity(), "Welcome"}));
-}
-
-TEST_F(SessionRepositoryTest, RefusesBothIncompleteCutoverStates) {
-    loadws(fixture_.root());
-    const std::filesystem::path legacy = fixture_.root()
-        / "forums" / "lobby" / "sessions" / "legacy.sqlite3";
-    std::filesystem::create_directories(legacy.parent_path());
-    std::ofstream(legacy) << "legacy";
-    EXPECT_THROW(
-        (void)SessionRepository(
-            fixture_.root(), {temporary_identity(), "Welcome"}),
-        std::runtime_error);
-
-    std::filesystem::remove(legacy);
-    {
-        const SessionRepository repository(
-            fixture_.root(), {temporary_identity(), "Welcome"});
-    }
-    std::ofstream(legacy) << "legacy";
-    EXPECT_THROW(
-        (void)SessionRepository(
-            fixture_.root(), {temporary_identity(), "Welcome"}),
-        std::runtime_error);
+    EXPECT_TRUE(std::filesystem::exists(welcome_path.parent_path()));
+    EXPECT_TRUE(std::filesystem::exists(welcome_path));
 }
 
 TEST_F(SessionRepositoryTest, SynchronizesForumsWithoutDeletingOldRows) {

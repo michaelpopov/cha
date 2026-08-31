@@ -4,7 +4,10 @@
 #include "support/test_workspace.h"
 #include "support/web_server_process.h"
 #include "session/session_database.h"
+#include "session/sqlite_storage.h"
+#include "session/workspace_session_database.h"
 #include "web/http_server.h"
+#include "workspace/workspace_config_store.h"
 #include "web/asset_handler.h"
 #include "web/live_session_manager.h"
 #include "web/lobby_routes.h"
@@ -49,6 +52,15 @@ namespace cha::web {
 namespace {
 
 using namespace std::chrono_literals;
+
+void make_v1_database(const std::filesystem::path& path) {
+    create_empty_workspace_session_database(path);
+    storage::SqliteDatabase database(path, storage::SqliteDatabase::Mode::read_write);
+    database.execute("DROP TABLE config");
+    database.execute(
+        "PRAGMA user_version = "
+        + std::to_string(workspace_session_database_version_v1));
+}
 
 httplib::Client web_client(int port) {
     httplib::Client client("127.0.0.1", port);
@@ -638,7 +650,8 @@ TEST(WebServerProcess, RunsWithAnApplicationRootThatHoldsNoWorkspace) {
 
     const int port = test::reserve_loopback_port();
     ASSERT_NE(port, 0);
-    test::WebServerProcess server(application, workspace.root(), port);
+    const auto database = test::import_test_database(workspace.root());
+    test::WebServerProcess server(application, database, port);
     ASSERT_TRUE(server.wait_until_ready()) << server.errors();
 
     httplib::Client client = web_client(port);
@@ -656,67 +669,50 @@ TEST(WebServerProcess, RunsWithAnApplicationRootThatHoldsNoWorkspace) {
 
     // Neither directory has grown the other's files.
     EXPECT_FALSE(std::filesystem::exists(application / "workspace.toml"));
-    EXPECT_FALSE(std::filesystem::exists(workspace.root() / "app.toml"));
+    EXPECT_TRUE(std::filesystem::exists(workspace.root() / "app.toml"));
+    EXPECT_FALSE(std::filesystem::exists(application / "app.toml"));
 
     EXPECT_EQ(server.stop(SIGTERM).exit_code, 0);
     std::error_code removal;
     std::filesystem::remove_all(application, removal);
 }
 
-TEST(WebServerProcess, RefusesIncompleteManualCutoverBeforeBinding) {
+TEST(WebServerProcess, RejectsAMissingDatabaseWithImportGuidance) {
     test::TestWorkspace workspace;
-    workspace.write_workspace_config();
-    const std::filesystem::path legacy = workspace.root()
-        / "forums" / "lobby" / "sessions" / "legacy.sqlite3";
-    std::filesystem::create_directories(legacy.parent_path());
-    std::ofstream(legacy) << "legacy";
+    const std::filesystem::path database =
+        workspace.root().parent_path()
+        / (workspace.root().filename().string() + "_missing")
+        / "workspace.sqlite3";
+    std::filesystem::create_directories(database.parent_path());
     const int port = test::reserve_loopback_port();
     ASSERT_NE(port, 0);
+    test::WebServerProcess server(workspace.root(), database, port);
+    EXPECT_FALSE(server.wait_until_ready());
+    const std::string errors = server.errors();
+    EXPECT_NE(errors.find(database.string()), std::string::npos) << errors;
+    EXPECT_NE(errors.find("does not exist"), std::string::npos) << errors;
+    EXPECT_NE(
+        errors.find("chaweb --data DATABASE --import WORKSPACE"),
+        std::string::npos)
+        << errors;
+    std::error_code removal;
+    std::filesystem::remove_all(database.parent_path(), removal);
+}
 
-    {
-        test::WebServerProcess server(workspace.root(), port);
-        EXPECT_FALSE(server.wait_until_ready());
-        const std::string errors = server.errors();
-        EXPECT_NE(
-            errors.find("This build cannot migrate them"),
-            std::string::npos)
-            << errors;
-        EXPECT_NE(
-            errors.find("archived migration-capable CHA build"),
-            std::string::npos)
-            << errors;
-        EXPECT_NE(
-            errors.find("chaweb --migration --workspace <workspace>"),
-            std::string::npos)
-            << errors;
-        EXPECT_NE(errors.find("verify 'workspace.sqlite3'"), std::string::npos)
-            << errors;
-        EXPECT_NE(
-            errors.find("remove the legacy session files"),
-            std::string::npos)
-            << errors;
-        EXPECT_FALSE(std::filesystem::exists(
-            workspace.root() / "workspace.sqlite3"));
-    }
-
-    std::filesystem::remove(legacy);
-    {
-        const test::WebGraph graph(workspace.root());
-        EXPECT_TRUE(std::filesystem::is_regular_file(
-            workspace.root() / "workspace.sqlite3"));
-    }
-    std::ofstream(legacy) << "legacy";
-    {
-        test::WebServerProcess server(workspace.root(), port);
-        EXPECT_FALSE(server.wait_until_ready());
-        const std::string errors = server.errors();
-        EXPECT_NE(errors.find("Verify 'workspace.sqlite3'"), std::string::npos)
-            << errors;
-        EXPECT_NE(
-            errors.find("remove the legacy session files"),
-            std::string::npos)
-            << errors;
-    }
+TEST(WebServerProcess, RejectsAVersion1DatabaseWithImportGuidance) {
+    test::TestWorkspace workspace;
+    const std::filesystem::path database = workspace.root() / "workspace.sqlite3";
+    make_v1_database(database);
+    const int port = test::reserve_loopback_port();
+    ASSERT_NE(port, 0);
+    test::WebServerProcess server(workspace.root(), database, port);
+    EXPECT_FALSE(server.wait_until_ready());
+    const std::string errors = server.errors();
+    EXPECT_NE(errors.find("schema-1"), std::string::npos) << errors;
+    EXPECT_NE(
+        errors.find("chaweb --data DATABASE --import WORKSPACE"),
+        std::string::npos)
+        << errors;
 }
 
 TEST(WebServerProcess, RejectsASecondProcessWithWorkspaceDiagnostic) {
@@ -731,13 +727,14 @@ TEST(WebServerProcess, RejectsASecondProcessWithWorkspaceDiagnostic) {
     ASSERT_NE(second_port, 0);
     ASSERT_NE(first_port, second_port);
 
-    test::WebServerProcess first(workspace.root(), first_port);
+    const auto database = test::import_test_database(workspace.root());
+    test::WebServerProcess first(workspace.root(), database, first_port);
     ASSERT_TRUE(first.wait_until_ready()) << first.errors();
-    test::WebServerProcess second(workspace.root(), second_port);
+    test::WebServerProcess second(workspace.root(), database, second_port);
     EXPECT_FALSE(second.wait_until_ready());
     EXPECT_NE(
         second.errors().find(
-            "Workspace already in use: '" + workspace.root().string() + "'"),
+            "Database already in use: '" + database.string() + "'"),
         std::string::npos)
         << second.errors();
 
@@ -746,12 +743,63 @@ TEST(WebServerProcess, RejectsASecondProcessWithWorkspaceDiagnostic) {
     EXPECT_EQ(stopped.exit_code, 0) << first.errors();
 }
 
+TEST(WebServerProcess, RunningServerBlocksOfflineExport) {
+    test::TestWorkspace workspace;
+    const auto database = test::import_test_database(workspace.root());
+    const int port = test::reserve_loopback_port();
+    ASSERT_NE(port, 0);
+    test::WebServerProcess server(workspace.root(), database, port);
+    ASSERT_TRUE(server.wait_until_ready()) << server.errors();
+
+    const std::filesystem::path exported =
+        workspace.root().parent_path()
+        / (workspace.root().filename().string() + "_blocked_export");
+    int error_pipe[2]{-1, -1};
+    ASSERT_EQ(::pipe(error_pipe), 0);
+    const pid_t child = ::fork();
+    ASSERT_NE(child, -1);
+    if (child == 0) {
+        (void)::dup2(error_pipe[1], STDERR_FILENO);
+        (void)::close(error_pipe[0]);
+        (void)::close(error_pipe[1]);
+        ::execl(
+            CHA_WEB_BINARY,
+            CHA_WEB_BINARY,
+            "--data",
+            database.string().c_str(),
+            "--export",
+            exported.string().c_str(),
+            static_cast<char*>(nullptr));
+        _exit(127);
+    }
+    (void)::close(error_pipe[1]);
+    std::string errors;
+    std::array<char, 4096> buffer{};
+    while (true) {
+        const ssize_t count = ::read(error_pipe[0], buffer.data(), buffer.size());
+        if (count > 0) {
+            errors.append(buffer.data(), static_cast<std::size_t>(count));
+            continue;
+        }
+        if (count == 0 || (count == -1 && errno != EINTR)) break;
+    }
+    (void)::close(error_pipe[0]);
+    int status{};
+    ASSERT_EQ(::waitpid(child, &status, 0), child);
+    EXPECT_TRUE(WIFEXITED(status));
+    EXPECT_NE(WEXITSTATUS(status), 0);
+    EXPECT_NE(errors.find("already in use"), std::string::npos) << errors;
+    EXPECT_FALSE(std::filesystem::exists(exported));
+    EXPECT_EQ(server.stop(SIGINT).exit_code, 0);
+}
+
 TEST(WebServerProcess, ServesConcurrentSseAndOrdinaryRequestsOnOneOrigin) {
     test::TestWorkspace workspace;
     const int port = test::reserve_loopback_port();
     ASSERT_NE(port, 0);
     workspace.write_workspace_config();
-    test::WebServerProcess server(workspace.root(), port);
+    const auto database = test::import_test_database(workspace.root());
+    test::WebServerProcess server(workspace.root(), database, port);
     ASSERT_TRUE(server.wait_until_ready()) << server.errors();
 
     httplib::Client client = web_client(port);
@@ -836,7 +884,8 @@ TEST(WebServerProcess, ForumPersonaReachesTheLiveTranscript) {
     const int port = test::reserve_loopback_port();
     ASSERT_NE(port, 0);
     workspace.write_workspace_config();
-    test::WebServerProcess server(workspace.root(), port);
+    const auto database = test::import_test_database(workspace.root());
+    test::WebServerProcess server(workspace.root(), database, port);
     ASSERT_TRUE(server.wait_until_ready()) << server.errors();
 
     httplib::Client client = web_client(port);
@@ -875,10 +924,11 @@ TEST(WebServerProcess, RestartReopensLeasesAfterCleanAndForcedExit) {
     const int port = test::reserve_loopback_port();
     ASSERT_NE(port, 0);
     workspace.write_workspace_config();
+    const auto database = test::import_test_database(workspace.root());
     std::string session_id;
 
     {
-        test::WebServerProcess first(workspace.root(), port);
+        test::WebServerProcess first(workspace.root(), database, port);
         ASSERT_TRUE(first.wait_until_ready()) << first.errors();
         httplib::Client client = web_client(port);
         session_id = create_session(client, "Restarted");
@@ -890,7 +940,7 @@ TEST(WebServerProcess, RestartReopensLeasesAfterCleanAndForcedExit) {
     }
 
     {
-        test::WebServerProcess second(workspace.root(), port);
+        test::WebServerProcess second(workspace.root(), database, port);
         ASSERT_TRUE(second.wait_until_ready()) << second.errors();
         httplib::Client client = web_client(port);
         ASSERT_FALSE(open_session(client, session_id).empty());
@@ -900,7 +950,7 @@ TEST(WebServerProcess, RestartReopensLeasesAfterCleanAndForcedExit) {
     }
 
     {
-        test::WebServerProcess third(workspace.root(), port);
+        test::WebServerProcess third(workspace.root(), database, port);
         ASSERT_TRUE(third.wait_until_ready()) << third.errors();
         httplib::Client client = web_client(port);
         EXPECT_FALSE(open_session(client, session_id).empty());
@@ -915,7 +965,8 @@ TEST(WebServerProcess, LogsServerAndSessionLifecycleWithoutPromptBodies) {
     const int port = test::reserve_loopback_port();
     ASSERT_NE(port, 0);
     workspace.write_workspace_config("info");
-    test::WebServerProcess server(workspace.root(), port);
+    const auto database = test::import_test_database(workspace.root());
+    test::WebServerProcess server(workspace.root(), database, port);
     ASSERT_TRUE(server.wait_until_ready()) << server.errors();
 
     httplib::Client client = web_client(port);
@@ -1019,7 +1070,8 @@ TEST(WebServerProcess, SignalShutdownCancelsAndJoinsActiveGeneration) {
     const int port = test::reserve_loopback_port();
     ASSERT_NE(port, 0);
     workspace.write_workspace_config();
-    test::WebServerProcess server(workspace.root(), port);
+    const auto database = test::import_test_database(workspace.root());
+    test::WebServerProcess server(workspace.root(), database, port);
     ASSERT_TRUE(server.wait_until_ready()) << server.errors();
 
     httplib::Client client = web_client(port);
@@ -1082,7 +1134,7 @@ TEST(ServerShutdownCoordinatorProcess, ShutdownWakesARealHttpOpenBeforeOwnerComm
     httplib::Server server;
     LobbyRoutes(
         graph.sessions(), test::WebGraph::initial_selection(),
-        live_sessions, settings).install(server);
+        live_sessions, settings, *graph.store).install(server);
     const int port = server.bind_to_any_port("127.0.0.1");
     ASSERT_GT(port, 0);
     configure_http_server(server, settings);
@@ -1155,7 +1207,8 @@ TEST(WebServerProcess, ReloadsALiveSessionAfterAStyleSave) {
     workspace.write_style("mono-large", "font = \"mono\"\nsize = \"large\"\n");
     const int port = test::reserve_loopback_port();
     ASSERT_NE(port, 0);
-    test::WebServerProcess server(workspace.root(), port);
+    const auto database = test::import_test_database(workspace.root());
+    test::WebServerProcess server(workspace.root(), database, port);
     ASSERT_TRUE(server.wait_until_ready()) << server.errors();
 
     httplib::Client client = web_client(port);
@@ -1163,17 +1216,19 @@ TEST(WebServerProcess, ReloadsALiveSessionAfterAStyleSave) {
     ASSERT_FALSE(id.empty());
     const std::string path = open_session(client, id);
     ASSERT_FALSE(path.empty());
-    StreamingRequest stream(port, path + "api/v1/events");
-    ASSERT_TRUE(stream.wait_for_snapshot());
+    {
+        StreamingRequest stream(port, path + "api/v1/events");
+        ASSERT_TRUE(stream.wait_for_snapshot());
 
-    const auto patched = client.Patch(
-        "/api/v1/characters/guide",
-        R"({"provider":"test","style":"mono-large"})",
-        "application/json");
-    ASSERT_TRUE(patched);
-    ASSERT_EQ(patched->status, 200) << patched->body;
-    ASSERT_TRUE(stream.wait_for_shutdown_reason("reloading"));
-    ASSERT_TRUE(stream.wait_for_end(5s));
+        const auto patched = client.Patch(
+            "/api/v1/characters/guide",
+            R"({"provider":"test","style":"mono-large"})",
+            "application/json");
+        ASSERT_TRUE(patched);
+        ASSERT_EQ(patched->status, 200) << patched->body;
+        ASSERT_TRUE(stream.wait_for_shutdown_reason("reloading"));
+        ASSERT_TRUE(stream.wait_for_end(5s));
+    }
 
     ASSERT_TRUE(open_after_reload(client, "lobby", id));
     const auto snapshot = client.Get(path + "api/v1/session");
@@ -1185,6 +1240,32 @@ TEST(WebServerProcess, ReloadsALiveSessionAfterAStyleSave) {
     EXPECT_EQ(characters.front().at("appearance"), nlohmann::json({
         {"font", "mono"}, {"style", "normal"},
         {"weight", "normal"}, {"size", "large"}, {"text_color", "normal"}}));
+    EXPECT_EQ(server.stop(SIGTERM).exit_code, 0);
+
+    {
+        test::WebServerProcess restarted(workspace.root(), database, port);
+        ASSERT_TRUE(restarted.wait_until_ready()) << restarted.errors();
+        httplib::Client again = web_client(port);
+        const auto character = again.Get("/api/v1/characters/guide");
+        ASSERT_TRUE(character);
+        ASSERT_EQ(character->status, 200) << character->body;
+        EXPECT_EQ(nlohmann::json::parse(character->body).at("style"), "mono-large");
+        EXPECT_EQ(restarted.stop(SIGTERM).exit_code, 0);
+    }
+
+    const std::filesystem::path exported =
+        workspace.root().parent_path()
+        / (workspace.root().filename().string() + "_export");
+    const cha::WorkspaceConfigTransfer transferred =
+        export_workspace_configuration(database, exported);
+    EXPECT_GT(transferred.file_count, 0U);
+    std::ifstream character_file(exported / "characters" / "guide" / "character.toml");
+    const std::string toml{
+        std::istreambuf_iterator<char>(character_file),
+        std::istreambuf_iterator<char>()};
+    EXPECT_NE(toml.find("mono-large"), std::string::npos);
+    std::error_code removal;
+    std::filesystem::remove_all(exported, removal);
 }
 
 TEST(WebServerProcess, ReloadsASessionDespiteAStaleForumProvider) {
@@ -1200,12 +1281,15 @@ TEST(WebServerProcess, ReloadsASessionDespiteAStaleForumProvider) {
     std::filesystem::create_directories(circle / "members" / "montaigne");
     std::ofstream(circle / "config.toml") << "display_name = \"Circle of Life\"\n";
     std::ofstream(circle / "FORUM.md") << "Forum instructions\n";
+    std::ofstream(circle / "members" / "montaigne" / "character.toml")
+        << "# forum membership\n";
     std::ofstream(circle / "members" / "character_defaults.toml")
         << "provider = \"sol-high\"\n";
 
     const int port = test::reserve_loopback_port();
     ASSERT_NE(port, 0);
-    test::WebServerProcess server(workspace.root(), port);
+    const auto database = test::import_test_database(workspace.root());
+    test::WebServerProcess server(workspace.root(), database, port);
     ASSERT_TRUE(server.wait_until_ready()) << server.errors();
 
     httplib::Client client = web_client(port);
@@ -1241,10 +1325,13 @@ TEST(WebServerProcess, ReloadsAForumsLiveSessionsAfterAPersonaSwitch) {
     std::filesystem::create_directories(circle / "members" / "guide");
     std::ofstream(circle / "config.toml") << "display_name = \"The Circle\"\n";
     std::ofstream(circle / "FORUM.md") << "Forum instructions\n";
+    std::ofstream(circle / "members" / "guide" / "character.toml")
+        << "# forum membership\n";
 
     const int port = test::reserve_loopback_port();
     ASSERT_NE(port, 0);
-    test::WebServerProcess server(workspace.root(), port);
+    const auto database = test::import_test_database(workspace.root());
+    test::WebServerProcess server(workspace.root(), database, port);
     ASSERT_TRUE(server.wait_until_ready()) << server.errors();
 
     httplib::Client client = web_client(port);

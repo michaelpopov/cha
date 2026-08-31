@@ -1,7 +1,7 @@
 #pragma once
 
-#include "session/opened_session.h"
 #include "chat/session_identity.h"
+#include "session/opened_session.h"
 
 #include <memory>
 
@@ -10,6 +10,7 @@ namespace cha {
 class SessionRepository;
 class WakeNotifier;
 class Providers;
+class WorkspaceConfigStore;
 
 // The one production path that creates a SessionController. It acquires the
 // current Workspace, validates the forum, and combines its stable IDs with
@@ -25,5 +26,6 @@ OpenedSession open_session(
     const SessionRepository& sessions,
     const FullSessionId& identity,
     Providers& providers,
-    std::shared_ptr<WakeNotifier> notifier);
+    std::shared_ptr<WakeNotifier> notifier,
+    WorkspaceConfigStore& config);
 } // namespace cha

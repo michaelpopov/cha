@@ -1,6 +1,7 @@
 #include "workspace/builtins.h"
 #include "workspace/session_open.h"
 #include "workspace/workspace.h"
+#include "workspace/workspace_config_store.h"
 #include "providers/providers.h"
 #include "session/session_repository.h"
 #include "web/application_config.h"
@@ -11,7 +12,6 @@
 #include "web/live_session_manager.h"
 #include "web/server_shutdown.h"
 #include "web/web_settings.h"
-#include "util/environment.h"
 #include "util/logging.h"
 #include "util/path_name.h"
 
@@ -34,9 +34,11 @@ static int run_web_server(
     const std::filesystem::path& root,
     const std::shared_ptr<const SessionRepository>& sessions,
     LiveSessionManager& live_sessions,
+    WorkspaceConfigStore& config,
     const WebSettings& settings);
 static void log_web_server_startup(const WebSettings& settings);
-static void configure_test_idle_grace(WebSettings& settings, const ApplicationConfig& app);
+static void configure_test_idle_grace(
+    WebSettings& settings, const ApplicationCommand& command);
 
 int main(int argc, const char* argv[]) {
     try {
@@ -48,31 +50,57 @@ int main(int argc, const char* argv[]) {
 }
 
 int prepare_and_run(int argc, const char* argv[]) {
-    const ApplicationConfig app = load_application_config(argc, argv);
-    load_dotenv(app.workspace / ".env");
+    const ApplicationCommand command = parse_application_command(argc, argv);
+    if (command.import_directory) {
+        const WorkspaceConfigTransfer transferred = import_workspace_configuration(
+            *command.import_directory, command.database);
+        std::cout << "Imported " << transferred.file_count
+                  << " files into '" << utf8_path(command.database) << "'\n";
+        return 0;
+    }
+    if (command.export_directory) {
+        const WorkspaceConfigTransfer transferred = export_workspace_configuration(
+            command.database, *command.export_directory);
+        std::cout << "Exported " << transferred.file_count
+                  << " files to '" << utf8_path(*command.export_directory) << "'\n";
+        return 0;
+    }
+
+    auto store = WorkspaceConfigStore::open(command.database);
+    const std::string host = command.host.value_or(store->host());
+    const int port = command.port.value_or(store->port());
+    if (host.empty()) {
+        throw std::runtime_error("Application setting 'host' must not be empty.");
+    }
 
     WebSettings settings;
-    configure_test_idle_grace(settings, app);
+    configure_test_idle_grace(settings, command);
 
-    loadws(app.workspace);
     const std::shared_ptr<const Workspace> workspace = getws();
+    if (!workspace) throw std::runtime_error("Workspace is not loaded");
     initialize_diagnostic_logging(
         workspace->settings().log_file, workspace->settings().log_level);
 
-    const auto seed = TemporarySessionSeed{{std::string(entrance_id), std::string(welcome_id)}, std::string(welcome_name)};
-    const auto sessions =
-        std::make_shared<const SessionRepository>(app.workspace, seed);
+    const auto seed = TemporarySessionSeed{
+        {std::string(entrance_id), std::string(welcome_id)},
+        std::string(welcome_name)};
+    const auto sessions = std::make_shared<const SessionRepository>(
+        store->database_path(),
+        store->workspace_path(),
+        store->welcome_path(),
+        seed);
     Providers providers;
 
-    auto opener = [sessions, &providers](
+    auto opener = [sessions, &providers, config = store.get()](
                       const FullSessionId& identity,
                       std::shared_ptr<WakeNotifier> notifier) {
-        return open_session(*sessions, identity, providers, std::move(notifier));
+        return open_session(
+            *sessions, identity, providers, std::move(notifier), *config);
     };
     LiveSessionManager live_sessions(settings, opener);
 
     const int result = run_web_server(
-        app.host, app.port, app.root, sessions, live_sessions, settings);
+        host, port, command.root, sessions, live_sessions, *store, settings);
     providers.shutdown();
     shutdown_diagnostic_logging();
     return result;
@@ -83,6 +111,7 @@ int run_web_server(
     const std::filesystem::path& root,
     const std::shared_ptr<const SessionRepository>& sessions,
     LiveSessionManager& live_sessions,
+    WorkspaceConfigStore& config,
     const WebSettings& settings) {
 
     httplib::Server server;
@@ -92,7 +121,7 @@ int run_web_server(
     assets.install(server);
 
     const InitialSelection initial{{std::string(entrance_id), std::string(welcome_id)}};
-    LobbyRoutes(sessions, initial, live_sessions, settings).install(server);
+    LobbyRoutes(sessions, initial, live_sessions, settings, config).install(server);
     SessionRoutes(live_sessions, settings, assets).install(server);
 
     log_web_server_startup(settings);
@@ -132,9 +161,9 @@ void log_web_server_startup(const WebSettings& settings) {
         + " command_deadline_ms=" + std::to_string(settings.command_deadline.count()));
 }
 
-void configure_test_idle_grace(WebSettings& settings, const ApplicationConfig& app) {
-    if (app.test_idle_grace_ms) {
-        settings.idle_grace = std::chrono::milliseconds(*app.test_idle_grace_ms);
+void configure_test_idle_grace(WebSettings& settings, const ApplicationCommand& command) {
+    if (command.test_idle_grace_ms) {
+        settings.idle_grace = std::chrono::milliseconds(*command.test_idle_grace_ms);
         settings.orphan_limit = std::max(settings.orphan_limit, settings.idle_grace);
         const auto max_interval = std::max(std::chrono::milliseconds{1}, settings.idle_grace / 2);
         settings.sse_heartbeat_interval = std::min(settings.sse_heartbeat_interval, max_interval);

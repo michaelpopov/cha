@@ -19,12 +19,12 @@ struct ProcessExit {
 // server or leave ctest's capture descriptors open.
 class WebServerProcess {
 public:
-    WebServerProcess(const std::filesystem::path& workspace, int port);
+    WebServerProcess(const std::filesystem::path& database, int port);
     // The two roots are independent. An empty application root means the
     // fixture is using one directory for both, which most tests do.
     WebServerProcess(
         const std::filesystem::path& application_root,
-        const std::filesystem::path& workspace,
+        const std::filesystem::path& database,
         int port);
     ~WebServerProcess();
     WebServerProcess(const WebServerProcess&) = delete;

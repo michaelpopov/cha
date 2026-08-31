@@ -8,6 +8,7 @@
 #include "support/test_backends.h"
 #include "support/test_controller.h"
 #include "support/test_notifier.h"
+#include "workspace/workspace_config_store.h"
 
 #include <gtest/gtest.h>
 
@@ -136,17 +137,27 @@ struct WorkspaceLayout {
 // repository that owns its storage.
 struct SessionGraph {
     explicit SessionGraph(const std::filesystem::path& root)
-        : repository(
-              publish(root),
+        : store_(open_store(root)),
+          repository(
+              store_->database_path(),
+              store_->workspace_path(),
+              store_->welcome_path(),
               TemporarySessionSeed{{"temporary-forum", "temporary-session"}, "Temporary"}) {}
 
-    SessionRepository repository;
+    WorkspaceConfigStore& config() const { return *store_; }
 
 private:
-    static std::filesystem::path publish(const std::filesystem::path& root) {
-        loadws(root);
-        return root;
+    static std::unique_ptr<WorkspaceConfigStore> open_store(
+        const std::filesystem::path& root) {
+        std::ofstream(root / "app.toml") << "host = \"127.0.0.1\"\nport = 8080\n";
+        import_workspace_configuration(root, root / "workspace.sqlite3");
+        return WorkspaceConfigStore::open(root / "workspace.sqlite3");
     }
+
+    std::unique_ptr<WorkspaceConfigStore> store_;
+
+public:
+    SessionRepository repository;
 };
 
 WorkspaceLayout make_workspace(const std::filesystem::path& parent) {
@@ -171,6 +182,8 @@ WorkspaceLayout make_workspace(const std::filesystem::path& parent) {
     }
     std::ofstream(forum / "config.toml") << "display_name = \"Forum\"\n";
     std::ofstream(forum / "FORUM.md") << "Forum prompt";
+    std::ofstream(forum / "members" / "character" / "character.toml")
+        << "# forum membership\n";
     std::ofstream(root / "characters" / "character" / "character.toml")
         << "display_name = \"Worker\"\nprovider = \"test\"\n";
     std::ofstream(root / "characters" / "character" / "CHARACTER.md")
@@ -379,7 +392,8 @@ TEST(WorkspaceConcurrency, OpensSessionsOnOwnerThreadsWhileListing) {
             open_start.arrive_and_wait();
             auto controller = open_session(
                 graph.repository, {"forum", created[0].identity.session_id}, providers,
-                std::shared_ptr<WakeNotifier>(&notifier, [](WakeNotifier*) {}));
+                std::shared_ptr<WakeNotifier>(&notifier, [](WakeNotifier*) {}),
+                graph.config());
             opened[0] = true;
             controller.controller->shutdown();
         } catch (...) {
@@ -393,7 +407,8 @@ TEST(WorkspaceConcurrency, OpensSessionsOnOwnerThreadsWhileListing) {
             open_start.arrive_and_wait();
             auto controller = open_session(
                 graph.repository, {"forum", created[1].identity.session_id}, providers,
-                std::shared_ptr<WakeNotifier>(&notifier, [](WakeNotifier*) {}));
+                std::shared_ptr<WakeNotifier>(&notifier, [](WakeNotifier*) {}),
+                graph.config());
             opened[1] = true;
             controller.controller->shutdown();
         } catch (...) {

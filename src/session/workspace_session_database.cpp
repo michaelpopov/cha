@@ -561,8 +561,9 @@ void create_empty_workspace_session_database(
 void initialize_workspace_session_database_runtime(
     const std::filesystem::path& path) {
     secure_workspace_database_files(path);
-    // Directory-based runtime still creates a missing database at v2 through
-    // Block 5. A valid v1 database is never upgraded or deleted here.
+    // Tests and helpers may still create a missing disposable database at v2.
+    // Normal runtime never calls this on a missing path; a valid v1 database
+    // is never upgraded or deleted here.
     if (!std::filesystem::exists(path)) {
         create_empty_workspace_session_database(path);
     }

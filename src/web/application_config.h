@@ -6,12 +6,13 @@
 
 namespace cha::web {
 
-struct ApplicationConfig {
+struct ApplicationCommand {
+    std::filesystem::path database;
+    std::optional<std::filesystem::path> import_directory;
+    std::optional<std::filesystem::path> export_directory;
     std::filesystem::path root;
-    std::filesystem::path config_file;
-    std::string host;
-    int port{};
-    std::filesystem::path workspace;
+    std::optional<std::string> host;
+    std::optional<int> port;
     // Browser automation uses this command-line-only seam to prove a real
     // disconnect/unload/reopen cycle without adding thirty seconds per run.
     std::optional<int> test_idle_grace_ms;
@@ -27,10 +28,9 @@ struct StoredApplicationSettings {
 StoredApplicationSettings load_stored_application_settings(
     const std::filesystem::path& config_file);
 
-// Resolves the application root, reads app.toml when present, and applies
-// command-line overrides. Throws a user-facing error for invalid arguments or
-// missing settings.
-ApplicationConfig load_application_config(
+// Parses the public command line. Does not read stored app.toml; runtime
+// loads host and port from the materialized database after startup.
+ApplicationCommand parse_application_command(
     int argc,
     const char* const* argv);
 
@@ -38,7 +38,9 @@ ApplicationConfig load_application_config(
 // runtime's idle unload so the browser suite can observe a real one; it is
 // accepted but deliberately not advertised to someone who mistyped an option.
 inline constexpr const char web_usage[] =
-    "Usage: chaweb [--root PATH] [--config PATH] [--host HOST] "
-    "[--port PORT] [--workspace PATH]";
+    "Usage:\n"
+    "  chaweb --data DATABASE [--root PATH] [--host HOST] [--port PORT]\n"
+    "  chaweb --data DATABASE --import SOURCE_DIRECTORY\n"
+    "  chaweb --data DATABASE --export DESTINATION_DIRECTORY";
 
 } // namespace cha::web

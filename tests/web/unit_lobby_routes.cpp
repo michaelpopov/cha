@@ -15,6 +15,7 @@
 #include <gtest/gtest.h>
 #include <httplib.h>
 #include <nlohmann/json.hpp>
+#include <sqlite3.h>
 
 #include <algorithm>
 #include <atomic>
@@ -69,7 +70,7 @@ public:
         AssetHandler(graph.root() / "web").install(server_);
         LobbyRoutes(
             graph.sessions(), LobbyGraph::initial_selection(),
-            live_sessions, settings).install(server_);
+            live_sessions, settings, *graph.store).install(server_);
         if (installer) installer(server_);
         port_ = server_.bind_to_any_port("127.0.0.1");
         if (port_ < 0) throw std::runtime_error("Could not bind test server");
@@ -306,6 +307,8 @@ TEST(LobbyRoutes, ServesCharacterProviderAndStyleSettingsWithoutLeakingProviderC
     std::filesystem::create_directories(circle / "members" / "montaigne");
     std::ofstream(circle / "config.toml") << "display_name = \"Circle of Life\"\n";
     std::ofstream(circle / "FORUM.md") << "Forum instructions\n";
+    std::ofstream(circle / "members" / "montaigne" / "character.toml")
+        << "# forum membership\n";
     std::ofstream(circle / "members" / "character_defaults.toml")
         << "provider = \"sol-high\"\n";
 
@@ -450,6 +453,38 @@ std::string read_bytes(const std::filesystem::path& path) {
     return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
 }
 
+std::string config_row(
+    const std::filesystem::path& database,
+    std::string_view name) {
+    sqlite3* handle = nullptr;
+    if (sqlite3_open_v2(
+            database.string().c_str(), &handle,
+            SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
+        ADD_FAILURE() << "failed to open " << database;
+        return {};
+    }
+    sqlite3_stmt* statement = nullptr;
+    if (sqlite3_prepare_v2(
+            handle, "SELECT content FROM config WHERE name = ?1", -1,
+            &statement, nullptr) != SQLITE_OK) {
+        sqlite3_close(handle);
+        ADD_FAILURE() << "failed to prepare config query";
+        return {};
+    }
+    sqlite3_bind_text(
+        statement, 1, name.data(), static_cast<int>(name.size()), SQLITE_STATIC);
+    std::string result;
+    if (sqlite3_step(statement) == SQLITE_ROW) {
+        if (const char* text =
+                reinterpret_cast<const char*>(sqlite3_column_text(statement, 0))) {
+            result = text;
+        }
+    }
+    sqlite3_finalize(statement);
+    sqlite3_close(handle);
+    return result;
+}
+
 httplib::Result patch_character(
     TestServer& server,
     std::string_view id,
@@ -469,6 +504,7 @@ TEST(LobbyRoutes, PatchesCharacterSettingsAndLeavesTheFileAloneOnABadName) {
     LiveSessionManager manager(lobby_settings(2), counting_opener(graph));
     TestServer server(graph, manager);
 
+    const std::string source_before = read_bytes(path);
     const auto saved = patch_character(
         server, "guide", {{"provider", "test"}, {"style", "serif-italic"}});
     ASSERT_TRUE(saved);
@@ -476,6 +512,11 @@ TEST(LobbyRoutes, PatchesCharacterSettingsAndLeavesTheFileAloneOnABadName) {
     EXPECT_EQ(body(saved)["provider"], "test");
     EXPECT_EQ(body(saved)["style"], "serif-italic");
     EXPECT_EQ(body(saved)["writable"], true);
+    EXPECT_EQ(read_bytes(path), source_before);
+    EXPECT_NE(
+        config_row(graph.store->database_path(), "characters/guide/character.toml")
+            .find("serif-italic"),
+        std::string::npos);
 
     const auto cleared = patch_character(
         server, "guide", {{"provider", "test"}, {"style", nullptr}});
@@ -483,6 +524,10 @@ TEST(LobbyRoutes, PatchesCharacterSettingsAndLeavesTheFileAloneOnABadName) {
     ASSERT_EQ(cleared->status, 200);
     EXPECT_EQ(body(cleared)["provider"], "test");
     EXPECT_TRUE(body(cleared)["style"].is_null());
+    EXPECT_EQ(
+        config_row(graph.store->database_path(), "characters/guide/character.toml")
+            .find("serif-italic"),
+        std::string::npos);
 
     const std::string before = read_bytes(path);
     expect_error(
@@ -524,6 +569,8 @@ TEST(LobbyRoutes, ReloadsEveryForumContainingTheChangedCharacter) {
     std::filesystem::create_directories(circle / "members" / "montaigne");
     std::ofstream(circle / "config.toml") << "display_name = \"Circle of Life\"\n";
     std::ofstream(circle / "FORUM.md") << "Forum instructions\n";
+    std::ofstream(circle / "members" / "montaigne" / "character.toml")
+        << "# forum membership\n";
     std::ofstream(circle / "members" / "character_defaults.toml")
         << "provider = \"sol-high\"\n";
 

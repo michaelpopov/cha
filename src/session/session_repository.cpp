@@ -2,28 +2,23 @@
 
 #include "session/not_found_error.h"
 #include "session/session_label.h"
-#include "session/session_storage_layout.h"
 #include "session/session_timestamp.h"
 #include "session/sqlite_storage.h"
 #include "session/workspace_session_database.h"
 #include "util/logging.h"
 #include "util/path_name.h"
-#include "util/private_filesystem.h"
 #include "workspace/workspace.h"
 
 #include <algorithm>
-#include <chrono>
 #include <ctime>
 #include <filesystem>
 #include <iomanip>
 #include <mutex>
-#include <random>
 #include <set>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
-#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -35,31 +30,6 @@ using Statement = storage::SqliteStatement;
 using Transaction = storage::SqliteTransaction;
 
 constexpr std::size_t max_session_id_attempts = 100;
-
-std::filesystem::path create_welcome_directory() {
-    const std::filesystem::path parent = std::filesystem::temp_directory_path();
-    std::mt19937_64 random(std::random_device{}());
-    for (std::size_t attempt{}; attempt != 100; ++attempt) {
-        const std::filesystem::path candidate = parent
-            / ("cha-session-"
-               + std::to_string(
-                   std::chrono::steady_clock::now().time_since_epoch().count())
-               + "-" + std::to_string(random()));
-        try {
-            create_private_directory(candidate);
-            return candidate;
-        } catch (const std::exception&) {
-            std::error_code error;
-            if (!std::filesystem::exists(
-                    std::filesystem::symlink_status(candidate, error))
-                || error) {
-                throw;
-            }
-        }
-    }
-    throw std::runtime_error(
-        "Failed to create private temporary session storage");
-}
 
 bool local_time(std::time_t now, std::tm& result) {
     static std::mutex mutex;
@@ -132,61 +102,36 @@ SessionRepository::reserve_maintenance() const {
 }
 
 SessionRepository::SessionRepository(
+    std::filesystem::path database_path,
     std::filesystem::path workspace_root,
+    std::filesystem::path welcome_directory,
     TemporarySessionSeed temporary)
     : workspace_root_(std::move(workspace_root)),
-      database_path_(workspace_session_database_path(workspace_root_)),
-      workspace_lease_(SessionLease::acquire(
-          database_path_,
-          "Workspace already in use: '" + utf8_path(workspace_root_) + "'")),
+      database_path_(std::move(database_path)),
       temporary_identity_(std::move(temporary.identity)),
       temporary_label_(std::move(temporary.label)) {
-    const bool database_exists =
-        std::filesystem::is_regular_file(database_path_);
-    const bool legacy_exists =
-        has_legacy_session_databases(workspace_root_);
-    if (legacy_exists) {
-        if (database_exists) {
-            throw std::runtime_error(
-                "Legacy session databases remain in workspace '"
-                + utf8_path(workspace_root_)
-                + "'. Verify 'workspace.sqlite3', then remove the legacy "
-                  "session files before starting this build");
-        }
-        throw std::runtime_error(
-            "Legacy session databases were found in workspace '"
-            + utf8_path(workspace_root_)
-            + "'. This build cannot migrate them. Use an archived "
-              "migration-capable CHA build to run 'chaweb --migration "
-              "--workspace <workspace>', verify 'workspace.sqlite3', then "
-              "remove the legacy session files before starting this build");
-    }
-    if (std::filesystem::exists(database_path_) && !database_exists) {
+    if (!std::filesystem::is_regular_file(database_path_)) {
         throw std::runtime_error(
             "Workspace session database path '" + utf8_path(database_path_)
             + "' is not a regular file");
     }
-    initialize_workspace_session_database_runtime(database_path_);
+    if (!std::filesystem::is_directory(welcome_directory)) {
+        throw std::runtime_error(
+            "Welcome directory '" + utf8_path(welcome_directory)
+            + "' is not a directory");
+    }
     synchronize_forums();
 
-    temporary_directory_ = create_welcome_directory();
-    try {
-        temporary_database_path_ = temporary_directory_ / "sessions.sqlite3";
-        if (!create_session_database(
-                temporary_database_path_,
-                {.id = temporary_identity_.session_id,
-                 .forum = temporary_identity_.forum_id,
-                 .label = temporary_label_})) {
-            throw std::runtime_error(
-                "Failed to create the temporary session database");
-        }
-        initialize_workspace_session_database_runtime(
-            temporary_database_path_);
-    } catch (...) {
-        std::error_code cleanup_error;
-        std::filesystem::remove_all(temporary_directory_, cleanup_error);
-        throw;
+    temporary_database_path_ = welcome_directory / "sessions.sqlite3";
+    if (!create_session_database(
+            temporary_database_path_,
+            {.id = temporary_identity_.session_id,
+             .forum = temporary_identity_.forum_id,
+             .label = temporary_label_})) {
+        throw std::runtime_error(
+            "Failed to create the temporary session database");
     }
+    initialize_workspace_session_database_runtime(temporary_database_path_);
 }
 
 SessionRepository::~SessionRepository() {
@@ -198,9 +143,6 @@ SessionRepository::~SessionRepository() {
             "Failed to checkpoint workspace session database: "
             + std::string(error.what()));
     }
-    std::error_code error;
-    std::filesystem::remove_all(temporary_directory_, error);
-    if (error) log_warn("Failed to clean up temporary session storage");
 }
 
 void SessionRepository::require_persistent_forum(

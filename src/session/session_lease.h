@@ -15,7 +15,8 @@ public:
 };
 
 // Holds one non-blocking, exclusive operating-system lock on a database
-// companion file. SessionRepository owns it for the workspace lifetime.
+// companion file. The top-level configuration store owns it for the database
+// lifetime.
 class SessionLease {
 public:
     SessionLease() = delete;

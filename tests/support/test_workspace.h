@@ -22,6 +22,9 @@ public:
     TestWorkspace& operator=(const TestWorkspace&) = delete;
 
     const std::filesystem::path& root() const noexcept { return root_; }
+    void write_application_config(
+        std::string_view host = "127.0.0.1",
+        int port = 8080) const;
     void write_workspace_config(std::string_view log_level = "off") const;
     void write_character_config(std::string_view contents) const;
     void write_character_defaults(std::string_view contents) const;
@@ -55,6 +58,10 @@ struct PublishedTestWorkspace {
 // Writes and publishes one complete, real Workspace for a controller test.
 // CharacterDefinition is only convenient fixture input; SessionController
 // never receives it and reads the resulting values through getws().
+// Imports `source` into `<source>/workspace.sqlite3` and returns that path.
+[[nodiscard]] std::filesystem::path import_test_database(
+    const std::filesystem::path& source);
+
 PublishedTestWorkspace publish_test_workspace(
     const std::vector<CharacterDefinition>& definitions,
     const PersonaRoster& personas,

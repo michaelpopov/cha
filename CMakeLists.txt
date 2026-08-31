@@ -392,7 +392,8 @@ if(BUILD_TESTING)
             tests/web/process_web_server.cpp
             tests/support/test_workspace.cpp
             tests/support/web_server_process.cpp)
-        target_link_libraries(cha_web_process_tests PRIVATE cha_web GTest::gtest_main)
+        target_link_libraries(
+            cha_web_process_tests PRIVATE cha_web cha_sqlite3 GTest::gtest_main)
         target_include_directories(
             cha_web_process_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
         target_compile_definitions(

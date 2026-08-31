@@ -98,19 +98,19 @@ int reserve_loopback_port() {
 }
 
 WebServerProcess::WebServerProcess(
-    const std::filesystem::path& workspace,
+    const std::filesystem::path& database,
     int port)
-    : WebServerProcess(workspace, workspace, port) {}
+    : WebServerProcess(database.parent_path(), database, port) {}
 
 WebServerProcess::WebServerProcess(
     const std::filesystem::path& application_root,
-    const std::filesystem::path& workspace,
+    const std::filesystem::path& database,
     int port)
     : port_(port) {
     const std::string root_text = application_root.string();
-    const std::string workspace_text = workspace.string();
+    const std::string database_text = database.string();
     const std::string port_text = std::to_string(port);
-    backup_home_ = workspace.parent_path()
+    backup_home_ = database.parent_path()
         / ("cha_web_process_backup_"
            + std::to_string(
                std::chrono::steady_clock::now().time_since_epoch().count()));
@@ -159,8 +159,8 @@ WebServerProcess::WebServerProcess(
             CHA_WEB_BINARY,
             "--root",
             root_text.c_str(),
-            "--workspace",
-            workspace_text.c_str(),
+            "--data",
+            database_text.c_str(),
             "--host",
             loopback_host,
             "--port",

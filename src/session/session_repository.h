@@ -2,7 +2,6 @@
 
 #include "chat/session_identity.h"
 #include "session/session_database.h"
-#include "session/session_lease.h"
 #include "session/stored_session.h"
 
 #include <filesystem>
@@ -29,8 +28,9 @@ struct PreparedSession {
     SessionRestore restore;
 };
 
-// Owns the process-lifetime workspace lease. Repository operations use
-// short-lived connections; every live actor opens its own journal connection.
+// Uses the already-locked unified database and the store-owned welcome
+// directory. Repository operations use short-lived connections; every live
+// actor opens its own journal connection.
 class SessionRepository final {
 public:
     class MaintenanceGuard {
@@ -52,7 +52,9 @@ public:
     };
 
     SessionRepository(
+        std::filesystem::path database_path,
         std::filesystem::path workspace_root,
+        std::filesystem::path welcome_directory,
         TemporarySessionSeed temporary);
     ~SessionRepository();
 
@@ -92,10 +94,8 @@ private:
     mutable std::shared_mutex operation_mutex_;
     std::filesystem::path workspace_root_;
     std::filesystem::path database_path_;
-    SessionLease workspace_lease_;
     FullSessionId temporary_identity_;
     std::string temporary_label_;
-    std::filesystem::path temporary_directory_;
     std::filesystem::path temporary_database_path_;
 };
 

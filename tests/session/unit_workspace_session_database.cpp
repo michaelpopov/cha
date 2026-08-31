@@ -123,7 +123,7 @@ std::string v1_import_command() {
 TEST(WorkspaceSessionDatabase, CreatesValidEmptyDatabaseAndEnablesWal) {
     test::TestWorkspace workspace;
     const std::filesystem::path path =
-        workspace_session_database_path(workspace.root());
+        workspace.root() / "workspace.sqlite3";
 
     create_empty_workspace_session_database(path);
     {
@@ -153,7 +153,7 @@ TEST(WorkspaceSessionDatabase, CreatesValidEmptyDatabaseAndEnablesWal) {
 TEST(WorkspaceSessionDatabase, RecoversAnInterruptedFirstCreation) {
     test::TestWorkspace workspace;
     const std::filesystem::path path =
-        workspace_session_database_path(workspace.root());
+        workspace.root() / "workspace.sqlite3";
     {
         Database database(path, Database::Mode::read_write_create);
         database.execute("PRAGMA journal_mode = DELETE");
@@ -181,7 +181,7 @@ TEST(WorkspaceSessionDatabase, RecoversAnInterruptedFirstCreation) {
 TEST(WorkspaceSessionDatabase, RejectsABusyCheckpoint) {
     test::TestWorkspace workspace;
     const std::filesystem::path path =
-        workspace_session_database_path(workspace.root());
+        workspace.root() / "workspace.sqlite3";
     create_empty_workspace_session_database(path);
     initialize_workspace_session_database_runtime(path);
 
@@ -211,7 +211,7 @@ TEST(WorkspaceSessionDatabase, RejectsABusyCheckpoint) {
 TEST(WorkspaceSessionDatabase, DoesNotReplaceAnUnknownNonemptyDatabase) {
     test::TestWorkspace workspace;
     const std::filesystem::path path =
-        workspace_session_database_path(workspace.root());
+        workspace.root() / "workspace.sqlite3";
     {
         Database database(path, Database::Mode::read_write_create);
         database.execute("CREATE TABLE foreign_data (value TEXT)");
@@ -231,7 +231,7 @@ TEST(WorkspaceSessionDatabase, DoesNotReplaceAnUnknownNonemptyDatabase) {
 TEST(WorkspaceSessionDatabase, RefusesAnExistingTargetAndUnknownVersion) {
     test::TestWorkspace workspace;
     const std::filesystem::path path =
-        workspace_session_database_path(workspace.root());
+        workspace.root() / "workspace.sqlite3";
     create_empty_workspace_session_database(path);
 
     EXPECT_THROW(
@@ -280,7 +280,7 @@ TEST(WorkspaceSessionDatabase, ValidationFindsMissingObjectsAndForeignKeys) {
 TEST(WorkspaceSessionDatabase, ScopesSessionIdentityByForumAndReservesArchives) {
     test::TestWorkspace workspace;
     const std::filesystem::path path =
-        workspace_session_database_path(workspace.root());
+        workspace.root() / "workspace.sqlite3";
     create_empty_workspace_session_database(path);
     Database database(path, Database::Mode::read_write);
     database.execute(
@@ -384,7 +384,7 @@ TEST(WorkspaceSessionDatabase, RejectsMissingAndMalformedV2ConfigObjects) {
 TEST(WorkspaceSessionDatabase, RuntimeInstructsImportForValidV1) {
     test::TestWorkspace workspace;
     const std::filesystem::path path =
-        workspace_session_database_path(workspace.root());
+        workspace.root() / "workspace.sqlite3";
     make_v1_database(path);
     {
         Database database(path, Database::Mode::read_write);
@@ -419,7 +419,7 @@ TEST(WorkspaceSessionDatabase, RuntimeInstructsImportForValidV1) {
 TEST(WorkspaceSessionDatabase, DistinguishesFutureSchemaFromV1ImportInstruction) {
     test::TestWorkspace workspace;
     const std::filesystem::path path =
-        workspace_session_database_path(workspace.root());
+        workspace.root() / "workspace.sqlite3";
     create_empty_workspace_session_database(path);
     {
         Database database(path, Database::Mode::read_write);
@@ -443,7 +443,7 @@ TEST(WorkspaceSessionDatabase, DistinguishesFutureSchemaFromV1ImportInstruction)
 TEST(WorkspaceSessionDatabase, TableCheckRejectsUnsafeConfigNames) {
     test::TestWorkspace workspace;
     const std::filesystem::path path =
-        workspace_session_database_path(workspace.root());
+        workspace.root() / "workspace.sqlite3";
     create_empty_workspace_session_database(path);
     Database database(path, Database::Mode::read_write);
 
@@ -483,7 +483,7 @@ TEST(WorkspaceSessionDatabase, TableCheckRejectsUnsafeConfigNames) {
 TEST(WorkspaceSessionDatabase, ReadsSortedConfigRowsAndReplacesAtomically) {
     test::TestWorkspace workspace;
     const std::filesystem::path path =
-        workspace_session_database_path(workspace.root());
+        workspace.root() / "workspace.sqlite3";
     create_empty_workspace_session_database(path);
     Database database(path, Database::Mode::read_write);
     const std::vector<ConfigFile> initial{
@@ -526,7 +526,7 @@ TEST(WorkspaceSessionDatabase, ReadsSortedConfigRowsAndReplacesAtomically) {
 TEST(WorkspaceSessionDatabase, RoundTripsExactConfigBytes) {
     test::TestWorkspace workspace;
     const std::filesystem::path path =
-        workspace_session_database_path(workspace.root());
+        workspace.root() / "workspace.sqlite3";
     create_empty_workspace_session_database(path);
     Database database(path, Database::Mode::read_write);
 
@@ -558,7 +558,7 @@ TEST(WorkspaceSessionDatabase, RoundTripsExactConfigBytes) {
 TEST(WorkspaceSessionDatabase, UpgradesV1WhilePreservingSessions) {
     test::TestWorkspace workspace;
     const std::filesystem::path path =
-        workspace_session_database_path(workspace.root());
+        workspace.root() / "workspace.sqlite3";
     make_v1_database(path);
     Database database(path, Database::Mode::read_write);
     seed_session_rows(database);
@@ -584,7 +584,7 @@ TEST(WorkspaceSessionDatabase, UpgradesV1WhilePreservingSessions) {
 TEST(WorkspaceSessionDatabase, FailedUpgradeLeavesValidV1Unchanged) {
     test::TestWorkspace workspace;
     const std::filesystem::path path =
-        workspace_session_database_path(workspace.root());
+        workspace.root() / "workspace.sqlite3";
     make_v1_database(path);
     Database database(path, Database::Mode::read_write);
     seed_session_rows(database);
@@ -617,7 +617,7 @@ TEST(WorkspaceSessionDatabase, FailedUpgradeLeavesValidV1Unchanged) {
 TEST(WorkspaceSessionDatabase, TightensExistingDatabaseAndSidecars) {
     test::TestWorkspace workspace;
     const std::filesystem::path path =
-        workspace_session_database_path(workspace.root());
+        workspace.root() / "workspace.sqlite3";
     create_empty_workspace_session_database(path);
     std::filesystem::path journal = path;
     journal += "-journal";
@@ -663,7 +663,7 @@ TEST(WorkspaceSessionDatabase, TightensExistingDatabaseAndSidecars) {
 TEST(WorkspaceSessionDatabase, CreatesOwnerOnlyDatabaseWalAndShm) {
     test::TestWorkspace workspace;
     const std::filesystem::path path =
-        workspace_session_database_path(workspace.root());
+        workspace.root() / "workspace.sqlite3";
     create_empty_workspace_session_database(path);
 #ifndef _WIN32
     EXPECT_EQ(posix_mode(path), static_cast<mode_t>(0600));
@@ -687,7 +687,7 @@ TEST(WorkspaceSessionDatabase, CreatesOwnerOnlyDatabaseWalAndShm) {
 TEST(WorkspaceSessionDatabase, SharedOpenAcquiresLeaseAndCreatesMissingV2) {
     test::TestWorkspace workspace;
     const std::filesystem::path path =
-        workspace_session_database_path(workspace.root());
+        workspace.root() / "workspace.sqlite3";
     {
         SessionLease lease = open_workspace_session_database(
             path, "Workspace already in use");
@@ -751,9 +751,6 @@ TEST(SessionStorageLayout, DetectsOnlyDirectLegacyDatabaseFiles) {
 
 TEST(SessionStorageLayout, AcceptsAWorkspaceWithoutLegacyDirectories) {
     test::TestWorkspace workspace;
-    EXPECT_EQ(
-        workspace_session_database_path(workspace.root()),
-        workspace.root() / "workspace.sqlite3");
     EXPECT_FALSE(has_legacy_session_databases(workspace.root()));
 }
 

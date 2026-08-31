@@ -3,8 +3,10 @@
 #include "workspace/builtins.h"
 #include "workspace/session_open.h"
 #include "workspace/workspace.h"
+#include "workspace/workspace_config_store.h"
 #include "providers/providers.h"
 #include "session/session_repository.h"
+#include "support/test_workspace.h"
 #include "web/live_session.h"
 #include "web/lobby_routes.h"
 
@@ -15,15 +17,18 @@
 
 namespace cha::test {
 
-// The production web graph over one fixture workspace.
+// The production web graph over one fixture workspace: import into a unified
+// database, then open the runtime store.
 class WebGraph {
 public:
     explicit WebGraph(std::filesystem::path root)
         : root_(std::move(root)),
           providers(std::make_shared<Providers>()) {
-        loadws(root_);
+        store = WorkspaceConfigStore::open(import_test_database(root_));
         repository = std::make_shared<const SessionRepository>(
-            root_,
+            store->database_path(),
+            store->workspace_path(),
+            store->welcome_path(),
             TemporarySessionSeed{
                 {std::string(entrance_id), std::string(welcome_id)},
                 std::string(welcome_name)});
@@ -36,10 +41,10 @@ public:
     }
 
     web::SessionOpener opener() const {
-        return [repository = repository, providers = providers](
+        return [repository = repository, providers = providers, config = store.get()](
                    const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier) {
             return open_session(
-                *repository, identity, *providers, std::move(notifier));
+                *repository, identity, *providers, std::move(notifier), *config);
         };
     }
 
@@ -56,6 +61,7 @@ private:
 
 public:
     std::shared_ptr<Providers> providers;
+    std::unique_ptr<WorkspaceConfigStore> store;
     std::shared_ptr<const SessionRepository> repository;
 };
 

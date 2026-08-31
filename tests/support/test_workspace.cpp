@@ -2,6 +2,7 @@
 
 #include "session/session_database.h"
 #include "workspace/workspace.h"
+#include "workspace/workspace_config_store.h"
 
 #include <nlohmann/json.hpp>
 
@@ -125,11 +126,20 @@ TestWorkspace::TestWorkspace()
     write_character_config("display_name = \"Guide\"\nprovider = \"test\"\n");
     std::ofstream(definition / "CHARACTER.md") << "Character instructions\n";
     add_persona("reader", "Reader");
+    write_application_config();
 }
 
 TestWorkspace::~TestWorkspace() {
     std::error_code error;
     std::filesystem::remove_all(root_, error);
+}
+
+void TestWorkspace::write_application_config(
+    std::string_view host,
+    int port) const {
+    std::ofstream(root_ / "app.toml")
+        << "host = \"" << host << "\"\n"
+           "port = " << port << "\n";
 }
 
 void TestWorkspace::write_workspace_config(std::string_view log_level) const {
@@ -372,6 +382,12 @@ PublishedTestWorkspace publish_test_workspace(
         .identity = std::move(identity),
         .default_persona_id = default_persona_id,
     };
+}
+
+std::filesystem::path import_test_database(const std::filesystem::path& source) {
+    const std::filesystem::path database = source / "workspace.sqlite3";
+    import_workspace_configuration(source, database);
+    return database;
 }
 
 } // namespace cha::test
