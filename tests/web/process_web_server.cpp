@@ -715,7 +715,7 @@ TEST(WebServerProcess, RejectsAVersion1DatabaseWithImportGuidance) {
         << errors;
 }
 
-TEST(WebServerProcess, RejectsASecondProcessWithWorkspaceDiagnostic) {
+TEST(WebServerProcess, RejectsASecondProcessWithDatabaseDiagnostic) {
     test::TestWorkspace workspace;
     workspace.write_workspace_config();
     const int first_port = test::reserve_loopback_port();

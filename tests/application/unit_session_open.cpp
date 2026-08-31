@@ -14,6 +14,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <memory>
 #include <string>
 
@@ -51,14 +52,14 @@ std::string config_content(
 class SessionOpenTest : public ::testing::Test {
 protected:
     SessionOpenTest() {
-        reopen_from_fixture();
+        database_ = test::import_test_database(fixture_.root());
+        open_runtime();
     }
 
-    void reopen_from_fixture() {
+    void open_runtime() {
         sessions_.reset();
         store_.reset();
-        store_ = WorkspaceConfigStore::open(
-            test::import_test_database(fixture_.root()));
+        store_ = WorkspaceConfigStore::open(database_);
         sessions_ = std::make_unique<SessionRepository>(
             store_->database_path(),
             store_->workspace_path(),
@@ -66,6 +67,13 @@ protected:
             TemporarySessionSeed{
                 {std::string(entrance_id), std::string(welcome_id)},
                 std::string(welcome_name)});
+    }
+
+    void reimport_fixture() {
+        sessions_.reset();
+        store_.reset();
+        (void)import_workspace_configuration(fixture_.root(), database_);
+        open_runtime();
     }
 
     OpenedSession open(const FullSessionId& identity) {
@@ -76,6 +84,7 @@ protected:
     }
 
     test::TestWorkspace fixture_;
+    std::filesystem::path database_;
     Providers providers_;
     std::unique_ptr<WorkspaceConfigStore> store_;
     std::unique_ptr<SessionRepository> sessions_;
@@ -101,7 +110,7 @@ TEST_F(SessionOpenTest, OpensWelcomeThroughTheSamePath) {
         workspace_guest_id);
 }
 
-TEST_F(SessionOpenTest, DefaultWritesCommitThroughTheStore) {
+TEST_F(SessionOpenTest, DefaultWritesSurviveRestartAndExport) {
     sessions_.reset();
     store_.reset();
     fixture_.add_character("writer", "Writer");
@@ -109,12 +118,19 @@ TEST_F(SessionOpenTest, DefaultWritesCommitThroughTheStore) {
         fixture_.root() / "forums" / "lobby" / "members" / "writer";
     std::filesystem::create_directories(member);
     std::ofstream(member / "character.toml") << "# forum membership\n";
-    reopen_from_fixture();
-    const StoredSession stored = sessions_->create("lobby", "Stored");
-    OpenedSession opened = open(stored.identity);
+    reimport_fixture();
+    StoredSession stored;
+    {
+        stored = sessions_->create("lobby", "Stored");
+        OpenedSession opened = open(stored.identity);
 
-    opened.persist_default_character("writer");
-    opened.persist_default_persona("reader");
+        opened.persist_default_character("writer");
+        const std::string after_character = config_content(
+            store_->database_path(), "forums/lobby/config.toml");
+        EXPECT_NE(after_character.find("writer"), std::string::npos);
+
+        opened.persist_default_persona("reader");
+    }
 
     const std::shared_ptr<const Workspace> workspace = getws();
     ASSERT_NE(workspace->find_forum("lobby"), nullptr);
@@ -125,6 +141,27 @@ TEST_F(SessionOpenTest, DefaultWritesCommitThroughTheStore) {
         store_->database_path(), "forums/lobby/config.toml");
     EXPECT_NE(forum.find("writer"), std::string::npos);
     EXPECT_NE(forum.find("reader"), std::string::npos);
+
+    sessions_.reset();
+    store_.reset();
+    open_runtime();
+    ASSERT_NE(getws()->find_forum("lobby"), nullptr);
+    EXPECT_EQ(getws()->find_forum("lobby")->default_character_id, "writer");
+    EXPECT_EQ(getws()->find_forum("lobby")->default_persona_id, "reader");
+    EXPECT_EQ(sessions_->prepare(stored.identity).label, "Stored");
+
+    sessions_.reset();
+    store_.reset();
+    const std::filesystem::path exported = fixture_.root() / "exported";
+    const WorkspaceConfigTransfer transfer =
+        export_workspace_configuration(database_, exported);
+    EXPECT_GT(transfer.file_count, 0U);
+    std::ifstream exported_forum(exported / "forums" / "lobby" / "config.toml");
+    const std::string exported_content{
+        std::istreambuf_iterator<char>(exported_forum),
+        std::istreambuf_iterator<char>()};
+    EXPECT_NE(exported_content.find("writer"), std::string::npos);
+    EXPECT_NE(exported_content.find("reader"), std::string::npos);
 }
 
 TEST_F(SessionOpenTest, SourceDirectoryEditsDoNotAffectOpening) {
@@ -141,7 +178,7 @@ TEST_F(SessionOpenTest, SourceDirectoryEditsDoNotAffectOpening) {
     unchanged.controller.reset();
     sessions_.reset();
     store_.reset();
-    reopen_from_fixture();
+    reimport_fixture();
     const StoredSession second = sessions_->create("lobby", "Second");
     OpenedSession reloaded = open(second.identity);
     ASSERT_TRUE(reloaded.controller->character_information().notice);

@@ -9,6 +9,7 @@
 #include <fstream>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace cha::web {
@@ -111,15 +112,21 @@ TEST_F(ApplicationConfigTest, ImportAndExportRequireDataAndRejectRuntimeOptions)
     EXPECT_NE(both.find("mutually exclusive"), std::string::npos);
     EXPECT_NE(both.find("--data DATABASE --import"), std::string::npos);
 
-    for (const char* option : {"--root", "--host", "--port", "--test-idle-grace-ms"}) {
-        const std::string value = std::string(option) == "--port"
-            || std::string(option) == "--test-idle-grace-ms" ? "8080" : "x";
-        const std::string text = error_text({
-            "chaweb", "--data", database_.string(),
-            "--import", import_.string(), option, value});
-        EXPECT_NE(text.find(option), std::string::npos) << text;
-        EXPECT_NE(text.find("runtime option"), std::string::npos) << text;
-        EXPECT_NE(text.find("--import"), std::string::npos) << text;
+    for (const char* offline : {"--import", "--export"}) {
+        const std::filesystem::path directory = std::string(offline) == "--import"
+            ? import_ : export_;
+        for (const char* option : {
+                 "--root", "--host", "--port", "--test-idle-grace-ms"}) {
+            const std::string value = std::string(option) == "--port"
+                    || std::string(option) == "--test-idle-grace-ms"
+                ? "8080" : "x";
+            const std::string text = error_text({
+                "chaweb", "--data", database_.string(),
+                offline, directory.string(), option, value});
+            EXPECT_NE(text.find(option), std::string::npos) << text;
+            EXPECT_NE(text.find("runtime option"), std::string::npos) << text;
+            EXPECT_NE(text.find(offline), std::string::npos) << text;
+        }
     }
 }
 
@@ -128,9 +135,38 @@ TEST_F(ApplicationConfigTest, MissingDuplicateAndUnknownOptionsNameTheRemedy) {
     EXPECT_NE(missing.find("--data DATABASE"), std::string::npos);
     EXPECT_NE(missing.find("--import SOURCE_DIRECTORY"), std::string::npos);
 
-    const std::string duplicate = error_text({
-        "chaweb", "--data", database_.string(), "--data", database_.string()});
-    EXPECT_NE(duplicate.find("more than once"), std::string::npos);
+    for (const char* offline : {"--import", "--export"}) {
+        const std::string without_data = error_text({
+            "chaweb", offline,
+            (std::string(offline) == "--import" ? import_ : export_).string()});
+        EXPECT_NE(without_data.find("Missing --data"), std::string::npos)
+            << without_data;
+    }
+    for (const char* option : {
+             "--data", "--import", "--export", "--root", "--host", "--port",
+             "--test-idle-grace-ms"}) {
+        const std::string without_value = error_text({"chaweb", option});
+        EXPECT_NE(without_value.find("requires a value"), std::string::npos)
+            << without_value;
+    }
+
+    const std::vector<std::pair<std::string, std::string>> unique_options{
+        {"--data", database_.string()},
+        {"--import", import_.string()},
+        {"--export", export_.string()},
+        {"--root", root_.string()},
+        {"--host", "127.0.0.1"},
+        {"--port", "8080"},
+        {"--test-idle-grace-ms", "25"},
+    };
+    for (const auto& [option, value] : unique_options) {
+        const std::string duplicate = error_text({
+            "chaweb", "--data", database_.string(),
+            option, value, option, value});
+        EXPECT_NE(duplicate.find(option), std::string::npos) << duplicate;
+        EXPECT_NE(duplicate.find("more than once"), std::string::npos)
+            << duplicate;
+    }
 
     const std::string removed_config = error_text({
         "chaweb", "--config", (root_ / "app.toml").string()});
@@ -146,6 +182,9 @@ TEST_F(ApplicationConfigTest, MissingDuplicateAndUnknownOptionsNameTheRemedy) {
 
     EXPECT_THROW((void)load({"chaweb", "--wat", "value"}), std::runtime_error);
     EXPECT_THROW((void)load({"chaweb", "--migration"}), std::runtime_error);
+    EXPECT_THROW(
+        (void)load({"chaweb", "--data", database_.string(), "--host", ""}),
+        std::runtime_error);
     EXPECT_THROW(
         (void)load({
             "chaweb", "--data", database_.string(),
