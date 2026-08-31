@@ -1,627 +1,908 @@
-# Workspace session database implementation plan
+# Unified CHA database implementation plan
 
-Status: Proposed
+Status: proposed implementation sequence for [`docs/design.md`](design.md).
 
-This plan implements `docs/design.md`. It is deliberately split into separate
-deliveries so the migration tool can be built, tested, and run before normal
-CHA starts using the workspace database.
+This plan moves every durable CHA datum into one SQLite database selected by
+`--data DATABASE`. The database continues to hold sessions and gains the current
+workspace configuration as `(name, content)` rows. The directory workspace becomes
+an import/export format only; normal runtime materializes its configuration into a
+private temporary directory.
 
-The required order is:
+The work is divided into eight sequential blocks. Each block is intended to fit in
+one Codex implementation session, including its focused tests and review. Blocks are
+as large as practical while retaining one coherent outcome and a clear stopping
+point. Implement them in order because later blocks assume the interfaces and
+invariants established earlier.
 
-1. Ship a migration build whose normal runtime still uses legacy per-session
-   databases.
-2. Stop CHA, back up the workspace, run migration, and manually remove the
-   legacy database files.
-3. Ship the runtime conversion to `workspace/sessions.sqlite3`.
-4. After all required workspaces have been converted, remove the temporary
-   migration command and importer while retaining legacy-layout detection.
-
-Do not combine steps 1 and 3 into one deployment. The manual cutover is a hard
-boundary and the phase-2 runtime must never start against a workspace that has
-not completed it.
+Every block is an implementation staging point, not a separate production release.
+Each must compile and pass its focused tests, but the application should not be
+deployed from an intermediate block. Block 6 establishes the first complete new
+runtime path; Blocks 7 and 8 are still required before release because they finish
+hardening, distribution changes, documentation, and cutover verification.
 
 ## Final invariants
 
-The completed implementation must maintain these invariants:
-
-- A workspace has one persistent `sessions.sqlite3` and one
-  `sessions.sqlite3.cha-lock` companion.
-- `(forum_id, session_id)` remains the public identity; `session_key` is an
-  internal database key.
-- Every persistent session has a foreign-key relationship to one forum row.
-- Only one CHA process can own a workspace database.
-- Repository calls use short-lived SQLite connections. A live actor owns its
-  own connection, and no connection is shared between threads.
-- Every transaction that may write starts with `BEGIN IMMEDIATE` before any
-  reads.
-- Welcome uses a private temporary file outside the workspace, but that file
-  has the same schema and journal code path as the workspace database.
-- Migration copies legacy data but never modifies, renames, moves, or deletes
-  a legacy database.
-- Normal startup never imports legacy files. It only detects them and refuses
-  an incomplete cutover.
-- Recoverable deletion is an `archived_at` update, not a filesystem move.
-- Existing URLs, HTTP response shapes, backup, workspace reload,
-  interrupted-turn recovery, and Markdown downloads remain compatible.
-
-The implementation must not add automatic startup migration, source
-fingerprints, a migration manifest, automatic legacy cleanup, multi-process
-database sharing, session moves between forums, forum-rename propagation,
-archive restore/purge UI, a new cross-session-history browser route, or live
-filesystem backup of a WAL database.
-
-## Expected source organization
-
-Keep the new storage code in `src/session/`. The exact names may be adjusted
-while implementing, but each responsibility should have one obvious home.
-
-| Responsibility | Expected source area |
-| --- | --- |
-| Reusable SQLite connection, statement, binding, and transaction helpers | New internal `sqlite_storage.h/.cpp` extracted from `session_database.cpp` |
-| Workspace path constants and permanent legacy-file detection | New `session_storage_layout.h/.cpp` |
-| Workspace schema, validation, checkpoint, and session SQL | New `workspace_session_database.h/.cpp` |
-| Temporary read-only legacy `.sqlite3` adapter | New `legacy_session_import.h/.cpp` |
-| Temporary migration orchestration and summary | New `session_migration.h/.cpp` |
-| Runtime catalog and session operations | Existing `session_repository.h/.cpp` rewritten around the workspace database |
-| Actor journal and restore wiring | Existing `session_database.h/.cpp`, `session_controller.*`, and `workspace/session_open.*` |
-| Temporary command-line mode | `web/application_config.*` and `web_main.cpp` |
-| Backup, reload, and HTTP adaptation | `web/workspace_backup.*` and `web/lobby_routes.cpp` |
-
-Add all new sources and tests to `CMakeLists.txt`. The SQLite wrappers are an
-internal implementation detail of `cha_core`; do not expose `sqlite3` handles
-through public application APIs.
-
-## Phase 1: migration build
-
-Phase 1 adds `chaweb --migration`. Normal server execution must remain on the
-current per-session storage implementation throughout this phase.
-
-### 1. Protect the current behavior
-
-- [ ] Run the existing unit, web, stress, integration, and process suites and
-      record a clean baseline.
-- [ ] Add focused fixtures capable of creating current legacy schema version 3
-      databases and supported version 2 databases without modifying the
-      source during a test.
-- [ ] Add fixture helpers that can create active and `deleted/` sources in
-      multiple forums, duplicate public identities, earlier history epochs,
-      and an unfinished turn.
-- [ ] Keep the migration fixtures separate from the final workspace database
-      fixtures so a test cannot accidentally validate a source with target
-      code.
-
-### 2. Extract the reusable SQLite primitives
-
-The current `Database`, `Statement`, and `Transaction` implementations are
-private to `session_database.cpp`. Extract them into a small internal storage
-module before adding the second schema.
-
-- [ ] Move connection ownership, open modes, statement preparation, parameter
-      binding, row access, error reporting, `changes()`, and PRAGMA reads
-      without changing behavior.
-- [ ] Preserve read-only, read-write, and read-write-create modes.
-- [ ] Preserve `SQLITE_OPEN_NOMUTEX`; each handle continues to be confined to
-      one thread.
-- [ ] Configure every connection with `PRAGMA foreign_keys = ON` and
-      `PRAGMA busy_timeout = 5000`.
-- [ ] Keep `Transaction` unconditionally based on `BEGIN IMMEDIATE`, automatic
-      rollback on destruction, and explicit commit.
-- [ ] Keep legacy database creation, restore, journal, and migration tests
-      passing after the extraction. This step must be behavior-only and should
-      not introduce the workspace schema yet.
-
-### 3. Implement the workspace schema module
-
-- [ ] Define a workspace-specific SQLite `application_id` distinct from
-      legacy `CHA1`; use one named constant and freeze schema `user_version` at
-      1.
-- [ ] Implement the `forums`, `sessions`, `turns`, and `entries` schema exactly
-      as specified in `docs/design.md`, including composite keys, foreign keys,
-      checks, and partial indexes.
-- [ ] Create `active_sessions_by_update` as a partial index led by
-      `updated_at`; rely on the unique `(forum_key, session_id)` index for
-      identity resolution and per-forum listing.
-- [ ] Put schema creation in one reusable function used by both migration and
-      final runtime. Do not copy the schema text into the migration command.
-- [ ] Put database identity and schema-version validation in the same module.
-- [ ] Add full target validation: required schema objects, session state
-      invariants, one prompt per turn, composite relationships,
-      `PRAGMA foreign_key_check`, and `PRAGMA integrity_check`.
-- [ ] Implement only schema version 1 creation and validation now. Reject every
-      other workspace schema version; do not add a migration registry for
-      hypothetical versions. When a real version 2 exists, its upgrade must run
-      under the workspace lease and update `user_version` last.
-- [ ] Add helpers for rollback-journal target creation, WAL runtime
-      initialization, read-only final validation, and
-      `PRAGMA wal_checkpoint(TRUNCATE)`.
-
-### 4. Add permanent storage-layout helpers
-
-This small module survives Phase 3.
-
-- [ ] Define the workspace database path as `workspace/sessions.sqlite3`, the
-      unpublished migration path as
-      `workspace/.sessions.sqlite3.migrating`, and the lease companion derived
-      from the workspace database path.
-- [ ] Scan each configured persistent forum for regular files directly under
-      `forums/<forum>/sessions/*.sqlite3` and
-      `forums/<forum>/sessions/deleted/*.sqlite3`.
-- [ ] Do not treat nested files, lock files, rollback journals, WAL/SHM
-      sidecars, or the Welcome database as legacy sources.
-- [ ] Return sources in deterministic sorted-path order and record whether
-      each source is active or archived.
-- [ ] Expose a cheap `has_legacy_session_databases()` operation for final
-      startup. It must inspect paths only and never open a legacy database.
-- [ ] Test all accepted and ignored path forms, including an absent sessions
-      directory.
-
-### 5. Extend workspace lease diagnostics
-
-- [ ] Extend the existing lease acquisition helper to accept an explicit busy
-      description while retaining the current one-argument behavior needed by
-      phase-1 per-session leases.
-- [ ] Make both migration and final runtime report
-      `Workspace already in use: '<workspace-root>'` rather than deriving
-      `sessions` from the database filename.
-- [ ] Keep lease acquisition non-blocking and keep using the fixed companion
-      file and operating-system lock.
-- [ ] Test same-process and second-process conflicts, release after clean exit,
-      release after forced exit, stale unlocked companion files, and the exact
-      workspace-oriented diagnostic.
-
-### 6. Implement the read-only legacy adapter
-
-This module is temporary and is only for migration of discovered `.sqlite3`
-files.
-
-- [ ] Open every source with SQLite read-only flags. Never call the existing
-      in-place `migrate_session_database()` on a source.
-- [ ] Support exactly the legacy versions already accepted by the application:
-      version 2 without `entries.created_at` and version 3 with timestamps.
-      Reject every other application ID or version.
-- [ ] For version 2, expose `created_at = 0` while copying rather than adding a
-      column to the source.
-- [ ] Read and validate embedded session ID, forum ID, label, durable counters,
-      history epoch, all turns, and every entry from every epoch.
-- [ ] Validate that the embedded forum matches the containing forum directory
-      and that the embedded session ID matches the filename.
-- [ ] Validate positive IDs, enum values, prompt/turn relationships, one
-      started turn, and all other invariants currently enforced by legacy
-      restore.
-- [ ] Capture source row counts and file modification time. Convert the file
-      time to the target's Unix-seconds `updated_at`.
-
-### 7. Implement migration preflight
-
-Perform all checks before creating the unpublished target.
-
-- [ ] Load and validate the filesystem workspace normally so configured forum
-      IDs are authoritative.
-- [ ] Acquire the workspace lease before checking or creating target paths.
-      Document that a phase-1 server does not honor this lease and therefore
-      must already be stopped.
-- [ ] Refuse an existing `sessions.sqlite3` without opening or modifying it.
-- [ ] Refuse an existing `.sessions.sqlite3.migrating`; require the operator to
-      inspect and remove stale generated output.
-- [ ] Discover and sort all active and archived sources. Refuse an empty source
-      set without creating a target.
-- [ ] Validate every source before target creation. Report the exact source
-      path on failure.
-- [ ] Reject a duplicate `(forum_id, session_id)`, including an active/deleted
-      duplicate, and name both source paths.
-- [ ] Capture source counts and planned target counts for final verification.
-
-### 8. Build and publish the migration target
-
-- [ ] Create `.sessions.sqlite3.migrating` in rollback-journal mode with
-      foreign keys and full synchronous behavior. Do not enable WAL before
-      publication.
-- [ ] Start one `BEGIN IMMEDIATE` target transaction.
-- [ ] Insert every configured persistent forum with `INSERT OR IGNORE`.
-- [ ] For each sorted source, insert its session row, obtain `session_key`, and
-      copy counters, turns, and entries with that key.
-- [ ] Set `updated_at` from the source database modification time.
-- [ ] Set `archived_at` to the migration time for a source under `deleted/` and
-      to null for an active source.
-- [ ] Preserve labels, current history epoch, next IDs, earlier epochs,
-      interrupted turns, entry timestamps, and all request/entry IDs.
-- [ ] Compare source and target counts for sessions, turns, and entries inside
-      the transaction.
-- [ ] Run relationship and foreign-key validation, then write the application
-      ID and schema version as the final transaction changes.
-- [ ] Commit, close, reopen read-only, and run complete application and SQLite
-      integrity validation.
-- [ ] Publish with the existing `archive_without_replacement()` helper. Map a
-      destination conflict to a migration target error. Do not implement a
-      second no-replace rename path; the existing helper already supplies the
-      WSL/9p hard-link fallback.
-- [ ] Read the committed published database to calculate the final summary.
-      Print target path and active, archived, turn, and entry counts.
-
-On an ordinary caught failure, roll back, close, and remove only the
-unpublished target and its sidecars when that cleanup is safe. Never remove a
-published target and never touch a source. If forced termination leaves the
-temporary path, the next run must refuse it and explain the manual action.
-
-### 9. Add the temporary command-line path
-
-- [ ] Add an execution mode to `ApplicationConfig` and accept flag-form
-      `--migration` without a value.
-- [ ] In migration mode, accept the existing root/config/workspace selection
-      inputs but do not require host, port, or backup-directory settings.
-- [ ] Reject explicitly supplied server-only flags with `--migration`; server
-      settings already present in `app.toml` may be ignored.
-- [ ] Update usage text and argument tests for flag position, duplicates,
-      missing workspace, incompatible options, and ordinary server parsing.
-- [ ] In `web_main.cpp`, branch to migration immediately after resolving the
-      workspace and before constructing `SessionRepository`, providers,
-      `LiveSessionManager`, HTTP routes, or browser assets.
-- [ ] Run workspace loading and migration, print the summary to stdout, print
-      a source-specific error to stderr on failure, and return status 0 or
-      nonzero.
-- [ ] Ensure migration creates no Welcome database and binds no HTTP listener.
-
-### 10. Test and release the migration build
-
-Add focused tests, preferably in new
-`tests/session/unit_workspace_session_database.cpp` and
-`tests/session/unit_session_migration.cpp`, plus command-level cases in the
-existing process-test target.
-
-- [ ] Verify workspace schema creation, identity/version rejection, foreign
-      keys, partial indexes, and integrity validation.
-- [ ] Import active and deleted sessions from several forums.
-- [ ] Import the same session ID in different forums and reject duplicates
-      within one forum.
-- [ ] Verify version 2 and version 3 sources, previous history epochs,
-      timestamps, counters, and unfinished turns.
-- [ ] Reject malformed databases, unsupported versions, identity/path
-      mismatches, missing prompts, invalid enums, and broken relationships.
-- [ ] Verify that one bad source prevents publication of every source.
-- [ ] Hash or byte-compare every source before and after both successful and
-      failed migration.
-- [ ] Refuse existing published and temporary targets without changing them.
-- [ ] Simulate transaction, validation, and publication failures and verify
-      that no target is published.
-- [ ] Verify deterministic ordering and target-derived summary counts.
-- [ ] Verify the workspace lease blocks a concurrent migration and reports the
-      workspace path.
-- [ ] Run all existing tests to prove normal phase-1 server behavior is
-      unchanged.
-- [ ] Run `chaweb --migration` on a disposable copy of a representative real
-      workspace and inspect `integrity_check`, `foreign_key_check`, row counts,
-      and several restored transcripts.
-
-Phase 1 is complete only when the migration build can be installed and run
-without changing the normal server's storage path.
-
-## Manual cutover
-
-These are operator steps, not application startup behavior.
-
-### 11. Prepare the maintenance window
-
-- [ ] Install the migration build but do not install the phase-2 runtime yet.
-- [ ] Stop every CHA process that can access the workspace and verify the HTTP
-      process is gone.
-- [ ] Create an ordinary full-workspace backup and confirm that the archive can
-      be opened.
-- [ ] Ensure free disk space is sufficient for all legacy files, the backup,
-      and the new workspace database at the same time.
-
-### 12. Run and verify migration
-
-- [ ] Run `chaweb --migration --workspace <path>` once.
-- [ ] Save the command output and verify its active, archived, turn, and entry
-      counts against the expected workspace contents.
-- [ ] Confirm `sessions.sqlite3` exists and
-      `.sessions.sqlite3.migrating` does not.
-- [ ] Open the result read-only and run `PRAGMA integrity_check` and
-      `PRAGMA foreign_key_check` if independent verification is desired.
-- [ ] Spot-check sessions from multiple forums, an archived session, an old
-      history epoch, timestamps, and an interrupted turn.
-
-If migration fails, leave the legacy files in place, correct the named problem,
-remove only a confirmed unpublished `.sessions.sqlite3.migrating` if needed,
-and retry. Do not proceed to cleanup after a failed or unverified run.
-
-### 13. Perform manual cleanup and cross the rollback boundary
-
-- [ ] While CHA remains stopped, manually move or delete only legacy
-      `.sqlite3` files under each forum's `sessions/` and `sessions/deleted/`.
-- [ ] Remove their legacy `.cha-lock`, `-journal`, `-wal`, and `-shm` sidecars.
-- [ ] Preserve every non-session workspace file.
-- [ ] Re-run the same discovery rules manually or with a small diagnostic to
-      confirm no legacy `.sqlite3` file remains in either scanned location.
-- [ ] Keep the original workspace backup until the phase-2 runtime has been
-      validated.
-
-Before legacy cleanup, rollback is possible by moving the new
-`sessions.sqlite3` aside and running the old application. After legacy cleanup,
-rollback requires restoring the complete workspace backup. Never run the old
-runtime after migration and before cleanup because it can create or modify data
-that is absent from the migrated target.
-
-## Phase 2: workspace-database runtime
-
-Phase 2 replaces normal storage only after the manual cutover has succeeded.
-The temporary migration command may remain compiled during this phase, but it
-must refuse the already existing target.
-
-### 14. Enforce startup ownership and cutover state
-
-- [ ] Make `SessionRepository` acquire the process-lifetime workspace lease
-      before creating, opening, migrating, or inspecting
-      `sessions.sqlite3`.
-- [ ] Hold the lease until the HTTP server and all live actors have stopped and
-      the repository is destroyed.
-- [ ] After acquiring the lease, perform the permanent path-only legacy scan
-      and implement all four startup states:
-
-  | Workspace database | Legacy database | Startup action |
-  | --- | --- | --- |
-  | Present | Absent | Validate and open the workspace database |
-  | Absent | Absent | Create a new empty workspace database |
-  | Absent | Present | Refuse and require offline migration |
-  | Present | Present | Refuse and require manual legacy cleanup |
-
-- [ ] Run this guard before creating Welcome, binding HTTP, or modifying the
-      workspace database.
-- [ ] Validate application ID and schema version before reading application
-      tables. Run any future schema migration while holding the lease and
-      before actors exist.
-- [ ] Enable WAL and full synchronous behavior for runtime databases.
-- [ ] Test every startup combination, invalid database identity/version,
-      second-process conflict, and stale unlocked companion file.
-
-### 15. Rewrite `SessionRepository` around workspace SQL
-
-Keep the repository constructible as
-`shared_ptr<const SessionRepository>`.
-
-- [ ] Store the workspace root, database path, workspace lease, and Welcome
-      temporary-storage information. Do not store a repository SQLite
-      connection or connection mutex.
-- [ ] Open and configure one short-lived connection inside each catalog or
-      maintenance operation and close it before returning.
-- [ ] On construction and after successful workspace reload, insert every
-      configured persistent forum ID with `INSERT OR IGNORE`.
-- [ ] Keep old forum rows and their sessions when a forum disappears from the
-      current filesystem workspace. Ordinary APIs must still require the forum
-      to be currently configured.
-- [ ] Replace `SessionCatalog` filesystem scans with repository SQL for list,
-      inspect/validate, create, rename, archive, prepare/restore, Recent, and
-      durable-history read.
-- [ ] Resolve public identities through the `forums` join and carry
-      `session_key` internally. Never assume `session_id` alone is unique.
-- [ ] Generate timestamp IDs as today. In one `BEGIN IMMEDIATE` transaction,
-      retry a suffix on `(forum_key, session_id)` collision; archived IDs remain
-      reserved by the same unique constraint.
-- [ ] Change `StoredSession.updated_at` to Unix seconds and remove its
-      filesystem database path and per-file validation error fields. Update all
-      callers that currently convert `file_time_type`.
-- [ ] Add one workspace-wide Recent query filtered to currently configured
-      forum IDs and ordered by `updated_at DESC`. Do not loop over forums and
-      sort in C++.
-- [ ] Add the repository-level durable-history operation. It returns one
-      active session's current-epoch durable entries in `entry_id` order while
-      another session may be active. It does not expose partial streaming text
-      or synthesize interruption errors.
-- [ ] Make rename and archive affect exactly one active row and update
-      `updated_at` in the same transaction.
-
-### 16. Convert restore and actor journaling
-
-- [ ] Change `PreparedSession` to carry database path, `session_key`, identity,
-      label, and restore state. Remove the per-session lease.
-- [ ] For a persistent session, set the prepared database path to the workspace
-      database. For Welcome, set it to its private temporary database.
-- [ ] Change `SessionJournal` construction to
-      `SessionJournal(database_path, session_key)`.
-- [ ] Change `SessionController::from_workspace()` and
-      `workspace/session_open.cpp` to pass `session_key` and no per-session
-      lease.
-- [ ] Scope every restore and journal statement by `session_key`, including
-      state counters, current history epoch, turns, entries, clear, and live
-      rename.
-- [ ] Update `sessions.updated_at` in the same transaction as create, journal
-      writes, clear, rename, and archive.
-- [ ] Preserve separate short start and terminal transactions. Never hold a
-      SQLite transaction across provider execution or streaming.
-- [ ] Use `BEGIN IMMEDIATE` before any read in every write-capable operation so
-      a second writer waits at transaction start instead of failing a deferred
-      WAL snapshot upgrade.
-- [ ] Keep interrupted-turn lookup and repair scoped to the selected
-      `session_key`.
-- [ ] Keep one long-lived SQLite connection per live actor and never share it
-      with repository calls or another actor.
-
-### 17. Convert Welcome to the shared schema and code path
-
-- [ ] Keep the existing repository-owned private temporary directory outside
-      the workspace.
-- [ ] Create a file-backed temporary database; do not use plain `:memory:`.
-- [ ] Initialize it with the exact workspace application ID, version, schema,
-      PRAGMAs, and validation code.
-- [ ] Insert exactly one `forums` row for Entrance and one active `sessions`
-      row for Welcome, then retain Welcome's `session_key`.
-- [ ] Make Entrance listing and Welcome preparation query that temporary
-      database while create, rename, and archive remain rejected.
-- [ ] Restore and journal Welcome through a separately opened actor connection
-      using `SessionJournal(path, session_key)`.
-- [ ] Remove the private directory at repository destruction after all actors
-      have stopped. Keep it outside backup and migration semantics.
-
-### 18. Replace filesystem deletion with transactional archival
-
-- [ ] Keep the existing `LiveSessionManager` maintenance reservation and
-      stop/join sequence for live deletion.
-- [ ] After the actor and journal connection are gone, run one
-      `BEGIN IMMEDIATE` update that sets `archived_at` and `updated_at` only
-      when the row is active.
-- [ ] Require exactly one changed row. On failure, leave the session active and
-      release the reservation with existing error behavior.
-- [ ] Exclude archived rows from list, inspect, open, rename, Markdown download,
-      and ordinary history operations.
-- [ ] Keep their turns and entries in place and keep their public identities
-      reserved.
-- [ ] Remove production use of per-session file moves, sidecar moves, and
-      per-session leases. Do not add restore or permanent-purge UI in this
-      change.
-
-### 19. Adapt backup and workspace reload
-
-- [ ] Add a repository checkpoint operation and call
-      `PRAGMA wal_checkpoint(TRUNCATE)` after all actors have stopped and before
-      `backup_workspace()` invokes `tar`.
-- [ ] Keep the complete workspace, not only `sessions.sqlite3`, as the backup
-      and transport unit.
-- [ ] Change workspace reload to this order: reserve reload, stop/join actors,
-      checkpoint, back up, load and validate the candidate workspace, insert
-      new forum rows, publish the candidate, and release the reservation.
-- [ ] Ensure candidate failure leaves the old filesystem workspace published.
-- [ ] Ensure removing a forum from configuration does not delete its row or
-      sessions.
-- [ ] Document that copying a live WAL database with ordinary filesystem tools
-      is unsupported.
-
-### 20. Adapt web and application integration
-
-- [ ] Update `web_main.cpp` construction order so the repository obtains the
-      workspace lease and passes startup checks before the HTTP listener is
-      bound.
-- [ ] Replace `recent_sessions()`'s per-forum loops with the repository's one
-      database query.
-- [ ] Update forum session listings to consume integer `updated_at` directly.
-- [ ] For inactive Markdown download, read the selected session from the
-      workspace database without creating a live actor. Keep live download on
-      the actor snapshot path.
-- [ ] Preserve the existing HTTP routes, response JSON, status codes, initial
-      Welcome selection, live rename ordering, and deletion reservation.
-- [ ] Update `src/README.md`, `src/session/README.md`,
-      `src/workspace/README.md`, and `src/web/README.md` to describe workspace
-      ownership, short-lived repository connections, actor connections, and
-      temporary Welcome storage.
-
-### 21. Replace and expand runtime tests
-
-- [ ] Replace per-file `SessionCatalog` and repository expectations with
-      workspace-row expectations. Retain only legacy fixtures needed by the
-      temporary migration tests.
-- [ ] Test the same `session_id` in different forums and duplicate rejection
-      within one forum, including archived rows.
-- [ ] Test forum synchronization, removal/reintroduction of a forum, and
-      rejection of ordinary access to an unconfigured forum.
-- [ ] Test independent counters, epochs, turns, entries, clear, rename,
-      archive, restore, and interrupted-turn repair for multiple
-      `session_key` values.
-- [ ] Test Workspace Recent across forums and verify ordering and exclusion of
-      archived or currently unconfigured forums.
-- [ ] Test durable history read while another session is active and ensure a
-      started turn in the other session is not interpreted as interrupted.
-- [ ] Test Welcome's one-forum/one-session temporary database by initializing
-      it on one connection and restoring/journaling it on an actor connection.
-- [ ] Run several live journals against the same WAL database and verify no
-      row, counter, or interrupted turn crosses session boundaries.
-- [ ] Add a deterministic competing-writer test proving the second write waits
-      within `busy_timeout` and does not fail with `SQLITE_BUSY_SNAPSHOT`.
-- [ ] Test clean and forced process exit, WAL recovery, workspace lease release,
-      and startup refusal before HTTP binding.
-- [ ] Test inactive and live Markdown downloads, rename, archive, reload,
-      backup checkpointing, and restart.
-- [ ] Update stress tests that currently assert one lease/database per session;
-      instead assert one persistent database/lease and concurrent actor
-      isolation.
-- [ ] Run all unit, web, stress, integration, and process suites under the
-      normal build and available sanitizer configurations.
-
-Phase 2 is complete only when the final-runtime acceptance criteria in
-`docs/design.md` pass against a manually converted workspace and a newly
-created empty workspace.
-
-## Phase 3: remove migration-only code
-
-Do this only after every workspace that must be retained has been converted and
-backed up.
-
-### 22. Remove the temporary execution mode
-
-- [ ] Remove `--migration` from argument parsing, `ApplicationConfig`, usage
-      text, `web_main.cpp`, and command-level documentation.
-- [ ] Remove `session_migration.*`, the legacy `.sqlite3` adapter, and their
-      migration-only fixtures and tests.
-- [ ] Remove source-list validation, migration summaries, unpublished-target
-      handling, and migration-specific error types that have no runtime use.
-- [ ] Remove `archive_without_replacement()` only if it has no remaining caller;
-      verify with a repository-wide reference search first.
-- [ ] Remove obsolete legacy database creation/journal/catalog code only when
-      no supported operation still uses it.
-- [ ] Remove now-unused sources from `CMakeLists.txt`.
-
-### 23. Retain the permanent incomplete-cutover guard
-
-- [ ] Keep `session_storage_layout.*` and its cheap scan of the two legacy
-      locations.
-- [ ] Keep all four startup-state checks and their tests.
-- [ ] Keep errors for “offline migration required” and “manual cleanup
-      incomplete.” After Phase 3, the first error should direct the operator to
-      an archived migration build.
-- [ ] Keep the detector path-only: it must never open, validate, import, move,
-      or delete a legacy file.
-
-### 24. Final cleanup and verification
-
-- [ ] Remove stale comments and documentation referring to normal per-session
-      databases, per-session leases, filesystem deletion, or the temporary
-      command.
-- [ ] Confirm the final schema has no migration manifest, source fingerprint,
-      or cleanup state.
-- [ ] Confirm startup with legacy files still refuses before creating or
-      opening application state beyond the workspace lease.
-- [ ] Confirm a new workspace creates exactly one persistent database and one
-      lock companion, while Welcome creates only private temporary files.
-- [ ] Re-run the complete test matrix and a backup/restore smoke test on the
-      converted workspace.
-- [ ] Retain the migration build and the pre-cutover workspace backup until the
-      converted runtime has been used and verified for an agreed period.
-
-## Recommended commit boundaries
-
-Keep commits small enough that each can be reviewed and tested independently:
-
-1. SQLite helper extraction with no storage behavior change.
-2. Workspace schema, validation, layout detection, and unit tests.
-3. Read-only legacy adapter and import tests.
-4. Migration orchestration, publication, CLI, and process tests.
-5. Workspace lease and startup format guard.
-6. Repository queries and data-type conversion.
-7. Prepared session, actor journal, and Welcome conversion.
-8. Transactional archive and cross-session history read.
-9. Backup, reload, and web integration.
-10. Runtime concurrency, process, and stress-test conversion.
-11. Migration-mode removal after operational cutover.
-
-Every commit should build and pass its directly affected tests. The migration
-release, runtime release, and final cleanup each require the complete test
-suite.
-
-## Definition of done
-
-Implementation is complete when:
-
-- Phase 1 produced a validated `sessions.sqlite3` without changing any legacy
-  source.
-- The operator completed and recorded the manual backup, migration,
-  verification, and legacy cleanup.
-- Phase 2 runs both converted and new workspaces with one persistent database,
-  correct forum ownership, transactional archival, concurrent actor isolation,
-  and compatible web behavior.
-- Welcome uses the same schema and `SessionJournal(path, session_key)` path from
-  a private temporary file.
-- Repository operations remain `const` and use short-lived connections.
-- All write-capable transactions use `BEGIN IMMEDIATE`.
-- Backups contain a checkpointed main database and restore cleanly on another
-  machine.
-- Phase 3 has removed the importer and temporary CLI while retaining permanent
-  read-only legacy-layout detection.
-- All acceptance criteria in `docs/design.md` and all project test suites pass.
+Keep these rules visible throughout implementation. If a block exposes a conflict
+with one of them, update the design before proceeding rather than silently changing
+the intended behavior.
+
+- `--data DATABASE` is mandatory for import, export, and normal execution.
+- A normal runtime never reads configuration from a durable workspace directory.
+- `--workspace` and the old `--config APP_TOML` option are removed without a
+  compatibility mode.
+- The database schema version is 2. Version 1 contains sessions only; version 2 adds
+  the `config` table. Only import may upgrade version 1 to version 2.
+- `config` has exactly two application-visible columns: `name` and `content`. There
+  is no generation, type, control, or revision column.
+- Import validates a byte-identical materialization of the rows that it will commit.
+  It must not validate extra source files that will not exist at runtime.
+- Runtime, import, and export all hold the existing database lock-file lease for
+  their full database-using lifetime. They are mutually exclusive.
+- The database, rollback journal, WAL, SHM file, private runtime tree, and exported
+  `.env` do not receive group or other access.
+- A normal process has one private temporary root with `workspace/` and `welcome/`
+  children and one owner responsible for cleanup.
+- Runtime configuration edits update the materialized tree, validate it, replace
+  all configuration rows in one SQLite transaction, and only then publish the new
+  in-memory workspace.
+- A published `Workspace` eagerly owns all parsed values. After `Workspace::load`
+  returns, no normal read may reopen files below `Workspace::root()`; filesystem
+  access there is limited to candidate loading, the three narrow writers, and store
+  restoration while the configuration mutex is held. `SessionRepository` may
+  compare the stable root path as an identity value but must not read configuration
+  through it.
+- The broad workspace-reload operation and workspace backup machinery are removed.
+  Character/session reload for a specific settings change remains.
+- The legacy per-session database detector remains in import preflight so a fresh
+  unified database cannot silently hide old sessions.
+- Simplicity wins: use direct functions and small value types; do not add a virtual
+  filesystem, repository hierarchy, migration framework, watcher, or generic
+  transaction abstraction.
+
+## Working rules for every block
+
+At the beginning of each block:
+
+1. Read the relevant sections of `docs/design.md` and inspect the current worktree.
+   Preserve unrelated user changes.
+2. Run the smallest useful baseline test set for the files being changed. If the
+   baseline is already failing, record the failure before editing.
+3. Locate current definitions and call sites before modifying an interface. Use
+   `local-investigate` for broad questions and `rg` for a single obvious lookup.
+
+At the end of each block:
+
+1. Follow the surrounding C++ style; the repository does not define a general C++
+   formatter. For webapp changes, run `npm run check`.
+2. Run the block's focused tests and at least compile every target affected by an
+   interface change.
+3. Run `git diff --check` and inspect the complete diff for accidental generated,
+   fixture, or user-file changes.
+4. Leave no commented-out implementation, unused compatibility overload, or TODO
+   that merely defers work assigned to the current block.
+5. Record any design discrepancy before starting the next block.
+
+## Block overview
+
+| Block | Outcome | Main risk retired |
+|---|---|---|
+| 1 | Private-filesystem, dotenv, and workspace-loading seams | Secrets and validation cannot be handled safely by later code |
+| 2 | Version-2 schema and configuration-row database primitives | Session loss or partial schema upgrades |
+| 3 | Complete offline import/export implementation | Source/runtime mismatch and unsafe path handling |
+| 4 | Runtime materialization and atomic configuration-edit engine | Durable and in-memory configuration divergence |
+| 5 | Obsolete reload/backup feature removed end to end | Two competing configuration update models |
+| 6 | CLI, composition root, and runtime fully cut over to the database | Split storage remains reachable in production |
+| 7 | Integration hardening, fixtures, samples, and packaging updated | Edge cases or distribution paths retain old assumptions |
+| 8 | User/developer docs and final release verification complete | Operators cannot perform a safe cutover |
+
+### Primary implementation locations
+
+| Block | Expected files or areas |
+|---|---|
+| 1 | `src/util/environment.*`, new `src/util/private_filesystem.*` (name may follow local convention), `src/workspace/workspace.*`, `src/session/session_repository.*`, SQLite target definitions, focused utility/workspace tests |
+| 2 | `src/session/workspace_session_database.*`, its unit tests, and small row/database helpers consumed by the store |
+| 3 | new `src/workspace/workspace_config_store.*`, `src/web/application_config.*` parser seam, store tests, and `CMakeLists.txt` source/test registration |
+| 4 | `src/workspace/workspace_config_store.*`, workspace publication/loading call sites used by its tests, and runtime-store tests |
+| 5 | `src/web/lobby_routes.*`, `src/web/workspace_backup.*`, live-session manager/protocol sources, `resources/cha.yaml`, generated API clients, webapp UI/tests, and CMake removal entries |
+| 6 | `src/web/application_config.*`, `src/web_main.cpp`, `src/session/session_repository.*`, `src/workspace/session_open.*`, `src/web/lobby_routes.*`, and native process/test fixtures |
+| 7 | remaining native/web integration tests, sample workspace, CMake staging, package/service/launch assets, and generated artifacts |
+| 8 | root/source READMEs and the files under `docs/` named in the approved design |
+
+Exact test filenames should follow current repository organization. Avoid moving
+unrelated code merely to make it match this table.
+
+## Block 1 — Establish security and loading foundations
+
+### Goal
+
+Add the small reusable seams needed by all later work without changing how users
+start CHA. This block should be almost entirely additive. Existing directory-based
+startup remains functional at its end.
+
+### 1.1 Baseline and ownership inventory
+
+- Identify the current owners and cleanup paths for:
+  - the workspace session database and its lease;
+  - the `cha-session-*` Welcome database directory;
+  - dotenv parsing and process-environment mutation;
+  - `Workspace::load` and its log-file path base.
+- List every call site of `Workspace::load`, `SessionRepository` construction,
+  `load_dotenv`, and private temporary-directory creation. This list is the checklist
+  for the later interface changes.
+- Run the existing session, workspace, application-config, and web process tests that
+  cover these areas.
+
+### 1.2 Add a private-filesystem helper
+
+- Add one small utility for security-sensitive directories and files. Keep the API
+  concrete; it only needs the operations used by this design:
+  - create a directory atomically with owner-only access;
+  - tighten and verify an existing regular file's permissions;
+  - create or replace a regular file with owner-only access;
+  - reject symlinks and unexpected file types where the caller requires a regular
+    file or directory.
+- On POSIX, create directories with `mkdir(..., 0700)` instead of creating with
+  default permissions and applying `chmod` afterwards. Create secret files with
+  mode `0600` from the first successful open.
+- Provide the corresponding owner-only Windows ACL behavior behind the same narrow
+  utility. Do not emulate POSIX modes on Windows.
+- Do not change the process-wide umask.
+- Replace the current `create_private_directory` implementation used for the Welcome
+  database with this helper immediately, eliminating its create-then-chmod window.
+  The ownership of that directory will move in Block 6.
+- Add SQLite's `SQLITE_DEFAULT_FILE_PERMISSIONS=0600` compile definition to the
+  bundled SQLite target so new databases and sidecars are private by default.
+
+### 1.3 Separate dotenv parsing from application
+
+- Refactor the environment utility into two explicit operations:
+  1. parse a `.env` file into an ordered collection or map without mutating the
+     process environment;
+  2. apply parsed values using the current startup policy.
+- Preserve the current runtime semantics for duplicate keys, quoting, invalid lines,
+  inherited variables, and empty values.
+- Add a small scoped environment overlay for import validation:
+  - only variables absent from the importing process are installed;
+  - values already present, including the policy for an empty present value, follow
+    the approved design exactly;
+  - every inserted variable is removed when the scope ends, including on exceptions;
+  - unrelated environment variables are never touched.
+- Avoid a general dependency-injection system for environment lookup. The scoped
+  overlay exists only to let the unchanged provider validator see imported dotenv
+  values during `Workspace::load`.
+
+### 1.4 Add the durable-relative-path base to workspace loading
+
+- Add `Workspace::load(materialized_root, durable_relative_path_base)`.
+- Retain `Workspace::load(directory)` for parser-focused unit tests. Make it delegate
+  to the new overload using the directory as both the physical root and durable path
+  base, so there remains only one loading implementation.
+- Resolve template includes against `materialized_root` so containment remains
+  rooted in the private workspace tree.
+- Resolve durable relative paths such as logging paths against
+  `durable_relative_path_base`. Runtime will pass the database parent directory.
+- Do not add a virtual path abstraction. Both arguments are ordinary filesystem
+  paths with clearly different responsibilities.
+
+### 1.5 Tests and completion gate
+
+Add focused unit tests for:
+
+- POSIX modes at creation time and rejection of symlink targets;
+- dotenv parsing without side effects;
+- scoped overlay precedence and restoration on success and exception;
+- an API key supplied only through `.env` satisfying provider validation inside the
+  overlay;
+- independent resolution of include paths and durable log paths.
+
+The block is complete when existing startup behavior is unchanged, the relevant
+native test targets pass, and the SQLite target is demonstrably compiled with the
+private default file mode.
+
+## Block 2 — Add schema version 2 and database primitives
+
+### Goal
+
+Teach the session database layer to recognize, create, validate, and atomically
+upgrade the unified schema. Expose only the minimal row operations needed by the
+configuration store; do not implement directory traversal in the database layer.
+
+### 2.1 Define the version-2 schema once
+
+- Bump the workspace session database schema version from 1 to 2.
+- Add the strict table exactly once in a shared schema definition:
+
+```sql
+CREATE TABLE config (
+    name TEXT PRIMARY KEY CHECK (
+        name <> ''
+        AND substr(name, 1, 1) <> '/'
+        AND instr(name, char(92)) = 0
+        AND instr('/' || name || '/', '/../') = 0
+    ),
+    content TEXT NOT NULL
+) STRICT;
+```
+
+- Keep the application-level path validator even though the `CHECK` provides
+  defense in depth.
+- Do not add `generation`, `type`, `config_control`, timestamps, hashes, or metadata.
+- Ensure new databases are created directly at version 2 with both session and
+  configuration schema objects.
+- Extend schema validation so a database claiming version 2 must contain the exact
+  required configuration and session objects. A missing or malformed table is an
+  error, not an opportunity for runtime repair.
+
+### 2.2 Separate inspection, creation, runtime opening, and import upgrade
+
+- Add a read-only database identity/schema probe that can distinguish:
+  - no database;
+  - a valid version-1 CHA session database;
+  - a valid version-2 unified database;
+  - a foreign, corrupt, unsupported, or structurally incomplete database.
+- Add the version-1-specific runtime diagnostic in this block, before the generic
+  unsupported-schema branch. It must identify the database as a valid CHA schema-1
+  database and instruct the operator to stop CHA and run
+  `chaweb --data DATABASE --import WORKSPACE` to upgrade it. Do not make a valid
+  version-1 database look foreign or corrupt.
+- The final normal runtime and export accept only a valid version-2 database. During
+  Blocks 2 through 5, the still-directory-based development runtime may retain its
+  existing missing-database creation path so a disposable local/CI database can be
+  recreated at version 2; Block 6 removes that transitional creation path.
+- Because executable import is not wired until Block 6, do not delete a data-bearing
+  version-1 database during the intermediate blocks. Preserve it for the import
+  upgrade. Developers and CI may delete and recreate only disposable databases that
+  contain no sessions they need to keep.
+- Import may:
+  - create a missing database directly as version 2;
+  - upgrade a valid version-1 database in place;
+  - replace the configuration rows of a valid version-2 database.
+- The version-1 upgrade must validate the existing session schema before beginning
+  its write transaction, create `config`, insert the imported rows, and update
+  `user_version` last in the same transaction.
+- Do not create a chainable migration framework. One explicit `v1 -> v2` function is
+  enough.
+- A failed creation must not leave a database that looks valid but has no imported
+  configuration. A failed upgrade must roll back to a valid version-1 database with
+  all session rows intact.
+
+### 2.3 Add low-level configuration-row operations
+
+- Introduce the internal two-field value type used between SQLite and the store,
+  for example `ConfigFile { std::string name; std::string content; }`.
+- Add operations to:
+  - read all rows in deterministic name order;
+  - replace all rows using `DELETE` followed by inserts inside the caller's single
+    transaction;
+  - read and bind `content` using explicit byte counts so empty values and embedded
+    NUL bytes round-trip exactly.
+- Bind names and contents as parameters. Do not derive SQL identifiers from paths.
+- Do not add UTF-8 or other content-encoding validation at the database boundary.
+  Existing semantic parsers remain responsible for files they consume.
+- Let higher layers enforce required files and the accepted source-file set. The
+  database layer enforces only schema and safe stored-name invariants.
+
+### 2.4 Enforce durable-store permissions before SQLite opens it
+
+- After acquiring the lock-file lease and before opening SQLite, tighten and verify
+  the main database and any existing `-wal`, `-shm`, and `-journal` files.
+- Reject symlinks and non-regular objects for all of those paths.
+- Apply the same check in runtime, import, and export through one shared opening
+  path; do not duplicate it in each command handler.
+- Rely on the SQLite compile-time default from Block 1 for newly created sidecars,
+  then verify their modes in tests.
+
+### 2.5 Tests and completion gate
+
+Cover at least:
+
+- creation of a valid empty version-2 schema;
+- opening and validating a populated version-2 schema;
+- rejection of a valid version-1 database by normal runtime with the specific import
+  instruction, distinct from the generic unsupported-schema diagnostic;
+- rejection of missing tables, wrong columns, wrong application id, future schema
+  versions, and foreign SQLite files;
+- direct SQL rejection of empty, absolute, backslash-containing, and `..` names;
+- deterministic row reads and atomic all-row replacement;
+- byte-exact content reads and writes, including empty content, non-UTF-8 bytes, and
+  embedded NULs;
+- successful version-1 upgrade preserving every existing session and label row;
+- injected failure during upgrade leaving version 1 unchanged;
+- permission tightening for an existing database and sidecars;
+- owner-only modes for newly created database, WAL, and SHM files.
+
+Run the session database and repository test targets. The block is complete when no
+ordinary runtime path silently upgrades version 1 and all schema-changing operations
+are transactionally tested.
+
+## Block 3 — Implement the offline configuration store
+
+### Goal
+
+Implement one `WorkspaceConfigStore` (or equivalently named small component) that
+converts between directory trees and rows. Import and export should be fully testable
+as library operations before CLI and runtime wiring changes.
+
+### 3.1 Define the component boundary
+
+The store owns these responsibilities:
+
+- collect accepted files from an import directory;
+- validate stored relative names;
+- materialize rows into a caller-supplied private workspace directory;
+- validate an imported materialization;
+- create or upgrade the database and atomically replace configuration rows;
+- export rows to a new directory;
+- return concise summaries and path-specific errors.
+
+It does not own session queries, HTTP routes, UI state, template parsing, or provider
+validation. Reuse `Workspace::load` for semantic workspace validation.
+
+### 3.2 Collect the import tree deterministically
+
+- Resolve the source to an absolute normalized directory path.
+- Recursively inspect entries without following symlinks. Reject a symbolic link that
+  would otherwise match the stored configuration set; ignore unrelated files and do
+  not traverse symlinked directories.
+- Store only:
+  - root `app.toml`;
+  - root `workspace.toml`;
+  - every regular `.toml` file below the root;
+  - every regular `.md` file below the root;
+  - optional root `.env`.
+- Do not store empty directories or unrelated files.
+- Convert paths to normalized relative names using `/`, independent of the host
+  platform. Validate each name before reading content.
+- Read file contents byte-for-byte and bind them as SQLite `TEXT` with an explicit
+  byte count. Preserve embedded NULs and arbitrary byte sequences; do not add UTF-8
+  validation or newline conversion. A parser may still reject invalid syntax in a
+  file it consumes, but the storage layer has no separate encoding policy.
+- Sort rows by name for deterministic tests and exports.
+- Require `app.toml` and `workspace.toml` in the collected set before any database is
+  opened for writing.
+
+### 3.3 Implement one safe materializer
+
+- Validate the complete row set before creating any output file:
+  - unique names;
+  - normalized relative paths;
+  - no absolute path, empty segment, `.` or `..` segment, or backslash;
+  - required root files are present;
+  - every parent/child relationship can be represented as directories and regular
+    files without collision.
+- Join validated names beneath the supplied destination and verify containment.
+- Create the known empty workspace skeleton (`system/providers/`, `personas/`,
+  `characters/`, and `forums/`) before writing rows.
+- Create directories privately and write regular files without following symlinks.
+- Write `.env` with owner-only access. Other materialized files are already protected
+  by the owner-only parent but should not be group/other writable.
+- Use this exact materializer for import validation, normal runtime, and export. Do
+  not write a source-tree validator whose accepted input differs from runtime input.
+
+### 3.4 Parse stored application settings
+
+- Extract a side-effect-free application-settings parser that reads materialized
+  `app.toml` and reports file/field errors without parsing command-line arguments.
+- The stored application settings contain required `host` and `port`. They do not
+  accept or retain `workspace` or `backup_dir`; removal of the old runtime backup
+  field and its remaining consumers is completed in Block 5.
+- Retain the current parser entry point as a thin transitional wrapper until the CLI
+  cutover, but keep all TOML validation in one implementation.
+
+### 3.5 Implement import in the required order
+
+Import must execute these phases in order:
+
+1. Canonicalize the source and database paths, require the source and database parent
+   directories to exist, and acquire the target database lease non-blockingly.
+2. Run the path-only legacy-session detector against the source unconditionally. If
+   it finds a legacy database, fail with the existing actionable distinction: a
+   missing target database means the archived per-session-to-workspace migration was
+   never run, while a present target database means migration cleanup is incomplete.
+3. Collect and validate the exact rows described above.
+4. Create a short-lived private validation root with a `workspace/` child.
+5. Materialize the collected rows with the shared materializer.
+6. Parse materialized `app.toml` and `.env` without changing the environment yet.
+7. Apply the parsed dotenv values through Block 1's scoped, non-overwriting overlay.
+8. Call `Workspace::load(validation_workspace, database_parent)` while the overlay is
+   active. This deliberately exercises provider key validation, template includes,
+   and the same filesystem representation runtime will see.
+9. Destroy the overlay and validation tree whether validation succeeds or throws.
+10. Only after validation succeeds, secure existing files, inspect/create/upgrade the
+    database, and replace all configuration rows in one transaction. Retain the
+    lease acquired in step 1 until the command finishes.
+
+Important consequences to test explicitly:
+
+- `{{include shared/snippet.txt}}` fails import because `.txt` is not stored and is
+  therefore absent from the validation materialization.
+- A provider key present only in source `.env` succeeds during import validation but
+  is absent from the importing process again after import returns.
+- A semantic validation failure never creates or modifies the target database.
+- A SQLite failure never exposes a partial new configuration.
+
+### 3.6 Implement export safely
+
+- Acquire the target database lease, secure/open the database, require version 2,
+  read and validate all rows, and only then prepare output.
+- Require the destination to be absent or an existing empty directory. Reject a
+  non-empty destination before writing and never overwrite an existing file.
+- Create a missing destination and the known skeleton, then materialize directly
+  into it. If an I/O failure occurs after writing begins, report that the destination
+  may be incomplete and must be emptied before retrying.
+- Never recursively delete an unresolved or pre-existing user path.
+- Ensure exported `.env` is `0600` and no exported path can escape the destination.
+- Do not export sessions or SQLite implementation files.
+
+### 3.7 Tests and completion gate
+
+Add store tests for:
+
+- exact round-trip of all accepted files, Unicode, arbitrary bytes, embedded NULs,
+  empty contents, and nested paths;
+- ignoring ordinary unsupported files while rejecting a template that depends on
+  one of them;
+- rejecting symlinks, path traversal, backslashes, absolute names, duplicate names,
+  file/directory collisions, missing required files, and malformed TOML/Markdown;
+- `.env` provider validation and complete environment restoration;
+- database-parent resolution of durable relative paths;
+- import into a missing database, a valid version-1 database, and an existing
+  version-2 database;
+- preservation of sessions across both upgrade and configuration replacement;
+- rollback on validation, schema, insertion, and commit failures;
+- refusal to export a foreign/v1 database or a non-empty destination;
+- import/export lock contention and private output permissions;
+- both legacy-database detector outcomes and their actionable messages.
+
+The block is complete when import and export work through direct C++ calls and every
+validation path operates on materialized rows rather than the richer source tree.
+
+## Block 4 — Implement runtime storage and atomic edit primitives
+
+### Goal
+
+Prepare the normal-runtime owner and configuration mutation algorithm behind direct
+unit tests. Do not change the public command line yet. Keeping the final wiring out of
+this block limits its context to lifetime, locking, materialization, and transactions.
+
+### 4.1 Add the normal-runtime owner
+
+- Add a concrete runtime-mode object, preferably as part of the configuration store,
+  that owns in declaration/destruction order:
+  1. the database lock-file lease;
+  2. the secured SQLite connection or repository-facing database handle;
+  3. one process-private temporary root;
+  4. `workspace/` and `welcome/` children;
+  5. the process-wide configuration mutation mutex.
+- Acquire the lease before inspecting permissions, schema, configuration rows, or
+  session rows.
+- Create the private root atomically with owner-only access. Create both children
+  beneath it and expose their paths read-only to consumers.
+- Materialize version-2 configuration rows into `workspace/` once at startup.
+- Use a single cleanup path owned by this object. Consumers must not remove the root
+  or either child.
+
+### 4.2 Define startup loading through the runtime owner
+
+- Add an operation that applies materialized dotenv using the existing startup
+  semantics, parses materialized `app.toml`, and calls
+  `Workspace::load(materialized_workspace, database_parent)`.
+- Keep the lease held across materialization and for the complete lifetime of the
+  returned runtime owner.
+- Fail clearly for missing/invalid required configuration, a version-1 database,
+  malformed stored names, or materialization errors.
+- A restart must rebuild the private tree solely from database rows; it must never
+  reuse an orphaned previous process tree.
+
+### 4.3 Implement one runtime configuration edit operation
+
+- Place the complete edit sequence behind one store operation so all current narrow
+  writers share the same mutex and failure behavior.
+- Before implementing in-place restoration, re-audit every use of
+  `Workspace::root()` and every filesystem open beneath the materialized tree.
+  Confirm that a published `Workspace` eagerly owns its values, that
+  `SessionRepository` only compares the stable root path, and that candidate loading
+  plus the three narrow writers and store restoration are the only filesystem access
+  after publication, all under the configuration mutex. If any asynchronous or
+  unlocked read reaches the tree, stop and revise the design; in-place restoration
+  would otherwise expose torn files.
+- Under the mutex:
+  1. apply the caller's existing filesystem edit to the materialized tree;
+  2. load and validate a candidate `Workspace` from that tree;
+  3. collect the entire accepted configuration set from the materialized tree;
+  4. begin one SQLite write transaction;
+  5. delete and insert all `config` rows;
+  6. commit;
+  7. publish with the existing `loadws(Workspace)` overload;
+  8. let the caller reload only sessions affected by its specific change.
+- Do not add a preallocated-publication overload. Allocation before `loadws` already
+  occurs outside `workspace_mutex`, and restart is the recovery for an exceptional
+  allocation failure after commit.
+- On any failure before commit, restore the materialized tree in place from current
+  database rows before releasing the configuration mutex. Keep the existing
+  `workspace/` directory itself and its stable path; remove/recreate only its
+  contents and required child skeleton. Never rename, remove, or replace the
+  `workspace/` directory because published workspace and session-repository identity
+  checks retain that path. Report the original failure; if restoration also fails,
+  include that fact and require process restart.
+- On a failure after commit but before in-memory publication, report that the durable
+  update committed and require restart. Do not attempt a compensating transaction.
+- Keep SQLite transactions short: filesystem edits, materialization, and
+  `Workspace::load` validation happen before the write transaction.
+- Do not reload `.env` or `app.toml` after a narrow runtime mutation. Neither is
+  editable through the runtime UI; changing them remains an offline import followed
+  by restart.
+
+### 4.4 Unit tests and completion gate
+
+Test the runtime owner and edit primitive directly for:
+
+- a single private root containing exactly the expected workspace and Welcome
+  subtrees;
+- lock lifetime and rejection of a second runtime/import/export process;
+- startup from database rows after deleting the original import tree;
+- clean recreation after an orphaned temporary tree is left behind;
+- successful edits changing materialized, database, and in-memory state together;
+- serialization of two edits and of an edit racing a workspace read;
+- validation failure restoring the tree and leaving database/in-memory state old;
+- SQLite write or commit failure restoring the tree;
+- restoration preserving the same `workspace/` directory while replacing its
+  contents, with published workspace reads and session identity checks remaining
+  valid throughout;
+- simulated post-commit publication failure yielding the documented restart state;
+- successful restart publishing the already-committed configuration.
+
+This block is complete when the new owner and edit engine are independently usable,
+but no production route or CLI depends on them yet.
+
+## Block 5 — Remove workspace reload and backup end to end
+
+### Goal
+
+Delete the broad directory-reload feature before the final cutover so there is only
+one configuration update model to wire. This is a removal block: avoid replacement
+state or compatibility endpoints.
+
+### 5.1 Remove backend reload and backup machinery
+
+- Remove `POST /api/v1/workspace/reload` and its route registration.
+- Remove `backup_dir`, `workspace_backup.*`, their CMake entries, and their tests.
+- Remove `WorkspaceReloadReservation`, `WorkspaceReloadResult`, global workspace
+  reload reservation/state, and related `LiveSessionManager` branches.
+- Remove error handling and messages that exist only for the broad reload.
+- Preserve the separate, session-scoped `reloading` reason used after character
+  settings changes.
+- Simplify `ApplicationConfig` only as far as removing backup configuration in this
+  block; final CLI/TOML separation happens in Block 6.
+
+### 5.2 Remove protocol and API surface
+
+- Remove `workspace_reloading` and `workspace_reload_failed` from
+  `resources/cha.yaml`.
+- Remove reload references embedded in unrelated descriptions so generated
+  documentation does not imply the operation still exists.
+- Hand-edit the repository's C++ protocol implementation; there is no C++ generator.
+  Remove the enum values and string mappings from `src/web/protocol.h` and
+  `src/web/protocol.cpp`, and remove the shutdown-priority case from
+  `src/web/live_session.cpp`, together with the manager/route uses removed in 5.1.
+- From `webapp/`, run `npm run api-types` to regenerate
+  `webapp/src/api/schema.d.ts` from `resources/cha.yaml`. That TypeScript schema is
+  generated and must not be hand-edited; the C++ files above are hand-maintained.
+- Remove client methods, response types, UI controls, state, notifications, and tests
+  dedicated to workspace reload.
+
+### 5.3 Tests and completion gate
+
+- Build native server and protocol targets after the hand edits, and verify
+  `npm run api-types:check` after TypeScript regeneration.
+- Run backend route and live-session tests.
+- Run the webapp API type check, unit tests, typecheck, and production build.
+- Search the repository for `workspace_reload`, `workspace reloading`, `backup_dir`,
+  and the deleted symbols. Remaining occurrences should be historical design text or
+  the intentional session-specific `reloading` concept, not executable behavior.
+
+The block is complete when the route is absent, the OpenAPI source and generated
+TypeScript schema agree, the hand-maintained C++ protocol has no removed values, the
+UI has no reload affordance, and no backup directory is required by application
+startup.
+
+## Block 6 — Cut CLI and normal runtime over to the unified database
+
+### Goal
+
+Make the new storage model the only executable behavior. This is the largest wiring
+block, but the schema, store, edit engine, and obsolete-feature removal are already
+complete, keeping it within one implementation session.
+
+### 6.1 Replace command-line parsing
+
+- Separate command-line options from stored application settings.
+- Support exactly these modes:
+  - `chaweb --data DATABASE --import SOURCE_DIRECTORY`;
+  - `chaweb --data DATABASE --export DESTINATION_DIRECTORY`;
+  - `chaweb --data DATABASE [--root PATH] [--host HOST] [--port PORT]`.
+- Require one `--data` in every mode.
+- Make `--import` and `--export` mutually exclusive and reject normal-run-only
+  options in offline modes where they have no meaning.
+- Retain hidden `--test-idle-grace-ms` for normal browser process tests and reject it
+  in offline modes.
+- Remove `--workspace`. Do not accept aliases or detect the old CLI heuristically.
+- Treat `--data` only as the SQLite path. Remove the old `--config` option; it no
+  longer names `app.toml` and is not an alias for `--data`.
+- Load required `host` and `port` from stored `app.toml` for normal execution, then
+  apply CLI `--host` and `--port` overrides. Keep `--root` as the existing web-root
+  override, not a workspace path.
+- Update `--help` and errors with complete example invocations and clear guidance
+  that a missing/version-1 database must first be imported.
+
+### 6.2 Dispatch offline commands at the composition root
+
+- In `web_main`, parse the mode before constructing web-server state.
+- For import, call the tested store import and exit after a concise summary.
+- For export, call the tested store export and exit after a concise summary.
+- Do not initialize HTTP, providers, sessions, or the Welcome database in either
+  offline mode.
+- Map validation, lock, schema, permission, and filesystem failures to nonzero exit
+  status with the specific offending path or database state.
+
+### 6.3 Construct normal runtime from the store
+
+- Replace durable-directory startup with Block 4's runtime owner:
+  1. acquire the database lease;
+  2. secure and validate the version-2 database;
+  3. create the single private root and its two children;
+  4. materialize configuration;
+  5. apply stored dotenv and load stored application settings;
+  6. load the workspace using the database parent for durable relative paths;
+  7. initialize logging from the loaded workspace, so a relative `logging.file`
+     demonstrably resolves below the database parent rather than the materialized
+     root;
+  8. initialize sessions and web routes while keeping the owner alive.
+- Ensure destruction order stops users of the workspace/session database before the
+  runtime owner releases the lease or removes the private root.
+- Delete code that discovers the session database from a durable workspace path.
+- Remove runtime invocation of `has_legacy_session_databases`; it belongs only to
+  import preflight.
+
+### 6.4 Simplify `SessionRepository` ownership
+
+- Change construction to receive the explicit unified database path, the stable
+  materialized `workspace/` path used by existing workspace identity checks, and the
+  private `welcome/` path from the top-level runtime owner.
+- Use the owner's `welcome/` child for the temporary Welcome database.
+- Remove its lock-file acquisition, random `cha-session-*` root creation, private
+  root cleanup, database-path derivation, and legacy-directory detection.
+- Delete `workspace_session_database_path()` and its focused tests once every caller
+  receives the database path explicitly. If `session_storage_layout.*` then contains
+  only `has_legacy_session_databases()`, retain it under a clear narrow name or rename
+  it with the smallest practical diff; no helper that derives
+  `<workspace>/workspace.sqlite3` may remain.
+- Keep session CRUD and Welcome-session behavior otherwise unchanged.
+- Preserve forum synchronization, maintenance fencing, checkpointing, and shutdown
+  behavior apart from the new ownership boundaries.
+- Do not give `SessionRepository` ownership of the materialized workspace tree.
+
+### 6.5 Wire narrow runtime edits through the store
+
+- Inject the store/edit capability only into the existing code that persists:
+  - character provider/style settings;
+  - forum default character;
+  - forum default persona.
+- Keep each existing filesystem writer as the function that edits the materialized
+  TOML/Markdown file, then execute it through Block 4's transaction wrapper.
+- Publish the validated candidate via existing `loadws(Workspace)` after commit.
+- Reload only the sessions already affected by the corresponding setting, using the
+  retained session-specific `reloading` reason.
+- Remove direct durable-directory assumptions from `lobby_routes`, `session_open`,
+  and any helpers they call.
+- Ensure HTTP errors distinguish a pre-commit rejection (nothing changed) from the
+  exceptional post-commit condition (restart required).
+
+### 6.6 Update directly broken fixtures and tests
+
+- Change the native process fixture to create a source workspace, run explicit
+  import into a fresh database, and then launch the server with `--data DATABASE`.
+- Update application-config unit tests for the three modes, required arguments,
+  mutual exclusion, overrides, and rejection of the removed `--config` and
+  `--workspace` options.
+- Update session repository construction in all unit/integration fixtures.
+- Update tests for the three runtime edit paths to assert database persistence, not
+  just changes to a durable source directory.
+
+### 6.7 Completion gate
+
+Run the affected native unit, web, process, and integration targets. Also complete a
+manual smoke test in a disposable directory:
+
+1. Import a representative workspace into a new database.
+2. Rename or remove the source workspace.
+3. Start the server from the database and open a session.
+4. Change each supported runtime setting.
+5. Stop and restart the server.
+6. Confirm the settings and sessions survive.
+7. Export and inspect the resulting workspace.
+
+The block is complete only when no normal execution path accepts or consults a
+durable workspace tree and no supported runtime edit can bypass the database.
+
+## Block 7 — Harden integration, fixtures, samples, and packaging
+
+### Goal
+
+Exercise the completed system across process boundaries and update every non-doc
+asset that assumes directory-backed runtime configuration. This block closes gaps
+that focused implementation tests may miss.
+
+### 7.1 Complete the test matrix
+
+Audit `docs/design.md`'s test plan against tests added in Blocks 1 through 6. Add any
+missing coverage, especially:
+
+- process-level mutual exclusion among runtime, import, and export;
+- killing import before commit and verifying the prior schema/configuration;
+- killing runtime with WAL active, then reopening and checking sidecar permissions;
+- replacing configuration in a populated database without changing session counts,
+  labels, timestamps, or message content;
+- import rejection before database creation for malformed source, missing provider
+  key, unsupported include dependency, or legacy session databases;
+- export failure clearly reporting a possibly incomplete destination while leaving
+  the database and unrelated paths unchanged;
+- startup refusal for version 1 with the correct import guidance;
+- exact relative logging behavior when the process current directory differs from
+  the database parent;
+- concurrent runtime edits and restart recovery after every modeled failure point;
+- POSIX and Windows-specific private permission behavior where CI supports it.
+
+Keep failure injection local and explicit. Do not build a generic fault-injection
+framework for this feature.
+
+### 7.2 Update sample configuration
+
+- Move the sample runtime application settings into the sample import tree as root
+  `app.toml`.
+- Remove `workspace` and `backup_dir` from sample TOML and require `host` and `port`.
+- Ensure sample templates include only file types preserved by import.
+- Keep sample `.env` secret-free and document values as placeholders if it is
+  distributed.
+- Add a fixture with `.env`-only provider credentials for automated import testing;
+  never commit a real key.
+
+### 7.3 Update build, staging, and package behavior
+
+- Update CMake sources for new helpers/store files and remove backup sources/tests.
+- Update local deployment staging and package scripts so they do not treat a copied
+  workspace directory as runtime state.
+- Never package a developer's real database or API keys.
+- If a sample workspace is distributed, label and place it as an import seed only.
+  Do not make normal server startup silently import it.
+- Provide an explicit development/package command that imports the seed to a chosen
+  database; keep the same command users run in production.
+- Update launch scripts and service templates to pass `--data` with a SQLite path.
+- Ensure cleanup rules distinguish disposable build databases from user databases.
+
+### 7.4 Run full automated verification
+
+Use the repository's Ninja preset and build directory:
+
+```sh
+cmake --preset ninja
+cmake --build build/ninja
+ctest --test-dir build/ninja --output-on-failure
+cd webapp
+npm run check
+npm run build
+npm run e2e
+```
+
+Also run configured sanitizer and stress/process-lock targets. If a platform-specific
+permission test cannot run locally, ensure it is compiled and assigned to the
+appropriate CI platform rather than weakening the assertion.
+
+The block is complete when all code, tests, generated assets, sample trees, launch
+scripts, and packaging agree on database-only runtime configuration.
+
+## Block 8 — Update documentation and perform release cutover verification
+
+### Goal
+
+Make the new operational contract unambiguous, remove stale directory/reload
+instructions, and verify the exact operator transition on disposable copies. This
+block is documentation-heavy but should not introduce new architecture.
+
+### 8.1 Update user-facing documentation
+
+Update at least:
+
+- the root `README.md`;
+- `docs/users.md`;
+- `docs/tutorial.md`;
+- web UI/API documentation generated or maintained outside `resources/cha.yaml`;
+- examples showing startup, service files, environment setup, or configuration
+  edits.
+
+Document:
+
+- `--data DATABASE` for every command and removal of the old `--config` option;
+- initial import, later edit/export/import workflow, and destination rules;
+- the requirement to stop the service before import/export and the enforced lease;
+- stored `app.toml`, required host/port, and CLI overrides;
+- the accepted import file set and the consequence for template includes;
+- the fact that `.env` is now durable database content and the required database
+  backup/permission discipline;
+- version-1 import upgrade and the archived legacy per-session migration prerequisite;
+- removal of `--workspace`, broad reload, and workspace backups;
+- a recovery procedure for pre-commit failures and the rare post-commit/restart case.
+
+Remove or correct stale claims about `sessions.sqlite3`, directory-backed runtime
+reload, workspace paths, and backup directories.
+
+### 8.2 Update developer and design relationships
+
+- Update source-area READMEs that describe session database ownership, application
+  configuration, or workspace reload.
+- Add the supersession note to `docs/session-design.md`:
+  - this unified design supersedes its storage layout, per-session database lease,
+    physical-deletion database lifecycle, and database path ownership;
+  - its session rename/delete UI behavior, label rules, and live-session coordination
+    remain applicable unless separately changed.
+- Keep `docs/design.md` as the authoritative detailed design and this file as the
+  implementation sequence. Resolve inconsistencies rather than duplicating divergent
+  explanations.
+- Update filenames and command examples in contributor/testing documentation.
+
+### 8.3 Verify the operator cutover exactly
+
+Use copies of realistic data, never the only production files:
+
+1. Stop the old service and preserve a recoverable backup of its workspace and
+   version-1 unified session database.
+2. If per-session legacy databases exist, run the archived migration build first and
+   verify that the guard blocks import until migration/cleanup is complete.
+3. Run `chaweb --data DATABASE --import WORKSPACE`.
+4. Inspect the command summary and verify schema version 2, session counts, private
+   database/sidecar permissions, and stored required rows.
+5. Run `chaweb --data DATABASE --export EXPORTED_WORKSPACE` and compare accepted
+   files byte-for-byte with the source.
+6. Move the original workspace aside and start normal runtime using only the
+   database.
+7. Exercise session open/resume, character settings, forum defaults, restart, and
+   export after edits.
+8. Confirm a concurrent import/export is rejected while runtime holds the lease.
+9. Confirm a second import replaces configuration while preserving all sessions.
+
+Do not delete the old backup as part of implementation. Its retention is an operator
+decision after the new build has been accepted.
+
+### 8.4 Final definition of done
+
+The change is complete when all of the following are true:
+
+- All native, webapp, process, integration, sanitizer, and applicable platform tests
+  pass.
+- `git diff --check` is clean and generated artifacts match their sources.
+- Repository searches find no executable use of the removed `--config` or
+  `--workspace` options, workspace reload, `backup_dir`, directory-derived session
+  database paths, generation/type/control configuration columns, or runtime legacy
+  detection.
+- A new database can be created only through successful import.
+- A version-1 database upgrades only through successful import and preserves
+  sessions exactly.
+- Normal runtime and export reject missing, foreign, malformed, or version-1
+  databases without modifying them.
+- Runtime succeeds after the original workspace is unavailable.
+- All supported runtime edits survive restart and export.
+- Database, sidecars, private roots, and exported `.env` satisfy the private-access
+  requirements on supported platforms.
+- The operator documentation describes one storage model and one safe cutover path.
+
+## Suggested commit boundaries
+
+One reviewed commit per block is the simplest history. If a block needs more than one
+commit while being implemented, squash or organize by the block's internal sections
+without mixing later-block behavior. In particular:
+
+- do not combine generated protocol removal with unrelated schema code;
+- do not land the CLI cutover without its runtime mutation wiring;
+- do not treat documentation or packaging as optional follow-up after Block 8;
+- do not delete legacy operator data or run migration against non-disposable data as
+  part of automated implementation.
