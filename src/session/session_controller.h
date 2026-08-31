@@ -7,7 +7,6 @@
 #include "session/controller_view.h"
 #include "session/generation_status.h"
 #include "session/session_database.h"
-#include "session/session_lease.h"
 #include "chat/session_identity.h"
 #include "chat/transcript.h"
 #include "util/wake_notifier.h"
@@ -44,24 +43,24 @@ public:
         CharacterId initial_default_character_id,
         std::string initial_default_persona_id,
         std::filesystem::path database_path,
-        SessionLease lease,
+        SessionKey session_key,
         Providers& providers,
         std::shared_ptr<WakeNotifier> notifier,
         SessionRestore restored,
         FullSessionId identity);
 
     // Tests use the same Workspace data path, but may own an injected provider
-    // executor and use an inactive lease or an activation fault hook.
+    // executor and use an activation fault hook.
     [[nodiscard]] static std::unique_ptr<SessionController> from_workspace_for_testing(
         CharacterId initial_default_character_id,
         std::string initial_default_persona_id,
         std::filesystem::path database_path,
-        SessionLease lease,
         std::shared_ptr<Providers> providers,
         std::shared_ptr<WakeNotifier> notifier,
         SessionRestore restored = {},
         ActivationHook before_activation = {},
-        FullSessionId identity = {});
+        FullSessionId identity = {},
+        SessionKey session_key = 1);
     ~SessionController();
     SessionController(const SessionController&) = delete;
     SessionController& operator=(const SessionController&) = delete;
@@ -121,7 +120,7 @@ private:
         CharacterId initial_default_character_id,
         std::string initial_default_persona_id,
         std::filesystem::path database_path,
-        SessionLease lease,
+        SessionKey session_key,
         Providers& providers,
         std::shared_ptr<WakeNotifier> notifier,
         SessionRestore restored,
@@ -181,9 +180,6 @@ private:
     TranscriptEntry response_entry(EntryStatus status) const;
     bool matches(RequestId request_id) const;
 
-    // lease_ is declared before journal_ so reverse destruction keeps the lock
-    // through journal destruction and explicit controller shutdown.
-    SessionLease lease_;
     Transcript transcript_;
     SessionJournal journal_;
     // Production borrows its process-owned executor. Test-backed controllers

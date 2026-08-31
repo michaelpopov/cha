@@ -50,9 +50,10 @@ The most useful high-level model is:
 
 - `loadws()` atomically publishes the current immutable `Workspace`, which owns
   all resolved workspace-directory configuration.
-- The independent process-owned `SessionRepository` lists, creates, validates,
-  leases, and restores SQLite session databases. It asks the current workspace
-  for forum storage paths but does not copy workspace configuration.
+- The independent process-owned `SessionRepository` owns the workspace session
+  database and its lease, and lists, creates, validates, archives, and restores
+  the sessions inside it. It asks the current workspace which forums exist but
+  does not copy workspace configuration.
 - `LiveSessionManager` owns the process's live-session registry.
 - One `LiveSession` is an actor with one permanent owner thread for one open
   session.
@@ -108,7 +109,8 @@ There are three kinds of long-lived information:
 - Sessions read configuration from the published `Workspace`; disk edits are
   invisible until a successful reload publishes them.
 - Conversation state is dynamic. A live controller owns an in-memory view and
-  writes durable turn transitions to one SQLite database.
+  writes durable turn transitions into its own rows of the one workspace
+  session database.
 
 This split explains why creating a session appears immediately while editing
 workspace configuration requires publication of a new `Workspace`.
@@ -179,7 +181,7 @@ keys use its SHA-256 implementation, independently of curl's TLS backend.
 | [src/util](../src/util) | Queues, template expansion, logging, path/text helpers |
 | [src/characters](../src/characters) | Character configuration, definitions, and model context |
 | [src/providers](../src/providers) | Request workers, provider transport, and response decoding |
-| [src/session](../src/session) | Controller, transcript orchestration, SQLite journal, leases, repository |
+| [src/session](../src/session) | Controller, transcript orchestration, workspace session database, journal, lease, repository |
 | [src/workspace](../src/workspace) | Workspace loading, built-ins, and session construction |
 | [src/web](../src/web) | Native protocol, routes, actor, mailbox, lifecycle, shutdown |
 | [tests](../tests) | Behavioral examples grouped by the same subsystem boundaries |
@@ -344,8 +346,10 @@ Startup proceeds in this order:
 2. `load_dotenv()` loads `workspace/.env`.
 3. `loadws()` loads, validates, and publishes the complete `Workspace`.
 4. File logging is initialized from the published workspace settings.
-5. The process-owned `SessionRepository` creates its temporary Entrance/Welcome
-   database.
+5. The process-owned `SessionRepository` takes the workspace lease, checks for
+   an incomplete manual cutover, opens or creates `sessions.sqlite3`,
+   synchronizes configured forum IDs into it, and creates its temporary
+   Entrance/Welcome database.
 6. The process-owned `Providers` supervisor is constructed.
 7. `LiveSessionManager` is given an opener lambda that calls `open_session()`.
 8. The HTTP server, asset handler, lobby routes, and session routes are
@@ -355,8 +359,12 @@ Startup proceeds in this order:
 10. Shutdown stops new work and tears down live actors, then
     `Providers::shutdown()` waits for request workers before logging stops.
 
-Local declaration order and function scopes matter: destructors run in reverse
-order, and log users must be destroyed before logging itself.
+Step 5 depends on step 3: the repository reads the published `Workspace` to
+decide which forum rows belong in the database. Local declaration order and
+function scopes matter too: destructors run in reverse order, log users must be
+destroyed before logging itself, and `LiveSessionManager` must be destroyed
+before the repository so every journal connection is gone before the workspace
+lease is released.
 
 ### 8.1 What `Workspace::load()` builds
 
@@ -399,10 +407,11 @@ returned `shared_ptr` while it reads references from the workspace. The
 `SessionRepository` is separate process state and is not replaced on reload.
 
 `POST /api/v1/workspace/reload` blocks new session opens, stops existing live
-actors, and writes a workspace archive before loading one replacement
-`Workspace`. Reload validates a complete candidate outside the publication
-mutex and swaps it in atomically. Failure retains the published workspace, but
-the actors were already stopped before filesystem work began.
+actors, checkpoints the session database's WAL, and writes a workspace archive
+before loading one replacement `Workspace`. Reload validates a complete
+candidate outside the publication mutex, synchronizes its forum IDs into the
+session database, and swaps it in atomically. Failure retains the published
+workspace, but the actors were already stopped before filesystem work began.
 
 ### 8.3 Provider selection
 
@@ -452,59 +461,144 @@ Read these in order:
 
 1. [chat/session_identity.h](../src/chat/session_identity.h)
 2. [session/stored_session.h](../src/session/stored_session.h)
-3. [session/session_catalog.h](../src/session/session_catalog.h)
-4. [session/session_lease.h](../src/session/session_lease.h)
-5. [session/session_database.h](../src/session/session_database.h)
-6. [session/session_repository.h](../src/session/session_repository.h)
-7. [workspace/session_open.cpp](../src/workspace/session_open.cpp)
+3. [session/session_storage_layout.h](../src/session/session_storage_layout.h)
+4. [session/workspace_session_database.h](../src/session/workspace_session_database.h)
+5. [session/session_lease.h](../src/session/session_lease.h)
+6. [session/session_database.h](../src/session/session_database.h)
+7. [session/session_repository.h](../src/session/session_repository.h)
+8. [workspace/session_open.cpp](../src/workspace/session_open.cpp)
 
-### 9.1 Observation versus authority
+Every persistent session in a workspace lives in one SQLite file,
+`workspace/sessions.sqlite3`, beside one lock companion,
+`sessions.sqlite3.cha-lock`. There is no per-session database file, no
+per-session lock, and no `sessions/` directory below a forum.
 
-`StoredSession` is listing data. It says what was observed on disk, not that the
-session can be opened or is unchanged.
+### 9.1 Two identities: public pair and internal key
+
+`(forum_id, session_id)` is the durable public identity. It appears in URLs,
+protocol values, and `FullSessionId`. Session IDs are timestamp-derived and
+unique only within a forum, so the database enforces
+`UNIQUE (forum_key, session_id)` rather than uniqueness on `session_id` alone.
+
+`session_key` is an internal SQLite integer. It never appears in a URL or a
+protocol message, and every restore and journal statement is scoped by it.
+Omitting `session_key` from a statement is a cross-session data isolation
+defect, because request IDs and entry IDs are session-local and repeat across
+sessions.
+
+### 9.2 Observation versus authority
+
+`StoredSession` is listing data: public identity, label, and an integer
+`updated_at`. It reports what one query observed; it does not promise the
+session can still be opened.
 
 `PreparedSession` is authoritative for construction because it contains:
 
 - validated identity and label;
-- the database path;
-- an active `SessionLease`;
+- the selected database path;
+- the resolved `session_key`;
 - restored transcript/counter state.
 
-`SessionRepository::prepare()` first establishes that the database file exists,
-then acquires the cross-process companion-file lease, then performs the
-authoritative load and validation behind that lease. Nothing observed before
-the lease is trusted for controller construction.
+`SessionRepository::prepare()` resolves the public identity to a `session_key`,
+validates the database identity and that one session's contents, and restores
+it inside a single read transaction. A persistent session selects the workspace
+database; Welcome selects its private temporary one. Preparation takes no
+per-session operating-system lock: `LiveSessionManager` is what prevents two
+actors from owning one identity inside the process, and the workspace lease is
+what excludes other processes.
 
-The lease is moved into `SessionController`. Consequently, “the controller is
-alive” and “this process holds the session lease” have the same lifetime.
+### 9.3 One lease, and the cutover guard
 
-### 9.2 Listing and creation
+`SessionRepository` acquires `sessions.sqlite3.cha-lock` in its constructor and
+holds it until it is destroyed. Acquisition is non-blocking, so a second CHA
+process fails with `SessionBusyError` before it binds an HTTP listener. A
+companion file is used rather than the database bytes because it exists before
+the database is created, does not interfere with SQLite's own byte-range
+locking, and stays stable while WAL sidecars come and go. An empty companion
+left behind after exit is harmless; the held kernel lock, not the file, is what
+means "busy".
 
-`SessionRepository` asks the current `Workspace` for a forum's directory and
-constructs a `SessionCatalog` per operation. It does not cache workspace
-configuration or session listings.
+Once the lease is held, the constructor enforces the manual-cutover state
+before opening or creating anything:
 
-`SessionCatalog::list()` is tolerant: a recognizable database with invalid
-metadata remains visible with an error label. Selecting/opening is strict.
+| `sessions.sqlite3` | Legacy `forums/*/sessions/*.sqlite3` | Behavior |
+| --- | --- | --- |
+| Present | Absent | Open it |
+| Absent | Absent | Create an empty database for a new workspace |
+| Absent | Present | Fail; offline migration was never run |
+| Present | Present | Fail; manual legacy cleanup is incomplete |
 
-Creation chooses a timestamp-based ID, acquires the candidate lease, creates a
-temporary SQLite database, and publishes it without overwriting an existing
-destination. Concurrency is settled per candidate; no global sessions-directory
-lock is needed.
+`has_legacy_session_databases()` in
+[session_storage_layout.cpp](../src/session/session_storage_layout.cpp) is a
+permanent path-only scan for regular `.sqlite3` files at the two old locations.
+It never opens, reads, imports, moves, or deletes one — this build contains no
+legacy reader at all, so an un-migrated workspace is refused rather than
+half-understood.
 
-The repository also creates a private temporary database for Welcome. It uses
-the same catalog/database/controller machinery and removes that private
-directory when the repository is destroyed.
+### 9.4 Connections and transactions
 
-### 9.3 `open_session()` is the bridge
+The repository owns no SQLite connection. Every catalog or maintenance
+operation opens a short-lived connection and closes it before returning, which
+is why its methods stay `const` behind `shared_ptr<const SessionRepository>`.
+Each live actor owns one long-lived journal connection confined to its owner
+thread. No handle is ever shared between threads.
+
+Every connection enables `foreign_keys` and a five-second `busy_timeout`, and
+write-capable connections set `synchronous = FULL`. The workspace database runs
+in WAL, so history readers proceed while a journal connection writes.
+
+Every write-capable transaction begins with `BEGIN IMMEDIATE` — that is all
+`SqliteTransaction` does. Reading first under a deferred `BEGIN` and upgrading
+later is unsafe with several actors: another writer can invalidate the reader's
+WAL snapshot, and the upgrade then fails with `SQLITE_BUSY_SNAPSHOT`, which
+`busy_timeout` does not retry. Read-only paths use the separate deferred
+`ReadSnapshot` helper in
+[session_database.cpp](../src/session/session_database.cpp).
+
+### 9.5 Listing, creation, and deletion
+
+Listing a forum and building Workspace Recent are indexed queries over
+`sessions` joined with `forums`, filtered to the forums the currently published
+`Workspace` still configures. Nothing scans the filesystem, and a newly created
+session appears without a workspace reload.
+
+Creation validates the forum against the published `Workspace`, ensures that
+forum has a row, and inserts one `sessions` row with its initial counters — all
+in one transaction. A timestamp ID collision surfaces as
+`SQLITE_CONSTRAINT_UNIQUE`; the retry loop confirms the conflict really is that
+session's own `(forum_key, session_id)` before trying the next suffix, so any
+other unique violation stays a storage error.
+
+Deletion is archival, not a file move: one `UPDATE` sets `archived_at`, and the
+turns and entries stay exactly where they are. An archived row keeps its unique
+identity, so its session ID can never be reused, and it is excluded from list,
+open, rename, and history queries.
+
+Forum synchronization is `INSERT OR IGNORE`, never a delete. Removing a forum
+directory makes its sessions unreachable through ordinary APIs but leaves them
+durable; restoring the directory makes them visible again.
+
+### 9.6 Welcome uses the same machinery
+
+Welcome is process-local and never persistent. `SessionRepository` creates a
+private temporary directory outside the workspace and one database inside it
+with the same application ID, schema version, and schema as the workspace
+database, holding exactly one forum row and one session row at `session_key` 1.
+That is why `SessionJournal` and every restore query take the same code path
+for Welcome as for a persistent session — there is no second storage
+implementation to keep in sync. The directory is removed when the repository is
+destroyed.
+
+### 9.7 `open_session()` is the bridge
 
 `workspace/session_open.cpp` performs a short but crucial composition:
 
 1. acquire the current `Workspace` and find the immutable forum;
-2. prepare and lease the stored session;
+2. prepare the stored session;
 3. retain the session label for the live web actor;
 4. construct a workspace-backed `SessionController`, transferring the database
-   path, restore state, lease, configured default IDs, and wake notifier.
+   path, `session_key`, restore state, configured default IDs, and wake
+   notifier.
 
 The workspace layer knows both the static workspace and dynamic repository;
 neither needs to know about HTTP.
@@ -647,7 +741,7 @@ four groups:
 
 One controller owns:
 
-- the session lease and `SessionJournal`;
+- one `SessionJournal` connection, scoped to a single `session_key`;
 - the owner-thread-confined `Transcript`;
 - a borrowed reference to the process-owned `Providers` supervisor;
 - stable forum/persona IDs used to look up the current `Workspace`;
@@ -927,22 +1021,24 @@ Use these traces as navigation exercises. Open each function in sequence.
 ### 13.1 Creating and opening a stored session
 
 1. `LobbyRoutes::install()` handles session creation.
-2. `SessionRepository::create()` selects the forum catalog.
-3. `SessionCatalog::create()` chooses an ID, leases the candidate, creates the
-   database, and returns `StoredSession`.
-4. The browser later posts to the open route.
-5. The route first tries to reattach, then validates storage, then calls
+2. `SessionRepository::create()` validates the forum against the published
+   `Workspace` and inserts one `sessions` row with a timestamp-derived ID and
+   initial counters, in one `BEGIN IMMEDIATE` transaction.
+3. The browser later posts to the open route.
+4. The route first tries to reattach, then calls `validate()`, then calls
    `LiveSessionManager::open()`.
-6. The manager inserts a starting actor before starting its owner thread.
-7. `LiveSession::owner_main()` calls the supplied opener.
-8. `open_session()` reads the current forum defaults and obtains a
-   `PreparedSession`.
-9. `SessionController` restores transcript state and repairs any interrupted
-   started turn.
-10. The actor commits `running`, publishes a snapshot, and enters its loop.
+5. The manager inserts a starting actor before starting its owner thread.
+6. `LiveSession::owner_main()` calls the supplied opener.
+7. `open_session()` reads the current forum defaults and obtains a
+   `PreparedSession` carrying the database path and `session_key`.
+8. `SessionController` opens its journal connection, restores transcript state,
+   and repairs any interrupted started turn.
+9. The actor commits `running`, publishes a snapshot, and enters its loop.
 
 The pre-route `validate()` improves error mapping but does not grant ownership.
-The lease-and-load in `prepare()` remains authoritative.
+`LiveSessionManager` is what prevents two actors from owning one identity, and
+the load in `prepare()` remains authoritative for what the controller is built
+from.
 
 ### 13.2 One ordinary prompt
 
@@ -1052,13 +1148,13 @@ controller repairs it to failed before normal operation.
 
 ```text
 starting -> running -> stopping -> finished
-    \---- open failed/busy/not found ----> finished
+    \---- open failed/not found ----> finished
 ```
 
 `finished` is published only after blocking actor teardown work, controller
-destruction, journal release, and lease release. Provider requests are
-cancelled and released without waiting, so process-owned supervision may still
-be winding down their transport. A post-finished actor join is nevertheless
+destruction, and journal release. Provider requests are cancelled and released
+without waiting, so process-owned supervision may still be winding down their
+transport. A post-finished actor join is nevertheless
 bounded, and the manager may reap the old actor.
 
 ### 14.3 Presentation delivery
@@ -1078,11 +1174,11 @@ Treat snapshots as truth and appends as a verified compression of truth.
 | Object | Lifetime/owner | Thread rule |
 | --- | --- | --- |
 | `Workspace` | Atomically published immutable snapshot; replaced snapshots live until their readers release them | Concurrent reads; callers hold one `getws()` shared pointer per operation |
-| `SessionRepository` | Process, independent session-storage owner | Concurrent const operations; leases arbitrate sessions |
+| `SessionRepository` | Process, independent session-storage owner; holds the workspace lease for its whole lifetime | Concurrent const operations, each on its own short-lived connection |
 | `LiveSessionManager` | Process web runtime | Internal mutex protects registry/lifecycle coordination |
 | `LiveSession` | Manager entry plus transient route handles | Owner thread mutates session; lifecycle methods synchronize |
 | `SessionController` | One `LiveSession` | Owner thread only |
-| `Transcript` / `SessionJournal` | One controller | Owner thread only |
+| `Transcript` / `SessionJournal` | One controller | Owner thread only; one SQLite connection per actor, never shared |
 | `Providers` registry | Process | Mutex protects admission and active requests; shutdown waits for transport quiescence |
 | `ProviderRequest` | Session handle plus provider registry/worker | Worker produces queued events; owner consumes; cancellation is atomic |
 | `CommandQueue` | One actor | HTTP producers, actor consumer |
@@ -1101,23 +1197,37 @@ explicit.
 
 ## 16. Persistence model
 
-The SQLite implementation is in
+The one authoritative schema and its validators are in
+[session/workspace_session_database.cpp](../src/session/workspace_session_database.cpp);
+restore and journal SQL are in
 [session/session_database.cpp](../src/session/session_database.cpp). Read the
-schema creation first, then validation/restore, then `SessionJournal` methods.
+schema first, then validation/restore, then `SessionJournal` methods.
 
-The schema has four conceptual tables:
+The schema has four `STRICT` tables:
 
 | Table | Purpose |
 | --- | --- |
-| `session` | Stable session ID, forum ID, and label |
-| `state` | Current history epoch and next ID counters |
+| `forums` | Durable forum IDs only; the filesystem workspace stays authoritative for names, members, prompts, and defaults |
+| `sessions` | `session_key`, owning forum, public session ID, label, `updated_at`, `archived_at`, history epoch, and next ID counters |
 | `turns` | Request ID, epoch, and started/completed/cancelled/failed state |
 | `entries` | Typed prompt/response/error records linked to turns |
 
+The counters and history epoch are columns on the session row rather than a
+separate singleton table: they are session state, so a one-to-one table would
+buy nothing.
+
+Because one file now holds every session, each constraint that used to be
+implicit — one database per session — is explicitly scoped by `session_key`:
+`PRIMARY KEY (session_key, request_id)` and `(session_key, entry_id)`, the
+partial unique index `one_started_turn_per_session`, and
+`one_prompt_per_session_turn`. Two sessions may therefore have a started turn
+at the same time, and their request and entry IDs advance independently.
+
 Database constraints mirror transcript/controller invariants rather than
-accepting any arbitrary row combination. Opening validates identity before
-trusting contents, then restores terminal entries in the current epoch and next
-ID counters.
+accepting any arbitrary row combination. Opening validates the database's
+application ID and schema version before trusting contents, then restores
+terminal entries in the current epoch and the next ID counters for that
+`session_key` alone.
 
 What is durable:
 
@@ -1125,7 +1235,7 @@ What is durable:
 - completed and partially cancelled character answers;
 - generation error entries;
 - turn state and ID counters;
-- history epoch and session metadata.
+- history epoch, label, `updated_at`, and `archived_at`.
 
 What is deliberately not durable:
 
@@ -1153,7 +1263,7 @@ Errors are handled at the narrowest layer that can give them meaning:
   transcript error.
 - A journal failure escapes the controller and is contained as a fatal live
   session failure.
-- `LiveSession` maps storage busy/not-found on startup and contains session-local
+- `LiveSession` maps storage not-found on startup and contains session-local
   failures during the owner loop.
 - Routes map known application outcomes to JSON error codes and HTTP statuses.
 - `std::bad_alloc` is generally not disguised as successful local cleanup; key
@@ -1180,7 +1290,8 @@ Within a `LiveSession`, teardown:
 3. closes the mailbox;
 4. resolves/rejects queued command replies;
 5. calls `SessionController::shutdown()`;
-6. destroys the controller, releasing request handles, journal, and lease;
+6. destroys the controller, releasing request handles and its journal
+   connection;
 7. publishes `finished` so the manager may join and erase the actor.
 
 Within the controller, shutdown cancels all requests, synchronously closes the
@@ -1211,8 +1322,9 @@ and before reading all of its implementation.
 | Provider protocols | [tests/providers/unit_chat_completions_api.cpp](../tests/providers/unit_chat_completions_api.cpp), [unit_responses_api.cpp](../tests/providers/unit_responses_api.cpp) |
 | Provider HTTP integration | [tests/providers/unit_provider_client.cpp](../tests/providers/unit_provider_client.cpp) |
 | Controller transitions | [tests/session/unit_session_controller.cpp](../tests/session/unit_session_controller.cpp) |
-| SQLite catalog/repository | [tests/session/unit_session_catalog.cpp](../tests/session/unit_session_catalog.cpp), [unit_session_repository.cpp](../tests/session/unit_session_repository.cpp) |
-| Cross-process leases | [tests/session/unit_session_lease.cpp](../tests/session/unit_session_lease.cpp) |
+| Workspace schema, validation, cutover guard | [tests/session/unit_workspace_session_database.cpp](../tests/session/unit_workspace_session_database.cpp) |
+| Repository storage operations | [tests/session/unit_session_repository.cpp](../tests/session/unit_session_repository.cpp) |
+| Workspace lease | [tests/session/unit_session_lease.cpp](../tests/session/unit_session_lease.cpp) |
 | Workspace publication | [tests/application/unit_workspace.cpp](../tests/application/unit_workspace.cpp) |
 | Actor behavior | [tests/web/unit_live_session.cpp](../tests/web/unit_live_session.cpp) |
 | Registry races/lifecycle | [tests/web/unit_live_session_manager.cpp](../tests/web/unit_live_session_manager.cpp) |
@@ -1266,7 +1378,7 @@ Trace all consumers before editing the struct:
 ```text
 factory/validation
     -> Transcript
-    -> SessionDatabase schema + read/write validation
+    -> workspace session schema + read/write validation
     -> model_context projection
     -> ControllerView / SessionSnapshot
     -> protocol JSON
@@ -1288,9 +1400,9 @@ explicit.
 ### Changing session lifetime
 
 Audit the manager map lifetime, actor raw-`this` thread capture, route
-`shared_ptr` handles, owner state transitions, controller/lease destruction,
-and bounded process shutdown together. These contracts are coupled even though
-they live in several files.
+`shared_ptr` handles, owner state transitions, controller and journal
+destruction, and bounded process shutdown together. These contracts are coupled
+even though they live in several files.
 
 ## 21. Learning exercises
 
@@ -1351,9 +1463,9 @@ resolution.
 
 ### Exercise 8: classify failures
 
-For malformed provider JSON, HTTP 500, missing session database, held session
-lease, SQLite write failure, command timeout, and disconnected SSE stream,
-identify:
+For malformed provider JSON, HTTP 500, a missing session row, a workspace lease
+already held by another process, an SQLite write failure, a command timeout, and
+a disconnected SSE stream, identify:
 
 - the first layer that detects it;
 - whether it is a turn, session, request, or process failure;
@@ -1370,7 +1482,7 @@ Use this as a suggested pace, not a process requirement.
 | 2 | `chat` and transcript tests | Write transcript invariants from memory |
 | 3 | `util` queue/template tests | Explain shutdown semantics of each mechanism |
 | 4 | workspace model and sample workspace | Trace one effective character definition |
-| 5 | repository, catalog, lease | Explain observation vs prepared authority |
+| 5 | repository, workspace database, lease | Explain observation vs prepared authority |
 | 6 | database schema and restore | Trace complete, cancelled, failed, interrupted turns |
 | 7 | model context | Hand-project a sample transcript into model messages |
 | 8 | provider supervisor/requests | Diagram admission, foreground order, cancellation |
@@ -1396,14 +1508,17 @@ observation state.
 **Active generation:** The controller's ordered request handles and one
 deterministic foreground index for a prompt or multicast.
 
+**Archived session:** A session whose row carries `archived_at`. It stays durable with all its
+turns and entries, but is excluded from listing, opening, rename, and history.
+
 **Controller view:** A short-lived borrowed view of controller state, consumed synchronously to make
 an owning web snapshot.
 
 **History epoch:** A durable generation of logical transcript history. `/clear` advances it rather
 than deleting older rows.
 
-**Lease:** Cross-process exclusive ownership of a session database, held for the
-controller lifetime.
+**Lease:** Cross-process exclusive ownership of the workspace session database,
+held by `SessionRepository` for the process lifetime.
 
 **Model history:** An owning immutable transcript snapshot shared with workers for context
 projection.
@@ -1411,8 +1526,11 @@ projection.
 **Notice:** Presentation state associated with command/session feedback. It is not model
 history or durable transcript state.
 
-**Prepared session:** A session validated and restored while its lease is held, ready to transfer
-into a controller.
+**Prepared session:** A session validated and restored into a database path plus `session_key`,
+ready to transfer into a controller.
+
+**Session key:** The internal SQLite integer identifying one session's rows. It never appears in a
+URL or protocol value; every restore and journal statement is scoped by it.
 
 **Snapshot:** An owning complete web presentation of current controller and actor state.
 

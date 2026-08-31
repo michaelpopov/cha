@@ -4,6 +4,7 @@
 
 #include <array>
 #include <cstdint>
+#include <filesystem>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -28,6 +29,25 @@ std::int64_t scalar(Database& database, std::string_view sql) {
             + database.path() + "'");
     }
     return value;
+}
+
+bool is_abandoned_empty_creation(Database& database) {
+    return database.pragma_integer("application_id") == 0
+        && database.pragma_integer("user_version") == 0
+        && scalar(database,
+            "SELECT COUNT(*) FROM sqlite_schema "
+            "WHERE name NOT LIKE 'sqlite_%'") == 0;
+}
+
+void remove_database_files_noexcept(
+    const std::filesystem::path& path) noexcept {
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+    for (const std::string_view suffix : {"-journal", "-wal", "-shm"}) {
+        std::filesystem::path sidecar = path;
+        sidecar += suffix;
+        std::filesystem::remove(sidecar, ignored);
+    }
 }
 
 void validate_required_objects(Database& database) {
@@ -82,7 +102,6 @@ void validate_integrity(Database& database) {
 } // namespace
 
 void create_workspace_session_schema(Database& database) {
-    database.execute("PRAGMA journal_mode = DELETE");
     database.execute(R"sql(
         CREATE TABLE forums (
             forum_key INTEGER PRIMARY KEY,
@@ -163,6 +182,17 @@ void set_workspace_session_database_identity(Database& database) {
         + std::to_string(workspace_session_database_version));
 }
 
+void validate_workspace_session_database_identity(Database& database) {
+    if (database.pragma_integer("application_id")
+            != workspace_session_application_id
+        || database.pragma_integer("user_version")
+            != workspace_session_database_version) {
+        throw std::runtime_error(
+            "Workspace session database '" + database.path()
+            + "' has an unsupported schema");
+    }
+}
+
 void validate_workspace_session_contents(Database& database) {
     validate_required_objects(database);
     validate_integrity(database);
@@ -202,32 +232,61 @@ void validate_workspace_session_contents(Database& database) {
     }
 }
 
-WorkspaceSessionDatabaseCounts validate_workspace_session_database(
+void create_empty_workspace_session_database(
     const std::filesystem::path& path) {
-    Database database(path, Database::Mode::read_only);
-    if (database.pragma_integer("application_id")
-            != workspace_session_application_id
-        || database.pragma_integer("user_version")
-            != workspace_session_database_version) {
+    if (std::filesystem::exists(path)) {
         throw std::runtime_error(
-            "Workspace session database '" + utf8_path(path)
-            + "' has an unsupported schema");
+            "Workspace session database already exists at '"
+            + utf8_path(path) + "'");
     }
+    try {
+        Database database(path, Database::Mode::read_write_create);
+        database.execute("PRAGMA journal_mode = DELETE");
+        storage::SqliteTransaction transaction(database);
+        create_workspace_session_schema(database);
+        set_workspace_session_database_identity(database);
+        transaction.commit();
+    } catch (...) {
+        remove_database_files_noexcept(path);
+        throw;
+    }
+}
+
+void initialize_workspace_session_database_runtime(
+    const std::filesystem::path& path) {
+    {
+        Database database(path, Database::Mode::read_write);
+        if (!is_abandoned_empty_creation(database)) {
+            validate_workspace_session_database_identity(database);
+            validate_workspace_session_contents(database);
+            database.execute("PRAGMA journal_mode = WAL");
+            return;
+        }
+    }
+
+    remove_database_files_noexcept(path);
+    create_empty_workspace_session_database(path);
+    Database database(path, Database::Mode::read_write);
+    validate_workspace_session_database_identity(database);
     validate_workspace_session_contents(database);
-    return {
-        .forums = static_cast<std::uint64_t>(
-            scalar(database, "SELECT COUNT(*) FROM forums")),
-        .active_sessions = static_cast<std::uint64_t>(scalar(
-            database,
-            "SELECT COUNT(*) FROM sessions WHERE archived_at IS NULL")),
-        .archived_sessions = static_cast<std::uint64_t>(scalar(
-            database,
-            "SELECT COUNT(*) FROM sessions WHERE archived_at IS NOT NULL")),
-        .turns = static_cast<std::uint64_t>(
-            scalar(database, "SELECT COUNT(*) FROM turns")),
-        .entries = static_cast<std::uint64_t>(
-            scalar(database, "SELECT COUNT(*) FROM entries")),
-    };
+    database.execute("PRAGMA journal_mode = WAL");
+}
+
+void checkpoint_workspace_session_database(
+    const std::filesystem::path& path) {
+    Database database(path, Database::Mode::read_write);
+    validate_workspace_session_database_identity(database);
+    Statement checkpoint = database.prepare("PRAGMA wal_checkpoint(TRUNCATE)");
+    if (!checkpoint.step()) {
+        throw std::runtime_error(
+            "Failed to checkpoint workspace session database '"
+            + utf8_path(path) + "'");
+    }
+    if (checkpoint.integer(0) != 0) {
+        throw std::runtime_error(
+            "Workspace session database checkpoint remained busy for '"
+            + utf8_path(path) + "'");
+    }
 }
 
 } // namespace cha

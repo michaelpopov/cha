@@ -3,7 +3,6 @@
 #include "web/live_session_manager.h"
 #include "web/sse_mailbox.h"
 
-#include "session/session_lease.h"
 #include "support/test_backends.h"
 #include "support/test_live_session.h"
 #include "util/logging.h"
@@ -161,9 +160,9 @@ SessionOpener scripted_opener(
     };
 }
 
-SessionOpener leased_opener(const std::filesystem::path& path) {
+SessionOpener test_opener(const std::filesystem::path& path) {
     return [path](const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier) {
-        return test::open_leased_session(identity, path, notifier);
+        return test::open_test_session(identity, path, notifier);
     };
 }
 
@@ -960,7 +959,7 @@ TEST(LiveSession, ControllerFailureIsContainedAndReleasesOnlyThatSession) {
     LiveSessionManager manager(
         test_settings(),
         [&](const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier) {
-            return test::open_leased_session(
+            return test::open_test_session(
                 identity,
                 identity.session_id == "failing" ? failing.path() : healthy.path(),
                 notifier);
@@ -985,30 +984,21 @@ TEST(LiveSession, ControllerFailureIsContainedAndReleasesOnlyThatSession) {
         ErrorCode::command_timeout);
     EXPECT_TRUE(wait_for_finished(failing_session));
 
-    // The failing actor released its lease; the healthy one still holds its
-    // own and keeps serving.
-    SessionLease reopened = SessionLease::acquire(failing.path());
-    EXPECT_TRUE(reopened.active());
+    // The failure is isolated; the healthy actor keeps serving.
     EXPECT_TRUE(std::holds_alternative<CommandResult>(
         healthy_session->submit(StopCommand{}, 2s)));
-    EXPECT_THROW((void)SessionLease::acquire(healthy.path()), SessionBusyError);
 }
 
-TEST(LiveSession, ReleasesItsLeaseBeforePublishingFinished) {
+TEST(LiveSession, PublishesFinishedAfterControllerShutdown) {
     test::TemporarySessionFile file("live_session_lease");
-    LiveSessionManager manager(test_settings(), leased_opener(file.path()));
+    LiveSessionManager manager(test_settings(), test_opener(file.path()));
     const FullSessionId key{"forum", "leased"};
     ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(manager.open(key, 5s)));
     LiveSessionHandle session = manager.lookup(key);
     ASSERT_TRUE(session);
-    EXPECT_THROW((void)SessionLease::acquire(file.path()), SessionBusyError);
-
     session->request_shutdown();
     ASSERT_TRUE(wait_for_finished(session));
-    // Finished is published only after the controller, and therefore the
-    // cross-process lease, has been released.
-    SessionLease reopened = SessionLease::acquire(file.path());
-    EXPECT_TRUE(reopened.active());
+    EXPECT_EQ(session->lifecycle(), LiveSessionState::finished);
 }
 
 TEST(LiveSession, GenerationLoggingRecordsStartAndTerminalTransitions) {
@@ -1056,7 +1046,7 @@ TEST(LiveSession, GenerationLoggingRecordsStartAndTerminalTransitions) {
         std::string::npos);
     EXPECT_NE(contents.find("event=registry_running"), std::string::npos);
     EXPECT_NE(
-        contents.find("event=lease_released_owner_finished"), std::string::npos);
+        contents.find("event=controller_released_owner_finished"), std::string::npos);
 }
 
 } // namespace

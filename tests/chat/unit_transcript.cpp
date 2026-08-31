@@ -1,6 +1,7 @@
 #include "characters/model_context.h"
 #include "chat/transcript.h"
 #include "session/session_database.h"
+#include "session/sqlite_storage.h"
 #include "support/test_session_database.h"
 #include "support/test_transcript.h"
 #include "util/path_name.h"
@@ -111,6 +112,30 @@ TranscriptEntry human(
     std::optional<RequestId> request_id = std::nullopt) {
     return test::human_entry(
         id, {"human", "You"}, {"reviewer-id", "Reviewer"}, std::move(text), request_id);
+}
+
+std::int64_t session_updated_at(const std::filesystem::path& path) {
+    storage::SqliteDatabase database(
+        path, storage::SqliteDatabase::Mode::read_only);
+    storage::SqliteStatement timestamp = database.prepare(
+        "SELECT updated_at FROM sessions");
+    if (!timestamp.step()) {
+        throw std::runtime_error("Test session is missing");
+    }
+    return timestamp.integer(0);
+}
+
+template <typename Mutation>
+void expect_timestamp_refresh(
+    const std::filesystem::path& path,
+    Mutation mutation) {
+    {
+        storage::SqliteDatabase database(
+            path, storage::SqliteDatabase::Mode::read_write);
+        database.execute("UPDATE sessions SET updated_at = 0");
+    }
+    mutation();
+    EXPECT_GT(session_updated_at(path), 0);
 }
 
 TEST(Transcript, StoresTypedCompleteAndStreamingEntries) {
@@ -532,6 +557,42 @@ TEST(SessionJournal, RecordsATurnlessEntryForTheNullAgent) {
     std::filesystem::remove(path);
 }
 
+TEST(SessionJournal, RefreshesUpdatedAtForEveryDurableMutationPath) {
+    const auto path = temporary_path("cha_journal_updated_at_");
+    create_test_database(path);
+    auto journal = std::make_unique<SessionJournal>(path);
+
+    expect_timestamp_refresh(path, [&] {
+        journal->record_entry(
+            test::human_entry(1, {"human", "You"}, {"-", "-"}, "Note"));
+    });
+    expect_timestamp_refresh(path, [&] {
+        journal->start_turn(1, human(2, "Complete", 1));
+    });
+    expect_timestamp_refresh(path, [&] {
+        journal->complete_turn(1, make_character_entry(
+            3, "reviewer-id", "Reviewer", "Done", EntryStatus::complete, 1));
+    });
+    expect_timestamp_refresh(path, [&] {
+        journal->start_turn(2, human(4, "Cancel", 2));
+    });
+    expect_timestamp_refresh(path, [&] {
+        journal->cancel_turn(2, std::nullopt);
+    });
+    expect_timestamp_refresh(path, [&] {
+        journal->start_turn(3, human(5, "Fail", 3));
+    });
+    expect_timestamp_refresh(path, [&] {
+        journal->fail_turn(
+            3, make_error_entry(6, "Unavailable", 3, "reviewer-id"));
+    });
+    expect_timestamp_refresh(path, [&] { journal->clear(); });
+    expect_timestamp_refresh(path, [&] { journal->rename("Renamed"); });
+
+    journal.reset();
+    std::filesystem::remove(path);
+}
+
 TEST(SessionJournal, RejectsEntriesThatDoNotMatchTheirTurnRecords) {
     const auto path = temporary_path("cha_invalid_turn_entry_");
     create_test_database(path);
@@ -661,16 +722,16 @@ TEST(SessionDatabase, RoundTripsTheAddressedTargetOfEveryPrompt) {
     std::filesystem::remove(path);
 }
 
-TEST(SessionDatabase, RefusesAVersionOneDatabase) {
-    const auto path = temporary_path("cha_version_one_");
+TEST(SessionDatabase, RefusesAnUnsupportedWorkspaceSchema) {
+    const auto path = temporary_path("cha_unsupported_schema_");
     create_test_database(path);
-    ASSERT_EQ(raw_execute(path, "PRAGMA user_version = 1"), SQLITE_OK);
+    ASSERT_EQ(raw_execute(path, "PRAGMA user_version = 2"), SQLITE_OK);
 
     try {
         (void)load_session_state(path);
         FAIL() << "expected the older schema version to be refused";
     } catch (const std::runtime_error& error) {
-        EXPECT_NE(std::string(error.what()).find("Unsupported session database"),
+        EXPECT_NE(std::string(error.what()).find("unsupported schema"),
                   std::string::npos)
             << error.what();
     }
@@ -699,60 +760,14 @@ TEST(SessionDatabase, StoresAndRestoresEntryCreationTimes) {
     std::filesystem::remove(path);
 }
 
-TEST(SessionDatabase, MigratesAVersionTwoDatabase) {
-    const auto path = temporary_path("cha_migrate_");
-    create_test_database(path);
-    {
-        SessionJournal journal(path);
-        journal.start_turn(1, human(1, "Hello", 1));
-        journal.complete_turn(1, make_character_entry(
-            2, "reviewer-id", "Reviewer", "Hi", EntryStatus::complete, 1));
-    }
-    // Reshape the database into its version-2 form: no created_at column.
-    ASSERT_EQ(
-        raw_execute(path, "ALTER TABLE entries DROP COLUMN created_at"),
-        SQLITE_OK);
-    ASSERT_EQ(raw_execute(path, "PRAGMA user_version = 2"), SQLITE_OK);
-
-    // Read-only paths accept the unmigrated database; restore reads do not
-    // happen before migration.
-    EXPECT_NO_THROW((void)read_session_database_metadata(path));
-
-    migrate_session_database(path);
-
-    const std::vector<std::string> columns = table_columns(path, "entries");
-    EXPECT_NE(
-        std::find(columns.begin(), columns.end(), "created_at"),
-        columns.end());
-
-    // Rows written before the migration honestly report no recorded time.
-    std::vector<TranscriptEntry> restored = load_transcript_entries(path);
-    ASSERT_EQ(restored.size(), 2U);
-    EXPECT_EQ(restored[0].created_at, 0);
-    EXPECT_EQ(restored[1].created_at, 0);
-
-    // Writes after the migration store real timestamps.
-    {
-        SessionJournal journal(path);
-        journal.start_turn(2, human(3, "Again", 2));
-    }
-    restored = load_transcript_entries(path);
-    ASSERT_EQ(restored.size(), 3U);
-    EXPECT_NE(restored.back().created_at, 0);
-
-    // Migrating a current database is a no-op.
-    migrate_session_database(path);
-    EXPECT_EQ(load_transcript_entries(path).size(), 3U);
-    std::filesystem::remove(path);
-}
-
 TEST(SessionDatabase, StoresTheTargetOnlyOnThePromptItself) {
     const auto path = temporary_path("cha_schema_shape_");
     create_test_database(path);
 
     EXPECT_EQ(
         table_columns(path, "turns"),
-        (std::vector<std::string>{"request_id", "epoch", "state"}))
+        (std::vector<std::string>{
+            "session_key", "request_id", "epoch", "state"}))
         << "the turn must not duplicate its prompt's target";
 
     const std::vector<std::string> entries = table_columns(path, "entries");
@@ -760,8 +775,11 @@ TEST(SessionDatabase, StoresTheTargetOnlyOnThePromptItself) {
     EXPECT_NE(std::find(entries.begin(), entries.end(), "addressed_to_name"), entries.end());
 
     EXPECT_EQ(
-        table_columns(path, "session"),
-        (std::vector<std::string>{"singleton", "id", "forum", "label"}))
+        table_columns(path, "sessions"),
+        (std::vector<std::string>{
+            "session_key", "forum_key", "session_id", "label",
+            "updated_at", "archived_at", "history_epoch",
+            "next_entry_id", "next_request_id"}))
         << "a session belongs to a forum, not to its current characters";
     std::filesystem::remove(path);
 }
@@ -774,9 +792,9 @@ TEST(SessionDatabase, ConstrainsAddressingColumnsByEntryKind) {
         std::string_view addressed_to, std::string_view addressed_to_name) {
         return raw_execute(
             path,
-            "INSERT INTO entries (entry_id, epoch, request_id, kind, participant_id,"
+            "INSERT INTO entries (session_key, entry_id, epoch, request_id, kind, participant_id,"
             " display_name, addressed_to, addressed_to_name, text, status) VALUES ("
-                + std::to_string(entry_id) + ", 1, NULL, " + std::to_string(kind)
+                "1, " + std::to_string(entry_id) + ", 1, NULL, " + std::to_string(kind)
                 + ", '" + std::string(participant) + "', '" + std::string(name)
                 + "', '" + std::string(addressed_to) + "', '"
                 + std::string(addressed_to_name) + "', 'Text', 0)");
@@ -797,14 +815,14 @@ TEST(SessionDatabase, AllowsOnlyOnePromptPerTurn) {
     const auto path = temporary_path("cha_one_prompt_");
     create_test_database(path);
     ASSERT_EQ(
-        raw_execute(path, "INSERT INTO turns (request_id, epoch, state) VALUES (1, 1, 1)"),
+        raw_execute(path, "INSERT INTO turns (session_key, request_id, epoch, state) VALUES (1, 1, 1, 1)"),
         SQLITE_OK);
     const auto insert_entry = [&path](int entry_id, int kind, std::string_view participant) {
         return raw_execute(
             path,
-            "INSERT INTO entries (entry_id, epoch, request_id, kind, participant_id,"
+            "INSERT INTO entries (session_key, entry_id, epoch, request_id, kind, participant_id,"
             " display_name, addressed_to, addressed_to_name, text, status) VALUES ("
-                + std::to_string(entry_id) + ", 1, 1, " + std::to_string(kind) + ", '"
+                "1, " + std::to_string(entry_id) + ", 1, 1, " + std::to_string(kind) + ", '"
                 + std::string(participant) + "', 'Name', "
                 + (kind == 0 ? "'ismael', 'Ismael'" : "'', ''") + ", 'Text', 0)");
     };
@@ -820,7 +838,7 @@ TEST(SessionDatabase, RejectsATurnThatHasNoPrompt) {
     const auto path = temporary_path("cha_turn_without_prompt_");
     create_test_database(path);
     ASSERT_EQ(
-        raw_execute(path, "INSERT INTO turns (request_id, epoch, state) VALUES (4, 1, 1)"),
+        raw_execute(path, "INSERT INTO turns (session_key, request_id, epoch, state) VALUES (1, 4, 1, 1)"),
         SQLITE_OK);
 
     try {

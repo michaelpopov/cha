@@ -7,16 +7,15 @@
 
 namespace cha {
 
-// Reports that another descriptor owns a session's companion-file lease.
-// Callers can handle this expected conflict without inspecting error text.
+// Reports that another process owns the workspace database lease. Callers can
+// handle this expected conflict without inspecting error text.
 class SessionBusyError : public std::runtime_error {
 public:
     using std::runtime_error::runtime_error;
 };
 
-// Holds one non-blocking, exclusive operating-system lock on a session's
-// companion file. Workspace acquires it before restore and transfers it to
-// SessionController, while tests may explicitly request an inactive lease.
+// Holds one non-blocking, exclusive operating-system lock on a database
+// companion file. SessionRepository owns it for the workspace lifetime.
 class SessionLease {
 public:
     SessionLease() = delete;
@@ -28,11 +27,8 @@ public:
     SessionLease& operator=(const SessionLease&) = delete;
 
     [[nodiscard]] static SessionLease acquire(
-        const std::filesystem::path& database_path);
-    [[nodiscard]] static SessionLease acquire(
         const std::filesystem::path& database_path,
         std::string busy_message);
-    [[nodiscard]] static SessionLease inactive_for_testing();
     [[nodiscard]] static std::filesystem::path companion_path(
         const std::filesystem::path& database_path);
 

@@ -60,7 +60,6 @@ enum class LiveSessionState {
 // transition: timing out never cancels startup.
 enum class LiveSessionStartResult {
     ready,
-    busy,
     not_found,
     failed,
     shutting_down,

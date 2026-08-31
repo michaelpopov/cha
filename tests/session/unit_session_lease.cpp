@@ -5,6 +5,7 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -15,6 +16,8 @@
 
 namespace cha {
 namespace {
+
+constexpr char test_busy_message[] = "Test database already in use";
 
 class SessionLeaseTest : public testing::Test {
 protected:
@@ -43,17 +46,18 @@ TEST_F(SessionLeaseTest, UsesACompanionPathAndIgnoresAnUnlockedExistingFile) {
     EXPECT_EQ(SessionLease::companion_path(database), companion);
 
     std::ofstream(companion) << "left behind after a prior run";
-    SessionLease lease = SessionLease::acquire(database);
+    SessionLease lease = SessionLease::acquire(database, test_busy_message);
     EXPECT_TRUE(lease.active());
 }
 
 TEST_F(SessionLeaseTest, HoldsIndependentLeasesWithoutCrossRelease) {
     const std::filesystem::path first_path = database_path("first");
     const std::filesystem::path second_path = database_path("second");
-    SessionLease first = SessionLease::acquire(first_path);
-    SessionLease second = SessionLease::acquire(second_path);
-    first = SessionLease::inactive_for_testing();
-    EXPECT_FALSE(first.active());
+    std::optional<SessionLease> first{
+        SessionLease::acquire(first_path, test_busy_message)};
+    SessionLease second =
+        SessionLease::acquire(second_path, test_busy_message);
+    first.reset();
     EXPECT_TRUE(second.active());
 #ifndef _WIN32
     EXPECT_EQ(
@@ -68,18 +72,22 @@ TEST_F(SessionLeaseTest, HoldsIndependentLeasesWithoutCrossRelease) {
 TEST_F(SessionLeaseTest, ReleasesTheNativeLockWhenTheOwnerIsDestroyed) {
     const std::filesystem::path database = database_path();
     {
-        SessionLease owner = SessionLease::acquire(database);
+        SessionLease owner =
+            SessionLease::acquire(database, test_busy_message);
         EXPECT_TRUE(owner.active());
     }
 
-    SessionLease reacquired = SessionLease::acquire(database);
+    SessionLease reacquired =
+        SessionLease::acquire(database, test_busy_message);
     EXPECT_TRUE(reacquired.active());
 }
 
 TEST_F(SessionLeaseTest, ReportsOpenFailuresWithoutCallingThemBusy) {
     const std::filesystem::path impossible =
         directory_ / "missing" / "session.sqlite3";
-    EXPECT_THROW((void)SessionLease::acquire(impossible), std::system_error);
+    EXPECT_THROW(
+        (void)SessionLease::acquire(impossible, test_busy_message),
+        std::system_error);
 }
 
 TEST_F(SessionLeaseTest, RejectsMalformedDatabasePaths) {
@@ -91,14 +99,12 @@ TEST_F(SessionLeaseTest, RejectsMalformedDatabasePaths) {
 #ifndef _WIN32
 TEST_F(SessionLeaseTest, RejectsSameProcessReacquireWithoutReleasingOwner) {
     const std::filesystem::path database = database_path();
-    SessionLease owner = SessionLease::acquire(database);
+    SessionLease owner = SessionLease::acquire(database, test_busy_message);
     try {
-        (void)SessionLease::acquire(database);
+        (void)SessionLease::acquire(database, test_busy_message);
         FAIL() << "expected the second lease acquisition to report busy";
     } catch (const SessionBusyError& error) {
-        EXPECT_NE(
-            std::string(error.what()).find("'session'"),
-            std::string::npos);
+        EXPECT_STREQ(error.what(), test_busy_message);
     }
 
     EXPECT_EQ(
@@ -109,7 +115,7 @@ TEST_F(SessionLeaseTest, RejectsSameProcessReacquireWithoutReleasingOwner) {
 
 TEST_F(SessionLeaseTest, UsesACallerSuppliedBusyMessage) {
     const std::filesystem::path database = database_path("sessions");
-    SessionLease owner = SessionLease::acquire(database);
+    SessionLease owner = SessionLease::acquire(database, test_busy_message);
     try {
         (void)SessionLease::acquire(
             database, "Workspace already in use: '/workspace/example'");
@@ -125,11 +131,14 @@ TEST_F(SessionLeaseTest, RejectsAnotherProcessAndReleasesAfterOwnerTermination) 
     const std::filesystem::path database = database_path();
     test::LeaseHolderProcess holder(database);
 
-    EXPECT_THROW((void)SessionLease::acquire(database), SessionBusyError);
+    EXPECT_THROW(
+        (void)SessionLease::acquire(database, test_busy_message),
+        SessionBusyError);
 
     holder.terminate();
 
-    SessionLease released = SessionLease::acquire(database);
+    SessionLease released =
+        SessionLease::acquire(database, test_busy_message);
     EXPECT_TRUE(released.active());
 }
 #endif

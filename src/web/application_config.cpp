@@ -16,7 +16,6 @@ namespace cha::web {
 namespace {
 
 struct Overrides {
-    bool migration{};
     std::optional<std::filesystem::path> root;
     std::optional<std::filesystem::path> config_file;
     std::optional<std::string> host;
@@ -59,13 +58,6 @@ Overrides parse_arguments(int argc, const char* const* argv) {
     Overrides result;
     for (int index = 1; index < argc; ++index) {
         const std::string_view option(argv[index]);
-        if (option == "--migration") {
-            if (result.migration) {
-                throw argument_error("Option '--migration' was specified more than once.");
-            }
-            result.migration = true;
-            continue;
-        }
         if (option != "--root" && option != "--config"
             && option != "--host" && option != "--port"
             && option != "--workspace"
@@ -118,11 +110,6 @@ ApplicationConfig load_application_config(
     int argc,
     const char* const* argv) {
     const Overrides overrides = parse_arguments(argc, argv);
-    if (overrides.migration
-        && (overrides.host || overrides.port || overrides.test_idle_grace_ms)) {
-        throw argument_error(
-            "--host, --port, and --test-idle-grace-ms cannot be used with --migration.");
-    }
     const std::filesystem::path root = std::filesystem::absolute(
         overrides.root.value_or(executable_directory())).lexically_normal();
     const bool explicit_config = overrides.config_file.has_value();
@@ -140,10 +127,8 @@ ApplicationConfig load_application_config(
                 "Failed to read application config '" + utf8_path(config_file) + "'.");
         }
         const toml::table table = toml::parse(input, utf8_path(config_file));
-        if (!overrides.migration) {
-            host = table["host"].value<std::string>();
-            port = table["port"].value<int>();
-        }
+        host = table["host"].value<std::string>();
+        port = table["port"].value<int>();
         if (const auto configured = table["workspace"].value<std::string>()) {
             if (configured->empty()) {
                 throw std::runtime_error(
@@ -155,26 +140,24 @@ ApplicationConfig load_application_config(
                 workspace = config_file.parent_path() / *workspace;
             }
         }
-        if (!overrides.migration) {
-            const auto configured = table["backup_dir"].value<std::string>();
-            if (configured) {
-                if (configured->empty()) {
-                    throw std::runtime_error(
-                        "Application config '" + utf8_path(config_file)
-                        + "' requires a non-empty string 'backup_dir'.");
-                }
-                backup_dir = path_from_utf8(*configured);
-                if (backup_dir->is_relative()) {
-                    backup_dir = config_file.parent_path() / *backup_dir;
-                }
+        const auto configured = table["backup_dir"].value<std::string>();
+        if (configured) {
+            if (configured->empty()) {
+                throw std::runtime_error(
+                    "Application config '" + utf8_path(config_file)
+                    + "' requires a non-empty string 'backup_dir'.");
+            }
+            backup_dir = path_from_utf8(*configured);
+            if (backup_dir->is_relative()) {
+                backup_dir = config_file.parent_path() / *backup_dir;
             }
         }
-        if (!overrides.migration && host && host->empty()) {
+        if (host && host->empty()) {
             throw std::runtime_error(
                 "Application config '" + utf8_path(config_file)
                 + "' requires a non-empty string 'host'.");
         }
-        if (!overrides.migration && port && (*port < 1 || *port > 65535)) {
+        if (port && (*port < 1 || *port > 65535)) {
             throw std::runtime_error(
                 "Application config '" + utf8_path(config_file)
                 + "' requires an integer 'port' between 1 and 65535.");
@@ -203,15 +186,6 @@ ApplicationConfig load_application_config(
             + "' is not a valid workspace with workspace.toml; correct 'workspace' "
               "in the application config or pass --workspace.");
     }
-    if (overrides.migration) {
-        return {
-            .root = root,
-            .config_file = config_file,
-            .migration = true,
-            .workspace = std::move(resolved_workspace),
-        };
-    }
-
     std::string resolved_host = require_setting(
         std::move(host), "host", "--host", config_file);
     if (resolved_host.empty()) {
@@ -224,7 +198,6 @@ ApplicationConfig load_application_config(
     return {
         .root = root,
         .config_file = config_file,
-        .migration = false,
         .host = std::move(resolved_host),
         .port = resolved_port,
         .workspace = std::move(resolved_workspace),

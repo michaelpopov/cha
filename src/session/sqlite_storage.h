@@ -12,9 +12,8 @@ namespace cha::storage {
 
 class SqliteStatement;
 
-// Small internal RAII wrapper shared by the legacy session database and the
-// workspace migration database. A handle belongs to one thread and therefore
-// uses SQLITE_OPEN_NOMUTEX.
+// Small internal RAII wrapper for session storage. A handle belongs to one
+// thread and therefore uses SQLITE_OPEN_NOMUTEX.
 class SqliteDatabase final {
 public:
     enum class Mode { read_only, read_write, read_write_create };

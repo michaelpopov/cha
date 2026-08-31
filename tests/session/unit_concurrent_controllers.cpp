@@ -1,6 +1,5 @@
 #include "providers/model_backend.h"
 #include "characters/character_config.h"
-#include "session/session_catalog.h"
 #include "session/session_controller.h"
 #include "session/session_database.h"
 #include "workspace/session_open.h"
@@ -263,14 +262,10 @@ TEST(ConcurrentControllers, ConstructSessionLocalProviderClientsConcurrently) {
     }
 }
 
-TEST(WorkspaceConcurrency, SharesTheModelWhileCatalogPublishesCollidingSessions) {
+TEST(WorkspaceConcurrency, SharesTheModelWhileRepositoryCreatesCollidingSessions) {
     TemporaryDirectory directory;
     const WorkspaceLayout layout = make_workspace(directory.path());
     const SessionGraph graph(layout.root);
-    SessionCatalog catalog(
-        layout.forum / "sessions",
-        "forum",
-        [] { return std::time_t{1'700'000'000}; });
     constexpr std::size_t creator_count = 4;
     std::atomic_bool creating{true};
     std::atomic_bool observed_forum_list_mismatch{false};
@@ -288,8 +283,7 @@ TEST(WorkspaceConcurrency, SharesTheModelWhileCatalogPublishesCollidingSessions)
             while (creating.load(std::memory_order_acquire)) {
                 const std::shared_ptr<const Workspace> workspace = getws();
                 const WorkspaceForum* const forum = workspace->find_forum("forum");
-                if (forum == nullptr
-                    || !workspace->forum_session_directory("forum")) {
+                if (forum == nullptr) {
                     observed_forum_list_mismatch.store(
                         true, std::memory_order_release);
                 }
@@ -298,9 +292,8 @@ TEST(WorkspaceConcurrency, SharesTheModelWhileCatalogPublishesCollidingSessions)
                         true, std::memory_order_release);
                 }
                 for (const StoredSession& session : graph.repository.list("forum")) {
-                    if (!session.error.empty()) {
-                        observed_invalid_session.store(
-                            true, std::memory_order_release);
+                    if (session.identity.forum_id != "forum") {
+                        observed_invalid_session.store(true, std::memory_order_release);
                     }
                 }
             }
@@ -317,7 +310,8 @@ TEST(WorkspaceConcurrency, SharesTheModelWhileCatalogPublishesCollidingSessions)
         creators.emplace_back([&, index] {
             try {
                 start.arrive_and_wait();
-                created[index] = catalog.create("Concurrent " + std::to_string(index));
+                created[index] = graph.repository.create(
+                    "forum", "Concurrent " + std::to_string(index));
             } catch (...) {
                 record_failure(std::current_exception());
             }
@@ -340,11 +334,8 @@ TEST(WorkspaceConcurrency, SharesTheModelWhileCatalogPublishesCollidingSessions)
         EXPECT_FALSE(session.identity.session_id.empty());
         EXPECT_TRUE(created_ids.insert(session.identity.session_id).second)
             << "duplicate published session ID: " << session.identity.session_id;
-        const std::filesystem::path database =
-            layout.forum / "sessions" / (session.identity.session_id + ".sqlite3");
-        EXPECT_TRUE(std::filesystem::is_regular_file(database));
         EXPECT_EQ(
-            read_session_database_metadata(database).label,
+            graph.repository.prepare(session.identity).label,
             session.label);
     }
     EXPECT_EQ(created_ids.size(), creator_count);
@@ -352,7 +343,7 @@ TEST(WorkspaceConcurrency, SharesTheModelWhileCatalogPublishesCollidingSessions)
     const std::vector<StoredSession> sessions = graph.repository.list("forum");
     ASSERT_EQ(sessions.size(), creator_count);
     for (const StoredSession& session : sessions) {
-        EXPECT_TRUE(session.error.empty());
+        EXPECT_EQ(session.identity.forum_id, "forum");
     }
 }
 
@@ -360,15 +351,12 @@ TEST(WorkspaceConcurrency, OpensSessionsOnOwnerThreadsWhileListing) {
     TemporaryDirectory directory;
     const WorkspaceLayout layout = make_workspace(directory.path());
     const SessionGraph graph(layout.root);
-    SessionCatalog catalog(
-        layout.forum / "sessions",
-        "forum",
-        [] { return std::time_t{1'700'000'000}; });
     constexpr std::size_t session_count = 4;
     std::vector<StoredSession> created;
     created.reserve(session_count);
     for (std::size_t index = 0; index < session_count; ++index) {
-        created.push_back(catalog.create("Session " + std::to_string(index)));
+        created.push_back(graph.repository.create(
+            "forum", "Session " + std::to_string(index)));
     }
     ASSERT_NE(created[0].identity.session_id, created[1].identity.session_id);
 
@@ -430,7 +418,7 @@ TEST(WorkspaceConcurrency, OpensSessionsOnOwnerThreadsWhileListing) {
     EXPECT_TRUE(opened[1]);
     ASSERT_EQ(listed_during_open.size(), session_count);
     for (const StoredSession& session : listed_during_open) {
-        EXPECT_TRUE(session.error.empty());
+        EXPECT_EQ(session.identity.forum_id, "forum");
     }
 }
 

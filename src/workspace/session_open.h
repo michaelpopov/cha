@@ -19,8 +19,8 @@ class Providers;
 // the model and Welcome an ordinary prepared session in the repository.
 //
 // Domain exceptions propagate unchanged: ForumNotFoundError,
-// SessionNotFoundError, SessionBusyError, and storage failures reach the
-// caller, which maps them to registry or HTTP results.
+// SessionNotFoundError, and storage failures reach the caller, which maps them
+// to registry or HTTP results.
 OpenedSession open_session(
     const SessionRepository& sessions,
     const FullSessionId& identity,

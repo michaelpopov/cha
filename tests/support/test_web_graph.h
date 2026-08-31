@@ -20,13 +20,13 @@ class WebGraph {
 public:
     explicit WebGraph(std::filesystem::path root)
         : root_(std::move(root)),
-          providers(std::make_shared<Providers>()),
-          repository(std::make_shared<const SessionRepository>(
-              root_,
-              TemporarySessionSeed{
-                  {std::string(entrance_id), std::string(welcome_id)},
-                  std::string(welcome_name)})) {
+          providers(std::make_shared<Providers>()) {
         loadws(root_);
+        repository = std::make_shared<const SessionRepository>(
+            root_,
+            TemporarySessionSeed{
+                {std::string(entrance_id), std::string(welcome_id)},
+                std::string(welcome_name)});
     }
 
     const std::filesystem::path& root() const noexcept { return root_; }

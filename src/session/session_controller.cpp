@@ -197,38 +197,35 @@ std::unique_ptr<SessionController> SessionController::from_workspace(
     CharacterId initial_default_character_id,
     std::string initial_default_persona_id,
     std::filesystem::path database_path,
-    SessionLease lease,
+    SessionKey session_key,
     Providers& providers,
     std::shared_ptr<WakeNotifier> notifier,
     SessionRestore restored,
     FullSessionId identity) {
-    if (!lease.active()) {
-        throw std::invalid_argument(
-            "Production session controllers require an active session lease");
-    }
     return std::unique_ptr<SessionController>(new SessionController(
         std::move(initial_default_character_id),
         std::move(initial_default_persona_id), std::move(database_path),
-        std::move(lease), providers, std::move(notifier), std::move(restored),
-        {}, std::move(identity)));
+        session_key, providers,
+        std::move(notifier), std::move(restored), {}, std::move(identity)));
 }
 
 std::unique_ptr<SessionController> SessionController::from_workspace_for_testing(
     ParticipantId initial_default_character_id,
     std::string initial_default_persona_id,
     std::filesystem::path database_path,
-    SessionLease lease,
     std::shared_ptr<Providers> providers,
     std::shared_ptr<WakeNotifier> notifier,
     SessionRestore restored,
     ActivationHook before_activation,
-    FullSessionId identity) {
+    FullSessionId identity,
+    SessionKey session_key) {
     if (!providers) throw std::invalid_argument("Session controller requires providers");
     Providers& provider = *providers;
     return std::unique_ptr<SessionController>(new SessionController(
         std::move(initial_default_character_id),
         std::move(initial_default_persona_id),
-        std::move(database_path), std::move(lease), provider, std::move(notifier),
+        std::move(database_path), session_key, provider,
+        std::move(notifier),
         std::move(restored), std::move(before_activation), std::move(identity),
         std::move(providers)));
 }
@@ -237,15 +234,14 @@ SessionController::SessionController(
     ParticipantId initial_default_character_id,
     std::string initial_default_persona_id,
     std::filesystem::path path,
-    SessionLease lease,
+    SessionKey session_key,
     Providers& providers,
     std::shared_ptr<WakeNotifier> notifier,
     SessionRestore restored,
     ActivationHook before_activation,
     FullSessionId identity,
     std::shared_ptr<Providers> providers_owner)
-    : lease_(std::move(lease)),
-      journal_(std::move(path)),
+    : journal_(std::move(path), session_key),
       providers_owner_(std::move(providers_owner)),
       providers_(providers),
       notifier_(std::move(notifier)),

@@ -157,7 +157,6 @@ std::string_view to_string(ErrorCode value) {
             {ErrorCode::prompt_too_large, "prompt_too_large"},
             {ErrorCode::forbidden_origin, "forbidden_origin"},
             {ErrorCode::internal_error, "internal_error"},
-            {ErrorCode::session_busy, "session_busy"},
             {ErrorCode::session_stopping, "session_stopping"},
             {ErrorCode::session_limit_reached, "session_limit_reached"},
             {ErrorCode::session_open_timeout, "session_open_timeout"},
@@ -165,7 +164,6 @@ std::string_view to_string(ErrorCode value) {
             {ErrorCode::session_not_live, "session_not_live"},
             {ErrorCode::command_timeout, "command_timeout"},
             {ErrorCode::command_queue_full, "command_queue_full"},
-            {ErrorCode::session_delete_conflict, "session_delete_conflict"},
             {ErrorCode::workspace_reload_failed, "workspace_reload_failed"},
         });
 }

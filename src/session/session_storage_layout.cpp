@@ -1,70 +1,44 @@
 #include "session/session_storage_layout.h"
 
-#include "util/path_name.h"
-#include "workspace/workspace.h"
-
-#include <algorithm>
 #include <filesystem>
-#include <stdexcept>
-#include <string>
-#include <string_view>
-#include <vector>
 
 namespace cha {
 namespace {
 
-void scan_directory(
-    const std::filesystem::path& directory,
-    std::string_view forum_id,
-    bool archived,
-    std::vector<LegacySessionSource>& result) {
-    if (!std::filesystem::exists(directory)) return;
-    if (!std::filesystem::is_directory(directory)) {
-        throw std::runtime_error(
-            "Legacy sessions path '" + utf8_path(directory)
-            + "' is not a directory");
-    }
-    for (const auto& entry : std::filesystem::directory_iterator(directory)) {
-        if (!entry.is_regular_file() || entry.path().extension() != ".sqlite3") {
-            continue;
+bool contains_legacy_database(const std::filesystem::path& directory) {
+    if (!std::filesystem::exists(directory)) return false;
+    if (!std::filesystem::is_directory(directory)) return false;
+    for (const std::filesystem::directory_entry& entry :
+         std::filesystem::directory_iterator(directory)) {
+        if (entry.is_regular_file()
+            && entry.path().extension() == ".sqlite3") {
+            return true;
         }
-        result.push_back({
-            .path = entry.path(),
-            .expected_identity = {
-                std::string(forum_id),
-                utf8_path(entry.path().stem()),
-            },
-            .archived = archived,
-        });
     }
+    return false;
 }
 
 } // namespace
 
 std::filesystem::path workspace_session_database_path(
-    const Workspace& workspace) {
-    return workspace.root() / "sessions.sqlite3";
+    const std::filesystem::path& workspace_root) {
+    return workspace_root / "workspace.sqlite3";
 }
 
-std::filesystem::path workspace_session_migration_path(
-    const Workspace& workspace) {
-    return workspace.root() / ".sessions.sqlite3.migrating";
-}
-
-std::vector<LegacySessionSource> discover_legacy_session_sources(
-    const Workspace& workspace) {
-    std::vector<LegacySessionSource> result;
-    for (const WorkspaceForum& forum : workspace.forums()) {
-        const auto sessions = workspace.forum_session_directory(forum.id);
-        if (!sessions) continue;
-        scan_directory(*sessions, forum.id, false, result);
-        scan_directory(*sessions / "deleted", forum.id, true, result);
+bool has_legacy_session_databases(
+    const std::filesystem::path& workspace_root) {
+    const std::filesystem::path forums = workspace_root / "forums";
+    if (!std::filesystem::is_directory(forums)) return false;
+    for (const std::filesystem::directory_entry& forum :
+         std::filesystem::directory_iterator(forums)) {
+        if (!forum.is_directory()) continue;
+        const std::filesystem::path sessions = forum.path() / "sessions";
+        if (contains_legacy_database(sessions)
+            || contains_legacy_database(sessions / "deleted")) {
+            return true;
+        }
     }
-    std::sort(result.begin(), result.end(),
-        [](const LegacySessionSource& left, const LegacySessionSource& right) {
-            return utf8_path(left.path) < utf8_path(right.path);
-        });
-    return result;
+    return false;
 }
 
 } // namespace cha

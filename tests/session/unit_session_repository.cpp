@@ -2,8 +2,8 @@
 
 #include "session/not_found_error.h"
 #include "session/session_database.h"
-#include "session/session_delete_conflict.h"
 #include "session/session_lease.h"
+#include "session/sqlite_storage.h"
 #include "support/test_transcript.h"
 #include "support/test_workspace.h"
 #include "workspace/workspace.h"
@@ -13,9 +13,13 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
-#include <optional>
+#include <future>
+#include <iomanip>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
@@ -26,411 +30,480 @@ namespace {
 constexpr std::string_view temporary_forum = "temporary-forum";
 constexpr std::string_view temporary_session = "temporary-session";
 
-class SessionRepositoryTest : public ::testing::Test {
-protected:
-    std::filesystem::path sessions_directory() const {
-        return fixture_.root() / "forums" / "lobby" / "sessions";
-    }
+std::string timestamp_session_id(std::time_t value) {
+    const std::tm* const local = std::localtime(&value);
+    if (local == nullptr) throw std::runtime_error("Failed to read test time");
+    std::ostringstream result;
+    result << std::put_time(local, "%Y-%m-%d-%H-%M-%S") << "-session";
+    return result.str();
+}
 
+std::vector<std::string> near_future_session_ids() {
+    const std::time_t now = std::time(nullptr);
+    std::vector<std::string> result;
+    for (int offset = -1; offset <= 15; ++offset) {
+        result.push_back(timestamp_session_id(now + offset));
+    }
+    return result;
+}
+
+void seed_session_id_collisions(
+    const std::filesystem::path& path,
+    const std::vector<std::string>& base_ids,
+    std::size_t suffix_count) {
+    storage::SqliteDatabase database(
+        path, storage::SqliteDatabase::Mode::read_write);
+    std::int64_t forum_key{};
+    {
+        storage::SqliteStatement forum = database.prepare(
+            "SELECT forum_key FROM forums WHERE forum_id = 'lobby'");
+        if (!forum.step()) throw std::runtime_error("Test forum is missing");
+        forum_key = forum.integer(0);
+    }
+    storage::SqliteTransaction transaction(database);
+    for (const std::string& base_id : base_ids) {
+        for (std::size_t suffix = 1; suffix <= suffix_count; ++suffix) {
+            const std::string id = suffix == 1
+                ? base_id : base_id + "-" + std::to_string(suffix);
+            storage::SqliteStatement insert = database.prepare(
+                "INSERT INTO sessions (forum_key, session_id, label, "
+                "updated_at, history_epoch, next_entry_id, next_request_id) "
+                "VALUES (?1, ?2, 'Existing', 0, 1, 1, 1)",
+                forum_key,
+                std::string_view(id));
+            insert.run();
+        }
+    }
+    transaction.commit();
+}
+
+class SessionRepositoryTest : public testing::Test {
+protected:
     SessionRepository make_repository() const {
         loadws(fixture_.root());
         return SessionRepository(
             fixture_.root(),
-            {{std::string(temporary_forum), std::string(temporary_session)}, "Welcome"});
+            {{std::string(temporary_forum), std::string(temporary_session)},
+             "Welcome"});
     }
 
     static FullSessionId temporary_identity() {
         return {std::string(temporary_forum), std::string(temporary_session)};
     }
 
+    static std::int64_t scalar(
+        const std::filesystem::path& path,
+        const char* sql) {
+        sqlite3* database = nullptr;
+        if (sqlite3_open_v2(
+                path.string().c_str(), &database,
+                SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
+            throw std::runtime_error("Failed to open test database");
+        }
+        sqlite3_stmt* statement = nullptr;
+        if (sqlite3_prepare_v2(database, sql, -1, &statement, nullptr)
+                != SQLITE_OK
+            || sqlite3_step(statement) != SQLITE_ROW) {
+            sqlite3_finalize(statement);
+            sqlite3_close(database);
+            throw std::runtime_error("Failed to query test database");
+        }
+        const std::int64_t result = sqlite3_column_int64(statement, 0);
+        sqlite3_finalize(statement);
+        sqlite3_close(database);
+        return result;
+    }
+
     test::TestWorkspace fixture_;
 };
 
-TEST_F(SessionRepositoryTest, CreatesListsValidatesAndPreparesAPersistentSession) {
+TEST_F(SessionRepositoryTest, CreatesOneWorkspaceDatabaseAndPreparesByKey) {
     const SessionRepository repository = make_repository();
-
     const StoredSession created = repository.create("lobby", "Stored");
-    EXPECT_EQ(created.identity.forum_id, "lobby");
-    EXPECT_EQ(created.label, "Stored");
-    EXPECT_TRUE(created.error.empty());
 
-    const std::vector<StoredSession> listed = repository.list("lobby");
-    ASSERT_EQ(listed.size(), 1U);
-    EXPECT_EQ(listed.front().identity, created.identity);
-    EXPECT_EQ(listed.front().label, "Stored");
-    EXPECT_EQ(listed.front().updated_at, created.updated_at);
-
-    EXPECT_NO_THROW(repository.validate(created.identity));
+    EXPECT_TRUE(std::filesystem::is_regular_file(
+        fixture_.root() / "workspace.sqlite3"));
+    EXPECT_TRUE(std::filesystem::is_regular_file(
+        fixture_.root() / "workspace.sqlite3.cha-lock"));
+    EXPECT_FALSE(std::filesystem::exists(
+        fixture_.root() / "sessions.sqlite3"));
+    EXPECT_FALSE(std::filesystem::exists(
+        fixture_.root() / "sessions.sqlite3.cha-lock"));
+    EXPECT_FALSE(std::filesystem::exists(
+        fixture_.root() / "forums" / "lobby" / "sessions"));
+    EXPECT_EQ(repository.list("lobby"),
+        (std::vector<StoredSession>{created}));
 
     const PreparedSession prepared = repository.prepare(created.identity);
-    EXPECT_EQ(prepared.identity, created.identity);
+    EXPECT_EQ(prepared.database_path, fixture_.root() / "workspace.sqlite3");
+    EXPECT_GT(prepared.session_key, 0);
     EXPECT_EQ(prepared.label, "Stored");
-    EXPECT_EQ(prepared.database_path, sessions_directory() / (created.identity.session_id + ".sqlite3"));
-    EXPECT_TRUE(prepared.lease.active());
     EXPECT_TRUE(prepared.restore.entries.empty());
 }
 
-TEST_F(SessionRepositoryTest, LabelsAnEmptyRequestWithItsSessionIdAndOrdersById) {
+TEST_F(SessionRepositoryTest, CreatesInNewlyPublishedUnsynchronizedForum) {
     const SessionRepository repository = make_repository();
-    const StoredSession first = repository.create("lobby", "");
-    const StoredSession second = repository.create("lobby", "Second");
-    EXPECT_EQ(first.label, first.identity.session_id);
+    fixture_.add_forum("second", "Second", "guide");
+    loadws(fixture_.root());
+    ASSERT_EQ(scalar(repository.database_path(),
+        "SELECT COUNT(*) FROM forums WHERE forum_id = 'second'"), 0);
 
-    std::vector<std::string> ids;
-    for (const StoredSession& entry : repository.list("lobby")) {
-        ids.push_back(entry.identity.session_id);
-    }
-    ASSERT_EQ(ids.size(), 2U);
-    std::vector<std::string> expected{first.identity.session_id, second.identity.session_id};
-    std::sort(expected.begin(), expected.end());
-    EXPECT_EQ(ids, expected);
+    const StoredSession created = repository.create("second", "Stored");
+
+    EXPECT_EQ(created.identity.forum_id, "second");
+    EXPECT_EQ(repository.list("second"), (std::vector<StoredSession>{created}));
+    EXPECT_EQ(scalar(repository.database_path(),
+        "SELECT COUNT(*) FROM forums WHERE forum_id = 'second'"), 1);
 }
 
-TEST_F(SessionRepositoryTest, RenamesStoredMetadataWithoutChangingIdentity) {
+TEST_F(SessionRepositoryTest, CreatesRenamesAndArchivesRowsTransactionally) {
     const SessionRepository repository = make_repository();
     const StoredSession created = repository.create("lobby", "Before");
-
+    const PreparedSession prepared = repository.prepare(created.identity);
+    {
+        SessionJournal journal(prepared.database_path, prepared.session_key);
+        journal.record_entry(test::human_entry(
+            1, {"human", "You"}, {"guide", "Guide"}, "Retained"));
+    }
     const StoredSession renamed = repository.rename(created.identity, "After ✓");
-
     EXPECT_EQ(renamed.identity, created.identity);
-    EXPECT_EQ(renamed.label, "After ✓");
-    ASSERT_EQ(repository.list("lobby").size(), 1U);
-    EXPECT_EQ(repository.list("lobby").front().label, "After ✓");
     EXPECT_EQ(repository.prepare(created.identity).label, "After ✓");
-}
 
-TEST_F(SessionRepositoryTest, AppliesTheSharedLabelPolicyToCreateAndRename) {
-    const SessionRepository repository = make_repository();
-    EXPECT_THROW((void)repository.create("lobby", " leading"), std::invalid_argument);
-    EXPECT_THROW((void)repository.create("lobby", "line\nbreak"), std::invalid_argument);
-    EXPECT_THROW((void)repository.create("lobby", std::string(201, 'x')), std::invalid_argument);
-
-    const StoredSession created = repository.create("lobby", "Valid");
-    EXPECT_THROW((void)repository.rename(created.identity, ""), std::invalid_argument);
-    EXPECT_THROW((void)repository.rename(created.identity, "trailing "), std::invalid_argument);
-    EXPECT_EQ(repository.prepare(created.identity).label, "Valid");
-}
-
-TEST_F(SessionRepositoryTest, MovesDeletedDatabaseButLeavesItsCompanionLock) {
-    const SessionRepository repository = make_repository();
-    const StoredSession created = repository.create("lobby", "Archived");
-    const std::filesystem::path lock = SessionLease::companion_path(created.database_path);
-    ASSERT_TRUE(std::filesystem::exists(lock));
-
-    repository.move_to_deleted(created.identity);
-
-    EXPECT_FALSE(std::filesystem::exists(created.database_path));
-    EXPECT_TRUE(std::filesystem::exists(
-        sessions_directory() / "deleted" / created.database_path.filename()));
-    EXPECT_TRUE(std::filesystem::exists(lock));
+    repository.archive(created.identity);
     EXPECT_TRUE(repository.list("lobby").empty());
-    EXPECT_THROW((void)repository.prepare(created.identity), SessionNotFoundError);
-}
-
-TEST_F(SessionRepositoryTest, DeletesCorruptDatabasesAndNeverReplacesAnArchive) {
-    const SessionRepository repository = make_repository();
-    const StoredSession corrupt = repository.create("lobby", "Corrupt");
-    {
-        std::ofstream file(corrupt.database_path, std::ios::binary | std::ios::trunc);
-        file << "not SQLite";
-    }
-    EXPECT_NO_THROW(repository.move_to_deleted(corrupt.identity));
-
-    const StoredSession conflict = repository.create("lobby", "Conflict");
-    const std::filesystem::path destination =
-        sessions_directory() / "deleted" / conflict.database_path.filename();
-    std::filesystem::copy_file(
-        sessions_directory() / "deleted" / corrupt.database_path.filename(),
-        destination);
     EXPECT_THROW(
-        repository.move_to_deleted(conflict.identity),
-        SessionDeleteConflictError);
-    EXPECT_TRUE(std::filesystem::exists(conflict.database_path));
+        (void)repository.prepare(created.identity), SessionNotFoundError);
+    EXPECT_EQ(scalar(repository.database_path(),
+        "SELECT COUNT(*) FROM sessions WHERE archived_at IS NOT NULL"), 1);
+    EXPECT_EQ(scalar(repository.database_path(), "SELECT COUNT(*) FROM entries"), 1);
 }
 
-TEST_F(SessionRepositoryTest, PrepareMigratesAVersionTwoSessionDatabase) {
+TEST_F(SessionRepositoryTest, AppliesLabelPolicyAndSeparatesMissingForums) {
     const SessionRepository repository = make_repository();
-    const StoredSession created = repository.create("lobby", "Old");
-
-    // Reshape the database into its version-2 form: no created_at column.
-    const std::string path_string = created.database_path.string();
-    sqlite3* handle = nullptr;
-    ASSERT_EQ(sqlite3_open(path_string.c_str(), &handle), SQLITE_OK);
-    ASSERT_EQ(
-        sqlite3_exec(
-            handle,
-            "ALTER TABLE entries DROP COLUMN created_at; PRAGMA user_version = 2",
-            nullptr,
-            nullptr,
-            nullptr),
-        SQLITE_OK);
-    sqlite3_close(handle);
-
-    // Read-only paths accept the unmigrated database.
-    EXPECT_NO_THROW(repository.validate(created.identity));
-
-    // Preparing migrates the database in place before the restore read.
-    const PreparedSession prepared = repository.prepare(created.identity);
-    EXPECT_TRUE(prepared.restore.entries.empty());
-
-    std::int64_t version = 0;
-    ASSERT_EQ(sqlite3_open(path_string.c_str(), &handle), SQLITE_OK);
-    sqlite3_stmt* statement = nullptr;
-    ASSERT_EQ(
-        sqlite3_prepare_v2(handle, "PRAGMA user_version", -1, &statement, nullptr),
-        SQLITE_OK);
-    ASSERT_EQ(sqlite3_step(statement), SQLITE_ROW);
-    version = sqlite3_column_int64(statement, 0);
-    sqlite3_finalize(statement);
-    sqlite3_close(handle);
-    EXPECT_EQ(version, 3);
-}
-
-TEST_F(SessionRepositoryTest, RenameAndDeleteRejectBusyAndTemporarySessions) {
-    const SessionRepository repository = make_repository();
-    const StoredSession created = repository.create("lobby", "Held");
-    const PreparedSession held = repository.prepare(created.identity);
-    EXPECT_THROW((void)repository.rename(created.identity, "Later"), SessionBusyError);
-    EXPECT_THROW(repository.move_to_deleted(created.identity), SessionBusyError);
-
     EXPECT_THROW(
-        (void)repository.rename(temporary_identity(), "Other"),
-        ForumNotFoundError);
+        (void)repository.create("lobby", " leading"), std::invalid_argument);
     EXPECT_THROW(
-        repository.move_to_deleted(temporary_identity()),
-        ForumNotFoundError);
-}
-
-TEST_F(SessionRepositoryTest, ListsAnEmptyForumWithoutCreatingItsDirectory) {
-    const SessionRepository repository = make_repository();
-    EXPECT_TRUE(repository.list("lobby").empty());
-    EXPECT_FALSE(std::filesystem::exists(sessions_directory()));
-}
-
-TEST_F(SessionRepositoryTest, KeepsADamagedDatabaseListedButRejectsItStrictly) {
-    const SessionRepository repository = make_repository();
-    const StoredSession created = repository.create("lobby", "Broken later");
-    {
-        std::ofstream database(
-            sessions_directory() / (created.identity.session_id + ".sqlite3"),
-            std::ios::binary | std::ios::trunc);
-        database << "not SQLite";
-    }
-
-    const std::vector<StoredSession> listed = repository.list("lobby");
-    ASSERT_EQ(listed.size(), 1U);
-    EXPECT_EQ(listed.front().identity, created.identity);
-    EXPECT_EQ(listed.front().label, created.identity.session_id + " [invalid database]");
-    EXPECT_FALSE(listed.front().error.empty());
-
-    EXPECT_THROW(repository.validate(created.identity), std::runtime_error);
-    EXPECT_THROW((void)repository.prepare(created.identity), std::runtime_error);
-}
-
-TEST_F(SessionRepositoryTest, CreatesWithoutInitializingAProvider) {
-    // Session creation only records session state; it must not initialize a
-    // network-mode provider.
-    const SessionRepository repository = make_repository();
-    fixture_.write_character_defaults(
-        "host = \"127.0.0.1\"\nport = 1\nmode = \"net\"\nmodel = \"fake\"\n");
-
-    const StoredSession created = repository.create("lobby", "Unopened");
-    EXPECT_FALSE(created.identity.session_id.empty());
-    EXPECT_EQ(repository.list("lobby").size(), 1U);
-}
-
-TEST_F(SessionRepositoryTest, RejectsAForumIdThatIsNotOneSafePathComponent) {
-    const SessionRepository repository = make_repository();
-    EXPECT_THROW((void)repository.create("../missing", "Escaping"), ForumNotFoundError);
-    EXPECT_TRUE(repository.list("lobby").empty());
-}
-
-TEST_F(SessionRepositoryTest, ReportsUnknownForumsAndSessionsSeparately) {
-    const SessionRepository repository = make_repository();
-
-    EXPECT_THROW((void)repository.list("absent"), ForumNotFoundError);
-    EXPECT_THROW((void)repository.create("absent", "Label"), ForumNotFoundError);
-    EXPECT_THROW(repository.validate({"absent", "any"}), ForumNotFoundError);
-    EXPECT_THROW((void)repository.prepare({"absent", "any"}), ForumNotFoundError);
-
-    EXPECT_THROW(repository.validate({"lobby", "absent"}), SessionNotFoundError);
-    EXPECT_THROW((void)repository.prepare({"lobby", "absent"}), SessionNotFoundError);
-}
-
-TEST_F(SessionRepositoryTest, OffersOneTemporaryRowAndRefusesToCreateBesideIt) {
-    const SessionRepository repository = make_repository();
-
-    const std::vector<StoredSession> listed = repository.list(temporary_forum);
-    ASSERT_EQ(listed.size(), 1U);
-    EXPECT_EQ(listed.front().identity, temporary_identity());
-    EXPECT_EQ(listed.front().label, "Welcome");
-    EXPECT_TRUE(listed.front().error.empty());
-
-    EXPECT_NO_THROW(repository.validate(temporary_identity()));
+        (void)repository.create("absent", "Label"), ForumNotFoundError);
     EXPECT_THROW(
-        repository.validate({std::string(temporary_forum), "other"}),
-        SessionNotFoundError);
+        (void)repository.prepare({"absent", "session"}), ForumNotFoundError);
     EXPECT_THROW(
-        (void)repository.create(temporary_forum, "Rejected"),
-        ForumNotFoundError);
+        (void)repository.prepare({"lobby", "absent"}), SessionNotFoundError);
 
-    const PreparedSession prepared = repository.prepare(temporary_identity());
-    EXPECT_EQ(prepared.label, "Welcome");
-    EXPECT_TRUE(prepared.lease.active());
-    EXPECT_TRUE(prepared.restore.entries.empty());
-}
-
-TEST_F(SessionRepositoryTest, GivesEachRepositoryItsOwnPrivateTemporaryDatabase) {
-    const SessionRepository first = make_repository();
-    const SessionRepository second = make_repository();
-    EXPECT_NE(
-        first.prepare(temporary_identity()).database_path,
-        second.prepare(temporary_identity()).database_path);
-}
-
-TEST_F(SessionRepositoryTest, RemovesOnlyItsOwnedTemporaryDirectoryOnDestruction) {
-    std::filesystem::path database_path;
-    {
-        const SessionRepository repository = make_repository();
-        database_path = repository.prepare(temporary_identity()).database_path;
-        ASSERT_TRUE(std::filesystem::exists(database_path));
-    }
-    EXPECT_FALSE(std::filesystem::exists(database_path));
-    EXPECT_FALSE(std::filesystem::exists(database_path.parent_path()));
-    EXPECT_TRUE(std::filesystem::exists(fixture_.root()));
-}
-
-TEST_F(SessionRepositoryTest, HoldsOneLeasePerSessionAndReleasesItWithThePreparedValue) {
-    const SessionRepository repository = make_repository();
-    const StoredSession created = repository.create("lobby", "Leased");
-    {
-        const PreparedSession held = repository.prepare(created.identity);
-        EXPECT_TRUE(held.lease.active());
-        EXPECT_THROW((void)repository.prepare(created.identity), SessionBusyError);
-    }
-    EXPECT_NO_THROW((void)repository.prepare(created.identity));
-}
-
-TEST_F(SessionRepositoryTest, RejectsMismatchedMetadataAfterTheLeaseAndReleasesIt) {
-    const SessionRepository repository = make_repository();
-    const StoredSession created = repository.create("lobby", "Renamed later");
-    const std::filesystem::path renamed =
-        sessions_directory() / "renamed.sqlite3";
-    std::filesystem::rename(created.database_path, renamed);
-    const FullSessionId wrong_filename{"lobby", "renamed"};
-
-    EXPECT_THROW((void)repository.prepare(wrong_filename), std::runtime_error);
-    // The failing read happened behind the lease, so the lease must be gone
-    // again once it threw.
-    EXPECT_NO_THROW((void)SessionLease::acquire(renamed));
-
-    // Same for a database that names another forum.
-    const std::filesystem::path foreign =
-        sessions_directory() / "foreign.sqlite3";
-    ASSERT_TRUE(create_session_database(
-        foreign, {.id = "foreign", .forum = "hall", .label = "Elsewhere"}));
-
+    const StoredSession created = repository.create("lobby", "");
+    EXPECT_EQ(created.label, created.identity.session_id);
     EXPECT_THROW(
-        (void)repository.prepare({"lobby", "foreign"}), std::runtime_error);
-    EXPECT_NO_THROW((void)SessionLease::acquire(foreign));
+        (void)repository.rename(created.identity, ""), std::invalid_argument);
 }
 
-TEST_F(SessionRepositoryTest, LeavesNoCompanionLockBehindForAMissingSession) {
+TEST_F(SessionRepositoryTest, RetriesAnExpectedSessionIdCollision) {
     const SessionRepository repository = make_repository();
-    (void)repository.create("lobby", "Present");
+    const std::vector<std::string> base_ids = near_future_session_ids();
+    seed_session_id_collisions(repository.database_path(), base_ids, 1);
 
-    EXPECT_THROW((void)repository.prepare({"lobby", "absent"}), SessionNotFoundError);
-    EXPECT_FALSE(std::filesystem::exists(SessionLease::companion_path(
-        sessions_directory() / "absent.sqlite3")));
+    const StoredSession created = repository.create("lobby", "Created");
+    EXPECT_TRUE(std::any_of(
+        base_ids.begin(), base_ids.end(),
+        [&created](const std::string& base_id) {
+            return created.identity.session_id == base_id + "-2";
+        }));
 }
 
-TEST_F(SessionRepositoryTest, ReportsBusyBeforeInvalidForALeasedDamagedDatabase) {
+TEST_F(SessionRepositoryTest, BoundsSessionIdCollisionRetries) {
     const SessionRepository repository = make_repository();
-    const StoredSession created = repository.create("lobby", "Damaged and held");
-    SessionLease held = SessionLease::acquire(created.database_path);
+    seed_session_id_collisions(
+        repository.database_path(), near_future_session_ids(), 100);
+
+    try {
+        (void)repository.create("lobby", "Created");
+        FAIL() << "Expected session ID allocation to fail";
+    } catch (const std::runtime_error& error) {
+        EXPECT_NE(
+            std::string(error.what()).find("after 100 attempts"),
+            std::string::npos);
+    }
+}
+
+TEST_F(SessionRepositoryTest, SurfacesUnexpectedInsertConstraints) {
+    const SessionRepository repository = make_repository();
     {
-        std::ofstream database(
-            created.database_path, std::ios::binary | std::ios::trunc);
-        database << "not SQLite";
+        storage::SqliteDatabase database(
+            repository.database_path(),
+            storage::SqliteDatabase::Mode::read_write);
+        database.execute(R"sql(
+            CREATE TRIGGER reject_new_session
+            BEFORE INSERT ON sessions
+            BEGIN
+                SELECT RAISE(ABORT, 'future session constraint');
+            END
+        )sql");
     }
 
-    // Preparation reads nothing until it owns the session, so contention is
-    // reported ahead of the invalidity it would otherwise have found.
-    EXPECT_THROW((void)repository.prepare(created.identity), SessionBusyError);
-    // The route-level preflight is what still separates the two for callers.
-    EXPECT_THROW(repository.validate(created.identity), std::runtime_error);
-}
-
-TEST_F(SessionRepositoryTest, RestoresTranscriptStateAndInterruptedTurnsInOneRead) {
-    const SessionRepository repository = make_repository();
-    const StoredSession created = repository.create("lobby", "Resumed");
-    const TranscriptEntry answered = test::human_entry(
-        1, {"human", "You"}, {"guide-id", "Guide"}, "Answered", 1);
-    const TranscriptEntry response = make_character_entry(
-        2, "guide-id", "Guide", "An answer", EntryStatus::complete, 1);
-    const TranscriptEntry pending = test::human_entry(
-        3, {"human", "You"}, {"guide-id", "Guide"}, "Interrupted", 2);
-    {
-        SessionJournal journal(created.database_path);
-        journal.start_turn(1, answered);
-        journal.complete_turn(1, response);
-        journal.start_turn(2, pending);
+    try {
+        (void)repository.create("lobby", "Created");
+        FAIL() << "Expected the constraint failure to escape";
+    } catch (const std::runtime_error& error) {
+        EXPECT_NE(
+            std::string(error.what()).find("future session constraint"),
+            std::string::npos);
     }
-
-    const PreparedSession prepared = repository.prepare(created.identity);
-    EXPECT_EQ(prepared.label, "Resumed");
-    EXPECT_EQ(
-        prepared.restore.entries,
-        (std::vector<TranscriptEntry>{answered, response, pending}));
-    EXPECT_EQ(prepared.restore.next_request_id, 3U);
-    // The repair entry for the interrupted turn takes the next entry ID.
-    EXPECT_EQ(prepared.restore.next_entry_id, 5U);
-    ASSERT_EQ(prepared.restore.interrupted_turns.size(), 1U);
-    EXPECT_EQ(prepared.restore.interrupted_turns.front().request_id, 2U);
-    EXPECT_EQ(
-        prepared.restore.interrupted_turns.front().error_entry.kind,
-        EntryKind::error);
 }
 
-TEST_F(SessionRepositoryTest, RejectsAnUnsupportedDatabaseWhereverItIsRead) {
-    const SessionRepository repository = make_repository();
-    const std::filesystem::path path =
-        sessions_directory() / "unsupported.sqlite3";
-    std::filesystem::create_directories(sessions_directory());
-    {
-        std::ofstream database(path, std::ios::binary);
-        database << "unsupported database";
-    }
-    const FullSessionId identity{"lobby", "unsupported"};
-
-    EXPECT_THROW(repository.validate(identity), std::runtime_error);
-    EXPECT_THROW((void)repository.prepare(identity), std::runtime_error);
-    EXPECT_NO_THROW((void)SessionLease::acquire(path));
-}
-
-TEST_F(SessionRepositoryTest, ServesConcurrentReadsAndCreationsWithoutARepositoryLock) {
+TEST_F(SessionRepositoryTest, DoesNotRetryAnUnrelatedUniqueConstraint) {
     const SessionRepository repository = make_repository();
     (void)repository.create("lobby", "Existing");
+    {
+        storage::SqliteDatabase database(
+            repository.database_path(),
+            storage::SqliteDatabase::Mode::read_write);
+        database.execute(
+            "CREATE UNIQUE INDEX one_session_total ON sessions ((1))");
+    }
 
+    try {
+        (void)repository.create("lobby", "Created");
+        FAIL() << "Expected the unrelated unique constraint to escape";
+    } catch (const std::runtime_error& error) {
+        EXPECT_NE(
+            std::string(error.what()).find("one_session_total"),
+            std::string::npos);
+    }
+}
+
+TEST_F(SessionRepositoryTest, KeepsTwoSessionsInOneDatabaseIsolated) {
+    const SessionRepository repository = make_repository();
+    const PreparedSession first =
+        repository.prepare(repository.create("lobby", "First").identity);
+    const PreparedSession second =
+        repository.prepare(repository.create("lobby", "Second").identity);
+    ASSERT_NE(first.session_key, second.session_key);
+    ASSERT_EQ(first.database_path, second.database_path);
+
+    const TranscriptEntry first_prompt = test::human_entry(
+        1, {"human", "You"}, {"guide", "Guide"}, "First prompt", 1);
+    const TranscriptEntry second_prompt = test::human_entry(
+        1, {"human", "You"}, {"guide", "Guide"}, "Second prompt", 1);
+    {
+        SessionJournal first_journal(first.database_path, first.session_key);
+        SessionJournal second_journal(second.database_path, second.session_key);
+        first_journal.start_turn(1, first_prompt);
+        second_journal.start_turn(1, second_prompt);
+        first_journal.cancel_turn(1, std::nullopt);
+        second_journal.cancel_turn(1, std::nullopt);
+    }
+
+    EXPECT_EQ(repository.prepare(first.identity).restore.entries,
+        (std::vector<TranscriptEntry>{first_prompt}));
+    EXPECT_EQ(repository.prepare(second.identity).restore.entries,
+        (std::vector<TranscriptEntry>{second_prompt}));
+
+    {
+        SessionJournal first_journal(first.database_path, first.session_key);
+        first_journal.clear();
+    }
+    EXPECT_TRUE(repository.prepare(first.identity).restore.entries.empty());
+    EXPECT_EQ(repository.prepare(second.identity).restore.entries,
+        (std::vector<TranscriptEntry>{second_prompt}));
+}
+
+TEST_F(SessionRepositoryTest, ReadsHistoryWhileAnotherSessionHasAStartedTurn) {
+    const SessionRepository repository = make_repository();
+    const PreparedSession first =
+        repository.prepare(repository.create("lobby", "First").identity);
+    const PreparedSession second =
+        repository.prepare(repository.create("lobby", "Second").identity);
+    const TranscriptEntry prompt = test::human_entry(
+        1, {"human", "You"}, {"guide", "Guide"}, "Pending", 1);
+    SessionJournal journal(first.database_path, first.session_key);
+    journal.start_turn(1, prompt);
+
+    EXPECT_TRUE(repository.history(second.identity).empty());
+    EXPECT_EQ(repository.history(first.identity),
+        (std::vector<TranscriptEntry>{prompt}));
+}
+
+TEST_F(SessionRepositoryTest, WelcomeUsesTheSameSchemaInAPrivateFile) {
+    std::filesystem::path welcome_path;
+    {
+        const SessionRepository repository = make_repository();
+        const PreparedSession welcome = repository.prepare(temporary_identity());
+        welcome_path = welcome.database_path;
+        EXPECT_NE(welcome.database_path, repository.database_path());
+        EXPECT_EQ(welcome.session_key, 1);
+        EXPECT_EQ(repository.list(temporary_forum).size(), 1U);
+        EXPECT_EQ(scalar(welcome.database_path, "PRAGMA application_id"),
+            0x43484157);
+        EXPECT_EQ(scalar(welcome.database_path, "SELECT COUNT(*) FROM forums"),
+            1);
+        EXPECT_EQ(scalar(welcome.database_path, "SELECT COUNT(*) FROM sessions"),
+            1);
+        EXPECT_THROW(
+            (void)repository.create(temporary_forum, "No"),
+            ForumNotFoundError);
+    }
+    EXPECT_FALSE(std::filesystem::exists(welcome_path.parent_path()));
+}
+
+TEST_F(SessionRepositoryTest, HoldsOneLeaseForTheWorkspaceLifetime) {
+    loadws(fixture_.root());
+    {
+        const SessionRepository first(
+            fixture_.root(), {temporary_identity(), "Welcome"});
+        EXPECT_THROW(
+            (void)SessionRepository(
+                fixture_.root(), {temporary_identity(), "Welcome"}),
+            SessionBusyError);
+    }
+    EXPECT_NO_THROW(
+        (void)SessionRepository(
+            fixture_.root(), {temporary_identity(), "Welcome"}));
+}
+
+TEST_F(SessionRepositoryTest, RefusesBothIncompleteCutoverStates) {
+    loadws(fixture_.root());
+    const std::filesystem::path legacy = fixture_.root()
+        / "forums" / "lobby" / "sessions" / "legacy.sqlite3";
+    std::filesystem::create_directories(legacy.parent_path());
+    std::ofstream(legacy) << "legacy";
+    EXPECT_THROW(
+        (void)SessionRepository(
+            fixture_.root(), {temporary_identity(), "Welcome"}),
+        std::runtime_error);
+
+    std::filesystem::remove(legacy);
+    {
+        const SessionRepository repository(
+            fixture_.root(), {temporary_identity(), "Welcome"});
+    }
+    std::ofstream(legacy) << "legacy";
+    EXPECT_THROW(
+        (void)SessionRepository(
+            fixture_.root(), {temporary_identity(), "Welcome"}),
+        std::runtime_error);
+}
+
+TEST_F(SessionRepositoryTest, SynchronizesForumsWithoutDeletingOldRows) {
+    fixture_.add_forum("second", "Second", "guide");
+    const SessionRepository repository = make_repository();
+    const StoredSession stored = repository.create("second", "Kept");
+
+    const std::filesystem::path forum = fixture_.root() / "forums" / "second";
+    const std::filesystem::path aside = fixture_.root() / "second-aside";
+    std::filesystem::rename(forum, aside);
+    Workspace without = Workspace::load(fixture_.root());
+    repository.synchronize_forums(without);
+    loadws(std::move(without));
+    EXPECT_THROW((void)repository.list("second"), ForumNotFoundError);
+    EXPECT_TRUE(std::ranges::none_of(
+        repository.recent(),
+        [&stored](const StoredSession& recent) {
+            return recent.identity == stored.identity;
+        }));
+
+    std::filesystem::rename(aside, forum);
+    Workspace restored = Workspace::load(fixture_.root());
+    repository.synchronize_forums(restored);
+    loadws(std::move(restored));
+    ASSERT_EQ(repository.list("second").size(), 1U);
+    EXPECT_EQ(repository.list("second").front().identity, stored.identity);
+    EXPECT_TRUE(std::ranges::any_of(
+        repository.recent(),
+        [&stored](const StoredSession& recent) {
+            return recent.identity == stored.identity;
+        }));
+}
+
+TEST_F(SessionRepositoryTest, ConcurrentCreatesUseShortLivedConnections) {
+    const SessionRepository repository = make_repository();
+    std::atomic<int> failures{};
     std::vector<std::thread> workers;
-    std::atomic<int> failures{0};
-    for (int worker = 0; worker != 4; ++worker) {
-        workers.emplace_back([&repository, &failures, worker] {
+    for (int index = 0; index != 8; ++index) {
+        workers.emplace_back([&repository, &failures, index] {
             try {
-                for (int round = 0; round != 5; ++round) {
-                    (void)repository.list("lobby");
-                    (void)repository.list(temporary_forum);
-                    (void)repository.create("lobby", "Worker " + std::to_string(worker));
-                }
+                (void)repository.create(
+                    "lobby", "Worker " + std::to_string(index));
             } catch (...) {
                 ++failures;
             }
         });
     }
     for (std::thread& worker : workers) worker.join();
-
     EXPECT_EQ(failures.load(), 0);
-    EXPECT_EQ(repository.list("lobby").size(), 21U);
+    EXPECT_EQ(repository.list("lobby").size(), 8U);
+}
+
+TEST_F(SessionRepositoryTest, MaintenanceFencesRepositoryReadsAndWrites) {
+    using namespace std::chrono_literals;
+    const SessionRepository repository = make_repository();
+    const StoredSession rename_target =
+        repository.create("lobby", "Rename target");
+    const StoredSession archive_target =
+        repository.create("lobby", "Archive target");
+    std::future<StoredSession> create;
+    std::future<StoredSession> rename;
+    std::future<void> archive;
+    std::future<std::vector<StoredSession>> list;
+    {
+        const SessionRepository::MaintenanceGuard maintenance =
+            repository.reserve_maintenance();
+        create = std::async(std::launch::async, [&] {
+            return repository.create("lobby", "Created after maintenance");
+        });
+        rename = std::async(std::launch::async, [&] {
+            return repository.rename(rename_target.identity, "Renamed");
+        });
+        archive = std::async(std::launch::async, [&] {
+            repository.archive(archive_target.identity);
+        });
+        list = std::async(std::launch::async, [&] {
+            return repository.list("lobby");
+        });
+
+        EXPECT_EQ(create.wait_for(100ms), std::future_status::timeout);
+        EXPECT_EQ(rename.wait_for(0ms), std::future_status::timeout);
+        EXPECT_EQ(archive.wait_for(0ms), std::future_status::timeout);
+        EXPECT_EQ(list.wait_for(0ms), std::future_status::timeout);
+        EXPECT_NO_THROW(maintenance.checkpoint());
+    }
+
+    EXPECT_EQ(create.wait_for(2s), std::future_status::ready);
+    EXPECT_EQ(rename.wait_for(2s), std::future_status::ready);
+    EXPECT_EQ(archive.wait_for(2s), std::future_status::ready);
+    EXPECT_EQ(list.wait_for(2s), std::future_status::ready);
+    EXPECT_NO_THROW((void)create.get());
+    EXPECT_NO_THROW((void)rename.get());
+    EXPECT_NO_THROW(archive.get());
+    EXPECT_NO_THROW((void)list.get());
+}
+
+TEST_F(SessionRepositoryTest, CompetingWriterWaitsAtImmediateTransactionStart) {
+    using namespace std::chrono_literals;
+    const SessionRepository repository = make_repository();
+    const PreparedSession first =
+        repository.prepare(repository.create("lobby", "First").identity);
+    const PreparedSession second =
+        repository.prepare(repository.create("lobby", "Second").identity);
+    SessionJournal second_journal(second.database_path, second.session_key);
+    const TranscriptEntry prompt = test::human_entry(
+        1, {"human", "You"}, {"guide", "Guide"}, "Waiting", 1);
+
+    storage::SqliteDatabase writer(
+        repository.database_path(), storage::SqliteDatabase::Mode::read_write);
+    storage::SqliteTransaction transaction(writer);
+    storage::SqliteStatement update = writer.prepare(
+        "UPDATE sessions SET updated_at = updated_at + 1 "
+        "WHERE session_key = ?1",
+        first.session_key);
+    update.run();
+
+    auto competing = std::async(std::launch::async, [&] {
+        second_journal.start_turn(1, prompt);
+    });
+    EXPECT_EQ(competing.wait_for(100ms), std::future_status::timeout);
+    transaction.commit();
+    EXPECT_EQ(competing.wait_for(2s), std::future_status::ready);
+    EXPECT_NO_THROW(competing.get());
+    EXPECT_EQ(repository.history(second.identity),
+        (std::vector<TranscriptEntry>{prompt}));
 }
 
 } // namespace

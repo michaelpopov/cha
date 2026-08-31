@@ -26,7 +26,6 @@ const knownErrorCodes = {
   prompt_too_large: true,
   forbidden_origin: true,
   internal_error: true,
-  session_busy: true,
   session_stopping: true,
   session_limit_reached: true,
   session_open_timeout: true,
@@ -34,7 +33,6 @@ const knownErrorCodes = {
   session_not_live: true,
   command_timeout: true,
   command_queue_full: true,
-  session_delete_conflict: true,
   workspace_reload_failed: true,
 } satisfies Record<ErrorCode, true>;
 

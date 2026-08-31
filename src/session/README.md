@@ -1,8 +1,15 @@
 # Session layer
 
-`session/` owns transcript behavior, durable journals and leases, character
-selection, prompt construction, and the presentation order of generation
-output. It has no HTTP or browser dependency.
+`session/` owns transcript behavior, the workspace session database and lease,
+durable journals, character selection, prompt construction, and the
+presentation order of generation output. It has no HTTP or browser dependency.
+
+All persistent sessions in a workspace share `workspace.sqlite3`. Public
+`(forum_id, session_id)` identities resolve to internal `session_key` values;
+every restore and journal statement is scoped by that key. The repository owns
+one workspace lease and uses short-lived connections. Each live controller
+owns its own long-lived journal connection, and write transactions begin with
+`BEGIN IMMEDIATE`.
 
 ## Controller ownership
 
@@ -38,9 +45,11 @@ durable turn using existing partial-response rules.
 | Source | Responsibility |
 | --- | --- |
 | `session_controller.*` | Controller commands, durable turn transitions, request-handle presentation, and shutdown. |
-| `session_database.*` | SQLite schema, restore, and journal operations. |
-| `session_repository.*`, `session_catalog.*` | Stored-session discovery and lifecycle. |
-| `session_lease.*` | Cross-process companion-file lease. |
+| `workspace_session_database.*` | Workspace schema, validation, WAL initialization, and checkpointing. |
+| `session_database.*` | Session-key-scoped restore and journal operations. |
+| `session_repository.*` | SQL-backed listing, creation, rename, archival, history, and preparation. |
+| `session_storage_layout.*` | Workspace database path and permanent path-only legacy-layout detection. |
+| `session_lease.*` | Process-lifetime workspace companion-file lease. |
 
 The controller view is borrowed and owner-thread-only. Workers never receive a
 `TranscriptView`; provider input always owns its `ModelHistory` snapshot.

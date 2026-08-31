@@ -2,7 +2,6 @@
 
 #include "session/not_found_error.h"
 #include "session/session_controller.h"
-#include "session/session_lease.h"
 #include "chat/transcript.h"
 #include "web/text_input.h"
 #include "util/logging.h"
@@ -288,9 +287,6 @@ bool LiveSession::open_controller() {
         return true;
     } catch (const std::bad_alloc&) {
         std::terminate();
-    } catch (const SessionBusyError&) {
-        log_warn(session_log(identity_, "lease_busy"));
-        failure = LiveSessionStartResult::busy;
     } catch (const SessionNotFoundError&) {
         log_warn(session_log(identity_, "storage_not_found"));
         failure = LiveSessionStartResult::not_found;
@@ -660,7 +656,7 @@ void LiveSession::teardown(ShutdownReason reason, bool skip_final_drain) noexcep
     // teardown work must not keep an SSE request alive.
     mailbox_->close();
     // A queue/reply mutex failure may strand later waiters, but it must
-    // not strand the controller, journal, workers, or session lease.
+    // not strand the controller, journal, or workers.
     (void)run_guarded([&] {
         while (auto work = commands_.try_pop()) {
             auto* command = std::get_if<OwnerCommand>(&*work);
@@ -676,13 +672,12 @@ void LiveSession::teardown(ShutdownReason reason, bool skip_final_drain) noexcep
             (void)mark_stopping(ShutdownReason::session_failed);
             log_fatal_once();
         }
-        // Destroying the controller here releases the journal and
-        // cross-process lease before this actor publishes Finished, which
-        // is what lets a same-identity actor start immediately afterwards.
+        // Destroy the controller before publishing Finished so a replacement
+        // actor can start immediately afterwards.
         controller_.reset();
         persist_default_character_ = {};
         persist_default_persona_ = {};
-        log_event("lease_released_owner_finished");
+        log_event("controller_released_owner_finished");
     }
     publish_finished();
 }

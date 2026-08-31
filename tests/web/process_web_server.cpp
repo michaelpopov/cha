@@ -617,39 +617,6 @@ void run_blocked_shutdown(const std::filesystem::path& log_path) {
     _exit(3);
 }
 
-TEST(WebServerProcess, MigrationModeBuildsTheDatabaseAndExits) {
-    test::TestWorkspace workspace;
-    const std::filesystem::path sessions =
-        workspace.root() / "forums" / "lobby" / "sessions";
-    std::filesystem::create_directories(sessions);
-    ASSERT_TRUE(create_session_database(
-        sessions / "legacy.sqlite3",
-        {.id = "legacy", .forum = "lobby", .label = "Legacy"}));
-
-    const std::string workspace_text = workspace.root().string();
-    const pid_t child = ::fork();
-    ASSERT_NE(child, -1);
-    if (child == 0) {
-        ::execl(
-            CHA_WEB_BINARY,
-            CHA_WEB_BINARY,
-            "--migration",
-            "--workspace",
-            workspace_text.c_str(),
-            static_cast<char*>(nullptr));
-        _exit(127);
-    }
-
-    int status{};
-    ASSERT_EQ(::waitpid(child, &status, 0), child);
-    ASSERT_TRUE(WIFEXITED(status));
-    EXPECT_EQ(WEXITSTATUS(status), 0);
-    EXPECT_TRUE(std::filesystem::is_regular_file(
-        workspace.root() / "sessions.sqlite3"));
-    EXPECT_TRUE(std::filesystem::is_regular_file(
-        sessions / "legacy.sqlite3"));
-}
-
 // The whole point of the two-root split is that an upgrade can replace the
 // application directory without touching the customer's files. Every other
 // process test hands the same path to both flags, which would pass just as
@@ -694,6 +661,89 @@ TEST(WebServerProcess, RunsWithAnApplicationRootThatHoldsNoWorkspace) {
     EXPECT_EQ(server.stop(SIGTERM).exit_code, 0);
     std::error_code removal;
     std::filesystem::remove_all(application, removal);
+}
+
+TEST(WebServerProcess, RefusesIncompleteManualCutoverBeforeBinding) {
+    test::TestWorkspace workspace;
+    workspace.write_workspace_config();
+    const std::filesystem::path legacy = workspace.root()
+        / "forums" / "lobby" / "sessions" / "legacy.sqlite3";
+    std::filesystem::create_directories(legacy.parent_path());
+    std::ofstream(legacy) << "legacy";
+    const int port = test::reserve_loopback_port();
+    ASSERT_NE(port, 0);
+
+    {
+        test::WebServerProcess server(workspace.root(), port);
+        EXPECT_FALSE(server.wait_until_ready());
+        const std::string errors = server.errors();
+        EXPECT_NE(
+            errors.find("This build cannot migrate them"),
+            std::string::npos)
+            << errors;
+        EXPECT_NE(
+            errors.find("archived migration-capable CHA build"),
+            std::string::npos)
+            << errors;
+        EXPECT_NE(
+            errors.find("chaweb --migration --workspace <workspace>"),
+            std::string::npos)
+            << errors;
+        EXPECT_NE(errors.find("verify 'workspace.sqlite3'"), std::string::npos)
+            << errors;
+        EXPECT_NE(
+            errors.find("remove the legacy session files"),
+            std::string::npos)
+            << errors;
+        EXPECT_FALSE(std::filesystem::exists(
+            workspace.root() / "workspace.sqlite3"));
+    }
+
+    std::filesystem::remove(legacy);
+    {
+        const test::WebGraph graph(workspace.root());
+        EXPECT_TRUE(std::filesystem::is_regular_file(
+            workspace.root() / "workspace.sqlite3"));
+    }
+    std::ofstream(legacy) << "legacy";
+    {
+        test::WebServerProcess server(workspace.root(), port);
+        EXPECT_FALSE(server.wait_until_ready());
+        const std::string errors = server.errors();
+        EXPECT_NE(errors.find("Verify 'workspace.sqlite3'"), std::string::npos)
+            << errors;
+        EXPECT_NE(
+            errors.find("remove the legacy session files"),
+            std::string::npos)
+            << errors;
+    }
+}
+
+TEST(WebServerProcess, RejectsASecondProcessWithWorkspaceDiagnostic) {
+    test::TestWorkspace workspace;
+    workspace.write_workspace_config();
+    const int first_port = test::reserve_loopback_port();
+    int second_port = test::reserve_loopback_port();
+    for (int attempt = 0; second_port == first_port && attempt != 10; ++attempt) {
+        second_port = test::reserve_loopback_port();
+    }
+    ASSERT_NE(first_port, 0);
+    ASSERT_NE(second_port, 0);
+    ASSERT_NE(first_port, second_port);
+
+    test::WebServerProcess first(workspace.root(), first_port);
+    ASSERT_TRUE(first.wait_until_ready()) << first.errors();
+    test::WebServerProcess second(workspace.root(), second_port);
+    EXPECT_FALSE(second.wait_until_ready());
+    EXPECT_NE(
+        second.errors().find(
+            "Workspace already in use: '" + workspace.root().string() + "'"),
+        std::string::npos)
+        << second.errors();
+
+    const test::ProcessExit stopped = first.stop(SIGINT);
+    EXPECT_FALSE(stopped.timed_out) << first.errors();
+    EXPECT_EQ(stopped.exit_code, 0) << first.errors();
 }
 
 TEST(WebServerProcess, ServesConcurrentSseAndOrdinaryRequestsOnOneOrigin) {
@@ -1026,7 +1076,7 @@ TEST(ServerShutdownCoordinatorProcess, ShutdownWakesARealHttpOpenBeforeOwnerComm
         settings,
         [&gate, &database](const FullSessionId& key, std::shared_ptr<WakeNotifier> notifier) {
             gate.wait();
-            return test::open_leased_session(key, database.path(), notifier);
+            return test::open_test_session(key, database.path(), notifier);
         });
     ReleaseOpeningGateOnExit release_gate(gate);
     httplib::Server server;

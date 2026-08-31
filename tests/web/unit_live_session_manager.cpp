@@ -1,7 +1,6 @@
 #include "web/live_session_manager.h"
 
 #include "workspace/builtins.h"
-#include "session/session_lease.h"
 #include "session/session_repository.h"
 #include "support/test_live_session.h"
 #include "support/test_web_graph.h"
@@ -62,11 +61,11 @@ private:
     std::map<FullSessionId, std::unique_ptr<test::TemporarySessionFile>> files_;
 };
 
-// Every mapped actor here runs a real SessionController over its own real
-// lease; nothing about the controller, its output, or its lifecycle is faked.
-SessionOpener leased_opener(SessionFiles& files) {
+// Every mapped actor here runs a real SessionController over real storage;
+// nothing about the controller, its output, or its lifecycle is faked.
+SessionOpener test_opener(SessionFiles& files) {
     return [&files](const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier) {
-        return test::open_leased_session(
+        return test::open_test_session(
             identity, files.path_for(identity), notifier);
     };
 }
@@ -135,23 +134,6 @@ private:
     std::map<FullSessionId, std::shared_ptr<test::BackendControls>> controls_;
 };
 
-class TemporaryLeasePath {
-public:
-    TemporaryLeasePath()
-        : path(std::filesystem::temp_directory_path()
-               / ("cha_manager_failed_open_"
-                  + std::to_string(std::chrono::steady_clock::now()
-                                       .time_since_epoch()
-                                       .count())
-                  + ".sqlite3")) {}
-    ~TemporaryLeasePath() {
-        std::error_code ignored;
-        std::filesystem::remove(SessionLease::companion_path(path), ignored);
-    }
-
-    std::filesystem::path path;
-};
-
 TEST(LiveSessionManager, ReusesRunningSessionAndReturnsTheActor) {
     SessionFiles files;
     std::atomic<int> starts{};
@@ -159,7 +141,7 @@ TEST(LiveSessionManager, ReusesRunningSessionAndReturnsTheActor) {
         manager_settings(2),
         [&](const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier) {
             ++starts;
-            return test::open_leased_session(
+            return test::open_test_session(
                 identity, files.path_for(identity), notifier);
         });
     const FullSessionId key{"forum", "session"};
@@ -184,7 +166,7 @@ TEST(LiveSessionManager, ReusesRunningSessionAndReturnsTheActor) {
 
 TEST(LiveSessionManager, WorkspaceReloadReservationClosesSessionsAndBlocksOpens) {
     SessionFiles files;
-    LiveSessionManager manager(manager_settings(1), leased_opener(files));
+    LiveSessionManager manager(manager_settings(1), test_opener(files));
     const FullSessionId key{"forum", "session"};
     ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(manager.open(key, 5s)));
 
@@ -250,49 +232,50 @@ TEST(LiveSessionManager, OpensWelcomeAndAttributesGuestInBuiltInAndWorkspaceSess
 
 TEST(LiveSessionManager, WelcomeReopensOnlyFromTheSameStorageWithItsForumPersona) {
     test::TestWorkspace fixture;
-    const test::WebGraph graph(fixture.root());
     const FullSessionId welcome_key = test::WebGraph::welcome();
-
     {
-        LiveSessionManager manager(manager_settings(1), graph.opener());
-        ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(
-            manager.open(welcome_key, 5s)));
-        LiveSessionHandle welcome = manager.lookup(welcome_key);
-        ASSERT_TRUE(welcome);
-        ASSERT_TRUE(std::holds_alternative<CommandResult>(
-            welcome->submit(RawCommand{"Remember this"}, 5s)));
+        const test::WebGraph graph(fixture.root());
+        {
+            LiveSessionManager manager(manager_settings(1), graph.opener());
+            ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(
+                manager.open(welcome_key, 5s)));
+            LiveSessionHandle welcome = manager.lookup(welcome_key);
+            ASSERT_TRUE(welcome);
+            ASSERT_TRUE(std::holds_alternative<CommandResult>(
+                welcome->submit(RawCommand{"Remember this"}, 5s)));
 
-        std::optional<SessionSnapshot> settled;
-        for (int attempt = 0; attempt < 200 && !settled; ++attempt) {
-            CommandSubmitResult state = welcome->snapshot(5s);
-            if (const auto* snapshot = std::get_if<SessionSnapshot>(&state);
-                snapshot != nullptr && !snapshot->generation.active) {
-                settled = *snapshot;
-                break;
+            std::optional<SessionSnapshot> settled;
+            for (int attempt = 0; attempt < 200 && !settled; ++attempt) {
+                CommandSubmitResult state = welcome->snapshot(5s);
+                if (const auto* snapshot = std::get_if<SessionSnapshot>(&state);
+                    snapshot != nullptr && !snapshot->generation.active) {
+                    settled = *snapshot;
+                    break;
+                }
+                std::this_thread::sleep_for(5ms);
             }
-            std::this_thread::sleep_for(5ms);
+            ASSERT_TRUE(settled);
+            ASSERT_EQ(settled->transcript.size(), 2U);
+            EXPECT_EQ(settled->transcript.front().participant_id, guest_id);
+            EXPECT_EQ(settled->transcript.front().display_name, guest_name);
+            manager.begin_shutdown();
         }
-        ASSERT_TRUE(settled);
-        ASSERT_EQ(settled->transcript.size(), 2U);
-        EXPECT_EQ(settled->transcript.front().participant_id, guest_id);
-        EXPECT_EQ(settled->transcript.front().display_name, guest_name);
-        manager.begin_shutdown();
+
+        {
+            LiveSessionManager manager(manager_settings(1), graph.opener());
+            ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(
+                manager.open(welcome_key, 5s)));
+            LiveSessionHandle welcome = manager.lookup(welcome_key);
+            ASSERT_TRUE(welcome);
+            const CommandSubmitResult state = welcome->snapshot(5s);
+            const auto* snapshot = std::get_if<SessionSnapshot>(&state);
+            ASSERT_NE(snapshot, nullptr);
+            EXPECT_EQ(snapshot->transcript.size(), 2U);
+            manager.begin_shutdown();
+        }
     }
 
-    {
-        LiveSessionManager manager(manager_settings(1), graph.opener());
-        ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(
-            manager.open(welcome_key, 5s)));
-        LiveSessionHandle welcome = manager.lookup(welcome_key);
-        ASSERT_TRUE(welcome);
-        const CommandSubmitResult state = welcome->snapshot(5s);
-        const auto* snapshot = std::get_if<SessionSnapshot>(&state);
-        ASSERT_NE(snapshot, nullptr);
-        EXPECT_EQ(snapshot->transcript.size(), 2U);
-        manager.begin_shutdown();
-    }
-
-    // A second repository owns a different temporary database and starts empty.
+    // A later repository owns a different temporary database and starts empty.
     const test::WebGraph other_graph(fixture.root());
     LiveSessionManager other(manager_settings(1), other_graph.opener());
     ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(
@@ -306,22 +289,7 @@ TEST(LiveSessionManager, WelcomeReopensOnlyFromTheSameStorageWithItsForumPersona
     other.begin_shutdown();
 }
 
-TEST(LiveSessionManager, BusyAndLimitHaveStableErrors) {
-    SessionFiles files;
-    std::atomic<int> busy_attempts{};
-    LiveSessionManager busy(
-        manager_settings(1),
-        [&](const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier) {
-            if (++busy_attempts == 1) throw SessionBusyError("busy");
-            return test::open_leased_session(
-                identity, files.path_for(identity), notifier);
-        });
-    EXPECT_EQ(failure_of(busy.open({"f", "s"}, 2s)), LiveSessionOpenFailure::busy);
-    busy.sweep();
-    EXPECT_TRUE(std::holds_alternative<LiveSessionReady>(busy.open({"f", "s"}, 5s)));
-    EXPECT_EQ(busy_attempts, 2);
-    busy.begin_shutdown();
-
+TEST(LiveSessionManager, LimitHasStableError) {
     std::mutex mutex;
     std::condition_variable entered;
     bool release{};
@@ -336,7 +304,7 @@ TEST(LiveSessionManager, BusyAndLimitHaveStableErrors) {
                 entered.notify_all();
                 entered.wait(lock, [&] { return release; });
             }
-            return test::open_leased_session(
+            return test::open_test_session(
                 identity, limit_files.path_for(identity), notifier);
         });
     std::thread opener([&] { (void)limit.open({"f", "one"}, 5s); });
@@ -378,7 +346,7 @@ TEST(LiveSessionManager, SimultaneousDistinctOpensNeverExceedLimit) {
                 changed.wait(lock, [&] { return release; });
                 --active;
             }
-            return test::open_leased_session(
+            return test::open_test_session(
                 identity, files.path_for(identity), notifier);
         });
 
@@ -440,7 +408,7 @@ TEST(LiveSessionManager, ConcurrentSameKeyOpensShareOneOwnerAndOutcome) {
                 changed.notify_all();
                 changed.wait(lock, [&] { return release; });
             }
-            return test::open_leased_session(
+            return test::open_test_session(
                 identity, files.path_for(identity), notifier);
         });
     const FullSessionId key{"f", "same"};
@@ -478,7 +446,7 @@ TEST(LiveSessionManager, ConcurrentDifferentKeyOpensProceedIndependently) {
                 changed.wait(lock, [&] { return entered == 2; });
                 changed.notify_all();
             }
-            return test::open_leased_session(
+            return test::open_test_session(
                 identity, files.path_for(identity), notifier);
         });
     auto first = std::async(std::launch::async, [&] { return manager.open({"f", "one"}, 10s); });
@@ -500,7 +468,7 @@ TEST(LiveSessionManager, FailedOpenIsSweptAndCanBeRetried) {
         manager_settings(1),
         [&](const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier) {
             if (++attempts == 1) throw std::runtime_error("open failed");
-            return test::open_leased_session(
+            return test::open_test_session(
                 identity, files.path_for(identity), notifier);
         });
     const FullSessionId key{"f", "retry"};
@@ -508,27 +476,6 @@ TEST(LiveSessionManager, FailedOpenIsSweptAndCanBeRetried) {
         failure_of(manager.open(key, 2s)), LiveSessionOpenFailure::internal_error);
     EXPECT_TRUE(std::holds_alternative<LiveSessionReady>(manager.open(key, 5s)));
     EXPECT_EQ(attempts, 2);
-    manager.begin_shutdown();
-}
-
-TEST(LiveSessionManager, OpenerFailureReleasesItsHandoffLease) {
-    TemporaryLeasePath temporary;
-    LiveSessionManager manager(
-        manager_settings(1),
-        [path = temporary.path](const FullSessionId&, std::shared_ptr<WakeNotifier>)
-            -> OpenedSession {
-            SessionLease lease = SessionLease::acquire(path);
-            if (!lease.active()) {
-                throw std::logic_error("opener did not acquire its lease");
-            }
-            throw std::runtime_error("injected opener failure");
-        });
-
-    EXPECT_EQ(
-        failure_of(manager.open({"f", "failed-lease"}, 2s)),
-        LiveSessionOpenFailure::internal_error);
-    SessionLease reopened = SessionLease::acquire(temporary.path);
-    EXPECT_TRUE(reopened.active());
     manager.begin_shutdown();
 }
 
@@ -546,7 +493,7 @@ TEST(LiveSessionManager, TimeoutDoesNotCancelTheOpen) {
                 std::unique_lock lock(mutex);
                 changed.wait(lock, [&] { return release; });
             }
-            return test::open_leased_session(
+            return test::open_test_session(
                 identity, files.path_for(identity), notifier);
         });
     const FullSessionId key{"f", "slow"};
@@ -577,7 +524,7 @@ TEST(LiveSessionManager, WaitersHaveIndependentDeadlines) {
                 changed.notify_all();
                 changed.wait(lock, [&] { return release; });
             }
-            return test::open_leased_session(
+            return test::open_test_session(
                 identity, files.path_for(identity), notifier);
         });
     const FullSessionId key{"f", "deadlines"};
@@ -647,7 +594,7 @@ TEST(LiveSessionManager, ShutdownExposesUnfinishedOwnersWithoutCompletingStartup
                 changed.notify_all();
                 changed.wait(lock, [&] { return release; });
             }
-            return test::open_leased_session(
+            return test::open_test_session(
                 identity, files.path_for(identity), notifier);
         });
     const FullSessionId key{"f", "unfinished"};
@@ -678,7 +625,7 @@ TEST(LiveSessionManager, ShutdownAtCommitNeverPublishesAndTearsDownTheNewControl
             ++opens;
             // Shutdown wins the commit race while this open is still running.
             manager_pointer->begin_shutdown();
-            return test::open_leased_session(identity, file.path(), notifier);
+            return test::open_test_session(identity, file.path(), notifier);
         });
     manager_pointer = &manager;
     const FullSessionId key{"f", "commit-race"};
@@ -689,9 +636,7 @@ TEST(LiveSessionManager, ShutdownAtCommitNeverPublishesAndTearsDownTheNewControl
     EXPECT_TRUE(manager.join_shutdown(10s));
     EXPECT_EQ(opens, 1);
     EXPECT_FALSE(manager.lookup(key));
-    // The controller that opening produced was still shut down and released.
-    SessionLease reopened = SessionLease::acquire(file.path());
-    EXPECT_TRUE(reopened.active());
+    // The controller that opening produced was still shut down.
 }
 
 TEST(LiveSessionManager, ShutdownJoinUsesOneBoundedGracePeriod) {
@@ -750,7 +695,7 @@ TEST(LiveSessionManager, ReopensSameKeyAfterTheOldOwnerHasBeenJoined) {
         manager_settings(2),
         [&](const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier) {
             ++starts;
-            return test::open_leased_session(
+            return test::open_test_session(
                 identity, files.path_for(identity), notifier);
         });
     const FullSessionId key{"f", "reopen"};
@@ -760,9 +705,8 @@ TEST(LiveSessionManager, ReopensSameKeyAfterTheOldOwnerHasBeenJoined) {
     old_handle->request_shutdown();
     ASSERT_TRUE(wait_for_finished(old_handle));
 
-    // The old actor released its cross-process lease before publishing
-    // finished, so the same identity opens again from the same storage while
-    // the old handle is still retained by this test.
+    // The old actor released its controller before publishing finished, so the
+    // same identity opens again while the old handle is retained by this test.
     ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(manager.open(key, 5s)));
     LiveSessionHandle fresh = manager.lookup(key);
     ASSERT_TRUE(fresh);
@@ -780,7 +724,7 @@ TEST(LiveSessionManager, DeletionReservationStopsTheActorAndBlocksOpenAndReattac
     WebSettings settings = manager_settings(2);
     settings.sse_drain_deadline = 10ms;
     settings.delete_deadline = 1s;
-    LiveSessionManager manager(settings, leased_opener(files));
+    LiveSessionManager manager(settings, test_opener(files));
     const FullSessionId key{"forum", "reserved"};
     ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(manager.open(key, 5s)));
 
@@ -803,18 +747,12 @@ TEST(LiveSessionManager, RepeatedOpenUnloadCyclesReapOwnersAndReleaseCapacity) {
     constexpr int cycles = 20;
     SessionFiles files;
     std::atomic<int> starts{};
-    std::atomic<int> lease_conflicts{};
     LiveSessionManager manager(
         manager_settings(1),
         [&](const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier) {
             ++starts;
-            try {
-                return test::open_leased_session(
-                    identity, files.path_for(identity), notifier);
-            } catch (const SessionBusyError&) {
-                ++lease_conflicts;
-                throw;
-            }
+            return test::open_test_session(
+                identity, files.path_for(identity), notifier);
         });
     const FullSessionId key{"forum", "cycled"};
 
@@ -835,7 +773,6 @@ TEST(LiveSessionManager, RepeatedOpenUnloadCyclesReapOwnersAndReleaseCapacity) {
     }
 
     EXPECT_EQ(starts, cycles);
-    EXPECT_EQ(lease_conflicts, 0);
 }
 
 } // namespace

@@ -1,46 +1,56 @@
 #pragma once
 
-#include "session/session_database.h"
 #include "chat/session_identity.h"
+#include "session/session_database.h"
 #include "session/session_lease.h"
 #include "session/stored_session.h"
 
 #include <filesystem>
+#include <mutex>
+#include <shared_mutex>
 #include <string>
 #include <string_view>
 #include <vector>
 
 namespace cha {
 
-class SessionCatalog;
+class Workspace;
 
-// The one process-local session the repository creates and owns for itself.
-// The application names it; this layer holds no built-in identifiers.
 struct TemporarySessionSeed {
     FullSessionId identity;
     std::string label;
 };
 
-// A session's storage, validated and leased, ready for a controller. Holding
-// this value holds the lease: destroying it releases the session again. This is
-// the only storage value that proves anything about the session it names; a
-// StoredSession observed before the lease does not.
 struct PreparedSession {
     FullSessionId identity;
     std::string label;
     std::filesystem::path database_path;
-    SessionLease lease;
+    SessionKey session_key{};
     SessionRestore restore;
 };
 
-// Owns every session-storage operation the application needs: the persistent
-// per-forum catalogs and the one temporary session it creates at construction
-// and removes at destruction. It constructs catalog helpers per operation, so
-// a repository serves concurrent const calls; exclusion comes from session
-// leases. Persistent forum existence and paths come from the currently
-// published Workspace; it caches no workspace configuration or session rows.
+// Owns the process-lifetime workspace lease. Repository operations use
+// short-lived connections; every live actor opens its own journal connection.
 class SessionRepository final {
 public:
+    class MaintenanceGuard {
+    public:
+        ~MaintenanceGuard() = default;
+        MaintenanceGuard(MaintenanceGuard&&) = delete;
+        MaintenanceGuard& operator=(MaintenanceGuard&&) = delete;
+        MaintenanceGuard(const MaintenanceGuard&) = delete;
+        MaintenanceGuard& operator=(const MaintenanceGuard&) = delete;
+
+        void checkpoint() const;
+
+    private:
+        friend class SessionRepository;
+        explicit MaintenanceGuard(const SessionRepository& repository);
+
+        const SessionRepository* repository_;
+        std::unique_lock<std::shared_mutex> lock_;
+    };
+
     SessionRepository(
         std::filesystem::path workspace_root,
         TemporarySessionSeed temporary);
@@ -49,25 +59,40 @@ public:
     SessionRepository(const SessionRepository&) = delete;
     SessionRepository& operator=(const SessionRepository&) = delete;
 
-    // Tolerant: an identifiable database with invalid metadata stays visible.
-    // Results are ordered by session ID.
-    [[nodiscard]] std::vector<StoredSession> list(std::string_view forum_id) const;
-    // Strict: throws for a missing or invalid selected session.
+    [[nodiscard]] std::vector<StoredSession> list(
+        std::string_view forum_id) const;
+    [[nodiscard]] std::vector<StoredSession> recent() const;
     void validate(const FullSessionId& identity) const;
-    // The temporary forum has no creation path and reports ForumNotFoundError.
-    [[nodiscard]] StoredSession create(std::string_view forum_id, std::string label) const;
+    [[nodiscard]] StoredSession create(
+        std::string_view forum_id,
+        std::string label) const;
     [[nodiscard]] StoredSession rename(
         const FullSessionId& identity,
         std::string label) const;
-    // Recoverable deletion moves the database into the forum's deleted/
-    // directory. The companion lease file deliberately stays in place.
-    void move_to_deleted(const FullSessionId& identity) const;
-    [[nodiscard]] PreparedSession prepare(const FullSessionId& identity) const;
+    void archive(const FullSessionId& identity) const;
+    [[nodiscard]] PreparedSession prepare(
+        const FullSessionId& identity) const;
+    [[nodiscard]] std::vector<TranscriptEntry> history(
+        const FullSessionId& identity) const;
+
+    // Fences new repository operations and waits for existing ones. Live
+    // actors write through SessionJournal and must be stopped separately.
+    [[nodiscard]] MaintenanceGuard reserve_maintenance() const;
+    void synchronize_forums() const;
+    void synchronize_forums(const Workspace& workspace) const;
+
+    [[nodiscard]] const std::filesystem::path& database_path() const noexcept {
+        return database_path_;
+    }
 
 private:
-    [[nodiscard]] SessionCatalog catalog_for(std::string_view forum_id) const;
+    void require_persistent_forum(std::string_view forum_id) const;
+    void synchronize_forums_unlocked(const Workspace& workspace) const;
 
+    mutable std::shared_mutex operation_mutex_;
     std::filesystem::path workspace_root_;
+    std::filesystem::path database_path_;
+    SessionLease workspace_lease_;
     FullSessionId temporary_identity_;
     std::string temporary_label_;
     std::filesystem::path temporary_directory_;

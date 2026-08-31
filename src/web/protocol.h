@@ -30,11 +30,10 @@ enum class ShutdownReason {
 };
 enum class ErrorCode {
     not_found, bad_request, body_too_large, prompt_too_large, forbidden_origin,
-    internal_error, session_busy, session_stopping,
+    internal_error, session_stopping,
     session_limit_reached, session_open_timeout, server_stopping,
     session_not_live, command_timeout,
-    command_queue_full, session_delete_conflict,
-    workspace_reload_failed,
+    command_queue_full, workspace_reload_failed,
 };
 
 // The lobby publishes the workspace-wide persona roster for discovery: the

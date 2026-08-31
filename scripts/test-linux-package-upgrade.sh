@@ -79,9 +79,9 @@ curl --silent --fail \
     "$origin/api/v1/forums/lobby/sessions/$session_id/open" >/dev/null
 stop_server
 
-database="$workspace/forums/lobby/sessions/$session_id.sqlite3"
+database="$workspace/workspace.sqlite3"
 if [ ! -f "$database" ]; then
-    echo "upgrade test: stored session database was not created" >&2
+    echo "upgrade test: workspace database was not created" >&2
     exit 1
 fi
 owned_before=$(sha256sum \

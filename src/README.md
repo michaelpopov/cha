@@ -62,29 +62,33 @@ is copied into protocol snapshots or append events and delivered through an
 events and persists turn transitions; every provider request owns its own
 worker, client, curl handle, cancellation state, and event queue. The owner
 thread never waits for provider cleanup during `/stop` or controller teardown.
-A stored session lease remains owned until the controller and journal are
-destroyed.
+`SessionRepository` owns one process-lifetime lease for the workspace database.
+Each live actor owns a separate SQLite journal connection scoped by its
+internal session key; repository operations use short-lived connections.
 
-Welcome is the sole built-in Entrance session. `SessionRepository` creates and
-owns its process-local database directory and removes it on destruction, while
-ordinary sessions are addressed by stable forum and session IDs in workspace
-storage.
+Welcome is the sole built-in Entrance session. `SessionRepository` creates a
+private temporary file outside the workspace with the same schema and journal
+path as persistent sessions, then removes it on destruction. All persistent
+sessions share `workspace/workspace.sqlite3` and are addressed by stable forum
+and session IDs.
 
 ## Persistence and identity
 
 The transcript is the source of presentation-neutral chat history. The session
 journal persists typed turns and entries transactionally in SQLite. Stable IDs
 are stored and used in routes; display names and labels are presentation data.
-Opening a session validates that its database metadata matches its forum,
-filename, and schema before restoring it.
+Opening a session resolves `(forum_id, session_id)` to an internal
+`session_key`, validates the workspace database identity, and restores only
+rows belonging to that key.
 
 One immutable `Workspace` is published process-wide, while one independent
 `SessionRepository` owns session-storage operations. `POST
-/api/v1/workspace/reload` first shuts down and joins every live session, then
-loads, validates, synchronizes, and atomically publishes one replacement. A
-failed candidate leaves the current workspace published. Disk configuration
-edits become visible only after a successful reload. Session listings are read
-from storage per request, so newly created sessions appear without a reload.
+/api/v1/workspace/reload` first shuts down and joins every live session,
+checkpoints the database, backs up the workspace, then loads, validates,
+synchronizes, and atomically publishes one replacement. A failed candidate
+leaves the current workspace published. Disk configuration edits become
+visible only after a successful reload. Session listings are read from SQLite
+per request, so newly created sessions appear without a reload.
 
 ## Build and test map
 

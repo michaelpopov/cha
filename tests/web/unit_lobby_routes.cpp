@@ -8,9 +8,10 @@
 
 #include "workspace/builtins.h"
 
+#include "session/not_found_error.h"
 #include "session/session_controller.h"
-#include "session/session_lease.h"
 #include "session/session_repository.h"
+#include "session/sqlite_storage.h"
 
 #include <gtest/gtest.h>
 #include <httplib.h>
@@ -337,6 +338,43 @@ TEST(LobbyRoutes, ReloadsWorkspaceDiscoveryAndRestartsEveryLiveSession) {
         "/api/v1/forums/writers/sessions", R"({"label":"Draft"})", "application/json");
     ASSERT_TRUE(created);
     EXPECT_EQ(created->status, 201) << created->body;
+}
+
+TEST(LobbyRoutes, DoesNotBackupWhenCheckpointRemainsBusy) {
+    test::TestWorkspace fixture;
+    const LobbyGraph graph(fixture.root());
+    LiveSessionManager manager(lobby_settings(2), counting_opener(graph));
+    TestServer server(graph, manager);
+
+    storage::SqliteDatabase reader(
+        graph.sessions()->database_path(),
+        storage::SqliteDatabase::Mode::read_only);
+    reader.execute("BEGIN");
+    {
+        storage::SqliteStatement snapshot = reader.prepare(
+            "SELECT COUNT(*) FROM forums");
+        ASSERT_TRUE(snapshot.step());
+    }
+    {
+        storage::SqliteDatabase writer(
+            graph.sessions()->database_path(),
+            storage::SqliteDatabase::Mode::read_write);
+        writer.execute(
+            "INSERT INTO forums (forum_id) VALUES ('checkpoint-order')");
+    }
+    std::filesystem::path wal = graph.sessions()->database_path();
+    wal += "-wal";
+    ASSERT_GT(std::filesystem::file_size(wal), 0U);
+
+    httplib::Client client = server.client();
+    client.set_read_timeout(10s);
+    expect_error(
+        client.Post("/api/v1/workspace/reload", "{}", "application/json"),
+        422, "workspace_reload_failed");
+
+    EXPECT_GT(std::filesystem::file_size(wal), 0U);
+    EXPECT_FALSE(std::filesystem::exists(graph.root() / "backups"));
+    reader.execute("ROLLBACK");
 }
 
 TEST(LobbyRoutes, KeepsThePublishedWorkspaceWhenReloadFailsAfterBackup) {
@@ -838,9 +876,9 @@ TEST(LobbyRoutes, RenamesAndRecoverablyDeletesStoredSessions) {
     EXPECT_EQ(deleted->status, 204);
     EXPECT_TRUE(deleted->body.empty());
     EXPECT_TRUE(graph.sessions()->list("lobby").empty());
-    EXPECT_TRUE(std::filesystem::exists(
-        fixture.root() / "forums" / "lobby" / "sessions" / "deleted"
-            / (id + ".sqlite3")));
+    EXPECT_THROW(
+        (void)graph.sessions()->prepare({"lobby", id}),
+        SessionNotFoundError);
 }
 
 TEST(LobbyRoutes, DownloadsStoredAndLiveSessionsAsMarkdown) {
@@ -851,7 +889,8 @@ TEST(LobbyRoutes, DownloadsStoredAndLiveSessionsAsMarkdown) {
     const std::string id = create_session(server, "Review notes");
     {
         PreparedSession prepared = graph.sessions()->prepare({"lobby", id});
-        SessionJournal journal(prepared.database_path);
+        SessionJournal journal(
+            prepared.database_path, prepared.session_key);
         const TranscriptEntry prompt = make_human_entry({
             .id = 1,
             .author = {"reader", "Reader"},
@@ -1080,47 +1119,6 @@ TEST(LobbyRoutes, ValidatesMissingIdentifiersMethodsAndOriginWithoutOrigin) {
     manager.begin_shutdown();
 }
 
-TEST(LobbyRoutes, ReportsSessionListingStorageFailuresAsInternalErrors) {
-    test::TestWorkspace fixture;
-    std::ofstream(fixture.root() / "forums" / "lobby" / "sessions")
-        << "not a directory";
-    const LobbyGraph graph(fixture.root());
-    LiveSessionManager manager(lobby_settings(2), counting_opener(graph));
-    TestServer server(graph, manager);
-
-    expect_error(
-        server.client().Get("/api/v1/forums/lobby/sessions"),
-        500,
-        "internal_error");
-    expect_error(
-        server.client().Get("/api/v1/forums/missing/sessions"),
-        404,
-        "not_found");
-}
-
-TEST(LobbyRoutes, ReportsCorruptSessionMetadataAsInternalError) {
-    test::TestWorkspace fixture;
-    const LobbyGraph graph(fixture.root());
-    std::atomic<int> starts{};
-    LiveSessionManager manager(lobby_settings(2), counting_opener(graph, &starts));
-    TestServer server(graph, manager);
-    const std::string id = create_session(server, "Corrupt");
-    std::ofstream(
-        fixture.root() / "forums" / "lobby" / "sessions"
-            / (id + ".sqlite3"),
-        std::ios::binary | std::ios::trunc)
-        << "not SQLite";
-
-    expect_error(
-        server.client().Post(
-            "/api/v1/forums/lobby/sessions/" + id + "/open",
-            "{}",
-            "application/json"),
-        500,
-        "internal_error");
-    EXPECT_EQ(starts, 0);
-}
-
 TEST(LobbyRoutes, ReattachesFromTheLiveSessionMapWithoutReadingStorageAgain) {
     test::TestWorkspace fixture;
     const LobbyGraph graph(fixture.root());
@@ -1134,9 +1132,7 @@ TEST(LobbyRoutes, ReattachesFromTheLiveSessionMapWithoutReadingStorageAgain) {
         server.client().Post(route, "{}", "application/json");
     ASSERT_TRUE(opened);
     ASSERT_EQ(opened->status, 200);
-    ASSERT_TRUE(std::filesystem::remove(
-        fixture.root() / "forums" / "lobby" / "sessions"
-            / (id + ".sqlite3")));
+    graph.sessions()->archive({"lobby", id});
 
     const auto reattached =
         server.client().Post(route, "{}", "application/json");
@@ -1154,19 +1150,15 @@ TEST(LobbyRoutes, DeletedSessionBetweenValidationAndOpenReturnsNotFoundAndReleas
     const LobbyGraph graph(fixture.root());
     const StoredSession deleted = graph.sessions()->create("lobby", "Deleted");
     const StoredSession survivor = graph.sessions()->create("lobby", "Survivor");
-    const std::filesystem::path deleted_database =
-        fixture.root() / "forums" / "lobby" / "sessions"
-        / (deleted.identity.session_id + ".sqlite3");
     const WebSettings settings = lobby_settings(1);
     const SessionOpener open_real = graph.opener();
     LiveSessionManager manager(
         settings,
-        [open_real, deleted, deleted_database](
+        [open_real, deleted, sessions = graph.sessions()](
             const FullSessionId& key,
             std::shared_ptr<WakeNotifier> notifier) {
-            if (key.session_id == deleted.identity.session_id
-                && !std::filesystem::remove(deleted_database)) {
-                throw std::runtime_error("Test session was not deleted");
+            if (key.session_id == deleted.identity.session_id) {
+                sessions->archive(key);
             }
             return open_real(key, notifier);
         });
@@ -1190,7 +1182,7 @@ TEST(LobbyRoutes, DeletedSessionBetweenValidationAndOpenReturnsNotFoundAndReleas
     manager.begin_shutdown();
 }
 
-TEST(LobbyRoutes, DeletedForumBetweenValidationAndOpenReturnsNotFound) {
+TEST(LobbyRoutes, DiskForumRemovalDoesNotChangeThePublishedWorkspace) {
     test::TestWorkspace fixture;
     const LobbyGraph graph(fixture.root());
     const StoredSession stored = graph.sessions()->create("lobby", "Deleted forum");
@@ -1210,14 +1202,14 @@ TEST(LobbyRoutes, DeletedForumBetweenValidationAndOpenReturnsNotFound) {
         });
     TestServer server(graph, manager, settings);
 
-    expect_error(
-        server.client().Post(
-            "/api/v1/forums/lobby/sessions/" + stored.identity.session_id + "/open",
-            "{}",
-            "application/json"),
-        404,
-        "not_found");
-    EXPECT_EQ(manager.snapshot().live_session_count, 0U);
+    const auto opened = server.client().Post(
+        "/api/v1/forums/lobby/sessions/" + stored.identity.session_id + "/open",
+        "{}",
+        "application/json");
+    ASSERT_TRUE(opened);
+    EXPECT_EQ(opened->status, 200);
+    EXPECT_EQ(manager.snapshot().live_session_count, 1U);
+    manager.begin_shutdown();
 }
 
 TEST(LobbyRoutes, ValidatesOpenBodyAndAppliesTheRequestLimit) {
@@ -1304,67 +1296,6 @@ TEST(LobbyRoutes, WrapsGeneratedAndUnhandledErrorsInTheCommonEnvelope) {
     EXPECT_EQ(
         body(unknown)["error"]["message"],
         "The requested resource was not found.");
-}
-
-TEST(LobbyRoutes, NewStoredSessionSurvivesBusyOpenAndCanBeRetried) {
-    test::TestWorkspace fixture;
-    const LobbyGraph graph(fixture.root());
-    std::atomic<bool> busy{true};
-    LiveSessionManager manager(
-        lobby_settings(),
-        [&busy, open = graph.opener()](
-            const FullSessionId& key, std::shared_ptr<WakeNotifier> notifier) {
-            if (busy) throw SessionBusyError("held by test");
-            return open(key, notifier);
-        });
-    TestServer server(graph, manager);
-    const std::string id = create_session(server);
-    const std::string route = "/api/v1/forums/lobby/sessions/" + id + "/open";
-
-    expect_error(
-        server.client().Post(route, "{}", "application/json"),
-        409,
-        "session_busy",
-        "Session is busy.");
-    EXPECT_TRUE(listed_not_live(server, id));
-
-    busy = false;
-    const auto opened = server.client().Post(route, "{}", "application/json");
-    ASSERT_TRUE(opened);
-    EXPECT_EQ(opened->status, 200);
-    EXPECT_EQ(body(opened), nlohmann::json({{"forum_id", "lobby"}, {"session_id", id}}));
-    manager.begin_shutdown();
-}
-
-TEST(LobbyRoutes, CreateSucceedsWhileAnotherStoredSessionLeaseIsHeld) {
-    test::TestWorkspace fixture;
-    const LobbyGraph graph(fixture.root());
-    const WebSettings settings = lobby_settings(1);
-    LiveSessionManager manager(settings, graph.opener());
-    TestServer server(graph, manager, settings);
-    const std::string leased_id = create_session(server, "Externally held");
-    SessionLease held = SessionLease::acquire(
-        fixture.root() / "forums" / "lobby" / "sessions"
-            / (leased_id + ".sqlite3"));
-    (void)held;
-
-    const auto created = server.client().Post(
-        "/api/v1/forums/lobby/sessions",
-        R"({"label":"Created while busy"})",
-        "application/json");
-    ASSERT_TRUE(created);
-    EXPECT_EQ(created->status, 201);
-    EXPECT_FALSE(body(created).contains("error"));
-
-    expect_error(
-        server.client().Post(
-            "/api/v1/forums/lobby/sessions/" + leased_id + "/open",
-            "{}",
-            "application/json"),
-        409,
-        "session_busy",
-        "Session is busy.");
-    manager.begin_shutdown();
 }
 
 TEST(LobbyRoutes, NewStoredSessionSurvivesInitializationFailureAndCanBeRetried) {
@@ -1480,13 +1411,12 @@ TEST(LobbyRoutes, MapsStoppingAndManagerShutdownOpenFailuresToExistingEnvelopes)
     std::atomic<int> starts{};
     LiveSessionManager manager(
         lobby_settings(1),
-        [&starts, controls, root = graph.root()](
+        [&starts, controls, database = graph.sessions()->database_path()](
             const FullSessionId& key, std::shared_ptr<WakeNotifier> notifier) {
             ++starts;
             return test::open_scripted_session(
                 key,
-                root / "forums" / key.forum_id / "sessions"
-                    / (key.session_id + ".sqlite3"),
+                database,
                 notifier,
                 controls);
         });

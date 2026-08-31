@@ -79,11 +79,6 @@ TEST(Workspace, EagerlyLoadsOwnedResolvedData) {
     ASSERT_EQ(workspace.find_forum("lobby")->members.size(), 1U);
     ASSERT_NE(workspace.find_forum_member("lobby", "guide"), nullptr);
     EXPECT_EQ(
-        workspace.forum_session_directory("lobby"),
-        fixture.root() / "forums" / "lobby" / "sessions");
-    EXPECT_FALSE(
-        workspace.forum_session_directory(workspace_entrance_id));
-    EXPECT_EQ(
         workspace.find_forum("lobby")->members.front().character_prompt,
         "Welcome, I am Guide in The Lobby.\n"
         "<character_profile>\nIntrinsic Guide.\n</character_profile>\n");

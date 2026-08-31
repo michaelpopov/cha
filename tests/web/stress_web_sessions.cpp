@@ -33,7 +33,7 @@ namespace {
 using namespace std::chrono_literals;
 
 // One temporary database per identity. Every session in this file runs a real
-// SessionController over its own storage and its own cross-process lease.
+// SessionController over its own storage.
 class SessionFiles {
 public:
     const std::filesystem::path& path_for(const FullSessionId& key) {
@@ -119,7 +119,7 @@ TEST(WebSessionStress, ConcurrentSessionsKeepCommandsOnIndependentQueues) {
     LiveSessionManager manager(
         settings,
         [&files](const FullSessionId& key, std::shared_ptr<WakeNotifier> notifier) {
-            return test::open_leased_session(key, files.path_for(key), notifier);
+            return test::open_test_session(key, files.path_for(key), notifier);
         });
 
     auto open = [&manager](std::string id) {
@@ -185,7 +185,7 @@ TEST(WebSessionStress, BlockedOwnerDoesNotDelayAnotherSession) {
                     test::one_backend(test::scripted_backend(blocked_controls)),
                     [&gate](std::size_t) { gate.wait(); });
             }
-            return test::open_leased_session(key, files.path_for(key), notifier);
+            return test::open_test_session(key, files.path_for(key), notifier);
         });
     ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(
         manager.open({"forum", "blocked"}, 10s)));
@@ -225,7 +225,7 @@ TEST(WebSessionStress, RepeatedOpenUnloadReopenAndSweepRacesPreserveLimit) {
         settings,
         [&](const FullSessionId& key, std::shared_ptr<WakeNotifier> notifier) {
             ++starts;
-            return test::open_leased_session(key, files.path_for(key), notifier);
+            return test::open_test_session(key, files.path_for(key), notifier);
         });
 
     for (int round = 0; round != rounds; ++round) {
@@ -320,7 +320,7 @@ TEST(WebSessionStress, FatalSessionDoesNotInterruptItsPeer) {
     LiveSessionManager manager(
         settings,
         [&files](const FullSessionId& key, std::shared_ptr<WakeNotifier> notifier) {
-            return test::open_leased_session(key, files.path_for(key), notifier);
+            return test::open_test_session(key, files.path_for(key), notifier);
         });
     const FullSessionId failing{"forum", "failing"};
     const FullSessionId healthy{"forum", "healthy"};
@@ -349,11 +349,8 @@ TEST(WebSessionStress, FatalSessionDoesNotInterruptItsPeer) {
     failing_session = {};
     ASSERT_TRUE(wait_for_live_count(manager, 1));
     EXPECT_TRUE(manager.lookup(healthy));
-    // The failed actor released its lease and its capacity; only its own
-    // storage is now unusable.
-    SessionLease reopened = SessionLease::acquire(files.path_for(failing));
-    EXPECT_TRUE(reopened.active());
-    reopened = SessionLease::inactive_for_testing();
+    // The failed actor released its capacity; only its own storage is now
+    // unusable.
     EXPECT_TRUE(std::holds_alternative<LiveSessionReady>(
         manager.open({"forum", "replacement"}, 10s)));
 
@@ -361,7 +358,7 @@ TEST(WebSessionStress, FatalSessionDoesNotInterruptItsPeer) {
     EXPECT_TRUE(manager.join_shutdown(10s));
 }
 
-TEST(WebSessionStress, ConcurrentWorkspaceLifecycleKeepsMailboxesAndLeasesIndependent) {
+TEST(WebSessionStress, ConcurrentWorkspaceLifecycleKeepsMailboxesAndRowsIndependent) {
     test::TestWorkspace fixture;
     const test::WebGraph graph(fixture.root());
     constexpr std::size_t session_count = 10;
@@ -425,12 +422,11 @@ TEST(WebSessionStress, ConcurrentWorkspaceLifecycleKeepsMailboxesAndLeasesIndepe
     }
     EXPECT_EQ(mailboxes.size(), session_count);
 
-    for (const StoredSession& session : sessions) {
-        const std::filesystem::path database =
-            fixture.root() / "forums" / "lobby" / "sessions"
-            / (session.identity.session_id + ".sqlite3");
-        EXPECT_THROW((void)SessionLease::acquire(database), SessionBusyError);
-    }
+    EXPECT_THROW(
+        (void)SessionLease::acquire(
+            graph.sessions()->database_path(),
+            "Stress-test workspace already in use"),
+        SessionBusyError);
 
     std::vector<std::future<CommandSubmitResult>> commands;
     commands.reserve(session_count);
@@ -460,13 +456,11 @@ TEST(WebSessionStress, ConcurrentWorkspaceLifecycleKeepsMailboxesAndLeasesIndepe
     for (auto& unload : unloads) unload.get();
 
     ASSERT_TRUE(wait_for_live_count(manager, 0));
-    for (const StoredSession& session : sessions) {
-        const std::filesystem::path database =
-            fixture.root() / "forums" / "lobby" / "sessions"
-            / (session.identity.session_id + ".sqlite3");
-        SessionLease lease = SessionLease::acquire(database);
-        EXPECT_TRUE(lease.active());
-    }
+    EXPECT_THROW(
+        (void)SessionLease::acquire(
+            graph.sessions()->database_path(),
+            "Stress-test workspace already in use"),
+        SessionBusyError);
 }
 
 } // namespace

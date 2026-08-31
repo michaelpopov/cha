@@ -1307,14 +1307,6 @@ CharacterDefinition Workspace::character_definition(
     };
 }
 
-std::optional<std::filesystem::path> Workspace::forum_session_directory(
-    std::string_view forum_id) const {
-    if (find_forum(forum_id) == nullptr || forum_id == workspace_entrance_id) {
-        return std::nullopt;
-    }
-    return root_ / "forums" / path_from_utf8(forum_id) / "sessions";
-}
-
 bool Workspace::character_is_writable(std::string_view id) const noexcept {
     return character_config_paths_.contains(std::string(id));
 }

@@ -97,17 +97,13 @@ TEST_F(SessionOpenTest, DiskEditsDoNotAffectOpeningUntilLoadws) {
         std::string::npos);
 }
 
-TEST_F(SessionOpenTest, ReportsMissingForumSessionAndLeaseContention) {
+TEST_F(SessionOpenTest, ReportsMissingForumAndSession) {
     EXPECT_THROW(
         (void)open({"missing", "session"}),
         ForumNotFoundError);
     EXPECT_THROW(
         (void)open({"lobby", "missing"}),
         SessionNotFoundError);
-
-    const StoredSession stored = sessions_->create("lobby", "Stored");
-    OpenedSession first = open(stored.identity);
-    EXPECT_THROW((void)open(stored.identity), SessionBusyError);
 }
 
 } // namespace

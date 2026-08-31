@@ -2,8 +2,6 @@
 
 #include "workspace/workspace.h"
 #include "session/not_found_error.h"
-#include "session/session_delete_conflict.h"
-#include "session/session_lease.h"
 #include "session/session_label.h"
 #include "session/session_repository.h"
 #include "web/http_response.h"
@@ -20,7 +18,6 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
-#include <chrono>
 #include <exception>
 #include <filesystem>
 #include <new>
@@ -74,9 +71,6 @@ void set_open_result(
     switch (std::get<LiveSessionOpenFailure>(result)) {
     case LiveSessionOpenFailure::not_found:
         set_route_not_found(response);
-        return;
-    case LiveSessionOpenFailure::busy:
-        set_error_response(response, 409, {ErrorCode::session_busy, "Session is busy."});
         return;
     case LiveSessionOpenFailure::stopping:
         set_error_response(response, 409, {ErrorCode::session_stopping, "Session is stopping."});
@@ -197,12 +191,6 @@ ForumSummary forum_summary(
     return result;
 }
 
-std::int64_t updated_at(std::filesystem::file_time_type time) {
-    const auto system_time = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
-        time - std::filesystem::file_time_type::clock::now() + std::chrono::system_clock::now());
-    return std::chrono::duration_cast<std::chrono::seconds>(system_time.time_since_epoch()).count();
-}
-
 std::vector<SessionListing> sessions_for(
     const SessionRepository& sessions,
     const LiveSessionManagerSnapshot& snapshot,
@@ -211,25 +199,21 @@ std::vector<SessionListing> sessions_for(
     for (const StoredSession& stored : sessions.list(forum_id)) {
         result.push_back({stored.identity.session_id, stored.label,
                           is_running(snapshot, stored.identity),
-                          updated_at(stored.updated_at)});
+                          stored.updated_at});
     }
     return result;
 }
 
 std::vector<RecentSession> recent_sessions(
-    const Workspace& workspace,
     const SessionRepository& sessions) {
     std::vector<RecentSession> result;
-    for (const WorkspaceForum& forum : workspace.forums()) {
-        for (const StoredSession& stored : sessions.list(forum.id)) {
-            result.push_back({forum.id, stored.identity.session_id, stored.label,
-                updated_at(stored.updated_at)});
-        }
+    for (const StoredSession& stored : sessions.recent()) {
+        result.push_back({
+            stored.identity.forum_id,
+            stored.identity.session_id,
+            stored.label,
+            stored.updated_at});
     }
-    std::sort(result.begin(), result.end(),
-        [](const RecentSession& left, const RecentSession& right) {
-            return left.updated_at > right.updated_at;
-        });
     return result;
 }
 
@@ -248,7 +232,7 @@ Bootstrap bootstrap_for(
     for (const WorkspaceForum& forum : workspace.forums()) {
         bootstrap.forums.push_back(forum_summary(forum, workspace));
     }
-    bootstrap.recent_sessions = recent_sessions(workspace, sessions);
+    bootstrap.recent_sessions = recent_sessions(sessions);
     return bootstrap;
 }
 
@@ -301,8 +285,14 @@ void LobbyRoutes::install(httplib::Server& server) const {
         }
         try {
             const auto current = published_workspace();
-            (void)backup_workspace(current->root(), backup_dir);
+            {
+                const SessionRepository::MaintenanceGuard maintenance =
+                    sessions->reserve_maintenance();
+                maintenance.checkpoint();
+                (void)backup_workspace(current->root(), backup_dir);
+            }
             Workspace candidate = Workspace::load(current->root());
+            sessions->synchronize_forums(candidate);
             loadws(std::move(candidate));
         } catch (const std::bad_alloc&) {
             throw;
@@ -478,9 +468,6 @@ void LobbyRoutes::install(httplib::Server& server) const {
             set_route_not_found(response);
         } catch (const SessionNotFoundError&) {
             set_route_not_found(response);
-        } catch (const SessionBusyError&) {
-            set_error_response(response, 409,
-                {ErrorCode::session_busy, "Session is busy."});
         }
     });
 
@@ -531,10 +518,6 @@ void LobbyRoutes::install(httplib::Server& server) const {
         } catch (const SessionNotFoundError&) {
             log_warn(session_event(key, "rename_failed"));
             set_route_not_found(response);
-        } catch (const SessionBusyError&) {
-            log_warn(session_event(key, "rename_failed"));
-            set_error_response(response, 409,
-                {ErrorCode::session_busy, "Session is busy."});
         } catch (const std::invalid_argument&) {
             log_warn(session_event(key, "rename_failed"));
             set_error_response(response, 400,
@@ -575,8 +558,8 @@ void LobbyRoutes::install(httplib::Server& server) const {
                 {ErrorCode::session_stopping, "Session is stopping."});
         }
         try {
-            sessions->move_to_deleted(key);
-            log_info(session_event(key, "delete_moved"));
+            sessions->archive(key);
+            log_info(session_event(key, "delete_archived"));
             response.status = 204;
             response.set_header("Cache-Control", "no-store");
         } catch (const ForumNotFoundError&) {
@@ -585,15 +568,6 @@ void LobbyRoutes::install(httplib::Server& server) const {
         } catch (const SessionNotFoundError&) {
             log_warn(session_event(key, "delete_failed"));
             set_route_not_found(response);
-        } catch (const SessionBusyError&) {
-            log_warn(session_event(key, "delete_failed"));
-            set_error_response(response, 409,
-                {ErrorCode::session_busy, "Session is busy."});
-        } catch (const SessionDeleteConflictError&) {
-            log_warn(session_event(key, "delete_failed"));
-            set_error_response(response, 409,
-                {ErrorCode::session_delete_conflict,
-                 "A deleted copy of this session already exists."});
         } catch (...) {
             log_warn(session_event(key, "delete_failed"));
             throw;

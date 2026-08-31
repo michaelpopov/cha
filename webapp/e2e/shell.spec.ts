@@ -1,6 +1,6 @@
 import { expect, test, type BrowserContext, type Page } from '@playwright/test';
-import { access } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import type { SessionSnapshot } from '../src/api/client';
 
 // Creates a stored session in the workspace forum and leaves the page on it,
@@ -119,7 +119,7 @@ test('renames an open session from Recent across every visible catalog', async (
   await expect(page.getByText(renamed, { exact: true }).last()).toBeVisible();
 });
 
-test('deletes a closed session and retains its database outside the catalog', async ({ page }) => {
+test('deletes a closed session and retains its archived row outside the catalog', async ({ page }) => {
   const label = `Closed delete browser test ${Date.now()}`;
   const sessionId = await createStoredLobbySession(page, label);
   await page.reload();
@@ -142,10 +142,20 @@ test('deletes a closed session and retains its database outside the catalog', as
   expect(result).toEqual({ listed: false, openStatus: 404 });
 
   const workspace = process.env.CHA_E2E_WORKSPACE;
-  expect(workspace).toBeTruthy();
-  await expect(access(resolve(
-    workspace ?? '', 'forums', 'lobby', 'sessions', 'deleted', `${sessionId}.sqlite3`,
-  ))).resolves.toBeUndefined();
+  if (!workspace) throw new Error('CHA_E2E_WORKSPACE is not set');
+  const database = new DatabaseSync(resolve(workspace, 'workspace.sqlite3'), {
+    readOnly: true,
+  });
+  try {
+    const archived = database.prepare(`
+      SELECT s.archived_at
+      FROM sessions AS s JOIN forums AS f USING (forum_key)
+      WHERE f.forum_id = ? AND s.session_id = ?
+    `).get('lobby', sessionId) as { archived_at: number | null } | undefined;
+    expect(archived?.archived_at).toEqual(expect.any(Number));
+  } finally {
+    database.close();
+  }
 });
 
 test('deleting the active session returns the browser to Welcome', async ({ page }) => {

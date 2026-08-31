@@ -9,7 +9,6 @@ namespace cha::web {
 struct ApplicationConfig {
     std::filesystem::path root;
     std::filesystem::path config_file;
-    bool migration{};
     std::string host;
     int port{};
     std::filesystem::path workspace;
@@ -30,7 +29,7 @@ ApplicationConfig load_application_config(
 // runtime's idle unload so the browser suite can observe a real one; it is
 // accepted but deliberately not advertised to someone who mistyped an option.
 inline constexpr const char web_usage[] =
-    "Usage: chaweb [--migration] [--root PATH] [--config PATH] [--host HOST] "
+    "Usage: chaweb [--root PATH] [--config PATH] [--host HOST] "
     "[--port PORT] [--workspace PATH]";
 
 } // namespace cha::web

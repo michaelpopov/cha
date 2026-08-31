@@ -270,7 +270,6 @@ interface SessionTarget {
 function isRetryableSessionOpen(failure: unknown): failure is ChaError {
   return failure instanceof ChaError && (
     failure.code === 'session_limit_reached'
-    || failure.code === 'session_busy'
     || failure.code === 'session_stopping'
     || failure.code === 'session_open_timeout'
   );

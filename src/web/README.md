@@ -55,8 +55,8 @@ an actor that appears in neither is one that has yet to read the file at all.
 `POST /api/v1/workspace/reload` is the equivalent whole-workspace operation. It
 requires the same empty JSON body and origin policy as other mutations. It
 first shuts every starting or running session down with `workspace_reloading`
-and joins their owners, then loads, synchronizes, and publishes the candidate
-workspace. On
+and joins their owners, checkpoints the session database, backs up the
+workspace, then loads, synchronizes, and publishes the candidate workspace. On
 validation failure it returns `422 workspace_reload_failed` and leaves the
 current workspace alone. It does not reload `.env`. A character-settings save
 also reloads and republishes `Workspace` after the write, then reloads affected
@@ -134,9 +134,9 @@ commit race: `Running` is never published and teardown proceeds straight to
 `Finished`. The owner thread is the sole writer of the startup result; the
 manager only sets the stop-request flag and wakes waiters, so an open timeout
 is a waiter outcome that never cancels a shared startup. `Finished` is
-published last, after the final drain, mailbox close, queued-command
-replies, controller shutdown, controller destruction, and lease release —
-which is what lets a same-identity actor start immediately afterwards.
+published last, after the final drain, mailbox close, queued-command replies,
+controller shutdown, and controller destruction — which is what lets a
+same-identity actor start immediately afterwards.
 
 For each update the owner thread applies the notice, then publishes a full
 snapshot if presentation changed (notice lives only in a snapshot under the
@@ -216,7 +216,7 @@ Live rename is serialized through the actor's owner queue and republishes its
 descriptor snapshot. Delete first acquires a manager maintenance reservation,
 which blocks open and reattach for that identity, then requests the
 `session_deleted` shutdown reason and waits under the configured deadline before
-the repository moves the database into `deleted/` without replacement.
+the repository transactionally sets the session row's `archived_at` timestamp.
 `configure_http_server()` owns the server-global request pool, read/write
 timeouts, payload limit, and fallback error/exception handlers so route
 installers cannot silently replace one another's policy. It does not restrict

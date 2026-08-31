@@ -16,14 +16,6 @@
 #endif
 
 namespace cha {
-namespace {
-
-std::string busy_message(const std::filesystem::path& database_path) {
-    return "Session already in use: '"
-        + utf8_path(database_path.stem()) + "'";
-}
-
-} // namespace
 
 class SessionLease::Impl {
 public:
@@ -65,7 +57,7 @@ public:
             fail("open or create", path, errno);
         }
 
-        // Session databases are restricted to local filesystems. flock locks
+        // Workspace databases are restricted to local filesystems. flock locks
         // the open file description, so another descriptor in this process
         // cannot acquire or inadvertently release this lease. On NFS, flock
         // may be implemented with process-owned fcntl locks instead.
@@ -104,7 +96,7 @@ private:
         throw std::system_error(
             static_cast<int>(error),
             std::system_category(),
-            std::string("Failed to ") + action + " session lease '"
+            std::string("Failed to ") + action + " database lease '"
                 + utf8_path(path) + "'");
     }
 
@@ -117,7 +109,7 @@ private:
         throw std::system_error(
             error,
             std::generic_category(),
-            std::string("Failed to ") + action + " session lease '"
+            std::string("Failed to ") + action + " database lease '"
                 + utf8_path(path) + "'");
     }
 
@@ -133,10 +125,6 @@ SessionLease::~SessionLease() = default;
 SessionLease::SessionLease(SessionLease&& other) noexcept = default;
 SessionLease& SessionLease::operator=(SessionLease&& other) noexcept = default;
 
-SessionLease SessionLease::acquire(const std::filesystem::path& database_path) {
-    return acquire(database_path, busy_message(database_path));
-}
-
 SessionLease SessionLease::acquire(
     const std::filesystem::path& database_path,
     std::string busy_message) {
@@ -144,14 +132,10 @@ SessionLease SessionLease::acquire(
     return SessionLease(std::make_unique<Impl>(path, std::move(busy_message)));
 }
 
-SessionLease SessionLease::inactive_for_testing() {
-    return SessionLease(nullptr);
-}
-
 std::filesystem::path SessionLease::companion_path(
     const std::filesystem::path& database_path) {
     if (database_path.empty() || database_path.filename().empty()) {
-        throw std::invalid_argument("Session database path must name a file");
+        throw std::invalid_argument("Database path must name a file");
     }
     std::filesystem::path result = database_path;
     result += ".cha-lock";

@@ -7,7 +7,6 @@
 #include "session/session_controller.h"
 #include "session/session_database.h"
 #include "chat/session_identity.h"
-#include "session/session_lease.h"
 #include "support/test_backends.h"
 #include "support/test_controller.h"
 #include "util/wake_notifier.h"
@@ -28,7 +27,7 @@
 
 namespace cha::test {
 
-// One temporary session database plus the companion file its lease uses.
+// One temporary session database.
 class TemporarySessionFile {
 public:
     explicit TemporarySessionFile(
@@ -49,7 +48,6 @@ public:
     ~TemporarySessionFile() {
         std::error_code ignored;
         std::filesystem::remove(path_, ignored);
-        std::filesystem::remove(SessionLease::companion_path(path_), ignored);
         std::filesystem::remove(path_.string() + "-journal", ignored);
         std::filesystem::remove(path_.string() + "-shm", ignored);
         std::filesystem::remove(path_.string() + "-wal", ignored);
@@ -233,9 +231,7 @@ inline PersonaRoster reader_roster() {
     return {{.id = "reader", .display_name = "Reader"}};
 }
 
-// A real controller driven by controlled model backends. The controller's
-// backend seam does not take a session lease, so lease behavior belongs to
-// open_leased_session() below rather than to a second controller abstraction.
+// A real controller driven by controlled model backends.
 inline OpenedSession open_scripted_session(
     const FullSessionId& identity,
     const std::filesystem::path& database_path,
@@ -317,14 +313,11 @@ inline CharacterDefinition unreachable_definition(
     };
 }
 
-// A real controller holding the production cross-process session lease. This
-// is the same construction path production uses, so releasing the controller
-// releases the lease.
-inline OpenedSession open_leased_session(
+// A real controller over a one-session workspace-schema test database.
+inline OpenedSession open_test_session(
     const FullSessionId& identity,
     const std::filesystem::path& database_path,
     std::shared_ptr<WakeNotifier> notifier) {
-    SessionLease lease = SessionLease::acquire(database_path);
     SessionRestore restored = load_session_state(database_path);
     auto providers = std::make_shared<Providers>();
     const std::vector<CharacterDefinition> definitions{
@@ -337,7 +330,6 @@ inline OpenedSession open_leased_session(
             "guide",
             "reader",
             database_path,
-            std::move(lease),
             std::move(providers),
             std::move(notifier),
             std::move(restored),

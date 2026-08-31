@@ -44,7 +44,6 @@ public:
           controller_(SessionController::from_workspace_for_testing(
               std::move(default_character_id), workspace_.default_persona_id,
               std::move(database_path),
-              SessionLease::inactive_for_testing(),
               std::make_shared<Providers>(
                   std::move(client_factory), std::move(thread_launcher)),
               notifier_, std::move(restored),

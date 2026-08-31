@@ -27,7 +27,6 @@ struct LiveSessionReady {};
 
 enum class LiveSessionOpenFailure {
     not_found,
-    busy,
     stopping,
     limit_reached,
     open_timeout,

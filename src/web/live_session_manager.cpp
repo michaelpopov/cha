@@ -21,7 +21,6 @@ std::string session_log(const FullSessionId& key, std::string_view event) {
 LiveSessionOpenResult map_start_result(LiveSessionStartResult result) {
     switch (result) {
     case LiveSessionStartResult::ready: return LiveSessionReady{};
-    case LiveSessionStartResult::busy: return LiveSessionOpenFailure::busy;
     case LiveSessionStartResult::not_found:
         return LiveSessionOpenFailure::not_found;
     case LiveSessionStartResult::failed:

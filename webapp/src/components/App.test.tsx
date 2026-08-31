@@ -664,7 +664,7 @@ it('restores a deep link and offers Welcome when the requested session cannot op
   const client = fixtureClient({
     openSession: async (forumId, sessionId) => {
       if (sessionId === 'planning') {
-        throw new ChaError(409, 'session_busy', 'Planning is already open elsewhere.');
+        throw new ChaError(500, 'internal_error', 'Planning could not be opened.');
       }
       return { forum_id: forumId, session_id: sessionId };
     },
@@ -672,7 +672,7 @@ it('restores a deep link and offers Welcome when the requested session cannot op
   render(<App client={client} connectSessionEvents={inertSessionEvents} />);
 
   expect(await screen.findByRole('heading', { name: 'Session unavailable' })).toBeInTheDocument();
-  expect(screen.getByRole('alert')).toHaveTextContent('already open elsewhere');
+  expect(screen.getByRole('alert')).toHaveTextContent('could not be opened');
   fireEvent.click(screen.getByRole('button', { name: 'Return to Welcome' }));
   await waitFor(() => expect(screen.getByLabelText('Current chat context')).toHaveTextContent('Entrance'));
   expect(window.location.pathname).toBe('/');
@@ -713,7 +713,7 @@ it('keeps a live stream attached through StrictMode effect replay', async () => 
   expect(events.connections.at(-1)?.close).not.toHaveBeenCalled();
 });
 
-it.each(['session_busy', 'session_stopping', 'session_open_timeout'] as const)(
+it.each(['session_stopping', 'session_open_timeout'] as const)(
   'offers Retry when open fails with %s',
   async (code) => {
     window.history.replaceState(null, '', '/s/lobby/planning/');
@@ -890,13 +890,13 @@ it('reports a failed create on the New session screen and keeps the typed name',
 it('reports a failed open on the sessions list without discarding it', async () => {
   const client = storedPlanningClient({
     openSession: async () => {
-      throw new ChaError(409, 'session_busy', 'Planning is already open elsewhere.');
+      throw new ChaError(409, 'session_stopping', 'Planning is still stopping.');
     },
   });
   render(<App client={client} connectSessionEvents={inertSessionEvents} />);
   await openPlanningFromTheLobby();
 
-  expect(await screen.findByRole('alert')).toHaveTextContent('already open elsewhere');
+  expect(await screen.findByRole('alert')).toHaveTextContent('still stopping');
   expect(sessionRow(/^Planning/)).toBeEnabled();
   expect(window.location.pathname).toBe('/');
 });
@@ -907,7 +907,9 @@ it('reports a failed open on the sessions list without discarding it', async () 
 it('reports a Recent open failure on whichever navigation screen is showing', async () => {
   const client = fixtureClient({
     openSession: async (forumId, sessionId) => {
-      if (sessionId === 'planning') throw new ChaError(409, 'session_busy', 'Planning is busy.');
+      if (sessionId === 'planning') {
+        throw new ChaError(409, 'session_stopping', 'Planning is still stopping.');
+      }
       return { forum_id: forumId, session_id: sessionId };
     },
   });
@@ -918,7 +920,7 @@ it('reports a Recent open failure on whichever navigation screen is showing', as
   const recent = within(screen.getByLabelText('Recent sessions'));
   fireEvent.click(recent.getByRole('button', { name: /^Planning/ }));
 
-  expect(await screen.findByRole('alert')).toHaveTextContent('Planning is busy.');
+  expect(await screen.findByRole('alert')).toHaveTextContent('Planning is still stopping.');
   expect(screen.getByLabelText('Characters navigation')).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Return to Welcome' })).toBeInTheDocument();
 });

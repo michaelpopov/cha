@@ -332,25 +332,17 @@ export interface paths {
         put?: never;
         post?: never;
         /**
-         * Move a session into recoverable deleted storage
-         * @description Removes the session from CHA without erasing it. Its database is moved
-         *     into the forum's `deleted/` directory, so the session stops listing,
-         *     stops opening, and answers `404` afterwards, while its transcript
-         *     remains on disk for an operator. The browser can neither list nor
-         *     restore it.
+         * Archive a session
+         * @description Marks the session archived in the workspace database, so it stops
+         *     listing, stops opening, and answers `404` afterwards. Its transcript
+         *     remains in the database, but the browser can neither list nor restore
+         *     it.
          *
          *     A session with a live runtime is stopped first, and its final snapshot
          *     carries the `session_deleted` shutdown reason. If that shutdown does not
-         *     finish within the server's deletion deadline the database is left in the
-         *     ordinary catalog and the request answers `409` with `session_stopping`;
+         *     finish within the server's deletion deadline the session remains active
+         *     and the request answers `409` with `session_stopping`;
          *     the shutdown may still complete, so a later delete can succeed.
-         *
-         *     The move never replaces a file already at the destination. That
-         *     collision answers `409` with `session_delete_conflict` and leaves both
-         *     the active session and the retained database untouched.
-         *
-         *     Deletion deliberately does not require readable session metadata, so a
-         *     corrupt database can still be removed from the catalog.
          *
          *     The built-in Welcome session is process-local and cannot be deleted; it
          *     answers `404` with `not_found` without stopping its runtime.
@@ -374,9 +366,6 @@ export interface paths {
          *     `command_queue_full`, `command_timeout`, and `session_not_live`. A
          *     `command_timeout` leaves the outcome unknown, because the owner may
          *     still commit the rename after the request has given up.
-         *
-         *     A session without a live runtime is renamed through storage, where
-         *     another process holding its lease answers `409` with `session_busy`.
          *
          *     The built-in Welcome session is process-local and cannot be renamed; it
          *     answers `404` with `not_found`.
@@ -718,7 +707,7 @@ export interface components {
         ErrorResponse: {
             error: {
                 /** @enum {string} */
-                code: "not_found" | "bad_request" | "body_too_large" | "prompt_too_large" | "forbidden_origin" | "internal_error" | "session_busy" | "session_stopping" | "session_limit_reached" | "session_open_timeout" | "server_stopping" | "session_not_live" | "command_timeout" | "command_queue_full" | "session_delete_conflict" | "workspace_reload_failed";
+                code: "not_found" | "bad_request" | "body_too_large" | "prompt_too_large" | "forbidden_origin" | "internal_error" | "session_stopping" | "session_limit_reached" | "session_open_timeout" | "server_stopping" | "session_not_live" | "command_timeout" | "command_queue_full" | "workspace_reload_failed";
                 message: string;
             };
         };
@@ -1155,10 +1144,8 @@ export interface operations {
             403: components["responses"]["ForbiddenMutation"];
             404: components["responses"]["NotFound"];
             /**
-             * @description The session is busy or stopping. `error.code` is `session_busy` when
-             *     its storage lease is held by another CHA process,
-             *     or `session_stopping` while its previous runtime is still shutting
-             *     down. Both are retryable.
+             * @description The session's previous runtime is still shutting down.
+             *     `error.code` is `session_stopping`, and the request can be retried.
              */
             409: {
                 headers: {
@@ -1245,7 +1232,7 @@ export interface operations {
         };
         requestBody: components["requestBodies"]["EmptyJsonObject"];
         responses: {
-            /** @description Session moved to deleted storage. */
+            /** @description Session archived. */
             204: {
                 headers: {
                     [name: string]: unknown;
@@ -1255,7 +1242,7 @@ export interface operations {
             400: components["responses"]["BadRequest"];
             403: components["responses"]["ForbiddenMutation"];
             404: components["responses"]["NotFound"];
-            /** @description Session is busy, stopping, or its archive destination exists. */
+            /** @description Session is stopping. */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -1307,7 +1294,7 @@ export interface operations {
             400: components["responses"]["BadRequest"];
             403: components["responses"]["ForbiddenMutation"];
             404: components["responses"]["NotFound"];
-            /** @description Session is busy or no longer live. */
+            /** @description The live session is no longer available. */
             409: {
                 headers: {
                     [name: string]: unknown;

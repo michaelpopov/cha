@@ -183,14 +183,10 @@ add_library(cha_core STATIC
     src/providers/sse_framer.cpp
     src/characters/character_config.cpp
     src/session/controller_update.cpp
-    src/session/legacy_session_import.cpp
-    src/session/session_archive.cpp
-    src/session/session_catalog.cpp
     src/session/session_controller.cpp
     src/session/session_database.cpp
     src/session/session_label.cpp
     src/session/session_lease.cpp
-    src/session/session_migration.cpp
     src/session/session_repository.cpp
     src/session/session_storage_layout.cpp
     src/session/sqlite_storage.cpp
@@ -295,12 +291,10 @@ if(BUILD_TESTING)
         tests/providers/unit_responses_api.cpp
         tests/providers/unit_sse_framer.cpp
         tests/session/unit_concurrent_controllers.cpp
-        tests/session/unit_session_archive.cpp
-        tests/session/unit_session_catalog.cpp
         tests/session/unit_session_controller.cpp
         tests/session/unit_session_lease.cpp
-        tests/session/unit_session_migration.cpp
         tests/session/unit_session_repository.cpp
+        tests/session/unit_workspace_session_database.cpp
         tests/session/unit_controller_update.cpp
         tests/application/unit_workspace.cpp
         tests/application/unit_session_open.cpp
