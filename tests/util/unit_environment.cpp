@@ -9,6 +9,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace cha {
 namespace {
@@ -92,6 +93,81 @@ TEST(Environment, RejectsInvalidEntries) {
 
     EXPECT_THROW(load_dotenv(path), std::runtime_error);
     std::filesystem::remove(path);
+}
+
+TEST(Environment, ParseDotenvDoesNotModifyTheProcessEnvironment) {
+    const auto path = unique_dotenv_path();
+    {
+        std::ofstream file(path);
+        file << "CHA_DOTENV_PARSED=from-file\n"
+                "CHA_DOTENV_PARSED=second\n";
+    }
+    ScopedEnvironmentVariable variable("CHA_DOTENV_PARSED");
+    (void)unset_environment_variable("CHA_DOTENV_PARSED");
+
+    const std::vector<DotenvEntry> entries = parse_dotenv(path);
+    ASSERT_EQ(entries.size(), 2U);
+    EXPECT_EQ(entries[0].name, "CHA_DOTENV_PARSED");
+    EXPECT_EQ(entries[0].value, "from-file");
+    EXPECT_EQ(entries[1].value, "second");
+    EXPECT_EQ(std::getenv("CHA_DOTENV_PARSED"), nullptr);
+
+    apply_dotenv(entries, path);
+    EXPECT_STREQ(std::getenv("CHA_DOTENV_PARSED"), "from-file");
+    std::filesystem::remove(path);
+}
+
+TEST(Environment, OverlayInstallsAbsentNamesAndCleansUp) {
+    ScopedEnvironmentVariable inherited("CHA_DOTENV_INHERITED");
+    ScopedEnvironmentVariable inserted("CHA_DOTENV_INSERTED");
+    ScopedEnvironmentVariable unrelated("CHA_DOTENV_UNRELATED");
+    ASSERT_TRUE(set_environment_variable("CHA_DOTENV_INHERITED", "process"));
+    ASSERT_TRUE(set_environment_variable("CHA_DOTENV_UNRELATED", "keep"));
+    (void)unset_environment_variable("CHA_DOTENV_INSERTED");
+
+    const std::vector<DotenvEntry> entries{
+        {"CHA_DOTENV_INHERITED", "file"},
+        {"CHA_DOTENV_INSERTED", "added"},
+        {"CHA_DOTENV_INSERTED", "later"},
+    };
+    {
+        ScopedEnvironmentOverlay overlay(entries);
+        EXPECT_STREQ(std::getenv("CHA_DOTENV_INHERITED"), "process");
+        EXPECT_STREQ(std::getenv("CHA_DOTENV_INSERTED"), "added");
+        EXPECT_STREQ(std::getenv("CHA_DOTENV_UNRELATED"), "keep");
+    }
+    EXPECT_STREQ(std::getenv("CHA_DOTENV_INHERITED"), "process");
+    EXPECT_EQ(std::getenv("CHA_DOTENV_INSERTED"), nullptr);
+    EXPECT_STREQ(std::getenv("CHA_DOTENV_UNRELATED"), "keep");
+}
+
+TEST(Environment, OverlayPreservesInheritedEmptyValues) {
+    ScopedEnvironmentVariable variable("CHA_DOTENV_EMPTY_INHERITED");
+    ASSERT_TRUE(set_environment_variable("CHA_DOTENV_EMPTY_INHERITED", ""));
+    if (std::getenv("CHA_DOTENV_EMPTY_INHERITED") == nullptr) {
+        GTEST_SKIP() << "this platform does not retain empty environment values";
+    }
+
+    const std::vector<DotenvEntry> entries{
+        {"CHA_DOTENV_EMPTY_INHERITED", "from-file"}};
+    {
+        ScopedEnvironmentOverlay overlay(entries);
+        EXPECT_STREQ(std::getenv("CHA_DOTENV_EMPTY_INHERITED"), "");
+    }
+    EXPECT_STREQ(std::getenv("CHA_DOTENV_EMPTY_INHERITED"), "");
+}
+
+TEST(Environment, OverlayCleansUpWhenAnExceptionEscapes) {
+    ScopedEnvironmentVariable variable("CHA_DOTENV_SCOPED");
+    (void)unset_environment_variable("CHA_DOTENV_SCOPED");
+    try {
+        ScopedEnvironmentOverlay overlay({{"CHA_DOTENV_SCOPED", "temp"}});
+        EXPECT_STREQ(std::getenv("CHA_DOTENV_SCOPED"), "temp");
+        throw std::runtime_error("forced");
+    } catch (const std::runtime_error& error) {
+        EXPECT_STREQ(error.what(), "forced");
+    }
+    EXPECT_EQ(std::getenv("CHA_DOTENV_SCOPED"), nullptr);
 }
 
 } // namespace

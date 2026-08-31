@@ -84,6 +84,9 @@ struct HandleResolution {
 class Workspace final {
 public:
     static Workspace load(std::filesystem::path root);
+    static Workspace load(
+        std::filesystem::path materialized_root,
+        std::filesystem::path durable_relative_path_base);
 
     [[nodiscard]] const std::filesystem::path& root() const noexcept {
         return root_;

@@ -162,11 +162,13 @@ target_compile_definitions(
         SQLITE_OMIT_DEPRECATED
         SQLITE_OMIT_LOAD_EXTENSION
         SQLITE_THREADSAFE=1
+        SQLITE_DEFAULT_FILE_PERMISSIONS=0600
 )
 
 add_library(cha_core STATIC
     ${CMAKE_CURRENT_BINARY_DIR}/generated/application_guide.cpp
     src/util/environment.cpp
+    src/util/private_filesystem.cpp
     src/util/logging.cpp
     src/util/path_name.cpp
     src/util/public_name.cpp
@@ -210,6 +212,7 @@ if(WIN32)
         PUBLIC
             NOMINMAX
             WIN32_LEAN_AND_MEAN)
+    target_link_libraries(cha_core PUBLIC advapi32)
 endif()
 target_link_libraries(
     cha_core
@@ -278,6 +281,7 @@ if(BUILD_TESTING)
 
     set(CHA_TEST_SOURCES
         tests/util/unit_environment.cpp
+        tests/util/unit_private_filesystem.cpp
         tests/util/unit_logging.cpp
         tests/util/unit_concurrent_queue.cpp
         tests/util/unit_text.cpp

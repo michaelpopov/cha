@@ -8,6 +8,7 @@
 #include "session/workspace_session_database.h"
 #include "util/logging.h"
 #include "util/path_name.h"
+#include "util/private_filesystem.h"
 #include "workspace/workspace.h"
 
 #include <algorithm>
@@ -35,7 +36,7 @@ using Transaction = storage::SqliteTransaction;
 
 constexpr std::size_t max_session_id_attempts = 100;
 
-std::filesystem::path create_private_directory() {
+std::filesystem::path create_welcome_directory() {
     const std::filesystem::path parent = std::filesystem::temp_directory_path();
     std::mt19937_64 random(std::random_device{}());
     for (std::size_t attempt{}; attempt != 100; ++attempt) {
@@ -44,9 +45,16 @@ std::filesystem::path create_private_directory() {
                + std::to_string(
                    std::chrono::steady_clock::now().time_since_epoch().count())
                + "-" + std::to_string(random()));
-        std::error_code error;
-        if (std::filesystem::create_directory(candidate, error)) {
+        try {
+            create_private_directory(candidate);
             return candidate;
+        } catch (const std::exception&) {
+            std::error_code error;
+            if (!std::filesystem::exists(
+                    std::filesystem::symlink_status(candidate, error))
+                || error) {
+                throw;
+            }
         }
     }
     throw std::runtime_error(
@@ -164,11 +172,8 @@ SessionRepository::SessionRepository(
     initialize_workspace_session_database_runtime(database_path_);
     synchronize_forums();
 
-    temporary_directory_ = create_private_directory();
+    temporary_directory_ = create_welcome_directory();
     try {
-        std::filesystem::permissions(
-            temporary_directory_, std::filesystem::perms::owner_all,
-            std::filesystem::perm_options::replace);
         temporary_database_path_ = temporary_directory_ / "sessions.sqlite3";
         if (!create_session_database(
                 temporary_database_path_,

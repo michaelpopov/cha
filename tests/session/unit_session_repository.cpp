@@ -24,6 +24,10 @@
 #include <thread>
 #include <vector>
 
+#ifndef _WIN32
+#include <sys/stat.h>
+#endif
+
 namespace cha {
 namespace {
 
@@ -339,6 +343,11 @@ TEST_F(SessionRepositoryTest, WelcomeUsesTheSameSchemaInAPrivateFile) {
         EXPECT_THROW(
             (void)repository.create(temporary_forum, "No"),
             ForumNotFoundError);
+#ifndef _WIN32
+        struct stat info {};
+        ASSERT_EQ(::lstat(welcome.database_path.parent_path().c_str(), &info), 0);
+        EXPECT_EQ(info.st_mode & 0777, static_cast<mode_t>(0700));
+#endif
     }
     EXPECT_FALSE(std::filesystem::exists(welcome_path.parent_path()));
 }

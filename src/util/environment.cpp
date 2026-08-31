@@ -9,6 +9,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace cha {
 namespace {
@@ -66,16 +67,17 @@ bool unset_environment_variable(std::string_view name) {
 #endif
 }
 
-void load_dotenv(const std::filesystem::path& path) {
+std::vector<DotenvEntry> parse_dotenv(const std::filesystem::path& path) {
     std::ifstream file(path);
     if (!file) {
         if (!std::filesystem::exists(path)) {
-            return;
+            return {};
         }
         throw std::runtime_error(
             "Failed to read dotenv file '" + utf8_path(path) + "'");
     }
 
+    std::vector<DotenvEntry> entries;
     std::string line;
     std::size_t line_number = 0;
     while (std::getline(file, line)) {
@@ -93,15 +95,60 @@ void load_dotenv(const std::filesystem::path& path) {
                 + "' at line " + std::to_string(line_number));
         }
 
-        const std::string name_string(name);
-        const std::string value =
-            parse_value(entry.substr(separator + 1));
-        if (!set_environment_variable(name_string, value, false)) {
-            throw std::runtime_error(
-                "Failed to set environment variable '" + name_string
-                + "' from '" + utf8_path(path) + "'");
-        }
+        entries.push_back({
+            .name = std::string(name),
+            .value = parse_value(entry.substr(separator + 1)),
+        });
     }
+    return entries;
+}
+
+void apply_dotenv(
+    const std::vector<DotenvEntry>& entries,
+    const std::filesystem::path& source) {
+    for (const DotenvEntry& entry : entries) {
+        if (set_environment_variable(entry.name, entry.value, false)) {
+            continue;
+        }
+        std::string message =
+            "Failed to set environment variable '" + entry.name + "'";
+        if (!source.empty()) {
+            message += " from '" + utf8_path(source) + "'";
+        }
+        throw std::runtime_error(message);
+    }
+}
+
+void load_dotenv(const std::filesystem::path& path) {
+    apply_dotenv(parse_dotenv(path), path);
+}
+
+ScopedEnvironmentOverlay::ScopedEnvironmentOverlay(
+    const std::vector<DotenvEntry>& entries) {
+    try {
+        for (const DotenvEntry& entry : entries) {
+            if (std::getenv(entry.name.c_str()) != nullptr) continue;
+            if (!set_environment_variable(entry.name, entry.value, false)) {
+                throw std::runtime_error(
+                    "Failed to set environment variable '" + entry.name + "'");
+            }
+            inserted_.push_back(entry.name);
+        }
+    } catch (...) {
+        restore();
+        throw;
+    }
+}
+
+void ScopedEnvironmentOverlay::restore() noexcept {
+    for (const std::string& name : inserted_) {
+        (void)unset_environment_variable(name);
+    }
+    inserted_.clear();
+}
+
+ScopedEnvironmentOverlay::~ScopedEnvironmentOverlay() {
+    restore();
 }
 
 } // namespace cha

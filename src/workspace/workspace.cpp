@@ -231,7 +231,9 @@ std::vector<std::filesystem::path> recursive_definition_directories(
     return result;
 }
 
-WorkspaceSettings load_settings(const std::filesystem::path& root) {
+WorkspaceSettings load_settings(
+    const std::filesystem::path& root,
+    const std::filesystem::path& durable_relative_path_base) {
     const std::filesystem::path path = root / "workspace.toml";
     const toml::table table = read_toml(path, "workspace config");
     static constexpr std::string_view fields[]{"logging"};
@@ -245,7 +247,7 @@ WorkspaceSettings load_settings(const std::filesystem::path& root) {
     reject_unknown_fields(*logging, path, logging_fields, "Workspace logging config");
     std::filesystem::path log_file =
         path_from_utf8(required_string(*logging, path, "file"));
-    if (log_file.is_relative()) log_file = root / log_file;
+    if (log_file.is_relative()) log_file = durable_relative_path_base / log_file;
     return {
         .log_file = std::move(log_file),
         .log_level = required_string(*logging, path, "level"),
@@ -760,14 +762,21 @@ void build_index(
 } // namespace
 
 Workspace Workspace::load(std::filesystem::path root) {
-    if (!std::filesystem::is_directory(root)) {
+    return load(root, root);
+}
+
+Workspace Workspace::load(
+    std::filesystem::path materialized_root,
+    std::filesystem::path durable_relative_path_base) {
+    if (!std::filesystem::is_directory(materialized_root)) {
         throw std::runtime_error(
-            "Workspace '" + utf8_path(root) + "' is not a directory");
+            "Workspace '" + utf8_path(materialized_root) + "' is not a directory");
     }
 
     Workspace workspace;
-    workspace.root_ = std::move(root);
-    workspace.settings_ = load_settings(workspace.root_);
+    workspace.root_ = std::move(materialized_root);
+    workspace.settings_ = load_settings(
+        workspace.root_, durable_relative_path_base);
 
     const std::filesystem::path providers_directory =
         workspace.root_ / "system" / "providers";

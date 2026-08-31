@@ -11,7 +11,9 @@
 #include <initializer_list>
 #include <iterator>
 #include <optional>
+#include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace cha {
 namespace {
@@ -316,6 +318,84 @@ TEST(Workspace, ResolvesRelativeAndAbsoluteLoggingPaths) {
     const Workspace absolute_workspace = Workspace::load(absolute.root());
     EXPECT_EQ(absolute_workspace.settings().log_file, log);
     EXPECT_EQ(absolute_workspace.settings().log_level, "debug");
+}
+
+TEST(Workspace, ResolvesRelativeLoggingPathAgainstDurableBase) {
+    test::TestWorkspace fixture;
+    const std::filesystem::path durable = fixture.root() / "durable-base";
+    std::filesystem::create_directories(durable);
+    const Workspace workspace = Workspace::load(fixture.root(), durable);
+    EXPECT_EQ(workspace.root(), fixture.root());
+    EXPECT_EQ(workspace.settings().log_file, durable / "logs" / "cha.log");
+}
+
+TEST(Workspace, TemplateIncludesResolveUnderThePhysicalRoot) {
+    test::TestWorkspace fixture;
+    const std::filesystem::path durable = fixture.root() / "durable-base";
+    std::filesystem::create_directories(durable);
+    std::ofstream(fixture.root() / "characters" / "guide" / "voice.md")
+        << "Physical include body.\n";
+    std::ofstream(fixture.root() / "characters" / "guide" / "CHARACTER.md")
+        << "$$(voice.md)\nGuide instructions.\n";
+    const Workspace workspace = Workspace::load(fixture.root(), durable);
+    ASSERT_NE(workspace.find_character("guide"), nullptr);
+    EXPECT_NE(
+        workspace.find_character("guide")->markdown.find(
+            "Physical include body."),
+        std::string::npos);
+    EXPECT_EQ(workspace.settings().log_file, durable / "logs" / "cha.log");
+}
+
+TEST(Workspace, OverlayMakesADotenvApiKeyVisibleDuringLoad) {
+    test::TestWorkspace fixture;
+    constexpr char variable[] = "CHA_WORKSPACE_TEST_OVERLAY_CREDENTIAL_9F3A";
+    ASSERT_TRUE(unset_environment_variable(variable));
+    fixture.write_provider(
+        "secured",
+        "host = \"example.test\"\n"
+        "port = 443\n"
+        "mode = \"net\"\n"
+        "model = \"secured\"\n"
+        "api_key_env = \"CHA_WORKSPACE_TEST_OVERLAY_CREDENTIAL_9F3A\"\n");
+    fixture.write_character_config(
+        "display_name = \"Guide\"\nprovider = \"secured\"\n");
+
+    EXPECT_THROW((void)Workspace::load(fixture.root()), std::runtime_error);
+
+    const std::vector<DotenvEntry> entries{{variable, "secret-key"}};
+    {
+        ScopedEnvironmentOverlay overlay(entries);
+        EXPECT_NO_THROW((void)Workspace::load(fixture.root()));
+        EXPECT_STREQ(std::getenv(variable), "secret-key");
+    }
+    EXPECT_EQ(std::getenv(variable), nullptr);
+}
+
+TEST(Workspace, OverlayCleansUpWhenProviderValidationThrows) {
+    test::TestWorkspace fixture;
+    constexpr char inserted[] = "CHA_WORKSPACE_TEST_OVERLAY_TEMP_2C8B";
+    constexpr char missing[] = "CHA_WORKSPACE_TEST_MISSING_OVERLAY_4D1E";
+    ASSERT_TRUE(unset_environment_variable(inserted));
+    ASSERT_TRUE(unset_environment_variable(missing));
+    fixture.write_provider(
+        "secured",
+        "host = \"example.test\"\n"
+        "port = 443\n"
+        "mode = \"net\"\n"
+        "model = \"secured\"\n"
+        "api_key_env = \"CHA_WORKSPACE_TEST_MISSING_OVERLAY_4D1E\"\n");
+    fixture.write_character_config(
+        "display_name = \"Guide\"\nprovider = \"secured\"\n");
+
+    try {
+        ScopedEnvironmentOverlay overlay({{inserted, "temporary"}});
+        EXPECT_STREQ(std::getenv(inserted), "temporary");
+        (void)Workspace::load(fixture.root());
+        FAIL() << "Expected provider validation to fail";
+    } catch (const std::runtime_error&) {
+    }
+    EXPECT_EQ(std::getenv(inserted), nullptr);
+    EXPECT_EQ(std::getenv(missing), nullptr);
 }
 
 TEST(Workspace, RejectsASelectedProviderWithAnUnavailableCredential) {
