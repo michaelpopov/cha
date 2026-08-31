@@ -130,6 +130,48 @@ TEST_F(ApplicationConfigTest, InvalidWorkspaceNamesTheResolvedPath) {
     }
 }
 
+TEST_F(ApplicationConfigTest, StoredSettingsReadHostAndPort) {
+    const std::filesystem::path file = root_ / "app.toml";
+    std::ofstream(file) << "host = \"127.0.0.1\"\nport = 8080\n";
+    const StoredApplicationSettings settings =
+        load_stored_application_settings(file);
+    EXPECT_EQ(settings.host, "127.0.0.1");
+    EXPECT_EQ(settings.port, 8080);
+}
+
+TEST_F(ApplicationConfigTest, StoredSettingsRejectOldWorkspaceFields) {
+    const std::filesystem::path file = root_ / "app.toml";
+    std::ofstream(file)
+        << "host = \"127.0.0.1\"\n"
+           "port = 8080\n"
+           "workspace = \"customer-data\"\n";
+    EXPECT_THROW(
+        (void)load_stored_application_settings(file), std::runtime_error);
+
+    std::ofstream(file)
+        << "host = \"127.0.0.1\"\n"
+           "port = 8080\n"
+           "backup_dir = \"backups\"\n";
+    EXPECT_THROW(
+        (void)load_stored_application_settings(file), std::runtime_error);
+}
+
+TEST_F(ApplicationConfigTest, StoredSettingsRequireHostAndPort) {
+    const std::filesystem::path file = root_ / "app.toml";
+    std::ofstream(file) << "host = \"127.0.0.1\"\n";
+    EXPECT_THROW(
+        (void)load_stored_application_settings(file), std::runtime_error);
+    std::ofstream(file) << "port = 8080\n";
+    EXPECT_THROW(
+        (void)load_stored_application_settings(file), std::runtime_error);
+    std::ofstream(file) << "host = \"\"\nport = 8080\n";
+    EXPECT_THROW(
+        (void)load_stored_application_settings(file), std::runtime_error);
+    std::ofstream(file) << "host = \"127.0.0.1\"\nport = 0\n";
+    EXPECT_THROW(
+        (void)load_stored_application_settings(file), std::runtime_error);
+}
+
 TEST(ExecutablePath, ResolvesTheRunningBinaryDirectory) {
     EXPECT_TRUE(std::filesystem::is_directory(executable_directory()));
 }

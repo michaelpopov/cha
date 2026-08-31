@@ -472,7 +472,12 @@ TEST(WorkspaceSessionDatabase, TableCheckRejectsUnsafeConfigNames) {
     EXPECT_THROW(validate_stored_config_name("a/../b"), std::runtime_error);
     EXPECT_THROW(validate_stored_config_name("."), std::runtime_error);
     EXPECT_THROW(validate_stored_config_name("foo//bar"), std::runtime_error);
+    EXPECT_THROW(validate_stored_config_name("C:app.toml"), std::runtime_error);
+    EXPECT_THROW(validate_stored_config_name("notes.txt"), std::runtime_error);
+    EXPECT_THROW(validate_stored_config_name("secret/.env"), std::runtime_error);
     EXPECT_NO_THROW(validate_stored_config_name("app.toml"));
+    EXPECT_NO_THROW(validate_stored_config_name(".env"));
+    EXPECT_NO_THROW(validate_stored_config_name("characters/guide/CHARACTER.md"));
 }
 
 TEST(WorkspaceSessionDatabase, ReadsSortedConfigRowsAndReplacesAtomically) {

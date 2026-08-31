@@ -104,7 +104,60 @@ std::filesystem::path user_home_directory() {
     return path_from_utf8(value);
 }
 
+void read_host_and_port(
+    const toml::table& table,
+    const std::filesystem::path& config_file,
+    std::optional<std::string>& host,
+    std::optional<int>& port) {
+    host = table["host"].value<std::string>();
+    port = table["port"].value<int>();
+    if (host && host->empty()) {
+        throw std::runtime_error(
+            "Application config '" + utf8_path(config_file)
+            + "' requires a non-empty string 'host'.");
+    }
+    if (port && (*port < 1 || *port > 65535)) {
+        throw std::runtime_error(
+            "Application config '" + utf8_path(config_file)
+            + "' requires an integer 'port' between 1 and 65535.");
+    }
+}
+
+toml::table parse_application_table(const std::filesystem::path& config_file) {
+    std::ifstream input(config_file, std::ios::binary);
+    if (!input) {
+        throw std::runtime_error(
+            "Failed to read application config '" + utf8_path(config_file)
+            + "'.");
+    }
+    return toml::parse(input, utf8_path(config_file));
+}
+
 } // namespace
+
+StoredApplicationSettings load_stored_application_settings(
+    const std::filesystem::path& config_file) {
+    const toml::table table = parse_application_table(config_file);
+    if (table.contains("workspace") || table.contains("backup_dir")) {
+        throw std::runtime_error(
+            "Application config '" + utf8_path(config_file)
+            + "' must not contain 'workspace' or 'backup_dir'.");
+    }
+    std::optional<std::string> host;
+    std::optional<int> port;
+    read_host_and_port(table, config_file, host, port);
+    if (!host) {
+        throw std::runtime_error(
+            "Application config '" + utf8_path(config_file)
+            + "' requires a non-empty string 'host'.");
+    }
+    if (!port) {
+        throw std::runtime_error(
+            "Application config '" + utf8_path(config_file)
+            + "' requires an integer 'port' between 1 and 65535.");
+    }
+    return {.host = std::move(*host), .port = *port};
+}
 
 ApplicationConfig load_application_config(
     int argc,
@@ -121,14 +174,8 @@ ApplicationConfig load_application_config(
     std::optional<std::filesystem::path> workspace;
     std::optional<std::filesystem::path> backup_dir;
     if (std::filesystem::exists(config_file)) {
-        std::ifstream input(config_file, std::ios::binary);
-        if (!input) {
-            throw std::runtime_error(
-                "Failed to read application config '" + utf8_path(config_file) + "'.");
-        }
-        const toml::table table = toml::parse(input, utf8_path(config_file));
-        host = table["host"].value<std::string>();
-        port = table["port"].value<int>();
+        const toml::table table = parse_application_table(config_file);
+        read_host_and_port(table, config_file, host, port);
         if (const auto configured = table["workspace"].value<std::string>()) {
             if (configured->empty()) {
                 throw std::runtime_error(
@@ -151,16 +198,6 @@ ApplicationConfig load_application_config(
             if (backup_dir->is_relative()) {
                 backup_dir = config_file.parent_path() / *backup_dir;
             }
-        }
-        if (host && host->empty()) {
-            throw std::runtime_error(
-                "Application config '" + utf8_path(config_file)
-                + "' requires a non-empty string 'host'.");
-        }
-        if (port && (*port < 1 || *port > 65535)) {
-            throw std::runtime_error(
-                "Application config '" + utf8_path(config_file)
-                + "' requires an integer 'port' between 1 and 65535.");
         }
     } else if (explicit_config) {
         throw std::runtime_error(

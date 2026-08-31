@@ -193,7 +193,9 @@ add_library(cha_core STATIC
     src/session/session_storage_layout.cpp
     src/session/sqlite_storage.cpp
     src/session/workspace_session_database.cpp
+    src/web/application_config.cpp
     src/workspace/workspace.cpp
+    src/workspace/workspace_config_store.cpp
     src/workspace/session_open.cpp
 )
 
@@ -230,7 +232,6 @@ target_link_libraries(
 cha_enable_warnings(cha_core)
 
 add_library(cha_web STATIC
-    src/web/application_config.cpp
     src/web/asset_handler.cpp
     src/web/browser_connection_state.cpp
     src/web/command_queue.cpp
@@ -301,6 +302,7 @@ if(BUILD_TESTING)
         tests/session/unit_workspace_session_database.cpp
         tests/session/unit_controller_update.cpp
         tests/application/unit_workspace.cpp
+        tests/application/unit_workspace_config_store.cpp
         tests/application/unit_session_open.cpp
         tests/application/unit_builtins.cpp
         tests/support/test_workspace.cpp

@@ -18,6 +18,16 @@ struct ApplicationConfig {
     std::optional<int> test_idle_grace_ms;
 };
 
+struct StoredApplicationSettings {
+    std::string host;
+    int port{};
+};
+
+// Reads materialized root app.toml. host and port are required. The stored
+// form does not accept workspace or backup_dir.
+StoredApplicationSettings load_stored_application_settings(
+    const std::filesystem::path& config_file);
+
 // Resolves the application root, reads app.toml when present, and applies
 // command-line overrides. Throws a user-facing error for invalid arguments or
 // missing settings.

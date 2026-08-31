@@ -104,6 +104,7 @@ TestWorkspace::TestWorkspace()
     const auto member = root_ / "forums" / "lobby" / "members" / "guide";
     std::filesystem::create_directories(definition);
     std::filesystem::create_directories(member);
+    std::ofstream(member / "character.toml") << "# forum membership\n";
     std::filesystem::create_directories(root_ / "personas");
     write_provider("test", "host = \"test\"\nport = 1\nmode = \"test\"\nmodel = \"fake\"\n");
     std::filesystem::create_directories(root_ / "system" / "assistant");
@@ -196,6 +197,9 @@ void TestWorkspace::add_forum(
     std::string_view member) const {
     const std::filesystem::path directory = root_ / "forums" / std::string(id);
     std::filesystem::create_directories(directory / "members" / std::string(member));
+    std::ofstream(
+        directory / "members" / std::string(member) / "character.toml")
+        << "# forum membership\n";
     std::ofstream(directory / "config.toml")
         << "display_name = \"" << display_name << "\"\n";
     std::ofstream(directory / "FORUM.md") << display_name << " forum instructions\n";

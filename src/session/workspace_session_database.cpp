@@ -448,7 +448,8 @@ void validate_stored_config_name(std::string_view name) {
     if (name.empty()) {
         throw std::runtime_error("Configuration name is empty");
     }
-    if (name.front() == '/') {
+    if (name.front() == '/'
+        || name.find(':') != std::string_view::npos) {
         throw std::runtime_error(
             "Configuration name '" + std::string(name) + "' must be relative");
     }
@@ -474,6 +475,14 @@ void validate_stored_config_name(std::string_view name) {
                 "Configuration name '" + std::string(name)
                 + "' contains an invalid path component");
         }
+    }
+
+    if (name != ".env"
+        && !name.ends_with(".toml")
+        && !name.ends_with(".md")) {
+        throw std::runtime_error(
+            "Configuration name '" + std::string(name)
+            + "' is not a stored configuration file");
     }
 }
 
@@ -522,6 +531,11 @@ void upgrade_workspace_session_database_from_v1(
         "PRAGMA user_version = "
         + std::to_string(workspace_session_database_version));
     transaction.commit();
+}
+
+void secure_workspace_session_database_files(
+    const std::filesystem::path& path) {
+    secure_workspace_database_files(path);
 }
 
 void create_empty_workspace_session_database(
