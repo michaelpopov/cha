@@ -603,12 +603,4 @@ void checkpoint_workspace_session_database(
     }
 }
 
-SessionLease open_workspace_session_database(
-    const std::filesystem::path& path,
-    std::string busy_message) {
-    SessionLease lease = SessionLease::acquire(path, std::move(busy_message));
-    initialize_workspace_session_database_runtime(path);
-    return lease;
-}
-
 } // namespace cha

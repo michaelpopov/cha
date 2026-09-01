@@ -1,6 +1,5 @@
 #pragma once
 
-#include "session/session_lease.h"
 #include "session/sqlite_storage.h"
 
 #include <cstdint>
@@ -64,8 +63,5 @@ void initialize_workspace_session_database_runtime(
     const std::filesystem::path& path);
 void checkpoint_workspace_session_database(
     const std::filesystem::path& path);
-[[nodiscard]] SessionLease open_workspace_session_database(
-    const std::filesystem::path& path,
-    std::string busy_message);
 
 } // namespace cha

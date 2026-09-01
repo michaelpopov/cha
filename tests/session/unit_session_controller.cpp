@@ -47,20 +47,26 @@ std::vector<ModelMessage> context_without_timestamp_metadata(
     return project_model_context(input, system_prompt);
 }
 
-// Blocks the execution's final wake. This makes `execution_finished` true
-// while the worker task is still live, so shutdown must join the pool rather
-// than treating the batch's backend-safety barrier as full quiescence.
+// Blocks the wake issued by the provider worker that ran perform(). This makes
+// `execution_finished` true while the worker task is still live, so shutdown
+// must join the pool rather than treating the batch's backend-safety barrier
+// as full quiescence.
+//
+// The worker is named explicitly rather than counted. An execution wakes twice
+// here, from two threads whose order is not fixed, so blocking whichever wake
+// arrived second sometimes blocked the terminal-event wake instead. That holds
+// a thread shutdown must join, and shutdown then waits for it correctly, so
+// the test failed on a scenario it never meant to describe.
 class FinalWakeBlockingNotifier final : public WakeNotifier {
 public:
-    void block_final_wake() noexcept {
+    void block_wakes_from(std::thread::id worker) noexcept {
         std::lock_guard lock(mutex_);
-        block_final_wake_ = true;
+        blocked_thread_ = worker;
     }
 
     void wake() noexcept override {
         std::unique_lock lock(mutex_);
-        ++wake_count_;
-        if (!block_final_wake_ || wake_count_ < 2) {
+        if (std::this_thread::get_id() != blocked_thread_) {
             return;
         }
         final_wake_blocked_ = true;
@@ -87,8 +93,7 @@ public:
 private:
     std::mutex mutex_;
     std::condition_variable changed_;
-    std::size_t wake_count_{};
-    bool block_final_wake_{};
+    std::thread::id blocked_thread_{};
     bool final_wake_blocked_{};
     bool release_final_wake_{};
 };
@@ -250,6 +255,7 @@ public:
         RequestPayload,
         const GenerationDeltaSink& on_delta,
         const std::atomic_bool& cancellation) override {
+        worker_thread = std::this_thread::get_id();
         entered.store(true, std::memory_order_release);
         while (release_ && !release_->load(std::memory_order_acquire)
                && !cancellation.load(std::memory_order_acquire)) {
@@ -276,6 +282,8 @@ public:
     std::vector<GenerationRequest> inputs;
     std::atomic_bool entered{false};
     std::atomic_bool finished{false};
+    // Published by the release store to `entered` above.
+    std::thread::id worker_thread{};
 
 private:
     std::mutex observations_mutex_;
@@ -2188,9 +2196,9 @@ TEST(SessionController, ShutdownReturnsBeforeCancelledProviderUnregisters) {
     TemporaryJournal temporary;
     FinalWakeBlockingNotifier shutdown_notifier;
     // The backend stays inside perform() until shutdown cancels it, so the
-    // notifier is still silent when the test arms the block below. The
-    // execution's two wakes are then exactly its terminal event and its
-    // generation finalization, and the blocked one is the generation wake.
+    // test can name that worker thread before any of the execution's wakes
+    // are blocked. Blocking the worker's own wake is what leaves its task
+    // live while `execution_finished` is already true.
     const std::atomic_bool never_released{false};
     auto backend = std::make_unique<ConcurrentBackend>(
         "guide-id", "Guide", "unused", &never_released);
@@ -2209,14 +2217,18 @@ TEST(SessionController, ShutdownReturnsBeforeCancelledProviderUnregisters) {
     }
     ASSERT_TRUE(backend_view->entered.load(std::memory_order_acquire));
 
-    shutdown_notifier.block_final_wake();
+    shutdown_notifier.block_wakes_from(backend_view->worker_thread);
     auto shutdown = std::async(std::launch::async, [&controller] {
         controller->shutdown();
     });
 
     const bool final_wake_blocked = shutdown_notifier.wait_for_final_wake();
+    // A shutdown that wrongly waits on the blocked wake cannot finish inside
+    // this window, because the release below happens only after it. The bound
+    // therefore only has to outlast a correct shutdown's own work, so it is
+    // generous enough that an instrumented build cannot fail it on timing.
     const std::future_status status = final_wake_blocked
-        ? shutdown.wait_for(std::chrono::milliseconds(50))
+        ? shutdown.wait_for(std::chrono::seconds(5))
         : std::future_status::deferred;
     shutdown_notifier.release_final_wake();
 

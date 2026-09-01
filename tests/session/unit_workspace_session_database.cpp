@@ -1,4 +1,3 @@
-#include "session/session_lease.h"
 #include "session/session_storage_layout.h"
 #include "session/sqlite_storage.h"
 #include "session/workspace_session_database.h"
@@ -683,27 +682,6 @@ TEST(WorkspaceSessionDatabase, CreatesOwnerOnlyDatabaseWalAndShm) {
     EXPECT_EQ(posix_mode(wal), static_cast<mode_t>(0600));
     EXPECT_EQ(posix_mode(shm), static_cast<mode_t>(0600));
 #endif
-}
-
-TEST(WorkspaceSessionDatabase, SharedOpenAcquiresLeaseAndCreatesMissingV2) {
-    test::TestWorkspace workspace;
-    const std::filesystem::path path =
-        workspace.root() / "workspace.sqlite3";
-    {
-        SessionLease lease = open_workspace_session_database(
-            path, "Workspace already in use");
-        EXPECT_TRUE(lease.active());
-        EXPECT_EQ(
-            inspect_workspace_session_database(path),
-            WorkspaceDatabaseState::valid_v2);
-        EXPECT_THROW(
-            (void)open_workspace_session_database(
-                path, "Workspace already in use"),
-            SessionBusyError);
-    }
-    EXPECT_NO_THROW(
-        (void)open_workspace_session_database(
-            path, "Workspace already in use"));
 }
 
 TEST(WorkspaceSessionDatabase, RejectsSymlinkDatabasePath) {

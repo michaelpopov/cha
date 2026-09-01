@@ -433,6 +433,13 @@ add_executable(chaweb_app src/web_main.cpp)
 target_link_libraries(chaweb_app PRIVATE cha_web)
 set_target_properties(chaweb_app PROPERTIES OUTPUT_NAME chaweb)
 cha_enable_warnings(chaweb_app)
+# The web process tests run this executable as a forked child, so the copy
+# compiled into the test binaries above never reaches it. Without its own copy
+# an instrumented server reports SQLite's WAL-index false positive and exits
+# nonzero, failing tests that write from two live sessions at once.
+if(NOT CHA_SANITIZER STREQUAL "none")
+    target_sources(chaweb_app PRIVATE tests/support/sanitizer_suppressions.cpp)
+endif()
 add_custom_command(
     TARGET chaweb_app
     POST_BUILD
