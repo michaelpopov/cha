@@ -294,6 +294,36 @@ TEST_F(WorkspaceConfigStoreTest, RoundTripsAcceptedFilesByteForByte) {
 #endif
 }
 
+TEST_F(WorkspaceConfigStoreTest, SynthesizesMissingForumMemberMarker) {
+    const std::filesystem::path source_marker =
+        source() / "forums" / "lobby" / "members" / "guide"
+        / "character.toml";
+    ASSERT_TRUE(std::filesystem::remove(source_marker));
+
+    import_from_source();
+
+    EXPECT_FALSE(std::filesystem::exists(source_marker));
+    {
+        Database handle(database(), Database::Mode::read_only);
+        bool found_marker = false;
+        for (const ConfigFile& row : read_workspace_config_files(handle)) {
+            if (row.name == "forums/lobby/members/guide/character.toml") {
+                EXPECT_EQ(row.content, "# Required placeholder\n");
+                found_marker = true;
+            }
+        }
+        EXPECT_TRUE(found_marker);
+    }
+
+    export_workspace_configuration(database(), export_);
+    const std::filesystem::path exported_marker =
+        export_ / "forums" / "lobby" / "members" / "guide"
+        / "character.toml";
+    EXPECT_EQ(file_bytes(exported_marker), "# Required placeholder\n");
+    const Workspace exported = Workspace::load(export_);
+    EXPECT_NE(exported.find_forum_member("lobby", "guide"), nullptr);
+}
+
 TEST_F(WorkspaceConfigStoreTest, RecreatesEmptySkeletonDirectories) {
     import_from_source();
     export_workspace_configuration(database(), export_);

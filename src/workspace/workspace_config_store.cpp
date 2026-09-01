@@ -46,6 +46,9 @@ constexpr std::array skeleton_directories{
     std::string_view("forums"),
 };
 
+constexpr std::string_view forum_member_placeholder =
+    "# Required placeholder\n";
+
 std::atomic_uint64_t next_validation_serial{};
 
 [[noreturn]] void fail_path(std::string message) {
@@ -112,6 +115,20 @@ std::filesystem::path require_existing_directory(
 bool is_accepted_stored_name(std::string_view name) {
     return name != "app.toml" && name != "workspace.toml"
         && (name == ".env" || name.ends_with(".toml") || name.ends_with(".md"));
+}
+
+bool is_forum_member_directory(std::string_view name) {
+    constexpr std::string_view forums_prefix = "forums/";
+    constexpr std::string_view members_prefix = "members/";
+    if (!name.starts_with(forums_prefix)) return false;
+    name.remove_prefix(forums_prefix.size());
+
+    const std::size_t forum_end = name.find('/');
+    if (forum_end == std::string_view::npos || forum_end == 0) return false;
+    name.remove_prefix(forum_end + 1);
+    if (!name.starts_with(members_prefix)) return false;
+    name.remove_prefix(members_prefix.size());
+    return !name.empty() && name.find('/') == std::string_view::npos;
 }
 
 std::string stored_name_from(
@@ -185,6 +202,7 @@ std::string read_file_bytes(const std::filesystem::path& path) {
 
 std::vector<ConfigFile> collect_config_rows(const std::filesystem::path& source) {
     std::map<std::string, std::string> files;
+    std::set<std::string> forum_member_directories;
     std::error_code error;
     const std::filesystem::recursive_directory_iterator end;
     std::filesystem::recursive_directory_iterator iterator(
@@ -214,12 +232,24 @@ std::vector<ConfigFile> collect_config_rows(const std::filesystem::path& source)
             }
             continue;
         }
+        if (std::filesystem::is_directory(status)) {
+            if (is_forum_member_directory(name)) {
+                forum_member_directories.insert(name);
+            }
+            continue;
+        }
         if (!std::filesystem::is_regular_file(status)) continue;
         if (!is_accepted_stored_name(name)) continue;
         validate_stored_config_name(name);
         if (!files.emplace(name, read_file_bytes(file)).second) {
             fail_path("Configuration name '" + name + "' is duplicated");
         }
+    }
+
+    for (const std::string& directory : forum_member_directories) {
+        files.try_emplace(
+            directory + "/character.toml",
+            forum_member_placeholder);
     }
 
     std::vector<ConfigFile> rows;

@@ -64,6 +64,7 @@ const executable = packagedApplication
   : resolve(repository, 'build/ninja/chaweb');
 const workspace = publishedWorkspace ?? resolve(temporary, 'workspace');
 const database = publishedDatabase ?? resolve(temporary, 'cha.sqlite3');
+const config = resolve(temporary, 'cha.toml');
 const apiPort = Number(process.env.CHA_E2E_PORT ?? '8080');
 const modelPort = apiPort + 2;
 
@@ -131,13 +132,27 @@ stream = true
 https = false
 `,
 );
+await writeFile(
+  config,
+  `data = ${JSON.stringify(database)}
+
+[web]
+host = "127.0.0.1"
+port = ${apiPort}
+
+[logging]
+file = "cha.log"
+level = "off"
+`,
+);
 
 // The real bundle, not a placeholder: the served suite loads the application
 // from this server with no development server anywhere in the path.
 if (packagedApplication) {
   for (const required of [
     'chaweb',
-    'import-seed/app.toml',
+    'cha.toml.example',
+    'import-seed/.env',
     'start-cha.sh',
     'web/index.html',
   ]) {
@@ -159,7 +174,7 @@ if (packagedApplication) {
 }
 
 const importer = spawn(executable, [
-  '--data', database,
+  '--config', config,
   '--import', workspace,
 ], { stdio: 'inherit' });
 const importCode = await new Promise((resolveExit, reject) => {
@@ -180,9 +195,7 @@ await new Promise((resolveListen, reject) => {
 
 child = spawn(executable, [
   '--root', application,
-  '--data', database,
-  '--host', '127.0.0.1',
-  '--port', String(apiPort),
+  '--config', config,
   // Short enough to exercise an actual unload in a browser test, but longer
   // than the client's first reconnect delay so ordinary recovery tests do not
   // race the test-only lifecycle setting.
