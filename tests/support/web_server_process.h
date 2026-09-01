@@ -3,6 +3,7 @@
 #include <chrono>
 #include <filesystem>
 #include <string>
+#include <string_view>
 
 #include <sys/types.h>
 
@@ -19,13 +20,17 @@ struct ProcessExit {
 // server or leave ctest's capture descriptors open.
 class WebServerProcess {
 public:
-    WebServerProcess(const std::filesystem::path& database, int port);
+    WebServerProcess(
+        const std::filesystem::path& database,
+        int port,
+        std::string_view log_level = "off");
     // The two roots are independent. An empty application root means the
     // fixture is using one directory for both, which most tests do.
     WebServerProcess(
         const std::filesystem::path& application_root,
         const std::filesystem::path& database,
-        int port);
+        int port,
+        std::string_view log_level = "off");
     ~WebServerProcess();
     WebServerProcess(const WebServerProcess&) = delete;
     WebServerProcess& operator=(const WebServerProcess&) = delete;
@@ -47,6 +52,7 @@ private:
     int output_fd_{-1};
     int error_fd_{-1};
     int port_{};
+    std::filesystem::path config_path_;
     std::string output_;
     std::string errors_;
 };

@@ -72,8 +72,8 @@ repository operations use short-lived connections.
 
 Welcome is the sole built-in Entrance session. Its database lives under the
 store's private `welcome/` child and is removed with that root. All persistent
-sessions share the SQLite file passed with `--data` and are addressed by stable
-forum and session IDs.
+sessions share the SQLite file selected by the external application config and
+are addressed by stable forum and session IDs.
 
 ## Persistence and identity
 
@@ -86,10 +86,9 @@ rows belonging to that key.
 
 One immutable `Workspace` is published process-wide, while one independent
 `SessionRepository` owns session-storage operations. `Workspace::load()` parses
-the store's materialized physical root but resolves durable relative paths,
-such as the diagnostic log, from the selected database's parent. Published
-values eagerly own their parsed data; normal reads do not reopen materialized
-files.
+the store's materialized physical root. Published values eagerly own their
+parsed data; normal reads do not reopen materialized files. Process settings,
+including diagnostic logging, come from the external application config.
 
 The three narrow runtime mutations are serialized by the store. Each edits the
 materialized candidate, validates it, replaces the complete small `config`

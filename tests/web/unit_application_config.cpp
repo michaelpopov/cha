@@ -22,16 +22,28 @@ protected:
             / ("cha_application_config_"
                + std::to_string(
                    std::chrono::steady_clock::now().time_since_epoch().count()));
-        database_ = root_ / "workspace.sqlite3";
+        config_ = root_ / "config" / "cha.toml";
         import_ = root_ / "import";
         export_ = root_ / "export";
+        std::filesystem::create_directories(config_.parent_path());
         std::filesystem::create_directories(import_);
-        std::ofstream(database_) << "placeholder";
+        write_config();
     }
 
     void TearDown() override {
         std::error_code error;
         std::filesystem::remove_all(root_, error);
+    }
+
+    void write_config(std::string_view contents =
+        "data = \"../data/workspace.sqlite3\"\n"
+        "[web]\n"
+        "host = \"127.0.0.1\"\n"
+        "port = 8080\n"
+        "[logging]\n"
+        "file = \"logs/cha.log\"\n"
+        "level = \"info\"\n") {
+        std::ofstream(config_) << contents;
     }
 
     ApplicationCommand load(std::vector<std::string> arguments) {
@@ -55,183 +67,123 @@ protected:
     }
 
     std::filesystem::path root_;
-    std::filesystem::path database_;
+    std::filesystem::path config_;
     std::filesystem::path import_;
     std::filesystem::path export_;
 };
 
-TEST_F(ApplicationConfigTest, RuntimeRequiresDataAndKeepsRootIndependent) {
+TEST_F(ApplicationConfigTest, LoadsUnifiedExternalConfigWithEqualsSyntax) {
     const ApplicationCommand command = load({
-        "chaweb", "--data", database_.string(), "--root", root_.string()});
+        "chaweb", "--config=" + config_.string(), "--root", root_.string()});
 
     EXPECT_EQ(
         command.database,
-        std::filesystem::weakly_canonical(std::filesystem::absolute(database_)));
+        std::filesystem::weakly_canonical(root_ / "data" / "workspace.sqlite3"));
+    EXPECT_EQ(command.root, std::filesystem::weakly_canonical(root_));
+    EXPECT_EQ(command.host, "127.0.0.1");
+    EXPECT_EQ(command.port, 8080);
     EXPECT_EQ(
-        command.root,
-        std::filesystem::weakly_canonical(std::filesystem::absolute(root_)));
+        command.log_file,
+        std::filesystem::weakly_canonical(config_.parent_path() / "logs/cha.log"));
+    EXPECT_EQ(command.log_level, "info");
     EXPECT_FALSE(command.import_directory);
     EXPECT_FALSE(command.export_directory);
-    EXPECT_FALSE(command.host);
-    EXPECT_FALSE(command.port);
-    EXPECT_FALSE(command.test_idle_grace_ms);
 }
 
-TEST_F(ApplicationConfigTest, RuntimeHostAndPortAreOptionalOverrides) {
-    const ApplicationCommand command = load({
-        "chaweb", "--data", database_.string(), "--root", root_.string(),
-        "--host", "127.0.0.1", "--port", "9000",
-        "--test-idle-grace-ms", "25"});
+TEST_F(ApplicationConfigTest, AcceptsSeparatedConfigOptionAndAbsolutePaths) {
+    const std::filesystem::path database = root_ / "absolute.sqlite3";
+    const std::filesystem::path log = root_ / "absolute.log";
+    write_config(
+        "data = \"" + database.string() + "\"\n"
+        "[web]\nhost = \"0.0.0.0\"\nport = 9000\n"
+        "[logging]\nfile = \"" + log.string() + "\"\nlevel = \"debug\"\n");
 
-    EXPECT_EQ(command.host, "127.0.0.1");
+    const ApplicationCommand command =
+        load({"chaweb", "--config", config_.string()});
+    EXPECT_EQ(command.database, database);
+    EXPECT_EQ(command.log_file, log);
+    EXPECT_EQ(command.host, "0.0.0.0");
     EXPECT_EQ(command.port, 9000);
-    EXPECT_EQ(command.test_idle_grace_ms, 25);
+    EXPECT_EQ(command.log_level, "debug");
 }
 
-TEST_F(ApplicationConfigTest, ImportAndExportRequireDataAndRejectRuntimeOptions) {
+TEST_F(ApplicationConfigTest, ImportAndExportUseConfiguredDatabase) {
     const ApplicationCommand imported = load({
-        "chaweb", "--data", database_.string(),
+        "chaweb", "--config=" + config_.string(),
         "--import", import_.string()});
     EXPECT_EQ(
         imported.import_directory,
         std::filesystem::weakly_canonical(std::filesystem::absolute(import_)));
-    EXPECT_FALSE(imported.export_directory);
     EXPECT_TRUE(imported.root.empty());
 
     const ApplicationCommand exported = load({
-        "chaweb", "--data", database_.string(),
-        "--export", export_.string()});
+        "chaweb", "--config=" + config_.string(),
+        "--export=" + export_.string()});
     EXPECT_EQ(
         exported.export_directory,
         std::filesystem::weakly_canonical(std::filesystem::absolute(export_)));
-    EXPECT_FALSE(exported.import_directory);
 
     const std::string both = error_text({
-        "chaweb", "--data", database_.string(),
+        "chaweb", "--config=" + config_.string(),
         "--import", import_.string(), "--export", export_.string()});
     EXPECT_NE(both.find("mutually exclusive"), std::string::npos);
-    EXPECT_NE(both.find("--data DATABASE --import"), std::string::npos);
-
-    for (const char* offline : {"--import", "--export"}) {
-        const std::filesystem::path directory = std::string(offline) == "--import"
-            ? import_ : export_;
-        for (const char* option : {
-                 "--root", "--host", "--port", "--test-idle-grace-ms"}) {
-            const std::string value = std::string(option) == "--port"
-                    || std::string(option) == "--test-idle-grace-ms"
-                ? "8080" : "x";
-            const std::string text = error_text({
-                "chaweb", "--data", database_.string(),
-                offline, directory.string(), option, value});
-            EXPECT_NE(text.find(option), std::string::npos) << text;
-            EXPECT_NE(text.find("runtime option"), std::string::npos) << text;
-            EXPECT_NE(text.find(offline), std::string::npos) << text;
-        }
-    }
 }
 
-TEST_F(ApplicationConfigTest, MissingDuplicateAndUnknownOptionsNameTheRemedy) {
-    const std::string missing = error_text({"chaweb"});
-    EXPECT_NE(missing.find("--data DATABASE"), std::string::npos);
-    EXPECT_NE(missing.find("--import SOURCE_DIRECTORY"), std::string::npos);
+TEST_F(ApplicationConfigTest, ImportRequiresTheApplicationConfigToBeExternal) {
+    const std::filesystem::path inside = import_ / "cha.toml";
+    std::filesystem::copy_file(config_, inside);
+    const std::string error = error_text({
+        "chaweb", "--config=" + inside.string(),
+        "--import", import_.string()});
+    EXPECT_NE(error.find("outside the imported workspace"), std::string::npos)
+        << error;
+}
 
-    for (const char* offline : {"--import", "--export"}) {
-        const std::string without_data = error_text({
-            "chaweb", offline,
-            (std::string(offline) == "--import" ? import_ : export_).string()});
-        EXPECT_NE(without_data.find("Missing --data"), std::string::npos)
-            << without_data;
-    }
-    for (const char* option : {
-             "--data", "--import", "--export", "--root", "--host", "--port",
-             "--test-idle-grace-ms"}) {
-        const std::string without_value = error_text({"chaweb", option});
-        EXPECT_NE(without_value.find("requires a value"), std::string::npos)
-            << without_value;
-    }
+TEST_F(ApplicationConfigTest, RejectsMissingDuplicateAndRuntimeOfflineOptions) {
+    EXPECT_NE(error_text({"chaweb"}).find("Missing --config"), std::string::npos);
+    EXPECT_NE(
+        error_text({"chaweb", "--config"}).find("requires a value"),
+        std::string::npos);
+    EXPECT_NE(
+        error_text({
+            "chaweb", "--config", config_.string(),
+            "--config=" + config_.string()}).find("more than once"),
+        std::string::npos);
+    EXPECT_NE(
+        error_text({"chaweb", "--data", "old.sqlite3"}).find("Unknown option"),
+        std::string::npos);
+    EXPECT_NE(
+        error_text({"chaweb", "--host", "127.0.0.1"}).find("Unknown option"),
+        std::string::npos);
+    EXPECT_NE(
+        error_text({
+            "chaweb", "--config=" + config_.string(),
+            "--import", import_.string(), "--root", root_.string()})
+            .find("runtime option"),
+        std::string::npos);
+    EXPECT_NE(
+        error_text({
+            "chaweb", "--config=" + config_.string(),
+            "--test-idle-grace-ms", "0"}).find("positive integer"),
+        std::string::npos);
+}
 
-    const std::vector<std::pair<std::string, std::string>> unique_options{
-        {"--data", database_.string()},
-        {"--import", import_.string()},
-        {"--export", export_.string()},
-        {"--root", root_.string()},
-        {"--host", "127.0.0.1"},
-        {"--port", "8080"},
-        {"--test-idle-grace-ms", "25"},
+TEST_F(ApplicationConfigTest, RequiresAllSettingsWithValidTypes) {
+    const std::vector<std::string> invalid{
+        "[web]\nhost = \"x\"\nport = 1\n[logging]\nfile = \"x\"\nlevel = \"off\"\n",
+        "data = \"x\"\n[logging]\nfile = \"x\"\nlevel = \"off\"\n",
+        "data = \"x\"\n[web]\nhost = \"\"\nport = 1\n[logging]\nfile = \"x\"\nlevel = \"off\"\n",
+        "data = \"x\"\n[web]\nhost = \"x\"\nport = 0\n[logging]\nfile = \"x\"\nlevel = \"off\"\n",
+        "data = \"x\"\n[web]\nhost = \"x\"\nport = 1\n[logging]\nlevel = \"off\"\n",
+        "data = \"x\"\nextra = true\n[web]\nhost = \"x\"\nport = 1\n[logging]\nfile = \"x\"\nlevel = \"off\"\n",
     };
-    for (const auto& [option, value] : unique_options) {
-        const std::string duplicate = error_text({
-            "chaweb", "--data", database_.string(),
-            option, value, option, value});
-        EXPECT_NE(duplicate.find(option), std::string::npos) << duplicate;
-        EXPECT_NE(duplicate.find("more than once"), std::string::npos)
-            << duplicate;
+    for (const std::string& contents : invalid) {
+        write_config(contents);
+        EXPECT_THROW(
+            (void)load({"chaweb", "--config=" + config_.string()}),
+            std::runtime_error)
+            << contents;
     }
-
-    const std::string removed_config = error_text({
-        "chaweb", "--config", (root_ / "app.toml").string()});
-    EXPECT_NE(removed_config.find("--config"), std::string::npos);
-    EXPECT_NE(removed_config.find("removed"), std::string::npos);
-    EXPECT_NE(removed_config.find("--data DATABASE"), std::string::npos);
-
-    const std::string removed_workspace = error_text({
-        "chaweb", "--workspace", import_.string()});
-    EXPECT_NE(removed_workspace.find("--workspace"), std::string::npos);
-    EXPECT_NE(removed_workspace.find("removed"), std::string::npos);
-    EXPECT_NE(removed_workspace.find("--data DATABASE"), std::string::npos);
-
-    EXPECT_THROW((void)load({"chaweb", "--wat", "value"}), std::runtime_error);
-    EXPECT_THROW((void)load({"chaweb", "--migration"}), std::runtime_error);
-    EXPECT_THROW(
-        (void)load({"chaweb", "--data", database_.string(), "--host", ""}),
-        std::runtime_error);
-    EXPECT_THROW(
-        (void)load({
-            "chaweb", "--data", database_.string(),
-            "--test-idle-grace-ms", "0"}),
-        std::runtime_error);
-}
-
-TEST_F(ApplicationConfigTest, StoredSettingsReadHostAndPort) {
-    const std::filesystem::path file = root_ / "app.toml";
-    std::ofstream(file) << "host = \"127.0.0.1\"\nport = 8080\n";
-    const StoredApplicationSettings settings =
-        load_stored_application_settings(file);
-    EXPECT_EQ(settings.host, "127.0.0.1");
-    EXPECT_EQ(settings.port, 8080);
-}
-
-TEST_F(ApplicationConfigTest, StoredSettingsRejectOldWorkspaceFields) {
-    const std::filesystem::path file = root_ / "app.toml";
-    std::ofstream(file)
-        << "host = \"127.0.0.1\"\n"
-           "port = 8080\n"
-           "workspace = \"customer-data\"\n";
-    EXPECT_THROW(
-        (void)load_stored_application_settings(file), std::runtime_error);
-
-    std::ofstream(file)
-        << "host = \"127.0.0.1\"\n"
-           "port = 8080\n"
-           "backup_dir = \"backups\"\n";
-    EXPECT_THROW(
-        (void)load_stored_application_settings(file), std::runtime_error);
-}
-
-TEST_F(ApplicationConfigTest, StoredSettingsRequireHostAndPort) {
-    const std::filesystem::path file = root_ / "app.toml";
-    std::ofstream(file) << "host = \"127.0.0.1\"\n";
-    EXPECT_THROW(
-        (void)load_stored_application_settings(file), std::runtime_error);
-    std::ofstream(file) << "port = 8080\n";
-    EXPECT_THROW(
-        (void)load_stored_application_settings(file), std::runtime_error);
-    std::ofstream(file) << "host = \"\"\nport = 8080\n";
-    EXPECT_THROW(
-        (void)load_stored_application_settings(file), std::runtime_error);
-    std::ofstream(file) << "host = \"127.0.0.1\"\nport = 0\n";
-    EXPECT_THROW(
-        (void)load_stored_application_settings(file), std::runtime_error);
 }
 
 TEST(ExecutablePath, ResolvesTheRunningBinaryDirectory) {

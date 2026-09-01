@@ -37,6 +37,7 @@ CREATE TABLE config (
         AND substr(name, 1, 1) <> '/'
         AND instr(name, char(92)) = 0
         AND instr('/' || name || '/', '/../') = 0
+        AND name NOT IN ('app.toml', 'workspace.toml')
     ),
     content TEXT NOT NULL
 ) STRICT;
@@ -104,7 +105,7 @@ bool is_valid_v1_identity(Database& database) {
     throw std::runtime_error(
         "Workspace session database '" + std::string(path)
         + "' is a valid CHA schema-1 database. Stop CHA and run:\n"
-        "chaweb --data DATABASE --import WORKSPACE");
+        "chaweb --config=CONFIG --import WORKSPACE");
 }
 
 void remove_database_files_noexcept(
@@ -457,6 +458,11 @@ void validate_stored_config_name(std::string_view name) {
         throw std::runtime_error(
             "Configuration name '" + std::string(name)
             + "' contains a backslash");
+    }
+    if (name == "app.toml" || name == "workspace.toml") {
+        throw std::runtime_error(
+            "External application config '" + std::string(name)
+            + "' must not be stored in the database");
     }
 
     std::string_view rest = name;

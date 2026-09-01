@@ -62,7 +62,6 @@ TEST(Workspace, EagerlyLoadsOwnedResolvedData) {
 
     const Workspace workspace = Workspace::load(fixture.root());
 
-    EXPECT_EQ(workspace.settings().log_level, "off");
     ASSERT_NE(workspace.find_provider("test"), nullptr);
     EXPECT_EQ(workspace.find_provider("test")->config.model, "fake");
     EXPECT_EQ(workspace.find_provider("test")->label, "Test");
@@ -281,11 +280,6 @@ TEST(Workspace, RejectsBrokenReferencesAndIdentityCollisions) {
 TEST(Workspace, RequiresTheWorkspaceDirectoryStructureAndDefinitionFiles) {
     {
         test::TestWorkspace fixture;
-        std::filesystem::remove(fixture.root() / "workspace.toml");
-        EXPECT_THROW((void)Workspace::load(fixture.root()), std::runtime_error);
-    }
-    {
-        test::TestWorkspace fixture;
         std::filesystem::remove_all(fixture.root() / "personas");
         EXPECT_THROW((void)Workspace::load(fixture.root()), std::runtime_error);
     }
@@ -303,47 +297,18 @@ TEST(Workspace, RequiresTheWorkspaceDirectoryStructureAndDefinitionFiles) {
     }
 }
 
-TEST(Workspace, ResolvesRelativeAndAbsoluteLoggingPaths) {
-    test::TestWorkspace relative;
-    const Workspace relative_workspace = Workspace::load(relative.root());
-    EXPECT_EQ(
-        relative_workspace.settings().log_file,
-        relative.root() / "logs" / "cha.log");
-
-    test::TestWorkspace absolute;
-    const std::filesystem::path log = absolute.root() / "absolute.log";
-    std::ofstream(absolute.root() / "workspace.toml")
-        << "[logging]\nfile = \"" << log.string()
-        << "\"\nlevel = \"debug\"\n";
-    const Workspace absolute_workspace = Workspace::load(absolute.root());
-    EXPECT_EQ(absolute_workspace.settings().log_file, log);
-    EXPECT_EQ(absolute_workspace.settings().log_level, "debug");
-}
-
-TEST(Workspace, ResolvesRelativeLoggingPathAgainstDurableBase) {
-    test::TestWorkspace fixture;
-    const std::filesystem::path durable = fixture.root() / "durable-base";
-    std::filesystem::create_directories(durable);
-    const Workspace workspace = Workspace::load(fixture.root(), durable);
-    EXPECT_EQ(workspace.root(), fixture.root());
-    EXPECT_EQ(workspace.settings().log_file, durable / "logs" / "cha.log");
-}
-
 TEST(Workspace, TemplateIncludesResolveUnderThePhysicalRoot) {
     test::TestWorkspace fixture;
-    const std::filesystem::path durable = fixture.root() / "durable-base";
-    std::filesystem::create_directories(durable);
     std::ofstream(fixture.root() / "characters" / "guide" / "voice.md")
         << "Physical include body.\n";
     std::ofstream(fixture.root() / "characters" / "guide" / "CHARACTER.md")
         << "$$(voice.md)\nGuide instructions.\n";
-    const Workspace workspace = Workspace::load(fixture.root(), durable);
+    const Workspace workspace = Workspace::load(fixture.root());
     ASSERT_NE(workspace.find_character("guide"), nullptr);
     EXPECT_NE(
         workspace.find_character("guide")->markdown.find(
             "Physical include body."),
         std::string::npos);
-    EXPECT_EQ(workspace.settings().log_file, durable / "logs" / "cha.log");
 }
 
 TEST(Workspace, OverlayMakesADotenvApiKeyVisibleDuringLoad) {

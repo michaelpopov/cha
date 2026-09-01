@@ -1,8 +1,8 @@
 # Web frontend boundary
 
 Workspace characters select their providers in their own `character.toml`.
-Stored root `app.toml` supplies required `host` and `port`; runtime CLI values
-may override them, while `--root` names only the installed web assets. Web
+The external application config supplies `data`, `[web]`, and `[logging]`,
+while `--root` names only the installed web assets. Web
 discovery has its own HTTP projection, including Guest, Assistant, Entrance,
 and Welcome, but does not use terminal presentation result types.
 

@@ -6,6 +6,7 @@
 
 #include <charconv>
 #include <fstream>
+#include <initializer_list>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -16,43 +17,38 @@ namespace cha::web {
 namespace {
 
 struct ParsedOptions {
-    std::optional<std::filesystem::path> database;
+    std::optional<std::filesystem::path> config;
     std::optional<std::filesystem::path> import_directory;
     std::optional<std::filesystem::path> export_directory;
     std::optional<std::filesystem::path> root;
-    std::optional<std::string> host;
-    std::optional<int> port;
     std::optional<int> test_idle_grace_ms;
+};
+
+struct ApplicationSettings {
+    std::filesystem::path database;
+    std::string host;
+    int port{};
+    std::filesystem::path log_file;
+    std::string log_level;
 };
 
 std::runtime_error argument_error(std::string message) {
     return std::runtime_error(std::move(message) + "\n" + web_usage);
 }
 
-int parse_port(std::string_view value) {
-    int port{};
+int parse_positive_integer(
+    std::string_view option,
+    std::string_view value) {
+    int result{};
     const auto parsed = std::from_chars(
-        value.data(), value.data() + value.size(), port);
+        value.data(), value.data() + value.size(), result);
     if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size()
-        || port < 1 || port > 65535) {
+        || result < 1) {
         throw argument_error(
-            "Invalid --port value '" + std::string(value)
-            + "'; expected an integer between 1 and 65535.");
-    }
-    return port;
-}
-
-int parse_test_idle_grace(std::string_view value) {
-    int milliseconds{};
-    const auto parsed = std::from_chars(
-        value.data(), value.data() + value.size(), milliseconds);
-    if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size()
-        || milliseconds < 1) {
-        throw argument_error(
-            "Invalid --test-idle-grace-ms value '" + std::string(value)
+            "Invalid " + std::string(option) + " value '" + std::string(value)
             + "'; expected a positive integer.");
     }
-    return milliseconds;
+    return result;
 }
 
 std::filesystem::path normalize_cli_path(
@@ -77,6 +73,147 @@ void assign_unique_path(
     destination = normalize_cli_path(option, value);
 }
 
+ParsedOptions parse_arguments(int argc, const char* const* argv) {
+    ParsedOptions result;
+    for (int index = 1; index < argc; ++index) {
+        const std::string_view argument(argv[index]);
+        const std::size_t equals = argument.find('=');
+        const std::string_view option = argument.substr(0, equals);
+        if (option != "--config" && option != "--import"
+            && option != "--export" && option != "--root"
+            && option != "--test-idle-grace-ms") {
+            throw argument_error("Unknown option '" + std::string(option) + "'.");
+        }
+
+        std::string_view value;
+        if (equals != std::string_view::npos) {
+            value = argument.substr(equals + 1);
+        } else {
+            if (++index >= argc) {
+                throw argument_error(
+                    "Option '" + std::string(option) + "' requires a value.");
+            }
+            value = argv[index];
+        }
+
+        if (option == "--config") {
+            assign_unique_path(result.config, option, value);
+        } else if (option == "--import") {
+            assign_unique_path(result.import_directory, option, value);
+        } else if (option == "--export") {
+            assign_unique_path(result.export_directory, option, value);
+        } else if (option == "--root") {
+            assign_unique_path(result.root, option, value);
+        } else {
+            if (result.test_idle_grace_ms) {
+                throw argument_error(
+                    "Option '--test-idle-grace-ms' was provided more than once.");
+            }
+            result.test_idle_grace_ms =
+                parse_positive_integer(option, value);
+        }
+    }
+    return result;
+}
+
+void reject_unknown_fields(
+    const toml::table& table,
+    const std::filesystem::path& config_file,
+    std::initializer_list<std::string_view> allowed,
+    std::string_view section) {
+    for (const auto& [key, value] : table) {
+        (void)value;
+        bool found = false;
+        for (const std::string_view name : allowed) {
+            if (key.str() == name) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            throw std::runtime_error(
+                "Application config '" + utf8_path(config_file) + "' "
+                + std::string(section) + " contains unknown field '"
+                + std::string(key.str()) + "'.");
+        }
+    }
+}
+
+const toml::table& required_table(
+    const toml::table& parent,
+    const std::filesystem::path& config_file,
+    std::string_view name) {
+    const toml::table* const result = parent[name].as_table();
+    if (result == nullptr) {
+        throw std::runtime_error(
+            "Application config '" + utf8_path(config_file)
+            + "' requires [" + std::string(name) + "].");
+    }
+    return *result;
+}
+
+std::string required_string(
+    const toml::table& table,
+    const std::filesystem::path& config_file,
+    std::string_view name) {
+    const std::optional<std::string> value = table[name].value<std::string>();
+    if (!value || value->empty()) {
+        throw std::runtime_error(
+            "Application config '" + utf8_path(config_file)
+            + "' requires a non-empty string '" + std::string(name) + "'.");
+    }
+    return *value;
+}
+
+std::filesystem::path resolve_config_path(
+    const std::filesystem::path& config_file,
+    std::string_view field,
+    std::string_view value) {
+    std::filesystem::path path = path_from_utf8(value);
+    if (path.is_relative()) path = config_file.parent_path() / path;
+    if (path.empty()) {
+        throw std::runtime_error(
+            "Application config '" + utf8_path(config_file)
+            + "' requires a non-empty path '" + std::string(field) + "'.");
+    }
+    return std::filesystem::weakly_canonical(std::filesystem::absolute(path));
+}
+
+ApplicationSettings load_application_settings(
+    const std::filesystem::path& config_file) {
+    std::ifstream input(config_file, std::ios::binary);
+    if (!input) {
+        throw std::runtime_error(
+            "Failed to read application config '" + utf8_path(config_file) + "'.");
+    }
+    const toml::table root = toml::parse(input, utf8_path(config_file));
+    reject_unknown_fields(root, config_file, {"data", "web", "logging"}, "root");
+
+    const std::string data = required_string(root, config_file, "data");
+    const toml::table& web = required_table(root, config_file, "web");
+    reject_unknown_fields(web, config_file, {"host", "port"}, "[web]");
+    const std::string host = required_string(web, config_file, "host");
+    const std::optional<int> port = web["port"].value<int>();
+    if (!port || *port < 1 || *port > 65535) {
+        throw std::runtime_error(
+            "Application config '" + utf8_path(config_file)
+            + "' requires an integer 'port' between 1 and 65535 in [web].");
+    }
+
+    const toml::table& logging = required_table(root, config_file, "logging");
+    reject_unknown_fields(logging, config_file, {"file", "level"}, "[logging]");
+    const std::string log_file = required_string(logging, config_file, "file");
+    const std::string log_level = required_string(logging, config_file, "level");
+
+    return {
+        .database = resolve_config_path(config_file, "data", data),
+        .host = host,
+        .port = *port,
+        .log_file = resolve_config_path(config_file, "logging.file", log_file),
+        .log_level = log_level,
+    };
+}
+
 void reject_runtime_option_in_offline_mode(
     std::string_view option,
     std::string_view offline) {
@@ -85,131 +222,39 @@ void reject_runtime_option_in_offline_mode(
         "be used with " + std::string(offline) + ".");
 }
 
-ParsedOptions parse_arguments(int argc, const char* const* argv) {
-    ParsedOptions result;
-    for (int index = 1; index < argc; ++index) {
-        const std::string_view option(argv[index]);
-        if (option == "--config") {
-            throw argument_error(
-                "Unknown option '--config'. The old --config APP_TOML option "
-                "has been removed; pass --data DATABASE.");
+bool path_is_under(
+    const std::filesystem::path& directory,
+    const std::filesystem::path& candidate) {
+    auto directory_part = directory.begin();
+    auto candidate_part = candidate.begin();
+    while (directory_part != directory.end()) {
+        if (candidate_part == candidate.end()
+            || *directory_part != *candidate_part) {
+            return false;
         }
-        if (option == "--workspace") {
-            throw argument_error(
-                "Unknown option '--workspace'. The --workspace option has "
-                "been removed; pass --data DATABASE.");
-        }
-        if (option != "--data" && option != "--import" && option != "--export"
-            && option != "--root" && option != "--host" && option != "--port"
-            && option != "--test-idle-grace-ms") {
-            throw argument_error("Unknown option '" + std::string(option) + "'.");
-        }
-        if (++index >= argc) {
-            throw argument_error(
-                "Option '" + std::string(option) + "' requires a value.");
-        }
-        const std::string_view value(argv[index]);
-        if (option == "--data") {
-            assign_unique_path(result.database, option, value);
-        } else if (option == "--import") {
-            assign_unique_path(result.import_directory, option, value);
-        } else if (option == "--export") {
-            assign_unique_path(result.export_directory, option, value);
-        } else if (option == "--root") {
-            assign_unique_path(result.root, option, value);
-        } else if (option == "--host") {
-            if (result.host) {
-                throw argument_error(
-                    "Option '--host' was provided more than once.");
-            }
-            if (value.empty()) {
-                throw argument_error("Option '--host' requires a non-empty value.");
-            }
-            result.host = std::string(value);
-        } else if (option == "--port") {
-            if (result.port) {
-                throw argument_error(
-                    "Option '--port' was provided more than once.");
-            }
-            result.port = parse_port(value);
-        } else {
-            if (result.test_idle_grace_ms) {
-                throw argument_error(
-                    "Option '--test-idle-grace-ms' was provided more than once.");
-            }
-            result.test_idle_grace_ms = parse_test_idle_grace(value);
-        }
+        ++directory_part;
+        ++candidate_part;
     }
-    return result;
-}
-
-void read_host_and_port(
-    const toml::table& table,
-    const std::filesystem::path& config_file,
-    std::optional<std::string>& host,
-    std::optional<int>& port) {
-    host = table["host"].value<std::string>();
-    port = table["port"].value<int>();
-    if (host && host->empty()) {
-        throw std::runtime_error(
-            "Application config '" + utf8_path(config_file)
-            + "' requires a non-empty string 'host'.");
-    }
-    if (port && (*port < 1 || *port > 65535)) {
-        throw std::runtime_error(
-            "Application config '" + utf8_path(config_file)
-            + "' requires an integer 'port' between 1 and 65535.");
-    }
-}
-
-toml::table parse_application_table(const std::filesystem::path& config_file) {
-    std::ifstream input(config_file, std::ios::binary);
-    if (!input) {
-        throw std::runtime_error(
-            "Failed to read application config '" + utf8_path(config_file)
-            + "'.");
-    }
-    return toml::parse(input, utf8_path(config_file));
+    return true;
 }
 
 } // namespace
-
-StoredApplicationSettings load_stored_application_settings(
-    const std::filesystem::path& config_file) {
-    const toml::table table = parse_application_table(config_file);
-    if (table.contains("workspace") || table.contains("backup_dir")) {
-        throw std::runtime_error(
-            "Application config '" + utf8_path(config_file)
-            + "' must not contain 'workspace' or 'backup_dir'.");
-    }
-    std::optional<std::string> host;
-    std::optional<int> port;
-    read_host_and_port(table, config_file, host, port);
-    if (!host) {
-        throw std::runtime_error(
-            "Application config '" + utf8_path(config_file)
-            + "' requires a non-empty string 'host'.");
-    }
-    if (!port) {
-        throw std::runtime_error(
-            "Application config '" + utf8_path(config_file)
-            + "' requires an integer 'port' between 1 and 65535.");
-    }
-    return {.host = std::move(*host), .port = *port};
-}
 
 ApplicationCommand parse_application_command(
     int argc,
     const char* const* argv) {
     const ParsedOptions options = parse_arguments(argc, argv);
-    if (!options.database) {
-        throw argument_error(
-            "Missing --data DATABASE. Every mode needs a CHA database. If "
-            "the file does not exist yet, import a workspace first:\n"
-            "  chaweb --data DATABASE --import SOURCE_DIRECTORY");
+    if (!options.config) {
+        throw argument_error("Missing --config=CONFIG.");
     }
     if (options.import_directory && options.export_directory) {
         throw argument_error("--import and --export are mutually exclusive.");
+    }
+    if (options.import_directory
+        && path_is_under(*options.import_directory, *options.config)) {
+        throw argument_error(
+            "Application config '" + utf8_path(*options.config)
+            + "' must be outside the imported workspace.");
     }
 
     const bool offline =
@@ -220,31 +265,26 @@ ApplicationCommand parse_application_command(
         if (options.root) {
             reject_runtime_option_in_offline_mode("--root", offline_option);
         }
-        if (options.host) {
-            reject_runtime_option_in_offline_mode("--host", offline_option);
-        }
-        if (options.port) {
-            reject_runtime_option_in_offline_mode("--port", offline_option);
-        }
         if (options.test_idle_grace_ms) {
             reject_runtime_option_in_offline_mode(
                 "--test-idle-grace-ms", offline_option);
         }
-        return {
-            .database = *options.database,
-            .import_directory = options.import_directory,
-            .export_directory = options.export_directory,
-        };
     }
 
-    const std::filesystem::path root = options.root
-        ? *options.root
-        : std::filesystem::absolute(executable_directory()).lexically_normal();
+    const ApplicationSettings settings = load_application_settings(*options.config);
+    const std::filesystem::path root = offline
+        ? std::filesystem::path{}
+        : options.root.value_or(
+              std::filesystem::absolute(executable_directory()).lexically_normal());
     return {
-        .database = *options.database,
+        .database = settings.database,
+        .import_directory = options.import_directory,
+        .export_directory = options.export_directory,
         .root = root,
-        .host = options.host,
-        .port = options.port,
+        .host = settings.host,
+        .port = settings.port,
+        .log_file = settings.log_file,
+        .log_level = settings.log_level,
         .test_idle_grace_ms = options.test_idle_grace_ms,
     };
 }

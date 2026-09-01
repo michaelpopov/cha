@@ -147,9 +147,14 @@ void expect_seeded_session_rows(Database& database) {
 class WorkspaceConfigStoreTest : public testing::Test {
 protected:
     void SetUp() override {
+        // Legacy root settings are external application configuration and must
+        // be ignored by metadata import.
         write_bytes(
             workspace_.root() / "app.toml",
             "host = \"127.0.0.1\"\nport = 8080\n");
+        write_bytes(
+            workspace_.root() / "workspace.toml",
+            "[logging]\nfile = \"logs/cha.log\"\nlevel = \"off\"\n");
         export_ = workspace_.root().parent_path()
             / (workspace_.root().filename().string() + "_export");
     }
@@ -174,7 +179,7 @@ protected:
 
 TEST_F(WorkspaceConfigStoreTest, ImportsIntoAMissingDatabase) {
     const std::size_t count = import_from_source();
-    EXPECT_GE(count, 8U);
+    EXPECT_GE(count, 6U);
     EXPECT_EQ(
         inspect_workspace_session_database(database()),
         WorkspaceDatabaseState::valid_v2);
@@ -188,8 +193,8 @@ TEST_F(WorkspaceConfigStoreTest, ImportsIntoAMissingDatabase) {
         if (row.name == "app.toml") found_app = true;
         if (row.name == "workspace.toml") found_workspace = true;
     }
-    EXPECT_TRUE(found_app);
-    EXPECT_TRUE(found_workspace);
+    EXPECT_FALSE(found_app);
+    EXPECT_FALSE(found_workspace);
 #ifndef _WIN32
     EXPECT_EQ(posix_mode(database()), static_cast<mode_t>(0600));
 #endif
@@ -222,27 +227,25 @@ TEST_F(WorkspaceConfigStoreTest, ReplacesV2ConfigurationAndPreservesSessions) {
         storage::SqliteTransaction transaction(handle);
         replace_workspace_config_files(
             handle,
-            {{"app.toml", "host = \"0.0.0.0\"\nport = 1\n"},
-             {"workspace.toml", "old = true\n"}});
+            {{"notes.md", "old\n"}});
         transaction.commit();
     }
 
-    write_bytes(source() / "app.toml", "host = \"127.0.0.1\"\nport = 9050\n");
+    write_bytes(source() / "notes.md", "new\n");
     import_from_source();
 
     Database handle(database(), Database::Mode::read_only);
     expect_seeded_session_rows(handle);
-    bool found_new_port = false;
+    bool found_new_notes = false;
     for (const ConfigFile& row : read_workspace_config_files(handle)) {
-        if (row.name == "app.toml") {
-            EXPECT_NE(row.content.find("9050"), std::string::npos);
-            found_new_port = true;
+        if (row.name == "notes.md") {
+            EXPECT_EQ(row.content, "new\n");
+            found_new_notes = true;
         }
-        if (row.name == "workspace.toml") {
-            EXPECT_EQ(row.content.find("old = true"), std::string::npos);
-        }
+        EXPECT_NE(row.name, "app.toml");
+        EXPECT_NE(row.name, "workspace.toml");
     }
-    EXPECT_TRUE(found_new_port);
+    EXPECT_TRUE(found_new_notes);
 }
 
 TEST_F(WorkspaceConfigStoreTest, RoundTripsAcceptedFilesByteForByte) {
@@ -300,19 +303,13 @@ TEST_F(WorkspaceConfigStoreTest, RecreatesEmptySkeletonDirectories) {
     EXPECT_TRUE(std::filesystem::is_directory(export_ / "forums"));
 }
 
-TEST_F(WorkspaceConfigStoreTest, RejectsMissingRequiredFiles) {
+TEST_F(WorkspaceConfigStoreTest, DoesNotRequireLegacyRootSettingsFiles) {
     std::filesystem::remove(source() / "app.toml");
-    EXPECT_THROW((void)import_from_source(), std::runtime_error);
-    EXPECT_EQ(
-        inspect_workspace_session_database(database()),
-        WorkspaceDatabaseState::missing);
-
-    write_bytes(source() / "app.toml", "host = \"127.0.0.1\"\nport = 8080\n");
     std::filesystem::remove(source() / "workspace.toml");
-    EXPECT_THROW((void)import_from_source(), std::runtime_error);
+    EXPECT_NO_THROW((void)import_from_source());
     EXPECT_EQ(
         inspect_workspace_session_database(database()),
-        WorkspaceDatabaseState::missing);
+        WorkspaceDatabaseState::valid_v2);
 }
 
 TEST_F(WorkspaceConfigStoreTest, RejectsUnsafeAndUnsupportedStoredNames) {
@@ -415,7 +412,8 @@ TEST_F(WorkspaceConfigStoreTest, RestoresEnvironmentWhenValidationThrows) {
     ScopedEnvironmentVariable guard(inserted);
     ASSERT_TRUE(unset_environment_variable(inserted));
     write_bytes(source() / ".env", "CHA_IMPORT_STORE_TEMP_E5F6=temporary\n");
-    std::ofstream(source() / "workspace.toml") << "not toml";
+    std::ofstream(source() / "characters" / "guide" / "character.toml")
+        << "not toml";
 
     EXPECT_THROW((void)import_from_source(), std::runtime_error);
     EXPECT_EQ(std::getenv(inserted), nullptr);
@@ -453,13 +451,6 @@ TEST_F(WorkspaceConfigStoreTest, MalformedInputsLeaveTheTargetUntouched) {
         seed_session_rows(handle);
     }
 
-    write_bytes(source() / "app.toml", "host = \n");
-    EXPECT_THROW((void)import_from_source(), std::runtime_error);
-    EXPECT_EQ(
-        inspect_workspace_session_database(database()),
-        WorkspaceDatabaseState::valid_v1);
-
-    write_bytes(source() / "app.toml", "host = \"127.0.0.1\"\nport = 8080\n");
     write_bytes(source() / ".env", "not a valid entry\n");
     EXPECT_THROW((void)import_from_source(), std::runtime_error);
     EXPECT_EQ(
@@ -467,7 +458,8 @@ TEST_F(WorkspaceConfigStoreTest, MalformedInputsLeaveTheTargetUntouched) {
         WorkspaceDatabaseState::valid_v1);
 
     std::filesystem::remove(source() / ".env");
-    std::ofstream(source() / "workspace.toml") << "[logging]\nlevel = 1\n";
+    std::ofstream(source() / "characters" / "guide" / "character.toml")
+        << "not toml\n";
     EXPECT_THROW((void)import_from_source(), std::runtime_error);
     EXPECT_EQ(
         inspect_workspace_session_database(database()),
@@ -502,14 +494,14 @@ TEST_F(WorkspaceConfigStoreTest, V2TransactionFailureLeavesPriorConfiguration) {
             "CREATE TRIGGER abort_config BEFORE INSERT ON config "
             "BEGIN SELECT RAISE(ABORT, 'blocked'); END");
     }
-    write_bytes(source() / "app.toml", "host = \"127.0.0.1\"\nport = 9051\n");
+    write_bytes(source() / "notes.md", "changed\n");
     EXPECT_THROW((void)import_from_source(), std::runtime_error);
     Database handle(database(), Database::Mode::read_only);
     expect_seeded_session_rows(handle);
-    Statement app = handle.prepare(
-        "SELECT content FROM config WHERE name = 'app.toml'");
-    ASSERT_TRUE(app.step());
-    EXPECT_EQ(app.text(0).find("9051"), std::string::npos);
+    Statement notes = handle.prepare(
+        "SELECT COUNT(*) FROM config WHERE name = 'notes.md'");
+    ASSERT_TRUE(notes.step());
+    EXPECT_EQ(notes.integer(0), 0);
 }
 
 TEST_F(WorkspaceConfigStoreTest, LegacyDetectorUsesTargetExistenceMessages) {
@@ -555,7 +547,8 @@ TEST_F(WorkspaceConfigStoreTest, ExportsToMissingAndEmptyDestinations) {
     const std::size_t first =
         export_workspace_configuration(database(), export_).file_count;
     EXPECT_GT(first, 0U);
-    EXPECT_TRUE(std::filesystem::is_regular_file(export_ / "app.toml"));
+    EXPECT_FALSE(std::filesystem::exists(export_ / "app.toml"));
+    EXPECT_FALSE(std::filesystem::exists(export_ / "workspace.toml"));
 
     std::error_code error;
     std::filesystem::remove_all(export_, error);
@@ -706,8 +699,6 @@ protected:
             source() / "forums" / "lobby" / "members" / "writer"
                 / "character.toml",
             "# forum membership\n");
-        write_bytes(
-            source() / "app.toml", "host = \"127.0.0.1\"\nport = 8080\n");
         write_bytes(source() / ".env", "CHA_RUNTIME_STORE_DOTENV_B4A1=from-file\n");
         (void)import_workspace_configuration(source(), database());
         export_ = source().parent_path()
@@ -772,20 +763,12 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, OpensOneOwnerOnlyRootWithChildren) {
             EXPECT_EQ(posix_mode(shm_file), static_cast<mode_t>(0600));
         }
 #endif
-        EXPECT_EQ(store->host(), "127.0.0.1");
-        EXPECT_EQ(store->port(), 8080);
         EXPECT_STREQ(std::getenv(dotenv_variable), "from-file");
         EXPECT_TRUE(
             std::filesystem::is_directory(
                 workspace_child / "system" / "providers"));
         const std::shared_ptr<const Workspace> published = getws();
         expect_session_root_identity(published, workspace_child);
-        EXPECT_EQ(
-            published->settings().log_file,
-            store->database_parent() / "logs" / "cha.log");
-        EXPECT_NE(
-            published->settings().log_file,
-            workspace_child / "logs" / "cha.log");
     }
     EXPECT_FALSE(std::filesystem::exists(root));
     EXPECT_FALSE(std::filesystem::exists(workspace_child));
@@ -828,7 +811,6 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, InheritedEnvironmentValuesWinAtStartup) 
     const auto store = open_store();
     EXPECT_STREQ(std::getenv(dotenv_variable), "from-process");
     EXPECT_NE(getws()->find_character("guide"), nullptr);
-    EXPECT_EQ(store->host(), "127.0.0.1");
 }
 
 TEST_F(RuntimeWorkspaceConfigStoreTest, StartsAfterDeletingTheOriginalImportTree) {
@@ -837,10 +819,6 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, StartsAfterDeletingTheOriginalImportTree
     ASSERT_TRUE(std::filesystem::exists(database()));
     const auto store = open_store();
     EXPECT_NE(getws()->find_character("guide"), nullptr);
-    EXPECT_EQ(store->host(), "127.0.0.1");
-    EXPECT_EQ(
-        getws()->settings().log_file,
-        store->database_parent() / "logs" / "cha.log");
 }
 
 TEST_F(RuntimeWorkspaceConfigStoreTest, RejectsMissingV1AndForeignDatabases) {
@@ -916,8 +894,6 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, SuccessfulEditUpdatesFilesDatabaseAndWor
     EXPECT_EQ(persona_result.affected_forum_ids, std::vector<std::string>{"lobby"});
     EXPECT_EQ(getws()->find_forum("lobby")->default_persona_id, "reader");
     EXPECT_NE(file_bytes(forum).find("reader"), std::string::npos);
-    EXPECT_EQ(store->host(), "127.0.0.1");
-    EXPECT_EQ(store->port(), 8080);
     EXPECT_EQ(
         std::getenv(dotenv_variable) == nullptr
             ? std::string()
@@ -976,7 +952,8 @@ void expect_restored_old_configuration(
             .find("second"),
         std::string::npos);
     EXPECT_NE(
-        file_bytes(workspace / "workspace.toml").find("[logging]"),
+        file_bytes(workspace / "characters" / "guide" / "character.toml")
+            .find("provider = \"test\""),
         std::string::npos);
 }
 
@@ -990,7 +967,9 @@ TEST_F(
     struct stat before {};
     ASSERT_EQ(::stat(workspace.c_str(), &before), 0);
 #endif
-    write_bytes(workspace / "workspace.toml", "not toml\n");
+    write_bytes(
+        workspace / "system" / "providers" / "test" / "config.toml",
+        "not toml\n");
     std::atomic<bool> stop{false};
     std::thread reader([&] {
         while (!stop.load()) {
@@ -1049,7 +1028,9 @@ TEST_F(
     struct stat before {};
     ASSERT_EQ(::stat(workspace.c_str(), &before), 0);
 #endif
-    write_bytes(workspace / "workspace.toml", "not toml\n");
+    write_bytes(
+        workspace / "system" / "providers" / "test" / "config.toml",
+        "not toml\n");
     force_next_workspace_config_fault(WorkspaceConfigFault::restore);
     try {
         (void)store->apply_character_settings("guide", "second", std::nullopt);

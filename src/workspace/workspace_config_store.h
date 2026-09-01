@@ -56,10 +56,6 @@ public:
     [[nodiscard]] const std::filesystem::path& workspace_path() const noexcept;
     [[nodiscard]] const std::filesystem::path& welcome_path() const noexcept;
     [[nodiscard]] const std::filesystem::path& database_path() const noexcept;
-    [[nodiscard]] const std::filesystem::path& database_parent() const noexcept;
-    [[nodiscard]] const std::string& host() const noexcept;
-    [[nodiscard]] int port() const noexcept;
-
     WorkspaceConfigEditResult apply_character_settings(
         std::string_view character_id,
         std::string_view provider_id,

@@ -104,7 +104,12 @@ flowchart LR
     Mailbox -->|"SSE snapshot or append"| Browser
 ```
 
-There are three kinds of long-lived information:
+There are four kinds of long-lived information:
+
+- Process configuration — the database path, web listener, and diagnostic log
+  settings — lives in one external TOML file. `chaweb` reads it before opening
+  the database; it is never materialized into the workspace or stored in
+  SQLite.
 
 - Discovery — the roster, descriptions, and Markdown the browser lists — is
   materialized from committed database rows, read once per `Workspace`,
@@ -189,6 +194,7 @@ keys use its SHA-256 implementation, independently of curl's TLS backend.
 | [src/workspace](../src/workspace) | Configuration store, workspace loading, built-ins, and session construction |
 | [src/web](../src/web) | Native protocol, routes, actor, mailbox, lifecycle, shutdown |
 | [tests](../tests) | Behavioral examples grouped by the same subsystem boundaries |
+| [packaging/linux/cha.toml.example](../packaging/linux/cha.toml.example) | External process-configuration example |
 | [packaging/linux/import-seed](../packaging/linux/import-seed) | A configuration source tree to compare against the loaders and import filter |
 
 Headers in this project are unusually valuable: most ownership and thread
@@ -345,16 +351,32 @@ policy or a reusable mechanism.
 The public command parser accepts exactly these customer-facing forms:
 
 ```text
-chaweb --data DATABASE [--root PATH] [--host HOST] [--port PORT]
-chaweb --data DATABASE --import DIRECTORY
-chaweb --data DATABASE --export DIRECTORY
+chaweb --config=CONFIG [--root PATH]
+chaweb --config=CONFIG --import DIRECTORY
+chaweb --config=CONFIG --export DIRECTORY
 ```
 
-Every mode requires `--data`. The removed `--config APP_TOML` and
-`--workspace` options are rejected, not aliases. `--root` is a runtime-only
-application-asset root. Stored `app.toml` requires host and port; runtime CLI
-values override them. Import and export acquire the same non-blocking database
-lease as runtime, so they are deliberately offline.
+Every mode requires the external unified config. The parser accepts both
+`--config=CONFIG` and `--config CONFIG`; `--root` is a runtime-only
+application-asset root. The TOML shape is:
+
+```toml
+data = "/var/lib/cha/workspace.sqlite3"
+
+[web]
+host = "0.0.0.0"
+port = 8086
+
+[logging]
+file = "logs/cha.log"
+level = "info"
+```
+
+Relative `data` and `logging.file` values resolve from the external config's
+directory. Import additionally requires that file to be outside the source
+workspace, preventing the process config itself from becoming an imported
+metadata row. Import and export acquire the same non-blocking database lease as
+runtime, so they are deliberately offline.
 
 A new database is created only after a source has been collected and validated
 successfully. Normal runtime and export require schema v2. Schema v1 is the
@@ -375,17 +397,18 @@ composition root, so most lines construct or connect an owner.
 
 Startup proceeds in this order:
 
-1. `parse_application_command()` requires `--data` and separates normal runtime
-   from the two offline transfer modes.
+1. `parse_application_command()` requires `--config`, validates top-level
+   `data`, `[web]`, and `[logging]`, resolves relative paths from the external
+   file's directory, and separates runtime from the two offline transfer modes.
 2. `WorkspaceConfigStore::open()` acquires the database companion-file lease,
    rejects anything except valid schema v2, secures the database/sidecars, and
    enables WAL.
 3. The store creates one private root with `workspace/` and `welcome/`,
    materializes every `config` row under `workspace/`, loads `.env` without
    overriding inherited values, and validates/publishes a complete `Workspace`.
-4. Stored root `app.toml` supplies required host and port; CLI host/port override
-   them. File logging is initialized from the published workspace settings,
-   with a relative path based at the database parent.
+4. File logging is initialized from the already parsed external settings, and
+   the HTTP server later binds the configured `[web]` host and port. Neither
+   setting belongs to `Workspace` or to a database row.
 5. `SessionRepository` receives the store's explicit database, materialized,
    and Welcome paths, synchronizes configured forum IDs, and creates the
    process-local Welcome database. It does not own the lease or private root.
@@ -412,8 +435,7 @@ Read [workspace/workspace.h](../src/workspace/workspace.h), then the helpers and
 [workspace/workspace.cpp](../src/workspace/workspace.cpp).
 
 The loader treats the workspace as one configuration unit. Production gives it
-the private materialized directory as its physical root and the database parent
-as the durable relative-path base:
+the private materialized directory as its physical root:
 
 - It requires `characters/`, `forums/`, and `personas/` in the expected form.
 - It validates character IDs and public-name uniqueness.
@@ -448,11 +470,13 @@ Read `getws()` and `loadws()` in
 returned `shared_ptr` while it reads references from the workspace.
 
 The schema-v2 `config` table contains exactly `name` and `content`. Import
-collects required root `app.toml` and `workspace.toml`, all regular `.toml` and
-`.md` files, and optional root `.env`; it follows no symlinks and stores no
-other types. A template include must itself be stored, so `snippet.txt` is not
-available after materialization while `snippet.md` can be. Import validates a
-byte-identical private materialization before it commits the complete row set.
+collects regular workspace `.toml` and `.md` files and optional root `.env`; it
+follows no symlinks and stores no other types. Legacy root `app.toml` and
+`workspace.toml` are explicitly excluded and prohibited as database config
+names. The unified external config is also outside the import tree. A template
+include must itself be stored, so `snippet.txt` is not available after
+materialization while `snippet.md` can be. Import validates a byte-identical
+private materialization before it commits the complete row set.
 
 Normal runtime never reads the import or export directory. The only online
 edits are character provider/style, forum default character, and forum default
@@ -518,8 +542,8 @@ Read these in order:
 8. [session/session_repository.h](../src/session/session_repository.h)
 9. [workspace/session_open.cpp](../src/workspace/session_open.cpp)
 
-Every persistent session lives in the SQLite file selected by `--data`, named
-`workspace.sqlite3` in these examples, beside
+Every persistent session lives in the SQLite file selected by the external
+config's `data` setting, named `workspace.sqlite3` in these examples, beside
 `workspace.sqlite3.cha-lock`. There is no per-session database file or lock.
 
 ### 9.1 Two identities: public pair and internal key
@@ -578,6 +602,22 @@ the target:
 | Valid v2 | Absent | Replace only the complete configuration rows |
 | Missing | Present | Fail: the archived per-session migration build was never run |
 | Present | Present | Fail: migration cleanup is incomplete |
+
+For the normal schema-v1 cutover, first stop the running application and back
+up both the database and metadata tree. Put the external configuration outside
+that tree, point its `data` setting at the existing `workspace.sqlite3`, then
+run the import and restart with the same configuration:
+
+```console
+$ chaweb --config=/srv/cha/cha.toml --import /srv/cha/workspace
+$ chaweb --config=/srv/cha/cha.toml
+```
+
+The first command upgrades a valid v1 database in place, preserving its
+sessions while importing the directory metadata. The second command is normal
+server mode; it reads application settings from `cha.toml` and all workspace
+content from SQLite. The metadata tree may remain as a backup, but runtime no
+longer reads it.
 
 `has_legacy_session_databases()` in
 [session_storage_layout.cpp](../src/session/session_storage_layout.cpp) is a
@@ -1054,7 +1094,7 @@ After the main actor path makes sense, scan the smaller adapters:
 
 | Files | Responsibility |
 | --- | --- |
-| `application_config.*` | Parse mandatory database/mode selection, runtime asset root, and host/port overrides; parse stored root `app.toml` |
+| `application_config.*` | Parse the mandatory external unified config, database/mode selection, and runtime asset root |
 | `asset_handler.*` | Serve the browser shell and staged static assets without owning session behavior |
 | `http_server.*` | Apply server-wide request, Host/Origin, timeout, and size policy |
 | `http_response.*`, `json.*`, `route_support.*` | Consistent JSON parsing, response bodies, route components, and mutation validation |
@@ -1313,6 +1353,8 @@ Errors are handled at the narrowest layer that can give them meaning:
   leaves the previous complete configuration. Export never changes the
   database; if writing began, its possibly incomplete destination must be
   emptied before retry.
+- External application-config errors fail before runtime opens the configured
+  database; the process file is never part of workspace publication.
 - A runtime configuration failure before commit rematerializes the old rows and
   leaves durable and published state old. The rare failure after commit reports
   restart-required; the next startup publishes the newly committed rows.
@@ -1380,6 +1422,7 @@ and before reading all of its implementation.
 | --- | --- |
 | Transcript invariants | [tests/chat/unit_transcript.cpp](../tests/chat/unit_transcript.cpp) |
 | Workspace loading and config validation | [tests/application/unit_workspace.cpp](../tests/application/unit_workspace.cpp) |
+| External process config and command modes | [tests/web/unit_application_config.cpp](../tests/web/unit_application_config.cpp) |
 | Context rules | [tests/agents/unit_model_context.cpp](../tests/agents/unit_model_context.cpp) |
 | Provider request lifecycle | [tests/providers/unit_providers.cpp](../tests/providers/unit_providers.cpp) |
 | Provider protocols | [tests/providers/unit_chat_completions_api.cpp](../tests/providers/unit_chat_completions_api.cpp), [unit_responses_api.cpp](../tests/providers/unit_responses_api.cpp) |

@@ -17,6 +17,8 @@
 
 #include <array>
 #include <chrono>
+#include <fstream>
+#include <iomanip>
 
 namespace cha::test {
 namespace {
@@ -99,17 +101,35 @@ int reserve_loopback_port() {
 
 WebServerProcess::WebServerProcess(
     const std::filesystem::path& database,
-    int port)
-    : WebServerProcess(database.parent_path(), database, port) {}
+    int port,
+    std::string_view log_level)
+    : WebServerProcess(database.parent_path(), database, port, log_level) {}
 
 WebServerProcess::WebServerProcess(
     const std::filesystem::path& application_root,
     const std::filesystem::path& database,
-    int port)
+    int port,
+    std::string_view log_level)
     : port_(port) {
     const std::string root_text = application_root.string();
-    const std::string database_text = database.string();
-    const std::string port_text = std::to_string(port);
+    config_path_ = database.parent_path()
+        / ("cha-test-" + std::to_string(port) + ".toml");
+    {
+        std::ofstream config(config_path_);
+        config << "data = " << std::quoted(database.string()) << "\n"
+               << "[web]\n"
+               << "host = " << std::quoted(loopback_host) << "\n"
+               << "port = " << port << "\n"
+               << "[logging]\n"
+               << "file = "
+               << std::quoted(
+                      (database.parent_path() / "logs" / "cha.log").string())
+               << "\nlevel = " << std::quoted(std::string(log_level)) << "\n";
+        if (!config) {
+            throw std::runtime_error("Failed to write web process test config");
+        }
+    }
+    const std::string config_text = config_path_.string();
     int output_pipe[2]{-1, -1};
     int error_pipe[2]{-1, -1};
     if (::pipe(output_pipe) == -1 || ::pipe(error_pipe) == -1) {
@@ -152,12 +172,8 @@ WebServerProcess::WebServerProcess(
             CHA_WEB_BINARY,
             "--root",
             root_text.c_str(),
-            "--data",
-            database_text.c_str(),
-            "--host",
-            loopback_host,
-            "--port",
-            port_text.c_str(),
+            "--config",
+            config_text.c_str(),
             static_cast<char*>(nullptr));
         _exit(127);
     }
@@ -174,6 +190,8 @@ WebServerProcess::~WebServerProcess() {
     drain_output();
     close_descriptor(output_fd_);
     close_descriptor(error_fd_);
+    std::error_code ignored;
+    std::filesystem::remove(config_path_, ignored);
 }
 
 bool WebServerProcess::wait_until_ready(std::chrono::milliseconds timeout) {

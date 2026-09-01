@@ -7,7 +7,6 @@
 #include "util/environment.h"
 #include "util/path_name.h"
 #include "util/private_filesystem.h"
-#include "web/application_config.h"
 #include "workspace/workspace.h"
 
 #include <array>
@@ -111,7 +110,8 @@ std::filesystem::path require_existing_directory(
 }
 
 bool is_accepted_stored_name(std::string_view name) {
-    return name == ".env" || name.ends_with(".toml") || name.ends_with(".md");
+    return name != "app.toml" && name != "workspace.toml"
+        && (name == ".env" || name.ends_with(".toml") || name.ends_with(".md"));
 }
 
 std::string stored_name_from(
@@ -149,13 +149,9 @@ void require_contained(
 }
 
 void validate_config_rows(const std::vector<ConfigFile>& rows) {
-    bool has_app = false;
-    bool has_workspace = false;
     std::set<std::string> names;
     for (const ConfigFile& row : rows) {
         validate_stored_config_name(row.name);
-        if (row.name == "app.toml") has_app = true;
-        if (row.name == "workspace.toml") has_workspace = true;
         if (!names.insert(row.name).second) {
             fail_path("Configuration name '" + row.name + "' is duplicated");
         }
@@ -170,11 +166,6 @@ void validate_config_rows(const std::vector<ConfigFile>& rows) {
                     + "' collides with '" + parent + "'");
             }
         }
-    }
-    if (!has_app || !has_workspace) {
-        fail_path(
-            "Configuration is missing required file '"
-            + std::string(has_app ? "workspace.toml" : "app.toml") + "'");
     }
 }
 
@@ -229,13 +220,6 @@ std::vector<ConfigFile> collect_config_rows(const std::filesystem::path& source)
         if (!files.emplace(name, read_file_bytes(file)).second) {
             fail_path("Configuration name '" + name + "' is duplicated");
         }
-    }
-
-    if (!files.contains("app.toml") || !files.contains("workspace.toml")) {
-        fail_path(
-            "Import source '" + utf8_path(source) + "' is missing required file '"
-            + std::string(files.contains("app.toml") ? "workspace.toml" : "app.toml")
-            + "'");
     }
 
     std::vector<ConfigFile> rows;
@@ -450,7 +434,7 @@ void remove_directory_contents(const std::filesystem::path& directory) {
         fail_path(
             "Workspace session database '" + utf8_path(database)
             + "' does not exist. Stop CHA and run:\n"
-              "chaweb --data DATABASE --import WORKSPACE");
+              "chaweb --config=CONFIG --import WORKSPACE");
     }
     fail_database_state(database, state);
 }
@@ -520,7 +504,7 @@ std::string busy_message(const std::filesystem::path& database) {
         fail_path(
             "Workspace session database '" + utf8_path(database)
             + "' is a valid CHA schema-1 database. Stop CHA and run:\n"
-              "chaweb --data DATABASE --import WORKSPACE");
+              "chaweb --config=CONFIG --import WORKSPACE");
     case WorkspaceDatabaseState::wrong_application_id:
     case WorkspaceDatabaseState::unsupported_version:
         fail_path(
@@ -536,18 +520,16 @@ std::string busy_message(const std::filesystem::path& database) {
 }
 
 void validate_materialized_source(
-    const std::vector<ConfigFile>& rows,
-    const std::filesystem::path& database_parent) {
+    const std::vector<ConfigFile>& rows) {
     TemporaryPrivateRoot root;
     materialize_config_files(root.workspace(), rows);
-    (void)web::load_stored_application_settings(root.workspace() / "app.toml");
     std::vector<DotenvEntry> entries;
     const std::filesystem::path dotenv = root.workspace() / ".env";
     if (std::filesystem::exists(inspected_status(dotenv))) {
         entries = parse_dotenv(dotenv);
     }
     ScopedEnvironmentOverlay overlay(entries);
-    (void)Workspace::load(root.workspace(), database_parent);
+    (void)Workspace::load(root.workspace());
 }
 
 void commit_imported_rows(
@@ -607,7 +589,7 @@ WorkspaceConfigTransfer import_workspace_configuration(
     }
 
     const std::vector<ConfigFile> rows = collect_config_rows(source);
-    validate_materialized_source(rows, database.parent_path());
+    validate_materialized_source(rows);
 
     secure_workspace_session_database_files(database);
     commit_imported_rows(database, rows);
@@ -687,8 +669,6 @@ void force_next_workspace_config_fault(WorkspaceConfigFault fault) {
 
 struct WorkspaceConfigStore::Impl {
     std::filesystem::path database_path;
-    std::filesystem::path database_parent;
-    web::StoredApplicationSettings app;
     std::optional<SessionLease> lease;
     std::unique_ptr<Database> database;
     std::optional<RuntimePrivateRoot> tree;
@@ -736,8 +716,7 @@ struct WorkspaceConfigStore::Impl {
         std::vector<std::string> affected_forum_ids;
         try {
             affected_forum_ids = writer(*published);
-            Workspace candidate =
-                Workspace::load(tree->workspace(), database_parent);
+            Workspace candidate = Workspace::load(tree->workspace());
             if (consume_runtime_fault(WorkspaceConfigFault::collect_rows)) {
                 fail_path("Forced configuration row-collection failure");
             }
@@ -792,8 +771,8 @@ std::unique_ptr<WorkspaceConfigStore> WorkspaceConfigStore::open(
     const std::filesystem::path& database_path) {
     auto impl = std::make_unique<Impl>();
     impl->database_path = normalize_path(database_path);
-    impl->database_parent = impl->database_path.parent_path();
-    (void)require_existing_directory(impl->database_parent, "Database parent");
+    (void)require_existing_directory(
+        impl->database_path.parent_path(), "Database parent");
 
     impl->lease.emplace(
         SessionLease::acquire(
@@ -823,9 +802,7 @@ std::unique_ptr<WorkspaceConfigStore> WorkspaceConfigStore::open(
     if (std::filesystem::exists(inspected_status(dotenv))) {
         load_dotenv(dotenv);
     }
-    impl->app = web::load_stored_application_settings(
-        impl->tree->workspace() / "app.toml");
-    loadws(Workspace::load(impl->tree->workspace(), impl->database_parent));
+    loadws(Workspace::load(impl->tree->workspace()));
     return std::unique_ptr<WorkspaceConfigStore>(
         new WorkspaceConfigStore(std::move(impl)));
 }
@@ -848,19 +825,6 @@ const std::filesystem::path& WorkspaceConfigStore::welcome_path()
 const std::filesystem::path& WorkspaceConfigStore::database_path()
     const noexcept {
     return impl_->database_path;
-}
-
-const std::filesystem::path& WorkspaceConfigStore::database_parent()
-    const noexcept {
-    return impl_->database_parent;
-}
-
-const std::string& WorkspaceConfigStore::host() const noexcept {
-    return impl_->app.host;
-}
-
-int WorkspaceConfigStore::port() const noexcept {
-    return impl_->app.port;
 }
 
 WorkspaceConfigEditResult WorkspaceConfigStore::apply_character_settings(

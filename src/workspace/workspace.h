@@ -22,11 +22,6 @@ inline constexpr std::string_view workspace_entrance_id = "builtin-entrance";
 using WorkspacePromptVariables =
     std::map<std::string, std::string, std::less<>>;
 
-struct WorkspaceSettings {
-    std::filesystem::path log_file;
-    std::string log_level;
-};
-
 // One complete provider configuration. Defaults have already been applied.
 struct WorkspaceProvider {
     std::string id;
@@ -84,15 +79,9 @@ struct HandleResolution {
 class Workspace final {
 public:
     static Workspace load(std::filesystem::path root);
-    static Workspace load(
-        std::filesystem::path materialized_root,
-        std::filesystem::path durable_relative_path_base);
 
     [[nodiscard]] const std::filesystem::path& root() const noexcept {
         return root_;
-    }
-    [[nodiscard]] const WorkspaceSettings& settings() const noexcept {
-        return settings_;
     }
     [[nodiscard]] std::span<const WorkspaceProvider> providers() const noexcept {
         return providers_;
@@ -150,7 +139,6 @@ public:
 
 private:
     std::filesystem::path root_;
-    WorkspaceSettings settings_;
     std::vector<WorkspaceProvider> providers_;
     std::vector<WorkspaceStyle> styles_;
     std::vector<WorkspacePersona> personas_;

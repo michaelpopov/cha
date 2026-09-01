@@ -21,9 +21,8 @@ fi
 for required in \
     chaweb \
     start-cha.sh \
+    cha.toml.example \
     import-seed/.env \
-    import-seed/app.toml \
-    import-seed/workspace.toml \
     web/index.html; do
     if [ ! -f "$application/$required" ]; then
         echo "package check: missing $required" >&2
@@ -37,24 +36,24 @@ if [ ! -x "$application/chaweb" ] || [ ! -x "$application/start-cha.sh" ]; then
 fi
 
 actual_entries=$(find "$application" -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort)
-expected_entries=$(printf '%s\n' chaweb import-seed start-cha.sh web | LC_ALL=C sort)
+expected_entries=$(printf '%s\n' chaweb cha.toml.example import-seed start-cha.sh web | LC_ALL=C sort)
 if [ "$actual_entries" != "$expected_entries" ]; then
     echo "package check: application directory has unexpected top-level entries" >&2
     printf '%s\n' "$actual_entries" >&2
     exit 1
 fi
 
+config="$application/cha.toml.example"
+if ! grep -Eq '^data[[:space:]]*=[[:space:]]*"cha\.sqlite3"[[:space:]]*$' "$config" \
+    || ! grep -Eq '^\[web\][[:space:]]*$' "$config" \
+    || ! grep -Eq '^host[[:space:]]*=[[:space:]]*"0\.0\.0\.0"[[:space:]]*$' "$config" \
+    || ! grep -Eq '^port[[:space:]]*=[[:space:]]*8086[[:space:]]*$' "$config" \
+    || ! grep -Eq '^\[logging\][[:space:]]*$' "$config"; then
+    echo "package check: cha.toml.example is not the expected unified config" >&2
+    exit 1
+fi
+
 seed="$application/import-seed"
-if ! grep -Eq '^host[[:space:]]*=[[:space:]]*"0\.0\.0\.0"[[:space:]]*$' "$seed/app.toml"; then
-    echo "package check: import-seed/app.toml must bind to 0.0.0.0" >&2
-    exit 1
-fi
-config_lines=$(grep -Ev '^[[:space:]]*(#|$)' "$seed/app.toml" | wc -l)
-if [ "$config_lines" -ne 2 ] \
-    || grep -Eiq 'workspace|provider|logging|api[_-]?key|secret|token' "$seed/app.toml"; then
-    echo "package check: import-seed/app.toml must contain only host and port" >&2
-    exit 1
-fi
 
 for required_directory in characters forums system; do
     if [ ! -d "$seed/$required_directory" ]; then
@@ -64,7 +63,7 @@ for required_directory in characters forums system; do
 done
 
 seed_entries=$(find "$seed" -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort)
-expected_seed_entries=$(printf '%s\n' .env app.toml characters forums system workspace.toml | LC_ALL=C sort)
+expected_seed_entries=$(printf '%s\n' .env characters forums system | LC_ALL=C sort)
 if [ "$seed_entries" != "$expected_seed_entries" ]; then
     echo "package check: import seed contains unexpected top-level entries" >&2
     printf '%s\n' "$seed_entries" >&2
@@ -110,24 +109,20 @@ launcher_setting() {
 shell_quote() {
     printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
 }
-launcher_host=$(launcher_setting HOST)
-launcher_port=$(launcher_setting PORT)
-launcher_database=$(launcher_setting DATABASE)
+launcher_config=$(launcher_setting CONFIG)
 launcher_import_seed=$(launcher_setting IMPORT_SEED)
-config_port=$(sed -n 's/^port[[:space:]]*=[[:space:]]*//p' "$seed/app.toml")
-if [ "$launcher_host" != "$(shell_quote 0.0.0.0)" ] \
-    || [ "$launcher_port" != "$(shell_quote "$config_port")" ] \
-    || [ "$launcher_database" != "$(shell_quote ../cha.sqlite3)" ] \
+if [ "$launcher_config" != "$(shell_quote ../cha.toml)" ] \
     || [ "$launcher_import_seed" != "$(shell_quote import-seed)" ]; then
     echo "package check: launcher settings do not match the package layout" >&2
     exit 1
 fi
 if grep -q -- '--workspace' "$application/start-cha.sh" \
-    || ! grep -Fq -- '--data "$database"' "$application/start-cha.sh" \
+    || grep -q -- '--data' "$application/start-cha.sh" \
+    || ! grep -Fq -- '--config="$config"' "$application/start-cha.sh" \
     || ! grep -Fq -- \
-        'echo "  \"$here/chaweb\" --data \"$database\" --import \"$import_seed\""' \
+        'echo "  \"$here/chaweb\" --config=\"$config\" --import \"$import_seed\""' \
         "$application/start-cha.sh"; then
-    echo "package check: launcher must use explicit database and import arguments" >&2
+    echo "package check: launcher must use the external unified config" >&2
     exit 1
 fi
 

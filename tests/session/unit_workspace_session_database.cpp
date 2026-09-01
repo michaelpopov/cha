@@ -117,7 +117,7 @@ void expect_seeded_session_rows(Database& database) {
 }
 
 std::string v1_import_command() {
-    return "chaweb --data DATABASE --import WORKSPACE";
+    return "chaweb --config=CONFIG --import WORKSPACE";
 }
 
 TEST(WorkspaceSessionDatabase, CreatesValidEmptyDatabaseAndEnablesWal) {
@@ -463,8 +463,9 @@ TEST(WorkspaceSessionDatabase, TableCheckRejectsUnsafeConfigNames) {
     EXPECT_THROW(
         insert("INSERT INTO config (name, content) VALUES ('a/../b', 'x')"),
         std::runtime_error);
-    EXPECT_NO_THROW(
-        insert("INSERT INTO config (name, content) VALUES ('app.toml', 'x')"));
+    EXPECT_THROW(
+        insert("INSERT INTO config (name, content) VALUES ('app.toml', 'x')"),
+        std::runtime_error);
 
     EXPECT_THROW(validate_stored_config_name(""), std::runtime_error);
     EXPECT_THROW(validate_stored_config_name("/abs"), std::runtime_error);
@@ -475,7 +476,8 @@ TEST(WorkspaceSessionDatabase, TableCheckRejectsUnsafeConfigNames) {
     EXPECT_THROW(validate_stored_config_name("C:app.toml"), std::runtime_error);
     EXPECT_THROW(validate_stored_config_name("notes.txt"), std::runtime_error);
     EXPECT_THROW(validate_stored_config_name("secret/.env"), std::runtime_error);
-    EXPECT_NO_THROW(validate_stored_config_name("app.toml"));
+    EXPECT_THROW(validate_stored_config_name("app.toml"), std::runtime_error);
+    EXPECT_THROW(validate_stored_config_name("workspace.toml"), std::runtime_error);
     EXPECT_NO_THROW(validate_stored_config_name(".env"));
     EXPECT_NO_THROW(validate_stored_config_name("characters/guide/CHARACTER.md"));
 }
@@ -564,8 +566,8 @@ TEST(WorkspaceSessionDatabase, UpgradesV1WhilePreservingSessions) {
     seed_session_rows(database);
 
     const std::vector<ConfigFile> rows{
-        {"app.toml", "host = \"127.0.0.1\"\n"},
-        {"workspace.toml", "name = \"Test\"\n"},
+        {"characters/guide/CHARACTER.md", "Guide\n"},
+        {"characters/guide/character.toml", "provider = \"test\"\n"},
     };
     upgrade_workspace_session_database_from_v1(database, rows);
 
@@ -596,8 +598,8 @@ TEST(WorkspaceSessionDatabase, FailedUpgradeLeavesValidV1Unchanged) {
     EXPECT_THROW(
         upgrade_workspace_session_database_from_v1(
             database,
-            {{"app.toml", "host = \"127.0.0.1\"\n"},
-             {"workspace.toml", "name = \"Test\"\n"}}),
+            {{"characters/guide/character.toml", "provider = \"test\"\n"},
+             {"characters/guide/CHARACTER.md", "Guide\n"}}),
         std::runtime_error);
     sqlite3_commit_hook(database.handle(), nullptr, nullptr);
 

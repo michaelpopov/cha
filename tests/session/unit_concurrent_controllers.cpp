@@ -149,7 +149,6 @@ struct SessionGraph {
 private:
     static std::unique_ptr<WorkspaceConfigStore> open_store(
         const std::filesystem::path& root) {
-        std::ofstream(root / "app.toml") << "host = \"127.0.0.1\"\nport = 8080\n";
         import_workspace_configuration(root, root / "workspace.sqlite3");
         return WorkspaceConfigStore::open(root / "workspace.sqlite3");
     }
@@ -176,9 +175,6 @@ WorkspaceLayout make_workspace(const std::filesystem::path& parent) {
         std::filesystem::create_directories(root / "system" / "assistant");
         std::ofstream(root / "system" / "assistant" / "character.toml")
             << "display_name = \"Assistant\"\nprovider = \"test\"\n";
-        std::ofstream file(root / "workspace.toml");
-        file << "[logging]\n"
-             << "file = \"cha.log\"\nlevel = \"off\"\n";
     }
     std::ofstream(forum / "config.toml") << "display_name = \"Forum\"\n";
     std::ofstream(forum / "FORUM.md") << "Forum prompt";

@@ -449,5 +449,6 @@ add_custom_command(
         -DOUTPUT_DIRECTORY=${CMAKE_CURRENT_SOURCE_DIR}/bin
         -DWEBAPP_DIST=${CMAKE_CURRENT_SOURCE_DIR}/webapp/dist
         -DIMPORT_SEED_DIRECTORY=${CMAKE_CURRENT_SOURCE_DIR}/packaging/linux/import-seed
+        -DCONFIG_TEMPLATE=${CMAKE_CURRENT_SOURCE_DIR}/packaging/linux/cha.toml.example
         -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/stage_local_deployment.cmake
     VERBATIM)

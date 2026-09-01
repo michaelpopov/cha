@@ -111,7 +111,6 @@ TestWorkspace::TestWorkspace()
     std::filesystem::create_directories(root_ / "system" / "assistant");
     std::ofstream(root_ / "system" / "assistant" / "character.toml")
         << "display_name = \"Assistant\"\nprovider = \"test\"\n";
-    write_workspace_config();
     std::filesystem::create_directories(root_ / "web" / "assets");
     std::ofstream(root_ / "web" / "index.html")
         << "<!doctype html><html><head><title>cha</title></head>"
@@ -126,27 +125,11 @@ TestWorkspace::TestWorkspace()
     write_character_config("display_name = \"Guide\"\nprovider = \"test\"\n");
     std::ofstream(definition / "CHARACTER.md") << "Character instructions\n";
     add_persona("reader", "Reader");
-    write_application_config();
 }
 
 TestWorkspace::~TestWorkspace() {
     std::error_code error;
     std::filesystem::remove_all(root_, error);
-}
-
-void TestWorkspace::write_application_config(
-    std::string_view host,
-    int port) const {
-    std::ofstream(root_ / "app.toml")
-        << "host = \"" << host << "\"\n"
-           "port = " << port << "\n";
-}
-
-void TestWorkspace::write_workspace_config(std::string_view log_level) const {
-    std::ofstream(root_ / "workspace.toml")
-        << "[logging]\n"
-           "file = \"logs/cha.log\"\n"
-           "level = \"" << log_level << "\"\n";
 }
 
 void TestWorkspace::write_provider(
@@ -275,9 +258,6 @@ PublishedTestWorkspace publish_test_workspace(
     std::filesystem::create_directories(root / "characters");
     const std::filesystem::path forum = root / "forums" / identity.forum_id;
     std::filesystem::create_directories(forum / "members");
-
-    std::ofstream(root / "workspace.toml")
-        << "[logging]\nfile = \"cha.log\"\nlevel = \"off\"\n";
 
     std::vector<std::string> provider_ids;
     provider_ids.reserve(definitions.size());

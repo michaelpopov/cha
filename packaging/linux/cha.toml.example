@@ -1,0 +1,9 @@
+data = "cha.sqlite3"
+
+[web]
+host = "0.0.0.0"
+port = 8086
+
+[logging]
+file = "logs/cha.log"
+level = "info"

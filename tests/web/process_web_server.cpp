@@ -36,6 +36,7 @@
 #include <filesystem>
 #include <fstream>
 #include <future>
+#include <iomanip>
 #include <iterator>
 #include <memory>
 #include <mutex>
@@ -86,6 +87,19 @@ OfflineProcessResult run_offline_process(
     const std::filesystem::path& database,
     const char* operation,
     const std::filesystem::path& directory) {
+    const std::filesystem::path config_path =
+        std::filesystem::temp_directory_path()
+        / ("cha-offline-" + std::to_string(::getpid()) + ".toml");
+    {
+        std::ofstream config(config_path);
+        config << "data = " << std::quoted(database.string()) << "\n"
+               << "[web]\nhost = \"127.0.0.1\"\nport = 1\n"
+               << "[logging]\nfile = \"cha-test.log\"\nlevel = \"off\"\n";
+        if (!config) {
+            throw std::runtime_error("Failed to write offline process test config");
+        }
+    }
+    const std::string config_text = config_path.string();
     int error_pipe[2]{-1, -1};
     if (::pipe(error_pipe) != 0) {
         throw std::runtime_error("Failed to create offline process-test pipe");
@@ -103,8 +117,8 @@ OfflineProcessResult run_offline_process(
         ::execl(
             CHA_WEB_BINARY,
             CHA_WEB_BINARY,
-            "--data",
-            database.string().c_str(),
+            "--config",
+            config_text.c_str(),
             operation,
             directory.string().c_str(),
             static_cast<char*>(nullptr));
@@ -126,6 +140,8 @@ OfflineProcessResult run_offline_process(
     if (::waitpid(child, &result.status, 0) != child) {
         throw std::runtime_error("Failed to reap offline process test");
     }
+    std::error_code ignored;
+    std::filesystem::remove(config_path, ignored);
     return result;
 }
 
@@ -686,7 +702,6 @@ void run_blocked_shutdown(const std::filesystem::path& log_path) {
 // replaceable application files, and durable database storage.
 TEST(WebServerProcess, RunsWithIndependentRootsAfterImportSourceDeletion) {
     test::TestWorkspace workspace;
-    workspace.write_workspace_config();
 
     const std::filesystem::path application =
         std::filesystem::temp_directory_path()
@@ -752,7 +767,7 @@ TEST(WebServerProcess, RejectsAMissingDatabaseWithImportGuidance) {
     EXPECT_NE(errors.find(database.string()), std::string::npos) << errors;
     EXPECT_NE(errors.find("does not exist"), std::string::npos) << errors;
     EXPECT_NE(
-        errors.find("chaweb --data DATABASE --import WORKSPACE"),
+        errors.find("chaweb --config=CONFIG --import WORKSPACE"),
         std::string::npos)
         << errors;
     std::error_code removal;
@@ -770,14 +785,13 @@ TEST(WebServerProcess, RejectsAVersion1DatabaseWithImportGuidance) {
     const std::string errors = server.errors();
     EXPECT_NE(errors.find("schema-1"), std::string::npos) << errors;
     EXPECT_NE(
-        errors.find("chaweb --data DATABASE --import WORKSPACE"),
+        errors.find("chaweb --config=CONFIG --import WORKSPACE"),
         std::string::npos)
         << errors;
 }
 
 TEST(WebServerProcess, RejectsASecondProcessWithDatabaseDiagnostic) {
     test::TestWorkspace workspace;
-    workspace.write_workspace_config();
     const int first_port = test::reserve_loopback_port();
     int second_port = test::reserve_loopback_port();
     for (int attempt = 0; second_port == first_port && attempt != 10; ++attempt) {
@@ -858,7 +872,8 @@ TEST(WebServerProcess, RecoversAfterAProcessDiesInsideASqliteTransaction) {
             database, storage::SqliteDatabase::Mode::read_write);
         handle.execute("BEGIN IMMEDIATE");
         handle.execute(
-            "UPDATE config SET content = 'host = ' WHERE name = 'app.toml'");
+            "UPDATE config SET content = content || '\n# uncommitted\n' "
+            "WHERE name = 'characters/guide/character.toml'");
         const char marker = '1';
         if (::write(ready[1], &marker, 1) != 1) _exit(2);
         for (;;) ::pause();
@@ -889,7 +904,6 @@ TEST(WebServerProcess, ServesConcurrentSseAndOrdinaryRequestsOnOneOrigin) {
     test::TestWorkspace workspace;
     const int port = test::reserve_loopback_port();
     ASSERT_NE(port, 0);
-    workspace.write_workspace_config();
     const auto database = test::import_test_database(workspace.root());
     test::WebServerProcess server(workspace.root(), database, port);
     ASSERT_TRUE(server.wait_until_ready()) << server.errors();
@@ -975,7 +989,6 @@ TEST(WebServerProcess, ForumPersonaReachesTheLiveTranscript) {
     test::TestWorkspace workspace;
     const int port = test::reserve_loopback_port();
     ASSERT_NE(port, 0);
-    workspace.write_workspace_config();
     const auto database = test::import_test_database(workspace.root());
     test::WebServerProcess server(workspace.root(), database, port);
     ASSERT_TRUE(server.wait_until_ready()) << server.errors();
@@ -1015,7 +1028,6 @@ TEST(WebServerProcess, RestartReopensLeasesAfterCleanAndForcedExit) {
     test::TestWorkspace workspace;
     const int port = test::reserve_loopback_port();
     ASSERT_NE(port, 0);
-    workspace.write_workspace_config();
     const auto database = test::import_test_database(workspace.root());
     std::string session_id;
 
@@ -1056,9 +1068,8 @@ TEST(WebServerProcess, LogsServerAndSessionLifecycleWithoutPromptBodies) {
     test::TestWorkspace workspace;
     const int port = test::reserve_loopback_port();
     ASSERT_NE(port, 0);
-    workspace.write_workspace_config("info");
     const auto database = test::import_test_database(workspace.root());
-    test::WebServerProcess server(workspace.root(), database, port);
+    test::WebServerProcess server(workspace.root(), database, port, "info");
     ASSERT_TRUE(server.wait_until_ready()) << server.errors();
 
     httplib::Client client = web_client(port);
@@ -1161,7 +1172,6 @@ TEST(WebServerProcess, SignalShutdownCancelsAndJoinsActiveGeneration) {
         "display_name = \"Guide\"\nprovider = \"blocking\"\n");
     const int port = test::reserve_loopback_port();
     ASSERT_NE(port, 0);
-    workspace.write_workspace_config();
     const auto database = test::import_test_database(workspace.root());
     test::WebServerProcess server(workspace.root(), database, port);
     ASSERT_TRUE(server.wait_until_ready()) << server.errors();

@@ -67,19 +67,11 @@ int prepare_and_run(int argc, const char* argv[]) {
     }
 
     auto store = WorkspaceConfigStore::open(command.database);
-    const std::string host = command.host.value_or(store->host());
-    const int port = command.port.value_or(store->port());
-    if (host.empty()) {
-        throw std::runtime_error("Application setting 'host' must not be empty.");
-    }
 
     WebSettings settings;
     configure_test_idle_grace(settings, command);
 
-    const std::shared_ptr<const Workspace> workspace = getws();
-    if (!workspace) throw std::runtime_error("Workspace is not loaded");
-    initialize_diagnostic_logging(
-        workspace->settings().log_file, workspace->settings().log_level);
+    initialize_diagnostic_logging(command.log_file, command.log_level);
 
     const auto seed = TemporarySessionSeed{
         {std::string(entrance_id), std::string(welcome_id)},
@@ -100,7 +92,8 @@ int prepare_and_run(int argc, const char* argv[]) {
     LiveSessionManager live_sessions(settings, opener);
 
     const int result = run_web_server(
-        host, port, command.root, sessions, live_sessions, *store, settings);
+        command.host, command.port, command.root,
+        sessions, live_sessions, *store, settings);
     providers.shutdown();
     shutdown_diagnostic_logging();
     return result;

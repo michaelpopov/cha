@@ -7,7 +7,7 @@ policy.
 
 | Component | Responsibility |
 | --- | --- |
-| `Workspace` | Load and validate workspace settings, providers, styles, personas, characters, forums, prompts, and built-ins. |
+| `Workspace` | Load and validate providers, styles, personas, characters, forums, prompts, and built-ins. |
 | `getws()` / `loadws()` | Read or atomically replace the current published `Workspace`. |
 | `WorkspaceConfigStore` | Own the database lease, secured database, private materialization, configuration mutex, and atomic runtime edits. |
 | `import_workspace_configuration()` / `export_workspace_configuration()` | Perform lease-protected offline transfer between a directory and database rows. |
@@ -15,9 +15,7 @@ policy.
 | `builtins` | Reserved built-in IDs and Welcome constants. |
 
 `Workspace::load()` reads a physical directory tree once and builds a complete
-candidate. Its separate durable path base lets relative log paths resolve from
-the database parent rather than the temporary materialization. It resolves
-character and forum prompts, provider and style
+candidate. It resolves character and forum prompts, provider and style
 selections, forum membership and defaults, descriptions, labels, and the
 Guest, Assistant, and Entrance data. Invalid referenced
 configuration fails the load. `loadws()` publishes only a successfully built

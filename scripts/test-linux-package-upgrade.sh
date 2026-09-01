@@ -15,6 +15,7 @@ port=${CHA_UPGRADE_TEST_PORT:-$((20000 + ($$ % 20000)))}
 test_root=$(mktemp -d)
 import_source="$test_root/import-source"
 database="$test_root/cha.sqlite3"
+config="$test_root/cha.toml"
 application="$test_root/cha"
 server_pid=
 
@@ -35,9 +36,7 @@ trap cleanup EXIT HUP INT TERM
 start_server() {
     "$application/chaweb" \
         --root "$application" \
-        --data "$database" \
-        --host 127.0.0.1 \
-        --port "$port" \
+        --config="$config" \
         >"$test_root/chaweb.out" 2>&1 &
     server_pid=$!
 
@@ -60,7 +59,17 @@ start_server() {
 cp -R "$repository/webapp/e2e/fixtures/workspace" "$import_source"
 cp -R "$source_application" "$application"
 
-"$application/chaweb" --data "$database" --import "$import_source"
+cat >"$config" <<EOF
+data = "cha.sqlite3"
+[web]
+host = "127.0.0.1"
+port = $port
+[logging]
+file = "cha.log"
+level = "off"
+EOF
+
+"$application/chaweb" --config="$config" --import "$import_source"
 cmake -E remove_directory "$import_source"
 
 start_server

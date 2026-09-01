@@ -4,7 +4,8 @@
 selection, prompt construction, and the presentation order of generation
 output. It has no HTTP or browser dependency.
 
-All persistent sessions share the SQLite file selected by top-level `--data`.
+All persistent sessions share the SQLite file selected by the external
+application config's `data` setting.
 Public `(forum_id, session_id)` identities resolve to internal `session_key` values;
 every restore and journal statement is scoped by that key. The top-level
 configuration store owns the database lease and private root. The repository

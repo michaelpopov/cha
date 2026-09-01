@@ -11,25 +11,17 @@ struct ApplicationCommand {
     std::optional<std::filesystem::path> import_directory;
     std::optional<std::filesystem::path> export_directory;
     std::filesystem::path root;
-    std::optional<std::string> host;
-    std::optional<int> port;
+    std::string host;
+    int port{};
+    std::filesystem::path log_file;
+    std::string log_level;
     // Browser automation uses this command-line-only seam to prove a real
     // disconnect/unload/reopen cycle without adding thirty seconds per run.
     std::optional<int> test_idle_grace_ms;
 };
 
-struct StoredApplicationSettings {
-    std::string host;
-    int port{};
-};
-
-// Reads materialized root app.toml. host and port are required. The stored
-// form does not accept workspace or backup_dir.
-StoredApplicationSettings load_stored_application_settings(
-    const std::filesystem::path& config_file);
-
-// Parses the public command line. Does not read stored app.toml; runtime
-// loads host and port from the materialized database after startup.
+// Parses the public command line and its required external TOML file. Relative
+// data and logging paths are resolved from the configuration file's directory.
 ApplicationCommand parse_application_command(
     int argc,
     const char* const* argv);
@@ -39,8 +31,8 @@ ApplicationCommand parse_application_command(
 // accepted but deliberately not advertised to someone who mistyped an option.
 inline constexpr const char web_usage[] =
     "Usage:\n"
-    "  chaweb --data DATABASE [--root PATH] [--host HOST] [--port PORT]\n"
-    "  chaweb --data DATABASE --import SOURCE_DIRECTORY\n"
-    "  chaweb --data DATABASE --export DESTINATION_DIRECTORY";
+    "  chaweb --config=CONFIG [--root PATH]\n"
+    "  chaweb --config=CONFIG --import SOURCE_DIRECTORY\n"
+    "  chaweb --config=CONFIG --export DESTINATION_DIRECTORY";
 
 } // namespace cha::web

@@ -8,7 +8,8 @@ servers. The `chaweb` process serves the browser client and its HTTP/SSE API.
 Initialize a development database once, then start the staged application:
 
 ```sh
-make import-dev DATABASE="$PWD/cha.sqlite3"
+cp packaging/linux/cha.toml.example cha.toml
+make import-dev CONFIG="$PWD/cha.toml"
 make run
 ```
 
@@ -19,8 +20,8 @@ character. Which persona you speak as follows the forum you are in and is set in
 that forum's configuration, not in the browser.
 
 Welcome is private to the running server and is deleted on shutdown. All stored
-sessions and the current configuration remain in the SQLite database selected
-with `--data`.
+sessions and workspace metadata remain in the SQLite database selected by the
+external `cha.toml`.
 
 The chat input also accepts these controller-level commands:
 
@@ -51,9 +52,9 @@ message addressed to it.
 
 ## Configuration
 
-A configuration import directory contains required root `app.toml` and
-`workspace.toml`, plus `characters/`, `forums/`, `personas/`, and `system/` as
-needed. `characters/` and `personas/` may use nested grouping directories;
+A configuration import directory contains `characters/`, `forums/`,
+`personas/`, and `system/` as needed. `characters/` and `personas/` may use
+nested grouping directories;
 the directory containing a definition file supplies that character or persona's ID.
 The `personas/` directory may be empty because the built-in Guest
 persona is always available, and is what a forum that names no `default_persona`
@@ -72,9 +73,16 @@ unambiguous, case-insensitive full or partial persona ID or display name, then
 saves the selected ID as `default_persona` in the forum config. Later prompts
 in the session are attributed to that persona.
 
-`workspace.toml` supplies diagnostic logging settings:
+The external application configuration supplies the database, web listener,
+and diagnostic logging settings in one file:
 
 ```toml
+data = "/var/lib/cha/workspace.sqlite3"
+
+[web]
+host = "0.0.0.0"
+port = 8086
+
 [logging]
 file = "logs/cha.log"
 level = "info"
@@ -175,38 +183,31 @@ over `.env`, even when the inherited value is empty. Import temporarily overlays
 only otherwise-absent variables while it validates providers, then restores the
 process environment even when validation fails.
 
-`app.toml` is also stored configuration and must contain a listener:
-
-```toml
-host = "127.0.0.1"
-port = 8080
-```
-
 Normal startup takes the application root for installed `web/` assets from the
-executable directory, or from `--root`. Stored `host` and `port` are required;
-runtime `--host` and `--port` values override them. Relative `logging.file`
-paths resolve against the database's parent directory. Template includes
-resolve beneath the private materialized workspace.
+executable directory, or from `--root`. Relative `data` and `logging.file`
+paths resolve against the external configuration file's directory. Template
+includes resolve beneath the private materialized workspace.
 
 ### Command line and configuration maintenance
 
 The complete public command interface is:
 
 ```text
-chaweb --data DATABASE [--root PATH] [--host HOST] [--port PORT]
-chaweb --data DATABASE --import DIRECTORY
-chaweb --data DATABASE --export DIRECTORY
+chaweb --config=CONFIG [--root PATH]
+chaweb --config=CONFIG --import DIRECTORY
+chaweb --config=CONFIG --export DIRECTORY
 ```
 
-`--data` is mandatory and names the one SQLite file containing sessions and
-current configuration. Normal startup requires a valid schema-v2 database; a
-missing database is created only by a successful import. The old
-`--config APP_TOML` and `--workspace` options are removed and have no
-compatibility aliases.
+`--config` is mandatory and names the external unified TOML file. Its `data`
+setting names the SQLite file containing sessions and workspace metadata.
+Normal startup requires a valid schema-v2 database; a missing database is
+created only by a successful import. For import, the external config file must
+be outside the workspace source directory.
 
-Import stores required root `app.toml` and `workspace.toml`, every regular
-`.toml` and `.md` file, and optional root `.env`. It follows no symlinks and
-stores no other file type. An included file must therefore be in this set:
+Import stores every regular workspace `.toml` and `.md` file and optional root
+`.env`, but explicitly excludes legacy root `app.toml` and `workspace.toml`.
+It follows no symlinks and stores no other file type. An included file must
+therefore be in this set:
 `$$(snippet.txt)` fails validation, while an appropriate stored
 `$$(snippet.md)` can work. The `config` table contains only `(name, content)`;
 one SQLite transaction replaces the complete small table, with no generation,
@@ -262,11 +263,11 @@ installation:
    contains regular `.sqlite3` files, first use the archived migration-capable
    build on a disposable copy, verify the unified v1 database, and finish legacy
    cleanup there. The new import intentionally refuses both incomplete states.
-3. Add valid root `app.toml` with required host and port to the import copy.
+3. Create one external `cha.toml` containing `data`, `[web]`, and `[logging]`.
 4. Run the import and inspect its file-count summary:
 
    ```sh
-   chaweb --data /absolute/path/workspace.sqlite3 \
+   chaweb --config=/absolute/path/cha.toml \
           --import /absolute/path/workspace
    ```
 
@@ -276,14 +277,14 @@ installation:
    with the source:
 
    ```sh
-   chaweb --data /absolute/path/workspace.sqlite3 \
+   chaweb --config=/absolute/path/cha.toml \
           --export /absolute/path/exported-workspace
    ```
 
 7. Move the original configuration directory aside and start only with:
 
    ```sh
-   chaweb --data /absolute/path/workspace.sqlite3
+   chaweb --config=/absolute/path/cha.toml
    ```
 
    Open and resume a session, exercise the three narrow settings, restart, and
@@ -295,12 +296,13 @@ installation:
 Do not delete the old backup as part of the cutover. Backup retention and
 eventual removal are operator decisions.
 
-Linux packages contain `import-seed/` as source material, not live storage.
-Replace its secret placeholder and initialize a database explicitly with the
-printed `chaweb --data ... --import ...` command before running
-`start-cha.sh`. The default launcher keeps the database outside the replaceable
-application directory, starts `chaweb` in the background on port 8086, prints
-its PID, and writes process output to `chaweb.log` beside the executable.
+Linux packages contain `cha.toml.example` and `import-seed/` as source
+material, not live storage. Copy the example to `../cha.toml`, replace the
+secret placeholder, and initialize the configured database explicitly with
+`chaweb --config=../cha.toml --import import-seed` before running
+`start-cha.sh`. The real configuration and database remain outside the
+replaceable application directory; the launcher writes process output to
+`chaweb.log` beside the executable.
 
 `chaweb` loads discovery — the roster, descriptions, and Markdown shown in
 Personas, Characters, and Forums — from the database as one validated immutable

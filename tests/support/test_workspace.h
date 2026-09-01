@@ -22,10 +22,6 @@ public:
     TestWorkspace& operator=(const TestWorkspace&) = delete;
 
     const std::filesystem::path& root() const noexcept { return root_; }
-    void write_application_config(
-        std::string_view host = "127.0.0.1",
-        int port = 8080) const;
-    void write_workspace_config(std::string_view log_level = "off") const;
     void write_character_config(std::string_view contents) const;
     void write_character_defaults(std::string_view contents) const;
     void write_provider(std::string_view name, std::string_view contents) const;
