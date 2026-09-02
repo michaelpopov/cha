@@ -9,6 +9,7 @@
 #include "web/http_server.h"
 #include "web/lobby_routes.h"
 #include "web/session_routes.h"
+#include "web/session_mirror.h"
 #include "web/live_session_manager.h"
 #include "web/server_shutdown.h"
 #include "web/web_settings.h"
@@ -33,6 +34,7 @@ static int run_web_server(
     const std::string& host, int port,
     const std::filesystem::path& root,
     const std::shared_ptr<const SessionRepository>& sessions,
+    const std::shared_ptr<SessionMirror>& mirror,
     LiveSessionManager& live_sessions,
     WorkspaceConfigStore& config,
     const WebSettings& settings);
@@ -81,19 +83,31 @@ int prepare_and_run(int argc, const char* argv[]) {
         store->workspace_path(),
         store->welcome_path(),
         seed);
+    std::shared_ptr<SessionMirror> mirror;
+    if (command.mirror) {
+        mirror = std::make_shared<SessionMirror>(*command.mirror, *sessions);
+    }
     Providers providers;
 
-    auto opener = [sessions, &providers, config = store.get()](
+    auto opener = [sessions, mirror, &providers, config = store.get()](
                       const FullSessionId& identity,
                       std::shared_ptr<WakeNotifier> notifier) {
-        return open_session(
+        OpenedSession opened = open_session(
             *sessions, identity, providers, std::move(notifier), *config);
+        if (mirror) {
+            opened.mirror = [mirror, identity](
+                                std::string_view label,
+                                std::span<const TranscriptEntry> entries) {
+                mirror->update(identity, label, entries);
+            };
+        }
+        return opened;
     };
     LiveSessionManager live_sessions(settings, opener);
 
     const int result = run_web_server(
         command.host, command.port, command.root,
-        sessions, live_sessions, *store, settings);
+        sessions, mirror, live_sessions, *store, settings);
     providers.shutdown();
     shutdown_diagnostic_logging();
     return result;
@@ -103,6 +117,7 @@ int run_web_server(
     const std::string& host, int port,
     const std::filesystem::path& root,
     const std::shared_ptr<const SessionRepository>& sessions,
+    const std::shared_ptr<SessionMirror>& mirror,
     LiveSessionManager& live_sessions,
     WorkspaceConfigStore& config,
     const WebSettings& settings) {
@@ -114,7 +129,8 @@ int run_web_server(
     assets.install(server);
 
     const InitialSelection initial{{std::string(entrance_id), std::string(welcome_id)}};
-    LobbyRoutes(sessions, initial, live_sessions, settings, config).install(server);
+    LobbyRoutes(
+        sessions, initial, live_sessions, settings, config, mirror).install(server);
     SessionRoutes(live_sessions, settings, assets).install(server);
 
     log_web_server_startup(settings);

@@ -26,6 +26,7 @@ struct ParsedOptions {
 
 struct ApplicationSettings {
     std::filesystem::path database;
+    std::optional<std::filesystem::path> mirror;
     std::string host;
     int port{};
     std::filesystem::path log_file;
@@ -187,9 +188,15 @@ ApplicationSettings load_application_settings(
             "Failed to read application config '" + utf8_path(config_file) + "'.");
     }
     const toml::table root = toml::parse(input, utf8_path(config_file));
-    reject_unknown_fields(root, config_file, {"data", "web", "logging"}, "root");
+    reject_unknown_fields(
+        root, config_file, {"data", "mirror", "web", "logging"}, "root");
 
     const std::string data = required_string(root, config_file, "data");
+    std::optional<std::filesystem::path> mirror;
+    if (root.contains("mirror")) {
+        const std::string value = required_string(root, config_file, "mirror");
+        mirror = resolve_config_path(config_file, "mirror", value);
+    }
     const toml::table& web = required_table(root, config_file, "web");
     reject_unknown_fields(web, config_file, {"host", "port"}, "[web]");
     const std::string host = required_string(web, config_file, "host");
@@ -207,6 +214,7 @@ ApplicationSettings load_application_settings(
 
     return {
         .database = resolve_config_path(config_file, "data", data),
+        .mirror = std::move(mirror),
         .host = host,
         .port = *port,
         .log_file = resolve_config_path(config_file, "logging.file", log_file),
@@ -278,6 +286,7 @@ ApplicationCommand parse_application_command(
               std::filesystem::absolute(executable_directory()).lexically_normal());
     return {
         .database = settings.database,
+        .mirror = settings.mirror,
         .import_directory = options.import_directory,
         .export_directory = options.export_directory,
         .root = root,

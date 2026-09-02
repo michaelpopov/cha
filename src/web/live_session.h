@@ -19,6 +19,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -146,6 +147,7 @@ private:
         ControllerStateUpdate state,
         bool presentation_changed);
     void publish_current_snapshot();
+    void mirror_if_changed();
     void log_generation_transitions(const SessionSnapshot& current);
     void publish_final(ShutdownReason reason);
     void log_fatal_once() noexcept;
@@ -179,6 +181,11 @@ private:
     std::string label_;
     std::function<void(std::string_view)> persist_default_character_;
     std::function<void(std::string_view)> persist_default_persona_;
+    std::function<void(
+        std::string_view,
+        std::span<const TranscriptEntry>)> mirror_;
+    std::size_t mirrored_revision_{};
+    std::string mirrored_label_;
     std::optional<std::string> notice_;
     // The only generation facts the actor retains: enough to recognize start
     // and terminal transitions without caching a protocol snapshot.

@@ -10,6 +10,7 @@ afterEach(() => {
 describe('session Markdown downloads', () => {
   it('uses a filesystem-safe default name based on the session name', () => {
     expect(sessionMarkdownFilename('Architecture: review?')).toBe('Architecture- review-.md');
+    expect(sessionMarkdownFilename('Notes #[draft]^')).toBe('Notes --draft--.md');
     expect(sessionMarkdownFilename('Trailing. ')).toBe('Trailing.md');
   });
 

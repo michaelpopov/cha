@@ -338,6 +338,116 @@ TEST(LiveSession, RoutesRawAndTypedCommandsOnOneOwnerThread) {
     EXPECT_EQ(read_session_database_metadata(file.path()).label, "Renamed live");
 }
 
+TEST(LiveSession, MirrorsOnlyDurableRoundTripRenameAndClearBoundaries) {
+    test::TemporarySessionFile file("live_session_mirror_boundaries");
+    auto controls = std::make_shared<test::BackendControls>();
+    std::mutex mirror_mutex;
+    std::size_t mirror_count{};
+    std::string mirrored_label;
+    std::vector<TranscriptEntry> mirrored_entries;
+    SessionOpener opener = [path = file.path(), controls, &mirror_mutex,
+                             &mirror_count, &mirrored_label,
+                             &mirrored_entries](
+                                const FullSessionId& identity,
+                                std::shared_ptr<WakeNotifier> notifier) {
+        OpenedSession opened = test::open_scripted_session(
+            identity, path, notifier, controls);
+        opened.mirror = [&mirror_mutex, &mirror_count, &mirrored_label,
+                         &mirrored_entries](
+                            std::string_view label,
+                            std::span<const TranscriptEntry> entries) {
+            const std::lock_guard lock(mirror_mutex);
+            ++mirror_count;
+            mirrored_label = label;
+            mirrored_entries.assign(entries.begin(), entries.end());
+        };
+        return opened;
+    };
+    LiveSessionHost host(test_settings(), std::move(opener));
+
+    ASSERT_TRUE(std::holds_alternative<CommandResult>(
+        host->submit(RawCommand{"Question"}, 2s)));
+    ASSERT_TRUE(controls->wait_until_running());
+    {
+        const std::lock_guard lock(mirror_mutex);
+        EXPECT_EQ(mirror_count, 0U);
+    }
+
+    ASSERT_TRUE(std::holds_alternative<SessionLabelResult>(
+        host->submit(RenameSessionCommand{"In flight"}, 2s)));
+    {
+        const std::lock_guard lock(mirror_mutex);
+        EXPECT_EQ(mirror_count, 1U);
+        EXPECT_EQ(mirrored_label, "In flight");
+    }
+
+    controls->emit_answer("Answer");
+    controls->finish();
+    ASSERT_TRUE(controls->wait_until_idle());
+    bool completed = false;
+    for (std::size_t attempt{}; attempt != 100; ++attempt) {
+        const CommandSubmitResult result = host->snapshot(2s);
+        ASSERT_TRUE(std::holds_alternative<SessionSnapshot>(result));
+        if (!std::get<SessionSnapshot>(result).generation.active) {
+            completed = true;
+            break;
+        }
+    }
+    ASSERT_TRUE(completed);
+    {
+        const std::lock_guard lock(mirror_mutex);
+        EXPECT_EQ(mirror_count, 2U);
+        ASSERT_EQ(mirrored_entries.size(), 2U);
+        EXPECT_EQ(mirrored_entries.back().text, "Answer");
+    }
+
+    ASSERT_TRUE(std::holds_alternative<CommandResult>(
+        host->submit(SetDefaultCharacterCommand{"guide"}, 2s)));
+    {
+        const std::lock_guard lock(mirror_mutex);
+        EXPECT_EQ(mirror_count, 2U);
+    }
+
+    ASSERT_TRUE(std::holds_alternative<SessionLabelResult>(
+        host->submit(RenameSessionCommand{"Renamed"}, 2s)));
+    {
+        const std::lock_guard lock(mirror_mutex);
+        EXPECT_EQ(mirror_count, 3U);
+        EXPECT_EQ(mirrored_label, "Renamed");
+    }
+
+    ASSERT_TRUE(std::holds_alternative<CommandResult>(
+        host->submit(RawCommand{"/clear"}, 2s)));
+    {
+        const std::lock_guard lock(mirror_mutex);
+        EXPECT_EQ(mirror_count, 4U);
+        EXPECT_TRUE(mirrored_entries.empty());
+    }
+
+    ASSERT_TRUE(std::holds_alternative<CommandResult>(
+        host->submit(RawCommand{"Cancelled question"}, 2s)));
+    ASSERT_TRUE(controls->wait_until_running());
+    ASSERT_TRUE(std::holds_alternative<CommandResult>(
+        host->submit(StopCommand{}, 2s)));
+    ASSERT_TRUE(controls->wait_until_idle());
+    completed = false;
+    for (std::size_t attempt{}; attempt != 100; ++attempt) {
+        const CommandSubmitResult result = host->snapshot(2s);
+        ASSERT_TRUE(std::holds_alternative<SessionSnapshot>(result));
+        if (!std::get<SessionSnapshot>(result).generation.active) {
+            completed = true;
+            break;
+        }
+    }
+    ASSERT_TRUE(completed);
+    {
+        const std::lock_guard lock(mirror_mutex);
+        EXPECT_EQ(mirror_count, 5U);
+        ASSERT_EQ(mirrored_entries.size(), 1U);
+        EXPECT_EQ(mirrored_entries.front().text, "Cancelled question");
+    }
+}
+
 TEST(LiveSession, KeepsADefaultCharacterThatCouldNotBeSaved) {
     test::TemporarySessionFile file("live_session_unsaved_default");
     auto guide = std::make_shared<test::BackendControls>();

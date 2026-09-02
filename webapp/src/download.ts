@@ -18,7 +18,7 @@ function saveFilePicker(): SaveFilePicker | undefined {
 
 export function sessionMarkdownFilename(label: string): string {
   const safe = label
-    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, '-')
+    .replace(/[<>:"/\\|?*#^\[\]\u0000-\u001f]/g, '-')
     .replace(/[ .]+$/g, '');
   return `${safe || 'session'}.md`;
 }

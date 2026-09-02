@@ -107,6 +107,34 @@ TEST_F(ApplicationConfigTest, AcceptsSeparatedConfigOptionAndAbsolutePaths) {
     EXPECT_EQ(command.log_level, "debug");
 }
 
+TEST_F(ApplicationConfigTest, LoadsOptionalMirrorRelativeToConfig) {
+    write_config(
+        "data = \"../data/workspace.sqlite3\"\n"
+        "mirror = \"../mirror\"\n"
+        "[web]\nhost = \"127.0.0.1\"\nport = 8080\n"
+        "[logging]\nfile = \"logs/cha.log\"\nlevel = \"info\"\n");
+
+    const ApplicationCommand command =
+        load({"chaweb", "--config", config_.string()});
+    ASSERT_TRUE(command.mirror);
+    EXPECT_EQ(
+        *command.mirror,
+        std::filesystem::weakly_canonical(root_ / "mirror"));
+}
+
+TEST_F(ApplicationConfigTest, RejectsAnEmptyMirrorPath) {
+    write_config(
+        "data = \"../data/workspace.sqlite3\"\n"
+        "mirror = \"\"\n"
+        "[web]\nhost = \"127.0.0.1\"\nport = 8080\n"
+        "[logging]\nfile = \"logs/cha.log\"\nlevel = \"info\"\n");
+
+    EXPECT_NE(
+        error_text({"chaweb", "--config", config_.string()})
+            .find("non-empty string 'mirror'"),
+        std::string::npos);
+}
+
 TEST_F(ApplicationConfigTest, ImportAndExportUseConfiguredDatabase) {
     const ApplicationCommand imported = load({
         "chaweb", "--config=" + config_.string(),

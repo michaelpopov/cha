@@ -282,6 +282,11 @@ bool LiveSession::open_controller() {
         controller_ = std::move(opened.controller);
         persist_default_character_ = std::move(opened.persist_default_character);
         persist_default_persona_ = std::move(opened.persist_default_persona);
+        mirror_ = std::move(opened.mirror);
+        if (mirror_) {
+            mirrored_revision_ = controller_->view().transcript.revision;
+            mirrored_label_ = label_;
+        }
         (void)apply_notice(opened.notice);
         return true;
     } catch (const std::bad_alloc&) {
@@ -367,6 +372,7 @@ void LiveSession::owner_loop() {
                 controller_->receive_events(settings_.event_batch_size);
             const bool presentation_changed = apply_notice(events.update.notice);
             publish_update(std::move(events.update.state), presentation_changed);
+            mirror_if_changed();
             if (events.update.session_ended) {
                 (void)mark_stopping(ShutdownReason::browser_disconnected);
             }
@@ -431,6 +437,7 @@ void LiveSession::execute(OwnerCommand command) {
         controller_->rename(rename->label);
         label_ = std::move(rename->label);
         publish_current_snapshot();
+        mirror_if_changed();
         (void)command.reply->complete(SessionLabelResult{
             identity_.session_id, label_});
         return;
@@ -493,6 +500,7 @@ void LiveSession::execute(OwnerCommand command) {
     // The state effect is in-process only; the serialized result carries just
     // clear_input and the notice.
     publish_update(std::move(outcome.session.state), presentation_changed);
+    mirror_if_changed();
     const bool close_session =
         outcome.session.session_ended || outcome.close_session;
     (void)command.reply->complete(std::move(outcome));
@@ -569,6 +577,19 @@ void LiveSession::publish_current_snapshot() {
     SessionSnapshot current = make_snapshot();
     log_generation_transitions(current);
     mailbox_->publish(SnapshotEvent{std::move(current)});
+}
+
+void LiveSession::mirror_if_changed() {
+    if (!mirror_) return;
+    const TranscriptView transcript = controller_->view().transcript;
+    const bool label_changed = label_ != mirrored_label_;
+    if (!label_changed && controller_->is_generating()) return;
+    if (!label_changed && transcript.revision == mirrored_revision_) {
+        return;
+    }
+    mirror_(label_, transcript.entries);
+    mirrored_revision_ = transcript.revision;
+    mirrored_label_ = label_;
 }
 
 void LiveSession::log_generation_transitions(const SessionSnapshot& current) {
@@ -676,6 +697,7 @@ void LiveSession::teardown(ShutdownReason reason, bool skip_final_drain) noexcep
         controller_.reset();
         persist_default_character_ = {};
         persist_default_persona_ = {};
+        mirror_ = {};
         log_event("controller_released_owner_finished");
     }
     publish_finished();

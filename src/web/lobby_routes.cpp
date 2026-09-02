@@ -10,6 +10,7 @@
 #include "web/protocol.h"
 #include "web/route_support.h"
 #include "web/session_markdown.h"
+#include "web/session_mirror.h"
 #include "web/live_session_manager.h"
 #include "util/text.h"
 #include "util/logging.h"
@@ -222,11 +223,13 @@ LobbyRoutes::LobbyRoutes(
     InitialSelection initial,
     LiveSessionManager& live_sessions,
     WebSettings settings,
-    WorkspaceConfigStore& config)
+    WorkspaceConfigStore& config,
+    std::shared_ptr<SessionMirror> mirror)
     : sessions_(std::move(sessions)),
       initial_(std::move(initial)), live_sessions_(live_sessions),
       settings_(std::move(settings)),
-      config_(&config) {
+      config_(&config),
+      mirror_(std::move(mirror)) {
     if (!sessions_) throw std::invalid_argument("Lobby routes need a session repository");
 }
 
@@ -236,6 +239,7 @@ void LobbyRoutes::install(httplib::Server& server) const {
     LiveSessionManager* const live_sessions = &live_sessions_;
     const WebSettings settings = settings_;
     WorkspaceConfigStore* const config = config_;
+    const std::shared_ptr<SessionMirror> mirror = mirror_;
     server.Get("/health", [live_sessions](const httplib::Request&, httplib::Response& response) {
         const LiveSessionManagerSnapshot snapshot = live_sessions->snapshot();
         set_json_response(response, 200, nlohmann::json{
@@ -348,7 +352,7 @@ void LobbyRoutes::install(httplib::Server& server) const {
         }
     });
 
-    server.Post(R"(/api/v1/forums/([^/]+)/sessions)", [sessions, settings](const httplib::Request& request, httplib::Response& response) {
+    server.Post(R"(/api/v1/forums/([^/]+)/sessions)", [sessions, mirror, settings](const httplib::Request& request, httplib::Response& response) {
         const std::string forum = request.matches[1];
         if (!is_valid_route_component(forum)) return set_route_not_found(response);
         if (!validate_json_mutation(request, response)) return;
@@ -363,6 +367,7 @@ void LobbyRoutes::install(httplib::Server& server) const {
         if (!validate_route_session_label(response, label, true)) return;
         try {
             const StoredSession created = sessions->create(forum, std::move(label));
+            if (mirror) mirror->add(created);
             set_json_response(response, 201, nlohmann::json(CreateSessionSuccess{
                 created.identity.session_id, created.label}));
         } catch (const ForumNotFoundError&) {
@@ -411,7 +416,7 @@ void LobbyRoutes::install(httplib::Server& server) const {
     });
 
     server.Patch(R"(/api/v1/forums/([^/]+)/sessions/([^/]+))",
-        [sessions, initial, live_sessions, settings](const httplib::Request& request,
+        [sessions, initial, live_sessions, mirror, settings](const httplib::Request& request,
                                                      httplib::Response& response) {
         const FullSessionId key{request.matches[1], request.matches[2]};
         if (!is_valid_route_component(key.forum_id)
@@ -448,6 +453,12 @@ void LobbyRoutes::install(httplib::Server& server) const {
                     {ErrorCode::internal_error, "The request could not be completed."});
             }
             const StoredSession renamed = sessions->rename(key, std::move(label));
+            if (mirror) {
+                mirror->update(
+                    renamed.identity,
+                    renamed.label,
+                    sessions->history(renamed.identity));
+            }
             log_info(session_event(key, "rename_committed"));
             set_json_response(response, 200, nlohmann::json(SessionLabelResult{
                 renamed.identity.session_id, renamed.label}));

@@ -17,6 +17,7 @@ class WorkspaceConfigStore;
 namespace cha::web {
 
 class LiveSessionManager;
+class SessionMirror;
 
 // What the browser starts on. These are startup facts rather than model state,
 // so the application decides them and the route layer only reports them.
@@ -31,7 +32,8 @@ public:
         InitialSelection initial,
         LiveSessionManager& live_sessions,
         WebSettings settings,
-        WorkspaceConfigStore& config);
+        WorkspaceConfigStore& config,
+        std::shared_ptr<SessionMirror> mirror = {});
 
     void install(httplib::Server& server) const;
 
@@ -41,6 +43,7 @@ private:
     LiveSessionManager& live_sessions_;
     WebSettings settings_;
     WorkspaceConfigStore* config_;
+    std::shared_ptr<SessionMirror> mirror_;
 };
 
 } // namespace cha::web

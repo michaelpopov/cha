@@ -242,6 +242,7 @@ add_library(cha_web STATIC
     src/web/protocol.cpp
     src/web/route_support.cpp
     src/web/session_markdown.cpp
+    src/web/session_mirror.cpp
     src/web/session_projection.cpp
     src/web/server_shutdown.cpp
     src/web/session_routes.cpp
@@ -346,6 +347,7 @@ if(BUILD_TESTING)
         tests/web/unit_asset_handler.cpp
         tests/web/unit_protocol.cpp
         tests/web/unit_session_markdown.cpp
+        tests/web/unit_session_mirror.cpp
         tests/web/unit_session_projection.cpp
         tests/web/unit_browser_connection_state.cpp
         tests/web/unit_lobby_routes.cpp

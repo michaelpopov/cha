@@ -78,6 +78,7 @@ and diagnostic logging settings in one file:
 
 ```toml
 data = "/var/lib/cha/workspace.sqlite3"
+mirror = "/home/user/cha-mirror"
 
 [web]
 host = "0.0.0.0"
@@ -87,6 +88,15 @@ port = 8086
 file = "logs/cha.log"
 level = "info"
 ```
+
+The optional `mirror` setting continuously writes each persistent session as
+Markdown under a display-named forum directory; omit it to disable mirroring.
+The root directory must already exist, sessions are refreshed after terminal
+responses and clears, renamed with their sessions, and retained when archived.
+This copies transcripts out of the SQLite workspace into plain files. CHA
+writes those files with mode `0600`, but does not change permissions on the
+configured root or existing forum directories, so choose the location
+accordingly.
 
 Each completed provider request writes its HTTP metadata, provider request ID,
 and reported `input_tokens`, `output_tokens`, `cache_read_tokens`, and

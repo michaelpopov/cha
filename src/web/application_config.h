@@ -8,6 +8,7 @@ namespace cha::web {
 
 struct ApplicationCommand {
     std::filesystem::path database;
+    std::optional<std::filesystem::path> mirror;
     std::optional<std::filesystem::path> import_directory;
     std::optional<std::filesystem::path> export_directory;
     std::filesystem::path root;

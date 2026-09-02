@@ -54,6 +54,8 @@ The most useful high-level model is:
 - The independent process-owned `SessionRepository` receives explicit database,
   materialized-workspace, and Welcome paths. It owns none of those outer
   resources and lists, creates, validates, archives, and restores sessions.
+- When the external config sets `mirror`, the process-owned `SessionMirror`
+  projects persistent sessions into continuously refreshed Markdown files.
 - `LiveSessionManager` owns the process's live-session registry.
 - One `LiveSession` is an actor with one permanent owner thread for one open
   session.
@@ -78,6 +80,7 @@ flowchart LR
     Workspace["Published immutable Workspace"]
     Store["WorkspaceConfigStore / lease / private root"]
     Repository["SessionRepository"]
+    Mirror["SessionMirror / Markdown files"]
     Journal["SessionJournal / SQLite"]
     Providers["Process Providers supervisor"]
     Request["ProviderRequest"]
@@ -90,11 +93,13 @@ flowchart LR
     Routes --> Repository
     Store -->|"materializes and publishes"| Workspace
     Store -->|"supplies explicit paths"| Repository
+    Repository -->|"startup history"| Mirror
     Routes -->|"queued WebCommand"| Actor
     Manager -->|"owns and locates"| Actor
     Actor -->|"only caller"| Controller
     Controller -->|"getws() lookups"| Workspace
     Controller --> Journal
+    Actor -->|"transcript revision / rename"| Mirror
     Controller -->|"retains while presenting"| Request
     Providers -->|"supervises while active"| Request
     Request --> Worker
@@ -106,10 +111,10 @@ flowchart LR
 
 There are four kinds of long-lived information:
 
-- Process configuration — the database path, web listener, and diagnostic log
-  settings — lives in one external TOML file. `chaweb` reads it before opening
-  the database; it is never materialized into the workspace or stored in
-  SQLite.
+- Process configuration — the database path, optional Markdown mirror, web
+  listener, and diagnostic log settings — lives in one external TOML file.
+  `chaweb` reads it before opening the database; it is never materialized into
+  the workspace or stored in SQLite.
 
 - Discovery — the roster, descriptions, and Markdown the browser lists — is
   materialized from committed database rows, read once per `Workspace`,
@@ -192,7 +197,7 @@ keys use its SHA-256 implementation, independently of curl's TLS backend.
 | [src/providers](../src/providers) | Request workers, provider transport, and response decoding |
 | [src/session](../src/session) | Controller, transcript orchestration, workspace session database, journal, lease, repository |
 | [src/workspace](../src/workspace) | Configuration store, workspace loading, built-ins, and session construction |
-| [src/web](../src/web) | Native protocol, routes, actor, mailbox, lifecycle, shutdown |
+| [src/web](../src/web) | Native protocol, routes, actor, Markdown mirror, mailbox, lifecycle, shutdown |
 | [tests](../tests) | Behavioral examples grouped by the same subsystem boundaries |
 | [packaging/linux/cha.toml.example](../packaging/linux/cha.toml.example) | External process-configuration example |
 | [packaging/linux/import-seed](../packaging/linux/import-seed) | A configuration source tree to compare against the loaders and import filter |
@@ -362,6 +367,7 @@ application-asset root. The TOML shape is:
 
 ```toml
 data = "/var/lib/cha/workspace.sqlite3"
+mirror = "/home/user/cha-mirror"
 
 [web]
 host = "0.0.0.0"
@@ -372,11 +378,13 @@ file = "logs/cha.log"
 level = "info"
 ```
 
-Relative `data` and `logging.file` values resolve from the external config's
-directory. Import additionally requires that file to be outside the source
-workspace, preventing the process config itself from becoming an imported
-metadata row. Import and export acquire the same non-blocking database lease as
-runtime, so they are deliberately offline.
+`mirror` is optional; omitting it disables filesystem mirroring. Relative
+`data`, `mirror`, and `logging.file` values resolve from the external config's
+directory. The mirror root must already exist and be a directory. Import
+additionally requires that file to be outside the source workspace, preventing
+the process config itself from becoming an imported metadata row. Import and
+export acquire the same non-blocking database lease as runtime, so they are
+deliberately offline.
 
 A new database is created only after a source has been collected and validated
 successfully. Normal runtime and export require schema v2. Schema v1 is the
@@ -389,6 +397,12 @@ sidecars, lock, private root, and exported `.env` use owner-only access (POSIX
 unified database therefore needs secret-grade access and backup discipline.
 There is no database backup command here, and copying a live WAL database
 naively is unsafe.
+
+Mirroring deliberately creates a second, plaintext representation of session
+content outside SQLite. Mirrored Markdown files are written atomically with
+owner-only access (`0600` on POSIX), and newly created forum directories are
+private (`0700`), but CHA does not tighten the configured root or an existing
+forum directory. The operator therefore chooses and secures that location.
 
 ## 8. Third reading pass: startup and the immutable workspace
 
@@ -412,13 +426,18 @@ Startup proceeds in this order:
 5. `SessionRepository` receives the store's explicit database, materialized,
    and Welcome paths, synchronizes configured forum IDs, and creates the
    process-local Welcome database. It does not own the lease or private root.
-6. The process-owned `Providers` supervisor is constructed.
-7. `LiveSessionManager` is given an opener lambda that calls `open_session()`.
-8. The HTTP server, asset handler, lobby routes, and session routes are
+6. If `mirror` is configured, `SessionMirror` validates the existing root,
+   creates any missing display-named forum directories, and writes every
+   active persistent session through the existing Markdown formatter. Any
+   failure here aborts startup; Entrance/Welcome is excluded.
+7. The process-owned `Providers` supervisor is constructed.
+8. `LiveSessionManager` is given an opener lambda that calls `open_session()`
+   and installs the mirror callback on the resulting `OpenedSession`.
+9. The HTTP server, asset handler, lobby routes, and session routes are
    installed.
-9. The socket is bound, the server begins listening, and shutdown coordination
+10. The socket is bound, the server begins listening, and shutdown coordination
    waits for a process signal.
-10. Shutdown stops new work and tears down live actors, then
+11. Shutdown stops new work and tears down live actors, then
     `Providers::shutdown()` waits for request workers before logging stops.
 
 Step 5 depends on step 3: the repository reads the published `Workspace` to
@@ -665,6 +684,12 @@ Deletion is archival, not a file move: one `UPDATE` sets `archived_at`, and the
 turns and entries stay exactly where they are. An archived row keeps its unique
 identity, so its session ID can never be reused, and it is excluded from list,
 open, rename, and history queries.
+
+When Markdown mirroring is enabled, archival intentionally leaves the last
+mirrored file in place. `SessionMirror` also retains that path allocation for
+the rest of the process, so a newly created session cannot take the archived
+file's name during that run. The mirror is an additive readable projection,
+not an archive catalog or a source from which sessions are restored.
 
 Forum synchronization is `INSERT OR IGNORE`, never a delete. Removing a forum
 from an imported configuration makes its sessions unreachable through ordinary
@@ -957,6 +982,8 @@ Read the web layer in this order:
 7. [web/live_session_manager.cpp](../src/web/live_session_manager.cpp)
 8. [web/lobby_routes.cpp](../src/web/lobby_routes.cpp)
 9. [web/session_routes.cpp](../src/web/session_routes.cpp)
+10. [web/session_markdown.cpp](../src/web/session_markdown.cpp)
+11. [web/session_mirror.cpp](../src/web/session_mirror.cpp)
 
 ### 12.1 Protocol values are owning DTOs
 
@@ -1012,8 +1039,9 @@ It is runtime-only.
 2. checks for shutdown;
 3. drains a bounded batch of foreground generation events;
 4. applies notice state and publishes an append or snapshot;
-5. checks browser-disconnect/idle deadlines;
-6. continues immediately if a batch was full, otherwise waits for a wake or
+5. refreshes the Markdown mirror if its transcript revision or label changed;
+6. checks browser-disconnect/idle deadlines;
+7. continues immediately if a batch was full, otherwise waits for a wake or
    deadline.
 
 Bounding both drains prevents an endless command stream from starving model
@@ -1099,12 +1127,51 @@ After the main actor path makes sense, scan the smaller adapters:
 | `http_server.*` | Apply server-wide request, Host/Origin, timeout, and size policy |
 | `http_response.*`, `json.*`, `route_support.*` | Consistent JSON parsing, response bodies, route components, and mutation validation |
 | `browser_connection_state.*` | Hand the session to the newest browser stream and calculate disconnect/idle deadlines |
+| `session_markdown.*`, `session_mirror.*` | Render portable transcripts and maintain the optional filesystem projection |
 | `owner_wake_signal.*` | Coalesce cross-thread wakeups for the actor loop |
 | `sse_stream.*` | Serialize mailbox payloads and heartbeats into `httplib::DataSink` |
 | `server_shutdown.*` | Bridge process signals to coordinated, bounded manager shutdown |
 
 These modules keep `LiveSession` and the route files from accumulating generic
 HTTP, filesystem, and signal-handling details.
+
+### 12.8 Markdown download and continuous mirroring
+
+The download route and filesystem mirror share
+`session_markdown()`. It escapes heading syntax, includes known local
+timestamps, preserves entry Markdown verbatim, omits transient off-record
+markers, and suppresses repeated multicast prompts. The HTTP route obtains an
+owner-thread snapshot for a live session or restores stored history for a
+closed one; `SessionMirror` writes the same bytes directly to disk.
+
+At startup `SessionMirror` reads the published forum display names and active
+sessions from `SessionRepository`. It creates one directory per persistent
+forum and one `.md` file per active session. Entrance/Welcome has no entry in
+the mirror's forum map, so later updates for it are silent no-ops. Paths use
+display text rather than IDs. The sanitizer replaces controls and
+`* " \\ / < > : | ? # ^ [ ]`, trims trailing dots/spaces, and collision
+allocation produces `Name.md`, `Name (1).md`, and so on. A mutex serializes
+startup-independent updates from route threads and different session-owner
+threads.
+
+New-session and closed-session rename routes call the mirror directly. An open
+session receives a synchronous callback through `OpenedSession`; the callback
+accepts only a call-scoped transcript span and never retains it.
+`LiveSession::mirror_if_changed()` holds the last mirrored transcript revision
+and label. Transcript changes remain pending while generation is active, then
+completion, cancellation, or failure writes the terminal state. `/clear` also
+changes the revision and writes immediately. A label change is handled even
+during generation so the old file is renamed promptly; the final response
+causes another write if transcript content subsequently changes. Unrelated
+snapshot state, such as a default-character selection, does not rewrite the
+file.
+
+Initial synchronization is strict because a configured but unusable mirror is
+a startup configuration failure. After startup, `SessionMirror::update()`
+catches filesystem errors and logs a warning: a failed secondary projection
+must not turn an already committed session transition into a failed chat
+operation. Writes use `create_private_file()`, which rejects symlink or
+non-regular targets and atomically replaces a regular file.
 
 ## 13. End-to-end workflow traces
 
@@ -1116,16 +1183,19 @@ Use these traces as navigation exercises. Open each function in sequence.
 2. `SessionRepository::create()` validates the forum against the published
    `Workspace` and inserts one `sessions` row with a timestamp-derived ID and
    initial counters, in one `BEGIN IMMEDIATE` transaction.
-3. The browser later posts to the open route.
-4. The route first tries to reattach, then calls `validate()`, then calls
+3. If mirroring is enabled, the route immediately adds the empty session's
+   display-named Markdown file.
+4. The browser later posts to the open route.
+5. The route first tries to reattach, then calls `validate()`, then calls
    `LiveSessionManager::open()`.
-5. The manager inserts a starting actor before starting its owner thread.
-6. `LiveSession::owner_main()` calls the supplied opener.
-7. `open_session()` reads the current forum defaults and obtains a
+6. The manager inserts a starting actor before starting its owner thread.
+7. `LiveSession::owner_main()` calls the supplied opener.
+8. `open_session()` reads the current forum defaults and obtains a
    `PreparedSession` carrying the database path and `session_key`.
-8. `SessionController` opens its journal connection, restores transcript state,
+9. `SessionController` opens its journal connection, restores transcript state,
    and repairs any interrupted started turn.
-9. The actor commits `running`, publishes a snapshot, and enters its loop.
+10. The actor records its initial revision/label baseline, commits `running`,
+    publishes a snapshot, and enters its loop.
 
 The pre-route `validate()` improves error mapping but does not grant ownership.
 `LiveSessionManager` is what prevents two actors from owning one identity, and
@@ -1150,6 +1220,8 @@ from.
 11. The SSE writer serializes the mailbox payload to the browser.
 12. The terminal event makes the controller persist completion, cancellation,
     or failure and publish final state.
+13. `mirror_if_changed()` observes the accumulated transcript revision and
+    writes the terminal Markdown state.
 
 ### 13.3 Multicast
 
@@ -1218,6 +1290,8 @@ would force the main view back to Chat.
 3. `Transcript::clear()` removes current in-memory entries, resets off-record
    state, and increments its local epoch/revision.
 4. A snapshot replaces browser state.
+5. `mirror_if_changed()` sees the new revision and replaces the Markdown file
+   with the now-empty current transcript.
 
 Old rows remain in the database as history from an earlier epoch. Restoration
 loads only the current epoch.
@@ -1344,6 +1418,12 @@ Persistence failures are session-fatal because continuing would let in-memory
 state diverge from the journal. Provider failures are ordinary turn outcomes
 and become durable error entries.
 
+Mirrored Markdown is not part of this persistence model. SQLite remains the
+authority, the application never imports mirror files, and archived or
+otherwise stale mirror files may remain. The mirror is a convenient
+human-readable projection whose filenames are based on mutable display labels,
+not durable identity.
+
 ## 17. Error boundaries
 
 Errors are handled at the narrowest layer that can give them meaning:
@@ -1355,6 +1435,9 @@ Errors are handled at the narrowest layer that can give them meaning:
   emptied before retry.
 - External application-config errors fail before runtime opens the configured
   database; the process file is never part of workspace publication.
+- A configured mirror whose root is missing or unusable, or whose initial
+  synchronization fails, is a startup failure. Later mirror-update failures
+  are warnings because SQLite has already committed the authoritative change.
 - A runtime configuration failure before commit rematerializes the old rows and
   leaves durable and published state old. The rare failure after commit reports
   restart-required; the next startup publishes the newly committed rows.
@@ -1434,6 +1517,7 @@ and before reading all of its implementation.
 | Database lease | [tests/session/unit_session_lease.cpp](../tests/session/unit_session_lease.cpp) |
 | Workspace publication | [tests/application/unit_workspace.cpp](../tests/application/unit_workspace.cpp) |
 | Actor behavior | [tests/web/unit_live_session.cpp](../tests/web/unit_live_session.cpp) |
+| Markdown rendering and mirroring | [tests/web/unit_session_markdown.cpp](../tests/web/unit_session_markdown.cpp), [unit_session_mirror.cpp](../tests/web/unit_session_mirror.cpp) |
 | Registry races/lifecycle | [tests/web/unit_live_session_manager.cpp](../tests/web/unit_live_session_manager.cpp) |
 | Snapshot/append collapse | [tests/web/unit_sse_mailbox.cpp](../tests/web/unit_sse_mailbox.cpp) |
 | Route protocol | [tests/web/unit_lobby_routes.cpp](../tests/web/unit_lobby_routes.cpp), [unit_session_routes.cpp](../tests/web/unit_session_routes.cpp) |
@@ -1630,6 +1714,9 @@ lease for their complete offline operation.
 
 **Model history:** An owning immutable transcript snapshot shared with workers for context
 projection.
+
+**Session mirror:** The optional, non-authoritative display-named Markdown
+projection of persistent sessions under the external config's `mirror` root.
 
 **Notice:** Presentation state associated with command/session feedback. It is not model
 history or durable transcript state.
