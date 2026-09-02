@@ -114,7 +114,7 @@ std::filesystem::path require_existing_directory(
 
 bool is_accepted_stored_name(std::string_view name) {
     return name != "app.toml" && name != "workspace.toml"
-        && (name == ".env" || name.ends_with(".toml") || name.ends_with(".md"));
+        && (name.ends_with(".toml") || name.ends_with(".md"));
 }
 
 bool is_forum_member_directory(std::string_view name) {
@@ -550,11 +550,12 @@ std::string busy_message(const std::filesystem::path& database) {
 }
 
 void validate_materialized_source(
-    const std::vector<ConfigFile>& rows) {
+    const std::vector<ConfigFile>& rows,
+    const std::filesystem::path& source) {
     TemporaryPrivateRoot root;
     materialize_config_files(root.workspace(), rows);
     std::vector<DotenvEntry> entries;
-    const std::filesystem::path dotenv = root.workspace() / ".env";
+    const std::filesystem::path dotenv = source / ".env";
     if (std::filesystem::exists(inspected_status(dotenv))) {
         entries = parse_dotenv(dotenv);
     }
@@ -619,7 +620,7 @@ WorkspaceConfigTransfer import_workspace_configuration(
     }
 
     const std::vector<ConfigFile> rows = collect_config_rows(source);
-    validate_materialized_source(rows);
+    validate_materialized_source(rows, source);
 
     secure_workspace_session_database_files(database);
     commit_imported_rows(database, rows);
@@ -828,10 +829,7 @@ std::unique_ptr<WorkspaceConfigStore> WorkspaceConfigStore::open(
     validate_config_rows(rows);
     materialize_config_files(impl->tree->workspace(), rows);
 
-    const std::filesystem::path dotenv = impl->tree->workspace() / ".env";
-    if (std::filesystem::exists(inspected_status(dotenv))) {
-        load_dotenv(dotenv);
-    }
+    load_dotenv(impl->database_path.parent_path() / ".env");
     loadws(Workspace::load(impl->tree->workspace()));
     return std::unique_ptr<WorkspaceConfigStore>(
         new WorkspaceConfigStore(std::move(impl)));

@@ -273,6 +273,7 @@ TEST_F(WorkspaceConfigStoreTest, RoundTripsAcceptedFilesByteForByte) {
     const std::vector<ConfigFile> rows = read_workspace_config_files(handle);
     EXPECT_EQ(rows.size(), imported);
     for (const ConfigFile& row : rows) {
+        EXPECT_NE(row.name, ".env");
         const std::filesystem::path exported_file = export_ / path_from_utf8(row.name);
         EXPECT_EQ(file_bytes(exported_file), row.content) << row.name;
         EXPECT_EQ(file_bytes(source() / path_from_utf8(row.name)), row.content)
@@ -284,14 +285,12 @@ TEST_F(WorkspaceConfigStoreTest, RoundTripsAcceptedFilesByteForByte) {
     EXPECT_FALSE(std::filesystem::exists(export_ / "workspace.sqlite3-wal"));
     EXPECT_FALSE(std::filesystem::exists(export_ / "workspace.sqlite3-shm"));
     EXPECT_FALSE(std::filesystem::exists(export_ / "workspace.sqlite3.cha-lock"));
+    EXPECT_FALSE(std::filesystem::exists(export_ / ".env"));
     EXPECT_FALSE(std::filesystem::exists(export_ / "sessions"));
     EXPECT_TRUE(std::filesystem::is_directory(export_ / "system" / "providers"));
     EXPECT_TRUE(std::filesystem::is_directory(export_ / "personas"));
     EXPECT_TRUE(std::filesystem::is_directory(export_ / "characters"));
     EXPECT_TRUE(std::filesystem::is_directory(export_ / "forums"));
-#ifndef _WIN32
-    EXPECT_EQ(posix_mode(export_ / ".env"), static_cast<mode_t>(0600));
-#endif
 }
 
 TEST_F(WorkspaceConfigStoreTest, SynthesizesMissingForumMemberMarker) {
@@ -384,7 +383,7 @@ TEST_F(WorkspaceConfigStoreTest, RejectsMatchingSymlinksAndSkipsSymlinkedDirecto
     EXPECT_GE(count, 8U);
 }
 
-TEST_F(WorkspaceConfigStoreTest, UsesDotenvOnlyProviderKeysAndRestoresEnvironment) {
+TEST_F(WorkspaceConfigStoreTest, UsesDotenvForValidationWithoutStoringIt) {
     constexpr char variable[] = "CHA_IMPORT_STORE_CREDENTIAL_A1B2";
     ScopedEnvironmentVariable guard(variable);
     ASSERT_TRUE(unset_environment_variable(variable));
@@ -405,9 +404,13 @@ TEST_F(WorkspaceConfigStoreTest, UsesDotenvOnlyProviderKeysAndRestoresEnvironmen
     EXPECT_EQ(
         inspect_workspace_session_database(database()),
         WorkspaceDatabaseState::valid_v2);
+    Database handle(database(), Database::Mode::read_only);
+    for (const ConfigFile& row : read_workspace_config_files(handle)) {
+        EXPECT_NE(row.name, ".env");
+    }
 }
 
-TEST_F(WorkspaceConfigStoreTest, InheritedEnvironmentValuesWinIncludingEmpty) {
+TEST_F(WorkspaceConfigStoreTest, UsesInheritedEnvironmentValuesIncludingEmpty) {
     constexpr char variable[] = "CHA_IMPORT_STORE_INHERITED_C3D4";
     ScopedEnvironmentVariable guard(variable);
     workspace_.write_provider(
@@ -437,16 +440,10 @@ TEST_F(WorkspaceConfigStoreTest, InheritedEnvironmentValuesWinIncludingEmpty) {
         WorkspaceDatabaseState::missing);
 }
 
-TEST_F(WorkspaceConfigStoreTest, RestoresEnvironmentWhenValidationThrows) {
-    constexpr char inserted[] = "CHA_IMPORT_STORE_TEMP_E5F6";
-    ScopedEnvironmentVariable guard(inserted);
-    ASSERT_TRUE(unset_environment_variable(inserted));
-    write_bytes(source() / ".env", "CHA_IMPORT_STORE_TEMP_E5F6=temporary\n");
-    std::ofstream(source() / "characters" / "guide" / "character.toml")
-        << "not toml";
+TEST_F(WorkspaceConfigStoreTest, RejectsMalformedDotenvWithoutStoringIt) {
+    write_bytes(source() / ".env", "not a valid entry\n");
 
     EXPECT_THROW((void)import_from_source(), std::runtime_error);
-    EXPECT_EQ(std::getenv(inserted), nullptr);
     EXPECT_EQ(
         inspect_workspace_session_database(database()),
         WorkspaceDatabaseState::missing);
@@ -481,13 +478,6 @@ TEST_F(WorkspaceConfigStoreTest, MalformedInputsLeaveTheTargetUntouched) {
         seed_session_rows(handle);
     }
 
-    write_bytes(source() / ".env", "not a valid entry\n");
-    EXPECT_THROW((void)import_from_source(), std::runtime_error);
-    EXPECT_EQ(
-        inspect_workspace_session_database(database()),
-        WorkspaceDatabaseState::valid_v1);
-
-    std::filesystem::remove(source() / ".env");
     std::ofstream(source() / "characters" / "guide" / "character.toml")
         << "not toml\n";
     EXPECT_THROW((void)import_from_source(), std::runtime_error);
@@ -730,6 +720,10 @@ protected:
                 / "character.toml",
             "# forum membership\n");
         write_bytes(source() / ".env", "CHA_RUNTIME_STORE_DOTENV_B4A1=from-file\n");
+        std::filesystem::create_directories(database_directory());
+        write_bytes(
+            database_directory() / ".env",
+            "CHA_RUNTIME_STORE_DOTENV_B4A1=from-file\n");
         (void)import_workspace_configuration(source(), database());
         export_ = source().parent_path()
             / (source().filename().string() + "_runtime_export");
@@ -740,12 +734,16 @@ protected:
         std::error_code error;
         std::filesystem::remove_all(export_, error);
         remove_database_bundle(database());
+        std::filesystem::remove_all(database_directory(), error);
     }
 
     const std::filesystem::path& source() const { return workspace_.root(); }
-    std::filesystem::path database() const {
+    std::filesystem::path database_directory() const {
         return source().parent_path()
-            / (source().filename().string() + "_runtime.sqlite3");
+            / (source().filename().string() + "_runtime_data");
+    }
+    std::filesystem::path database() const {
+        return database_directory() / "workspace.sqlite3";
     }
 
     std::unique_ptr<WorkspaceConfigStore> open_store() {
@@ -794,6 +792,7 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, OpensOneOwnerOnlyRootWithChildren) {
         }
 #endif
         EXPECT_STREQ(std::getenv(dotenv_variable), "from-file");
+        EXPECT_FALSE(std::filesystem::exists(workspace_child / ".env"));
         EXPECT_TRUE(
             std::filesystem::is_directory(
                 workspace_child / "system" / "providers"));
@@ -896,7 +895,6 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, SuccessfulEditUpdatesFilesDatabaseAndWor
         std::getenv(dotenv_variable) == nullptr
             ? std::string()
             : std::getenv(dotenv_variable);
-
     const WorkspaceConfigEditResult character_result =
         store->apply_character_settings(
             "guide", "second", std::string_view{"mono"});

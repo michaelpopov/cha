@@ -466,6 +466,9 @@ TEST(WorkspaceSessionDatabase, TableCheckRejectsUnsafeConfigNames) {
     EXPECT_THROW(
         insert("INSERT INTO config (name, content) VALUES ('app.toml', 'x')"),
         std::runtime_error);
+    EXPECT_THROW(
+        insert("INSERT INTO config (name, content) VALUES ('.env', 'secret')"),
+        std::runtime_error);
 
     EXPECT_THROW(validate_stored_config_name(""), std::runtime_error);
     EXPECT_THROW(validate_stored_config_name("/abs"), std::runtime_error);
@@ -478,7 +481,7 @@ TEST(WorkspaceSessionDatabase, TableCheckRejectsUnsafeConfigNames) {
     EXPECT_THROW(validate_stored_config_name("secret/.env"), std::runtime_error);
     EXPECT_THROW(validate_stored_config_name("app.toml"), std::runtime_error);
     EXPECT_THROW(validate_stored_config_name("workspace.toml"), std::runtime_error);
-    EXPECT_NO_THROW(validate_stored_config_name(".env"));
+    EXPECT_THROW(validate_stored_config_name(".env"), std::runtime_error);
     EXPECT_NO_THROW(validate_stored_config_name("characters/guide/CHARACTER.md"));
 }
 
@@ -536,10 +539,7 @@ TEST(WorkspaceSessionDatabase, RoundTripsExactConfigBytes) {
     binary.push_back('\0');
     binary.push_back(static_cast<char>(0xFF));
     binary.push_back('\n');
-    const std::vector<ConfigFile> rows{
-        {".env", ""},
-        {"notes.md", binary},
-    };
+    const std::vector<ConfigFile> rows{{"notes.md", binary}};
     {
         storage::SqliteTransaction transaction(database);
         replace_workspace_config_files(database, rows);
@@ -548,13 +548,38 @@ TEST(WorkspaceSessionDatabase, RoundTripsExactConfigBytes) {
 
     const std::vector<ConfigFile> restored = read_workspace_config_files(database);
     expect_config_rows(restored, rows);
-    ASSERT_EQ(restored.size(), 2U);
-    EXPECT_EQ(restored[0].content.size(), 0U);
-    EXPECT_EQ(restored[1].content.size(), 4U);
-    EXPECT_EQ(restored[1].content[1], '\0');
+    ASSERT_EQ(restored.size(), 1U);
+    EXPECT_EQ(restored[0].content.size(), 4U);
+    EXPECT_EQ(restored[0].content[1], '\0');
     EXPECT_EQ(
-        static_cast<unsigned char>(restored[1].content[2]),
+        static_cast<unsigned char>(restored[0].content[2]),
         static_cast<unsigned char>(0xFF));
+}
+
+TEST(WorkspaceSessionDatabase, RejectsAndCanReplaceLegacyStoredDotenv) {
+    test::TestWorkspace workspace;
+    const std::filesystem::path path =
+        workspace.root() / "workspace.sqlite3";
+    create_empty_workspace_session_database(path);
+    Database database(path, Database::Mode::read_write);
+    database.execute("DROP TABLE config");
+    database.execute(
+        "CREATE TABLE config ("
+        "name TEXT PRIMARY KEY, content TEXT NOT NULL"
+        ") STRICT");
+    database.execute(
+        "INSERT INTO config (name, content) VALUES ('.env', 'secret')");
+
+    EXPECT_THROW(
+        (void)read_workspace_config_files(database), std::runtime_error);
+
+    const std::vector<ConfigFile> replacement{{"notes.md", "safe"}};
+    {
+        storage::SqliteTransaction transaction(database);
+        replace_workspace_config_files(database, replacement);
+        transaction.commit();
+    }
+    expect_config_rows(read_workspace_config_files(database), replacement);
 }
 
 TEST(WorkspaceSessionDatabase, UpgradesV1WhilePreservingSessions) {

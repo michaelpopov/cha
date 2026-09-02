@@ -37,7 +37,7 @@ CREATE TABLE config (
         AND substr(name, 1, 1) <> '/'
         AND instr(name, char(92)) = 0
         AND instr('/' || name || '/', '/../') = 0
-        AND name NOT IN ('app.toml', 'workspace.toml')
+        AND name NOT IN ('.env', 'app.toml', 'workspace.toml')
     ),
     content TEXT NOT NULL
 ) STRICT;
@@ -459,6 +459,10 @@ void validate_stored_config_name(std::string_view name) {
             "Configuration name '" + std::string(name)
             + "' contains a backslash");
     }
+    if (name == ".env") {
+        throw std::runtime_error(
+            "Secrets file '.env' must not be stored in the database");
+    }
     if (name == "app.toml" || name == "workspace.toml") {
         throw std::runtime_error(
             "External application config '" + std::string(name)
@@ -483,8 +487,7 @@ void validate_stored_config_name(std::string_view name) {
         }
     }
 
-    if (name != ".env"
-        && !name.ends_with(".toml")
+    if (!name.ends_with(".toml")
         && !name.ends_with(".md")) {
         throw std::runtime_error(
             "Configuration name '" + std::string(name)
