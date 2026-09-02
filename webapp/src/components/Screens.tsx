@@ -78,6 +78,19 @@ function visibleEntryText(kind: string, text: string): string {
   return kind === 'character' ? text.replace(echoedTimestampPrefix, '') : text;
 }
 
+function visibleTranscriptEntries(entries: SessionSnapshot['transcript']) {
+  // Multicast stores one addressed prompt per character. Character replies do
+  // not reset this comparison, so only the first copy is shown to the reader.
+  let lastPrompt: { participantId: string; text: string } | null = null;
+  return entries.filter((entry) => {
+    if (entry.kind !== 'human') return true;
+    const repeated = lastPrompt?.participantId === entry.participant_id
+      && lastPrompt.text === entry.text;
+    lastPrompt = { participantId: entry.participant_id, text: entry.text };
+    return !repeated;
+  });
+}
+
 // A character speaks in its own hand so a reader can tell one voice from another
 // without reading every name. Only the departures from the interface's own
 // settings are named, so an unstyled character adds no classes at all, and the
@@ -278,7 +291,7 @@ export function ChatScreen({
             <p>Start the conversation below.</p>
           </div>
         )}
-        {snapshot?.transcript.map((entry) => (
+        {snapshot && visibleTranscriptEntries(snapshot.transcript).map((entry) => (
           <article
             className={`cha-message is-${entry.kind}`}
             data-status={entry.status}

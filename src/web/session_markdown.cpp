@@ -44,11 +44,19 @@ std::string session_markdown(
     std::string_view label,
     std::span<const TranscriptEntry> entries) {
     std::string result = "# " + heading_text(label) + "\n";
+    const TranscriptEntry* last_prompt = nullptr;
     for (const TranscriptEntry& entry : entries) {
         // Off-record markers (/hide) are transient, empty notice entries that
         // exist only to draw a boundary in the live view; they carry no content
         // to export and would otherwise appear as blank speaker headings.
         if (entry.kind == EntryKind::notice && entry.text.empty()) continue;
+        if (entry.kind == EntryKind::human) {
+            const bool repeated = last_prompt != nullptr
+                && last_prompt->participant_id == entry.participant_id
+                && last_prompt->text == entry.text;
+            last_prompt = &entry;
+            if (repeated) continue;
+        }
         result += "\n## " + heading_text(entry.display_name) + "\n";
         if (const std::string timestamp = local_timestamp(entry.created_at);
             !timestamp.empty()) {

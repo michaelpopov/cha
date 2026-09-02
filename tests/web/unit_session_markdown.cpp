@@ -34,6 +34,46 @@ TEST(SessionMarkdown, ExportsAnEmptySessionAsItsTitle) {
     EXPECT_EQ(session_markdown("Notes", {}), "# Notes\n");
 }
 
+TEST(SessionMarkdown, ExportsAMulticastPromptOnceAndEveryResponse) {
+    TranscriptEntry first_prompt = make_human_entry({
+        .id = 1,
+        .author = {"reader", "Reader"},
+        .addressed_to = {"one", "One"},
+        .text = "Shared question",
+        .request_id = 10,
+        .created_at = 0,
+    });
+    TranscriptEntry first_response = make_character_entry(
+        2, "one", "One", "One answer", EntryStatus::complete, 10);
+    first_response.created_at = 0;
+    TranscriptEntry second_prompt = make_human_entry({
+        .id = 3,
+        .author = {"reader", "Reader"},
+        .addressed_to = {"two", "Two"},
+        .text = "Shared question",
+        .request_id = 11,
+        .created_at = 0,
+    });
+    TranscriptEntry second_response = make_character_entry(
+        4, "two", "Two", "Two answer", EntryStatus::complete, 11);
+    second_response.created_at = 0;
+    const std::vector<TranscriptEntry> entries{
+        std::move(first_prompt),
+        std::move(first_response),
+        std::move(second_prompt),
+        std::move(second_response),
+    };
+
+    EXPECT_EQ(session_markdown("Discussion", entries),
+        "# Discussion\n"
+        "\n## Reader\n\n"
+        "Shared question\n"
+        "\n## One\n\n"
+        "One answer\n"
+        "\n## Two\n\n"
+        "Two answer\n");
+}
+
 TEST(SessionMarkdown, ExportsKnownTimestampsInLocalTime) {
     const std::vector<TranscriptEntry> entries{
         {

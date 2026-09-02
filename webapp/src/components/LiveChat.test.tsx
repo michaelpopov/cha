@@ -159,6 +159,41 @@ describe('live chat', () => {
     expect(articles[1].querySelector('.cha-message-time')).toBeNull();
   });
 
+  it('shows a multicast prompt once while keeping every character response', async () => {
+    const events = drivableEvents();
+    render(<App client={fixtureClient()} connectSessionEvents={events.connect} />);
+    await attachInitial(events, {
+      ...snapshotFixture,
+      transcript: [
+        {
+          id: 1, kind: 'human', participant_id: 'guest', display_name: 'Guest',
+          addressed_to: 'one', addressed_to_name: 'One',
+          text: 'Shared question', status: 'complete', request_id: 10, created_at: 100,
+        },
+        {
+          id: 2, kind: 'character', participant_id: 'one', display_name: 'One',
+          addressed_to: '', addressed_to_name: '',
+          text: 'One answer', status: 'complete', request_id: 10, created_at: 101,
+        },
+        {
+          id: 3, kind: 'human', participant_id: 'guest', display_name: 'Guest',
+          addressed_to: 'two', addressed_to_name: 'Two',
+          text: 'Shared question', status: 'complete', request_id: 11, created_at: 100,
+        },
+        {
+          id: 4, kind: 'character', participant_id: 'two', display_name: 'Two',
+          addressed_to: '', addressed_to_name: '',
+          text: 'Two answer', status: 'complete', request_id: 11, created_at: 102,
+        },
+      ],
+    });
+
+    expect(screen.getAllByText('Shared question')).toHaveLength(1);
+    expect(screen.getByText('One answer')).toBeInTheDocument();
+    expect(screen.getByText('Two answer')).toBeInTheDocument();
+    expect(document.querySelectorAll('.cha-message')).toHaveLength(3);
+  });
+
   it('hides an echoed UTC metadata prefix from a character response', async () => {
     const events = drivableEvents();
     render(<App client={fixtureClient()} connectSessionEvents={events.connect} />);
