@@ -43,6 +43,8 @@ struct WorkspaceCharacter {
     CharacterMetadata character;
     std::string provider_id;
     std::optional<std::string> style_id;
+    std::optional<std::string> reasoning_effort;
+    std::optional<WebSearchMode> web_search;
     WorkspacePromptVariables prompt_variables;
     std::string prompt_template;
     std::string markdown;
@@ -129,7 +131,9 @@ public:
     void write_character_settings(
         std::string_view character_id,
         std::string_view provider_id,
-        std::optional<std::string_view> style_id) const;
+        std::optional<std::string_view> style_id,
+        std::optional<std::string_view> reasoning_effort = std::nullopt,
+        std::optional<WebSearchMode> web_search = std::nullopt) const;
     void write_forum_default_character(
         std::string_view forum_id,
         std::string_view character_id) const;

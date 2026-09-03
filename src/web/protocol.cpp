@@ -292,6 +292,10 @@ void to_json(nlohmann::json& json, const CharacterDetail& value) {
     json["character_markdown"] = value.character_markdown;
     json["provider"] = value.provider ? nlohmann::json(*value.provider) : nlohmann::json(nullptr);
     json["style"] = value.style ? nlohmann::json(*value.style) : nlohmann::json(nullptr);
+    json["reasoning_effort"] = value.reasoning_effort
+        ? nlohmann::json(*value.reasoning_effort) : nlohmann::json(nullptr);
+    json["web_search"] = value.web_search
+        ? nlohmann::json(to_string(*value.web_search)) : nlohmann::json(nullptr);
     json["available_providers"] = value.available_providers;
     json["available_styles"] = value.available_styles;
     json["writable"] = value.writable;

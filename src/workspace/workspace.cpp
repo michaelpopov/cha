@@ -300,7 +300,7 @@ WorkspaceProvider load_provider(const std::filesystem::path& directory) {
                 {{"off", WebSearchMode::off},
                  {"auto", WebSearchMode::automatic},
                  {"required", WebSearchMode::required}},
-                WebSearchMode::required),
+                WebSearchMode::off),
             .cache_retention = choice(
                 table, path, "cache_retention",
                 {{"off", CacheRetention::off},
@@ -339,10 +339,11 @@ WorkspaceProvider load_provider(const std::filesystem::path& directory) {
             "Provider config '" + utf8_path(path) + "' has invalid base_path");
     }
     if (config.web_search != WebSearchMode::off
-        && config.api != ProviderApi::responses) {
+        && config.api != ProviderApi::responses
+        && !is_openrouter_host(config.host)) {
         throw std::runtime_error(
             "Provider config '" + utf8_path(path)
-            + "' enables web search for a non-Responses API");
+            + "' enables web search for an unsupported Chat Completions host");
     }
     if (!config.api_key_env.empty()) {
         const char* const value = std::getenv(config.api_key_env.c_str());
@@ -512,9 +513,20 @@ struct CharacterConfig {
     std::optional<std::string> description;
     std::optional<std::string> provider_id;
     std::optional<std::string> style_id;
+    std::optional<std::string> reasoning_effort;
+    std::optional<WebSearchMode> web_search;
     std::vector<std::string> tags;
     WorkspacePromptVariables prompt_variables;
 };
+
+bool valid_character_reasoning_effort(std::string_view value) {
+    return value == "low" || value == "medium" || value == "high"
+        || value == "xhigh";
+}
+
+bool provider_supports_web_search(const ModelBackendConfig& config) {
+    return config.api == ProviderApi::responses || is_openrouter_host(config.host);
+}
 
 CharacterConfig load_character_config(
     const std::filesystem::path& path,
@@ -522,7 +534,8 @@ CharacterConfig load_character_config(
     bool allow_reserved_name = false) {
     const toml::table table = read_toml(path, "character config");
     static constexpr std::string_view definition_fields[]{
-        "display_name", "description", "provider", "style", "tags", "prompt"};
+        "display_name", "description", "provider", "style", "reasoning_effort",
+        "web_search", "tags", "prompt"};
     static constexpr std::string_view override_fields[]{"provider", "prompt"};
     reject_unknown_fields(
         table, path,
@@ -538,9 +551,19 @@ CharacterConfig load_character_config(
             table, path, "provider", "a string"),
         .style_id = optional_value<std::string>(
             table, path, "style", "a string"),
+        .reasoning_effort = optional_value<std::string>(
+            table, path, "reasoning_effort", "a string"),
         .tags = definition ? load_tags(table, path) : std::vector<std::string>{},
         .prompt_variables = template_scope_from_toml(table, "prompt", utf8_path(path)),
     };
+    if (table.contains("web_search")) {
+        result.web_search = choice(
+            table, path, "web_search",
+            {{"off", WebSearchMode::off},
+             {"auto", WebSearchMode::automatic},
+             {"required", WebSearchMode::required}},
+            WebSearchMode::off);
+    }
     if (definition) {
         if (!result.display_name || result.display_name->empty()) {
             throw std::runtime_error(
@@ -562,6 +585,13 @@ CharacterConfig load_character_config(
         }
         require_path_component(*result.provider_id, path);
         if (result.style_id) require_path_component(*result.style_id, path);
+        if (result.reasoning_effort
+            && !valid_character_reasoning_effort(*result.reasoning_effort)) {
+            throw std::runtime_error(
+                "Character config '" + utf8_path(path)
+                + "' has unsupported reasoning_effort '"
+                + *result.reasoning_effort + "'");
+        }
     }
     return result;
 }
@@ -841,6 +871,12 @@ Workspace Workspace::load(std::filesystem::path root) {
                 "Character '" + id + "' references unknown provider '"
                 + *config.provider_id + "'");
         }
+        if (config.web_search && *config.web_search != WebSearchMode::off
+            && !provider_supports_web_search(provider->config)) {
+            throw std::runtime_error(
+                "Character '" + id
+                + "' enables web search for an unsupported provider");
+        }
         CharacterAppearance appearance;
         if (config.style_id) {
             const WorkspaceStyle* style = workspace.find_style(*config.style_id);
@@ -878,6 +914,8 @@ Workspace Workspace::load(std::filesystem::path root) {
             },
             .provider_id = *config.provider_id,
             .style_id = config.style_id,
+            .reasoning_effort = config.reasoning_effort,
+            .web_search = config.web_search,
             .prompt_variables = config.prompt_variables,
             .prompt_template = prompt_template,
             .markdown = character_description(
@@ -899,6 +937,13 @@ Workspace Workspace::load(std::filesystem::path root) {
         throw std::runtime_error(
             "Assistant references unknown provider '" + *assistant.provider_id + "'");
     }
+    const WorkspaceProvider* const assistant_provider =
+        workspace.find_provider(*assistant.provider_id);
+    if (assistant.web_search && *assistant.web_search != WebSearchMode::off
+        && !provider_supports_web_search(assistant_provider->config)) {
+        throw std::runtime_error(
+            "Assistant enables web search for an unsupported provider");
+    }
     CharacterAppearance assistant_appearance;
     if (assistant.style_id) {
         const WorkspaceStyle* style = workspace.find_style(*assistant.style_id);
@@ -918,6 +963,8 @@ Workspace Workspace::load(std::filesystem::path root) {
         },
         .provider_id = *assistant.provider_id,
         .style_id = assistant.style_id,
+        .reasoning_effort = assistant.reasoning_effort,
+        .web_search = assistant.web_search,
         .prompt_variables = assistant.prompt_variables,
         .prompt_template = std::string(embedded_application_guide()),
         .markdown = std::string(embedded_application_guide()),
@@ -1273,11 +1320,18 @@ CharacterDefinition Workspace::character_definition(
     if (character == nullptr || provider == nullptr) {
         throw std::logic_error("Workspace contains an invalid forum member");
     }
+    ModelBackendConfig provider_config = provider->config;
+    if (character->reasoning_effort) {
+        provider_config.reasoning_effort = *character->reasoning_effort;
+    }
+    if (character->web_search) {
+        provider_config.web_search = *character->web_search;
+    }
     return {
         .character = character->character,
         .provider = {
             .id = provider->id,
-            .config = provider->config,
+            .config = std::move(provider_config),
         },
         .character_prompt = member->character_prompt,
         .character_description = character->markdown,
@@ -1292,14 +1346,17 @@ bool Workspace::character_is_writable(std::string_view id) const noexcept {
 void Workspace::write_character_settings(
     std::string_view character_id,
     std::string_view provider_id,
-    std::optional<std::string_view> style_id) const {
+    std::optional<std::string_view> style_id,
+    std::optional<std::string_view> reasoning_effort,
+    std::optional<WebSearchMode> web_search) const {
     const auto config = character_config_paths_.find(std::string(character_id));
     if (config == character_config_paths_.end()) {
         throw std::runtime_error(
             "Character '" + std::string(character_id)
             + "' has no writable configuration");
     }
-    if (find_provider(provider_id) == nullptr) {
+    const WorkspaceProvider* const provider = find_provider(provider_id);
+    if (provider == nullptr) {
         throw std::invalid_argument(
             "Provider '" + std::string(provider_id) + "' does not exist");
     }
@@ -1307,10 +1364,31 @@ void Workspace::write_character_settings(
         throw std::invalid_argument(
             "Style '" + std::string(*style_id) + "' does not exist");
     }
+    if (reasoning_effort && !valid_character_reasoning_effort(*reasoning_effort)) {
+        throw std::invalid_argument(
+            "Reasoning effort '" + std::string(*reasoning_effort)
+            + "' is not supported");
+    }
+    if (web_search && *web_search != WebSearchMode::off
+        && !provider_supports_web_search(provider->config)) {
+        throw std::invalid_argument(
+            "The selected provider does not support web search");
+    }
     rewrite_config(config->second, [&](toml::table& table) {
         table.insert_or_assign("provider", std::string(provider_id));
         if (style_id) table.insert_or_assign("style", std::string(*style_id));
         else table.erase("style");
+        if (reasoning_effort) {
+            table.insert_or_assign(
+                "reasoning_effort", std::string(*reasoning_effort));
+        } else {
+            table.erase("reasoning_effort");
+        }
+        if (web_search) {
+            table.insert_or_assign("web_search", std::string(to_string(*web_search)));
+        } else {
+            table.erase("web_search");
+        }
     });
 }
 

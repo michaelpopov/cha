@@ -322,6 +322,8 @@ TEST(LobbyRoutes, ServesCharacterProviderAndStyleSettingsWithoutLeakingProviderC
     const nlohmann::json guide_body = body(guide);
     EXPECT_EQ(guide_body["provider"], "test");
     EXPECT_EQ(guide_body["style"], "serif-italic");
+    EXPECT_TRUE(guide_body["reasoning_effort"].is_null());
+    EXPECT_TRUE(guide_body["web_search"].is_null());
     EXPECT_EQ(guide_body["writable"], true);
     EXPECT_FALSE(guide_body.contains("provider_overridden_by"));
 
@@ -421,7 +423,7 @@ TEST(LobbyRoutes, ReloadsASessionThatWasStillOpeningWhenTheSaveCommitted) {
 
     const auto patched = server.client().Patch(
         "/api/v1/characters/guide",
-        R"({"provider":"test","style":"mono-large"})",
+        R"({"provider":"test","style":"mono-large","reasoning_effort":null,"web_search":null})",
         "application/json");
     ASSERT_TRUE(patched);
     ASSERT_EQ(patched->status, 200) << patched->body;
@@ -489,9 +491,16 @@ httplib::Result patch_character(
     TestServer& server,
     std::string_view id,
     const nlohmann::json& body) {
+    nlohmann::json settings = body;
+    if (!settings.contains("reasoning_effort")) {
+        settings["reasoning_effort"] = nullptr;
+    }
+    if (!settings.contains("web_search")) {
+        settings["web_search"] = nullptr;
+    }
     return server.client().Patch(
         "/api/v1/characters/" + std::string(id),
-        body.dump(),
+        settings.dump(),
         "application/json");
 }
 
@@ -506,16 +515,31 @@ TEST(LobbyRoutes, PatchesCharacterSettingsAndLeavesTheFileAloneOnABadName) {
 
     const std::string source_before = read_bytes(path);
     const auto saved = patch_character(
-        server, "guide", {{"provider", "test"}, {"style", "serif-italic"}});
+        server, "guide", {
+            {"provider", "test"},
+            {"style", "serif-italic"},
+            {"reasoning_effort", "high"},
+            {"web_search", "auto"},
+        });
     ASSERT_TRUE(saved);
     ASSERT_EQ(saved->status, 200);
     EXPECT_EQ(body(saved)["provider"], "test");
     EXPECT_EQ(body(saved)["style"], "serif-italic");
+    EXPECT_EQ(body(saved)["reasoning_effort"], "high");
+    EXPECT_EQ(body(saved)["web_search"], "auto");
     EXPECT_EQ(body(saved)["writable"], true);
     EXPECT_EQ(read_bytes(path), source_before);
     EXPECT_NE(
         config_row(graph.store->database_path(), "characters/guide/character.toml")
             .find("serif-italic"),
+        std::string::npos);
+    EXPECT_NE(
+        config_row(graph.store->database_path(), "characters/guide/character.toml")
+            .find("reasoning_effort"),
+        std::string::npos);
+    EXPECT_NE(
+        config_row(graph.store->database_path(), "characters/guide/character.toml")
+            .find("web_search"),
         std::string::npos);
 
     const auto cleared = patch_character(
@@ -524,15 +548,25 @@ TEST(LobbyRoutes, PatchesCharacterSettingsAndLeavesTheFileAloneOnABadName) {
     ASSERT_EQ(cleared->status, 200);
     EXPECT_EQ(body(cleared)["provider"], "test");
     EXPECT_TRUE(body(cleared)["style"].is_null());
+    EXPECT_TRUE(body(cleared)["reasoning_effort"].is_null());
+    EXPECT_TRUE(body(cleared)["web_search"].is_null());
     EXPECT_EQ(
         config_row(graph.store->database_path(), "characters/guide/character.toml")
             .find("serif-italic"),
+        std::string::npos);
+    EXPECT_EQ(
+        config_row(graph.store->database_path(), "characters/guide/character.toml")
+            .find("reasoning_effort"),
+        std::string::npos);
+    EXPECT_EQ(
+        config_row(graph.store->database_path(), "characters/guide/character.toml")
+            .find("web_search"),
         std::string::npos);
 
     const std::string before = read_bytes(path);
     expect_error(
         patch_character(server, "guide", {{"provider", "broken"}, {"style", nullptr}}),
-        400, "bad_request", "Invalid provider or style.");
+        400, "bad_request", "Invalid character settings.");
     EXPECT_EQ(read_bytes(path), before);
 
     expect_error(

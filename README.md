@@ -114,9 +114,10 @@ port = 443
 https = true
 mode = "net"
 model = "gpt-5.6-terra"
+reasoning_effort = "low"
 stream = true
 api = "responses"          # responses | chat_completions
-web_search = "required"    # required | auto | off
+web_search = "off"         # required | auto | off
 api_key_env = "OPENAI_API_KEY"
 cache_retention = "short"  # off | short | long
 timeout_s = 600
@@ -153,9 +154,10 @@ files are loaded when the committed configuration is materialized. To change
 their host, model, prompt, or other hand-edited settings, use the offline
 export/edit/import workflow below and restart CHA.
 
-A character's chosen `provider` and `style` can be changed from the browser:
+A character's chosen provider, reasoning effort, web search mode, and style can
+be changed from the browser:
 Characters → the character → the row naming it above the description → Settings. Save writes
-those keys in the character's `character.toml` (under `characters/`, including
+those settings in the character's `character.toml` (under `characters/`, including
 through any grouping directories) and restarts live sessions containing that
 character. The built-in Assistant reads `system/assistant/character.toml` but
 has no settings screen.
@@ -176,11 +178,17 @@ weight = "bold"
 Style configs may contain `font`, `style`, `weight`, `size`, and `text_color`;
 omitted fields use the interface defaults. A style reference must resolve during startup.
 
-`web_search` other than `off` requires `api = "responses"`. With
-`web_search = "auto"`, the model may search when the prompt and turn warrant
-it; `required` forces a search tool call on every generation. To use the Chat
-Completions path, set both `api = "chat_completions"` and `web_search = "off"`
-explicitly.
+Provider `reasoning_effort` and `web_search` values are defaults. A character's
+`character.toml` may override them with `reasoning_effort = "low"`, `"medium"`,
+`"high"`, or `"xhigh"`, and `web_search = "off"`, `"auto"`, or `"required"`.
+Omitting either character key inherits the provider value.
+
+`web_search` other than `off` normally requires `api = "responses"`. OpenRouter
+also supports it with `api = "chat_completions"` through its server-side web
+search tool. With `web_search = "auto"`, the model may search when the prompt
+and turn warrant it; `required` forces a search tool call on every generation.
+Other Chat Completions hosts cannot be selected by a character that enables
+web search.
 
 Search queries, progress, retrieved pages, annotations, and tool-call details
 stay inside the provider interaction. Only the character's synthesized answer

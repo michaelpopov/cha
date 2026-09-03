@@ -465,6 +465,35 @@ TEST(ProviderClient, AddsCacheMetadataForSupportedHosts) {
     EXPECT_FALSE(openrouter_gateway.session_id);
 }
 
+TEST(ProviderClient, AddsOpenRouterWebSearchToolToChatRequests) {
+    Transcript transcript;
+    const GenerationRequest request = client_request(transcript, 34, "Question");
+    const auto request_body_for = [&request](WebSearchMode mode) {
+        CharacterDefinition definition = network_definition(443, false);
+        definition.provider.config.host = "OPENROUTER.AI.";
+        definition.provider.config.https = true;
+        definition.provider.config.web_search = mode;
+        ProviderClient client(shared_definition(std::move(definition)));
+        return Json::parse(client.prepare(request).bytes);
+    };
+
+    const Json automatic = request_body_for(WebSearchMode::automatic);
+    EXPECT_EQ(
+        automatic["tools"],
+        Json::array({Json{{"type", "openrouter:web_search"}}}));
+    EXPECT_EQ(automatic["tool_choice"], "auto");
+
+    const Json required = request_body_for(WebSearchMode::required);
+    EXPECT_EQ(
+        required["tools"],
+        Json::array({Json{{"type", "openrouter:web_search"}}}));
+    EXPECT_EQ(required["tool_choice"], "required");
+
+    const Json off = request_body_for(WebSearchMode::off);
+    EXPECT_FALSE(off.contains("tools"));
+    EXPECT_FALSE(off.contains("tool_choice"));
+}
+
 TEST(ProviderClient, ReportsProviderHttpFailure) {
     MockHttpServer mock({status_response(
         503, "Service Unavailable", "application/json",
@@ -935,7 +964,7 @@ TEST(ProviderClient, HandlesNonStreamingResponsesApiResponse) {
     EXPECT_TRUE(mock.requests().front().starts_with("POST /v1/responses HTTP/1.1"));
 }
 
-TEST(ProviderClient, UnconfiguredProtocolDefaultsToMandatoryWebSearch) {
+TEST(ProviderClient, UnconfiguredProtocolDefaultsToWebSearchOff) {
     MockHttpServer mock({http_response(
         "application/json",
         R"({"status":"completed","output":[{"type":"message","role":"assistant",)"
@@ -960,8 +989,8 @@ TEST(ProviderClient, UnconfiguredProtocolDefaultsToMandatoryWebSearch) {
     ASSERT_EQ(mock.requests().size(), 1U);
     EXPECT_TRUE(mock.requests().front().starts_with("POST /v1/responses HTTP/1.1"));
     const Json body = Json::parse(request_body(mock.requests().front()));
-    EXPECT_EQ(body["tools"], Json::array({Json{{"type", "web_search"}}}));
-    EXPECT_EQ(body["tool_choice"], "required");
+    EXPECT_FALSE(body.contains("tools"));
+    EXPECT_FALSE(body.contains("tool_choice"));
 }
 
 TEST(ProviderClient, ReportsATruncatedResponsesStreamAsATransportError) {

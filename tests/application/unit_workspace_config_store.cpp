@@ -897,7 +897,8 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, SuccessfulEditUpdatesFilesDatabaseAndWor
             : std::getenv(dotenv_variable);
     const WorkspaceConfigEditResult character_result =
         store->apply_character_settings(
-            "guide", "second", std::string_view{"mono"});
+            "guide", "second", std::string_view{"mono"},
+            std::string_view{"high"}, WebSearchMode::automatic);
     EXPECT_NE(
         std::find(
             character_result.affected_forum_ids.begin(),
@@ -907,7 +908,15 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, SuccessfulEditUpdatesFilesDatabaseAndWor
     const std::shared_ptr<const Workspace> after_character = getws();
     EXPECT_EQ(after_character->find_character("guide")->provider_id, "second");
     EXPECT_EQ(after_character->find_character("guide")->style_id, "mono");
+    EXPECT_EQ(
+        after_character->find_character("guide")->reasoning_effort,
+        "high");
+    EXPECT_EQ(
+        after_character->find_character("guide")->web_search,
+        WebSearchMode::automatic);
     EXPECT_NE(file_bytes(character).find("second"), std::string::npos);
+    EXPECT_NE(file_bytes(character).find("reasoning_effort"), std::string::npos);
+    EXPECT_NE(file_bytes(character).find("web_search"), std::string::npos);
     EXPECT_NE(
         stored_config(database(), "characters/guide/character.toml").find("second"),
         std::string::npos);

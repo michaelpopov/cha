@@ -122,11 +122,16 @@ std::shared_ptr<const Workspace> published_workspace() {
 CharacterDetail character_detail(
     const Workspace& workspace,
     const WorkspaceCharacter& character) {
-    CharacterDetail detail{character_summary(character), character.markdown};
+    CharacterDetail detail{
+        .summary = character_summary(character),
+        .character_markdown = character.markdown,
+    };
     detail.writable = workspace.character_is_writable(character.character.id);
     if (detail.writable) {
         detail.provider = character.provider_id;
         detail.style = character.style_id;
+        detail.reasoning_effort = character.reasoning_effort;
+        detail.web_search = character.web_search;
     }
     for (const WorkspaceProvider& provider : workspace.providers()) {
         detail.available_providers.push_back({provider.id, provider.label});
@@ -288,18 +293,24 @@ void LobbyRoutes::install(httplib::Server& server) const {
                     update = parse_character_settings_update(json);
                 })) return;
         const bool changed = update.provider != character->provider_id
-            || update.style != character->style_id;
+            || update.style != character->style_id
+            || update.reasoning_effort != character->reasoning_effort
+            || update.web_search != character->web_search;
         try {
             const std::optional<std::string_view> style = update.style
                 ? std::optional<std::string_view>(*update.style) : std::nullopt;
+            const std::optional<std::string_view> reasoning_effort =
+                update.reasoning_effort
+                ? std::optional<std::string_view>(*update.reasoning_effort)
+                : std::nullopt;
             if (changed) {
-                const WorkspaceConfigEditResult edited =
-                    config->apply_character_settings(id, update.provider, style);
+                const WorkspaceConfigEditResult edited = config->apply_character_settings(
+                    id, update.provider, style, reasoning_effort, update.web_search);
                 request_reload(*live_sessions, edited.affected_forum_ids);
             }
         } catch (const std::invalid_argument&) {
             return set_error_response(response, 400,
-                {ErrorCode::bad_request, "Invalid provider or style."});
+                {ErrorCode::bad_request, "Invalid character settings."});
         } catch (const WorkspaceRestartRequiredError& error) {
             return set_error_response(response, 500,
                 {ErrorCode::internal_error, error.what()});

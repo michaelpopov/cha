@@ -14,10 +14,11 @@ enum class CacheRetention { off, short_, long_ };
 
 inline constexpr ProviderApi default_provider_api = ProviderApi::responses;
 inline constexpr WebSearchMode default_web_search_mode =
-    WebSearchMode::required;
+    WebSearchMode::off;
 
 bool is_direct_openai_host(std::string_view host);
 bool is_openrouter_host(std::string_view host);
+std::string_view to_string(WebSearchMode value);
 
 // One request's resolved provider configuration. It is built from the current
 // Workspace when generation starts and then owned by that request.

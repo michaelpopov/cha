@@ -75,6 +75,22 @@ TEST(ChatCompletionsApi, DecodesSeveralEventsInOneChunk) {
     EXPECT_EQ(output.answer(), "Hello world");
 }
 
+TEST(ChatCompletionsApi, IgnoresOpenRouterProcessingHeartbeats) {
+    Output output;
+    ChatCompletionsStreamDecoder decoder(ReasoningFormat::automatic, output.sink());
+
+    decoder.consume(
+        ": OPENROUTER PROCESSING\n\n"
+        ": OPENROUTER PROCESSING\n\n"
+        "data: {\"choices\":[{\"delta\":{\"content\":\"Answer\"}}]}\n\n"
+        "data: [DONE]\n\n");
+    const StreamDecodeResult result = decoder.finish();
+
+    EXPECT_EQ(result.result.outcome, GenerationOutcome::completed);
+    EXPECT_EQ(output.answer(), "Answer");
+    EXPECT_EQ(output.deltas().size(), 1U);
+}
+
 TEST(ChatCompletionsApi, ReadsUsageFromTheFinalStreamingChunk) {
     Output output;
     ChatCompletionsStreamDecoder decoder(ReasoningFormat::automatic, output.sink());

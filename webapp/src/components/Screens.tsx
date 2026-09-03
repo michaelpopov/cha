@@ -678,6 +678,9 @@ export function CharacterSettingsScreen({
   const [detail, setDetail] = useState<CharacterDetail | null>(null);
   const [provider, setProvider] = useState<string | null>(null);
   const [style, setStyle] = useState<string | null>(null);
+  const [reasoningEffort, setReasoningEffort] =
+    useState<CharacterDetail['reasoning_effort']>(null);
+  const [webSearch, setWebSearch] = useState<CharacterDetail['web_search']>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [requestVersion, setRequestVersion] = useState(0);
@@ -693,6 +696,8 @@ export function CharacterSettingsScreen({
         setDetail(loaded);
         setProvider(loaded.provider);
         setStyle(loaded.style);
+        setReasoningEffort(loaded.reasoning_effort);
+        setWebSearch(loaded.web_search);
       },
       (failure: unknown) => {
         if (current) {
@@ -713,14 +718,23 @@ export function CharacterSettingsScreen({
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!characterId || !detail || provider === null || saving) return;
-    if (provider === detail.provider && style === detail.style) return;
+    if (provider === detail.provider && style === detail.style
+      && reasoningEffort === detail.reasoning_effort
+      && webSearch === detail.web_search) return;
     setSaving(true);
     setError(null);
     try {
-      const saved = await client.updateCharacter(characterId, { provider, style });
+      const saved = await client.updateCharacter(characterId, {
+        provider,
+        style,
+        reasoning_effort: reasoningEffort,
+        web_search: webSearch,
+      });
       setDetail(saved);
       setProvider(saved.provider);
       setStyle(saved.style);
+      setReasoningEffort(saved.reasoning_effort);
+      setWebSearch(saved.web_search);
     } catch (failure: unknown) {
       setError(publicErrorMessage(failure, 'Character settings could not be saved.'));
     } finally {
@@ -734,7 +748,9 @@ export function CharacterSettingsScreen({
   const unresolvedStyle = detail
     && unresolvedOption(detail.available_styles, detail.style);
   const dirty = detail !== null
-    && (provider !== detail.provider || style !== detail.style);
+    && (provider !== detail.provider || style !== detail.style
+      || reasoningEffort !== detail.reasoning_effort
+      || webSearch !== detail.web_search);
 
   return (
     <section className="cha-screen cha-navigation" aria-label="Character settings">
@@ -780,6 +796,41 @@ export function CharacterSettingsScreen({
             {unresolvedProvider && (
               <option value={unresolvedProvider.id}>{unresolvedProvider.label}</option>
             )}
+          </select>
+          <label htmlFor="cha-character-reasoning-effort">Reasoning effort</label>
+          <select
+            className="cha-form-control"
+            disabled={saving}
+            id="cha-character-reasoning-effort"
+            onChange={(event) => {
+              setReasoningEffort(event.target.value === ''
+                ? null
+                : event.target.value as NonNullable<CharacterDetail['reasoning_effort']>);
+            }}
+            value={reasoningEffort ?? ''}
+          >
+            <option value="">Provider default</option>
+            <option value="low">Low</option>
+            <option value="medium">Medium</option>
+            <option value="high">High</option>
+            <option value="xhigh">Extra high</option>
+          </select>
+          <label htmlFor="cha-character-web-search">Web search</label>
+          <select
+            className="cha-form-control"
+            disabled={saving}
+            id="cha-character-web-search"
+            onChange={(event) => {
+              setWebSearch(event.target.value === ''
+                ? null
+                : event.target.value as NonNullable<CharacterDetail['web_search']>);
+            }}
+            value={webSearch ?? ''}
+          >
+            <option value="">Provider default</option>
+            <option value="off">Off</option>
+            <option value="auto">Automatic</option>
+            <option value="required">Required</option>
           </select>
           <label htmlFor="cha-character-style">Style</label>
           <select

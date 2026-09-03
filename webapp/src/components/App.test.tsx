@@ -1091,7 +1091,9 @@ it('reopens a live conversation after a settings save without leaving the settin
   await user.click(screen.getByRole('button', { name: 'Save' }));
   await waitFor(() => expect(updateCharacter).toHaveBeenCalledWith('guide', {
     provider: 'terra',
+    reasoning_effort: null,
     style: 'mono-large',
+    web_search: null,
   }));
 
   act(() => events.handlers[planning].onSnapshot({

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "characters/character_config.h"
+
 #include <cstddef>
 #include <filesystem>
 #include <memory>
@@ -59,7 +61,9 @@ public:
     WorkspaceConfigEditResult apply_character_settings(
         std::string_view character_id,
         std::string_view provider_id,
-        std::optional<std::string_view> style_id);
+        std::optional<std::string_view> style_id,
+        std::optional<std::string_view> reasoning_effort = std::nullopt,
+        std::optional<WebSearchMode> web_search = std::nullopt);
     WorkspaceConfigEditResult apply_forum_default_character(
         std::string_view forum_id,
         std::string_view character_id);

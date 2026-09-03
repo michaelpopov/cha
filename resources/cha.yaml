@@ -113,9 +113,8 @@ paths:
       summary: Get character details
       description: |
         Returns the character summary, its template-expanded Markdown
-        definition, and the provider/style settings the editor needs. The
-        built-in Assistant returns the embedded application guide and is not
-        writable.
+        definition, and the settings the editor needs. The built-in Assistant
+        returns the embedded application guide and is not writable.
       responses:
         "200":
           description: Character details.
@@ -130,11 +129,12 @@ paths:
     patch:
       tags: [Discovery]
       operationId: updateCharacter
-      summary: Update a character's provider and style
+      summary: Update character settings
       description: |
-        Rewrites `provider` and `style` in the character's `character.toml`.
-        Provider is required; `null` erases only the style key. A name whose
-        config does not load is `400` and leaves the file untouched. The
+        Rewrites `provider`, `style`, `reasoning_effort`, and `web_search` in the
+        character's `character.toml`. Provider is required; `null` erases the
+        corresponding optional key so the provider default applies. A setting
+        whose config does not load is `400` and leaves the file untouched. The
         built-in Assistant, a missing character, and a character whose file
         cannot be read are `404`.
 
@@ -972,6 +972,8 @@ components:
         - character_markdown
         - provider
         - style
+        - reasoning_effort
+        - web_search
         - available_providers
         - available_styles
         - writable
@@ -990,6 +992,12 @@ components:
           type: [string, "null"]
         style:
           type: [string, "null"]
+        reasoning_effort:
+          type: [string, "null"]
+          enum: [low, medium, high, xhigh, null]
+        web_search:
+          type: [string, "null"]
+          enum: [off, auto, required, null]
         available_providers:
           type: array
           items:
@@ -1004,12 +1012,18 @@ components:
     UpdateCharacterRequest:
       type: object
       additionalProperties: false
-      required: [provider, style]
+      required: [provider, style, reasoning_effort, web_search]
       properties:
         provider:
           type: string
         style:
           type: [string, "null"]
+        reasoning_effort:
+          type: [string, "null"]
+          enum: [low, medium, high, xhigh, null]
+        web_search:
+          type: [string, "null"]
+          enum: [off, auto, required, null]
 
     PersonaDetail:
       type: object

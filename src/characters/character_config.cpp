@@ -16,6 +16,15 @@ bool is_openrouter_host(std::string_view host) {
     return ascii_iequals(host, "openrouter.ai");
 }
 
+std::string_view to_string(WebSearchMode value) {
+    switch (value) {
+    case WebSearchMode::off: return "off";
+    case WebSearchMode::automatic: return "auto";
+    case WebSearchMode::required: return "required";
+    }
+    throw std::logic_error("Unknown web search mode");
+}
+
 std::string provider_endpoint(const ModelBackendConfig& config) {
     std::string host = config.host;
     if (host.find(':') != std::string::npos && !host.starts_with('[')) {

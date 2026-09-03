@@ -144,6 +144,21 @@ TEST(ResponsesApi, EmitsRequiredWebSearchChoice) {
     EXPECT_EQ(body["tool_choice"], "required");
 }
 
+TEST(ResponsesApi, EmitsOpenRouterServerWebSearchTool) {
+    Transcript transcript;
+    const GenerationRequest request = make_request(transcript, "Research this");
+    ModelBackendConfig config = responses_config(WebSearchMode::automatic);
+    config.host = "OPENROUTER.AI.";
+
+    const Json body = Json::parse(build_responses_request_body(
+        request, config, "Prompt"));
+
+    EXPECT_EQ(
+        body["tools"],
+        Json::array({Json{{"type", "openrouter:web_search"}}}));
+    EXPECT_EQ(body["tool_choice"], "auto");
+}
+
 TEST(ResponsesApi, RejectsInvalidUtf8InRequestBody) {
     Transcript transcript;
     const GenerationRequest request = make_request(

@@ -108,6 +108,8 @@ TEST(WebProtocol, SerializesSpecifiedSuccessListingAndErrorBodies) {
             .character_markdown = "Prompt",
             .provider = "terra",
             .style = std::nullopt,
+            .reasoning_effort = "high",
+            .web_search = WebSearchMode::automatic,
             .available_providers = {{"terra", "Terra"}},
             .available_styles = {{"serif-italic", "Serif italic",
                 {CharacterFont::serif, CharacterSlant::italic,
@@ -121,6 +123,8 @@ TEST(WebProtocol, SerializesSpecifiedSuccessListingAndErrorBodies) {
             {"character_markdown", "Prompt"},
             {"provider", "terra"},
             {"style", nullptr},
+            {"reasoning_effort", "high"},
+            {"web_search", "auto"},
             {"available_providers", {{{"id", "terra"}, {"label", "Terra"}}}},
             {"available_styles", {{
                 {"id", "serif-italic"},
@@ -335,17 +339,52 @@ TEST(WebProtocol, ParsesRouteSpecificCommandPayloads) {
         std::invalid_argument);
 
     const CharacterSettingsUpdate update = parse_character_settings_update(
-        {{"provider", "qwen"}, {"style", nullptr}});
+        {{"provider", "qwen"},
+         {"style", nullptr},
+         {"reasoning_effort", "xhigh"},
+         {"web_search", "required"}});
     EXPECT_EQ(update.provider, "qwen");
     EXPECT_FALSE(update.style);
+    EXPECT_EQ(update.reasoning_effort, "xhigh");
+    EXPECT_EQ(update.web_search, WebSearchMode::required);
     EXPECT_THROW(
-        (void)parse_character_settings_update({{"provider", "qwen"}}),
+        (void)parse_character_settings_update({
+            {"provider", "qwen"},
+            {"style", nullptr},
+            {"reasoning_effort", nullptr},
+        }),
         std::invalid_argument);
     EXPECT_THROW(
-        (void)parse_character_settings_update({{"provider", 1}, {"style", nullptr}}),
+        (void)parse_character_settings_update({
+            {"provider", 1},
+            {"style", nullptr},
+            {"reasoning_effort", nullptr},
+            {"web_search", nullptr},
+        }),
         std::invalid_argument);
     EXPECT_THROW(
-        (void)parse_character_settings_update({{"provider", nullptr}, {"style", nullptr}}),
+        (void)parse_character_settings_update({
+            {"provider", nullptr},
+            {"style", nullptr},
+            {"reasoning_effort", nullptr},
+            {"web_search", nullptr},
+        }),
+        std::invalid_argument);
+    EXPECT_THROW(
+        (void)parse_character_settings_update({
+            {"provider", "qwen"},
+            {"style", nullptr},
+            {"reasoning_effort", "extreme"},
+            {"web_search", nullptr},
+        }),
+        std::invalid_argument);
+    EXPECT_THROW(
+        (void)parse_character_settings_update({
+            {"provider", "qwen"},
+            {"style", nullptr},
+            {"reasoning_effort", nullptr},
+            {"web_search", "sometimes"},
+        }),
         std::invalid_argument);
 
     EXPECT_EQ(parse_create_session_label({{"label", "Notes"}}), "Notes");

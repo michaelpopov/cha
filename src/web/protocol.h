@@ -1,5 +1,6 @@
 #pragma once
 
+#include "characters/character_config.h"
 #include "chat/character.h"
 #include "session/controller_update.h"
 #include "session/generation_status.h"
@@ -191,6 +192,8 @@ struct StyleOption {
 struct CharacterSettingsUpdate {
     std::string provider;
     std::optional<std::string> style;
+    std::optional<std::string> reasoning_effort;
+    std::optional<WebSearchMode> web_search;
 };
 
 struct CharacterDetail {
@@ -198,6 +201,8 @@ struct CharacterDetail {
     std::string character_markdown;
     std::optional<std::string> provider;
     std::optional<std::string> style;
+    std::optional<std::string> reasoning_effort;
+    std::optional<WebSearchMode> web_search;
     std::vector<ProviderOption> available_providers;
     std::vector<StyleOption> available_styles;
     bool writable{};

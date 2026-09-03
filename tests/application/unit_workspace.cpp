@@ -148,7 +148,9 @@ TEST(Workspace, ResolvesCompleteProviderAndStyleValues) {
     fixture.write_character_config(
         "display_name = \"Guide\"\n"
         "provider = \"complete-provider\"\n"
-        "style = \"loud-style\"\n");
+        "style = \"loud-style\"\n"
+        "reasoning_effort = \"xhigh\"\n"
+        "web_search = \"required\"\n");
 
     const Workspace workspace = Workspace::load(fixture.root());
     const WorkspaceProvider* const provider =
@@ -167,6 +169,11 @@ TEST(Workspace, ResolvesCompleteProviderAndStyleValues) {
     EXPECT_EQ(provider->config.web_search, WebSearchMode::automatic);
     EXPECT_EQ(provider->config.cache_retention, CacheRetention::long_);
 
+    const WorkspaceCharacter* const character = workspace.find_character("guide");
+    ASSERT_NE(character, nullptr);
+    EXPECT_EQ(character->reasoning_effort, "xhigh");
+    EXPECT_EQ(character->web_search, WebSearchMode::required);
+
     const WorkspaceStyle* const style = workspace.find_style("loud-style");
     ASSERT_NE(style, nullptr);
     EXPECT_EQ(style->label, "Loud style");
@@ -176,10 +183,60 @@ TEST(Workspace, ResolvesCompleteProviderAndStyleValues) {
     EXPECT_EQ(style->appearance.size, CharacterScale::large);
     EXPECT_EQ(style->appearance.text_color, CharacterTextColor::accent);
 
-    const ModelBackendConfig& runtime = provider->config;
+    const CharacterDefinition definition =
+        workspace.character_definition("lobby", "guide");
+    const ModelBackendConfig& runtime = definition.provider.config;
     EXPECT_EQ(runtime.model, "model-one");
     EXPECT_EQ(runtime.api, ProviderApi::responses);
-    EXPECT_EQ(runtime.web_search, WebSearchMode::automatic);
+    EXPECT_EQ(runtime.reasoning_effort, "xhigh");
+    EXPECT_EQ(runtime.web_search, WebSearchMode::required);
+    EXPECT_EQ(provider->config.reasoning_effort, "high");
+    EXPECT_EQ(provider->config.web_search, WebSearchMode::automatic);
+}
+
+TEST(Workspace, AllowsCharacterChatWebSearchOnlyForOpenRouter) {
+    {
+        test::TestWorkspace fixture;
+        fixture.write_provider(
+            "search",
+            "host = \"OPENROUTER.AI.\"\n"
+            "port = 443\n"
+            "mode = \"test\"\n"
+            "model = \"test-model\"\n"
+            "api = \"chat_completions\"\n"
+            "web_search = \"off\"\n");
+        fixture.write_character_config(
+            "display_name = \"Guide\"\n"
+            "provider = \"search\"\n"
+            "web_search = \"auto\"\n");
+
+        const Workspace workspace = Workspace::load(fixture.root());
+        ASSERT_NE(workspace.find_provider("search"), nullptr);
+        EXPECT_EQ(
+            workspace.find_provider("search")->config.web_search,
+            WebSearchMode::off);
+        EXPECT_EQ(
+            workspace.character_definition("lobby", "guide")
+                .provider.config.web_search,
+            WebSearchMode::automatic);
+    }
+    {
+        test::TestWorkspace fixture;
+        fixture.write_provider(
+            "search",
+            "host = \"example.test\"\n"
+            "port = 443\n"
+            "mode = \"test\"\n"
+            "model = \"test-model\"\n"
+            "api = \"chat_completions\"\n"
+            "web_search = \"off\"\n");
+        fixture.write_character_config(
+            "display_name = \"Guide\"\n"
+            "provider = \"search\"\n"
+            "web_search = \"auto\"\n");
+
+        EXPECT_THROW((void)Workspace::load(fixture.root()), std::runtime_error);
+    }
 }
 
 TEST(Workspace, ResolvesForumMemberOverridesAndDefaultPersonaPrompt) {
@@ -404,7 +461,8 @@ TEST(Workspace, WritesConfigurationWithoutChangingTheLoadedInstance) {
 
     const Workspace workspace = Workspace::load(fixture.root());
     workspace.write_character_settings(
-        "guide", "second", std::string_view{"mono"});
+        "guide", "second", std::string_view{"mono"},
+        std::string_view{"xhigh"}, WebSearchMode::required);
     workspace.write_forum_default_character("lobby", "writer");
     workspace.write_forum_default_persona("lobby", "reader");
 
@@ -419,6 +477,8 @@ TEST(Workspace, WritesConfigurationWithoutChangingTheLoadedInstance) {
     const Workspace reloaded = Workspace::load(fixture.root());
     EXPECT_EQ(reloaded.find_character("guide")->provider_id, "second");
     EXPECT_EQ(reloaded.find_character("guide")->style_id, "mono");
+    EXPECT_EQ(reloaded.find_character("guide")->reasoning_effort, "xhigh");
+    EXPECT_EQ(reloaded.find_character("guide")->web_search, WebSearchMode::required);
     EXPECT_EQ(
         reloaded.find_forum("lobby")->default_character_id,
         "writer");
@@ -445,6 +505,10 @@ TEST(Workspace, RejectsInvalidWritesWithoutChangingTheConfigFile) {
         workspace.write_character_settings(
             workspace_assistant_id, "test", std::nullopt),
         std::runtime_error);
+    EXPECT_THROW(
+        workspace.write_character_settings(
+            "guide", "test", std::nullopt, std::string_view{"extreme"}),
+        std::invalid_argument);
     EXPECT_EQ(file_bytes(character), before);
     EXPECT_TRUE(workspace.character_is_writable("guide"));
     EXPECT_FALSE(workspace.character_is_writable(workspace_assistant_id));

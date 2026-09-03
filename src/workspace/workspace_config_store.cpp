@@ -858,11 +858,14 @@ const std::filesystem::path& WorkspaceConfigStore::database_path()
 WorkspaceConfigEditResult WorkspaceConfigStore::apply_character_settings(
     std::string_view character_id,
     std::string_view provider_id,
-    std::optional<std::string_view> style_id) {
+    std::optional<std::string_view> style_id,
+    std::optional<std::string_view> reasoning_effort,
+    std::optional<WebSearchMode> web_search) {
     return impl_->edit([&](const Workspace& workspace) {
         std::vector<std::string> affected =
             forums_using_character(workspace, character_id);
-        workspace.write_character_settings(character_id, provider_id, style_id);
+        workspace.write_character_settings(
+            character_id, provider_id, style_id, reasoning_effort, web_search);
         return affected;
     });
 }

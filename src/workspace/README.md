@@ -46,5 +46,10 @@ failure rematerializes the old rows; a post-commit publication failure requires
 restart and then loads the committed rows. All other edits use offline
 export/edit/import.
 
+Character settings can override their provider's `reasoning_effort` and
+`web_search`. The overrides remain optional in `WorkspaceCharacter`; generation
+copies the provider config and applies them when it constructs the request's
+`CharacterDefinition`.
+
 This directory may depend on `session/`, `characters/`, `chat/`, and `util/`.
 It must not depend on `web/`, executable wiring, or HTTP types.

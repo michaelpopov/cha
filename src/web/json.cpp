@@ -114,9 +114,34 @@ std::optional<std::string> nullable_string(
     return value.get<std::string>();
 }
 
+std::optional<std::string> nullable_reasoning_effort(
+    const nlohmann::json& json) {
+    std::optional<std::string> value = nullable_string(json, "reasoning_effort");
+    if (value && *value != "low" && *value != "medium"
+        && *value != "high" && *value != "xhigh") {
+        throw std::invalid_argument("Invalid web command");
+    }
+    return value;
+}
+
+std::optional<WebSearchMode> nullable_web_search(
+    const nlohmann::json& json) {
+    const std::optional<std::string> value = nullable_string(json, "web_search");
+    if (!value) return std::nullopt;
+    if (*value == "off") return WebSearchMode::off;
+    if (*value == "auto") return WebSearchMode::automatic;
+    if (*value == "required") return WebSearchMode::required;
+    throw std::invalid_argument("Invalid web command");
+}
+
 CharacterSettingsUpdate parse_character_settings_update(const nlohmann::json& json) {
-    exact_keys(json, {"provider", "style"});
-    return {required_string(json, "provider"), nullable_string(json, "style")};
+    exact_keys(json, {"provider", "style", "reasoning_effort", "web_search"});
+    return {
+        .provider = required_string(json, "provider"),
+        .style = nullable_string(json, "style"),
+        .reasoning_effort = nullable_reasoning_effort(json),
+        .web_search = nullable_web_search(json),
+    };
 }
 
 void parse_empty_object(const nlohmann::json& json) {

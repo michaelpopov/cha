@@ -76,6 +76,8 @@ export const characterDetailFixture: CharacterDetail = {
   character_markdown: '# Guide dossier\n\nA **careful** guide.\n\n- Listen\n- Respond',
   provider: 'terra',
   style: 'serif-italic',
+  reasoning_effort: null,
+  web_search: null,
   available_providers: [
     { id: 'sol-high', label: 'Sol high' },
     { id: 'terra', label: 'Terra' },

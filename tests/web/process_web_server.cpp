@@ -1324,7 +1324,7 @@ TEST(WebServerProcess, ReloadsALiveSessionAfterAStyleSave) {
 
         const auto patched = client.Patch(
             "/api/v1/characters/guide",
-            R"({"provider":"test","style":"mono-large"})",
+            R"({"provider":"test","style":"mono-large","reasoning_effort":null,"web_search":null})",
             "application/json");
         ASSERT_TRUE(patched);
         ASSERT_EQ(patched->status, 200) << patched->body;
@@ -1413,7 +1413,7 @@ TEST(WebServerProcess, ReloadsASessionDespiteAStaleForumProvider) {
 
     const auto patched = client.Patch(
         "/api/v1/characters/montaigne",
-        R"({"provider":"sol-high","style":null})",
+        R"({"provider":"sol-high","style":null,"reasoning_effort":null,"web_search":null})",
         "application/json");
     ASSERT_TRUE(patched);
     ASSERT_EQ(patched->status, 200) << patched->body;

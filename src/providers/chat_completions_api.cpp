@@ -157,6 +157,18 @@ std::string build_chat_completions_request_body(
     if (!config.reasoning_effort.empty()) {
         body["reasoning_effort"] = config.reasoning_effort;
     }
+    if (config.web_search != WebSearchMode::off) {
+        if (!is_openrouter_host(config.host)) {
+            throw std::logic_error(
+                "Chat Completions web search requires OpenRouter");
+        }
+        body["tools"] = Json::array({
+            Json{{"type", "openrouter:web_search"}},
+        });
+        body["tool_choice"] = config.web_search == WebSearchMode::required
+            ? "required"
+            : "auto";
+    }
     if (!input.run.prompt_cache_key.empty()
         && config.cache_retention != CacheRetention::off) {
         if (is_direct_openai_host(config.host)) {

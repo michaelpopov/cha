@@ -32,14 +32,16 @@ Bootstrap also carries the workspace persona roster as summaries, and `GET
 /api/v1/characters/{id}` serves a character definition. That is discovery for
 reading, not selection: neither endpoint takes part in attribution, and
 `persona_markdown` is empty for a persona that configures no `PERSONA.md`.
-Character detail also carries the character's current provider and style names
-(null when a setting cannot be read), the lists of options that resolve, and
-`writable`, which is false for the built-in Assistant. A provider option is only
-an id and a label — never
-host, model, or credential — so the response stays discovery-safe.
+Character detail also carries the character's current provider and style names,
+plus its optional reasoning-effort and web-search overrides. A null override
+means to inherit the provider default. It also carries the lists of options that
+resolve and `writable`, which is false for the built-in Assistant. A provider
+option is only an id and a label — never host, model, or credential — so the
+response stays discovery-safe.
 
-`PATCH /api/v1/characters/{id}` requires a provider name and takes an optional
-style (`null` erases only the style). The configuration store validates the
+`PATCH /api/v1/characters/{id}` requires a provider name and takes a nullable
+style, reasoning effort, and web search mode. Null erases that optional key and
+restores provider inheritance. The configuration store validates the
 materialized edit, commits the complete `config` table, publishes the candidate,
 and asks live sessions in every forum containing that character to shut down
 with `reloading`. The server does not reopen anything: the browser's existing

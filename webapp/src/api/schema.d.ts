@@ -111,9 +111,8 @@ export interface paths {
         /**
          * Get character details
          * @description Returns the character summary, its template-expanded Markdown
-         *     definition, and the provider/style settings the editor needs. The
-         *     built-in Assistant returns the embedded application guide and is not
-         *     writable.
+         *     definition, and the settings the editor needs. The built-in Assistant
+         *     returns the embedded application guide and is not writable.
          */
         get: operations["getCharacter"];
         put?: never;
@@ -122,10 +121,11 @@ export interface paths {
         options?: never;
         head?: never;
         /**
-         * Update a character's provider and style
-         * @description Rewrites `provider` and `style` in the character's `character.toml`.
-         *     Provider is required; `null` erases only the style key. A name whose
-         *     config does not load is `400` and leaves the file untouched. The
+         * Update character settings
+         * @description Rewrites `provider`, `style`, `reasoning_effort`, and `web_search` in the
+         *     character's `character.toml`. Provider is required; `null` erases the
+         *     corresponding optional key so the provider default applies. A setting
+         *     whose config does not load is `400` and leaves the file untouched. The
          *     built-in Assistant, a missing character, and a character whose file
          *     cannot be read are `404`.
          *
@@ -556,6 +556,10 @@ export interface components {
             character_markdown: string;
             provider: string | null;
             style: string | null;
+            /** @enum {string|null} */
+            reasoning_effort: "low" | "medium" | "high" | "xhigh" | null;
+            /** @enum {string|null} */
+            web_search: "off" | "auto" | "required" | null;
             available_providers: components["schemas"]["ProviderOption"][];
             available_styles: components["schemas"]["StyleOption"][];
             writable: boolean;
@@ -563,6 +567,10 @@ export interface components {
         UpdateCharacterRequest: {
             provider: string;
             style: string | null;
+            /** @enum {string|null} */
+            reasoning_effort: "low" | "medium" | "high" | "xhigh" | null;
+            /** @enum {string|null} */
+            web_search: "off" | "auto" | "required" | null;
         };
         PersonaDetail: {
             id: components["schemas"]["Identifier"];
