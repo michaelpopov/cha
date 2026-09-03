@@ -11,6 +11,8 @@ struct ApplicationCommand {
     std::optional<std::filesystem::path> mirror;
     std::optional<std::filesystem::path> import_directory;
     std::optional<std::filesystem::path> export_directory;
+    bool upload{};
+    bool download{};
     std::filesystem::path root;
     std::string host;
     int port{};
@@ -34,6 +36,8 @@ inline constexpr const char web_usage[] =
     "Usage:\n"
     "  chaweb --config=CONFIG [--root PATH]\n"
     "  chaweb --config=CONFIG --import SOURCE_DIRECTORY\n"
-    "  chaweb --config=CONFIG --export DESTINATION_DIRECTORY";
+    "  chaweb --config=CONFIG --export DESTINATION_DIRECTORY\n"
+    "  chaweb --config=CONFIG --upload\n"
+    "  chaweb --config=CONFIG --download";
 
 } // namespace cha::web

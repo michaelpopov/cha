@@ -11,6 +11,7 @@
 #include "web/session_routes.h"
 #include "web/session_mirror.h"
 #include "web/live_session_manager.h"
+#include "web/r2_database_transfer.h"
 #include "web/server_shutdown.h"
 #include "web/web_settings.h"
 #include "util/logging.h"
@@ -65,6 +66,22 @@ int prepare_and_run(int argc, const char* argv[]) {
             command.database, *command.export_directory);
         std::cout << "Exported " << transferred.file_count
                   << " files to '" << utf8_path(*command.export_directory) << "'\n";
+        return 0;
+    }
+    if (command.upload) {
+        const R2DatabaseTransfer transferred = upload_database_to_r2(
+            command.database);
+        std::cout << "Uploaded " << transferred.byte_count
+                  << " bytes from '" << utf8_path(command.database)
+                  << "' to R2\n";
+        return 0;
+    }
+    if (command.download) {
+        const R2DatabaseTransfer transferred = download_database_from_r2(
+            command.database);
+        std::cout << "Downloaded " << transferred.byte_count
+                  << " bytes from R2 into '" << utf8_path(command.database)
+                  << "'\n";
         return 0;
     }
 

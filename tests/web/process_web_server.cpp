@@ -114,14 +114,25 @@ OfflineProcessResult run_offline_process(
         (void)::dup2(error_pipe[1], STDERR_FILENO);
         (void)::close(error_pipe[0]);
         (void)::close(error_pipe[1]);
-        ::execl(
-            CHA_WEB_BINARY,
-            CHA_WEB_BINARY,
-            "--config",
-            config_text.c_str(),
-            operation,
-            directory.string().c_str(),
-            static_cast<char*>(nullptr));
+        if (directory.empty()) {
+            ::execl(
+                CHA_WEB_BINARY,
+                CHA_WEB_BINARY,
+                "--config",
+                config_text.c_str(),
+                operation,
+                static_cast<char*>(nullptr));
+        } else {
+            const std::string directory_text = directory.string();
+            ::execl(
+                CHA_WEB_BINARY,
+                CHA_WEB_BINARY,
+                "--config",
+                config_text.c_str(),
+                operation,
+                directory_text.c_str(),
+                static_cast<char*>(nullptr));
+        }
         _exit(127);
     }
 
@@ -817,7 +828,7 @@ TEST(WebServerProcess, RejectsASecondProcessWithDatabaseDiagnostic) {
     EXPECT_EQ(stopped.exit_code, 0) << first.errors();
 }
 
-TEST(WebServerProcess, RunningServerBlocksOfflineImportAndExport) {
+TEST(WebServerProcess, RunningServerBlocksEveryOfflineOperation) {
     test::TestWorkspace workspace;
     const auto database = test::import_test_database(workspace.root());
     const int port = test::reserve_loopback_port();
@@ -833,6 +844,14 @@ TEST(WebServerProcess, RunningServerBlocksOfflineImportAndExport) {
              std::pair{"--import", workspace.root()}}) {
         const OfflineProcessResult result =
             run_offline_process(database, operation, directory);
+        EXPECT_TRUE(WIFEXITED(result.status));
+        EXPECT_NE(WEXITSTATUS(result.status), 0);
+        EXPECT_NE(result.errors.find("already in use"), std::string::npos)
+            << operation << ": " << result.errors;
+    }
+    for (const char* operation : {"--upload", "--download"}) {
+        const OfflineProcessResult result =
+            run_offline_process(database, operation, {});
         EXPECT_TRUE(WIFEXITED(result.status));
         EXPECT_NE(WEXITSTATUS(result.status), 0);
         EXPECT_NE(result.errors.find("already in use"), std::string::npos)

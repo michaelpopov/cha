@@ -214,6 +214,8 @@ The complete public command interface is:
 chaweb --config=CONFIG [--root PATH]
 chaweb --config=CONFIG --import DIRECTORY
 chaweb --config=CONFIG --export DIRECTORY
+chaweb --config=CONFIG --upload
+chaweb --config=CONFIG --download
 ```
 
 `--config` is mandatory and names the external unified TOML file. Its `data`
@@ -231,8 +233,9 @@ therefore be in this set:
 one SQLite transaction replaces the complete small table, with no generation,
 type, control, or revision metadata.
 
-Import and export are offline operations. Stop CHA first; either command fails
-immediately while runtime holds the database lease. To edit configuration:
+Import, export, upload, and download are mutually exclusive offline operations.
+Stop CHA first; any of these commands fails immediately while runtime holds the
+database lease. To edit configuration:
 
 1. Stop CHA.
 2. Export to a missing or empty private directory.
@@ -248,9 +251,28 @@ publication.
 
 The database, rollback journal, WAL/SHM sidecars, companion lock, private
 runtime tree, and exported `.env` must remain accessible only to their owner.
-CHA enforces this for files it manages. There is no unified-database backup
-command in this change, and naively copying a live WAL database is unsafe. Stop
-the service and use a SQLite-aware or otherwise safe offline backup procedure.
+CHA enforces this for files it manages. Naively copying a live WAL database is
+unsafe; the R2 commands acquire the database lease, and upload checkpoints the
+WAL before transferring the main database file.
+
+R2 transfer configuration comes from three inherited environment variables:
+
+```text
+CHA_R2_URL=https://ACCOUNT_ID.r2.cloudflarestorage.com/BUCKET
+CHA_R2_ACCESS_KEY_ID=ACCESS_KEY_ID
+CHA_R2_SECRET_ACCESS_KEY=SECRET_ACCESS_KEY
+```
+
+The bucket URL may optionally end with `/`.
+
+The R2 object key is always the configured database's filename. For example,
+`data = "/var/lib/cha/workspace.sqlite3"` uses `workspace.sqlite3` in the
+configured bucket. `--upload` validates the schema-v2 database and overwrites
+that object. `--download` first writes and validates a private temporary
+schema-v2 database. It then renames the current database to the same path with
+`.bac` appended, overwriting an older `.bac`, and atomically installs the
+download. HTTP failures and invalid downloads leave both the database and
+existing backup untouched. R2 requests use its S3-compatible API over HTTPS.
 
 An invalid import does not change an existing database. Failed v1 upgrade
 leaves valid v1; failed v2 replacement leaves the previous complete config. A
@@ -343,8 +365,16 @@ cmake --build --preset ninja
 ctest --test-dir build/ninja -j8 --output-on-failure
 make web-check
 make web-e2e
-# Requires configured live-provider credentials:
+# Requires configured live-provider and R2 credentials:
 make itest
+```
+
+The R2 integration case overwrites the dedicated
+`cha-r2-integration-test.sqlite3` object in the configured bucket. Run only
+that live round trip with:
+
+```sh
+build/ninja/itest --gtest_filter=R2Integration.*
 ```
 
 Browser development is documented in

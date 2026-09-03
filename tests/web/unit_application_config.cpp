@@ -88,6 +88,8 @@ TEST_F(ApplicationConfigTest, LoadsUnifiedExternalConfigWithEqualsSyntax) {
     EXPECT_EQ(command.log_level, "info");
     EXPECT_FALSE(command.import_directory);
     EXPECT_FALSE(command.export_directory);
+    EXPECT_FALSE(command.upload);
+    EXPECT_FALSE(command.download);
 }
 
 TEST_F(ApplicationConfigTest, AcceptsSeparatedConfigOptionAndAbsolutePaths) {
@@ -157,6 +159,32 @@ TEST_F(ApplicationConfigTest, ImportAndExportUseConfiguredDatabase) {
     EXPECT_NE(both.find("mutually exclusive"), std::string::npos);
 }
 
+TEST_F(ApplicationConfigTest, UploadAndDownloadAreOfflineFlags) {
+    const ApplicationCommand uploaded = load({
+        "chaweb", "--config=" + config_.string(), "--upload"});
+    EXPECT_TRUE(uploaded.upload);
+    EXPECT_FALSE(uploaded.download);
+    EXPECT_TRUE(uploaded.root.empty());
+
+    const ApplicationCommand downloaded = load({
+        "chaweb", "--download", "--config=" + config_.string()});
+    EXPECT_FALSE(downloaded.upload);
+    EXPECT_TRUE(downloaded.download);
+    EXPECT_TRUE(downloaded.root.empty());
+
+    EXPECT_NE(
+        error_text({
+            "chaweb", "--config=" + config_.string(),
+            "--upload", "--download"}).find("mutually exclusive"),
+        std::string::npos);
+    EXPECT_NE(
+        error_text({
+            "chaweb", "--config=" + config_.string(),
+            "--upload", "--export", export_.string()})
+            .find("mutually exclusive"),
+        std::string::npos);
+}
+
 TEST_F(ApplicationConfigTest, ImportRequiresTheApplicationConfigToBeExternal) {
     const std::filesystem::path inside = import_ / "cha.toml";
     std::filesystem::copy_file(config_, inside);
@@ -188,6 +216,23 @@ TEST_F(ApplicationConfigTest, RejectsMissingDuplicateAndRuntimeOfflineOptions) {
             "chaweb", "--config=" + config_.string(),
             "--import", import_.string(), "--root", root_.string()})
             .find("runtime option"),
+        std::string::npos);
+    EXPECT_NE(
+        error_text({
+            "chaweb", "--config=" + config_.string(),
+            "--download", "--root", root_.string()})
+            .find("runtime option"),
+        std::string::npos);
+    EXPECT_NE(
+        error_text({
+            "chaweb", "--config=" + config_.string(), "--upload=value"})
+            .find("does not take a value"),
+        std::string::npos);
+    EXPECT_NE(
+        error_text({
+            "chaweb", "--config=" + config_.string(),
+            "--upload", "--upload"})
+            .find("more than once"),
         std::string::npos);
     EXPECT_NE(
         error_text({

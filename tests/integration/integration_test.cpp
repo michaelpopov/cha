@@ -9,6 +9,8 @@
 #include "support/test_notifier.h"
 #include "support/test_controller.h"
 #include "support/test_session_database.h"
+#include "support/test_workspace.h"
+#include "web/r2_database_transfer.h"
 
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
@@ -17,6 +19,8 @@
 #include <cstddef>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -66,6 +70,44 @@ std::vector<TranscriptEntry> copy_entries(TranscriptView transcript) {
     const auto entries = transcript.entries;
     return {entries.begin(), entries.end()};
 }
+
+std::string file_bytes(const std::filesystem::path& path) {
+    std::ifstream input(path, std::ios::binary);
+    if (!input) {
+        throw std::runtime_error(
+            "Failed to read integration-test file '" + path.string() + "'");
+    }
+    return {
+        std::istreambuf_iterator<char>(input),
+        std::istreambuf_iterator<char>()};
+}
+
+class TemporaryR2Database {
+public:
+    TemporaryR2Database()
+        : directory_(
+              std::filesystem::temp_directory_path()
+              / ("cha_r2_integration_"
+                 + std::to_string(
+                     std::chrono::steady_clock::now()
+                         .time_since_epoch().count()))),
+          path_(directory_ / "cha-r2-integration-test.sqlite3") {
+        std::filesystem::create_directories(directory_);
+        (void)test::import_test_database(source_.root(), path_);
+    }
+
+    ~TemporaryR2Database() {
+        std::error_code ignored;
+        std::filesystem::remove_all(directory_, ignored);
+    }
+
+    const std::filesystem::path& path() const noexcept { return path_; }
+
+private:
+    test::TestWorkspace source_;
+    std::filesystem::path directory_;
+    std::filesystem::path path_;
+};
 
 // Captures the response text and streaming chunk count produced by an integration chat run.
 struct ChatResult {
@@ -236,6 +278,32 @@ TEST(Integration, StreamingChatCanBeCancelled) {
     const ChatResult result = run_cancelled_chat();
     EXPECT_GT(result.chunks, 0U);
     EXPECT_FALSE(result.response.starts_with("Error:")) << result.response;
+}
+
+// This test intentionally overwrites one dedicated object named
+// cha-r2-integration-test.sqlite3 in the bucket selected by CHA_R2_URL.
+TEST(R2Integration, UploadsDownloadsAndBacksUpThePreviousDatabase) {
+    TemporaryR2Database fixture;
+
+    const web::R2DatabaseTransfer uploaded =
+        web::upload_database_to_r2(fixture.path());
+    const std::string expected_download = file_bytes(fixture.path());
+    ASSERT_EQ(uploaded.byte_count, expected_download.size());
+
+    test::TestWorkspace previous_local;
+    previous_local.add_persona("r2test", "R2 test persona");
+    (void)test::import_test_database(previous_local.root(), fixture.path());
+    const std::string expected_backup = file_bytes(fixture.path());
+    ASSERT_NE(expected_backup, expected_download);
+
+    const web::R2DatabaseTransfer downloaded =
+        web::download_database_from_r2(fixture.path());
+    std::filesystem::path backup = fixture.path();
+    backup += ".bac";
+
+    EXPECT_EQ(downloaded.byte_count, expected_download.size());
+    EXPECT_EQ(file_bytes(fixture.path()), expected_download);
+    EXPECT_EQ(file_bytes(backup), expected_backup);
 }
 
 // Removes one temporary session database when a multi-character test leaves scope.

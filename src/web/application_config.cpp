@@ -20,6 +20,8 @@ struct ParsedOptions {
     std::optional<std::filesystem::path> config;
     std::optional<std::filesystem::path> import_directory;
     std::optional<std::filesystem::path> export_directory;
+    bool upload{};
+    bool download{};
     std::optional<std::filesystem::path> root;
     std::optional<int> test_idle_grace_ms;
 };
@@ -74,6 +76,21 @@ void assign_unique_path(
     destination = normalize_cli_path(option, value);
 }
 
+void assign_unique_flag(
+    bool& destination,
+    std::string_view option,
+    bool has_value) {
+    if (has_value) {
+        throw argument_error(
+            "Option '" + std::string(option) + "' does not take a value.");
+    }
+    if (destination) {
+        throw argument_error(
+            "Option '" + std::string(option) + "' was provided more than once.");
+    }
+    destination = true;
+}
+
 ParsedOptions parse_arguments(int argc, const char* const* argv) {
     ParsedOptions result;
     for (int index = 1; index < argc; ++index) {
@@ -82,8 +99,16 @@ ParsedOptions parse_arguments(int argc, const char* const* argv) {
         const std::string_view option = argument.substr(0, equals);
         if (option != "--config" && option != "--import"
             && option != "--export" && option != "--root"
+            && option != "--upload" && option != "--download"
             && option != "--test-idle-grace-ms") {
             throw argument_error("Unknown option '" + std::string(option) + "'.");
+        }
+
+        if (option == "--upload" || option == "--download") {
+            bool& flag = option == "--upload" ? result.upload : result.download;
+            assign_unique_flag(
+                flag, option, equals != std::string_view::npos);
+            continue;
         }
 
         std::string_view value;
@@ -255,8 +280,13 @@ ApplicationCommand parse_application_command(
     if (!options.config) {
         throw argument_error("Missing --config=CONFIG.");
     }
-    if (options.import_directory && options.export_directory) {
-        throw argument_error("--import and --export are mutually exclusive.");
+    const int offline_count = static_cast<int>(options.import_directory.has_value())
+        + static_cast<int>(options.export_directory.has_value())
+        + static_cast<int>(options.upload)
+        + static_cast<int>(options.download);
+    if (offline_count > 1) {
+        throw argument_error(
+            "--import, --export, --upload, and --download are mutually exclusive.");
     }
     if (options.import_directory
         && path_is_under(*options.import_directory, *options.config)) {
@@ -266,10 +296,13 @@ ApplicationCommand parse_application_command(
     }
 
     const bool offline =
-        options.import_directory.has_value() || options.export_directory.has_value();
+        offline_count != 0;
     if (offline) {
         const std::string_view offline_option = options.import_directory
-            ? "--import" : "--export";
+            ? "--import"
+            : options.export_directory ? "--export"
+            : options.upload ? "--upload"
+            : "--download";
         if (options.root) {
             reject_runtime_option_in_offline_mode("--root", offline_option);
         }
@@ -289,6 +322,8 @@ ApplicationCommand parse_application_command(
         .mirror = settings.mirror,
         .import_directory = options.import_directory,
         .export_directory = options.export_directory,
+        .upload = options.upload,
+        .download = options.download,
         .root = root,
         .host = settings.host,
         .port = settings.port,

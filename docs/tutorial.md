@@ -359,11 +359,17 @@ The public command parser accepts exactly these customer-facing forms:
 chaweb --config=CONFIG [--root PATH]
 chaweb --config=CONFIG --import DIRECTORY
 chaweb --config=CONFIG --export DIRECTORY
+chaweb --config=CONFIG --upload
+chaweb --config=CONFIG --download
 ```
 
 Every mode requires the external unified config. The parser accepts both
 `--config=CONFIG` and `--config CONFIG`; `--root` is a runtime-only
-application-asset root. The TOML shape is:
+application-asset root. The four offline modes are mutually exclusive. Upload
+and download use the R2 bucket URL and S3 credentials from
+`CHA_R2_URL`, `CHA_R2_ACCESS_KEY_ID`, and
+`CHA_R2_SECRET_ACCESS_KEY`; the configured database filename becomes the object
+key. The TOML shape is:
 
 ```toml
 data = "/var/lib/cha/workspace.sqlite3"

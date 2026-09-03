@@ -194,6 +194,7 @@ add_library(cha_core STATIC
     src/session/sqlite_storage.cpp
     src/session/workspace_session_database.cpp
     src/web/application_config.cpp
+    src/web/r2_database_transfer.cpp
     src/workspace/workspace.cpp
     src/workspace/workspace_config_store.cpp
     src/workspace/session_open.cpp
@@ -361,6 +362,10 @@ if(BUILD_TESTING)
         tests/web/unit_text_multicast.cpp
         tests/web/unit_live_session.cpp
         tests/support/test_workspace.cpp)
+    if(NOT WIN32)
+        target_sources(
+            cha_web_tests PRIVATE tests/web/unit_r2_database_transfer.cpp)
+    endif()
     target_link_libraries(
         cha_web_tests PRIVATE cha_web cha_sqlite3 GTest::gtest_main)
     target_include_directories(cha_web_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
