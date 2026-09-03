@@ -519,8 +519,8 @@ void LobbyRoutes::install(httplib::Server& server) const {
                 {ErrorCode::session_stopping, "Session is stopping."});
         }
         try {
-            sessions->archive(key);
-            log_info(session_event(key, "delete_archived"));
+            sessions->delete_session(key);
+            log_info(session_event(key, "delete_committed"));
             response.status = 204;
             response.set_header("Cache-Control", "no-store");
         } catch (const ForumNotFoundError&) {

@@ -297,11 +297,9 @@ export interface paths {
         put?: never;
         post?: never;
         /**
-         * Archive a session
-         * @description Marks the session archived in the workspace database, so it stops
-         *     listing, stops opening, and answers `404` afterwards. Its transcript
-         *     remains in the database, but the browser can neither list nor restore
-         *     it.
+         * Delete a session
+         * @description Deletes the session and its transcript from the workspace database, so
+         *     it stops listing, stops opening, and answers `404` afterwards.
          *
          *     A session with a live runtime is stopped first, and its final snapshot
          *     carries the `session_deleted` shutdown reason. If that shutdown does not
@@ -1168,7 +1166,7 @@ export interface operations {
         };
         requestBody: components["requestBodies"]["EmptyJsonObject"];
         responses: {
-            /** @description Session archived. */
+            /** @description Session deleted. */
             204: {
                 headers: {
                     [name: string]: unknown;

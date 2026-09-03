@@ -85,6 +85,12 @@ std::vector<StoredSession> list_forum(
     return result;
 }
 
+void delete_archived_sessions(const std::filesystem::path& path) {
+    Database database(path, Database::Mode::read_write);
+    validate_workspace_session_database_identity(database);
+    database.execute("DELETE FROM sessions WHERE archived_at IS NOT NULL");
+}
+
 } // namespace
 
 SessionRepository::MaintenanceGuard::MaintenanceGuard(
@@ -120,6 +126,7 @@ SessionRepository::SessionRepository(
             "Welcome directory '" + utf8_path(welcome_directory)
             + "' is not a directory");
     }
+    delete_archived_sessions(database_path_);
     synchronize_forums();
 
     temporary_database_path_ = welcome_directory / "sessions.sqlite3";
@@ -366,22 +373,20 @@ StoredSession SessionRepository::rename(
     };
 }
 
-void SessionRepository::archive(const FullSessionId& identity) const {
+void SessionRepository::delete_session(const FullSessionId& identity) const {
     const std::shared_lock operation(operation_mutex_);
     require_persistent_forum(identity.forum_id);
     Database database(database_path_, Database::Mode::read_write);
     validate_workspace_session_database_identity(database);
     Transaction transaction(database);
-    const std::int64_t timestamp = session_timestamp();
-    Statement update = database.prepare(
-        "UPDATE sessions SET archived_at = ?1, updated_at = ?1 "
-        "WHERE session_key = (SELECT s.session_key FROM sessions AS s "
-        "JOIN forums AS f USING (forum_key) WHERE f.forum_id = ?2 "
-        "AND s.session_id = ?3) AND archived_at IS NULL",
-        timestamp,
+    Statement remove = database.prepare(
+        "DELETE FROM sessions WHERE session_key = ("
+        "SELECT s.session_key FROM sessions AS s "
+        "JOIN forums AS f USING (forum_key) WHERE f.forum_id = ?1 "
+        "AND s.session_id = ?2) AND archived_at IS NULL",
         std::string_view(identity.forum_id),
         std::string_view(identity.session_id));
-    update.run();
+    remove.run();
     if (database.changes() != 1) {
         throw missing_session_error(identity.session_id);
     }

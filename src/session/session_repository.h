@@ -71,7 +71,7 @@ public:
     [[nodiscard]] StoredSession rename(
         const FullSessionId& identity,
         std::string label) const;
-    void archive(const FullSessionId& identity) const;
+    void delete_session(const FullSessionId& identity) const;
     [[nodiscard]] PreparedSession prepare(
         const FullSessionId& identity) const;
     [[nodiscard]] std::vector<TranscriptEntry> history(

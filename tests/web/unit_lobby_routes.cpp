@@ -769,7 +769,7 @@ TEST(LobbyRoutes, SessionLabelErrorsAreDistinctFromMalformedJson) {
     EXPECT_EQ(body(empty)["label"], body(empty)["id"]);
 }
 
-TEST(LobbyRoutes, RenamesAndRecoverablyDeletesStoredSessions) {
+TEST(LobbyRoutes, RenamesAndDeletesStoredSessions) {
     test::TestWorkspace fixture;
     const LobbyGraph graph(fixture.root());
     LiveSessionManager manager(lobby_settings(2), counting_opener(graph));
@@ -1065,7 +1065,7 @@ TEST(LobbyRoutes, ReattachesFromTheLiveSessionMapWithoutReadingStorageAgain) {
         server.client().Post(route, "{}", "application/json");
     ASSERT_TRUE(opened);
     ASSERT_EQ(opened->status, 200);
-    graph.sessions()->archive({"lobby", id});
+    graph.sessions()->delete_session({"lobby", id});
 
     const auto reattached =
         server.client().Post(route, "{}", "application/json");
@@ -1091,7 +1091,7 @@ TEST(LobbyRoutes, DeletedSessionBetweenValidationAndOpenReturnsNotFoundAndReleas
             const FullSessionId& key,
             std::shared_ptr<WakeNotifier> notifier) {
             if (key.session_id == deleted.identity.session_id) {
-                sessions->archive(key);
+                sessions->delete_session(key);
             }
             return open_real(key, notifier);
         });

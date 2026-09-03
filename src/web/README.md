@@ -206,7 +206,7 @@ disconnected, cancels its one deadline on stream acceptance, and on matching
 close unloads at `idle_grace` or the absolute `orphan_limit` from that same
 disconnection timestamp while generation is active.
 `LobbyRoutes` is the HTTP boundary for bootstrap discovery, character detail,
-stored-session discovery, create, rename, recoverable delete,
+stored-session discovery, create, rename, delete,
 and manager-backed open/reattach. It validates route identifiers before either
 the live-session map or session storage is consulted; creation reaches only
 `SessionRepository`, while opening first asks the manager for a disk-free
@@ -218,7 +218,7 @@ Live rename is serialized through the actor's owner queue and republishes its
 descriptor snapshot. Delete first acquires a manager maintenance reservation,
 which blocks open and reattach for that identity, then requests the
 `session_deleted` shutdown reason and waits under the configured deadline before
-the repository transactionally sets the session row's `archived_at` timestamp.
+the repository transactionally deletes the session row and its transcript.
 `configure_http_server()` owns the server-global request pool, read/write
 timeouts, payload limit, and fallback error/exception handlers so route
 installers cannot silently replace one another's policy. It does not restrict

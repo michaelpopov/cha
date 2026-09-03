@@ -57,7 +57,7 @@ TEST(SessionMirror, WritesActiveSessionsUnderForumDisplayNameAndNumbersDuplicate
         {});
     EXPECT_FALSE(std::filesystem::exists(root / "Entrance"));
 
-    graph.sessions()->archive(second.identity);
+    graph.sessions()->delete_session(second.identity);
     EXPECT_TRUE(std::filesystem::exists(forum / "xyz (1).md"));
 
     mirror.update(first.identity, "renamed/name", {});

@@ -173,7 +173,7 @@ TEST_F(SessionRepositoryTest, CreatesInNewlyPublishedUnsynchronizedForum) {
         "SELECT COUNT(*) FROM forums WHERE forum_id = 'second'"), 1);
 }
 
-TEST_F(SessionRepositoryTest, CreatesRenamesAndArchivesRowsTransactionally) {
+TEST_F(SessionRepositoryTest, CreatesRenamesAndDeletesRowsTransactionally) {
     const SessionRepository repository = make_repository();
     const StoredSession created = repository.create("lobby", "Before");
     const PreparedSession prepared = repository.prepare(created.identity);
@@ -186,13 +186,50 @@ TEST_F(SessionRepositoryTest, CreatesRenamesAndArchivesRowsTransactionally) {
     EXPECT_EQ(renamed.identity, created.identity);
     EXPECT_EQ(repository.prepare(created.identity).label, "After ✓");
 
-    repository.archive(created.identity);
+    repository.delete_session(created.identity);
     EXPECT_TRUE(repository.list("lobby").empty());
     EXPECT_THROW(
         (void)repository.prepare(created.identity), SessionNotFoundError);
     EXPECT_EQ(scalar(repository.database_path(),
-        "SELECT COUNT(*) FROM sessions WHERE archived_at IS NOT NULL"), 1);
-    EXPECT_EQ(scalar(repository.database_path(), "SELECT COUNT(*) FROM entries"), 1);
+        "SELECT COUNT(*) FROM sessions"), 0);
+    EXPECT_EQ(scalar(repository.database_path(), "SELECT COUNT(*) FROM entries"), 0);
+}
+
+TEST_F(SessionRepositoryTest, DeletesArchivedRowsOnStartup) {
+    FullSessionId archived;
+    StoredSession active;
+    {
+        const SessionRepository repository = make_repository();
+        archived = repository.create("lobby", "Archived").identity;
+        active = repository.create("lobby", "Active");
+        const PreparedSession prepared = repository.prepare(archived);
+        {
+            SessionJournal journal(prepared.database_path, prepared.session_key);
+            journal.record_entry(test::human_entry(
+                1, {"human", "You"}, {"guide", "Guide"}, "Delete me"));
+        }
+
+        storage::SqliteDatabase database(
+            repository.database_path(), storage::SqliteDatabase::Mode::read_write);
+        storage::SqliteStatement update = database.prepare(
+            "UPDATE sessions SET archived_at = 1 WHERE session_id = ?1",
+            std::string_view(archived.session_id));
+        update.run();
+    }
+
+    const std::filesystem::path restarted_welcome =
+        fixture_.root() / "restarted-welcome";
+    create_private_directory(restarted_welcome);
+    const SessionRepository repository(
+        database_path(),
+        fixture_.root(),
+        restarted_welcome,
+        {temporary_identity(), "Welcome"});
+
+    EXPECT_EQ(repository.list("lobby"), (std::vector<StoredSession>{active}));
+    EXPECT_EQ(scalar(repository.database_path(),
+        "SELECT COUNT(*) FROM sessions WHERE archived_at IS NOT NULL"), 0);
+    EXPECT_EQ(scalar(repository.database_path(), "SELECT COUNT(*) FROM entries"), 0);
 }
 
 TEST_F(SessionRepositoryTest, AppliesLabelPolicyAndSeparatesMissingForums) {
@@ -421,11 +458,11 @@ TEST_F(SessionRepositoryTest, MaintenanceFencesRepositoryReadsAndWrites) {
     const SessionRepository repository = make_repository();
     const StoredSession rename_target =
         repository.create("lobby", "Rename target");
-    const StoredSession archive_target =
-        repository.create("lobby", "Archive target");
+    const StoredSession delete_target =
+        repository.create("lobby", "Delete target");
     std::future<StoredSession> create;
     std::future<StoredSession> rename;
-    std::future<void> archive;
+    std::future<void> deletion;
     std::future<std::vector<StoredSession>> list;
     {
         const SessionRepository::MaintenanceGuard maintenance =
@@ -436,8 +473,8 @@ TEST_F(SessionRepositoryTest, MaintenanceFencesRepositoryReadsAndWrites) {
         rename = std::async(std::launch::async, [&] {
             return repository.rename(rename_target.identity, "Renamed");
         });
-        archive = std::async(std::launch::async, [&] {
-            repository.archive(archive_target.identity);
+        deletion = std::async(std::launch::async, [&] {
+            repository.delete_session(delete_target.identity);
         });
         list = std::async(std::launch::async, [&] {
             return repository.list("lobby");
@@ -445,18 +482,18 @@ TEST_F(SessionRepositoryTest, MaintenanceFencesRepositoryReadsAndWrites) {
 
         EXPECT_EQ(create.wait_for(100ms), std::future_status::timeout);
         EXPECT_EQ(rename.wait_for(0ms), std::future_status::timeout);
-        EXPECT_EQ(archive.wait_for(0ms), std::future_status::timeout);
+        EXPECT_EQ(deletion.wait_for(0ms), std::future_status::timeout);
         EXPECT_EQ(list.wait_for(0ms), std::future_status::timeout);
         EXPECT_NO_THROW(maintenance.checkpoint());
     }
 
     EXPECT_EQ(create.wait_for(2s), std::future_status::ready);
     EXPECT_EQ(rename.wait_for(2s), std::future_status::ready);
-    EXPECT_EQ(archive.wait_for(2s), std::future_status::ready);
+    EXPECT_EQ(deletion.wait_for(2s), std::future_status::ready);
     EXPECT_EQ(list.wait_for(2s), std::future_status::ready);
     EXPECT_NO_THROW((void)create.get());
     EXPECT_NO_THROW((void)rename.get());
-    EXPECT_NO_THROW(archive.get());
+    EXPECT_NO_THROW(deletion.get());
     EXPECT_NO_THROW((void)list.get());
 }
 

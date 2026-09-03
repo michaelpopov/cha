@@ -50,7 +50,7 @@ durable turn using existing partial-response rules.
 | `session_controller.*` | Controller commands, durable turn transitions, request-handle presentation, and shutdown. |
 | `workspace_session_database.*` | Workspace schema, validation, WAL initialization, and checkpointing. |
 | `session_database.*` | Session-key-scoped restore and journal operations. |
-| `session_repository.*` | SQL-backed listing, creation, rename, archival, history, and preparation. |
+| `session_repository.*` | SQL-backed listing, creation, rename, deletion, history, and preparation. |
 | `session_storage_layout.*` | Import-only, path-based detection of legacy per-session databases. |
 | `session_lease.*` | Portable companion-file lease used by the top-level store and offline transfers. |
 

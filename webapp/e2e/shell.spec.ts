@@ -119,7 +119,7 @@ test('renames an open session from Recent across every visible catalog', async (
   await expect(page.getByText(renamed, { exact: true }).last()).toBeVisible();
 });
 
-test('deletes a closed session and retains its archived row outside the catalog', async ({ page }) => {
+test('deletes a closed session and its stored row', async ({ page }) => {
   const label = `Closed delete browser test ${Date.now()}`;
   const sessionId = await createStoredLobbySession(page, label);
   await page.reload();
@@ -147,12 +147,12 @@ test('deletes a closed session and retains its archived row outside the catalog'
     readOnly: true,
   });
   try {
-    const archived = database.prepare(`
-      SELECT s.archived_at
+    const stored = database.prepare(`
+      SELECT 1
       FROM sessions AS s JOIN forums AS f USING (forum_key)
       WHERE f.forum_id = ? AND s.session_id = ?
-    `).get('lobby', sessionId) as { archived_at: number | null } | undefined;
-    expect(archived?.archived_at).toEqual(expect.any(Number));
+    `).get('lobby', sessionId);
+    expect(stored).toBeUndefined();
   } finally {
     database.close();
   }
