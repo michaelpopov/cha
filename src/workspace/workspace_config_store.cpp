@@ -9,6 +9,8 @@
 #include "util/private_filesystem.h"
 #include "workspace/workspace.h"
 
+#include <toml++/toml.hpp>
+
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -563,9 +565,196 @@ void validate_materialized_source(
     (void)Workspace::load(root.workspace());
 }
 
+struct PrunedImport {
+    std::vector<ConfigFile> rows;
+    std::set<std::string> forums;
+};
+
+std::string_view trimmed_line_start(std::string_view line) {
+    while (!line.empty()
+           && (line.front() == ' ' || line.front() == '\t'
+               || line.front() == '\r')) {
+        line.remove_prefix(1);
+    }
+    return line;
+}
+
+std::optional<std::string> forum_config_default(std::string_view content) {
+    toml::table table;
+    try {
+        table = toml::parse(content);
+    } catch (const toml::parse_error&) {
+        return std::nullopt;
+    }
+    if (table.contains("default_character") == table.contains("default_agent")) {
+        return std::nullopt;
+    }
+    const auto node = table.contains("default_character")
+        ? table["default_character"] : table["default_agent"];
+    return node.value<std::string>();
+}
+
+std::string without_forum_default_lines(std::string_view content) {
+    std::string result;
+    std::size_t position{};
+    while (position <= content.size()) {
+        const std::size_t end = content.find('\n', position);
+        const bool last = end == std::string_view::npos;
+        const std::string_view line = last
+            ? content.substr(position)
+            : content.substr(position, end - position + 1);
+        const std::string_view body = trimmed_line_start(line);
+        if (!body.starts_with("default_character")
+            && !body.starts_with("default_agent")) {
+            result.append(line);
+        }
+        if (last) break;
+        position = end + 1;
+    }
+    return result;
+}
+
+PrunedImport prune_imported_rows(std::vector<ConfigFile> rows) {
+    std::set<std::string> characters;
+    for (const ConfigFile& row : rows) {
+        constexpr std::string_view prefix = "characters/";
+        constexpr std::string_view suffix = "/character.toml";
+        if (!row.name.starts_with(prefix) || !row.name.ends_with(suffix)
+            || row.name.size() < prefix.size() + suffix.size()) {
+            continue;
+        }
+        std::string_view middle = std::string_view(row.name).substr(prefix.size());
+        middle.remove_suffix(suffix.size());
+        const std::size_t slash = middle.rfind('/');
+        const std::string_view id =
+            slash == std::string_view::npos ? middle : middle.substr(slash + 1);
+        if (!id.empty()) characters.emplace(id);
+    }
+
+    constexpr std::string_view forums_prefix = "forums/";
+    constexpr std::string_view members_infix = "/members/";
+    std::set<std::string> forum_ids;
+    std::map<std::string, std::set<std::string>> forum_members;
+    for (const ConfigFile& row : rows) {
+        if (!row.name.starts_with(forums_prefix)) continue;
+        const std::string_view rest =
+            std::string_view(row.name).substr(forums_prefix.size());
+        const std::size_t slash = rest.find('/');
+        if (slash == std::string_view::npos) continue;
+        const std::string forum(rest.substr(0, slash));
+        forum_ids.insert(forum);
+        const std::string prefix =
+            std::string(forums_prefix) + forum + std::string(members_infix);
+        if (!row.name.starts_with(prefix)) continue;
+        const std::string_view member_rest =
+            std::string_view(row.name).substr(prefix.size());
+        const std::size_t member_end = member_rest.find('/');
+        if (member_end == std::string_view::npos) continue;
+        const std::string member(member_rest.substr(0, member_end));
+        if (!member.empty()) forum_members[forum].insert(member);
+    }
+
+    std::map<std::string, std::set<std::string>> removed_members;
+    for (const auto& [forum, members] : forum_members) {
+        for (const std::string& member : members) {
+            if (!characters.contains(member)) removed_members[forum].insert(member);
+        }
+    }
+    if (!removed_members.empty()) {
+        std::vector<ConfigFile> kept;
+        kept.reserve(rows.size());
+        for (ConfigFile& row : rows) {
+            bool drop = false;
+            for (const auto& [forum, members] : removed_members) {
+                const std::string prefix =
+                    std::string(forums_prefix) + forum + std::string(members_infix);
+                if (!row.name.starts_with(prefix)) continue;
+                const std::string_view rest =
+                    std::string_view(row.name).substr(prefix.size());
+                const std::size_t end = rest.find('/');
+                if (end != std::string_view::npos
+                    && members.contains(std::string(rest.substr(0, end)))) {
+                    drop = true;
+                    break;
+                }
+            }
+            if (!drop) kept.push_back(std::move(row));
+        }
+        rows = std::move(kept);
+        for (const auto& [forum, members] : removed_members) {
+            for (const std::string& member : members) forum_members[forum].erase(member);
+        }
+    }
+
+    std::set<std::string> empty_forums;
+    for (const std::string& forum : forum_ids) {
+        const auto found = forum_members.find(forum);
+        if (found == forum_members.end() || found->second.empty()) empty_forums.insert(forum);
+    }
+    if (!empty_forums.empty()) {
+        std::vector<ConfigFile> kept;
+        kept.reserve(rows.size());
+        for (ConfigFile& row : rows) {
+            bool drop = false;
+            for (const std::string& forum : empty_forums) {
+                if (row.name == "forums/" + forum
+                    || row.name.starts_with("forums/" + forum + "/")) {
+                    drop = true;
+                    break;
+                }
+            }
+            if (!drop) kept.push_back(std::move(row));
+        }
+        rows = std::move(kept);
+        for (const std::string& forum : empty_forums) {
+            forum_ids.erase(forum);
+            forum_members.erase(forum);
+        }
+    }
+
+    for (ConfigFile& row : rows) {
+        if (!row.name.starts_with(forums_prefix)) continue;
+        const std::string_view rest =
+            std::string_view(row.name).substr(forums_prefix.size());
+        const std::size_t slash = rest.find('/');
+        if (slash == std::string_view::npos || rest.substr(slash + 1) != "config.toml") {
+            continue;
+        }
+        const auto members = forum_members.find(std::string(rest.substr(0, slash)));
+        if (members == forum_members.end()) continue;
+        const std::optional<std::string> configured = forum_config_default(row.content);
+        if (!configured || members->second.contains(*configured)) continue;
+        row.content = without_forum_default_lines(row.content);
+    }
+
+    std::set<std::string> surviving = forum_ids;
+    surviving.emplace(workspace_entrance_id);
+    return {.rows = std::move(rows), .forums = std::move(surviving)};
+}
+
+void prune_orphan_sessions(Database& database, const std::set<std::string>& valid_forums) {
+    storage::SqliteStatement forums = database.prepare("SELECT forum_id FROM forums");
+    std::vector<std::string> orphans;
+    while (forums.step()) {
+        const std::string forum_id = forums.text(0);
+        if (!valid_forums.contains(forum_id)) orphans.push_back(forum_id);
+    }
+    for (const std::string& forum_id : orphans) {
+        storage::SqliteStatement delete_sessions = database.prepare(
+            "DELETE FROM sessions WHERE forum_key IN ("
+            "SELECT forum_key FROM forums WHERE forum_id = ?1)",
+            std::string_view(forum_id));
+        delete_sessions.run();
+        storage::SqliteStatement delete_forum = database.prepare(
+            "DELETE FROM forums WHERE forum_id = ?1", std::string_view(forum_id));
+        delete_forum.run();
+    }
+}
+
 void commit_imported_rows(
     const std::filesystem::path& database,
-    const std::vector<ConfigFile>& rows) {
+    const std::vector<ConfigFile>& rows,
+    const std::set<std::string>& valid_forums) {
     const WorkspaceDatabaseState state =
         inspect_workspace_session_database(database);
     switch (state) {
@@ -585,12 +774,16 @@ void commit_imported_rows(
     case WorkspaceDatabaseState::valid_v1: {
         Database handle(database, Database::Mode::read_write);
         upgrade_workspace_session_database_from_v1(handle, rows);
+        storage::SqliteTransaction transaction(handle);
+        prune_orphan_sessions(handle, valid_forums);
+        transaction.commit();
         break;
     }
     case WorkspaceDatabaseState::valid_v2: {
         Database handle(database, Database::Mode::read_write);
         storage::SqliteTransaction transaction(handle);
         replace_workspace_config_files(handle, rows);
+        prune_orphan_sessions(handle, valid_forums);
         transaction.commit();
         break;
     }
@@ -619,12 +812,12 @@ WorkspaceConfigTransfer import_workspace_configuration(
         fail_legacy(source, database_exists);
     }
 
-    const std::vector<ConfigFile> rows = collect_config_rows(source);
-    validate_materialized_source(rows, source);
+    PrunedImport pruned = prune_imported_rows(collect_config_rows(source));
+    validate_materialized_source(pruned.rows, source);
 
     secure_workspace_session_database_files(database);
-    commit_imported_rows(database, rows);
-    return {.file_count = rows.size()};
+    commit_imported_rows(database, pruned.rows, pruned.forums);
+    return {.file_count = pruned.rows.size()};
 }
 
 WorkspaceConfigTransfer export_workspace_configuration(

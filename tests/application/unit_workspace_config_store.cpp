@@ -323,6 +323,20 @@ TEST_F(WorkspaceConfigStoreTest, SynthesizesMissingForumMemberMarker) {
     EXPECT_NE(exported.find_forum_member("lobby", "guide"), nullptr);
 }
 
+TEST_F(WorkspaceConfigStoreTest, IgnoresATopLevelCharacterFileWithoutAnIdDirectory) {
+    // A "characters/character.toml" row with no id directory used to
+    // underflow a string_view length while pruning orphaned import rows.
+    write_bytes(source() / "characters" / "character.toml", "stray = true\n");
+    const std::size_t count = import_from_source();
+    EXPECT_GE(count, 6U);
+    Database handle(database(), Database::Mode::read_only);
+    bool found_stray = false;
+    for (const ConfigFile& row : read_workspace_config_files(handle)) {
+        if (row.name == "characters/character.toml") found_stray = true;
+    }
+    EXPECT_TRUE(found_stray);
+}
+
 TEST_F(WorkspaceConfigStoreTest, RecreatesEmptySkeletonDirectories) {
     import_from_source();
     export_workspace_configuration(database(), export_);
