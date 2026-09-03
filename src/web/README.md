@@ -77,7 +77,7 @@ restarts the forum's live sessions so agent prompts carry that persona.
 ## Chat input grammar
 
 The raw-input owner path recognizes optional leading character mentions and
-the commands `/clear`, `/hide-on`, `/hide`, `/hide-off`, `/mcast`, `/info`,
+the commands `/clear`, `/cover`, `/uncover`, `/mcast`, `/info`,
 `/characters` (`/agents` is a legacy alias), `/@Name`, `/!Name`,
 `/style`, `/stop`, and `/exit`. Mentions and multicast recipient
 handles remain unresolved until `SessionController` applies the forum's

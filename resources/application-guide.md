@@ -27,7 +27,7 @@ provider. Assistant has no Settings screen; its provider is configured in
 ## Commands
 
 - `/clear` clears the transcript.
-- `/hide-on`, `/hide`, and `/hide-off` begin, extend, and end an off-record span.
+- `/cover` hides all earlier conversation from model context; `/uncover` restores it.
 - `/mcast <targets> <text>` sends one prompt to multiple characters.
 - `/info` shows session information; `/characters` lists the forum's characters (`/agents` is a legacy alias).
 - `/@Name` changes the default character and saves it as the forum's default.

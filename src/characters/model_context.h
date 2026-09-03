@@ -57,7 +57,7 @@ struct ModelMessage {
 std::vector<ModelMessage> project_model_context(
     std::span<const TranscriptEntry> entries,
     std::optional<EntryId> open_entry_id,
-    OffrecordSpan offrecord_span,
+    std::optional<EntryId> covered_until,
     std::string_view system_prompt,
     std::string_view character_id);
 

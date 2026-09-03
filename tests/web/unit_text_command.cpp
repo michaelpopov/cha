@@ -20,9 +20,11 @@ TEST(Command, RecognizesEveryArgumentlessCommand) {
     EXPECT_EQ(parse_command("/exit").kind, CommandKind::exit);
     EXPECT_EQ(parse_command("/agents").kind, CommandKind::characters);
     EXPECT_EQ(parse_command("/characters").kind, CommandKind::characters);
-    EXPECT_EQ(parse_command("/hide-on").kind, CommandKind::hide_on);
-    EXPECT_EQ(parse_command("/hide").kind, CommandKind::hide);
-    EXPECT_EQ(parse_command("/hide-off").kind, CommandKind::hide_off);
+    EXPECT_EQ(parse_command("/cover").kind, CommandKind::cover);
+    EXPECT_EQ(parse_command("/uncover").kind, CommandKind::uncover);
+    EXPECT_EQ(parse_command("/hide-on").kind, CommandKind::unknown);
+    EXPECT_EQ(parse_command("/hide").kind, CommandKind::unknown);
+    EXPECT_EQ(parse_command("/hide-off").kind, CommandKind::unknown);
     EXPECT_EQ(parse_command("/mcast").kind, CommandKind::mcast);
     EXPECT_EQ(parse_command("/nonsense").kind, CommandKind::unknown);
     EXPECT_EQ(parse_command("/clearly").kind, CommandKind::unknown);
@@ -42,9 +44,9 @@ TEST(Command, CapturesTrailingTextAsTheRejectableArgument) {
     EXPECT_EQ(characters.kind, CommandKind::characters);
     EXPECT_EQ(characters.argument, "please");
 
-    const Command hide = parse_command("/hide later");
-    EXPECT_EQ(hide.kind, CommandKind::hide);
-    EXPECT_EQ(hide.argument, "later");
+    const Command cover = parse_command("/cover later");
+    EXPECT_EQ(cover.kind, CommandKind::cover);
+    EXPECT_EQ(cover.argument, "later");
 
     const Command multicast = parse_command("/mcast @One, @Two. Question");
     EXPECT_EQ(multicast.kind, CommandKind::mcast);
@@ -114,7 +116,7 @@ TEST(Command, SeparatesTheDefaultCharacterHandleFromAnArgument) {
 TEST(Command, ListsOnlyCommandsAcceptedByTheWebRawInputPath) {
     EXPECT_EQ(
         command_names(),
-        "/clear, /hide-on, /hide, /hide-off, /mcast, /info, /characters, /agents, /@Name, /!Name, /style, /stop, /exit");
+        "/clear, /cover, /uncover, /mcast, /info, /characters, /agents, /@Name, /!Name, /style, /stop, /exit");
 }
 
 } // namespace

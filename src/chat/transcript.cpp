@@ -71,16 +71,12 @@ TranscriptEntry make_marker_entry(EntryId id, std::string display_name) {
 
 } // namespace
 
-TranscriptEntry make_hide_on_marker(EntryId id) {
-    return make_marker_entry(id, "hide-on");
+TranscriptEntry make_cover_marker(EntryId id) {
+    return make_marker_entry(id, "cover");
 }
 
-TranscriptEntry make_hide_marker(EntryId id) {
-    return make_marker_entry(id, "hide");
-}
-
-TranscriptEntry make_hide_off_marker(EntryId id) {
-    return make_marker_entry(id, "hide-off");
+TranscriptEntry make_uncover_marker(EntryId id) {
+    return make_marker_entry(id, "uncover");
 }
 
 TranscriptEntry make_error_entry(
@@ -222,7 +218,7 @@ void Transcript::clear() {
         throw std::logic_error("Cannot clear a transcript while an entry is streaming");
     }
     entries_.clear();
-    offrecord_ = {};
+    covered_until_.reset();
     ++revision_;
     ++history_epoch_;
 }
@@ -241,45 +237,34 @@ void Transcript::replace_entries(std::vector<TranscriptEntry> entries) {
     }
 
     entries_ = std::move(entries);
-    offrecord_ = {};
+    covered_until_.reset();
     ++revision_;
     ++history_epoch_;
 }
 
-bool Transcript::open_offrecord(EntryId marker_id) {
-    if (open_entry_id_ || offrecord_.begin) {
-        return false;
+void Transcript::cover(EntryId marker_id) {
+    if (open_entry_id_) {
+        throw std::logic_error("Cannot cover a transcript while an entry is streaming");
     }
-    TranscriptEntry marker = make_hide_on_marker(marker_id);
+    TranscriptEntry marker = make_cover_marker(marker_id);
     require_terminal_transcript_entry(marker);
     require_next_id(marker.id);
-    offrecord_.begin = boundary();
+    covered_until_ = boundary();
     entries_.push_back(std::move(marker));
     ++revision_;
-    return true;
 }
 
-bool Transcript::extend_offrecord(EntryId marker_id) {
-    if (open_entry_id_ || !offrecord_.begin) {
+bool Transcript::uncover(EntryId marker_id) {
+    if (open_entry_id_) {
+        throw std::logic_error("Cannot uncover a transcript while an entry is streaming");
+    }
+    if (!covered_until_) {
         return false;
     }
-    TranscriptEntry marker = make_hide_marker(marker_id);
+    TranscriptEntry marker = make_uncover_marker(marker_id);
     require_terminal_transcript_entry(marker);
     require_next_id(marker.id);
-    offrecord_.end = boundary();
-    entries_.push_back(std::move(marker));
-    ++revision_;
-    return true;
-}
-
-bool Transcript::restore_offrecord(EntryId marker_id) {
-    if (open_entry_id_ || !offrecord_.begin) {
-        return false;
-    }
-    TranscriptEntry marker = make_hide_off_marker(marker_id);
-    require_terminal_transcript_entry(marker);
-    require_next_id(marker.id);
-    offrecord_ = {};
+    covered_until_.reset();
     entries_.push_back(std::move(marker));
     ++revision_;
     return true;
@@ -293,7 +278,7 @@ ModelHistory Transcript::model_history() const {
     return {
         .entries = entries_,
         .open_entry_id = open_entry_id_,
-        .offrecord_span = offrecord_,
+        .covered_until = covered_until_,
     };
 }
 

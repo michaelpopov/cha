@@ -82,7 +82,7 @@ std::string timestamped_character_message(
 std::vector<ModelMessage> project_entries(
     std::span<const TranscriptEntry> entries,
     std::optional<EntryId> open_entry_id,
-    OffrecordSpan offrecord_span,
+    std::optional<EntryId> covered_until,
     std::string_view system_prompt,
     std::string_view character_id,
     bool include_timestamps) {
@@ -98,10 +98,10 @@ std::vector<ModelMessage> project_entries(
         }
     }
 
-    const auto projectable = [&failed_requests, open_entry_id, offrecord_span](
+    const auto projectable = [&failed_requests, open_entry_id, covered_until](
                                  const TranscriptEntry& entry) {
         if (open_entry_id && *open_entry_id == entry.id) return false;
-        if (offrecord_span.contains(entry.id)) return false;
+        if (covered_until && entry.id < *covered_until) return false;
         if (entry.kind == EntryKind::notice || entry.kind == EntryKind::error) return false;
         if (entry.kind == EntryKind::human) {
             return !entry.request_id || !failed_requests.contains(*entry.request_id);
@@ -156,13 +156,13 @@ std::vector<ModelMessage> project_entries(
 std::vector<ModelMessage> project_model_context(
     std::span<const TranscriptEntry> entries,
     std::optional<EntryId> open_entry_id,
-    OffrecordSpan offrecord_span,
+    std::optional<EntryId> covered_until,
     std::string_view system_prompt,
     std::string_view character_id) {
     return project_entries(
         entries,
         open_entry_id,
-        offrecord_span,
+        covered_until,
         system_prompt,
         character_id,
         false);
@@ -178,7 +178,7 @@ std::vector<ModelMessage> project_model_context(
     std::vector<ModelMessage> messages = project_entries(
         input.history->entries,
         input.history->open_entry_id,
-        input.history->offrecord_span,
+        input.history->covered_until,
         system_prompt,
         input.run.target.id,
         include_timestamps);

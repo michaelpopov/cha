@@ -299,19 +299,23 @@ The factory functions (`make_human_entry`, `make_character_entry`, and so on)
 make valid intent visible at call sites. Validation still exists at boundaries;
 factories are not a reason to trust arbitrary loaded data.
 
-### 6.2 Revision, history epoch, and off-record state
+### 6.2 Revision, history epoch, and cover state
 
 Three transcript concepts are easy to conflate:
 
 - `revision` changes on presentation mutations.
 - `history_epoch` changes when the visible logical history is replaced or
   cleared.
-- `OffrecordSpan` is a half-open range of entry IDs omitted from model context.
+- `covered_until` is an optional entry-ID boundary; earlier entries are omitted
+  from model context.
 
-The `/hide-on`, `/hide`, and `/hide-off` operations add visible transient marker
-entries and change the runtime span. Those markers and span boundaries are not
-durable session history. `/clear` does not delete old SQLite rows; it advances
-the durable history epoch so restoration selects only the current epoch.
+`/cover` adds a transient marker and moves the boundary to the current point,
+so the conversation through the immediately preceding message is omitted from
+later model requests. Calling it again moves the boundary forward. `/uncover`
+adds its own marker and clears the boundary, restoring the full conversation to
+model context. The markers and boundary are not durable session history.
+`/clear` does not delete old SQLite rows; it advances the durable history epoch
+so restoration selects only the current epoch.
 
 Checkpoint: explain why `Transcript::model_history()` returns an owning value
 while `Transcript::view()` returns a borrowed span.
@@ -768,7 +772,7 @@ Projection omits:
 
 - notices and errors;
 - the current open streaming entry;
-- entries inside the closed off-record span;
+- entries before the optional cover boundary;
 - failed prompts;
 - incomplete/cancelled character history.
 
@@ -1145,7 +1149,7 @@ HTTP, filesystem, and signal-handling details.
 
 The download route and filesystem mirror share
 `session_markdown()`. It escapes heading syntax, includes known local
-timestamps, preserves entry Markdown verbatim, omits transient off-record
+timestamps, preserves entry Markdown verbatim, omits transient cover
 markers, and suppresses repeated multicast prompts. The HTTP route obtains an
 owner-thread snapshot for a live session or restores stored history for a
 closed one; `SessionMirror` writes the same bytes directly to disk.
@@ -1293,7 +1297,7 @@ would force the main view back to Chat.
 1. `/clear` is rejected while the controller is busy.
 2. `SessionJournal::clear()` verifies no turn is started and increments the
    durable `history_epoch` in a transaction.
-3. `Transcript::clear()` removes current in-memory entries, resets off-record
+3. `Transcript::clear()` removes current in-memory entries, resets cover
    state, and increments its local epoch/revision.
 4. A snapshot replaces browser state.
 5. `mirror_if_changed()` sees the new revision and replaces the Markdown file
@@ -1416,7 +1420,7 @@ What is deliberately not durable:
 
 - reasoning text;
 - live streaming status;
-- off-record runtime markers/span;
+- cover runtime markers/boundary;
 - notice presentation state;
 - background multicast output before it becomes foreground.
 

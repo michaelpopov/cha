@@ -77,64 +77,22 @@ TEST(ModelContext, OmitsNoticesErrorsFailedPromptsAndIncompleteCharacterEntries)
         (std::vector<ModelMessage>{human("Current request")}));
 }
 
-TEST(ModelContext, OmitsTheClosedOffrecordSpan) {
+TEST(ModelContext, OmitsEntriesBeforeTheCoverBoundary) {
     const std::vector<TranscriptEntry> entries{
-        test::human_entry(1, {"human", "You"}, {"assistant", "Assistant"}, "Before", 1),
-        make_hide_on_marker(2),
-        test::human_entry(3, {"human", "You"}, {"assistant", "Assistant"}, "Hidden", 2),
-        make_character_entry(4, "assistant", "Assistant", "Hidden answer", EntryStatus::complete, 2),
-        make_hide_marker(5),
-        test::human_entry(6, {"human", "You"}, {"assistant", "Assistant"}, "After", 3),
+        test::human_entry(1, {"human", "You"}, {"assistant", "Assistant"}, "Hidden", 1),
+        make_character_entry(2, "assistant", "Assistant", "Hidden answer", EntryStatus::complete, 1),
+        make_cover_marker(3),
+        test::human_entry(4, {"human", "You"}, {"assistant", "Assistant"}, "After", 2),
     };
 
     EXPECT_EQ(
         project_model_context(
             entries,
             std::nullopt,
-            OffrecordSpan{.begin = 2, .end = 5},
+            3,
             {},
             "assistant"),
-        (std::vector<ModelMessage>{
-            human("Before"),
-            human("After"),
-        }));
-}
-
-TEST(ModelContext, AnOpenOffrecordSpanExcludesNothing) {
-    const std::vector<TranscriptEntry> entries{
-        test::human_entry(1, {"human", "You"}, {"assistant", "Assistant"}, "Before", 1),
-        make_hide_on_marker(2),
-        test::human_entry(3, {"human", "You"}, {"assistant", "Assistant"}, "After opening", 2),
-    };
-
-    EXPECT_EQ(
-        project_model_context(
-            entries,
-            std::nullopt,
-            OffrecordSpan{.begin = 2, .end = std::nullopt},
-            {},
-            "assistant"),
-        (std::vector<ModelMessage>{
-            human("Before"),
-            human("After opening"),
-        }));
-}
-
-TEST(ModelContext, ProjectsOnlyEntriesOutsideAClosedOffrecordSpan) {
-    const std::vector<TranscriptEntry> entries{
-        test::human_entry(1, {"human", "You"}, {"one", "One"}, "Question", 1),
-        make_character_entry(2, "one", "One", "One answer", EntryStatus::complete, 1),
-        test::human_entry(3, {"human", "You"}, {"two", "Two"}, "Question", 2),
-    };
-
-    EXPECT_EQ(
-        project_model_context(
-            entries,
-            std::nullopt,
-            OffrecordSpan{.begin = 1, .end = 3},
-            {},
-            "two"),
-        (std::vector<ModelMessage>{human("Question")}));
+        (std::vector<ModelMessage>{human("After")}));
 }
 
 TEST(ModelContext, ImmutableInputKeepsATrailingSharedBlockSeparateFromPrompt) {
@@ -291,33 +249,26 @@ TEST(ModelContext, SubmissionTimeChangesOnlyTheFinalMessage) {
     EXPECT_EQ(second.back().content, "from You at 2023-11-14T22:13:24Z:\nCurrent question");
 }
 
-TEST(ModelContext, SplicesHiddenTurnsOutOfOneSharedHistoryBlock) {
+TEST(ModelContext, CoverOmitsAnEarlierSharedHistoryPrefix) {
     const std::vector<TranscriptEntry> entries{
         test::human_entry(1, {"human", "You"}, {"other", "Other"}, "First question", 1),
         make_character_entry(2, "other", "Other", "First answer", EntryStatus::complete, 1),
-        make_hide_on_marker(3),
-        test::human_entry(4, {"human", "You"}, {"assistant", "Assistant"}, "Hidden question", 2),
-        make_character_entry(5, "assistant", "Assistant", "Hidden answer", EntryStatus::complete, 2),
-        make_hide_marker(6),
-        test::human_entry(7, {"human", "You"}, {"other", "Other"}, "Second question", 3),
-        make_character_entry(8, "other", "Other", "Second answer", EntryStatus::complete, 3),
-        test::human_entry(9, {"human", "You"}, {"assistant", "Assistant"}, "Current", 4),
+        make_cover_marker(3),
+        test::human_entry(4, {"human", "You"}, {"other", "Other"}, "Second question", 2),
+        make_character_entry(5, "other", "Other", "Second answer", EntryStatus::complete, 2),
+        test::human_entry(6, {"human", "You"}, {"assistant", "Assistant"}, "Current", 3),
     };
 
     EXPECT_EQ(
         project_model_context(
             entries,
             std::nullopt,
-            OffrecordSpan{.begin = 3, .end = 6},
+            3,
             {},
             "assistant"),
         (std::vector<ModelMessage>{
             {ModelRole::user,
              "Shared chat history (JSONL):\n"
-             R"({"kind":"human","speaker":"You","addressed_to":"Other","text":"First question"})"
-             "\n"
-             R"({"kind":"character","speaker":"Other","text":"First answer"})"
-             "\n"
              R"({"kind":"human","speaker":"You","addressed_to":"Other","text":"Second question"})"
              "\n"
              R"({"kind":"character","speaker":"Other","text":"Second answer"})"},
@@ -325,20 +276,19 @@ TEST(ModelContext, SplicesHiddenTurnsOutOfOneSharedHistoryBlock) {
         }));
 }
 
-TEST(ModelContext, SpanCanHideAllEarlierTurnsWithoutHidingTheCurrentPrompt) {
+TEST(ModelContext, CoverHidesAllEarlierTurnsWithoutHidingTheCurrentPrompt) {
     const std::vector<TranscriptEntry> entries{
         test::human_entry(1, {"human", "You"}, {"assistant", "Assistant"}, "Earlier", 1),
         make_character_entry(2, "assistant", "Assistant", "Earlier answer", EntryStatus::complete, 1),
-        make_hide_on_marker(3),
-        make_hide_marker(4),
-        test::human_entry(5, {"human", "You"}, {"assistant", "Assistant"}, "Current", 2),
+        make_cover_marker(3),
+        test::human_entry(4, {"human", "You"}, {"assistant", "Assistant"}, "Current", 2),
     };
 
     EXPECT_EQ(
         project_model_context(
             entries,
             std::nullopt,
-            OffrecordSpan{.begin = 1, .end = 5},
+            3,
             "System",
             "assistant"),
         (std::vector<ModelMessage>{
@@ -347,7 +297,7 @@ TEST(ModelContext, SpanCanHideAllEarlierTurnsWithoutHidingTheCurrentPrompt) {
         }));
 }
 
-TEST(ModelContext, CombinesSpanExclusionWithFailedAndCancelledTurnRules) {
+TEST(ModelContext, CombinesCoverExclusionWithFailedAndCancelledTurnRules) {
     const std::vector<TranscriptEntry> entries{
         test::human_entry(1, {"human", "You"}, {"assistant", "Assistant"}, "Hidden", 1),
         test::human_entry(2, {"human", "You"}, {"assistant", "Assistant"}, "Failed", 2),
@@ -361,7 +311,7 @@ TEST(ModelContext, CombinesSpanExclusionWithFailedAndCancelledTurnRules) {
         project_model_context(
             entries,
             std::nullopt,
-            OffrecordSpan{.begin = 1, .end = 2},
+            2,
             {},
             "assistant"),
         (std::vector<ModelMessage>{

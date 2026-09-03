@@ -1011,41 +1011,31 @@ TEST(SessionController, OwnsClearAndInformationSemantics) {
 
 }
 
-TEST(SessionController, KeepsOffrecordMarkersOutOfTheSessionDatabase) {
+TEST(SessionController, KeepsCoverMarkersOutOfTheSessionDatabase) {
     TemporaryJournal temporary;
     auto controller = test::from_test_backends(
         test::one_backend(std::make_unique<ScriptedBackend>()),
         temporary.path,
         notifier());
 
-    const ControllerUpdate no_span = controller->extend_offrecord();
-    EXPECT_EQ(no_span.notice, "No off-record span to extend");
-    EXPECT_TRUE(no_span.input_consumed);
-    const ControllerUpdate opened = controller->open_offrecord();
-    EXPECT_TRUE(has_state_update(opened));
-    EXPECT_TRUE(opened.input_consumed);
-    EXPECT_FALSE(opened.notice);
-    const ControllerUpdate already_open = controller->open_offrecord();
-    EXPECT_EQ(already_open.notice,
-              "Already off the record; use /hide-off first");
-    EXPECT_TRUE(already_open.input_consumed);
-    EXPECT_TRUE(has_state_update(controller->extend_offrecord()));
-    EXPECT_TRUE(has_state_update(controller->restore_offrecord()));
-    const ControllerUpdate nothing_to_restore = controller->restore_offrecord();
-    EXPECT_EQ(nothing_to_restore.notice, "Nothing to restore");
-    EXPECT_TRUE(nothing_to_restore.input_consumed);
+    const ControllerUpdate nothing_to_uncover = controller->uncover_conversation();
+    EXPECT_EQ(nothing_to_uncover.notice, "Nothing to uncover");
+    EXPECT_TRUE(nothing_to_uncover.input_consumed);
+    EXPECT_TRUE(has_state_update(controller->cover_conversation()));
+    EXPECT_TRUE(has_state_update(controller->cover_conversation()));
+    EXPECT_TRUE(has_state_update(controller->uncover_conversation()));
 
     EXPECT_EQ(
         copy_entries(controller->view().transcript),
         (std::vector<TranscriptEntry>{
-            make_hide_on_marker(1),
-            make_hide_marker(2),
-            make_hide_off_marker(3),
+            make_cover_marker(1),
+            make_cover_marker(2),
+            make_uncover_marker(3),
         }));
     EXPECT_TRUE(load_transcript_entries(temporary.path).empty());
 }
 
-TEST(SessionController, ExcludesAHiddenTurnFromTheNextRequestAndRestoresItLater) {
+TEST(SessionController, CoversEarlierTurnsForTheNextRequestAndUncoversThemLater) {
     TemporaryJournal temporary;
     auto backend = std::make_unique<ScriptedBackend>(
         GenerationResult{}, std::vector<std::string>{"Answer"});
@@ -1055,26 +1045,30 @@ TEST(SessionController, ExcludesAHiddenTurnFromTheNextRequestAndRestoresItLater)
         temporary.path,
         notifier());
 
-    (void)controller->submit_prompt("operator", "Visible");
+    (void)controller->submit_prompt("operator", "First");
     receive_until_idle(*controller);
-    (void)controller->open_offrecord();
-    (void)controller->submit_prompt("operator", "Hidden");
+    (void)controller->cover_conversation();
+    (void)controller->submit_prompt("operator", "After first cover");
     receive_until_idle(*controller);
-    (void)controller->extend_offrecord();
-    (void)controller->submit_prompt("operator", "Current");
+    (void)controller->cover_conversation();
+    (void)controller->submit_prompt("operator", "After second cover");
     receive_until_idle(*controller);
 
     ASSERT_EQ(backend_view->model_contexts.size(), 3U);
     EXPECT_EQ(
         context_without_timestamp_metadata(
+            backend_view->inputs[1], backend_view->system_prompt),
+        (std::vector<ModelMessage>{
+            operator_prompt("After first cover"),
+        }));
+    EXPECT_EQ(
+        context_without_timestamp_metadata(
             backend_view->inputs[2], backend_view->system_prompt),
         (std::vector<ModelMessage>{
-            operator_prompt("Visible"),
-            {ModelRole::assistant, "Answer"},
-            operator_prompt("Current"),
+            operator_prompt("After second cover"),
         }));
 
-    (void)controller->restore_offrecord();
+    (void)controller->uncover_conversation();
     (void)controller->submit_prompt("operator", "Restored");
     receive_until_idle(*controller);
 
@@ -1083,17 +1077,17 @@ TEST(SessionController, ExcludesAHiddenTurnFromTheNextRequestAndRestoresItLater)
         context_without_timestamp_metadata(
             backend_view->inputs[3], backend_view->system_prompt),
         (std::vector<ModelMessage>{
-            operator_prompt("Visible"),
+            operator_prompt("First"),
             {ModelRole::assistant, "Answer"},
-            operator_prompt("Hidden"),
+            operator_prompt("After first cover"),
             {ModelRole::assistant, "Answer"},
-            operator_prompt("Current"),
+            operator_prompt("After second cover"),
             {ModelRole::assistant, "Answer"},
             operator_prompt("Restored"),
         }));
 }
 
-TEST(SessionController, RejectsOffrecordCommandsWhileActiveAndClearResetsTheSpan) {
+TEST(SessionController, RejectsCoverCommandsWhileActiveAndClearResetsTheBoundary) {
     TemporaryJournal busy_temporary;
     auto busy_controller = test::from_test_backends(
         test::one_backend(std::make_unique<ScriptedBackend>(
@@ -1102,9 +1096,8 @@ TEST(SessionController, RejectsOffrecordCommandsWhileActiveAndClearResetsTheSpan
         notifier());
     (void)busy_controller->submit_prompt("operator", "Question");
 
-    EXPECT_EQ(busy_controller->open_offrecord().notice, generation_in_progress_notice);
-    EXPECT_EQ(busy_controller->extend_offrecord().notice, generation_in_progress_notice);
-    EXPECT_EQ(busy_controller->restore_offrecord().notice, generation_in_progress_notice);
+    EXPECT_EQ(busy_controller->cover_conversation().notice, generation_in_progress_notice);
+    EXPECT_EQ(busy_controller->uncover_conversation().notice, generation_in_progress_notice);
     busy_controller->shutdown();
 
     TemporaryJournal clear_temporary;
@@ -1112,9 +1105,9 @@ TEST(SessionController, RejectsOffrecordCommandsWhileActiveAndClearResetsTheSpan
         test::one_backend(std::make_unique<ScriptedBackend>()),
         clear_temporary.path,
         notifier());
-    EXPECT_TRUE(has_state_update(clear_controller->open_offrecord()));
+    EXPECT_TRUE(has_state_update(clear_controller->cover_conversation()));
     EXPECT_EQ(clear_controller->clear_transcript().notice, "Transcript cleared");
-    EXPECT_EQ(clear_controller->extend_offrecord().notice, "No off-record span to extend");
+    EXPECT_EQ(clear_controller->uncover_conversation().notice, "Nothing to uncover");
     EXPECT_TRUE(clear_controller->view().transcript.entries.empty());
 }
 
@@ -1214,17 +1207,7 @@ TEST(SessionController, ResolvesMulticastHandlesAndTreatsAnEmptyListAsAllCharact
     EXPECT_EQ(two_view->inputs.size(), 1U);
 }
 
-TEST(SessionController, MulticastRefusesOffrecordAndStopPreventsNextActivation) {
-    TemporaryJournal span_temporary;
-    auto span_controller = test::from_test_backends(
-        test::one_backend(std::make_unique<ScriptedBackend>()),
-        span_temporary.path,
-        notifier());
-    (void)span_controller->open_offrecord();
-    EXPECT_EQ(
-        span_controller->start_multicast("operator", "Question", {"Guide"}).notice,
-        "Cannot start multicast while an off-record span is active");
-
+TEST(SessionController, StopPreventsNextMulticastActivation) {
     TemporaryJournal stop_temporary;
     auto first = std::make_unique<ScriptedBackend>(
         GenerationResult{}, std::vector<std::string>{}, true, "one-id", "One");
@@ -1244,11 +1227,9 @@ TEST(SessionController, MulticastRefusesOffrecordAndStopPreventsNextActivation) 
               generation_in_progress_notice);
     EXPECT_EQ(stop_controller->clear_transcript().notice,
               generation_in_progress_notice);
-    EXPECT_EQ(stop_controller->open_offrecord().notice,
+    EXPECT_EQ(stop_controller->cover_conversation().notice,
               generation_in_progress_notice);
-    EXPECT_EQ(stop_controller->extend_offrecord().notice,
-              generation_in_progress_notice);
-    EXPECT_EQ(stop_controller->restore_offrecord().notice,
+    EXPECT_EQ(stop_controller->uncover_conversation().notice,
               generation_in_progress_notice);
     EXPECT_EQ(
         stop_controller->start_multicast("operator", "Again", {"One"}).notice,
@@ -2184,9 +2165,9 @@ TEST(SessionController, CommandsRequestSnapshotsAndNoticesAloneDoNot) {
     EXPECT_TRUE(requires_snapshot(controller->set_default_character("Guide")));
     EXPECT_TRUE(requires_snapshot(controller->set_default_character_by_id("guide-id")));
     EXPECT_TRUE(requires_snapshot(controller->clear_transcript()));
-    EXPECT_TRUE(requires_snapshot(controller->open_offrecord()));
-    EXPECT_TRUE(requires_snapshot(controller->extend_offrecord()));
-    EXPECT_TRUE(requires_snapshot(controller->restore_offrecord()));
+    EXPECT_TRUE(requires_snapshot(controller->cover_conversation()));
+    EXPECT_TRUE(requires_snapshot(controller->cover_conversation()));
+    EXPECT_TRUE(requires_snapshot(controller->uncover_conversation()));
 
     // Nothing to stop is a notice only.
     EXPECT_FALSE(has_state_update(controller->request_stop()));

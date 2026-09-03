@@ -78,9 +78,8 @@ public:
         std::string text,
         std::string handle = {});
     [[nodiscard]] ControllerUpdate clear_transcript();
-    [[nodiscard]] ControllerUpdate open_offrecord();
-    [[nodiscard]] ControllerUpdate extend_offrecord();
-    [[nodiscard]] ControllerUpdate restore_offrecord();
+    [[nodiscard]] ControllerUpdate cover_conversation();
+    [[nodiscard]] ControllerUpdate uncover_conversation();
     // The web text grammar submits handles; resolution and all target
     // validation stay here with the forum's authoritative character set.
     [[nodiscard]] ControllerUpdate start_multicast(

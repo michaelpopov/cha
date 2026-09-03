@@ -159,6 +159,64 @@ describe('live chat', () => {
     expect(articles[1].querySelector('.cha-message-time')).toBeNull();
   });
 
+  it('shades the active covered prefix and removes the shading after uncover', async () => {
+    const events = drivableEvents();
+    const human = (id: number, text: string): SessionSnapshot['transcript'][number] => ({
+      id, kind: 'human', participant_id: 'guest', display_name: 'Guest',
+      addressed_to: 'assistant', addressed_to_name: 'Assistant',
+      text, status: 'complete', created_at: null,
+    });
+    const character = (id: number, text: string): SessionSnapshot['transcript'][number] => ({
+      id, kind: 'character', participant_id: 'assistant', display_name: 'Assistant',
+      addressed_to: '', addressed_to_name: '',
+      text, status: 'complete', created_at: null,
+    });
+    const marker = (
+      id: number,
+      name: 'cover' | 'uncover',
+    ): SessionSnapshot['transcript'][number] => ({
+      id, kind: 'notice', participant_id: '', display_name: name,
+      addressed_to: '', addressed_to_name: '',
+      text: '', status: 'complete', created_at: null,
+    });
+    const firstCover = [
+      human(1, 'Earlier question'),
+      character(2, 'Earlier answer'),
+      marker(3, 'cover'),
+      human(4, 'After cover'),
+    ];
+
+    render(<App client={fixtureClient()} connectSessionEvents={events.connect} />);
+    await attachInitial(events, { ...snapshotFixture, transcript: firstCover });
+
+    let covered = screen.getByRole('region', { name: 'Covered conversation' });
+    expect(within(covered).getByText('Earlier question')).toBeInTheDocument();
+    expect(within(covered).getByText('Earlier answer')).toBeInTheDocument();
+    expect(within(covered).queryByText('After cover')).not.toBeInTheDocument();
+    expect(document.querySelectorAll('.cha-message.is-notice')).toHaveLength(0);
+
+    const secondCover = [...firstCover, marker(5, 'cover'), human(6, 'After second cover')];
+    act(() => events.handlers[0].onSnapshot({
+      ...snapshotFixture,
+      transcript: secondCover,
+    }));
+
+    covered = screen.getByRole('region', { name: 'Covered conversation' });
+    expect(within(covered).getByText('After cover')).toBeInTheDocument();
+    expect(within(covered).queryByText('After second cover')).not.toBeInTheDocument();
+    expect(document.querySelectorAll('.cha-message.is-notice')).toHaveLength(0);
+
+    act(() => events.handlers[0].onSnapshot({
+      ...snapshotFixture,
+      transcript: [...secondCover, marker(7, 'uncover')],
+    }));
+
+    expect(screen.queryByRole('region', { name: 'Covered conversation' }))
+      .not.toBeInTheDocument();
+    expect(screen.getByText('Earlier question')).toBeInTheDocument();
+    expect(document.querySelectorAll('.cha-message.is-notice')).toHaveLength(0);
+  });
+
   it('shows a multicast prompt once while keeping every character response', async () => {
     const events = drivableEvents();
     render(<App client={fixtureClient()} connectSessionEvents={events.connect} />);

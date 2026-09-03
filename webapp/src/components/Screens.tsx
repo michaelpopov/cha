@@ -83,12 +83,24 @@ function visibleTranscriptEntries(entries: SessionSnapshot['transcript']) {
   // not reset this comparison, so only the first copy is shown to the reader.
   let lastPrompt: { participantId: string; text: string } | null = null;
   return entries.filter((entry) => {
+    if (entry.kind === 'notice' && entry.text === '') return false;
     if (entry.kind !== 'human') return true;
     const repeated = lastPrompt?.participantId === entry.participant_id
       && lastPrompt.text === entry.text;
     lastPrompt = { participantId: entry.participant_id, text: entry.text };
     return !repeated;
   });
+}
+
+function activeCoverMarkerId(entries: SessionSnapshot['transcript']): number | null {
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index];
+    const marker = entry.kind === 'notice'
+      && entry.text === ''
+      && (entry.display_name === 'cover' || entry.display_name === 'uncover');
+    if (marker) return entry.display_name === 'cover' ? entry.id : null;
+  }
+  return null;
 }
 
 // A character speaks in its own hand so a reader can tell one voice from another
@@ -105,6 +117,43 @@ function voiceClasses(appearance: CharacterAppearance | undefined): string {
   if (appearance.size !== 'normal') classes.push(`cha-scale-${appearance.size}`);
   if (appearance.text_color !== 'normal') classes.push(`cha-color-${appearance.text_color}`);
   return classes.length > 0 ? ` ${classes.join(' ')}` : '';
+}
+
+function TranscriptMessage({
+  entry,
+  appearance,
+}: {
+  entry: SessionSnapshot['transcript'][number];
+  appearance: CharacterAppearance | undefined;
+}) {
+  return (
+    <article
+      className={`cha-message is-${entry.kind}`}
+      data-status={entry.status}
+    >
+      {entry.kind !== 'human' && entry.display_name && (
+        <div className="cha-speaker">{entry.display_name}</div>
+      )}
+      <div
+        className={`cha-message-text${entry.kind === 'character'
+          ? voiceClasses(appearance)
+          : ''}`}
+      >
+        {visibleEntryText(entry.kind, entry.text)}
+      </div>
+      {entry.status === 'cancelled' && <div className="cha-entry-status">Stopped</div>}
+      {entry.status === 'failed' && <div className="cha-entry-status">Failed</div>}
+      {entry.created_at !== null && (
+        <time
+          className="cha-message-time"
+          dateTime={new Date(entry.created_at * 1000).toISOString()}
+          title={new Date(entry.created_at * 1000).toLocaleString()}
+        >
+          {formatEntryTime(entry.created_at)}
+        </time>
+      )}
+    </article>
+  );
 }
 
 // A final snapshot arrives over a healthy stream, so a session ending is not a
@@ -162,6 +211,14 @@ export function ChatScreen({
     () => new Map((snapshot?.characters ?? []).map(({ id, appearance }) => [id, appearance])),
     [snapshot?.characters],
   );
+  const transcriptEntries = snapshot ? visibleTranscriptEntries(snapshot.transcript) : [];
+  const coverMarkerId = snapshot ? activeCoverMarkerId(snapshot.transcript) : null;
+  const coveredEntries = coverMarkerId === null
+    ? []
+    : transcriptEntries.filter(({ id }) => id < coverMarkerId);
+  const uncoveredEntries = coverMarkerId === null
+    ? transcriptEntries
+    : transcriptEntries.filter(({ id }) => id > coverMarkerId);
 
   // A different conversation starts at its own end rather than inheriting where
   // the reader had left the previous one.
@@ -291,34 +348,23 @@ export function ChatScreen({
             <p>Start the conversation below.</p>
           </div>
         )}
-        {snapshot && visibleTranscriptEntries(snapshot.transcript).map((entry) => (
-          <article
-            className={`cha-message is-${entry.kind}`}
-            data-status={entry.status}
+        {coveredEntries.length > 0 && (
+          <section aria-label="Covered conversation" className="cha-covered">
+            {coveredEntries.map((entry) => (
+              <TranscriptMessage
+                appearance={voices.get(entry.participant_id)}
+                entry={entry}
+                key={entry.id}
+              />
+            ))}
+          </section>
+        )}
+        {uncoveredEntries.map((entry) => (
+          <TranscriptMessage
+            appearance={voices.get(entry.participant_id)}
+            entry={entry}
             key={entry.id}
-          >
-            {entry.kind !== 'human' && entry.display_name && (
-              <div className="cha-speaker">{entry.display_name}</div>
-            )}
-            <div
-              className={`cha-message-text${entry.kind === 'character'
-                ? voiceClasses(voices.get(entry.participant_id))
-                : ''}`}
-            >
-              {visibleEntryText(entry.kind, entry.text)}
-            </div>
-            {entry.status === 'cancelled' && <div className="cha-entry-status">Stopped</div>}
-            {entry.status === 'failed' && <div className="cha-entry-status">Failed</div>}
-            {entry.created_at !== null && (
-              <time
-                className="cha-message-time"
-                dateTime={new Date(entry.created_at * 1000).toISOString()}
-                title={new Date(entry.created_at * 1000).toLocaleString()}
-              >
-                {formatEntryTime(entry.created_at)}
-              </time>
-            )}
-          </article>
+          />
         ))}
         {generation?.active && (
           <div className="cha-generation">

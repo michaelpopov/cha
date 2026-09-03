@@ -74,12 +74,10 @@ CommandResult handle_text_input(
     switch (command.kind) {
     case CommandKind::clear:
         result.session = controller.clear_transcript(); break;
-    case CommandKind::hide_on:
-        result.session = controller.open_offrecord(); break;
-    case CommandKind::hide:
-        result.session = controller.extend_offrecord(); break;
-    case CommandKind::hide_off:
-        result.session = controller.restore_offrecord(); break;
+    case CommandKind::cover:
+        result.session = controller.cover_conversation(); break;
+    case CommandKind::uncover:
+        result.session = controller.uncover_conversation(); break;
     case CommandKind::mcast:
         return result;
     case CommandKind::session_style:

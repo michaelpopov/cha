@@ -20,9 +20,8 @@ struct CommandDescriptor {
 
 constexpr std::array descriptors{
     CommandDescriptor{"/clear", CommandKind::clear},
-    CommandDescriptor{"/hide-on", CommandKind::hide_on},
-    CommandDescriptor{"/hide", CommandKind::hide},
-    CommandDescriptor{"/hide-off", CommandKind::hide_off},
+    CommandDescriptor{"/cover", CommandKind::cover},
+    CommandDescriptor{"/uncover", CommandKind::uncover},
     CommandDescriptor{"/mcast", CommandKind::mcast},
     CommandDescriptor{"/info", CommandKind::info},
     CommandDescriptor{"/characters", CommandKind::characters},

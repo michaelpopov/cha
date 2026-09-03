@@ -561,7 +561,7 @@ TEST(ReasoningIntegration, ExcludesNonStreamingReasoningFromTranscript) {
     EXPECT_EQ(restored.back().text, "Non-stream answer");
 }
 
-TEST(OffrecordIntegration, OmitsHiddenTurnsFromTheSerializedNextRequest) {
+TEST(CoverIntegration, OmitsCoveredTurnsFromTheSerializedNextRequest) {
     LobbySetup lobby = lobby_setup();
     std::vector<CharacterDefinition>& definitions = lobby.definitions;
     definitions.resize(1);
@@ -584,10 +584,10 @@ TEST(OffrecordIntegration, OmitsHiddenTurnsFromTheSerializedNextRequest) {
         system_prompt = current_system_prompt("Cheburashka");
         (void)controller->submit_prompt(lobby.author_id, "Visible question");
         run_until_idle(*controller);
-        EXPECT_TRUE(has_state_update(controller->open_offrecord()));
+        EXPECT_TRUE(has_state_update(controller->cover_conversation()));
         (void)controller->submit_prompt(lobby.author_id, "Hidden question");
         run_until_idle(*controller);
-        EXPECT_TRUE(has_state_update(controller->extend_offrecord()));
+        EXPECT_TRUE(has_state_update(controller->cover_conversation()));
         (void)controller->submit_prompt(lobby.author_id, "Current question");
         run_until_idle(*controller);
     }
@@ -598,8 +598,6 @@ TEST(OffrecordIntegration, OmitsHiddenTurnsFromTheSerializedNextRequest) {
         Json::parse(request_body(server.requests().back()));
     EXPECT_EQ(messages_without_timestamps(current_body["messages"]), Json::array({
         Json{{"role", "system"}, {"content", system_prompt}},
-        Json{{"role", "user"}, {"content", "from " + lobby.author_name + ":\nVisible question"}},
-        Json{{"role", "assistant"}, {"content", "Visible answer"}},
         Json{{"role", "user"}, {"content", "from " + lobby.author_name + ":\nCurrent question"}},
     }));
 

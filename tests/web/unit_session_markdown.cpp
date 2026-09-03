@@ -93,14 +93,14 @@ TEST(SessionMarkdown, ExportsKnownTimestampsInLocalTime) {
         R"(## Reader\n\*[A-Z][a-z]+ [0-9]{2}, [0-9]{4}, [0-9]{2}:[0-9]{2} [A-Z]+\*\n\nWhen was this\?\n)")));
 }
 
-TEST(SessionMarkdown, OmitsTransientOffRecordMarkers) {
+TEST(SessionMarkdown, OmitsTransientCoverMarkers) {
     TranscriptEntry response = make_character_entry(
         2, "guide", "Guide", "Off the record.", EntryStatus::complete, 1);
     response.created_at = 0;
     const std::vector<TranscriptEntry> entries{
-        make_hide_on_marker(1),
+        make_cover_marker(1),
         std::move(response),
-        make_hide_off_marker(3),
+        make_uncover_marker(3),
     };
 
     EXPECT_EQ(session_markdown("Plan", entries),

@@ -16,7 +16,7 @@ project.
 | `session_identity.h` | The stable forum/session identity shared across provider, session, workspace, and web boundaries. |
 | `character.*` | Discovery-safe `CharacterMetadata`, including the closed appearance vocabulary used by frontends. |
 | `persona.h` | `Persona` and the immutable/shared roster forms used for human authorship and prompt context. |
-| `transcript.h` | Entry and request IDs, `EntryKind`, `EntryStatus`, `TranscriptEntry`, `OffrecordSpan`, factories, validators, the non-owning `TranscriptView`, `ModelHistory`, the reserved null-target `-` handle/name constants, and the `Transcript` container. |
+| `transcript.h` | Entry and request IDs, `EntryKind`, `EntryStatus`, `TranscriptEntry`, factories, validators, the non-owning `TranscriptView`, `ModelHistory`, the reserved null-target `-` handle/name constants, and the `Transcript` container. |
 | `transcript.cpp` | Factory construction, validation rules, and live-state mutation and read operations. |
 
 ## The entry model
@@ -39,7 +39,7 @@ Four kinds and four statuses combine only in these ways:
 | --- | --- | --- |
 | `human` | `complete` | Must name the character it addresses. |
 | `character` | `streaming`, `complete`, `cancelled` | Never `failed` — a failed turn produces an `error` entry instead. Terminal character entries require non-empty answer `text`. |
-| `notice` | `complete` | Session messages; no participant identity. Ordinary notices are labelled `"System"`; the off-record markers are the only notices with another display name. |
+| `notice` | `complete` | Session messages; no participant identity. Ordinary notices are labelled `"System"`; cover markers are the only notices with another display name. |
 | `error` | `failed` | May carry the participant it concerns and the request it ends. |
 
 Provider reasoning is not transcript content. The session layer holds it only
@@ -57,9 +57,8 @@ the entry reaches the chat layer; the clean `text` is stored and
 rendered unchanged. The transcript performs no session-membership lookup.
 Model-context projection, outside this layer,
 adds `from <display name>:` only when it makes an ordinary `persona` message.
-`make_hide_on_marker`, `make_hide_marker`, and `make_hide_off_marker` build the
-off-record markers the same way: notices with empty text whose display names
-are `"hide-on"`, `"hide"`, and `"hide-off"`.
+`make_cover_marker` and `make_uncover_marker` build transient notices with empty
+text and display names `"cover"` and `"uncover"`.
 
 ## Validation levels
 
@@ -95,45 +94,27 @@ Generation workers never read it; the controller captures an immutable
 | `append_answer` | Appends answer text to the open entry only. |
 | `finish_entry` | Closes it as `complete` or `cancelled`, re-checking the content rules. |
 | `discard_entry` | Drops the open entry entirely — used when a turn fails mid-stream. |
-| `clear` | Empties the visible history, resets the off-record span, and bumps `history_epoch`. |
-| `replace_entries` | Installs a restored transcript, validating order and terminality; resets the off-record span and bumps `history_epoch`. |
-| `open_offrecord` | Opens the span at the current boundary and appends `[hide-on]`. |
-| `extend_offrecord` | Sets or moves the span's end to the current boundary and appends `[hide]`. |
-| `restore_offrecord` | Clears both bounds and appends `[hide-off]`. |
+| `clear` | Empties the visible history, resets the cover boundary, and bumps `history_epoch`. |
+| `replace_entries` | Installs a restored transcript, validating order and terminality; resets the cover boundary and bumps `history_epoch`. |
+| `cover` | Hides every entry before the current boundary from model context and appends `[cover]`. |
+| `uncover` | Clears the boundary and appends `[uncover]`. |
 
 Every presentation-changing mutation bumps `revision`, and every entry ID must
 be strictly greater than the last. Renderers use `revision` to detect change
 and `history_epoch` to detect that everything they had drawn is now invalid.
-The marker-producing off-record mutations bump `revision` for their marker
+The marker-producing cover mutations bump `revision` for their marker
 like any other insertion, but leave `history_epoch` alone: nothing already
 drawn becomes invalid.
 
-### The off-record span
+### The cover boundary
 
-`OffrecordSpan` is a half-open range of entry IDs excluded from model context
-while remaining fully visible on screen. It lives in `Transcript` because that
-is the one place that owns both the bounds and the entries they describe.
-`model_history()` copies both together in one operation for immutable
-backend input. `TranscriptView` has no span field—renderers never need the
-bounds, only the marker entries already in `entries`.
+`covered_until` is an optional entry-ID boundary. While set, every earlier
+entry remains visible on screen but is excluded from model context.
+`model_history()` copies the boundary with the entries for immutable backend
+input. Calling `cover` again moves the boundary forward; `uncover` clears it.
 
-Bounds are **boundary values, not entry references**: `begin` and `end` are
-numeric cuts one past the transcript tail, which stay meaningful across the
-gaps entry IDs are allowed to have. `contains()` requires both bounds, so a
-span with only `begin` set hides nothing.
-
-The three marker-producing mutations each take the ID of the marker to append
-and return whether the command precondition held. On success, checking the precondition, capturing
-the boundary, assigning the one bound, and appending the marker all happen in
-one method without external interleaving; a `false` result changes neither
-bounds nor entries, so the caller can allocate the entry ID only once the
-command has actually applied. The boundary is captured *before* the marker is
-appended, which is why `[hide-on]` falls inside the span it opens and `[hide]`
-falls outside the span it closes. Both are notices, and notices never reach
-model context in any case.
-
-Neither the bounds nor the markers are persisted, and `clear()` and
-`replace_entries()` reset the bounds so no caller has to remember to.
+The boundary and markers are not persisted. `clear()` and `replace_entries()`
+also reset the boundary.
 
 ### Streaming entry lifecycle
 
@@ -146,7 +127,7 @@ stateDiagram-v2
     Open --> Closed: discard_entry, entry removed
     note right of Open
         While open: no add_entry, no clear,
-        no replace_entries, no off-record mutation.
+        no replace_entries, no cover mutation.
     end note
 ```
 
@@ -193,8 +174,8 @@ protocol, or terminal concepts.
 ## Tests
 
 `tests/chat/unit_transcript.cpp` covers the factories, every
-validation rule, the streaming lifecycle, ID ordering, the off-record bound
-states and their markers, immutable model-history capture, and
+validation rule, the streaming lifecycle, ID ordering, the cover boundary and
+its markers, immutable model-history capture, and
 view borrowing and open-entry reads.
 
 The same file also tests `SessionJournal` and the session database, on

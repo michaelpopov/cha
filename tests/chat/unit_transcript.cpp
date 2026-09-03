@@ -211,81 +211,80 @@ TEST(Transcript, ReplacesAndClearsEntries) {
     EXPECT_EQ(transcript.view().history_epoch, initial_epoch + 2);
 }
 
-TEST(Transcript, ManagesOffrecordBoundsAndTransientMarkersAtomically) {
+TEST(Transcript, ManagesCoverBoundaryAndTransientMarkersAtomically) {
     Transcript transcript;
 
-    EXPECT_THROW((void)transcript.open_offrecord(0), std::invalid_argument);
+    EXPECT_THROW((void)transcript.cover(0), std::invalid_argument);
     EXPECT_TRUE(transcript.view().entries.empty());
-    EXPECT_FALSE(transcript.extend_offrecord(1));
-    EXPECT_FALSE(transcript.restore_offrecord(1));
-    EXPECT_TRUE(transcript.open_offrecord(1));
-    EXPECT_FALSE(transcript.open_offrecord(2));
-    transcript.add_entry(human(2, "Hidden prompt", 1));
+    EXPECT_FALSE(transcript.uncover(1));
+    transcript.add_entry(human(1, "Hidden prompt", 1));
     transcript.add_entry(make_character_entry(
-        3, "reviewer-id", "Reviewer", "Hidden answer", EntryStatus::complete, 1));
-    EXPECT_TRUE(transcript.extend_offrecord(4));
+        2, "reviewer-id", "Reviewer", "Hidden answer", EntryStatus::complete, 1));
+    transcript.cover(3);
 
-    const OffrecordSpan closed_span = transcript.model_history().offrecord_span;
-    EXPECT_EQ(closed_span, (OffrecordSpan{.begin = 1, .end = 4}));
-    EXPECT_TRUE(closed_span.contains(1));
-    EXPECT_TRUE(closed_span.contains(3));
-    EXPECT_FALSE(closed_span.contains(4));
+    EXPECT_EQ(transcript.model_history().covered_until, 3U);
     expect_entries(
         transcript.view().entries,
         (std::vector<TranscriptEntry>{
-            make_hide_on_marker(1),
-            human(2, "Hidden prompt", 1),
+            human(1, "Hidden prompt", 1),
             make_character_entry(
-                3, "reviewer-id", "Reviewer", "Hidden answer", EntryStatus::complete, 1),
-            make_hide_marker(4),
+                2, "reviewer-id", "Reviewer", "Hidden answer", EntryStatus::complete, 1),
+            make_cover_marker(3),
         }));
 
-    EXPECT_TRUE(transcript.restore_offrecord(5));
-    EXPECT_EQ(transcript.model_history().offrecord_span, OffrecordSpan{});
-    expect_same_entry(transcript.view().entries.back(), make_hide_off_marker(5));
+    EXPECT_TRUE(transcript.uncover(4));
+    EXPECT_EQ(transcript.model_history().covered_until, std::nullopt);
+    expect_same_entry(transcript.view().entries.back(), make_uncover_marker(4));
     transcript.clear();
-    EXPECT_EQ(transcript.model_history().offrecord_span, OffrecordSpan{});
+    EXPECT_EQ(transcript.model_history().covered_until, std::nullopt);
 }
 
-TEST(Transcript, OffrecordBoundariesUseEntryIdsAndEachMarkerChangesOneRevision) {
+TEST(Transcript, RepeatedCoverMovesTheBoundaryAndEachMarkerChangesOneRevision) {
     Transcript transcript;
     transcript.add_entry(human(2, "Earlier", 1));
     const TranscriptView before = transcript.view();
 
-    EXPECT_TRUE(transcript.open_offrecord(5));
-    const TranscriptView opened = transcript.view();
-    EXPECT_EQ(opened.revision, before.revision + 1);
-    EXPECT_EQ(opened.history_epoch, before.history_epoch);
-    EXPECT_EQ(
-        transcript.model_history().offrecord_span,
-        (OffrecordSpan{.begin = 3, .end = std::nullopt}));
+    transcript.cover(5);
+    const TranscriptView covered = transcript.view();
+    EXPECT_EQ(covered.revision, before.revision + 1);
+    EXPECT_EQ(covered.history_epoch, before.history_epoch);
+    EXPECT_EQ(transcript.model_history().covered_until, 3U);
 
     transcript.add_entry(human(6, "Hidden", 2));
-    const TranscriptView before_extend = transcript.view();
-    EXPECT_TRUE(transcript.extend_offrecord(9));
-    const TranscriptView closed = transcript.view();
-    EXPECT_EQ(closed.revision, before_extend.revision + 1);
-    EXPECT_EQ(closed.history_epoch, before_extend.history_epoch);
-    EXPECT_EQ(
-        transcript.model_history().offrecord_span,
-        (OffrecordSpan{.begin = 3, .end = 7}));
+    const TranscriptView before_move = transcript.view();
+    transcript.cover(9);
+    const TranscriptView moved = transcript.view();
+    EXPECT_EQ(moved.revision, before_move.revision + 1);
+    EXPECT_EQ(moved.history_epoch, before_move.history_epoch);
+    EXPECT_EQ(transcript.model_history().covered_until, 7U);
 
-    EXPECT_TRUE(transcript.restore_offrecord(12));
-    const TranscriptView restored = transcript.view();
-    EXPECT_EQ(restored.revision, closed.revision + 1);
-    EXPECT_EQ(restored.history_epoch, closed.history_epoch);
+    EXPECT_TRUE(transcript.uncover(12));
+    const TranscriptView uncovered = transcript.view();
+    EXPECT_EQ(uncovered.revision, moved.revision + 1);
+    EXPECT_EQ(uncovered.history_epoch, moved.history_epoch);
 }
 
-TEST(Transcript, ReplacingEntriesDropsTheOffrecordSpan) {
+TEST(Transcript, RejectsCoverMutationsWhileAnEntryIsStreaming) {
     Transcript transcript;
-    EXPECT_TRUE(transcript.open_offrecord(1));
-    transcript.add_entry(human(2, "Hidden", 1));
-    EXPECT_TRUE(transcript.extend_offrecord(3));
-    ASSERT_NE(transcript.model_history().offrecord_span, OffrecordSpan{});
+    transcript.add_entry(human(1, "Earlier", 1));
+    transcript.cover(2);
+    transcript.begin_entry(make_character_entry(
+        3, "reviewer-id", "Reviewer", {}, EntryStatus::streaming, 2));
+
+    EXPECT_THROW(transcript.cover(4), std::logic_error);
+    EXPECT_THROW((void)transcript.uncover(4), std::logic_error);
+    EXPECT_EQ(transcript.model_history().covered_until, 2U);
+}
+
+TEST(Transcript, ReplacingEntriesDropsTheCoverBoundary) {
+    Transcript transcript;
+    transcript.add_entry(human(1, "Hidden", 1));
+    transcript.cover(2);
+    ASSERT_TRUE(transcript.model_history().covered_until);
 
     transcript.replace_entries({human(20, "Restored", 2)});
 
-    EXPECT_EQ(transcript.model_history().offrecord_span, OffrecordSpan{});
+    EXPECT_EQ(transcript.model_history().covered_until, std::nullopt);
     expect_entries(
         transcript.view().entries,
         (std::vector<TranscriptEntry>{human(20, "Restored", 2)}));
@@ -303,20 +302,17 @@ TEST(Transcript, ModelHistoryOwnsOneAtomicModelContextSnapshot) {
     EXPECT_EQ(history.open_entry_id, 2U);
     ASSERT_EQ(history.entries.size(), 2U);
     EXPECT_TRUE(history.entries.back().text.empty());
-    EXPECT_EQ(history.offrecord_span, OffrecordSpan{});
+    EXPECT_EQ(history.covered_until, std::nullopt);
 }
 
-TEST(Transcript, ModelHistoryIncludesOffrecordProjectionState) {
+TEST(Transcript, ModelHistoryIncludesCoverProjectionState) {
     Transcript transcript;
-    EXPECT_TRUE(transcript.open_offrecord(1));
-    transcript.add_entry(human(2, "Hidden", 2));
-    EXPECT_TRUE(transcript.extend_offrecord(3));
+    transcript.add_entry(human(1, "Hidden", 2));
+    transcript.cover(2);
 
     const ModelHistory history = transcript.model_history();
 
-    EXPECT_EQ(
-        history.offrecord_span,
-        (OffrecordSpan{.begin = 1, .end = 3}));
+    EXPECT_EQ(history.covered_until, 2U);
     expect_entries(transcript.view().entries, history.entries);
 }
 

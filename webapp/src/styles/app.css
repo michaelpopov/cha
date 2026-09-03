@@ -602,6 +602,16 @@ select:disabled {
   margin-top: auto;
 }
 
+.cha-covered {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  gap: 0.85rem;
+  padding: 0.85rem;
+  border-radius: 0.7rem;
+  background: var(--surface);
+}
+
 .cha-chat-welcome {
   color: var(--muted-foreground);
   text-align: center;

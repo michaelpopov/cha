@@ -146,15 +146,15 @@ TEST(TextInput, DispatchesSlashCommandsAndOwnsExitSyntax) {
     EXPECT_EQ(
         handle_text_input(*controller, "not-a-persona", "/clear").session.notice,
         "Transcript cleared");
-    EXPECT_TRUE(has_state_update(handle_text_input(*controller, "operator", "/hide-on").session));
-    EXPECT_TRUE(has_state_update(handle_text_input(*controller, "operator", "/hide").session));
-    EXPECT_TRUE(has_state_update(handle_text_input(*controller, "operator", "/hide-off").session));
+    EXPECT_TRUE(has_state_update(handle_text_input(*controller, "operator", "/cover").session));
+    EXPECT_TRUE(has_state_update(handle_text_input(*controller, "operator", "/cover").session));
+    EXPECT_TRUE(has_state_update(handle_text_input(*controller, "operator", "/uncover").session));
     EXPECT_EQ(
         copy_entries(controller->view().transcript),
         (std::vector<TranscriptEntry>{
-            make_hide_on_marker(1),
-            make_hide_marker(2),
-            make_hide_off_marker(3),
+            make_cover_marker(1),
+            make_cover_marker(2),
+            make_uncover_marker(3),
         }));
     const CommandResult information =
         handle_text_input(*controller, "operator", "/info");
@@ -332,11 +332,11 @@ TEST(TextInput, PreservesDraftsAndAcceptsStopDuringGeneration) {
         blocked.session.notice,
         "Generation in progress; use /stop, Esc, or Ctrl-C");
 
-    const CommandResult hidden_while_active =
-        handle_text_input(*controller, "operator", "/hide");
-    EXPECT_FALSE(hidden_while_active.clear_input);
+    const CommandResult covered_while_active =
+        handle_text_input(*controller, "operator", "/cover");
+    EXPECT_FALSE(covered_while_active.clear_input);
     EXPECT_EQ(
-        hidden_while_active.session.notice,
+        covered_while_active.session.notice,
         "Generation in progress; use /stop, Esc, or Ctrl-C");
 
     const CommandResult stop_with_argument =
@@ -380,17 +380,11 @@ TEST(TextInput, SeparatesDraftClearingFromControllerAcceptanceAndExit) {
 
     // A recognized command that fails its precondition still consumes the line
     // it was typed on. Only composed prompt text survives a rejection.
-    const CommandResult no_span =
-        handle_text_input(*controller, "operator", "/hide");
-    EXPECT_TRUE(no_span.session.input_consumed);
-    EXPECT_TRUE(no_span.clear_input);
-    EXPECT_FALSE(has_state_update(no_span.session));
-
-    const CommandResult nothing_to_restore =
-        handle_text_input(*controller, "operator", "/hide-off");
-    EXPECT_TRUE(nothing_to_restore.session.input_consumed);
-    EXPECT_TRUE(nothing_to_restore.clear_input);
-    EXPECT_FALSE(has_state_update(nothing_to_restore.session));
+    const CommandResult nothing_to_uncover =
+        handle_text_input(*controller, "operator", "/uncover");
+    EXPECT_TRUE(nothing_to_uncover.session.input_consumed);
+    EXPECT_TRUE(nothing_to_uncover.clear_input);
+    EXPECT_FALSE(has_state_update(nothing_to_uncover.session));
 
     const CommandResult exit_result =
         handle_text_input(*controller, "operator", "/exit");

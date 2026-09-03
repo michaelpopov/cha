@@ -46,7 +46,7 @@ std::string session_markdown(
     std::string result = "# " + heading_text(label) + "\n";
     const TranscriptEntry* last_prompt = nullptr;
     for (const TranscriptEntry& entry : entries) {
-        // Off-record markers (/hide) are transient, empty notice entries that
+        // Cover markers are transient, empty notice entries that
         // exist only to draw a boundary in the live view; they carry no content
         // to export and would otherwise appear as blank speaker headings.
         if (entry.kind == EntryKind::notice && entry.text.empty()) continue;

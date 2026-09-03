@@ -679,16 +679,11 @@ ControllerUpdate SessionController::clear_transcript() {
     };
 }
 
-ControllerUpdate SessionController::open_offrecord() {
+ControllerUpdate SessionController::cover_conversation() {
     if (is_generating()) {
         return busy_notice();
     }
-    if (!transcript_.open_offrecord(next_entry_id_)) {
-        return {
-            .input_consumed = true,
-            .notice = "Already off the record; use /hide-off first",
-        };
-    }
+    transcript_.cover(next_entry_id_);
     ++next_entry_id_;
     return {
         .state = SnapshotRequired{},
@@ -696,31 +691,14 @@ ControllerUpdate SessionController::open_offrecord() {
     };
 }
 
-ControllerUpdate SessionController::extend_offrecord() {
+ControllerUpdate SessionController::uncover_conversation() {
     if (is_generating()) {
         return busy_notice();
     }
-    if (!transcript_.extend_offrecord(next_entry_id_)) {
+    if (!transcript_.uncover(next_entry_id_)) {
         return {
             .input_consumed = true,
-            .notice = "No off-record span to extend",
-        };
-    }
-    ++next_entry_id_;
-    return {
-        .state = SnapshotRequired{},
-        .input_consumed = true,
-    };
-}
-
-ControllerUpdate SessionController::restore_offrecord() {
-    if (is_generating()) {
-        return busy_notice();
-    }
-    if (!transcript_.restore_offrecord(next_entry_id_)) {
-        return {
-            .input_consumed = true,
-            .notice = "Nothing to restore",
+            .notice = "Nothing to uncover",
         };
     }
     ++next_entry_id_;
@@ -796,17 +774,10 @@ ControllerUpdate SessionController::start_resolved_multicast(
     std::optional<EntryIdentity> author = resolve_author(author_id, update);
     if (!author) return update;
 
-    // Capture once so the off-record precondition and every child use the
-    // same model history.
+    // Capture once so every child uses the same model history.
     SharedModelHistory history =
         std::make_shared<const ModelHistory>(
             transcript_.model_history());
-    if (history->offrecord_span.begin) {
-        return {
-            .notice =
-                "Cannot start multicast while an off-record span is active",
-        };
-    }
 
     update.input_consumed = true;
     start_generation(

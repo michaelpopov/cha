@@ -80,19 +80,6 @@ struct TranscriptEntry {
     bool operator==(const TranscriptEntry&) const = default;
 };
 
-// A half-open range of transcript entry IDs excluded from model context. The
-// begin-only state records an open span; membership requires both bounds.
-struct OffrecordSpan {
-    std::optional<EntryId> begin;
-    std::optional<EntryId> end;
-
-    [[nodiscard]] bool contains(EntryId id) const noexcept {
-        return begin && end && *begin <= id && id < *end;
-    }
-
-    bool operator==(const OffrecordSpan&) const = default;
-};
-
 // A call-scoped, non-owning presentation view of the main-thread Transcript.
 // Any Transcript mutation may invalidate the span and strings reached through
 // it, so renderers may retain only scalar positions derived from this value.
@@ -116,7 +103,8 @@ struct TranscriptView {
 struct ModelHistory {
     std::vector<TranscriptEntry> entries;
     std::optional<EntryId> open_entry_id;
-    OffrecordSpan offrecord_span;
+    // Entries before this boundary are excluded from model context.
+    std::optional<EntryId> covered_until;
 };
 
 TranscriptEntry make_human_entry(HumanEntrySpec spec);
@@ -128,9 +116,8 @@ TranscriptEntry make_character_entry(
     EntryStatus status,
     std::optional<RequestId> request_id = std::nullopt);
 TranscriptEntry make_notice_entry(EntryId id, std::string text);
-TranscriptEntry make_hide_on_marker(EntryId id);
-TranscriptEntry make_hide_marker(EntryId id);
-TranscriptEntry make_hide_off_marker(EntryId id);
+TranscriptEntry make_cover_marker(EntryId id);
+TranscriptEntry make_uncover_marker(EntryId id);
 TranscriptEntry make_error_entry(
     EntryId id,
     std::string text,
@@ -168,10 +155,8 @@ public:
     void replace_entries(std::vector<TranscriptEntry> entries);
 
     // Each successful mutation also appends its transient presentation marker.
-    // A false result means the command precondition failed without mutation.
-    [[nodiscard]] bool open_offrecord(EntryId marker_id);
-    [[nodiscard]] bool extend_offrecord(EntryId marker_id);
-    [[nodiscard]] bool restore_offrecord(EntryId marker_id);
+    void cover(EntryId marker_id);
+    [[nodiscard]] bool uncover(EntryId marker_id);
 
     [[nodiscard]] TranscriptView view() const noexcept;
     ModelHistory model_history() const;
@@ -184,7 +169,7 @@ private:
     std::vector<TranscriptEntry> entries_;
     std::size_t revision_{};
     std::optional<EntryId> open_entry_id_;
-    OffrecordSpan offrecord_;
+    std::optional<EntryId> covered_until_;
     std::size_t history_epoch_{};
 };
 

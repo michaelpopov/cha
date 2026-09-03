@@ -28,7 +28,7 @@ The chat input also accepts these controller-level commands:
 | Command | Purpose |
 | --- | --- |
 | `/clear` | Clear the transcript. |
-| `/hide-on`, `/hide`, `/hide-off` | Manage the off-record model-context span. |
+| `/cover`, `/uncover` | Hide all earlier conversation from model context, or restore it. |
 | `/mcast` | Send one prompt to multiple forum characters. |
 | `/info`, `/characters` | Inspect the session and its characters (`/agents` remains an alias). |
 | `/@Name` | Change and save the forum's default character. |

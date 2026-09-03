@@ -8,9 +8,8 @@ namespace cha::web {
 enum class CommandKind {
     text,
     clear,
-    hide_on,
-    hide,
-    hide_off,
+    cover,
+    uncover,
     mcast,
     info,
     stop,
