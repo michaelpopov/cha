@@ -327,7 +327,7 @@ describe('live chat', () => {
     ));
   });
 
-  it('resizes the message editor by dragging its divider up to 80% of the chat', async () => {
+  it('resizes the message editor in both directions and clamps its height', async () => {
     const events = drivableEvents();
     render(<App client={fixtureClient()} connectSessionEvents={events.connect} />);
     await attachInitial(events);
@@ -336,13 +336,28 @@ describe('live chat', () => {
     const input = screen.getByRole('textbox', { name: 'Message' });
     const divider = screen.getByRole('separator', { name: 'Resize message editor' });
     Object.defineProperty(chat, 'clientHeight', { configurable: true, value: 500 });
-    Object.defineProperty(input, 'offsetHeight', { configurable: true, value: 40 });
-    Object.defineProperty(input, 'scrollHeight', { configurable: true, value: 30 });
+    Object.defineProperty(input, 'offsetHeight', {
+      configurable: true,
+      get: () => Number.parseFloat(input.style.height) || 40,
+    });
+    Object.defineProperty(input, 'scrollHeight', {
+      configurable: true,
+      get: () => input.style.height === 'auto'
+        ? 30
+        : Math.max(30, Number.parseFloat(input.style.height) || 0),
+    });
 
     fireEvent.pointerDown(divider, { clientY: 300, pointerId: 1 });
     fireEvent.pointerMove(divider, { clientY: -100, pointerId: 1 });
     expect(input).toHaveStyle({ height: '400px' });
     fireEvent.pointerUp(divider, { pointerId: 1 });
+
+    fireEvent.pointerDown(divider, { clientY: 100, pointerId: 2 });
+    fireEvent.pointerMove(divider, { clientY: 350, pointerId: 2 });
+    expect(input).toHaveStyle({ height: '150px' });
+    fireEvent.pointerMove(divider, { clientY: 600, pointerId: 2 });
+    expect(input).toHaveStyle({ height: '30px' });
+    fireEvent.pointerUp(divider, { pointerId: 2 });
   });
 
   it('keeps a draft typed while the previous send was still in flight', async () => {

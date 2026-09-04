@@ -285,7 +285,13 @@ export function ChatScreen({
     const input = composerInput.current;
     if (!input) return;
     const maximum = maximumComposerHeight(height);
+    // Once the textarea is taller than its contents, browsers include that
+    // assigned height in scrollHeight. Measure it without the assigned height
+    // so dragging down can reach the real content height again.
+    const assignedHeight = input.style.height;
+    input.style.height = 'auto';
     const minimum = Math.min(input.scrollHeight, maximum);
+    input.style.height = assignedHeight;
     setComposerHeight(Math.min(maximum, Math.max(minimum, height)));
   }
 
