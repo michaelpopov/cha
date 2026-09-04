@@ -102,8 +102,8 @@ TEST_F(ApplicationConfigTest, AcceptsSeparatedConfigOptionAndAbsolutePaths) {
 
     const ApplicationCommand command =
         load({"chaweb", "--config", config_.string()});
-    EXPECT_EQ(command.database, database);
-    EXPECT_EQ(command.log_file, log);
+    EXPECT_EQ(command.database, std::filesystem::weakly_canonical(database));
+    EXPECT_EQ(command.log_file, std::filesystem::weakly_canonical(log));
     EXPECT_EQ(command.host, "0.0.0.0");
     EXPECT_EQ(command.port, 9000);
     EXPECT_EQ(command.log_level, "debug");

@@ -95,14 +95,22 @@ if [ ! -f "$database" ]; then
     echo "upgrade test: database was not created" >&2
     exit 1
 fi
-owned_before=$(sha256sum "$database")
+sha256_file() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1"
+    else
+        shasum -a 256 "$1"
+    fi
+}
+
+owned_before=$(sha256_file "$database")
 
 # This is the documented upgrade: the whole application directory is
 # replaced, while the sibling database is not part of the operation.
 cmake -E remove_directory "$application"
 cp -R "$source_application" "$application"
 
-owned_after=$(sha256sum "$database")
+owned_after=$(sha256_file "$database")
 if [ "$owned_before" != "$owned_after" ]; then
     echo "upgrade test: customer-owned database changed during replacement" >&2
     exit 1

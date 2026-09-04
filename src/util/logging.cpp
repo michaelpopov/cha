@@ -19,7 +19,7 @@ namespace {
 constexpr std::size_t log_file_size_limit = 10U * 1024U * 1024U;
 constexpr std::size_t log_file_count = 3;
 
-std::atomic<std::shared_ptr<spdlog::logger>> diagnostic_logger;
+std::shared_ptr<spdlog::logger> diagnostic_logger;
 std::mutex diagnostic_logger_initialization;
 
 spdlog::level::level_enum parse_log_level(std::string_view value) {
@@ -51,7 +51,9 @@ spdlog::level::level_enum parse_log_level(std::string_view value) {
 
 void write_log(spdlog::level::level_enum level, std::string_view message) noexcept {
     try {
-        if (const auto logger = diagnostic_logger.load(std::memory_order_acquire)) {
+        if (const auto logger = std::atomic_load_explicit(
+                &diagnostic_logger,
+                std::memory_order_acquire)) {
             logger->log(level, "{}", message);
         }
     } catch (...) {
@@ -70,7 +72,9 @@ void initialize_diagnostic_logging(
     }
 
     std::lock_guard lock(diagnostic_logger_initialization);
-    if (diagnostic_logger.load(std::memory_order_relaxed)) {
+    if (std::atomic_load_explicit(
+            &diagnostic_logger,
+            std::memory_order_relaxed)) {
         return;
     }
 
@@ -98,14 +102,20 @@ void initialize_diagnostic_logging(
         // A diagnostic sink must not write to the server's standard streams.
     });
     logger->flush_on(spdlog::level::trace);
-    diagnostic_logger.store(logger, std::memory_order_release);
+    std::atomic_store_explicit(
+        &diagnostic_logger,
+        logger,
+        std::memory_order_release);
     logger->info("diagnostic logging enabled");
 }
 
 void shutdown_diagnostic_logging() noexcept {
     try {
         std::lock_guard lock(diagnostic_logger_initialization);
-        diagnostic_logger.store({}, std::memory_order_release);
+        std::atomic_store_explicit(
+            &diagnostic_logger,
+            std::shared_ptr<spdlog::logger>{},
+            std::memory_order_release);
         spdlog::drop("cha");
     } catch (...) {
         // Teardown must not affect application exit or test cleanup.

@@ -62,12 +62,12 @@ void read_available(int& descriptor, std::string& destination) noexcept {
 
 void reset_child_signals() noexcept {
     sigset_t empty{};
-    (void)::sigemptyset(&empty);
+    (void)sigemptyset(&empty);
     (void)::pthread_sigmask(SIG_SETMASK, &empty, nullptr);
 
     struct sigaction action {};
     action.sa_handler = SIG_DFL;
-    (void)::sigemptyset(&action.sa_mask);
+    (void)sigemptyset(&action.sa_mask);
     (void)::sigaction(SIGINT, &action, nullptr);
     (void)::sigaction(SIGTERM, &action, nullptr);
 }

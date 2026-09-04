@@ -821,7 +821,8 @@ TEST(WebServerProcess, RejectsASecondProcessWithDatabaseDiagnostic) {
     EXPECT_FALSE(second.wait_until_ready());
     EXPECT_NE(
         second.errors().find(
-            "Database already in use: '" + database.string() + "'"),
+            "Database already in use: '"
+            + std::filesystem::weakly_canonical(database).string() + "'"),
         std::string::npos)
         << second.errors();
 

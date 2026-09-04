@@ -336,10 +336,10 @@ installation:
 Do not delete the old backup as part of the cutover. Backup retention and
 eventual removal are operator decisions.
 
-Linux packages contain `cha.toml.example` and `import-seed/` as source
-material, not live storage. Copy the example to `../cha.toml`, replace the
-secret placeholder, and initialize the configured database explicitly with
-`chaweb --config=../cha.toml --import import-seed` before running
+Linux and macOS packages contain `cha.toml.example` and `import-seed/` as
+source material, not live storage. Copy the example to `../cha.toml`, replace
+the secret placeholder, and initialize the configured database explicitly
+with `chaweb --config=../cha.toml --import import-seed` before running
 `start-cha.sh`. The real configuration and database remain outside the
 replaceable application directory; the launcher writes process output to
 `chaweb.log` beside the executable.
@@ -378,7 +378,9 @@ build/ninja/itest --gtest_filter=R2Integration.*
 ```
 
 Browser development is documented in
-[webapp/README.md](webapp/README.md). Build a validated Linux release with
-`make package-linux VERSION=<version>`; it writes an application directory and
-`.tar.gz` archive under `packages/`. See [src/README.md](src/README.md) for the
-native architecture.
+[webapp/README.md](webapp/README.md). Build a validated Linux or macOS release
+with `make package-linux VERSION=<version>` or
+`make package-macos VERSION=<version>`; each writes an application directory
+and `.tar.gz` archive under `packages/`. Packaging requires the Node.js version
+in `webapp/.node-version`, including npm and npx. See
+[src/README.md](src/README.md) for the native architecture.

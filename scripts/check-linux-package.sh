@@ -13,7 +13,15 @@ if [ ! -d "$application" ]; then
     echo "package check: no application directory at $application" >&2
     exit 1
 fi
-if [ "$(stat -c '%a' "$application")" != "755" ]; then
+file_mode() {
+    if stat -c '%a' "$1" >/dev/null 2>&1; then
+        stat -c '%a' "$1"
+    else
+        stat -f '%Lp' "$1"
+    fi
+}
+
+if [ "$(file_mode "$application")" != "755" ]; then
     echo "package check: application directory must have mode 755" >&2
     exit 1
 fi
@@ -35,7 +43,7 @@ if [ ! -x "$application/chaweb" ] || [ ! -x "$application/start-cha.sh" ]; then
     exit 1
 fi
 
-actual_entries=$(find "$application" -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort)
+actual_entries=$(find "$application" -mindepth 1 -maxdepth 1 -exec basename {} \; | LC_ALL=C sort)
 expected_entries=$(printf '%s\n' chaweb cha.toml.example import-seed start-cha.sh web | LC_ALL=C sort)
 if [ "$actual_entries" != "$expected_entries" ]; then
     echo "package check: application directory has unexpected top-level entries" >&2
@@ -62,7 +70,7 @@ for required_directory in characters forums system; do
     fi
 done
 
-seed_entries=$(find "$seed" -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort)
+seed_entries=$(find "$seed" -mindepth 1 -maxdepth 1 -exec basename {} \; | LC_ALL=C sort)
 expected_seed_entries=$(printf '%s\n' .env characters forums system | LC_ALL=C sort)
 if [ "$seed_entries" != "$expected_seed_entries" ]; then
     echo "package check: import seed contains unexpected top-level entries" >&2
@@ -88,7 +96,7 @@ if [ "$env_value" != 'OPENAI_API_KEY=replace-with-your-openai-api-key' ]; then
     echo "package check: import seed must contain only the documented key placeholder" >&2
     exit 1
 fi
-if [ "$(stat -c '%a' "$seed/.env")" != "600" ]; then
+if [ "$(file_mode "$seed/.env")" != "600" ]; then
     echo "package check: import-seed/.env must have mode 600" >&2
     exit 1
 fi
