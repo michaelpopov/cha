@@ -118,6 +118,8 @@ if [ "$launcher_config" != "$(shell_quote ../cha.toml)" ] \
 fi
 if grep -q -- '--workspace' "$application/start-cha.sh" \
     || grep -q -- '--data' "$application/start-cha.sh" \
+    || ! grep -Fq -- 'config_setting=${CHA_CONFIG:-"$CONFIG"}' \
+        "$application/start-cha.sh" \
     || ! grep -Fq -- '--config="$config"' "$application/start-cha.sh" \
     || ! grep -Fq -- \
         'echo "  \"$here/chaweb\" --config=\"$config\" --import \"$import_seed\""' \

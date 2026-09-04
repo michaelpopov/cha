@@ -9,9 +9,12 @@ set -eu
 
 here=$(cd -- "$(dirname -- "$0")" && pwd)
 
-case "$CONFIG" in
-    /*) config="$CONFIG" ;;
-    *) config="$here/$CONFIG" ;;
+# An explicit environment value overrides the packaged default. Relative paths
+# follow the same launcher-relative rule as CONFIG.
+config_setting=${CHA_CONFIG:-"$CONFIG"}
+case "$config_setting" in
+    /*) config="$config_setting" ;;
+    *) config="$here/$config_setting" ;;
 esac
 config_parent=$(dirname -- "$config")
 if [ ! -d "$config_parent" ]; then

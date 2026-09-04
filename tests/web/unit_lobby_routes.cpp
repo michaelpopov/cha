@@ -843,11 +843,13 @@ TEST(LobbyRoutes, DownloadsStoredAndLiveSessionsAsMarkdown) {
     EXPECT_EQ(downloaded->get_header_value("Content-Type"),
         "text/markdown; charset=utf-8");
     EXPECT_EQ(downloaded->get_header_value("Cache-Control"), "no-store");
-    EXPECT_NE(downloaded->body.find("# Review notes\n"), std::string::npos);
-    EXPECT_NE(downloaded->body.find("## Reader\n*"), std::string::npos);
-    EXPECT_NE(downloaded->body.find("Review **this**\n"), std::string::npos);
-    EXPECT_NE(downloaded->body.find("## Guide\n*"), std::string::npos);
-    EXPECT_NE(downloaded->body.find("Looks good.\n"), std::string::npos);
+    EXPECT_NE(downloaded->body.find("<!-- CHA session: Review notes -->\n"),
+        std::string::npos);
+    EXPECT_NE(downloaded->body.find("*Started "), std::string::npos);
+    EXPECT_NE(downloaded->body.find("`Reader` · Review **this**\n"),
+        std::string::npos);
+    EXPECT_NE(downloaded->body.find("`Guide` · Looks good.\n"),
+        std::string::npos);
 
     const std::string route = "/api/v1/forums/lobby/sessions/" + id;
     ASSERT_EQ(server.client().Post(
@@ -857,11 +859,13 @@ TEST(LobbyRoutes, DownloadsStoredAndLiveSessionsAsMarkdown) {
     const auto live_download = server.client().Get(route + "/download");
     ASSERT_TRUE(live_download);
     EXPECT_EQ(live_download->status, 200);
-    EXPECT_NE(live_download->body.find("# Live review\n"), std::string::npos);
-    EXPECT_NE(live_download->body.find("## Reader\n*"), std::string::npos);
-    EXPECT_NE(live_download->body.find("Review **this**\n"), std::string::npos);
-    EXPECT_NE(live_download->body.find("## Guide\n*"), std::string::npos);
-    EXPECT_NE(live_download->body.find("Looks good.\n"), std::string::npos);
+    EXPECT_NE(live_download->body.find("<!-- CHA session: Live review -->\n"),
+        std::string::npos);
+    EXPECT_NE(live_download->body.find("*Started "), std::string::npos);
+    EXPECT_NE(live_download->body.find("`Reader` · Review **this**\n"),
+        std::string::npos);
+    EXPECT_NE(live_download->body.find("`Guide` · Looks good.\n"),
+        std::string::npos);
 }
 
 TEST(LobbyRoutes, RenamesAndDeletesAnOpenSessionThroughItsOwner) {

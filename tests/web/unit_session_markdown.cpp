@@ -8,7 +8,7 @@
 namespace cha::web {
 namespace {
 
-TEST(SessionMarkdown, ExportsSpeakersAndPreservesEntryMarkdown) {
+TEST(SessionMarkdown, ExportsSpeakerBadgesAndInlineMarkdown) {
     TranscriptEntry prompt = make_human_entry({
             .id = 1,
             .author = {"reader", "Reader"},
@@ -23,15 +23,13 @@ TEST(SessionMarkdown, ExportsSpeakersAndPreservesEntryMarkdown) {
     const std::vector<TranscriptEntry> entries{std::move(prompt), std::move(response)};
 
     EXPECT_EQ(session_markdown("Plan #1", entries),
-        "# Plan \\#1\n"
-        "\n## Reader\n\n"
-        "Can you review **this**?\n"
-        "\n## Guide \\#1\n\n"
-        "- First\n- Second\n");
+        "<!-- CHA session: Plan #1 -->\n"
+        "\n`Reader` · Can you review **this**?\n"
+        "\n`Guide #1` · - First\n- Second\n");
 }
 
 TEST(SessionMarkdown, ExportsAnEmptySessionAsItsTitle) {
-    EXPECT_EQ(session_markdown("Notes", {}), "# Notes\n");
+    EXPECT_EQ(session_markdown("Notes", {}), "<!-- CHA session: Notes -->\n");
 }
 
 TEST(SessionMarkdown, ExportsAMulticastPromptOnceAndEveryResponse) {
@@ -65,13 +63,10 @@ TEST(SessionMarkdown, ExportsAMulticastPromptOnceAndEveryResponse) {
     };
 
     EXPECT_EQ(session_markdown("Discussion", entries),
-        "# Discussion\n"
-        "\n## Reader\n\n"
-        "Shared question\n"
-        "\n## One\n\n"
-        "One answer\n"
-        "\n## Two\n\n"
-        "Two answer\n");
+        "<!-- CHA session: Discussion -->\n"
+        "\n`Reader` · Shared question\n"
+        "\n`One` · One answer\n"
+        "\n`Two` · Two answer\n");
 }
 
 TEST(SessionMarkdown, ExportsKnownTimestampsInLocalTime) {
@@ -90,7 +85,18 @@ TEST(SessionMarkdown, ExportsKnownTimestampsInLocalTime) {
 
     const std::string markdown = session_markdown("Plan", entries);
     EXPECT_TRUE(std::regex_search(markdown, std::regex(
-        R"(## Reader\n\*[A-Z][a-z]+ [0-9]{2}, [0-9]{4}, [0-9]{2}:[0-9]{2} [A-Z]+\*\n\nWhen was this\?\n)")));
+        R"(\*Started [A-Z][a-z]+ [0-9]{2}, [0-9]{4} at [0-9]{2}:[0-9]{2} [A-Z]+\*\n\n`Reader` · When was this\?\n)")));
+}
+
+TEST(SessionMarkdown, CompactsParagraphsWithinOneMessage) {
+    TranscriptEntry response = make_character_entry(
+        1, "guide", "Guide", "First paragraph.\n\nSecond paragraph.",
+        EntryStatus::complete, 1);
+    response.created_at = 0;
+
+    EXPECT_EQ(session_markdown("Plan", {&response, 1}),
+        "<!-- CHA session: Plan -->\n"
+        "\n`Guide` · First paragraph.  \nSecond paragraph.\n");
 }
 
 TEST(SessionMarkdown, OmitsTransientCoverMarkers) {
@@ -104,9 +110,8 @@ TEST(SessionMarkdown, OmitsTransientCoverMarkers) {
     };
 
     EXPECT_EQ(session_markdown("Plan", entries),
-        "# Plan\n"
-        "\n## Guide\n\n"
-        "Off the record.\n");
+        "<!-- CHA session: Plan -->\n"
+        "\n`Guide` · Off the record.\n");
 }
 
 } // namespace

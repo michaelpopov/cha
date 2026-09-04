@@ -1,14 +1,15 @@
 import {
+  Fragment,
   useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
-  type ChangeEvent,
   type Dispatch,
   type FormEvent,
   type KeyboardEvent,
+  type PointerEvent,
   type ReactNode,
   type UIEvent,
 } from 'react';
@@ -25,7 +26,6 @@ import {
 } from '../api/client';
 import { sessionOperationState, type AppAction, type AppState } from '../state/view';
 import { Markdown } from './Markdown';
-import { TransliterationToggle, useTransliteration } from './TransliterationMode';
 import {
   ChevronLeftIcon,
   ChevronRightIcon,
@@ -78,18 +78,34 @@ function visibleEntryText(kind: string, text: string): string {
   return kind === 'character' ? text.replace(echoedTimestampPrefix, '') : text;
 }
 
+type VisibleTranscriptEntry = {
+  entry: SessionSnapshot['transcript'][number];
+  dividerBefore: boolean;
+};
+
 function visibleTranscriptEntries(entries: SessionSnapshot['transcript']) {
   // Multicast stores one addressed prompt per character. Character replies do
   // not reset this comparison, so only the first copy is shown to the reader.
+  // A divider keeps the omitted prompt from making adjacent replies run
+  // together.
   let lastPrompt: { participantId: string; text: string } | null = null;
-  return entries.filter((entry) => {
-    if (entry.kind === 'notice' && entry.text === '') return false;
-    if (entry.kind !== 'human') return true;
-    const repeated = lastPrompt?.participantId === entry.participant_id
-      && lastPrompt.text === entry.text;
-    lastPrompt = { participantId: entry.participant_id, text: entry.text };
-    return !repeated;
-  });
+  let dividerBefore = false;
+  const visible: VisibleTranscriptEntry[] = [];
+  for (const entry of entries) {
+    if (entry.kind === 'notice' && entry.text === '') continue;
+    if (entry.kind === 'human') {
+      const repeated = lastPrompt?.participantId === entry.participant_id
+        && lastPrompt.text === entry.text;
+      lastPrompt = { participantId: entry.participant_id, text: entry.text };
+      if (repeated) {
+        dividerBefore = true;
+        continue;
+      }
+    }
+    visible.push({ entry, dividerBefore });
+    dividerBefore = false;
+  }
+  return visible;
 }
 
 function activeCoverMarkerId(entries: SessionSnapshot['transcript']): number | null {
@@ -186,11 +202,17 @@ export function ChatScreen({
   onSubmitInput,
 }: ChatScreenProps) {
   const [draft, setDraft] = useState('');
-  const transliteration = useTransliteration<HTMLTextAreaElement>(draft);
   const [actionError, setActionError] = useState<string | null>(null);
   const [pendingAction, setPendingAction] = useState<'send' | 'stop' | 'target' | null>(null);
   const transcriptEnd = useRef<HTMLDivElement | null>(null);
-  const composerInput = transliteration.field;
+  const composerInput = useRef<HTMLTextAreaElement | null>(null);
+  const chatArea = useRef<HTMLElement | null>(null);
+  const composerResize = useRef<{
+    pointerId: number;
+    startHeight: number;
+    startY: number;
+  } | null>(null);
+  const [composerHeight, setComposerHeight] = useState<number | null>(null);
   const followingLatest = useRef(true);
   const snapshot = state.sessionSnapshot;
   const generation = snapshot?.generation;
@@ -215,10 +237,10 @@ export function ChatScreen({
   const coverMarkerId = snapshot ? activeCoverMarkerId(snapshot.transcript) : null;
   const coveredEntries = coverMarkerId === null
     ? []
-    : transcriptEntries.filter(({ id }) => id < coverMarkerId);
+    : transcriptEntries.filter(({ entry }) => entry.id < coverMarkerId);
   const uncoveredEntries = coverMarkerId === null
     ? transcriptEntries
-    : transcriptEntries.filter(({ id }) => id > coverMarkerId);
+    : transcriptEntries.filter(({ entry }) => entry.id > coverMarkerId);
 
   // A different conversation starts at its own end rather than inheriting where
   // the reader had left the previous one.
@@ -236,15 +258,20 @@ export function ChatScreen({
     }
   }, [conversationKey, generation?.reasoning_text, snapshot?.transcript]);
 
-  // A textarea begins as a single line, then follows its wrapped content. It
-  // is measured after React has put the latest draft in the DOM so deletion
-  // shrinks it again as well as typing grows it.
+  function maximumComposerHeight(fallback = Number.POSITIVE_INFINITY) {
+    const chatHeight = chatArea.current?.clientHeight ?? 0;
+    return chatHeight > 0 ? chatHeight * 0.8 : fallback;
+  }
+
+  // A textarea follows its wrapped content until the reader gives it a larger
+  // floor. Both automatic and manual growth stop at 80% of the chat area.
   useLayoutEffect(() => {
     const input = composerInput.current;
     if (!input) return;
     input.style.height = 'auto';
-    input.style.height = `${input.scrollHeight}px`;
-  }, [draft]);
+    const maximum = maximumComposerHeight();
+    input.style.height = `${Math.min(maximum, Math.max(input.scrollHeight, composerHeight ?? 0))}px`;
+  }, [composerHeight, draft]);
 
   // Growing the transcript moves the end away without moving the viewport, so
   // whether the reader is following has to be recorded when they last scrolled
@@ -254,8 +281,50 @@ export function ChatScreen({
     followingLatest.current = scrollHeight - scrollTop - clientHeight <= followSlack;
   }
 
-  function updateDraft(event: ChangeEvent<HTMLTextAreaElement>) {
-    setDraft(transliteration.convert(event, draft));
+  function resizeComposer(height: number) {
+    const input = composerInput.current;
+    if (!input) return;
+    const maximum = maximumComposerHeight(height);
+    const minimum = Math.min(input.scrollHeight, maximum);
+    setComposerHeight(Math.min(maximum, Math.max(minimum, height)));
+  }
+
+  function startComposerResize(event: PointerEvent<HTMLDivElement>) {
+    const input = composerInput.current;
+    if (!input) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    composerResize.current = {
+      pointerId: event.pointerId,
+      startHeight: input.offsetHeight || input.scrollHeight,
+      startY: event.clientY,
+    };
+  }
+
+  function continueComposerResize(event: PointerEvent<HTMLDivElement>) {
+    const resize = composerResize.current;
+    if (!resize || resize.pointerId !== event.pointerId) return;
+    resizeComposer(resize.startHeight + resize.startY - event.clientY);
+  }
+
+  function finishComposerResize(event: PointerEvent<HTMLDivElement>) {
+    if (composerResize.current?.pointerId !== event.pointerId) return;
+    composerResize.current = null;
+    event.currentTarget.releasePointerCapture?.(event.pointerId);
+  }
+
+  function resizeComposerWithKeyboard(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key === 'Home') {
+      event.preventDefault();
+      setComposerHeight(null);
+      return;
+    }
+    if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
+    event.preventDefault();
+    const input = composerInput.current;
+    if (!input) return;
+    resizeComposer((input.offsetHeight || input.scrollHeight)
+      + (event.key === 'ArrowUp' ? 24 : -24));
   }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -277,18 +346,12 @@ export function ChatScreen({
     }
   }
 
-  // Enter is the quick way to send. Ctrl+Enter inserts a line explicitly: it
-  // is not a consistently native textarea shortcut, so relying on the browser
-  // would make multiline drafts depend on the platform. IME composition has to
-  // finish before Enter can be interpreted as the command.
+  // Enter keeps its native textarea behavior and adds a line. Ctrl+Enter is the
+  // explicit send shortcut. IME composition has to finish before Enter can be
+  // interpreted as the command.
   function submitOnEnter(event: KeyboardEvent<HTMLTextAreaElement>) {
     if (event.key !== 'Enter' || event.nativeEvent.isComposing) return;
-    if (event.ctrlKey) {
-      event.preventDefault();
-      const { selectionEnd, selectionStart } = event.currentTarget;
-      setDraft((current) => `${current.slice(0, selectionStart)}\n${current.slice(selectionEnd)}`);
-      return;
-    }
+    if (!event.ctrlKey) return;
     event.preventDefault();
     if (!canSend || generationActive) return;
     event.currentTarget.form?.requestSubmit();
@@ -334,7 +397,7 @@ export function ChatScreen({
       && snapshot?.shutdown_reason !== 'reloading');
 
   return (
-    <section className="cha-screen cha-chat" aria-label="Chat area">
+    <section className="cha-screen cha-chat" aria-label="Chat area" ref={chatArea}>
       <div
         aria-label="Conversation transcript"
         className="cha-transcript"
@@ -350,21 +413,25 @@ export function ChatScreen({
         )}
         {coveredEntries.length > 0 && (
           <section aria-label="Covered conversation" className="cha-covered">
-            {coveredEntries.map((entry) => (
-              <TranscriptMessage
-                appearance={voices.get(entry.participant_id)}
-                entry={entry}
-                key={entry.id}
-              />
+            {coveredEntries.map(({ entry, dividerBefore }) => (
+              <Fragment key={entry.id}>
+                {dividerBefore && <hr className="cha-repeated-prompt-divider" />}
+                <TranscriptMessage
+                  appearance={voices.get(entry.participant_id)}
+                  entry={entry}
+                />
+              </Fragment>
             ))}
           </section>
         )}
-        {uncoveredEntries.map((entry) => (
-          <TranscriptMessage
-            appearance={voices.get(entry.participant_id)}
-            entry={entry}
-            key={entry.id}
-          />
+        {uncoveredEntries.map(({ entry, dividerBefore }) => (
+          <Fragment key={entry.id}>
+            {dividerBefore && <hr className="cha-repeated-prompt-divider" />}
+            <TranscriptMessage
+              appearance={voices.get(entry.participant_id)}
+              entry={entry}
+            />
+          </Fragment>
         ))}
         {generation?.active && (
           <div className="cha-generation">
@@ -416,6 +483,20 @@ export function ChatScreen({
         <p className="cha-chat-action-error cha-error-message" role="alert">{actionError}</p>
       )}
       <div className="cha-composer-area">
+        <div
+          aria-label="Resize message editor"
+          aria-orientation="horizontal"
+          className="cha-composer-resize"
+          onDoubleClick={() => setComposerHeight(null)}
+          onKeyDown={resizeComposerWithKeyboard}
+          onPointerCancel={finishComposerResize}
+          onPointerDown={startComposerResize}
+          onPointerMove={continueComposerResize}
+          onPointerUp={finishComposerResize}
+          role="separator"
+          tabIndex={0}
+          title="Drag to resize; double-click to reset"
+        />
         <form className="cha-composer" onSubmit={submit}>
           <label className="cha-target-select" title="Choose target character">
             <TargetIcon />
@@ -435,7 +516,7 @@ export function ChatScreen({
             aria-label="Message"
             autoComplete="off"
             disabled={!sessionAvailable}
-            onChange={updateDraft}
+            onChange={(event) => setDraft(event.target.value)}
             onKeyDown={submitOnEnter}
             placeholder={recording
               ? 'Recording — saved, not sent'
@@ -456,14 +537,10 @@ export function ChatScreen({
             {generationActive ? <StopIcon /> : <SendIcon />}
           </button>
         </form>
-        {/* The composer's own row is worth more to the draft than to a mode
-            switch, so the toggle rides the context line already under it,
-            trading a column of the composer for a few pixels of that row. */}
         <div className="cha-chat-status" aria-label="Current chat context">
           <span>{forum?.display_name ?? 'Unknown forum'}</span>
           <span>From: {forum?.default_persona_display_name ?? 'Unknown persona'}</span>
           <span>To: {recording ? 'Recording' : (character?.display_name ?? 'Unknown character')}</span>
-          <TransliterationToggle disabled={!sessionAvailable} transliteration={transliteration} />
         </div>
       </div>
     </section>
@@ -1203,7 +1280,6 @@ export function NewSessionScreen({
   sessionReport,
 }: NewSessionScreenProps) {
   const [name, setName] = useState('');
-  const transliteration = useTransliteration<HTMLInputElement>(name);
   const trimmedName = name.trim();
   const { pending: sessionPending, failure: sessionFailure } = sessionOperationState(state);
 
@@ -1232,17 +1308,11 @@ export function NewSessionScreen({
           className="cha-form-control"
           disabled={sessionPending}
           id="cha-session-name"
-          onChange={(event) => setName(transliteration.convert(event, name))}
+          onChange={(event) => setName(event.target.value)}
           placeholder="e.g. Architecture review"
-          ref={transliteration.field}
           type="text"
           value={name}
         />
-        {/* The mode switch sits under the field it types into, on the same
-            right edge as the actions below it. */}
-        <div className="cha-field-mode">
-          <TransliterationToggle disabled={sessionPending} transliteration={transliteration} />
-        </div>
         <div className="cha-new-session-actions">
           <button
             className="cha-button cha-button-ghost"

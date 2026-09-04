@@ -47,8 +47,8 @@ TEST(SessionMirror, WritesActiveSessionsUnderForumDisplayNameAndNumbersDuplicate
 
     const std::filesystem::path forum = root / "The Lobby";
     EXPECT_TRUE(std::filesystem::is_directory(forum));
-    EXPECT_EQ(read_file(forum / "xyz.md"), "# xyz\n");
-    EXPECT_EQ(read_file(forum / "xyz (1).md"), "# xyz\n");
+    EXPECT_EQ(read_file(forum / "xyz.md"), "<!-- CHA session: xyz -->\n");
+    EXPECT_EQ(read_file(forum / "xyz (1).md"), "<!-- CHA session: xyz -->\n");
     EXPECT_FALSE(std::filesystem::exists(root / "Entrance"));
 
     mirror.update(
@@ -64,7 +64,7 @@ TEST(SessionMirror, WritesActiveSessionsUnderForumDisplayNameAndNumbersDuplicate
     EXPECT_FALSE(std::filesystem::exists(forum / "xyz.md"));
     EXPECT_EQ(
         read_file(forum / "renamed-name.md"),
-        "# renamed/name\n");
+        "<!-- CHA session: renamed/name -->\n");
 }
 
 } // namespace

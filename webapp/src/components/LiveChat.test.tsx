@@ -250,6 +250,7 @@ describe('live chat', () => {
     expect(screen.getByText('One answer')).toBeInTheDocument();
     expect(screen.getByText('Two answer')).toBeInTheDocument();
     expect(document.querySelectorAll('.cha-message')).toHaveLength(3);
+    expect(document.querySelectorAll('.cha-repeated-prompt-divider')).toHaveLength(1);
   });
 
   it('hides an echoed UTC metadata prefix from a character response', async () => {
@@ -297,7 +298,7 @@ describe('live chat', () => {
     await waitFor(() => expect(input).toHaveValue(''));
   });
 
-  it('sends a draft with Enter and adds a line with Ctrl+Enter', async () => {
+  it('adds a line with Enter and sends a draft with Ctrl+Enter', async () => {
     const user = userEvent.setup();
     const events = drivableEvents();
     const submitInput = vi.fn(async () => ({ clear_input: true }));
@@ -314,42 +315,34 @@ describe('live chat', () => {
     expect(input).toHaveAttribute('rows', '1');
     Object.defineProperty(input, 'scrollHeight', { configurable: true, value: 72 });
 
-    await user.type(input, 'First line{Control>}{Enter}{/Control}Second line');
+    await user.type(input, 'First line{Enter}Second line');
 
     expect(input).toHaveValue('First line\nSecond line');
     expect(input).toHaveStyle({ height: '72px' });
     expect(submitInput).not.toHaveBeenCalled();
 
-    await user.type(input, '{enter}');
+    await user.type(input, '{Control>}{Enter}{/Control}');
     await waitFor(() => expect(submitInput).toHaveBeenCalledWith(
       'entrance', 'welcome', { text: 'First line\nSecond line' },
     ));
   });
 
-  it('transliterates Latin typing to Russian when the composer mode is enabled', async () => {
-    const user = userEvent.setup();
+  it('resizes the message editor by dragging its divider up to 80% of the chat', async () => {
     const events = drivableEvents();
-    render(
-      <App
-        client={fixtureClient()}
-        connectSessionEvents={events.connect}
-      />,
-    );
+    render(<App client={fixtureClient()} connectSessionEvents={events.connect} />);
     await attachInitial(events);
 
+    const chat = screen.getByLabelText('Chat area');
     const input = screen.getByRole('textbox', { name: 'Message' });
-    const toggle = screen.getByRole('button', { name: 'Latin to Russian transliteration' });
-    expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    const divider = screen.getByRole('separator', { name: 'Resize message editor' });
+    Object.defineProperty(chat, 'clientHeight', { configurable: true, value: 500 });
+    Object.defineProperty(input, 'offsetHeight', { configurable: true, value: 40 });
+    Object.defineProperty(input, 'scrollHeight', { configurable: true, value: 30 });
 
-    await user.click(toggle);
-    expect(toggle).toHaveAttribute('aria-pressed', 'true');
-    await user.type(input, "Privet, shhuka mozhet s+hodit' v raj+on.");
-    expect(input).toHaveValue('Привет, щука может сходить в район.');
-
-    await user.clear(input);
-    await user.click(toggle);
-    await user.type(input, 'Latin stays Latin');
-    expect(input).toHaveValue('Latin stays Latin');
+    fireEvent.pointerDown(divider, { clientY: 300, pointerId: 1 });
+    fireEvent.pointerMove(divider, { clientY: -100, pointerId: 1 });
+    expect(input).toHaveStyle({ height: '400px' });
+    fireEvent.pointerUp(divider, { pointerId: 1 });
   });
 
   it('keeps a draft typed while the previous send was still in flight', async () => {
