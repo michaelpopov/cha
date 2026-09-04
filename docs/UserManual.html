@@ -1,0 +1,1291 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CHA User Manual</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --page: #f3f1ec;
+      --paper: #fffefa;
+      --ink: #252421;
+      --muted: #68645c;
+      --accent: #315b63;
+      --accent-soft: #e7f0f0;
+      --line: #d9d4ca;
+      --code: #f0eee8;
+      --warning: #8a4b17;
+      --warning-soft: #fbefe3;
+      --shadow: 0 12px 35px rgba(44, 39, 31, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      background: var(--page);
+      color: var(--ink);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 17px;
+      line-height: 1.62;
+    }
+
+    a {
+      color: var(--accent);
+      text-underline-offset: 0.18em;
+    }
+
+    a:hover {
+      text-decoration-thickness: 2px;
+    }
+
+    .skip-link {
+      position: absolute;
+      left: -9999px;
+      top: 0;
+    }
+
+    .skip-link:focus {
+      left: 1rem;
+      top: 1rem;
+      z-index: 10;
+      padding: 0.6rem 0.9rem;
+      background: var(--paper);
+      border: 2px solid var(--accent);
+    }
+
+    .page {
+      width: min(1120px, calc(100% - 2rem));
+      margin: 2rem auto;
+      background: var(--paper);
+      box-shadow: var(--shadow);
+    }
+
+    header {
+      padding: clamp(2rem, 6vw, 4.5rem);
+      border-bottom: 1px solid var(--line);
+    }
+
+    header p {
+      max-width: 48rem;
+      margin: 0.8rem 0 0;
+      color: var(--muted);
+      font-size: 1.08rem;
+    }
+
+    h1,
+    h2,
+    h3,
+    h4 {
+      line-height: 1.2;
+      letter-spacing: -0.018em;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(2.5rem, 7vw, 4.7rem);
+      font-weight: 750;
+    }
+
+    h2 {
+      margin: 0 0 1rem;
+      font-size: clamp(1.7rem, 4vw, 2.35rem);
+    }
+
+    h3 {
+      margin: 2rem 0 0.7rem;
+      font-size: 1.35rem;
+    }
+
+    h4 {
+      margin: 1.5rem 0 0.55rem;
+      font-size: 1.05rem;
+    }
+
+    p,
+    ul,
+    ol {
+      margin-top: 0.65rem;
+      margin-bottom: 0.9rem;
+    }
+
+    li + li {
+      margin-top: 0.35rem;
+    }
+
+    nav {
+      padding: 2rem clamp(1.5rem, 6vw, 4.5rem);
+      background: var(--accent-soft);
+      border-bottom: 1px solid var(--line);
+    }
+
+    nav h2 {
+      font-size: 1.2rem;
+      margin-bottom: 0.75rem;
+    }
+
+    nav ol {
+      columns: 2 19rem;
+      column-gap: 3rem;
+      margin: 0;
+      padding-left: 1.35rem;
+    }
+
+    nav li {
+      break-inside: avoid;
+      margin: 0 0 0.35rem;
+    }
+
+    main {
+      padding: 0 clamp(1.5rem, 6vw, 4.5rem) 4rem;
+    }
+
+    section {
+      padding-top: 3.2rem;
+      scroll-margin-top: 1rem;
+    }
+
+    section + section {
+      margin-top: 2.8rem;
+      border-top: 1px solid var(--line);
+    }
+
+    .lead {
+      max-width: 48rem;
+      color: var(--muted);
+      font-size: 1.08rem;
+    }
+
+    .note,
+    .warning {
+      margin: 1.35rem 0;
+      padding: 1rem 1.15rem;
+      border-left: 4px solid var(--accent);
+      background: var(--accent-soft);
+    }
+
+    .warning {
+      border-left-color: var(--warning);
+      background: var(--warning-soft);
+    }
+
+    .note > :first-child,
+    .warning > :first-child {
+      margin-top: 0;
+    }
+
+    .note > :last-child,
+    .warning > :last-child {
+      margin-bottom: 0;
+    }
+
+    .steps {
+      padding-left: 1.4rem;
+    }
+
+    .steps > li {
+      padding-left: 0.35rem;
+      margin-bottom: 0.8rem;
+    }
+
+    .table-wrap {
+      max-width: 100%;
+      margin: 1.2rem 0 1.6rem;
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 0.35rem;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.94rem;
+      line-height: 1.45;
+    }
+
+    caption {
+      padding: 0.75rem 0.9rem;
+      background: var(--code);
+      color: var(--muted);
+      font-weight: 650;
+      text-align: left;
+    }
+
+    th,
+    td {
+      padding: 0.75rem 0.9rem;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      background: #f8f6f1;
+      font-weight: 700;
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    code,
+    kbd {
+      border: 1px solid var(--line);
+      border-radius: 0.25rem;
+      background: var(--code);
+      font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+      font-size: 0.88em;
+    }
+
+    code {
+      padding: 0.1em 0.32em;
+    }
+
+    kbd {
+      padding: 0.12em 0.42em;
+      box-shadow: inset 0 -1px 0 var(--line);
+      white-space: nowrap;
+    }
+
+    pre {
+      margin: 1rem 0 1.4rem;
+      padding: 1rem 1.15rem;
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 0.35rem;
+      background: var(--code);
+      color: #282724;
+      line-height: 1.5;
+    }
+
+    pre code {
+      padding: 0;
+      border: 0;
+      background: transparent;
+      font-size: 0.88rem;
+    }
+
+    .term {
+      font-weight: 700;
+    }
+
+    .appendix-label {
+      color: var(--accent);
+      font-size: 0.83rem;
+      font-weight: 750;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    footer {
+      padding: 1.5rem clamp(1.5rem, 6vw, 4.5rem);
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+
+    @media (max-width: 640px) {
+      body {
+        font-size: 16px;
+      }
+
+      .page {
+        width: 100%;
+        margin: 0;
+        box-shadow: none;
+      }
+
+      header,
+      nav,
+      main,
+      footer {
+        padding-left: 1.1rem;
+        padding-right: 1.1rem;
+      }
+
+      th,
+      td {
+        min-width: 9rem;
+      }
+    }
+
+    @media print {
+      :root {
+        --page: #fff;
+        --paper: #fff;
+        --ink: #000;
+        --muted: #444;
+        --line: #bbb;
+      }
+
+      body {
+        font-size: 10.5pt;
+      }
+
+      .page {
+        width: 100%;
+        margin: 0;
+        box-shadow: none;
+      }
+
+      header,
+      nav,
+      main,
+      footer {
+        padding-left: 0;
+        padding-right: 0;
+      }
+
+      header {
+        padding-top: 0;
+      }
+
+      section {
+        padding-top: 1.5rem;
+      }
+
+      section + section {
+        margin-top: 1.5rem;
+      }
+
+      h2,
+      h3,
+      h4,
+      caption {
+        break-after: avoid;
+      }
+
+      table,
+      pre,
+      .note,
+      .warning {
+        break-inside: avoid;
+      }
+
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Skip to the manual</a>
+
+  <div class="page">
+    <header>
+      <h1>CHA User Manual</h1>
+      <p>
+        A practical guide to conversations, personas, characters, forums,
+        saved sessions, and application settings.
+      </p>
+    </header>
+
+    <nav aria-labelledby="contents-heading">
+      <h2 id="contents-heading">Contents</h2>
+      <ol>
+        <li><a href="#about">About CHA</a></li>
+        <li><a href="#getting-started">Getting started</a></li>
+        <li><a href="#concepts">The four main ideas</a></li>
+        <li><a href="#navigation">Finding your way around</a></li>
+        <li><a href="#sessions">Creating and managing sessions</a></li>
+        <li><a href="#conversation">Having a conversation</a></li>
+        <li><a href="#commands">Chat commands</a></li>
+        <li><a href="#character-settings">Character settings</a></li>
+        <li><a href="#exporting">Downloading conversations</a></li>
+        <li><a href="#privacy">Privacy and data</a></li>
+        <li><a href="#troubleshooting">Troubleshooting</a></li>
+        <li><a href="#appendix">Appendix: configuration</a></li>
+        <li><a href="#glossary">Glossary</a></li>
+      </ol>
+    </nav>
+
+    <main id="main-content">
+      <section id="about">
+        <h2>1. About CHA</h2>
+        <p class="lead">
+          CHA is a private browser application for conversations with one or
+          more AI characters. It lets you choose who you speak as, choose who
+          answers, organize conversations into forums, and keep useful sessions.
+        </p>
+        <p>
+          CHA runs as a small service called <code>chaweb</code>. You use the
+          application in a web browser. The service stores your workspace and
+          conversations in a local database and sends prompts to the AI provider
+          selected for each character.
+        </p>
+        <div class="note">
+          <p>
+            CHA is intended for personal use. It does not replace professional
+            medical, legal, financial, or emergency advice.
+          </p>
+        </div>
+      </section>
+
+      <section id="getting-started">
+        <h2>2. Getting started</h2>
+
+        <h3>Open CHA</h3>
+        <ol class="steps">
+          <li>Make sure the CHA service is running.</li>
+          <li>
+            Open the address given by the person who installed CHA. On the same
+            computer, the address is often <code>http://localhost:8086</code>.
+          </li>
+          <li>
+            CHA opens the <strong>Welcome</strong> session. You can start typing
+            immediately or choose another forum or saved session from the sidebar.
+          </li>
+        </ol>
+
+        <p>
+          The Welcome session is temporary. It is useful for a quick conversation,
+          but it disappears when the CHA service stops. Create a normal session in
+          a forum when you want the conversation to be saved.
+        </p>
+
+        <h3>Send your first message</h3>
+        <ol class="steps">
+          <li>Click the message box at the bottom of the chat.</li>
+          <li>Type your message.</li>
+          <li>
+            Press <kbd>Ctrl</kbd>+<kbd>Enter</kbd>, or select the Send button.
+          </li>
+        </ol>
+        <p>
+          Pressing <kbd>Enter</kbd> by itself adds a new line. This makes it easy
+          to write a message with several paragraphs before sending it.
+        </p>
+
+        <h3>Make the message box larger</h3>
+        <p>
+          Drag the divider above the message box upward or downward. The box can
+          use up to 80% of the chat height. When the divider has keyboard focus,
+          use the Up and Down arrow keys to resize it. Press <kbd>Home</kbd> or
+          double-click the divider to return to the automatic size.
+        </p>
+      </section>
+
+      <section id="concepts">
+        <h2>3. The four main ideas</h2>
+        <div class="table-wrap">
+          <table>
+            <caption>How CHA organizes a conversation</caption>
+            <thead>
+              <tr>
+                <th scope="col">Item</th>
+                <th scope="col">What it means</th>
+                <th scope="col">Example</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><span class="term">Persona</span></td>
+                <td>The identity and background you use when speaking.</td>
+                <td>You, a guest, or a role created for a particular kind of discussion.</td>
+              </tr>
+              <tr>
+                <td><span class="term">Character</span></td>
+                <td>The AI counterpart that replies, together with its instructions and provider settings.</td>
+                <td>A general assistant, tutor, editor, or historical voice.</td>
+              </tr>
+              <tr>
+                <td><span class="term">Forum</span></td>
+                <td>A group of characters and the default persona used with them.</td>
+                <td>A study group or a collection of advisers.</td>
+              </tr>
+              <tr>
+                <td><span class="term">Session</span></td>
+                <td>One saved conversation inside a forum.</td>
+                <td>“Planning the autumn trip.”</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          A forum provides the setting. A persona says who is asking. A character
+          says who answers. A session contains the actual conversation.
+        </p>
+      </section>
+
+      <section id="navigation">
+        <h2>4. Finding your way around</h2>
+        <p>The sidebar contains four main areas:</p>
+        <ul>
+          <li>
+            <strong>Personas</strong> shows the available speaking identities and
+            their descriptions. Opening a persona here does not change your current persona.
+          </li>
+          <li>
+            <strong>Characters</strong> shows the available AI characters. Select
+            one to read its description or, when allowed, change its settings.
+          </li>
+          <li>
+            <strong>Forums</strong> shows groups of characters. Open a forum to see
+            its members, active persona, and saved sessions.
+          </li>
+          <li>
+            <strong>Recent</strong> gives quick access to recently used sessions.
+          </li>
+        </ul>
+        <p>
+          On a small screen, open the sidebar when you need it and close it to give
+          the conversation more room.
+        </p>
+      </section>
+
+      <section id="sessions">
+        <h2>5. Creating and managing sessions</h2>
+
+        <h3>Create a saved session</h3>
+        <ol class="steps">
+          <li>Open <strong>Forums</strong> in the sidebar.</li>
+          <li>Select the forum you want to use.</li>
+          <li>Select <strong>New session</strong>.</li>
+          <li>Enter a title when requested, then begin the conversation.</li>
+        </ol>
+
+        <h3>Open an earlier session</h3>
+        <p>
+          Select a session under <strong>Recent</strong>, or open its forum and
+          choose it from the session list. Sessions in a forum are shown with the
+          most recently used items first.
+        </p>
+
+        <h3>Rename, download, or delete</h3>
+        <p>
+          Open the action menu beside a session in the Recent list. Choose:
+        </p>
+        <ul>
+          <li><strong>Rename</strong> to change the displayed title.</li>
+          <li><strong>Download</strong> to save a Markdown copy.</li>
+          <li><strong>Delete</strong> to remove the session from CHA.</li>
+        </ul>
+        <div class="warning">
+          <p>
+            A deleted session can no longer be opened in the browser. Download it
+            first if you may need a readable copy later.
+          </p>
+        </div>
+
+        <h3>Using the same session in two browsers</h3>
+        <p>
+          Only one browser connection controls a live session. If you open the same
+          session on another device or browser tab, the newest page takes control.
+          The older page may need to reconnect or be refreshed.
+        </p>
+      </section>
+
+      <section id="conversation">
+        <h2>6. Having a conversation</h2>
+
+        <h3>See who is speaking</h3>
+        <p>
+          The information above the message box shows the forum, the persona in the
+          <strong>From</strong> position, and the character in the <strong>To</strong>
+          position. Check this line before sending if the forum has several members.
+        </p>
+
+        <h3>Choose one character for a message</h3>
+        <p>
+          Start a message with <code>@Name</code> to address a particular character:
+        </p>
+        <pre><code>@Seneca How should I think about this setback?</code></pre>
+        <p>
+          CHA accepts an unambiguous full name, identifier, or partial name without
+          regard to letter case. To start ordinary text with a literal at sign, type
+          two at signs: <code>@@example</code> becomes <code>@example</code>.
+        </p>
+
+        <h3>Ask several characters</h3>
+        <p>
+          Use <code>/mcast</code> to send one prompt to several forum members:
+        </p>
+        <pre><code>/mcast @Seneca @Epictetus What matters most here?</code></pre>
+        <p>
+          CHA shows the shared question once. A horizontal line separates each
+          reply, so it remains clear where one answer ends and the next begins.
+        </p>
+
+        <h3>Record a message without an AI reply</h3>
+        <p>
+          Start a message with <code>@-</code> to add it to the conversation without
+          asking a character to respond:
+        </p>
+        <pre><code>@- I made the decision this morning.</code></pre>
+        <p>
+          The note is saved in the shared history. A character selected later can
+          use it as context. Use <code>/@-</code> to stay in recording mode until you
+          choose a character again.
+        </p>
+
+        <h3>Stop a reply</h3>
+        <p>
+          While CHA is generating an answer, the Send button changes to
+          <strong>Stop</strong>. Select it to stop generation. You can also use the
+          <code>/stop</code> command.
+        </p>
+
+        <h3>Write in any language</h3>
+        <p>
+          Enter text directly in the language you want to use. For a different
+          alphabet or keyboard layout, use the normal input settings provided by
+          your computer or phone.
+        </p>
+      </section>
+
+      <section id="commands">
+        <h2>7. Chat commands</h2>
+        <p>
+          Commands begin with a slash and are entered in the same box as an ordinary
+          message. The following commands are available during a session.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <caption>Session commands</caption>
+            <thead>
+              <tr>
+                <th scope="col">Command</th>
+                <th scope="col">Purpose</th>
+                <th scope="col">Example or note</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>/clear</code></td>
+                <td>Clear the current transcript and begin with an empty conversation.</td>
+                <td>Use with care if you still need the earlier exchange.</td>
+              </tr>
+              <tr>
+                <td><code>/cover</code></td>
+                <td>Keep earlier messages visible, but leave them out of later AI requests.</td>
+                <td>Useful when the conversation has changed subject.</td>
+              </tr>
+              <tr>
+                <td><code>/uncover</code></td>
+                <td>Return covered messages to the context used for future replies.</td>
+                <td>&nbsp;</td>
+              </tr>
+              <tr>
+                <td><code>/mcast</code></td>
+                <td>Send one prompt to more than one character.</td>
+                <td><code>/mcast @One @Two Your question</code></td>
+              </tr>
+              <tr>
+                <td><code>/info</code></td>
+                <td>Show information about the current session.</td>
+                <td>&nbsp;</td>
+              </tr>
+              <tr>
+                <td><code>/characters</code></td>
+                <td>List the characters in the current forum.</td>
+                <td><code>/agents</code> is an older name for the same command.</td>
+              </tr>
+              <tr>
+                <td><code>/@Name</code></td>
+                <td>Choose the default character and save that choice for the forum.</td>
+                <td><code>/@Seneca</code></td>
+              </tr>
+              <tr>
+                <td><code>/@-</code></td>
+                <td>Enter recording mode, in which messages are saved without AI replies.</td>
+                <td>This choice applies only to the current session.</td>
+              </tr>
+              <tr>
+                <td><code>/!Name</code></td>
+                <td>Choose your persona and save that choice for the forum.</td>
+                <td><code>/!Michael</code></td>
+              </tr>
+              <tr>
+                <td><code>/style name</code></td>
+                <td>Change the conversation's visual text style for this session.</td>
+                <td>Use <code>/style</code> to see the current style and <code>/style default</code> to restore it.</td>
+              </tr>
+              <tr>
+                <td><code>/stop</code></td>
+                <td>Stop the reply that is being generated.</td>
+                <td>&nbsp;</td>
+              </tr>
+              <tr>
+                <td><code>/exit</code></td>
+                <td>Close the live session.</td>
+                <td>You can open a saved session again later.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="character-settings">
+        <h2>8. Character settings</h2>
+        <p>
+          Open <strong>Characters</strong>, select a character, and then open
+          <strong>Settings</strong>. The Settings option appears only for characters
+          that can be changed. The built-in Assistant does not have this screen.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <caption>Settings available in the browser</caption>
+            <thead>
+              <tr>
+                <th scope="col">Setting</th>
+                <th scope="col">Meaning</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Provider</td>
+                <td>The AI service and model used by this character.</td>
+              </tr>
+              <tr>
+                <td>Reasoning effort</td>
+                <td>How much internal work the model may do before answering. Higher settings can take longer and may cost more.</td>
+              </tr>
+              <tr>
+                <td>Web search</td>
+                <td>Whether the character may search the web, must search it, or must not search it.</td>
+              </tr>
+              <tr>
+                <td>Style</td>
+                <td>The font treatment used to display this character's messages.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="warning">
+          <p>
+            Saving character settings restarts live sessions that use the character.
+            If a reply is being generated, that unfinished reply will be lost.
+          </p>
+        </div>
+      </section>
+
+      <section id="exporting">
+        <h2>9. Downloading conversations</h2>
+        <p>
+          Use <strong>Download</strong> in a session's action menu to save a Markdown
+          file. Markdown is plain text that remains readable in an ordinary text
+          editor and is also supported by many note-taking applications.
+        </p>
+        <p>The exported file is designed to be compact:</p>
+        <ul>
+          <li>The session start time appears once near the beginning.</li>
+          <li>Each speaker is shown as a monospace badge followed by a middle dot.</li>
+          <li>Paragraphs within one reply stay close together.</li>
+          <li>A small gap separates one message from the next.</li>
+        </ul>
+        <pre><code>&lt;!-- CHA session: An evening conversation --&gt;
+*Started September 03, 2026 at 17:47 PDT*
+
+`Michael` · How can I make better use of the rest of today?
+
+`Montaigne` · Begin by deciding whether you need rest or attention.  
+Then choose one small act and do it completely.</code></pre>
+        <p>
+          An administrator may also enable a Markdown mirror. When enabled, CHA
+          keeps an additional plain-text copy of persistent sessions in folders
+          named after their forums. The database remains the main copy used by CHA.
+        </p>
+      </section>
+
+      <section id="privacy">
+        <h2>10. Privacy and data</h2>
+        <ul>
+          <li>
+            Saved sessions and workspace settings are stored in the SQLite database
+            named in the application configuration.
+          </li>
+          <li>
+            Prompts and the needed conversation history are sent to the configured
+            AI provider when you request a reply.
+          </li>
+          <li>
+            If web search is enabled, the provider may use the web to prepare an
+            answer. CHA stores the final answer, not the provider's search details.
+          </li>
+          <li>
+            A Markdown mirror, if enabled, creates readable copies of conversations
+            on disk. Treat that folder as private.
+          </li>
+        </ul>
+        <div class="warning">
+          <p>
+            Protect the database, configuration, environment file, log files, and
+            Markdown mirror. They can contain private conversations or access keys.
+          </p>
+        </div>
+      </section>
+
+      <section id="troubleshooting">
+        <h2>11. Troubleshooting</h2>
+        <div class="table-wrap">
+          <table>
+            <caption>Common problems</caption>
+            <thead>
+              <tr>
+                <th scope="col">Problem</th>
+                <th scope="col">What to try</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>The browser cannot open CHA.</td>
+                <td>Confirm that <code>chaweb</code> is running, check the configured host and port, and look in <code>chaweb.log</code> or the configured application log.</td>
+              </tr>
+              <tr>
+                <td>A reply fails immediately.</td>
+                <td>Check that the selected provider is correct and that its API key environment variable is available to CHA.</td>
+              </tr>
+              <tr>
+                <td>A reply stops during generation.</td>
+                <td>Check the network connection and provider status, then send the message again. An administrator can also review timeout settings and logs.</td>
+              </tr>
+              <tr>
+                <td>The wrong character answers.</td>
+                <td>Check the <strong>To</strong> value above the message box. Use <code>/@Name</code> to choose a default or begin one message with <code>@Name</code>.</td>
+              </tr>
+              <tr>
+                <td>The wrong persona is shown.</td>
+                <td>Check the <strong>From</strong> value and use <code>/!Name</code> to choose another persona.</td>
+              </tr>
+              <tr>
+                <td>Typing Enter sends nothing.</td>
+                <td>This is expected. <kbd>Enter</kbd> adds a new line; use <kbd>Ctrl</kbd>+<kbd>Enter</kbd> or the Send button.</td>
+              </tr>
+              <tr>
+                <td>An older browser tab disconnected.</td>
+                <td>Another tab or device probably opened the same session. Continue in the newest page, or refresh the page you want to use.</td>
+              </tr>
+              <tr>
+                <td>Changes to files do not appear.</td>
+                <td>Configuration files are imported into the database. Stop CHA and import the workspace again; editing an old import folder alone does not change the running application.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="appendix">
+        <p class="appendix-label">Appendix A</p>
+        <h2>Configuration reference</h2>
+        <p class="lead">
+          This appendix is for the person who installs or maintains CHA. Everyday
+          use of the application does not require these settings.
+        </p>
+
+        <h3>A.1 Main configuration file</h3>
+        <p>
+          CHA reads a TOML configuration file. In a packaged installation, copy
+          <code>cha.toml.example</code> to a safe location outside the application
+          directory and edit the copy. A basic file looks like this:
+        </p>
+        <pre><code>data = "cha.sqlite3"
+# mirror = "session-mirror"
+
+[web]
+host = "0.0.0.0"
+port = 8086
+
+[logging]
+file = "logs/cha.log"
+level = "info"</code></pre>
+
+        <div class="table-wrap">
+          <table>
+            <caption>Main configuration settings</caption>
+            <thead>
+              <tr>
+                <th scope="col">Setting</th>
+                <th scope="col">Required</th>
+                <th scope="col">Meaning</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>data</code></td>
+                <td>Yes</td>
+                <td>Path to the SQLite database used by CHA.</td>
+              </tr>
+              <tr>
+                <td><code>mirror</code></td>
+                <td>No</td>
+                <td>Existing directory where CHA keeps additional Markdown copies of persistent sessions.</td>
+              </tr>
+              <tr>
+                <td><code>web.host</code></td>
+                <td>Yes</td>
+                <td>Network address on which the web service listens. <code>0.0.0.0</code> allows connections through any available network interface.</td>
+              </tr>
+              <tr>
+                <td><code>web.port</code></td>
+                <td>Yes</td>
+                <td>Web service port, from 1 through 65535.</td>
+              </tr>
+              <tr>
+                <td><code>logging.file</code></td>
+                <td>Yes</td>
+                <td>File that receives application log messages.</td>
+              </tr>
+              <tr>
+                <td><code>logging.level</code></td>
+                <td>Yes</td>
+                <td>Detail level: <code>trace</code>, <code>debug</code>, <code>info</code>, <code>warn</code>, <code>error</code>, <code>critical</code>, or <code>off</code>.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          Relative paths in <code>data</code>, <code>mirror</code>, and
+          <code>logging.file</code> are resolved from the directory containing the
+          main configuration file. The mirror directory must already exist.
+        </p>
+
+        <h3>A.2 Starting a packaged installation</h3>
+        <p>A typical first installation uses these steps:</p>
+        <pre><code>cd /path/to/cha-package
+cp cha.toml.example ../cha.toml
+# Edit ../cha.toml and import-seed/.env as needed.
+./chaweb --config=../cha.toml --import ./import-seed
+./start-cha.sh</code></pre>
+        <p>
+          The import creates and fills the database. Normal startup expects an
+          initialized database; it does not create an empty workspace by itself.
+          The start script runs <code>chaweb</code> in the background and writes its
+          console output to <code>chaweb.log</code> beside the executable.
+        </p>
+
+        <h4>Choose another configuration file</h4>
+        <p>
+          By default, <code>start-cha.sh</code> uses <code>../cha.toml</code>. Set
+          <code>CHA_CONFIG</code> to use another file:
+        </p>
+        <pre><code>CHA_CONFIG=/etc/cha/cha.toml ./start-cha.sh</code></pre>
+        <p>
+          An absolute path is used directly. A relative path is interpreted from
+          the directory containing <code>start-cha.sh</code>.
+        </p>
+
+        <h3>A.3 Environment variables and secrets</h3>
+        <div class="table-wrap">
+          <table>
+            <caption>Environment variables used by CHA</caption>
+            <thead>
+              <tr>
+                <th scope="col">Variable</th>
+                <th scope="col">Purpose</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>CHA_CONFIG</code></td>
+                <td>Overrides the configuration file used by <code>start-cha.sh</code>.</td>
+              </tr>
+              <tr>
+                <td><code>OPENAI_API_KEY</code></td>
+                <td>A common API key variable. The actual name is chosen by each provider's <code>api_key_env</code> setting.</td>
+              </tr>
+              <tr>
+                <td><code>CHA_R2_URL</code></td>
+                <td>Cloudflare R2 endpoint and bucket used for database upload or download.</td>
+              </tr>
+              <tr>
+                <td><code>CHA_R2_ACCESS_KEY_ID</code></td>
+                <td>Access key for R2 synchronization.</td>
+              </tr>
+              <tr>
+                <td><code>CHA_R2_SECRET_ACCESS_KEY</code></td>
+                <td>Secret key for R2 synchronization.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          Provider keys can be inherited from the operating-system environment or
+          read from a root <code>.env</code> file during import. An inherited value
+          takes precedence. Never commit a real <code>.env</code> file or API key to
+          source control.
+        </p>
+
+        <h3>A.4 Workspace files</h3>
+        <p>
+          Personas, characters, forums, providers, styles, and prompt text are
+          imported into the database from a workspace directory. A typical layout is:
+        </p>
+        <pre><code>workspace/
+  .env
+  characters/
+    assistant-name/
+      character.toml
+      CHARACTER.md
+  personas/
+    persona-name/
+      persona.toml
+      PERSONA.md
+  forums/
+    forum-name/
+      config.toml
+      FORUM.md
+      members/
+  system/
+    providers/
+    styles/</code></pre>
+        <p>
+          Only regular TOML and Markdown files are imported, together with the
+          optional root <code>.env</code> file. Symbolic links are not followed.
+          Directory names act as stable identifiers, so use short, distinct names.
+        </p>
+
+        <h4>Character settings</h4>
+        <pre><code>display_name = "Montaigne"
+description = "A reflective conversation partner"
+provider = "openai"
+style = "book"
+reasoning_effort = "medium"
+web_search = "auto"
+tags = ["philosophy"]
+
+[prompt]
+language = "English"</code></pre>
+        <div class="table-wrap">
+          <table>
+            <caption><code>characters/&lt;id&gt;/character.toml</code></caption>
+            <thead>
+              <tr>
+                <th scope="col">Setting</th>
+                <th scope="col">Required</th>
+                <th scope="col">Allowed values or meaning</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td><code>display_name</code></td><td>Yes</td><td>Name shown in CHA.</td></tr>
+              <tr><td><code>provider</code></td><td>Yes</td><td>Identifier of a configured provider.</td></tr>
+              <tr><td><code>description</code></td><td>No</td><td>Short description shown to the user.</td></tr>
+              <tr><td><code>style</code></td><td>No</td><td>Identifier of a configured display style.</td></tr>
+              <tr><td><code>reasoning_effort</code></td><td>No</td><td><code>low</code>, <code>medium</code>, <code>high</code>, or <code>xhigh</code>.</td></tr>
+              <tr><td><code>web_search</code></td><td>No</td><td><code>off</code>, <code>auto</code>, or <code>required</code>.</td></tr>
+              <tr><td><code>tags</code></td><td>No</td><td>A list of labels used to describe the character.</td></tr>
+              <tr><td><code>[prompt]</code></td><td>No</td><td>Values substituted into prompt templates.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          <code>CHARACTER.md</code> contains the character's main instructions.
+          Keep them clear, specific, and suitable for the intended conversations.
+        </p>
+
+        <h4>Persona settings</h4>
+        <pre><code>display_name = "Michael"
+description = "My everyday speaking persona"</code></pre>
+        <div class="table-wrap">
+          <table>
+            <caption><code>personas/&lt;id&gt;/persona.toml</code></caption>
+            <thead>
+              <tr><th scope="col">Setting</th><th scope="col">Required</th><th scope="col">Meaning</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>display_name</code></td><td>Yes</td><td>Name shown in CHA.</td></tr>
+              <tr><td><code>description</code></td><td>No</td><td>Short explanation of the persona.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          <code>PERSONA.md</code> is optional and can provide background that helps
+          characters understand the speaker. CHA also provides a built-in Guest persona.
+        </p>
+
+        <h4>Forum settings</h4>
+        <pre><code>display_name = "Philosophers"
+description = "Conversations about practical philosophy"
+default_character = "montaigne"
+default_persona = "michael"</code></pre>
+        <div class="table-wrap">
+          <table>
+            <caption><code>forums/&lt;id&gt;/config.toml</code></caption>
+            <thead>
+              <tr><th scope="col">Setting</th><th scope="col">Required</th><th scope="col">Meaning</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>display_name</code></td><td>Yes</td><td>Name shown in CHA.</td></tr>
+              <tr><td><code>description</code></td><td>No</td><td>Short explanation of the forum.</td></tr>
+              <tr><td><code>default_character</code></td><td>No</td><td>Character selected when a session begins. It must be a forum member.</td></tr>
+              <tr><td><code>default_persona</code></td><td>No</td><td>Persona selected when a session begins. Guest is used when this is omitted.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          Forum members are listed under <code>forums/&lt;id&gt;/members</code>.
+          <code>FORUM.md</code> contains forum-level instructions. The optional
+          <code>members/character_defaults.toml</code> file provides prompt values
+          shared by the forum's characters.
+        </p>
+
+        <h4>Provider settings</h4>
+        <p>
+          Provider files are stored below <code>system/providers</code>. The exact
+          folder structure in the supplied workspace can be used as a template.
+        </p>
+        <pre><code>host = "api.openai.com"
+port = 443
+https = true
+base_path = "/v1"
+model = "model-name"
+api = "responses"
+mode = "net"
+stream = true
+api_key_env = "OPENAI_API_KEY"
+timeout_s = 600
+idle_timeout_s = 60
+web_search = "off"</code></pre>
+        <div class="table-wrap">
+          <table>
+            <caption>Provider configuration</caption>
+            <thead>
+              <tr><th scope="col">Setting</th><th scope="col">Default</th><th scope="col">Meaning</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>host</code></td><td>Required</td><td>Provider server name.</td></tr>
+              <tr><td><code>port</code></td><td>Required</td><td>Provider server port, from 1 through 65535.</td></tr>
+              <tr><td><code>model</code></td><td>Required</td><td>Model name sent to the provider.</td></tr>
+              <tr><td><code>https</code></td><td><code>false</code></td><td>Use a secure HTTPS connection when true.</td></tr>
+              <tr><td><code>base_path</code></td><td>Empty</td><td>URL path before the API endpoint. If present, it begins with <code>/</code>.</td></tr>
+              <tr><td><code>api</code></td><td><code>responses</code></td><td><code>responses</code> or <code>chat_completions</code>.</td></tr>
+              <tr><td><code>mode</code></td><td><code>test</code></td><td><code>net</code> makes real requests. <code>test</code> is a local test mode.</td></tr>
+              <tr><td><code>stream</code></td><td><code>true</code></td><td>Show the answer as it arrives.</td></tr>
+              <tr><td><code>temperature</code></td><td>Provider default</td><td>Optional value from 0 through 2 controlling variation.</td></tr>
+              <tr><td><code>max_tokens</code></td><td>Provider default</td><td>Optional positive answer-length limit.</td></tr>
+              <tr><td><code>timeout_s</code></td><td><code>600</code></td><td>Maximum total request time in seconds.</td></tr>
+              <tr><td><code>idle_timeout_s</code></td><td><code>60</code></td><td>Maximum wait between received pieces of a streamed answer.</td></tr>
+              <tr><td><code>api_key_env</code></td><td>Empty</td><td>Name of the environment variable holding the API key.</td></tr>
+              <tr><td><code>reasoning_effort</code></td><td>Provider default</td><td>Default reasoning effort sent to the provider.</td></tr>
+              <tr><td><code>reasoning_format</code></td><td><code>auto</code></td><td><code>auto</code>, <code>none</code>, <code>reasoning_content</code>, or <code>reasoning</code>.</td></tr>
+              <tr><td><code>web_search</code></td><td><code>off</code></td><td><code>off</code>, <code>auto</code>, or <code>required</code>.</td></tr>
+              <tr><td><code>cache_retention</code></td><td><code>short</code></td><td><code>off</code>, <code>short</code>, or <code>long</code>, when supported by the provider.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="note">
+          <p>
+            Use <code>mode = "net"</code> for normal conversations. Web search works
+            only with provider and API combinations that support it.
+          </p>
+        </div>
+
+        <h4>Display style settings</h4>
+        <p>
+          A style is defined in <code>system/styles/&lt;id&gt;/config.toml</code>.
+          It changes presentation only; it does not change what a character says.
+        </p>
+        <pre><code>font = "serif"
+style = "normal"
+weight = "medium"
+size = "normal"
+text_color = "normal"</code></pre>
+        <div class="table-wrap">
+          <table>
+            <caption>Allowed style values</caption>
+            <thead>
+              <tr><th scope="col">Setting</th><th scope="col">Allowed values</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>font</code></td><td><code>sans</code>, <code>serif</code>, <code>mono</code></td></tr>
+              <tr><td><code>style</code></td><td><code>normal</code>, <code>italic</code></td></tr>
+              <tr><td><code>weight</code></td><td><code>light</code>, <code>normal</code>, <code>medium</code>, <code>semibold</code>, <code>bold</code></td></tr>
+              <tr><td><code>size</code></td><td><code>small</code>, <code>normal</code>, <code>large</code></td></tr>
+              <tr><td><code>text_color</code></td><td><code>normal</code>, <code>muted</code>, <code>accent</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h4>Prompt templates</h4>
+        <p>
+          Markdown prompt files can reuse text and values. Use
+          <code>$$(relative/file)</code> to include another file and
+          <code>$${variable}</code> to insert a value from a prompt settings table.
+          Keep templates small and test them after import.
+        </p>
+
+        <h3>A.5 Import, export, and maintenance</h3>
+        <p>
+          Stop the running service before an offline import, export, upload, or
+          download. These modes cannot be combined in one command.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <caption><code>chaweb</code> commands</caption>
+            <thead>
+              <tr><th scope="col">Command</th><th scope="col">Purpose</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>chaweb --config=CONFIG --root PATH</code></td><td>Start CHA and optionally use PATH for web application files.</td></tr>
+              <tr><td><code>chaweb --config=CONFIG --import DIRECTORY</code></td><td>Import workspace files into the database.</td></tr>
+              <tr><td><code>chaweb --config=CONFIG --export DIRECTORY</code></td><td>Export the database configuration to an empty or missing directory.</td></tr>
+              <tr><td><code>chaweb --config=CONFIG --upload</code></td><td>Upload the database to the configured R2 bucket.</td></tr>
+              <tr><td><code>chaweb --config=CONFIG --download</code></td><td>Download the database from R2. The previous local database is backed up with a <code>.bac</code> suffix.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>A safe configuration-editing cycle is:</p>
+        <ol class="steps">
+          <li>Stop CHA.</li>
+          <li>Export the current workspace to a new, empty directory.</li>
+          <li>Edit the exported TOML and Markdown files.</li>
+          <li>Keep a backup of the database.</li>
+          <li>Import the edited workspace.</li>
+          <li>Start CHA and test the change.</li>
+        </ol>
+        <pre><code>./chaweb --config=/path/cha.toml --export /path/exported-workspace
+# Edit the exported files.
+./chaweb --config=/path/cha.toml --import /path/exported-workspace</code></pre>
+
+        <h3>A.6 R2 database backup</h3>
+        <p>
+          Set the three <code>CHA_R2_...</code> environment variables described in
+          section A.3, then use <code>--upload</code> or <code>--download</code>. The R2
+          URL has this form:
+        </p>
+        <pre><code>CHA_R2_URL=https://ACCOUNT_ID.r2.cloudflarestorage.com/BUCKET</code></pre>
+        <p>
+          The object name is the database file name. Test backup and restore before
+          relying on them, and keep the R2 credentials private.
+        </p>
+      </section>
+
+      <section id="glossary">
+        <p class="appendix-label">Appendix B</p>
+        <h2>Glossary</h2>
+        <div class="table-wrap">
+          <table>
+            <caption>Useful terms</caption>
+            <thead>
+              <tr><th scope="col">Term</th><th scope="col">Plain-language meaning</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>API key</td><td>A private password that allows CHA to use an AI provider account.</td></tr>
+              <tr><td>Character</td><td>The AI counterpart that replies in a conversation.</td></tr>
+              <tr><td>Context</td><td>Earlier messages and instructions sent to the model to help it prepare the next answer.</td></tr>
+              <tr><td>Forum</td><td>A group of characters, defaults, and saved sessions.</td></tr>
+              <tr><td>Markdown</td><td>A readable plain-text format used for downloaded conversations and prompt files.</td></tr>
+              <tr><td>Persona</td><td>The identity used for the human side of a conversation.</td></tr>
+              <tr><td>Provider</td><td>The service and model that generate a character's answers.</td></tr>
+              <tr><td>Session</td><td>One conversation saved inside a forum.</td></tr>
+              <tr><td>SQLite</td><td>The single local database file in which CHA stores its workspace and sessions.</td></tr>
+              <tr><td>TOML</td><td>A simple text format used for configuration settings.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <p>CHA User Manual. This document describes the current browser application and packaged service.</p>
+    </footer>
+  </div>
+</body>
+</html>

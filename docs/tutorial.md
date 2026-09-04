@@ -5,9 +5,9 @@ not merely to list files, but to build a working mental model: which objects
 exist, who owns them, which thread may touch them, when data becomes durable,
 and how one browser prompt turns into streamed model output.
 
-The browser implementation under `webapp/` is outside this guide. It appears
-only at the native protocol boundary, where understanding the C++ server
-requires knowing what the browser sends and receives.
+The guide focuses on the native implementation. The browser under `webapp/`
+appears mainly at the protocol boundary, plus one short presentation section
+covering transcript filtering and composer behavior.
 
 ## 1. How to use this guide
 
@@ -183,6 +183,13 @@ There are also `asan-ubsan` and `tsan` CMake presets. Browser checks and the
 credential-dependent provider integration test are separate from the core C++
 unit suite; see the root [README](../README.md).
 
+Run the complete browser checks from `webapp/`:
+
+```sh
+npm run check
+npm run build
+```
+
 The current native build requires OpenSSL on every platform because prompt-cache
 keys use its SHA-256 implementation, independently of curl's TLS backend.
 
@@ -198,6 +205,7 @@ keys use its SHA-256 implementation, independently of curl's TLS backend.
 | [src/session](../src/session) | Controller, transcript orchestration, workspace session database, journal, lease, repository |
 | [src/workspace](../src/workspace) | Configuration store, workspace loading, built-ins, and session construction |
 | [src/web](../src/web) | Native protocol, routes, actor, Markdown mirror, mailbox, lifecycle, shutdown |
+| [webapp/src](../webapp/src) | Browser state, transcript presentation, composer, and API client |
 | [tests](../tests) | Behavioral examples grouped by the same subsystem boundaries |
 | [packaging/linux/cha.toml.example](../packaging/linux/cha.toml.example) | External process-configuration example |
 | [packaging/linux/import-seed](../packaging/linux/import-seed) | A configuration source tree to compare against the loaders and import filter |
@@ -373,7 +381,19 @@ application-asset root. The four offline modes are mutually exclusive. Upload
 and download use the R2 bucket URL and S3 credentials from
 `CHA_R2_URL`, `CHA_R2_ACCESS_KEY_ID`, and
 `CHA_R2_SECRET_ACCESS_KEY`; the configured database filename becomes the object
-key. The TOML shape is:
+key.
+
+The Linux package includes `start-cha.sh`, which supplies `--root`, starts
+`chaweb` in the background, and uses `../cha.toml` by default. A nonempty
+`CHA_CONFIG` overrides that default for the launcher only; the executable
+itself still requires `--config`. Absolute override paths are used directly,
+while relative paths resolve from the directory containing `start-cha.sh`:
+
+```sh
+CHA_CONFIG=/etc/cha/cha.toml ./start-cha.sh
+```
+
+The TOML shape is:
 
 ```toml
 data = "/var/lib/cha/workspace.sqlite3"
@@ -1148,11 +1168,16 @@ HTTP, filesystem, and signal-handling details.
 ### 12.8 Markdown download and continuous mirroring
 
 The download route and filesystem mirror share
-`session_markdown()`. It escapes heading syntax, includes known local
-timestamps, preserves entry Markdown verbatim, omits transient cover
-markers, and suppresses repeated multicast prompts. The HTTP route obtains an
-owner-thread snapshot for a live session or restores stored history for a
-closed one; `SessionMirror` writes the same bytes directly to disk.
+`session_markdown()`. The filename supplies the visible session title; the file
+keeps that label in a hidden `<!-- CHA session: ... -->` comment instead of
+rendering a duplicate heading. The first known entry time appears once as the
+session start time. Each message begins on the same line as a monospace speaker
+badge and middle dot, for example `` `Reader` · Review this``. Blank paragraph
+gaps inside one message become Markdown hard line breaks, while a blank line
+still separates messages. The formatter omits transient cover markers and
+suppresses repeated multicast prompts. The HTTP route obtains an owner-thread
+snapshot for a live session or restores stored history for a closed one;
+`SessionMirror` writes the same bytes directly to disk.
 
 At startup `SessionMirror` reads the published forum display names and active
 sessions from `SessionRepository`. It creates one directory per persistent
@@ -1182,6 +1207,30 @@ catches filesystem errors and logs a warning: a failed secondary projection
 must not turn an already committed session transition into a failed chat
 operation. Writes use `create_private_file()`, which rejects symlink or
 non-regular targets and atomically replaces a regular file.
+
+### 12.9 Browser transcript and composer
+
+The browser's presentation behavior is concentrated in
+[webapp/src/components/Screens.tsx](../webapp/src/components/Screens.tsx), with
+layout rules in [webapp/src/styles/app.css](../webapp/src/styles/app.css).
+`visibleTranscriptEntries()` suppresses the duplicate human prompts stored for
+multicast, but marks the next visible response so the renderer inserts an
+unlabelled horizontal divider. Readers can therefore see where one response
+ends and the next response to the same prompt begins without seeing the whole
+prompt again.
+
+The horizontal line above the composer is also its resize handle. Dragging it
+up or down changes the textarea's height while the transcript consumes the
+remaining flexible space. Automatic growth remains the minimum, and both
+automatic and manual growth stop at 80% of the chat area's height. The handle
+also accepts Up/Down keys, while Home or a double-click returns to automatic
+sizing.
+
+The composer follows ordinary multiline textarea behavior: Enter adds a new
+line and Ctrl+Enter submits the prompt. The send button uses the same form
+submission path. There is no application-level Latin-to-Russian
+transliteration mode or toggle; text comes directly from the user's configured
+keyboard or input method.
 
 ## 13. End-to-end workflow traces
 
@@ -1532,6 +1581,7 @@ and before reading all of its implementation.
 | Snapshot/append collapse | [tests/web/unit_sse_mailbox.cpp](../tests/web/unit_sse_mailbox.cpp) |
 | Route protocol | [tests/web/unit_lobby_routes.cpp](../tests/web/unit_lobby_routes.cpp), [unit_session_routes.cpp](../tests/web/unit_session_routes.cpp) |
 | Whole-process behavior | [tests/web/process_web_server.cpp](../tests/web/process_web_server.cpp) |
+| Browser transcript and composer | [webapp/src/components/LiveChat.test.tsx](../webapp/src/components/LiveChat.test.tsx) |
 
 Useful test support types include fake model backends, deterministic notifiers,
 temporary workspace builders, controller fixtures, live-session graphs, and a
