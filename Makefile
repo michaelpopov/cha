@@ -14,7 +14,7 @@ package-linux:
 
 package-macos:
 	@test -n "$(VERSION)" || (echo "usage: make package-macos VERSION=<version>" >&2; exit 2)
-	./scripts/package-macos.sh "$(VERSION)"
+	./packaging/macos/package.sh "$(VERSION)"
 
 web-check:
 	cd webapp && npm run check

@@ -336,13 +336,19 @@ installation:
 Do not delete the old backup as part of the cutover. Backup retention and
 eventual removal are operator decisions.
 
-Linux and macOS packages contain `cha.toml.example` and `import-seed/` as
-source material, not live storage. Copy the example to `../cha.toml`, replace
-the secret placeholder, and initialize the configured database explicitly
-with `chaweb --config=../cha.toml --import import-seed` before running
+The Linux package contains `cha.toml.example` and `import-seed/` as source
+material, not live storage. Copy the example to `../cha.toml`, replace the
+secret placeholder, and initialize the configured database explicitly with
+`chaweb --config=../cha.toml --import import-seed` before running
 `start-cha.sh`. The real configuration and database remain outside the
 replaceable application directory; the launcher writes process output to
 `chaweb.log` beside the executable.
+
+`CHA.app` performs its own setup. On first launch it asks for an OpenAI API key
+and prepares everything it needs. Later launches reuse the conversations and
+settings already on that Mac, so replacing `CHA.app` upgrades the application
+without removing them. Choose **Change API Key…** from the CHA menu to save a
+new key for the next launch.
 
 `chaweb` loads discovery — the roster, descriptions, and Markdown shown in
 Personas, Characters, and Forums — from the database as one validated immutable
@@ -378,9 +384,17 @@ build/ninja/itest --gtest_filter=R2Integration.*
 ```
 
 Browser development is documented in
-[webapp/README.md](webapp/README.md). Build a validated Linux or macOS release
-with `make package-linux VERSION=<version>` or
-`make package-macos VERSION=<version>`; each writes an application directory
-and `.tar.gz` archive under `packages/`. Packaging requires the Node.js version
-in `webapp/.node-version`, including npm and npx. See
-[src/README.md](src/README.md) for the native architecture.
+[webapp/README.md](webapp/README.md). Build a validated release with
+`make package-linux VERSION=<version>` or
+`make package-macos VERSION=<version>`. The Linux command writes an application
+directory and `.tar.gz` archive under `packages/`; the macOS command writes
+`packages/CHA.app` and `packages/CHA-macos-<version>.zip`. Packaging requires
+the Node.js version in `webapp/.node-version`, including npm and npx.
+
+The macOS package must be built on an Apple Silicon Mac with the Xcode command
+line tools. It links Homebrew's static OpenSSL, which is built for the host
+macOS generation, so the application runs on the macOS generation that built it
+or newer; building for an older Mac means building on one. It is signed ad hoc
+rather than notarized, so a copy that arrives through a browser is quarantined:
+open it once from the Finder shortcut menu, or remove the quarantine attribute.
+See [src/README.md](src/README.md) for the native architecture.

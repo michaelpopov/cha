@@ -276,14 +276,6 @@
       font-weight: 700;
     }
 
-    .appendix-label {
-      color: var(--accent);
-      font-size: 0.83rem;
-      font-weight: 750;
-      letter-spacing: 0.12em;
-      text-transform: uppercase;
-    }
-
     footer {
       padding: 1.5rem clamp(1.5rem, 6vw, 4.5rem);
       border-top: 1px solid var(--line);
@@ -392,7 +384,7 @@
       <h2 id="contents-heading">Contents</h2>
       <ol>
         <li><a href="#about">About CHA</a></li>
-        <li><a href="#getting-started">Getting started</a></li>
+        <li><a href="#getting-started">Install and start CHA on macOS</a></li>
         <li><a href="#concepts">The four main ideas</a></li>
         <li><a href="#navigation">Finding your way around</a></li>
         <li><a href="#sessions">Creating and managing sessions</a></li>
@@ -402,7 +394,6 @@
         <li><a href="#exporting">Downloading conversations</a></li>
         <li><a href="#privacy">Privacy and data</a></li>
         <li><a href="#troubleshooting">Troubleshooting</a></li>
-        <li><a href="#appendix">Appendix: configuration</a></li>
         <li><a href="#glossary">Glossary</a></li>
       </ol>
     </nav>
@@ -411,15 +402,16 @@
       <section id="about">
         <h2>1. About CHA</h2>
         <p class="lead">
-          CHA is a private browser application for conversations with one or
-          more AI characters. It lets you choose who you speak as, choose who
-          answers, organize conversations into forums, and keep useful sessions.
+          CHA is a private application for conversations with one or more AI
+          characters. It lets you choose who you speak as, choose who answers,
+          organize conversations into forums, and keep useful sessions.
         </p>
         <p>
-          CHA runs as a small service called <code>chaweb</code>. You use the
-          application in a web browser. The service stores your workspace and
-          conversations in a local database and sends prompts to the AI provider
-          selected for each character.
+          On a compatible Mac, CHA installs in the Applications folder and opens
+          in its own window like any other application. Chrome, Safari, and other
+          web browsers are not needed. CHA keeps its settings and conversations
+          on the Mac and contacts the selected AI provider when a character
+          prepares a reply.
         </p>
         <div class="note">
           <p>
@@ -430,25 +422,101 @@
       </section>
 
       <section id="getting-started">
-        <h2>2. Getting started</h2>
+        <h2>2. Install and start CHA on macOS</h2>
+        <p class="lead">
+          The standalone edition of CHA is a normal Mac application. Installation
+          requires no Terminal commands and everyday use requires no web browser.
+        </p>
 
-        <h3>Open CHA</h3>
-        <ol class="steps">
-          <li>Make sure the CHA service is running.</li>
+        <h3>Before you begin</h3>
+        <p>You need:</p>
+        <ul>
           <li>
-            Open the address given by the person who installed CHA. On the same
-            computer, the address is often <code>http://localhost:8086</code>.
+            A Mac with Apple silicon, such as an M1, M2, M3, M4, or later chip.
+            This edition does not run on an Intel Mac.
           </li>
           <li>
-            CHA opens the <strong>Welcome</strong> session. You can start typing
-            immediately or choose another forum or saved session from the sidebar.
+            A copy of CHA built for the macOS version on that Mac. A build made
+            for a newer macOS release cannot run on an older release.
+          </li>
+          <li>An internet connection for AI-generated replies.</li>
+          <li>
+            An OpenAI Platform API key. If you do not have one, sign in to the
+            <a href="https://platform.openai.com/api-keys">OpenAI API key page</a>
+            and create a key. Treat the key like a password: do not share it or
+            include it in messages or downloaded conversations.
+          </li>
+        </ul>
+
+        <h3>Install the application</h3>
+        <ol class="steps">
+          <li>
+            Obtain <code>CHA-macos-&lt;version&gt;.zip</code> or <code>CHA.app</code>
+            from a source you trust.
+          </li>
+          <li>
+            If you received a ZIP file, double-click it in Finder. Finder creates
+            <code>CHA.app</code> beside it.
+          </li>
+          <li>Open a second Finder window and select <strong>Applications</strong>.</li>
+          <li>Drag <code>CHA.app</code> into the Applications folder.</li>
+          <li>
+            Open Applications and double-click <strong>CHA</strong>. Do not open
+            the application from inside the ZIP file and do not move or edit files
+            inside <code>CHA.app</code>.
           </li>
         </ol>
 
+        <h3 id="macos-security">If macOS blocks the first launch</h3>
+        <p>
+          Because this personal-use application does not come from the Mac App
+          Store, macOS may say that Apple cannot check it or that its developer
+          cannot be verified. Continue only if you trust the person or place from
+          which you received this exact copy.
+        </p>
+        <ol class="steps">
+          <li>Try to open CHA once, then dismiss the macOS warning.</li>
+          <li>
+            Choose Apple menu &gt; <strong>System Settings</strong>, then select
+            <strong>Privacy &amp; Security</strong> in the sidebar.
+          </li>
+          <li>
+            Scroll to the Security area and select <strong>Open Anyway</strong>
+            beside the message about CHA.
+          </li>
+          <li>
+            Enter the Mac login password if asked, confirm the choice, and select
+            <strong>Open</strong> in the final warning.
+          </li>
+        </ol>
+        <div class="warning">
+          <p>
+            Do not override a warning that says CHA will damage the Mac, and do
+            not continue if the copy came from an unexpected or untrusted source.
+            Obtain a fresh copy instead. For more context, see
+            <a href="https://support.apple.com/102445">Apple's guidance for
+            opening applications safely</a>.
+          </p>
+        </div>
+
+        <h3>Complete the first launch</h3>
+        <ol class="steps">
+          <li>Wait for the <strong>Set up CHA</strong> window to appear.</li>
+          <li>Paste the OpenAI API key into the protected field.</li>
+          <li>Select <strong>Continue</strong>.</li>
+          <li>
+            Wait while CHA prepares itself. The main window opens at the
+            <strong>Welcome</strong> session when setup is complete.
+          </li>
+        </ol>
+        <p>
+          CHA remembers the key, settings, and saved conversations on that Mac.
+          You do not need to repeat setup each time the application opens.
+        </p>
         <p>
           The Welcome session is temporary. It is useful for a quick conversation,
-          but it disappears when the CHA service stops. Create a normal session in
-          a forum when you want the conversation to be saved.
+          but it disappears when CHA quits. Create a normal session in a forum when
+          you want the conversation to be saved.
         </p>
 
         <h3>Send your first message</h3>
@@ -470,6 +538,44 @@
           use up to 80% of the chat height. When the divider has keyboard focus,
           use the Up and Down arrow keys to resize it. Press <kbd>Home</kbd> or
           double-click the divider to return to the automatic size.
+        </p>
+
+        <h3>Open and quit CHA</h3>
+        <ul>
+          <li>
+            To open CHA later, double-click it in Applications. You can also drag
+            CHA from Applications to the Dock for convenient access.
+          </li>
+          <li>
+            To quit, choose <strong>CHA &gt; Quit CHA</strong>, press
+            <kbd>Command</kbd>+<kbd>Q</kbd>, or close CHA's only window.
+          </li>
+        </ul>
+
+        <h3>Change the OpenAI API key</h3>
+        <ol class="steps">
+          <li>Choose <strong>CHA &gt; Change API Key…</strong>.</li>
+          <li>Paste the replacement key and select <strong>Continue</strong>.</li>
+          <li>Select <strong>OK</strong> after CHA confirms that the key was saved.</li>
+          <li>Quit CHA and open it again. The new key is used after the restart.</li>
+        </ol>
+
+        <h3>Install an updated version</h3>
+        <ol class="steps">
+          <li>Quit CHA completely.</li>
+          <li>Extract the new <code>CHA.app</code> if it arrived in a ZIP file.</li>
+          <li>Drag the new copy into Applications.</li>
+          <li>Select <strong>Replace</strong> when Finder asks what to do.</li>
+          <li>Open CHA normally. Existing settings and saved conversations remain.</li>
+        </ol>
+
+        <h3>Copy CHA to another Mac</h3>
+        <p>
+          Copy the ZIP file or <code>CHA.app</code> to the other Mac, place CHA in
+          that Mac's Applications folder, and follow the first-launch steps above.
+          The application can be copied, but the OpenAI API key and saved
+          conversations do not travel with it. The other Mac starts with its own
+          setup and its own conversations.
         </p>
       </section>
 
@@ -570,17 +676,10 @@
         </ul>
         <div class="warning">
           <p>
-            A deleted session can no longer be opened in the browser. Download it
+            A deleted session can no longer be opened in CHA. Download it
             first if you may need a readable copy later.
           </p>
         </div>
-
-        <h3>Using the same session in two browsers</h3>
-        <p>
-          Only one browser connection controls a live session. If you open the same
-          session on another device or browser tab, the newest page takes control.
-          The older page may need to reconnect or be refreshed.
-        </p>
       </section>
 
       <section id="conversation">
@@ -610,7 +709,7 @@
         </p>
         <pre><code>/mcast @Seneca @Epictetus What matters most here?</code></pre>
         <p>
-          CHA shows the shared question once. A horizontal line separates each
+          CHA shows the question once. A horizontal line separates each
           reply, so it remains clear where one answer ends and the next begins.
         </p>
 
@@ -621,9 +720,9 @@
         </p>
         <pre><code>@- I made the decision this morning.</code></pre>
         <p>
-          The note is saved in the shared history. A character selected later can
-          use it as context. Use <code>/@-</code> to stay in recording mode until you
-          choose a character again.
+          The note is saved in the conversation history. A character selected later
+          can use it as context. Use <code>/@-</code> to stay in recording mode until
+          you choose a character again.
         </p>
 
         <h3>Stop a reply</h3>
@@ -732,7 +831,7 @@
         </p>
         <div class="table-wrap">
           <table>
-            <caption>Settings available in the browser</caption>
+            <caption>Character settings</caption>
             <thead>
               <tr>
                 <th scope="col">Setting</th>
@@ -742,7 +841,7 @@
             <tbody>
               <tr>
                 <td>Provider</td>
-                <td>The AI service and model used by this character.</td>
+                <td>The AI provider and model used by this character.</td>
               </tr>
               <tr>
                 <td>Reasoning effort</td>
@@ -761,8 +860,8 @@
         </div>
         <div class="warning">
           <p>
-            Saving character settings restarts live sessions that use the character.
-            If a reply is being generated, that unfinished reply will be lost.
+            Saving character settings applies them to open conversations. If a reply
+            is being generated, that unfinished reply will be lost.
           </p>
         </div>
       </section>
@@ -788,19 +887,15 @@
 
 `Montaigne` · Begin by deciding whether you need rest or attention.  
 Then choose one small act and do it completely.</code></pre>
-        <p>
-          An administrator may also enable a Markdown mirror. When enabled, CHA
-          keeps an additional plain-text copy of persistent sessions in folders
-          named after their forums. The database remains the main copy used by CHA.
-        </p>
       </section>
 
       <section id="privacy">
         <h2>10. Privacy and data</h2>
         <ul>
           <li>
-            Saved sessions and workspace settings are stored in the SQLite database
-            named in the application configuration.
+            In the standalone Mac application, saved conversations and settings
+            remain on that Mac. Replacing the application preserves them, while
+            copying only the application to another Mac does not transfer them.
           </li>
           <li>
             Prompts and the needed conversation history are sent to the configured
@@ -811,14 +906,18 @@ Then choose one small act and do it completely.</code></pre>
             answer. CHA stores the final answer, not the provider's search details.
           </li>
           <li>
-            A Markdown mirror, if enabled, creates readable copies of conversations
-            on disk. Treat that folder as private.
+            Downloaded conversation files are separate copies. Protect or delete
+            those files yourself when you no longer need them.
+          </li>
+          <li>
+            Your API key is stored on the Mac and should be treated like a password.
           </li>
         </ul>
         <div class="warning">
           <p>
-            Protect the database, configuration, environment file, log files, and
-            Markdown mirror. They can contain private conversations or access keys.
+            Anyone with access to your Mac account or downloaded conversation files
+            may be able to read your conversations. Lock your Mac and do not share
+            your API key.
           </p>
         </div>
       </section>
@@ -836,16 +935,24 @@ Then choose one small act and do it completely.</code></pre>
             </thead>
             <tbody>
               <tr>
-                <td>The browser cannot open CHA.</td>
-                <td>Confirm that <code>chaweb</code> is running, check the configured host and port, and look in <code>chaweb.log</code> or the configured application log.</td>
+                <td>macOS says Apple cannot check CHA or cannot verify its developer.</td>
+                <td>If the copy came from a trusted source, follow <a href="#macos-security">If macOS blocks the first launch</a>. Otherwise, obtain a fresh copy from someone you trust.</td>
+              </tr>
+              <tr>
+                <td>CHA says that it could not open.</td>
+                <td>Quit CHA, wait a few seconds, and open it again from Applications. If the problem remains, restart the Mac.</td>
+              </tr>
+              <tr>
+                <td>CHA says that this copy is incomplete.</td>
+                <td>Delete only the application, obtain a fresh ZIP file, extract it again, and move the new <code>CHA.app</code> into Applications. Saved conversations remain on the Mac.</td>
               </tr>
               <tr>
                 <td>A reply fails immediately.</td>
-                <td>Check that the selected provider is correct and that its API key environment variable is available to CHA.</td>
+                <td>Check the internet connection. Choose <strong>CHA &gt; Change API Key…</strong>, save a valid key, quit CHA, and open it again.</td>
               </tr>
               <tr>
                 <td>A reply stops during generation.</td>
-                <td>Check the network connection and provider status, then send the message again. An administrator can also review timeout settings and logs.</td>
+                <td>Check the internet connection, wait briefly, and send the message again. If the AI provider is unavailable, try again later.</td>
               </tr>
               <tr>
                 <td>The wrong character answers.</td>
@@ -859,407 +966,13 @@ Then choose one small act and do it completely.</code></pre>
                 <td>Typing Enter sends nothing.</td>
                 <td>This is expected. <kbd>Enter</kbd> adds a new line; use <kbd>Ctrl</kbd>+<kbd>Enter</kbd> or the Send button.</td>
               </tr>
-              <tr>
-                <td>An older browser tab disconnected.</td>
-                <td>Another tab or device probably opened the same session. Continue in the newest page, or refresh the page you want to use.</td>
-              </tr>
-              <tr>
-                <td>Changes to files do not appear.</td>
-                <td>Configuration files are imported into the database. Stop CHA and import the workspace again; editing an old import folder alone does not change the running application.</td>
-              </tr>
             </tbody>
           </table>
         </div>
-      </section>
-
-      <section id="appendix">
-        <p class="appendix-label">Appendix A</p>
-        <h2>Configuration reference</h2>
-        <p class="lead">
-          This appendix is for the person who installs or maintains CHA. Everyday
-          use of the application does not require these settings.
-        </p>
-
-        <h3>A.1 Main configuration file</h3>
-        <p>
-          CHA reads a TOML configuration file. In a packaged installation, copy
-          <code>cha.toml.example</code> to a safe location outside the application
-          directory and edit the copy. A basic file looks like this:
-        </p>
-        <pre><code>data = "cha.sqlite3"
-# mirror = "session-mirror"
-
-[web]
-host = "0.0.0.0"
-port = 8086
-
-[logging]
-file = "logs/cha.log"
-level = "info"</code></pre>
-
-        <div class="table-wrap">
-          <table>
-            <caption>Main configuration settings</caption>
-            <thead>
-              <tr>
-                <th scope="col">Setting</th>
-                <th scope="col">Required</th>
-                <th scope="col">Meaning</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td><code>data</code></td>
-                <td>Yes</td>
-                <td>Path to the SQLite database used by CHA.</td>
-              </tr>
-              <tr>
-                <td><code>mirror</code></td>
-                <td>No</td>
-                <td>Existing directory where CHA keeps additional Markdown copies of persistent sessions.</td>
-              </tr>
-              <tr>
-                <td><code>web.host</code></td>
-                <td>Yes</td>
-                <td>Network address on which the web service listens. <code>0.0.0.0</code> allows connections through any available network interface.</td>
-              </tr>
-              <tr>
-                <td><code>web.port</code></td>
-                <td>Yes</td>
-                <td>Web service port, from 1 through 65535.</td>
-              </tr>
-              <tr>
-                <td><code>logging.file</code></td>
-                <td>Yes</td>
-                <td>File that receives application log messages.</td>
-              </tr>
-              <tr>
-                <td><code>logging.level</code></td>
-                <td>Yes</td>
-                <td>Detail level: <code>trace</code>, <code>debug</code>, <code>info</code>, <code>warn</code>, <code>error</code>, <code>critical</code>, or <code>off</code>.</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-        <p>
-          Relative paths in <code>data</code>, <code>mirror</code>, and
-          <code>logging.file</code> are resolved from the directory containing the
-          main configuration file. The mirror directory must already exist.
-        </p>
-
-        <h3>A.2 Starting a packaged installation</h3>
-        <p>A typical first installation uses these steps:</p>
-        <pre><code>cd /path/to/cha-package
-cp cha.toml.example ../cha.toml
-# Edit ../cha.toml and import-seed/.env as needed.
-./chaweb --config=../cha.toml --import ./import-seed
-./start-cha.sh</code></pre>
-        <p>
-          The import creates and fills the database. Normal startup expects an
-          initialized database; it does not create an empty workspace by itself.
-          The start script runs <code>chaweb</code> in the background and writes its
-          console output to <code>chaweb.log</code> beside the executable.
-        </p>
-
-        <h4>Choose another configuration file</h4>
-        <p>
-          By default, <code>start-cha.sh</code> uses <code>../cha.toml</code>. Set
-          <code>CHA_CONFIG</code> to use another file:
-        </p>
-        <pre><code>CHA_CONFIG=/etc/cha/cha.toml ./start-cha.sh</code></pre>
-        <p>
-          An absolute path is used directly. A relative path is interpreted from
-          the directory containing <code>start-cha.sh</code>.
-        </p>
-
-        <h3>A.3 Environment variables and secrets</h3>
-        <div class="table-wrap">
-          <table>
-            <caption>Environment variables used by CHA</caption>
-            <thead>
-              <tr>
-                <th scope="col">Variable</th>
-                <th scope="col">Purpose</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td><code>CHA_CONFIG</code></td>
-                <td>Overrides the configuration file used by <code>start-cha.sh</code>.</td>
-              </tr>
-              <tr>
-                <td><code>OPENAI_API_KEY</code></td>
-                <td>A common API key variable. The actual name is chosen by each provider's <code>api_key_env</code> setting.</td>
-              </tr>
-              <tr>
-                <td><code>CHA_R2_URL</code></td>
-                <td>Cloudflare R2 endpoint and bucket used for database upload or download.</td>
-              </tr>
-              <tr>
-                <td><code>CHA_R2_ACCESS_KEY_ID</code></td>
-                <td>Access key for R2 synchronization.</td>
-              </tr>
-              <tr>
-                <td><code>CHA_R2_SECRET_ACCESS_KEY</code></td>
-                <td>Secret key for R2 synchronization.</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-        <p>
-          Provider keys can be inherited from the operating-system environment or
-          read from a root <code>.env</code> file during import. An inherited value
-          takes precedence. Never commit a real <code>.env</code> file or API key to
-          source control.
-        </p>
-
-        <h3>A.4 Workspace files</h3>
-        <p>
-          Personas, characters, forums, providers, styles, and prompt text are
-          imported into the database from a workspace directory. A typical layout is:
-        </p>
-        <pre><code>workspace/
-  .env
-  characters/
-    assistant-name/
-      character.toml
-      CHARACTER.md
-  personas/
-    persona-name/
-      persona.toml
-      PERSONA.md
-  forums/
-    forum-name/
-      config.toml
-      FORUM.md
-      members/
-  system/
-    providers/
-    styles/</code></pre>
-        <p>
-          Only regular TOML and Markdown files are imported, together with the
-          optional root <code>.env</code> file. Symbolic links are not followed.
-          Directory names act as stable identifiers, so use short, distinct names.
-        </p>
-
-        <h4>Character settings</h4>
-        <pre><code>display_name = "Montaigne"
-description = "A reflective conversation partner"
-provider = "openai"
-style = "book"
-reasoning_effort = "medium"
-web_search = "auto"
-tags = ["philosophy"]
-
-[prompt]
-language = "English"</code></pre>
-        <div class="table-wrap">
-          <table>
-            <caption><code>characters/&lt;id&gt;/character.toml</code></caption>
-            <thead>
-              <tr>
-                <th scope="col">Setting</th>
-                <th scope="col">Required</th>
-                <th scope="col">Allowed values or meaning</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr><td><code>display_name</code></td><td>Yes</td><td>Name shown in CHA.</td></tr>
-              <tr><td><code>provider</code></td><td>Yes</td><td>Identifier of a configured provider.</td></tr>
-              <tr><td><code>description</code></td><td>No</td><td>Short description shown to the user.</td></tr>
-              <tr><td><code>style</code></td><td>No</td><td>Identifier of a configured display style.</td></tr>
-              <tr><td><code>reasoning_effort</code></td><td>No</td><td><code>low</code>, <code>medium</code>, <code>high</code>, or <code>xhigh</code>.</td></tr>
-              <tr><td><code>web_search</code></td><td>No</td><td><code>off</code>, <code>auto</code>, or <code>required</code>.</td></tr>
-              <tr><td><code>tags</code></td><td>No</td><td>A list of labels used to describe the character.</td></tr>
-              <tr><td><code>[prompt]</code></td><td>No</td><td>Values substituted into prompt templates.</td></tr>
-            </tbody>
-          </table>
-        </div>
-        <p>
-          <code>CHARACTER.md</code> contains the character's main instructions.
-          Keep them clear, specific, and suitable for the intended conversations.
-        </p>
-
-        <h4>Persona settings</h4>
-        <pre><code>display_name = "Michael"
-description = "My everyday speaking persona"</code></pre>
-        <div class="table-wrap">
-          <table>
-            <caption><code>personas/&lt;id&gt;/persona.toml</code></caption>
-            <thead>
-              <tr><th scope="col">Setting</th><th scope="col">Required</th><th scope="col">Meaning</th></tr>
-            </thead>
-            <tbody>
-              <tr><td><code>display_name</code></td><td>Yes</td><td>Name shown in CHA.</td></tr>
-              <tr><td><code>description</code></td><td>No</td><td>Short explanation of the persona.</td></tr>
-            </tbody>
-          </table>
-        </div>
-        <p>
-          <code>PERSONA.md</code> is optional and can provide background that helps
-          characters understand the speaker. CHA also provides a built-in Guest persona.
-        </p>
-
-        <h4>Forum settings</h4>
-        <pre><code>display_name = "Philosophers"
-description = "Conversations about practical philosophy"
-default_character = "montaigne"
-default_persona = "michael"</code></pre>
-        <div class="table-wrap">
-          <table>
-            <caption><code>forums/&lt;id&gt;/config.toml</code></caption>
-            <thead>
-              <tr><th scope="col">Setting</th><th scope="col">Required</th><th scope="col">Meaning</th></tr>
-            </thead>
-            <tbody>
-              <tr><td><code>display_name</code></td><td>Yes</td><td>Name shown in CHA.</td></tr>
-              <tr><td><code>description</code></td><td>No</td><td>Short explanation of the forum.</td></tr>
-              <tr><td><code>default_character</code></td><td>No</td><td>Character selected when a session begins. It must be a forum member.</td></tr>
-              <tr><td><code>default_persona</code></td><td>No</td><td>Persona selected when a session begins. Guest is used when this is omitted.</td></tr>
-            </tbody>
-          </table>
-        </div>
-        <p>
-          Forum members are listed under <code>forums/&lt;id&gt;/members</code>.
-          <code>FORUM.md</code> contains forum-level instructions. The optional
-          <code>members/character_defaults.toml</code> file provides prompt values
-          shared by the forum's characters.
-        </p>
-
-        <h4>Provider settings</h4>
-        <p>
-          Provider files are stored below <code>system/providers</code>. The exact
-          folder structure in the supplied workspace can be used as a template.
-        </p>
-        <pre><code>host = "api.openai.com"
-port = 443
-https = true
-base_path = "/v1"
-model = "model-name"
-api = "responses"
-mode = "net"
-stream = true
-api_key_env = "OPENAI_API_KEY"
-timeout_s = 600
-idle_timeout_s = 60
-web_search = "off"</code></pre>
-        <div class="table-wrap">
-          <table>
-            <caption>Provider configuration</caption>
-            <thead>
-              <tr><th scope="col">Setting</th><th scope="col">Default</th><th scope="col">Meaning</th></tr>
-            </thead>
-            <tbody>
-              <tr><td><code>host</code></td><td>Required</td><td>Provider server name.</td></tr>
-              <tr><td><code>port</code></td><td>Required</td><td>Provider server port, from 1 through 65535.</td></tr>
-              <tr><td><code>model</code></td><td>Required</td><td>Model name sent to the provider.</td></tr>
-              <tr><td><code>https</code></td><td><code>false</code></td><td>Use a secure HTTPS connection when true.</td></tr>
-              <tr><td><code>base_path</code></td><td>Empty</td><td>URL path before the API endpoint. If present, it begins with <code>/</code>.</td></tr>
-              <tr><td><code>api</code></td><td><code>responses</code></td><td><code>responses</code> or <code>chat_completions</code>.</td></tr>
-              <tr><td><code>mode</code></td><td><code>test</code></td><td><code>net</code> makes real requests. <code>test</code> is a local test mode.</td></tr>
-              <tr><td><code>stream</code></td><td><code>true</code></td><td>Show the answer as it arrives.</td></tr>
-              <tr><td><code>temperature</code></td><td>Provider default</td><td>Optional value from 0 through 2 controlling variation.</td></tr>
-              <tr><td><code>max_tokens</code></td><td>Provider default</td><td>Optional positive answer-length limit.</td></tr>
-              <tr><td><code>timeout_s</code></td><td><code>600</code></td><td>Maximum total request time in seconds.</td></tr>
-              <tr><td><code>idle_timeout_s</code></td><td><code>60</code></td><td>Maximum wait between received pieces of a streamed answer.</td></tr>
-              <tr><td><code>api_key_env</code></td><td>Empty</td><td>Name of the environment variable holding the API key.</td></tr>
-              <tr><td><code>reasoning_effort</code></td><td>Provider default</td><td>Default reasoning effort sent to the provider.</td></tr>
-              <tr><td><code>reasoning_format</code></td><td><code>auto</code></td><td><code>auto</code>, <code>none</code>, <code>reasoning_content</code>, or <code>reasoning</code>.</td></tr>
-              <tr><td><code>web_search</code></td><td><code>off</code></td><td><code>off</code>, <code>auto</code>, or <code>required</code>.</td></tr>
-              <tr><td><code>cache_retention</code></td><td><code>short</code></td><td><code>off</code>, <code>short</code>, or <code>long</code>, when supported by the provider.</td></tr>
-            </tbody>
-          </table>
-        </div>
-        <div class="note">
-          <p>
-            Use <code>mode = "net"</code> for normal conversations. Web search works
-            only with provider and API combinations that support it.
-          </p>
-        </div>
-
-        <h4>Display style settings</h4>
-        <p>
-          A style is defined in <code>system/styles/&lt;id&gt;/config.toml</code>.
-          It changes presentation only; it does not change what a character says.
-        </p>
-        <pre><code>font = "serif"
-style = "normal"
-weight = "medium"
-size = "normal"
-text_color = "normal"</code></pre>
-        <div class="table-wrap">
-          <table>
-            <caption>Allowed style values</caption>
-            <thead>
-              <tr><th scope="col">Setting</th><th scope="col">Allowed values</th></tr>
-            </thead>
-            <tbody>
-              <tr><td><code>font</code></td><td><code>sans</code>, <code>serif</code>, <code>mono</code></td></tr>
-              <tr><td><code>style</code></td><td><code>normal</code>, <code>italic</code></td></tr>
-              <tr><td><code>weight</code></td><td><code>light</code>, <code>normal</code>, <code>medium</code>, <code>semibold</code>, <code>bold</code></td></tr>
-              <tr><td><code>size</code></td><td><code>small</code>, <code>normal</code>, <code>large</code></td></tr>
-              <tr><td><code>text_color</code></td><td><code>normal</code>, <code>muted</code>, <code>accent</code></td></tr>
-            </tbody>
-          </table>
-        </div>
-
-        <h4>Prompt templates</h4>
-        <p>
-          Markdown prompt files can reuse text and values. Use
-          <code>$$(relative/file)</code> to include another file and
-          <code>$${variable}</code> to insert a value from a prompt settings table.
-          Keep templates small and test them after import.
-        </p>
-
-        <h3>A.5 Import, export, and maintenance</h3>
-        <p>
-          Stop the running service before an offline import, export, upload, or
-          download. These modes cannot be combined in one command.
-        </p>
-        <div class="table-wrap">
-          <table>
-            <caption><code>chaweb</code> commands</caption>
-            <thead>
-              <tr><th scope="col">Command</th><th scope="col">Purpose</th></tr>
-            </thead>
-            <tbody>
-              <tr><td><code>chaweb --config=CONFIG --root PATH</code></td><td>Start CHA and optionally use PATH for web application files.</td></tr>
-              <tr><td><code>chaweb --config=CONFIG --import DIRECTORY</code></td><td>Import workspace files into the database.</td></tr>
-              <tr><td><code>chaweb --config=CONFIG --export DIRECTORY</code></td><td>Export the database configuration to an empty or missing directory.</td></tr>
-              <tr><td><code>chaweb --config=CONFIG --upload</code></td><td>Upload the database to the configured R2 bucket.</td></tr>
-              <tr><td><code>chaweb --config=CONFIG --download</code></td><td>Download the database from R2. The previous local database is backed up with a <code>.bac</code> suffix.</td></tr>
-            </tbody>
-          </table>
-        </div>
-        <p>A safe configuration-editing cycle is:</p>
-        <ol class="steps">
-          <li>Stop CHA.</li>
-          <li>Export the current workspace to a new, empty directory.</li>
-          <li>Edit the exported TOML and Markdown files.</li>
-          <li>Keep a backup of the database.</li>
-          <li>Import the edited workspace.</li>
-          <li>Start CHA and test the change.</li>
-        </ol>
-        <pre><code>./chaweb --config=/path/cha.toml --export /path/exported-workspace
-# Edit the exported files.
-./chaweb --config=/path/cha.toml --import /path/exported-workspace</code></pre>
-
-        <h3>A.6 R2 database backup</h3>
-        <p>
-          Set the three <code>CHA_R2_...</code> environment variables described in
-          section A.3, then use <code>--upload</code> or <code>--download</code>. The R2
-          URL has this form:
-        </p>
-        <pre><code>CHA_R2_URL=https://ACCOUNT_ID.r2.cloudflarestorage.com/BUCKET</code></pre>
-        <p>
-          The object name is the database file name. Test backup and restore before
-          relying on them, and keep the R2 credentials private.
-        </p>
       </section>
 
       <section id="glossary">
-        <p class="appendix-label">Appendix B</p>
-        <h2>Glossary</h2>
+        <h2>12. Glossary</h2>
         <div class="table-wrap">
           <table>
             <caption>Useful terms</caption>
@@ -1271,12 +984,10 @@ text_color = "normal"</code></pre>
               <tr><td>Character</td><td>The AI counterpart that replies in a conversation.</td></tr>
               <tr><td>Context</td><td>Earlier messages and instructions sent to the model to help it prepare the next answer.</td></tr>
               <tr><td>Forum</td><td>A group of characters, defaults, and saved sessions.</td></tr>
-              <tr><td>Markdown</td><td>A readable plain-text format used for downloaded conversations and prompt files.</td></tr>
+              <tr><td>Markdown</td><td>A readable plain-text format used for downloaded conversations.</td></tr>
               <tr><td>Persona</td><td>The identity used for the human side of a conversation.</td></tr>
-              <tr><td>Provider</td><td>The service and model that generate a character's answers.</td></tr>
+              <tr><td>Provider</td><td>The AI company and model that generate a character's answers.</td></tr>
               <tr><td>Session</td><td>One conversation saved inside a forum.</td></tr>
-              <tr><td>SQLite</td><td>The single local database file in which CHA stores its workspace and sessions.</td></tr>
-              <tr><td>TOML</td><td>A simple text format used for configuration settings.</td></tr>
             </tbody>
           </table>
         </div>
@@ -1284,7 +995,7 @@ text_color = "normal"</code></pre>
     </main>
 
     <footer>
-      <p>CHA User Manual. This document describes the current browser application and packaged service.</p>
+      <p>CHA User Manual. This document describes the standalone macOS application.</p>
     </footer>
   </div>
 </body>

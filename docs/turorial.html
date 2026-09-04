@@ -1,0 +1,2667 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc 3.10.1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>Learning the CHA C++ codebase</title>
+  <style>
+
+span.smallcaps{font-variant: small-caps;}
+div.columns{display: flex; gap: 1.5em;}
+div.column{flex: auto;}
+@media screen {
+div.columns{gap: min(4vw, 1.5em);}
+div.column{overflow-x: auto;}
+}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+
+ul.task-list[class]{list-style: none;}
+ul.task-list li input[type="checkbox"] {
+font-size: inherit;
+width: 0.8em;
+margin: 0 0.8em 0.2em -1.6em;
+vertical-align: middle;
+}
+.display.math{display: block; text-align: center; margin: 0.5rem auto;}
+
+html { -webkit-text-size-adjust: 100%; }
+pre > code.sourceCode { white-space: pre; position: relative; }
+pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
+pre > code.sourceCode > span:empty { height: 1.2em; }
+.sourceCode { overflow: visible; }
+code.sourceCode > span { color: inherit; text-decoration: inherit; }
+div.sourceCode { margin: 1em 0; }
+pre.sourceCode { margin: 0; }
+@media screen {
+div.sourceCode { overflow: auto; }
+}
+@media print {
+pre > code.sourceCode { white-space: pre-wrap; }
+pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+}
+pre.numberSource code
+{ counter-reset: source-line 0; }
+pre.numberSource code > span
+{ position: relative; left: -4em; counter-increment: source-line; }
+pre.numberSource code > span > a:first-child::before
+{ content: counter(source-line);
+position: relative; left: -1em; text-align: right; vertical-align: baseline;
+border: none; display: inline-block;
+-webkit-touch-callout: none; -webkit-user-select: none;
+-khtml-user-select: none; -moz-user-select: none;
+-ms-user-select: none; user-select: none;
+padding: 0 4px; width: 4em;
+background-color: #232629;
+color: #7a7c7d;
+}
+pre.numberSource { margin-left: 3em; border-left: 1px solid #7a7c7d; padding-left: 4px; }
+div.sourceCode
+{ color: #cfcfc2; background-color: #232629; }
+@media screen {
+pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+}
+code span { color: #cfcfc2; } 
+code span.al { color: #95da4c; background-color: #4d1f24; font-weight: bold; } 
+code span.an { color: #3f8058; } 
+code span.at { color: #2980b9; } 
+code span.bn { color: #f67400; } 
+code span.bu { color: #7f8c8d; } 
+code span.cf { color: #fdbc4b; font-weight: bold; } 
+code span.ch { color: #3daee9; } 
+code span.cn { color: #27aeae; font-weight: bold; } 
+code span.co { color: #7a7c7d; } 
+code span.cv { color: #7f8c8d; } 
+code span.do { color: #a43340; } 
+code span.dt { color: #2980b9; } 
+code span.dv { color: #f67400; } 
+code span.er { color: #da4453; text-decoration: underline; } 
+code span.ex { color: #0099ff; font-weight: bold; } 
+code span.fl { color: #f67400; } 
+code span.fu { color: #8e44ad; } 
+code span.im { color: #27ae60; } 
+code span.in { color: #c45b00; } 
+code span.kw { color: #cfcfc2; font-weight: bold; } 
+code span.op { color: #cfcfc2; } 
+code span.ot { color: #27ae60; } 
+code span.pp { color: #27ae60; } 
+code span.re { color: #2980b9; background-color: #153042; } 
+code span.sc { color: #3daee9; } 
+code span.ss { color: #da4453; } 
+code span.st { color: #f44f4f; } 
+code span.va { color: #27aeae; } 
+code span.vs { color: #da4453; } 
+code span.wa { color: #da4453; } 
+</style>
+  <style type="text/css">:root {
+--page: #f3f5f7;
+--paper: #ffffff;
+--ink: #18212b;
+--muted: #5b6875;
+--accent: #176b87;
+--accent-dark: #0f4d63;
+--accent-soft: #eaf5f8;
+--line: #dce3e8;
+--code: #17232d;
+--code-ink: #eef6f8;
+--shadow: 0 18px 55px rgba(24, 33, 43, 0.09);
+}
+* {
+box-sizing: border-box;
+}
+html {
+scroll-behavior: smooth;
+background: var(--page);
+}
+body {
+max-width: 980px;
+margin: 0 auto;
+padding: 3.75rem clamp(1.4rem, 5vw, 4.5rem) 5rem;
+background: var(--paper);
+color: var(--ink);
+box-shadow: var(--shadow);
+font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+font-size: 17px;
+line-height: 1.72;
+}
+body > h1 {
+margin: 0 0 1.1rem;
+color: #102d3a;
+font-size: clamp(2.35rem, 6vw, 4.25rem);
+line-height: 1.03;
+letter-spacing: -0.045em;
+}
+body > h1::before {
+display: block;
+margin-bottom: 1.1rem;
+color: var(--accent);
+content: "CHA ENGINEERING GUIDE";
+font-size: 0.77rem;
+font-weight: 800;
+letter-spacing: 0.16em;
+}
+body > h1 + p {
+margin-top: 0;
+color: #344754;
+font-size: 1.18rem;
+line-height: 1.65;
+}
+h2,
+h3,
+h4 {
+color: #173847;
+line-height: 1.25;
+scroll-margin-top: 1.5rem;
+}
+h2 {
+margin: 4.4rem 0 1.35rem;
+padding-top: 1.05rem;
+border-top: 3px solid var(--accent);
+font-size: clamp(1.72rem, 4vw, 2.25rem);
+letter-spacing: -0.025em;
+}
+h3 {
+margin: 2.8rem 0 0.9rem;
+font-size: 1.43rem;
+letter-spacing: -0.015em;
+}
+h4 {
+margin: 2rem 0 0.65rem;
+font-size: 1.08rem;
+}
+p,
+ul,
+ol,
+dl {
+margin-top: 0.8rem;
+margin-bottom: 1.25rem;
+}
+li + li {
+margin-top: 0.42rem;
+}
+li > p {
+margin: 0.45rem 0;
+}
+strong {
+color: #102f3d;
+}
+a {
+color: var(--accent-dark);
+text-decoration-color: rgba(23, 107, 135, 0.38);
+text-decoration-thickness: 0.08em;
+text-underline-offset: 0.18em;
+}
+a:hover,
+a:focus-visible {
+color: #9b4d16;
+text-decoration-color: currentColor;
+}
+code {
+padding: 0.14em 0.36em;
+border: 1px solid #dce5e8;
+border-radius: 0.3em;
+background: #f1f6f7;
+color: #17485b;
+font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+font-size: 0.88em;
+}
+pre,
+div.sourceCode {
+margin: 1.45rem 0 1.75rem;
+border: 1px solid #31424e;
+border-radius: 0.65rem;
+background: var(--code);
+box-shadow: 0 9px 25px rgba(23, 35, 45, 0.12);
+}
+pre {
+padding: 1.05rem 1.2rem;
+overflow: auto;
+color: var(--code-ink);
+line-height: 1.5;
+tab-size: 4;
+}
+div.sourceCode > pre {
+margin: 0;
+border: 0;
+box-shadow: none;
+}
+pre code,
+pre code.sourceCode {
+padding: 0;
+border: 0;
+background: transparent;
+color: inherit;
+font-size: 0.86rem;
+}
+pre.mermaid::before {
+display: block;
+margin-bottom: 0.85rem;
+padding-bottom: 0.55rem;
+border-bottom: 1px solid #405563;
+color: #8fd1e2;
+content: "ARCHITECTURE MAP · MERMAID";
+font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+font-size: 0.7rem;
+font-weight: 800;
+letter-spacing: 0.11em;
+}
+blockquote {
+margin: 1.6rem 0;
+padding: 0.9rem 1.3rem;
+border-left: 4px solid var(--accent);
+background: var(--accent-soft);
+color: #294652;
+}
+blockquote > :first-child {
+margin-top: 0;
+}
+blockquote > :last-child {
+margin-bottom: 0;
+}
+table {
+display: block;
+width: 100%;
+margin: 1.6rem 0 2rem;
+overflow-x: auto;
+border: 1px solid var(--line);
+border-collapse: separate;
+border-spacing: 0;
+border-radius: 0.55rem;
+font-size: 0.92rem;
+line-height: 1.52;
+}
+thead {
+background: #153f51;
+color: #fff;
+}
+th,
+td {
+min-width: 9rem;
+padding: 0.72rem 0.85rem;
+border-right: 1px solid var(--line);
+border-bottom: 1px solid var(--line);
+text-align: left;
+vertical-align: top;
+}
+th:last-child,
+td:last-child {
+border-right: 0;
+}
+tbody tr:last-child td {
+border-bottom: 0;
+}
+tbody tr:nth-child(even) {
+background: #f7fafb;
+}
+thead code {
+border-color: rgba(255, 255, 255, 0.25);
+background: rgba(255, 255, 255, 0.12);
+color: #fff;
+}
+hr {
+margin: 3rem 0;
+border: 0;
+border-top: 1px solid var(--line);
+}
+#TOC {
+margin: 2.5rem 0 3.2rem;
+padding: 1.25rem 1.4rem 1.35rem;
+border: 1px solid #c9dce2;
+border-radius: 0.7rem;
+background: #f5fafb;
+font-size: 0.9rem;
+line-height: 1.4;
+}
+#TOC::before {
+display: block;
+margin-bottom: 0.8rem;
+color: #173847;
+content: "CONTENTS";
+font-size: 0.74rem;
+font-weight: 800;
+letter-spacing: 0.13em;
+}
+#TOC ul {
+margin: 0;
+padding-left: 0;
+list-style: none;
+}
+#TOC > ul > li > a {
+display: none;
+}
+#TOC > ul > li > ul {
+padding-left: 0;
+}
+#TOC li + li {
+margin-top: 0.2rem;
+}
+#TOC a {
+display: block;
+padding: 0.28rem 0.4rem;
+border-radius: 0.3rem;
+color: #365463;
+text-decoration: none;
+}
+#TOC a:hover,
+#TOC a:focus-visible {
+background: #e2f1f4;
+color: #0d5068;
+}
+#TOC code {
+padding: 0;
+border: 0;
+background: transparent;
+color: inherit;
+}
+@media (min-width: 1320px) {
+body {
+max-width: 1280px;
+min-height: 100vh;
+padding-right: 4.5rem;
+padding-left: 22.5rem;
+}
+#TOC {
+position: fixed;
+z-index: 2;
+top: 1.5rem;
+left: max(1.5rem, calc(50vw - 620px));
+width: 17.5rem;
+max-height: calc(100vh - 3rem);
+margin: 0;
+overflow-y: auto;
+box-shadow: 0 10px 28px rgba(24, 33, 43, 0.08);
+}
+}
+@media (max-width: 680px) {
+body {
+padding: 2.2rem 1.15rem 3.5rem;
+font-size: 16px;
+}
+body > h1 {
+font-size: 2.45rem;
+}
+h2 {
+margin-top: 3.4rem;
+}
+table {
+font-size: 0.86rem;
+}
+th,
+td {
+min-width: 8rem;
+padding: 0.62rem 0.7rem;
+}
+}
+@media print {
+:root {
+--paper: #fff;
+--ink: #000;
+}
+html,
+body {
+max-width: none;
+margin: 0;
+padding: 0;
+background: #fff;
+box-shadow: none;
+color: #000;
+font-size: 10.5pt;
+}
+#TOC {
+position: static;
+max-height: none;
+break-after: page;
+box-shadow: none;
+}
+h2,
+h3 {
+break-after: avoid;
+}
+pre,
+table,
+blockquote {
+break-inside: avoid;
+}
+a {
+color: inherit;
+}
+}
+</style>
+</head>
+<body>
+<nav id="TOC" role="doc-toc">
+<ul>
+<li><a href="#learning-the-cha-c-codebase" id="toc-learning-the-cha-c-codebase">Learning the CHA C++ codebase</a>
+<ul>
+<li><a href="#1-how-to-use-this-guide" id="toc-1-how-to-use-this-guide">1. How to use this guide</a></li>
+<li><a href="#2-the-application-in-one-page" id="toc-2-the-application-in-one-page">2. The application in one
+page</a></li>
+<li><a href="#3-build-graph-and-dependency-direction" id="toc-3-build-graph-and-dependency-direction">3. Build graph and
+dependency direction</a></li>
+<li><a href="#4-repository-map" id="toc-4-repository-map">4. Repository
+map</a></li>
+<li><a href="#5-the-four-concepts-that-unlock-the-code" id="toc-5-the-four-concepts-that-unlock-the-code">5. The four concepts
+that unlock the code</a></li>
+<li><a href="#6-first-reading-pass-domain-vocabulary" id="toc-6-first-reading-pass-domain-vocabulary">6. First reading pass:
+domain vocabulary</a></li>
+<li><a href="#7-second-reading-pass-utility-mechanisms" id="toc-7-second-reading-pass-utility-mechanisms">7. Second reading
+pass: utility mechanisms</a></li>
+<li><a href="#8-third-reading-pass-startup-and-the-immutable-workspace" id="toc-8-third-reading-pass-startup-and-the-immutable-workspace">8.
+Third reading pass: startup and the immutable workspace</a></li>
+<li><a href="#9-fourth-reading-pass-session-storage-and-opening" id="toc-9-fourth-reading-pass-session-storage-and-opening">9. Fourth
+reading pass: session storage and opening</a></li>
+<li><a href="#10-fifth-reading-pass-the-generation-pipeline" id="toc-10-fifth-reading-pass-the-generation-pipeline">10. Fifth reading
+pass: the generation pipeline</a></li>
+<li><a href="#11-sixth-reading-pass-sessioncontroller" id="toc-11-sixth-reading-pass-sessioncontroller">11. Sixth reading pass:
+<code>SessionController</code></a></li>
+<li><a href="#12-seventh-reading-pass-web-actor-and-protocol" id="toc-12-seventh-reading-pass-web-actor-and-protocol">12. Seventh
+reading pass: web actor and protocol</a></li>
+<li><a href="#13-end-to-end-workflow-traces" id="toc-13-end-to-end-workflow-traces">13. End-to-end workflow
+traces</a></li>
+<li><a href="#14-state-machines-to-keep-in-your-head" id="toc-14-state-machines-to-keep-in-your-head">14. State machines to
+keep in your head</a></li>
+<li><a href="#15-concurrency-and-ownership-map" id="toc-15-concurrency-and-ownership-map">15. Concurrency and ownership
+map</a></li>
+<li><a href="#16-persistence-model" id="toc-16-persistence-model">16.
+Persistence model</a></li>
+<li><a href="#17-error-boundaries" id="toc-17-error-boundaries">17.
+Error boundaries</a></li>
+<li><a href="#18-shutdown-and-destruction" id="toc-18-shutdown-and-destruction">18. Shutdown and
+destruction</a></li>
+<li><a href="#19-tests-as-executable-documentation" id="toc-19-tests-as-executable-documentation">19. Tests as executable
+documentation</a></li>
+<li><a href="#20-how-to-approach-changes-safely" id="toc-20-how-to-approach-changes-safely">20. How to approach changes
+safely</a></li>
+<li><a href="#21-learning-exercises" id="toc-21-learning-exercises">21.
+Learning exercises</a></li>
+<li><a href="#22-a-practical-two-week-reading-plan" id="toc-22-a-practical-two-week-reading-plan">22. A practical two-week
+reading plan</a></li>
+<li><a href="#23-glossary" id="toc-23-glossary">23. Glossary</a></li>
+<li><a href="#24-final-mental-checklist" id="toc-24-final-mental-checklist">24. Final mental checklist</a></li>
+</ul></li>
+</ul>
+</nav>
+<h1 id="learning-the-cha-c-codebase">Learning the CHA C++ codebase</h1>
+<p>This guide is a systematic route through CHA&#39;s native C++ code. Its
+purpose is not merely to list files, but to build a working mental
+model: which objects exist, who owns them, which thread may touch them,
+when data becomes durable, and how one browser prompt turns into
+streamed model output.</p>
+<p>The guide focuses on the native implementation. The browser under
+<code>webapp/</code> appears mainly at the protocol boundary, plus one
+short presentation section covering transcript filtering and composer
+behavior.</p>
+<h2 id="1-how-to-use-this-guide">1. How to use this guide</h2>
+<p>Read the code in passes. Do not try to understand every
+implementation detail on the first pass.</p>
+<ol type="1">
+<li>Read sections 2–5 to learn the vocabulary, dependency direction,
+startup, and ownership model.</li>
+<li>Follow the focused reading path in sections 6–12. Keep the source
+open and find each named type or function as it appears here.</li>
+<li>Trace the complete workflows in section 13 without diving into
+helpers.</li>
+<li>Use sections 14–18 to consolidate concurrency, persistence, failure,
+and shutdown behavior.</li>
+<li>Complete the exercises in section 21. If you can explain each answer
+in terms of concrete objects and transitions, you understand the
+architecture well enough to change it deliberately.</li>
+</ol>
+<p>The subsystem <code>README.md</code> files are reference manuals.
+This document connects them into a learning sequence:</p>
+<ul>
+<li><a href="../src/README.md">Native architecture</a></li>
+<li><a href="../src/util/README.md">Utility contracts</a></li>
+<li><a href="../src/chat/README.md">Chat model</a></li>
+<li><a href="../src/characters/README.md">Character definitions and
+model context</a></li>
+<li><a href="../src/providers/README.md">Provider execution</a></li>
+<li><a href="../src/session/README.md">Session layer</a></li>
+<li><a href="../src/workspace/README.md">Workspace composition</a></li>
+<li><a href="../src/web/README.md">Web runtime</a></li>
+</ul>
+<p>When this tutorial and a subsystem reference differ, inspect the
+current headers and tests. They are the executable contract.</p>
+<h2 id="2-the-application-in-one-page">2. The application in one
+page</h2>
+<p>CHA is a C++20 web server for conversations with OpenAI-compatible
+model servers. The executable is <code>chaweb</code>. It serves a
+browser shell, exposes a JSON HTTP API, and streams session changes with
+server-sent events (SSE).</p>
+<p>The most useful high-level model is:</p>
+<ul>
+<li>The process-owned <code>WorkspaceConfigStore</code> holds the
+selected database lease, secures the database and sidecars, materializes
+committed configuration into one private root, and atomically publishes
+the immutable <code>Workspace</code>.</li>
+<li>The independent process-owned <code>SessionRepository</code>
+receives explicit database, materialized-workspace, and Welcome paths.
+It owns none of those outer resources and lists, creates, validates,
+archives, and restores sessions.</li>
+<li>When the external config sets <code>mirror</code>, the process-owned
+<code>SessionMirror</code> projects persistent sessions into
+continuously refreshed Markdown files.</li>
+<li><code>LiveSessionManager</code> owns the process&#39;s live-session
+registry.</li>
+<li>One <code>LiveSession</code> is an actor with one permanent owner
+thread for one open session.</li>
+<li>One <code>SessionController</code> owns the live transcript,
+persistence journal, and ordered generation state for that session.</li>
+<li>The process-owned <code>Providers</code> supervisor starts one
+independent request worker per target. The controller exposes their
+events in deterministic foreground order.</li>
+<li><code>ProviderClient</code> owns provider HTTP mechanics. The Chat
+Completions and Responses API modules own their request encoding and
+response decoding without knowing about curl or HTTP.</li>
+<li><code>SseMailbox</code> transfers presentation updates from the
+session owner thread to the HTTP thread writing the browser&#39;s event
+stream.</li>
+</ul>
+<pre class="mermaid"><code>flowchart LR
+    Browser[&quot;Browser client&quot;]
+    Routes[&quot;HTTP routes&quot;]
+    Manager[&quot;LiveSessionManager&quot;]
+    Actor[&quot;LiveSession owner thread&quot;]
+    Controller[&quot;SessionController&quot;]
+    Workspace[&quot;Published immutable Workspace&quot;]
+    Store[&quot;WorkspaceConfigStore / lease / private root&quot;]
+    Repository[&quot;SessionRepository&quot;]
+    Mirror[&quot;SessionMirror / Markdown files&quot;]
+    Journal[&quot;SessionJournal / SQLite&quot;]
+    Providers[&quot;Process Providers supervisor&quot;]
+    Request[&quot;ProviderRequest&quot;]
+    Worker[&quot;Detached request worker&quot;]
+    Provider[&quot;ProviderClient&quot;]
+    Mailbox[&quot;SseMailbox&quot;]
+
+    Browser --&gt;|&quot;JSON commands&quot;| Routes
+    Routes --&gt;|&quot;getws() reads&quot;| Workspace
+    Routes --&gt; Repository
+    Store --&gt;|&quot;materializes and publishes&quot;| Workspace
+    Store --&gt;|&quot;supplies explicit paths&quot;| Repository
+    Repository --&gt;|&quot;startup history&quot;| Mirror
+    Routes --&gt;|&quot;queued WebCommand&quot;| Actor
+    Manager --&gt;|&quot;owns and locates&quot;| Actor
+    Actor --&gt;|&quot;only caller&quot;| Controller
+    Controller --&gt;|&quot;getws() lookups&quot;| Workspace
+    Controller --&gt; Journal
+    Actor --&gt;|&quot;transcript revision / rename&quot;| Mirror
+    Controller --&gt;|&quot;retains while presenting&quot;| Request
+    Providers --&gt;|&quot;supervises while active&quot;| Request
+    Request --&gt; Worker
+    Worker --&gt; Provider
+    Request --&gt;|&quot;GenerationEvent queue + wake&quot;| Actor
+    Actor --&gt; Mailbox
+    Mailbox --&gt;|&quot;SSE snapshot or append&quot;| Browser</code></pre>
+<p>There are four kinds of long-lived information:</p>
+<ul>
+<li><p>Process configuration — the database path, optional Markdown
+mirror, web listener, and diagnostic log settings — lives in one
+external TOML file. <code>chaweb</code> reads it before opening the
+database; it is never materialized into the workspace or stored in
+SQLite.</p></li>
+<li><p>Discovery — the roster, descriptions, and Markdown the browser
+lists — is materialized from committed database rows, read once per
+<code>Workspace</code>, validated as a whole, and shared immutably until
+a narrow committed mutation publishes a replacement or the process
+restarts after offline import.</p></li>
+<li><p>Sessions read eagerly owned configuration from the published
+<code>Workspace</code>; neither the import source nor an export
+directory is consulted at runtime.</p></li>
+<li><p>Conversation state is dynamic. A live controller owns an
+in-memory view and writes durable turn transitions into its own rows of
+the one workspace session database.</p></li>
+</ul>
+<p>This split explains why creating a session appears immediately while
+an operator&#39;s configuration edit requires
+stop/export/edit/import/restart.</p>
+<h2 id="3-build-graph-and-dependency-direction">3. Build graph and
+dependency direction</h2>
+<p>Start with <a href="../CMakeLists.txt">CMakeLists.txt</a>. The native
+build has three important production targets:</p>
+<table>
+<thead>
+<tr>
+<th>Target</th>
+<th>Role</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>cha_core</code></td>
+<td><code>util</code>, <code>chat</code>, <code>characters</code>,
+<code>providers</code>, <code>session</code>, and
+<code>workspace</code></td>
+</tr>
+<tr>
+<td><code>cha_web</code></td>
+<td>HTTP, SSE, actor runtime, routing, and protocol; links
+<code>cha_core</code></td>
+</tr>
+<tr>
+<td><code>chaweb_app</code></td>
+<td>Small composition root in <code>src/web_main.cpp</code>; links
+<code>cha_web</code></td>
+</tr>
+</tbody>
+</table>
+<p>The executable file is named <code>chaweb</code> even though the
+CMake target is <code>chaweb_app</code>.</p>
+<p>The intended dependency direction is:</p>
+<pre class="text"><code>chaweb_app -&gt; cha_web -&gt; cha_core
+
+workspace -&gt; session -&gt; providers -&gt; characters -&gt; chat
+                \-----------&gt; characters
+
+util is used where needed without depending on the domain layers.</code></pre>
+<p>That diagram is intentionally approximate inside
+<code>cha_core</code>; the important rules are simpler:</p>
+<ul>
+<li><code>chat</code> contains presentation-neutral domain
+vocabulary.</li>
+<li><code>util</code> contains domain-neutral mechanisms.</li>
+<li><code>characters</code> owns character configuration and
+model-context projection.</li>
+<li><code>providers</code> owns request execution, provider transport,
+and protocol decoding, but not sessions or HTTP routing.</li>
+<li><code>session</code> coordinates transcripts, persistence, and
+generation, but not web routes.</li>
+<li><code>workspace</code> loads the workspace and wires a session from
+workspace data.</li>
+<li><code>web</code> adapts HTTP/SSE to the workspace and session
+APIs.</li>
+<li>Only <code>web_main.cpp</code> assembles the complete process.</li>
+</ul>
+<p>If a proposed change makes <code>chat</code> include a web header, or
+makes <code>session</code> depend on <code>httplib</code>, it is
+crossing an important boundary.</p>
+<h3 id="build-and-test-commands">Build and test commands</h3>
+<div class="sourceCode" id="cb3"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="fu">cmake</span> <span class="at">--preset</span> ninja</span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="fu">cmake</span> <span class="at">--build</span> <span class="at">--preset</span> ninja</span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a><span class="ex">ctest</span> <span class="at">--test-dir</span> build/ninja <span class="at">-j8</span> <span class="at">--output-on-failure</span></span></code></pre></div>
+<p>There are also <code>asan-ubsan</code> and <code>tsan</code> CMake
+presets. Browser checks and the credential-dependent provider
+integration test are separate from the core C++ unit suite; see the root
+<a href="../README.md">README</a>.</p>
+<p>Run the complete browser checks from <code>webapp/</code>:</p>
+<div class="sourceCode" id="cb4"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="ex">npm</span> run check</span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a><span class="ex">npm</span> run build</span></code></pre></div>
+<p>The current native build requires OpenSSL on every platform because
+prompt-cache keys use its SHA-256 implementation, independently of
+curl&#39;s TLS backend.</p>
+<h2 id="4-repository-map">4. Repository map</h2>
+<table>
+<thead>
+<tr>
+<th>Location</th>
+<th>What to learn there</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="../src/web_main.cpp">src/web_main.cpp</a></td>
+<td>Process composition and destruction order</td>
+</tr>
+<tr>
+<td><a href="../src/chat">src/chat</a></td>
+<td>IDs, personas, character metadata, transcript vocabulary</td>
+</tr>
+<tr>
+<td><a href="../src/util">src/util</a></td>
+<td>Queues, template expansion, logging, path/text helpers</td>
+</tr>
+<tr>
+<td><a href="../src/characters">src/characters</a></td>
+<td>Character configuration, definitions, and model context</td>
+</tr>
+<tr>
+<td><a href="../src/providers">src/providers</a></td>
+<td>Request workers, provider transport, and response decoding</td>
+</tr>
+<tr>
+<td><a href="../src/session">src/session</a></td>
+<td>Controller, transcript orchestration, workspace session database,
+journal, lease, repository</td>
+</tr>
+<tr>
+<td><a href="../src/workspace">src/workspace</a></td>
+<td>Configuration store, workspace loading, built-ins, and session
+construction</td>
+</tr>
+<tr>
+<td><a href="../src/web">src/web</a></td>
+<td>Native protocol, routes, actor, Markdown mirror, mailbox, lifecycle,
+shutdown</td>
+</tr>
+<tr>
+<td><a href="../webapp/src">webapp/src</a></td>
+<td>Browser state, transcript presentation, composer, and API
+client</td>
+</tr>
+<tr>
+<td><a href="../tests">tests</a></td>
+<td>Behavioral examples grouped by the same subsystem boundaries</td>
+</tr>
+<tr>
+<td><a href="../packaging/linux/cha.toml.example">packaging/linux/cha.toml.example</a></td>
+<td>External process-configuration example</td>
+</tr>
+<tr>
+<td><a href="../packaging/linux/import-seed">packaging/linux/import-seed</a></td>
+<td>A configuration source tree to compare against the loaders and
+import filter</td>
+</tr>
+</tbody>
+</table>
+<p>Headers in this project are unusually valuable: most ownership and
+thread contracts are written next to the types. Read a subsystem&#39;s
+public headers before its <code>.cpp</code> files.</p>
+<h2 id="5-the-four-concepts-that-unlock-the-code">5. The four concepts
+that unlock the code</h2>
+<h3 id="51-stable-identity-is-not-display-text">5.1 Stable identity is
+not display text</h3>
+<p><code>ForumId</code>, <code>CharacterId</code>, and
+<code>SessionId</code> are string aliases declared in <a href="../src/chat/ids.h">chat/ids.h</a>. A participant also has a stable
+ID and a display name. IDs are used for storage, URLs, lookup, and model
+attribution; display names are used in the interface and prompt
+text.</p>
+<p>The code deliberately stores both. Renaming a display label should
+not silently change the identity of old entries. When reading a field
+named <code>character_id</code>, <code>participant_id</code>, or
+<code>addressed_to</code>, do not mentally replace it with the visible
+name beside it.</p>
+<h3 id="52-there-is-one-mutable-owner-per-live-session">5.2 There is one
+mutable owner per live session</h3>
+<p>The core session model is not generally thread-safe, and it does not
+need to be. <code>LiveSession::owner_main()</code> is the sole caller of
+its <code>SessionController</code>. HTTP workers enqueue commands;
+generation workers enqueue events; the owner thread drains both and
+performs all mutations.</p>
+<p>This is actor-style confinement implemented with ordinary C++
+objects, a thread, queues, and wakeups—not an actor framework.</p>
+<h3 id="53-workers-receive-copies-views-stay-local">5.3 Workers receive
+copies, views stay local</h3>
+<p><code>TranscriptView</code> and <code>ControllerView</code> borrow
+owner-thread storage and are valid only for immediate synchronous
+projection. In contrast, <code>ModelHistory</code> owns a point-in-time
+copy and can be shared immutably with generation workers.</p>
+<p>The distinction prevents two common errors:</p>
+<ul>
+<li>retaining a <code>std::span</code> into a transcript that will
+mutate;</li>
+<li>allowing a worker to observe a transcript halfway through a state
+change.</li>
+</ul>
+<h3 id="54-state-is-published-as-a-snapshot-unless-append-safety-is-proven">5.4
+State is published as a snapshot unless append safety is proven</h3>
+<p>A controller update is either no state change, a required full
+snapshot, or a text append to a precise entry/reasoning target. The
+append is an optimization, not an alternate source of truth. If the
+actor or mailbox cannot prove that the browser has the correct base and
+target, it publishes a new snapshot.</p>
+<p>This lets the mutable controller remain authoritative while keeping
+token streaming efficient.</p>
+<h2 id="6-first-reading-pass-domain-vocabulary">6. First reading pass:
+domain vocabulary</h2>
+<p>Begin with <a href="../src/chat/ids.h">chat/ids.h</a>, <a href="../src/chat/persona.h">chat/persona.h</a>, and <a href="../src/chat/character.h">chat/character.h</a>.</p>
+<p>The important split in character data is:</p>
+<ul>
+<li><code>CharacterMetadata</code> is public, discovery-safe
+information: ID, display name, description, tags, and appearance.</li>
+<li><code>CharacterDefinition</code>, declared in <a href="../src/characters/character.h">characters/character.h</a>,
+combines public metadata with private backend configuration and a
+completed system prompt.</li>
+</ul>
+<p>Routes may expose metadata. They must not expose the full definition,
+which can contain provider configuration and private prompt
+material.</p>
+<h3 id="61-the-transcript-is-the-shared-conversation-language">6.1 The
+transcript is the shared conversation language</h3>
+<p>Read <a href="../src/chat/transcript.h">chat/transcript.h</a>
+completely before <a href="../src/chat/transcript.cpp">chat/transcript.cpp</a>.</p>
+<p><code>TranscriptEntry</code> is used by rendering, persistence, and
+model-context projection. Its fields answer different questions:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>id</code></td>
+<td>Monotonically increasing entry identity within the session</td>
+</tr>
+<tr>
+<td><code>kind</code></td>
+<td>Human, character, notice, or error semantics</td>
+</tr>
+<tr>
+<td><code>participant_id</code> / <code>display_name</code></td>
+<td>Who authored the entry</td>
+</tr>
+<tr>
+<td><code>addressed_to</code> / <code>addressed_to_name</code></td>
+<td>Target of a human prompt</td>
+</tr>
+<tr>
+<td><code>text</code></td>
+<td>Visible content</td>
+</tr>
+<tr>
+<td><code>status</code></td>
+<td>Complete, streaming, cancelled, or failed</td>
+</tr>
+<tr>
+<td><code>request_id</code></td>
+<td>Turn/generation correlation when applicable</td>
+</tr>
+</tbody>
+</table>
+<p>The <code>Transcript</code> class enforces several central
+invariants:</p>
+<ul>
+<li>Entry IDs increase strictly.</li>
+<li>At most one character entry is open for streaming.</li>
+<li>Human and notice entries are immediately complete.</li>
+<li>A completed or cancelled character entry has answer text.</li>
+<li>An error entry has failed status.</li>
+<li>A live streaming entry cannot be stored as a terminal record.</li>
+</ul>
+<p>The factory functions (<code>make_human_entry</code>,
+<code>make_character_entry</code>, and so on) make valid intent visible
+at call sites. Validation still exists at boundaries; factories are not
+a reason to trust arbitrary loaded data.</p>
+<h3 id="62-revision-history-epoch-and-cover-state">6.2 Revision, history
+epoch, and cover state</h3>
+<p>Three transcript concepts are easy to conflate:</p>
+<ul>
+<li><code>revision</code> changes on presentation mutations.</li>
+<li><code>history_epoch</code> changes when the visible logical history
+is replaced or cleared.</li>
+<li><code>covered_until</code> is an optional entry-ID boundary; earlier
+entries are omitted from model context.</li>
+</ul>
+<p><code>/cover</code> adds a transient marker and moves the boundary to
+the current point, so the conversation through the immediately preceding
+message is omitted from later model requests. Calling it again moves the
+boundary forward. <code>/uncover</code> adds its own marker and clears
+the boundary, restoring the full conversation to model context. The
+markers and boundary are not durable session history.
+<code>/clear</code> does not delete old SQLite rows; it advances the
+durable history epoch so restoration selects only the current epoch.</p>
+<p>Checkpoint: explain why <code>Transcript::model_history()</code>
+returns an owning value while <code>Transcript::view()</code> returns a
+borrowed span.</p>
+<h2 id="7-second-reading-pass-utility-mechanisms">7. Second reading
+pass: utility mechanisms</h2>
+<p>Read utilities as mechanisms with specific shutdown contracts, not as
+a bag of helpers.</p>
+<h3 id="71-concurrentqueuet">7.1
+<code>ConcurrentQueue&lt;T&gt;</code></h3>
+<p><a href="../src/util/concurrent_queue.h">util/concurrent_queue.h</a>
+is used for generation events. Closing the queue stops new values but
+preserves accepted values for draining. <code>close_with()</code>
+installs one final terminal value. That terminal guarantee is how each
+generation execution reports exactly one completion, cancellation, or
+failure even on its exception path.</p>
+<h3 id="72-wakenotifier">7.2 <code>WakeNotifier</code></h3>
+<p><a href="../src/util/wake_notifier.h">util/wake_notifier.h</a> is the
+tiny seam by which a generation worker tells the session actor, “new
+events may be available.” The web implementation is
+<code>OwnerWakeSignal</code>. Waking does not carry state; queues remain
+the source of work.</p>
+<h3 id="73-configuration-helpers">7.3 Configuration helpers</h3>
+<p>The other utilities support important boundaries:</p>
+<ul>
+<li><code>environment.*</code> parses <code>.env</code>, preserves
+inherited values (including empty ones), and supports import&#39;s temporary
+overlay of absent values.</li>
+<li><code>path_name.*</code> and <code>utf8_path.*</code> keep
+filesystem and URL identifiers explicit.</li>
+<li><code>public_name.*</code> centralizes visible-name validation.</li>
+<li><code>text_template.*</code> expands <code>$$(relative/file)</code>
+includes and <code>$${variable}</code> substitutions with containment
+and cycle/resource limits.</li>
+<li><code>logging.*</code> owns the process logging lifetime.</li>
+</ul>
+<p>Checkpoint: locate one caller of each utility and state whether it is
+a domain policy or a reusable mechanism.</p>
+<h3 id="74-public-process-modes">7.4 Public process modes</h3>
+<p>The public command parser accepts exactly these customer-facing
+forms:</p>
+<pre class="text"><code>chaweb --config=CONFIG [--root PATH]
+chaweb --config=CONFIG --import DIRECTORY
+chaweb --config=CONFIG --export DIRECTORY
+chaweb --config=CONFIG --upload
+chaweb --config=CONFIG --download</code></pre>
+<p>Every mode requires the external unified config. The parser accepts
+both <code>--config=CONFIG</code> and <code>--config CONFIG</code>;
+<code>--root</code> is a runtime-only application-asset root. The four
+offline modes are mutually exclusive. Upload and download use the R2
+bucket URL and S3 credentials from <code>CHA_R2_URL</code>,
+<code>CHA_R2_ACCESS_KEY_ID</code>, and
+<code>CHA_R2_SECRET_ACCESS_KEY</code>; the configured database filename
+becomes the object key.</p>
+<p>The Linux package includes <code>start-cha.sh</code>, which supplies
+<code>--root</code>, starts <code>chaweb</code> in the background, and
+uses <code>../cha.toml</code> by default. A nonempty
+<code>CHA_CONFIG</code> overrides that default for the launcher only;
+the executable itself still requires <code>--config</code>. Absolute
+override paths are used directly, while relative paths resolve from the
+directory containing <code>start-cha.sh</code>:</p>
+<div class="sourceCode" id="cb6"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="va">CHA_CONFIG</span><span class="op">=</span>/etc/cha/cha.toml <span class="ex">./start-cha.sh</span></span></code></pre></div>
+<p>The TOML shape is:</p>
+<div class="sourceCode" id="cb7"><pre class="sourceCode toml"><code class="sourceCode toml"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="dt">data</span> <span class="op">=</span> <span class="st">&quot;/var/lib/cha/workspace.sqlite3&quot;</span></span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a><span class="dt">mirror</span> <span class="op">=</span> <span class="st">&quot;/home/user/cha-mirror&quot;</span></span>
+<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a><span class="kw">[web]</span></span>
+<span id="cb7-5"><a href="#cb7-5" aria-hidden="true" tabindex="-1"></a><span class="dt">host</span> <span class="op">=</span> <span class="st">&quot;0.0.0.0&quot;</span></span>
+<span id="cb7-6"><a href="#cb7-6" aria-hidden="true" tabindex="-1"></a><span class="dt">port</span> <span class="op">=</span> <span class="dv">8086</span></span>
+<span id="cb7-7"><a href="#cb7-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-8"><a href="#cb7-8" aria-hidden="true" tabindex="-1"></a><span class="kw">[logging]</span></span>
+<span id="cb7-9"><a href="#cb7-9" aria-hidden="true" tabindex="-1"></a><span class="dt">file</span> <span class="op">=</span> <span class="st">&quot;logs/cha.log&quot;</span></span>
+<span id="cb7-10"><a href="#cb7-10" aria-hidden="true" tabindex="-1"></a><span class="dt">level</span> <span class="op">=</span> <span class="st">&quot;info&quot;</span></span></code></pre></div>
+<p><code>mirror</code> is optional; omitting it disables filesystem
+mirroring. Relative <code>data</code>, <code>mirror</code>, and
+<code>logging.file</code> values resolve from the external config&#39;s
+directory. The mirror root must already exist and be a directory. Import
+additionally requires that file to be outside the source workspace,
+preventing the process config itself from becoming an imported metadata
+row. Import and export acquire the same non-blocking database lease as
+runtime, so they are deliberately offline.</p>
+<p>A new database is created only after a source has been collected and
+validated successfully. Normal runtime and export require schema v2.
+Schema v1 is the unified sessions-only database; only import can add the
+<code>config</code> table and advance it to v2 while preserving session
+rows.</p>
+<p><code>.env</code> is one of the durable database rows. The database,
+journal/WAL/SHM sidecars, lock, private root, and exported
+<code>.env</code> use owner-only access (POSIX <code>0600</code> files
+and <code>0700</code> private directories, with private Windows DACLs).
+A unified database therefore needs secret-grade access and backup
+discipline. There is no database backup command here, and copying a live
+WAL database naively is unsafe.</p>
+<p>Mirroring deliberately creates a second, plaintext representation of
+session content outside SQLite. Mirrored Markdown files are written
+atomically with owner-only access (<code>0600</code> on POSIX), and
+newly created forum directories are private (<code>0700</code>), but CHA
+does not tighten the configured root or an existing forum directory. The
+operator therefore chooses and secures that location.</p>
+<h2 id="8-third-reading-pass-startup-and-the-immutable-workspace">8.
+Third reading pass: startup and the immutable workspace</h2>
+<p>Read <a href="../src/web_main.cpp">web_main.cpp</a> once from top to
+bottom. It is the composition root, so most lines construct or connect
+an owner.</p>
+<p>Startup proceeds in this order:</p>
+<ol type="1">
+<li><code>parse_application_command()</code> requires
+<code>--config</code>, validates top-level <code>data</code>,
+<code>[web]</code>, and <code>[logging]</code>, resolves relative paths
+from the external file&#39;s directory, and separates runtime from the two
+offline transfer modes.</li>
+<li><code>WorkspaceConfigStore::open()</code> acquires the database
+companion-file lease, rejects anything except valid schema v2, secures
+the database/sidecars, and enables WAL.</li>
+<li>The store creates one private root with <code>workspace/</code> and
+<code>welcome/</code>, materializes every <code>config</code> row under
+<code>workspace/</code>, loads <code>.env</code> without overriding
+inherited values, and validates/publishes a complete
+<code>Workspace</code>.</li>
+<li>File logging is initialized from the already parsed external
+settings, and the HTTP server later binds the configured
+<code>[web]</code> host and port. Neither setting belongs to
+<code>Workspace</code> or to a database row.</li>
+<li><code>SessionRepository</code> receives the store&#39;s explicit
+database, materialized, and Welcome paths, synchronizes configured forum
+IDs, and creates the process-local Welcome database. It does not own the
+lease or private root.</li>
+<li>If <code>mirror</code> is configured, <code>SessionMirror</code>
+validates the existing root, creates any missing display-named forum
+directories, and writes every active persistent session through the
+existing Markdown formatter. Any failure here aborts startup;
+Entrance/Welcome is excluded.</li>
+<li>The process-owned <code>Providers</code> supervisor is
+constructed.</li>
+<li><code>LiveSessionManager</code> is given an opener lambda that calls
+<code>open_session()</code> and installs the mirror callback on the
+resulting <code>OpenedSession</code>.</li>
+<li>The HTTP server, asset handler, lobby routes, and session routes are
+installed.</li>
+<li>The socket is bound, the server begins listening, and shutdown
+coordination waits for a process signal.</li>
+<li>Shutdown stops new work and tears down live actors, then
+<code>Providers::shutdown()</code> waits for request workers before
+logging stops.</li>
+</ol>
+<p>Step 5 depends on step 3: the repository reads the published
+<code>Workspace</code> to decide which forum rows belong in the
+database. Local declaration order and function scopes matter too:
+destructors run in reverse order, log users must be destroyed before
+logging itself, and live sessions and the repository must be destroyed
+before the configuration store releases its database handle, private
+root, and lease.</p>
+<h3 id="81-what-workspaceload-builds">8.1 What
+<code>Workspace::load()</code> builds</h3>
+<p>Read <a href="../src/workspace/workspace.h">workspace/workspace.h</a>, then the
+helpers and <code>Workspace::load()</code> in <a href="../src/workspace/workspace.cpp">workspace/workspace.cpp</a>.</p>
+<p>The loader treats the workspace as one configuration unit. Production
+gives it the private materialized directory as its physical root:</p>
+<ul>
+<li>It requires <code>characters/</code>, <code>forums/</code>, and
+<code>personas/</code> in the expected form.</li>
+<li>It validates character IDs and public-name uniqueness.</li>
+<li>It loads persona metadata and optional <code>PERSONA.md</code>
+prompts.</li>
+<li>It validates every forum&#39;s members, default character, and default
+persona, the last of which becomes the starting author for sessions in
+that forum.</li>
+<li>It validates every forum member&#39;s character, provider, and style
+references.</li>
+<li>It builds indexes and fully resolved forum-member prompt
+values.</li>
+<li>It adds the built-in Guest persona, Assistant character, and
+Entrance forum.</li>
+</ul>
+<p>All forums are resolved when a workspace is loaded, including unused
+ones. This turns an invalid member override or prompt into a
+deterministic load error rather than a delayed failure when someone
+opens that forum.</p>
+<p>The public methods expose information from one published workspace.
+Production sessions keep their identity and runtime state, then query
+the current workspace when they need forum, persona, character,
+provider, or style data. Provider requests alone own the exact resolved
+input they are already running. Normal readers use eagerly owned values
+and do not reopen materialized files after load.</p>
+<p>There is no copied forum-roster object. A candidate is simply a
+temporary <code>Workspace</code>. Once fully loaded and durably
+committed, <code>loadws()</code> atomically makes it current. Callers
+use one <code>getws()</code> result for the duration of an operation, so
+references into that immutable snapshot remain valid even if a narrow
+settings write publishes its replacement.</p>
+<h3 id="82-database-authority-and-publication">8.2 Database authority
+and publication</h3>
+<p>Read <code>getws()</code> and <code>loadws()</code> in <a href="../src/workspace/workspace.cpp">workspace/workspace.cpp</a>. A
+caller holds the returned <code>shared_ptr</code> while it reads
+references from the workspace.</p>
+<p>The schema-v2 <code>config</code> table contains exactly
+<code>name</code> and <code>content</code>. Import collects regular
+workspace <code>.toml</code> and <code>.md</code> files and optional
+root <code>.env</code>; it follows no symlinks and stores no other
+types. Legacy root <code>app.toml</code> and <code>workspace.toml</code>
+are explicitly excluded and prohibited as database config names. The
+unified external config is also outside the import tree. A template
+include must itself be stored, so <code>snippet.txt</code> is not
+available after materialization while <code>snippet.md</code> can be.
+Import validates a byte-identical private materialization before it
+commits the complete row set.</p>
+<p>Normal runtime never reads the import or export directory. The only
+online edits are character provider/style, forum default character, and
+forum default persona. <code>WorkspaceConfigStore</code> serializes each
+one, edits its private tree, loads a complete candidate, replaces all
+configuration rows in one SQLite transaction, and publishes after
+commit. There is no generation, type, control, or revision column. Other
+edits require stop, export to a missing or empty directory, edit,
+import, and restart.</p>
+<h3 id="83-provider-selection">8.3 Provider selection</h3>
+<p>Every connection and model setting lives in
+<code>system/providers/&lt;id&gt;/config.toml</code>. Each character
+selects exactly one of those configs with
+<code>provider = &quot;&lt;id&gt;&quot;</code> in its own
+<code>character.toml</code>. Workspace, forum-default, and member
+provider keys are ignored, so there is no provider inheritance or
+override chain. The <code>[prompt]</code> scope still merges across the
+character, forum-default, and member layers.</p>
+<p>Read the provider loader in <a href="../src/workspace/workspace.cpp">workspace/workspace.cpp</a>.
+<code>WorkspaceProvider</code> stores the fully resolved
+<code>ModelBackendConfig</code> directly;
+<code>Workspace::character_definition()</code> copies it into the
+request-owned value passed to provider code.</p>
+<h3 id="84-prompt-construction">8.4 Prompt construction</h3>
+<p><code>Workspace::load()</code> combines:</p>
+<ul>
+<li>the character definition prompt;</li>
+<li>forum prompt/context;</li>
+<li>the forum&#39;s default persona and its <code>PERSONA.md</code>
+prompt;</li>
+<li>standard generated context;</li>
+<li>effective model backend settings.</li>
+</ul>
+<p><code>FORUM.md</code> has two audiences. It is the forum prompt
+above, and <code>Workspace</code> also reads it verbatim and serves it
+through <code>/api/v1/forums/{forum}</code> as the forum&#39;s description.
+Write it for readers as well as for the characters. This differs from
+<code>CHARACTER.md</code>, which publishes only its
+<code>&lt;character_profile&gt;</code> section: a forum publishes the
+whole file. The raw template source is served, so
+<code>$${character.display_name}</code> and <code>$$(...)</code>
+includes appear literally — a description belongs to the forum rather
+than to any one member, so there is nothing to expand it against.</p>
+<p>The built-in Assistant and Entrance data are assembled by
+<code>Workspace::load()</code>. The generated workspace guide is
+combined with public workspace inventory data. The Entrance/Welcome
+session is a normal session at the controller level; its specialness is
+in how the application constructs and stores it.</p>
+<p>Checkpoint: starting with
+<code>packaging/linux/import-seed/forums/stoics</code>, identify the
+files that contribute to one member&#39;s final definition and the order in
+which values win.</p>
+<h2 id="9-fourth-reading-pass-session-storage-and-opening">9. Fourth
+reading pass: session storage and opening</h2>
+<p>Read these in order:</p>
+<ol type="1">
+<li><a href="../src/chat/session_identity.h">chat/session_identity.h</a></li>
+<li><a href="../src/session/stored_session.h">session/stored_session.h</a></li>
+<li><a href="../src/session/workspace_session_database.h">session/workspace_session_database.h</a></li>
+<li><a href="../src/session/session_lease.h">session/session_lease.h</a></li>
+<li><a href="../src/session/session_storage_layout.h">session/session_storage_layout.h</a></li>
+<li><a href="../src/workspace/workspace_config_store.h">workspace/workspace_config_store.h</a></li>
+<li><a href="../src/session/session_database.h">session/session_database.h</a></li>
+<li><a href="../src/session/session_repository.h">session/session_repository.h</a></li>
+<li><a href="../src/workspace/session_open.cpp">workspace/session_open.cpp</a></li>
+</ol>
+<p>Every persistent session lives in the SQLite file selected by the
+external config&#39;s <code>data</code> setting, named
+<code>workspace.sqlite3</code> in these examples, beside
+<code>workspace.sqlite3.cha-lock</code>. There is no per-session
+database file or lock.</p>
+<h3 id="91-two-identities-public-pair-and-internal-key">9.1 Two
+identities: public pair and internal key</h3>
+<p><code>(forum_id, session_id)</code> is the durable public identity.
+It appears in URLs, protocol values, and <code>FullSessionId</code>.
+Session IDs are timestamp-derived and unique only within a forum, so the
+database enforces <code>UNIQUE (forum_key, session_id)</code> rather
+than uniqueness on <code>session_id</code> alone.</p>
+<p><code>session_key</code> is an internal SQLite integer. It never
+appears in a URL or a protocol message, and every restore and journal
+statement is scoped by it. Omitting <code>session_key</code> from a
+statement is a cross-session data isolation defect, because request IDs
+and entry IDs are session-local and repeat across sessions.</p>
+<h3 id="92-observation-versus-authority">9.2 Observation versus
+authority</h3>
+<p><code>StoredSession</code> is listing data: public identity, label,
+and an integer <code>updated_at</code>. It reports what one query
+observed; it does not promise the session can still be opened.</p>
+<p><code>PreparedSession</code> is authoritative for construction
+because it contains:</p>
+<ul>
+<li>validated identity and label;</li>
+<li>the selected database path;</li>
+<li>the resolved <code>session_key</code>;</li>
+<li>restored transcript/counter state.</li>
+</ul>
+<p><code>SessionRepository::prepare()</code> resolves the public
+identity to a <code>session_key</code>, validates the database identity
+and that one session&#39;s contents, and restores it inside a single read
+transaction. A persistent session selects the unified database; Welcome
+selects its private temporary one. Preparation takes no per-session
+operating-system lock: <code>LiveSessionManager</code> prevents two
+actors from owning one identity inside the process, and the top-level
+store&#39;s database lease excludes other processes.</p>
+<h3 id="93-one-lease-and-the-cutover-guard">9.3 One lease, and the
+cutover guard</h3>
+<p><code>WorkspaceConfigStore</code> acquires
+<code>workspace.sqlite3.cha-lock</code> before opening the database and
+holds it through normal runtime. Import and export acquire the same
+lease for their full operation. Acquisition is non-blocking, so
+concurrent runtime/import/export fails before database use. A companion
+file is used rather than the database bytes because it exists before the
+database is created, does not interfere with SQLite&#39;s own byte-range
+locking, and stays stable while WAL sidecars come and go. An empty
+companion left behind after exit is harmless; the held kernel lock, not
+the file, is what means &quot;busy&quot;.</p>
+<p>Only import performs the permanent manual-cutover preflight, before
+it modifies the target:</p>
+<table>
+<thead>
+<tr>
+<th><code>workspace.sqlite3</code></th>
+<th>Legacy <code>forums/*/sessions/*.sqlite3</code></th>
+<th>Import behavior</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Missing</td>
+<td>Absent</td>
+<td>Create v2 only after successful validation</td>
+</tr>
+<tr>
+<td>Valid v1</td>
+<td>Absent</td>
+<td>Upgrade to v2 and preserve every session</td>
+</tr>
+<tr>
+<td>Valid v2</td>
+<td>Absent</td>
+<td>Replace only the complete configuration rows</td>
+</tr>
+<tr>
+<td>Missing</td>
+<td>Present</td>
+<td>Fail: the archived per-session migration build was never run</td>
+</tr>
+<tr>
+<td>Present</td>
+<td>Present</td>
+<td>Fail: migration cleanup is incomplete</td>
+</tr>
+</tbody>
+</table>
+<p>For the normal schema-v1 cutover, first stop the running application
+and back up both the database and metadata tree. Put the external
+configuration outside that tree, point its <code>data</code> setting at
+the existing <code>workspace.sqlite3</code>, then run the import and
+restart with the same configuration:</p>
+<pre class="console"><code>$ chaweb --config=/srv/cha/cha.toml --import /srv/cha/workspace
+$ chaweb --config=/srv/cha/cha.toml</code></pre>
+<p>The first command upgrades a valid v1 database in place, preserving
+its sessions while importing the directory metadata. The second command
+is normal server mode; it reads application settings from
+<code>cha.toml</code> and all workspace content from SQLite. The
+metadata tree may remain as a backup, but runtime no longer reads
+it.</p>
+<p><code>has_legacy_session_databases()</code> in <a href="../src/session/session_storage_layout.cpp">session_storage_layout.cpp</a>
+is a permanent path-only scan for regular <code>.sqlite3</code> files
+directly under each <code>forums/*/sessions/</code> and
+<code>forums/*/sessions/deleted/</code>. It never opens, reads, imports,
+moves, or deletes one. This build contains no legacy reader: the first
+message directs the operator to an archived migration-capable build,
+while the second directs them to verify the unified database and finish
+cleanup.</p>
+<h3 id="94-connections-and-transactions">9.4 Connections and
+transactions</h3>
+<p>The repository owns no SQLite connection. Every catalog or
+maintenance operation opens a short-lived connection and closes it
+before returning, which is why its methods stay <code>const</code>
+behind <code>shared_ptr&lt;const SessionRepository&gt;</code>. Each live
+actor owns one long-lived journal connection confined to its owner
+thread. No handle is ever shared between threads.</p>
+<p>Every connection enables <code>foreign_keys</code> and a five-second
+<code>busy_timeout</code>, and write-capable connections set
+<code>synchronous = FULL</code>. The workspace database runs in WAL, so
+history readers proceed while a journal connection writes.</p>
+<p>Every write-capable transaction begins with
+<code>BEGIN IMMEDIATE</code> — that is all
+<code>SqliteTransaction</code> does. Reading first under a deferred
+<code>BEGIN</code> and upgrading later is unsafe with several actors:
+another writer can invalidate the reader&#39;s WAL snapshot, and the upgrade
+then fails with <code>SQLITE_BUSY_SNAPSHOT</code>, which
+<code>busy_timeout</code> does not retry. Read-only paths use the
+separate deferred <code>ReadSnapshot</code> helper in <a href="../src/session/session_database.cpp">session_database.cpp</a>.</p>
+<h3 id="95-listing-creation-and-deletion">9.5 Listing, creation, and
+deletion</h3>
+<p>Listing a forum and building Workspace Recent are indexed queries
+over <code>sessions</code> joined with <code>forums</code>, filtered to
+the forums the currently published <code>Workspace</code> still
+configures. Nothing scans the filesystem, and a newly created session
+appears immediately.</p>
+<p>Creation validates the forum against the published
+<code>Workspace</code>, ensures that forum has a row, and inserts one
+<code>sessions</code> row with its initial counters — all in one
+transaction. A timestamp ID collision surfaces as
+<code>SQLITE_CONSTRAINT_UNIQUE</code>; the retry loop confirms the
+conflict really is that session&#39;s own
+<code>(forum_key, session_id)</code> before trying the next suffix, so
+any other unique violation stays a storage error.</p>
+<p>Deletion is archival, not a file move: one <code>UPDATE</code> sets
+<code>archived_at</code>, and the turns and entries stay exactly where
+they are. An archived row keeps its unique identity, so its session ID
+can never be reused, and it is excluded from list, open, rename, and
+history queries.</p>
+<p>When Markdown mirroring is enabled, archival intentionally leaves the
+last mirrored file in place. <code>SessionMirror</code> also retains
+that path allocation for the rest of the process, so a newly created
+session cannot take the archived file&#39;s name during that run. The mirror
+is an additive readable projection, not an archive catalog or a source
+from which sessions are restored.</p>
+<p>Forum synchronization is <code>INSERT OR IGNORE</code>, never a
+delete. Removing a forum from an imported configuration makes its
+sessions unreachable through ordinary APIs but leaves them durable;
+importing configuration that restores the forum makes them visible
+again.</p>
+<h3 id="96-welcome-uses-the-same-machinery">9.6 Welcome uses the same
+machinery</h3>
+<p>Welcome is process-local and never persistent.
+<code>WorkspaceConfigStore</code> creates the private root and
+<code>welcome/</code> child; <code>SessionRepository</code> creates one
+database there with the same application ID, schema version, and schema
+as the unified database, holding exactly one forum row and one session
+row at <code>session_key</code> 1. That is why
+<code>SessionJournal</code> and every restore query take the same code
+path for Welcome as for a persistent session — there is no second
+storage implementation to keep in sync. The top-level store removes the
+whole private root during teardown.</p>
+<h3 id="97-open_session-is-the-bridge">9.7 <code>open_session()</code>
+is the bridge</h3>
+<p><code>workspace/session_open.cpp</code> performs a short but crucial
+composition:</p>
+<ol type="1">
+<li>acquire the current <code>Workspace</code> and find the immutable
+forum;</li>
+<li>prepare the stored session;</li>
+<li>retain the session label for the live web actor;</li>
+<li>construct a workspace-backed <code>SessionController</code>,
+transferring the database path, <code>session_key</code>, restore state,
+configured default IDs, wake notifier, and a reference to the
+configuration store for the two forum-default writes.</li>
+</ol>
+<p>The workspace layer knows both the static workspace and dynamic
+repository; neither needs to know about HTTP.</p>
+<p>Checkpoint: explain why route code calls <code>validate()</code>
+before starting an actor, but the actor&#39;s <code>open_session()</code>
+must still call <code>prepare()</code>.</p>
+<h2 id="10-fifth-reading-pass-the-generation-pipeline">10. Fifth reading
+pass: the generation pipeline</h2>
+<p>Read the interfaces before the implementations:</p>
+<ol type="1">
+<li><a href="../src/providers/generation_event.h">providers/generation_event.h</a></li>
+<li><a href="../src/characters/model_context.h">characters/model_context.h</a></li>
+<li><a href="../src/providers/model_backend.h">providers/model_backend.h</a></li>
+<li><a href="../src/providers/providers.h">providers/providers.h</a></li>
+<li><a href="../src/providers/chat_completions_api.h">providers/chat_completions_api.h</a></li>
+<li><a href="../src/providers/responses_api.h">providers/responses_api.h</a></li>
+<li><a href="../src/providers/provider_client.h">providers/provider_client.h</a></li>
+</ol>
+<h3 id="101-the-backend-seam">10.1 The backend seam</h3>
+<p><code>ModelBackend</code> has a two-phase contract:</p>
+<ul>
+<li><code>prepare(const GenerationRequest&amp;)</code> projects context
+and creates owned request bytes.</li>
+<li><code>perform(RequestPayload, delta sink, cancellation flag)</code>
+performs synchronous generation and returns a classified terminal
+result.</li>
+</ul>
+<p>The split lets request preparation fail on a worker while keeping the
+session controller provider-agnostic. Tests inject fake backends through
+the same seam.</p>
+<p><code>GenerationDelta</code> distinguishes reasoning from answer
+text. <code>GenerationResult</code> classifies completion, cancellation,
+protocol error, or transport error. Worker-facing
+<code>GenerationEvent</code> adds the request ID and converts the result
+into deltas followed by one terminal event.</p>
+<h3 id="102-context-projection">10.2 Context projection</h3>
+<p><a href="../src/characters/model_context.cpp">characters/model_context.cpp</a>
+translates a presentation-neutral <code>ModelHistory</code> into
+provider message roles.</p>
+<p>Projection omits:</p>
+<ul>
+<li>notices and errors;</li>
+<li>the current open streaming entry;</li>
+<li>entries before the optional cover boundary;</li>
+<li>failed prompts;</li>
+<li>incomplete/cancelled character history.</li>
+</ul>
+<p>For the target character, its own completed output becomes
+<code>assistant</code> history and directly addressed human prompts
+become <code>user</code>-role history. Other participants&#39; entries are
+grouped into explicit shared-history JSONL so the model can see the
+multi-party conversation without being told it authored someone else&#39;s
+words. The system prompt names the same JSONL heading and tells the
+character to use the block as earlier forum conversation context. The
+new prompt is appended last with its persona display name as the current
+message to answer.</p>
+<h3 id="103-provider-requests-and-ordered-generation">10.3 Provider
+requests and ordered generation</h3>
+<p><code>Providers</code> is a process-owned supervisor, not a scheduler
+or cache. Each call to <code>make_request()</code> creates a
+<code>ProviderRequest</code>, registers it, and launches one detached
+worker. The request owns immutable character and history input, a
+cancellation flag, an event queue, and a shared wake notifier. Its
+worker creates a fresh backend and curl easy handle for that
+request.</p>
+<p>Registration makes the detached work supervised:
+<code>Providers</code> retains the request until its terminal event is
+published and its transport resources are gone. Process shutdown closes
+admission, cancels active requests, and waits for the registry and final
+diagnostic tails to quiesce. A session may release a request without
+waiting for its provider I/O.</p>
+<p>For multicast, the controller creates an ordered vector of
+independent request handles that share one immutable history snapshot.
+Every request starts as soon as it is admitted, but the controller
+drains only <code>foreground_index</code>. A later request may finish
+first; its output remains buffered in its private queue until the
+controller durably activates that target. This preserves concurrent
+provider latency and deterministic transcript order without a
+provider-layer batch abstraction.</p>
+<p>Stopping cancels every request, discards non-foreground handles, and
+retains only the current foreground request long enough to persist its
+terminal event.</p>
+<h3 id="104-provider-transport-versus-protocol-semantics">10.4 Provider
+transport versus protocol semantics</h3>
+<p><code>ProviderClient</code> owns:</p>
+<ul>
+<li>protocol selection and <code>/v1/chat/completions</code> or
+<code>/v1/responses</code> dispatch;</li>
+<li>headers/authentication, curl handles, status/content-type checks,
+logging, byte counts, and cancellation through curl&#39;s progress
+callback;</li>
+<li>test mode, which emits the prompt as answer text.</li>
+</ul>
+<p><code>chat_completions_api.*</code> and <code>responses_api.*</code>
+each own request encoding and response meaning for one protocol. Read <a href="../src/providers/chat_completions_api.cpp">providers/chat_completions_api.cpp</a>
+beside <a href="../src/providers/responses_api.cpp">providers/responses_api.cpp</a>:</p>
+<ul>
+<li>incremental SSE framing for streaming responses;</li>
+<li>JSON message extraction;</li>
+<li>reasoning-format interpretation;</li>
+<li>reasoning and answer delta emission;</li>
+<li>end marker, malformed response, and missing-answer
+classification.</li>
+</ul>
+<p>The controller derives a stable prompt-cache key from forum, session,
+and character identity. When caching is enabled, the protocol encoders
+send that key as <code>prompt_cache_key</code> to the direct OpenAI host
+and as <code>session_id</code> to OpenRouter. For GPT-5.6 and later
+Responses, long retention also requests implicit caching with the
+longest currently supported minimum TTL, 30 minutes. Other compatible
+hosts receive no cache-affinity field.</p>
+<p>The protocol modules intentionally know nothing about curl, HTTP
+status, or cancellation. <code>ProviderClient::perform()</code> decides
+the final outcome after the transport completes and may add HTTP
+metadata to a decoder error.</p>
+<p>Streaming needs state across arbitrary network chunks. One
+<code>ChatCompletionsStreamDecoder</code> or
+<code>ResponsesStreamDecoder</code> is therefore created per streaming
+request. It retains incomplete SSE framing, protocol completion, token
+usage, and whether reasoning or answer text was received, then is
+destroyed with that request. The common
+<code>StreamingResponseDecoder</code> interface lets
+<code>ProviderClient</code> select the protocol without owning either
+protocol&#39;s parsing state.</p>
+<p>Checkpoint: describe what happens if a streaming response contains
+reasoning but no answer, and identify which layer detects it and which
+layer converts it into a transcript error.</p>
+<h2 id="11-sixth-reading-pass-sessioncontroller">11. Sixth reading pass:
+<code>SessionController</code></h2>
+<p>The controller is the heart of the application. Read <a href="../src/session/session_controller.h">session/session_controller.h</a>
+first, then read <a href="../src/session/session_controller.cpp">session/session_controller.cpp</a>
+in four groups:</p>
+<ol type="1">
+<li>construction, restoration, and <code>view()</code>;</li>
+<li>prompt resolution and <code>start_generation()</code>;</li>
+<li>command methods such as clear, hide, multicast, default character,
+and stop;</li>
+<li>generation-event <code>apply()</code> overloads and shutdown.</li>
+</ol>
+<h3 id="111-what-the-controller-owns">11.1 What the controller owns</h3>
+<p>One controller owns:</p>
+<ul>
+<li>one <code>SessionJournal</code> connection, scoped to a single
+<code>session_key</code>;</li>
+<li>the owner-thread-confined <code>Transcript</code>;</li>
+<li>a borrowed reference to the process-owned <code>Providers</code>
+supervisor;</li>
+<li>stable forum/persona IDs used to look up the current
+<code>Workspace</code>;</li>
+<li>default-character and current-persona selection;</li>
+<li>next request and entry IDs;</li>
+<li>at most one active foreground response;</li>
+<li>at most one <code>ActiveGeneration</code>, containing ordered
+request handles.</li>
+</ul>
+<p>The controller has no mutex. Its public mutation/view methods belong
+to the owner thread. Thread-safe communication is isolated inside
+request event queues, cancellation flags, and the wake mechanism.</p>
+<p><code>Workspace</code> is the forum roster and handle resolver. It
+centralizes exact, normalized, and prefix matching plus ambiguity
+diagnostics, so prompt submission, multicast, and default-character
+changes use the same rules. <code>SessionController</code> keeps no
+copied roster; its style-override map stores only style IDs and overlays
+the selected appearance when metadata is copied for a request or
+presentation. The smaller <code>generation_status.h</code>,
+<code>controller_view.h</code>, and <code>opened_session.h</code>
+headers are boundary value types: they let application and web code
+observe or transfer session state without gaining access to controller
+internals.</p>
+<h3 id="112-starting-a-prompt">11.2 Starting a prompt</h3>
+<p><code>submit_prompt()</code> resolves a character handle or uses the
+current default, resolves the author ID against the workspace persona
+roster, copies current <code>ModelHistory</code>, and delegates to
+<code>start_generation()</code>.</p>
+<p><code>start_generation()</code> is ordered carefully:</p>
+<ol type="1">
+<li>Allocate one request ID per target and build all owning
+<code>ProviderRequestInput</code> values from one shared history
+snapshot.</li>
+<li>Install <code>ActiveGeneration</code> and reserve its ordered
+request list.</li>
+<li><code>activate_run()</code> persists the first started turn and
+human prompt transactionally.</li>
+<li>Add that prompt to the transcript, install
+<code>ActiveResponse</code>, and require a presentation snapshot.</li>
+<li>Call <code>Providers::make_request()</code> for every target. Each
+admitted request starts immediately and returns a handle whose queue
+ends in one terminal event.</li>
+</ol>
+<p>This is the key commit boundary: provider work starts only after the
+foreground prompt is durable and the controller has installed state
+capable of receiving its result. Later multicast targets run immediately
+but are not made durable or visible until they become foreground.</p>
+<h3 id="113-response-phases">11.3 Response phases</h3>
+<p><code>ActiveResponse::phase</code> moves through:</p>
+<pre class="text"><code>waiting -&gt; reasoning -&gt; answering -&gt; terminal
+    \-----------------&gt; answering -&gt; terminal</code></pre>
+<p>Reasoning may continue after answer text has begun; the phase records
+the most important visible structure, while reasoning text remains
+separate ephemeral state.</p>
+<ul>
+<li>The first reasoning delta changes structure and requires a
+snapshot.</li>
+<li>Later reasoning growth can be a targeted append.</li>
+<li>The first answer delta creates the streaming transcript entry and
+requires a snapshot.</li>
+<li>Later answer growth can be a targeted append.</li>
+<li>Completion, cancellation, failure, target changes, and notices
+require a snapshot.</li>
+</ul>
+<p>Reasoning is never written to the transcript or SQLite journal.</p>
+<h3 id="114-terminal-outcomes">11.4 Terminal outcomes</h3>
+<p>On completion with answer text, the controller transactionally
+completes the turn, marks the streaming entry complete, clears
+<code>active_</code>, and advances or finishes the active
+generation.</p>
+<p>Completion without answer text is treated as failure. On failure, an
+open streaming response is discarded and a durable error entry replaces
+it.</p>
+<p>Cancellation has two forms:</p>
+<ul>
+<li>If answer text exists, a cancelled character entry is stored with
+the partial text.</li>
+<li>If no answer exists, the turn is cancelled without a response entry;
+the prompt remains.</li>
+</ul>
+<p><code>request_stop()</code> only sets cancellation and returns. It
+does not block the actor waiting for provider threads. Later event-loop
+passes drain terminal events and finish cleanup.</p>
+<h3 id="115-controllerupdate-is-an-effect-description">11.5
+<code>ControllerUpdate</code> is an effect description</h3>
+<p>Read <a href="../src/session/controller_update.h">session/controller_update.h</a>
+and <a href="../src/session/controller_update.cpp">session/controller_update.cpp</a>.</p>
+<p>A command/event returns both semantic results (notice, input
+consumed, session ended) and a presentation-state effect:</p>
+<ul>
+<li><code>NoStateUpdate</code></li>
+<li><code>SnapshotRequired</code></li>
+<li><code>TextAppend</code> to an entry or reasoning request</li>
+</ul>
+<p>Merging is conservative. A structural change dominates an append, and
+incompatible appends become a snapshot. This type lets the session layer
+describe what changed without depending on SSE.</p>
+<p>Checkpoint: for first answer chunk, second answer chunk, completion,
+and provider failure, state the transcript mutation, journal operation,
+and update classification.</p>
+<h2 id="12-seventh-reading-pass-web-actor-and-protocol">12. Seventh
+reading pass: web actor and protocol</h2>
+<p>Read the web layer in this order:</p>
+<ol type="1">
+<li><a href="../src/web/protocol.h">web/protocol.h</a></li>
+<li><a href="../src/web/session_projection.cpp">web/session_projection.cpp</a></li>
+<li><a href="../src/web/command_queue.h">web/command_queue.h</a></li>
+<li><a href="../src/web/sse_mailbox.h">web/sse_mailbox.h</a></li>
+<li><a href="../src/web/live_session.h">web/live_session.h</a></li>
+<li><a href="../src/web/live_session.cpp">web/live_session.cpp</a></li>
+<li><a href="../src/web/live_session_manager.cpp">web/live_session_manager.cpp</a></li>
+<li><a href="../src/web/lobby_routes.cpp">web/lobby_routes.cpp</a></li>
+<li><a href="../src/web/session_routes.cpp">web/session_routes.cpp</a></li>
+<li><a href="../src/web/session_markdown.cpp">web/session_markdown.cpp</a></li>
+<li><a href="../src/web/session_mirror.cpp">web/session_mirror.cpp</a></li>
+</ol>
+<h3 id="121-protocol-values-are-owning-dtos">12.1 Protocol values are
+owning DTOs</h3>
+<p><code>ControllerView</code> borrows controller storage.
+<code>to_snapshot()</code> immediately copies it into an owning
+<code>SessionSnapshot</code> suitable for JSON or cross-thread
+publication. The protocol also defines <code>AppendEvent</code>, command
+results, errors, bootstrap data, and lifecycle/shutdown values.</p>
+<p>This projection is the seam where core state becomes web
+presentation. Core types do not acquire JSON annotations just because
+the browser needs them.</p>
+<h3 id="122-command-ingress">12.2 Command ingress</h3>
+<p>An HTTP handler obtains a <code>shared_ptr&lt;LiveSession&gt;</code>
+from the manager and calls <code>submit()</code>; it never calls the
+controller.</p>
+<p><code>CommandQueue</code> has two lanes:</p>
+<ul>
+<li>bounded commands with <code>CommandReply</code> objects, so load
+cannot grow queued mutations without limit;</li>
+<li>unbounded, lossless owner notifications for SSE disconnect
+cleanup.</li>
+</ul>
+<p><code>submit()</code> enqueues under the lifecycle boundary, wakes
+the owner if necessary, and waits only for the caller&#39;s deadline. A
+timeout abandons the reply but does not undo a command that may already
+be executing. That is why the HTTP error says the outcome is
+unknown.</p>
+<h3 id="123-text-parsing-is-a-web-adapter">12.3 Text parsing is a web
+adapter</h3>
+<p>The browser sends <code>RawCommand { text }</code>; the author is not
+the browser&#39;s to choose, so <code>LiveSession</code> supplies the
+session&#39;s current persona ID. The actor passes it to
+<code>handle_text_input()</code> in <a href="../src/web/text_input.cpp">web/text_input.cpp</a>. Parsing is
+divided among:</p>
+<ul>
+<li><code>text_mention.*</code> for leading character mentions;</li>
+<li><code>text_command.*</code> for slash commands;</li>
+<li><code>text_multicast.*</code> for <code>/mcast</code> syntax;</li>
+<li><code>text_input.*</code> for dispatch to typed controller
+methods.</li>
+</ul>
+<p>The parser belongs in <code>web</code> because it adapts one input
+protocol. The controller exposes typed actions and remains usable
+without slash-command syntax. <code>/style</code> is a presentation-only
+command: <code>set_session_style()</code> resolves the name in the
+current <code>Workspace</code> and stores only the selected style ID as
+session state. The next snapshot overlays that style on Workspace
+character data. It has no backend or busy guard, and its mutating forms
+carry a snapshot. It is runtime-only.</p>
+<h3 id="124-the-owner-loop">12.4 The owner loop</h3>
+<p><code>LiveSession::owner_loop()</code> repeatedly:</p>
+<ol type="1">
+<li>drains a bounded batch of commands/notifications;</li>
+<li>checks for shutdown;</li>
+<li>drains a bounded batch of foreground generation events;</li>
+<li>applies notice state and publishes an append or snapshot;</li>
+<li>refreshes the Markdown mirror if its transcript revision or label
+changed;</li>
+<li>checks browser-disconnect/idle deadlines;</li>
+<li>continues immediately if a batch was full, otherwise waits for a
+wake or deadline.</li>
+</ol>
+<p>Bounding both drains prevents an endless command stream from starving
+model events and prevents a hot model stream from starving commands such
+as <code>/stop</code>.</p>
+<h3 id="125-sse-mailbox">12.5 SSE mailbox</h3>
+<p><code>SseMailbox</code> is the one cross-thread presentation channel
+from owner to HTTP stream writer. It holds at most one in-flight payload
+and one replaceable pending payload.</p>
+<p>Snapshots replace stale pending state. Compatible appends can be
+combined only when their sequence base and text target are exact. A
+pending snapshot plus a later append is not assumed compatible; the
+mailbox rejects the append and the owner projects a current snapshot
+instead.</p>
+<p>The result is bounded memory under a slow browser. Intermediate
+presentation updates may collapse, but the latest complete state is
+recoverable. A newly connected SSE stream always begins with a
+snapshot.</p>
+<p>A live session holds one browser SSE connection: the most recent one.
+CHA has a single reader who may carry a conversation from desktop to
+laptop to tablet, so a new connection takes the session over at once
+rather than waiting for the previous device&#39;s stream to end, and the
+stream it displaces is closed with a final <code>superseded</code>
+record. Connection state also drives the actor&#39;s idle/orphan deadline;
+generation receives the longer protection appropriate to active
+work.</p>
+<h3 id="126-manager-and-routes">12.6 Manager and routes</h3>
+<p><code>LiveSessionManager</code> is the liveness authority and join
+authority. Its map is keyed by <code>FullSessionId</code>.</p>
+<ul>
+<li>Concurrent opens of the same identity share one starting actor and
+result.</li>
+<li>A running actor is reattached rather than duplicated.</li>
+<li>Waiting for startup happens outside the manager mutex.</li>
+<li>Finished actors are removed under the mutex and joined outside
+it.</li>
+<li>A caller timing out while an actor starts does not cancel shared
+startup.</li>
+</ul>
+<p>Lobby routes provide health, public discovery and the narrow
+character settings write, plus stored-session listing, creation,
+download, rename, deletion, and open. Session routes operate only on a
+live actor:</p>
+<pre class="text"><code>GET  /health
+GET  /api/v1/bootstrap
+GET  /api/v1/characters/{character}
+PATCH /api/v1/characters/{character}
+GET  /api/v1/personas/{persona}
+GET  /api/v1/forums/{forum}
+GET  /api/v1/forums/{forum}/sessions
+POST /api/v1/forums/{forum}/sessions
+GET  /api/v1/forums/{forum}/sessions/{session}/download
+PATCH /api/v1/forums/{forum}/sessions/{session}
+DELETE /api/v1/forums/{forum}/sessions/{session}
+POST /api/v1/forums/{forum}/sessions/{session}/open
+
+GET  /s/{forum}/{session}/
+GET  /s/{forum}/{session}/api/v1/session
+GET  /s/{forum}/{session}/api/v1/events
+POST /s/{forum}/{session}/api/v1/input
+POST /s/{forum}/{session}/api/v1/actions/stop
+POST /s/{forum}/{session}/api/v1/actions/default-character</code></pre>
+<p><code>default-agent</code> remains a compatibility alias for
+<code>default-character</code>; new code uses character vocabulary.</p>
+<p>The route files should mostly validate HTTP input, map
+errors/statuses, look up an actor, and serialize protocol values.
+Session behavior belongs below them.</p>
+<p>Checkpoint: explain why a <code>LiveSessionHandle</code> may safely
+outlive the manager&#39;s map entry after the owner thread has finished.</p>
+<h3 id="127-web-support-modules">12.7 Web support modules</h3>
+<p>After the main actor path makes sense, scan the smaller adapters:</p>
+<table>
+<thead>
+<tr>
+<th>Files</th>
+<th>Responsibility</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>application_config.*</code></td>
+<td>Parse the mandatory external unified config, database/mode
+selection, and runtime asset root</td>
+</tr>
+<tr>
+<td><code>asset_handler.*</code></td>
+<td>Serve the browser shell and staged static assets without owning
+session behavior</td>
+</tr>
+<tr>
+<td><code>http_server.*</code></td>
+<td>Apply server-wide request, Host/Origin, timeout, and size
+policy</td>
+</tr>
+<tr>
+<td><code>http_response.*</code>, <code>json.*</code>,
+<code>route_support.*</code></td>
+<td>Consistent JSON parsing, response bodies, route components, and
+mutation validation</td>
+</tr>
+<tr>
+<td><code>browser_connection_state.*</code></td>
+<td>Hand the session to the newest browser stream and calculate
+disconnect/idle deadlines</td>
+</tr>
+<tr>
+<td><code>session_markdown.*</code>, <code>session_mirror.*</code></td>
+<td>Render portable transcripts and maintain the optional filesystem
+projection</td>
+</tr>
+<tr>
+<td><code>owner_wake_signal.*</code></td>
+<td>Coalesce cross-thread wakeups for the actor loop</td>
+</tr>
+<tr>
+<td><code>sse_stream.*</code></td>
+<td>Serialize mailbox payloads and heartbeats into
+<code>httplib::DataSink</code></td>
+</tr>
+<tr>
+<td><code>server_shutdown.*</code></td>
+<td>Bridge process signals to coordinated, bounded manager shutdown</td>
+</tr>
+</tbody>
+</table>
+<p>These modules keep <code>LiveSession</code> and the route files from
+accumulating generic HTTP, filesystem, and signal-handling details.</p>
+<h3 id="128-markdown-download-and-continuous-mirroring">12.8 Markdown
+download and continuous mirroring</h3>
+<p>The download route and filesystem mirror share
+<code>session_markdown()</code>. The filename supplies the visible
+session title; the file keeps that label in a hidden
+<code>&lt;!-- CHA session: ... --&gt;</code> comment instead of
+rendering a duplicate heading. The first known entry time appears once
+as the session start time. Each message begins on the same line as a
+monospace speaker badge and middle dot, for example
+<code> `Reader` · Review this</code>. Blank paragraph gaps inside one
+message become Markdown hard line breaks, while a blank line still
+separates messages. The formatter omits transient cover markers and
+suppresses repeated multicast prompts. The HTTP route obtains an
+owner-thread snapshot for a live session or restores stored history for
+a closed one; <code>SessionMirror</code> writes the same bytes directly
+to disk.</p>
+<p>At startup <code>SessionMirror</code> reads the published forum
+display names and active sessions from <code>SessionRepository</code>.
+It creates one directory per persistent forum and one <code>.md</code>
+file per active session. Entrance/Welcome has no entry in the mirror&#39;s
+forum map, so later updates for it are silent no-ops. Paths use display
+text rather than IDs. The sanitizer replaces controls and
+<code>* &quot; \\ / &lt; &gt; : | ? # ^ [ ]</code>, trims trailing
+dots/spaces, and collision allocation produces <code>Name.md</code>,
+<code>Name (1).md</code>, and so on. A mutex serializes
+startup-independent updates from route threads and different
+session-owner threads.</p>
+<p>New-session and closed-session rename routes call the mirror
+directly. An open session receives a synchronous callback through
+<code>OpenedSession</code>; the callback accepts only a call-scoped
+transcript span and never retains it.
+<code>LiveSession::mirror_if_changed()</code> holds the last mirrored
+transcript revision and label. Transcript changes remain pending while
+generation is active, then completion, cancellation, or failure writes
+the terminal state. <code>/clear</code> also changes the revision and
+writes immediately. A label change is handled even during generation so
+the old file is renamed promptly; the final response causes another
+write if transcript content subsequently changes. Unrelated snapshot
+state, such as a default-character selection, does not rewrite the
+file.</p>
+<p>Initial synchronization is strict because a configured but unusable
+mirror is a startup configuration failure. After startup,
+<code>SessionMirror::update()</code> catches filesystem errors and logs
+a warning: a failed secondary projection must not turn an already
+committed session transition into a failed chat operation. Writes use
+<code>create_private_file()</code>, which rejects symlink or non-regular
+targets and atomically replaces a regular file.</p>
+<h3 id="129-browser-transcript-and-composer">12.9 Browser transcript and
+composer</h3>
+<p>The browser&#39;s presentation behavior is concentrated in <a href="../webapp/src/components/Screens.tsx">webapp/src/components/Screens.tsx</a>,
+with layout rules in <a href="../webapp/src/styles/app.css">webapp/src/styles/app.css</a>.
+<code>visibleTranscriptEntries()</code> suppresses the duplicate human
+prompts stored for multicast, but marks the next visible response so the
+renderer inserts an unlabelled horizontal divider. Readers can therefore
+see where one response ends and the next response to the same prompt
+begins without seeing the whole prompt again.</p>
+<p>The horizontal line above the composer is also its resize handle.
+Dragging it up or down changes the textarea&#39;s height while the
+transcript consumes the remaining flexible space. Automatic growth
+remains the minimum, and both automatic and manual growth stop at 80% of
+the chat area&#39;s height. The handle also accepts Up/Down keys, while Home
+or a double-click returns to automatic sizing.</p>
+<p>The composer follows ordinary multiline textarea behavior: Enter adds
+a new line and Ctrl+Enter submits the prompt. The send button uses the
+same form submission path. There is no application-level
+Latin-to-Russian transliteration mode or toggle; text comes directly
+from the user&#39;s configured keyboard or input method.</p>
+<h2 id="13-end-to-end-workflow-traces">13. End-to-end workflow
+traces</h2>
+<p>Use these traces as navigation exercises. Open each function in
+sequence.</p>
+<h3 id="131-creating-and-opening-a-stored-session">13.1 Creating and
+opening a stored session</h3>
+<ol type="1">
+<li><code>LobbyRoutes::install()</code> handles session creation.</li>
+<li><code>SessionRepository::create()</code> validates the forum against
+the published <code>Workspace</code> and inserts one
+<code>sessions</code> row with a timestamp-derived ID and initial
+counters, in one <code>BEGIN IMMEDIATE</code> transaction.</li>
+<li>If mirroring is enabled, the route immediately adds the empty
+session&#39;s display-named Markdown file.</li>
+<li>The browser later posts to the open route.</li>
+<li>The route first tries to reattach, then calls
+<code>validate()</code>, then calls
+<code>LiveSessionManager::open()</code>.</li>
+<li>The manager inserts a starting actor before starting its owner
+thread.</li>
+<li><code>LiveSession::owner_main()</code> calls the supplied
+opener.</li>
+<li><code>open_session()</code> reads the current forum defaults and
+obtains a <code>PreparedSession</code> carrying the database path and
+<code>session_key</code>.</li>
+<li><code>SessionController</code> opens its journal connection,
+restores transcript state, and repairs any interrupted started
+turn.</li>
+<li>The actor records its initial revision/label baseline, commits
+<code>running</code>, publishes a snapshot, and enters its loop.</li>
+</ol>
+<p>The pre-route <code>validate()</code> improves error mapping but does
+not grant ownership. <code>LiveSessionManager</code> is what prevents
+two actors from owning one identity, and the load in
+<code>prepare()</code> remains authoritative for what the controller is
+built from.</p>
+<h3 id="132-one-ordinary-prompt">13.2 One ordinary prompt</h3>
+<ol type="1">
+<li><code>SessionRoutes</code> parses JSON into <code>RawCommand</code>
+and enqueues it.</li>
+<li><code>LiveSession::execute()</code> calls
+<code>handle_text_input()</code> on the owner thread.</li>
+<li>Text parsing selects
+<code>SessionController::submit_prompt()</code>.</li>
+<li>The controller resolves the current persona and target, copies
+<code>ModelHistory</code>, persists the started turn, adds the prompt,
+installs active state, and asks <code>Providers</code> to start one
+request.</li>
+<li>The actor publishes a snapshot showing the prompt and active
+generation.</li>
+<li>The request worker creates a fresh <code>ProviderClient</code> and
+calls <code>prepare()</code> to project/model-encode context.</li>
+<li>It calls <code>perform()</code>, whose decoder emits reasoning or
+answer deltas.</li>
+<li>The request queues each delta and wakes the owner.</li>
+<li>The actor drains the event; the controller updates reasoning or
+transcript.</li>
+<li>Structural changes become snapshots; proven text growth becomes
+appends.</li>
+<li>The SSE writer serializes the mailbox payload to the browser.</li>
+<li>The terminal event makes the controller persist completion,
+cancellation, or failure and publish final state.</li>
+<li><code>mirror_if_changed()</code> observes the accumulated transcript
+revision and writes the terminal Markdown state.</li>
+</ol>
+<h3 id="133-multicast">13.3 Multicast</h3>
+<ol type="1">
+<li><code>/mcast</code> syntax resolves an ordered, duplicate-free
+target list.</li>
+<li>The controller captures one shared history for all children.</li>
+<li>The controller makes the first foreground prompt durable, then
+starts one independent request per target. The first can begin slightly
+before the final request is admitted.</li>
+<li>Workers perform concurrently and buffer per-request events.</li>
+<li>Only request 0 mutates live state.</li>
+<li>On its terminal event, request 1 becomes foreground and its prompt
+is then persisted/added; already-buffered output can be drained
+immediately.</li>
+<li>The process repeats in requested target order.</li>
+</ol>
+<p>The transcript therefore reads as a deterministic sequence of
+individual turns, not interleaved token streams.</p>
+<h3 id="134-stop">13.4 Stop</h3>
+<ol type="1">
+<li>The stop route enqueues <code>StopCommand</code>.</li>
+<li>The owner calls <code>SessionController::request_stop()</code>.</li>
+<li>The controller sets every request&#39;s atomic cancellation flag and
+releases all non-foreground handles.</li>
+<li><code>ProviderClient</code> observes cancellation in curl&#39;s progress
+callback; a fake backend is expected to observe the same flag.</li>
+<li>The command returns “Stopping generation...” without joining
+workers.</li>
+<li>Terminal events are drained later. The active turn is persisted as
+cancelled with or without partial answer text.</li>
+<li>Once the foreground terminal is handled, the controller releases its
+final request and the UI receives terminal state. Cancelled background
+workers may still be unregistering from <code>Providers</code>.</li>
+</ol>
+<h3 id="135-changing-a-characters-provider-or-style">13.5 Changing a
+character&#39;s provider or style</h3>
+<p>From the browser:</p>
+<ol type="1">
+<li>Open Characters, select a workspace character, and follow the
+top-right chevron into Settings. Assistant has no chevron because its
+system config is not writable from the browser.</li>
+<li>Choose a required provider and an optional style. No style erases
+only the style key. The sample line uses the selected style&#39;s
+appearance.</li>
+<li>Save writes both values. The screen warns that sessions using the
+character will restart and that an answer being generated is lost.</li>
+</ol>
+<p>On the server:</p>
+<ol start="4" type="1">
+<li><code>PATCH /api/v1/characters/{id}</code> validates the names
+through the current <code>Workspace</code>.
+<code>WorkspaceConfigStore</code> edits the private materialization,
+loads a complete candidate, replaces all configuration rows
+transactionally, publishes after commit, and asks sessions in every
+forum containing the character to shut down with
+<code>reloading</code>.</li>
+<li>The stream drops. The browser&#39;s existing recovery ladder probes,
+sees <code>session_not_live</code>, opens again, and reattaches. It
+reports <code>session-snapshot</code>, so the settings screen stays in
+view. The chat shows &quot;Applying character settings…&quot; and no Retry
+buttons.</li>
+<li>The reopened session reads the newly published provider and
+style.</li>
+</ol>
+<p>Do not add an explicit <code>openConversation()</code> for
+<code>reloading</code>: that dispatch would force the main view back to
+Chat.</p>
+<h3 id="136-clear">13.6 Clear</h3>
+<ol type="1">
+<li><code>/clear</code> is rejected while the controller is busy.</li>
+<li><code>SessionJournal::clear()</code> verifies no turn is started and
+increments the durable <code>history_epoch</code> in a transaction.</li>
+<li><code>Transcript::clear()</code> removes current in-memory entries,
+resets cover state, and increments its local epoch/revision.</li>
+<li>A snapshot replaces browser state.</li>
+<li><code>mirror_if_changed()</code> sees the new revision and replaces
+the Markdown file with the now-empty current transcript.</li>
+</ol>
+<p>Old rows remain in the database as history from an earlier epoch.
+Restoration loads only the current epoch.</p>
+<h2 id="14-state-machines-to-keep-in-your-head">14. State machines to
+keep in your head</h2>
+<h3 id="141-turn-persistence">14.1 Turn persistence</h3>
+<pre class="text"><code>               +-&gt; completed + response
+started prompt +-&gt; cancelled + optional partial response
+               +-&gt; failed    + error entry</code></pre>
+<p>SQLite enforces at most one started turn and one prompt per turn.
+Every journal transition is transactional. On startup, a leftover
+started turn means the previous process was interrupted; restore creates
+an <code>InterruptedTurn</code>, and the controller repairs it to failed
+before normal operation.</p>
+<h3 id="142-live-actor-lifecycle">14.2 Live actor lifecycle</h3>
+<pre class="text"><code>starting -&gt; running -&gt; stopping -&gt; finished
+    \---- open failed/not found ----&gt; finished</code></pre>
+<p><code>finished</code> is published only after blocking actor teardown
+work, controller destruction, and journal release. Provider requests are
+cancelled and released without waiting, so process-owned supervision may
+still be winding down their transport. A post-finished actor join is
+nevertheless bounded, and the manager may reap the old actor.</p>
+<h3 id="143-presentation-delivery">14.3 Presentation delivery</h3>
+<pre class="text"><code>controller mutation
+    -&gt; no update
+    -&gt; exact append -&gt; mailbox accepts -&gt; AppendEvent
+                    -&gt; mailbox rejects -&gt; current SnapshotEvent
+    -&gt; structural change -------------&gt; current SnapshotEvent</code></pre>
+<p>Treat snapshots as truth and appends as a verified compression of
+truth.</p>
+<h2 id="15-concurrency-and-ownership-map">15. Concurrency and ownership
+map</h2>
+<table>
+<thead>
+<tr>
+<th>Object</th>
+<th>Lifetime/owner</th>
+<th>Thread rule</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Workspace</code></td>
+<td>Atomically published immutable snapshot; replaced snapshots live
+until their readers release them</td>
+<td>Concurrent reads; callers hold one <code>getws()</code> shared
+pointer per operation</td>
+</tr>
+<tr>
+<td><code>WorkspaceConfigStore</code></td>
+<td>Process; owns database lease/handle, private root, materialized
+workspace, Welcome path, and cleanup</td>
+<td>Configuration mutex serializes the three runtime edits; publish
+follows commit</td>
+</tr>
+<tr>
+<td><code>SessionRepository</code></td>
+<td>Process, independent session-storage owner; receives explicit outer
+paths and owns none of them</td>
+<td>Concurrent const operations, each on its own short-lived
+connection</td>
+</tr>
+<tr>
+<td><code>LiveSessionManager</code></td>
+<td>Process web runtime</td>
+<td>Internal mutex protects registry/lifecycle coordination</td>
+</tr>
+<tr>
+<td><code>LiveSession</code></td>
+<td>Manager entry plus transient route handles</td>
+<td>Owner thread mutates session; lifecycle methods synchronize</td>
+</tr>
+<tr>
+<td><code>SessionController</code></td>
+<td>One <code>LiveSession</code></td>
+<td>Owner thread only</td>
+</tr>
+<tr>
+<td><code>Transcript</code> / <code>SessionJournal</code></td>
+<td>One controller</td>
+<td>Owner thread only; one SQLite connection per actor, never
+shared</td>
+</tr>
+<tr>
+<td><code>Providers</code> registry</td>
+<td>Process</td>
+<td>Mutex protects admission and active requests; shutdown waits for
+transport quiescence</td>
+</tr>
+<tr>
+<td><code>ProviderRequest</code></td>
+<td>Session handle plus provider registry/worker</td>
+<td>Worker produces queued events; owner consumes; cancellation is
+atomic</td>
+</tr>
+<tr>
+<td><code>CommandQueue</code></td>
+<td>One actor</td>
+<td>HTTP producers, actor consumer</td>
+</tr>
+<tr>
+<td><code>SseMailbox</code></td>
+<td>One actor/stream pair</td>
+<td>Actor producer, HTTP SSE consumer</td>
+</tr>
+</tbody>
+</table>
+<p>The application has three relevant thread roles:</p>
+<ol type="1">
+<li>HTTP library threads parse requests, wait on command replies, and
+write SSE.</li>
+<li>One owner thread per live session performs all core state
+transitions.</li>
+<li>One detached worker per active provider request performs blocking
+provider work and may briefly outlive its creating session.</li>
+</ol>
+<p>When debugging a race, first classify every access by those roles.
+Most state should belong entirely to one row of this table; shared
+mechanisms are small and explicit.</p>
+<h2 id="16-persistence-model">16. Persistence model</h2>
+<p>The one authoritative schema and its validators are in <a href="../src/session/workspace_session_database.cpp">session/workspace_session_database.cpp</a>;
+restore and journal SQL are in <a href="../src/session/session_database.cpp">session/session_database.cpp</a>.
+Read the schema first, then validation/restore, then
+<code>SessionJournal</code> methods.</p>
+<p>Schema v2 has five <code>STRICT</code> tables:</p>
+<table>
+<thead>
+<tr>
+<th>Table</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>config</code></td>
+<td>Complete durable configuration as only <code>(name, content)</code>
+rows</td>
+</tr>
+<tr>
+<td><code>forums</code></td>
+<td>Durable forum IDs referenced by session rows; published database
+configuration supplies names, members, prompts, and defaults</td>
+</tr>
+<tr>
+<td><code>sessions</code></td>
+<td><code>session_key</code>, owning forum, public session ID, label,
+<code>updated_at</code>, <code>archived_at</code>, history epoch, and
+next ID counters</td>
+</tr>
+<tr>
+<td><code>turns</code></td>
+<td>Request ID, epoch, and started/completed/cancelled/failed state</td>
+</tr>
+<tr>
+<td><code>entries</code></td>
+<td>Typed prompt/response/error records linked to turns</td>
+</tr>
+</tbody>
+</table>
+<p>The counters and history epoch are columns on the session row rather
+than a separate singleton table: they are session state, so a one-to-one
+table would buy nothing.</p>
+<p>Because one file now holds every session, each constraint that used
+to be implicit — one database per session — is explicitly scoped by
+<code>session_key</code>:
+<code>PRIMARY KEY (session_key, request_id)</code> and
+<code>(session_key, entry_id)</code>, the partial unique index
+<code>one_started_turn_per_session</code>, and
+<code>one_prompt_per_session_turn</code>. Two sessions may therefore
+have a started turn at the same time, and their request and entry IDs
+advance independently.</p>
+<p>Database constraints mirror transcript/controller invariants rather
+than accepting any arbitrary row combination. Opening validates the
+database&#39;s application ID and schema version before trusting contents,
+then restores terminal entries in the current epoch and the next ID
+counters for that <code>session_key</code> alone.</p>
+<p>What is durable:</p>
+<ul>
+<li>human prompts attached to started turns;</li>
+<li>completed and partially cancelled character answers;</li>
+<li>generation error entries;</li>
+<li>turn state and ID counters;</li>
+<li>history epoch, label, <code>updated_at</code>, and
+<code>archived_at</code>.</li>
+</ul>
+<p>What is deliberately not durable:</p>
+<ul>
+<li>reasoning text;</li>
+<li>live streaming status;</li>
+<li>cover runtime markers/boundary;</li>
+<li>notice presentation state;</li>
+<li>background multicast output before it becomes foreground.</li>
+</ul>
+<p>Persistence failures are session-fatal because continuing would let
+in-memory state diverge from the journal. Provider failures are ordinary
+turn outcomes and become durable error entries.</p>
+<p>Mirrored Markdown is not part of this persistence model. SQLite
+remains the authority, the application never imports mirror files, and
+archived or otherwise stale mirror files may remain. The mirror is a
+convenient human-readable projection whose filenames are based on
+mutable display labels, not durable identity.</p>
+<h2 id="17-error-boundaries">17. Error boundaries</h2>
+<p>Errors are handled at the narrowest layer that can give them
+meaning:</p>
+<ul>
+<li>Import validates before database modification. A failed new import
+leaves no database, a failed v1 upgrade leaves valid v1, and a failed v2
+replacement leaves the previous complete configuration. Export never
+changes the database; if writing began, its possibly incomplete
+destination must be emptied before retry.</li>
+<li>External application-config errors fail before runtime opens the
+configured database; the process file is never part of workspace
+publication.</li>
+<li>A configured mirror whose root is missing or unusable, or whose
+initial synchronization fails, is a startup failure. Later mirror-update
+failures are warnings because SQLite has already committed the
+authoritative change.</li>
+<li>A runtime configuration failure before commit rematerializes the old
+rows and leaves durable and published state old. The rare failure after
+commit reports restart-required; the next startup publishes the newly
+committed rows.</li>
+<li>Loaders throw contextual configuration errors; <code>web_main</code>
+treats startup failure as process failure.</li>
+<li>Provider response code classifies malformed model output as protocol
+error.</li>
+<li><code>ProviderClient</code> classifies transport/HTTP failure and
+cancellation.</li>
+<li><code>ProviderRequest</code> workers convert exceptions/results into
+one terminal generation event.</li>
+<li><code>SessionController</code> turns a generation failure into a
+failed durable turn and transcript error.</li>
+<li>A journal failure escapes the controller and is contained as a fatal
+live session failure.</li>
+<li><code>LiveSession</code> maps storage not-found on startup and
+contains session-local failures during the owner loop.</li>
+<li>Routes map known application outcomes to JSON error codes and HTTP
+statuses.</li>
+<li><code>std::bad_alloc</code> is generally not disguised as successful
+local cleanup; key actor boundaries terminate instead.</li>
+</ul>
+<p>Avoid broad <code>catch (...)</code> additions without identifying
+the state boundary they protect. A catch that lets processing continue
+after a journal mutation failed can be worse than allowing the actor to
+terminate.</p>
+<h2 id="18-shutdown-and-destruction">18. Shutdown and destruction</h2>
+<p>Shutdown is part of the design, not cleanup after the design.</p>
+<p>At process level, the shutdown coordinator stops HTTP acceptance,
+asks the manager to stop all actors, and gives the entire process one
+grace deadline. The deadline is shared, not reset for every session. If
+owners cannot finish in time, the process takes the immediate-exit path
+rather than running destructors that could block indefinitely.</p>
+<p>Within a <code>LiveSession</code>, teardown:</p>
+<ol type="1">
+<li>marks the actor stopping and publishes a final snapshot when
+possible;</li>
+<li>performs a bounded final SSE drain unless the shutdown reason skips
+it;</li>
+<li>closes the mailbox;</li>
+<li>resolves/rejects queued command replies;</li>
+<li>calls <code>SessionController::shutdown()</code>;</li>
+<li>destroys the controller, releasing request handles and its journal
+connection;</li>
+<li>publishes <code>finished</code> so the manager may join and erase
+the actor.</li>
+</ol>
+<p>Within the controller, shutdown cancels all requests, synchronously
+closes the currently durable turn as cancelled, and releases its handles
+without waiting for provider I/O. Each request owns a shared wake
+notifier, so a late wake does not borrow a destroyed session object.</p>
+<p>After all live sessions have stopped, the composition root calls
+<code>Providers::shutdown()</code>. It closes admission, cancels a
+snapshot of active requests, and waits for every request to unregister
+and finish its final diagnostic after transport resources are gone.
+Diagnostic logging is shut down only after that wait.</p>
+<p>When changing member declaration order, constructor order, or scopes
+in <code>web_main.cpp</code>, re-evaluate this destruction chain.</p>
+<h2 id="19-tests-as-executable-documentation">19. Tests as executable
+documentation</h2>
+<p>The tests mirror production boundaries. Use them after reading a
+type&#39;s header and before reading all of its implementation.</p>
+<table>
+<thead>
+<tr>
+<th>Area</th>
+<th>Best starting tests</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Transcript invariants</td>
+<td><a href="../tests/chat/unit_transcript.cpp">tests/chat/unit_transcript.cpp</a></td>
+</tr>
+<tr>
+<td>Workspace loading and config validation</td>
+<td><a href="../tests/application/unit_workspace.cpp">tests/application/unit_workspace.cpp</a></td>
+</tr>
+<tr>
+<td>External process config and command modes</td>
+<td><a href="../tests/web/unit_application_config.cpp">tests/web/unit_application_config.cpp</a></td>
+</tr>
+<tr>
+<td>Context rules</td>
+<td><a href="../tests/agents/unit_model_context.cpp">tests/agents/unit_model_context.cpp</a></td>
+</tr>
+<tr>
+<td>Provider request lifecycle</td>
+<td><a href="../tests/providers/unit_providers.cpp">tests/providers/unit_providers.cpp</a></td>
+</tr>
+<tr>
+<td>Provider protocols</td>
+<td><a href="../tests/providers/unit_chat_completions_api.cpp">tests/providers/unit_chat_completions_api.cpp</a>,
+<a href="../tests/providers/unit_responses_api.cpp">unit_responses_api.cpp</a></td>
+</tr>
+<tr>
+<td>Provider HTTP integration</td>
+<td><a href="../tests/providers/unit_provider_client.cpp">tests/providers/unit_provider_client.cpp</a></td>
+</tr>
+<tr>
+<td>Controller transitions</td>
+<td><a href="../tests/session/unit_session_controller.cpp">tests/session/unit_session_controller.cpp</a></td>
+</tr>
+<tr>
+<td>Workspace schema, validation, cutover guard</td>
+<td><a href="../tests/session/unit_workspace_session_database.cpp">tests/session/unit_workspace_session_database.cpp</a></td>
+</tr>
+<tr>
+<td>Configuration import/export, materialization, edits, and failure
+atomicity</td>
+<td><a href="../tests/application/unit_workspace_config_store.cpp">tests/application/unit_workspace_config_store.cpp</a></td>
+</tr>
+<tr>
+<td>Repository storage operations</td>
+<td><a href="../tests/session/unit_session_repository.cpp">tests/session/unit_session_repository.cpp</a></td>
+</tr>
+<tr>
+<td>Database lease</td>
+<td><a href="../tests/session/unit_session_lease.cpp">tests/session/unit_session_lease.cpp</a></td>
+</tr>
+<tr>
+<td>Workspace publication</td>
+<td><a href="../tests/application/unit_workspace.cpp">tests/application/unit_workspace.cpp</a></td>
+</tr>
+<tr>
+<td>Actor behavior</td>
+<td><a href="../tests/web/unit_live_session.cpp">tests/web/unit_live_session.cpp</a></td>
+</tr>
+<tr>
+<td>Markdown rendering and mirroring</td>
+<td><a href="../tests/web/unit_session_markdown.cpp">tests/web/unit_session_markdown.cpp</a>,
+<a href="../tests/web/unit_session_mirror.cpp">unit_session_mirror.cpp</a></td>
+</tr>
+<tr>
+<td>Registry races/lifecycle</td>
+<td><a href="../tests/web/unit_live_session_manager.cpp">tests/web/unit_live_session_manager.cpp</a></td>
+</tr>
+<tr>
+<td>Snapshot/append collapse</td>
+<td><a href="../tests/web/unit_sse_mailbox.cpp">tests/web/unit_sse_mailbox.cpp</a></td>
+</tr>
+<tr>
+<td>Route protocol</td>
+<td><a href="../tests/web/unit_lobby_routes.cpp">tests/web/unit_lobby_routes.cpp</a>,
+<a href="../tests/web/unit_session_routes.cpp">unit_session_routes.cpp</a></td>
+</tr>
+<tr>
+<td>Whole-process behavior</td>
+<td><a href="../tests/web/process_web_server.cpp">tests/web/process_web_server.cpp</a></td>
+</tr>
+<tr>
+<td>Browser transcript and composer</td>
+<td><a href="../webapp/src/components/LiveChat.test.tsx">webapp/src/components/LiveChat.test.tsx</a></td>
+</tr>
+</tbody>
+</table>
+<p>Useful test support types include fake model backends, deterministic
+notifiers, temporary workspace builders, controller fixtures,
+live-session graphs, and a mock provider HTTP server under <a href="../tests/support">tests/support</a>.</p>
+<p>The CMake executables also reveal test scope:</p>
+<ul>
+<li><code>cha_tests</code> covers utilities and the non-web core.</li>
+<li><code>cha_web_tests</code> covers deterministic web components and
+routes.</li>
+<li><code>cha_web_stress_tests</code> exercises concurrent live-session
+load.</li>
+<li><code>cha_web_process_tests</code> starts the real
+<code>chaweb</code> process on supported platforms.</li>
+<li><code>itest</code> uses a configured live provider and is not part
+of ordinary offline unit verification.</li>
+</ul>
+<h3 id="a-productive-test-reading-method">A productive test-reading
+method</h3>
+<p>For one behavior, read in this order:</p>
+<ol type="1">
+<li>test name and setup;</li>
+<li>public call being exercised;</li>
+<li>asserted state and side effects;</li>
+<li>implementation of that one call;</li>
+<li>nearby negative tests that reveal the invariant.</li>
+</ol>
+<p>This is faster than reading a 900-line implementation sequentially
+with no question in mind.</p>
+<h2 id="20-how-to-approach-changes-safely">20. How to approach changes
+safely</h2>
+<h3 id="adding-a-controller-command">Adding a controller command</h3>
+<ol type="1">
+<li>Decide whether it is a typed core action or only web text
+syntax.</li>
+<li>Add/adjust the <code>SessionController</code> method and
+<code>ControllerUpdate</code> behavior.</li>
+<li>Add focused controller tests, including busy-state behavior.</li>
+<li>Add parser syntax in <code>web/text_*</code> if needed.</li>
+<li>Dispatch it from <code>handle_text_input()</code> or a typed
+<code>WebCommand</code>.</li>
+<li>Verify command result, notice, snapshot/append classification, and
+input clearing in web tests.</li>
+</ol>
+<h3 id="adding-transcript-data">Adding transcript data</h3>
+<p>Trace all consumers before editing the struct:</p>
+<pre class="text"><code>factory/validation
+    -&gt; Transcript
+    -&gt; workspace session schema + read/write validation
+    -&gt; model_context projection
+    -&gt; ControllerView / SessionSnapshot
+    -&gt; protocol JSON
+    -&gt; tests and browser contract</code></pre>
+<p>Not every new field belongs in every consumer, but the decision
+should be explicit.</p>
+<h3 id="adding-provider-response-behavior">Adding provider response
+behavior</h3>
+<ul>
+<li>Put curl/HTTP/cancellation in <code>ProviderClient</code>.</li>
+<li>Put Chat Completions encoding/decoding in
+<code>chat_completions_api.*</code> and Responses encoding/decoding in
+<code>responses_api.*</code>.</li>
+<li>Emit only generic generation deltas/results across the backend
+seam.</li>
+<li>Test response chunk boundaries independently from HTTP.</li>
+<li>Add a provider-client test only when transport integration
+matters.</li>
+</ul>
+<h3 id="changing-session-lifetime">Changing session lifetime</h3>
+<p>Audit the manager map lifetime, actor raw-<code>this</code> thread
+capture, route <code>shared_ptr</code> handles, owner state transitions,
+controller and journal destruction, and bounded process shutdown
+together. These contracts are coupled even though they live in several
+files.</p>
+<h2 id="21-learning-exercises">21. Learning exercises</h2>
+<p>Work through these in order. Write the answer with symbol names, not
+only prose.</p>
+<h3 id="exercise-1-draw-the-object-graph">Exercise 1: draw the object
+graph</h3>
+<p>Starting at <code>main()</code>, draw who owns
+<code>Workspace</code>, <code>SessionRepository</code>,
+<code>LiveSessionManager</code>, <code>Providers</code>, routes, a
+<code>LiveSession</code>, its controller, journal, active requests,
+request-local backends, and mailbox. Mark <code>shared_ptr</code>,
+<code>unique_ptr</code>, value, and borrowed references.</p>
+<h3 id="exercise-2-follow-one-visible-token">Exercise 2: follow one
+visible token</h3>
+<p>Set a breakpoint or add temporary tracing at:</p>
+<ul>
+<li>provider decoder delta emission;</li>
+<li>the delta callback in <code>ProviderRequest::execute()</code>;</li>
+<li><code>SessionController::apply(GenerationEventDelta)</code>;</li>
+<li><code>LiveSession::publish_update()</code>;</li>
+<li><code>SseMailbox::publish_append()</code>;</li>
+<li><code>SseStreamWriter::write()</code>.</li>
+</ul>
+<p>Explain why the first answer token follows a snapshot path while a
+later token usually follows an append path.</p>
+<h3 id="exercise-3-reconstruct-after-a-crash">Exercise 3: reconstruct
+after a crash</h3>
+<p>Create a session, submit a prompt, and inspect the database-related
+code as if the process stopped immediately after
+<code>start_turn()</code>. Follow <code>build_restore()</code>,
+<code>InterruptedTurn</code>, and
+<code>SessionController::initialize()</code> to explain the next startup
+transcript.</p>
+<h3 id="exercise-4-compare-single-target-and-multicast">Exercise 4:
+compare single-target and multicast</h3>
+<p>Trace <code>submit_prompt()</code> and <code>start_multicast()</code>
+until they converge. Identify the one history copy, request IDs, target
+order, each request&#39;s admission point, and the moment each target
+becomes durable.</p>
+<h3 id="exercise-5-prove-owner-thread-confinement">Exercise 5: prove
+owner-thread confinement</h3>
+<p>Find every production call to a mutating
+<code>SessionController</code> method. Verify that it originates in
+<code>LiveSession</code> owner code, not directly in an HTTP callback or
+generation worker.</p>
+<h3 id="exercise-6-force-the-snapshot-fallback">Exercise 6: force the
+snapshot fallback</h3>
+<p>Read the <code>ControllerUpdate</code> and <code>SseMailbox</code>
+tests that combine incompatible appends or a pending snapshot and
+append. Explain what browser corruption could occur if the code sent the
+append anyway.</p>
+<h3 id="exercise-7-trace-a-public-name">Exercise 7: trace a public
+name</h3>
+<p>Choose one character in <code>packaging/linux/import-seed/</code>.
+Follow its directory ID, public display name, forum membership,
+<code>CharacterMetadata</code>, backend definition, transcript
+participant identity, model-context role, snapshot JSON, and mention
+resolution.</p>
+<h3 id="exercise-8-classify-failures">Exercise 8: classify failures</h3>
+<p>For malformed provider JSON, HTTP 500, a missing session row, a
+database lease already held by another process, an SQLite write failure,
+a command timeout, and a disconnected SSE stream, identify:</p>
+<ul>
+<li>the first layer that detects it;</li>
+<li>whether it is a turn, session, request, or process failure;</li>
+<li>whether a durable record is written;</li>
+<li>what the browser can observe.</li>
+</ul>
+<h2 id="22-a-practical-two-week-reading-plan">22. A practical two-week
+reading plan</h2>
+<p>Use this as a suggested pace, not a process requirement.</p>
+<table>
+<thead>
+<tr>
+<th>Day</th>
+<th>Focus</th>
+<th>Concrete result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>Build graph, <code>web_main</code>, root/native READMEs</td>
+<td>Draw the process object graph</td>
+</tr>
+<tr>
+<td>2</td>
+<td><code>chat</code> and transcript tests</td>
+<td>Write transcript invariants from memory</td>
+</tr>
+<tr>
+<td>3</td>
+<td><code>util</code> queue/template tests</td>
+<td>Explain shutdown semantics of each mechanism</td>
+</tr>
+<tr>
+<td>4</td>
+<td>workspace model and sample workspace</td>
+<td>Trace one effective character definition</td>
+</tr>
+<tr>
+<td>5</td>
+<td>repository, workspace database, lease</td>
+<td>Explain observation vs prepared authority</td>
+</tr>
+<tr>
+<td>6</td>
+<td>database schema and restore</td>
+<td>Trace complete, cancelled, failed, interrupted turns</td>
+</tr>
+<tr>
+<td>7</td>
+<td>model context</td>
+<td>Hand-project a sample transcript into model messages</td>
+</tr>
+<tr>
+<td>8</td>
+<td>provider supervisor/requests</td>
+<td>Diagram admission, foreground order, cancellation</td>
+</tr>
+<tr>
+<td>9</td>
+<td>provider response/client</td>
+<td>Separate semantic decode from transport outcomes</td>
+</tr>
+<tr>
+<td>10</td>
+<td>controller</td>
+<td>Trace prompt and every terminal outcome</td>
+</tr>
+<tr>
+<td>11</td>
+<td>protocol/projection/parsers</td>
+<td>Map typed core actions to web DTOs</td>
+</tr>
+<tr>
+<td>12</td>
+<td>actor/manager</td>
+<td>Explain thread confinement and lifecycle races</td>
+</tr>
+<tr>
+<td>13</td>
+<td>mailbox/routes/shutdown</td>
+<td>Trace browser delivery and teardown</td>
+</tr>
+<tr>
+<td>14</td>
+<td>tests and exercises</td>
+<td>Make one small change with tests and update this guide</td>
+</tr>
+</tbody>
+</table>
+<h2 id="23-glossary">23. Glossary</h2>
+<p><strong>Actor:</strong> One <code>LiveSession</code> plus its
+permanent owner thread and queues. It serializes all session state
+changes.</p>
+<p><strong>Active response:</strong> The controller&#39;s foreground request
+currently allowed to affect transcript, journal, and presentation.</p>
+<p><strong>Backend:</strong> A request-local <code>ModelBackend</code>.
+Production creates a fresh <code>ProviderClient</code> per request;
+tests can inject fresh facades over shared observation state.</p>
+<p><strong>Active generation:</strong> The controller&#39;s ordered request
+handles and one deterministic foreground index for a prompt or
+multicast.</p>
+<p><strong>Archived session:</strong> A session whose row carries
+<code>archived_at</code>. It stays durable with all its turns and
+entries, but is excluded from listing, opening, rename, and history.</p>
+<p><strong>Controller view:</strong> A short-lived borrowed view of
+controller state, consumed synchronously to make an owning web
+snapshot.</p>
+<p><strong>History epoch:</strong> A durable generation of logical
+transcript history. <code>/clear</code> advances it rather than deleting
+older rows.</p>
+<p><strong>Lease:</strong> Cross-process exclusive ownership of the
+unified database. Normal runtime holds it through
+<code>WorkspaceConfigStore</code>; import and export hold the same lease
+for their complete offline operation.</p>
+<p><strong>Model history:</strong> An owning immutable transcript
+snapshot shared with workers for context projection.</p>
+<p><strong>Session mirror:</strong> The optional, non-authoritative
+display-named Markdown projection of persistent sessions under the
+external config&#39;s <code>mirror</code> root.</p>
+<p><strong>Notice:</strong> Presentation state associated with
+command/session feedback. It is not model history or durable transcript
+state.</p>
+<p><strong>Prepared session:</strong> A session validated and restored
+into a database path plus <code>session_key</code>, ready to transfer
+into a controller.</p>
+<p><strong>Session key:</strong> The internal SQLite integer identifying
+one session&#39;s rows. It never appears in a URL or protocol value; every
+restore and journal statement is scoped by it.</p>
+<p><strong>Snapshot:</strong> An owning complete web presentation of
+current controller and actor state.</p>
+<p><strong>Text append:</strong> A compact update proven to extend one
+exact reasoning or transcript target on a known snapshot base.</p>
+<p><strong>Turn:</strong> A request-correlated durable state machine
+beginning with one human prompt and ending completed, cancelled, or
+failed.</p>
+<h2 id="24-final-mental-checklist">24. Final mental checklist</h2>
+<p>Before saying you understand a code path, answer these questions:</p>
+<ol type="1">
+<li>What is the stable identity, and what is only a display name?</li>
+<li>Which object owns the state?</li>
+<li>Which thread may mutate it?</li>
+<li>Is the value borrowed, copied, shared immutably, or moved?</li>
+<li>What is the durable commit point?</li>
+<li>What invariant prevents partial or ambiguous state?</li>
+<li>Does the browser need a snapshot, or is an exact append safe?</li>
+<li>How is cancellation observed?</li>
+<li>Which layer classifies a failure, and is it recoverable at that
+layer?</li>
+<li>In what order must the objects be destroyed?</li>
+</ol>
+<p>Those questions capture the design logic repeated throughout CHA.
+Once their answers are automatic, the project stops looking like a
+collection of files and starts looking like one coherent system.</p>
+</body>
+</html>
