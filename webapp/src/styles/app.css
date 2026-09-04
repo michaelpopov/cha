@@ -3,6 +3,7 @@
   --background: light-dark(rgb(255 255 255), rgb(24 24 24));
   --foreground: light-dark(rgb(26 28 31), rgb(245 245 245));
   --surface: light-dark(rgb(247 247 248), rgb(31 31 31));
+  --covered-surface: light-dark(rgb(235 235 238), rgb(43 43 43));
   --secondary: light-dark(rgb(255 255 255 / 96%), rgb(54 54 54 / 96%));
   --secondary-foreground: var(--foreground);
   --muted-foreground: light-dark(rgb(26 28 31 / 52%), rgb(255 255 255 / 52%));
@@ -608,8 +609,9 @@ select:disabled {
   flex-direction: column;
   gap: 0.85rem;
   padding: 0.85rem;
+  border: 1px solid var(--border);
   border-radius: 0.7rem;
-  background: var(--surface);
+  background: var(--covered-surface);
 }
 
 .cha-chat-welcome {

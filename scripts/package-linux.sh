@@ -43,7 +43,10 @@ cleanup() {
 trap cleanup EXIT HUP INT TERM
 
 echo "==> Installing locked browser build dependencies"
-(cd "$webapp" && npm ci)
+(cd "$webapp" && npm ci --no-audit)
+
+echo "==> Installing the Playwright Chromium browser"
+(cd "$webapp" && npx playwright install chromium)
 
 echo "==> Checking generated API types and browser application"
 (cd "$webapp" && npm run check)
