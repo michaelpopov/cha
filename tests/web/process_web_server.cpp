@@ -492,7 +492,9 @@ constexpr int socket_timing_scale = 4;
 constexpr std::chrono::milliseconds socket_release_margin{2500};
 #else
 constexpr int socket_timing_scale = 1;
-constexpr std::chrono::milliseconds socket_release_margin{500};
+// Filling the local TCP buffers and serializing the probe response can add
+// about 30ms after the worker's configured no-progress timeout.
+constexpr std::chrono::milliseconds socket_release_margin{750};
 #endif
 
 class RealSocketSseServer {

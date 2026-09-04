@@ -2,7 +2,7 @@
 
 # The real configuration is customer-owned and lives outside this replaceable
 # application directory. Relative paths in it are resolved from its directory.
-CONFIG='~/var/workspace/cha.toml'
+CONFIG='../cha.toml'
 IMPORT_SEED='import-seed'
 
 set -eu
@@ -10,7 +10,6 @@ set -eu
 here=$(cd -- "$(dirname -- "$0")" && pwd)
 
 case "$CONFIG" in
-    \~/*) config="$HOME/${CONFIG#\~/}" ;;
     /*) config="$CONFIG" ;;
     *) config="$here/$CONFIG" ;;
 esac
