@@ -849,6 +849,25 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, HoldsTheLeaseAgainstRuntimeImportAndExpo
         SessionBusyError);
 }
 
+TEST_F(RuntimeWorkspaceConfigStoreTest, ClosesSqliteButKeepsLeaseForMaintenance) {
+    const auto store = open_store();
+    const std::filesystem::path workspace_path = store->workspace_path();
+    {
+        auto maintenance = store->reserve_maintenance();
+        maintenance.close();
+        EXPECT_THROW(
+            (void)SessionLease::acquire(
+                database(), "maintenance keeps the runtime lease"),
+            SessionBusyError);
+        maintenance.reopen();
+    }
+
+    EXPECT_EQ(store->workspace_path(), workspace_path);
+    expect_session_root_identity(getws(), workspace_path);
+    EXPECT_THROW(
+        (void)WorkspaceConfigStore::open(database()), SessionBusyError);
+}
+
 TEST_F(RuntimeWorkspaceConfigStoreTest, InheritedEnvironmentValuesWinAtStartup) {
     ASSERT_TRUE(set_environment_variable(dotenv_variable, "from-process"));
     const auto store = open_store();

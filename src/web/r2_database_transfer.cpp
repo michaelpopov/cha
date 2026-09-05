@@ -20,6 +20,7 @@
 #include <fstream>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -605,10 +606,13 @@ std::string busy_message(const std::filesystem::path& database) {
 } // namespace
 
 R2DatabaseTransfer upload_database_to_r2(
-    const std::filesystem::path& database_path) {
+    const std::filesystem::path& database_path,
+    R2DatabaseLease lease_mode) {
     const std::filesystem::path database = normalize_database_path(database_path);
-    SessionLease lease = SessionLease::acquire(database, busy_message(database));
-    (void)lease;
+    std::optional<SessionLease> lease;
+    if (lease_mode == R2DatabaseLease::acquire) {
+        lease.emplace(SessionLease::acquire(database, busy_message(database)));
+    }
 
     secure_workspace_session_database_files(database);
     checkpoint_workspace_session_database(database);
@@ -663,15 +667,18 @@ R2DatabaseTransfer upload_database_to_r2(
 }
 
 R2DatabaseTransfer download_database_from_r2(
-    const std::filesystem::path& database_path) {
+    const std::filesystem::path& database_path,
+    R2DatabaseLease lease_mode) {
     const std::filesystem::path database = normalize_database_path(database_path);
     const std::filesystem::path parent = database.parent_path();
     if (!std::filesystem::is_directory(parent)) {
         throw std::runtime_error(
             "Database parent '" + utf8_path(parent) + "' does not exist");
     }
-    SessionLease lease = SessionLease::acquire(database, busy_message(database));
-    (void)lease;
+    std::optional<SessionLease> lease;
+    if (lease_mode == R2DatabaseLease::acquire) {
+        lease.emplace(SessionLease::acquire(database, busy_message(database)));
+    }
 
     const R2Settings settings = load_r2_settings(database);
     TemporaryPath temporary(unique_sibling(database, "download"));

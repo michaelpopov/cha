@@ -3,7 +3,6 @@ import Darwin
 import WebKit
 
 private let applicationName = "CHA"
-private let runtimePort = 8086
 
 private enum LauncherError: LocalizedError {
     case setupCancelled
@@ -11,7 +10,6 @@ private enum LauncherError: LocalizedError {
     case invalidAPIKey
     case setupFailed
     case cannotStart
-    case stoppedUnexpectedly
 
     var errorDescription: String? {
         switch self {
@@ -25,21 +23,21 @@ private enum LauncherError: LocalizedError {
             return "CHA couldn't finish setting itself up. Quit CHA and try again."
         case .cannotStart:
             return "CHA couldn't open. Close CHA if it is already running, then try again."
-        case .stoppedUnexpectedly:
-            return "CHA stopped unexpectedly. Quit CHA and open it again."
         }
     }
 }
 
-private enum RuntimeState {
-    case unavailable
-    case ready
-    case occupied
+private struct RuntimeBridgeError: LocalizedError {
+    let message: String
+
+    var errorDescription: String? { message }
 }
 
-private struct RuntimeRecord {
-    let processIdentifier: Int32
-    let executablePath: String
+// The runtime is process-owned and its C++ boundary serializes shutdown and
+// database maintenance. This wrapper makes that explicit when work moves off
+// the AppKit main actor.
+private struct RuntimeHandle: @unchecked Sendable {
+    let pointer: OpaquePointer
 }
 
 private struct DownloadDestination {
@@ -53,11 +51,15 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
     private let fileManager = FileManager.default
     private var window: NSWindow!
     private var webView: WKWebView!
-    private var runtime: Process?
-    private var runtimeLog: FileHandle?
+    private var runtime: OpaquePointer?
+    private var runtimeURL: URL?
+    private var runtimeToken = ""
+    private var uploadMenuItem: NSMenuItem!
+    private var downloadMenuItem: NSMenuItem!
     private var downloadDestinations: [ObjectIdentifier: DownloadDestination] = [:]
+    private var databaseTransferInProgress = false
+    private var terminationPending = false
     private var quitting = false
-    private var readinessDeadline = Date()
 
     private var supportDirectory: URL {
         fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -72,25 +74,17 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
         supportDirectory.appendingPathComponent(".env")
     }
 
-    private var databaseFile: URL {
-        supportDirectory.appendingPathComponent("cha.sqlite3")
-    }
-
-    private var logFile: URL {
-        supportDirectory.appendingPathComponent("launcher.log")
-    }
-
-    private var runtimeRecordFile: URL {
-        supportDirectory.appendingPathComponent("runtime")
-    }
-
     func applicationDidFinishLaunching(_ notification: Notification) {
         installMenus()
         showWindow()
 
         do {
             let apiKey = try prepareApplicationData()
-            openApplication(apiKey: apiKey)
+            guard setenv("OPENAI_API_KEY", apiKey, 1) == 0 else {
+                throw LauncherError.cannotStart
+            }
+            try startRuntime()
+            showApplication()
         } catch LauncherError.setupCancelled {
             NSApp.terminate(nil)
         } catch {
@@ -102,12 +96,22 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
         true
     }
 
+    // A transfer runs off the main thread against the runtime pointer, and
+    // applicationWillTerminate destroys it. Quitting therefore waits for the
+    // transfer to hand the pointer back, rather than freeing it underneath.
+    func applicationShouldTerminate(
+        _ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard databaseTransferInProgress else { return .terminateNow }
+        terminationPending = true
+        return .terminateLater
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         quitting = true
-        if runtime?.isRunning == true {
-            runtime?.terminate()
+        if let runtime {
+            cha_runtime_destroy(runtime)
+            self.runtime = nil
         }
-        runtimeLog?.closeFile()
     }
 
     private func installMenus() {
@@ -132,6 +136,24 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
             keyEquivalent: "q")
         applicationItem.submenu = applicationMenu
         mainMenu.addItem(applicationItem)
+
+        let databaseItem = NSMenuItem()
+        let databaseMenu = NSMenu(title: "Database")
+        // Without this AppKit recomputes the items from their target/action and
+        // the greying-out during a transfer never shows.
+        databaseMenu.autoenablesItems = false
+        uploadMenuItem = databaseMenu.addItem(
+            withTitle: "Upload",
+            action: #selector(uploadDatabase(_:)),
+            keyEquivalent: "")
+        uploadMenuItem.target = self
+        downloadMenuItem = databaseMenu.addItem(
+            withTitle: "Download…",
+            action: #selector(downloadDatabase(_:)),
+            keyEquivalent: "")
+        downloadMenuItem.target = self
+        databaseItem.submenu = databaseMenu
+        mainMenu.addItem(databaseItem)
 
         let editItem = NSMenuItem()
         let editMenu = NSMenu(title: "Edit")
@@ -189,26 +211,30 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
         try createPrivateDirectory(supportDirectory)
         try createPrivateDirectory(supportDirectory.appendingPathComponent("logs", isDirectory: true))
 
-        // Rewritten on every launch: the private address and database name below are
-        // also compiled into this launcher, and an edited copy would leave it
-        // opening the wrong address or importing over the wrong file.
-        let config = """
-            data = "\(databaseFile.lastPathComponent)"
+        // Written once to give a new installation something that works, then
+        // left alone: cha.toml is the user's file, and CHA reads whatever it
+        // finds there on the next launch.
+        if !fileManager.fileExists(atPath: configFile.path) {
+            try writePrivateFile("""
+                data = "cha.sqlite3"
 
-            [web]
-            host = "127.0.0.1"
-            port = \(runtimePort)
+                # CHA.app does not use this section. It always listens on
+                # 127.0.0.1 on a port the system picks, reachable only from
+                # CHA's own window. The settings are here because the shared
+                # configuration format requires them.
+                [web]
+                host = "127.0.0.1"
+                port = 0
 
-            [logging]
-            file = "logs/cha.log"
-            level = "info"
-            """
-        try writePrivateFile(config, to: configFile)
+                [logging]
+                file = "logs/cha.log"
+                level = "info"
+
+                """, to: configFile)
+        }
 
         let apiKey = try loadOrAskForAPIKey()
-        if !fileManager.fileExists(atPath: databaseFile.path) {
-            try importInitialDatabase(apiKey: apiKey)
-        }
+        try importInitialDatabase(apiKey: apiKey)
         return apiKey
     }
 
@@ -253,8 +279,27 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
         }
 
         let value = try askForAPIKey(title: "Set up CHA", cancelTitle: "Quit")
-        try writePrivateFile("OPENAI_API_KEY=\(value)\n", to: environmentFile)
+        try saveAPIKey(value)
         return value
+    }
+
+    private func saveAPIKey(_ value: String) throws {
+        var lines = ((try? String(contentsOf: environmentFile, encoding: .utf8)) ?? "")
+            .components(separatedBy: .newlines)
+        var replaced = false
+        for index in lines.indices {
+            let entry = lines[index].trimmingCharacters(in: .whitespaces)
+            if entry.hasPrefix("OPENAI_API_KEY=") {
+                lines[index] = "OPENAI_API_KEY=\(value)"
+                replaced = true
+                break
+            }
+        }
+        if !replaced {
+            while lines.last == "" { lines.removeLast() }
+            lines.append("OPENAI_API_KEY=\(value)")
+        }
+        try writePrivateFile(lines.joined(separator: "\n") + "\n", to: environmentFile)
     }
 
     private func askForAPIKey(title: String, cancelTitle: String) throws -> String {
@@ -286,7 +331,7 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
     @objc private func changeAPIKey(_ sender: Any?) {
         do {
             let value = try askForAPIKey(title: "Change API Key", cancelTitle: "Cancel")
-            try writePrivateFile("OPENAI_API_KEY=\(value)\n", to: environmentFile)
+            try saveAPIKey(value)
             showNotice(
                 "API key saved",
                 detail: "CHA uses the new key the next time it starts.")
@@ -318,232 +363,150 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
         return url
     }
 
-    private func helperURL() throws -> URL {
-        let url = Bundle.main.bundleURL
-            .appendingPathComponent("Contents/Helpers/chaweb")
-        guard fileManager.isExecutableFile(atPath: url.path) else {
-            throw LauncherError.incompleteApplication
-        }
-        return url
-    }
-
+    // Only seeds a database that is not there yet; the runtime decides that,
+    // because the config file is what names the database.
     private func importInitialDatabase(apiKey: String) throws {
-        let process = Process()
-        process.executableURL = try helperURL()
-        process.arguments = [
-            "--config", configFile.path,
-            "--import", try bundledURL("import-seed", isDirectory: true).path,
-        ]
-        var environment = ProcessInfo.processInfo.environment
-        environment["OPENAI_API_KEY"] = apiKey
-        process.environment = environment
-
-        let output = Pipe()
-        process.standardOutput = output
-        process.standardError = output
-        try process.run()
-        let data = output.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else {
-            if !data.isEmpty {
-                try? writePrivateFile(String(decoding: data, as: UTF8.self), to: logFile)
-            }
+        guard setenv("OPENAI_API_KEY", apiKey, 1) == 0 else {
             throw LauncherError.setupFailed
         }
+        let seed = try bundledURL("import-seed", isDirectory: true)
+        var bridgeError: UnsafeMutablePointer<CChar>?
+        let imported = configFile.path.withCString { configPath in
+            seed.path.withCString { seedPath in
+                cha_runtime_import_initial_database(
+                    configPath, seedPath, &bridgeError)
+            }
+        }
+        guard imported != 0 else { throw takeBridgeError(bridgeError) }
     }
 
-    private func startRuntime(apiKey: String) throws {
+    private func takeBridgeError(
+        _ pointer: UnsafeMutablePointer<CChar>?) -> RuntimeBridgeError {
+        let message = pointer.map { String(cString: $0) }
+            ?? "CHA encountered an unknown error."
+        cha_string_free(pointer)
+        return RuntimeBridgeError(message: message)
+    }
+
+    private func startRuntime() throws {
         guard let resources = Bundle.main.resourceURL else {
             throw LauncherError.incompleteApplication
         }
-
-        // Replaced rather than appended: the output that explains a failure is
-        // this run's, and appending would grow the file for the life of the Mac.
-        fileManager.createFile(atPath: logFile.path, contents: nil)
-        try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: logFile.path)
-        let handle = try FileHandle(forWritingTo: logFile)
-        runtimeLog = handle
-
-        let process = Process()
-        process.executableURL = try helperURL()
-        process.arguments = [
-            "--root", resources.path,
-            "--config", configFile.path,
-        ]
-        var environment = ProcessInfo.processInfo.environment
-        environment["OPENAI_API_KEY"] = apiKey
-        process.environment = environment
-        process.standardOutput = handle
-        process.standardError = handle
-        process.terminationHandler = { [weak self] process in
-            DispatchQueue.main.async {
-                guard let self else { return }
-                self.removeRuntimeRecord(for: process.processIdentifier)
-                guard !self.quitting else { return }
-                self.showFatalError(LauncherError.stoppedUnexpectedly)
+        runtimeToken = UUID().uuidString + UUID().uuidString
+        var bridgeError: UnsafeMutablePointer<CChar>?
+        let created = configFile.path.withCString { configPath in
+            resources.path.withCString { resourcePath in
+                runtimeToken.withCString { token in
+                    cha_runtime_create(
+                        configPath, resourcePath, token, &bridgeError)
+                }
             }
         }
-        try process.run()
-        runtime = process
-        guard let executablePath = executablePath(for: process.processIdentifier) else {
-            process.terminate()
+        guard let created else { throw takeBridgeError(bridgeError) }
+        let port = cha_runtime_port(created)
+        guard port > 0,
+              let url = URL(string: "http://127.0.0.1:\(port)/") else {
+            cha_runtime_destroy(created)
             throw LauncherError.cannotStart
         }
-        do {
-            try writePrivateFile(
-                "\(process.processIdentifier)\n\(executablePath)\n",
-                to: runtimeRecordFile)
-        } catch {
-            process.terminate()
-            throw error
-        }
-        readinessDeadline = Date().addingTimeInterval(10)
-    }
-
-    private func openApplication(apiKey: String) {
-        inspectRuntime { [weak self] state in
-            guard let self, !self.quitting else { return }
-            switch state {
-            case .unavailable:
-                self.startAndOpenApplication(apiKey: apiKey)
-            case .ready:
-                self.stopPreviousRuntime(apiKey: apiKey)
-            case .occupied:
-                self.showFatalError(LauncherError.cannotStart)
-            }
-        }
-    }
-
-    private func startAndOpenApplication(apiKey: String) {
-        do {
-            try startRuntime(apiKey: apiKey)
-            waitForRuntime()
-        } catch {
-            showFatalError(error)
-        }
-    }
-
-    // A force-quit can leave the previous runtime alive. The private record lets
-    // a later copy verify exactly which process it created, stop it, and start
-    // from the new application bundle instead of mixing two versions.
-    private func stopPreviousRuntime(apiKey: String) {
-        guard let record = readRuntimeRecord() else {
-            showFatalError(LauncherError.cannotStart)
-            return
-        }
-
-        if let currentPath = executablePath(for: record.processIdentifier) {
-            guard currentPath == record.executablePath else {
-                showFatalError(LauncherError.cannotStart)
-                return
-            }
-            if kill(record.processIdentifier, SIGTERM) != 0 && errno != ESRCH {
-                showFatalError(LauncherError.cannotStart)
-                return
-            }
-        }
-
-        readinessDeadline = Date().addingTimeInterval(12)
-        waitForPreviousRuntime(record, apiKey: apiKey)
-    }
-
-    private func waitForPreviousRuntime(_ record: RuntimeRecord, apiKey: String) {
-        guard !quitting else { return }
-        if executablePath(for: record.processIdentifier) != record.executablePath {
-            removeRuntimeRecord(for: record.processIdentifier)
-            startAndOpenApplication(apiKey: apiKey)
-        } else if Date() < readinessDeadline {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-                self?.waitForPreviousRuntime(record, apiKey: apiKey)
-            }
-        } else {
-            showFatalError(LauncherError.cannotStart)
-        }
-    }
-
-    private func readRuntimeRecord() -> RuntimeRecord? {
-        guard let contents = try? String(contentsOf: runtimeRecordFile, encoding: .utf8),
-              let separator = contents.firstIndex(of: "\n"),
-              let processIdentifier = Int32(contents[..<separator]),
-              processIdentifier > 1 else { return nil }
-        let pathStart = contents.index(after: separator)
-        let executablePath = String(contents[pathStart...])
-            .trimmingCharacters(in: .newlines)
-        guard !executablePath.isEmpty else { return nil }
-        return RuntimeRecord(
-            processIdentifier: processIdentifier,
-            executablePath: executablePath)
-    }
-
-    private func executablePath(for processIdentifier: Int32) -> String? {
-        var buffer = [CChar](repeating: 0, count: 4096)
-        guard proc_pidpath(processIdentifier, &buffer, UInt32(buffer.count)) > 0 else {
-            return nil
-        }
-        return String(cString: buffer)
-    }
-
-    private func removeRuntimeRecord(for processIdentifier: Int32) {
-        guard readRuntimeRecord()?.processIdentifier == processIdentifier else { return }
-        try? fileManager.removeItem(at: runtimeRecordFile)
-    }
-
-    private func inspectRuntime(_ completion: @escaping (RuntimeState) -> Void) {
-        guard let url = URL(string: "http://127.0.0.1:\(runtimePort)/health") else {
-            completion(.unavailable)
-            return
-        }
-
-        var request = URLRequest(url: url)
-        request.timeoutInterval = 0.5
-        URLSession.shared.dataTask(with: request) { data, response, _ in
-            let state: RuntimeState
-            if let response = response as? HTTPURLResponse {
-                let body = data.flatMap {
-                    try? JSONSerialization.jsonObject(with: $0) as? [String: Any]
-                }
-                if response.statusCode == 200,
-                   body?["ready"] as? Bool == true,
-                   let liveSessionCount = body?["live_session_count"] as? Int,
-                   liveSessionCount >= 0 {
-                    state = .ready
-                } else {
-                    state = .occupied
-                }
-            } else {
-                state = .unavailable
-            }
-            DispatchQueue.main.async {
-                completion(state)
-            }
-        }.resume()
-    }
-
-    private func waitForRuntime() {
-        inspectRuntime { [weak self] state in
-            guard let self, !self.quitting else { return }
-            if state == .ready {
-                self.showApplication()
-            } else if self.runtime?.isRunning == true && Date() < self.readinessDeadline {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                    self.waitForRuntime()
-                }
-            } else if self.runtime?.isRunning == true {
-                self.showFatalError(LauncherError.cannotStart)
-            }
-        }
+        runtime = created
+        runtimeURL = url
     }
 
     private func showApplication() {
-        guard webView == nil,
-              let url = URL(string: "http://127.0.0.1:\(runtimePort)/") else { return }
-        let view = WKWebView(frame: .zero)
+        guard webView == nil, let runtimeURL else { return }
+        let configuration = WKWebViewConfiguration()
+        let view = WKWebView(frame: .zero, configuration: configuration)
         view.allowsMagnification = true
         view.navigationDelegate = self
         webView = view
         window.contentView = view
-        view.load(URLRequest(url: url))
         window.makeFirstResponder(view)
+
+        let properties: [HTTPCookiePropertyKey: Any] = [
+            .domain: "127.0.0.1",
+            .path: "/",
+            .name: "CHA_RUNTIME",
+            .value: runtimeToken,
+            HTTPCookiePropertyKey("HttpOnly"): "TRUE",
+            HTTPCookiePropertyKey("SameSite"): "Strict",
+        ]
+        guard let cookie = HTTPCookie(properties: properties) else {
+            return showFatalError(LauncherError.cannotStart)
+        }
+        view.configuration.websiteDataStore.httpCookieStore.setCookie(cookie) {
+            view.load(URLRequest(url: runtimeURL))
+        }
+    }
+
+    @objc private func uploadDatabase(_ sender: Any?) {
+        performDatabaseTransfer(download: false)
+    }
+
+    @objc private func downloadDatabase(_ sender: Any?) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Replace the local database?"
+        alert.informativeText =
+            "CHA will save the current database beside itself with a .bac suffix, then use the database downloaded from R2."
+        alert.addButton(withTitle: "Download")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        performDatabaseTransfer(download: true)
+    }
+
+    private func performDatabaseTransfer(download: Bool) {
+        guard !databaseTransferInProgress, let runtime else { return }
+        let runtimeHandle = RuntimeHandle(pointer: runtime)
+        databaseTransferInProgress = true
+        uploadMenuItem.isEnabled = false
+        downloadMenuItem.isEnabled = false
+        let operation = download ? "Downloading" : "Uploading"
+        window.title = "\(applicationName) — \(operation)…"
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            var byteCount: UInt64 = 0
+            var bridgeError: UnsafeMutablePointer<CChar>?
+            let succeeded = download
+                ? cha_runtime_download(runtimeHandle.pointer, &byteCount, &bridgeError)
+                : cha_runtime_upload(runtimeHandle.pointer, &byteCount, &bridgeError)
+            let errorMessage = bridgeError.map { String(cString: $0) }
+            cha_string_free(bridgeError)
+
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.databaseTransferInProgress = false
+                self.uploadMenuItem.isEnabled = true
+                self.downloadMenuItem.isEnabled = true
+                if self.terminationPending {
+                    self.terminationPending = false
+                    NSApp.reply(toApplicationShouldTerminate: true)
+                    return
+                }
+                guard !self.quitting else { return }
+                self.window.title = applicationName
+
+                if succeeded < 0 {
+                    return self.showFatalError(RuntimeBridgeError(
+                        message: errorMessage
+                            ?? "CHA can no longer reach its database."))
+                }
+                guard succeeded != 0 else {
+                    self.showNotice(
+                        download ? "Download failed" : "Upload failed",
+                        detail: errorMessage ?? "CHA encountered an unknown error.")
+                    return
+                }
+                if download, let runtimeURL = self.runtimeURL {
+                    self.webView.load(URLRequest(url: runtimeURL))
+                }
+                let size = ByteCountFormatter.string(
+                    fromByteCount: Int64(byteCount), countStyle: .file)
+                self.showNotice(
+                    download ? "Download complete" : "Upload complete",
+                    detail: "Transferred \(size).")
+            }
+        }
     }
 
     func webView(
@@ -629,15 +592,15 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
     private func showFatalError(_ error: Error) {
         guard !quitting else { return }
         quitting = true
-        if runtime?.isRunning == true {
-            runtime?.terminate()
+        if let runtime {
+            cha_runtime_destroy(runtime)
+            self.runtime = nil
         }
 
         let alert = NSAlert()
         alert.alertStyle = .critical
         alert.messageText = "CHA cannot continue"
-        alert.informativeText = (error as? LauncherError)?.localizedDescription
-            ?? LauncherError.cannotStart.localizedDescription
+        alert.informativeText = error.localizedDescription
         alert.addButton(withTitle: "Quit")
         alert.runModal()
         NSApp.terminate(nil)

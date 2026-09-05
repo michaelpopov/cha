@@ -138,15 +138,19 @@ important production targets:
 | --- | --- |
 | `cha_core` | `util`, `chat`, `characters`, `providers`, `session`, and `workspace` |
 | `cha_web` | HTTP, SSE, actor runtime, routing, and protocol; links `cha_core` |
-| `chaweb_app` | Small composition root in `src/web_main.cpp`; links `cha_web` |
+| `chaweb_app` | Small command-line entry point in `src/web_main.cpp`; links `cha_web` |
+| `cha_macos_runtime` | macOS only: `libChaRuntime.dylib`, a C shim over `cha_web` that CHA.app links so the runtime lives in the launcher's own process |
 
 The executable file is named `chaweb` even though the CMake target is
-`chaweb_app`.
+`chaweb_app`. Both entry points are thin: `web/application_runtime.*` is the
+composition root they share, so the command line and CHA.app run identical
+code and differ only in the listener port and the private access token.
 
 The intended dependency direction is:
 
 ```text
-chaweb_app -> cha_web -> cha_core
+chaweb_app        -> cha_web -> cha_core
+cha_macos_runtime -> cha_web -> cha_core
 
 workspace -> session -> providers -> characters -> chat
                 \-----------> characters
@@ -1014,6 +1018,7 @@ Read the web layer in this order:
 9. [web/session_routes.cpp](../src/web/session_routes.cpp)
 10. [web/session_markdown.cpp](../src/web/session_markdown.cpp)
 11. [web/session_mirror.cpp](../src/web/session_mirror.cpp)
+12. [web/application_runtime.cpp](../src/web/application_runtime.cpp)
 
 ### 12.1 Protocol values are owning DTOs
 
@@ -1161,9 +1166,29 @@ After the main actor path makes sense, scan the smaller adapters:
 | `owner_wake_signal.*` | Coalesce cross-thread wakeups for the actor loop |
 | `sse_stream.*` | Serialize mailbox payloads and heartbeats into `httplib::DataSink` |
 | `server_shutdown.*` | Bridge process signals to coordinated, bounded manager shutdown |
+| `application_runtime.*` | Compose one running application: open the store, build the manager and routes, bind a port, and run R2 transfers in process |
+| `r2_database_transfer.*` | Upload and download the workspace database over the S3 API |
 
 These modules keep `LiveSession` and the route files from accumulating generic
 HTTP, filesystem, and signal-handling details.
+
+Replacing the database while the server is running needs every writer to let
+go of it at once, so `ApplicationRuntime` takes three reservations in order
+before an upload or download:
+
+1. `LiveSessionManager::reserve_global_maintenance()` stops admitting sessions,
+   asks every live actor to release its journal connection, and waits for all
+   of them under one deadline.
+2. `WorkspaceConfigStore::reserve_maintenance()` holds the configuration mutex,
+   so no configuration edit is inside a SQLite transaction when the checkpoint
+   runs, and then releases the store's own handle.
+3. `SessionRepository::reserve_maintenance()` fences repository operations and
+   checkpoints the WAL back into the database file.
+
+Each reservation restores what it took when it is destroyed, in the reverse
+order, after the transfer has finished and the database has been reopened. If
+the reopen fails, the store cannot serve again and the runtime says so with
+`WorkspaceRestartRequiredError` rather than continuing without a handle.
 
 ### 12.8 Markdown download and continuous mirroring
 
@@ -1580,6 +1605,7 @@ and before reading all of its implementation.
 | Registry races/lifecycle | [tests/web/unit_live_session_manager.cpp](../tests/web/unit_live_session_manager.cpp) |
 | Snapshot/append collapse | [tests/web/unit_sse_mailbox.cpp](../tests/web/unit_sse_mailbox.cpp) |
 | Route protocol | [tests/web/unit_lobby_routes.cpp](../tests/web/unit_lobby_routes.cpp), [unit_session_routes.cpp](../tests/web/unit_session_routes.cpp) |
+| Composition root, private cookie, in-process transfers | [tests/web/unit_application_runtime.cpp](../tests/web/unit_application_runtime.cpp) |
 | Whole-process behavior | [tests/web/process_web_server.cpp](../tests/web/process_web_server.cpp) |
 | Browser transcript and composer | [webapp/src/components/LiveChat.test.tsx](../webapp/src/components/LiveChat.test.tsx) |
 

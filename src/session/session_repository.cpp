@@ -102,6 +102,11 @@ void SessionRepository::MaintenanceGuard::checkpoint() const {
     checkpoint_workspace_session_database(repository_->database_path_);
 }
 
+void SessionRepository::MaintenanceGuard::synchronize_forums(
+    const Workspace& workspace) const {
+    repository_->synchronize_forums_unlocked(workspace);
+}
+
 SessionRepository::MaintenanceGuard
 SessionRepository::reserve_maintenance() const {
     return MaintenanceGuard(*this);

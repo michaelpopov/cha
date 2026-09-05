@@ -757,5 +757,30 @@ TEST(LiveSessionManager, RepeatedOpenUnloadCyclesReapOwnersAndReleaseCapacity) {
     EXPECT_EQ(starts, cycles);
 }
 
+TEST(LiveSessionManager, GlobalMaintenanceReleasesActorsAndResumesAdmission) {
+    SessionFiles files;
+    LiveSessionManager manager(
+        manager_settings(2),
+        [&](const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier) {
+            return test::open_test_session(
+                identity, files.path_for(identity), notifier);
+        });
+    const FullSessionId key{"forum", "maintenance"};
+    ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(manager.open(key, 5s)));
+
+    {
+        GlobalMaintenanceResult reserved =
+            manager.reserve_global_maintenance(5s);
+        ASSERT_TRUE(std::holds_alternative<LiveSessionGlobalMaintenance>(reserved));
+        EXPECT_FALSE(manager.lookup(key));
+        EXPECT_EQ(
+            failure_of(manager.open(key, 10ms)),
+            LiveSessionOpenFailure::manager_stopping);
+    }
+
+    EXPECT_TRUE(std::holds_alternative<LiveSessionReady>(manager.open(key, 5s)));
+    manager.begin_shutdown();
+}
+
 } // namespace
 } // namespace cha::web

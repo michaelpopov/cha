@@ -233,6 +233,7 @@ target_link_libraries(
 cha_enable_warnings(cha_core)
 
 add_library(cha_web STATIC
+    src/web/application_runtime.cpp
     src/web/asset_handler.cpp
     src/web/browser_connection_state.cpp
     src/web/command_queue.cpp
@@ -344,6 +345,7 @@ if(BUILD_TESTING)
 
     add_executable(
         cha_web_tests
+        tests/web/unit_application_runtime.cpp
         tests/web/unit_application_config.cpp
         tests/web/unit_asset_handler.cpp
         tests/web/unit_protocol.cpp
@@ -446,6 +448,23 @@ cha_enable_warnings(chaweb_app)
 # nonzero, failing tests that write from two live sessions at once.
 if(NOT CHA_SANITIZER STREQUAL "none")
     target_sources(chaweb_app PRIVATE tests/support/sanitizer_suppressions.cpp)
+endif()
+
+if(APPLE)
+    add_library(
+        cha_macos_runtime SHARED
+        packaging/macos/runtime_bridge.cpp)
+    target_link_libraries(cha_macos_runtime PRIVATE cha_web)
+    target_include_directories(
+        cha_macos_runtime PRIVATE packaging/macos)
+    set_target_properties(
+        cha_macos_runtime
+        PROPERTIES
+            OUTPUT_NAME ChaRuntime
+            INSTALL_NAME_DIR "@rpath"
+            BUILD_WITH_INSTALL_RPATH TRUE
+            MACOSX_RPATH TRUE)
+    cha_enable_warnings(cha_macos_runtime)
 endif()
 add_custom_command(
     TARGET chaweb_app

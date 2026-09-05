@@ -67,11 +67,7 @@ resources="$contents/Resources"
 native_build="$repository/build/package-macos"
 webapp="$repository/webapp"
 
-bundle_server=
 cleanup() {
-    if [ -n "$bundle_server" ] && kill -0 "$bundle_server" 2>/dev/null; then
-        kill -TERM "$bundle_server"
-    fi
     if [ -d "$temporary" ]; then
         cmake -E remove_directory "$temporary"
     fi
@@ -90,18 +86,18 @@ echo "==> Checking generated API types and browser application"
 echo "==> Building production browser files"
 (cd "$webapp" && npm run build)
 
-echo "==> Building Apple Silicon chaweb"
+echo "==> Building Apple Silicon CHA runtime"
 cmake -S "$repository" -B "$native_build" -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_OSX_ARCHITECTURES=arm64 \
     -DCMAKE_OSX_DEPLOYMENT_TARGET="$deployment_target" \
     -DBUILD_TESTING=OFF \
     -DOPENSSL_USE_STATIC_LIBS=TRUE
-cmake --build "$native_build" --target chaweb_app
+cmake --build "$native_build" --target cha_macos_runtime chaweb_app
 
 echo "==> Assembling CHA.app"
 cmake -E remove_directory "$temporary"
-mkdir -p "$contents/MacOS" "$contents/Helpers" "$resources/web"
+mkdir -p "$contents/MacOS" "$contents/Frameworks" "$resources/web"
 
 xcrun swiftc \
     -swift-version 5 \
@@ -110,6 +106,11 @@ xcrun swiftc \
     -target "arm64-apple-macos$deployment_target" \
     -framework AppKit \
     -framework WebKit \
+    -import-objc-header "$repository/packaging/macos/runtime_bridge.h" \
+    -L "$native_build" \
+    -lChaRuntime \
+    -Xlinker -rpath \
+    -Xlinker @executable_path/../Frameworks \
     "$repository/packaging/macos/main.swift" \
     -o "$contents/MacOS/CHA"
 
@@ -117,7 +118,7 @@ sed -e "s/@VERSION@/$version/g" \
     -e "s/@MINIMUM_SYSTEM_VERSION@/$deployment_target/g" \
     "$repository/packaging/macos/Info.plist.in" \
     > "$contents/Info.plist"
-cp "$native_build/chaweb" "$contents/Helpers/chaweb"
+cp "$native_build/libChaRuntime.dylib" "$contents/Frameworks/libChaRuntime.dylib"
 cp -R "$repository/packaging/linux/import-seed" "$resources/import-seed"
 cp -R "$webapp/dist/." "$resources/web/"
 
@@ -125,13 +126,13 @@ iconset="$temporary/AppIcon.iconset"
 xcrun swift "$repository/packaging/macos/make-icon.swift" "$iconset"
 iconutil -c icns "$iconset" -o "$resources/AppIcon.icns"
 
-chmod 755 "$contents/MacOS/CHA" "$contents/Helpers/chaweb"
+chmod 755 "$contents/MacOS/CHA" "$contents/Frameworks/libChaRuntime.dylib"
 chmod -R u=rwX,go=rX "$resources/web" "$resources/import-seed"
 chmod 600 "$resources/import-seed/.env"
 
 echo "==> Checking application bundle"
 plutil -lint "$contents/Info.plist"
-for executable in "$contents/MacOS/CHA" "$contents/Helpers/chaweb"; do
+for executable in "$contents/MacOS/CHA" "$contents/Frameworks/libChaRuntime.dylib"; do
     if ! file "$executable" | grep -q 'arm64'; then
         echo "package check: $(basename "$executable") is not an Apple Silicon binary" >&2
         exit 1
@@ -157,12 +158,13 @@ if find "$application" -type f \( \
 fi
 
 # A Homebrew library path would make the application work only on the build host.
-for executable in "$contents/MacOS/CHA" "$contents/Helpers/chaweb"; do
+for executable in "$contents/MacOS/CHA" "$contents/Frameworks/libChaRuntime.dylib"; do
     external_dependency=$(otool -L "$executable" | awk '
         NR == 1 { next }
         {
             path = $1
-            if (path !~ /^\/usr\/lib\// && path !~ /^\/System\/Library\//) {
+            if (path !~ /^\/usr\/lib\// && path !~ /^\/System\/Library\// \
+                && path != "@rpath/libChaRuntime.dylib") {
                 print path
                 exit
             }
@@ -174,51 +176,31 @@ for executable in "$contents/MacOS/CHA" "$contents/Helpers/chaweb"; do
     fi
 done
 
-# The one check that runs the application the way CHA.app runs it: the helper
-# started on the bundle's own Resources directory, which is the layout the
-# launcher passes to --root. The suites below cannot do this, because they
-# expect the flat Linux package. Only the launcher's window is left to manual
-# testing.
-echo "==> Testing the bundle layout through the bundled helper"
+echo "==> Testing the embedded runtime from the assembled bundle"
 bundle_test="$temporary/bundle-test"
-bundle_port=$((20000 + ($$ % 20000)))
 mkdir -p "$bundle_test/logs"
 cat >"$bundle_test/cha.toml" <<EOF
 data = "cha.sqlite3"
 
 [web]
 host = "127.0.0.1"
-port = $bundle_port
+port = 0
 
 [logging]
 file = "logs/cha.log"
 level = "info"
 EOF
-OPENAI_API_KEY=package-check "$contents/Helpers/chaweb" \
-    --config "$bundle_test/cha.toml" \
-    --import "$resources/import-seed"
-OPENAI_API_KEY=package-check "$contents/Helpers/chaweb" \
-    --root "$resources" \
-    --config "$bundle_test/cha.toml" \
-    >"$bundle_test/chaweb.out" 2>&1 &
-bundle_server=$!
-attempt=0
-while ! curl --silent --fail "http://127.0.0.1:$bundle_port/health" >/dev/null; do
-    if [ "$attempt" -ge 100 ] || ! kill -0 "$bundle_server" 2>/dev/null; then
-        sed -n '1,40p' "$bundle_test/chaweb.out" >&2
-        echo "package check: the bundled helper did not serve /health" >&2
-        exit 1
-    fi
-    attempt=$((attempt + 1))
-    sleep 0.05
-done
-if ! curl --silent --fail "http://127.0.0.1:$bundle_port/" >/dev/null; then
-    echo "package check: the bundle does not serve its browser application" >&2
-    exit 1
-fi
-kill -TERM "$bundle_server"
-wait "$bundle_server" || true
-bundle_server=
+xcrun clang \
+    -target "arm64-apple-macos$deployment_target" \
+    -I "$repository/packaging/macos" \
+    -L "$contents/Frameworks" \
+    -lChaRuntime \
+    "$repository/packaging/macos/runtime-smoke.c" \
+    -o "$bundle_test/runtime-smoke"
+DYLD_LIBRARY_PATH="$contents/Frameworks" "$bundle_test/runtime-smoke" \
+    "$bundle_test/cha.toml" \
+    "$resources/import-seed" \
+    "$resources"
 cmake -E remove_directory "$bundle_test"
 
 # The browser suite and the upgrade check both expect the flat Linux package,
@@ -228,7 +210,7 @@ cmake -E remove_directory "$bundle_test"
 echo "==> Testing the assembled application through production chaweb"
 test_application="$temporary/test-application"
 mkdir -p "$test_application"
-cp "$contents/Helpers/chaweb" "$test_application/chaweb"
+cp "$native_build/chaweb" "$test_application/chaweb"
 cp "$repository/bin/start-cha.sh" "$test_application/start-cha.sh"
 cp "$repository/packaging/linux/cha.toml.example" "$test_application/cha.toml.example"
 cp -R "$resources/import-seed" "$test_application/import-seed"
@@ -246,7 +228,7 @@ chmod 600 "$test_application/import-seed/.env"
 cmake -E remove_directory "$test_application"
 
 echo "==> Ad-hoc signing application"
-codesign --force --sign - --timestamp=none "$contents/Helpers/chaweb"
+codesign --force --sign - --timestamp=none "$contents/Frameworks/libChaRuntime.dylib"
 codesign --force --sign - --timestamp=none "$application"
 codesign --verify --deep --strict "$application"
 

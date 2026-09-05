@@ -65,8 +65,29 @@ private:
     FullSessionId identity_;
 };
 
+class LiveSessionGlobalMaintenance {
+public:
+    ~LiveSessionGlobalMaintenance();
+    LiveSessionGlobalMaintenance(LiveSessionGlobalMaintenance&& other) noexcept;
+    LiveSessionGlobalMaintenance& operator=(
+        LiveSessionGlobalMaintenance&& other) noexcept;
+    LiveSessionGlobalMaintenance(const LiveSessionGlobalMaintenance&) = delete;
+    LiveSessionGlobalMaintenance& operator=(
+        const LiveSessionGlobalMaintenance&) = delete;
+
+private:
+    friend class LiveSessionManager;
+    explicit LiveSessionGlobalMaintenance(LiveSessionManager& manager);
+    void release() noexcept;
+
+    LiveSessionManager* manager_{};
+};
+
 using MaintenanceReservationResult = std::variant<
     LiveSessionMaintenanceReservation,
+    MaintenanceFailure>;
+using GlobalMaintenanceResult = std::variant<
+    LiveSessionGlobalMaintenance,
     MaintenanceFailure>;
 
 // The process-wide collection of live actors, and the sole authority for
@@ -117,6 +138,11 @@ public:
     [[nodiscard]] MaintenanceReservationResult reserve_for_deletion(
         const FullSessionId& key,
         std::chrono::milliseconds deadline);
+    // Temporarily rejects new live-session work, asks every actor to release
+    // its journal connection, and waits for all of them under one deadline.
+    // Destroying the returned reservation resumes normal admission.
+    [[nodiscard]] GlobalMaintenanceResult reserve_global_maintenance(
+        std::chrono::milliseconds deadline);
 
     // Begins process shutdown without writing startup results. The optional
     // callback runs after the stopping flag is published but before open
@@ -137,11 +163,13 @@ public:
 
 private:
     friend class LiveSessionMaintenanceReservation;
+    friend class LiveSessionGlobalMaintenance;
     using RetiredSessions = std::vector<LiveSessionHandle>;
 
     [[nodiscard]] RetiredSessions sweep_locked();
     static void reap(RetiredSessions retired);
     void release_maintenance(const FullSessionId& key) noexcept;
+    void release_global_maintenance() noexcept;
 
     WebSettings settings_;
     SessionOpener opener_;
@@ -149,6 +177,7 @@ private:
     std::mutex mutex_;
     std::map<FullSessionId, LiveSessionHandle, std::less<>> sessions_;
     std::set<FullSessionId, std::less<>> maintenance_;
+    bool global_maintenance_{};
     bool stopping_{};
 };
 

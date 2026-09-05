@@ -64,6 +64,34 @@ void LiveSessionMaintenanceReservation::release() noexcept {
     }
 }
 
+LiveSessionGlobalMaintenance::LiveSessionGlobalMaintenance(
+    LiveSessionManager& manager)
+    : manager_(&manager) {}
+
+LiveSessionGlobalMaintenance::~LiveSessionGlobalMaintenance() {
+    release();
+}
+
+LiveSessionGlobalMaintenance::LiveSessionGlobalMaintenance(
+    LiveSessionGlobalMaintenance&& other) noexcept
+    : manager_(std::exchange(other.manager_, nullptr)) {}
+
+LiveSessionGlobalMaintenance&
+LiveSessionGlobalMaintenance::operator=(
+    LiveSessionGlobalMaintenance&& other) noexcept {
+    if (this != &other) {
+        release();
+        manager_ = std::exchange(other.manager_, nullptr);
+    }
+    return *this;
+}
+
+void LiveSessionGlobalMaintenance::release() noexcept {
+    if (LiveSessionManager* const manager = std::exchange(manager_, nullptr)) {
+        manager->release_global_maintenance();
+    }
+}
+
 LiveSessionManager::LiveSessionManager(
     WebSettings settings,
     SessionOpener opener,
@@ -105,7 +133,7 @@ LiveSessionOpenResult LiveSessionManager::open(
     {
         std::unique_lock lock(mutex_);
         retired = sweep_locked();
-        if (stopping_) {
+        if (stopping_ || global_maintenance_) {
             lock.unlock();
             reap(std::move(retired));
             return LiveSessionOpenFailure::manager_stopping;
@@ -177,17 +205,21 @@ LiveSessionOpenResult LiveSessionManager::open(
     if (!outcome) {
         log_warn(session_log(key, "open_deadline_expired"));
         std::lock_guard lock(mutex_);
-        return stopping_
+        return stopping_ || global_maintenance_
             ? LiveSessionOpenResult{LiveSessionOpenFailure::manager_stopping}
             : LiveSessionOpenResult{LiveSessionOpenFailure::open_timeout};
     }
     if (*outcome == LiveSessionStartResult::shutting_down) {
         std::lock_guard lock(mutex_);
-        if (stopping_) return LiveSessionOpenFailure::manager_stopping;
+        if (stopping_ || global_maintenance_) {
+            return LiveSessionOpenFailure::manager_stopping;
+        }
     }
     if (*outcome == LiveSessionStartResult::ready) {
         std::lock_guard lock(mutex_);
-        if (stopping_) return LiveSessionOpenFailure::manager_stopping;
+        if (stopping_ || global_maintenance_) {
+            return LiveSessionOpenFailure::manager_stopping;
+        }
         if (maintenance_.contains(key)) {
             return LiveSessionOpenFailure::stopping;
         }
@@ -208,7 +240,7 @@ std::optional<LiveSessionOpenResult> LiveSessionManager::try_reattach(
     {
         std::lock_guard lock(mutex_);
         retired = sweep_locked();
-        if (stopping_) {
+        if (stopping_ || global_maintenance_) {
             result = LiveSessionOpenFailure::manager_stopping;
         } else if (maintenance_.contains(key)) {
             result = LiveSessionOpenFailure::stopping;
@@ -238,7 +270,7 @@ LiveSessionHandle LiveSessionManager::lookup(const FullSessionId& key) {
         std::lock_guard lock(mutex_);
         retired = sweep_locked();
         const auto found = sessions_.find(key);
-        if (found != sessions_.end()
+        if (!global_maintenance_ && found != sessions_.end()
             && found->second->lifecycle() == LiveSessionState::running) {
             result = found->second;
         }
@@ -292,7 +324,7 @@ MaintenanceReservationResult LiveSessionManager::reserve_for_deletion(
     {
         std::lock_guard lock(mutex_);
         retired = sweep_locked();
-        if (stopping_) {
+        if (stopping_ || global_maintenance_) {
             failure = MaintenanceFailure::manager_stopping;
         } else if (maintenance_.contains(key)) {
             failure = MaintenanceFailure::stopping;
@@ -313,6 +345,55 @@ MaintenanceReservationResult LiveSessionManager::reserve_for_deletion(
     const auto absolute_deadline = std::chrono::steady_clock::now() + deadline;
     if (!actor->wait_until_finished(absolute_deadline)) {
         return MaintenanceFailure::stopping;
+    }
+    sweep();
+    return reservation;
+}
+
+GlobalMaintenanceResult LiveSessionManager::reserve_global_maintenance(
+    std::chrono::milliseconds deadline) {
+    RetiredSessions retired;
+    RetiredSessions live;
+    std::optional<MaintenanceFailure> failure;
+    {
+        std::lock_guard lock(mutex_);
+        retired = sweep_locked();
+        if (stopping_) {
+            failure = MaintenanceFailure::manager_stopping;
+        } else if (global_maintenance_) {
+            failure = MaintenanceFailure::stopping;
+        } else {
+            // Snapshotting before publishing the flag keeps a failed
+            // allocation from leaving the manager closed with no owner.
+            for (const auto& [key, session] : sessions_) {
+                (void)key;
+                live.push_back(session);
+            }
+            global_maintenance_ = true;
+        }
+    }
+    if (failure) {
+        reap(std::move(retired));
+        return *failure;
+    }
+
+    // The flag is now ours, so it is owned from here on: every failure below
+    // releases it instead of closing the manager for the rest of the process.
+    LiveSessionGlobalMaintenance reservation(*this);
+    for (const LiveSessionHandle& session : live) {
+        session->wake_start_waiters();
+    }
+    reap(std::move(retired));
+    for (const LiveSessionHandle& session : live) {
+        session->request_shutdown(ShutdownReason::reloading);
+    }
+
+    const auto absolute_deadline =
+        std::chrono::steady_clock::now() + deadline;
+    for (const LiveSessionHandle& session : live) {
+        if (!session->wait_until_finished(absolute_deadline)) {
+            return MaintenanceFailure::stopping;
+        }
     }
     sweep();
     return reservation;
@@ -417,6 +498,15 @@ void LiveSessionManager::release_maintenance(
     try {
         std::lock_guard lock(mutex_);
         maintenance_.erase(key);
+    } catch (...) {
+        std::terminate();
+    }
+}
+
+void LiveSessionManager::release_global_maintenance() noexcept {
+    try {
+        std::lock_guard lock(mutex_);
+        global_maintenance_ = false;
     } catch (...) {
         std::terminate();
     }

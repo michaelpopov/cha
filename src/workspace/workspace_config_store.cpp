@@ -991,6 +991,70 @@ WorkspaceConfigStore::WorkspaceConfigStore(std::unique_ptr<Impl> impl)
 
 WorkspaceConfigStore::~WorkspaceConfigStore() = default;
 
+struct WorkspaceConfigStore::MaintenanceGuard::Impl {
+    explicit Impl(WorkspaceConfigStore::Impl& store)
+        : store(&store), lock(store.mutex) {}
+
+    WorkspaceConfigStore::Impl* store;
+    std::unique_lock<std::mutex> lock;
+    bool closed{};
+};
+
+WorkspaceConfigStore::MaintenanceGuard::MaintenanceGuard(
+    std::unique_ptr<MaintenanceGuard::Impl> impl)
+    : impl_(std::move(impl)) {}
+
+WorkspaceConfigStore::MaintenanceGuard::~MaintenanceGuard() = default;
+
+WorkspaceConfigStore::MaintenanceGuard::MaintenanceGuard(
+    MaintenanceGuard&&) noexcept = default;
+
+WorkspaceConfigStore::MaintenanceGuard&
+WorkspaceConfigStore::MaintenanceGuard::operator=(
+    MaintenanceGuard&&) noexcept = default;
+
+void WorkspaceConfigStore::MaintenanceGuard::close() {
+    if (!impl_ || impl_->closed) {
+        throw std::logic_error("Workspace database is already closed");
+    }
+    impl_->store->database.reset();
+    impl_->closed = true;
+}
+
+void WorkspaceConfigStore::MaintenanceGuard::reopen() {
+    if (!impl_ || !impl_->closed) {
+        throw std::logic_error("Workspace database is not closed");
+    }
+    WorkspaceConfigStore::Impl& store = *impl_->store;
+    try {
+        secure_workspace_session_database_files(store.database_path);
+        const WorkspaceDatabaseState state =
+            inspect_workspace_session_database(store.database_path);
+        if (state != WorkspaceDatabaseState::valid_v2) {
+            fail_runtime_database_state(store.database_path, state);
+        }
+
+        store.database = std::make_unique<Database>(
+            store.database_path, Database::Mode::read_write);
+        validate_workspace_session_database_identity(*store.database);
+        validate_workspace_session_contents(*store.database);
+        store.database->execute("PRAGMA journal_mode = WAL");
+        secure_workspace_session_database_files(store.database_path);
+
+        store.rematerialize_workspace();
+        loadws(Workspace::load(store.tree->workspace()));
+        impl_->closed = false;
+    } catch (const std::exception& error) {
+        // Nothing here is recoverable in place: the handle is gone and the
+        // materialized tree may be half rebuilt, so the store stays closed and
+        // the caller must bring the process down rather than keep serving.
+        store.database.reset();
+        throw WorkspaceRestartRequiredError(
+            "Failed to reopen the workspace database: "
+            + std::string(error.what()) + ". Restart is required");
+    }
+}
+
 std::unique_ptr<WorkspaceConfigStore> WorkspaceConfigStore::open(
     const std::filesystem::path& database_path) {
     auto impl = std::make_unique<Impl>();
@@ -1046,6 +1110,12 @@ const std::filesystem::path& WorkspaceConfigStore::welcome_path()
 const std::filesystem::path& WorkspaceConfigStore::database_path()
     const noexcept {
     return impl_->database_path;
+}
+
+WorkspaceConfigStore::MaintenanceGuard
+WorkspaceConfigStore::reserve_maintenance() {
+    return MaintenanceGuard(
+        std::make_unique<MaintenanceGuard::Impl>(*impl_));
 }
 
 WorkspaceConfigEditResult WorkspaceConfigStore::apply_character_settings(

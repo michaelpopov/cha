@@ -226,10 +226,10 @@ ApplicationSettings load_application_settings(
     reject_unknown_fields(web, config_file, {"host", "port"}, "[web]");
     const std::string host = required_string(web, config_file, "host");
     const std::optional<int> port = web["port"].value<int>();
-    if (!port || *port < 1 || *port > 65535) {
+    if (!port || *port < 0 || *port > 65535) {
         throw std::runtime_error(
             "Application config '" + utf8_path(config_file)
-            + "' requires an integer 'port' between 1 and 65535 in [web].");
+            + "' requires an integer 'port' between 0 and 65535 in [web].");
     }
 
     const toml::table& logging = required_table(root, config_file, "logging");

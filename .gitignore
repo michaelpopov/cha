@@ -31,6 +31,9 @@ CPack*.cmake
 *.swp
 *~
 
+# macOS Finder metadata
+.DS_Store
+
 .env
 !/packaging/linux/import-seed/.env
 *.sqlite3

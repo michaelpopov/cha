@@ -45,6 +45,29 @@ struct WorkspaceConfigEditResult {
 // root with workspace/ and welcome/ children, and the configuration mutex.
 class WorkspaceConfigStore {
 public:
+    class MaintenanceGuard {
+    public:
+        ~MaintenanceGuard();
+        MaintenanceGuard(MaintenanceGuard&&) noexcept;
+        MaintenanceGuard& operator=(MaintenanceGuard&&) noexcept;
+        MaintenanceGuard(const MaintenanceGuard&) = delete;
+        MaintenanceGuard& operator=(const MaintenanceGuard&) = delete;
+
+        // Releases the SQLite handle while keeping the process lease, store,
+        // and materialized runtime tree alive. reopen() validates and publishes
+        // whichever database is present at the same path; it throws
+        // WorkspaceRestartRequiredError if that fails, leaving the store closed
+        // and the process unable to serve.
+        void close();
+        void reopen();
+
+    private:
+        struct Impl;
+        friend class WorkspaceConfigStore;
+        explicit MaintenanceGuard(std::unique_ptr<Impl> impl);
+        std::unique_ptr<Impl> impl_;
+    };
+
     static std::unique_ptr<WorkspaceConfigStore> open(
         const std::filesystem::path& database_path);
 
@@ -58,6 +81,7 @@ public:
     [[nodiscard]] const std::filesystem::path& workspace_path() const noexcept;
     [[nodiscard]] const std::filesystem::path& welcome_path() const noexcept;
     [[nodiscard]] const std::filesystem::path& database_path() const noexcept;
+    [[nodiscard]] MaintenanceGuard reserve_maintenance();
     WorkspaceConfigEditResult apply_character_settings(
         std::string_view character_id,
         std::string_view provider_id,

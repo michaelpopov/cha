@@ -42,6 +42,7 @@ public:
         MaintenanceGuard& operator=(const MaintenanceGuard&) = delete;
 
         void checkpoint() const;
+        void synchronize_forums(const Workspace& workspace) const;
 
     private:
         friend class SessionRepository;

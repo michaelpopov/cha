@@ -109,6 +109,17 @@ TEST_F(ApplicationConfigTest, AcceptsSeparatedConfigOptionAndAbsolutePaths) {
     EXPECT_EQ(command.log_level, "debug");
 }
 
+TEST_F(ApplicationConfigTest, AcceptsZeroAsAnEphemeralPort) {
+    write_config(
+        "data = \"../data/workspace.sqlite3\"\n"
+        "[web]\nhost = \"127.0.0.1\"\nport = 0\n"
+        "[logging]\nfile = \"logs/cha.log\"\nlevel = \"info\"\n");
+
+    const ApplicationCommand command =
+        load({"chaweb", "--config", config_.string()});
+    EXPECT_EQ(command.port, 0);
+}
+
 TEST_F(ApplicationConfigTest, LoadsOptionalMirrorRelativeToConfig) {
     write_config(
         "data = \"../data/workspace.sqlite3\"\n"
@@ -246,7 +257,7 @@ TEST_F(ApplicationConfigTest, RequiresAllSettingsWithValidTypes) {
         "[web]\nhost = \"x\"\nport = 1\n[logging]\nfile = \"x\"\nlevel = \"off\"\n",
         "data = \"x\"\n[logging]\nfile = \"x\"\nlevel = \"off\"\n",
         "data = \"x\"\n[web]\nhost = \"\"\nport = 1\n[logging]\nfile = \"x\"\nlevel = \"off\"\n",
-        "data = \"x\"\n[web]\nhost = \"x\"\nport = 0\n[logging]\nfile = \"x\"\nlevel = \"off\"\n",
+        "data = \"x\"\n[web]\nhost = \"x\"\nport = -1\n[logging]\nfile = \"x\"\nlevel = \"off\"\n",
         "data = \"x\"\n[web]\nhost = \"x\"\nport = 1\n[logging]\nlevel = \"off\"\n",
         "data = \"x\"\nextra = true\n[web]\nhost = \"x\"\nport = 1\n[logging]\nfile = \"x\"\nlevel = \"off\"\n",
     };
