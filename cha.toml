@@ -1,0 +1,11 @@
+data = "cha.sqlite3"
+# mirrot = ""
+modify = "/tmp/modify"
+
+[web]
+host = "127.0.0.1"
+port = 0
+
+[logging]
+file = "logs/cha.log"
+level = "info"

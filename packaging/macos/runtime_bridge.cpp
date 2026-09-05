@@ -23,6 +23,7 @@ using cha::web::parse_application_command;
 struct ChaRuntime {
     std::unique_ptr<ApplicationRuntime> application;
     int port{};
+    bool can_modify{};
     bool logging{};
 };
 
@@ -49,6 +50,11 @@ void set_current_error(char** error) noexcept {
     } catch (...) {
         set_error(error, "CHA failed with an unknown error");
     }
+}
+
+bool environment_is_set(const char* name) {
+    const char* const value = std::getenv(name);
+    return value != nullptr && *value != '\0';
 }
 
 ApplicationCommand runtime_command(
@@ -91,6 +97,31 @@ int32_t transfer(
     }
 }
 
+int32_t transfer_configuration(
+    ChaRuntime* runtime,
+    uint64_t* file_count,
+    char** error,
+    bool importing) {
+    clear_error(error);
+    if (!runtime || !runtime->application || !file_count) {
+        set_error(error, "CHA runtime is not available");
+        return 0;
+    }
+    try {
+        const WorkspaceConfigTransfer result = importing
+            ? runtime->application->import_configuration()
+            : runtime->application->export_configuration();
+        *file_count = result.file_count;
+        return 1;
+    } catch (const cha::WorkspaceRestartRequiredError& fatal) {
+        set_error(error, fatal.what());
+        return -1;
+    } catch (...) {
+        set_current_error(error);
+        return 0;
+    }
+}
+
 } // namespace
 
 ChaRuntime* cha_runtime_create(
@@ -115,6 +146,7 @@ ChaRuntime* cha_runtime_create(
         runtime->logging = true;
         runtime->application = ApplicationRuntime::open(
             command, access_token);
+        runtime->can_modify = command.modify.has_value();
         runtime->port = runtime->application->start();
         return runtime.release();
     } catch (...) {
@@ -146,6 +178,18 @@ void cha_runtime_destroy(ChaRuntime* runtime) {
 
 int32_t cha_runtime_port(const ChaRuntime* runtime) {
     return runtime ? runtime->port : 0;
+}
+
+int32_t cha_runtime_can_modify(const ChaRuntime* runtime) {
+    return runtime && runtime->can_modify ? 1 : 0;
+}
+
+int32_t cha_runtime_can_transfer_r2(const ChaRuntime* runtime) {
+    return runtime
+        && environment_is_set("CHA_R2_URL")
+        && environment_is_set("CHA_R2_ACCESS_KEY_ID")
+        && environment_is_set("CHA_R2_SECRET_ACCESS_KEY")
+        ? 1 : 0;
 }
 
 int32_t cha_runtime_import_initial_database(
@@ -188,6 +232,20 @@ int32_t cha_runtime_download(
     uint64_t* byte_count,
     char** error) {
     return transfer(runtime, byte_count, error, true);
+}
+
+int32_t cha_runtime_import_configuration(
+    ChaRuntime* runtime,
+    uint64_t* file_count,
+    char** error) {
+    return transfer_configuration(runtime, file_count, error, true);
+}
+
+int32_t cha_runtime_export_configuration(
+    ChaRuntime* runtime,
+    uint64_t* file_count,
+    char** error) {
+    return transfer_configuration(runtime, file_count, error, false);
 }
 
 void cha_string_free(char* value) {

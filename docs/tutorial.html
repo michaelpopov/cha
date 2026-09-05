@@ -596,29 +596,30 @@ stream.</li>
 <p>There are four kinds of long-lived information:</p>
 <ul>
 <li><p>Process configuration — the database path, optional Markdown
-mirror, web listener, and diagnostic log settings — lives in one
-external TOML file. <code>chaweb</code> reads it before opening the
-database; it is never materialized into the workspace or stored in
-SQLite.</p></li>
+mirror and modification directory, web listener, and diagnostic log
+settings — lives in one external TOML file. <code>chaweb</code> reads it
+before opening the database; it is never materialized into the workspace
+or stored in SQLite.</p></li>
 <li><p>Discovery — the roster, descriptions, and Markdown the browser
 lists — is materialized from committed database rows, read once per
 <code>Workspace</code>, validated as a whole, and shared immutably until
-a narrow committed mutation publishes a replacement or the process
-restarts after offline import.</p></li>
+a narrow committed mutation publishes a replacement, including after an
+in-process macOS Import or Download operation.</p></li>
 <li><p>Sessions read eagerly owned configuration from the published
-<code>Workspace</code>; neither the import source nor an export
-directory is consulted at runtime.</p></li>
+<code>Workspace</code>. Import and export directories are consulted only
+during an explicit maintenance operation.</p></li>
 <li><p>Conversation state is dynamic. A live controller owns an
 in-memory view and writes durable turn transitions into its own rows of
 the one workspace session database.</p></li>
 </ul>
-<p>This split explains why creating a session appears immediately while
-an operator&#39;s configuration edit requires
-stop/export/edit/import/restart.</p>
+<p>This split explains why creating a session appears immediately. The
+console configuration workflow still requires
+stop/export/edit/import/restart; CHA.app performs Import and Export
+through its Database menu without restarting.</p>
 <h2 id="3-build-graph-and-dependency-direction">3. Build graph and
 dependency direction</h2>
 <p>Start with <a href="../CMakeLists.txt">CMakeLists.txt</a>. The native
-build has three important production targets:</p>
+build has four important production targets:</p>
 <table>
 <thead>
 <tr>
@@ -640,18 +641,28 @@ build has three important production targets:</p>
 </tr>
 <tr>
 <td><code>chaweb_app</code></td>
-<td>Small composition root in <code>src/web_main.cpp</code>; links
+<td>Small command-line entry point in <code>src/web_main.cpp</code>; links
 <code>cha_web</code></td>
+</tr>
+<tr>
+<td><code>cha_macos_runtime</code></td>
+<td>macOS only: <code>libChaRuntime.dylib</code>, a C shim over
+<code>cha_web</code> that CHA.app links so the runtime lives in the
+launcher&#39;s own process</td>
 </tr>
 </tbody>
 </table>
 <p>The executable file is named <code>chaweb</code> even though the
-CMake target is <code>chaweb_app</code>.</p>
+CMake target is <code>chaweb_app</code>. Both entry points are thin:
+<code>web/application_runtime.*</code> is the composition root they
+share, so the command line and CHA.app run identical code and differ
+only in the listener port and the private access token.</p>
 <p>The intended dependency direction is:</p>
-<pre class="text"><code>chaweb_app -&gt; cha_web -&gt; cha_core
+<pre class="text"><code>chaweb_app        -&gt; cha_web -&gt; cha_core
+cha_macos_runtime -&gt; cha_web -&gt; cha_core
 
 workspace -&gt; session -&gt; providers -&gt; characters -&gt; chat
-                \-----------&gt; characters
+                \----------&gt; characters
 
 util is used where needed without depending on the domain layers.</code></pre>
 <p>That diagram is intentionally approximate inside
@@ -743,6 +754,11 @@ client</td>
 <td>Behavioral examples grouped by the same subsystem boundaries</td>
 </tr>
 <tr>
+<td><a href="../cha.toml">cha.toml</a></td>
+<td>External process-configuration example included beside CHA.app in
+the macOS zip</td>
+</tr>
+<tr>
 <td><a href="../packaging/linux/cha.toml.example">packaging/linux/cha.toml.example</a></td>
 <td>External process-configuration example</td>
 </tr>
@@ -750,6 +766,10 @@ client</td>
 <td><a href="../packaging/linux/import-seed">packaging/linux/import-seed</a></td>
 <td>A configuration source tree to compare against the loaders and
 import filter</td>
+</tr>
+<tr>
+<td><a href="../packaging/macos">packaging/macos</a></td>
+<td>Swift launcher, C bridge, smoke test, and macOS packaging script</td>
 </tr>
 </tbody>
 </table>
@@ -955,22 +975,33 @@ directory containing <code>start-cha.sh</code>:</p>
 <p>The TOML shape is:</p>
 <div class="sourceCode" id="cb7"><pre class="sourceCode toml"><code class="sourceCode toml"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="dt">data</span> <span class="op">=</span> <span class="st">&quot;/var/lib/cha/workspace.sqlite3&quot;</span></span>
 <span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a><span class="dt">mirror</span> <span class="op">=</span> <span class="st">&quot;/home/user/cha-mirror&quot;</span></span>
-<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a><span class="kw">[web]</span></span>
-<span id="cb7-5"><a href="#cb7-5" aria-hidden="true" tabindex="-1"></a><span class="dt">host</span> <span class="op">=</span> <span class="st">&quot;0.0.0.0&quot;</span></span>
-<span id="cb7-6"><a href="#cb7-6" aria-hidden="true" tabindex="-1"></a><span class="dt">port</span> <span class="op">=</span> <span class="dv">8086</span></span>
-<span id="cb7-7"><a href="#cb7-7" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb7-8"><a href="#cb7-8" aria-hidden="true" tabindex="-1"></a><span class="kw">[logging]</span></span>
-<span id="cb7-9"><a href="#cb7-9" aria-hidden="true" tabindex="-1"></a><span class="dt">file</span> <span class="op">=</span> <span class="st">&quot;logs/cha.log&quot;</span></span>
-<span id="cb7-10"><a href="#cb7-10" aria-hidden="true" tabindex="-1"></a><span class="dt">level</span> <span class="op">=</span> <span class="st">&quot;info&quot;</span></span></code></pre></div>
+<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a><span class="dt">modify</span> <span class="op">=</span> <span class="st">&quot;/home/user/cha-modify&quot;</span></span>
+<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-5"><a href="#cb7-5" aria-hidden="true" tabindex="-1"></a><span class="kw">[web]</span></span>
+<span id="cb7-6"><a href="#cb7-6" aria-hidden="true" tabindex="-1"></a><span class="dt">host</span> <span class="op">=</span> <span class="st">&quot;0.0.0.0&quot;</span></span>
+<span id="cb7-7"><a href="#cb7-7" aria-hidden="true" tabindex="-1"></a><span class="dt">port</span> <span class="op">=</span> <span class="dv">8086</span></span>
+<span id="cb7-8"><a href="#cb7-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-9"><a href="#cb7-9" aria-hidden="true" tabindex="-1"></a><span class="kw">[logging]</span></span>
+<span id="cb7-10"><a href="#cb7-10" aria-hidden="true" tabindex="-1"></a><span class="dt">file</span> <span class="op">=</span> <span class="st">&quot;logs/cha.log&quot;</span></span>
+<span id="cb7-11"><a href="#cb7-11" aria-hidden="true" tabindex="-1"></a><span class="dt">level</span> <span class="op">=</span> <span class="st">&quot;info&quot;</span></span></code></pre></div>
 <p><code>mirror</code> is optional; omitting it disables filesystem
-mirroring. Relative <code>data</code>, <code>mirror</code>, and
+mirroring. <code>modify</code> is also optional and names the directory
+used by CHA.app&#39;s Import and Export menu items. Relative
+<code>data</code>, <code>mirror</code>, <code>modify</code>, and
 <code>logging.file</code> values resolve from the external config&#39;s
-directory. The mirror root must already exist and be a directory. Import
-additionally requires that file to be outside the source workspace,
-preventing the process config itself from becoming an imported metadata
-row. Import and export acquire the same non-blocking database lease as
-runtime, so they are deliberately offline.</p>
+directory. A <code>modify</code> directory may not contain the external
+config or database, because the macOS Export operation replaces that
+directory. The mirror root must already exist and be a directory.
+Console Import additionally requires the config file to be outside the
+source workspace, preventing the process config itself from becoming an
+imported metadata row. Console Import and Export acquire the same
+non-blocking database lease as runtime, so they remain deliberately
+offline.</p>
+<p>The macOS zip contains <code>CHA.app</code> and the root
+<code>cha.toml</code> example. CHA.app keeps its active config at
+<code>~/Library/Application Support/CHA/cha.toml</code>; a new active
+config uses <code>modify = &quot;modify&quot;</code>, relative to that
+directory.</p>
 <p>A new database is created only after a source has been collected and
 validated successfully. Normal runtime and export require schema v2.
 Schema v1 is the unified sessions-only database; only import can add the
@@ -999,8 +1030,8 @@ an owner.</p>
 <li><code>parse_application_command()</code> requires
 <code>--config</code>, validates top-level <code>data</code>,
 <code>[web]</code>, and <code>[logging]</code>, resolves relative paths
-from the external file&#39;s directory, and separates runtime from the two
-offline transfer modes.</li>
+from the external file&#39;s directory, and separates runtime from the four
+offline modes.</li>
 <li><code>WorkspaceConfigStore::open()</code> acquires the database
 companion-file lease, rejects anything except valid schema v2, secures
 the database/sidecars, and enables WAL.</li>
@@ -1096,14 +1127,14 @@ include must itself be stored, so <code>snippet.txt</code> is not
 available after materialization while <code>snippet.md</code> can be.
 Import validates a byte-identical private materialization before it
 commits the complete row set.</p>
-<p>Normal runtime never reads the import or export directory. The only
-online edits are character provider/style, forum default character, and
+<p>Normal requests never read the import or export directory. The narrow
+browser edits are character provider/style, forum default character, and
 forum default persona. <code>WorkspaceConfigStore</code> serializes each
 one, edits its private tree, loads a complete candidate, replaces all
 configuration rows in one SQLite transaction, and publishes after
 commit. There is no generation, type, control, or revision column. Other
-edits require stop, export to a missing or empty directory, edit,
-import, and restart.</p>
+edits use stop/export/edit/import/restart in console mode, or the
+in-process Export/Edit/Import workflow in CHA.app.</p>
 <h3 id="83-provider-selection">8.3 Provider selection</h3>
 <p>Every connection and model setting lives in
 <code>system/providers/&lt;id&gt;/config.toml</code>. Each character
@@ -1203,14 +1234,16 @@ store&#39;s database lease excludes other processes.</p>
 cutover guard</h3>
 <p><code>WorkspaceConfigStore</code> acquires
 <code>workspace.sqlite3.cha-lock</code> before opening the database and
-holds it through normal runtime. Import and export acquire the same
-lease for their full operation. Acquisition is non-blocking, so
-concurrent runtime/import/export fails before database use. A companion
-file is used rather than the database bytes because it exists before the
-database is created, does not interfere with SQLite&#39;s own byte-range
-locking, and stays stable while WAL sidecars come and go. An empty
-companion left behind after exit is harmless; the held kernel lock, not
-the file, is what means &quot;busy&quot;.</p>
+holds it through normal runtime. Console Import and Export acquire the
+same lease for their full operation; CHA.app keeps its already-held
+lease while closing database handles for maintenance. Acquisition is
+non-blocking, so a concurrent console runtime/import/export fails before
+database use. A companion file is used rather than the database bytes
+because it exists before the database is created, does not interfere
+with SQLite&#39;s own byte-range locking, and stays stable while WAL
+sidecars come and go. An empty companion left behind after exit is
+harmless; the held kernel lock, not the file, is what means
+&quot;busy&quot;.</p>
 <p>Only import performs the permanent manual-cutover preflight, before
 it modifies the target:</p>
 <table>
@@ -1607,6 +1640,7 @@ reading pass: web actor and protocol</h2>
 <li><a href="../src/web/session_routes.cpp">web/session_routes.cpp</a></li>
 <li><a href="../src/web/session_markdown.cpp">web/session_markdown.cpp</a></li>
 <li><a href="../src/web/session_mirror.cpp">web/session_mirror.cpp</a></li>
+<li><a href="../src/web/application_runtime.cpp">web/application_runtime.cpp</a></li>
 </ol>
 <h3 id="121-protocol-values-are-owning-dtos">12.1 Protocol values are
 owning DTOs</h3>
@@ -1748,8 +1782,14 @@ outlive the manager&#39;s map entry after the owner thread has finished.</p>
 <tbody>
 <tr>
 <td><code>application_config.*</code></td>
-<td>Parse the mandatory external unified config, database/mode
-selection, and runtime asset root</td>
+<td>Parse the mandatory external unified config, optional
+<code>mirror</code>/<code>modify</code> paths, database/mode selection,
+and runtime asset root</td>
+</tr>
+<tr>
+<td><code>application_runtime.*</code></td>
+<td>Compose one running application and serialize in-process database
+maintenance</td>
 </tr>
 <tr>
 <td><code>asset_handler.*</code></td>
@@ -1790,10 +1830,45 @@ projection</td>
 <td><code>server_shutdown.*</code></td>
 <td>Bridge process signals to coordinated, bounded manager shutdown</td>
 </tr>
+<tr>
+<td><code>r2_database_transfer.*</code></td>
+<td>Upload and download the workspace database over the S3 API</td>
+</tr>
 </tbody>
 </table>
 <p>These modules keep <code>LiveSession</code> and the route files from
 accumulating generic HTTP, filesystem, and signal-handling details.</p>
+<p>Database maintenance while the server is running needs every writer
+to let go of it at once, so <code>ApplicationRuntime</code> takes three
+reservations in order before Import, Export, Upload, or Download:</p>
+<ol type="1">
+<li><code>LiveSessionManager::reserve_global_maintenance()</code> stops
+admitting sessions, asks every live actor to release its journal
+connection, and waits for all of them under one deadline.</li>
+<li><code>WorkspaceConfigStore::reserve_maintenance()</code> holds the
+configuration mutex, so no configuration edit is inside a SQLite
+transaction when the checkpoint runs, and then releases the store&#39;s own
+handle.</li>
+<li><code>SessionRepository::reserve_maintenance()</code> fences
+repository operations and checkpoints the WAL back into the database
+file.</li>
+</ol>
+<p>With the existing lease still held, Import replaces configuration
+rows from <code>modify</code>, Export first removes an existing
+<code>modify</code> directory and recreates it, and Upload/Download
+transfer the database through R2. Each reservation restores what it took
+when it is destroyed, in reverse order, after the operation has finished
+and the database has been reopened. Import and Download publish the
+reloaded workspace to the browser. If the reopen fails, the store cannot
+serve again and the runtime says so with
+<code>WorkspaceRestartRequiredError</code> rather than continuing
+without a handle.</p>
+<p>The Swift Database menu asks the C bridge which operations are
+available. Import and Export are enabled only when <code>modify</code>
+was present in the parsed TOML. Upload and Download are enabled only when
+<code>CHA_R2_URL</code>, <code>CHA_R2_ACCESS_KEY_ID</code>, and
+<code>CHA_R2_SECRET_ACCESS_KEY</code> are all nonempty. All four items
+are disabled while any database operation is in progress.</p>
 <h3 id="128-markdown-download-and-continuous-mirroring">12.8 Markdown
 download and continuous mirroring</h3>
 <p>The download route and filesystem mirror share
@@ -2210,8 +2285,9 @@ meaning:</p>
 <li>Import validates before database modification. A failed new import
 leaves no database, a failed v1 upgrade leaves valid v1, and a failed v2
 replacement leaves the previous complete configuration. Export never
-changes the database; if writing began, its possibly incomplete
-destination must be emptied before retry.</li>
+changes the database. Console Export requires a missing or empty
+destination; macOS Export deliberately replaces the configured
+<code>modify</code> directory.</li>
 <li>External application-config errors fail before runtime opens the
 configured database; the process file is never part of workspace
 publication.</li>
@@ -2365,6 +2441,10 @@ atomicity</td>
 <td>Route protocol</td>
 <td><a href="../tests/web/unit_lobby_routes.cpp">tests/web/unit_lobby_routes.cpp</a>,
 <a href="../tests/web/unit_session_routes.cpp">unit_session_routes.cpp</a></td>
+</tr>
+<tr>
+<td>Composition root, private cookie, in-process transfers</td>
+<td><a href="../tests/web/unit_application_runtime.cpp">tests/web/unit_application_runtime.cpp</a></td>
 </tr>
 <tr>
 <td>Whole-process behavior</td>
@@ -2622,8 +2702,9 @@ transcript history. <code>/clear</code> advances it rather than deleting
 older rows.</p>
 <p><strong>Lease:</strong> Cross-process exclusive ownership of the
 unified database. Normal runtime holds it through
-<code>WorkspaceConfigStore</code>; import and export hold the same lease
-for their complete offline operation.</p>
+<code>WorkspaceConfigStore</code>; console Import and Export acquire the
+same lease, while CHA.app retains its runtime lease during in-process
+maintenance.</p>
 <p><strong>Model history:</strong> An owning immutable transcript
 snapshot shared with workers for context projection.</p>
 <p><strong>Session mirror:</strong> The optional, non-authoritative

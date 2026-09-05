@@ -391,6 +391,7 @@
         <li><a href="#conversation">Having a conversation</a></li>
         <li><a href="#commands">Chat commands</a></li>
         <li><a href="#character-settings">Character settings</a></li>
+        <li><a href="#database-maintenance">Backing up and editing CHA data</a></li>
         <li><a href="#exporting">Downloading conversations</a></li>
         <li><a href="#privacy">Privacy and data</a></li>
         <li><a href="#troubleshooting">Troubleshooting</a></li>
@@ -455,8 +456,8 @@
             from a source you trust.
           </li>
           <li>
-            If you received a ZIP file, double-click it in Finder. Finder creates
-            <code>CHA.app</code> beside it.
+            If you received a ZIP file, double-click it in Finder. Finder extracts
+            <code>CHA.app</code> and a <code>cha.toml</code> configuration example.
           </li>
           <li>Open a second Finder window and select <strong>Applications</strong>.</li>
           <li>Drag <code>CHA.app</code> into the Applications folder.</li>
@@ -866,8 +867,91 @@
         </div>
       </section>
 
+      <section id="database-maintenance">
+        <h2>9. Backing up and editing CHA data</h2>
+        <p class="lead">
+          The <strong>Database</strong> menu can export or import workspace
+          configuration and can upload or download the complete database. These
+          operations run inside the current CHA process; the application does
+          not restart or launch a separate console program.
+        </p>
+
+        <h3>Find the active configuration files</h3>
+        <p>
+          The <code>cha.toml</code> extracted from the ZIP is an example. The
+          application uses its active files here:
+        </p>
+        <pre><code>~/Library/Application Support/CHA/cha.toml
+~/Library/Application Support/CHA/.env</code></pre>
+        <p>
+          In Finder, choose <strong>Go &gt; Go to Folder…</strong>, enter
+          <code>~/Library/Application Support/CHA</code>, and select
+          <strong>Go</strong>. Quit and reopen CHA after changing either active
+          file so the new settings and menu availability take effect.
+        </p>
+
+        <h3>Export, edit, and import workspace configuration</h3>
+        <p>
+          The optional <code>modify</code> setting in the active
+          <code>cha.toml</code> names the directory used by both operations. A
+          relative path starts from the directory containing <code>cha.toml</code>:
+        </p>
+        <pre><code>modify = "modify"</code></pre>
+        <p>
+          When this setting is absent, <strong>Import</strong> and
+          <strong>Export</strong> are disabled. To edit workspace configuration:
+        </p>
+        <ol class="steps">
+          <li>Wait for any current AI reply to finish.</li>
+          <li>
+            Choose <strong>Database &gt; Export</strong>. CHA deletes an existing
+            directory at the configured <code>modify</code> path, recreates it,
+            and writes the current workspace configuration there.
+          </li>
+          <li>Edit the exported <code>.toml</code> or <code>.md</code> files.</li>
+          <li>Choose <strong>Database &gt; Import…</strong> and confirm the change.</li>
+          <li>Wait for CHA to validate, store, and display the imported workspace.</li>
+        </ol>
+        <div class="warning">
+          <p>
+            Export permanently replaces the existing <code>modify</code>
+            directory. Copy out any edits you still need before exporting again.
+            Import replaces the complete workspace configuration and can remove
+            sessions belonging to forums that are no longer configured.
+          </p>
+        </div>
+
+        <h3>Upload or download the complete database</h3>
+        <p>
+          Upload and Download use Cloudflare R2 through its S3-compatible API.
+          They are enabled only when all three of these entries have nonempty
+          values in the active <code>.env</code> file or the environment that
+          launched CHA:
+        </p>
+        <pre><code>CHA_R2_URL=https://example.r2.cloudflarestorage.com/bucket
+CHA_R2_ACCESS_KEY_ID=your-access-key-id
+CHA_R2_SECRET_ACCESS_KEY=your-secret-access-key</code></pre>
+        <ul>
+          <li>
+            <strong>Database &gt; Upload</strong> validates and uploads the current
+            database, replacing the object with the same database filename.
+          </li>
+          <li>
+            <strong>Database &gt; Download…</strong> asks for confirmation, saves
+            the current database beside itself with a <code>.bac</code> suffix,
+            downloads and validates the R2 copy, and refreshes CHA.
+          </li>
+        </ul>
+        <div class="note">
+          <p>
+            All four Database menu items are temporarily disabled while one
+            database operation is running.
+          </p>
+        </div>
+      </section>
+
       <section id="exporting">
-        <h2>9. Downloading conversations</h2>
+        <h2>10. Downloading conversations</h2>
         <p>
           Use <strong>Download</strong> in a session's action menu to save a Markdown
           file. Markdown is plain text that remains readable in an ordinary text
@@ -890,7 +974,7 @@ Then choose one small act and do it completely.</code></pre>
       </section>
 
       <section id="privacy">
-        <h2>10. Privacy and data</h2>
+        <h2>11. Privacy and data</h2>
         <ul>
           <li>
             In the standalone Mac application, saved conversations and settings
@@ -910,6 +994,10 @@ Then choose one small act and do it completely.</code></pre>
             those files yourself when you no longer need them.
           </li>
           <li>
+            If you use Database Upload, the complete database is copied to the
+            configured R2 bucket and protected by that account's access controls.
+          </li>
+          <li>
             Your API key is stored on the Mac and should be treated like a password.
           </li>
         </ul>
@@ -923,7 +1011,7 @@ Then choose one small act and do it completely.</code></pre>
       </section>
 
       <section id="troubleshooting">
-        <h2>11. Troubleshooting</h2>
+        <h2>12. Troubleshooting</h2>
         <div class="table-wrap">
           <table>
             <caption>Common problems</caption>
@@ -966,13 +1054,21 @@ Then choose one small act and do it completely.</code></pre>
                 <td>Typing Enter sends nothing.</td>
                 <td>This is expected. <kbd>Enter</kbd> adds a new line; use <kbd>Ctrl</kbd>+<kbd>Enter</kbd> or the Send button.</td>
               </tr>
+              <tr>
+                <td>Import and Export are disabled.</td>
+                <td>Add a nonempty <code>modify</code> path to the active <code>cha.toml</code>, then quit and reopen CHA.</td>
+              </tr>
+              <tr>
+                <td>Upload and Download are disabled.</td>
+                <td>Set all three <code>CHA_R2_URL</code>, <code>CHA_R2_ACCESS_KEY_ID</code>, and <code>CHA_R2_SECRET_ACCESS_KEY</code> values, then quit and reopen CHA.</td>
+              </tr>
             </tbody>
           </table>
         </div>
       </section>
 
       <section id="glossary">
-        <h2>12. Glossary</h2>
+        <h2>13. Glossary</h2>
         <div class="table-wrap">
           <table>
             <caption>Useful terms</caption>

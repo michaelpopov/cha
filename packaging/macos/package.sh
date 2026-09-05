@@ -61,7 +61,8 @@ fi
 destination="$output_parent/CHA.app"
 archive="$output_parent/CHA-macos-$version.zip"
 temporary="$output_parent/.cha-macos-$version.tmp.$$"
-application="$temporary/CHA.app"
+archive_contents="$temporary/archive"
+application="$archive_contents/CHA.app"
 contents="$application/Contents"
 resources="$contents/Resources"
 native_build="$repository/build/package-macos"
@@ -181,6 +182,7 @@ bundle_test="$temporary/bundle-test"
 mkdir -p "$bundle_test/logs"
 cat >"$bundle_test/cha.toml" <<EOF
 data = "cha.sqlite3"
+modify = "modify"
 
 [web]
 host = "127.0.0.1"
@@ -232,16 +234,17 @@ codesign --force --sign - --timestamp=none "$contents/Frameworks/libChaRuntime.d
 codesign --force --sign - --timestamp=none "$application"
 codesign --verify --deep --strict "$application"
 
+echo "==> Writing copyable archive"
+cp "$repository/cha.toml" "$archive_contents/cha.toml"
+rm -f "$archive"
+ditto -c -k --sequesterRsrc "$archive_contents" "$archive"
+
 if [ -e "$destination" ]; then
     cmake -E remove_directory "$destination"
 fi
 mv "$application" "$destination"
 cmake -E remove_directory "$temporary"
 trap - EXIT HUP INT TERM
-
-echo "==> Writing copyable archive"
-rm -f "$archive"
-ditto -c -k --sequesterRsrc --keepParent "$destination" "$archive"
 
 echo "macOS application: $destination"
 echo "macOS archive: $archive"

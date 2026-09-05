@@ -111,27 +111,31 @@ flowchart LR
 
 There are four kinds of long-lived information:
 
-- Process configuration — the database path, optional Markdown mirror, web
-  listener, and diagnostic log settings — lives in one external TOML file.
+- Process configuration — the database path, optional Markdown mirror and
+  modification directory, web listener, and diagnostic log settings — lives in
+  one external TOML file.
   `chaweb` reads it before opening the database; it is never materialized into
   the workspace or stored in SQLite.
 
 - Discovery — the roster, descriptions, and Markdown the browser lists — is
   materialized from committed database rows, read once per `Workspace`,
   validated as a whole, and shared immutably until a narrow committed mutation
-  publishes a replacement or the process restarts after offline import.
-- Sessions read eagerly owned configuration from the published `Workspace`;
-  neither the import source nor an export directory is consulted at runtime.
+  publishes a replacement, including after an in-process macOS Import or
+  Download operation.
+- Sessions read eagerly owned configuration from the published `Workspace`.
+  Import and export directories are consulted only during an explicit
+  maintenance operation.
 - Conversation state is dynamic. A live controller owns an in-memory view and
   writes durable turn transitions into its own rows of the one workspace
   session database.
 
-This split explains why creating a session appears immediately while an
-operator's configuration edit requires stop/export/edit/import/restart.
+This split explains why creating a session appears immediately. The console
+configuration workflow still requires stop/export/edit/import/restart; CHA.app
+performs Import and Export through its Database menu without restarting.
 
 ## 3. Build graph and dependency direction
 
-Start with [CMakeLists.txt](../CMakeLists.txt). The native build has three
+Start with [CMakeLists.txt](../CMakeLists.txt). The native build has four
 important production targets:
 
 | Target | Role |
@@ -211,8 +215,10 @@ keys use its SHA-256 implementation, independently of curl's TLS backend.
 | [src/web](../src/web) | Native protocol, routes, actor, Markdown mirror, mailbox, lifecycle, shutdown |
 | [webapp/src](../webapp/src) | Browser state, transcript presentation, composer, and API client |
 | [tests](../tests) | Behavioral examples grouped by the same subsystem boundaries |
+| [cha.toml](../cha.toml) | External process-configuration example included beside CHA.app in the macOS zip |
 | [packaging/linux/cha.toml.example](../packaging/linux/cha.toml.example) | External process-configuration example |
 | [packaging/linux/import-seed](../packaging/linux/import-seed) | A configuration source tree to compare against the loaders and import filter |
+| [packaging/macos](../packaging/macos) | Swift launcher, C bridge, smoke test, and macOS packaging script |
 
 Headers in this project are unusually valuable: most ownership and thread
 contracts are written next to the types. Read a subsystem's public headers
@@ -402,6 +408,7 @@ The TOML shape is:
 ```toml
 data = "/var/lib/cha/workspace.sqlite3"
 mirror = "/home/user/cha-mirror"
+modify = "/home/user/cha-modify"
 
 [web]
 host = "0.0.0.0"
@@ -412,13 +419,20 @@ file = "logs/cha.log"
 level = "info"
 ```
 
-`mirror` is optional; omitting it disables filesystem mirroring. Relative
-`data`, `mirror`, and `logging.file` values resolve from the external config's
-directory. The mirror root must already exist and be a directory. Import
-additionally requires that file to be outside the source workspace, preventing
-the process config itself from becoming an imported metadata row. Import and
-export acquire the same non-blocking database lease as runtime, so they are
-deliberately offline.
+`mirror` is optional; omitting it disables filesystem mirroring. `modify` is
+also optional and names the directory used by CHA.app's Import and Export menu
+items. Relative `data`, `mirror`, `modify`, and `logging.file` values resolve
+from the external config's directory. A `modify` directory may not contain the
+external config or database, because the macOS Export operation replaces that
+directory. The mirror root must already exist and be a directory. Console
+Import additionally requires the config file to be outside the source
+workspace, preventing the process config itself from becoming an imported
+metadata row. Console Import and Export acquire the same non-blocking database
+lease as runtime, so they remain deliberately offline.
+
+The macOS zip contains `CHA.app` and the root `cha.toml` example. CHA.app keeps
+its active config at `~/Library/Application Support/CHA/cha.toml`; a new active
+config uses `modify = "modify"`, relative to that directory.
 
 A new database is created only after a source has been collected and validated
 successfully. Normal runtime and export require schema v2. Schema v1 is the
@@ -447,7 +461,7 @@ Startup proceeds in this order:
 
 1. `parse_application_command()` requires `--config`, validates top-level
    `data`, `[web]`, and `[logging]`, resolves relative paths from the external
-   file's directory, and separates runtime from the two offline transfer modes.
+   file's directory, and separates runtime from the four offline modes.
 2. `WorkspaceConfigStore::open()` acquires the database companion-file lease,
    rejects anything except valid schema v2, secures the database/sidecars, and
    enables WAL.
@@ -531,13 +545,13 @@ include must itself be stored, so `snippet.txt` is not available after
 materialization while `snippet.md` can be. Import validates a byte-identical
 private materialization before it commits the complete row set.
 
-Normal runtime never reads the import or export directory. The only online
+Normal requests never read the import or export directory. The narrow browser
 edits are character provider/style, forum default character, and forum default
 persona. `WorkspaceConfigStore` serializes each one, edits its private tree,
 loads a complete candidate, replaces all configuration rows in one SQLite
 transaction, and publishes after commit. There is no generation, type, control,
-or revision column. Other edits require stop, export to a missing or empty
-directory, edit, import, and restart.
+or revision column. Other edits use stop/export/edit/import/restart in console
+mode, or the in-process Export/Edit/Import workflow in CHA.app.
 
 ### 8.3 Provider selection
 
@@ -636,9 +650,10 @@ lease excludes other processes.
 ### 9.3 One lease, and the cutover guard
 
 `WorkspaceConfigStore` acquires `workspace.sqlite3.cha-lock` before opening the
-database and holds it through normal runtime. Import and export acquire the same
-lease for their full operation. Acquisition is non-blocking, so concurrent
-runtime/import/export fails before database use. A
+database and holds it through normal runtime. Console Import and Export acquire
+the same lease for their full operation; CHA.app keeps its already-held lease
+while closing database handles for maintenance. Acquisition is non-blocking,
+so a concurrent console runtime/import/export fails before database use. A
 companion file is used rather than the database bytes because it exists before
 the database is created, does not interfere with SQLite's own byte-range
 locking, and stays stable while WAL sidecars come and go. An empty companion
@@ -1157,7 +1172,8 @@ After the main actor path makes sense, scan the smaller adapters:
 
 | Files | Responsibility |
 | --- | --- |
-| `application_config.*` | Parse the mandatory external unified config, database/mode selection, and runtime asset root |
+| `application_config.*` | Parse the mandatory external unified config, optional `mirror`/`modify` paths, database/mode selection, and runtime asset root |
+| `application_runtime.*` | Compose one running application and serialize in-process database maintenance |
 | `asset_handler.*` | Serve the browser shell and staged static assets without owning session behavior |
 | `http_server.*` | Apply server-wide request, Host/Origin, timeout, and size policy |
 | `http_response.*`, `json.*`, `route_support.*` | Consistent JSON parsing, response bodies, route components, and mutation validation |
@@ -1166,15 +1182,14 @@ After the main actor path makes sense, scan the smaller adapters:
 | `owner_wake_signal.*` | Coalesce cross-thread wakeups for the actor loop |
 | `sse_stream.*` | Serialize mailbox payloads and heartbeats into `httplib::DataSink` |
 | `server_shutdown.*` | Bridge process signals to coordinated, bounded manager shutdown |
-| `application_runtime.*` | Compose one running application: open the store, build the manager and routes, bind a port, and run R2 transfers in process |
 | `r2_database_transfer.*` | Upload and download the workspace database over the S3 API |
 
 These modules keep `LiveSession` and the route files from accumulating generic
 HTTP, filesystem, and signal-handling details.
 
-Replacing the database while the server is running needs every writer to let
-go of it at once, so `ApplicationRuntime` takes three reservations in order
-before an upload or download:
+Database maintenance while the server is running needs every writer to let go
+of it at once, so `ApplicationRuntime` takes three reservations in order before
+Import, Export, Upload, or Download:
 
 1. `LiveSessionManager::reserve_global_maintenance()` stops admitting sessions,
    asks every live actor to release its journal connection, and waits for all
@@ -1185,10 +1200,20 @@ before an upload or download:
 3. `SessionRepository::reserve_maintenance()` fences repository operations and
    checkpoints the WAL back into the database file.
 
-Each reservation restores what it took when it is destroyed, in the reverse
-order, after the transfer has finished and the database has been reopened. If
-the reopen fails, the store cannot serve again and the runtime says so with
-`WorkspaceRestartRequiredError` rather than continuing without a handle.
+With the existing lease still held, Import replaces configuration rows from
+`modify`, Export first removes an existing `modify` directory and recreates it,
+and Upload/Download transfer the database through R2. Each reservation restores
+what it took when it is destroyed, in reverse order, after the operation has
+finished and the database has been reopened. Import and Download publish the
+reloaded workspace to the browser. If the reopen fails, the store cannot serve
+again and the runtime says so with `WorkspaceRestartRequiredError` rather than
+continuing without a handle.
+
+The Swift Database menu asks the C bridge which operations are available.
+Import and Export are enabled only when `modify` was present in the parsed
+TOML. Upload and Download are enabled only when `CHA_R2_URL`,
+`CHA_R2_ACCESS_KEY_ID`, and `CHA_R2_SECRET_ACCESS_KEY` are all nonempty. All
+four items are disabled while any database operation is in progress.
 
 ### 12.8 Markdown download and continuous mirroring
 
@@ -1515,8 +1540,8 @@ Errors are handled at the narrowest layer that can give them meaning:
 - Import validates before database modification. A failed new import leaves no
   database, a failed v1 upgrade leaves valid v1, and a failed v2 replacement
   leaves the previous complete configuration. Export never changes the
-  database; if writing began, its possibly incomplete destination must be
-  emptied before retry.
+  database. Console Export requires a missing or empty destination; macOS
+  Export deliberately replaces the configured `modify` directory.
 - External application-config errors fail before runtime opens the configured
   database; the process file is never part of workspace publication.
 - A configured mirror whose root is missing or unusable, or whose initial
@@ -1795,8 +1820,9 @@ an owning web snapshot.
 than deleting older rows.
 
 **Lease:** Cross-process exclusive ownership of the unified database. Normal
-runtime holds it through `WorkspaceConfigStore`; import and export hold the same
-lease for their complete offline operation.
+runtime holds it through `WorkspaceConfigStore`; console Import and Export
+acquire the same lease, while CHA.app retains its runtime lease during
+in-process maintenance.
 
 **Model history:** An owning immutable transcript snapshot shared with workers for context
 projection.

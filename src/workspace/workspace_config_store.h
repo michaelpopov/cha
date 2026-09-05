@@ -17,17 +17,24 @@ struct WorkspaceConfigTransfer {
     std::size_t file_count{};
 };
 
-// Offline directory-to-database conversion. The caller supplies ordinary
-// filesystem paths; the store acquires the CHA lease, validates a
-// byte-identical materialization of the rows it will commit, and never
-// starts HTTP or provider threads.
+enum class WorkspaceConfigLease {
+    acquire,
+    already_held,
+};
+
+// Directory-to-database conversion. By default the store acquires the CHA
+// lease, validates a byte-identical materialization of the rows it will commit,
+// and never starts HTTP or provider threads. A running application may instead
+// keep its existing lease while its database handles are closed.
 WorkspaceConfigTransfer import_workspace_configuration(
     const std::filesystem::path& source_directory,
-    const std::filesystem::path& database_path);
+    const std::filesystem::path& database_path,
+    WorkspaceConfigLease lease = WorkspaceConfigLease::acquire);
 
 WorkspaceConfigTransfer export_workspace_configuration(
     const std::filesystem::path& database_path,
-    const std::filesystem::path& destination_directory);
+    const std::filesystem::path& destination_directory,
+    WorkspaceConfigLease lease = WorkspaceConfigLease::acquire);
 
 // Reported when a runtime edit committed to SQLite but in-memory publication
 // failed, or when pre-commit restoration of the materialized tree failed.

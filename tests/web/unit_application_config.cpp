@@ -86,6 +86,7 @@ TEST_F(ApplicationConfigTest, LoadsUnifiedExternalConfigWithEqualsSyntax) {
         command.log_file,
         std::filesystem::weakly_canonical(config_.parent_path() / "logs/cha.log"));
     EXPECT_EQ(command.log_level, "info");
+    EXPECT_FALSE(command.modify);
     EXPECT_FALSE(command.import_directory);
     EXPECT_FALSE(command.export_directory);
     EXPECT_FALSE(command.upload);
@@ -133,6 +134,34 @@ TEST_F(ApplicationConfigTest, LoadsOptionalMirrorRelativeToConfig) {
     EXPECT_EQ(
         *command.mirror,
         std::filesystem::weakly_canonical(root_ / "mirror"));
+}
+
+TEST_F(ApplicationConfigTest, LoadsOptionalModifyRelativeToConfig) {
+    write_config(
+        "data = \"../data/workspace.sqlite3\"\n"
+        "modify = \"../modify\"\n"
+        "[web]\nhost = \"127.0.0.1\"\nport = 8080\n"
+        "[logging]\nfile = \"logs/cha.log\"\nlevel = \"info\"\n");
+
+    const ApplicationCommand command =
+        load({"chaweb", "--config", config_.string()});
+    ASSERT_TRUE(command.modify);
+    EXPECT_EQ(
+        *command.modify,
+        std::filesystem::weakly_canonical(root_ / "modify"));
+}
+
+TEST_F(ApplicationConfigTest, RejectsModifyContainingConfigOrDatabase) {
+    write_config(
+        "data = \"../data/workspace.sqlite3\"\n"
+        "modify = \"..\"\n"
+        "[web]\nhost = \"127.0.0.1\"\nport = 8080\n"
+        "[logging]\nfile = \"logs/cha.log\"\nlevel = \"info\"\n");
+
+    EXPECT_NE(
+        error_text({"chaweb", "--config", config_.string()})
+            .find("must not contain the config or database"),
+        std::string::npos);
 }
 
 TEST_F(ApplicationConfigTest, RejectsAnEmptyMirrorPath) {

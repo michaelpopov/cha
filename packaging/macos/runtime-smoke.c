@@ -66,6 +66,11 @@ static int check(const char* what, int status, int expected) {
 int main(int argc, const char* argv[]) {
     if (argc != 4) return 2;
     if (setenv("OPENAI_API_KEY", "package-check", 1) != 0) return 1;
+    if (unsetenv("CHA_R2_URL") != 0
+        || unsetenv("CHA_R2_ACCESS_KEY_ID") != 0
+        || unsetenv("CHA_R2_SECRET_ACCESS_KEY") != 0) {
+        return 1;
+    }
 
     static const char* const token = "package-private-token";
     char* error = NULL;
@@ -74,6 +79,22 @@ int main(int argc, const char* argv[]) {
     }
     ChaRuntime* runtime = cha_runtime_create(argv[1], argv[3], token, &error);
     if (!runtime) return fail(error);
+    if (!cha_runtime_can_modify(runtime)
+        || cha_runtime_can_transfer_r2(runtime)) {
+        fprintf(stderr,
+            "embedded runtime smoke test failed: incorrect menu capabilities\n");
+        cha_runtime_destroy(runtime);
+        return 1;
+    }
+    if (setenv("CHA_R2_URL", "set", 1) != 0
+        || setenv("CHA_R2_ACCESS_KEY_ID", "set", 1) != 0
+        || setenv("CHA_R2_SECRET_ACCESS_KEY", "set", 1) != 0
+        || !cha_runtime_can_transfer_r2(runtime)) {
+        fprintf(stderr,
+            "embedded runtime smoke test failed: R2 menu capability missing\n");
+        cha_runtime_destroy(runtime);
+        return 1;
+    }
 
     const int port = cha_runtime_port(runtime);
     int served = port > 0;
@@ -86,6 +107,18 @@ int main(int argc, const char* argv[]) {
         served = check("/ without the cookie", http_status(port, "/", NULL), 404)
             & check("/health", http_status(port, "/health", token), 200)
             & check("/", http_status(port, "/", token), 200);
+    }
+
+    uint64_t file_count = 0;
+    if (served && cha_runtime_export_configuration(
+            runtime, &file_count, &error) != 1) {
+        cha_runtime_destroy(runtime);
+        return fail(error);
+    }
+    if (served && cha_runtime_import_configuration(
+            runtime, &file_count, &error) != 1) {
+        cha_runtime_destroy(runtime);
+        return fail(error);
     }
 
     cha_runtime_destroy(runtime);

@@ -40,6 +40,35 @@ private struct RuntimeHandle: @unchecked Sendable {
     let pointer: OpaquePointer
 }
 
+private enum DatabaseOperation {
+    case importConfiguration
+    case exportConfiguration
+    case upload
+    case download
+
+    var progressTitle: String {
+        switch self {
+        case .importConfiguration: return "Importing"
+        case .exportConfiguration: return "Exporting"
+        case .upload: return "Uploading"
+        case .download: return "Downloading"
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .importConfiguration: return "Import"
+        case .exportConfiguration: return "Export"
+        case .upload: return "Upload"
+        case .download: return "Download"
+        }
+    }
+
+    var reloadsApplication: Bool {
+        self == .importConfiguration || self == .download
+    }
+}
+
 private struct DownloadDestination {
     let temporaryURL: URL
     let finalURL: URL
@@ -54,10 +83,12 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
     private var runtime: OpaquePointer?
     private var runtimeURL: URL?
     private var runtimeToken = ""
+    private var importMenuItem: NSMenuItem!
+    private var exportMenuItem: NSMenuItem!
     private var uploadMenuItem: NSMenuItem!
     private var downloadMenuItem: NSMenuItem!
     private var downloadDestinations: [ObjectIdentifier: DownloadDestination] = [:]
-    private var databaseTransferInProgress = false
+    private var databaseOperationInProgress = false
     private var terminationPending = false
     private var quitting = false
 
@@ -96,12 +127,12 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
         true
     }
 
-    // A transfer runs off the main thread against the runtime pointer, and
-    // applicationWillTerminate destroys it. Quitting therefore waits for the
-    // transfer to hand the pointer back, rather than freeing it underneath.
+    // A database operation runs off the main thread against the runtime pointer,
+    // and applicationWillTerminate destroys it. Quitting therefore waits for
+    // the operation to hand the pointer back, rather than freeing it underneath.
     func applicationShouldTerminate(
         _ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard databaseTransferInProgress else { return .terminateNow }
+        guard databaseOperationInProgress else { return .terminateNow }
         terminationPending = true
         return .terminateLater
     }
@@ -140,8 +171,19 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
         let databaseItem = NSMenuItem()
         let databaseMenu = NSMenu(title: "Database")
         // Without this AppKit recomputes the items from their target/action and
-        // the greying-out during a transfer never shows.
+        // the greying-out during an operation never shows.
         databaseMenu.autoenablesItems = false
+        importMenuItem = databaseMenu.addItem(
+            withTitle: "Import…",
+            action: #selector(importConfiguration(_:)),
+            keyEquivalent: "")
+        importMenuItem.target = self
+        exportMenuItem = databaseMenu.addItem(
+            withTitle: "Export",
+            action: #selector(exportConfiguration(_:)),
+            keyEquivalent: "")
+        exportMenuItem.target = self
+        databaseMenu.addItem(.separator())
         uploadMenuItem = databaseMenu.addItem(
             withTitle: "Upload",
             action: #selector(uploadDatabase(_:)),
@@ -152,6 +194,7 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
             action: #selector(downloadDatabase(_:)),
             keyEquivalent: "")
         downloadMenuItem.target = self
+        updateDatabaseMenuItems()
         databaseItem.submenu = databaseMenu
         mainMenu.addItem(databaseItem)
 
@@ -217,6 +260,7 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
         if !fileManager.fileExists(atPath: configFile.path) {
             try writePrivateFile("""
                 data = "cha.sqlite3"
+                modify = "modify"
 
                 # CHA.app does not use this section. It always listens on
                 # 127.0.0.1 on a port the system picks, reachable only from
@@ -411,6 +455,7 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
         }
         runtime = created
         runtimeURL = url
+        updateDatabaseMenuItems()
     }
 
     private func showApplication() {
@@ -440,7 +485,7 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
     }
 
     @objc private func uploadDatabase(_ sender: Any?) {
-        performDatabaseTransfer(download: false)
+        performDatabaseOperation(.upload)
     }
 
     @objc private func downloadDatabase(_ sender: Any?) {
@@ -452,32 +497,57 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
         alert.addButton(withTitle: "Download")
         alert.addButton(withTitle: "Cancel")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
-        performDatabaseTransfer(download: true)
+        performDatabaseOperation(.download)
     }
 
-    private func performDatabaseTransfer(download: Bool) {
-        guard !databaseTransferInProgress, let runtime else { return }
+    @objc private func importConfiguration(_ sender: Any?) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Import workspace configuration?"
+        alert.informativeText =
+            "CHA will replace its workspace configuration with the contents of the directory named by “modify” in cha.toml."
+        alert.addButton(withTitle: "Import")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        performDatabaseOperation(.importConfiguration)
+    }
+
+    @objc private func exportConfiguration(_ sender: Any?) {
+        performDatabaseOperation(.exportConfiguration)
+    }
+
+    private func performDatabaseOperation(_ operation: DatabaseOperation) {
+        guard !databaseOperationInProgress, let runtime else { return }
         let runtimeHandle = RuntimeHandle(pointer: runtime)
-        databaseTransferInProgress = true
-        uploadMenuItem.isEnabled = false
-        downloadMenuItem.isEnabled = false
-        let operation = download ? "Downloading" : "Uploading"
-        window.title = "\(applicationName) — \(operation)…"
+        databaseOperationInProgress = true
+        updateDatabaseMenuItems()
+        window.title = "\(applicationName) — \(operation.progressTitle)…"
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            var byteCount: UInt64 = 0
+            var count: UInt64 = 0
             var bridgeError: UnsafeMutablePointer<CChar>?
-            let succeeded = download
-                ? cha_runtime_download(runtimeHandle.pointer, &byteCount, &bridgeError)
-                : cha_runtime_upload(runtimeHandle.pointer, &byteCount, &bridgeError)
+            let succeeded: Int32
+            switch operation {
+            case .importConfiguration:
+                succeeded = cha_runtime_import_configuration(
+                    runtimeHandle.pointer, &count, &bridgeError)
+            case .exportConfiguration:
+                succeeded = cha_runtime_export_configuration(
+                    runtimeHandle.pointer, &count, &bridgeError)
+            case .upload:
+                succeeded = cha_runtime_upload(
+                    runtimeHandle.pointer, &count, &bridgeError)
+            case .download:
+                succeeded = cha_runtime_download(
+                    runtimeHandle.pointer, &count, &bridgeError)
+            }
             let errorMessage = bridgeError.map { String(cString: $0) }
             cha_string_free(bridgeError)
 
             DispatchQueue.main.async {
                 guard let self else { return }
-                self.databaseTransferInProgress = false
-                self.uploadMenuItem.isEnabled = true
-                self.downloadMenuItem.isEnabled = true
+                self.databaseOperationInProgress = false
+                self.updateDatabaseMenuItems()
                 if self.terminationPending {
                     self.terminationPending = false
                     NSApp.reply(toApplicationShouldTerminate: true)
@@ -493,20 +563,41 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
                 }
                 guard succeeded != 0 else {
                     self.showNotice(
-                        download ? "Download failed" : "Upload failed",
+                        "\(operation.title) failed",
                         detail: errorMessage ?? "CHA encountered an unknown error.")
                     return
                 }
-                if download, let runtimeURL = self.runtimeURL {
+                if operation.reloadsApplication, let runtimeURL = self.runtimeURL {
                     self.webView.load(URLRequest(url: runtimeURL))
                 }
-                let size = ByteCountFormatter.string(
-                    fromByteCount: Int64(byteCount), countStyle: .file)
+                let detail: String
+                switch operation {
+                case .importConfiguration:
+                    detail = "Imported \(count) files."
+                case .exportConfiguration:
+                    detail = "Exported \(count) files."
+                case .upload, .download:
+                    let size = ByteCountFormatter.string(
+                        fromByteCount: Int64(count), countStyle: .file)
+                    detail = "Transferred \(size)."
+                }
                 self.showNotice(
-                    download ? "Download complete" : "Upload complete",
-                    detail: "Transferred \(size).")
+                    "\(operation.title) complete",
+                    detail: detail)
             }
         }
+    }
+
+    private func updateDatabaseMenuItems() {
+        let canModify = runtime.map { cha_runtime_can_modify($0) != 0 } ?? false
+        let canTransferR2 = runtime.map {
+            cha_runtime_can_transfer_r2($0) != 0
+        } ?? false
+        let idle = !databaseOperationInProgress
+        importMenuItem.isEnabled = idle && canModify
+        exportMenuItem.isEnabled = idle && canModify
+        uploadMenuItem.isEnabled = idle && canTransferR2
+        downloadMenuItem.isEnabled = idle && canTransferR2
     }
 
     func webView(

@@ -143,12 +143,13 @@ struct ApplicationRuntime::Impl {
     // there, such as a start() that failed after the providers were built.
     ~Impl() { providers.shutdown(); }
 
-    R2DatabaseTransfer transfer(bool download) {
-        const std::lock_guard operation(lifecycle_mutex);
+    template<typename Operation>
+    auto maintain_database(Operation operation) {
+        const std::lock_guard lifecycle(lifecycle_mutex);
         if (unusable) {
             throw WorkspaceRestartRequiredError(
                 "The workspace database could not be reopened after an earlier "
-                "transfer. Restart is required");
+                "maintenance operation. Restart is required");
         }
         if (!started || stopped) {
             throw std::runtime_error("CHA runtime is not running");
@@ -173,11 +174,7 @@ struct ApplicationRuntime::Impl {
         bool reopened = false;
 
         try {
-            const R2DatabaseTransfer result = download
-                ? download_database_from_r2(
-                    command.database, R2DatabaseLease::already_held)
-                : upload_database_to_r2(
-                    command.database, R2DatabaseLease::already_held);
+            auto result = operation();
             reopen(database, repository);
             reopened = true;
             return result;
@@ -330,11 +327,46 @@ void ApplicationRuntime::shutdown() {
 }
 
 R2DatabaseTransfer ApplicationRuntime::upload_database() {
-    return impl_->transfer(false);
+    return impl_->maintain_database([this] {
+        return upload_database_to_r2(
+            impl_->command.database, R2DatabaseLease::already_held);
+    });
 }
 
 R2DatabaseTransfer ApplicationRuntime::download_database() {
-    return impl_->transfer(true);
+    return impl_->maintain_database([this] {
+        return download_database_from_r2(
+            impl_->command.database, R2DatabaseLease::already_held);
+    });
+}
+
+WorkspaceConfigTransfer ApplicationRuntime::import_configuration() {
+    if (!impl_->command.modify) {
+        throw std::runtime_error(
+            "Application config requires 'modify' for Import");
+    }
+    return impl_->maintain_database([this] {
+        return import_workspace_configuration(
+            *impl_->command.modify,
+            impl_->command.database,
+            WorkspaceConfigLease::already_held);
+    });
+}
+
+WorkspaceConfigTransfer ApplicationRuntime::export_configuration() {
+    if (!impl_->command.modify) {
+        throw std::runtime_error(
+            "Application config requires 'modify' for Export");
+    }
+    return impl_->maintain_database([this] {
+        if (std::filesystem::is_directory(*impl_->command.modify)) {
+            std::filesystem::remove_all(*impl_->command.modify);
+        }
+        return export_workspace_configuration(
+            impl_->command.database,
+            *impl_->command.modify,
+            WorkspaceConfigLease::already_held);
+    });
 }
 
 } // namespace cha::web

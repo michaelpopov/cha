@@ -22,6 +22,8 @@ ChaRuntime* cha_runtime_create(
     char** error);
 void cha_runtime_destroy(ChaRuntime* runtime);
 int32_t cha_runtime_port(const ChaRuntime* runtime);
+int32_t cha_runtime_can_modify(const ChaRuntime* runtime);
+int32_t cha_runtime_can_transfer_r2(const ChaRuntime* runtime);
 
 // Seeds the database named by the config file from seed_path. Does nothing
 // and reports success when that database already exists, so the launcher can
@@ -40,6 +42,14 @@ int32_t cha_runtime_upload(
 int32_t cha_runtime_download(
     ChaRuntime* runtime,
     uint64_t* byte_count,
+    char** error);
+int32_t cha_runtime_import_configuration(
+    ChaRuntime* runtime,
+    uint64_t* file_count,
+    char** error);
+int32_t cha_runtime_export_configuration(
+    ChaRuntime* runtime,
+    uint64_t* file_count,
     char** error);
 
 void cha_string_free(char* value);

@@ -29,6 +29,7 @@ struct ParsedOptions {
 struct ApplicationSettings {
     std::filesystem::path database;
     std::optional<std::filesystem::path> mirror;
+    std::optional<std::filesystem::path> modify;
     std::string host;
     int port{};
     std::filesystem::path log_file;
@@ -214,13 +215,21 @@ ApplicationSettings load_application_settings(
     }
     const toml::table root = toml::parse(input, utf8_path(config_file));
     reject_unknown_fields(
-        root, config_file, {"data", "mirror", "web", "logging"}, "root");
+        root,
+        config_file,
+        {"data", "mirror", "modify", "web", "logging"},
+        "root");
 
     const std::string data = required_string(root, config_file, "data");
     std::optional<std::filesystem::path> mirror;
     if (root.contains("mirror")) {
         const std::string value = required_string(root, config_file, "mirror");
         mirror = resolve_config_path(config_file, "mirror", value);
+    }
+    std::optional<std::filesystem::path> modify;
+    if (root.contains("modify")) {
+        const std::string value = required_string(root, config_file, "modify");
+        modify = resolve_config_path(config_file, "modify", value);
     }
     const toml::table& web = required_table(root, config_file, "web");
     reject_unknown_fields(web, config_file, {"host", "port"}, "[web]");
@@ -240,6 +249,7 @@ ApplicationSettings load_application_settings(
     return {
         .database = resolve_config_path(config_file, "data", data),
         .mirror = std::move(mirror),
+        .modify = std::move(modify),
         .host = host,
         .port = *port,
         .log_file = resolve_config_path(config_file, "logging.file", log_file),
@@ -313,6 +323,13 @@ ApplicationCommand parse_application_command(
     }
 
     const ApplicationSettings settings = load_application_settings(*options.config);
+    if (settings.modify
+        && (path_is_under(*settings.modify, *options.config)
+            || path_is_under(*settings.modify, settings.database))) {
+        throw std::runtime_error(
+            "Application config '" + utf8_path(*options.config)
+            + "' field 'modify' must not contain the config or database.");
+    }
     const std::filesystem::path root = offline
         ? std::filesystem::path{}
         : options.root.value_or(
@@ -320,6 +337,7 @@ ApplicationCommand parse_application_command(
     return {
         .database = settings.database,
         .mirror = settings.mirror,
+        .modify = settings.modify,
         .import_directory = options.import_directory,
         .export_directory = options.export_directory,
         .upload = options.upload,

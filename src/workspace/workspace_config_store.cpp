@@ -797,14 +797,17 @@ void commit_imported_rows(
 
 WorkspaceConfigTransfer import_workspace_configuration(
     const std::filesystem::path& source_directory,
-    const std::filesystem::path& database_path) {
+    const std::filesystem::path& database_path,
+    WorkspaceConfigLease lease_mode) {
     const std::filesystem::path source =
         require_existing_directory(source_directory, "Import source");
     const std::filesystem::path database = normalize_path(database_path);
     (void)require_existing_directory(database.parent_path(), "Database parent");
 
-    SessionLease lease = SessionLease::acquire(database, busy_message(database));
-    (void)lease;
+    std::optional<SessionLease> lease;
+    if (lease_mode == WorkspaceConfigLease::acquire) {
+        lease.emplace(SessionLease::acquire(database, busy_message(database)));
+    }
 
     const bool database_exists =
         std::filesystem::is_regular_file(inspected_status(database));
@@ -822,14 +825,17 @@ WorkspaceConfigTransfer import_workspace_configuration(
 
 WorkspaceConfigTransfer export_workspace_configuration(
     const std::filesystem::path& database_path,
-    const std::filesystem::path& destination_directory) {
+    const std::filesystem::path& destination_directory,
+    WorkspaceConfigLease lease_mode) {
     const std::filesystem::path database = normalize_path(database_path);
     (void)require_existing_directory(database.parent_path(), "Database parent");
     const std::filesystem::path destination =
         normalize_path(destination_directory);
 
-    SessionLease lease = SessionLease::acquire(database, busy_message(database));
-    (void)lease;
+    std::optional<SessionLease> lease;
+    if (lease_mode == WorkspaceConfigLease::acquire) {
+        lease.emplace(SessionLease::acquire(database, busy_message(database)));
+    }
 
     secure_workspace_session_database_files(database);
     const WorkspaceDatabaseState state =

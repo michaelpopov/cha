@@ -2,6 +2,7 @@
 
 #include "web/application_config.h"
 #include "web/r2_database_transfer.h"
+#include "workspace/workspace_config_store.h"
 
 #include <memory>
 #include <string>
@@ -29,6 +30,8 @@ public:
 
     [[nodiscard]] R2DatabaseTransfer upload_database();
     [[nodiscard]] R2DatabaseTransfer download_database();
+    [[nodiscard]] WorkspaceConfigTransfer import_configuration();
+    [[nodiscard]] WorkspaceConfigTransfer export_configuration();
 
 private:
     struct Impl;

@@ -9,6 +9,7 @@ namespace cha::web {
 struct ApplicationCommand {
     std::filesystem::path database;
     std::optional<std::filesystem::path> mirror;
+    std::optional<std::filesystem::path> modify;
     std::optional<std::filesystem::path> import_directory;
     std::optional<std::filesystem::path> export_directory;
     bool upload{};
@@ -24,7 +25,7 @@ struct ApplicationCommand {
 };
 
 // Parses the public command line and its required external TOML file. Relative
-// data and logging paths are resolved from the configuration file's directory.
+// paths in that file are resolved from the configuration file's directory.
 ApplicationCommand parse_application_command(
     int argc,
     const char* const* argv);

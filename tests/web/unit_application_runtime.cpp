@@ -183,6 +183,55 @@ TEST(ApplicationRuntime, DownloadsInProcessAndPublishesTheNewWorkspace) {
     runtime->shutdown();
 }
 
+TEST(ApplicationRuntime, ExportsInProcessAndReplacesModifyDirectory) {
+    test::TestWorkspace workspace;
+    const std::filesystem::path database =
+        test::import_test_database(workspace.root());
+    const std::filesystem::path modify = workspace.root() / "modify";
+    std::filesystem::create_directories(modify);
+    std::ofstream(modify / "stale.txt") << "stale";
+    ApplicationCommand command = make_command(workspace, database);
+    command.modify = modify;
+    auto runtime = ApplicationRuntime::open(command, "private-test-token");
+    (void)runtime->start();
+
+    const WorkspaceConfigTransfer transferred =
+        runtime->export_configuration();
+    EXPECT_GT(transferred.file_count, 0U);
+    EXPECT_FALSE(std::filesystem::exists(modify / "stale.txt"));
+    EXPECT_TRUE(std::filesystem::is_regular_file(
+        modify / "forums" / "lobby" / "config.toml"));
+    runtime->shutdown();
+}
+
+TEST(ApplicationRuntime, ImportsInProcessAndPublishesTheNewWorkspace) {
+    test::TestWorkspace local_workspace;
+    test::TestWorkspace modified_workspace;
+    modified_workspace.add_persona("modified", "Modified Persona");
+    const std::filesystem::path database =
+        test::import_test_database(local_workspace.root());
+    ApplicationCommand command = make_command(local_workspace, database);
+    command.modify = modified_workspace.root();
+    auto runtime = ApplicationRuntime::open(command, "private-test-token");
+    const int port = runtime->start();
+
+    const WorkspaceConfigTransfer transferred =
+        runtime->import_configuration();
+    EXPECT_GT(transferred.file_count, 0U);
+
+    httplib::Client client("127.0.0.1", port);
+    const auto bootstrap = client.Get(
+        "/api/v1/bootstrap", httplib::Headers{
+            {"Cookie", "CHA_RUNTIME=private-test-token"}});
+    ASSERT_TRUE(bootstrap);
+    ASSERT_EQ(bootstrap->status, 200) << bootstrap->body;
+    const auto personas = nlohmann::json::parse(bootstrap->body).at("personas");
+    EXPECT_TRUE(std::ranges::any_of(personas, [](const auto& persona) {
+        return persona.at("id") == "modified";
+    }));
+    runtime->shutdown();
+}
+
 TEST(ApplicationRuntime, AFailedReopenIsFatalAndRefusesLaterTransfers) {
     ScopedEnvironmentVariable url("CHA_R2_URL");
     ScopedEnvironmentVariable access("CHA_R2_ACCESS_KEY_ID");
