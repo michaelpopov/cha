@@ -37,6 +37,7 @@ import {
   type AppState,
 } from '../state/view';
 import { SidebarIcon } from './Icons';
+import { OpenAiConnectionScreen } from './OpenAiConnection';
 import {
   CharacterDetailScreen,
   CharacterSettingsScreen,
@@ -157,6 +158,13 @@ function Screen({
       <NewSessionScreen
         dispatch={dispatch}
         onCreateSession={onCreateSession}
+        sessionReport={sessionReport}
+        state={state}
+      />
+    );
+    case 'openai': return (
+      <OpenAiConnectionScreen
+        client={client}
         sessionReport={sessionReport}
         state={state}
       />

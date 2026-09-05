@@ -171,11 +171,49 @@ Verify these cases explicitly:
 Update this section as the durable block record and stop before changing
 macOS startup or package defaults.
 
-- Status: not started.
-- Changed files, client methods, component, and route/view name: none yet.
-- Poll scheduling/cleanup and retry behavior: not implemented.
+- Status: complete.
+- Changed files, client methods, component, and route/view name:
+  - `webapp/src/api/client.ts`: typed `OpenAiAuth` plus
+    `getOpenAiAuth` (`GET /api/v1/openai/auth`),
+    `startOpenAiAuth` (`POST /api/v1/openai/auth/login`, body `{}`),
+    `pollOpenAiAuth` (`POST /api/v1/openai/auth/poll`, body `{}`),
+    `disconnectOpenAiAuth` (`POST /api/v1/openai/auth/disconnect`, body `{}`).
+    Reuses `requestJson` / `jsonMutation` / existing error conversion.
+  - `webapp/src/state/view.ts`: `MainView` `'openai'`, action `'show-openai'`,
+    topbar title `OpenAI`. Switching to/from this view keeps
+    `activeConversation`, `inspectedCharacterId`, and
+    `characterSettingsAvailable`.
+  - `webapp/src/components/Sidebar.tsx`: **OpenAI** primary destination.
+  - `webapp/src/components/OpenAiConnection.tsx`: `OpenAiConnectionScreen`.
+    App routes `mainView === 'openai'` to it. Fetches status on enter.
+  - Also: `Icons.tsx`, `App.tsx`, `app.css`, `fixtures.ts`, client/view/App
+    tests, `OpenAiConnection.test.tsx`, `e2e/shell.spec.ts`.
+- Poll scheduling/cleanup and retry behavior:
+  One `setTimeout` from `next_poll_delay_ms` (or `0`). The next timer is
+  scheduled only after that poll returns, using the returned delay. An
+  epoch plus `cancelled` flag ignore stale completions after navigation,
+  unmount, or Cancel/Disconnect; an ignored in-flight poll does not
+  recreate a timer or overwrite the new view. HTTP errors stop polling and
+  offer **Try again**, which reloads `GET` status. Snapshot `error` is
+  shown in the existing alert UI; signed-out reconnect is **Connect ChatGPT**.
+  Cancel and Disconnect both call `disconnectOpenAiAuth`. Conflicting
+  buttons disable while a mutation is in flight; Cancel remains available
+  during a poll.
 - Verification link's actual navigation/new-window behavior for block 5:
-  not implemented.
-- Commands, test counts, browser smoke, and results: not run.
-- Remaining work or unavailable checks: none recorded.
-- Ready for block 5: no; requires the working shared page and passing checks.
+  Waiting renders a normal `<a href={verification_url} target="_blank"
+  rel="noopener noreferrer">` whose href is the snapshot URL
+  (`https://auth.openai.com/codex/device`). It opens only on a user click.
+  No `window.open`, callback tokens, or Swift bridge. CHA stays on the
+  connection page and continues polling.
+- Commands, test counts, browser smoke, and results:
+  - `cd webapp && npm run check`: api-types match; typecheck; 184 vitest
+    tests passed (was 167).
+  - `cd webapp && npm run build`: production bundle built.
+  - `cmake --preset ninja && cmake --build build/ninja --target chaweb_app`
+  - `cd webapp && npx playwright test`: 37 passed (20 served + 17 chromium),
+    including signed-out smoke: sidebar **OpenAI** shows **Connect ChatGPT**.
+- Remaining work or unavailable checks: none for this block. Automated
+  tests are synthetic and subscription-free; live ChatGPT login was not
+  required. Stop before macOS startup or package defaults.
+- Ready for block 5: yes. The shared page, client methods, poll lifecycle,
+  `target="_blank"` verification link, and checks are in place.

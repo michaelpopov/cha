@@ -27,6 +27,7 @@ tags:
   - name: Shell
   - name: Service
   - name: Discovery
+  - name: OpenAI
   - name: Stored sessions
   - name: Live sessions
 
@@ -101,6 +102,94 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Bootstrap"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/openai/auth:
+    get:
+      tags: [OpenAI]
+      operationId: getOpenAiAuth
+      summary: Get the ChatGPT connection snapshot
+      description: |
+        Returns displayable connection status only. This read does not call
+        OpenAI. A `waiting` snapshot is enough for the browser to resume an
+        unexpired device login after a page reload.
+
+        The snapshot never includes tokens, account IDs, email, device IDs,
+        authorization codes, or verifiers. `Cache-Control` is `no-store`.
+      responses:
+        "200":
+          $ref: "#/components/responses/OpenAiAuth"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/openai/auth/login:
+    post:
+      tags: [OpenAI]
+      operationId: startOpenAiAuth
+      summary: Start or resume ChatGPT device login
+      description: |
+        Starts one workspace device login, or returns the current pending
+        attempt. A connected account must be disconnected first. The request
+        body is `{}`. `Cache-Control` is `no-store`, including error responses.
+      requestBody:
+        $ref: "#/components/requestBodies/EmptyJsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/OpenAiAuth"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/ForbiddenMutation"
+        "413":
+          $ref: "#/components/responses/BodyTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/openai/auth/poll:
+    post:
+      tags: [OpenAI]
+      operationId: pollOpenAiAuth
+      summary: Poll the pending ChatGPT device login once
+      description: |
+        Performs at most one eligible owner poll. An early request returns the
+        current snapshot without calling OpenAI. The request body is `{}`.
+        `next_poll_delay_ms` is the wait the browser can pass to `setTimeout`.
+        `Cache-Control` is `no-store`, including error responses.
+      requestBody:
+        $ref: "#/components/requestBodies/EmptyJsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/OpenAiAuth"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/ForbiddenMutation"
+        "413":
+          $ref: "#/components/responses/BodyTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/openai/auth/disconnect:
+    post:
+      tags: [OpenAI]
+      operationId: disconnectOpenAiAuth
+      summary: Cancel pending login or disconnect ChatGPT
+      description: |
+        Cancels a pending device login or disconnects the saved account and
+        removes the private credential file. The request body is `{}`.
+        `Cache-Control` is `no-store`, including error responses.
+      requestBody:
+        $ref: "#/components/requestBodies/EmptyJsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/OpenAiAuth"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/ForbiddenMutation"
+        "413":
+          $ref: "#/components/responses/BodyTooLarge"
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -778,6 +867,42 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/CommandResult"
+    OpenAiAuth:
+      description: |
+        Displayable ChatGPT connection snapshot. Waiting is the only status
+        that includes a user code, verification URL, attempt expiry, and
+        next-poll delay.
+      headers:
+        Cache-Control:
+          schema:
+            type: string
+            const: no-store
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/OpenAiAuth"
+          examples:
+            signed_out:
+              summary: No ChatGPT account is connected
+              value:
+                status: signed_out
+            waiting:
+              summary: Device login in progress
+              value:
+                status: waiting
+                user_code: TEST-ONLY
+                verification_url: https://auth.openai.com/codex/device
+                attempt_expires_at: 1700000900
+                next_poll_delay_ms: 1000
+            connected:
+              summary: ChatGPT account is connected
+              value:
+                status: connected
+            signed_out_with_error:
+              summary: Login failed; reconnect is manual
+              value:
+                status: signed_out
+                error: OpenAI login failed.
 
   schemas:
     Identifier:
@@ -789,6 +914,43 @@ components:
     EmptyObject:
       type: object
       additionalProperties: false
+
+    OpenAiAuth:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [signed_out, waiting, connected]
+        user_code:
+          type: string
+          description: |
+            Present only while `status` is `waiting`. The code the user enters
+            at the verification URL.
+        verification_url:
+          type: string
+          format: uri
+          description: |
+            Present only while `status` is `waiting`. Always
+            `https://auth.openai.com/codex/device`.
+        attempt_expires_at:
+          $ref: "#/components/schemas/UnixTimestamp"
+          description: |
+            Present only while `status` is `waiting`. Unix seconds when this
+            pending login expires. The browser can compare with `Date.now()/1000`.
+        next_poll_delay_ms:
+          type: integer
+          minimum: 0
+          description: |
+            Present only while `status` is `waiting`. Milliseconds until the
+            next eligible `POST /api/v1/openai/auth/poll`. The browser can pass
+            this value to `setTimeout`.
+        error:
+          type: string
+          description: |
+            Sanitized operator-facing message when the last owner operation
+            failed. Omitted when there is no such message.
 
     Health:
       type: object

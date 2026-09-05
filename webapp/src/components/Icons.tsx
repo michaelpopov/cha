@@ -59,6 +59,15 @@ export function ForumsIcon(props: IconProps) {
   );
 }
 
+export function OpenAiIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="8" cy="12" r="3" {...stroke} />
+      <path d="M11 12h9M17.5 9.5 20 12l-2.5 2.5" {...stroke} />
+    </Icon>
+  );
+}
+
 export function MessageIcon(props: IconProps) {
   return (
     <Icon {...props}>

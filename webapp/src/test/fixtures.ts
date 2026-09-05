@@ -4,6 +4,7 @@ import type {
   CharacterAppearance,
   CharacterDetail,
   ForumDetail,
+  OpenAiAuth,
   PersonaDetail,
   SessionSnapshot,
 } from '../api/client';
@@ -112,6 +113,18 @@ export const forumDetailFixture: ForumDetail = {
   forum_markdown: '# House rules\n\nA **deliberate** place to talk.\n\n- Ask one thing\n- Start a session per question',
 };
 
+export const signedOutAuth: OpenAiAuth = { status: 'signed_out' };
+
+export const waitingAuth: OpenAiAuth = {
+  status: 'waiting',
+  user_code: 'TEST-ONLY',
+  verification_url: 'https://auth.openai.com/codex/device',
+  attempt_expires_at: 1700000900,
+  next_poll_delay_ms: 1000,
+};
+
+export const connectedAuth: OpenAiAuth = { status: 'connected' };
+
 export const snapshotFixture: SessionSnapshot = {
   forum: bootstrapFixture.forums[0],
   session_id: 'welcome',
@@ -149,6 +162,10 @@ export function fixtureClient(overrides: Partial<ChaClient> = {}): ChaClient {
     submitInput: async () => ({ clear_input: true }),
     stopGeneration: async () => ({ clear_input: false }),
     setDefaultCharacter: async () => ({ clear_input: false }),
+    getOpenAiAuth: async () => signedOutAuth,
+    startOpenAiAuth: async () => signedOutAuth,
+    pollOpenAiAuth: async () => signedOutAuth,
+    disconnectOpenAiAuth: async () => signedOutAuth,
     ...overrides,
   };
 }

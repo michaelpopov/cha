@@ -242,6 +242,7 @@ add_library(cha_web STATIC
     src/web/http_server.cpp
     src/web/json.cpp
     src/web/lobby_routes.cpp
+    src/web/openai_auth_routes.cpp
     src/web/protocol.cpp
     src/web/route_support.cpp
     src/web/session_markdown.cpp
@@ -356,6 +357,7 @@ if(BUILD_TESTING)
         tests/web/unit_session_projection.cpp
         tests/web/unit_browser_connection_state.cpp
         tests/web/unit_lobby_routes.cpp
+        tests/web/unit_openai_auth_routes.cpp
         tests/web/unit_session_routes.cpp
         tests/web/unit_live_session_manager.cpp
         tests/web/unit_sse_mailbox.cpp

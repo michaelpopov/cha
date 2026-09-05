@@ -1,5 +1,7 @@
 #include "web/application_runtime.h"
 
+#include "providers/openai_oauth.h"
+#include "providers/provider_client.h"
 #include "providers/providers.h"
 #include "session/session_repository.h"
 #include "util/logging.h"
@@ -11,6 +13,7 @@
 #include "web/http_server.h"
 #include "web/live_session_manager.h"
 #include "web/lobby_routes.h"
+#include "web/openai_auth_routes.h"
 #include "web/server_shutdown.h"
 #include "web/session_mirror.h"
 #include "web/session_routes.h"
@@ -98,6 +101,19 @@ std::shared_ptr<const Workspace> current_workspace() {
     return workspace;
 }
 
+std::filesystem::path openai_credential_path(
+    const std::filesystem::path& database) {
+    std::filesystem::path path = database;
+    path += ".openai-auth.json";
+    return path;
+}
+
+ProviderClientFactory shared_openai_provider_factory(OpenAiOAuth* oauth) {
+    return [oauth](SharedCharacterDefinition definition) {
+        return std::make_unique<ProviderClient>(std::move(definition), oauth);
+    };
+}
+
 } // namespace
 
 struct ApplicationRuntime::Impl {
@@ -106,7 +122,10 @@ struct ApplicationRuntime::Impl {
         std::string selected_access_token)
         : command(selected_command),
           access_token(std::move(selected_access_token)),
-          store(WorkspaceConfigStore::open(command.database)) {
+          store(WorkspaceConfigStore::open(command.database)),
+          openai_auth(std::make_unique<OpenAiOAuth>(
+              openai_credential_path(store->database_path()))),
+          providers(shared_openai_provider_factory(openai_auth.get())) {
         configure_test_idle_grace(settings, command);
         const auto seed = TemporarySessionSeed{
             {std::string(entrance_id), std::string(welcome_id)},
@@ -218,6 +237,7 @@ struct ApplicationRuntime::Impl {
     std::unique_ptr<WorkspaceConfigStore> store;
     std::shared_ptr<const SessionRepository> sessions;
     std::shared_ptr<SessionMirror> mirror;
+    std::unique_ptr<OpenAiOAuth> openai_auth;
     Providers providers;
     std::unique_ptr<LiveSessionManager> live_sessions;
     std::unique_ptr<httplib::Server> server;
@@ -274,6 +294,7 @@ int ApplicationRuntime::start(int port_override) {
         impl_->settings,
         *impl_->store,
         impl_->mirror).install(*server);
+    OpenAiAuthRoutes(*impl_->openai_auth, impl_->settings).install(*server);
     SessionRoutes(
         *impl_->live_sessions, impl_->settings, assets).install(*server);
     log_startup(impl_->settings);

@@ -14,6 +14,7 @@ export type OpenSessionResult = components['schemas']['OpenSessionResult'];
 export type SessionSnapshot = components['schemas']['SessionSnapshot'];
 export type CommandResult = components['schemas']['CommandResult'];
 export type InputRequest = components['schemas']['InputRequest'];
+export type OpenAiAuth = components['schemas']['OpenAiAuth'];
 export type ErrorCode = components['schemas']['ErrorResponse']['error']['code'];
 
 // Generated API unions are compile-time only. Keeping the runtime list checked
@@ -97,6 +98,10 @@ export interface ChaClient {
     sessionId: string,
     characterId: string,
   ): Promise<CommandResult>;
+  getOpenAiAuth(): Promise<OpenAiAuth>;
+  startOpenAiAuth(): Promise<OpenAiAuth>;
+  pollOpenAiAuth(): Promise<OpenAiAuth>;
+  disconnectOpenAiAuth(): Promise<OpenAiAuth>;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -315,6 +320,26 @@ export function createChaClient(
       fetcher,
       sessionApiUrl(forumId, sessionId, 'actions/default-character'),
       jsonMutation({ character_id: characterId }),
+    ),
+
+    getOpenAiAuth: () => requestJson<OpenAiAuth>(fetcher, '/api/v1/openai/auth'),
+
+    startOpenAiAuth: () => requestJson<OpenAiAuth>(
+      fetcher,
+      '/api/v1/openai/auth/login',
+      jsonMutation({}),
+    ),
+
+    pollOpenAiAuth: () => requestJson<OpenAiAuth>(
+      fetcher,
+      '/api/v1/openai/auth/poll',
+      jsonMutation({}),
+    ),
+
+    disconnectOpenAiAuth: () => requestJson<OpenAiAuth>(
+      fetcher,
+      '/api/v1/openai/auth/disconnect',
+      jsonMutation({}),
     ),
   };
 }

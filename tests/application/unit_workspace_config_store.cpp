@@ -4,6 +4,7 @@
 #include "support/test_workspace.h"
 #include "util/environment.h"
 #include "util/path_name.h"
+#include "util/private_filesystem.h"
 #include "workspace/workspace.h"
 #include "workspace/workspace_config_store.h"
 
@@ -291,6 +292,30 @@ TEST_F(WorkspaceConfigStoreTest, RoundTripsAcceptedFilesByteForByte) {
     EXPECT_TRUE(std::filesystem::is_directory(export_ / "personas"));
     EXPECT_TRUE(std::filesystem::is_directory(export_ / "characters"));
     EXPECT_TRUE(std::filesystem::is_directory(export_ / "forums"));
+}
+
+TEST_F(WorkspaceConfigStoreTest, LeavesOpenAiAuthFileOutOfImportAndExport) {
+    import_from_source();
+    std::filesystem::path auth = database();
+    auth += ".openai-auth.json";
+    const std::string secret =
+        R"({"access_token":"store-access-secret","refresh_token":"store-refresh-secret","expires_at":2000000000,"account_id":"acct_store"})";
+    create_private_file(auth, secret);
+    write_bytes(source() / "notes.openai-auth.json", secret);
+
+    export_workspace_configuration(database(), export_);
+    EXPECT_EQ(file_bytes(auth), secret);
+    EXPECT_FALSE(std::filesystem::exists(
+        export_ / "workspace.sqlite3.openai-auth.json"));
+    EXPECT_FALSE(std::filesystem::exists(export_ / "notes.openai-auth.json"));
+    EXPECT_EQ(
+        file_bytes(database()).find("store-access-secret"), std::string::npos);
+
+    write_bytes(source() / "personas" / "reader" / "PERSONA.md", "updated\n");
+    import_from_source();
+    EXPECT_EQ(file_bytes(auth), secret);
+    EXPECT_EQ(
+        file_bytes(database()).find("store-access-secret"), std::string::npos);
 }
 
 TEST_F(WorkspaceConfigStoreTest, SynthesizesMissingForumMemberMarker) {

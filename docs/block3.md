@@ -183,12 +183,73 @@ editing, but must match actual tests. Before handoff verify:
 Persist the actual interface and verification here, not in duplicate overview
 notes. Stop before implementing the page or macOS startup.
 
-- Status: not started.
-- Changed files and runtime/factory/lifetime arrangement: none yet.
-- Exact response fields and timing units: not implemented.
-- Synthetic examples for signed out, waiting, connected, and errors: not yet.
-- Route method names/behavior and generated type names: not implemented.
-- Commands, test counts, and results: not run.
-- Remaining work, limitations, or unavailable checks: none recorded.
-- Ready for block 4: no; requires the working shared API, generated types,
-  safe response examples, and passing checks.
+- Status: complete.
+- Changed files and runtime/factory/lifetime arrangement:
+  - `src/web/application_runtime.cpp`: after `WorkspaceConfigStore::open`
+    normalizes the database path and takes the exclusive lease, constructs one
+    `OpenAiOAuth` at `<store->database_path()>.openai-auth.json` (so
+    `/srv/cha/cha.sqlite3` → `/srv/cha/cha.sqlite3.openai-auth.json`). The
+    owner is an `Impl` member declared before `Providers`. `Providers` is
+    constructed with a factory that does
+    `ProviderClient(definition, openai_auth.get())`. Ordinary providers ignore
+    the non-owning pointer; subscription clients use the same owner.
+    Maintenance/import/export/R2 close SQLite only and do not recreate the
+    owner, reload credentials, or disconnect. Shutdown stops HTTP, then
+    `providers.shutdown()`, then the `Impl` destructor destroys `Providers`
+    before `OpenAiOAuth`.
+  - `src/web/openai_auth_routes.h/.cpp`: four root-scoped handlers; each calls
+    one owner operation (`status`/`start`/`poll`/`disconnect`).
+  - `CMakeLists.txt`: register the new source and `unit_openai_auth_routes.cpp`.
+  - `resources/cha.yaml`, generated `webapp/src/api/schema.d.ts`.
+  - Tests: `tests/web/unit_openai_auth_routes.cpp`,
+    `tests/web/unit_application_runtime.cpp`,
+    `tests/application/unit_workspace_config_store.cpp`.
+  - Packaging guards: `packaging/macos/package.sh`,
+    `scripts/check-linux-package.sh` reject `*.openai-auth.json`.
+- Exact response fields and timing units:
+  JSON object with required `status`: `signed_out` | `waiting` | `connected`.
+  Only `waiting` also has `user_code` (string), `verification_url` (always
+  `https://auth.openai.com/codex/device`), `attempt_expires_at` (Unix seconds,
+  compare with `Date.now()/1000`), `next_poll_delay_ms` (milliseconds, pass to
+  `setTimeout`). Optional `error` is a sanitized string, omitted when unused.
+  POST bodies are `{}`. All auth responses, including errors, send
+  `Cache-Control: no-store`. HTTP errors use the existing envelope
+  `{error:{code,message}}` (`bad_request`, `forbidden_origin`,
+  `body_too_large`). Status GET does not call upstream.
+- Synthetic examples for signed out, waiting, connected, and errors:
+  - signed out: `{"status":"signed_out"}`
+  - waiting: `{"status":"waiting","user_code":"TEST-ONLY","verification_url":"https://auth.openai.com/codex/device","attempt_expires_at":1700000900,"next_poll_delay_ms":1000}`
+  - connected: `{"status":"connected"}`
+  - signed out with owner error: `{"status":"signed_out","error":"OpenAI login failed."}`
+  - malformed POST: `400` `{"error":{"code":"bad_request","message":"Expected a JSON request body."}}`
+  - foreign Origin: `403` `{"error":{"code":"forbidden_origin","message":"Request origin is not allowed."}}`
+  Waiting fields, tokens, account IDs, device IDs, authorization codes, and
+  verifiers are absent from signed-out/connected snapshots and from error
+  bodies.
+- Route method names/behavior and generated type names:
+  - `GET /api/v1/openai/auth` → `getOpenAiAuth` → owner `status()`
+  - `POST /api/v1/openai/auth/login` → `startOpenAiAuth` → owner `start()`
+    (returns the current pending attempt if one exists)
+  - `POST /api/v1/openai/auth/poll` → `pollOpenAiAuth` → owner `poll()`
+    (early/repeated calls share next-poll timing; at most one upstream poll)
+  - `POST /api/v1/openai/auth/disconnect` → `disconnectOpenAiAuth` → owner
+    `disconnect()` (cancels pending login or removes credentials; one browser
+    can cancel a login started by another)
+  Snapshot type: `components["schemas"]["OpenAiAuth"]`. Empty POST body:
+  `components["requestBodies"]["EmptyJsonObject"]`. Do not add client methods
+  or a connection page here.
+- Commands, test counts, and results:
+  - `cmake --preset ninja`
+  - `cmake --build build/ninja --target cha_tests cha_web_tests`
+  - `./build/ninja/cha_tests --gtest_list_tests`: 432 tests
+  - `./build/ninja/cha_web_tests --gtest_list_tests`: 196 tests
+  - `./build/ninja/cha_tests`: 430 passed, 2 skipped (live, env not set)
+  - `./build/ninja/cha_web_tests`: 196 passed
+  - `cd webapp && npm run api-types && npm run check`: generated types match;
+    typecheck and 167 vitest tests passed
+- Remaining work, limitations, or unavailable checks: none for this block.
+  Live OpenAI login is not required here; synthetic credentials only. Cookie
+  gate remains for macOS; Linux `chaweb` is still unauthenticated. Stop before
+  the connection page or macOS startup.
+- Ready for block 4: yes. The shared API, generated types, safe examples, and
+  checks are in place.

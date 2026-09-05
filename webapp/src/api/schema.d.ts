@@ -98,6 +98,98 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/openai/auth": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get the ChatGPT connection snapshot
+         * @description Returns displayable connection status only. This read does not call
+         *     OpenAI. A `waiting` snapshot is enough for the browser to resume an
+         *     unexpired device login after a page reload.
+         *
+         *     The snapshot never includes tokens, account IDs, email, device IDs,
+         *     authorization codes, or verifiers. `Cache-Control` is `no-store`.
+         */
+        get: operations["getOpenAiAuth"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/openai/auth/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start or resume ChatGPT device login
+         * @description Starts one workspace device login, or returns the current pending
+         *     attempt. A connected account must be disconnected first. The request
+         *     body is `{}`. `Cache-Control` is `no-store`, including error responses.
+         */
+        post: operations["startOpenAiAuth"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/openai/auth/poll": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Poll the pending ChatGPT device login once
+         * @description Performs at most one eligible owner poll. An early request returns the
+         *     current snapshot without calling OpenAI. The request body is `{}`.
+         *     `next_poll_delay_ms` is the wait the browser can pass to `setTimeout`.
+         *     `Cache-Control` is `no-store`, including error responses.
+         */
+        post: operations["pollOpenAiAuth"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/openai/auth/disconnect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cancel pending login or disconnect ChatGPT
+         * @description Cancels a pending device login or disconnects the saved account and
+         *     removes the private credential file. The request body is `{}`.
+         *     `Cache-Control` is `no-store`, including error responses.
+         */
+        post: operations["disconnectOpenAiAuth"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/characters/{character_id}": {
         parameters: {
             query?: never;
@@ -472,6 +564,37 @@ export interface components {
         /** @example lobby */
         Identifier: string;
         EmptyObject: Record<string, never>;
+        OpenAiAuth: {
+            /** @enum {string} */
+            status: "signed_out" | "waiting" | "connected";
+            /**
+             * @description Present only while `status` is `waiting`. The code the user enters
+             *     at the verification URL.
+             */
+            user_code?: string;
+            /**
+             * Format: uri
+             * @description Present only while `status` is `waiting`. Always
+             *     `https://auth.openai.com/codex/device`.
+             */
+            verification_url?: string;
+            /**
+             * @description Present only while `status` is `waiting`. Unix seconds when this
+             *     pending login expires. The browser can compare with `Date.now()/1000`.
+             */
+            attempt_expires_at?: components["schemas"]["UnixTimestamp"];
+            /**
+             * @description Present only while `status` is `waiting`. Milliseconds until the
+             *     next eligible `POST /api/v1/openai/auth/poll`. The browser can pass
+             *     this value to `setTimeout`.
+             */
+            next_poll_delay_ms?: number;
+            /**
+             * @description Sanitized operator-facing message when the last owner operation
+             *     failed. Omitted when there is no such message.
+             */
+            error?: string;
+        };
         Health: {
             /** @constant */
             ready: true;
@@ -791,6 +914,20 @@ export interface components {
                 "application/json": components["schemas"]["CommandResult"];
             };
         };
+        /**
+         * @description Displayable ChatGPT connection snapshot. Waiting is the only status
+         *     that includes a user code, verification URL, attempt expiry, and
+         *     next-poll delay.
+         */
+        OpenAiAuth: {
+            headers: {
+                "Cache-Control"?: "no-store";
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["OpenAiAuth"];
+            };
+        };
     };
     parameters: {
         /** @description Stable URL-safe forum identifier. */
@@ -884,6 +1021,67 @@ export interface operations {
                     "application/json": components["schemas"]["Bootstrap"];
                 };
             };
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getOpenAiAuth: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["OpenAiAuth"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    startOpenAiAuth: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: components["requestBodies"]["EmptyJsonObject"];
+        responses: {
+            200: components["responses"]["OpenAiAuth"];
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["ForbiddenMutation"];
+            413: components["responses"]["BodyTooLarge"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    pollOpenAiAuth: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: components["requestBodies"]["EmptyJsonObject"];
+        responses: {
+            200: components["responses"]["OpenAiAuth"];
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["ForbiddenMutation"];
+            413: components["responses"]["BodyTooLarge"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    disconnectOpenAiAuth: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: components["requestBodies"]["EmptyJsonObject"];
+        responses: {
+            200: components["responses"]["OpenAiAuth"];
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["ForbiddenMutation"];
+            413: components["responses"]["BodyTooLarge"];
             500: components["responses"]["InternalError"];
         };
     };

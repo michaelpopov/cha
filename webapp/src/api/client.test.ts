@@ -48,6 +48,10 @@ describe('CHA API client', () => {
       reasoning_effort: null,
       web_search: null,
     });
+    await client.getOpenAiAuth();
+    await client.startOpenAiAuth();
+    await client.pollOpenAiAuth();
+    await client.disconnectOpenAiAuth();
 
     expect(fetcher.mock.calls.map(([url]) => url)).toEqual([
       '/api/v1/bootstrap',
@@ -64,6 +68,10 @@ describe('CHA API client', () => {
       '/s/forum/session/api/v1/actions/stop',
       '/s/forum/session/api/v1/actions/default-character',
       '/api/v1/characters/a%20b',
+      '/api/v1/openai/auth',
+      '/api/v1/openai/auth/login',
+      '/api/v1/openai/auth/poll',
+      '/api/v1/openai/auth/disconnect',
     ]);
 
     expect(fetcher.mock.calls[0][1]?.method).toBeUndefined();
@@ -85,6 +93,16 @@ describe('CHA API client', () => {
     expect(fetcher.mock.calls[13][1]?.body).toBe(
       '{"provider":"terra","style":null,"reasoning_effort":null,"web_search":null}',
     );
+    expect(fetcher.mock.calls[14][1]?.method).toBeUndefined();
+    expect(new Headers(fetcher.mock.calls[14][1]?.headers).get('Accept')).toBe('application/json');
+    expect(fetcher.mock.calls[15][1]?.method).toBe('POST');
+    expect(new Headers(fetcher.mock.calls[15][1]?.headers).get('Content-Type'))
+      .toBe('application/json');
+    expect(fetcher.mock.calls[15][1]?.body).toBe('{}');
+    expect(fetcher.mock.calls[16][1]?.method).toBe('POST');
+    expect(fetcher.mock.calls[16][1]?.body).toBe('{}');
+    expect(fetcher.mock.calls[17][1]?.method).toBe('POST');
+    expect(fetcher.mock.calls[17][1]?.body).toBe('{}');
     expect(sessionEventsUrl('f one', 's/two')).toBe('/s/f%20one/s%2Ftwo/api/v1/events');
   });
 
@@ -124,6 +142,19 @@ describe('CHA API client', () => {
   it('rejects a session snapshot whose shape the contract does not describe', async () => {
     const client = createChaClient(async () => jsonResponse({ session_id: 'one' }));
     await expect(client.getSessionSnapshot('forum', 'one')).rejects.toThrow(TypeError);
+  });
+
+  it('reports OpenAI auth errors through the existing envelope', async () => {
+    const client = createChaClient(async () => jsonResponse({
+      error: { code: 'bad_request', message: 'Expected a JSON request body.' },
+    }, 400));
+
+    await expect(client.startOpenAiAuth()).rejects.toEqual(expect.objectContaining({
+      name: 'ChaError',
+      status: 400,
+      code: 'bad_request',
+      message: 'Expected a JSON request body.',
+    }));
   });
 
   it('turns a transport failure into a fixed message without leaking exception details', async () => {

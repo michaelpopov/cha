@@ -104,7 +104,7 @@ fi
 if find "$application" -type f \( \
     -name '*.sqlite3' -o -name '*.sqlite' -o -name '*.db' \
     -o -name '*-wal' -o -name '*-shm' -o -name '*-journal' \
-    -o -name '*.cha-lock' \) -print -quit | grep -q .; then
+    -o -name '*.cha-lock' -o -name '*.openai-auth.json' \) -print -quit | grep -q .; then
     echo "package check: a database, sidecar, journal, or lock leaked into the application" >&2
     exit 1
 fi

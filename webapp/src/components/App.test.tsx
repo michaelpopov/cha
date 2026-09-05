@@ -21,6 +21,7 @@ import {
   personaDetailFixture,
   serifItalicVoice,
   snapshotFixture,
+  waitingAuth,
 } from '../test/fixtures';
 import { App } from './App';
 
@@ -926,6 +927,49 @@ it('names an unavailable API, hides arbitrary exception details, and retries sta
   fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
   expect(await screen.findByLabelText('Current chat context')).toHaveTextContent('Entrance');
   expect(getBootstrap).toHaveBeenCalledTimes(2);
+});
+
+it('opens the OpenAI page, fetches status, and keeps the selected conversation', async () => {
+  const getOpenAiAuth = vi.fn(async () => ({ status: 'signed_out' as const }));
+  render(
+    <App
+      client={fixtureClient({ getOpenAiAuth })}
+      connectSessionEvents={inertSessionEvents}
+    />,
+  );
+  await screen.findByLabelText('Current chat context');
+
+  fireEvent.click(screen.getByRole('button', { name: 'OpenAI' }));
+  expect(await screen.findByRole('heading', { name: 'OpenAI' })).toBeInTheDocument();
+  expect(await screen.findByRole('button', { name: 'Connect ChatGPT' })).toBeEnabled();
+  expect(getOpenAiAuth).toHaveBeenCalledTimes(1);
+
+  fireEvent.click(screen.getByRole('button', { name: 'WelcomeEntrance' }));
+  expect(await screen.findByLabelText('Current chat context')).toHaveTextContent('Entrance');
+  expect(screen.queryByRole('button', { name: 'Connect ChatGPT' })).not.toBeInTheDocument();
+});
+
+it('does not let a late OpenAI status replace a newly selected view', async () => {
+  let finish!: (snapshot: typeof waitingAuth) => void;
+  const getOpenAiAuth = vi.fn(() => new Promise<typeof waitingAuth>((resolve) => {
+    finish = resolve;
+  }));
+  render(
+    <App
+      client={fixtureClient({ getOpenAiAuth })}
+      connectSessionEvents={inertSessionEvents}
+    />,
+  );
+  fireEvent.click(await screen.findByRole('button', { name: 'OpenAI' }));
+  expect(await screen.findByText('Loading ChatGPT connection…')).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole('button', { name: 'Characters' }));
+  expect(await screen.findByLabelText('Characters navigation')).toBeInTheDocument();
+  await act(async () => { finish(waitingAuth); });
+
+  expect(screen.getByLabelText('Characters navigation')).toBeInTheDocument();
+  expect(screen.queryByText('TEST-ONLY')).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Connect ChatGPT' })).not.toBeInTheDocument();
 });
 
 it('contains the amended chat controls and no Settings entry point', async () => {

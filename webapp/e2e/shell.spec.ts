@@ -202,6 +202,15 @@ test('accepts a JSON mutation with matching Host and Origin', async ({ page }) =
   expect(result.body).toMatchObject({ label: expect.stringMatching(/^Proxy smoke test /) });
 });
 
+test('opens the OpenAI connection page in the signed-out state', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.getByLabel('Current chat context')).toContainText('Entrance');
+  await page.getByRole('button', { name: 'OpenAI' }).click();
+  await expect(page.getByRole('heading', { name: 'OpenAI' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Connect ChatGPT' })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Connect ChatGPT' })).toBeVisible();
+});
+
 test('renders discovery screens from the server workspace', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByLabel('Current chat context')).toContainText('Entrance');
@@ -304,6 +313,7 @@ test('lays every screen out inside the visible panel', async ({ page }) => {
     async () => page.getByRole('button', { name: 'Forums' }).click(),
     async () => on('Forums').getByRole('button', { name: /The Lobby/ }).click(),
     async () => on('Forum sessions').getByRole('button', { name: /New session/ }).click(),
+    async () => page.getByRole('button', { name: 'OpenAI' }).click(),
   ];
 
   for (const step of steps) {

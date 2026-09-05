@@ -34,6 +34,7 @@ describe('application navigation reducer', () => {
       { type: 'show-forums' },
       { type: 'select-forum', forumId: 'lobby' },
       { type: 'show-new-session' },
+      { type: 'show-openai' },
       { type: 'show-chat' },
     ];
 
@@ -196,6 +197,29 @@ describe('application navigation reducer', () => {
       type: 'character-detail-loaded', characterId: 'assistant', writable: false,
     });
     expect(state.characterSettingsAvailable).toBe(false);
+  });
+
+  it('preserves conversation and character-settings state on the OpenAI page', () => {
+    let state = readyState();
+    state = appReducer(state, { type: 'inspect-character', characterId: 'guide' });
+    state = appReducer(state, {
+      type: 'character-detail-loaded', characterId: 'guide', writable: true,
+    });
+    state = appReducer(state, { type: 'show-character-settings' });
+    const conversation = state.activeConversation;
+
+    state = appReducer(state, { type: 'show-openai' });
+    expect(state.mainView).toBe('openai');
+    expect(navigationTitle(state)).toBe('OpenAI');
+    expect(state.activeConversation).toEqual(conversation);
+    expect(state.inspectedCharacterId).toBe('guide');
+    expect(state.characterSettingsAvailable).toBe(true);
+
+    state = appReducer(state, { type: 'show-chat' });
+    expect(state.mainView).toBe('chat');
+    expect(state.activeConversation).toEqual(conversation);
+    expect(state.inspectedCharacterId).toBe('guide');
+    expect(state.characterSettingsAvailable).toBe(true);
   });
 
   it('ignores a character detail that finished loading after the reader left it', () => {
