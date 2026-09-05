@@ -162,7 +162,7 @@ function Screen({
         state={state}
       />
     );
-    case 'openai': return (
+    case 'settings': return (
       <OpenAiConnectionScreen
         client={client}
         sessionReport={sessionReport}

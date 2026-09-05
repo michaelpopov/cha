@@ -929,7 +929,7 @@ it('names an unavailable API, hides arbitrary exception details, and retries sta
   expect(getBootstrap).toHaveBeenCalledTimes(2);
 });
 
-it('opens the OpenAI page, fetches status, and keeps the selected conversation', async () => {
+it('opens Settings from the gear, fetches OpenAI status, and keeps the conversation', async () => {
   const getOpenAiAuth = vi.fn(async () => ({ status: 'signed_out' as const }));
   render(
     <App
@@ -939,8 +939,10 @@ it('opens the OpenAI page, fetches status, and keeps the selected conversation',
   );
   await screen.findByLabelText('Current chat context');
 
-  fireEvent.click(screen.getByRole('button', { name: 'OpenAI' }));
-  expect(await screen.findByRole('heading', { name: 'OpenAI' })).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'OpenAI' })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+  expect(await screen.findByRole('heading', { name: 'Settings' })).toBeInTheDocument();
+  expect(screen.getByRole('heading', { name: 'OpenAI' })).toBeInTheDocument();
   expect(await screen.findByRole('button', { name: 'Connect ChatGPT' })).toBeEnabled();
   expect(getOpenAiAuth).toHaveBeenCalledTimes(1);
 
@@ -949,7 +951,7 @@ it('opens the OpenAI page, fetches status, and keeps the selected conversation',
   expect(screen.queryByRole('button', { name: 'Connect ChatGPT' })).not.toBeInTheDocument();
 });
 
-it('does not let a late OpenAI status replace a newly selected view', async () => {
+it('does not let a late OpenAI status replace a view selected after Settings', async () => {
   let finish!: (snapshot: typeof waitingAuth) => void;
   const getOpenAiAuth = vi.fn(() => new Promise<typeof waitingAuth>((resolve) => {
     finish = resolve;
@@ -960,7 +962,7 @@ it('does not let a late OpenAI status replace a newly selected view', async () =
       connectSessionEvents={inertSessionEvents}
     />,
   );
-  fireEvent.click(await screen.findByRole('button', { name: 'OpenAI' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Settings' }));
   expect(await screen.findByText('Loading ChatGPT connection…')).toBeInTheDocument();
 
   fireEvent.click(screen.getByRole('button', { name: 'Characters' }));
@@ -972,11 +974,12 @@ it('does not let a late OpenAI status replace a newly selected view', async () =
   expect(screen.queryByRole('button', { name: 'Connect ChatGPT' })).not.toBeInTheDocument();
 });
 
-it('contains the amended chat controls and no Settings entry point', async () => {
+it('contains the main navigation and a Settings gear instead of an OpenAI row', async () => {
   renderAt(1280);
   expect(await screen.findByRole('combobox', { name: 'Choose target character' })).toBeDisabled();
   expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
-  expect(screen.queryByRole('button', { name: 'Settings' })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Settings' })).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'OpenAI' })).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Personas' })).toBeInTheDocument();
 });
 

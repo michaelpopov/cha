@@ -59,11 +59,12 @@ export function ForumsIcon(props: IconProps) {
   );
 }
 
-export function OpenAiIcon(props: IconProps) {
+export function SettingsIcon(props: IconProps) {
   return (
     <Icon {...props}>
-      <circle cx="8" cy="12" r="3" {...stroke} />
-      <path d="M11 12h9M17.5 9.5 20 12l-2.5 2.5" {...stroke} />
+      <circle cx="12" cy="12" r="3" {...stroke} />
+      <path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M18.7 5.3l-1.4 1.4M6.7 17.3l-1.4 1.4" {...stroke} />
+      <circle cx="12" cy="12" r="7" {...stroke} />
     </Icon>
   );
 }

@@ -12,7 +12,7 @@ export type MainView =
   | 'sessions'
   | 'forum-detail'
   | 'new-session'
-  | 'openai';
+  | 'settings';
 
 export type BootstrapStatus = 'loading' | 'ready' | 'failed' | 'incompatible';
 export type StreamStatus =
@@ -88,7 +88,7 @@ export type AppAction =
   | { type: 'show-sessions' }
   | { type: 'show-forum-detail' }
   | { type: 'show-new-session' }
-  | { type: 'show-openai' }
+  | { type: 'show-settings' }
   | { type: 'show-chat' }
   | { type: 'session-operation-started'; message: string }
   | { type: 'session-operation-failed'; message: string; retryable?: boolean }
@@ -233,8 +233,8 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return { ...state, mainView: 'forum-detail', ...idleSessionOperation() };
     case 'show-new-session':
       return { ...state, mainView: 'new-session', ...idleSessionOperation() };
-    case 'show-openai':
-      return { ...state, mainView: 'openai', ...idleSessionOperation() };
+    case 'show-settings':
+      return { ...state, mainView: 'settings', ...idleSessionOperation() };
     case 'show-chat':
       return { ...state, mainView: 'chat', ...idleSessionOperation() };
     case 'session-operation-started':
@@ -332,7 +332,7 @@ export function navigationTitle(state: AppState): string | null {
         ({ id }) => id === state.currentForumId,
       )?.display_name ?? 'Forum';
     case 'new-session': return 'New session';
-    case 'openai': return 'OpenAI';
+    case 'settings': return 'Settings';
     case 'chat': return null;
   }
 }

@@ -53,7 +53,7 @@ describe('OpenAI connection screen', () => {
 
     renderConnection(fixtureClient({ getOpenAiAuth: async () => waitingAuth }));
     expect(await screen.findByText('TEST-ONLY')).toBeInTheDocument();
-    const link = screen.getByRole('link', { name: 'https://auth.openai.com/codex/device' });
+    const link = screen.getByRole('link', { name: 'the ChatGPT device page' });
     expect(link).toHaveAttribute('href', 'https://auth.openai.com/codex/device');
     expect(link).toHaveAttribute('target', '_blank');
     expect(link).toHaveAttribute('rel', 'noopener noreferrer');
@@ -102,7 +102,7 @@ describe('OpenAI connection screen', () => {
     const open = vi.spyOn(window, 'open');
     renderConnection(fixtureClient({ getOpenAiAuth: async () => waitingAuth }));
     const link = await screen.findByRole('link', {
-      name: 'https://auth.openai.com/codex/device',
+      name: 'the ChatGPT device page',
     });
 
     expect(open).not.toHaveBeenCalled();

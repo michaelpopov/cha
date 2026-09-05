@@ -11,7 +11,7 @@ import { createPortal } from 'react-dom';
 
 import { publicErrorMessage } from '../api/client';
 import type { AppAction, AppState, MainView } from '../state/view';
-import { CharacterIcon, ForumsIcon, MoreIcon, OpenAiIcon, PersonasIcon } from './Icons';
+import { CharacterIcon, ForumsIcon, MoreIcon, PersonasIcon, SettingsIcon } from './Icons';
 
 interface SidebarProps {
   state: AppState;
@@ -43,7 +43,6 @@ const navigation = [
   { action: 'show-personas' as const, views: ['personas', 'persona-detail'] as MainView[], label: 'Personas', icon: PersonasIcon },
   { action: 'show-characters' as const, views: ['characters', 'character-detail', 'character-settings'] as MainView[], label: 'Characters', icon: CharacterIcon },
   { action: 'show-forums' as const, views: ['forums', 'sessions', 'new-session'] as MainView[], label: 'Forums', icon: ForumsIcon },
-  { action: 'show-openai' as const, views: ['openai'] as MainView[], label: 'OpenAI', icon: OpenAiIcon },
 ];
 
 function SessionDialog({
@@ -255,6 +254,17 @@ export function Sidebar({
           );
         })}
       </div>
+      <button
+        aria-current={state.mainView === 'settings' ? 'page' : undefined}
+        aria-label="Settings"
+        className={`cha-sidebar-settings ${state.mainView === 'settings' ? 'is-current' : ''}`}
+        disabled={state.bootstrapStatus !== 'ready'}
+        onClick={() => dispatch({ type: 'show-settings' })}
+        title="Settings"
+        type="button"
+      >
+        <SettingsIcon />
+      </button>
       {menu && createPortal(
         <div
           className="cha-session-menu"

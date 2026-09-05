@@ -159,68 +159,89 @@ export function OpenAiConnectionScreen({
   const href = snapshot ? verificationHref(snapshot) : null;
 
   return (
-    <section className="cha-screen cha-navigation" aria-label="OpenAI connection">
+    <section className="cha-screen cha-navigation cha-settings" aria-label="Settings">
       {sessionReport}
-      {snapshot === null && !httpError && (
-        <p className="cha-state-message" role="status">Loading ChatGPT connection…</p>
-      )}
-      {message && (
-        <div className="cha-state-message cha-error-message" role="alert">
-          <p>{message}</p>
-          {httpError && (
+      <section className="cha-settings-card" aria-labelledby="cha-openai-settings-title">
+        <header className="cha-settings-card-header">
+          <h2 id="cha-openai-settings-title">OpenAI</h2>
+          <p>Connect ChatGPT to use your subscription with CHA.</p>
+        </header>
+        {snapshot === null && !httpError && (
+          <div className="cha-settings-connection" role="status">
+            <span className="cha-settings-status">
+              <span aria-hidden="true" className="cha-settings-status-marker" />
+              Loading ChatGPT connection…
+            </span>
+          </div>
+        )}
+        {message && (
+          <div className="cha-settings-feedback cha-error-message" role="alert">
+            <p>{message}</p>
+            {httpError && (
+              <button
+                className="cha-button"
+                onClick={() => setReloadToken((token) => token + 1)}
+                type="button"
+              >
+                Try again
+              </button>
+            )}
+          </div>
+        )}
+        {snapshot?.status === 'signed_out' && (
+          <div className="cha-settings-connection">
+            <span className="cha-settings-status">
+              <span aria-hidden="true" className="cha-settings-status-marker" />
+              Not connected
+            </span>
             <button
-              className="cha-button cha-button-ghost"
-              onClick={() => setReloadToken((token) => token + 1)}
+              className="cha-button cha-button-primary"
+              disabled={busy !== null}
+              onClick={() => void connect()}
               type="button"
             >
-              Try again
-            </button>
-          )}
-        </div>
-      )}
-      {snapshot?.status === 'signed_out' && (
-        <div className="cha-openai-actions">
-          <button
-            className="cha-button cha-button-primary"
-            disabled={busy !== null}
-            onClick={() => void connect()}
-            type="button"
-          >
-            Connect ChatGPT
-          </button>
-        </div>
-      )}
-      {waiting && (
-        <>
-          {href && (
-            <p>
-              Enter this code at{' '}
-              <a href={href} rel="noopener noreferrer" target="_blank">
-                {href}
-              </a>
-            </p>
-          )}
-          {snapshot.user_code && (
-            <p className="cha-openai-code">{snapshot.user_code}</p>
-          )}
-          <div className="cha-openai-actions">
-            <button
-              className="cha-button cha-button-ghost"
-              disabled={busy === 'login' || busy === 'disconnect'}
-              onClick={() => void disconnect()}
-              type="button"
-            >
-              Cancel
+              Connect ChatGPT
             </button>
           </div>
-        </>
-      )}
-      {snapshot?.status === 'connected' && (
-        <>
-          <p>Connected to ChatGPT</p>
-          <div className="cha-openai-actions">
+        )}
+        {waiting && (
+          <div className="cha-openai-verification">
+            <div className="cha-settings-connection">
+              <span className="cha-settings-status is-waiting">
+                <span aria-hidden="true" className="cha-settings-status-marker" />
+                Waiting for approval
+              </span>
+              <button
+                className="cha-button"
+                disabled={busy === 'login' || busy === 'disconnect'}
+                onClick={() => void disconnect()}
+                type="button"
+              >
+                Cancel
+              </button>
+            </div>
+            {href && (
+              <p>
+                Open{' '}
+                <a href={href} rel="noopener noreferrer" target="_blank">
+                  the ChatGPT device page
+                </a>
+                {' '}and enter this code:
+              </p>
+            )}
+            {snapshot.user_code && (
+              <p className="cha-openai-code">{snapshot.user_code}</p>
+            )}
+          </div>
+        )}
+        {snapshot?.status === 'connected' && (
+          <div className="cha-settings-connection">
+            <span className="cha-settings-status is-connected">
+              <span aria-hidden="true" className="cha-settings-status-marker" />
+              Connected to ChatGPT
+            </span>
             <button
-              className="cha-button cha-button-ghost"
+              className="cha-button"
               disabled={busy !== null}
               onClick={() => void disconnect()}
               type="button"
@@ -228,8 +249,8 @@ export function OpenAiConnectionScreen({
               Disconnect
             </button>
           </div>
-        </>
-      )}
+        )}
+      </section>
     </section>
   );
 }

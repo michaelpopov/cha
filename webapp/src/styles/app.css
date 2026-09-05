@@ -96,7 +96,7 @@ select:disabled {
   width: var(--cha-sidebar-width);
   flex-direction: column;
   padding: 0.75rem 0.6rem;
-  overflow: auto;
+  overflow: hidden;
   background: var(--background);
 }
 
@@ -116,7 +116,15 @@ select:disabled {
   gap: 0.05rem;
 }
 
+.cha-recents {
+  min-height: 0;
+  flex: 1;
+  align-content: start;
+  overflow-y: auto;
+}
+
 .cha-side-action,
+.cha-sidebar-settings,
 .cha-recent-row,
 .cha-list-action,
 .cha-roster-row,
@@ -132,6 +140,18 @@ select:disabled {
   cursor: pointer;
 }
 
+.cha-sidebar-settings {
+  display: grid;
+  width: 2.65rem;
+  height: 2.65rem;
+  flex: 0 0 auto;
+  place-items: center;
+  align-self: flex-end;
+  margin-top: 0.5rem;
+  border-radius: 0.65rem;
+  color: var(--muted-foreground);
+}
+
 .cha-side-action {
   display: flex;
   width: 100%;
@@ -145,6 +165,8 @@ select:disabled {
 
 .cha-side-action:hover,
 .cha-side-action.is-current,
+.cha-sidebar-settings:hover:not(:disabled),
+.cha-sidebar-settings.is-current,
 .cha-list-action:hover,
 .cha-list-action.is-current,
 .cha-roster-row:hover,
@@ -933,18 +955,108 @@ select:disabled {
   gap: 0.5rem;
 }
 
-.cha-openai-code {
-  margin: 0;
-  font-family: var(--font-mono);
-  font-size: 1.5rem;
-  font-weight: 540;
-  letter-spacing: 0.12em;
+.cha-settings {
+  width: min(100%, 42rem);
+  gap: 1rem;
+  padding-top: 1.2rem;
 }
 
-.cha-openai-actions {
+.cha-settings-card {
+  display: grid;
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  background: var(--secondary);
+  box-shadow: 0 0.35rem 1.25rem rgb(0 0 0 / 4%);
+}
+
+.cha-settings-card-header {
+  padding: 1.15rem 1.2rem 1rem;
+}
+
+.cha-settings-card-header h2,
+.cha-settings-card-header p,
+.cha-settings-feedback p,
+.cha-openai-verification p {
+  margin: 0;
+}
+
+.cha-settings-card-header h2 {
+  font-size: 1.05rem;
+  font-weight: 560;
+}
+
+.cha-settings-card-header p {
+  margin-top: 0.2rem;
+  color: var(--muted-foreground);
+}
+
+.cha-settings-connection,
+.cha-settings-feedback {
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
+  min-height: 4rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.85rem 1.2rem;
+  border-top: 1px solid var(--border);
+}
+
+.cha-settings-status {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.55rem;
+  font-weight: 500;
+}
+
+.cha-settings-status-marker {
+  width: 0.55rem;
+  height: 0.55rem;
+  flex: 0 0 auto;
+  border: 1.5px solid currentColor;
+  border-radius: 50%;
+  color: var(--muted-foreground);
+}
+
+.cha-settings-status.is-waiting .cha-settings-status-marker {
+  border-color: var(--primary);
+}
+
+.cha-settings-status.is-connected .cha-settings-status-marker {
+  border-color: var(--primary);
+  background: var(--primary);
+}
+
+.cha-settings-feedback {
+  color: light-dark(rgb(174 45 36), rgb(255 145 136));
+}
+
+.cha-openai-verification {
+  display: grid;
+  gap: 1rem;
+  padding-bottom: 1.2rem;
+}
+
+.cha-openai-verification > p:not(.cha-openai-code) {
+  padding-inline: 1.2rem;
+  color: var(--muted-foreground);
+}
+
+.cha-openai-code {
+  width: fit-content;
+  justify-self: center;
+  margin-inline: 1.2rem;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid var(--input);
+  border-radius: 0.65rem;
+  color: var(--foreground);
+  background: var(--covered-surface);
+  font-family: var(--font-mono);
+  font-size: 1.4rem;
+  font-weight: 560;
+  letter-spacing: 0.12em;
 }
 
 .cha-style-sample {
