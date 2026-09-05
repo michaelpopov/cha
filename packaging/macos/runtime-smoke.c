@@ -65,7 +65,7 @@ static int check(const char* what, int status, int expected) {
 
 int main(int argc, const char* argv[]) {
     if (argc != 4) return 2;
-    if (setenv("OPENAI_API_KEY", "package-check", 1) != 0) return 1;
+    if (unsetenv("OPENAI_API_KEY") != 0) return 1;
     if (unsetenv("CHA_R2_URL") != 0
         || unsetenv("CHA_R2_ACCESS_KEY_ID") != 0
         || unsetenv("CHA_R2_SECRET_ACCESS_KEY") != 0) {
@@ -106,7 +106,11 @@ int main(int argc, const char* argv[]) {
         // launcher's private cookie.
         served = check("/ without the cookie", http_status(port, "/", NULL), 404)
             & check("/health", http_status(port, "/health", token), 200)
-            & check("/", http_status(port, "/", token), 200);
+            & check("/", http_status(port, "/", token), 200)
+            & check("/api/v1/openai/auth without the cookie",
+                http_status(port, "/api/v1/openai/auth", NULL), 404)
+            & check("/api/v1/openai/auth",
+                http_status(port, "/api/v1/openai/auth", token), 200);
     }
 
     uint64_t file_count = 0;

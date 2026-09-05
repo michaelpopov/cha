@@ -157,6 +157,13 @@ if find "$application" -type f \( \
     echo "package check: a database, sidecar, journal, or lock leaked into CHA.app" >&2
     exit 1
 fi
+if find "$application" \( \
+    -type d -name node_modules \
+    -o -type f \( -name node -o -name npm -o -name npx -o -name pi -o -name codex \) \
+    \) -print -quit | grep -q .; then
+    echo "package check: a Node, Pi, or Codex runtime dependency leaked into CHA.app" >&2
+    exit 1
+fi
 
 # A Homebrew library path would make the application work only on the build host.
 for executable in "$contents/MacOS/CHA" "$contents/Frameworks/libChaRuntime.dylib"; do

@@ -1209,5 +1209,73 @@ TEST_F(
         std::string::npos);
 }
 
+void expect_package_seed_subscription(const ModelBackendConfig& config) {
+    EXPECT_EQ(config.auth, ProviderAuth::openai_subscription);
+    EXPECT_EQ(config.host, "chatgpt.com");
+    EXPECT_EQ(config.port, 443);
+    EXPECT_TRUE(config.https);
+    EXPECT_EQ(config.base_path, "/backend-api/codex");
+    EXPECT_EQ(config.mode, Mode::net);
+    EXPECT_EQ(config.api, ProviderApi::responses);
+    EXPECT_EQ(config.model, "gpt-5.6-terra");
+    EXPECT_TRUE(config.stream);
+    EXPECT_TRUE(config.api_key_env.empty());
+    EXPECT_FALSE(config.temperature);
+    EXPECT_FALSE(config.max_tokens);
+    EXPECT_EQ(config.web_search, WebSearchMode::off);
+    EXPECT_EQ(config.cache_retention, CacheRetention::off);
+}
+
+TEST(WorkspaceConfigStore, ImportsPackageSeedWithoutApiKey) {
+    ScopedEnvironmentVariable guard("OPENAI_API_KEY");
+    ASSERT_TRUE(unset_environment_variable("OPENAI_API_KEY"));
+    EXPECT_EQ(std::getenv("OPENAI_API_KEY"), nullptr);
+
+    test::TestWorkspace fixture;
+    const std::filesystem::path database = fixture.root() / "imported.sqlite3";
+    EXPECT_NO_THROW(
+        (void)import_workspace_configuration(
+            std::filesystem::path(CHA_IMPORT_SEED_DIRECTORY), database));
+    EXPECT_EQ(std::getenv("OPENAI_API_KEY"), nullptr);
+    EXPECT_EQ(
+        inspect_workspace_session_database(database),
+        WorkspaceDatabaseState::valid_v2);
+
+    const auto store = WorkspaceConfigStore::open(database);
+    const auto workspace = getws();
+    ASSERT_NE(workspace, nullptr);
+
+    const WorkspaceProvider* const chatgpt = workspace->find_provider("chatgpt");
+    ASSERT_NE(chatgpt, nullptr);
+    expect_package_seed_subscription(chatgpt->config);
+
+    const WorkspaceProvider* const terra = workspace->find_provider("terra");
+    ASSERT_NE(terra, nullptr);
+    EXPECT_EQ(terra->config.auth, ProviderAuth::none);
+    EXPECT_EQ(terra->config.api_key_env, "OPENAI_API_KEY");
+    EXPECT_EQ(terra->config.model, "gpt-5.6-terra");
+
+    EXPECT_EQ(
+        workspace->find_character(workspace_assistant_id)->provider_id,
+        "chatgpt");
+    EXPECT_EQ(workspace->find_character("epictetus")->provider_id, "chatgpt");
+    EXPECT_EQ(
+        workspace->find_character("markus_aurelius")->provider_id, "chatgpt");
+    EXPECT_EQ(workspace->find_character("seneca")->provider_id, "chatgpt");
+
+    expect_package_seed_subscription(
+        workspace->character_definition(
+            workspace_entrance_id, workspace_assistant_id)
+            .provider.config);
+    expect_package_seed_subscription(
+        workspace->character_definition("stoics", "epictetus").provider.config);
+    expect_package_seed_subscription(
+        workspace->character_definition("stoics", "markus_aurelius")
+            .provider.config);
+    expect_package_seed_subscription(
+        workspace->character_definition("stoics", "seneca").provider.config);
+    (void)store;
+}
+
 } // namespace
 } // namespace cha

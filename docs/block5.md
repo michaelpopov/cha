@@ -190,12 +190,61 @@ Before marking complete, verify:
 Update this file with actual evidence and stop before the final cross-platform
 verification block. Do not duplicate progress in the overview plan.
 
-- Status: not started.
-- Changed startup/import/navigation files and behavior: none yet.
-- New provider name, live-tested model, and fresh seed selections: not set.
-- Commands, tests, package/runtime-smoke results, and output path: not run.
-- Disposable-profile Mac login/browser/storage smoke: not run.
-- Existing API-key/data preservation checks: not run.
-- Remaining work, unavailable checks, and safe cleanup performed: none recorded.
-- Ready for block 6: no; requires completed integration and honest platform/
-  live-check results.
+- Status: complete.
+- Changed startup/import/navigation files and behavior:
+  - `packaging/macos/main.swift`: `prepareApplicationData()` and
+    `importInitialDatabase()` no longer require a key. Inherited
+    `OPENAI_API_KEY` and a saved `.env` are still applied; missing keys no
+    longer prompt at launch. **Change API Key…** is unchanged. `WKUIDelegate`
+    `createWebViewWith` opens `target="_blank"` HTTPS links with
+    `NSWorkspace`; same-frame external navigations are cancelled so CHA stays
+    loaded. Internal `127.0.0.1` navigation, downloads, and the `CHA_RUNTIME`
+    cookie are unchanged.
+  - `packaging/macos/runtime-smoke.c`: initial import runs with
+    `OPENAI_API_KEY` unset; cookie-gated `GET /api/v1/openai/auth` is checked.
+  - `packaging/macos/package.sh`: rejects Node/Pi/Codex runtime files in the
+    bundle. `runtime_bridge.cpp`/`.h` were inspected and not changed.
+- New provider name, live-tested model, and fresh seed selections:
+  provider `chatgpt`, model `gpt-5.6-terra` (block 2 live request). Seed
+  assistant plus `epictetus`, `markus_aurelius`, and `seneca` select
+  `chatgpt`. Existing `terra` API-key provider is retained. Browser e2e
+  fixtures still use the fake `test` provider.
+- Commands, tests, package/runtime-smoke results, and output path:
+  - `cmake --preset ninja`
+  - `cmake --build build/ninja --target cha_tests cha_web_tests cha_macos_runtime`
+  - `./build/ninja/cha_tests`: 431 passed, 2 skipped (live, env not set).
+    New `WorkspaceConfigStore.ImportsPackageSeedWithoutApiKey` passed.
+  - `./build/ninja/cha_web_tests`: 196 passed.
+  - `cd webapp && npm run check && npm run build`: 186 vitest tests passed;
+    production bundle built.
+  - `oauth_package_dir=/tmp/cha-oauth-block5.4fYJp8`
+    `./packaging/macos/package.sh oauth-block5 "$oauth_package_dir"`
+    macOS 26.0 Apple Silicon. Runtime-smoke passed (keyless import, cookie
+    gate, `/api/v1/openai/auth`). Linux package check and upgrade check
+    passed. Playwright served: 20 passed, including signed-out OpenAI page.
+    Output: `/tmp/cha-oauth-block5.4fYJp8/CHA.app` and
+    `/tmp/cha-oauth-block5.4fYJp8/CHA-macos-oauth-block5.zip`.
+- Disposable-profile Mac login/browser/storage smoke:
+  `$HOME` does not override Application Support, so a one-off binary
+  identical except `applicationName = "CHA-oauth-block5"` used
+  `~/Library/Application Support/CHA-oauth-block5`. Product `CHA.app` was
+  not launched against the active profile. Keyless launch created
+  `cha.sqlite3` with no `.env`, bound `127.0.0.1:62371`, and loaded the
+  welcome session. Device login started/succeeded in `cha.log`. Private
+  sibling `cha.sqlite3.openai-auth.json` appeared in Application Support
+  with mode 0600 and keys `access_token`, `refresh_token`, `expires_at`,
+  `account_id`; contents were not printed. File was not in either bundle.
+  Credentials survived quit/relaunch. Logs did not contain token values.
+- Existing API-key/data preservation checks:
+  SHA-256 of the active `~/Library/Application Support/CHA`
+  `{cha.toml,.env,cha.sqlite3,cha.sqlite3.bac,launcher.log,runtime}` was
+  unchanged throughout. No auth file was written there. A dummy saved
+  `.env` in the disposable profile was not rewritten on launch or when
+  `OPENAI_API_KEY` was inherited. **Change API Key…** remains in the
+  packaged binary; the save path is unchanged. The Change API Key dialog
+  was not clicked (System Events/Accessibility blocked automation).
+- Remaining work, unavailable checks, and safe cleanup performed:
+  Linux packaged-app login is block 6, not inferred from this Mac build.
+  Disposable profile and one-off app were deleted after the smoke,
+  including the live sibling credential file. Active profile left in place.
+- Ready for block 6: yes.

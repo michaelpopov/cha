@@ -1,0 +1,11 @@
+auth = "openai_subscription"
+host = "chatgpt.com"
+port = 443
+https = true
+base_path = "/backend-api/codex"
+mode = "net"
+api = "responses"
+model = "gpt-5.6-terra"
+stream = true
+web_search = "off"
+cache_retention = "off"

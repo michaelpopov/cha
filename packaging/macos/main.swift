@@ -8,7 +8,6 @@ private enum LauncherError: LocalizedError {
     case setupCancelled
     case incompleteApplication
     case invalidAPIKey
-    case setupFailed
     case cannotStart
 
     var errorDescription: String? {
@@ -19,8 +18,6 @@ private enum LauncherError: LocalizedError {
             return "This copy of CHA is incomplete. Replace it with a fresh copy and try again."
         case .invalidAPIKey:
             return "The API key must not be empty or contain a line break."
-        case .setupFailed:
-            return "CHA couldn't finish setting itself up. Quit CHA and try again."
         case .cannotStart:
             return "CHA couldn't open. Close CHA if it is already running, then try again."
         }
@@ -76,7 +73,7 @@ private struct DownloadDestination {
 
 @MainActor
 private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
-    WKNavigationDelegate, WKDownloadDelegate {
+    WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
     private let fileManager = FileManager.default
     private var window: NSWindow!
     private var webView: WKWebView!
@@ -110,14 +107,9 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
         showWindow()
 
         do {
-            let apiKey = try prepareApplicationData()
-            guard setenv("OPENAI_API_KEY", apiKey, 1) == 0 else {
-                throw LauncherError.cannotStart
-            }
+            try prepareApplicationData()
             try startRuntime()
             showApplication()
-        } catch LauncherError.setupCancelled {
-            NSApp.terminate(nil)
         } catch {
             showFatalError(error)
         }
@@ -250,7 +242,7 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    private func prepareApplicationData() throws -> String {
+    private func prepareApplicationData() throws {
         try createPrivateDirectory(supportDirectory)
         try createPrivateDirectory(supportDirectory.appendingPathComponent("logs", isDirectory: true))
 
@@ -277,9 +269,8 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
                 """, to: configFile)
         }
 
-        let apiKey = try loadOrAskForAPIKey()
-        try importInitialDatabase(apiKey: apiKey)
-        return apiKey
+        try applyInheritedOrSavedAPIKey()
+        try importInitialDatabase()
     }
 
     private func createPrivateDirectory(_ url: URL) throws {
@@ -295,12 +286,21 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
         try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
     }
 
-    private func loadOrAskForAPIKey() throws -> String {
+    // Inherited process environment wins. Otherwise the saved .env is exported
+    // so the shared runtime sees the same key chaweb would. A missing key is
+    // not a launch error; providers that need one fail when they are used.
+    private func applyInheritedOrSavedAPIKey() throws {
         if let inherited = ProcessInfo.processInfo.environment["OPENAI_API_KEY"],
            !inherited.isEmpty {
-            return inherited
+            return
         }
+        guard let saved = savedAPIKey() else { return }
+        guard setenv("OPENAI_API_KEY", saved, 1) == 0 else {
+            throw LauncherError.cannotStart
+        }
+    }
 
+    private func savedAPIKey() -> String? {
         // The same reading chaweb's dotenv parser gives the file: the entry may
         // be indented, and the value is trimmed before one matching pair of
         // quotes comes off. Anything else would work under chaweb but not here,
@@ -318,13 +318,10 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
                 value.removeLast()
             }
             if !value.isEmpty {
-                return value
+                return String(value)
             }
         }
-
-        let value = try askForAPIKey(title: "Set up CHA", cancelTitle: "Quit")
-        try saveAPIKey(value)
-        return value
+        return nil
     }
 
     private func saveAPIKey(_ value: String) throws {
@@ -408,11 +405,9 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
     }
 
     // Only seeds a database that is not there yet; the runtime decides that,
-    // because the config file is what names the database.
-    private func importInitialDatabase(apiKey: String) throws {
-        guard setenv("OPENAI_API_KEY", apiKey, 1) == 0 else {
-            throw LauncherError.setupFailed
-        }
+    // because the config file is what names the database. Import does not
+    // require an API key.
+    private func importInitialDatabase() throws {
         let seed = try bundledURL("import-seed", isDirectory: true)
         var bridgeError: UnsafeMutablePointer<CChar>?
         let imported = configFile.path.withCString { configPath in
@@ -464,6 +459,7 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
         let view = WKWebView(frame: .zero, configuration: configuration)
         view.allowsMagnification = true
         view.navigationDelegate = self
+        view.uiDelegate = self
         webView = view
         window.contentView = view
         window.makeFirstResponder(view)
@@ -606,9 +602,56 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
         decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         if #available(macOS 11.3, *), navigationAction.shouldPerformDownload {
             decisionHandler(.download)
-        } else {
-            decisionHandler(.allow)
+            return
         }
+
+        guard let url = navigationAction.request.url else {
+            decisionHandler(.allow)
+            return
+        }
+        if isApplicationURL(url) {
+            decisionHandler(.allow)
+            return
+        }
+        // target="_blank" is handled by createWebViewWith. Same-frame
+        // navigations to an external page must not replace CHA.
+        if navigationAction.targetFrame != nil {
+            openHTTPSInSystemBrowser(url)
+        }
+        decisionHandler(.cancel)
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        createWebViewWith configuration: WKWebViewConfiguration,
+        for navigationAction: WKNavigationAction,
+        windowFeatures: WKWindowFeatures) -> WKWebView? {
+        guard let url = navigationAction.request.url else { return nil }
+        if isApplicationURL(url) {
+            // An internal target="_blank" has no other window to open in;
+            // keep it in CHA instead of dropping it.
+            self.webView?.load(navigationAction.request)
+        } else {
+            openHTTPSInSystemBrowser(url)
+        }
+        return nil
+    }
+
+    private func isApplicationURL(_ url: URL) -> Bool {
+        guard let runtimeURL,
+              url.scheme?.caseInsensitiveCompare("http") == .orderedSame,
+              url.host == runtimeURL.host,
+              url.port == runtimeURL.port else {
+            return false
+        }
+        return true
+    }
+
+    private func openHTTPSInSystemBrowser(_ url: URL) {
+        guard url.scheme?.caseInsensitiveCompare("https") == .orderedSame else {
+            return
+        }
+        NSWorkspace.shared.open(url)
     }
 
     @available(macOS 11.3, *)

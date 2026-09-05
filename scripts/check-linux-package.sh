@@ -101,6 +101,47 @@ if [ "$(file_mode "$seed/.env")" != "600" ]; then
     exit 1
 fi
 
+chatgpt="$seed/system/providers/chatgpt/config.toml"
+terra="$seed/system/providers/terra/config.toml"
+if [ ! -f "$chatgpt" ] || [ ! -f "$terra" ]; then
+    echo "package check: import seed is missing required providers" >&2
+    exit 1
+fi
+if ! grep -Eq '^auth[[:space:]]*=[[:space:]]*"openai_subscription"[[:space:]]*$' "$chatgpt" \
+    || ! grep -Eq '^host[[:space:]]*=[[:space:]]*"chatgpt.com"[[:space:]]*$' "$chatgpt" \
+    || ! grep -Eq '^port[[:space:]]*=[[:space:]]*443[[:space:]]*$' "$chatgpt" \
+    || ! grep -Eq '^https[[:space:]]*=[[:space:]]*true[[:space:]]*$' "$chatgpt" \
+    || ! grep -Eq '^base_path[[:space:]]*=[[:space:]]*"/backend-api/codex"[[:space:]]*$' "$chatgpt" \
+    || ! grep -Eq '^mode[[:space:]]*=[[:space:]]*"net"[[:space:]]*$' "$chatgpt" \
+    || ! grep -Eq '^api[[:space:]]*=[[:space:]]*"responses"[[:space:]]*$' "$chatgpt" \
+    || ! grep -Eq '^model[[:space:]]*=[[:space:]]*"gpt-5.6-terra"[[:space:]]*$' "$chatgpt" \
+    || ! grep -Eq '^stream[[:space:]]*=[[:space:]]*true[[:space:]]*$' "$chatgpt" \
+    || ! grep -Eq '^web_search[[:space:]]*=[[:space:]]*"off"[[:space:]]*$' "$chatgpt" \
+    || ! grep -Eq '^cache_retention[[:space:]]*=[[:space:]]*"off"[[:space:]]*$' "$chatgpt" \
+    || grep -Eq '^api_key_env[[:space:]]*=' "$chatgpt" \
+    || grep -Eq '^temperature[[:space:]]*=' "$chatgpt" \
+    || grep -Eq '^max_tokens[[:space:]]*=' "$chatgpt"; then
+    echo "package check: chatgpt provider is not the subscription seed" >&2
+    exit 1
+fi
+if ! grep -Eq '^api_key_env[[:space:]]*=[[:space:]]*"OPENAI_API_KEY"[[:space:]]*$' "$terra" \
+    || grep -Eq '^auth[[:space:]]*=[[:space:]]*"openai_subscription"' "$terra"; then
+    echo "package check: terra API-key provider is missing" >&2
+    exit 1
+fi
+if ! grep -Eq '^provider[[:space:]]*=[[:space:]]*"chatgpt"[[:space:]]*$' \
+    "$seed/system/assistant/character.toml"; then
+    echo "package check: assistant does not select the subscription provider" >&2
+    exit 1
+fi
+for character in epictetus markus_aurelius seneca; do
+    if ! grep -Eq '^provider[[:space:]]*=[[:space:]]*"chatgpt"[[:space:]]*$' \
+        "$seed/characters/$character/character.toml"; then
+        echo "package check: $character does not select the subscription provider" >&2
+        exit 1
+    fi
+done
+
 if find "$application" -type f \( \
     -name '*.sqlite3' -o -name '*.sqlite' -o -name '*.db' \
     -o -name '*-wal' -o -name '*-shm' -o -name '*-journal' \

@@ -337,6 +337,10 @@ if(BUILD_TESTING)
             cha_sqlite3
             GTest::gtest_main)
     target_include_directories(cha_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+    target_compile_definitions(
+        cha_tests
+        PRIVATE
+            CHA_IMPORT_SEED_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/packaging/linux/import-seed")
     if(TARGET cha_lease_test_helper)
         target_compile_definitions(
             cha_tests
