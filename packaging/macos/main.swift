@@ -613,11 +613,9 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
             decisionHandler(.allow)
             return
         }
-        // target="_blank" is handled by createWebViewWith. Same-frame
-        // navigations to an external page must not replace CHA.
-        if navigationAction.targetFrame != nil {
-            openHTTPSInSystemBrowser(url)
-        }
+        // Open external links here, including target="_blank": cancelling
+        // navigation prevents createWebViewWith from being called.
+        openHTTPSInSystemBrowser(url)
         decisionHandler(.cancel)
     }
 

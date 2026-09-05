@@ -1413,6 +1413,39 @@ TEST(ProviderClient, CancellationDuringRefreshSavesCredentialsAndSkipsModel) {
     EXPECT_EQ(oauth.status().state, OpenAiOAuthState::connected);
 }
 
+TEST(ProviderClient, CancellationDuringFailedRefreshCleansUpAndSkipsModel) {
+    SubscriptionOwner owner;
+    std::atomic_bool cancellation{false};
+    int auth_calls = 0;
+    owner.on_auth_request = [&](const OpenAiOAuthHttpRequest&) {
+        ++auth_calls;
+        cancellation.store(true, std::memory_order_release);
+        throw std::runtime_error("synthetic refresh failure");
+    };
+    OpenAiOAuth oauth = owner.make_near_expiry();
+    int model_calls = 0;
+    ProviderHttpTransport transport =
+        [&](const ProviderHttpRequest&, const std::atomic_bool&) {
+            ++model_calls;
+            return ProviderHttpResponse{200, "text/event-stream", kCompletedStream};
+        };
+    ProviderClient client(
+        shared_definition(subscription_definition()), &oauth, transport);
+    Transcript transcript;
+    const GenerationRequest request = client_request(transcript, 43, "refresh");
+
+    const GenerationResult result = complete(
+        client, request, transcript, [](GenerationDelta) {}, cancellation);
+
+    EXPECT_EQ(result.outcome, GenerationOutcome::cancelled);
+    EXPECT_TRUE(result.message.empty());
+    EXPECT_EQ(auth_calls, 1);
+    EXPECT_EQ(model_calls, 0);
+    EXPECT_EQ(oauth.status().state, OpenAiOAuthState::signed_out);
+    EXPECT_THROW(oauth.credentials(), std::runtime_error);
+    EXPECT_EQ(auth_calls, 1);
+}
+
 TEST(ProviderClient, SubscriptionUnauthorizedDoesNotRetryOrMutateCredentials) {
     SubscriptionOwner owner;
     OpenAiOAuth oauth = owner.make_connected("acct_old", "keep-refresh");

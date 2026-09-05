@@ -569,6 +569,10 @@ GenerationResult ProviderClient::perform(
         try {
             subscription_credentials = oauth_->credentials();
         } catch (const std::exception& error) {
+            if (cancellation.load(std::memory_order_acquire)) {
+                log_info("HTTP generation skipped after authentication");
+                return {GenerationOutcome::cancelled, {}};
+            }
             return {GenerationOutcome::protocol_error, error.what()};
         }
         if (cancellation.load(std::memory_order_acquire)) {
