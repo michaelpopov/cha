@@ -3,6 +3,7 @@
 #include "characters/character.h"
 #include "characters/character_config.h"
 #include "providers/chat_completions_api.h"
+#include "providers/openai_oauth.h"
 #include "providers/responses_api.h"
 #include "util/logging.h"
 #include "util/text.h"
@@ -24,6 +25,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 namespace cha {
 
@@ -458,7 +460,20 @@ GenerationResult classify_success_response_error(
 } // namespace
 
 ProviderClient::ProviderClient(SharedCharacterDefinition definition)
-    : definition_(std::move(definition)) {
+    : ProviderClient(std::move(definition), nullptr, {}) {}
+
+ProviderClient::ProviderClient(
+    SharedCharacterDefinition definition,
+    OpenAiOAuth* oauth)
+    : ProviderClient(std::move(definition), oauth, {}) {}
+
+ProviderClient::ProviderClient(
+    SharedCharacterDefinition definition,
+    OpenAiOAuth* oauth,
+    ProviderHttpTransport transport)
+    : definition_(std::move(definition)),
+      oauth_(oauth),
+      transport_(std::move(transport)) {
     if (!definition_) {
         throw std::invalid_argument("Provider client requires a character definition");
     }
@@ -471,6 +486,10 @@ ProviderClient::ProviderClient(SharedCharacterDefinition definition)
     if (config.model.empty()) {
         throw std::runtime_error("Provider client requires a non-empty configured model");
     }
+    if (config.auth == ProviderAuth::openai_subscription && oauth_ == nullptr) {
+        throw std::runtime_error(
+            "OpenAI subscription provider requires an authentication owner");
+    }
     if (!config.api_key_env.empty()) {
         const char* api_key = std::getenv(config.api_key_env.c_str());
         if (!api_key || *api_key == '\0') {
@@ -481,7 +500,7 @@ ProviderClient::ProviderClient(SharedCharacterDefinition definition)
         api_key_ = api_key;
     }
 
-    if (config.mode == Mode::net) {
+    if (config.mode == Mode::net && !transport_) {
         (void)curl_global();
         curl_ = std::make_unique<CurlEasyHandle>();
     }
@@ -533,6 +552,29 @@ GenerationResult ProviderClient::perform(
             std::move(payload.bytes),
         });
         return {GenerationOutcome::completed, {}};
+    }
+
+    std::optional<OpenAiOAuthRequestCredentials> subscription_credentials;
+    if (config.auth == ProviderAuth::openai_subscription) {
+        if (cancellation.load(std::memory_order_acquire)) {
+            log_info("HTTP generation skipped before authentication");
+            return {GenerationOutcome::cancelled, {}};
+        }
+        if (oauth_ == nullptr) {
+            return {
+                GenerationOutcome::protocol_error,
+                "OpenAI subscription provider requires an authentication owner",
+            };
+        }
+        try {
+            subscription_credentials = oauth_->credentials();
+        } catch (const std::exception& error) {
+            return {GenerationOutcome::protocol_error, error.what()};
+        }
+        if (cancellation.load(std::memory_order_acquire)) {
+            log_info("HTTP generation skipped after authentication");
+            return {GenerationOutcome::cancelled, {}};
+        }
     }
 
     const std::string& request_body = payload.bytes;
@@ -591,94 +633,136 @@ GenerationResult ProviderClient::perform(
         }
         return result;
     };
-    curl_->set(CURLOPT_URL, url.c_str(), "Failed to configure request URL");
-    curl_->set(CURLOPT_POST, 1L, "Failed to configure POST request");
-    curl_->set(CURLOPT_POSTFIELDS, request_body.data(), "Failed to configure request body");
-    curl_->set_offset(
-        CURLOPT_POSTFIELDSIZE_LARGE,
-        static_cast<curl_off_t>(request_body.size()),
-        "Failed to configure request body size");
-    curl_->set(CURLOPT_WRITEFUNCTION, receive_response, "Failed to configure response callback");
-    curl_->set(CURLOPT_WRITEDATA, &response, "Failed to configure response destination");
-    curl_->set(CURLOPT_HEADERFUNCTION, receive_header, "Failed to configure response header callback");
-    curl_->set(CURLOPT_HEADERDATA, &response, "Failed to configure response header destination");
-    curl_->set(CURLOPT_CONNECTTIMEOUT, 10L, "Failed to configure connection timeout");
-    curl_->set(
-        CURLOPT_TIMEOUT,
-        static_cast<long>(config.timeout_s),
-        "Failed to configure generation timeout");
-    curl_->set(CURLOPT_NOSIGNAL, 1L, "Failed to configure libcurl signals");
-    curl_->set(CURLOPT_TCP_KEEPALIVE, 1L, "Failed to configure TCP keepalive");
-    // The progress callback owns both cancellation and the idle timeout, so
-    // cancellation keeps precedence and idleness means "no bytes at all"
-    // rather than libcurl's averaged low-speed window.
-    curl_->set(CURLOPT_NOPROGRESS, 0L, "Failed to enable transfer progress");
-    curl_->set(CURLOPT_XFERINFOFUNCTION, transfer_progress, "Failed to configure cancellation callback");
-    curl_->set(CURLOPT_XFERINFODATA, &progress, "Failed to configure transfer progress state");
 
-    curl_slist* raw_headers = nullptr;
-    raw_headers = curl_slist_append(
-        raw_headers,
-        "Content-Type: application/json");
-    raw_headers = curl_slist_append(
-        raw_headers,
-        config.stream
-            ? "Accept: text/event-stream"
-            : "Accept: application/json");
-    if (!api_key_.empty()) {
-        raw_headers = curl_slist_append(
-            raw_headers,
-            ("Authorization: Bearer " + api_key_).c_str());
+    std::vector<std::string> header_lines{
+        "Content-Type: application/json",
+        config.stream ? "Accept: text/event-stream" : "Accept: application/json",
+    };
+    if (subscription_credentials) {
+        header_lines.push_back(
+            "Authorization: Bearer " + subscription_credentials->access_token);
+        header_lines.push_back(
+            "chatgpt-account-id: " + subscription_credentials->account_id);
+        header_lines.push_back("OpenAI-Beta: responses=experimental");
+        header_lines.push_back("originator: cha");
+        header_lines.push_back("User-Agent: cha");
+    } else if (!api_key_.empty()) {
+        header_lines.push_back("Authorization: Bearer " + api_key_);
     }
     if (payload.session_id) {
-        raw_headers = curl_slist_append(
-            raw_headers,
-            ("session_id: " + *payload.session_id).c_str());
-    }
-    if (!raw_headers) {
-        throw std::runtime_error("Failed to create HTTP headers");
-    }
-    CurlHeaders headers(raw_headers);
-    curl_->set(CURLOPT_HTTPHEADER, headers.get(), "Failed to configure HTTP headers");
-
-    const CURLcode perform_result = curl_->perform();
-    if (response.error) {
-        log_error(http_event(
-            "response processing failed",
-            url,
-            0,
-            "unknown",
-            request_body.size(),
-            response.received_bytes,
-            elapsed_milliseconds(started_at),
-            {},
-            response.request_id));
-        std::rethrow_exception(response.error);
-    }
-    if (perform_result == CURLE_ABORTED_BY_CALLBACK
-        && cancellation.load(std::memory_order_acquire)) {
-        return complete({GenerationOutcome::cancelled, {}}, 0, "unknown");
-    }
-    if (perform_result == CURLE_ABORTED_BY_CALLBACK
-        && progress.idle_timed_out) {
-        return complete({
-            GenerationOutcome::transport_error,
-            "HTTP request failed: idle timeout reached",
-        }, 0, "unknown");
-    }
-    if (perform_result != CURLE_OK) {
-        return complete({
-            GenerationOutcome::transport_error,
-            "HTTP request failed: "
-                + std::string(curl_easy_strerror(perform_result)),
-        }, 0, "unknown");
+        header_lines.push_back("session_id: " + *payload.session_id);
     }
 
-    const long status = curl_->response_code(
-        "Failed to read HTTP status");
-    const std::string content_type = curl_->content_type(
-        "Failed to read HTTP content type");
+    long status = 0;
+    std::string content_type;
+    if (transport_) {
+        ProviderHttpResponse http;
+        try {
+            http = transport_(
+                ProviderHttpRequest{url, header_lines, request_body},
+                cancellation);
+        } catch (const std::exception& error) {
+            return complete({
+                GenerationOutcome::transport_error,
+                error.what(),
+            }, 0, "unknown");
+        }
+        if (cancellation.load(std::memory_order_acquire)) {
+            return complete({GenerationOutcome::cancelled, {}}, 0, "unknown");
+        }
+        status = http.status;
+        content_type = http.content_type;
+        response.status = status;
+        response.received_bytes = http.body.size();
+        const bool successful = status >= 200 && status < 300;
+        if (successful && decoder) {
+            decoder->consume(http.body);
+        } else {
+            response.body = std::move(http.body);
+        }
+    } else {
+        curl_->set(CURLOPT_URL, url.c_str(), "Failed to configure request URL");
+        curl_->set(CURLOPT_POST, 1L, "Failed to configure POST request");
+        curl_->set(CURLOPT_POSTFIELDS, request_body.data(), "Failed to configure request body");
+        curl_->set_offset(
+            CURLOPT_POSTFIELDSIZE_LARGE,
+            static_cast<curl_off_t>(request_body.size()),
+            "Failed to configure request body size");
+        curl_->set(CURLOPT_WRITEFUNCTION, receive_response, "Failed to configure response callback");
+        curl_->set(CURLOPT_WRITEDATA, &response, "Failed to configure response destination");
+        curl_->set(CURLOPT_HEADERFUNCTION, receive_header, "Failed to configure response header callback");
+        curl_->set(CURLOPT_HEADERDATA, &response, "Failed to configure response header destination");
+        curl_->set(CURLOPT_CONNECTTIMEOUT, 10L, "Failed to configure connection timeout");
+        curl_->set(
+            CURLOPT_TIMEOUT,
+            static_cast<long>(config.timeout_s),
+            "Failed to configure generation timeout");
+        curl_->set(CURLOPT_NOSIGNAL, 1L, "Failed to configure libcurl signals");
+        curl_->set(CURLOPT_TCP_KEEPALIVE, 1L, "Failed to configure TCP keepalive");
+        if (subscription_credentials) {
+            curl_->set(CURLOPT_FOLLOWLOCATION, 0L, "Failed to disable HTTP redirects");
+        }
+        // The progress callback owns both cancellation and the idle timeout, so
+        // cancellation keeps precedence and idleness means "no bytes at all"
+        // rather than libcurl's averaged low-speed window.
+        curl_->set(CURLOPT_NOPROGRESS, 0L, "Failed to enable transfer progress");
+        curl_->set(CURLOPT_XFERINFOFUNCTION, transfer_progress, "Failed to configure cancellation callback");
+        curl_->set(CURLOPT_XFERINFODATA, &progress, "Failed to configure transfer progress state");
+
+        curl_slist* raw_headers = nullptr;
+        for (const std::string& line : header_lines) {
+            raw_headers = curl_slist_append(raw_headers, line.c_str());
+        }
+        if (!raw_headers) {
+            throw std::runtime_error("Failed to create HTTP headers");
+        }
+        CurlHeaders headers(raw_headers);
+        curl_->set(CURLOPT_HTTPHEADER, headers.get(), "Failed to configure HTTP headers");
+
+        const CURLcode perform_result = curl_->perform();
+        if (response.error) {
+            log_error(http_event(
+                "response processing failed",
+                url,
+                0,
+                "unknown",
+                request_body.size(),
+                response.received_bytes,
+                elapsed_milliseconds(started_at),
+                {},
+                response.request_id));
+            std::rethrow_exception(response.error);
+        }
+        if (perform_result == CURLE_ABORTED_BY_CALLBACK
+            && cancellation.load(std::memory_order_acquire)) {
+            return complete({GenerationOutcome::cancelled, {}}, 0, "unknown");
+        }
+        if (perform_result == CURLE_ABORTED_BY_CALLBACK
+            && progress.idle_timed_out) {
+            return complete({
+                GenerationOutcome::transport_error,
+                "HTTP request failed: idle timeout reached",
+            }, 0, "unknown");
+        }
+        if (perform_result != CURLE_OK) {
+            return complete({
+                GenerationOutcome::transport_error,
+                "HTTP request failed: "
+                    + std::string(curl_easy_strerror(perform_result)),
+            }, 0, "unknown");
+        }
+
+        status = curl_->response_code("Failed to read HTTP status");
+        content_type = curl_->content_type("Failed to read HTTP content type");
+    }
+
     if (status < 200 || status >= 300) {
+        if (status == 401 && config.auth == ProviderAuth::openai_subscription) {
+            return complete({
+                GenerationOutcome::protocol_error,
+                "ChatGPT rejected this request. Reconnect before using this provider.",
+            }, status, content_type);
+        }
         return complete({
             GenerationOutcome::protocol_error,
             classified_http_error(status, response.body),

@@ -113,11 +113,9 @@ std::string build_responses_request_body(
         {"store", false},
         {"input", std::move(messages)},
     };
-    if (config.temperature) {
-        body["temperature"] = *config.temperature;
-    }
-    if (config.max_tokens) {
-        body["max_output_tokens"] = std::max(*config.max_tokens, 16);
+    const bool subscription = config.auth == ProviderAuth::openai_subscription;
+    if (subscription && instructions.empty()) {
+        instructions = "You are a helpful assistant.";
     }
     if (!instructions.empty()) {
         body["instructions"] = std::move(instructions);
@@ -125,37 +123,45 @@ std::string build_responses_request_body(
     if (!config.reasoning_effort.empty()) {
         body["reasoning"] = Json{{"effort", config.reasoning_effort}};
     }
-    if (!input.run.prompt_cache_key.empty()
-        && config.cache_retention != CacheRetention::off) {
-        if (is_direct_openai_host(config.host)) {
-            body["prompt_cache_key"] = input.run.prompt_cache_key;
-            if (config.cache_retention == CacheRetention::long_) {
-                body["prompt_cache_options"] = {
-                    {"mode", "implicit"},
-                    {"ttl", "30m"},
-                };
-            }
-        } else if (is_openrouter_host(config.host)) {
-            body["session_id"] = input.run.prompt_cache_key;
+    if (!subscription) {
+        if (config.temperature) {
+            body["temperature"] = *config.temperature;
         }
-    }
+        if (config.max_tokens) {
+            body["max_output_tokens"] = std::max(*config.max_tokens, 16);
+        }
+        if (!input.run.prompt_cache_key.empty()
+            && config.cache_retention != CacheRetention::off) {
+            if (is_direct_openai_host(config.host)) {
+                body["prompt_cache_key"] = input.run.prompt_cache_key;
+                if (config.cache_retention == CacheRetention::long_) {
+                    body["prompt_cache_options"] = {
+                        {"mode", "implicit"},
+                        {"ttl", "30m"},
+                    };
+                }
+            } else if (is_openrouter_host(config.host)) {
+                body["session_id"] = input.run.prompt_cache_key;
+            }
+        }
 
-    const char* const web_search_type = is_openrouter_host(config.host)
-        ? "openrouter:web_search"
-        : "web_search";
-    switch (config.web_search) {
-    case WebSearchMode::off:
-        break;
-    case WebSearchMode::automatic:
-        body["tools"] = Json::array({Json{{"type", web_search_type}}});
-        body["tool_choice"] = "auto";
-        break;
-    case WebSearchMode::required:
-        body["tools"] = Json::array({Json{{"type", web_search_type}}});
-        body["tool_choice"] = "required";
-        break;
-    default:
-        throw std::logic_error("Unknown web search mode");
+        const char* const web_search_type = is_openrouter_host(config.host)
+            ? "openrouter:web_search"
+            : "web_search";
+        switch (config.web_search) {
+        case WebSearchMode::off:
+            break;
+        case WebSearchMode::automatic:
+            body["tools"] = Json::array({Json{{"type", web_search_type}}});
+            body["tool_choice"] = "auto";
+            break;
+        case WebSearchMode::required:
+            body["tools"] = Json::array({Json{{"type", web_search_type}}});
+            body["tool_choice"] = "required";
+            break;
+        default:
+            throw std::logic_error("Unknown web search mode");
+        }
     }
 
     return dump_json(body, "Model request");

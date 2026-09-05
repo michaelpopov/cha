@@ -115,6 +115,45 @@ TEST(ResponsesApi, BuildsRequestFieldsAndMapsRoles) {
     }));
 }
 
+TEST(ResponsesApi, SubscriptionBodyUsesFallbackInstructionsAndOmitsExtras) {
+    Transcript transcript;
+    GenerationRequest request = make_request(
+        transcript, "Current question", {
+            test::human_entry(
+                1, {"human", "You"}, {"assistant", "Assistant"},
+                "Earlier question", 6),
+            make_character_entry(
+                2, "assistant", "Assistant", "Earlier answer",
+                EntryStatus::complete, 6),
+        });
+    ModelBackendConfig config = responses_config(WebSearchMode::automatic);
+    config.auth = ProviderAuth::openai_subscription;
+    config.host = "api.openai.com";
+    config.temperature = 0.5;
+    config.max_tokens = 64;
+    config.cache_retention = CacheRetention::short_;
+    request.run.prompt_cache_key = "cache-key";
+
+    const Json body = Json::parse(build_responses_request_body(
+        request, config, ""));
+
+    EXPECT_EQ(body["model"], "test-model");
+    EXPECT_TRUE(body["stream"]);
+    EXPECT_FALSE(body["store"]);
+    EXPECT_EQ(body["instructions"], "You are a helpful assistant.");
+    EXPECT_FALSE(body.contains("temperature"));
+    EXPECT_FALSE(body.contains("max_output_tokens"));
+    EXPECT_FALSE(body.contains("tools"));
+    EXPECT_FALSE(body.contains("tool_choice"));
+    EXPECT_FALSE(body.contains("prompt_cache_key"));
+    EXPECT_FALSE(body.contains("session_id"));
+    EXPECT_EQ(body["input"], Json::array({
+        {{"role", "user"}, {"content", "from You:\nEarlier question"}},
+        {{"role", "assistant"}, {"content", "Earlier answer"}},
+        {{"role", "user"}, {"content", "from You:\nCurrent question"}},
+    }));
+}
+
 TEST(ResponsesApi, OmitsEmptyInstructionsAndReasoningAndSearchFields) {
     Transcript transcript;
     const GenerationRequest request = make_request(transcript, "Hi");

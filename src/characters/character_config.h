@@ -9,6 +9,7 @@ namespace cha {
 enum class Mode { net, test };
 enum class ReasoningFormat { automatic, none, reasoning_content, reasoning };
 enum class ProviderApi { chat_completions, responses };
+enum class ProviderAuth { none, openai_subscription };
 enum class WebSearchMode { off, automatic, required };
 enum class CacheRetention { off, short_, long_ };
 
@@ -38,6 +39,7 @@ struct ModelBackendConfig {
     ReasoningFormat reasoning_format{ReasoningFormat::automatic};
     bool https{};
     ProviderApi api{default_provider_api};
+    ProviderAuth auth{ProviderAuth::none};
     WebSearchMode web_search{default_web_search_mode};
     CacheRetention cache_retention{CacheRetention::short_};
 };

@@ -26,6 +26,9 @@ std::string_view to_string(WebSearchMode value) {
 }
 
 std::string provider_endpoint(const ModelBackendConfig& config) {
+    if (config.auth == ProviderAuth::openai_subscription) {
+        return "https://chatgpt.com/backend-api/codex/responses";
+    }
     std::string host = config.host;
     if (host.find(':') != std::string::npos && !host.starts_with('[')) {
         host = '[' + host + ']';

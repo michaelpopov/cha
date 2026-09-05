@@ -37,6 +37,7 @@ CPack*.cmake
 .env
 !/packaging/linux/import-seed/.env
 *.sqlite3
+*.openai-auth.json
 *.log
 *.cha-lock
 

@@ -447,11 +447,31 @@ TEST_F(WorkspaceConfigStoreTest, UsesInheritedEnvironmentValuesIncludingEmpty) {
     if (std::getenv(variable) == nullptr) {
         GTEST_SKIP() << "this platform does not retain empty environment values";
     }
-    EXPECT_THROW((void)import_from_source(), std::runtime_error);
+    EXPECT_NO_THROW((void)import_from_source());
     EXPECT_STREQ(std::getenv(variable), "");
     EXPECT_EQ(
         inspect_workspace_session_database(database()),
-        WorkspaceDatabaseState::missing);
+        WorkspaceDatabaseState::valid_v2);
+}
+
+TEST_F(WorkspaceConfigStoreTest, ImportsAKeylessApiKeyProvider) {
+    constexpr char variable[] = "CHA_IMPORT_STORE_MISSING_KEY_E5F6";
+    ScopedEnvironmentVariable guard(variable);
+    ASSERT_TRUE(unset_environment_variable(variable));
+    workspace_.write_provider(
+        "secured",
+        "host = \"example.test\"\n"
+        "port = 443\n"
+        "mode = \"net\"\n"
+        "model = \"secured\"\n"
+        "api_key_env = \"CHA_IMPORT_STORE_MISSING_KEY_E5F6\"\n");
+    workspace_.write_character_config(
+        "display_name = \"Guide\"\nprovider = \"secured\"\n");
+    EXPECT_EQ(std::getenv(variable), nullptr);
+    EXPECT_NO_THROW((void)import_from_source());
+    EXPECT_EQ(
+        inspect_workspace_session_database(database()),
+        WorkspaceDatabaseState::valid_v2);
 }
 
 TEST_F(WorkspaceConfigStoreTest, RejectsMalformedDotenvWithoutStoringIt) {

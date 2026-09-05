@@ -231,6 +231,8 @@ std::vector<std::filesystem::path> recursive_definition_directories(
     return result;
 }
 
+bool provider_supports_web_search(const ModelBackendConfig& config);
+
 std::string option_label(std::string_view id) {
     std::string label(id);
     for (char& character : label) {
@@ -252,7 +254,7 @@ WorkspaceProvider load_provider(const std::filesystem::path& directory) {
         "host", "port", "base_path", "mode", "model", "stream",
         "temperature", "max_tokens", "timeout_s", "idle_timeout_s",
         "api_key_env", "reasoning_effort", "reasoning_format", "https",
-        "api", "web_search", "cache_retention"};
+        "api", "auth", "web_search", "cache_retention"};
     reject_unknown_fields(table, path, fields, "Provider config");
 
     WorkspaceProvider provider{
@@ -295,6 +297,10 @@ WorkspaceProvider load_provider(const std::filesystem::path& directory) {
                 {{"chat_completions", ProviderApi::chat_completions},
                  {"responses", ProviderApi::responses}},
                 ProviderApi::responses),
+            .auth = choice(
+                table, path, "auth",
+                {{"openai_subscription", ProviderAuth::openai_subscription}},
+                ProviderAuth::none),
             .web_search = choice(
                 table, path, "web_search",
                 {{"off", WebSearchMode::off},
@@ -339,19 +345,27 @@ WorkspaceProvider load_provider(const std::filesystem::path& directory) {
             "Provider config '" + utf8_path(path) + "' has invalid base_path");
     }
     if (config.web_search != WebSearchMode::off
-        && config.api != ProviderApi::responses
-        && !is_openrouter_host(config.host)) {
+        && !provider_supports_web_search(config)) {
         throw std::runtime_error(
             "Provider config '" + utf8_path(path)
-            + "' enables web search for an unsupported Chat Completions host");
+            + "' enables web search for an unsupported provider");
     }
-    if (!config.api_key_env.empty()) {
-        const char* const value = std::getenv(config.api_key_env.c_str());
-        if (value == nullptr || *value == '\0') {
+    if (config.auth == ProviderAuth::openai_subscription) {
+        if (config.host != "chatgpt.com"
+            || config.port != 443
+            || !config.https
+            || config.base_path != "/backend-api/codex"
+            || config.mode != Mode::net
+            || config.api != ProviderApi::responses
+            || !config.stream
+            || !config.api_key_env.empty()
+            || config.temperature
+            || config.max_tokens
+            || config.web_search != WebSearchMode::off
+            || config.cache_retention != CacheRetention::off) {
             throw std::runtime_error(
                 "Provider config '" + utf8_path(path)
-                + "' requires non-empty environment variable '"
-                + config.api_key_env + "'");
+                + "' has invalid openai_subscription settings");
         }
     }
     return provider;
@@ -525,6 +539,7 @@ bool valid_character_reasoning_effort(std::string_view value) {
 }
 
 bool provider_supports_web_search(const ModelBackendConfig& config) {
+    if (config.auth == ProviderAuth::openai_subscription) return false;
     return config.api == ProviderApi::responses || is_openrouter_host(config.host);
 }
 

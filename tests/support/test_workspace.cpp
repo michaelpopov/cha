@@ -40,6 +40,14 @@ std::string_view api_name(ProviderApi value) {
     return value == ProviderApi::responses ? "responses" : "chat_completions";
 }
 
+std::string_view auth_name(ProviderAuth value) {
+    switch (value) {
+    case ProviderAuth::none: return "";
+    case ProviderAuth::openai_subscription: return "openai_subscription";
+    }
+    return "";
+}
+
 std::string_view web_search_name(WebSearchMode value) {
     switch (value) {
     case WebSearchMode::off: return "off";
@@ -76,8 +84,11 @@ void write_provider_config(
          << "reasoning_effort = " << quoted(config.reasoning_effort) << '\n'
          << "reasoning_format = " << quoted(reasoning_format_name(config.reasoning_format)) << '\n'
          << "https = " << (config.https ? "true" : "false") << '\n'
-         << "api = " << quoted(api_name(config.api)) << '\n'
-         << "web_search = " << quoted(web_search_name(config.web_search)) << '\n'
+         << "api = " << quoted(api_name(config.api)) << '\n';
+    if (config.auth != ProviderAuth::none) {
+        file << "auth = " << quoted(auth_name(config.auth)) << '\n';
+    }
+    file << "web_search = " << quoted(web_search_name(config.web_search)) << '\n'
          << "cache_retention = " << quoted(retention_name(config.cache_retention)) << '\n';
 }
 

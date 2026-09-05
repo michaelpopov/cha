@@ -180,6 +180,7 @@ add_library(cha_core STATIC
     src/characters/model_context.cpp
     src/providers/providers.cpp
     src/providers/provider_client.cpp
+    src/providers/openai_oauth.cpp
     src/providers/chat_completions_api.cpp
     src/providers/responses_api.cpp
     src/providers/sse_framer.cpp
@@ -294,6 +295,7 @@ if(BUILD_TESTING)
         tests/chat/unit_transcript.cpp
         tests/agents/unit_model_context.cpp
         tests/providers/unit_providers.cpp
+        tests/providers/unit_openai_oauth.cpp
         tests/providers/unit_chat_completions_api.cpp
         tests/providers/unit_responses_api.cpp
         tests/providers/unit_sse_framer.cpp
