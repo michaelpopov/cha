@@ -862,6 +862,52 @@ TEST(ApplicationRuntime, UnknownAndInvalidTargetsFailBeforeDraining) {
     runtime->shutdown();
 }
 
+TEST(ApplicationRuntime, DrainTimeoutLeavesOldVaultSelectedAndAllowsRetry) {
+    TwoVaultRuntime pair;
+    pair.command.test_shutdown_grace_ms = 0;
+    auto runtime = ApplicationRuntime::open(pair.command, "private-test-token");
+    const int port = runtime->start();
+    httplib::Client client("127.0.0.1", port);
+    const std::string live = create_lobby_session(client, "Needs draining");
+    ASSERT_FALSE(live.empty());
+    ASSERT_TRUE(open_lobby_session(client, live));
+    const std::string original =
+        file_bytes(pair.command.config_directory / "app.toml");
+
+    std::string failure;
+    try {
+        runtime->switch_vault("B");
+    } catch (const std::exception& error) {
+        failure = error.what();
+    }
+    ASSERT_EQ(
+        failure,
+        "Could not pause active sessions for database maintenance");
+    EXPECT_EQ(runtime->current_vault().name, "A");
+    EXPECT_EQ(file_bytes(pair.command.config_directory / "app.toml"), original);
+    const auto bootstrap_a = get_bootstrap(client);
+    EXPECT_TRUE(bootstrap_has_persona(bootstrap_a, "alpha"));
+    EXPECT_FALSE(bootstrap_has_persona(bootstrap_a, "beta"));
+
+    bool switched = false;
+    const auto deadline = std::chrono::steady_clock::now()
+        + std::chrono::seconds(2);
+    while (!switched && std::chrono::steady_clock::now() < deadline) {
+        try {
+            runtime->switch_vault("B");
+            switched = true;
+        } catch (const std::runtime_error& error) {
+            EXPECT_STREQ(
+                error.what(),
+                "Could not pause active sessions for database maintenance");
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    }
+    ASSERT_TRUE(switched);
+    EXPECT_EQ(runtime->current_vault().name, "B");
+    runtime->shutdown();
+}
+
 #ifndef _WIN32
 TEST(ApplicationRuntime, BusyTargetLeaseLeavesTheOldVaultRunning) {
     TwoVaultRuntime pair;
@@ -894,14 +940,25 @@ TEST(ApplicationRuntime, BusyTargetLeaseLeavesTheOldVaultRunning) {
 TEST(ApplicationRuntime, FailedSwitchReopenIsFatalAndRefusesLaterTransfers) {
     TwoVaultRuntime pair(false, true);
     auto runtime = ApplicationRuntime::open(pair.command, "private-test-token");
-    (void)runtime->start();
+    const int port = runtime->start();
     const std::string original =
         file_bytes(pair.command.config_directory / "app.toml");
+    httplib::Client client("127.0.0.1", port);
     force_next_workspace_config_fault(WorkspaceConfigFault::restore);
-    EXPECT_THROW(runtime->switch_vault("B"), WorkspaceRestartRequiredError);
+    const auto failed = client.Post(
+        "/api/v1/vault/switch",
+        kRuntimeCookie,
+        nlohmann::json{{"vault_name", "B"}}.dump(),
+        "application/json");
+    ASSERT_TRUE(failed);
+    EXPECT_EQ(failed->status, 500);
+    EXPECT_NE(failed->body.find("Restart is required"), std::string::npos);
+    EXPECT_EQ(runtime->current_vault().name, "A");
     EXPECT_EQ(file_bytes(pair.command.config_directory / "app.toml"), original);
     EXPECT_THROW(
         (void)runtime->export_configuration(), WorkspaceRestartRequiredError);
+    httplib::Client after("127.0.0.1", port);
+    EXPECT_FALSE(after.Get("/api/v1/bootstrap", kRuntimeCookie));
     runtime->shutdown();
 }
 
@@ -929,6 +986,67 @@ TEST(ApplicationRuntime, MirroringSwitchesRootsAndSurvivesStoredSessions) {
     EXPECT_TRUE(std::filesystem::exists(
         pair.mirror_a / "The Lobby" / "Mirrored A.md"));
     runtime->shutdown();
+}
+
+TEST(ApplicationRuntime, MirrorRebuildFailureKeepsSwitchedVaultRunning) {
+    TwoVaultRuntime pair(true);
+    auto runtime = ApplicationRuntime::open(pair.command, "private-test-token");
+    const int port = runtime->start();
+    httplib::Client client("127.0.0.1", port);
+
+    ASSERT_TRUE(std::filesystem::remove(pair.mirror_b));
+    std::ofstream(pair.mirror_b) << "not a directory";
+    ASSERT_NO_THROW(runtime->switch_vault("B"));
+
+    EXPECT_EQ(runtime->current_vault().name, "B");
+    EXPECT_EQ(
+        read_toml_file(pair.command.config_directory / "app.toml", "config file")
+            ["vault"].value<std::string>(),
+        "B");
+    const auto bootstrap_b = get_bootstrap(client);
+    EXPECT_TRUE(bootstrap_has_persona(bootstrap_b, "beta"));
+    EXPECT_FALSE(bootstrap_has_persona(bootstrap_b, "alpha"));
+    EXPECT_TRUE(std::filesystem::is_regular_file(pair.mirror_b));
+
+    const std::string created = create_lobby_session(
+        client, "After failed mirror rebuild");
+    ASSERT_FALSE(created.empty());
+    EXPECT_FALSE(std::filesystem::exists(
+        pair.mirror_a / "The Lobby" / "After failed mirror rebuild.md"));
+    runtime->shutdown();
+}
+
+TEST(ApplicationRuntime, PersistenceFailureKeepsSwitchedVaultRunning) {
+    TwoVaultRuntime pair;
+    auto runtime = ApplicationRuntime::open(pair.command, "private-test-token");
+    const int port = runtime->start();
+    httplib::Client client("127.0.0.1", port);
+    const std::filesystem::path config = pair.command.config_directory;
+    std::filesystem::path unavailable = config;
+    unavailable += ".unavailable";
+    const std::filesystem::path app =
+        config / "app.toml";
+    const std::string original = file_bytes(app);
+
+    std::filesystem::rename(config, unavailable);
+    try {
+        runtime->switch_vault("B");
+    } catch (...) {
+        std::filesystem::rename(unavailable, config);
+        throw;
+    }
+    std::filesystem::rename(unavailable, config);
+
+    EXPECT_EQ(runtime->current_vault().name, "B");
+    EXPECT_EQ(file_bytes(app), original);
+    const auto bootstrap_b = get_bootstrap(client);
+    EXPECT_TRUE(bootstrap_has_persona(bootstrap_b, "beta"));
+    EXPECT_FALSE(bootstrap_has_persona(bootstrap_b, "alpha"));
+    runtime->shutdown();
+
+    const ConfigurationDirectory after_restart =
+        load_configuration_directory(pair.command.config_directory);
+    EXPECT_EQ(after_restart.startup_vault, "A");
 }
 
 TEST(ApplicationRuntime, MaintenanceAfterSwitchUsesTheCurrentVault) {

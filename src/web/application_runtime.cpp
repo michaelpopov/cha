@@ -247,6 +247,7 @@ struct ApplicationRuntime::Impl {
             repository.synchronize_forums(*current_workspace());
         } catch (...) {
             unusable = true;
+            if (server) server->stop();
             throw;
         }
     }
@@ -282,7 +283,8 @@ struct ApplicationRuntime::Impl {
     std::mutex lifecycle_mutex;
     bool started{};
     bool stopped{};
-    // Set when the workspace database could not be reopened after a transfer.
+    // Set when the workspace database could not be reopened. The HTTP server is
+    // stopped at the same time because the runtime can no longer serve safely.
     bool unusable{};
 };
 
@@ -346,19 +348,10 @@ void ApplicationRuntime::switch_vault(std::string_view name) {
             impl_->sessions->reserve_maintenance();
         repository.checkpoint();
         database.close();
-        bool reopened = false;
-        try {
-            database.retarget(selected.data, std::move(target_lease));
-            repository.retarget(selected.data);
-            impl_->reopen(database, repository);
-            reopened = true;
-            impl_->current_vault_.set(selected);
-        } catch (...) {
-            if (!reopened) {
-                impl_->reopen_after_failure(database, repository);
-            }
-            throw;
-        }
+        database.retarget(selected.data, std::move(target_lease));
+        repository.retarget(selected.data);
+        impl_->reopen(database, repository);
+        impl_->current_vault_.set(selected);
     }
 
     try {

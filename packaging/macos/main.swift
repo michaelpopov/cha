@@ -251,10 +251,18 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
         try createPrivateDirectory(supportDirectory)
         try createPrivateDirectory(supportDirectory.appendingPathComponent("logs", isDirectory: true))
 
-        // Written once to give a new installation something that works, then
-        // left alone: these files are the user's, and CHA reads whatever it
-        // finds there on the next launch.
+        // app.toml marks completed first-run setup. Write the vault first so a
+        // partial failure can be retried; once app.toml exists, vault files are
+        // entirely the user's and are never recreated.
         if !fileManager.fileExists(atPath: appConfigFile.path) {
+            if !fileManager.fileExists(atPath: personalVaultFile.path) {
+                try writePrivateFile("""
+                    vault_name = "Personal"
+                    data = "cha.sqlite3"
+                    modify = "modify"
+
+                    """, to: personalVaultFile)
+            }
             try writePrivateFile("""
                 vault = "Personal"
 
@@ -271,14 +279,6 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
                 level = "info"
 
                 """, to: appConfigFile)
-        }
-        if !fileManager.fileExists(atPath: personalVaultFile.path) {
-            try writePrivateFile("""
-                vault_name = "Personal"
-                data = "cha.sqlite3"
-                modify = "modify"
-
-                """, to: personalVaultFile)
         }
 
         try applyInheritedOrSavedAPIKey()

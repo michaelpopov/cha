@@ -51,6 +51,9 @@ The most useful high-level model is:
 - The process-owned `WorkspaceConfigStore` holds the selected database lease,
   secures the database and sidecars, materializes committed configuration into
   one private root, and atomically publishes the immutable `Workspace`.
+- `ApplicationRuntime` owns that store and the small `CurrentVault` value. Its
+  lifecycle mutex serializes vault switches with Import, Export, Upload, and
+  Download.
 - The independent process-owned `SessionRepository` receives explicit database,
   materialized-workspace, and Welcome paths. It owns none of those outer
   resources and lists, creates, validates, archives, and restores sessions.
@@ -74,6 +77,7 @@ The most useful high-level model is:
 flowchart LR
     Browser["Browser client"]
     Routes["HTTP routes"]
+    Runtime["ApplicationRuntime / CurrentVault"]
     Manager["LiveSessionManager"]
     Actor["LiveSession owner thread"]
     Controller["SessionController"]
@@ -89,6 +93,11 @@ flowchart LR
     Mailbox["SseMailbox"]
 
     Browser -->|"JSON commands"| Routes
+    Routes -->|"vault switch"| Runtime
+    Runtime --> Store
+    Runtime --> Repository
+    Runtime --> Mirror
+    Runtime --> Manager
     Routes -->|"getws() reads"| Workspace
     Routes --> Repository
     Store -->|"materializes and publishes"| Workspace
@@ -111,11 +120,12 @@ flowchart LR
 
 There are four kinds of long-lived information:
 
-- Process configuration — the database path, optional Markdown mirror and
-  modification directory, web listener, and diagnostic log settings — lives in
-  one external TOML file.
-  `chaweb` reads it before opening the database; it is never materialized into
-  the workspace or stored in SQLite.
+- Process configuration lives in one external directory. `app.toml` contains
+  the startup-vault selection, web listener, and diagnostic log settings; every
+  other `.toml` file defines a vault's database path and optional Markdown
+  mirror and modification directory. `chaweb` reads the directory before
+  opening the database. These files are never materialized into the workspace
+  or stored in SQLite.
 
 - Discovery — the roster, descriptions, and Markdown the browser lists — is
   materialized from committed database rows, read once per `Workspace`,
@@ -126,8 +136,8 @@ There are four kinds of long-lived information:
   Import and export directories are consulted only during an explicit
   maintenance operation.
 - Conversation state is dynamic. A live controller owns an in-memory view and
-  writes durable turn transitions into its own rows of the one workspace
-  session database.
+  writes durable turn transitions into its own rows of the active vault's
+  workspace database.
 
 This split explains why creating a session appears immediately. The console
 configuration workflow still requires stop/export/edit/import/restart; CHA.app
@@ -438,10 +448,17 @@ the source workspace, preventing process config files from becoming imported
 metadata rows. Console Import and Export acquire the same non-blocking database
 lease as runtime, so they remain deliberately offline.
 
+The vault registry is loaded once at startup. Adding, removing, or editing a
+vault file therefore requires a restart. Server mode uses the selection in
+`app.toml`; the offline modes use `--vault` and never change the saved
+selection.
+
 The macOS zip contains `CHA.app` and the tracked `cha-config` example. CHA.app
-keeps its active config at `~/Library/Application Support/CHA/`; a new active
-config writes `app.toml` selecting `Personal` and `personal.toml` with
-`modify = "modify"`, relative to that directory.
+keeps its active config at `~/Library/Application Support/CHA/`. A missing
+`app.toml` is its first-run marker: the launcher creates `personal.toml` if
+needed, then creates `app.toml` selecting `Personal`. Once `app.toml` exists,
+the launcher treats vault files as user-owned configuration and does not
+recreate a deleted `personal.toml`.
 
 A new database is created only after a source has been collected and validated
 successfully. Normal runtime and export require schema v2. Schema v1 is the
@@ -468,9 +485,10 @@ composition root, so most lines construct or connect an owner.
 
 Startup proceeds in this order:
 
-1. `parse_application_command()` requires `--config`, validates top-level
-   `data`, `[web]`, and `[logging]`, resolves relative paths from the external
-   file's directory, and separates runtime from the four offline modes.
+1. `parse_application_command()` requires `--config`. It reads `app.toml`,
+   discovers and validates the vault files, resolves relative paths from the
+   configuration directory, selects the startup or command-line vault, and
+   separates runtime from the four offline modes.
 2. `WorkspaceConfigStore::open()` acquires the database companion-file lease,
    rejects anything except valid schema v2, secures the database/sidecars, and
    enables WAL.
@@ -490,8 +508,8 @@ Startup proceeds in this order:
 7. The process-owned `Providers` supervisor is constructed.
 8. `LiveSessionManager` is given an opener lambda that calls `open_session()`
    and installs the mirror callback on the resulting `OpenedSession`.
-9. The HTTP server, asset handler, lobby routes, and session routes are
-   installed.
+9. The HTTP server, asset handler, lobby routes, vault-switch route, and session
+   routes are installed.
 10. The socket is bound, the server begins listening, and shutdown coordination
    waits for a process signal.
 11. Shutdown stops new work and tears down live actors, then
@@ -656,18 +674,19 @@ per-session operating-system lock: `LiveSessionManager` prevents two actors
 from owning one identity inside the process, and the top-level store's database
 lease excludes other processes.
 
-### 9.3 One lease, and the cutover guard
+### 9.3 Database leases and the cutover guard
 
 `WorkspaceConfigStore` acquires `workspace.sqlite3.cha-lock` before opening the
-database and holds it through normal runtime. Console Import and Export acquire
-the same lease for their full operation; CHA.app keeps its already-held lease
-while closing database handles for maintenance. Acquisition is non-blocking,
-so a concurrent console runtime/import/export fails before database use. A
-companion file is used rather than the database bytes because it exists before
-the database is created, does not interfere with SQLite's own byte-range
-locking, and stays stable while WAL sidecars come and go. An empty companion
-left behind after exit is harmless; the held kernel lock, not the file, is what
-means "busy".
+database and holds it through normal runtime. The four console maintenance
+modes acquire the same lease for their full operation; CHA.app keeps its
+already-held lease while closing database handles for maintenance. A vault
+switch acquires the target lease before disturbing or releasing the active
+database. Acquisition is non-blocking, so competing operations fail before
+database use. A companion file is used rather than the database bytes because
+it exists before the database is created, does not interfere with SQLite's own
+byte-range locking, and stays stable while WAL sidecars come and go. An empty
+companion left behind after exit is harmless; the held kernel lock, not the
+file, is what means "busy".
 
 Only import performs the permanent manual-cutover preflight, before it modifies
 the target:
@@ -1181,8 +1200,8 @@ After the main actor path makes sense, scan the smaller adapters:
 
 | Files | Responsibility |
 | --- | --- |
-| `application_config.*` | Parse the mandatory external unified config, optional `mirror`/`modify` paths, database/mode selection, and runtime asset root |
-| `application_runtime.*` | Compose one running application and serialize in-process database maintenance |
+| `application_config.*` | Parse `app.toml` and the vault registry, resolve the selected database and optional `mirror`/`modify` paths, and select the process mode and runtime asset root |
+| `application_runtime.*`, `current_vault.h` | Compose one running application, hold the active vault, and serialize vault switching with in-process database maintenance |
 | `asset_handler.*` | Serve the browser shell and staged static assets without owning session behavior |
 | `http_server.*` | Apply server-wide request, Host/Origin, timeout, and size policy |
 | `http_response.*`, `json.*`, `route_support.*` | Consistent JSON parsing, response bodies, route components, and mutation validation |
@@ -1215,8 +1234,12 @@ and Upload/Download transfer the database through R2. Each reservation restores
 what it took when it is destroyed, in reverse order, after the operation has
 finished and the database has been reopened. Import and Download publish the
 reloaded workspace to the browser. If the reopen fails, the store cannot serve
-again and the runtime says so with `WorkspaceRestartRequiredError` rather than
-continuing without a handle.
+again. The runtime marks itself unusable, stops the HTTP server, and reports
+`WorkspaceRestartRequiredError` rather than continuing without a handle.
+
+Vault switching reuses the live-session, store, and repository reservations;
+it does not construct a second runtime or introduce another transaction layer.
+The complete cutover is traced in section 13.7.
 
 The Swift Database menu asks the C bridge which operations are available.
 Import and Export are enabled only when `modify` was present in the parsed
@@ -1414,6 +1437,48 @@ would force the main view back to Chat.
 Old rows remain in the database as history from an earlier epoch. Restoration
 loads only the current epoch.
 
+### 13.7 Switching vaults
+
+The switch changes which local database the existing runtime uses. It does not
+move or copy data:
+
+1. `Sidebar` calls `ApiClient::switchVault()`, which posts the selected name to
+   `/api/v1/vault/switch`.
+2. The route calls `ApplicationRuntime::switch_vault()` under the runtime
+   lifecycle mutex. An unknown name fails, and selecting the current vault is a
+   no-op.
+3. The runtime acquires the target database's `SessionLease` and validates its
+   schema before disturbing the current vault. A busy or invalid target leaves
+   the old vault running.
+4. `LiveSessionManager::reserve_global_maintenance()` stops admission, closes
+   live sessions, and waits for their journal connections to drain. A timeout
+   releases maintenance and leaves the old vault running, so the switch can be
+   retried.
+5. With the store and repository maintenance guards held, the repository
+   checkpoints the old database, the store closes it, and each object changes
+   its database path to the target. The store reopens the target and the
+   repository synchronizes its forums from the newly published `Workspace`.
+6. `CurrentVault` records the target. `SessionMirror::rebuild()` clears the old
+   path allocation and projects sessions from the target into its configured
+   mirror. A rebuild failure is logged and leaves mirroring inactive without
+   undoing the database switch.
+7. `rewrite_toml_file()` atomically updates the `vault` value in `app.toml`. A
+   save failure is logged without undoing the switch; the running process uses
+   the target, while the next launch uses the previously saved selection.
+8. Maintenance is released and the route returns `204`. The initiating browser
+   page reloads `/`, reads `vault_name` and `vaults` from bootstrap, and opens
+   Welcome in the selected vault.
+
+The store, repository, mirror, manager, HTTP listener, and port are the same
+objects before and after the switch. Only their database-dependent state
+changes. Other browser tabs receive no broadcast; their old live sessions have
+closed, and those tabs may need a manual reload.
+
+There is one fatal edge after step 5 starts. If the target cannot be reopened
+after the database paths change, `CurrentVault` and `app.toml` still name the
+old vault, but the store and repository cannot safely serve it. The runtime
+marks itself unusable and stops the HTTP server. The application must restart.
+
 ## 14. State machines to keep in your head
 
 ### 14.1 Turn persistence
@@ -1459,8 +1524,9 @@ Treat snapshots as truth and appends as a verified compression of truth.
 | Object | Lifetime/owner | Thread rule |
 | --- | --- | --- |
 | `Workspace` | Atomically published immutable snapshot; replaced snapshots live until their readers release them | Concurrent reads; callers hold one `getws()` shared pointer per operation |
-| `WorkspaceConfigStore` | Process; owns database lease/handle, private root, materialized workspace, Welcome path, and cleanup | Configuration mutex serializes the three runtime edits; publish follows commit |
-| `SessionRepository` | Process, independent session-storage owner; receives explicit outer paths and owns none of them | Concurrent const operations, each on its own short-lived connection |
+| `WorkspaceConfigStore` | Process; owns database lease/handle, private root, materialized workspace, Welcome path, and cleanup | Configuration mutex serializes runtime workspace edits; publish follows commit |
+| `ApplicationRuntime` / `CurrentVault` | Process; owns the runtime objects and active vault definition | Lifecycle mutex serializes switching and database maintenance; `CurrentVault` has a small mutex for readers |
+| `SessionRepository` | Process, independent session-storage owner; receives explicit outer paths and owns none of them | Concurrent const operations use short-lived connections; its maintenance guard fences operations during a vault switch |
 | `LiveSessionManager` | Process web runtime | Internal mutex protects registry/lifecycle coordination |
 | `LiveSession` | Manager entry plus transient route handles | Owner thread mutates session; lifecycle methods synchronize |
 | `SessionController` | One `LiveSession` | Owner thread only |
@@ -1552,7 +1618,13 @@ Errors are handled at the narrowest layer that can give them meaning:
   database. Console Export requires a missing or empty destination; macOS
   Export deliberately replaces the configured `modify` directory.
 - External application-config errors fail before runtime opens the configured
-  database; the process file is never part of workspace publication.
+  database; those files are never part of workspace publication.
+- A vault target that is unknown, busy, invalid, or cannot drain live sessions
+  leaves the old vault active. A reopen failure after paths change is fatal to
+  the runtime and stops its HTTP server.
+- Mirror rebuild and `app.toml` persistence happen after a successful vault
+  cutover. Their failures are logged without rolling back the open target;
+  persistence failure means the next launch uses the previously saved vault.
 - A configured mirror whose root is missing or unusable, or whose initial
   synchronization fails, is a startup failure. Later mirror-update failures
   are warnings because SQLite has already committed the authoritative change.
@@ -1639,9 +1711,9 @@ and before reading all of its implementation.
 | Registry races/lifecycle | [tests/web/unit_live_session_manager.cpp](../tests/web/unit_live_session_manager.cpp) |
 | Snapshot/append collapse | [tests/web/unit_sse_mailbox.cpp](../tests/web/unit_sse_mailbox.cpp) |
 | Route protocol | [tests/web/unit_lobby_routes.cpp](../tests/web/unit_lobby_routes.cpp), [unit_session_routes.cpp](../tests/web/unit_session_routes.cpp) |
-| Composition root, private cookie, in-process transfers | [tests/web/unit_application_runtime.cpp](../tests/web/unit_application_runtime.cpp) |
+| Composition root, private cookie, in-process transfers, and vault switching | [tests/web/unit_application_runtime.cpp](../tests/web/unit_application_runtime.cpp) |
 | Whole-process behavior | [tests/web/process_web_server.cpp](../tests/web/process_web_server.cpp) |
-| Browser transcript and composer | [webapp/src/components/LiveChat.test.tsx](../webapp/src/components/LiveChat.test.tsx) |
+| Browser transcript, composer, and vault selector | [webapp/src/components/LiveChat.test.tsx](../webapp/src/components/LiveChat.test.tsx), [App.test.tsx](../webapp/src/components/App.test.tsx) |
 
 Useful test support types include fake model backends, deterministic notifiers,
 temporary workspace builders, controller fixtures, live-session graphs, and a
@@ -1775,8 +1847,9 @@ resolution.
 ### Exercise 8: classify failures
 
 For malformed provider JSON, HTTP 500, a missing session row, a database lease
-already held by another process, an SQLite write failure, a command timeout, and
-a disconnected SSE stream, identify:
+already held by another process, a vault-switch drain timeout, a fatal reopen,
+an SQLite write failure, a command timeout, and a disconnected SSE stream,
+identify:
 
 - the first layer that detects it;
 - whether it is a turn, session, request, or process failure;
@@ -1801,7 +1874,7 @@ Use this as a suggested pace, not a process requirement.
 | 10 | controller | Trace prompt and every terminal outcome |
 | 11 | protocol/projection/parsers | Map typed core actions to web DTOs |
 | 12 | actor/manager | Explain thread confinement and lifecycle races |
-| 13 | mailbox/routes/shutdown | Trace browser delivery and teardown |
+| 13 | mailbox/routes/runtime/shutdown | Trace browser delivery, a vault switch, and teardown |
 | 14 | tests and exercises | Make one small change with tests and update this guide |
 
 ## 23. Glossary
@@ -1829,9 +1902,13 @@ an owning web snapshot.
 than deleting older rows.
 
 **Lease:** Cross-process exclusive ownership of the unified database. Normal
-runtime holds it through `WorkspaceConfigStore`; console Import and Export
+runtime holds it through `WorkspaceConfigStore`; console maintenance modes
 acquire the same lease, while CHA.app retains its runtime lease during
-in-process maintenance.
+in-process maintenance and acquires a switch target before cutover.
+
+**Vault:** A named external definition of one database and its optional mirror
+and modification directories. One process has one active vault at a time; a
+switch reuses the existing runtime objects with the selected paths.
 
 **Model history:** An owning immutable transcript snapshot shared with workers for context
 projection.

@@ -112,6 +112,32 @@ automatic migration from a single `cha.toml`; create the directory, split
 selection/web/logging into `app.toml` and data paths into a vault file, adjust
 relative paths, and move `.env` and `openai-auth.json` into the directory.
 
+### Vault switching
+
+Vault files are discovered when CHA starts. Restart CHA after adding, removing,
+or editing a vault file. Selecting a vault in the browser changes the vault for
+the whole running process, including Import, Export, Upload, and Download. A
+successful switch closes live sessions, opens the selected database, and
+reloads the initiating page at Welcome. Other open tabs may need to be reloaded
+manually.
+
+Failures have deliberately small, explicit outcomes:
+
+| Failure | Runtime result |
+| --- | --- |
+| The target is unknown, busy, or invalid | The old vault remains active. |
+| Live sessions do not drain before the timeout | The old vault remains active and the switch can be retried. |
+| The target cannot be reopened after the database path changes | The HTTP server stops because its database state is unusable. Quit and restart CHA; `app.toml` still selects the old vault. |
+| The target mirror cannot be rebuilt | The switch succeeds with mirroring inactive. |
+| The new selection cannot be saved to `app.toml` | The switch succeeds for the running process. The next launch uses the previously saved vault. |
+
+The macOS application stores this directory at
+`~/Library/Application Support/CHA`. A missing `app.toml` marks first-run setup:
+the launcher creates `personal.toml` if needed, then creates `app.toml`. Once
+`app.toml` exists, the launcher does not recreate deleted vault files. Before
+deleting the selected vault file, change the `vault` value in `app.toml` to an
+existing vault or CHA will fail on its next launch.
+
 ## 3. Workspace directory map
 
 A representative workspace looks like this:
@@ -993,6 +1019,8 @@ character when the user asks for connectivity verification.
 | `Sign in to ChatGPT before using this provider.` | OAuth provider is configured but Settings has no connected account |
 | import/export reports database busy | A CHA runtime or another maintenance operation holds the database lease |
 | editing exported files changes nothing | Runtime reads committed SQLite configuration; the edited bundle has not been imported |
+| vault switch reports that restart is required, or the page becomes unavailable during a switch | Reopening the selected database failed and the server stopped; quit and restart CHA |
+| startup reports that the selected vault is unknown after a vault file was deleted | `app.toml` still selects the deleted vault; select an existing vault in that file |
 
 ## 15. Source-of-truth implementation files
 
@@ -1011,12 +1039,19 @@ guide:
 - `src/characters/character_config.cpp` and `.h`: provider endpoint and enum
   semantics;
 - `src/providers/openai_oauth.cpp`: OAuth credential lifecycle;
-- `src/web/application_runtime.cpp`: configuration-directory OAuth credential
-  path and runtime maintenance operations;
+- `src/web/application_config.cpp`: application and vault configuration
+  discovery, validation, and command-line selection;
+- `src/web/application_runtime.cpp`: active-vault switching,
+  configuration-directory OAuth credentials, and runtime maintenance
+  operations;
+- `packaging/macos/main.swift`: native first-run configuration ownership and
+  database menu behavior;
 - `packaging/linux/import-seed/`: minimal package seed;
 - `tests/application/unit_workspace.cpp` and
   `tests/application/unit_workspace_config_store.cpp`: executable examples of
-  accepted and rejected configurations.
+  accepted and rejected configurations;
+- `tests/web/unit_application_runtime.cpp`: runtime maintenance and vault
+  switching behavior, including failure outcomes.
 
 The directory `~/var/modify/` is a useful content example, but the source and
 tests above are authoritative when the example and code disagree.
