@@ -1,6 +1,7 @@
 #include "runtime_bridge.h"
 
 #include "util/logging.h"
+#include "util/path_name.h"
 #include "web/application_config.h"
 #include "web/application_runtime.h"
 #include "workspace/workspace_config_store.h"
@@ -11,19 +12,22 @@
 #include <filesystem>
 #include <memory>
 #include <new>
+#include <stdexcept>
 #include <string>
 
 using cha::WorkspaceConfigTransfer;
 using cha::import_workspace_configuration;
+using cha::path_from_utf8;
 using cha::web::ApplicationCommand;
 using cha::web::ApplicationRuntime;
 using cha::web::R2DatabaseTransfer;
+using cha::web::find_vault;
+using cha::web::load_configuration_directory;
 using cha::web::parse_application_command;
 
 struct ChaRuntime {
     std::unique_ptr<ApplicationRuntime> application;
     int port{};
-    bool can_modify{};
     bool logging{};
 };
 
@@ -146,7 +150,6 @@ ChaRuntime* cha_runtime_create(
         runtime->logging = true;
         runtime->application = ApplicationRuntime::open(
             command, access_token);
-        runtime->can_modify = command.modify.has_value();
         runtime->port = runtime->application->start();
         return runtime.release();
     } catch (...) {
@@ -181,7 +184,12 @@ int32_t cha_runtime_port(const ChaRuntime* runtime) {
 }
 
 int32_t cha_runtime_can_modify(const ChaRuntime* runtime) {
-    return runtime && runtime->can_modify ? 1 : 0;
+    if (!runtime || !runtime->application) return 0;
+    try {
+        return runtime->application->current_vault().modify ? 1 : 0;
+    } catch (...) {
+        return 0;
+    }
 }
 
 int32_t cha_runtime_can_transfer_r2(const ChaRuntime* runtime) {
@@ -202,16 +210,20 @@ int32_t cha_runtime_import_initial_database(
         return 0;
     }
     try {
-        const char* arguments[] = {
-            "CHA", "--config", config_path, "--import", seed_path};
-        const ApplicationCommand command =
-            parse_application_command(5, arguments);
-        // The config file names the database, so the decision to seed one
+        const auto config = load_configuration_directory(
+            path_from_utf8(config_path));
+        const auto* const vault =
+            find_vault(config.vaults, config.startup_vault);
+        if (vault == nullptr) {
+            throw std::runtime_error(
+                "Application config does not name a discovered vault");
+        }
+        // app.toml names the startup vault, so the decision to seed one
         // belongs here rather than in a launcher that would have to guess.
-        if (std::filesystem::is_regular_file(command.database)) return 1;
+        if (std::filesystem::is_regular_file(vault->data)) return 1;
         const WorkspaceConfigTransfer result =
             import_workspace_configuration(
-                *command.import_directory, command.database);
+                path_from_utf8(seed_path), vault->data);
         (void)result;
         return 1;
     } catch (...) {

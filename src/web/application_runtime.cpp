@@ -4,7 +4,9 @@
 #include "providers/provider_client.h"
 #include "providers/providers.h"
 #include "session/session_repository.h"
+#include "util/environment.h"
 #include "util/logging.h"
+#include "web/current_vault.h"
 #include "workspace/builtins.h"
 #include "workspace/session_open.h"
 #include "workspace/workspace.h"
@@ -101,13 +103,6 @@ std::shared_ptr<const Workspace> current_workspace() {
     return workspace;
 }
 
-std::filesystem::path openai_credential_path(
-    const std::filesystem::path& database) {
-    std::filesystem::path path = database;
-    path += ".openai-auth.json";
-    return path;
-}
-
 ProviderClientFactory shared_openai_provider_factory(OpenAiOAuth* oauth) {
     return [oauth](SharedCharacterDefinition definition) {
         return std::make_unique<ProviderClient>(std::move(definition), oauth);
@@ -122,9 +117,11 @@ struct ApplicationRuntime::Impl {
         std::string selected_access_token)
         : command(selected_command),
           access_token(std::move(selected_access_token)),
-          store(WorkspaceConfigStore::open(command.database)),
+          settings(),
+          current_vault_(selected_command.vault),
+          store(WorkspaceConfigStore::open(command.vault.data)),
           openai_auth(std::make_unique<OpenAiOAuth>(
-              openai_credential_path(store->database_path()))),
+              command.config_directory / "openai-auth.json")),
           providers(shared_openai_provider_factory(openai_auth.get())) {
         configure_test_idle_grace(settings, command);
         const auto seed = TemporarySessionSeed{
@@ -135,9 +132,9 @@ struct ApplicationRuntime::Impl {
             store->workspace_path(),
             store->welcome_path(),
             seed);
-        if (command.mirror) {
+        if (command.vault.mirror) {
             mirror = std::make_shared<SessionMirror>(
-                *command.mirror, *sessions);
+                *command.vault.mirror, *sessions);
         }
 
         auto opener = [this](
@@ -234,6 +231,7 @@ struct ApplicationRuntime::Impl {
     ApplicationCommand command;
     std::string access_token;
     WebSettings settings;
+    CurrentVault current_vault_;
     std::unique_ptr<WorkspaceConfigStore> store;
     std::shared_ptr<const SessionRepository> sessions;
     std::shared_ptr<SessionMirror> mirror;
@@ -259,8 +257,13 @@ ApplicationRuntime::~ApplicationRuntime() {
 std::unique_ptr<ApplicationRuntime> ApplicationRuntime::open(
     const ApplicationCommand& command,
     std::string access_token) {
+    load_dotenv(command.config_directory / ".env");
     return std::unique_ptr<ApplicationRuntime>(new ApplicationRuntime(
         std::make_unique<Impl>(command, std::move(access_token))));
+}
+
+VaultDefinition ApplicationRuntime::current_vault() const {
+    return impl_->current_vault_.get();
 }
 
 int ApplicationRuntime::start(int port_override) {
@@ -349,43 +352,47 @@ void ApplicationRuntime::shutdown() {
 
 R2DatabaseTransfer ApplicationRuntime::upload_database() {
     return impl_->maintain_database([this] {
+        const VaultDefinition vault = impl_->current_vault_.get();
         return upload_database_to_r2(
-            impl_->command.database, R2DatabaseLease::already_held);
+            vault.data, R2DatabaseLease::already_held);
     });
 }
 
 R2DatabaseTransfer ApplicationRuntime::download_database() {
     return impl_->maintain_database([this] {
+        const VaultDefinition vault = impl_->current_vault_.get();
         return download_database_from_r2(
-            impl_->command.database, R2DatabaseLease::already_held);
+            vault.data, R2DatabaseLease::already_held);
     });
 }
 
 WorkspaceConfigTransfer ApplicationRuntime::import_configuration() {
-    if (!impl_->command.modify) {
-        throw std::runtime_error(
-            "Application config requires 'modify' for Import");
-    }
     return impl_->maintain_database([this] {
+        const VaultDefinition vault = impl_->current_vault_.get();
+        if (!vault.modify) {
+            throw std::runtime_error(
+                "Application config requires 'modify' for Import");
+        }
         return import_workspace_configuration(
-            *impl_->command.modify,
-            impl_->command.database,
+            *vault.modify,
+            vault.data,
             WorkspaceConfigLease::already_held);
     });
 }
 
 WorkspaceConfigTransfer ApplicationRuntime::export_configuration() {
-    if (!impl_->command.modify) {
-        throw std::runtime_error(
-            "Application config requires 'modify' for Export");
-    }
     return impl_->maintain_database([this] {
-        if (std::filesystem::is_directory(*impl_->command.modify)) {
-            std::filesystem::remove_all(*impl_->command.modify);
+        const VaultDefinition vault = impl_->current_vault_.get();
+        if (!vault.modify) {
+            throw std::runtime_error(
+                "Application config requires 'modify' for Export");
+        }
+        if (std::filesystem::is_directory(*vault.modify)) {
+            std::filesystem::remove_all(*vault.modify);
         }
         return export_workspace_configuration(
-            impl_->command.database,
-            *impl_->command.modify,
+            vault.data,
+            *vault.modify,
             WorkspaceConfigLease::already_held);
     });
 }

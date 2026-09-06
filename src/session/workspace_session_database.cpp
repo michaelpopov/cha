@@ -105,7 +105,7 @@ bool is_valid_v1_identity(Database& database) {
     throw std::runtime_error(
         "Workspace session database '" + std::string(path)
         + "' is a valid CHA schema-1 database. Stop CHA and run:\n"
-        "chaweb --config=CONFIG --import WORKSPACE");
+        "chaweb --config=CONFIG_DIR --vault=NAME --import WORKSPACE");
 }
 
 void remove_database_files_noexcept(

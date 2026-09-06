@@ -86,20 +86,28 @@ struct OfflineProcessResult {
 OfflineProcessResult run_offline_process(
     const std::filesystem::path& database,
     const char* operation,
-    const std::filesystem::path& directory) {
-    const std::filesystem::path config_path =
+    const std::filesystem::path& directory,
+    std::string_view vault_name = "Test") {
+    const std::filesystem::path config_directory =
         std::filesystem::temp_directory_path()
-        / ("cha-offline-" + std::to_string(::getpid()) + ".toml");
+        / ("cha-offline-" + std::to_string(::getpid()) + "-"
+           + std::to_string(
+               std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::filesystem::create_directories(config_directory);
     {
-        std::ofstream config(config_path);
-        config << "data = " << std::quoted(database.string()) << "\n"
-               << "[web]\nhost = \"127.0.0.1\"\nport = 1\n"
-               << "[logging]\nfile = \"cha-test.log\"\nlevel = \"off\"\n";
-        if (!config) {
+        std::ofstream app(config_directory / "app.toml");
+        app << "vault = " << std::quoted(std::string(vault_name)) << "\n"
+            << "[web]\nhost = \"127.0.0.1\"\nport = 1\n"
+            << "[logging]\nfile = \"cha-test.log\"\nlevel = \"off\"\n";
+        std::ofstream vault(config_directory / "test.toml");
+        vault << "vault_name = " << std::quoted(std::string(vault_name)) << "\n"
+              << "data = " << std::quoted(database.string()) << "\n";
+        if (!app || !vault) {
             throw std::runtime_error("Failed to write offline process test config");
         }
     }
-    const std::string config_text = config_path.string();
+    const std::string config_text = config_directory.string();
+    const std::string vault_text = "--vault=" + std::string(vault_name);
     int error_pipe[2]{-1, -1};
     if (::pipe(error_pipe) != 0) {
         throw std::runtime_error("Failed to create offline process-test pipe");
@@ -120,6 +128,7 @@ OfflineProcessResult run_offline_process(
                 CHA_WEB_BINARY,
                 "--config",
                 config_text.c_str(),
+                vault_text.c_str(),
                 operation,
                 static_cast<char*>(nullptr));
         } else {
@@ -129,6 +138,7 @@ OfflineProcessResult run_offline_process(
                 CHA_WEB_BINARY,
                 "--config",
                 config_text.c_str(),
+                vault_text.c_str(),
                 operation,
                 directory_text.c_str(),
                 static_cast<char*>(nullptr));
@@ -152,8 +162,75 @@ OfflineProcessResult run_offline_process(
         throw std::runtime_error("Failed to reap offline process test");
     }
     std::error_code ignored;
-    std::filesystem::remove(config_path, ignored);
+    std::filesystem::remove_all(config_directory, ignored);
     return result;
+}
+
+OfflineProcessResult run_offline_config(
+    const std::filesystem::path& config_directory,
+    const std::vector<std::string>& extra_arguments) {
+    const std::string config_text = config_directory.string();
+    std::vector<std::string> arguments{
+        CHA_WEB_BINARY, "--config", config_text};
+    arguments.insert(
+        arguments.end(), extra_arguments.begin(), extra_arguments.end());
+    std::vector<const char*> pointers;
+    pointers.reserve(arguments.size() + 1);
+    for (const std::string& argument : arguments) {
+        pointers.push_back(argument.c_str());
+    }
+    pointers.push_back(nullptr);
+
+    int error_pipe[2]{-1, -1};
+    if (::pipe(error_pipe) != 0) {
+        throw std::runtime_error("Failed to create offline process-test pipe");
+    }
+    const pid_t child = ::fork();
+    if (child == -1) {
+        (void)::close(error_pipe[0]);
+        (void)::close(error_pipe[1]);
+        throw std::runtime_error("Failed to fork offline process test");
+    }
+    if (child == 0) {
+        (void)::dup2(error_pipe[1], STDERR_FILENO);
+        (void)::close(error_pipe[0]);
+        (void)::close(error_pipe[1]);
+        ::execv(CHA_WEB_BINARY, const_cast<char**>(pointers.data()));
+        _exit(127);
+    }
+
+    (void)::close(error_pipe[1]);
+    OfflineProcessResult result;
+    std::array<char, 4096> buffer{};
+    while (true) {
+        const ssize_t count = ::read(error_pipe[0], buffer.data(), buffer.size());
+        if (count > 0) {
+            result.errors.append(buffer.data(), static_cast<std::size_t>(count));
+            continue;
+        }
+        if (count == 0 || (count == -1 && errno != EINTR)) break;
+    }
+    (void)::close(error_pipe[0]);
+    if (::waitpid(child, &result.status, 0) != child) {
+        throw std::runtime_error("Failed to reap offline process test");
+    }
+    return result;
+}
+
+void write_process_config_directory(
+    const std::filesystem::path& config_directory,
+    std::string_view startup_vault,
+    const std::vector<std::pair<std::string, std::filesystem::path>>& vaults) {
+    std::filesystem::create_directories(config_directory);
+    std::ofstream app(config_directory / "app.toml");
+    app << "vault = " << std::quoted(std::string(startup_vault)) << "\n"
+        << "[web]\nhost = \"127.0.0.1\"\nport = 1\n"
+        << "[logging]\nfile = \"cha-test.log\"\nlevel = \"off\"\n";
+    for (const auto& [name, data] : vaults) {
+        std::ofstream vault(config_directory / (name + ".toml"));
+        vault << "vault_name = " << std::quoted(name) << "\n"
+              << "data = " << std::quoted(data.string()) << "\n";
+    }
 }
 
 // Diagnostic logging flushes every record as it is written, so the log is what
@@ -780,11 +857,79 @@ TEST(WebServerProcess, RejectsAMissingDatabaseWithImportGuidance) {
     EXPECT_NE(errors.find(database.string()), std::string::npos) << errors;
     EXPECT_NE(errors.find("does not exist"), std::string::npos) << errors;
     EXPECT_NE(
-        errors.find("chaweb --config=CONFIG --import WORKSPACE"),
+        errors.find("chaweb --config=CONFIG_DIR --vault=NAME --import WORKSPACE"),
         std::string::npos)
         << errors;
     std::error_code removal;
     std::filesystem::remove_all(database.parent_path(), removal);
+}
+
+TEST(WebServerProcess, ConsoleImportCreatesTheSelectedMissingDatabase) {
+    test::TestWorkspace workspace;
+    const std::filesystem::path selected =
+        workspace.root().parent_path()
+        / (workspace.root().filename().string() + "_selected")
+        / "selected.sqlite3";
+    const std::filesystem::path other =
+        workspace.root().parent_path()
+        / (workspace.root().filename().string() + "_other")
+        / "other.sqlite3";
+    std::filesystem::create_directories(selected.parent_path());
+    std::filesystem::create_directories(other.parent_path());
+    const std::filesystem::path config_directory =
+        workspace.root().parent_path()
+        / (workspace.root().filename().string() + "_config");
+    write_process_config_directory(
+        config_directory,
+        "Selected",
+        {{"Selected", selected}, {"Other", other}});
+
+    const OfflineProcessResult result = run_offline_config(
+        config_directory,
+        {"--vault=Selected", "--import", workspace.root().string()});
+    EXPECT_TRUE(WIFEXITED(result.status));
+    EXPECT_EQ(WEXITSTATUS(result.status), 0) << result.errors;
+    EXPECT_TRUE(std::filesystem::is_regular_file(selected));
+    EXPECT_FALSE(std::filesystem::exists(other));
+
+    std::error_code removal;
+    std::filesystem::remove_all(selected.parent_path(), removal);
+    std::filesystem::remove_all(other.parent_path(), removal);
+    std::filesystem::remove_all(config_directory, removal);
+}
+
+TEST(WebServerProcess, InvalidVaultSelectionFailsBeforeDataChanges) {
+    test::TestWorkspace workspace;
+    const std::filesystem::path selected =
+        workspace.root().parent_path()
+        / (workspace.root().filename().string() + "_invalid_vault")
+        / "selected.sqlite3";
+    std::filesystem::create_directories(selected.parent_path());
+    const std::filesystem::path config_directory =
+        selected.parent_path() / "cha-config";
+    write_process_config_directory(
+        config_directory, "Selected", {{"Selected", selected}});
+
+    const OfflineProcessResult missing = run_offline_config(
+        config_directory,
+        {"--import", workspace.root().string()});
+    EXPECT_TRUE(WIFEXITED(missing.status));
+    EXPECT_NE(WEXITSTATUS(missing.status), 0);
+    EXPECT_NE(missing.errors.find("--vault"), std::string::npos)
+        << missing.errors;
+    EXPECT_FALSE(std::filesystem::exists(selected));
+
+    const OfflineProcessResult unknown = run_offline_config(
+        config_directory,
+        {"--vault=Missing", "--import", workspace.root().string()});
+    EXPECT_TRUE(WIFEXITED(unknown.status));
+    EXPECT_NE(WEXITSTATUS(unknown.status), 0);
+    EXPECT_NE(unknown.errors.find("Unknown vault"), std::string::npos)
+        << unknown.errors;
+    EXPECT_FALSE(std::filesystem::exists(selected));
+
+    std::error_code removal;
+    std::filesystem::remove_all(selected.parent_path(), removal);
 }
 
 TEST(WebServerProcess, RejectsAVersion1DatabaseWithImportGuidance) {
@@ -798,7 +943,7 @@ TEST(WebServerProcess, RejectsAVersion1DatabaseWithImportGuidance) {
     const std::string errors = server.errors();
     EXPECT_NE(errors.find("schema-1"), std::string::npos) << errors;
     EXPECT_NE(
-        errors.find("chaweb --config=CONFIG --import WORKSPACE"),
+        errors.find("chaweb --config=CONFIG_DIR --vault=NAME --import WORKSPACE"),
         std::string::npos)
         << errors;
 }

@@ -17,6 +17,7 @@
 
 #include <array>
 #include <chrono>
+#include <filesystem>
 #include <fstream>
 #include <iomanip>
 
@@ -112,24 +113,28 @@ WebServerProcess::WebServerProcess(
     std::string_view log_level)
     : port_(port) {
     const std::string root_text = application_root.string();
-    config_path_ = database.parent_path()
-        / ("cha-test-" + std::to_string(port) + ".toml");
+    config_directory_ = database.parent_path()
+        / ("cha-test-" + std::to_string(port));
+    std::filesystem::create_directories(config_directory_);
     {
-        std::ofstream config(config_path_);
-        config << "data = " << std::quoted(database.string()) << "\n"
-               << "[web]\n"
-               << "host = " << std::quoted(loopback_host) << "\n"
-               << "port = " << port << "\n"
-               << "[logging]\n"
-               << "file = "
-               << std::quoted(
-                      (database.parent_path() / "logs" / "cha.log").string())
-               << "\nlevel = " << std::quoted(std::string(log_level)) << "\n";
-        if (!config) {
+        std::ofstream app(config_directory_ / "app.toml");
+        app << "vault = \"Test\"\n"
+            << "[web]\n"
+            << "host = " << std::quoted(loopback_host) << "\n"
+            << "port = " << port << "\n"
+            << "[logging]\n"
+            << "file = "
+            << std::quoted(
+                   (database.parent_path() / "logs" / "cha.log").string())
+            << "\nlevel = " << std::quoted(std::string(log_level)) << "\n";
+        std::ofstream vault(config_directory_ / "test.toml");
+        vault << "vault_name = \"Test\"\n"
+              << "data = " << std::quoted(database.string()) << "\n";
+        if (!app || !vault) {
             throw std::runtime_error("Failed to write web process test config");
         }
     }
-    const std::string config_text = config_path_.string();
+    const std::string config_text = config_directory_.string();
     int output_pipe[2]{-1, -1};
     int error_pipe[2]{-1, -1};
     if (::pipe(output_pipe) == -1 || ::pipe(error_pipe) == -1) {
@@ -191,7 +196,7 @@ WebServerProcess::~WebServerProcess() {
     close_descriptor(output_fd_);
     close_descriptor(error_fd_);
     std::error_code ignored;
-    std::filesystem::remove(config_path_, ignored);
+    std::filesystem::remove_all(config_directory_, ignored);
 }
 
 bool WebServerProcess::wait_until_ready(std::chrono::milliseconds timeout) {

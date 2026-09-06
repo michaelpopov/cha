@@ -117,7 +117,7 @@ void expect_seeded_session_rows(Database& database) {
 }
 
 std::string v1_import_command() {
-    return "chaweb --config=CONFIG --import WORKSPACE";
+    return "chaweb --config=CONFIG_DIR --vault=NAME --import WORKSPACE";
 }
 
 TEST(WorkspaceSessionDatabase, CreatesValidEmptyDatabaseAndEnablesWal) {

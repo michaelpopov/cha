@@ -52,7 +52,7 @@ private:
     int output_fd_{-1};
     int error_fd_{-1};
     int port_{};
-    std::filesystem::path config_path_;
+    std::filesystem::path config_directory_;
     std::string output_;
     std::string errors_;
 };

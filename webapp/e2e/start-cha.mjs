@@ -64,7 +64,7 @@ const executable = packagedApplication
   : resolve(repository, 'build/ninja/chaweb');
 const workspace = publishedWorkspace ?? resolve(temporary, 'workspace');
 const database = publishedDatabase ?? resolve(temporary, 'cha.sqlite3');
-const config = resolve(temporary, 'cha.toml');
+const config = resolve(temporary, 'cha-config');
 const apiPort = Number(process.env.CHA_E2E_PORT ?? '8080');
 const modelPort = apiPort + 2;
 
@@ -132,9 +132,10 @@ stream = true
 https = false
 `,
 );
+await mkdir(config, { recursive: true });
 await writeFile(
-  config,
-  `data = ${JSON.stringify(database)}
+  resolve(config, 'app.toml'),
+  `vault = "E2E"
 
 [web]
 host = "127.0.0.1"
@@ -143,6 +144,12 @@ port = ${apiPort}
 [logging]
 file = "cha.log"
 level = "off"
+`,
+);
+await writeFile(
+  resolve(config, 'e2e.toml'),
+  `vault_name = "E2E"
+data = ${JSON.stringify(database)}
 `,
 );
 
@@ -175,6 +182,7 @@ if (packagedApplication) {
 
 const importer = spawn(executable, [
   '--config', config,
+  '--vault=E2E',
   '--import', workspace,
 ], { stdio: 'inherit' });
 const importCode = await new Promise((resolveExit, reject) => {

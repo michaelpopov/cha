@@ -13,8 +13,8 @@ has exactly one active vault. The active vault supplies the current in-memory
 directory, and database used by maintenance operations.
 
 Vault selection is global to the application process. It is not scoped to a
-browser, tab, or user. Switching vaults replaces the application's active
-workspace and all of its vault-specific runtime state.
+browser, tab, or user. Switching vaults retargets the application's
+vault-specific runtime state at the new vault and republishes its workspace.
 
 OpenAI login is application-wide rather than vault-specific. It remains active
 when the current vault changes.
@@ -35,9 +35,10 @@ A representative directory is:
 ```text
 cha-config/
 ├── app.toml
+├── openai-auth.json
+├── .env
 ├── personal.toml
-├── projects.toml
-└── unrelated.toml
+└── projects.toml
 ```
 
 `app.toml` is the only reserved filename. Vault filenames have no identity or
@@ -45,13 +46,41 @@ meaning of their own. `personal.toml` could define a vault named `Archive`, and
 renaming the file would not rename the vault.
 
 CHA scans only the direct children of the configuration directory. It does not
-search subdirectories. Only files whose names end in `.toml` participate in
-discovery.
+search subdirectories. Every other file whose name ends in `.toml` is a vault
+definition. Files with other extensions, such as `openai-auth.json` and
+`.env`, are not vault definitions and are ignored by discovery.
 
 The discovered vault set is fixed for the lifetime of the process. Adding,
 removing, or editing a vault file takes effect after CHA is restarted. The one
 exception is that CHA updates the `vault` selection in `app.toml` after a
 successful runtime switch.
+
+### Migration from the single configuration file
+
+There is no compatibility mode, so upgrading an existing installation is a
+one-time manual step:
+
+- `cha.toml` becomes a directory. Its `[web]` and `[logging]` tables move to
+  `app.toml` together with the new `vault` field; its `data`, `mirror`, and
+  `modify` fields move to one vault file with a `vault_name`. Relative paths
+  keep resolving against the directory that holds them.
+- The OpenAI credential file moves from `<database>.openai-auth.json` to
+  `cha-config/openai-auth.json`. CHA does not move it. An upgraded
+  installation starts signed out until the user signs in again through
+  Settings, or moves the old file by hand before starting CHA.
+- The `.env` file moves from the database directory to the configuration
+  directory. It is moved by hand as well.
+- R2 backups keep their names, because the object key is still the database
+  filename.
+
+The following describe or generate the single-file layout today and change
+with it: `packaging/linux/cha.toml.example`, which becomes an example
+`app.toml` and vault file; the `CONFIG` default and the seed hint in
+`bin/start-cha.sh`, whose hint gains `--vault`; the `import-dev` target in the
+`Makefile`, which passes `--vault`; the macOS first-run writer, which creates
+`app.toml` and one vault file instead of `cha.toml`; and the configuration
+descriptions in `README.md` and `docs/MaintainerGuide.md`, including the
+guide's table of configuration locations.
 
 ## Application configuration
 
@@ -78,9 +107,9 @@ matching vault's `vault_name` is canonical and is used in the UI. For example,
 `vault = "personal"` selects a vault whose definition says
 `vault_name = "Personal"`.
 
-The `vault` field must be present and must select one valid discovered vault.
+The `vault` field must be present and must select one discovered vault.
 Startup fails if it is missing, empty, or has no match. Startup also fails if
-the directory contains no valid vaults.
+the directory defines no vaults.
 
 When a user changes the active vault, CHA rewrites `app.toml` with the selected
 vault's canonical name. CHA is allowed to rewrite the complete TOML file; it
@@ -119,14 +148,33 @@ providers in every other vault. Disconnecting from any vault disconnects the
 application-wide account. A pending device-login attempt also survives a vault
 switch.
 
-Provider definitions and provider runtime collections remain vault-scoped
-because they come from each vault's workspace. Each vault's provider factory
-receives a reference to the stable application-wide `OpenAiOAuth` owner.
-Switching cancels the old vault's provider work and retires those clients; any
-transport tail that does not stop promptly is cleaned up away from the switch
-request. The new vault's clients use the same OAuth owner and credential
-bundle. Vault switching must not load, replace, delete, or copy an OAuth
-credential file.
+Provider definitions come from each vault's workspace, but the `Providers`
+supervisor is process-wide and stores none of them; each request carries its
+own character definition. Its client factory holds a reference to the stable
+application-wide `OpenAiOAuth` owner. Switching drains the live sessions,
+which cancels their in-flight provider requests, and requests made after the
+switch carry definitions from the new vault's workspace through the same
+supervisor, OAuth owner, and credential bundle. Vault switching must not load,
+replace, delete, or copy an OAuth credential file.
+
+### Application-wide environment file
+
+API keys and R2 credentials may be supplied in one `.env` file in the
+configuration directory:
+
+```text
+cha-config/.env
+```
+
+CHA loads it once when the runtime starts, before the first vault is opened,
+with the existing rule that a variable already present in the process
+environment is not overridden. The directory of a vault's database is no
+longer consulted. A per-vault file could not work with that rule: after a
+switch, the first vault's `OPENAI_API_KEY` would silently shadow the second
+vault's. Like the credential file, `.env` is outside every vault and is not
+part of workspace import/export, session mirroring, or R2 database transfer.
+Console maintenance commands keep reading credentials from the process
+environment, as they do today.
 
 ## Vault configuration
 
@@ -148,16 +196,16 @@ The fields are:
 | `mirror` | No | Directory receiving the vault's session mirror. |
 | `modify` | No | Directory used by the vault's configuration import and export operations. |
 
-`data`, `mirror`, and `modify` must be absolute paths when present. Relative
-paths make the vault definition invalid. The database and optional directories
-do not have to exist during discovery. In particular, `--import` and the macOS
-Import operation must be able to initialize a vault whose database does not yet
-exist.
+Relative `data`, `mirror`, and `modify` values are resolved against the
+configuration directory, exactly as the single file resolved them against its
+own directory. The database and optional directories do not have to exist
+during discovery. In particular, `--import` and the macOS Import operation
+must be able to initialize a vault whose database does not yet exist.
 
-Unknown fields in a vault file are ignored. This allows a vault file to carry
-unrelated metadata without making it unavailable. CHA still verifies that each
-known field is present when required, has the correct TOML type, and has a valid
-value.
+Unknown fields are rejected, exactly as in `app.toml`, so a misspelled optional
+field such as `mirrror` is reported instead of silently ignored. CHA verifies
+that each known field is present when required, has the correct TOML type, and
+has a valid value.
 
 ### Vault-name rules
 
@@ -181,39 +229,43 @@ the selection to `app.toml`.
 
 ### Cross-vault path safety
 
-Vault paths are normalized before the registry is accepted, using an absolute,
-weakly canonical form so `..` components and existing symlinked parents cannot
-hide aliases. Registry-wide validation then applies to every individually valid
-vault definition, including vaults that are not selected at startup.
-
-Existing data files are additionally compared with filesystem equivalence so
-two hard-link paths to the same file are duplicates. For paths that do not yet
-exist, normalized path equality is used.
+Vault paths are normalized before the registry is accepted, using the same
+absolute, weakly canonical form as command-line paths, so `..` components and
+symlinked parents cannot hide aliases. Registry-wide validation then applies
+to every vault definition, including vaults that are not selected at startup,
+and compares normalized paths.
 
 The complete registry must satisfy these invariants:
 
 - Every vault has a distinct `data` path. Two names cannot refer to the same
   SQLite database.
-- Every `mirror` root is distinct from and non-overlapping with every other
-  `mirror` root. Two vaults cannot write into the same or nested mirror trees.
-- Every `modify` root is distinct from and non-overlapping with every other
-  `modify` root. Exporting one vault cannot replace another vault's edit tree.
-- No `mirror` and `modify` roots overlap, whether they belong to the same vault
-  or different vaults.
-- No vault's `data` file is equal to or contained by any vault's `mirror` or
-  `modify` tree. In particular, Vault A's export must never be able to delete
-  Vault B's database with `remove_all(A.modify)`.
-- The configuration directory does not overlap any `mirror` or `modify` tree,
-  so export or mirror writes cannot replace `app.toml` or vault definitions.
+- Every vault has a distinct `data` filename, because R2 names a backup after
+  the local filename. See [R2 object identity](#r2-object-identity).
+- No `modify` root equals, contains, or is contained by another vault's
+  `modify` root. Export removes the whole `modify` tree before writing, so a
+  shared or nested root would let one vault's export delete another's edit
+  tree.
+- No `modify` root equals or contains any vault's `data` file or the
+  configuration directory. This generalizes the existing single-file rule
+  that `modify` must not contain the config file or the database, so
+  `remove_all(A.modify)` can never delete Vault B's database, `app.toml`, or
+  a vault definition.
 
-For directory roots, “overlap” means equality or containment in either
-direction. Sibling paths are allowed. For example, these paths are independent:
+`mirror` roots are not validated against each other or against the other
+paths. The mirror is a best-effort projection that only creates directories
+and replaces individual Markdown files, so a misconfigured overlap degrades
+that projection without touching primary data. Hard-link aliases of an
+existing database are likewise not detected; normalized path equality is
+enough for a personal configuration.
+
+Containment is checked in either direction for `modify` roots. Sibling paths
+are allowed. For example, these paths are independent:
 
 ```text
-/srv/cha/personal/cha.sqlite3
+/srv/cha/personal/personal.sqlite3
 /srv/cha/personal/mirror/
 /srv/cha/personal/modify/
-/srv/cha/work/cha.sqlite3
+/srv/cha/work/work.sqlite3
 /srv/cha/work/mirror/
 /srv/cha/work/modify/
 ```
@@ -224,28 +276,24 @@ would make the selected vault and destructive operation targets dependent on
 directory iteration order. The diagnostic names both vaults, both fields, and
 the conflicting normalized path.
 
-## Discovery and invalid files
+## Discovery
 
-After reading `app.toml`, CHA examines the other direct-child `.toml` files.
-For each file:
+After reading `app.toml`, CHA reads every other direct-child `.toml` file as a
+vault definition. For each file:
 
 1. Read and parse the TOML document.
-2. Look for `vault_name`.
-3. If `vault_name` is absent, ignore the file; it is not a vault definition.
-4. If it is present, validate `vault_name`, `data`, and any optional `mirror`
-   and `modify` fields.
-5. If validation succeeds, add the definition to the available vaults.
-6. If the file cannot be read, cannot be parsed, or has invalid known fields,
-   skip it and write a diagnostic log message naming the file and problem.
+2. Validate `vault_name`, `data`, and any optional `mirror` and `modify`
+   fields, and reject unknown fields exactly as `app.toml` does.
+3. Add the definition to the available vaults.
 
-After individual files have been filtered, CHA checks case-insensitive vault-
-name uniqueness and the registry-wide path invariants above. Unlike one invalid
-file, an ambiguity between two otherwise valid definitions fails discovery.
+A file that cannot be read or parsed, or that fails validation, fails startup
+with a diagnostic naming the file and the problem. CHA does not skip a bad
+vault file and continue: skipping would silently remove a vault from the
+selector, or hide a typo behind a log line, and the same strictness already
+applies to `app.toml`.
 
-An invalid vault definition does not prevent startup unless `app.toml` selects
-it and no valid definition with that name exists. A malformed non-`app.toml`
-file is likewise skipped and logged because CHA cannot reliably determine its
-contents.
+After every file has been accepted, CHA checks case-insensitive vault-name
+uniqueness and the registry-wide path invariants above.
 
 Discovery validates the vault file, not the referenced database. A vault may
 therefore appear in the available list even when its database is absent,
@@ -258,87 +306,93 @@ alphabetically by `vault_name`, using case-insensitive comparison.
 
 ## Runtime ownership
 
-Vault switching cannot be implemented by replacing the fields currently held
-directly by `ApplicationRuntime::Impl`. The HTTP routes are installed once when
-the server starts, and today their handlers capture the selected vault's
-`SessionRepository`, `LiveSessionManager`, `WorkspaceConfigStore`,
-and `SessionMirror` objects. Destroying those objects during a switch would
-leave the installed handlers with dangling pointers.
+The HTTP routes are installed once when the server starts, and their handlers
+capture the `SessionRepository`, `LiveSessionManager`, `WorkspaceConfigStore`,
+and `SessionMirror` objects held by `ApplicationRuntime::Impl`. Destroying and
+recreating those objects during a switch would leave the installed handlers
+with dangling pointers. A switch therefore keeps every one of them for the
+lifetime of the process and retargets them in place.
 
-The runtime therefore introduces one vault-scoped aggregate and one
-application-scoped holder:
+This is what `maintain_database` already does for an R2 download, which
+replaces the database file underneath the running process. It drains every
+live session under one deadline, holds the store and repository maintenance
+guards, closes the SQLite handle, runs the operation, then reopens the
+database, revalidates it, republishes the workspace through `loadws()`, and
+resynchronizes forums. A vault switch is that operation with a different
+database path.
 
 ```text
-ApplicationRuntime
-├── HTTP server, listener, assets, WebSettings, vault registry
-├── OpenAiOAuth                                 # stable, application-scoped
-├── old-runtime reaper                          # application-scoped cleanup
-└── VaultRuntimeHolder                         # stable for process lifetime
-    └── shared VaultRuntime                    # atomically replaceable
-        ├── VaultDefinition and activation epoch
-        ├── WorkspaceConfigStore / Workspace
-        ├── SessionRepository
-        ├── LiveSessionManager
-        ├── SessionMirror (optional)
-        └── Providers                          # uses shared OpenAiOAuth
+ApplicationRuntime::Impl
+├── HTTP server, listener, assets, WebSettings
+├── vault registry and current VaultDefinition   # which vault is active
+├── OpenAiOAuth                                  # application-wide, config directory
+├── Providers                                    # process-wide request supervisor
+├── WorkspaceConfigStore                         # retargeted: lease, database, workspace
+├── SessionRepository                            # retargeted: database path
+├── SessionMirror                                # retargeted: root, or inactive
+└── LiveSessionManager                           # unchanged; drained, then resumed
 ```
 
-`VaultRuntimeHolder` follows the existing `getws()`/`loadws()` publication
-pattern, but publishes the complete vault runtime instead of only a
-`Workspace`. It owns the current `shared_ptr<VaultRuntime>`, the switch-in-
-progress state, and the count of active vault-route leases.
+`Impl` holds the startup-time vault registry and the definition of the
+current vault. Maintenance operations read the current vault's `data` and
+`modify` paths from that definition instead of from the parsed command line,
+and the macOS bridge asks for the current vault's capabilities instead of
+caching them when the runtime is created.
 
-`LobbyRoutes` and `SessionRoutes` are changed to capture the stable holder, not
-a vault runtime or any member of one. This includes the vault-derived `/health`
-response. Each handler acquires one holder lease at the start of a request and
-uses only the `VaultRuntime` obtained by that lease. It must not fetch the
-repository from one holder read and the live-session manager from another. The
-SSE content and cleanup callbacks retain the same lease until the stream
-closes.
+`WorkspaceConfigStore` keeps its process lease, SQLite handle, private
+materialized tree, and configuration mutex. Its `MaintenanceGuard` already
+offers `close()` and `reopen()`; a switch adds a retarget step between them
+that acquires the lease for the new database, releases the old lease, and
+points the store at the new path. `reopen()` then validates the database at
+that path, rematerializes the workspace into the same private tree, and
+publishes it through `loadws()`, exactly as it does after a download. Because
+the private tree is reused, `workspace_path()` and `welcome_path()` do not
+change across a switch.
 
-`OpenAiAuthRoutes` instead captures the stable application-wide `OpenAiOAuth`
-owner. Its status, login, polling, and disconnect operations do not acquire a
-vault lease and remain valid while a vault switch is committing.
+`SessionRepository` keeps its workspace root and its process-local Welcome
+database. It gains a retarget operation, run under the exclusive maintenance
+lock it already has, that points the repository at the new database; the
+existing post-reopen step synchronizes forums from the republished workspace,
+and archived rows in that database are purged at its next startup, as today.
+Routes hold the same `shared_ptr` before and after.
 
-The application-level vault-switch route also captures the holder, but it does
-not acquire an ordinary vault-route lease. Native macOS maintenance entry
-points acquire the current vault through the same holder instead of caching
-startup paths or capabilities.
+`SessionMirror` keeps its identity too. It gains an inactive state for a vault
+without `mirror`, and a retarget operation that clears its forum and session
+maps and rebuilds them for the new vault's root, or leaves it inactive. The
+opener and the lobby routes keep the pointer they captured; an inactive mirror
+turns `add()` and `update()` into no-ops.
 
-The old-runtime reaper prevents destruction from blocking the HTTP switch
-request. `Providers::~Providers()` currently cancels active requests and then
-waits without a deadline for every transport and diagnostic tail to leave. The
-request thread must therefore never perform the final release of a retired
-`VaultRuntime`. After publication, ownership of the complete old runtime is
-handed to the application-scoped background reaper, which destroys it and may
-wait there for provider shutdown. The new runtime is already independent and
-continues serving even if an old provider transport ignores cancellation. The
-reaper retains all old-runtime and shared OAuth lifetime needed by those
-workers; a detached worker must not refer to an object that has already been
-destroyed.
+`Providers` is not vault-scoped. It is a process-wide supervisor for
+independent request workers that stores no provider configuration, credential,
+client, or scheduling state; each request carries the character definition
+from the workspace that was current when its session opened. Draining the
+live sessions cancels their in-flight requests, and a slow transport tail
+finishes on its own, as after any cancelled request. A switch never creates or
+destroys a `Providers`, so there is no unbounded destructor to wait for and no
+background cleanup.
 
-The holder has a short switching gate. Once the commit phase begins, new
-vault-scoped requests are rejected with a retryable `503 vault_switching`
-response. Routes that already hold a lease keep the old `VaultRuntime` alive
-until they finish, so no request can dereference destroyed state. The switch
-waits for those leases to drain before publication. Closing old live sessions
-causes their long-lived SSE leases to finish. The gate also serializes switch
-requests, so a second switch cannot prepare or publish over one already being
-committed.
+`LiveSessionManager` is unchanged. `reserve_global_maintenance()` closes
+admission, stops every actor with `ShutdownReason::reloading`, and waits under
+one deadline; destroying the reservation resumes admission on the same
+manager. Sessions opened afterwards go through the same opener lambda, which
+reads the retargeted store, repository, and mirror and passes the current
+vault's canonical name to the new `LiveSession`.
 
-Side loading must not call the current `WorkspaceConfigStore::open()` path if
-that path publishes through `loadws()`. Preparation needs an unpublished form
-that returns a fully loaded store and `Workspace` without changing `getws()`.
-The same rule applies to constructors that currently consult `getws()` while
-they initialize. In particular, candidate `SessionRepository` synchronization
-must receive the prepared `Workspace` explicitly instead of comparing itself
-to the still-current old workspace.
+`OpenAiAuthRoutes` capture the application-wide `OpenAiOAuth` owner directly.
+Its status, login, polling, and disconnect operations do not touch vault state
+and remain valid throughout a switch.
 
-During commit, while the holder gate excludes vault requests, the already
-prepared workspace and complete `VaultRuntime` are published together. New
-leases are admitted only after both publications refer to the new vault. This
-prevents a route from observing a new repository with the old global workspace,
-or the reverse.
+Because no object is replaced, there is no second runtime aggregate, no
+per-request lease, no switching gate, and no activation epoch. A request that
+arrives during a switch behaves as it does during an R2 download: a session
+open is refused with the existing `session_stopping` response while global
+maintenance is reserved, a session route reports `session_not_live` because
+the old actor is gone, and a lobby request waits on the store or repository
+maintenance guard and then runs against whichever vault is current. That last
+case, like a stale tab acting on the lobby after the switch, can carry the old
+tab's intent into the new vault. CHA accepts that exposure: it is a personal
+application, the window is bounded by `shutdown_grace`, and the browser's
+vault-name check reloads the tab as soon as it sees a snapshot.
 
 ## Startup behavior
 
@@ -346,18 +400,20 @@ Normal application startup proceeds as follows:
 
 1. Resolve and validate the directory passed with `--config`.
 2. Read the required `app.toml` and its application-wide settings.
-3. Scan the directory and build the fixed list of valid vault definitions.
-4. Reject case-insensitive duplicate vault names, duplicate database paths, and
-   unsafe cross-vault path overlap.
+3. Read every other `.toml` file as a vault definition; any invalid file fails
+   startup.
+4. Reject case-insensitive duplicate vault names, duplicate database paths or
+   filenames, and unsafe `modify` overlap.
 5. Find the vault named by `app.toml`'s `vault` field.
-6. Create the application-wide `OpenAiOAuth` owner from
+6. Load `cha-config/.env` into the process environment.
+7. Create the application-wide `OpenAiOAuth` owner from
    `openai-auth.json` in the configuration directory.
-7. Open the selected vault's SQLite database and load and validate its
-   workspace.
-8. Create a complete `VaultRuntime` for its workspace, sessions, providers,
-   and optional mirror; its providers reference the shared OAuth owner.
-9. Publish that runtime through `VaultRuntimeHolder` and start serving the
-   application with that vault marked active.
+8. Open the selected vault's SQLite database through `WorkspaceConfigStore`,
+   which validates it and publishes its workspace, and record that vault as
+   current.
+9. Create the session repository, the optional mirror, the process-wide
+   providers, and the live-session manager as today.
+10. Start serving with that vault marked active.
 
 The application does not have a usable partial state if its initially selected
 vault cannot be opened. Normal startup fails with the existing diagnostic error
@@ -379,7 +435,7 @@ chaweb --config=/path/to/config --vault="Personal" --download
 `app.toml` for application-wide settings and performs the normal vault-file
 discovery and cross-vault safety validation. `--vault` is matched
 case-insensitively against the discovered vault names. The name must resolve to
-exactly one valid vault before CHA opens, creates, replaces, or removes any
+exactly one discovered vault before CHA opens, creates, replaces, or removes any
 vault data.
 
 `--vault` is required whenever `--import`, `--export`, `--upload`, or
@@ -397,29 +453,24 @@ database path are established before the download begins.
 
 ### R2 object identity
 
-An R2 backup belongs to a vault, not to the basename of its local database.
-Deriving the object key from `data.filename()` would make
-`/personal/cha.sqlite3` and `/work/cha.sqlite3` upload to and download from the
-same remote object.
-
-Upload and download therefore receive both the selected vault identity and its
-database path. The object name is the percent-encoded, case-normalized vault
-name followed by `.sqlite3`:
+An R2 backup keeps its existing name: the local database filename,
+percent-encoded, under the configured bucket.
 
 ```text
-vault_name = "Personal"  ->  /<bucket>/personal.sqlite3
-vault_name = "Work Notes" -> /<bucket>/work%20notes.sqlite3
+/srv/cha/personal/personal.sqlite3  ->  /<bucket>/personal.sqlite3
+/srv/cha/work/work.sqlite3          ->  /<bucket>/work.sqlite3
 ```
 
-The normalization is the same one used for case-insensitive vault matching and
-duplicate detection. Because discovery rejects duplicate normalized names,
-every available vault has one distinct deterministic R2 object even when local
-database filenames are equal. The database path continues to identify only the
-local upload source or download destination.
+Nothing changes in the transfer code. Two vaults whose databases shared a
+filename would upload to and download from the same object, so discovery
+rejects duplicate `data` filenames instead; see
+[Cross-vault path safety](#cross-vault-path-safety). Keying objects by vault
+name was considered and rejected: it would orphan every existing backup, so an
+upgraded installation's first `--download` would report that its object does
+not exist.
 
-There is no fallback to the old filename-only object key: choosing such a
-fallback during download could restore another vault's data, which is worse
-than reporting that the new vault-specific object does not exist.
+Upload and download use the selected vault's `data` path as the local source
+or destination and derive the object name from it, as today.
 
 ## Browser API
 
@@ -431,7 +482,6 @@ canonical active name and the alphabetically ordered list:
 {
   "vault_name": "Personal",
   "vaults": ["Personal", "Projects"],
-  "vault_epoch": 1,
   "initial_forum_id": "entrance",
   "initial_session_id": "welcome",
   "personas": [],
@@ -442,44 +492,38 @@ canonical active name and the alphabetically ordered list:
 ```
 
 The remaining bootstrap fields describe only the active vault's workspace and
-sessions. The canonical `vault_name` and `vault_epoch` together identify one
-vault activation. `vault_epoch` is a process-local, monotonically increasing
-number. It starts with the initially published vault and advances exactly once
-for every successful vault switch, including a later switch back to a
-previously used vault. Configuration edits and database replacement within the
-same vault do not advance it.
+sessions.
 
 Every `SessionSnapshot`, including the initial event on an SSE stream, carries
-the complete activation identity of the `VaultRuntime` that created its live
-session:
+the canonical name of the vault that was current when its live session opened:
 
 ```json
 {
   "vault_name": "Personal",
-  "vault_epoch": 1,
   "session_id": "welcome",
   "...": "existing session snapshot fields"
 }
 ```
 
-The browser stores both values from bootstrap and checks both on every snapshot
-before placing it in application state. A different name or epoch means the
-page belongs to a previous vault activation. The browser discards that snapshot
-and immediately navigates to `/` for a full reload. This check is shared by
-normal session open, recovery probes, and SSE snapshot handling; none of those
-paths may publish a mismatched snapshot.
+The browser stores the name from bootstrap and checks it on every snapshot
+before placing it in application state. A different name means the page
+belongs to a vault that is no longer active. The browser discards that
+snapshot and immediately navigates to `/` for a full reload. This check is
+shared by normal session open, recovery probes, and SSE snapshot handling;
+none of those paths may publish a mismatched snapshot.
 
-The name comparison is required because the counter restarts with the process.
-If CHA restarts on another vault, a stale tab's epoch can equal the new
-process's initial epoch, but its vault name cannot. The epoch still distinguishes
-switching away from and then back to the same named vault within one process.
+The name alone identifies the activation. Switching away from a vault and
+back to it needs no separate counter: a stale tab that reattaches to that
+vault's session receives the session's complete current transcript in its
+first snapshot, exactly as after any reload, and a process restart on the same
+vault is indistinguishable from today's behavior.
 
-Each `LiveSession` captures its creating `VaultRuntime`'s canonical name and
-epoch and stamps both values into every snapshot it produces. It must not read
-the holder's current identity while serializing an event: an old actor finishing
-during a switch still belongs to the old activation. Append events need no
-separate identity because their stream begins with a checked snapshot and is
-forcibly closed during vault replacement.
+The opener passes the current vault's canonical name into each `LiveSession`
+when the session opens, and the session stamps that name into every snapshot
+it produces. It does not consult the runtime's current vault while
+serializing an event. Append events need no separate identity because their
+stream begins with a checked snapshot and is closed when the vault's live
+sessions are drained.
 
 The browser selects a vault with:
 
@@ -493,16 +537,17 @@ Content-Type: application/json
 The requested name is matched case-insensitively against the discovered list.
 Selecting the already active vault is an idempotent no-op. A successful request
 returns `204 No Content` only after the switch is complete. A request for an
-unknown vault, a target that cannot be loaded, or a switch that cannot be
-persisted returns an error through the existing JSON error-response mechanism.
-If the old runtime cannot be drained within the switch deadline, the endpoint
-returns `503 vault_switch_timeout`. The current vault and epoch do not change.
-`vault_switching` and `vault_switch_timeout` are added to the protocol's closed
-error-code set, OpenAPI schema, and browser runtime allowlist.
+unknown vault returns `bad_request`. A target that fails its pre-checks, a
+switch whose live sessions do not drain in time, or a failure after the old
+database was closed returns `internal_error` carrying the maintenance message.
+Both go through the existing JSON error-response mechanism, and nothing is
+added to the protocol's closed error-code set, the OpenAPI schema, or the
+browser runtime allowlist. The current vault does not change.
 
-Vault switching is an application-level route installed against the stable
-`VaultRuntimeHolder`. All other vault routes resolve their dependencies from a
-holder lease per request as described in [Runtime ownership](#runtime-ownership).
+The switch route is installed by `ApplicationRuntime::start()` itself, because
+it calls the runtime's maintenance operation. Every other route is unchanged
+and keeps the objects it captured at installation, as described in
+[Runtime ownership](#runtime-ownership).
 
 ## Sidebar UI
 
@@ -535,116 +580,99 @@ forum, session URL, conversation, or draft across vaults.
 
 No separate cross-tab broadcast channel is required. Closing the old vault's
 live sessions closes their SSE streams. Another tab follows its existing
-recovery ladder. If a session that the tab had already displayed is absent from
-the new vault, `openSession` returns not-found; recovery treats that response as
-a stale activation and immediately reloads `/` instead of retrying forever. If
-the same session identifiers exist in the new vault, the next snapshot's vault
-name and epoch differ from the tab's bootstrap identity and force the same
-reload. In particular, a tab cannot silently reattach to the new vault's
-`entrance/welcome`, whose identifiers intentionally exist in every vault.
+recovery ladder, which is bounded and ends in the retry state it has today. If
+a session that the tab had already displayed is absent from the new vault,
+`openSession` returns not-found and the ladder ends there, exactly as for a
+deleted session; no new recovery rule is added. If the same session
+identifiers exist in the new vault, the next snapshot's vault name differs
+from the tab's bootstrap name and forces the reload. In particular, a tab
+cannot silently reattach to the new vault's `entrance/welcome`, whose
+identifiers intentionally exist in every vault.
 
 ## Runtime switching lifecycle
 
-A switch must not discard the working vault before CHA knows the target vault
-can be used. It also must not publish the new vault while an old route can still
-start work. The switch has a fallible preparation phase followed by a short,
-exclusive commit phase.
+A switch must not touch the working vault before the cheap checks that catch
+the common failures have passed, and it must not let a live session or a
+route observe half of a switch. It runs as one `maintain_database` operation,
+so it is serialized by the runtime's lifecycle mutex with every other
+maintenance operation, and it reuses that operation's drain, close, reopen,
+and failure handling.
 
-### Preparation
+### Pre-checks
+
+Before any live session is touched:
 
 1. Resolve the requested name in the startup-time vault registry.
 2. If it is the active vault, succeed without changing anything.
-3. Open the target database and load its `Workspace` without publishing it.
-4. Construct the complete candidate `VaultRuntime`, including its store,
-   repository, providers, mirror, and an empty live-session manager. Its
-   provider factory references the existing application-wide OAuth owner.
-5. Prepare a rewritten `app.toml` in a temporary sibling file, but do not
-   replace the durable file yet.
+3. Require `inspect_workspace_session_database` to report a valid current
+   database at the target's `data` path. A missing or corrupt file, another
+   application's database, or an unsupported schema version fails here.
+4. Require the target's `mirror` directory to exist when one is configured.
 
-The old vault continues serving normally throughout preparation. Any failure
-discards the candidate and temporary file and returns an error without touching
-the old runtime or epoch.
+A pre-check failure returns an error without draining sessions or touching
+the old vault.
 
-### Reusing global maintenance for retirement
+### Switch
 
-Process shutdown is not suitable for the commit. `begin_shutdown()` is
-terminal: it permanently stops its `LiveSessionManager`, stops HTTP acceptance,
-and allows the process coordinator to call `_Exit(1)` when its grace expires.
-The existing `reserve_global_maintenance(deadline)` already performs the
-reversible work needed by a switch: it closes live-session admission, snapshots
-starting and running actors, wakes waiters, requests
-`ShutdownReason::reloading`, and waits for all owners using one absolute
-deadline.
+The remaining steps are the existing `maintain_database` sequence with the
+retarget as its operation and two additions after the reopen:
 
-Do not add a second near-identical manager operation. Instead, add
-`commit_retirement()` to the existing `LiveSessionGlobalMaintenance`
-reservation. Normally destroying the reservation releases
-`global_maintenance_` and resumes admission, exactly as it does today. Calling
-`commit_retirement()` disarms that release and leaves admission permanently
-closed for the old manager's remaining lifetime. No second drain algorithm or
-second manager-wide maintenance flag is needed.
+1. Reserve global maintenance on the live-session manager with
+   `WebSettings::shutdown_grace` as the drain deadline. This closes admission,
+   stops every actor with `ShutdownReason::reloading`, ends their SSE streams,
+   and waits for them to finish. Expiration is the ordinary
+   `MaintenanceFailure` result: the reservation is released, admission
+   resumes on the old vault, and the request fails with the existing "could
+   not pause active sessions" error. Unfinished actors stay in their normal
+   stopping state until they finish and are swept; nothing is destroyed or
+   joined without a bound.
+2. Take the store and repository maintenance guards, checkpoint, and close the
+   SQLite handle, as for a download.
+3. Retarget. Acquire the process lease for the target database, then release
+   the old lease, point the store and the repository at the new path, and
+   record the target as the current vault. The lease acquisition is the only
+   part of this step that can fail, and it runs before anything is
+   re-pointed. A busy lease, held for example by a console `--import` on that
+   vault, fails here; the existing failure path then reopens the old database
+   at its unchanged path, and the old vault stays current with its sessions
+   closed but stored.
+4. Reopen. The store validates the target database, rematerializes its
+   workspace into the same private tree, and publishes it through
+   `loadws()`; the repository synchronizes forums from it. A failure here is
+   the same outcome as a failed download: the store stays closed, the runtime
+   reports `WorkspaceRestartRequiredError`, and the process must restart.
+   `app.toml` has not been rewritten, so the next launch opens the previous
+   vault.
+5. Rebuild the mirror for the target's `mirror` root, or leave it inactive
+   when the target has none. Mirroring is best-effort, so an I/O failure here
+   is logged and leaves the mirror inactive instead of failing the switch.
+6. Rewrite `app.toml` with the target's canonical name using the shared
+   temp-file-and-rename helper. The process has already switched, so a
+   failure here is logged and does not fail the request; the next launch
+   opens the previously saved vault.
+7. Release the maintenance guards and the global reservation, which resumes
+   live-session admission on the new vault, and return `204 No Content`.
 
-Unlike process shutdown, expiration is an ordinary recoverable result. It
-never stops the HTTP listener and never calls `_Exit`. On expiration the
-global-maintenance reservation is released, the old manager remains current,
-and the switch request fails. Sessions that already finished remain closed and
-can be opened again from their stored records. An unfinished actor remains in
-its normal stopping state until it finishes and is swept; it is not destroyed
-or joined without a bound.
+Steps 5 and 6 run before the reservation is released so that no session can
+open against the new vault while the mirror still describes the old one.
 
-### Commit
+Closing the old vault's live sessions removes their runtime objects only. It
+does not delete stored sessions from the old vault's database. Those sessions
+are available again when that vault is selected later.
 
-After preparation succeeds:
-
-1. Enter the holder's switching gate. New vault-scoped requests receive
-   `503 vault_switching`; application-level assets and the in-flight switch
-   request remain available.
-2. Acquire a successful global-maintenance reservation from the old
-   live-session manager using `WebSettings::shutdown_grace` as the single
-   absolute drain deadline.
-3. Wait, using the remainder of that same deadline, for existing old-vault
-   route leases to finish. The session drain closes SSE streams, allowing their
-   leases to leave. A request that acquired an old-runtime lease before the gate
-   remains memory-safe, but it is not guaranteed to succeed: while global
-   maintenance is reserved, a session lookup returns no actor and the existing
-   route reports `409 session_not_live`.
-4. Atomically replace `app.toml` with the prepared file. If replacement fails,
-   abandon the reservation, reopen old-vault admission, and leave the old
-   runtime current.
-5. Assign the next `vault_epoch` and publish the prepared `Workspace` and
-   `VaultRuntime` while the gate is still closed. All allocations and other
-   fallible setup happened during preparation; publication is only a no-fail
-   shared-pointer swap.
-6. Call `commit_retirement()` on the old manager's global-maintenance
-   reservation, reopen the gate on the new runtime, and hand the old runtime to
-   the background reaper. The switch request does not run the old runtime's
-   potentially unbounded provider destructor.
-7. Return `204 No Content` so the initiating browser reloads. This does not wait
-   for background destruction of the retired runtime.
-
-If session or route-lease draining reaches the deadline, CHA logs the unfinished
-session identities and/or remaining lease count, reopens the holder gate on the
-old runtime, leaves `app.toml` and `vault_epoch` unchanged, discards the
-candidate, and returns `503 vault_switch_timeout`. It does not publish or
-destroy the new or old workspace. A later switch can be attempted after the
-stopping actor or request finishes.
-
-Closing and removing old sessions means removing their live runtime objects.
-It does not delete stored sessions from the old vault's SQLite database. Those
-sessions are available again when that vault is selected later.
-
-All vault-specific resources change together. After the commit, every new API
-operation uses the new database, workspace, session repository, `mirror`, and
-`modify` settings. This includes configuration import/export and database
-upload/download. No operation may continue using paths cached from the startup
-vault.
+All vault-specific resources change together and before admission resumes.
+After the switch, every new API operation uses the new database, workspace,
+session repository, `mirror`, and `modify` settings. This includes
+configuration import and export and database upload and download. No
+operation may continue using paths cached from the startup vault.
 
 Vault selection is global even if more than one browser happens to be
 connected. CHA is a personal application and does not require elaborate
 multi-client coordination or consensus. The browser that initiated the switch
-reloads immediately. Other browsers detect the activation change through the
-snapshot vault name and epoch, or through not-found recovery, and reload before
-accepting state from the new vault.
+reloads immediately. Other browsers detect the change through the vault name
+on the next snapshot they receive and reload before accepting state from the
+new vault; a tab whose session no longer exists ends in the existing retry
+state.
 
 ## Why switching stays in process
 
@@ -657,7 +685,8 @@ still points at the old origin. A process that exits also cannot complete the
 switch request with `204`.
 
 The HTTP server and listener must therefore survive the switch. Only the
-published `VaultRuntime` and its vault-scoped resources are replaced.
+vault-scoped resources are retargeted, underneath the routes that already hold
+them.
 
 ## macOS application
 
@@ -665,7 +694,11 @@ The macOS application uses the same configuration-directory layout and vault
 rules as the console application:
 
 - its configuration argument names the directory containing `app.toml` and
-  vault definitions;
+  vault definitions, which is its Application Support directory;
+- on first run it writes `app.toml` selecting `Personal` and a `personal.toml`
+  whose `data` and `modify` are relative paths under that directory, in place
+  of the single `cha.toml` it writes today, and continues to write `.env`
+  beside them;
 - it discovers and selects the startup vault in the same way;
 - the browser UI switches the single in-process runtime globally;
 - its OpenAI login remains application-wide and unchanged across vault
@@ -675,7 +708,7 @@ rules as the console application:
 - Import can create the current vault's database when it does not exist.
 
 The bundled first-run database seed is a special pre-runtime path: it runs
-before a `VaultRuntimeHolder` exists, so there is no current runtime to query.
+before the runtime exists, so there is no current vault to query.
 `cha_runtime_import_initial_database` receives the configuration directory,
 reads `app.toml`, performs normal vault discovery, resolves the vault named by
 `app.toml`, and seeds that vault's `data` path if it is missing. It does not
@@ -694,24 +727,53 @@ The important failure cases are:
 | Failure | Behavior |
 | --- | --- |
 | `app.toml` is missing or invalid | Startup fails. |
-| No valid vault definitions are found | Startup fails. |
-| Two valid definitions have the same case-insensitive name | Startup fails because selection would be ambiguous. |
-| Two valid vaults resolve to the same `data` path | Discovery fails before either database is opened. |
-| Vault `mirror` or `modify` trees overlap each other, a database, or the configuration directory | Discovery fails before any destructive operation is available. |
-| A non-selected vault definition is invalid | It is logged and omitted from the available list. |
-| The startup vault has no valid matching definition | Startup fails. |
+| No vault definitions are found | Startup fails. |
+| Any vault file cannot be read, parsed, or validated | Startup fails, naming the file and the problem. |
+| Two definitions have the same case-insensitive name | Startup fails because selection would be ambiguous. |
+| Two vaults resolve to the same `data` path | Discovery fails before either database is opened. |
+| Two vault databases have the same filename | Discovery fails, because R2 names a backup after the filename. |
+| A `modify` tree overlaps another `modify` tree, a database, or the configuration directory | Discovery fails before any destructive operation is available. |
+| `app.toml` names a vault that is not defined | Startup fails. |
+| A variable is set both in the shell and in `cha-config/.env` | The shell value wins, as today; the file never overrides an existing variable. |
 | The startup database cannot be loaded during normal startup | Startup fails. |
 | A console maintenance command omits `--vault` | The command fails before touching any vault data. |
-| A console maintenance command names an unknown or invalid vault | The command fails before touching any vault data. |
+| A console maintenance command names an unknown vault | The command fails before touching any vault data. |
 | An imported vault database does not yet exist | Import may create it. |
-| A runtime switch target cannot be loaded | The old vault remains active; the browser shows the failure. |
-| `app.toml` cannot be updated during a switch | The old vault remains active; the browser shows the failure. |
-| Old-vault sessions or route leases do not drain before the switch deadline | The switch returns `503 vault_switch_timeout`; the process keeps serving the old vault, the epoch and `app.toml` do not change, and unfinished actors are retained safely. |
-| A request arrives while the holder is committing a switch | It receives retryable `503 vault_switching`; it cannot acquire either a partial old runtime or a partial new one. |
-| A stale browser receives a snapshot with a different vault name or epoch | It discards the snapshot and reloads `/` before displaying or mutating the new vault. |
-| Recovery cannot find a session that the tab previously displayed | The tab treats not-found as a stale vault activation and reloads `/` instead of retrying forever. |
-| An old provider transport ignores cancellation after a successful switch | The switch still returns `204`; the background reaper retains the old runtime and waits without blocking the new vault. |
-| Two vault databases have the same filename | They remain safe: R2 addresses them by normalized vault name, not database filename. |
+| A runtime switch target fails its pre-checks | The old vault remains active and untouched; the browser shows the failure. |
+| Live sessions do not finish within `shutdown_grace` | The switch fails with the existing maintenance error; the old vault remains active, `app.toml` is unchanged, and unfinished actors are retained safely. |
+| The target database's lease is held by another process | The retarget fails before the store is re-pointed; the old database is reopened and the old vault remains active with its sessions closed but stored. |
+| The target database fails validation after the old handle was closed | Restart is required, as after a failed download; `app.toml` still names the old vault, so the next launch opens it. |
+| The target's mirror cannot be rebuilt | The switch succeeds with the mirror inactive; the failure is logged. |
+| `app.toml` cannot be rewritten after the switch | The process is serving the new vault; the failure is logged; the next launch opens the previously saved vault. |
+| A request arrives during a switch | A session open gets `session_stopping`, a session route gets `session_not_live`, and a lobby request waits for the maintenance guards and then runs against the current vault, as during a download. |
+| A stale browser receives a snapshot with a different vault name | It discards the snapshot and reloads `/` before displaying or mutating the new vault. |
+| Recovery cannot find a session that the tab previously displayed | The existing bounded ladder ends in its retry state, as for a deleted session; the first snapshot the tab accepts afterwards must carry the current vault name. |
+| An old provider transport ignores cancellation after a successful switch | `Providers` is process-wide and untouched by the switch; the tail finishes on its own without blocking anything. |
+
+## Tests
+
+The change is verified where the code it touches is already tested:
+
+- `tests/web/unit_application_config.cpp`: the directory form of `--config`,
+  `app.toml` validation including the required `vault` field, vault-file
+  validation and unknown-field rejection, case-insensitive duplicate names,
+  duplicate `data` paths and filenames, `modify` overlap, and the `--vault`
+  requirement and matching for console commands.
+- `tests/web/unit_application_runtime.cpp`, which already drives upload and
+  download through `maintain_database`: a switch between two vault databases
+  closes the live sessions, republishes the workspace, retargets the
+  repository and mirror, and rewrites `app.toml`; selecting the active vault
+  is a no-op; a pre-check failure leaves the old vault serving; a busy target
+  lease reopens the old vault; a target whose rows fail validation reports
+  `WorkspaceRestartRequiredError` with `app.toml` unchanged.
+- `tests/web/unit_lobby_routes.cpp` and `tests/web/unit_protocol.cpp`:
+  `vault_name` and `vaults` in bootstrap, `vault_name` in every snapshot, and
+  the switch route's `204`, `bad_request`, and `internal_error` responses.
+- `tests/web/unit_session_mirror.cpp`: retargeting to a new root and to the
+  inactive state.
+- `webapp/src`: bootstrap validation of the new fields, the snapshot
+  vault-name check forcing a reload, and the sidebar selector's disabled and
+  failure states.
 
 ## Deliberate non-goals
 
@@ -719,7 +781,7 @@ This design does not introduce:
 
 - more than one simultaneously active vault;
 - per-browser or per-user vault selection;
-- per-vault OpenAI login or credential files;
+- per-vault OpenAI login, credential, or `.env` files;
 - recursive vault discovery;
 - live rescanning or filesystem watching;
 - UI for creating, deleting, renaming, or editing vault definitions;

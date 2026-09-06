@@ -466,7 +466,7 @@ void remove_directory_contents(const std::filesystem::path& directory) {
         fail_path(
             "Workspace session database '" + utf8_path(database)
             + "' does not exist. Stop CHA and run:\n"
-              "chaweb --config=CONFIG --import WORKSPACE");
+              "chaweb --config=CONFIG_DIR --vault=NAME --import WORKSPACE");
     }
     fail_database_state(database, state);
 }
@@ -536,7 +536,7 @@ std::string busy_message(const std::filesystem::path& database) {
         fail_path(
             "Workspace session database '" + utf8_path(database)
             + "' is a valid CHA schema-1 database. Stop CHA and run:\n"
-              "chaweb --config=CONFIG --import WORKSPACE");
+              "chaweb --config=CONFIG_DIR --vault=NAME --import WORKSPACE");
     case WorkspaceDatabaseState::wrong_application_id:
     case WorkspaceDatabaseState::unsupported_version:
         fail_path(
@@ -1092,7 +1092,6 @@ std::unique_ptr<WorkspaceConfigStore> WorkspaceConfigStore::open(
     validate_config_rows(rows);
     materialize_config_files(impl->tree->workspace(), rows);
 
-    load_dotenv(impl->database_path.parent_path() / ".env");
     loadws(Workspace::load(impl->tree->workspace()));
     return std::unique_ptr<WorkspaceConfigStore>(
         new WorkspaceConfigStore(std::move(impl)));

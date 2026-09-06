@@ -28,6 +28,7 @@ public:
     void wait_for_shutdown_signal();
     void shutdown();
 
+    [[nodiscard]] VaultDefinition current_vault() const;
     [[nodiscard]] R2DatabaseTransfer upload_database();
     [[nodiscard]] R2DatabaseTransfer download_database();
     [[nodiscard]] WorkspaceConfigTransfer import_configuration();

@@ -14,8 +14,10 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iterator>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -45,19 +47,47 @@ private:
 
 ApplicationCommand make_command(
     const test::TestWorkspace& workspace,
-    const std::filesystem::path& database) {
+    const std::filesystem::path& database,
+    std::optional<std::filesystem::path> modify = {},
+    std::optional<std::filesystem::path> mirror = {}) {
+    const std::filesystem::path config_directory =
+        workspace.root() / "cha-config";
+    std::filesystem::create_directories(config_directory);
+    {
+        std::ofstream app(config_directory / "app.toml");
+        app << "vault = \"Test\"\n"
+            << "[web]\nhost = \"127.0.0.1\"\nport = 0\n"
+            << "[logging]\nfile = \"runtime.log\"\nlevel = \"off\"\n";
+    }
+    {
+        std::ofstream vault(config_directory / "test.toml");
+        vault << "vault_name = \"Test\"\n"
+              << "data = " << std::quoted(database.string()) << "\n";
+        if (modify) {
+            vault << "modify = " << std::quoted(modify->string()) << "\n";
+        }
+        if (mirror) {
+            vault << "mirror = " << std::quoted(mirror->string()) << "\n";
+        }
+    }
+    const ConfigurationDirectory loaded =
+        load_configuration_directory(config_directory);
+    const VaultDefinition* const vault =
+        find_vault(loaded.vaults, loaded.startup_vault);
     const std::filesystem::path application_root =
         workspace.root() / "runtime-assets";
     std::filesystem::create_directories(application_root / "web");
     std::ofstream(application_root / "web" / "index.html")
         << "<!doctype html><title>CHA</title>";
     return {
-        .database = database,
+        .config_directory = loaded.directory,
+        .vaults = loaded.vaults,
+        .vault = *vault,
         .root = application_root,
         .host = "127.0.0.1",
         .port = 0,
-        .log_file = workspace.root() / "runtime.log",
-        .log_level = "off",
+        .log_file = loaded.log_file,
+        .log_level = loaded.log_level,
     };
 }
 
@@ -68,10 +98,9 @@ std::string file_bytes(const std::filesystem::path& path) {
         std::istreambuf_iterator<char>()};
 }
 
-std::filesystem::path openai_auth_path(const std::filesystem::path& database) {
-    std::filesystem::path path = database;
-    path += ".openai-auth.json";
-    return path;
+std::filesystem::path openai_auth_path(
+    const std::filesystem::path& config_directory) {
+    return config_directory / "openai-auth.json";
 }
 
 constexpr const char runtime_access[] = "runtime-access-secret";
@@ -87,9 +116,9 @@ bool contains_runtime_secret(std::string_view text) {
         || text.find(runtime_account) != std::string_view::npos;
 }
 
-void write_runtime_auth(const std::filesystem::path& database) {
+void write_runtime_auth(const std::filesystem::path& config_directory) {
     create_private_file(
-        openai_auth_path(database),
+        openai_auth_path(config_directory),
         nlohmann::json{
             {"access_token", runtime_access},
             {"refresh_token", runtime_refresh},
@@ -236,8 +265,7 @@ TEST(ApplicationRuntime, ExportsInProcessAndReplacesModifyDirectory) {
     const std::filesystem::path modify = workspace.root() / "modify";
     std::filesystem::create_directories(modify);
     std::ofstream(modify / "stale.txt") << "stale";
-    ApplicationCommand command = make_command(workspace, database);
-    command.modify = modify;
+    ApplicationCommand command = make_command(workspace, database, modify);
     auto runtime = ApplicationRuntime::open(command, "private-test-token");
     (void)runtime->start();
 
@@ -256,8 +284,8 @@ TEST(ApplicationRuntime, ImportsInProcessAndPublishesTheNewWorkspace) {
     modified_workspace.add_persona("modified", "Modified Persona");
     const std::filesystem::path database =
         test::import_test_database(local_workspace.root());
-    ApplicationCommand command = make_command(local_workspace, database);
-    command.modify = modified_workspace.root();
+    ApplicationCommand command = make_command(
+        local_workspace, database, modified_workspace.root());
     auto runtime = ApplicationRuntime::open(command, "private-test-token");
     const int port = runtime->start();
 
@@ -313,8 +341,8 @@ TEST(ApplicationRuntime, AuthRoutesUseTheCookieGateAndStartSignedOut) {
     test::TestWorkspace workspace;
     const std::filesystem::path database =
         test::import_test_database(workspace.root());
-    auto runtime = ApplicationRuntime::open(
-        make_command(workspace, database), "private-test-token");
+    const ApplicationCommand command = make_command(workspace, database);
+    auto runtime = ApplicationRuntime::open(command, "private-test-token");
     const int port = runtime->start();
     httplib::Client client("127.0.0.1", port);
 
@@ -326,7 +354,7 @@ TEST(ApplicationRuntime, AuthRoutesUseTheCookieGateAndStartSignedOut) {
 
     const auto status = client.Get("/api/v1/openai/auth", kRuntimeCookie);
     expect_auth_snapshot(status, "signed_out");
-    EXPECT_FALSE(std::filesystem::exists(openai_auth_path(database)));
+    EXPECT_FALSE(std::filesystem::exists(openai_auth_path(command.config_directory)));
 
     const auto created = client.Post(
         "/api/v1/forums/lobby/sessions",
@@ -351,14 +379,14 @@ TEST(ApplicationRuntime, LoadsSyntheticCredentialsAndLeavesThemThroughMaintenanc
     test::TestWorkspace workspace;
     const std::filesystem::path database =
         test::import_test_database(workspace.root());
-    write_runtime_auth(database);
-    const std::string original = file_bytes(openai_auth_path(database));
     const std::filesystem::path modify = workspace.root() / "modify";
     const std::filesystem::path mirror = workspace.root() / "mirror";
     std::filesystem::create_directories(mirror);
-    ApplicationCommand command = make_command(workspace, database);
-    command.modify = modify;
-    command.mirror = mirror;
+    ApplicationCommand command =
+        make_command(workspace, database, modify, mirror);
+    write_runtime_auth(command.config_directory);
+    const std::string original =
+        file_bytes(openai_auth_path(command.config_directory));
     command.log_level = "debug";
     auto runtime = ApplicationRuntime::open(command, "private-test-token");
     const int port = runtime->start();
@@ -371,10 +399,10 @@ TEST(ApplicationRuntime, LoadsSyntheticCredentialsAndLeavesThemThroughMaintenanc
     EXPECT_GT(exported.file_count, 0U);
     EXPECT_FALSE(std::filesystem::exists(
         modify / "workspace.sqlite3.openai-auth.json"));
-    EXPECT_EQ(file_bytes(openai_auth_path(database)), original);
+    EXPECT_EQ(file_bytes(openai_auth_path(command.config_directory)), original);
     EXPECT_EQ(file_bytes(database).find(runtime_access), std::string::npos);
 
-    std::filesystem::remove(openai_auth_path(database));
+    std::filesystem::remove(openai_auth_path(command.config_directory));
     const WorkspaceConfigTransfer imported = runtime->import_configuration();
     EXPECT_GT(imported.file_count, 0U);
     expect_auth_snapshot(
@@ -396,7 +424,8 @@ TEST(ApplicationRuntime, UploadsTheDatabaseWithoutTheAuthFile) {
     test::TestWorkspace workspace;
     const std::filesystem::path database =
         test::import_test_database(workspace.root());
-    write_runtime_auth(database);
+    const ApplicationCommand command = make_command(workspace, database);
+    write_runtime_auth(command.config_directory);
     MockHttpServer r2({http_response("application/xml", "")});
     ASSERT_TRUE(set_environment_variable(
         "CHA_R2_URL",
@@ -404,8 +433,7 @@ TEST(ApplicationRuntime, UploadsTheDatabaseWithoutTheAuthFile) {
     ASSERT_TRUE(set_environment_variable("CHA_R2_ACCESS_KEY_ID", "access"));
     ASSERT_TRUE(set_environment_variable("CHA_R2_SECRET_ACCESS_KEY", "secret"));
 
-    auto runtime = ApplicationRuntime::open(
-        make_command(workspace, database), "private-test-token");
+    auto runtime = ApplicationRuntime::open(command, "private-test-token");
     const int port = runtime->start();
     httplib::Client client("127.0.0.1", port);
     expect_auth_snapshot(
@@ -417,7 +445,8 @@ TEST(ApplicationRuntime, UploadsTheDatabaseWithoutTheAuthFile) {
     EXPECT_GT(transferred.byte_count, 0U);
     ASSERT_EQ(r2.requests().size(), 1U);
     EXPECT_FALSE(contains_runtime_secret(r2.requests().front()));
-    EXPECT_TRUE(std::filesystem::is_regular_file(openai_auth_path(database)));
+    EXPECT_TRUE(std::filesystem::is_regular_file(
+        openai_auth_path(command.config_directory)));
     expect_auth_snapshot(
         client.Get("/api/v1/openai/auth", kRuntimeCookie), "connected");
     runtime->shutdown();
@@ -434,7 +463,8 @@ TEST(ApplicationRuntime, DownloadLeavesTheAuthOwnerConnected) {
         test::import_test_database(local_workspace.root());
     const std::filesystem::path remote =
         test::import_test_database(remote_workspace.root());
-    write_runtime_auth(local);
+    const ApplicationCommand command = make_command(local_workspace, local);
+    write_runtime_auth(command.config_directory);
     MockHttpServer r2({http_response(
         "application/vnd.sqlite3", file_bytes(remote))});
     ASSERT_TRUE(set_environment_variable(
@@ -443,14 +473,14 @@ TEST(ApplicationRuntime, DownloadLeavesTheAuthOwnerConnected) {
     ASSERT_TRUE(set_environment_variable("CHA_R2_ACCESS_KEY_ID", "access"));
     ASSERT_TRUE(set_environment_variable("CHA_R2_SECRET_ACCESS_KEY", "secret"));
 
-    auto runtime = ApplicationRuntime::open(
-        make_command(local_workspace, local), "private-test-token");
+    auto runtime = ApplicationRuntime::open(command, "private-test-token");
     const int port = runtime->start();
     httplib::Client client("127.0.0.1", port);
     r2.start();
     (void)runtime->download_database();
     r2.join();
-    EXPECT_TRUE(std::filesystem::is_regular_file(openai_auth_path(local)));
+    EXPECT_TRUE(std::filesystem::is_regular_file(
+        openai_auth_path(command.config_directory)));
     expect_auth_snapshot(
         client.Get("/api/v1/openai/auth", kRuntimeCookie), "connected");
     runtime->shutdown();
@@ -460,9 +490,9 @@ TEST(ApplicationRuntime, DisconnectRemovesSyntheticCredentials) {
     test::TestWorkspace workspace;
     const std::filesystem::path database =
         test::import_test_database(workspace.root());
-    write_runtime_auth(database);
-    auto runtime = ApplicationRuntime::open(
-        make_command(workspace, database), "private-test-token");
+    const ApplicationCommand command = make_command(workspace, database);
+    write_runtime_auth(command.config_directory);
+    auto runtime = ApplicationRuntime::open(command, "private-test-token");
     const int port = runtime->start();
     httplib::Client client("127.0.0.1", port);
     const auto disconnected = client.Post(
@@ -471,7 +501,8 @@ TEST(ApplicationRuntime, DisconnectRemovesSyntheticCredentials) {
         "{}",
         "application/json");
     expect_auth_snapshot(disconnected, "signed_out");
-    EXPECT_FALSE(std::filesystem::exists(openai_auth_path(database)));
+    EXPECT_FALSE(std::filesystem::exists(
+        openai_auth_path(command.config_directory)));
     runtime->shutdown();
 }
 
@@ -479,11 +510,11 @@ TEST(ApplicationRuntime, InvalidAuthFileStartsSignedOut) {
     test::TestWorkspace workspace;
     const std::filesystem::path database =
         test::import_test_database(workspace.root());
+    const ApplicationCommand command = make_command(workspace, database);
     create_private_file(
-        openai_auth_path(database),
+        openai_auth_path(command.config_directory),
         std::string("{\"access_token\":\"") + runtime_access + "\"}");
-    auto runtime = ApplicationRuntime::open(
-        make_command(workspace, database), "private-test-token");
+    auto runtime = ApplicationRuntime::open(command, "private-test-token");
     const int port = runtime->start();
     httplib::Client client("127.0.0.1", port);
     const auto status = client.Get("/api/v1/openai/auth", kRuntimeCookie);
@@ -492,6 +523,55 @@ TEST(ApplicationRuntime, InvalidAuthFileStartsSignedOut) {
     ASSERT_TRUE(json.contains("error"));
     EXPECT_TRUE(json.at("error").is_string());
     EXPECT_FALSE(contains_runtime_secret(json.at("error").get<std::string>()));
+    runtime->shutdown();
+}
+
+TEST(ApplicationRuntime, OpensTheConfiguredVaultAndFailsIfItsDatabaseIsMissing) {
+    test::TestWorkspace workspace;
+    const std::filesystem::path database =
+        test::import_test_database(workspace.root());
+    const ApplicationCommand command = make_command(workspace, database);
+    auto runtime = ApplicationRuntime::open(command, "private-test-token");
+    EXPECT_EQ(runtime->current_vault().name, "Test");
+    EXPECT_EQ(runtime->current_vault().data, command.vault.data);
+    runtime->shutdown();
+
+    const std::filesystem::path missing = workspace.root() / "missing.sqlite3";
+    const ApplicationCommand absent = make_command(workspace, missing);
+    EXPECT_THROW(
+        (void)ApplicationRuntime::open(absent, "private-test-token"),
+        std::runtime_error);
+}
+
+TEST(ApplicationRuntime, LoadsConfigDirectoryDotenvAndIgnoresDatabaseAdjacent) {
+    constexpr char variable[] = "CHA_RUNTIME_CONFIG_DOTENV_E8F1";
+    ScopedEnvironmentVariable guard(variable);
+    ASSERT_TRUE(unset_environment_variable(variable));
+    test::TestWorkspace workspace;
+    const std::filesystem::path database =
+        test::import_test_database(workspace.root());
+    const ApplicationCommand command = make_command(workspace, database);
+    std::ofstream(command.config_directory / ".env")
+        << "CHA_RUNTIME_CONFIG_DOTENV_E8F1=from-config\n";
+    std::ofstream(database.parent_path() / ".env")
+        << "CHA_RUNTIME_CONFIG_DOTENV_E8F1=from-database\n";
+    auto runtime = ApplicationRuntime::open(command, "private-test-token");
+    EXPECT_STREQ(std::getenv(variable), "from-config");
+    runtime->shutdown();
+}
+
+TEST(ApplicationRuntime, InheritedEnvironmentWinsOverConfigDotenv) {
+    constexpr char variable[] = "CHA_RUNTIME_CONFIG_DOTENV_E8F2";
+    ScopedEnvironmentVariable guard(variable);
+    ASSERT_TRUE(set_environment_variable(variable, "from-process"));
+    test::TestWorkspace workspace;
+    const std::filesystem::path database =
+        test::import_test_database(workspace.root());
+    const ApplicationCommand command = make_command(workspace, database);
+    std::ofstream(command.config_directory / ".env")
+        << "CHA_RUNTIME_CONFIG_DOTENV_E8F2=from-config\n";
+    auto runtime = ApplicationRuntime::open(command, "private-test-token");
+    EXPECT_STREQ(std::getenv(variable), "from-process");
     runtime->shutdown();
 }
 

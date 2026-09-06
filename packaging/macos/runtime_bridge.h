@@ -12,9 +12,9 @@ typedef struct ChaRuntime ChaRuntime;
 // cha_string_free().
 //
 // The runtime always listens on 127.0.0.1 on an operating-system-chosen port,
-// whatever the config file's [web] section says, and answers only requests
-// carrying access_token as a CHA_RUNTIME cookie. Read the port back with
-// cha_runtime_port().
+// whatever app.toml's [web] section says, and answers only requests carrying
+// access_token as a CHA_RUNTIME cookie. Read the port back with
+// cha_runtime_port(). config_path is the configuration directory.
 ChaRuntime* cha_runtime_create(
     const char* config_path,
     const char* resource_path,
@@ -25,9 +25,10 @@ int32_t cha_runtime_port(const ChaRuntime* runtime);
 int32_t cha_runtime_can_modify(const ChaRuntime* runtime);
 int32_t cha_runtime_can_transfer_r2(const ChaRuntime* runtime);
 
-// Seeds the database named by the config file from seed_path. Does nothing
-// and reports success when that database already exists, so the launcher can
-// call it on every start without knowing which file the config names.
+// Seeds the startup vault named by app.toml from seed_path. Does nothing and
+// reports success when that database already exists, so the launcher can call
+// it on every start without a user-facing --vault argument. config_path is
+// the configuration directory.
 int32_t cha_runtime_import_initial_database(
     const char* config_path,
     const char* seed_path,

@@ -850,7 +850,7 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, OpensOneOwnerOnlyRootWithChildren) {
             EXPECT_EQ(posix_mode(shm_file), static_cast<mode_t>(0600));
         }
 #endif
-        EXPECT_STREQ(std::getenv(dotenv_variable), "from-file");
+        EXPECT_EQ(std::getenv(dotenv_variable), nullptr);
         EXPECT_FALSE(std::filesystem::exists(workspace_child / ".env"));
         EXPECT_TRUE(
             std::filesystem::is_directory(

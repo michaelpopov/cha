@@ -27,31 +27,31 @@ int prepare_and_run(int argc, const char* argv[]) {
     const ApplicationCommand command = parse_application_command(argc, argv);
     if (command.import_directory) {
         const WorkspaceConfigTransfer transferred = import_workspace_configuration(
-            *command.import_directory, command.database);
+            *command.import_directory, command.vault.data);
         std::cout << "Imported " << transferred.file_count
-                  << " files into '" << utf8_path(command.database) << "'\n";
+                  << " files into '" << utf8_path(command.vault.data) << "'\n";
         return 0;
     }
     if (command.export_directory) {
         const WorkspaceConfigTransfer transferred = export_workspace_configuration(
-            command.database, *command.export_directory);
+            command.vault.data, *command.export_directory);
         std::cout << "Exported " << transferred.file_count
                   << " files to '" << utf8_path(*command.export_directory) << "'\n";
         return 0;
     }
     if (command.upload) {
         const R2DatabaseTransfer transferred = upload_database_to_r2(
-            command.database);
+            command.vault.data);
         std::cout << "Uploaded " << transferred.byte_count
-                  << " bytes from '" << utf8_path(command.database)
+                  << " bytes from '" << utf8_path(command.vault.data)
                   << "' to R2\n";
         return 0;
     }
     if (command.download) {
         const R2DatabaseTransfer transferred = download_database_from_r2(
-            command.database);
+            command.vault.data);
         std::cout << "Downloaded " << transferred.byte_count
-                  << " bytes from R2 into '" << utf8_path(command.database)
+                  << " bytes from R2 into '" << utf8_path(command.vault.data)
                   << "'\n";
         return 0;
     }

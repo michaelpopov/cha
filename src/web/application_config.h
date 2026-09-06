@@ -3,13 +3,32 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <string_view>
+#include <vector>
 
 namespace cha::web {
 
-struct ApplicationCommand {
-    std::filesystem::path database;
+struct VaultDefinition {
+    std::string name;
+    std::filesystem::path data;
     std::optional<std::filesystem::path> mirror;
     std::optional<std::filesystem::path> modify;
+};
+
+struct ConfigurationDirectory {
+    std::filesystem::path directory;
+    std::string startup_vault;
+    std::vector<VaultDefinition> vaults;
+    std::string host;
+    int port{};
+    std::filesystem::path log_file;
+    std::string log_level;
+};
+
+struct ApplicationCommand {
+    std::filesystem::path config_directory;
+    std::vector<VaultDefinition> vaults;
+    VaultDefinition vault;
     std::optional<std::filesystem::path> import_directory;
     std::optional<std::filesystem::path> export_directory;
     bool upload{};
@@ -24,8 +43,14 @@ struct ApplicationCommand {
     std::optional<int> test_idle_grace_ms;
 };
 
-// Parses the public command line and its required external TOML file. Relative
-// paths in that file are resolved from the configuration file's directory.
+ConfigurationDirectory load_configuration_directory(
+    const std::filesystem::path& directory);
+bool same_vault_name(std::string_view left, std::string_view right);
+const VaultDefinition* find_vault(
+    const std::vector<VaultDefinition>& vaults, std::string_view name);
+
+// Parses the public command line and its required configuration directory.
+// Relative paths in that directory's files are resolved from the directory.
 ApplicationCommand parse_application_command(
     int argc,
     const char* const* argv);
@@ -35,10 +60,10 @@ ApplicationCommand parse_application_command(
 // accepted but deliberately not advertised to someone who mistyped an option.
 inline constexpr const char web_usage[] =
     "Usage:\n"
-    "  chaweb --config=CONFIG [--root PATH]\n"
-    "  chaweb --config=CONFIG --import SOURCE_DIRECTORY\n"
-    "  chaweb --config=CONFIG --export DESTINATION_DIRECTORY\n"
-    "  chaweb --config=CONFIG --upload\n"
-    "  chaweb --config=CONFIG --download";
+    "  chaweb --config=CONFIG_DIR [--root PATH]\n"
+    "  chaweb --config=CONFIG_DIR --vault=NAME --import SOURCE_DIRECTORY\n"
+    "  chaweb --config=CONFIG_DIR --vault=NAME --export DESTINATION_DIRECTORY\n"
+    "  chaweb --config=CONFIG_DIR --vault=NAME --upload\n"
+    "  chaweb --config=CONFIG_DIR --vault=NAME --download";
 
 } // namespace cha::web
