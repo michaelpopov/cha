@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
   type Dispatch,
+  type ChangeEvent,
   type FormEvent,
   type KeyboardEvent,
   type PointerEvent,
@@ -29,6 +30,7 @@ import { Markdown } from './Markdown';
 import {
   ChevronLeftIcon,
   ChevronRightIcon,
+  FileUpIcon,
   MessageIcon,
   PlusIcon,
   SendIcon,
@@ -590,11 +592,14 @@ interface RosterDetailScreenProps {
   // Stable across renders, so reading one entry does not restart itself.
   load(subjectId: string): Promise<string>;
   onBack(): void;
+  reloadVersion?: number;
+  report?: ReactNode;
   sessionReport: ReactNode;
   subjectId: string | null;
   // Facts the roster already knows, shown above the Markdown and while it is
   // still loading. A persona or character has none; a forum names its cast.
   subtitle?: ReactNode;
+  toolbarAction?: ReactNode;
 }
 
 function RosterDetailScreen({
@@ -603,9 +608,12 @@ function RosterDetailScreen({
   copy,
   load,
   onBack,
+  reloadVersion = 0,
+  report,
   sessionReport,
   subjectId,
   subtitle,
+  toolbarAction,
 }: RosterDetailScreenProps) {
   const [markdown, setMarkdown] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -627,15 +635,19 @@ function RosterDetailScreen({
     return () => {
       current = false;
     };
-  }, [copy.failed, load, requestVersion, subjectId]);
+  }, [copy.failed, load, reloadVersion, requestVersion, subjectId]);
 
   return (
     <section className="cha-screen cha-navigation" aria-label={ariaLabel}>
-      <button className="cha-back-row" onClick={onBack} type="button">
-        <ChevronLeftIcon />
-        <span>{backLabel}</span>
-      </button>
+      <div className="cha-detail-toolbar">
+        <button className="cha-back-row" onClick={onBack} type="button">
+          <ChevronLeftIcon />
+          <span>{backLabel}</span>
+        </button>
+        {toolbarAction}
+      </div>
       {sessionReport}
+      {report}
       {subtitle}
       {!subjectId && <p className="cha-state-message">{copy.absent}</p>}
       {subjectId && markdown === null && !error && (
@@ -669,6 +681,18 @@ export function PersonasScreen({ state, dispatch, sessionReport }: NavigationScr
     <section className="cha-screen cha-navigation" aria-label="Personas navigation">
       {sessionReport}
       <div className="cha-roster">
+        <button
+          className="cha-list-action"
+          onClick={() => dispatch({ type: 'show-new-persona' })}
+          type="button"
+        >
+          <span className="cha-list-icon"><PlusIcon /></span>
+          <span className="cha-list-copy">
+            <span className="cha-primary-line">New persona</span>
+            <span className="cha-secondary-line">Enter a name to begin</span>
+          </span>
+          <ChevronRightIcon className="cha-chevron" />
+        </button>
         {state.bootstrap?.personas.map((persona) => (
           <RosterRow
             description={persona.description}
@@ -682,16 +706,143 @@ export function PersonasScreen({ state, dispatch, sessionReport }: NavigationScr
   );
 }
 
+export function NewPersonaScreen({
+  dispatch,
+  client,
+  sessionReport,
+}: RosterDetailProps) {
+  const [name, setName] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const trimmedName = name.trim();
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!trimmedName || saving) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const persona = await client.createPersona({ display_name: trimmedName });
+      dispatch({ type: 'persona-created', persona });
+    } catch (failure: unknown) {
+      setError(publicErrorMessage(failure, 'The persona could not be created.'));
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="cha-screen cha-navigation" aria-label="New persona navigation">
+      <button
+        className="cha-back-row"
+        onClick={() => dispatch({ type: 'show-personas' })}
+        type="button"
+      >
+        <ChevronLeftIcon />
+        <span>Personas</span>
+      </button>
+      {sessionReport}
+      <form className="cha-new-persona" onSubmit={(event) => void submit(event)}>
+        <label htmlFor="cha-persona-name">Persona name</label>
+        <input
+          autoComplete="off"
+          autoFocus
+          className="cha-form-control"
+          disabled={saving}
+          id="cha-persona-name"
+          onChange={(event) => setName(event.target.value)}
+          placeholder="e.g. Project manager"
+          type="text"
+          value={name}
+        />
+        {error && <p className="cha-error-message" role="alert">{error}</p>}
+        <div className="cha-new-persona-actions">
+          <button
+            className="cha-button cha-button-ghost"
+            disabled={saving}
+            onClick={() => dispatch({ type: 'show-personas' })}
+            type="button"
+          >
+            Cancel
+          </button>
+          <button
+            className="cha-button cha-button-primary"
+            disabled={!trimmedName || saving}
+            type="submit"
+          >
+            Create persona
+          </button>
+        </div>
+      </form>
+    </section>
+  );
+}
+
 export function PersonaDetailScreen({
   state,
   dispatch,
   client,
   sessionReport,
 }: RosterDetailProps) {
+  const fileInput = useRef<HTMLInputElement>(null);
+  const [reloadVersion, setReloadVersion] = useState(0);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const load = useCallback(
-    (personaId: string) => client.getPersona(personaId).then((detail) => detail.persona_markdown),
-    [client],
+    (personaId: string) => client.getPersona(personaId).then((detail) => {
+      dispatch({
+        type: 'persona-detail-loaded',
+        personaId,
+        writable: detail.writable,
+      });
+      return detail.persona_markdown;
+    }),
+    [client, dispatch],
   );
+
+  async function replaceFromFile(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    const personaId = state.inspectedPersonaId;
+    if (!file || !personaId || saving) return;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const persona = await client.updatePersona(personaId, {
+        persona_markdown: await file.text(),
+      });
+      dispatch({ type: 'persona-updated', persona });
+      setReloadVersion((version) => version + 1);
+    } catch (failure: unknown) {
+      setSaveError(publicErrorMessage(
+        failure,
+        'Persona description could not be replaced.',
+      ));
+    } finally {
+      setSaving(false);
+      if (fileInput.current) fileInput.current.value = '';
+    }
+  }
+
+  const uploadAction = state.personaEditingAvailable && state.inspectedPersonaId ? (
+    <>
+      <input
+        accept=".md,.txt,text/markdown,text/plain"
+        className="cha-file-input"
+        onChange={(event) => void replaceFromFile(event)}
+        ref={fileInput}
+        type="file"
+      />
+      <button
+        aria-label="Replace persona description from file"
+        className="cha-compact-icon-action"
+        disabled={saving}
+        onClick={() => fileInput.current?.click()}
+        type="button"
+      >
+        <FileUpIcon />
+      </button>
+    </>
+  ) : undefined;
+
   return (
     <RosterDetailScreen
       ariaLabel="Persona detail navigation"
@@ -704,8 +855,13 @@ export function PersonaDetailScreen({
       }}
       load={load}
       onBack={() => dispatch({ type: 'show-personas' })}
+      reloadVersion={reloadVersion}
+      report={saveError && (
+        <p className="cha-state-message cha-error-message" role="alert">{saveError}</p>
+      )}
       sessionReport={sessionReport}
       subjectId={state.inspectedPersonaId}
+      toolbarAction={uploadAction}
     />
   );
 }

@@ -651,6 +651,20 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
         return nil
     }
 
+    func webView(
+        _ webView: WKWebView,
+        runOpenPanelWith parameters: WKOpenPanelParameters,
+        initiatedByFrame frame: WKFrameInfo,
+        completionHandler: @escaping ([URL]?) -> Void) {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = parameters.allowsMultipleSelection
+        panel.canChooseDirectories = parameters.allowsDirectories
+        panel.canChooseFiles = !parameters.allowsDirectories
+        panel.beginSheetModal(for: window) { result in
+            completionHandler(result == .OK ? panel.urls : nil)
+        }
+    }
+
     private func isApplicationURL(_ url: URL) -> Bool {
         guard let runtimeURL,
               url.scheme?.caseInsensitiveCompare("http") == .orderedSame,

@@ -144,6 +144,16 @@ CharacterDetail character_detail(
     return detail;
 }
 
+PersonaDetail persona_detail(
+    const Workspace& workspace,
+    const WorkspacePersona& persona) {
+    return {
+        .summary = {persona.id, persona.display_name, persona.description},
+        .persona_markdown = persona.prompt,
+        .writable = workspace.persona_is_writable(persona.id),
+    };
+}
+
 ForumSummary forum_summary(
     const WorkspaceForum& forum,
     const Workspace& workspace) {
@@ -266,6 +276,46 @@ void LobbyRoutes::install(httplib::Server& server) const {
                 current_vault->get().name, vault_names)));
     });
 
+    server.Post("/api/v1/personas",
+        [settings, config](const httplib::Request& request,
+                           httplib::Response& response) {
+        if (!validate_json_mutation(request, response)) return;
+        std::string display_name;
+        if (!parse_route_json_body(
+                request, response, settings.request_body_limit,
+                [&display_name](const nlohmann::json& json) {
+                    display_name = parse_create_persona_name(json);
+                })) return;
+
+        const auto workspace = published_workspace();
+        std::string id;
+        for (std::size_t suffix = 1;; ++suffix) {
+            const std::string candidate = "persona_" + std::to_string(suffix);
+            if (workspace->find_persona(candidate) == nullptr) {
+                id = candidate;
+                break;
+            }
+        }
+        try {
+            config->apply_persona_create(id, display_name);
+        } catch (const std::invalid_argument&) {
+            return set_error_response(response, 400,
+                {ErrorCode::bad_request, "Invalid persona."});
+        } catch (const WorkspaceRestartRequiredError& error) {
+            return set_error_response(response, 500,
+                {ErrorCode::internal_error, error.what()});
+        }
+        const auto current = published_workspace();
+        const WorkspacePersona* created = current->find_persona(id);
+        if (created == nullptr) {
+            return set_error_response(response, 500,
+                {ErrorCode::internal_error, "The persona could not be created."});
+        }
+        set_json_response(
+            response, 201,
+            nlohmann::json(persona_detail(*current, *created)));
+    });
+
     server.Get(R"(/api/v1/characters/([^/]+))", [](const httplib::Request& request, httplib::Response& response) {
         const auto workspace = published_workspace();
         const std::string id = request.matches[1];
@@ -344,8 +394,55 @@ void LobbyRoutes::install(httplib::Server& server) const {
         if (persona == nullptr) {
             return set_route_not_found(response, "That persona was not found.");
         }
-        set_json_response(response, 200, nlohmann::json(PersonaDetail{
-            {persona->id, persona->display_name, persona->description}, persona->prompt}));
+        set_json_response(response, 200, nlohmann::json(persona_detail(*workspace, *persona)));
+    });
+
+    server.Patch(R"(/api/v1/personas/([^/]+))",
+        [live_sessions, settings, config](const httplib::Request& request,
+                                          httplib::Response& response) {
+        const auto workspace = published_workspace();
+        const std::string id = request.matches[1];
+        if (!is_valid_route_component(id)) {
+            return set_route_not_found(response, "That persona was not found.");
+        }
+        const WorkspacePersona* persona = workspace->find_persona(id);
+        if (persona == nullptr || !workspace->persona_is_writable(id)) {
+            return set_route_not_found(response, "That persona was not found.");
+        }
+        if (!validate_json_mutation(request, response)) return;
+        PersonaUpdate update;
+        if (!parse_route_json_body(
+                request, response, settings.request_body_limit,
+                [&update](const nlohmann::json& json) {
+                    update = parse_persona_update(json);
+                })) return;
+        const std::string& display_name = update.display_name
+            ? *update.display_name : persona->display_name;
+        const std::string& markdown = update.persona_markdown
+            ? *update.persona_markdown : persona->prompt;
+        const bool changed = display_name != persona->display_name
+            || markdown != persona->prompt;
+        try {
+            if (changed) {
+                const WorkspaceConfigEditResult edited =
+                    config->apply_persona_update(id, display_name, markdown);
+                request_reload(*live_sessions, edited.affected_forum_ids);
+            }
+        } catch (const std::invalid_argument&) {
+            return set_error_response(response, 400,
+                {ErrorCode::bad_request, "Invalid persona."});
+        } catch (const WorkspaceRestartRequiredError& error) {
+            return set_error_response(response, 500,
+                {ErrorCode::internal_error, error.what()});
+        }
+        const auto current = published_workspace();
+        const WorkspacePersona* updated = current->find_persona(id);
+        if (updated == nullptr) {
+            return set_route_not_found(response, "That persona was not found.");
+        }
+        set_json_response(
+            response, 200,
+            nlohmann::json(persona_detail(*current, *updated)));
     });
 
     // `[^/]+` cannot span the separator, so this never shadows the session

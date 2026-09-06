@@ -214,6 +214,12 @@ struct PersonaDetail {
     PersonaSummary summary;
     // PERSONA.md verbatim, and empty for a persona that configures none.
     std::string persona_markdown;
+    bool writable{};
+};
+
+struct PersonaUpdate {
+    std::optional<std::string> display_name;
+    std::optional<std::string> persona_markdown;
 };
 
 struct ForumDetail {

@@ -136,3 +136,37 @@ export function MoreIcon(props: IconProps) {
     </Icon>
   );
 }
+
+export function EditIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="m4 20 4.5-1 10-10a2.1 2.1 0 0 0-3-3l-10 10L4 20Z" {...stroke} />
+      <path d="m14 7 3 3" {...stroke} />
+    </Icon>
+  );
+}
+
+export function CheckIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="m5 12 4 4L19 6" {...stroke} />
+    </Icon>
+  );
+}
+
+export function CloseIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="m6 6 12 12M18 6 6 18" {...stroke} />
+    </Icon>
+  );
+}
+
+export function FileUpIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9Z" {...stroke} />
+      <path d="M14 3v6h6M12 18v-6M9.5 14.5 12 12l2.5 2.5" {...stroke} />
+    </Icon>
+  );
+}

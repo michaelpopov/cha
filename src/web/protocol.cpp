@@ -306,6 +306,7 @@ void to_json(nlohmann::json& json, const CharacterDetail& value) {
 void to_json(nlohmann::json& json, const PersonaDetail& value) {
     json = nlohmann::json(value.summary);
     json["persona_markdown"] = value.persona_markdown;
+    json["writable"] = value.writable;
 }
 
 void to_json(nlohmann::json& json, const ForumDetail& value) {

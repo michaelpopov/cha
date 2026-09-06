@@ -486,6 +486,16 @@ std::vector<std::string> forums_using_character(
     return result;
 }
 
+std::vector<std::string> forums_using_persona(
+    const Workspace& workspace,
+    std::string_view persona_id) {
+    std::vector<std::string> result;
+    for (const WorkspaceForum& forum : workspace.forums()) {
+        if (forum.default_persona_id == persona_id) result.push_back(forum.id);
+    }
+    return result;
+}
+
 void remove_created_database(const std::filesystem::path& path) noexcept {
     std::error_code ignored;
     std::filesystem::remove(path, ignored);
@@ -1146,6 +1156,27 @@ WorkspaceConfigEditResult WorkspaceConfigStore::apply_character_settings(
         workspace.write_character_settings(
             character_id, provider_id, style_id, reasoning_effort, web_search);
         return affected;
+    });
+}
+
+WorkspaceConfigEditResult WorkspaceConfigStore::apply_persona_update(
+    std::string_view persona_id,
+    std::string_view display_name,
+    std::string_view markdown) {
+    return impl_->edit([&](const Workspace& workspace) {
+        std::vector<std::string> affected =
+            forums_using_persona(workspace, persona_id);
+        workspace.write_persona(persona_id, display_name, markdown);
+        return affected;
+    });
+}
+
+WorkspaceConfigEditResult WorkspaceConfigStore::apply_persona_create(
+    std::string_view persona_id,
+    std::string_view display_name) {
+    return impl_->edit([&](const Workspace& workspace) {
+        workspace.create_persona(persona_id, display_name);
+        return std::vector<std::string>{};
     });
 }
 

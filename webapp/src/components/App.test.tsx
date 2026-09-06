@@ -162,7 +162,7 @@ it('renders bootstrap discovery data and preserves conversation context while na
   expect(openSession).toHaveBeenCalledTimes(1);
 });
 
-it('lists every persona and renders one as read-only Markdown', async () => {
+it('lists every persona and renders its Markdown', async () => {
   const getPersona = vi.fn(async () => personaDetailFixture);
   render(<App client={fixtureClient({ getPersona })} />);
   fireEvent.click(await screen.findByRole('button', { name: 'Personas' }));
@@ -177,11 +177,105 @@ it('lists every persona and renders one as read-only Markdown', async () => {
   expect(screen.getByText('thoughtful').tagName).toBe('STRONG');
   expect(getPersona).toHaveBeenCalledWith('reader');
   // The topbar names the persona from bootstrap while its description loads.
-  expect(screen.getByRole('heading', { name: 'Reader' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Rename Reader' })).toBeInTheDocument();
 
   fireEvent.click(within(screen.getByLabelText('Persona detail navigation'))
     .getByRole('button', { name: 'Personas' }));
   expect(screen.getByRole('heading', { name: 'Personas' })).toBeInTheDocument();
+});
+
+it('creates a named persona and adds it to the roster immediately', async () => {
+  const user = userEvent.setup();
+  const created = {
+    id: 'persona_1',
+    display_name: 'Project manager',
+    persona_markdown: '',
+    writable: true,
+  };
+  const createPersona = vi.fn(async () => created);
+  const getPersona = vi.fn(async (personaId: string) => (
+    personaId === created.id ? created : personaDetailFixture
+  ));
+  render(<App client={fixtureClient({ createPersona, getPersona })} />);
+  await user.click(await screen.findByRole('button', { name: 'Personas' }));
+  await user.click(screen.getByRole('button', {
+    name: 'New personaEnter a name to begin',
+  }));
+
+  const create = screen.getByRole('button', { name: 'Create persona' });
+  const name = screen.getByRole('textbox', { name: 'Persona name' });
+  expect(create).toBeDisabled();
+  await user.type(name, '  Project manager  ');
+  await user.click(create);
+
+  await waitFor(() => expect(createPersona).toHaveBeenCalledWith({
+    display_name: 'Project manager',
+  }));
+  expect(await screen.findByRole('button', { name: 'Rename Project manager' }))
+    .toBeInTheDocument();
+  expect(screen.getByText('This persona has no PERSONA.md description.'))
+    .toBeInTheDocument();
+  await user.click(within(screen.getByLabelText('Persona detail navigation'))
+    .getByRole('button', { name: 'Personas' }));
+  expect(within(screen.getByLabelText('Personas navigation'))
+    .getByRole('button', { name: /Project manager/ })).toBeInTheDocument();
+});
+
+it('renames a writable persona in place and updates the roster immediately', async () => {
+  const user = userEvent.setup();
+  const updatePersona = vi.fn(async (_personaId, update) => ({
+    ...personaDetailFixture,
+    ...update,
+  }));
+  render(<App client={fixtureClient({ updatePersona })} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Personas' }));
+  fireEvent.click(within(screen.getByLabelText('Personas navigation'))
+    .getByRole('button', { name: /Reader/ }));
+
+  await user.click(await screen.findByRole('button', { name: 'Rename Reader' }));
+  const input = screen.getByRole('textbox', { name: 'Persona name' });
+  await user.clear(input);
+  await user.type(input, 'Editor');
+  await user.click(screen.getByRole('button', { name: 'Save persona name' }));
+
+  await waitFor(() => expect(updatePersona).toHaveBeenCalledWith(
+    'reader', { display_name: 'Editor' },
+  ));
+  expect(await screen.findByRole('button', { name: 'Rename Editor' })).toBeInTheDocument();
+  fireEvent.click(within(screen.getByLabelText('Persona detail navigation'))
+    .getByRole('button', { name: 'Personas' }));
+  expect(within(screen.getByLabelText('Personas navigation'))
+    .getByRole('button', { name: /Editor/ })).toBeInTheDocument();
+});
+
+it('replaces persona Markdown from the compact file action', async () => {
+  let detail = personaDetailFixture;
+  const getPersona = vi.fn(async () => detail);
+  const updatePersona = vi.fn(async (_personaId, update) => {
+    detail = { ...detail, ...update };
+    return detail;
+  });
+  const { container } = render(<App client={fixtureClient({ getPersona, updatePersona })} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Personas' }));
+  fireEvent.click(within(screen.getByLabelText('Personas navigation'))
+    .getByRole('button', { name: /Reader/ }));
+
+  await screen.findByRole('button', { name: 'Replace persona description from file' });
+  const file = new File(['# Replacement\n\nFresh text.'], 'persona.md', {
+    type: 'text/markdown',
+  });
+  Object.defineProperty(file, 'text', {
+    value: vi.fn(async () => '# Replacement\n\nFresh text.'),
+  });
+  fireEvent.change(container.querySelector('input[type="file"]') as HTMLInputElement, {
+    target: { files: [file] },
+  });
+
+  await waitFor(() => expect(updatePersona).toHaveBeenCalledWith('reader', {
+    persona_markdown: '# Replacement\n\nFresh text.',
+  }));
+  expect(await screen.findByRole('heading', { name: 'Replacement' })).toBeInTheDocument();
+  expect(screen.getByText('Fresh text.')).toBeInTheDocument();
 });
 
 it('reports a persona with no PERSONA.md rather than an empty screen', async () => {

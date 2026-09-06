@@ -4,6 +4,8 @@ export type Bootstrap = components['schemas']['Bootstrap'];
 export type CharacterDetail = components['schemas']['CharacterDetail'];
 export type UpdateCharacterRequest = components['schemas']['UpdateCharacterRequest'];
 export type PersonaDetail = components['schemas']['PersonaDetail'];
+export type CreatePersonaRequest = components['schemas']['CreatePersonaRequest'];
+export type UpdatePersonaRequest = components['schemas']['UpdatePersonaRequest'];
 export type ForumDetail = components['schemas']['ForumDetail'];
 export type ForumSummary = components['schemas']['ForumSummary'];
 export type CharacterAppearance = components['schemas']['CharacterAppearance'];
@@ -83,6 +85,8 @@ export interface ChaClient {
   getCharacter(characterId: string): Promise<CharacterDetail>;
   updateCharacter(characterId: string, settings: UpdateCharacterRequest): Promise<CharacterDetail>;
   getPersona(personaId: string): Promise<PersonaDetail>;
+  createPersona(request: CreatePersonaRequest): Promise<PersonaDetail>;
+  updatePersona(personaId: string, update: UpdatePersonaRequest): Promise<PersonaDetail>;
   getForum(forumId: string): Promise<ForumDetail>;
   listSessions(forumId: string): Promise<SessionListing[]>;
   createSession(forumId: string, label: string): Promise<CreateSessionResult>;
@@ -253,6 +257,18 @@ export function createChaClient(
     getPersona: (personaId) => requestJson<PersonaDetail>(
       fetcher,
       `/api/v1/personas/${component(personaId)}`,
+    ),
+
+    createPersona: (request) => requestJson<PersonaDetail>(
+      fetcher,
+      '/api/v1/personas',
+      jsonMutation(request),
+    ),
+
+    updatePersona: (personaId, update) => requestJson<PersonaDetail>(
+      fetcher,
+      `/api/v1/personas/${component(personaId)}`,
+      jsonMutation(update, 'PATCH'),
     ),
 
     getForum: (forumId) => requestJson<ForumDetail>(

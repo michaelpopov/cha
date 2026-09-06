@@ -101,6 +101,13 @@ public:
         std::optional<std::string_view> style_id,
         std::optional<std::string_view> reasoning_effort = std::nullopt,
         std::optional<WebSearchMode> web_search = std::nullopt);
+    WorkspaceConfigEditResult apply_persona_update(
+        std::string_view persona_id,
+        std::string_view display_name,
+        std::string_view markdown);
+    WorkspaceConfigEditResult apply_persona_create(
+        std::string_view persona_id,
+        std::string_view display_name);
     WorkspaceConfigEditResult apply_forum_default_character(
         std::string_view forum_id,
         std::string_view character_id);

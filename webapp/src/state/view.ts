@@ -1,9 +1,10 @@
-import type { Bootstrap, SessionSnapshot } from '../api/client';
+import type { Bootstrap, PersonaDetail, SessionSnapshot } from '../api/client';
 import type { AppendEvent } from '../api/events';
 
 export type MainView =
   | 'chat'
   | 'personas'
+  | 'new-persona'
   | 'persona-detail'
   | 'characters'
   | 'character-detail'
@@ -40,6 +41,7 @@ export interface AppState {
   inspectedCharacterId: string | null;
   characterSettingsAvailable: boolean;
   inspectedPersonaId: string | null;
+  personaEditingAvailable: boolean;
   currentDefaultCharacterId: string | null;
   sessionOperation: 'idle' | 'pending' | 'failed';
   sessionOperationMessage: string | null;
@@ -61,6 +63,7 @@ export const initialAppState: AppState = {
   inspectedCharacterId: null,
   characterSettingsAvailable: false,
   inspectedPersonaId: null,
+  personaEditingAvailable: false,
   currentDefaultCharacterId: null,
   sessionOperation: 'idle',
   sessionOperationMessage: null,
@@ -78,7 +81,11 @@ export type AppAction =
   | { type: 'bootstrap-refreshed'; bootstrap: Bootstrap }
   | { type: 'toggle-sidebar' }
   | { type: 'show-personas' }
+  | { type: 'show-new-persona' }
   | { type: 'inspect-persona'; personaId: string }
+  | { type: 'persona-detail-loaded'; personaId: string; writable: boolean }
+  | { type: 'persona-created'; persona: PersonaDetail }
+  | { type: 'persona-updated'; persona: PersonaDetail }
   | { type: 'show-characters' }
   | { type: 'inspect-character'; characterId: string }
   | { type: 'character-detail-loaded'; characterId: string; writable: boolean }
@@ -183,14 +190,82 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     case 'toggle-sidebar':
       return { ...state, sidebarOpen: !state.sidebarOpen };
     case 'show-personas':
-      return { ...state, mainView: 'personas', inspectedPersonaId: null, ...idleSessionOperation() };
+      return {
+        ...state,
+        mainView: 'personas',
+        inspectedPersonaId: null,
+        personaEditingAvailable: false,
+        ...idleSessionOperation(),
+      };
+    case 'show-new-persona':
+      return { ...state, mainView: 'new-persona', ...idleSessionOperation() };
     case 'inspect-persona':
       return {
         ...state,
         mainView: 'persona-detail',
         inspectedPersonaId: action.personaId,
+        personaEditingAvailable: action.personaId === state.inspectedPersonaId
+          ? state.personaEditingAvailable
+          : false,
         ...idleSessionOperation(),
       };
+    case 'persona-detail-loaded':
+      if (state.inspectedPersonaId !== action.personaId) return state;
+      return { ...state, personaEditingAvailable: action.writable };
+    case 'persona-created': {
+      if (!state.bootstrap) return state;
+      const persona = action.persona;
+      const personas = [
+        ...state.bootstrap.personas,
+        {
+          id: persona.id,
+          display_name: persona.display_name,
+          ...(persona.description === undefined
+            ? {} : { description: persona.description }),
+        },
+      ].sort((left, right) => left.display_name.localeCompare(right.display_name));
+      return {
+        ...state,
+        mainView: 'persona-detail',
+        bootstrap: { ...state.bootstrap, personas },
+        inspectedPersonaId: persona.id,
+        personaEditingAvailable: persona.writable,
+        ...idleSessionOperation(),
+      };
+    }
+    case 'persona-updated': {
+      if (!state.bootstrap) return state;
+      const persona = action.persona;
+      const bootstrap = {
+        ...state.bootstrap,
+        personas: state.bootstrap.personas.map((current) => (
+          current.id === persona.id
+            ? {
+              id: persona.id,
+              display_name: persona.display_name,
+              ...(persona.description === undefined
+                ? {} : { description: persona.description }),
+            }
+            : current
+        )),
+        forums: state.bootstrap.forums.map((forum) => (
+          forum.default_persona_id === persona.id
+            ? { ...forum, default_persona_display_name: persona.display_name }
+            : forum
+        )),
+      };
+      const sessionSnapshot = state.sessionSnapshot
+        && state.sessionSnapshot.forum.default_persona_id === persona.id
+        ? {
+          ...state.sessionSnapshot,
+          forum: {
+            ...state.sessionSnapshot.forum,
+            default_persona_display_name: persona.display_name,
+          },
+        }
+        : state.sessionSnapshot;
+      return { ...state, bootstrap, sessionSnapshot };
+    }
     case 'show-characters':
       return {
         ...state,
@@ -316,6 +391,7 @@ export function sessionOperationState(state: AppState): {
 export function navigationTitle(state: AppState): string | null {
   switch (state.mainView) {
     case 'personas': return 'Personas';
+    case 'new-persona': return 'New persona';
     case 'persona-detail':
       return state.bootstrap?.personas.find(
         ({ id }) => id === state.inspectedPersonaId,

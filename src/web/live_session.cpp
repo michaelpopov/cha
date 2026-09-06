@@ -443,7 +443,7 @@ void LiveSession::execute(OwnerCommand command) {
         return;
     }
     SessionController& controller = *controller_;
-    CommandResult outcome = std::visit([this, &controller](auto&& value) -> CommandResult {
+    CommandResult outcome = std::visit([&controller](auto&& value) -> CommandResult {
         using T = std::decay_t<decltype(value)>;
         if constexpr (std::is_same_v<T, RawCommand>) {
             return handle_text_input(

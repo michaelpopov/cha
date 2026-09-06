@@ -285,6 +285,36 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /api/v1/personas:
+    post:
+      tags: [Discovery]
+      operationId: createPersona
+      summary: Create a persona
+      description: |
+        Creates a writable persona with an empty `PERSONA.md`. The generated
+        persona identifier is stable and returned in the response.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePersonaRequest"
+      responses:
+        "201":
+          description: The new persona.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonaDetail"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/ForbiddenMutation"
+        "413":
+          $ref: "#/components/responses/BodyTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /api/v1/personas/{persona_id}:
     parameters:
       - $ref: "#/components/parameters/PersonaId"
@@ -304,6 +334,41 @@ paths:
                 $ref: "#/components/schemas/PersonaDetail"
         "404":
           $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    patch:
+      tags: [Discovery]
+      operationId: updatePersona
+      summary: Update a persona
+      description: |
+        Updates the persona's display name, its `PERSONA.md`, or both. Omitted
+        fields are left unchanged. The built-in Guest and missing personas are
+        not writable.
+
+        After a write that actually changes a value, the server asks live
+        sessions in every forum using the persona to shut down with `reloading`.
+        The server does not reopen anything.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePersonaRequest"
+      responses:
+        "200":
+          description: Persona details after the write.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonaDetail"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/ForbiddenMutation"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/BodyTooLarge"
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -1239,7 +1304,7 @@ components:
     PersonaDetail:
       type: object
       additionalProperties: false
-      required: [id, display_name, persona_markdown]
+      required: [id, display_name, persona_markdown, writable]
       properties:
         id:
           $ref: "#/components/schemas/Identifier"
@@ -1248,6 +1313,26 @@ components:
         description:
           type: string
         persona_markdown:
+          type: string
+        writable:
+          type: boolean
+
+    UpdatePersonaRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        display_name:
+          type: string
+        persona_markdown:
+          type: string
+
+    CreatePersonaRequest:
+      type: object
+      additionalProperties: false
+      required: [display_name]
+      properties:
+        display_name:
           type: string
 
     ForumDetail:

@@ -256,6 +256,12 @@ TEST(LobbyRoutes, ServesBootstrapDiscoveryAndHealthWithoutSessionDataInHealth) {
     ASSERT_TRUE(reader_persona);
     ASSERT_EQ(reader_persona->status, 200);
     EXPECT_EQ(body(reader_persona)["persona_markdown"], "");
+    EXPECT_EQ(body(reader_persona)["writable"], true);
+    const auto guest_persona =
+        server.client().Get("/api/v1/personas/builtin-guest");
+    ASSERT_TRUE(guest_persona);
+    ASSERT_EQ(guest_persona->status, 200);
+    EXPECT_EQ(body(guest_persona)["writable"], false);
     expect_error(
         server.client().Get("/api/v1/characters/missing"),
         404, "not_found", "That character was not found.");
@@ -507,6 +513,145 @@ httplib::Result patch_character(
         "/api/v1/characters/" + std::string(id),
         settings.dump(),
         "application/json");
+}
+
+httplib::Result patch_persona(
+    TestServer& server,
+    std::string_view id,
+    const nlohmann::json& update) {
+    return server.client().Patch(
+        "/api/v1/personas/" + std::string(id),
+        update.dump(),
+        "application/json");
+}
+
+httplib::Result create_persona(
+    TestServer& server,
+    const nlohmann::json& request) {
+    return server.client().Post(
+        "/api/v1/personas", request.dump(), "application/json");
+}
+
+TEST(LobbyRoutes, CreatesPersonaInTheDatabaseAndBootstrap) {
+    test::TestWorkspace fixture;
+    const LobbyGraph graph(fixture.root());
+    LiveSessionManager manager(lobby_settings(2), counting_opener(graph));
+    TestServer server(graph, manager);
+
+    const auto created = create_persona(
+        server, {{"display_name", "Project manager"}});
+    ASSERT_TRUE(created);
+    ASSERT_EQ(created->status, 201);
+    const nlohmann::json created_body = body(created);
+    EXPECT_EQ(created_body["id"], "persona_1");
+    EXPECT_EQ(created_body["display_name"], "Project manager");
+    EXPECT_EQ(created_body["persona_markdown"], "");
+    EXPECT_EQ(created_body["writable"], true);
+    EXPECT_NE(
+        config_row(
+            graph.store->database_path(),
+            "personas/persona_1/persona.toml").find("Project manager"),
+        std::string::npos);
+
+    const auto bootstrap = server.client().Get("/api/v1/bootstrap");
+    ASSERT_TRUE(bootstrap);
+    ASSERT_EQ(bootstrap->status, 200);
+    const nlohmann::json bootstrap_body = body(bootstrap);
+    const auto& personas = bootstrap_body["personas"];
+    EXPECT_NE(
+        std::ranges::find_if(personas, [](const nlohmann::json& persona) {
+            return persona["id"] == "persona_1"
+                && persona["display_name"] == "Project manager";
+        }),
+        personas.end());
+
+    expect_error(
+        create_persona(server, {{"display_name", "Project manager"}}),
+        400, "bad_request", "Invalid persona.");
+    expect_error(
+        create_persona(server, nlohmann::json::object()),
+        400, "bad_request");
+}
+
+TEST(LobbyRoutes, PatchesPersonaNameAndMarkdownInTheDatabase) {
+    test::TestWorkspace fixture;
+    std::ofstream(fixture.root() / "forums" / "lobby" / "config.toml")
+        << "display_name = \"The Lobby\"\n"
+           "default_persona = \"reader\"\n";
+    const auto config_path = fixture.root() / "personas" / "reader" / "persona.toml";
+    const LobbyGraph graph(fixture.root());
+    LiveSessionManager manager(lobby_settings(2), counting_opener(graph));
+    TestServer server(graph, manager);
+
+    const std::string source_before = read_bytes(config_path);
+    const auto saved = patch_persona(server, "reader", {
+        {"display_name", "Editor"},
+        {"persona_markdown", "# Updated persona\n"},
+    });
+    ASSERT_TRUE(saved);
+    ASSERT_EQ(saved->status, 200);
+    const nlohmann::json saved_body = body(saved);
+    EXPECT_EQ(saved_body["display_name"], "Editor");
+    EXPECT_EQ(saved_body["persona_markdown"], "# Updated persona\n");
+    EXPECT_EQ(saved_body["writable"], true);
+    EXPECT_EQ(read_bytes(config_path), source_before);
+    EXPECT_NE(
+        config_row(graph.store->database_path(), "personas/reader/persona.toml")
+            .find("Editor"),
+        std::string::npos);
+    EXPECT_EQ(
+        config_row(graph.store->database_path(), "personas/reader/PERSONA.md"),
+        "# Updated persona\n");
+
+    const auto bootstrap = server.client().Get("/api/v1/bootstrap");
+    ASSERT_TRUE(bootstrap);
+    ASSERT_EQ(bootstrap->status, 200);
+    const nlohmann::json bootstrap_body = body(bootstrap);
+    const auto lobby = std::ranges::find_if(
+        bootstrap_body["forums"],
+        [](const nlohmann::json& forum) { return forum["id"] == "lobby"; });
+    ASSERT_NE(lobby, bootstrap_body["forums"].end());
+    EXPECT_EQ((*lobby)["default_persona_display_name"], "Editor");
+
+    expect_error(
+        patch_persona(server, "reader", {{"display_name", "Assistant"}}),
+        400, "bad_request", "Invalid persona.");
+    expect_error(
+        patch_persona(server, "builtin-guest", {{"display_name", "Visitor"}}),
+        404, "not_found", "That persona was not found.");
+    expect_error(
+        patch_persona(server, "reader", nlohmann::json::object()),
+        400, "bad_request");
+}
+
+TEST(LobbyRoutes, ReloadsAForumUsingTheChangedPersona) {
+    test::TestWorkspace fixture;
+    std::ofstream(fixture.root() / "forums" / "lobby" / "config.toml")
+        << "display_name = \"The Lobby\"\n"
+           "default_persona = \"reader\"\n";
+    const LobbyGraph graph(fixture.root());
+    LiveSessionManager manager(lobby_settings(2), counting_opener(graph));
+    TestServer server(graph, manager);
+
+    const std::string session_id = create_session(server);
+    const FullSessionId key{"lobby", session_id};
+    const auto opened = server.client().Post(
+        "/api/v1/forums/lobby/sessions/" + session_id + "/open",
+        "{}", "application/json");
+    ASSERT_TRUE(opened);
+    ASSERT_EQ(opened->status, 200);
+    ASSERT_TRUE(session_is_live(manager, key));
+
+    const auto saved = patch_persona(
+        server, "reader", {{"persona_markdown", "Changed prompt"}});
+    ASSERT_TRUE(saved);
+    ASSERT_EQ(saved->status, 200);
+    const auto deadline = std::chrono::steady_clock::now() + 2s;
+    while (session_is_live(manager, key)
+           && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(10ms);
+    }
+    EXPECT_FALSE(session_is_live(manager, key));
 }
 
 TEST(LobbyRoutes, PatchesCharacterSettingsAndLeavesTheFileAloneOnABadName) {

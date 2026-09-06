@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
   type Dispatch,
+  type FormEvent,
 } from 'react';
 
 import {
@@ -36,7 +37,7 @@ import {
   type AppAction,
   type AppState,
 } from '../state/view';
-import { SidebarIcon } from './Icons';
+import { CheckIcon, CloseIcon, EditIcon, SidebarIcon } from './Icons';
 import { OpenAiConnectionScreen } from './OpenAiConnection';
 import {
   CharacterDetailScreen,
@@ -45,6 +46,7 @@ import {
   ChatScreen,
   ForumDetailScreen,
   ForumsScreen,
+  NewPersonaScreen,
   NewSessionScreen,
   PersonaDetailScreen,
   PersonasScreen,
@@ -105,6 +107,14 @@ function Screen({
     );
     case 'personas': return (
       <PersonasScreen state={state} dispatch={dispatch} sessionReport={sessionReport} />
+    );
+    case 'new-persona': return (
+      <NewPersonaScreen
+        client={client}
+        dispatch={dispatch}
+        sessionReport={sessionReport}
+        state={state}
+      />
     );
     case 'persona-detail': return (
       <PersonaDetailScreen
@@ -235,6 +245,8 @@ function SessionOperationState({
 const inPlaceActions = new Set<AppAction['type']>([
   'toggle-sidebar',
   'character-detail-loaded',
+  'persona-detail-loaded',
+  'persona-updated',
 ]);
 
 export type SessionEventsConnector = (
@@ -245,6 +257,109 @@ export type SessionEventsConnector = (
 
 function defaultReload() {
   window.location.assign('/');
+}
+
+function PersonaTitleEditor({
+  client,
+  dispatch,
+  state,
+}: {
+  client: ChaClient;
+  dispatch: Dispatch<AppAction>;
+  state: AppState;
+}) {
+  const personaId = state.inspectedPersonaId;
+  const name = state.bootstrap?.personas.find(({ id }) => id === personaId)?.display_name;
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(name ?? '');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setEditing(false);
+    setDraft(name ?? '');
+    setError(null);
+  }, [name, personaId]);
+
+  if (!personaId || !name) return null;
+  if (!state.personaEditingAvailable) return <h1>{name}</h1>;
+
+  function cancel() {
+    setDraft(name ?? '');
+    setEditing(false);
+    setError(null);
+  }
+
+  async function save(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const displayName = draft.trim();
+    if (!personaId || !displayName || saving) return;
+    if (displayName === name) {
+      setEditing(false);
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const persona = await client.updatePersona(personaId, {
+        display_name: displayName,
+      });
+      dispatch({ type: 'persona-updated', persona });
+      setEditing(false);
+    } catch (failure: unknown) {
+      setError(publicErrorMessage(failure, 'Persona name could not be saved.'));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!editing) {
+    return (
+      <button
+        aria-label={`Rename ${name}`}
+        className="cha-persona-title-trigger"
+        onClick={() => setEditing(true)}
+        type="button"
+      >
+        <span>{name}</span>
+        <EditIcon />
+      </button>
+    );
+  }
+
+  return (
+    <form className="cha-persona-title-form" onSubmit={(event) => void save(event)}>
+      <input
+        aria-label="Persona name"
+        autoFocus
+        disabled={saving}
+        onChange={(event) => setDraft(event.target.value)}
+        onFocus={(event) => event.currentTarget.select()}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') cancel();
+        }}
+        value={draft}
+      />
+      <button
+        aria-label="Save persona name"
+        className="cha-title-icon-action"
+        disabled={saving || draft.trim() === ''}
+        type="submit"
+      >
+        <CheckIcon />
+      </button>
+      <button
+        aria-label="Cancel renaming"
+        className="cha-title-icon-action"
+        disabled={saving}
+        onClick={cancel}
+        type="button"
+      >
+        <CloseIcon />
+      </button>
+      {error && <span className="cha-persona-title-error" role="alert">{error}</span>}
+    </form>
+  );
 }
 
 interface AppProps {
@@ -927,7 +1042,11 @@ export function App({
               <SidebarIcon />
             </button>
           </div>
-          <div className="cha-topbar-title">{title && <h1>{title}</h1>}</div>
+          <div className="cha-topbar-title">
+            {state.mainView === 'persona-detail'
+              ? <PersonaTitleEditor client={client} dispatch={navigate} state={state} />
+              : title && <h1>{title}</h1>}
+          </div>
           {/* Balances the leading control so a navigation title stays centred. */}
           {title && <div className="cha-topbar-balance" aria-hidden="true" />}
         </header>

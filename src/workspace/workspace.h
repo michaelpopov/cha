@@ -127,6 +127,8 @@ public:
         std::string_view character_id) const;
     [[nodiscard]] bool character_is_writable(
         std::string_view id) const noexcept;
+    [[nodiscard]] bool persona_is_writable(
+        std::string_view id) const noexcept;
 
     void write_character_settings(
         std::string_view character_id,
@@ -134,6 +136,13 @@ public:
         std::optional<std::string_view> style_id,
         std::optional<std::string_view> reasoning_effort = std::nullopt,
         std::optional<WebSearchMode> web_search = std::nullopt) const;
+    void write_persona(
+        std::string_view persona_id,
+        std::string_view display_name,
+        std::string_view markdown) const;
+    void create_persona(
+        std::string_view persona_id,
+        std::string_view display_name) const;
     void write_forum_default_character(
         std::string_view forum_id,
         std::string_view character_id) const;
@@ -155,6 +164,8 @@ private:
     std::unordered_map<std::string, std::size_t> forum_index_;
     std::unordered_map<std::string, std::filesystem::path>
         character_config_paths_;
+    std::unordered_map<std::string, std::filesystem::path>
+        persona_directories_;
     std::unordered_map<std::string, std::filesystem::path>
         forum_config_paths_;
 };

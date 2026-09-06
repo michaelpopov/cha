@@ -254,6 +254,27 @@ export interface paths {
         patch: operations["updateCharacter"];
         trace?: never;
     };
+    "/api/v1/personas": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create a persona
+         * @description Creates a writable persona with an empty `PERSONA.md`. The generated
+         *     persona identifier is stable and returned in the response.
+         */
+        post: operations["createPersona"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/personas/{persona_id}": {
         parameters: {
             query?: never;
@@ -275,7 +296,17 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        patch?: never;
+        /**
+         * Update a persona
+         * @description Updates the persona's display name, its `PERSONA.md`, or both. Omitted
+         *     fields are left unchanged. The built-in Guest and missing personas are
+         *     not writable.
+         *
+         *     After a write that actually changes a value, the server asks live
+         *     sessions in every forum using the persona to shut down with `reloading`.
+         *     The server does not reopen anything.
+         */
+        patch: operations["updatePersona"];
         trace?: never;
     };
     "/api/v1/forums/{forum_id}": {
@@ -729,6 +760,14 @@ export interface components {
             display_name: string;
             description?: string;
             persona_markdown: string;
+            writable: boolean;
+        };
+        UpdatePersonaRequest: {
+            display_name?: string;
+            persona_markdown?: string;
+        };
+        CreatePersonaRequest: {
+            display_name: string;
         };
         ForumDetail: {
             id: components["schemas"]["Identifier"];
@@ -1199,6 +1238,34 @@ export interface operations {
             500: components["responses"]["InternalError"];
         };
     };
+    createPersona: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreatePersonaRequest"];
+            };
+        };
+        responses: {
+            /** @description The new persona. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonaDetail"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["ForbiddenMutation"];
+            413: components["responses"]["BodyTooLarge"];
+            500: components["responses"]["InternalError"];
+        };
+    };
     getPersona: {
         parameters: {
             query?: never;
@@ -1221,6 +1288,38 @@ export interface operations {
                 };
             };
             404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    updatePersona: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Stable URL-safe persona identifier. */
+                persona_id: components["parameters"]["PersonaId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdatePersonaRequest"];
+            };
+        };
+        responses: {
+            /** @description Persona details after the write. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonaDetail"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["ForbiddenMutation"];
+            404: components["responses"]["NotFound"];
+            413: components["responses"]["BodyTooLarge"];
             500: components["responses"]["InternalError"];
         };
     };

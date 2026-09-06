@@ -371,6 +371,22 @@ TEST(WebProtocol, ParsesRouteSpecificCommandPayloads) {
             {"reasoning_effort", nullptr},
         }),
         std::invalid_argument);
+
+    const PersonaUpdate persona = parse_persona_update({
+        {"display_name", "Editor"},
+        {"persona_markdown", "# Notes"},
+    });
+    EXPECT_EQ(persona.display_name, "Editor");
+    EXPECT_EQ(persona.persona_markdown, "# Notes");
+    EXPECT_FALSE(parse_persona_update({{"display_name", "Editor"}})
+                     .persona_markdown);
+    EXPECT_THROW((void)parse_persona_update({}), std::invalid_argument);
+    EXPECT_THROW(
+        (void)parse_persona_update({{"display_name", 1}}),
+        std::invalid_argument);
+    EXPECT_THROW(
+        (void)parse_persona_update({{"unknown", "value"}}),
+        std::invalid_argument);
     EXPECT_THROW(
         (void)parse_character_settings_update({
             {"provider", 1},
@@ -405,6 +421,9 @@ TEST(WebProtocol, ParsesRouteSpecificCommandPayloads) {
         std::invalid_argument);
 
     EXPECT_EQ(parse_create_session_label({{"label", "Notes"}}), "Notes");
+    EXPECT_EQ(
+        parse_create_persona_name({{"display_name", "Project manager"}}),
+        "Project manager");
     EXPECT_EQ(parse_rename_session_label({{"label", "Renamed"}}), "Renamed");
     EXPECT_EQ(parse_rename_session_label({{"label", ""}}), "");
     EXPECT_EQ(parse_vault_switch_name({{"vault_name", "Projects"}}), "Projects");
@@ -413,6 +432,13 @@ TEST(WebProtocol, ParsesRouteSpecificCommandPayloads) {
         std::invalid_argument);
     EXPECT_THROW(
         (void)parse_create_session_label({{"label", "Notes"}, {"extra", true}}),
+        std::invalid_argument);
+    EXPECT_THROW(
+        (void)parse_create_persona_name({}),
+        std::invalid_argument);
+    EXPECT_THROW(
+        (void)parse_create_persona_name({
+            {"display_name", "Manager"}, {"extra", true}}),
         std::invalid_argument);
     EXPECT_THROW(
         (void)parse_vault_switch_name({}),

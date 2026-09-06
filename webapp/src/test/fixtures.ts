@@ -100,6 +100,7 @@ export const personaDetailFixture: PersonaDetail = {
   display_name: 'Reader',
   description: 'Thoughtful, curious, and concise',
   persona_markdown: '# Reader notes\n\nA **thoughtful** reader.',
+  writable: true,
 };
 
 // As with the persona fixture, the Markdown heading differs from the display
@@ -153,6 +154,16 @@ export function fixtureClient(overrides: Partial<ChaClient> = {}): ChaClient {
       ...settings,
     }),
     getPersona: async () => personaDetailFixture,
+    createPersona: async ({ display_name }) => ({
+      id: 'persona_1',
+      display_name,
+      persona_markdown: '',
+      writable: true,
+    }),
+    updatePersona: async (_personaId, update) => ({
+      ...personaDetailFixture,
+      ...update,
+    }),
     getForum: async () => forumDetailFixture,
     listSessions: async () => [],
     createSession: async (_forumId, label) => ({ id: 'created', label }),

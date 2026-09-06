@@ -94,6 +94,11 @@ std::string parse_create_session_label(const nlohmann::json& json) {
     return required_string(json, "label");
 }
 
+std::string parse_create_persona_name(const nlohmann::json& json) {
+    exact_keys(json, {"display_name"});
+    return required_string(json, "display_name");
+}
+
 std::string parse_rename_session_label(const nlohmann::json& json) {
     exact_keys(json, {"label"});
     return required_string(json, "label");
@@ -147,6 +152,26 @@ CharacterSettingsUpdate parse_character_settings_update(const nlohmann::json& js
         .reasoning_effort = nullable_reasoning_effort(json),
         .web_search = nullable_web_search(json),
     };
+}
+
+PersonaUpdate parse_persona_update(const nlohmann::json& json) {
+    if (!json.is_object() || json.empty() || json.size() > 2) {
+        throw std::invalid_argument("Invalid web command");
+    }
+    PersonaUpdate update;
+    for (const auto& [key, value] : json.items()) {
+        if (!value.is_string()) {
+            throw std::invalid_argument("Invalid web command");
+        }
+        if (key == "display_name") {
+            update.display_name = value.get<std::string>();
+        } else if (key == "persona_markdown") {
+            update.persona_markdown = value.get<std::string>();
+        } else {
+            throw std::invalid_argument("Invalid web command");
+        }
+    }
+    return update;
 }
 
 void parse_empty_object(const nlohmann::json& json) {

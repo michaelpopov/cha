@@ -3,6 +3,7 @@
 #include "characters/model_context.h"
 #include "util/path_name.h"
 #include "util/logging.h"
+#include "util/private_filesystem.h"
 #include "util/public_name.h"
 #include "util/text.h"
 #include "util/text_template.h"
@@ -801,7 +802,9 @@ Workspace Workspace::load(std::filesystem::path root) {
     const std::filesystem::path personas_directory = workspace.root_ / "personas";
     for (const std::filesystem::path& directory : recursive_definition_directories(
              personas_directory, "persona.toml", "PERSONA.md")) {
-        workspace.personas_.push_back(load_persona(directory));
+        WorkspacePersona persona = load_persona(directory);
+        workspace.persona_directories_.emplace(persona.id, directory);
+        workspace.personas_.push_back(std::move(persona));
     }
     workspace.personas_.push_back({
         .id = std::string(workspace_guest_id),
@@ -1315,6 +1318,82 @@ CharacterDefinition Workspace::character_definition(
 
 bool Workspace::character_is_writable(std::string_view id) const noexcept {
     return character_config_paths_.contains(std::string(id));
+}
+
+bool Workspace::persona_is_writable(std::string_view id) const noexcept {
+    return persona_directories_.contains(std::string(id));
+}
+
+void Workspace::write_persona(
+    std::string_view persona_id,
+    std::string_view display_name,
+    std::string_view markdown) const {
+    const auto directory = persona_directories_.find(std::string(persona_id));
+    if (directory == persona_directories_.end()) {
+        throw std::runtime_error(
+            "Persona '" + std::string(persona_id)
+            + "' has no writable configuration");
+    }
+    const std::filesystem::path config_path = directory->second / "persona.toml";
+    try {
+        validate_public_name(display_name, "Persona name", config_path, true);
+    } catch (const std::runtime_error&) {
+        throw std::invalid_argument("Invalid persona name");
+    }
+    if (is_reserved_participant(display_name)) {
+        throw std::invalid_argument("Reserved persona name");
+    }
+    for (const WorkspacePersona& persona : personas_) {
+        if (persona.id != persona_id
+            && ascii_iequals(persona.display_name, display_name)) {
+            throw std::invalid_argument("Duplicate persona name");
+        }
+    }
+    for (const WorkspaceCharacter& character : characters_) {
+        if (ascii_iequals(character.character.display_name, display_name)) {
+            throw std::invalid_argument("Persona name conflicts with a character");
+        }
+    }
+    rewrite_toml_file(config_path, [&](toml::table& table) {
+        table.insert_or_assign("display_name", std::string(display_name));
+    });
+    create_private_file(directory->second / "PERSONA.md", markdown);
+}
+
+void Workspace::create_persona(
+    std::string_view persona_id,
+    std::string_view display_name) const {
+    if (!is_persona_id(persona_id) || is_reserved_participant(persona_id)
+        || find_persona(persona_id) != nullptr) {
+        throw std::invalid_argument("Invalid persona ID");
+    }
+    const std::filesystem::path directory =
+        root_ / "personas" / std::string(persona_id);
+    const std::filesystem::path config_path = directory / "persona.toml";
+    try {
+        validate_public_name(display_name, "Persona name", config_path, true);
+    } catch (const std::runtime_error&) {
+        throw std::invalid_argument("Invalid persona name");
+    }
+    if (is_reserved_participant(display_name)) {
+        throw std::invalid_argument("Reserved persona name");
+    }
+    for (const WorkspacePersona& persona : personas_) {
+        if (ascii_iequals(persona.display_name, display_name)) {
+            throw std::invalid_argument("Duplicate persona name");
+        }
+    }
+    for (const WorkspaceCharacter& character : characters_) {
+        if (ascii_iequals(character.character.display_name, display_name)) {
+            throw std::invalid_argument("Persona name conflicts with a character");
+        }
+    }
+
+    create_private_directory(directory);
+    toml::table config;
+    config.insert("display_name", std::string(display_name));
+    write_toml_file(config_path, config);
+    create_private_file(directory / "PERSONA.md", "");
 }
 
 void Workspace::write_character_settings(
