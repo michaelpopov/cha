@@ -1000,7 +1000,9 @@ Workspace Workspace::load(std::filesystem::path root) {
         for (const std::filesystem::path& member_directory :
              direct_subdirectories(members_directory)) {
             const std::string member_id = utf8_path(member_directory.filename());
-            validate_workspace_character_id(member_id);
+            if (member_id != workspace_assistant_id) {
+                validate_workspace_character_id(member_id);
+            }
             if (workspace.find_character(member_id) == nullptr) {
                 throw std::runtime_error(
                     "Forum '" + id + "' member '" + member_id
@@ -1077,12 +1079,9 @@ Workspace Workspace::load(std::filesystem::path root) {
                     variables,
                     load_character_config(member_config_path, false).prompt_variables);
             }
-            const std::filesystem::path override_path =
-                member_directory / "CHARACTER.md";
+            const std::filesystem::path override_path = member_directory / "CHARACTER.md";
             std::optional<std::string> prompt_override;
-            std::filesystem::path selected_prompt =
-                character_directories.at(member_id) / "CHARACTER.md";
-            std::filesystem::path containment = characters_directory;
+            std::string character_prompt;
             if (std::filesystem::exists(override_path)) {
                 if (!std::filesystem::is_regular_file(override_path)) {
                     throw std::runtime_error(
@@ -1090,11 +1089,9 @@ Workspace Workspace::load(std::filesystem::path root) {
                         + "' is not a regular file");
                 }
                 prompt_override = read_text(override_path, "forum member prompt");
-                selected_prompt = override_path;
-                containment = directory;
             }
             TemplateOptions options{
-                .containment_root = containment,
+                .containment_root = prompt_override ? directory : characters_directory,
                 .scope_table_name = "prompt",
                 .reserved = {
                     {"character.id", character.character.id},
@@ -1104,7 +1101,14 @@ Workspace Workspace::load(std::filesystem::path root) {
                 },
                 .initial_scope = variables,
             };
-            std::string character_prompt = expand_template_file(selected_prompt, options);
+            if (prompt_override) {
+                character_prompt = expand_template_file(override_path, options);
+            } else if (member_id == workspace_assistant_id) {
+                character_prompt = character.prompt_template;
+            } else {
+                character_prompt = expand_template_file(
+                    character_directories.at(member_id) / "CHARACTER.md", options);
+            }
             options.containment_root = directory;
             std::string forum_prompt = expand_template_file(forum_prompt_path, options);
             forum.members.push_back({
@@ -1337,6 +1341,10 @@ bool Workspace::persona_is_writable(std::string_view id) const noexcept {
     return persona_directories_.contains(std::string(id));
 }
 
+bool Workspace::forum_is_writable(std::string_view id) const noexcept {
+    return forum_config_paths_.contains(std::string(id));
+}
+
 void Workspace::write_character_definition(
     std::string_view character_id,
     std::string_view display_name,
@@ -1501,6 +1509,43 @@ void Workspace::create_character(
     create_private_file(directory / "PROFILE.md", "");
 }
 
+void Workspace::create_forum(
+    std::string_view forum_id,
+    std::string_view display_name,
+    std::string_view persona_id) const {
+    const std::filesystem::path directory =
+        root_ / "forums" / std::string(forum_id);
+    const std::filesystem::path config_path = directory / "config.toml";
+    try {
+        require_url_safe_identifier(forum_id, root_ / "forums");
+        validate_public_name(display_name, "Forum name", config_path);
+    } catch (const std::runtime_error&) {
+        throw std::invalid_argument("Invalid forum");
+    }
+    if (is_reserved_id(forum_id) || find_forum(forum_id) != nullptr
+        || ascii_iequals(display_name, "Entrance")
+        || find_persona(persona_id) == nullptr) {
+        throw std::invalid_argument("Invalid forum");
+    }
+    for (const WorkspaceForum& forum : forums_) {
+        if (ascii_iequals(forum.display_name, display_name)) {
+            throw std::invalid_argument("Duplicate forum name");
+        }
+    }
+
+    create_private_directory(directory);
+    toml::table config;
+    config.insert("display_name", std::string(display_name));
+    config.insert("default_persona", std::string(persona_id));
+    write_toml_file(config_path, config);
+    create_private_file(directory / "FORUM.md", "");
+    const std::filesystem::path member =
+        directory / "members" / std::string(workspace_assistant_id);
+    create_private_directory(directory / "members");
+    create_private_directory(member);
+    create_private_file(member / "character.toml", "# Forum member\n");
+}
+
 void Workspace::write_character_settings(
     std::string_view character_id,
     std::string_view provider_id,
@@ -1572,6 +1617,96 @@ void Workspace::write_forum_default_character(
     rewrite_toml_file(config->second, [&](toml::table& table) {
         table.erase("default_agent");
         table.insert_or_assign("default_character", std::string(character_id));
+    });
+}
+
+void Workspace::write_forum(
+    std::string_view forum_id,
+    std::string_view display_name,
+    std::string_view markdown) const {
+    const auto config = forum_config_paths_.find(std::string(forum_id));
+    if (config == forum_config_paths_.end() || find_forum(forum_id) == nullptr) {
+        throw std::runtime_error(
+            "Forum '" + std::string(forum_id)
+            + "' has no writable configuration");
+    }
+    try {
+        validate_public_name(display_name, "Forum name", config->second);
+    } catch (const std::runtime_error&) {
+        throw std::invalid_argument("Invalid forum name");
+    }
+    if (ascii_iequals(display_name, "Entrance")) {
+        throw std::invalid_argument("Reserved forum name");
+    }
+    for (const WorkspaceForum& forum : forums_) {
+        if (forum.id != forum_id
+            && ascii_iequals(forum.display_name, display_name)) {
+            throw std::invalid_argument("Duplicate forum name");
+        }
+    }
+    rewrite_toml_file(config->second, [&](toml::table& table) {
+        table.insert_or_assign("display_name", std::string(display_name));
+    });
+    create_private_file(config->second.parent_path() / "FORUM.md", markdown);
+}
+
+void Workspace::write_forum_members(
+    std::string_view forum_id,
+    std::span<const std::string> character_ids) const {
+    const auto config = forum_config_paths_.find(std::string(forum_id));
+    const WorkspaceForum* forum = find_forum(forum_id);
+    if (config == forum_config_paths_.end() || forum == nullptr) {
+        throw std::runtime_error(
+            "Forum '" + std::string(forum_id)
+            + "' has no writable configuration");
+    }
+    if (character_ids.empty()) {
+        throw std::invalid_argument("Forum requires a member");
+    }
+
+    std::vector<std::string> selected(character_ids.begin(), character_ids.end());
+    std::ranges::sort(selected);
+    if (std::ranges::adjacent_find(selected) != selected.end()) {
+        throw std::invalid_argument("Duplicate forum member");
+    }
+    for (const std::string& character_id : selected) {
+        const WorkspaceCharacter* character = find_character(character_id);
+        if (character == nullptr
+            || (is_reserved_id(character_id)
+                && character_id != workspace_assistant_id)
+            || !character->provider_id) {
+            throw std::invalid_argument("Invalid forum member");
+        }
+    }
+
+    const std::filesystem::path members = config->second.parent_path() / "members";
+    for (const WorkspaceForumMember& member : forum->members) {
+        if (std::ranges::binary_search(selected, member.character_id)) continue;
+        const std::filesystem::path directory =
+            members / path_from_utf8(member.character_id);
+        std::error_code error;
+        std::filesystem::remove_all(directory, error);
+        if (error) {
+            throw std::runtime_error(
+                "Failed to remove forum member '" + member.character_id
+                + "': " + error.message());
+        }
+    }
+    for (const std::string& character_id : selected) {
+        if (find_forum_member(forum_id, character_id) != nullptr) continue;
+        const std::filesystem::path directory =
+            members / path_from_utf8(character_id);
+        create_private_directory(directory);
+        create_private_file(directory / "character.toml", "# Forum member\n");
+    }
+
+    const std::string& default_character = std::ranges::binary_search(
+        selected, forum->default_character_id)
+        ? forum->default_character_id
+        : selected.front();
+    rewrite_toml_file(config->second, [&](toml::table& table) {
+        table.erase("default_agent");
+        table.insert_or_assign("default_character", default_character);
     });
 }
 

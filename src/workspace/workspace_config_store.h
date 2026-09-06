@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <memory>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -116,6 +117,17 @@ public:
         std::string_view character_id,
         std::string_view display_name,
         std::string_view description);
+    WorkspaceConfigEditResult apply_forum_create(
+        std::string_view forum_id,
+        std::string_view display_name,
+        std::string_view persona_id);
+    WorkspaceConfigEditResult apply_forum_update(
+        std::string_view forum_id,
+        std::string_view display_name,
+        std::string_view markdown);
+    WorkspaceConfigEditResult apply_forum_members(
+        std::string_view forum_id,
+        std::span<const std::string> character_ids);
     WorkspaceConfigEditResult apply_forum_default_character(
         std::string_view forum_id,
         std::string_view character_id);

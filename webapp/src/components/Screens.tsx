@@ -1015,7 +1015,7 @@ export function CharacterDetailScreen({
       subjectId={state.inspectedCharacterId}
       toolbarAction={state.characterSettingsAvailable ? (
         <button
-          className="cha-character-settings-link"
+          className="cha-detail-link"
           onClick={() => dispatch({ type: 'show-character-settings' })}
           type="button"
         >
@@ -1267,6 +1267,18 @@ export function ForumsScreen({ state, dispatch, sessionReport }: NavigationScree
     <section className="cha-screen cha-navigation" aria-label="Forums navigation">
       {sessionReport}
       <div className="cha-roster">
+        <button
+          className="cha-list-action"
+          onClick={() => dispatch({ type: 'show-new-forum' })}
+          type="button"
+        >
+          <span className="cha-list-icon"><PlusIcon /></span>
+          <span className="cha-list-copy">
+            <span className="cha-primary-line">New forum</span>
+            <span className="cha-secondary-line">Enter a name to begin</span>
+          </span>
+          <ChevronRightIcon className="cha-chevron" />
+        </button>
         {state.bootstrap?.forums.map((forum) => (
           <RosterRow
             description={forumRosterDescription(forum)}
@@ -1276,6 +1288,95 @@ export function ForumsScreen({ state, dispatch, sessionReport }: NavigationScree
           />
         ))}
       </div>
+    </section>
+  );
+}
+
+export function NewForumScreen({
+  state,
+  dispatch,
+  client,
+  sessionReport,
+}: RosterDetailProps) {
+  const personas = state.bootstrap?.personas ?? [];
+  const [name, setName] = useState('');
+  const [personaId, setPersonaId] = useState(personas[0]?.id ?? '');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const trimmedName = name.trim();
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!trimmedName || !personaId || saving) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const forum = await client.createForum({
+        display_name: trimmedName,
+        persona_id: personaId,
+      });
+      dispatch({ type: 'forum-created', forum });
+    } catch (failure: unknown) {
+      setError(publicErrorMessage(failure, 'The forum could not be created.'));
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="cha-screen cha-navigation" aria-label="New forum navigation">
+      <button
+        className="cha-back-row"
+        onClick={() => dispatch({ type: 'show-forums' })}
+        type="button"
+      >
+        <ChevronLeftIcon />
+        <span>Forums</span>
+      </button>
+      {sessionReport}
+      <form className="cha-new-forum" onSubmit={(event) => void submit(event)}>
+        <label htmlFor="cha-forum-name">Name</label>
+        <input
+          autoComplete="off"
+          autoFocus
+          className="cha-form-control"
+          disabled={saving}
+          id="cha-forum-name"
+          onChange={(event) => setName(event.target.value)}
+          placeholder="e.g. Brain Trust"
+          type="text"
+          value={name}
+        />
+        <label htmlFor="cha-forum-persona">Persona</label>
+        <select
+          className="cha-form-control"
+          disabled={saving}
+          id="cha-forum-persona"
+          onChange={(event) => setPersonaId(event.target.value)}
+          value={personaId}
+        >
+          {personas.map((persona) => (
+            <option key={persona.id} value={persona.id}>{persona.display_name}</option>
+          ))}
+        </select>
+        {error && <p className="cha-error-message" role="alert">{error}</p>}
+        <div className="cha-new-forum-actions">
+          <button
+            className="cha-button cha-button-ghost"
+            disabled={saving}
+            onClick={() => dispatch({ type: 'show-forums' })}
+            type="button"
+          >
+            Cancel
+          </button>
+          <button
+            className="cha-button cha-button-primary"
+            disabled={!trimmedName || !personaId || saving}
+            type="submit"
+          >
+            Create forum
+          </button>
+        </div>
+      </form>
     </section>
   );
 }
@@ -1292,10 +1393,19 @@ function ForumCast({ forum }: { forum: ForumSummary }) {
   );
 }
 
-export function ForumDetailScreen({ state, dispatch, client, sessionReport }: RosterDetailProps) {
+export function ForumDetailScreen({
+  state,
+  dispatch,
+  client,
+  reloadVersion = 0,
+  sessionReport,
+}: RosterDetailProps) {
   const load = useCallback(
-    (forumId: string) => client.getForum(forumId).then((detail) => detail.forum_markdown),
-    [client],
+    (forumId: string) => client.getForum(forumId).then((detail) => {
+      dispatch({ type: 'forum-detail-loaded', forumId, writable: detail.writable });
+      return detail.forum_markdown;
+    }),
+    [client, dispatch],
   );
   const forum = state.bootstrap?.forums.find(({ id }) => id === state.currentForumId);
   return (
@@ -1310,10 +1420,117 @@ export function ForumDetailScreen({ state, dispatch, client, sessionReport }: Ro
       }}
       load={load}
       onBack={() => dispatch({ type: 'show-sessions' })}
+      reloadVersion={reloadVersion}
       sessionReport={sessionReport}
       subjectId={state.currentForumId}
       subtitle={forum && <ForumCast forum={forum} />}
+      toolbarAction={state.forumEditingAvailable ? (
+        <button
+          className="cha-detail-link"
+          onClick={() => dispatch({ type: 'show-forum-members' })}
+          type="button"
+        >
+          <span>Members</span>
+          <ChevronRightIcon />
+        </button>
+      ) : undefined}
     />
+  );
+}
+
+export function ForumMembersScreen({
+  state,
+  dispatch,
+  client,
+  sessionReport,
+}: RosterDetailProps) {
+  const forumId = state.currentForumId;
+  const forum = state.bootstrap?.forums.find(({ id }) => id === forumId);
+  const available = state.bootstrap?.characters ?? [];
+  const memberKey = forum?.members.map(({ id }) => id).sort().join('\0') ?? '';
+  const [selected, setSelected] = useState<Set<string>>(
+    () => new Set(forum?.members.map(({ id }) => id)),
+  );
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setSelected(new Set(forum?.members.map(({ id }) => id)));
+    setError(null);
+  }, [forumId, memberKey]);
+
+  const dirty = forum !== undefined && (
+    selected.size !== forum.members.length
+    || forum.members.some(({ id }) => !selected.has(id))
+  );
+
+  function toggle(characterId: string) {
+    setSelected((current) => {
+      const next = new Set(current);
+      if (next.has(characterId)) next.delete(characterId);
+      else next.add(characterId);
+      return next;
+    });
+    setError(null);
+  }
+
+  async function save(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!forumId || !dirty || selected.size === 0 || saving) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const updated = await client.updateForumMembers(forumId, {
+        character_ids: [...selected],
+      });
+      dispatch({ type: 'forum-updated', forum: updated });
+    } catch (failure: unknown) {
+      setError(publicErrorMessage(failure, 'Forum members could not be saved.'));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="cha-screen cha-navigation" aria-label="Forum members navigation">
+      <button
+        className="cha-back-row"
+        onClick={() => dispatch({ type: 'show-forum-detail' })}
+        type="button"
+      >
+        <ChevronLeftIcon />
+        <span>{forum?.display_name ?? 'Forum'}</span>
+      </button>
+      {sessionReport}
+      {!forum && <p className="cha-state-message">No forum is selected.</p>}
+      {forum && (
+        <form className="cha-forum-members" onSubmit={(event) => void save(event)}>
+          <div className="cha-member-list">
+            {available.map((character) => (
+              <label className="cha-member-row" key={character.id}>
+                <input
+                  checked={selected.has(character.id)}
+                  disabled={saving}
+                  onChange={() => toggle(character.id)}
+                  type="checkbox"
+                />
+                <span>{character.display_name}</span>
+              </label>
+            ))}
+          </div>
+          {error && <p className="cha-error-message" role="alert">{error}</p>}
+          <div className="cha-forum-members-actions">
+            <button
+              className="cha-button cha-button-primary"
+              disabled={!dirty || selected.size === 0 || saving}
+              type="submit"
+            >
+              Save
+            </button>
+          </div>
+        </form>
+      )}
+    </section>
   );
 }
 

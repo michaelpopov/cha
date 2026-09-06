@@ -1,0 +1,57 @@
+Real issues, ranked
+
+These are the places that diverge from good practice, or will hurt you later. None of them means the app is unsafe to run.
+
+1. Two files have become “god files”
+
+Screens.tsx is ~1,600 lines (every screen). App.tsx is ~1,300 lines (session open, SSE, reconnect, history, vault switch, plus title editors and file upload). app.css is another ~1,300.
+
+This is the main maintainability problem. The ideas are separated; the files are not.
+
+App.tsx is doing two jobs that do not belong together:
+
+• Session runtime: open, attach stream, recover, cancel when the user navigates away
+• Shell chrome: sidebar toggle, persona/character rename in the top bar, definition upload
+
+The first job is inherently messy (one stream, StrictMode double-mount, history). The second is ordinary UI. Mixing them is why App.tsx is hard to read.
+
+Screens.tsx is a grab bag: chat transcript, composer, personas, characters, forums, settings forms. Chat alone is ~360 lines and has its own 956-line test file.
+
+This is not a rewrite. If you ever split files, the natural cuts are:
+
+• ChatScreen (+ transcript helpers) out of Screens.tsx
+• title editors / upload out of App.tsx
+• roster screens can stay together; they already share RosterDetailScreen
+
+Do not introduce a router library, Redux, or a component kit just to “organize” this.
+
+2. Most of the UI is not in the URL
+
+Only two addresses exist:
+
+• / — Welcome
+• /s/{forum}/{session}/ — a live conversation
+
+Personas, characters, forums, settings, and “new session” live only in mainView memory. Browser Back from a session works. Browser Back from “Characters → this character” does not, because that screen was never an address. Refresh on a character page also cannot restore it.
+
+For a desktop-like local app this is a reasonable choice (chat is the thing you bookmark). It is still a real product limitation, not a bug in the reducer. If you later want shareable/reloadable screens, you would add more path kinds next to parseAppRoute — still without React Router.
+
+3. Composer draft is not tied to the conversation
+
+ChatScreen keeps draft in local useState. Switching sessions from Recent while already in chat does not remount that screen, and nothing clears or keys the draft on conversationKey. A half-typed message can ride into the next session.
+
+That is a state-ownership bug: the draft is UI-local, but the conversation identity lives in AppState. Either key the draft by forumId/sessionId, or reset it when conversationKey changes.
+
+4. JSON responses are trusted except for two payloads
+
+Bootstrap and session snapshots are validated. Character detail, persona detail, forum detail, listings, command results, and OpenAI auth are payload as T. If chaweb and the browser get out of sync, those screens can crash instead of showing the “incompatible application response” path you already built for bootstrap.
+
+That is acceptable while you always ship them together. It is the main place the API layer is thinner than the comments in client.ts imply. You do not need a validation library; even a few isRecord checks on the screens that already have a “failed to load” UI would close the gap.
+
+5. Small inconsistencies, not architecture
+
+• No ESLint. You have TypeScript strict mode and tests, which matter more. A linter would still catch unused vars and hook-dependency mistakes.
+• No React error boundary. A render throw in chat whitescreens the whole app. One boundary around <Screen> with “Reload” would be enough.
+• Download errors use window.alert. Everywhere else uses role="alert" in the page.
+• PersonaTitleEditor and CharacterTitleEditor are almost the same component.
+• Character settings save does not dispatch character-updated. Name/markdown edits do. Harmless today because the roster does not show provider/style, but it is an inconsistent cache update.

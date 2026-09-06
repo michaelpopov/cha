@@ -131,6 +131,8 @@ public:
         std::string_view id) const noexcept;
     [[nodiscard]] bool persona_is_writable(
         std::string_view id) const noexcept;
+    [[nodiscard]] bool forum_is_writable(
+        std::string_view id) const noexcept;
 
     void write_character_settings(
         std::string_view character_id,
@@ -153,6 +155,17 @@ public:
         std::string_view character_id,
         std::string_view display_name,
         std::string_view description) const;
+    void create_forum(
+        std::string_view forum_id,
+        std::string_view display_name,
+        std::string_view persona_id) const;
+    void write_forum(
+        std::string_view forum_id,
+        std::string_view display_name,
+        std::string_view markdown) const;
+    void write_forum_members(
+        std::string_view forum_id,
+        std::span<const std::string> character_ids) const;
     void write_forum_default_character(
         std::string_view forum_id,
         std::string_view character_id) const;

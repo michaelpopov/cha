@@ -1203,6 +1203,35 @@ WorkspaceConfigEditResult WorkspaceConfigStore::apply_character_create(
     });
 }
 
+WorkspaceConfigEditResult WorkspaceConfigStore::apply_forum_create(
+    std::string_view forum_id,
+    std::string_view display_name,
+    std::string_view persona_id) {
+    return impl_->edit([&](const Workspace& workspace) {
+        workspace.create_forum(forum_id, display_name, persona_id);
+        return std::vector<std::string>{};
+    });
+}
+
+WorkspaceConfigEditResult WorkspaceConfigStore::apply_forum_update(
+    std::string_view forum_id,
+    std::string_view display_name,
+    std::string_view markdown) {
+    return impl_->edit([&](const Workspace& workspace) {
+        workspace.write_forum(forum_id, display_name, markdown);
+        return std::vector<std::string>{std::string(forum_id)};
+    });
+}
+
+WorkspaceConfigEditResult WorkspaceConfigStore::apply_forum_members(
+    std::string_view forum_id,
+    std::span<const std::string> character_ids) {
+    return impl_->edit([&](const Workspace& workspace) {
+        workspace.write_forum_members(forum_id, character_ids);
+        return std::vector<std::string>{std::string(forum_id)};
+    });
+}
+
 WorkspaceConfigEditResult WorkspaceConfigStore::apply_forum_default_character(
     std::string_view forum_id,
     std::string_view character_id) {

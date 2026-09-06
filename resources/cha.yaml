@@ -449,6 +449,37 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /api/v1/forums:
+    post:
+      tags: [Discovery]
+      operationId: createForum
+      summary: Create a forum
+      description: |
+        Creates a writable forum with a generated stable identifier, the
+        selected persona, the built-in Assistant as its initial member, and an
+        empty `FORUM.md` ready for later upload.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateForumRequest"
+      responses:
+        "201":
+          description: The new forum.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ForumDetail"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/ForbiddenMutation"
+        "413":
+          $ref: "#/components/responses/BodyTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /api/v1/forums/{forum_id}:
     parameters:
       - $ref: "#/components/parameters/ForumId"
@@ -472,6 +503,41 @@ paths:
                 $ref: "#/components/schemas/ForumDetail"
         "404":
           $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    patch:
+      tags: [Discovery]
+      operationId: updateForum
+      summary: Update a forum
+      description: |
+        Updates the forum's display name, its `FORUM.md`, or both. Omitted
+        fields are left unchanged. The built-in Entrance and missing forums
+        are not writable.
+
+        After a write that actually changes a value, the server asks live
+        sessions in the forum to shut down with `reloading`. The server does
+        not reopen anything.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateForumRequest"
+      responses:
+        "200":
+          description: Forum details after the write.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ForumDetail"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/ForbiddenMutation"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/BodyTooLarge"
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -498,6 +564,7 @@ paths:
           $ref: "#/components/responses/NotFound"
         "500":
           $ref: "#/components/responses/InternalError"
+
     post:
       tags: [Stored sessions]
       operationId: createSession
@@ -528,6 +595,42 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CreateSessionResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/ForbiddenMutation"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/BodyTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/forums/{forum_id}/members:
+    parameters:
+      - $ref: "#/components/parameters/ForumId"
+    put:
+      tags: [Discovery]
+      operationId: updateForumMembers
+      summary: Replace a forum's members
+      description: |
+        Replaces the complete member list of a writable forum. At least one
+        configured character is required. If the existing
+        default character is removed, the first remaining character becomes
+        the default. Live sessions in the forum are asked to reload.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateForumMembersRequest"
+      responses:
+        "200":
+          description: Forum details after the write.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ForumDetail"
         "400":
           $ref: "#/components/responses/BadRequest"
         "403":
@@ -1435,7 +1538,7 @@ components:
     ForumDetail:
       type: object
       additionalProperties: false
-      required: [id, display_name, default_character_id, default_persona_id, default_persona_display_name, members, forum_markdown]
+      required: [id, display_name, default_character_id, default_persona_id, default_persona_display_name, members, forum_markdown, writable]
       properties:
         id:
           $ref: "#/components/schemas/Identifier"
@@ -1455,6 +1558,40 @@ components:
             $ref: "#/components/schemas/CharacterSummary"
         forum_markdown:
           type: string
+        writable:
+          type: boolean
+
+    CreateForumRequest:
+      type: object
+      additionalProperties: false
+      required: [display_name, persona_id]
+      properties:
+        display_name:
+          type: string
+        persona_id:
+          $ref: "#/components/schemas/Identifier"
+
+    UpdateForumRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        display_name:
+          type: string
+        forum_markdown:
+          type: string
+
+    UpdateForumMembersRequest:
+      type: object
+      additionalProperties: false
+      required: [character_ids]
+      properties:
+        character_ids:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/Identifier"
 
     CreateSessionRequest:
       type: object

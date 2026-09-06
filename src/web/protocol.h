@@ -196,6 +196,11 @@ struct CreateCharacterRequest {
     std::string description;
 };
 
+struct CreateForumRequest {
+    std::string display_name;
+    std::string persona_id;
+};
+
 struct CharacterSettingsUpdate {
     std::string provider;
     std::optional<std::string> style;
@@ -232,11 +237,21 @@ struct PersonaUpdate {
     std::optional<std::string> persona_markdown;
 };
 
+struct ForumUpdate {
+    std::optional<std::string> display_name;
+    std::optional<std::string> forum_markdown;
+};
+
+struct ForumMembersUpdate {
+    std::vector<CharacterId> character_ids;
+};
+
 struct ForumDetail {
     ForumSummary summary;
     // FORUM.md verbatim, and empty for a forum that has none. The same file is
     // the forum's system prompt; publishing it whole is deliberate.
     std::string forum_markdown;
+    bool writable{};
 };
 
 struct Error {

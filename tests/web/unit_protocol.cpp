@@ -69,10 +69,11 @@ TEST(WebProtocol, SerializesSpecifiedSuccessListingAndErrorBodies) {
     EXPECT_EQ(
         nlohmann::json(ForumDetail{
             {"forum", "Forum", std::nullopt, "guide", "reader", "Reader", {{"guide", "Guide"}}},
-            "# House rules"}),
+            "# House rules",
+            true}),
         nlohmann::json({{"display_name", "Forum"}, {"id", "forum"}, {"default_character_id", "guide"}, {"default_persona_id", "reader"}, {"default_persona_display_name", "Reader"},
             {"members", {{{"id", "guide"}, {"display_name", "Guide"}, {"appearance", default_appearance()}}}},
-            {"forum_markdown", "# House rules"}}));
+            {"forum_markdown", "# House rules"}, {"writable", true}}));
     EXPECT_EQ(
         nlohmann::json(PersonaSummary{"reader", "Reader"}),
         nlohmann::json({{"display_name", "Reader"}, {"id", "reader"}}));
@@ -407,6 +408,40 @@ TEST(WebProtocol, ParsesRouteSpecificCommandPayloads) {
     EXPECT_THROW(
         (void)parse_persona_update({{"unknown", "value"}}),
         std::invalid_argument);
+
+    const ForumUpdate forum = parse_forum_update({
+        {"display_name", "Brain Trust"},
+        {"forum_markdown", "# Rules"},
+    });
+    EXPECT_EQ(forum.display_name, "Brain Trust");
+    EXPECT_EQ(forum.forum_markdown, "# Rules");
+    EXPECT_FALSE(parse_forum_update({{"display_name", "Brain Trust"}})
+                     .forum_markdown);
+    EXPECT_THROW((void)parse_forum_update({}), std::invalid_argument);
+    EXPECT_THROW(
+        (void)parse_forum_update({{"display_name", 1}}),
+        std::invalid_argument);
+    EXPECT_THROW(
+        (void)parse_forum_update({{"unknown", "value"}}),
+        std::invalid_argument);
+
+    const ForumMembersUpdate members = parse_forum_members_update({
+        {"character_ids", {"guide", "critic"}},
+    });
+    EXPECT_EQ(members.character_ids,
+        (std::vector<std::string>{"guide", "critic"}));
+    EXPECT_THROW(
+        (void)parse_forum_members_update({{"character_ids", {}}}),
+        std::invalid_argument);
+    EXPECT_THROW(
+        (void)parse_forum_members_update({{"character_ids", {"guide", "guide"}}}),
+        std::invalid_argument);
+    EXPECT_THROW(
+        (void)parse_forum_members_update({{"character_ids", {1}}}),
+        std::invalid_argument);
+    EXPECT_THROW(
+        (void)parse_forum_members_update({{"members", {"guide"}}}),
+        std::invalid_argument);
     EXPECT_THROW(
         (void)parse_character_settings_update({
             {"provider", 1},
@@ -444,6 +479,12 @@ TEST(WebProtocol, ParsesRouteSpecificCommandPayloads) {
     EXPECT_EQ(
         parse_create_persona_name({{"display_name", "Project manager"}}),
         "Project manager");
+    const CreateForumRequest create_forum = parse_create_forum_request({
+        {"display_name", "Brain Trust"},
+        {"persona_id", "reader"},
+    });
+    EXPECT_EQ(create_forum.display_name, "Brain Trust");
+    EXPECT_EQ(create_forum.persona_id, "reader");
     const CreateCharacterRequest create_character =
         parse_create_character_request({
             {"display_name", "Mentor"},
@@ -462,6 +503,9 @@ TEST(WebProtocol, ParsesRouteSpecificCommandPayloads) {
         std::invalid_argument);
     EXPECT_THROW(
         (void)parse_create_persona_name({}),
+        std::invalid_argument);
+    EXPECT_THROW(
+        (void)parse_create_forum_request({{"display_name", "Brain Trust"}}),
         std::invalid_argument);
     EXPECT_THROW(
         (void)parse_create_character_request({{"display_name", "Mentor"}}),

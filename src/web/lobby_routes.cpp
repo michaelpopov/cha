@@ -187,6 +187,16 @@ ForumSummary forum_summary(
     return result;
 }
 
+ForumDetail forum_detail(
+    const Workspace& workspace,
+    const WorkspaceForum& forum) {
+    return {
+        .summary = forum_summary(forum, workspace),
+        .forum_markdown = forum.prompt_template,
+        .writable = workspace.forum_is_writable(forum.id),
+    };
+}
+
 std::vector<SessionListing> sessions_for(
     const SessionRepository& sessions,
     const LiveSessionManagerSnapshot& snapshot,
@@ -356,6 +366,47 @@ void LobbyRoutes::install(httplib::Server& server) const {
         set_json_response(
             response, 201,
             nlohmann::json(character_detail(*current, *created)));
+    });
+
+    server.Post("/api/v1/forums",
+        [settings, config](const httplib::Request& request,
+                           httplib::Response& response) {
+        if (!validate_json_mutation(request, response)) return;
+        CreateForumRequest create;
+        if (!parse_route_json_body(
+                request, response, settings.request_body_limit,
+                [&create](const nlohmann::json& json) {
+                    create = parse_create_forum_request(json);
+                })) return;
+
+        const auto workspace = published_workspace();
+        std::string id;
+        for (std::size_t suffix = 1;; ++suffix) {
+            const std::string candidate = "forum_" + std::to_string(suffix);
+            if (workspace->find_forum(candidate) == nullptr) {
+                id = candidate;
+                break;
+            }
+        }
+        try {
+            config->apply_forum_create(
+                id, create.display_name, create.persona_id);
+        } catch (const std::invalid_argument&) {
+            return set_error_response(response, 400,
+                {ErrorCode::bad_request, "Invalid forum."});
+        } catch (const WorkspaceRestartRequiredError& error) {
+            return set_error_response(response, 500,
+                {ErrorCode::internal_error, error.what()});
+        }
+        const auto current = published_workspace();
+        const WorkspaceForum* created = current->find_forum(id);
+        if (created == nullptr) {
+            return set_error_response(response, 500,
+                {ErrorCode::internal_error, "The forum could not be created."});
+        }
+        set_json_response(
+            response, 201,
+            nlohmann::json(forum_detail(*current, *created)));
     });
 
     server.Get(R"(/api/v1/characters/([^/]+))", [](const httplib::Request& request, httplib::Response& response) {
@@ -546,9 +597,95 @@ void LobbyRoutes::install(httplib::Server& server) const {
         if (!is_valid_route_component(id)) return set_route_not_found(response);
         const WorkspaceForum* const forum = workspace->find_forum(id);
         if (forum == nullptr) return set_route_not_found(response);
-        set_json_response(response, 200, nlohmann::json(ForumDetail{
-            forum_summary(*forum, *workspace),
-            forum->prompt_template}));
+        set_json_response(
+            response, 200, nlohmann::json(forum_detail(*workspace, *forum)));
+    });
+
+    server.Patch(R"(/api/v1/forums/([^/]+))",
+        [live_sessions, settings, config](const httplib::Request& request,
+                                          httplib::Response& response) {
+        const auto workspace = published_workspace();
+        const std::string id = request.matches[1];
+        if (!is_valid_route_component(id)) {
+            return set_route_not_found(response, "That forum was not found.");
+        }
+        const WorkspaceForum* forum = workspace->find_forum(id);
+        if (forum == nullptr || !workspace->forum_is_writable(id)) {
+            return set_route_not_found(response, "That forum was not found.");
+        }
+        if (!validate_json_mutation(request, response)) return;
+        ForumUpdate update;
+        if (!parse_route_json_body(
+                request, response, settings.request_body_limit,
+                [&update](const nlohmann::json& json) {
+                    update = parse_forum_update(json);
+                })) return;
+        const std::string& display_name = update.display_name
+            ? *update.display_name : forum->display_name;
+        const std::string& markdown = update.forum_markdown
+            ? *update.forum_markdown : forum->prompt_template;
+        const bool changed = display_name != forum->display_name
+            || markdown != forum->prompt_template;
+        try {
+            if (changed) {
+                const WorkspaceConfigEditResult edited =
+                    config->apply_forum_update(id, display_name, markdown);
+                request_reload(*live_sessions, edited.affected_forum_ids);
+            }
+        } catch (const std::invalid_argument&) {
+            return set_error_response(response, 400,
+                {ErrorCode::bad_request, "Invalid forum."});
+        } catch (const WorkspaceRestartRequiredError& error) {
+            return set_error_response(response, 500,
+                {ErrorCode::internal_error, error.what()});
+        }
+        const auto current = published_workspace();
+        const WorkspaceForum* updated = current->find_forum(id);
+        if (updated == nullptr) {
+            return set_route_not_found(response, "That forum was not found.");
+        }
+        set_json_response(
+            response, 200, nlohmann::json(forum_detail(*current, *updated)));
+    });
+
+    server.Put(R"(/api/v1/forums/([^/]+)/members)",
+        [live_sessions, settings, config](const httplib::Request& request,
+                                          httplib::Response& response) {
+        const auto workspace = published_workspace();
+        const std::string id = request.matches[1];
+        if (!is_valid_route_component(id)) {
+            return set_route_not_found(response, "That forum was not found.");
+        }
+        const WorkspaceForum* forum = workspace->find_forum(id);
+        if (forum == nullptr || !workspace->forum_is_writable(id)) {
+            return set_route_not_found(response, "That forum was not found.");
+        }
+        if (!validate_json_mutation(request, response)) return;
+        ForumMembersUpdate update;
+        if (!parse_route_json_body(
+                request, response, settings.request_body_limit,
+                [&update](const nlohmann::json& json) {
+                    update = parse_forum_members_update(json);
+                })) return;
+        try {
+            const WorkspaceConfigEditResult edited =
+                config->apply_forum_members(id, update.character_ids);
+            request_reload(*live_sessions, edited.affected_forum_ids);
+        } catch (const std::invalid_argument&) {
+            return set_error_response(response, 400,
+                {ErrorCode::bad_request,
+                 "Select at least one configured character."});
+        } catch (const WorkspaceRestartRequiredError& error) {
+            return set_error_response(response, 500,
+                {ErrorCode::internal_error, error.what()});
+        }
+        const auto current = published_workspace();
+        const WorkspaceForum* updated = current->find_forum(id);
+        if (updated == nullptr) {
+            return set_route_not_found(response, "That forum was not found.");
+        }
+        set_json_response(
+            response, 200, nlohmann::json(forum_detail(*current, *updated)));
     });
 
     server.Get(R"(/api/v1/forums/([^/]+)/sessions)", [sessions, live_sessions](const httplib::Request& request, httplib::Response& response) {

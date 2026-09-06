@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <set>
 #include <stdexcept>
 #include <string>
 
@@ -97,6 +98,14 @@ std::string parse_create_session_label(const nlohmann::json& json) {
 std::string parse_create_persona_name(const nlohmann::json& json) {
     exact_keys(json, {"display_name"});
     return required_string(json, "display_name");
+}
+
+CreateForumRequest parse_create_forum_request(const nlohmann::json& json) {
+    exact_keys(json, {"display_name", "persona_id"});
+    return {
+        .display_name = required_string(json, "display_name"),
+        .persona_id = required_string(json, "persona_id"),
+    };
 }
 
 CreateCharacterRequest parse_create_character_request(const nlohmann::json& json) {
@@ -199,6 +208,45 @@ PersonaUpdate parse_persona_update(const nlohmann::json& json) {
         } else {
             throw std::invalid_argument("Invalid web command");
         }
+    }
+    return update;
+}
+
+ForumUpdate parse_forum_update(const nlohmann::json& json) {
+    if (!json.is_object() || json.empty() || json.size() > 2) {
+        throw std::invalid_argument("Invalid web command");
+    }
+    ForumUpdate update;
+    for (const auto& [key, value] : json.items()) {
+        if (!value.is_string()) {
+            throw std::invalid_argument("Invalid web command");
+        }
+        if (key == "display_name") {
+            update.display_name = value.get<std::string>();
+        } else if (key == "forum_markdown") {
+            update.forum_markdown = value.get<std::string>();
+        } else {
+            throw std::invalid_argument("Invalid web command");
+        }
+    }
+    return update;
+}
+
+ForumMembersUpdate parse_forum_members_update(const nlohmann::json& json) {
+    exact_keys(json, {"character_ids"});
+    const nlohmann::json& ids = json.at("character_ids");
+    if (!ids.is_array() || ids.empty()) {
+        throw std::invalid_argument("Invalid web command");
+    }
+    ForumMembersUpdate update;
+    std::set<std::string> unique;
+    for (const nlohmann::json& id : ids) {
+        if (!id.is_string()) throw std::invalid_argument("Invalid web command");
+        std::string value = id.get<std::string>();
+        if (value.empty() || !unique.insert(value).second) {
+            throw std::invalid_argument("Invalid web command");
+        }
+        update.character_ids.push_back(std::move(value));
     }
     return update;
 }

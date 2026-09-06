@@ -11,6 +11,9 @@ export type CreatePersonaRequest = components['schemas']['CreatePersonaRequest']
 export type UpdatePersonaRequest = components['schemas']['UpdatePersonaRequest'];
 export type ForumDetail = components['schemas']['ForumDetail'];
 export type ForumSummary = components['schemas']['ForumSummary'];
+export type CreateForumRequest = components['schemas']['CreateForumRequest'];
+export type UpdateForumRequest = components['schemas']['UpdateForumRequest'];
+export type UpdateForumMembersRequest = components['schemas']['UpdateForumMembersRequest'];
 export type CharacterAppearance = components['schemas']['CharacterAppearance'];
 export type SessionListing = components['schemas']['SessionListing'];
 export type CreateSessionResult = components['schemas']['CreateSessionResult'];
@@ -96,6 +99,12 @@ export interface ChaClient {
   createPersona(request: CreatePersonaRequest): Promise<PersonaDetail>;
   updatePersona(personaId: string, update: UpdatePersonaRequest): Promise<PersonaDetail>;
   getForum(forumId: string): Promise<ForumDetail>;
+  createForum(request: CreateForumRequest): Promise<ForumDetail>;
+  updateForum(forumId: string, update: UpdateForumRequest): Promise<ForumDetail>;
+  updateForumMembers(
+    forumId: string,
+    update: UpdateForumMembersRequest,
+  ): Promise<ForumDetail>;
   listSessions(forumId: string): Promise<SessionListing[]>;
   createSession(forumId: string, label: string): Promise<CreateSessionResult>;
   renameSession(forumId: string, sessionId: string, label: string): Promise<SessionLabelResult>;
@@ -294,6 +303,24 @@ export function createChaClient(
     getForum: (forumId) => requestJson<ForumDetail>(
       fetcher,
       `/api/v1/forums/${component(forumId)}`,
+    ),
+
+    createForum: (request) => requestJson<ForumDetail>(
+      fetcher,
+      '/api/v1/forums',
+      jsonMutation(request),
+    ),
+
+    updateForum: (forumId, update) => requestJson<ForumDetail>(
+      fetcher,
+      `/api/v1/forums/${component(forumId)}`,
+      jsonMutation(update, 'PATCH'),
+    ),
+
+    updateForumMembers: (forumId, update) => requestJson<ForumDetail>(
+      fetcher,
+      `/api/v1/forums/${component(forumId)}/members`,
+      jsonMutation(update, 'PUT'),
     ),
 
     listSessions: (forumId) => requestJson<SessionListing[]>(

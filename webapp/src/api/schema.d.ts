@@ -367,6 +367,28 @@ export interface paths {
         patch: operations["updatePersona"];
         trace?: never;
     };
+    "/api/v1/forums": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create a forum
+         * @description Creates a writable forum with a generated stable identifier, the
+         *     selected persona, the built-in Assistant as its initial member, and an
+         *     empty `FORUM.md` ready for later upload.
+         */
+        post: operations["createForum"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/forums/{forum_id}": {
         parameters: {
             query?: never;
@@ -392,7 +414,17 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        patch?: never;
+        /**
+         * Update a forum
+         * @description Updates the forum's display name, its `FORUM.md`, or both. Omitted
+         *     fields are left unchanged. The built-in Entrance and missing forums
+         *     are not writable.
+         *
+         *     After a write that actually changes a value, the server asks live
+         *     sessions in the forum to shut down with `reloading`. The server does
+         *     not reopen anything.
+         */
+        patch: operations["updateForum"];
         trace?: never;
     };
     "/api/v1/forums/{forum_id}/sessions": {
@@ -428,6 +460,32 @@ export interface paths {
          *     `not_found`; its Welcome session is the only session it ever lists.
          */
         post: operations["createSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/forums/{forum_id}/members": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Stable URL-safe forum identifier. */
+                forum_id: components["parameters"]["ForumId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Replace a forum's members
+         * @description Replaces the complete member list of a writable forum. At least one
+         *     configured character is required. If the existing
+         *     default character is removed, the first remaining character becomes
+         *     the default. Live sessions in the forum are asked to reload.
+         */
+        put: operations["updateForumMembers"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -844,6 +902,18 @@ export interface components {
             default_persona_display_name: string;
             members: components["schemas"]["CharacterSummary"][];
             forum_markdown: string;
+            writable: boolean;
+        };
+        CreateForumRequest: {
+            display_name: string;
+            persona_id: components["schemas"]["Identifier"];
+        };
+        UpdateForumRequest: {
+            display_name?: string;
+            forum_markdown?: string;
+        };
+        UpdateForumMembersRequest: {
+            character_ids: components["schemas"]["Identifier"][];
         };
         CreateSessionRequest: {
             label: string;
@@ -1449,6 +1519,34 @@ export interface operations {
             500: components["responses"]["InternalError"];
         };
     };
+    createForum: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateForumRequest"];
+            };
+        };
+        responses: {
+            /** @description The new forum. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ForumDetail"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["ForbiddenMutation"];
+            413: components["responses"]["BodyTooLarge"];
+            500: components["responses"]["InternalError"];
+        };
+    };
     getForum: {
         parameters: {
             query?: never;
@@ -1471,6 +1569,38 @@ export interface operations {
                 };
             };
             404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    updateForum: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Stable URL-safe forum identifier. */
+                forum_id: components["parameters"]["ForumId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateForumRequest"];
+            };
+        };
+        responses: {
+            /** @description Forum details after the write. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ForumDetail"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["ForbiddenMutation"];
+            404: components["responses"]["NotFound"];
+            413: components["responses"]["BodyTooLarge"];
             500: components["responses"]["InternalError"];
         };
     };
@@ -1522,6 +1652,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CreateSessionResult"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["ForbiddenMutation"];
+            404: components["responses"]["NotFound"];
+            413: components["responses"]["BodyTooLarge"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    updateForumMembers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Stable URL-safe forum identifier. */
+                forum_id: components["parameters"]["ForumId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateForumMembersRequest"];
+            };
+        };
+        responses: {
+            /** @description Forum details after the write. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ForumDetail"];
                 };
             };
             400: components["responses"]["BadRequest"];

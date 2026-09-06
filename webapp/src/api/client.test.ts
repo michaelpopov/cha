@@ -60,6 +60,10 @@ describe('CHA API client', () => {
       display_name: 'Mentor',
       description: 'A thoughtful guide.',
     });
+    await client.createForum({ display_name: 'Brain Trust', persona_id: 'reader' });
+    await client.getForum('f one');
+    await client.updateForum('f one', { display_name: 'Brain Trust' });
+    await client.updateForumMembers('f one', { character_ids: ['guide', 'critic'] });
 
     expect(fetcher.mock.calls.map(([url]) => url)).toEqual([
       '/api/v1/bootstrap',
@@ -85,6 +89,10 @@ describe('CHA API client', () => {
       '/api/v1/vault/switch',
       '/api/v1/personas',
       '/api/v1/characters',
+      '/api/v1/forums',
+      '/api/v1/forums/f%20one',
+      '/api/v1/forums/f%20one',
+      '/api/v1/forums/f%20one/members',
     ]);
 
     expect(fetcher.mock.calls[0][1]?.method).toBeUndefined();
@@ -126,6 +134,17 @@ describe('CHA API client', () => {
     expect(fetcher.mock.calls[22][1]?.method).toBe('POST');
     expect(fetcher.mock.calls[22][1]?.body).toBe(
       '{"display_name":"Mentor","description":"A thoughtful guide."}',
+    );
+    expect(fetcher.mock.calls[23][1]?.method).toBe('POST');
+    expect(fetcher.mock.calls[23][1]?.body).toBe(
+      '{"display_name":"Brain Trust","persona_id":"reader"}',
+    );
+    expect(fetcher.mock.calls[24][1]?.method).toBeUndefined();
+    expect(fetcher.mock.calls[25][1]?.method).toBe('PATCH');
+    expect(fetcher.mock.calls[25][1]?.body).toBe('{"display_name":"Brain Trust"}');
+    expect(fetcher.mock.calls[26][1]?.method).toBe('PUT');
+    expect(fetcher.mock.calls[26][1]?.body).toBe(
+      '{"character_ids":["guide","critic"]}',
     );
     expect(sessionEventsUrl('f one', 's/two')).toBe('/s/f%20one/s%2Ftwo/api/v1/events');
   });

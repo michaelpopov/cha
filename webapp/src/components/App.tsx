@@ -46,9 +46,11 @@ import {
   CharactersScreen,
   ChatScreen,
   ForumDetailScreen,
+  ForumMembersScreen,
   ForumsScreen,
   NewPersonaScreen,
   NewCharacterScreen,
+  NewForumScreen,
   NewSessionScreen,
   PersonaDetailScreen,
   PersonasScreen,
@@ -69,6 +71,7 @@ interface ScreenProps extends ChatActions {
   onRetrySession(): void;
   catalogRevision: number;
   characterRevision: number;
+  forumRevision: number;
 }
 
 function Screen({
@@ -85,6 +88,7 @@ function Screen({
   onSubmitInput,
   catalogRevision,
   characterRevision,
+  forumRevision,
 }: ScreenProps) {
   // A session can be opened from the sidebar while any navigation screen is
   // showing, so each one carries the report rather than only the two screens
@@ -159,6 +163,14 @@ function Screen({
     case 'forums': return (
       <ForumsScreen state={state} dispatch={dispatch} sessionReport={sessionReport} />
     );
+    case 'new-forum': return (
+      <NewForumScreen
+        client={client}
+        dispatch={dispatch}
+        sessionReport={sessionReport}
+        state={state}
+      />
+    );
     case 'sessions': return (
       <SessionsScreen
         catalogRevision={catalogRevision}
@@ -171,6 +183,15 @@ function Screen({
     );
     case 'forum-detail': return (
       <ForumDetailScreen
+        client={client}
+        dispatch={dispatch}
+        reloadVersion={forumRevision}
+        sessionReport={sessionReport}
+        state={state}
+      />
+    );
+    case 'forum-members': return (
+      <ForumMembersScreen
         client={client}
         dispatch={dispatch}
         sessionReport={sessionReport}
@@ -261,6 +282,8 @@ const inPlaceActions = new Set<AppAction['type']>([
   'character-updated',
   'persona-detail-loaded',
   'persona-updated',
+  'forum-detail-loaded',
+  'forum-updated',
 ]);
 
 export type SessionEventsConnector = (
@@ -520,7 +543,7 @@ function CharacterDefinitionUpload({
   }
 
   return (
-    <div className="cha-character-topbar-action">
+    <div className="cha-definition-topbar-action">
       <input
         accept=".md,.txt,text/markdown,text/plain"
         className="cha-file-input"
@@ -537,7 +560,173 @@ function CharacterDefinitionUpload({
       >
         <FileUpIcon />
       </button>
-      {error && <span className="cha-character-upload-error" role="alert">{error}</span>}
+      {error && <span className="cha-definition-upload-error" role="alert">{error}</span>}
+    </div>
+  );
+}
+
+function ForumTitleEditor({
+  client,
+  dispatch,
+  state,
+}: {
+  client: ChaClient;
+  dispatch: Dispatch<AppAction>;
+  state: AppState;
+}) {
+  const forumId = state.currentForumId;
+  const name = state.bootstrap?.forums.find(({ id }) => id === forumId)?.display_name;
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(name ?? '');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setEditing(false);
+    setDraft(name ?? '');
+    setError(null);
+  }, [forumId, name]);
+
+  if (!forumId || !name) return null;
+  if (!state.forumEditingAvailable) return <h1>{name}</h1>;
+
+  function cancel() {
+    setDraft(name ?? '');
+    setEditing(false);
+    setError(null);
+  }
+
+  async function save(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const displayName = draft.trim();
+    if (!forumId || !displayName || saving) return;
+    if (displayName === name) {
+      setEditing(false);
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const forum = await client.updateForum(forumId, {
+        display_name: displayName,
+      });
+      dispatch({ type: 'forum-updated', forum });
+      setEditing(false);
+    } catch (failure: unknown) {
+      setError(publicErrorMessage(failure, 'Forum name could not be saved.'));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!editing) {
+    return (
+      <button
+        aria-label={`Rename ${name}`}
+        className="cha-persona-title-trigger"
+        onClick={() => setEditing(true)}
+        type="button"
+      >
+        <span>{name}</span>
+        <EditIcon />
+      </button>
+    );
+  }
+
+  return (
+    <form className="cha-persona-title-form" onSubmit={(event) => void save(event)}>
+      <input
+        aria-label="Forum name"
+        autoFocus
+        disabled={saving}
+        onChange={(event) => setDraft(event.target.value)}
+        onFocus={(event) => event.currentTarget.select()}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') cancel();
+        }}
+        value={draft}
+      />
+      <button
+        aria-label="Save forum name"
+        className="cha-title-icon-action"
+        disabled={saving || draft.trim() === ''}
+        type="submit"
+      >
+        <CheckIcon />
+      </button>
+      <button
+        aria-label="Cancel renaming"
+        className="cha-title-icon-action"
+        disabled={saving}
+        onClick={cancel}
+        type="button"
+      >
+        <CloseIcon />
+      </button>
+      {error && <span className="cha-persona-title-error" role="alert">{error}</span>}
+    </form>
+  );
+}
+
+function ForumDefinitionUpload({
+  client,
+  dispatch,
+  onUpdated,
+  state,
+}: {
+  client: ChaClient;
+  dispatch: Dispatch<AppAction>;
+  onUpdated(): void;
+  state: AppState;
+}) {
+  const input = useRef<HTMLInputElement>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => setError(null), [state.currentForumId]);
+
+  async function replaceFromFile(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    const forumId = state.currentForumId;
+    if (!file || !forumId || saving) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const forum = await client.updateForum(forumId, {
+        forum_markdown: await file.text(),
+      });
+      dispatch({ type: 'forum-updated', forum });
+      onUpdated();
+    } catch (failure: unknown) {
+      setError(publicErrorMessage(
+        failure,
+        'Forum definition could not be replaced.',
+      ));
+    } finally {
+      setSaving(false);
+      if (input.current) input.current.value = '';
+    }
+  }
+
+  return (
+    <div className="cha-definition-topbar-action">
+      <input
+        accept=".md,.txt,text/markdown,text/plain"
+        className="cha-file-input"
+        onChange={(event) => void replaceFromFile(event)}
+        ref={input}
+        type="file"
+      />
+      <button
+        aria-label="Replace forum definition from file"
+        className="cha-compact-icon-action"
+        disabled={saving}
+        onClick={() => input.current?.click()}
+        type="button"
+      >
+        <FileUpIcon />
+      </button>
+      {error && <span className="cha-definition-upload-error" role="alert">{error}</span>}
     </div>
   );
 }
@@ -588,6 +777,7 @@ export function App({
   const [bootstrapAttempt, setBootstrapAttempt] = useState(0);
   const [catalogRevision, setCatalogRevision] = useState(0);
   const [characterRevision, setCharacterRevision] = useState(0);
+  const [forumRevision, setForumRevision] = useState(0);
   // The epoch this render was built from. The ref below is what asynchronous
   // work compares against; this is what a render can compare against without
   // reading that ref while rendering.
@@ -1228,6 +1418,8 @@ export function App({
               ? <PersonaTitleEditor client={client} dispatch={navigate} state={state} />
               : state.mainView === 'character-detail'
                 ? <CharacterTitleEditor client={client} dispatch={navigate} state={state} />
+                : state.mainView === 'forum-detail'
+                  ? <ForumTitleEditor client={client} dispatch={navigate} state={state} />
               : title && <h1>{title}</h1>}
           </div>
           {/* Balances the leading control so a navigation title stays centred. */}
@@ -1240,6 +1432,17 @@ export function App({
                 client={client}
                 dispatch={navigate}
                 onUpdated={() => setCharacterRevision((revision) => revision + 1)}
+                state={state}
+              />
+            )}
+          {state.mainView === 'forum-detail'
+            && state.forumEditingAvailable
+            && state.currentForumId
+            && (
+              <ForumDefinitionUpload
+                client={client}
+                dispatch={navigate}
+                onUpdated={() => setForumRevision((revision) => revision + 1)}
                 state={state}
               />
             )}
@@ -1256,6 +1459,7 @@ export function App({
           <Screen
             catalogRevision={catalogRevision}
             characterRevision={characterRevision}
+            forumRevision={forumRevision}
             client={client}
             dispatch={navigate}
             onCreateSession={createConversation}

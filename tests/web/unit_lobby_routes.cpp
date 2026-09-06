@@ -278,6 +278,7 @@ TEST(LobbyRoutes, ServesBootstrapDiscoveryAndHealthWithoutSessionDataInHealth) {
     EXPECT_EQ(lobby_forum_body["forum_markdown"],
         "# House rules\n\nA deliberate place to talk.\n");
     EXPECT_EQ(lobby_forum_body["members"].size(), 1);
+    EXPECT_EQ(lobby_forum_body["writable"], true);
 
     // The built-in forum keeps no forum directory, so it has nothing to
     // publish and says so rather than borrowing the Assistant's guide.
@@ -285,6 +286,7 @@ TEST(LobbyRoutes, ServesBootstrapDiscoveryAndHealthWithoutSessionDataInHealth) {
     ASSERT_TRUE(entrance_forum);
     ASSERT_EQ(entrance_forum->status, 200);
     EXPECT_EQ(body(entrance_forum)["forum_markdown"], "");
+    EXPECT_EQ(body(entrance_forum)["writable"], false);
     EXPECT_FALSE(body(entrance_forum).contains("description"));
     expect_error(server.client().Get("/api/v1/forums/missing"), 404, "not_found");
 
@@ -549,6 +551,33 @@ httplib::Result create_character(
         "/api/v1/characters", request.dump(), "application/json");
 }
 
+httplib::Result create_forum(
+    TestServer& server,
+    const nlohmann::json& request) {
+    return server.client().Post(
+        "/api/v1/forums", request.dump(), "application/json");
+}
+
+httplib::Result patch_forum(
+    TestServer& server,
+    std::string_view id,
+    const nlohmann::json& update) {
+    return server.client().Patch(
+        "/api/v1/forums/" + std::string(id),
+        update.dump(),
+        "application/json");
+}
+
+httplib::Result put_forum_members(
+    TestServer& server,
+    std::string_view id,
+    const nlohmann::json& character_ids) {
+    return server.client().Put(
+        "/api/v1/forums/" + std::string(id) + "/members",
+        nlohmann::json({{"character_ids", character_ids}}).dump(),
+        "application/json");
+}
+
 TEST(LobbyRoutes, CreatesPersonaInTheDatabaseAndBootstrap) {
     test::TestWorkspace fixture;
     const LobbyGraph graph(fixture.root());
@@ -657,6 +686,70 @@ TEST(LobbyRoutes, CreatesDraftCharacterAndUploadsItsProfile) {
         400, "bad_request", "Invalid character.");
 }
 
+TEST(LobbyRoutes, CreatesForumWithTheSelectedPersona) {
+    test::TestWorkspace fixture;
+    const LobbyGraph graph(fixture.root());
+    LiveSessionManager manager(lobby_settings(2), counting_opener(graph));
+    TestServer server(graph, manager);
+
+    const auto created = create_forum(server, {
+        {"display_name", "Brain Trust"},
+        {"persona_id", "reader"},
+    });
+    ASSERT_TRUE(created);
+    ASSERT_EQ(created->status, 201) << created->body;
+    const nlohmann::json created_body = body(created);
+    EXPECT_EQ(created_body["id"], "forum_1");
+    EXPECT_EQ(created_body["display_name"], "Brain Trust");
+    EXPECT_EQ(created_body["default_persona_id"], "reader");
+    EXPECT_EQ(created_body["default_persona_display_name"], "Reader");
+    EXPECT_EQ(created_body["default_character_id"], "builtin-assistant");
+    ASSERT_EQ(created_body["members"].size(), 1);
+    EXPECT_EQ(created_body["members"][0]["id"], "builtin-assistant");
+    EXPECT_EQ(created_body["forum_markdown"], "");
+    EXPECT_EQ(created_body["writable"], true);
+
+    const std::filesystem::path database = graph.store->database_path();
+    const std::string config = config_row(
+        database, "forums/forum_1/config.toml");
+    EXPECT_NE(config.find("Brain Trust"), std::string::npos);
+    EXPECT_NE(config.find("reader"), std::string::npos);
+    EXPECT_EQ(config_row(database, "forums/forum_1/FORUM.md"), "");
+    EXPECT_EQ(
+        config_row(
+            database,
+            "forums/forum_1/members/builtin-assistant/character.toml"),
+        "# Forum member\n");
+
+    const auto bootstrap = server.client().Get("/api/v1/bootstrap");
+    ASSERT_TRUE(bootstrap);
+    ASSERT_EQ(bootstrap->status, 200);
+    const nlohmann::json forums = body(bootstrap)["forums"];
+    EXPECT_NE(
+        std::ranges::find_if(forums, [](const nlohmann::json& forum) {
+            return forum["id"] == "forum_1"
+                && forum["display_name"] == "Brain Trust"
+                && forum["default_persona_id"] == "reader";
+        }),
+        forums.end());
+
+    expect_error(
+        create_forum(server, {
+            {"display_name", "Brain Trust"},
+            {"persona_id", "reader"},
+        }),
+        400, "bad_request", "Invalid forum.");
+    expect_error(
+        create_forum(server, {
+            {"display_name", "Other"},
+            {"persona_id", "missing"},
+        }),
+        400, "bad_request", "Invalid forum.");
+    expect_error(
+        create_forum(server, nlohmann::json::object()),
+        400, "bad_request");
+}
+
 TEST(LobbyRoutes, PatchesPersonaNameAndMarkdownInTheDatabase) {
     test::TestWorkspace fixture;
     std::ofstream(fixture.root() / "forums" / "lobby" / "config.toml")
@@ -736,6 +829,165 @@ TEST(LobbyRoutes, ReloadsAForumUsingTheChangedPersona) {
         std::this_thread::sleep_for(10ms);
     }
     EXPECT_FALSE(session_is_live(manager, key));
+}
+
+TEST(LobbyRoutes, PatchesForumNameAndMarkdownInTheDatabase) {
+    test::TestWorkspace fixture;
+    const auto config_path = fixture.root() / "forums" / "lobby" / "config.toml";
+    const auto markdown_path = fixture.root() / "forums" / "lobby" / "FORUM.md";
+    const LobbyGraph graph(fixture.root());
+    LiveSessionManager manager(lobby_settings(2), counting_opener(graph));
+    TestServer server(graph, manager);
+
+    const std::string session_id = create_session(server);
+    const FullSessionId key{"lobby", session_id};
+    const auto opened = server.client().Post(
+        "/api/v1/forums/lobby/sessions/" + session_id + "/open",
+        "{}", "application/json");
+    ASSERT_TRUE(opened);
+    ASSERT_EQ(opened->status, 200);
+    ASSERT_TRUE(session_is_live(manager, key));
+
+    const std::string config_before = read_bytes(config_path);
+    const std::string markdown_before = read_bytes(markdown_path);
+    const auto saved = patch_forum(server, "lobby", {
+        {"display_name", "Brain Trust"},
+        {"forum_markdown", "# Updated forum\n"},
+    });
+    ASSERT_TRUE(saved);
+    ASSERT_EQ(saved->status, 200);
+    const nlohmann::json saved_body = body(saved);
+    EXPECT_EQ(saved_body["display_name"], "Brain Trust");
+    EXPECT_EQ(saved_body["forum_markdown"], "# Updated forum\n");
+    EXPECT_EQ(saved_body["writable"], true);
+    EXPECT_EQ(read_bytes(config_path), config_before);
+    EXPECT_EQ(read_bytes(markdown_path), markdown_before);
+    EXPECT_NE(
+        config_row(graph.store->database_path(), "forums/lobby/config.toml")
+            .find("Brain Trust"),
+        std::string::npos);
+    EXPECT_EQ(
+        config_row(graph.store->database_path(), "forums/lobby/FORUM.md"),
+        "# Updated forum\n");
+
+    const auto bootstrap = server.client().Get("/api/v1/bootstrap");
+    ASSERT_TRUE(bootstrap);
+    ASSERT_EQ(bootstrap->status, 200);
+    const nlohmann::json forums = body(bootstrap)["forums"];
+    const auto forum = std::ranges::find_if(
+        forums,
+        [](const nlohmann::json& value) { return value["id"] == "lobby"; });
+    ASSERT_NE(forum, forums.end());
+    EXPECT_EQ((*forum)["display_name"], "Brain Trust");
+
+    const auto deadline = std::chrono::steady_clock::now() + 2s;
+    while (session_is_live(manager, key)
+           && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(10ms);
+    }
+    EXPECT_FALSE(session_is_live(manager, key));
+
+    expect_error(
+        patch_forum(server, "lobby", {{"display_name", "Entrance"}}),
+        400, "bad_request", "Invalid forum.");
+    expect_error(
+        patch_forum(
+            server, "builtin-entrance", {{"display_name", "Welcome"}}),
+        404, "not_found", "That forum was not found.");
+    expect_error(
+        patch_forum(server, "lobby", nlohmann::json::object()),
+        400, "bad_request");
+}
+
+TEST(LobbyRoutes, ReplacesForumMembersAndDefaultInTheDatabase) {
+    test::TestWorkspace fixture;
+    const auto critic = fixture.root() / "characters" / "critic";
+    std::filesystem::create_directories(critic);
+    std::ofstream(critic / "character.toml")
+        << "display_name = \"Critic\"\nprovider = \"test\"\n";
+    std::ofstream(critic / "CHARACTER.md") << "Critic prompt\n";
+    const auto draft = fixture.root() / "characters" / "draft";
+    std::filesystem::create_directories(draft);
+    std::ofstream(draft / "character.toml") << "display_name = \"Draft\"\n";
+    std::ofstream(draft / "CHARACTER.md") << "Draft prompt\n";
+
+    const LobbyGraph graph(fixture.root());
+    LiveSessionManager manager(lobby_settings(2), counting_opener(graph));
+    TestServer server(graph, manager);
+
+    const std::string session_id = create_session(server);
+    const FullSessionId key{"lobby", session_id};
+    const auto opened = server.client().Post(
+        "/api/v1/forums/lobby/sessions/" + session_id + "/open",
+        "{}", "application/json");
+    ASSERT_TRUE(opened);
+    ASSERT_EQ(opened->status, 200);
+
+    const auto added = put_forum_members(
+        server, "lobby",
+        nlohmann::json::array({"guide", "critic", "builtin-assistant"}));
+    ASSERT_TRUE(added);
+    ASSERT_EQ(added->status, 200) << added->body;
+    EXPECT_EQ(body(added)["members"].size(), 3);
+    EXPECT_EQ(body(added)["default_character_id"], "guide");
+    EXPECT_FALSE(std::filesystem::exists(
+        fixture.root() / "forums" / "lobby" / "members" / "critic"));
+    EXPECT_EQ(
+        config_row(
+            graph.store->database_path(),
+            "forums/lobby/members/critic/character.toml"),
+        "# Forum member\n");
+    EXPECT_EQ(
+        config_row(
+            graph.store->database_path(),
+            "forums/lobby/members/builtin-assistant/character.toml"),
+        "# Forum member\n");
+
+    const auto replaced = put_forum_members(
+        server, "lobby", nlohmann::json::array({"critic"}));
+    ASSERT_TRUE(replaced);
+    ASSERT_EQ(replaced->status, 200) << replaced->body;
+    const nlohmann::json replaced_body = body(replaced);
+    ASSERT_EQ(replaced_body["members"].size(), 1);
+    EXPECT_EQ(replaced_body["members"][0]["id"], "critic");
+    EXPECT_EQ(replaced_body["default_character_id"], "critic");
+    EXPECT_TRUE(config_row(
+        graph.store->database_path(),
+        "forums/lobby/members/guide/character.toml").empty());
+    const std::string forum_config = config_row(
+        graph.store->database_path(), "forums/lobby/config.toml");
+    EXPECT_NE(forum_config.find("default_character"), std::string::npos);
+    EXPECT_NE(forum_config.find("critic"), std::string::npos);
+
+    const auto bootstrap = server.client().Get("/api/v1/bootstrap");
+    ASSERT_TRUE(bootstrap);
+    ASSERT_EQ(bootstrap->status, 200);
+    const nlohmann::json bootstrap_forums = body(bootstrap)["forums"];
+    const auto forum = std::ranges::find_if(
+        bootstrap_forums,
+        [](const nlohmann::json& value) { return value["id"] == "lobby"; });
+    ASSERT_NE(forum, bootstrap_forums.end());
+    ASSERT_EQ((*forum)["members"].size(), 1);
+    EXPECT_EQ((*forum)["members"][0]["id"], "critic");
+
+    const auto deadline = std::chrono::steady_clock::now() + 2s;
+    while (session_is_live(manager, key)
+           && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(10ms);
+    }
+    EXPECT_FALSE(session_is_live(manager, key));
+
+    expect_error(
+        put_forum_members(server, "lobby", nlohmann::json::array()),
+        400, "bad_request");
+    expect_error(
+        put_forum_members(server, "lobby", nlohmann::json::array({"draft"})),
+        400, "bad_request", "Select at least one configured character.");
+    expect_error(
+        put_forum_members(
+            server, "builtin-entrance",
+            nlohmann::json::array({"builtin-assistant"})),
+        404, "not_found", "That forum was not found.");
 }
 
 TEST(LobbyRoutes, PatchesCharacterNameAndMarkdownInTheDatabase) {

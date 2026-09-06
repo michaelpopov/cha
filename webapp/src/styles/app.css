@@ -129,7 +129,7 @@ select:disabled {
 .cha-list-action,
 .cha-roster-row,
 .cha-header-row,
-.cha-character-settings-link,
+.cha-detail-link,
 .cha-icon-action,
 .cha-compact-icon-action,
 .cha-persona-title-trigger,
@@ -422,7 +422,7 @@ select:disabled {
   width: 2.65rem;
 }
 
-.cha-character-topbar-action {
+.cha-definition-topbar-action {
   position: absolute;
   z-index: 4;
   top: 50%;
@@ -430,7 +430,7 @@ select:disabled {
   transform: translateY(-50%);
 }
 
-.cha-character-upload-error {
+.cha-definition-upload-error {
   position: absolute;
   z-index: 5;
   top: calc(100% + 0.45rem);
@@ -626,7 +626,7 @@ select:disabled {
   gap: 0.6rem;
 }
 
-.cha-character-settings-link {
+.cha-detail-link {
   display: inline-flex;
   align-items: center;
   gap: 0.3rem;
@@ -634,7 +634,7 @@ select:disabled {
   color: var(--muted-foreground);
 }
 
-.cha-character-settings-link svg {
+.cha-detail-link svg {
   width: 1rem;
   height: 1rem;
 }
@@ -1114,7 +1114,8 @@ select:disabled {
 
 .cha-new-session,
 .cha-new-persona,
-.cha-new-character {
+.cha-new-character,
+.cha-new-forum {
   display: grid;
   width: min(100%, 30rem);
   gap: 0.8rem;
@@ -1133,11 +1134,50 @@ select:disabled {
 
 .cha-new-session-actions,
 .cha-new-persona-actions,
-.cha-new-character-actions {
+.cha-new-character-actions,
+.cha-new-forum-actions {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 0.5rem;
+}
+
+.cha-forum-members {
+  display: grid;
+  width: min(100%, 42rem);
+  gap: 1rem;
+  margin: 1.2rem auto 0;
+}
+
+.cha-member-list {
+  border-top: 1px solid var(--border);
+}
+
+.cha-member-row {
+  display: flex;
+  min-height: 3.5rem;
+  align-items: center;
+  gap: 0.85rem;
+  padding: 0 0.8rem;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.cha-member-row:hover {
+  background: var(--secondary);
+}
+
+.cha-member-row input {
+  width: 1.15rem;
+  height: 1.15rem;
+  margin: 0;
+  accent-color: var(--primary);
+}
+
+.cha-forum-members-actions {
+  display: flex;
+  justify-content: flex-end;
 }
 
 .cha-settings {
@@ -1292,7 +1332,7 @@ select:disabled {
     padding-inline: 1rem;
   }
 
-  .cha-character-topbar-action {
+  .cha-definition-topbar-action {
     right: 1rem;
   }
 

@@ -114,6 +114,7 @@ export const forumDetailFixture: ForumDetail = {
   default_persona_display_name: 'Reader',
   members: [{ id: 'guide', display_name: 'Guide', description: 'A deterministic test character', appearance: plainVoice }],
   forum_markdown: '# House rules\n\nA **deliberate** place to talk.\n\n- Ask one thing\n- Start a session per question',
+  writable: true,
 };
 
 export const signedOutAuth: OpenAiAuth = { status: 'signed_out' };
@@ -178,6 +179,28 @@ export function fixtureClient(overrides: Partial<ChaClient> = {}): ChaClient {
       ...update,
     }),
     getForum: async () => forumDetailFixture,
+    createForum: async ({ display_name, persona_id }) => ({
+      ...forumDetailFixture,
+      id: 'forum_1',
+      display_name,
+      default_persona_id: persona_id,
+      default_persona_display_name: bootstrapFixture.personas.find(
+        ({ id }) => id === persona_id,
+      )?.display_name ?? persona_id,
+      members: [bootstrapFixture.characters[0]],
+      default_character_id: bootstrapFixture.characters[0].id,
+      forum_markdown: '',
+    }),
+    updateForum: async (_forumId, update) => ({
+      ...forumDetailFixture,
+      ...update,
+    }),
+    updateForumMembers: async (_forumId, update) => ({
+      ...forumDetailFixture,
+      members: bootstrapFixture.characters.filter(({ id }) => (
+        update.character_ids.includes(id)
+      )),
+    }),
     listSessions: async () => [],
     createSession: async (_forumId, label) => ({ id: 'created', label }),
     renameSession: async (_forumId, sessionId, label) => ({ id: sessionId, label }),

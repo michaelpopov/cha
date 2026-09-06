@@ -1,6 +1,7 @@
 import type {
   Bootstrap,
   CharacterDetail,
+  ForumDetail,
   PersonaDetail,
   SessionSnapshot,
 } from '../api/client';
@@ -16,8 +17,10 @@ export type MainView =
   | 'character-detail'
   | 'character-settings'
   | 'forums'
+  | 'new-forum'
   | 'sessions'
   | 'forum-detail'
+  | 'forum-members'
   | 'new-session'
   | 'settings';
 
@@ -48,6 +51,7 @@ export interface AppState {
   characterSettingsAvailable: boolean;
   inspectedPersonaId: string | null;
   personaEditingAvailable: boolean;
+  forumEditingAvailable: boolean;
   currentDefaultCharacterId: string | null;
   sessionOperation: 'idle' | 'pending' | 'failed';
   sessionOperationMessage: string | null;
@@ -70,6 +74,7 @@ export const initialAppState: AppState = {
   characterSettingsAvailable: false,
   inspectedPersonaId: null,
   personaEditingAvailable: false,
+  forumEditingAvailable: false,
   currentDefaultCharacterId: null,
   sessionOperation: 'idle',
   sessionOperationMessage: null,
@@ -100,9 +105,14 @@ export type AppAction =
   | { type: 'character-updated'; character: CharacterDetail }
   | { type: 'show-character-settings' }
   | { type: 'show-forums' }
+  | { type: 'show-new-forum' }
+  | { type: 'forum-created'; forum: ForumDetail }
   | { type: 'select-forum'; forumId: string }
   | { type: 'show-sessions' }
   | { type: 'show-forum-detail' }
+  | { type: 'show-forum-members' }
+  | { type: 'forum-detail-loaded'; forumId: string; writable: boolean }
+  | { type: 'forum-updated'; forum: ForumDetail }
   | { type: 'show-new-session' }
   | { type: 'show-settings' }
   | { type: 'show-chat' }
@@ -365,11 +375,31 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return { ...state, mainView: 'character-settings', ...idleSessionOperation() };
     case 'show-forums':
       return { ...state, mainView: 'forums', ...idleSessionOperation() };
+    case 'show-new-forum':
+      return { ...state, mainView: 'new-forum', ...idleSessionOperation() };
+    case 'forum-created': {
+      if (!state.bootstrap) return state;
+      const { forum_markdown: _markdown, writable, ...summary } = action.forum;
+      const forums = [...state.bootstrap.forums, summary].sort(
+        (left, right) => left.display_name.localeCompare(right.display_name),
+      );
+      return {
+        ...state,
+        mainView: 'forum-detail',
+        bootstrap: { ...state.bootstrap, forums },
+        currentForumId: summary.id,
+        forumEditingAvailable: writable,
+        ...idleSessionOperation(),
+      };
+    }
     case 'select-forum':
       return {
         ...state,
         mainView: 'sessions',
         currentForumId: action.forumId,
+        forumEditingAvailable: action.forumId === state.currentForumId
+          ? state.forumEditingAvailable
+          : false,
         ...idleSessionOperation(),
       };
     case 'show-sessions':
@@ -378,6 +408,33 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     // that forum's Sessions screen, so it needs no subject of its own.
     case 'show-forum-detail':
       return { ...state, mainView: 'forum-detail', ...idleSessionOperation() };
+    case 'show-forum-members':
+      return { ...state, mainView: 'forum-members', ...idleSessionOperation() };
+    case 'forum-detail-loaded':
+      if (state.currentForumId !== action.forumId) return state;
+      return { ...state, forumEditingAvailable: action.writable };
+    case 'forum-updated': {
+      if (!state.bootstrap) return state;
+      const { forum_markdown: _markdown, writable, ...summary } = action.forum;
+      const bootstrap = {
+        ...state.bootstrap,
+        forums: state.bootstrap.forums.map((forum) => (
+          forum.id === summary.id ? summary : forum
+        )),
+      };
+      const sessionSnapshot = state.sessionSnapshot?.forum.id === summary.id
+        ? {
+          ...state.sessionSnapshot,
+          forum: { ...state.sessionSnapshot.forum, ...summary },
+        }
+        : state.sessionSnapshot;
+      return {
+        ...state,
+        bootstrap,
+        sessionSnapshot,
+        forumEditingAvailable: writable,
+      };
+    }
     case 'show-new-session':
       return { ...state, mainView: 'new-session', ...idleSessionOperation() };
     case 'show-settings':
@@ -476,11 +533,13 @@ export function navigationTitle(state: AppState): string | null {
       )?.display_name ?? 'Character';
     case 'character-settings': return 'Settings';
     case 'forums': return 'Forums';
+    case 'new-forum': return 'New forum';
     case 'sessions': return 'Sessions';
     case 'forum-detail':
       return state.bootstrap?.forums.find(
         ({ id }) => id === state.currentForumId,
       )?.display_name ?? 'Forum';
+    case 'forum-members': return 'Members';
     case 'new-session': return 'New session';
     case 'settings': return 'Settings';
     case 'chat': return null;
