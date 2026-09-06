@@ -48,10 +48,6 @@ export interface AppState {
   sessionSnapshot: SessionSnapshot | null;
   streamStatus: StreamStatus;
   streamMessage: string | null;
-  vaultSwitch: {
-    status: 'idle' | 'pending' | 'failed';
-    message: string | null;
-  };
 }
 
 export const initialAppState: AppState = {
@@ -73,7 +69,6 @@ export const initialAppState: AppState = {
   sessionSnapshot: null,
   streamStatus: 'idle',
   streamMessage: null,
-  vaultSwitch: { status: 'idle', message: null },
 };
 
 export type AppAction =
@@ -101,9 +96,7 @@ export type AppAction =
   | { type: 'session-snapshot'; snapshot: SessionSnapshot }
   | { type: 'session-append'; forumId: string; sessionId: string; event: AppendEvent }
   | { type: 'show-initial-conversation' }
-  | { type: 'stream-state'; status: StreamStatus; message?: string }
-  | { type: 'vault-switch-started' }
-  | { type: 'vault-switch-failed'; message: string };
+  | { type: 'stream-state'; status: StreamStatus; message?: string };
 
 function idleSessionOperation() {
   return {
@@ -178,7 +171,6 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         bootstrapStatus: 'ready',
         bootstrap: action.bootstrap,
         bootstrapMessage: null,
-        vaultSwitch: { status: 'idle', message: null },
       }, action.bootstrap);
     case 'bootstrap-failed':
       return {
@@ -305,16 +297,6 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         ...state,
         streamStatus: action.status,
         streamMessage: action.message ?? null,
-      };
-    case 'vault-switch-started':
-      return {
-        ...state,
-        vaultSwitch: { status: 'pending', message: null },
-      };
-    case 'vault-switch-failed':
-      return {
-        ...state,
-        vaultSwitch: { status: 'failed', message: action.message },
       };
   }
 }

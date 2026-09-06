@@ -163,12 +163,6 @@ describe('CHA API client', () => {
     await expect(client.getSessionSnapshot('forum', 'one')).rejects.toThrow(TypeError);
   });
 
-  it('rejects a session snapshot that omits vault_name', async () => {
-    const { vault_name: _ignored, ...withoutVault } = snapshotFixture;
-    const client = createChaClient(async () => jsonResponse(withoutVault));
-    await expect(client.getSessionSnapshot('forum', 'one')).rejects.toThrow(TypeError);
-  });
-
   it('reports OpenAI auth errors through the existing envelope', async () => {
     const client = createChaClient(async () => jsonResponse({
       error: { code: 'bad_request', message: 'Expected a JSON request body.' },

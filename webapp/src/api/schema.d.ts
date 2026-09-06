@@ -794,7 +794,6 @@ export interface components {
             reasoning_text: string;
         };
         SessionSnapshot: {
-            vault_name: string;
             forum: components["schemas"]["ForumSummary"];
             session_id: components["schemas"]["Identifier"];
             session_label: string;

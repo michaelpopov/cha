@@ -20,7 +20,7 @@ interface SidebarProps {
   onDownloadSession(forumId: string, sessionId: string, label: string): Promise<void>;
   onRenameSession(forumId: string, sessionId: string, label: string): Promise<void>;
   onDeleteSession(forumId: string, sessionId: string): Promise<void>;
-  onSwitchVault(vaultName: string): void;
+  onSwitchVault(vaultName: string): Promise<void>;
 }
 
 interface SelectedSession {
@@ -144,6 +144,8 @@ export function Sidebar({
   const recents = state.bootstrap?.recent_sessions;
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [dialog, setDialog] = useState<DialogState | null>(null);
+  const [vaultPending, setVaultPending] = useState(false);
+  const [vaultError, setVaultError] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
   function closeMenu(restore = true) {
@@ -190,6 +192,18 @@ export function Sidebar({
     else return;
     event.preventDefault();
     items[next]?.focus();
+  }
+
+  async function switchVault(name: string) {
+    if (name === state.bootstrap?.vault_name || vaultPending) return;
+    setVaultPending(true);
+    setVaultError(null);
+    try {
+      await onSwitchVault(name);
+    } catch (failure: unknown) {
+      setVaultError(publicErrorMessage(failure, 'The vault could not be switched.'));
+      setVaultPending(false);
+    }
   }
 
   return (
@@ -256,19 +270,13 @@ export function Sidebar({
           );
         })}
       </div>
-      {state.vaultSwitch.status === 'failed' && state.vaultSwitch.message && (
-        <p className="cha-error-message" role="alert">{state.vaultSwitch.message}</p>
-      )}
+      {vaultError && <p className="cha-error-message" role="alert">{vaultError}</p>}
       <div className="cha-sidebar-footer">
         <select
           aria-label="Vault"
           className="cha-vault-select"
-          disabled={state.bootstrapStatus !== 'ready' || state.vaultSwitch.status === 'pending'}
-          onChange={(event) => {
-            const name = event.target.value;
-            if (name === state.bootstrap?.vault_name) return;
-            onSwitchVault(name);
-          }}
+          disabled={state.bootstrapStatus !== 'ready' || vaultPending}
+          onChange={(event) => void switchVault(event.target.value)}
           value={state.bootstrap?.vault_name ?? ''}
         >
           {state.bootstrap?.vaults.map((name) => (

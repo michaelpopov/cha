@@ -1412,7 +1412,6 @@ components:
       type: object
       additionalProperties: false
       required:
-        - vault_name
         - forum
         - session_id
         - session_label
@@ -1422,9 +1421,6 @@ components:
         - generation
         - lifecycle
       properties:
-        vault_name:
-          type: string
-          minLength: 1
         forum:
           $ref: "#/components/schemas/ForumSummary"
         session_id:

@@ -13,7 +13,6 @@ import {
   publicErrorMessage,
   type Bootstrap,
   type ChaClient,
-  type SessionSnapshot,
 } from '../api/client';
 import {
   openSessionEvents,
@@ -236,8 +235,6 @@ function SessionOperationState({
 const inPlaceActions = new Set<AppAction['type']>([
   'toggle-sidebar',
   'character-detail-loaded',
-  'vault-switch-started',
-  'vault-switch-failed',
 ]);
 
 export type SessionEventsConnector = (
@@ -320,10 +317,6 @@ export function App({
   // Bumped by every navigation intent. An open that finishes after the epoch
   // moved on belongs to a conversation the user has already left.
   const navigation = useRef(0);
-  const pageVault = useRef<string | null>(null);
-  const reloadRef = useRef(reload);
-  reloadRef.current = reload;
-  const reloading = useRef(false);
 
   useEffect(() => {
     if (request.current?.client !== client) {
@@ -334,15 +327,7 @@ export function App({
       (response) => {
         if (!current) return;
         try {
-          const bootstrap = validateBootstrap(response);
-          if (pageVault.current === null) {
-            pageVault.current = bootstrap.vault_name;
-          } else if (bootstrap.vault_name !== pageVault.current) {
-            reloading.current = true;
-            reloadRef.current();
-            return;
-          }
-          dispatch({ type: 'bootstrap-loaded', bootstrap });
+          dispatch({ type: 'bootstrap-loaded', bootstrap: validateBootstrap(response) });
         } catch (failure: unknown) {
           // The screen stays deliberately generic: validation errors describe
           // the response shape, not a recovery action. Keep that detail in the
@@ -380,13 +365,10 @@ export function App({
 
   const refreshBootstrap = useCallback(async () => {
     try {
-      const bootstrap = validateBootstrap(await client.getBootstrap());
-      if (pageVault.current !== null && bootstrap.vault_name !== pageVault.current) {
-        reloading.current = true;
-        reloadRef.current();
-        return;
-      }
-      dispatch({ type: 'bootstrap-refreshed', bootstrap });
+      dispatch({
+        type: 'bootstrap-refreshed',
+        bootstrap: validateBootstrap(await client.getBootstrap()),
+      });
     } catch {
       // The live snapshot remains usable. Discovery refresh is non-critical.
     }
@@ -441,19 +423,6 @@ export function App({
     return liveGeneration.current;
   }, [cancelRetryTimer]);
 
-  const rejectForeignSnapshot = useCallback((snapshot: SessionSnapshot) => {
-    if (pageVault.current === null || snapshot.vault_name === pageVault.current) {
-      return false;
-    }
-    if (reloading.current) {
-      return true;
-    }
-    reloading.current = true;
-    resetLiveSession();
-    reloadRef.current();
-    return true;
-  }, [resetLiveSession]);
-
   // `onSettled` belongs to the ladder, which needs to know whether this stream
   // reached its first snapshot. Without one, a failure simply starts recovery.
   const connectStream = useCallback((
@@ -463,7 +432,7 @@ export function App({
     reconnecting: boolean,
     onSettled?: (connected: boolean) => void,
   ) => {
-    if (reloading.current || liveGeneration.current !== generation) {
+    if (liveGeneration.current !== generation) {
       onSettled?.(false);
       return;
     }
@@ -477,7 +446,6 @@ export function App({
       events = connectSessionEvents(forumId, sessionId, {
         onSnapshot: (snapshot) => {
           if (!events || connection.current?.events !== events) return;
-          if (rejectForeignSnapshot(snapshot)) return;
           dispatch({ type: 'session-snapshot', snapshot });
           dispatch({ type: 'stream-state', status: 'connected' });
           onSettled?.(true);
@@ -520,7 +488,7 @@ export function App({
       if (events) detachStream(events);
       failed();
     }
-  }, [cancelRetryTimer, connectSessionEvents, detachStream, rejectForeignSnapshot]);
+  }, [cancelRetryTimer, connectSessionEvents, detachStream]);
 
   // One ladder rung's attach: resolves true when the new stream delivers its
   // first snapshot, false when it fails first. A failure after that belongs to
@@ -548,7 +516,7 @@ export function App({
   ) => {
     // A ladder already running for this live session owns the retries; a
     // stale generation belongs to a conversation the user has left.
-    if (reloading.current || liveGeneration.current !== generation || recovery.current) return;
+    if (liveGeneration.current !== generation || recovery.current) return;
     const run: RecoveryRun = { forumId, sessionId, generation };
     recovery.current = run;
     const cancelled = () => recovery.current !== run
@@ -562,10 +530,7 @@ export function App({
         forumId,
         sessionId,
         cancelled,
-        onSnapshot: (snapshot) => {
-          if (rejectForeignSnapshot(snapshot)) return;
-          dispatch({ type: 'session-snapshot', snapshot });
-        },
+        onSnapshot: (snapshot) => dispatch({ type: 'session-snapshot', snapshot }),
       }),
       report: (message) => dispatch({ type: 'stream-state', status: 'reconnecting', message }),
       wait: (milliseconds) => waitForRetry(milliseconds, generation),
@@ -581,7 +546,7 @@ export function App({
         });
       }
     });
-  }, [attachStream, client, rejectForeignSnapshot, retryDelays, waitForRetry]);
+  }, [attachStream, client, retryDelays, waitForRetry]);
 
   // A stream error is the only caller, and a stream cannot exist before the
   // effects of the commit that created it have run, so publishing the current
@@ -627,7 +592,6 @@ export function App({
     // is in flight. Retry that one interrupted attempt without asking the user
     // to recover from a framework lifecycle probe.
     for (let interruption = 0; interruption < 2; interruption += 1) {
-      if (reloading.current) return false;
       const generation = resetLiveSession();
       if (navigation.current !== epoch) return false;
       if (!await openWithCapacityRetry(epoch, generation, forumId, sessionId)) {
@@ -637,7 +601,6 @@ export function App({
       const snapshot = await client.getSessionSnapshot(forumId, sessionId);
       if (navigation.current !== epoch) return false;
       if (liveGeneration.current !== generation) continue;
-      if (rejectForeignSnapshot(snapshot)) return false;
 
       dispatch({ type: 'conversation-opened', snapshot });
       if (updateHistory) {
@@ -648,8 +611,7 @@ export function App({
       return true;
     }
     return false;
-  }, [client, connectStream, openWithCapacityRetry, refreshBootstrap,
-    rejectForeignSnapshot, resetLiveSession]);
+  }, [client, connectStream, openWithCapacityRetry, refreshBootstrap, resetLiveSession]);
 
   const openConversation = useCallback(async (
     forumId: string,
@@ -671,7 +633,7 @@ export function App({
       const opened = await performOpen(
         epoch, forumId, sessionId, updateHistory, refreshRecent,
       );
-      if (!opened && navigation.current === epoch && !reloading.current) {
+      if (!opened && navigation.current === epoch) {
         dispatch({
           type: 'session-operation-failed',
           retryable: true,
@@ -680,7 +642,7 @@ export function App({
       }
       return opened;
     } catch (failure: unknown) {
-      if (navigation.current === epoch && !reloading.current) {
+      if (navigation.current === epoch) {
         const limited = isSessionLimit(failure);
         const retryable = isRetryableSessionOpen(failure);
         dispatch({
@@ -714,7 +676,7 @@ export function App({
       retryTarget.current = { forumId, sessionId: created.id, updateHistory: true };
       dispatch({ type: 'session-operation-started', message: 'Opening session…' });
       const opened = await performOpen(epoch, forumId, created.id, true, true);
-      if (!opened && navigation.current === epoch && !reloading.current) {
+      if (!opened && navigation.current === epoch) {
         dispatch({
           type: 'session-operation-failed',
           retryable: true,
@@ -723,7 +685,7 @@ export function App({
       }
       return opened;
     } catch (failure: unknown) {
-      if (navigation.current === epoch && !reloading.current) {
+      if (navigation.current === epoch) {
         const limited = isSessionLimit(failure);
         const retryable = isRetryableSessionOpen(failure);
         dispatch({
@@ -753,19 +715,9 @@ export function App({
   }, [openConversation]);
 
   const switchVault = useCallback(async (vaultName: string) => {
-    if (pageVault.current !== null && vaultName === pageVault.current) return;
-    dispatch({ type: 'vault-switch-started' });
-    try {
-      await client.switchVault(vaultName);
-      reloading.current = true;
-      reloadRef.current();
-    } catch (failure: unknown) {
-      dispatch({
-        type: 'vault-switch-failed',
-        message: publicErrorMessage(failure, 'The vault could not be switched.'),
-      });
-    }
-  }, [client]);
+    await client.switchVault(vaultName);
+    reload();
+  }, [client, reload]);
 
   const retryStream = useCallback(() => {
     const active = state.activeConversation;
@@ -897,7 +849,6 @@ export function App({
     // A click can land after this render but before its effect runs. In that
     // case the captured Chat view is stale and must not reopen over the user's
     // new navigation screen.
-    if (reloading.current) return;
     if (navigation.current !== renderedEpoch) return;
     if (!initialRouteReady || state.bootstrapStatus !== 'ready' || !active) return;
     if (state.mainView !== 'chat') return;

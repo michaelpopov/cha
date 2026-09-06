@@ -1,6 +1,7 @@
 #pragma once
 
 #include "characters/character_config.h"
+#include "session/session_lease.h"
 
 #include <cstddef>
 #include <filesystem>
@@ -67,11 +68,11 @@ public:
         // and the process unable to serve.
         void close();
         void reopen();
-        // Points the closed store at another database. Acquires that path's
-        // process lease before releasing the old lease or changing the stored
-        // path. reopen() then validates and publishes the database at the new
-        // path into the same private tree.
-        void retarget(const std::filesystem::path& database_path);
+        // Points the closed store at a database whose lease was acquired before
+        // maintenance began. reopen() validates and publishes it.
+        void retarget(
+            std::filesystem::path database_path,
+            SessionLease lease);
 
     private:
         struct Impl;

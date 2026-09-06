@@ -5,7 +5,6 @@
 #include "session/stored_session.h"
 
 #include <filesystem>
-#include <memory>
 #include <mutex>
 #include <shared_mutex>
 #include <string>
@@ -44,53 +43,14 @@ public:
 
         void checkpoint() const;
         void synchronize_forums(const Workspace& workspace) const;
-        [[nodiscard]] std::vector<StoredSession> list(
-            std::string_view forum_id) const;
-        [[nodiscard]] std::vector<TranscriptEntry> history(
-            const FullSessionId& identity) const;
-        // Validates the target without changing the repository path, so a
-        // later store retarget is not left unpaired by an ordinary check.
-        [[nodiscard]] std::filesystem::path prepare_retarget(
-            const std::filesystem::path& database_path) const;
         void retarget(std::filesystem::path database_path);
 
     private:
         friend class SessionRepository;
-        explicit MaintenanceGuard(const SessionRepository& repository);
+        explicit MaintenanceGuard(SessionRepository& repository);
 
         SessionRepository* repository_;
         std::unique_lock<std::shared_mutex> lock_;
-    };
-
-    // Holds the repository's shared lock for a compound lobby read or
-    // create/rename plus mirror update.
-    class SharedLock {
-    public:
-        ~SharedLock() = default;
-        SharedLock(SharedLock&&) = delete;
-        SharedLock& operator=(SharedLock&&) = delete;
-        SharedLock(const SharedLock&) = delete;
-        SharedLock& operator=(const SharedLock&) = delete;
-
-        [[nodiscard]] std::shared_ptr<const Workspace> workspace() const;
-        [[nodiscard]] std::vector<StoredSession> recent() const;
-        [[nodiscard]] std::vector<StoredSession> list(
-            std::string_view forum_id) const;
-        [[nodiscard]] StoredSession create(
-            std::string_view forum_id,
-            std::string label) const;
-        [[nodiscard]] StoredSession rename(
-            const FullSessionId& identity,
-            std::string label) const;
-        [[nodiscard]] std::vector<TranscriptEntry> history(
-            const FullSessionId& identity) const;
-
-    private:
-        friend class SessionRepository;
-        explicit SharedLock(const SessionRepository& repository);
-
-        const SessionRepository* repository_;
-        std::shared_lock<std::shared_mutex> lock_;
     };
 
     SessionRepository(
@@ -121,8 +81,7 @@ public:
 
     // Fences new repository operations and waits for existing ones. Live
     // actors write through SessionJournal and must be stopped separately.
-    [[nodiscard]] MaintenanceGuard reserve_maintenance() const;
-    [[nodiscard]] SharedLock lock_shared() const;
+    [[nodiscard]] MaintenanceGuard reserve_maintenance();
     void synchronize_forums() const;
     void synchronize_forums(const Workspace& workspace) const;
 
@@ -131,18 +90,6 @@ public:
 private:
     void require_persistent_forum(std::string_view forum_id) const;
     void synchronize_forums_unlocked(const Workspace& workspace) const;
-    [[nodiscard]] std::shared_ptr<const Workspace> require_workspace() const;
-    [[nodiscard]] std::vector<StoredSession> list_unlocked(
-        std::string_view forum_id) const;
-    [[nodiscard]] std::vector<StoredSession> recent_unlocked() const;
-    [[nodiscard]] StoredSession create_unlocked(
-        std::string_view forum_id,
-        std::string label) const;
-    [[nodiscard]] StoredSession rename_unlocked(
-        const FullSessionId& identity,
-        std::string label) const;
-    [[nodiscard]] std::vector<TranscriptEntry> history_unlocked(
-        const FullSessionId& identity) const;
 
     mutable std::shared_mutex operation_mutex_;
     std::filesystem::path workspace_root_;

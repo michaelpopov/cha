@@ -3,12 +3,12 @@
 #include "providers/openai_oauth.h"
 #include "providers/provider_client.h"
 #include "providers/providers.h"
+#include "session/session_lease.h"
 #include "session/session_repository.h"
 #include "session/workspace_session_database.h"
 #include "util/environment.h"
 #include "util/logging.h"
 #include "util/path_name.h"
-#include "util/private_filesystem.h"
 #include "util/toml_file.h"
 #include "web/current_vault.h"
 #include "workspace/builtins.h"
@@ -43,7 +43,6 @@
 #include <string>
 #include <string_view>
 #include <thread>
-#include <type_traits>
 #include <utility>
 #include <variant>
 
@@ -176,8 +175,7 @@ struct ApplicationRuntime::Impl {
             seed);
         mirror = std::make_shared<SessionMirror>();
         if (command.vault.mirror) {
-            mirror->retarget(
-                *command.vault.mirror, mirror_rebuild_input(*sessions));
+            mirror->rebuild(*command.vault.mirror, *sessions);
         }
 
         auto opener = [this](
@@ -185,7 +183,6 @@ struct ApplicationRuntime::Impl {
                           std::shared_ptr<WakeNotifier> notifier) {
             OpenedSession opened = open_session(
                 *sessions, identity, providers, std::move(notifier), *store);
-            opened.vault_name = current_vault_.get().name;
             const auto selected_mirror = mirror;
             opened.mirror = [selected_mirror, identity](
                                 std::string_view label,
@@ -201,10 +198,9 @@ struct ApplicationRuntime::Impl {
     // there, such as a start() that failed after the providers were built.
     ~Impl() { providers.shutdown(); }
 
-    template<typename Operation, typename AfterReopen = std::nullptr_t>
-    auto maintain_locked(
-        Operation&& operation,
-        AfterReopen&& after_reopen = nullptr) {
+    template<typename Operation>
+    auto maintain_database(Operation operation) {
+        const std::lock_guard lifecycle(lifecycle_mutex);
         if (unusable) {
             throw WorkspaceRestartRequiredError(
                 "The workspace database could not be reopened after an earlier "
@@ -233,38 +229,14 @@ struct ApplicationRuntime::Impl {
         bool reopened = false;
 
         try {
-            using Result = std::invoke_result_t<
-                Operation,
-                WorkspaceConfigStore::MaintenanceGuard&,
-                SessionRepository::MaintenanceGuard&>;
-            if constexpr (std::is_void_v<Result>) {
-                operation(database, repository);
-                reopen(database, repository);
-                reopened = true;
-                if constexpr (!std::is_null_pointer_v<
-                                  std::decay_t<AfterReopen>>) {
-                    after_reopen(database, repository);
-                }
-            } else {
-                auto result = operation(database, repository);
-                reopen(database, repository);
-                reopened = true;
-                if constexpr (!std::is_null_pointer_v<
-                                  std::decay_t<AfterReopen>>) {
-                    after_reopen(database, repository);
-                }
-                return result;
-            }
+            auto result = operation();
+            reopen(database, repository);
+            reopened = true;
+            return result;
         } catch (...) {
             if (!reopened) reopen_after_failure(database, repository);
             throw;
         }
-    }
-
-    template<typename Operation>
-    auto maintain_database(Operation&& operation) {
-        const std::lock_guard lifecycle(lifecycle_mutex);
-        return maintain_locked(std::forward<Operation>(operation));
     }
 
     void reopen(
@@ -344,47 +316,68 @@ void ApplicationRuntime::switch_vault(std::string_view name) {
     if (same_vault_name(impl_->current_vault_.get().name, target->name)) {
         return;
     }
-    require_switchable_database(target->data);
-    if (target->mirror) require_directory(*target->mirror);
+    if (impl_->unusable) {
+        throw WorkspaceRestartRequiredError(
+            "The workspace database could not be reopened after an earlier "
+            "maintenance operation. Restart is required");
+    }
+    if (!impl_->started || impl_->stopped) {
+        throw std::runtime_error("CHA runtime is not running");
+    }
+
     const VaultDefinition selected = *target;
-    impl_->maintain_locked(
-        [this, selected](
-            WorkspaceConfigStore::MaintenanceGuard& database,
-            SessionRepository::MaintenanceGuard& repository) {
-            const std::filesystem::path prepared =
-                repository.prepare_retarget(selected.data);
-            database.retarget(prepared);
-            repository.retarget(std::move(prepared));
+    SessionLease target_lease = SessionLease::acquire(
+        selected.data,
+        "Database already in use: '" + utf8_path(selected.data) + "'");
+    require_switchable_database(selected.data);
+
+    GlobalMaintenanceResult reserved =
+        impl_->live_sessions->reserve_global_maintenance(
+            impl_->settings.shutdown_grace);
+    if (std::holds_alternative<MaintenanceFailure>(reserved)) {
+        throw std::runtime_error(
+            "Could not pause active sessions for database maintenance");
+    }
+    auto global = std::move(
+        std::get<LiveSessionGlobalMaintenance>(reserved));
+    {
+        auto database = impl_->store->reserve_maintenance();
+        SessionRepository::MaintenanceGuard repository =
+            impl_->sessions->reserve_maintenance();
+        repository.checkpoint();
+        database.close();
+        bool reopened = false;
+        try {
+            database.retarget(selected.data, std::move(target_lease));
+            repository.retarget(selected.data);
+            impl_->reopen(database, repository);
+            reopened = true;
             impl_->current_vault_.set(selected);
-        },
-        [this, selected](
-            WorkspaceConfigStore::MaintenanceGuard&,
-            SessionRepository::MaintenanceGuard& repository) {
-            try {
-                if (selected.mirror) {
-                    impl_->mirror->retarget(
-                        *selected.mirror, mirror_rebuild_input(repository));
-                } else {
-                    impl_->mirror->retarget(std::nullopt, {});
-                }
-            } catch (const std::exception& error) {
-                log_warn(
-                    "Session mirror rebuild failed: "
-                    + std::string(error.what()));
-                impl_->mirror->retarget(std::nullopt, {});
+        } catch (...) {
+            if (!reopened) {
+                impl_->reopen_after_failure(database, repository);
             }
-            try {
-                rewrite_toml_file(
-                    impl_->command.config_directory / "app.toml",
-                    [&](toml::table& table) {
-                        table.insert_or_assign("vault", selected.name);
-                    });
-            } catch (const std::exception& error) {
-                log_warn(
-                    "Failed to persist vault selection: "
-                    + std::string(error.what()));
-            }
-        });
+            throw;
+        }
+    }
+
+    try {
+        impl_->mirror->rebuild(selected.mirror, *impl_->sessions);
+    } catch (const std::exception& error) {
+        log_warn(
+            "Session mirror rebuild failed: " + std::string(error.what()));
+        impl_->mirror->rebuild(std::nullopt, *impl_->sessions);
+    }
+    try {
+        rewrite_toml_file(
+            impl_->command.config_directory / "app.toml",
+            [&](toml::table& table) {
+                table.insert_or_assign("vault", selected.name);
+            });
+    } catch (const std::exception& error) {
+        log_warn(
+            "Failed to persist vault selection: " + std::string(error.what()));
+    }
 }
 
 int ApplicationRuntime::start(int port_override) {
@@ -508,7 +501,7 @@ void ApplicationRuntime::shutdown() {
 }
 
 R2DatabaseTransfer ApplicationRuntime::upload_database() {
-    return impl_->maintain_database([this](auto&, auto&) {
+    return impl_->maintain_database([this] {
         const VaultDefinition vault = impl_->current_vault_.get();
         return upload_database_to_r2(
             vault.data, R2DatabaseLease::already_held);
@@ -516,7 +509,7 @@ R2DatabaseTransfer ApplicationRuntime::upload_database() {
 }
 
 R2DatabaseTransfer ApplicationRuntime::download_database() {
-    return impl_->maintain_database([this](auto&, auto&) {
+    return impl_->maintain_database([this] {
         const VaultDefinition vault = impl_->current_vault_.get();
         return download_database_from_r2(
             vault.data, R2DatabaseLease::already_held);
@@ -524,7 +517,7 @@ R2DatabaseTransfer ApplicationRuntime::download_database() {
 }
 
 WorkspaceConfigTransfer ApplicationRuntime::import_configuration() {
-    return impl_->maintain_database([this](auto&, auto&) {
+    return impl_->maintain_database([this] {
         const VaultDefinition vault = impl_->current_vault_.get();
         if (!vault.modify) {
             throw std::runtime_error(
@@ -538,7 +531,7 @@ WorkspaceConfigTransfer ApplicationRuntime::import_configuration() {
 }
 
 WorkspaceConfigTransfer ApplicationRuntime::export_configuration() {
-    return impl_->maintain_database([this](auto&, auto&) {
+    return impl_->maintain_database([this] {
         const VaultDefinition vault = impl_->current_vault_.get();
         if (!vault.modify) {
             throw std::runtime_error(

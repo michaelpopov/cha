@@ -9,7 +9,6 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
-#include <optional>
 #include <string>
 
 namespace cha::web {
@@ -66,64 +65,6 @@ TEST(SessionMirror, WritesActiveSessionsUnderForumDisplayNameAndNumbersDuplicate
     EXPECT_EQ(
         read_file(forum / "renamed-name.md"),
         "<!-- CHA session: renamed/name -->\n");
-}
-
-TEST(SessionMirror, InactiveAddAndUpdateAreNoOps) {
-    SessionMirror mirror;
-    mirror.add({.identity = {"lobby", "s1"}, .label = "One", .updated_at = 1});
-    mirror.update({"lobby", "s1"}, "One", {});
-}
-
-TEST(SessionMirror, RetargetRebuildsMapsAndCanBecomeInactive) {
-    test::TestWorkspace workspace;
-    test::WebGraph graph(workspace.root());
-    const StoredSession stored = graph.sessions()->create("lobby", "alpha");
-    const std::filesystem::path first = workspace.root() / "mirror-a";
-    const std::filesystem::path second = workspace.root() / "mirror-b";
-    std::filesystem::create_directory(first);
-    std::filesystem::create_directory(second);
-
-    SessionMirror mirror(first, *graph.sessions());
-    EXPECT_TRUE(std::filesystem::exists(first / "The Lobby" / "alpha.md"));
-
-    mirror.retarget(second, mirror_rebuild_input(*graph.sessions()));
-    EXPECT_TRUE(std::filesystem::exists(second / "The Lobby" / "alpha.md"));
-
-    mirror.retarget(std::nullopt, {});
-    mirror.update(stored.identity, "alpha", {});
-    EXPECT_TRUE(std::filesystem::exists(second / "The Lobby" / "alpha.md"));
-}
-
-TEST(SessionMirror, RetargetFailureLeavesTheMirrorInactive) {
-    test::TestWorkspace workspace;
-    test::WebGraph graph(workspace.root());
-    (void)graph.sessions()->create("lobby", "alpha");
-    const std::filesystem::path first = workspace.root() / "mirror-ok";
-    std::filesystem::create_directory(first);
-    SessionMirror mirror(first, *graph.sessions());
-
-    const std::filesystem::path missing = workspace.root() / "missing-mirror";
-    EXPECT_THROW(
-        mirror.retarget(missing, mirror_rebuild_input(*graph.sessions())),
-        std::runtime_error);
-    mirror.add({.identity = {"lobby", "later"}, .label = "Later", .updated_at = 1});
-    EXPECT_FALSE(std::filesystem::exists(missing));
-}
-
-TEST(SessionMirror, RebuildsFromAMaintenanceGuardWithoutRelocking) {
-    test::TestWorkspace workspace;
-    test::WebGraph graph(workspace.root());
-    (void)graph.sessions()->create("lobby", "guarded");
-    const std::filesystem::path root = workspace.root() / "mirror-guard";
-    std::filesystem::create_directory(root);
-
-    SessionMirror mirror;
-    {
-        const SessionRepository::MaintenanceGuard maintenance =
-            graph.sessions()->reserve_maintenance();
-        mirror.retarget(root, mirror_rebuild_input(maintenance));
-    }
-    EXPECT_TRUE(std::filesystem::exists(root / "The Lobby" / "guarded.md"));
 }
 
 } // namespace

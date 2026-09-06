@@ -847,9 +847,6 @@ TEST(ApplicationRuntime, UnknownAndInvalidTargetsFailBeforeDraining) {
     EXPECT_EQ(runtime->current_vault().name, "A");
     (void)test::import_test_database(pair.workspace_b.root(), pair.database_b);
 
-    std::filesystem::remove_all(pair.mirror_b);
-    EXPECT_THROW(runtime->switch_vault("B"), std::runtime_error);
-    EXPECT_EQ(runtime->current_vault().name, "A");
     EXPECT_EQ(file_bytes(pair.command.config_directory / "app.toml"), original);
 
     const auto listing = client.Get(
@@ -866,12 +863,12 @@ TEST(ApplicationRuntime, UnknownAndInvalidTargetsFailBeforeDraining) {
 }
 
 #ifndef _WIN32
-TEST(ApplicationRuntime, BusyTargetLeaseReopensTheOldVault) {
+TEST(ApplicationRuntime, BusyTargetLeaseLeavesTheOldVaultRunning) {
     TwoVaultRuntime pair;
     auto runtime = ApplicationRuntime::open(pair.command, "private-test-token");
     const int port = runtime->start();
     httplib::Client client("127.0.0.1", port);
-    const std::string live = create_lobby_session(client, "Drained");
+    const std::string live = create_lobby_session(client, "Still live");
     ASSERT_FALSE(live.empty());
     ASSERT_TRUE(open_lobby_session(client, live));
     const std::string original =
@@ -881,29 +878,18 @@ TEST(ApplicationRuntime, BusyTargetLeaseReopensTheOldVault) {
     EXPECT_THROW(runtime->switch_vault("B"), SessionBusyError);
     EXPECT_EQ(runtime->current_vault().name, "A");
     EXPECT_EQ(file_bytes(pair.command.config_directory / "app.toml"), original);
-    const std::string again = create_lobby_session(client, "After busy");
-    ASSERT_FALSE(again.empty());
-    ASSERT_TRUE(open_lobby_session(client, again));
+    const auto listing = client.Get(
+        "/api/v1/forums/lobby/sessions", kRuntimeCookie);
+    ASSERT_TRUE(listing);
+    const auto sessions = nlohmann::json::parse(listing->body);
+    const auto found = std::ranges::find_if(sessions, [&](const auto& session) {
+        return session.at("id").template get<std::string>() == live;
+    });
+    ASSERT_NE(found, sessions.end());
+    EXPECT_TRUE(found->at("live").template get<bool>());
     runtime->shutdown();
 }
 #endif
-
-TEST(ApplicationRuntime, DrainTimeoutKeepsTheOldSelection) {
-    TwoVaultRuntime pair;
-    pair.command.test_shutdown_grace_ms = 0;
-    auto runtime = ApplicationRuntime::open(pair.command, "private-test-token");
-    const int port = runtime->start();
-    httplib::Client client("127.0.0.1", port);
-    const std::string live = create_lobby_session(client, "Slow drain");
-    ASSERT_FALSE(live.empty());
-    ASSERT_TRUE(open_lobby_session(client, live));
-    const std::string original =
-        file_bytes(pair.command.config_directory / "app.toml");
-    EXPECT_THROW(runtime->switch_vault("B"), std::runtime_error);
-    EXPECT_EQ(runtime->current_vault().name, "A");
-    EXPECT_EQ(file_bytes(pair.command.config_directory / "app.toml"), original);
-    runtime->shutdown();
-}
 
 TEST(ApplicationRuntime, FailedSwitchReopenIsFatalAndRefusesLaterTransfers) {
     TwoVaultRuntime pair(false, true);
@@ -945,217 +931,19 @@ TEST(ApplicationRuntime, MirroringSwitchesRootsAndSurvivesStoredSessions) {
     runtime->shutdown();
 }
 
-TEST(ApplicationRuntime, SwitchingCanDisableAndEnableMirroring) {
-    TwoVaultRuntime pair;
-    std::filesystem::create_directories(pair.mirror_a);
-    const std::filesystem::path config = pair.command.config_directory;
-    {
-        std::ofstream vault(config / "a.toml");
-        vault << "vault_name = \"A\"\n"
-              << "data = " << std::quoted(pair.database_a.string()) << "\n"
-              << "mirror = " << std::quoted(pair.mirror_a.string()) << "\n";
-    }
-    const ConfigurationDirectory loaded = load_configuration_directory(config);
-    pair.command.vaults = loaded.vaults;
-    pair.command.vault = *find_vault(loaded.vaults, "A");
-
-    auto runtime = ApplicationRuntime::open(pair.command, "private-test-token");
-    const int port = runtime->start();
-    httplib::Client client("127.0.0.1", port);
-    ASSERT_FALSE(create_lobby_session(client, "On A").empty());
-    EXPECT_TRUE(std::filesystem::exists(
-        pair.mirror_a / "The Lobby" / "On A.md"));
-
-    runtime->switch_vault("B");
-    httplib::Client after("127.0.0.1", port);
-    ASSERT_FALSE(create_lobby_session(after, "On B").empty());
-    EXPECT_FALSE(std::filesystem::exists(
-        pair.mirror_b / "The Lobby" / "On B.md"));
-    runtime->shutdown();
-}
-
-#ifndef _WIN32
-TEST(ApplicationRuntime, MirrorRebuildAndConfigWriteFailuresAreNonfatal) {
-    TwoVaultRuntime pair(true);
-    initialize_diagnostic_logging(pair.command.log_file, "warn");
-    auto runtime = ApplicationRuntime::open(pair.command, "private-test-token");
-    (void)runtime->start();
-
-    ASSERT_EQ(::chmod(pair.mirror_b.c_str(), 0555), 0);
-    runtime->switch_vault("B");
-    EXPECT_EQ(runtime->current_vault().name, "B");
-    ASSERT_EQ(::chmod(pair.mirror_b.c_str(), 0755), 0);
-
-    const std::string after_mirror =
-        file_bytes(pair.command.config_directory / "app.toml");
-    EXPECT_EQ(
-        read_toml_file(pair.command.config_directory / "app.toml", "config file")
-            ["vault"]
-                .value<std::string>(),
-        "B");
-
-    ASSERT_EQ(::chmod(pair.command.config_directory.c_str(), 0555), 0);
-    runtime->switch_vault("A");
-    EXPECT_EQ(runtime->current_vault().name, "A");
-    ASSERT_EQ(::chmod(pair.command.config_directory.c_str(), 0755), 0);
-    EXPECT_EQ(
-        file_bytes(pair.command.config_directory / "app.toml"), after_mirror);
-    const std::string log = file_bytes(pair.command.log_file);
-    EXPECT_NE(log.find("Session mirror rebuild failed"), std::string::npos);
-    EXPECT_NE(log.find("Failed to persist vault selection"), std::string::npos);
-    runtime->shutdown();
-    shutdown_diagnostic_logging();
-}
-#endif
-
 TEST(ApplicationRuntime, MaintenanceAfterSwitchUsesTheCurrentVault) {
-    ScopedEnvironmentVariable url("CHA_R2_URL");
-    ScopedEnvironmentVariable access("CHA_R2_ACCESS_KEY_ID");
-    ScopedEnvironmentVariable secret("CHA_R2_SECRET_ACCESS_KEY");
     TwoVaultRuntime pair(false, true);
     auto runtime = ApplicationRuntime::open(pair.command, "private-test-token");
     (void)runtime->start();
-    runtime->switch_vault("B");
-    EXPECT_EQ(
-        runtime->current_vault().data,
-        std::filesystem::weakly_canonical(
-            std::filesystem::absolute(pair.database_b)));
 
+    runtime->switch_vault("B");
     const WorkspaceConfigTransfer exported = runtime->export_configuration();
+
     EXPECT_GT(exported.file_count, 0U);
     EXPECT_TRUE(std::filesystem::exists(
         pair.modify_b / "personas" / "beta" / "persona.toml"));
     EXPECT_FALSE(std::filesystem::exists(
         pair.modify_a / "personas" / "alpha" / "persona.toml"));
-
-    test::TestWorkspace imported;
-    imported.add_persona("gamma", "Gamma");
-    std::filesystem::remove_all(pair.modify_b);
-    std::filesystem::copy(
-        imported.root(),
-        pair.modify_b,
-        std::filesystem::copy_options::recursive);
-    const WorkspaceConfigTransfer brought_in =
-        runtime->import_configuration();
-    EXPECT_GT(brought_in.file_count, 0U);
-
-    MockHttpServer r2({http_response("application/xml", "")});
-    ASSERT_TRUE(set_environment_variable(
-        "CHA_R2_URL",
-        "http://127.0.0.1:" + std::to_string(r2.port()) + "/backups"));
-    ASSERT_TRUE(set_environment_variable("CHA_R2_ACCESS_KEY_ID", "access"));
-    ASSERT_TRUE(set_environment_variable("CHA_R2_SECRET_ACCESS_KEY", "secret"));
-    r2.start();
-    const R2DatabaseTransfer uploaded = runtime->upload_database();
-    r2.join();
-    EXPECT_GT(uploaded.byte_count, 0U);
-
-    MockHttpServer download({http_response(
-        "application/vnd.sqlite3", file_bytes(pair.database_a))});
-    ASSERT_TRUE(set_environment_variable(
-        "CHA_R2_URL",
-        "http://127.0.0.1:" + std::to_string(download.port()) + "/backups"));
-    download.start();
-    (void)runtime->download_database();
-    download.join();
-    EXPECT_EQ(
-        runtime->current_vault().data,
-        std::filesystem::weakly_canonical(
-            std::filesystem::absolute(pair.database_b)));
-    runtime->shutdown();
-}
-
-TEST(ApplicationRuntime, ConcurrentSwitchAndExportDoNotUseAStaleSelection) {
-    TwoVaultRuntime pair(false, true);
-    auto runtime = ApplicationRuntime::open(pair.command, "private-test-token");
-    (void)runtime->start();
-    std::latch start(2);
-    std::exception_ptr export_error;
-    std::exception_ptr switch_error;
-    std::thread exporter([&] {
-        start.arrive_and_wait();
-        try {
-            (void)runtime->export_configuration();
-        } catch (...) {
-            export_error = std::current_exception();
-        }
-    });
-    std::thread switching([&] {
-        start.arrive_and_wait();
-        try {
-            runtime->switch_vault("B");
-        } catch (...) {
-            switch_error = std::current_exception();
-        }
-    });
-    exporter.join();
-    switching.join();
-    EXPECT_FALSE(export_error);
-    EXPECT_FALSE(switch_error);
-    EXPECT_EQ(runtime->current_vault().name, "B");
-    const bool exported_a = std::filesystem::exists(
-        pair.modify_a / "personas" / "alpha" / "persona.toml");
-    const bool exported_b = std::filesystem::exists(
-        pair.modify_b / "personas" / "beta" / "persona.toml");
-    EXPECT_TRUE(exported_a || exported_b);
-    if (exported_a) {
-        EXPECT_FALSE(std::filesystem::exists(
-            pair.modify_a / "personas" / "beta" / "persona.toml"));
-    }
-    if (exported_b) {
-        EXPECT_FALSE(std::filesystem::exists(
-            pair.modify_b / "personas" / "alpha" / "persona.toml"));
-    }
-    runtime->shutdown();
-}
-
-TEST(ApplicationRuntime, ConcurrentBootstrapDoesNotMixVaults) {
-    TwoVaultRuntime pair;
-    auto runtime = ApplicationRuntime::open(pair.command, "private-test-token");
-    const int port = runtime->start();
-    std::latch start(2);
-    nlohmann::json bootstrap;
-    std::thread reader([&] {
-        httplib::Client client("127.0.0.1", port);
-        start.arrive_and_wait();
-        bootstrap = get_bootstrap(client);
-    });
-    std::thread switching([&] {
-        start.arrive_and_wait();
-        runtime->switch_vault("B");
-    });
-    reader.join();
-    switching.join();
-    ASSERT_FALSE(bootstrap.is_null());
-    const bool has_alpha = bootstrap_has_persona(bootstrap, "alpha");
-    const bool has_beta = bootstrap_has_persona(bootstrap, "beta");
-    EXPECT_TRUE(has_alpha != has_beta) << bootstrap.dump();
-    runtime->shutdown();
-}
-
-TEST(ApplicationRuntime, ConcurrentCreateDoesNotMirrorAcrossVaults) {
-    TwoVaultRuntime pair(true);
-    auto runtime = ApplicationRuntime::open(pair.command, "private-test-token");
-    const int port = runtime->start();
-    std::latch start(2);
-    std::string created_id;
-    std::thread creator([&] {
-        httplib::Client client("127.0.0.1", port);
-        start.arrive_and_wait();
-        created_id = create_lobby_session(client, "Cross");
-    });
-    std::thread switching([&] {
-        start.arrive_and_wait();
-        runtime->switch_vault("B");
-    });
-    creator.join();
-    switching.join();
-    ASSERT_FALSE(created_id.empty());
-    const bool in_a = std::filesystem::exists(
-        pair.mirror_a / "The Lobby" / "Cross.md");
-    const bool in_b = std::filesystem::exists(
-        pair.mirror_b / "The Lobby" / "Cross.md");
-    EXPECT_FALSE(in_a && in_b);
     runtime->shutdown();
 }
 
@@ -1183,142 +971,26 @@ void expect_error_envelope(
     EXPECT_FALSE(json["error"]["message"].get<std::string>().empty());
 }
 
-TEST(ApplicationRuntime, SwitchRouteSwitchesAToBAndMapsFailures) {
+TEST(ApplicationRuntime, SwitchRouteSwitchesVaultAndMapsUnknownNames) {
     TwoVaultRuntime pair;
-    seed_lobby_session(pair.database_a, "Stored on A");
     auto runtime = ApplicationRuntime::open(pair.command, "private-test-token");
     const int port = runtime->start();
     httplib::Client client("127.0.0.1", port);
-    const std::string live = create_lobby_session(client, "Live on A");
-    ASSERT_FALSE(live.empty());
-    ASSERT_TRUE(open_lobby_session(client, live));
 
     const auto switched = post_switch(client, "b");
     ASSERT_TRUE(switched);
     EXPECT_EQ(switched->status, 204) << switched->body;
-    EXPECT_EQ(runtime->current_vault().name, "B");
 
-    httplib::Client after("127.0.0.1", port);
-    const auto bootstrap_b = get_bootstrap(after);
-    EXPECT_EQ(bootstrap_b.at("vault_name").get<std::string>(), "B");
+    const auto bootstrap = get_bootstrap(client);
+    EXPECT_EQ(bootstrap.at("vault_name").get<std::string>(), "B");
+    EXPECT_EQ(bootstrap.at("vaults"), nlohmann::json::array({"A", "B"}));
+    EXPECT_TRUE(bootstrap_has_persona(bootstrap, "beta"));
     EXPECT_EQ(
-        bootstrap_b.at("vaults"),
-        nlohmann::json::array({"A", "B"}));
-    EXPECT_TRUE(bootstrap_has_persona(bootstrap_b, "beta"));
-    EXPECT_FALSE(bootstrap_has_persona(bootstrap_b, "alpha"));
-    EXPECT_EQ(after.Get("/health", kRuntimeCookie)->status, 200);
-
-    const auto old_snapshot = after.Get(
-        "/s/lobby/" + live + "/api/v1/session", kRuntimeCookie);
-    ASSERT_TRUE(old_snapshot);
-    EXPECT_EQ(old_snapshot->status, 409);
-
-    const std::string on_b = create_lobby_session(after, "Live on B");
-    ASSERT_FALSE(on_b.empty());
-    ASSERT_TRUE(open_lobby_session(after, on_b));
-    const auto new_snapshot = after.Get(
-        "/s/lobby/" + on_b + "/api/v1/session", kRuntimeCookie);
-    ASSERT_TRUE(new_snapshot);
-    ASSERT_EQ(new_snapshot->status, 200) << new_snapshot->body;
-    EXPECT_EQ(
-        nlohmann::json::parse(new_snapshot->body).at("vault_name").get<std::string>(),
+        read_toml_file(pair.command.config_directory / "app.toml", "config file")
+            ["vault"].value<std::string>(),
         "B");
 
-    const toml::table table =
-        read_toml_file(pair.command.config_directory / "app.toml", "config file");
-    EXPECT_EQ(table["vault"].value<std::string>(), "B");
-
-    const auto again = post_switch(after, "B");
-    ASSERT_TRUE(again);
-    EXPECT_EQ(again->status, 204) << again->body;
-    const auto listing = after.Get("/api/v1/forums/lobby/sessions", kRuntimeCookie);
-    ASSERT_TRUE(listing);
-    bool running = false;
-    for (const auto& session : nlohmann::json::parse(listing->body)) {
-        if (session.at("id").get<std::string>() == on_b) {
-            running = session.at("live").get<bool>();
-        }
-    }
-    EXPECT_TRUE(running);
-
-    expect_error_envelope(post_switch(after, "missing"), 400, "bad_request");
-    const auto malformed = after.Post(
-        "/api/v1/vault/switch",
-        kRuntimeCookie,
-        R"({"vault_name":1})",
-        "application/json");
-    expect_error_envelope(malformed, 400, "bad_request");
-    const auto extra = after.Post(
-        "/api/v1/vault/switch",
-        kRuntimeCookie,
-        R"({"vault_name":"A","extra":true})",
-        "application/json");
-    expect_error_envelope(extra, 400, "bad_request");
-    const auto wrong_type = after.Post(
-        "/api/v1/vault/switch",
-        kRuntimeCookie,
-        R"({"vault_name":"A"})",
-        "text/plain");
-    expect_error_envelope(wrong_type, 400, "bad_request");
-    httplib::Headers foreign = kRuntimeCookie;
-    foreign.emplace("Origin", "http://other.example");
-    const auto origin = after.Post(
-        "/api/v1/vault/switch",
-        foreign,
-        R"({"vault_name":"A"})",
-        "application/json");
-    expect_error_envelope(origin, 403, "forbidden_origin");
-
-    runtime->shutdown();
-}
-
-TEST(ApplicationRuntime, SwitchRouteReportsPrecheckAndMaintenanceFailures) {
-    TwoVaultRuntime pair;
-    auto runtime = ApplicationRuntime::open(pair.command, "private-test-token");
-    const int port = runtime->start();
-    httplib::Client client("127.0.0.1", port);
-    const std::string live = create_lobby_session(client, "Still live");
-    ASSERT_FALSE(live.empty());
-    ASSERT_TRUE(open_lobby_session(client, live));
-
-    std::filesystem::remove(pair.database_b);
-    expect_error_envelope(post_switch(client, "B"), 500, "internal_error");
-    EXPECT_EQ(runtime->current_vault().name, "A");
-    const auto listing = client.Get("/api/v1/forums/lobby/sessions", kRuntimeCookie);
-    ASSERT_TRUE(listing);
-    bool running = false;
-    for (const auto& session : nlohmann::json::parse(listing->body)) {
-        if (session.at("id").get<std::string>() == live) {
-            running = session.at("live").get<bool>();
-        }
-    }
-    EXPECT_TRUE(running);
-    runtime->shutdown();
-}
-
-TEST(ApplicationRuntime, SwitchRouteReportsAFatalReopenThroughTheErrorEnvelope) {
-    TwoVaultRuntime pair(false, true);
-    auto runtime = ApplicationRuntime::open(pair.command, "private-test-token");
-    const int port = runtime->start();
-    httplib::Client client("127.0.0.1", port);
-    force_next_workspace_config_fault(WorkspaceConfigFault::restore);
-    expect_error_envelope(post_switch(client, "B"), 500, "internal_error");
-    runtime->shutdown();
-}
-
-TEST(ApplicationRuntime, OauthStatusSurvivesASwitch) {
-    TwoVaultRuntime pair;
-    write_runtime_auth(pair.command.config_directory);
-    auto runtime = ApplicationRuntime::open(pair.command, "private-test-token");
-    const int port = runtime->start();
-    httplib::Client client("127.0.0.1", port);
-    expect_auth_snapshot(
-        client.Get("/api/v1/openai/auth", kRuntimeCookie), "connected");
-    runtime->switch_vault("B");
-    httplib::Client after("127.0.0.1", port);
-    expect_auth_snapshot(
-        after.Get("/api/v1/openai/auth", kRuntimeCookie), "connected");
-    ASSERT_FALSE(create_lobby_session(after, "Uses B").empty());
+    expect_error_envelope(post_switch(client, "missing"), 400, "bad_request");
     runtime->shutdown();
 }
 

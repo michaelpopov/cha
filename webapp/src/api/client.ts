@@ -114,8 +114,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 // The check lives here so neither route trusts a shape the other would reject.
 export function isSessionSnapshot(value: unknown): value is SessionSnapshot {
   return isRecord(value)
-    && typeof value.vault_name === 'string'
-    && value.vault_name.length > 0
     && isRecord(value.forum)
     && typeof value.forum.default_persona_id === 'string'
     && value.forum.default_persona_id.length > 0

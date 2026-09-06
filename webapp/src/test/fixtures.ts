@@ -128,7 +128,6 @@ export const waitingAuth: OpenAiAuth = {
 export const connectedAuth: OpenAiAuth = { status: 'connected' };
 
 export const snapshotFixture: SessionSnapshot = {
-  vault_name: 'Personal',
   forum: bootstrapFixture.forums[0],
   session_id: 'welcome',
   session_label: 'Welcome',

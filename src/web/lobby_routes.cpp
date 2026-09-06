@@ -258,18 +258,12 @@ void LobbyRoutes::install(httplib::Server& server) const {
 
     server.Get("/api/v1/bootstrap", [sessions, initial, current_vault, vault_names](
                                         const httplib::Request&, httplib::Response& response) {
-        std::shared_ptr<const Workspace> current;
-        std::vector<StoredSession> recent;
-        std::string vault_name;
-        {
-            const auto access = sessions->lock_shared();
-            vault_name = current_vault->get().name;
-            current = access.workspace();
-            recent = access.recent();
-        }
+        const std::shared_ptr<const Workspace> current = published_workspace();
+        const std::vector<StoredSession> recent = sessions->recent();
         set_json_response(response, 200, nlohmann::json(
             bootstrap_for(
-                *current, recent, initial, std::move(vault_name), vault_names)));
+                *current, recent, initial,
+                current_vault->get().name, vault_names)));
     });
 
     server.Get(R"(/api/v1/characters/([^/]+))", [](const httplib::Request& request, httplib::Response& response) {
@@ -392,8 +386,7 @@ void LobbyRoutes::install(httplib::Server& server) const {
                 })) return;
         if (!validate_route_session_label(response, label, true)) return;
         try {
-            const auto access = sessions->lock_shared();
-            const StoredSession created = access.create(forum, std::move(label));
+            const StoredSession created = sessions->create(forum, std::move(label));
             if (mirror) mirror->add(created);
             set_json_response(response, 201, nlohmann::json(CreateSessionSuccess{
                 created.identity.session_id, created.label}));
@@ -479,13 +472,12 @@ void LobbyRoutes::install(httplib::Server& server) const {
                 return set_error_response(response, 500,
                     {ErrorCode::internal_error, "The request could not be completed."});
             }
-            const auto access = sessions->lock_shared();
-            const StoredSession renamed = access.rename(key, std::move(label));
+            const StoredSession renamed = sessions->rename(key, std::move(label));
             if (mirror) {
                 mirror->update(
                     renamed.identity,
                     renamed.label,
-                    access.history(renamed.identity));
+                    sessions->history(renamed.identity));
             }
             log_info(session_event(key, "rename_committed"));
             set_json_response(response, 200, nlohmann::json(SessionLabelResult{

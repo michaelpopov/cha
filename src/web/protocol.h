@@ -91,8 +91,6 @@ struct SessionSnapshot {
     std::optional<std::string> notice;
     SessionLifecycle lifecycle{SessionLifecycle::starting};
     std::optional<ShutdownReason> shutdown_reason;
-    // Captured when the live session opens, not looked up at serialize time.
-    std::string vault_name;
     bool operator==(const SessionSnapshot&) const = default;
 };
 

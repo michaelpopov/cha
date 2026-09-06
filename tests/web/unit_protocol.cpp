@@ -199,12 +199,10 @@ TEST(WebProtocol, SerializesSnapshotMailboxPayloadAndTargetAwareAppend) {
         .notice = std::string{"<notice>"},
         .lifecycle = SessionLifecycle::stopping,
         .shutdown_reason = ShutdownReason::session_failed,
-        .vault_name = "Personal",
     };
 
     const auto value = nlohmann::json(SnapshotEvent{std::move(snapshot)});
     const nlohmann::json expected = {
-        {"vault_name", "Personal"},
         {"default_character_id", "guide"},
         {"forum", {{"display_name", "Forum"}, {"id", "forum"}, {"default_character_id", ""}, {"default_persona_id", ""}, {"default_persona_display_name", ""}, {"members", nlohmann::json::array()}}},
         {"generation",

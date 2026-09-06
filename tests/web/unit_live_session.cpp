@@ -762,40 +762,6 @@ TEST(LiveSession, PublishesAnOpenedSessionNoticeOnTheFirstSnapshot) {
     host->disconnect_sse(connection.connection_id, 0);
 }
 
-TEST(LiveSession, SnapshotsCarryTheOpenerProvidedVaultName) {
-    test::TemporarySessionFile file("live_session_vault_name");
-    auto controls = std::make_shared<test::BackendControls>();
-    LiveSessionHost host(
-        test_settings(),
-        [path = file.path(), controls](
-            const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier) {
-            OpenedSession opened = test::open_scripted_session(
-                identity, path, notifier, controls);
-            opened.vault_name = "Personal";
-            return opened;
-        });
-
-    CommandSubmitResult first = host->snapshot(2s);
-    ASSERT_TRUE(std::holds_alternative<SessionSnapshot>(first));
-    EXPECT_EQ(std::get<SessionSnapshot>(first).vault_name, "Personal");
-
-    const SseConnectResult connection = connect(*host);
-    const std::shared_ptr<const SsePayload> initial = next_payload(connection);
-    ASSERT_TRUE(initial);
-    EXPECT_EQ(snapshot_of(*initial).vault_name, "Personal");
-    connection.mailbox->written(connection.stream);
-
-    host->request_shutdown(ShutdownReason::reloading);
-    const std::shared_ptr<const SsePayload> final_payload = next_payload(connection);
-    ASSERT_TRUE(final_payload);
-    ASSERT_TRUE(std::holds_alternative<SnapshotEvent>(*final_payload));
-    EXPECT_EQ(snapshot_of(*final_payload).vault_name, "Personal");
-    EXPECT_EQ(
-        snapshot_of(*final_payload).lifecycle, SessionLifecycle::stopping);
-    connection.mailbox->written(connection.stream);
-    EXPECT_TRUE(wait_for_finished(host.handle()));
-}
-
 TEST(LiveSession, ReloadingOutranksBrowserDisconnectedOnTheFinalSnapshot) {
     test::TemporarySessionFile file("live_session_reloading");
     auto controls = std::make_shared<test::BackendControls>();

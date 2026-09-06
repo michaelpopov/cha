@@ -13,7 +13,6 @@
 #include <ctime>
 #include <filesystem>
 #include <iomanip>
-#include <memory>
 #include <mutex>
 #include <set>
 #include <sstream>
@@ -95,9 +94,8 @@ void delete_archived_sessions(const std::filesystem::path& path) {
 } // namespace
 
 SessionRepository::MaintenanceGuard::MaintenanceGuard(
-    const SessionRepository& repository)
-    : repository_(const_cast<SessionRepository*>(&repository)),
-      lock_(repository.operation_mutex_) {
+    SessionRepository& repository)
+    : repository_(&repository), lock_(repository.operation_mutex_) {
 }
 
 void SessionRepository::MaintenanceGuard::checkpoint() const {
@@ -109,80 +107,19 @@ void SessionRepository::MaintenanceGuard::synchronize_forums(
     repository_->synchronize_forums_unlocked(workspace);
 }
 
-std::vector<StoredSession> SessionRepository::MaintenanceGuard::list(
-    std::string_view forum_id) const {
-    return repository_->list_unlocked(forum_id);
-}
-
-std::vector<TranscriptEntry> SessionRepository::MaintenanceGuard::history(
-    const FullSessionId& identity) const {
-    return repository_->history_unlocked(identity);
-}
-
-std::filesystem::path SessionRepository::MaintenanceGuard::prepare_retarget(
-    const std::filesystem::path& database_path) const {
-    const std::filesystem::path next =
-        std::filesystem::weakly_canonical(std::filesystem::absolute(database_path));
-    if (!std::filesystem::is_regular_file(next)) {
-        throw std::runtime_error(
-            "Workspace session database path '" + utf8_path(database_path)
-            + "' is not a regular file");
-    }
-    return next;
-}
-
 void SessionRepository::MaintenanceGuard::retarget(
     std::filesystem::path database_path) {
     repository_->database_path_ = std::move(database_path);
 }
 
 SessionRepository::MaintenanceGuard
-SessionRepository::reserve_maintenance() const {
+SessionRepository::reserve_maintenance() {
     return MaintenanceGuard(*this);
 }
 
 std::filesystem::path SessionRepository::database_path() const {
     const std::shared_lock lock(operation_mutex_);
     return database_path_;
-}
-
-SessionRepository::SharedLock::SharedLock(const SessionRepository& repository)
-    : repository_(&repository), lock_(repository.operation_mutex_) {
-}
-
-std::shared_ptr<const Workspace>
-SessionRepository::SharedLock::workspace() const {
-    return repository_->require_workspace();
-}
-
-std::vector<StoredSession> SessionRepository::SharedLock::recent() const {
-    return repository_->recent_unlocked();
-}
-
-std::vector<StoredSession> SessionRepository::SharedLock::list(
-    std::string_view forum_id) const {
-    return repository_->list_unlocked(forum_id);
-}
-
-StoredSession SessionRepository::SharedLock::create(
-    std::string_view forum_id,
-    std::string label) const {
-    return repository_->create_unlocked(forum_id, std::move(label));
-}
-
-StoredSession SessionRepository::SharedLock::rename(
-    const FullSessionId& identity,
-    std::string label) const {
-    return repository_->rename_unlocked(identity, std::move(label));
-}
-
-std::vector<TranscriptEntry> SessionRepository::SharedLock::history(
-    const FullSessionId& identity) const {
-    return repository_->history_unlocked(identity);
-}
-
-SessionRepository::SharedLock SessionRepository::lock_shared() const {
-    return SharedLock(*this);
 }
 
 SessionRepository::SessionRepository(
@@ -230,23 +167,18 @@ SessionRepository::~SessionRepository() {
     }
 }
 
-std::shared_ptr<const Workspace>
-SessionRepository::require_workspace() const {
-    const std::shared_ptr<const Workspace> workspace = getws();
-    if (!workspace || workspace->root() != workspace_root_) {
-        throw std::runtime_error(
-            "Session repository has no matching loaded workspace");
-    }
-    return workspace;
-}
-
 void SessionRepository::require_persistent_forum(
     std::string_view forum_id) const {
     if (forum_id == temporary_identity_.forum_id) {
         throw ForumNotFoundError(
             "Forum '" + std::string(forum_id) + "' does not store sessions");
     }
-    if (require_workspace()->find_forum(forum_id) == nullptr) {
+    const std::shared_ptr<const Workspace> workspace = getws();
+    if (!workspace || workspace->root() != workspace_root_) {
+        throw std::runtime_error(
+            "Session repository has no matching loaded workspace");
+    }
+    if (workspace->find_forum(forum_id) == nullptr) {
         throw ForumNotFoundError(
             "Forum '" + std::string(forum_id) + "' does not exist");
     }
@@ -254,7 +186,12 @@ void SessionRepository::require_persistent_forum(
 
 void SessionRepository::synchronize_forums() const {
     const std::shared_lock operation(operation_mutex_);
-    synchronize_forums_unlocked(*require_workspace());
+    const std::shared_ptr<const Workspace> workspace = getws();
+    if (!workspace || workspace->root() != workspace_root_) {
+        throw std::runtime_error(
+            "Session repository has no matching loaded workspace");
+    }
+    synchronize_forums_unlocked(*workspace);
 }
 
 void SessionRepository::synchronize_forums(const Workspace& workspace) const {
@@ -281,8 +218,9 @@ void SessionRepository::synchronize_forums_unlocked(
     transaction.commit();
 }
 
-std::vector<StoredSession> SessionRepository::list_unlocked(
+std::vector<StoredSession> SessionRepository::list(
     std::string_view forum_id) const {
+    const std::shared_lock operation(operation_mutex_);
     if (forum_id == temporary_identity_.forum_id) {
         return list_forum(temporary_database_path_, forum_id);
     }
@@ -290,14 +228,13 @@ std::vector<StoredSession> SessionRepository::list_unlocked(
     return list_forum(database_path_, forum_id);
 }
 
-std::vector<StoredSession> SessionRepository::list(
-    std::string_view forum_id) const {
+std::vector<StoredSession> SessionRepository::recent() const {
     const std::shared_lock operation(operation_mutex_);
-    return list_unlocked(forum_id);
-}
-
-std::vector<StoredSession> SessionRepository::recent_unlocked() const {
-    const std::shared_ptr<const Workspace> workspace = require_workspace();
+    const std::shared_ptr<const Workspace> workspace = getws();
+    if (!workspace || workspace->root() != workspace_root_) {
+        throw std::runtime_error(
+            "Session repository has no matching loaded workspace");
+    }
     std::set<std::string, std::less<>> current_forums;
     for (const WorkspaceForum& forum : workspace->forums()) {
         if (forum.id == temporary_identity_.forum_id) continue;
@@ -335,11 +272,6 @@ std::vector<StoredSession> SessionRepository::recent_unlocked() const {
     return result;
 }
 
-std::vector<StoredSession> SessionRepository::recent() const {
-    const std::shared_lock operation(operation_mutex_);
-    return recent_unlocked();
-}
-
 void SessionRepository::validate(const FullSessionId& identity) const {
     const std::shared_lock operation(operation_mutex_);
     if (identity.forum_id == temporary_identity_.forum_id) {
@@ -358,9 +290,10 @@ void SessionRepository::validate(const FullSessionId& identity) const {
     require_active(database, identity);
 }
 
-StoredSession SessionRepository::create_unlocked(
+StoredSession SessionRepository::create(
     std::string_view forum_id,
     std::string label) const {
+    const std::shared_lock operation(operation_mutex_);
     require_persistent_forum(forum_id);
     if (!label.empty()) validate_session_label(label);
     const std::string base_id = timestamp_name(std::time(nullptr));
@@ -424,16 +357,10 @@ StoredSession SessionRepository::create_unlocked(
         + std::to_string(max_session_id_attempts) + " attempts");
 }
 
-StoredSession SessionRepository::create(
-    std::string_view forum_id,
-    std::string label) const {
-    const std::shared_lock operation(operation_mutex_);
-    return create_unlocked(forum_id, std::move(label));
-}
-
-StoredSession SessionRepository::rename_unlocked(
+StoredSession SessionRepository::rename(
     const FullSessionId& identity,
     std::string label) const {
+    const std::shared_lock operation(operation_mutex_);
     require_persistent_forum(identity.forum_id);
     validate_session_label(label);
     Database database(database_path_, Database::Mode::read_write);
@@ -459,13 +386,6 @@ StoredSession SessionRepository::rename_unlocked(
         .label = std::move(label),
         .updated_at = updated_at,
     };
-}
-
-StoredSession SessionRepository::rename(
-    const FullSessionId& identity,
-    std::string label) const {
-    const std::shared_lock operation(operation_mutex_);
-    return rename_unlocked(identity, std::move(label));
 }
 
 void SessionRepository::delete_session(const FullSessionId& identity) const {
@@ -509,8 +429,9 @@ PreparedSession SessionRepository::prepare(
     };
 }
 
-std::vector<TranscriptEntry> SessionRepository::history_unlocked(
+std::vector<TranscriptEntry> SessionRepository::history(
     const FullSessionId& identity) const {
+    const std::shared_lock operation(operation_mutex_);
     const bool temporary = identity.forum_id == temporary_identity_.forum_id;
     if (temporary && identity != temporary_identity_) {
         throw missing_session_error(identity.session_id);
@@ -519,12 +440,6 @@ std::vector<TranscriptEntry> SessionRepository::history_unlocked(
     const std::filesystem::path& path = temporary
         ? temporary_database_path_ : database_path_;
     return load_session_history(path, identity);
-}
-
-std::vector<TranscriptEntry> SessionRepository::history(
-    const FullSessionId& identity) const {
-    const std::shared_lock operation(operation_mutex_);
-    return history_unlocked(identity);
 }
 
 } // namespace cha

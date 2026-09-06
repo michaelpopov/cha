@@ -228,7 +228,6 @@ void to_json(nlohmann::json& json, const SessionSnapshot& value) {
         transcript.push_back(transcript_entry_json(entry));
     }
     json = {
-        {"vault_name", value.vault_name},
         {"forum", value.forum},
         {"session_id", value.session_id},
         {"session_label", value.session_label},
