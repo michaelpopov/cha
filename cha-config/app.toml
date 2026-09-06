@@ -1,6 +1,4 @@
-data = "cha.sqlite3"
-# mirrot = ""
-modify = "/tmp/modify"
+vault = "Dev"
 
 [web]
 host = "127.0.0.1"

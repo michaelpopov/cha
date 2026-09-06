@@ -1,6 +1,6 @@
 if(NOT DEFINED EXECUTABLE OR NOT DEFINED OUTPUT_DIRECTORY
    OR NOT DEFINED WEBAPP_DIST OR NOT DEFINED IMPORT_SEED_DIRECTORY
-   OR NOT DEFINED CONFIG_TEMPLATE)
+   OR NOT DEFINED CONFIG_EXAMPLE_DIRECTORY)
     message(FATAL_ERROR "Local deployment staging arguments are incomplete")
 endif()
 
@@ -14,10 +14,11 @@ configure_file(
 # The application directory contains a source tree only as an explicit import
 # seed. A live database always belongs outside it.
 file(REMOVE "${OUTPUT_DIRECTORY}/app.toml")
-configure_file(
-    "${CONFIG_TEMPLATE}"
-    "${OUTPUT_DIRECTORY}/cha.toml.example"
-    COPYONLY)
+file(REMOVE "${OUTPUT_DIRECTORY}/cha.toml.example")
+file(REMOVE_RECURSE "${OUTPUT_DIRECTORY}/cha-config.example")
+file(MAKE_DIRECTORY "${OUTPUT_DIRECTORY}/cha-config.example")
+file(COPY "${CONFIG_EXAMPLE_DIRECTORY}/"
+    DESTINATION "${OUTPUT_DIRECTORY}/cha-config.example")
 file(REMOVE_RECURSE "${OUTPUT_DIRECTORY}/import-seed")
 file(MAKE_DIRECTORY "${OUTPUT_DIRECTORY}/import-seed")
 file(COPY "${IMPORT_SEED_DIRECTORY}/"

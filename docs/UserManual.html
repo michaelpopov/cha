@@ -457,7 +457,7 @@
           </li>
           <li>
             If you received a ZIP file, double-click it in Finder. Finder extracts
-            <code>CHA.app</code> and a <code>cha.toml</code> configuration example.
+            <code>CHA.app</code> and a <code>cha-config</code> configuration example.
           </li>
           <li>Open a second Finder window and select <strong>Applications</strong>.</li>
           <li>Drag <code>CHA.app</code> into the Applications folder.</li>
@@ -878,10 +878,11 @@
 
         <h3>Find the active configuration files</h3>
         <p>
-          The <code>cha.toml</code> extracted from the ZIP is an example. The
+          The <code>cha-config</code> extracted from the ZIP is an example. The
           application uses its active files here:
         </p>
-        <pre><code>~/Library/Application Support/CHA/cha.toml
+        <pre><code>~/Library/Application Support/CHA/app.toml
+~/Library/Application Support/CHA/personal.toml
 ~/Library/Application Support/CHA/.env</code></pre>
         <p>
           In Finder, choose <strong>Go &gt; Go to Folder…</strong>, enter
@@ -892,9 +893,9 @@
 
         <h3>Export, edit, and import workspace configuration</h3>
         <p>
-          The optional <code>modify</code> setting in the active
-          <code>cha.toml</code> names the directory used by both operations. A
-          relative path starts from the directory containing <code>cha.toml</code>:
+          The optional <code>modify</code> setting in the active vault's
+          configuration names the directory used by both operations. A
+          relative path starts from the configuration directory:
         </p>
         <pre><code>modify = "modify"</code></pre>
         <p>
@@ -1056,7 +1057,7 @@ Then choose one small act and do it completely.</code></pre>
               </tr>
               <tr>
                 <td>Import and Export are disabled.</td>
-                <td>Add a nonempty <code>modify</code> path to the active <code>cha.toml</code>, then quit and reopen CHA.</td>
+                <td>Add a nonempty <code>modify</code> path to the active vault's configuration, then quit and reopen CHA.</td>
               </tr>
               <tr>
                 <td>Upload and Download are disabled.</td>

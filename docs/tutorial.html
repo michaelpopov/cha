@@ -754,12 +754,12 @@ client</td>
 <td>Behavioral examples grouped by the same subsystem boundaries</td>
 </tr>
 <tr>
-<td><a href="../cha.toml">cha.toml</a></td>
-<td>External process-configuration example included beside CHA.app in
+<td><a href="../cha-config">cha-config</a></td>
+<td>Tracked development configuration directory included beside CHA.app in
 the macOS zip</td>
 </tr>
 <tr>
-<td><a href="../packaging/linux/cha.toml.example">packaging/linux/cha.toml.example</a></td>
+<td><a href="../packaging/linux/cha-config.example">packaging/linux/cha-config.example</a></td>
 <td>External process-configuration example</td>
 </tr>
 <tr>
@@ -951,56 +951,64 @@ a domain policy or a reusable mechanism.</p>
 <h3 id="74-public-process-modes">7.4 Public process modes</h3>
 <p>The public command parser accepts exactly these customer-facing
 forms:</p>
-<pre class="text"><code>chaweb --config=CONFIG [--root PATH]
-chaweb --config=CONFIG --import DIRECTORY
-chaweb --config=CONFIG --export DIRECTORY
-chaweb --config=CONFIG --upload
-chaweb --config=CONFIG --download</code></pre>
-<p>Every mode requires the external unified config. The parser accepts
-both <code>--config=CONFIG</code> and <code>--config CONFIG</code>;
-<code>--root</code> is a runtime-only application-asset root. The four
-offline modes are mutually exclusive. Upload and download use the R2
+<pre class="text"><code>chaweb --config=CONFIG_DIR [--root PATH]
+chaweb --config=CONFIG_DIR --vault=NAME --import DIRECTORY
+chaweb --config=CONFIG_DIR --vault=NAME --export DIRECTORY
+chaweb --config=CONFIG_DIR --vault=NAME --upload
+chaweb --config=CONFIG_DIR --vault=NAME --download</code></pre>
+<p>Every mode requires the configuration directory. The parser accepts
+both <code>--config=CONFIG_DIR</code> and <code>--config CONFIG_DIR</code>;
+<code>--root</code> is a runtime-only application-asset root.
+<code>--vault</code> is required for the four offline modes, which are
+mutually exclusive. Upload and download use the R2
 bucket URL and S3 credentials from <code>CHA_R2_URL</code>,
 <code>CHA_R2_ACCESS_KEY_ID</code>, and
 <code>CHA_R2_SECRET_ACCESS_KEY</code>; the configured database filename
 becomes the object key.</p>
 <p>The Linux package includes <code>start-cha.sh</code>, which supplies
 <code>--root</code>, starts <code>chaweb</code> in the background, and
-uses <code>../cha.toml</code> by default. A nonempty
+uses <code>../cha-config</code> by default. A nonempty
 <code>CHA_CONFIG</code> overrides that default for the launcher only;
 the executable itself still requires <code>--config</code>. Absolute
 override paths are used directly, while relative paths resolve from the
 directory containing <code>start-cha.sh</code>:</p>
-<div class="sourceCode" id="cb6"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="va">CHA_CONFIG</span><span class="op">=</span>/etc/cha/cha.toml <span class="ex">./start-cha.sh</span></span></code></pre></div>
-<p>The TOML shape is:</p>
-<div class="sourceCode" id="cb7"><pre class="sourceCode toml"><code class="sourceCode toml"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="dt">data</span> <span class="op">=</span> <span class="st">&quot;/var/lib/cha/workspace.sqlite3&quot;</span></span>
-<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a><span class="dt">mirror</span> <span class="op">=</span> <span class="st">&quot;/home/user/cha-mirror&quot;</span></span>
-<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a><span class="dt">modify</span> <span class="op">=</span> <span class="st">&quot;/home/user/cha-modify&quot;</span></span>
-<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb7-5"><a href="#cb7-5" aria-hidden="true" tabindex="-1"></a><span class="kw">[web]</span></span>
-<span id="cb7-6"><a href="#cb7-6" aria-hidden="true" tabindex="-1"></a><span class="dt">host</span> <span class="op">=</span> <span class="st">&quot;0.0.0.0&quot;</span></span>
-<span id="cb7-7"><a href="#cb7-7" aria-hidden="true" tabindex="-1"></a><span class="dt">port</span> <span class="op">=</span> <span class="dv">8086</span></span>
-<span id="cb7-8"><a href="#cb7-8" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb7-9"><a href="#cb7-9" aria-hidden="true" tabindex="-1"></a><span class="kw">[logging]</span></span>
-<span id="cb7-10"><a href="#cb7-10" aria-hidden="true" tabindex="-1"></a><span class="dt">file</span> <span class="op">=</span> <span class="st">&quot;logs/cha.log&quot;</span></span>
-<span id="cb7-11"><a href="#cb7-11" aria-hidden="true" tabindex="-1"></a><span class="dt">level</span> <span class="op">=</span> <span class="st">&quot;info&quot;</span></span></code></pre></div>
+<div class="sourceCode" id="cb6"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="va">CHA_CONFIG</span><span class="op">=</span>/etc/cha/cha-config <span class="ex">./start-cha.sh</span></span></code></pre></div>
+<p><code>app.toml</code> selects the startup vault and holds web and
+logging settings. Each other <code>.toml</code> file is one vault:</p>
+<div class="sourceCode" id="cb7"><pre class="sourceCode toml"><code class="sourceCode toml"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="co"># app.toml</span></span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a><span class="dt">vault</span> <span class="op">=</span> <span class="st">&quot;Personal&quot;</span></span>
+<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a><span class="kw">[web]</span></span>
+<span id="cb7-5"><a href="#cb7-5" aria-hidden="true" tabindex="-1"></a><span class="dt">host</span> <span class="op">=</span> <span class="st">&quot;0.0.0.0&quot;</span></span>
+<span id="cb7-6"><a href="#cb7-6" aria-hidden="true" tabindex="-1"></a><span class="dt">port</span> <span class="op">=</span> <span class="dv">8086</span></span>
+<span id="cb7-7"><a href="#cb7-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-8"><a href="#cb7-8" aria-hidden="true" tabindex="-1"></a><span class="kw">[logging]</span></span>
+<span id="cb7-9"><a href="#cb7-9" aria-hidden="true" tabindex="-1"></a><span class="dt">file</span> <span class="op">=</span> <span class="st">&quot;logs/cha.log&quot;</span></span>
+<span id="cb7-10"><a href="#cb7-10" aria-hidden="true" tabindex="-1"></a><span class="dt">level</span> <span class="op">=</span> <span class="st">&quot;info&quot;</span></span></code></pre></div>
+<div class="sourceCode" id="cb8"><pre class="sourceCode toml"><code class="sourceCode toml"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="co"># personal.toml</span></span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="dt">vault_name</span> <span class="op">=</span> <span class="st">&quot;Personal&quot;</span></span>
+<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a><span class="dt">data</span> <span class="op">=</span> <span class="st">&quot;/var/lib/cha/workspace.sqlite3&quot;</span></span>
+<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a><span class="dt">mirror</span> <span class="op">=</span> <span class="st">&quot;/home/user/cha-mirror&quot;</span></span>
+<span id="cb8-5"><a href="#cb8-5" aria-hidden="true" tabindex="-1"></a><span class="dt">modify</span> <span class="op">=</span> <span class="st">&quot;/home/user/cha-modify&quot;</span></span></code></pre></div>
 <p><code>mirror</code> is optional; omitting it disables filesystem
 mirroring. <code>modify</code> is also optional and names the directory
 used by CHA.app&#39;s Import and Export menu items. Relative
 <code>data</code>, <code>mirror</code>, <code>modify</code>, and
-<code>logging.file</code> values resolve from the external config&#39;s
-directory. A <code>modify</code> directory may not contain the external
-config or database, because the macOS Export operation replaces that
+<code>logging.file</code> values resolve from the configuration
+directory. A <code>modify</code> directory may not contain the
+configuration directory or database, because the macOS Export operation replaces that
 directory. The mirror root must already exist and be a directory.
-Console Import additionally requires the config file to be outside the
-source workspace, preventing the process config itself from becoming an
+Console Import additionally requires the configuration directory to be outside
+the source workspace, preventing process config files from becoming an
 imported metadata row. Console Import and Export acquire the same
 non-blocking database lease as runtime, so they remain deliberately
 offline.</p>
-<p>The macOS zip contains <code>CHA.app</code> and the root
-<code>cha.toml</code> example. CHA.app keeps its active config at
-<code>~/Library/Application Support/CHA/cha.toml</code>; a new active
-config uses <code>modify = &quot;modify&quot;</code>, relative to that
+<p>The macOS zip contains <code>CHA.app</code> and the tracked
+<code>cha-config</code> example. CHA.app keeps its active config at
+<code>~/Library/Application Support/CHA/</code>; a new active
+config writes <code>app.toml</code> selecting <code>Personal</code> and
+<code>personal.toml</code> with
+<code>modify = &quot;modify&quot;</code>, relative to that
 directory.</p>
 <p>A new database is created only after a source has been collected and
 validated successfully. Normal runtime and export require schema v2.
@@ -1287,12 +1295,12 @@ and back up both the database and metadata tree. Put the external
 configuration outside that tree, point its <code>data</code> setting at
 the existing <code>workspace.sqlite3</code>, then run the import and
 restart with the same configuration:</p>
-<pre class="console"><code>$ chaweb --config=/srv/cha/cha.toml --import /srv/cha/workspace
-$ chaweb --config=/srv/cha/cha.toml</code></pre>
+<pre class="console"><code>$ chaweb --config=/srv/cha/cha-config --vault=Personal --import /srv/cha/workspace
+$ chaweb --config=/srv/cha/cha-config</code></pre>
 <p>The first command upgrades a valid v1 database in place, preserving
 its sessions while importing the directory metadata. The second command
 is normal server mode; it reads application settings from
-<code>cha.toml</code> and all workspace content from SQLite. The
+the configuration directory and all workspace content from SQLite. The
 metadata tree may remain as a backup, but runtime no longer reads
 it.</p>
 <p><code>has_legacy_session_databases()</code> in <a href="../src/session/session_storage_layout.cpp">session_storage_layout.cpp</a>

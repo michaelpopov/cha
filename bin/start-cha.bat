@@ -1,7 +1,7 @@
 @echo off
 setlocal
 
-set "CONFIG=..\cha.toml"
+set "CONFIG=..\cha-config"
 set "IMPORT_SEED=import-seed"
 
 rem Starts CHA from this directory. The real config lives outside it.
@@ -14,11 +14,11 @@ if not exist "%EXECUTABLE%" (
     echo start-cha: no executable at %EXECUTABLE% 1>&2
     exit /b 1
 )
-if not exist "%CONFIG_PATH%" (
-    echo start-cha: no configuration file at %CONFIG_PATH% 1>&2
-    echo start-cha: copy and edit %HERE%\cha.toml.example 1>&2
+if not exist "%CONFIG_PATH%\app.toml" (
+    echo start-cha: no configuration directory at %CONFIG_PATH% 1>&2
+    echo start-cha: copy and edit %HERE%\cha-config.example 1>&2
     echo start-cha: then initialize its database explicitly: 1>&2
-    echo   "%EXECUTABLE%" --config="%CONFIG_PATH%" --import "%IMPORT_SEED_PATH%" 1>&2
+    echo   "%EXECUTABLE%" --config="%CONFIG_PATH%" --vault="Personal" --import "%IMPORT_SEED_PATH%" 1>&2
     exit /b 1
 )
 

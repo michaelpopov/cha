@@ -10,6 +10,7 @@ require recovery-specific API models.
 | UI need | API |
 | --- | --- |
 | Load startup and discovery data | `GET /api/v1/bootstrap` |
+| Switch the active vault | `POST /api/v1/vault/switch` |
 | Read character detail | `GET /api/v1/characters/{character_id}` |
 | Update a character's provider and style | `PATCH /api/v1/characters/{character_id}` |
 | List one forum's sessions | `GET /api/v1/forums/{forum}/sessions` |
@@ -32,6 +33,8 @@ live-session API remains the base for Chat.
 
 ```json
 {
+  "vault_name": "Personal",
+  "vaults": ["Personal", "Projects"],
   "initial_forum_id": "builtin-entrance",
   "initial_session_id": "builtin-welcome",
   "characters": [],
@@ -39,6 +42,12 @@ live-session API remains the base for Chat.
   "recent_sessions": []
 }
 ```
+
+`vault_name` is the canonical active vault. `vaults` is the sorted registry and
+contains `vault_name`. Other bootstrap properties describe that same vault.
+`POST /api/v1/vault/switch` takes `{"vault_name":"Projects"}` and returns empty
+`204` on success; the browser then performs a full reload. Session snapshots
+do not carry vault identity.
 
 The server materializes and validates the database's committed configuration as
 one immutable `Workspace`. Its HTTP projection contains workspace entities plus

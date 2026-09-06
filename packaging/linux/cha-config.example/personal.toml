@@ -1,0 +1,4 @@
+vault_name = "Personal"
+data = "cha.sqlite3"
+# mirror = "mirror"
+# modify = "modify"

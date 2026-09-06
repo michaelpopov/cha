@@ -153,7 +153,8 @@ fi
 if find "$application" -type f \( \
     -name '*.sqlite3' -o -name '*.sqlite' -o -name '*.db' \
     -o -name '*-wal' -o -name '*-shm' -o -name '*-journal' \
-    -o -name '*.cha-lock' -o -name '*.openai-auth.json' \) -print -quit | grep -q .; then
+    -o -name '*.cha-lock' -o -name '*.openai-auth.json' \
+    -o -name 'openai-auth.json' \) -print -quit | grep -q .; then
     echo "package check: a database, sidecar, journal, or lock leaked into CHA.app" >&2
     exit 1
 fi
@@ -187,9 +188,8 @@ done
 echo "==> Testing the embedded runtime from the assembled bundle"
 bundle_test="$temporary/bundle-test"
 mkdir -p "$bundle_test/logs"
-cat >"$bundle_test/cha.toml" <<EOF
-data = "cha.sqlite3"
-modify = "modify"
+cat >"$bundle_test/app.toml" <<EOF
+vault = "Personal"
 
 [web]
 host = "127.0.0.1"
@@ -199,6 +199,11 @@ port = 0
 file = "logs/cha.log"
 level = "info"
 EOF
+cat >"$bundle_test/personal.toml" <<EOF
+vault_name = "Personal"
+data = "cha.sqlite3"
+modify = "modify"
+EOF
 xcrun clang \
     -target "arm64-apple-macos$deployment_target" \
     -I "$repository/packaging/macos" \
@@ -207,26 +212,28 @@ xcrun clang \
     "$repository/packaging/macos/runtime-smoke.c" \
     -o "$bundle_test/runtime-smoke"
 DYLD_LIBRARY_PATH="$contents/Frameworks" "$bundle_test/runtime-smoke" \
-    "$bundle_test/cha.toml" \
+    "$bundle_test" \
     "$resources/import-seed" \
     "$resources"
 cmake -E remove_directory "$bundle_test"
 
 # The browser suite and the upgrade check both expect the flat Linux package,
 # down to files CHA.app has no use for: webapp/e2e/start-cha.mjs refuses to run
-# without start-cha.sh and cha.toml.example. Both are staged here to satisfy
+# without start-cha.sh and cha-config.example. Both are staged here to satisfy
 # that assertion; the bundle itself ships neither.
 echo "==> Testing the assembled application through production chaweb"
 test_application="$temporary/test-application"
 mkdir -p "$test_application"
 cp "$native_build/chaweb" "$test_application/chaweb"
 cp "$repository/bin/start-cha.sh" "$test_application/start-cha.sh"
-cp "$repository/packaging/linux/cha.toml.example" "$test_application/cha.toml.example"
+cp -R "$repository/packaging/linux/cha-config.example" \
+    "$test_application/cha-config.example"
 cp -R "$resources/import-seed" "$test_application/import-seed"
 cp -R "$resources/web" "$test_application/web"
 chmod 755 "$test_application"
 chmod 755 "$test_application/chaweb" "$test_application/start-cha.sh"
-chmod -R u=rwX,go=rX "$test_application/web" "$test_application/import-seed"
+chmod -R u=rwX,go=rX "$test_application/web" "$test_application/import-seed" \
+    "$test_application/cha-config.example"
 chmod 600 "$test_application/import-seed/.env"
 
 "$repository/scripts/check-linux-package.sh" "$test_application"
@@ -242,7 +249,9 @@ codesign --force --sign - --timestamp=none "$application"
 codesign --verify --deep --strict "$application"
 
 echo "==> Writing copyable archive"
-cp "$repository/cha.toml" "$archive_contents/cha.toml"
+mkdir -p "$archive_contents/cha-config"
+cp "$repository/cha-config/app.toml" "$archive_contents/cha-config/app.toml"
+cp "$repository/cha-config/dev.toml" "$archive_contents/cha-config/dev.toml"
 rm -f "$archive"
 ditto -c -k --sequesterRsrc "$archive_contents" "$archive"
 

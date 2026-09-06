@@ -15,7 +15,7 @@ port=${CHA_UPGRADE_TEST_PORT:-$((20000 + ($$ % 20000)))}
 test_root=$(mktemp -d)
 import_source="$test_root/import-source"
 database="$test_root/cha.sqlite3"
-config="$test_root/cha.toml"
+config="$test_root/cha-config"
 application="$test_root/cha"
 server_pid=
 
@@ -59,8 +59,9 @@ start_server() {
 cp -R "$repository/webapp/e2e/fixtures/workspace" "$import_source"
 cp -R "$source_application" "$application"
 
-cat >"$config" <<EOF
-data = "cha.sqlite3"
+mkdir -p "$config"
+cat >"$config/app.toml" <<EOF
+vault = "Personal"
 [web]
 host = "127.0.0.1"
 port = $port
@@ -68,8 +69,12 @@ port = $port
 file = "cha.log"
 level = "off"
 EOF
+cat >"$config/personal.toml" <<EOF
+vault_name = "Personal"
+data = "../cha.sqlite3"
+EOF
 
-"$application/chaweb" --config="$config" --import "$import_source"
+"$application/chaweb" --config="$config" --vault="Personal" --import "$import_source"
 cmake -E remove_directory "$import_source"
 
 start_server

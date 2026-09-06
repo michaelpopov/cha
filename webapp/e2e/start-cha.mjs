@@ -186,7 +186,8 @@ data = ${JSON.stringify(databaseB)}
 if (packagedApplication) {
   for (const required of [
     'chaweb',
-    'cha.toml.example',
+    'cha-config.example/app.toml',
+    'cha-config.example/personal.toml',
     'import-seed/.env',
     'start-cha.sh',
     'web/index.html',

@@ -2,7 +2,7 @@
 
 # The real configuration is customer-owned and lives outside this replaceable
 # application directory. Relative paths in it are resolved from its directory.
-CONFIG='../cha.toml'
+CONFIG='../cha-config'
 IMPORT_SEED='import-seed'
 
 set -eu
@@ -32,12 +32,12 @@ if [ ! -x "$here/chaweb" ]; then
     echo "start-cha: no executable at $here/chaweb" >&2
     exit 1
 fi
-if [ ! -f "$config" ]; then
-    echo "start-cha: no configuration file at $config" >&2
+if [ ! -f "$config/app.toml" ]; then
+    echo "start-cha: no configuration directory at $config" >&2
     echo "start-cha: copy and edit the packaged example:" >&2
-    echo "  cp \"$here/cha.toml.example\" \"$config\"" >&2
+    echo "  cp -R \"$here/cha-config.example\" \"$config\"" >&2
     echo "start-cha: then initialize its database explicitly:" >&2
-    echo "  \"$here/chaweb\" --config=\"$config\" --import \"$import_seed\"" >&2
+    echo "  \"$here/chaweb\" --config=\"$config\" --vault=\"Personal\" --import \"$import_seed\"" >&2
     exit 1
 fi
 

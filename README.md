@@ -8,8 +8,7 @@ servers. The `chaweb` process serves the browser client and its HTTP/SSE API.
 Initialize a development database once, then start the staged application:
 
 ```sh
-cp packaging/linux/cha.toml.example cha.toml
-make import-dev CONFIG="$PWD/cha.toml"
+make import-dev CONFIG="$PWD/cha-config" VAULT=Dev
 make run
 ```
 
@@ -21,7 +20,7 @@ that forum's configuration, not in the browser.
 
 Welcome is private to the running server and is deleted on shutdown. All stored
 sessions and workspace metadata remain in the SQLite database selected by the
-external `cha.toml`.
+active vault.
 
 The chat input also accepts these controller-level commands:
 
@@ -73,12 +72,19 @@ unambiguous, case-insensitive full or partial persona ID or display name, then
 saves the selected ID as `default_persona` in the forum config. Later prompts
 in the session are attributed to that persona.
 
-The external application configuration supplies the database, web listener,
-and diagnostic logging settings in one file:
+The external application configuration is a directory. `app.toml` selects the
+startup vault and holds web and logging settings. Each other `.toml` file is
+one vault and supplies that vault's data paths:
+
+```text
+cha-config/
+├── app.toml
+└── personal.toml
+```
 
 ```toml
-data = "/var/lib/cha/workspace.sqlite3"
-mirror = "/home/user/cha-mirror"
+# app.toml
+vault = "Personal"
 
 [web]
 host = "0.0.0.0"
@@ -87,6 +93,13 @@ port = 8086
 [logging]
 file = "logs/cha.log"
 level = "info"
+```
+
+```toml
+# personal.toml
+vault_name = "Personal"
+data = "/var/lib/cha/workspace.sqlite3"
+mirror = "/home/user/cha-mirror"
 ```
 
 The optional `mirror` setting continuously writes each persistent session as
@@ -194,16 +207,16 @@ Search queries, progress, retrieved pages, annotations, and tool-call details
 stay inside the provider interaction. Only the character's synthesized answer
 text enters the transcript.
 
-Provider secrets belong in the inherited environment or optional root `.env`.
-The `.env` file is imported into SQLite as durable configuration, so the entire
-database must be protected and backed up like a secret. An inherited value wins
-over `.env`, even when the inherited value is empty. Import temporarily overlays
-only otherwise-absent variables while it validates providers, then restores the
-process environment even when validation fails.
+Provider secrets belong in the inherited environment or optional `.env` in the
+configuration directory. An inherited value wins over `.env`, even when the
+inherited value is empty. Import temporarily overlays only otherwise-absent
+variables while it validates providers, then restores the process environment
+even when validation fails. OpenAI subscription credentials live in
+`openai-auth.json` in the same directory.
 
 Normal startup takes the application root for installed `web/` assets from the
-executable directory, or from `--root`. Relative `data` and `logging.file`
-paths resolve against the external configuration file's directory. Template
+executable directory, or from `--root`. Relative `data`, `mirror`, `modify`, and
+`logging.file` paths resolve against the configuration directory. Template
 includes resolve beneath the private materialized workspace.
 
 ### Command line and configuration maintenance
@@ -211,21 +224,23 @@ includes resolve beneath the private materialized workspace.
 The complete public command interface is:
 
 ```text
-chaweb --config=CONFIG [--root PATH]
-chaweb --config=CONFIG --import DIRECTORY
-chaweb --config=CONFIG --export DIRECTORY
-chaweb --config=CONFIG --upload
-chaweb --config=CONFIG --download
+chaweb --config=CONFIG_DIR [--root PATH]
+chaweb --config=CONFIG_DIR --vault=NAME --import DIRECTORY
+chaweb --config=CONFIG_DIR --vault=NAME --export DIRECTORY
+chaweb --config=CONFIG_DIR --vault=NAME --upload
+chaweb --config=CONFIG_DIR --vault=NAME --download
 ```
 
-`--config` is mandatory and names the external unified TOML file. Its `data`
-setting names the SQLite file containing sessions and workspace metadata.
-Normal startup requires a valid schema-v2 database; a missing database is
-created only by a successful import. For import, the external config file must
-be outside the workspace source directory.
+`--config` is mandatory and names the configuration directory. Server mode
+opens the vault selected by `app.toml`. `--vault` is required for import,
+export, upload, and download, and names the vault those commands act on. That
+vault's `data` setting names the SQLite file containing sessions and workspace
+metadata. Normal startup requires a valid schema-v2 database; a missing
+database is created only by a successful import. For import, the configuration
+directory must be outside the workspace source directory.
 
-Import stores every regular workspace `.toml` and `.md` file and optional root
-`.env`, but explicitly excludes legacy root `app.toml` and `workspace.toml`.
+Import stores every regular workspace `.toml` and `.md` file, but explicitly
+excludes `.env`, legacy root `app.toml`, and `workspace.toml`.
 It follows no symlinks and stores no other file type. An included file must
 therefore be in this set:
 `$$(snippet.txt)` fails validation, while an appropriate stored
@@ -250,7 +265,8 @@ character, and a forum's default persona; each persists through SQLite before
 publication.
 
 The database, rollback journal, WAL/SHM sidecars, companion lock, private
-runtime tree, and exported `.env` must remain accessible only to their owner.
+runtime tree, configuration-directory `.env`, and `openai-auth.json` must
+remain accessible only to their owner.
 CHA enforces this for files it manages. Naively copying a live WAL database is
 unsafe; the R2 commands acquire the database lease, and upload checkpoints the
 WAL before transferring the main database file.
@@ -303,11 +319,12 @@ installation:
    contains regular `.sqlite3` files, first use the archived migration-capable
    build on a disposable copy, verify the unified v1 database, and finish legacy
    cleanup there. The new import intentionally refuses both incomplete states.
-3. Create one external `cha.toml` containing `data`, `[web]`, and `[logging]`.
+3. Create one configuration directory. Put `vault`, `[web]`, and `[logging]`
+   in `app.toml`, and put `vault_name` plus `data` in a vault TOML file.
 4. Run the import and inspect its file-count summary:
 
    ```sh
-   chaweb --config=/absolute/path/cha.toml \
+   chaweb --config=/absolute/path/cha-config --vault=Personal \
           --import /absolute/path/workspace
    ```
 
@@ -317,14 +334,14 @@ installation:
    with the source:
 
    ```sh
-   chaweb --config=/absolute/path/cha.toml \
+   chaweb --config=/absolute/path/cha-config --vault=Personal \
           --export /absolute/path/exported-workspace
    ```
 
 7. Move the original configuration directory aside and start only with:
 
    ```sh
-   chaweb --config=/absolute/path/cha.toml
+   chaweb --config=/absolute/path/cha-config
    ```
 
    Open and resume a session, exercise the three narrow settings, restart, and
@@ -336,13 +353,29 @@ installation:
 Do not delete the old backup as part of the cutover. Backup retention and
 eventual removal are operator decisions.
 
-The Linux package contains `cha.toml.example` and `import-seed/` as source
-material, not live storage. Copy the example to `../cha.toml`, replace the
-secret placeholder, and initialize the configured database explicitly with
-`chaweb --config=../cha.toml --import import-seed` before running
-`start-cha.sh`. The real configuration and database remain outside the
-replaceable application directory; the launcher writes process output to
-`chaweb.log` beside the executable.
+The Linux package contains `cha-config.example/` and `import-seed/` as source
+material, not live storage. Copy the example directory to `../cha-config`,
+replace the secret placeholder, and initialize the configured database
+explicitly with
+`chaweb --config=../cha-config --vault="Personal" --import import-seed`
+before running `start-cha.sh`. The real configuration and database remain
+outside the replaceable application directory; the launcher writes process
+output to `chaweb.log` beside the executable.
+
+There is no automatic migration from a single `cha.toml`. To move an existing
+installation:
+
+1. Create a configuration directory. Put selection and web/logging settings in
+   `app.toml`; put data, mirror, and modify paths in a vault TOML file.
+2. Adjust relative paths for the new base directory. For a root database this
+   commonly changes `data = "cha.sqlite3"` to `data = "../cha.sqlite3"`; the
+   database itself does not move.
+3. Move `.env` to the configuration directory if it was beside the database.
+4. Move `<database>.openai-auth.json` to
+   `<config-directory>/openai-auth.json`, preserving private permissions, or
+   sign in again.
+
+R2 object keys still come from database filenames.
 
 `CHA.app` performs its own setup. On first launch it asks for an OpenAI API key
 and prepares everything it needs. Later launches reuse the conversations and

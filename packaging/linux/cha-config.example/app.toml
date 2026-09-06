@@ -1,4 +1,4 @@
-data = "cha.sqlite3"
+vault = "Personal"
 
 [web]
 host = "0.0.0.0"

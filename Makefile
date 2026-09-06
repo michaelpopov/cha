@@ -35,8 +35,8 @@ run: build-web web-stage
 	./bin/start-cha.sh
 
 import-dev: build-web
-	@test -n "$(CONFIG)" || (echo "usage: make import-dev CONFIG=/path/to/cha.toml" >&2; exit 2)
-	./build/ninja/chaweb --config="$(CONFIG)" --import packaging/linux/import-seed
+	@test -n "$(CONFIG)" && test -n "$(VAULT)" || (echo "usage: make import-dev CONFIG=/path/to/cha-config VAULT=Personal" >&2; exit 2)
+	./build/ninja/chaweb --config="$(CONFIG)" --vault="$(VAULT)" --import packaging/linux/import-seed
 
 # The API server behind 'npm run dev'. It listens on the port the Vite proxy
 # targets, which is not the port the staged loop above uses; see
@@ -44,7 +44,7 @@ import-dev: build-web
 # It stages only because chaweb refuses to start without a web/index.html; the
 # editable loop serves its shell from Vite and never reads the staged one.
 run-web-dev: build-web web-stage
-	@test -n "$(CONFIG)" || (echo "usage: make run-web-dev CONFIG=/path/to/cha.toml" >&2; exit 2)
+	@test -n "$(CONFIG)" || (echo "usage: make run-web-dev CONFIG=/path/to/cha-config" >&2; exit 2)
 	./build/ninja/chaweb --root bin --config="$(CONFIG)"
 
 clean-san:

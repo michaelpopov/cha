@@ -73,7 +73,7 @@ private struct DownloadDestination {
 
 @MainActor
 private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
-    WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
+    NSMenuDelegate, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
     private let fileManager = FileManager.default
     private var window: NSWindow!
     private var webView: WKWebView!
@@ -94,8 +94,12 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
             .appendingPathComponent(applicationName, isDirectory: true)
     }
 
-    private var configFile: URL {
-        supportDirectory.appendingPathComponent("cha.toml")
+    private var appConfigFile: URL {
+        supportDirectory.appendingPathComponent("app.toml")
+    }
+
+    private var personalVaultFile: URL {
+        supportDirectory.appendingPathComponent("personal.toml")
     }
 
     private var environmentFile: URL {
@@ -187,6 +191,7 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
             keyEquivalent: "")
         downloadMenuItem.target = self
         updateDatabaseMenuItems()
+        databaseMenu.delegate = self
         databaseItem.submenu = databaseMenu
         mainMenu.addItem(databaseItem)
 
@@ -247,12 +252,11 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
         try createPrivateDirectory(supportDirectory.appendingPathComponent("logs", isDirectory: true))
 
         // Written once to give a new installation something that works, then
-        // left alone: cha.toml is the user's file, and CHA reads whatever it
+        // left alone: these files are the user's, and CHA reads whatever it
         // finds there on the next launch.
-        if !fileManager.fileExists(atPath: configFile.path) {
+        if !fileManager.fileExists(atPath: appConfigFile.path) {
             try writePrivateFile("""
-                data = "cha.sqlite3"
-                modify = "modify"
+                vault = "Personal"
 
                 # CHA.app does not use this section. It always listens on
                 # 127.0.0.1 on a port the system picks, reachable only from
@@ -266,7 +270,15 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
                 file = "logs/cha.log"
                 level = "info"
 
-                """, to: configFile)
+                """, to: appConfigFile)
+        }
+        if !fileManager.fileExists(atPath: personalVaultFile.path) {
+            try writePrivateFile("""
+                vault_name = "Personal"
+                data = "cha.sqlite3"
+                modify = "modify"
+
+                """, to: personalVaultFile)
         }
 
         try applyInheritedOrSavedAPIKey()
@@ -405,12 +417,12 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
     }
 
     // Only seeds a database that is not there yet; the runtime decides that,
-    // because the config file is what names the database. Import does not
+    // because app.toml names the startup vault. Import does not
     // require an API key.
     private func importInitialDatabase() throws {
         let seed = try bundledURL("import-seed", isDirectory: true)
         var bridgeError: UnsafeMutablePointer<CChar>?
-        let imported = configFile.path.withCString { configPath in
+        let imported = supportDirectory.path.withCString { configPath in
             seed.path.withCString { seedPath in
                 cha_runtime_import_initial_database(
                     configPath, seedPath, &bridgeError)
@@ -433,7 +445,7 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
         }
         runtimeToken = UUID().uuidString + UUID().uuidString
         var bridgeError: UnsafeMutablePointer<CChar>?
-        let created = configFile.path.withCString { configPath in
+        let created = supportDirectory.path.withCString { configPath in
             resources.path.withCString { resourcePath in
                 runtimeToken.withCString { token in
                     cha_runtime_create(
@@ -501,7 +513,7 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
         alert.alertStyle = .warning
         alert.messageText = "Import workspace configuration?"
         alert.informativeText =
-            "CHA will replace its workspace configuration with the contents of the directory named by “modify” in cha.toml."
+            "CHA will replace its workspace configuration with the contents of the directory named by “modify” in the active vault's configuration."
         alert.addButton(withTitle: "Import")
         alert.addButton(withTitle: "Cancel")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
@@ -582,6 +594,10 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
                     detail: detail)
             }
         }
+    }
+
+    func menuNeedsUpdate(_: NSMenu) {
+        updateDatabaseMenuItems()
     }
 
     private func updateDatabaseMenuItems() {

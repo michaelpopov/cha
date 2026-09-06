@@ -1,74 +1,45 @@
-# Block 4: Native application, packaging, migration, and acceptance
+# Block 4: Launchers, packages, and migration
 
-## Task and prerequisites
+## Goal
 
-Finish integration and documentation for CHA vaults. This is block 4, the last
-of four sequential implementation blocks. This brief is self-contained; no
-previous chat or block file is required. Verify that the repository already
-implements these capabilities:
+Finish the vault feature by updating the remaining launchers, packages,
+development files, and documentation to use a configuration directory. This is
+the last of four sequential blocks and this brief is self-contained.
 
-- A validated configuration directory and fixed vault registry, selected-vault
-  startup/console commands, and application-wide `.env`/OAuth storage.
-- `ApplicationRuntime::current_vault()` and tested in-process
-  `switch_vault(name)`, using stable runtime objects and the same listener.
-  Runtime/native maintenance reads current paths inside the lifecycle lock.
-- The C++ macOS bridge accepts a configuration directory, seeds the selected
-  missing database through directory discovery, and derives `can_modify` from
-  the current vault instead of caching a startup flag.
-- Bootstrap carries canonical `vault_name` and the `vaults` list. Session
-  snapshots carry the name captured at opening. The switch route returns
-  204/400/500, and the browser selector reloads `/` on success or mismatched
-  vault identity. Protocol, browser, and runtime tests pass.
-- Process/browser test harnesses already generate directory configurations.
-  Their packaged-file expectations, actual package examples, and native Swift
-  first-run setup still need the migration owned by this block.
+Blocks 1–3 already implement directory configuration, explicit `--vault` for
+console maintenance, in-process switching, the browser selector, and shared
+`.env`/OAuth storage. Bootstrap contains `vault_name` and `vaults`; session
+snapshots intentionally have no vault field. Do not redesign those parts, add
+cross-tab coordination, or change runtime switching. This block only fixes
+consumers that still expect one `cha.toml` file.
 
-Identify missing prerequisites instead of silently implementing earlier blocks.
-Inspect equivalent code already completed and avoid redoing it. At completion,
-the native application, development launcher, Linux packages, and documentation
-all use the new layout, and the full feature's acceptance checks are accounted
-for.
+Read `AGENTS.md` and `CLAUDE.md`, inspect the worktree, and preserve unrelated
+changes. This block explicitly includes the documentation edits listed below.
+Never package actual credentials or runtime data. The existing import seed's
+placeholder `.env` remains intentional.
 
-## Working rules
+## Required layout
 
-Read applicable `AGENTS.md`/`CLAUDE.md`, inspect `git status`, preserve unrelated
-changes, and keep changes small. This block explicitly includes the `docs/`
-edits listed below as part of the requested implementation. Do not expand that
-into an unrelated documentation rewrite. Smaller commits are optional.
-
-Never commit or package actual credentials, private `.env` files, local
-databases, or runtime state. Existing intentionally tracked seed/example files
-remain part of the package, including the seed's placeholder `.env`. Use
-isolated temporary configurations/databases for verification. Migration of a
-real user's private files is manual; document it rather than modifying those
-files as an implementation side effect. Do not add compatibility code or an
-automatic migration subsystem. Paths below are repository-relative.
-
-## Final behavior to integrate and document
-
-`--config` names a directory. There is no old single-file compatibility. The
-directory holds required `app.toml` with application settings and selection,
-plus one vault definition per other direct-child `.toml` file:
+Launchers and examples use a directory containing `app.toml` and one TOML file
+per vault:
 
 ```text
 cha-config/
 ├── app.toml
-├── personal.toml
-├── openai-auth.json
-└── .env
+└── personal.toml
 ```
 
-Example `app.toml`:
+Linux example `app.toml`:
 
 ```toml
 vault = "Personal"
 
 [web]
-host = "127.0.0.1"
-port = 8080
+host = "0.0.0.0"
+port = 8086
 
 [logging]
-file = "cha.log"
+file = "logs/cha.log"
 level = "info"
 ```
 
@@ -76,153 +47,71 @@ Example `personal.toml`:
 
 ```toml
 vault_name = "Personal"
-data = "personal.sqlite3"
-# mirror = "personal-mirror"
-# modify = "personal-edit"
-```
-
-All relative paths resolve against the configuration directory. The authored
-vault name, not its filename, identifies it. Names match using the implemented
-ASCII case folding, with non-ASCII bytes unchanged, and retain canonical
-spelling for display. Discovery is nonrecursive and fixed until restart.
-Invalid definitions, duplicate names/database paths/database filenames, and
-unsafe modify overlaps fail discovery. Optional database/directory paths need
-not exist at discovery; normal startup requires a usable selected database.
-
-Exactly one vault is active globally. The selector switches in process,
-closes old live sessions without deleting stored sessions, keeps the same
-listener/port, and reloads the initiating browser to the target's Welcome
-session. New operations use the selected database, mirror, and modify paths.
-Other tabs check snapshot vault identity before applying state; missing old
-sessions can end in the existing bounded retry state. No per-tab vaults,
-watchers, or UI for editing vault definitions is introduced.
-
-The application loads `.env` once from the configuration directory without
-overriding inherited variables. One OAuth owner uses private
-`openai-auth.json` there; login and pending device authorization survive
-switching. Neither file is in workspace exports, mirrors, or R2 transfers.
-Console commands continue using the process environment for credentials.
-
-```text
-chaweb --config=CONFIG_DIR [--root PATH]
-chaweb --config=CONFIG_DIR --vault=NAME --import SOURCE_DIRECTORY
-chaweb --config=CONFIG_DIR --vault=NAME --export DESTINATION_DIRECTORY
-chaweb --config=CONFIG_DIR --vault=NAME --upload
-chaweb --config=CONFIG_DIR --vault=NAME --download
-```
-
-Console maintenance requires explicit `--vault`; normal server mode rejects
-it and uses `app.toml`. Console selection never changes the saved default.
-Console import/export retain explicit source/destination arguments. Native
-Import/Export use the current vault's optional `modify` and are unavailable
-without it. Native pre-runtime initial seeding is the private exception to
-console `--vault`: it resolves `app.toml` and seeds that vault if missing.
-R2 continues using the percent-encoded local database filename as its object
-key; duplicate filenames are rejected to prevent backup collisions.
-
-Successful switching saves the canonical selection using an atomic TOML
-rewrite. A failed save logs a warning and leaves the running vault changed
-but the previously saved default intact. Failed mirror rebuilding likewise
-logs and disables mirroring. Invalid target pre-checks leave the old vault
-untouched; failed reopening after retarget requires restart, with the old
-saved selection still present. Do not describe every failure as recoverable.
-
-## Implementation
-
-### macOS application and smoke setup
-
-In `packaging/macos/main.swift`, use the Application Support directory itself
-as the configuration argument instead of `configFile` pointing at `cha.toml`.
-Keep `.env` at `supportDirectory/.env`, where the runtime now reads it.
-
-On first run, when `app.toml` is missing, create complete `app.toml` selecting
-`Personal` with the existing web/logging settings and the comment explaining
-the native application's web-setting behavior. Create `personal.toml` with:
-
-```toml
-vault_name = "Personal"
 data = "cha.sqlite3"
-modify = "modify"
+# mirror = "mirror"
+# modify = "modify"
 ```
 
-Do not overwrite existing user vault definitions as part of first-run setup.
-Pass `supportDirectory.path` to both `cha_runtime_import_initial_database`
-and `cha_runtime_create`. Update Import alerts that currently mention
-`modify in cha.toml` to point to the active vault's configuration.
+Relative paths resolve from the configuration directory. Private installations
+may also contain `.env` and `openai-auth.json`; example directories must not.
 
-Make the Database menu refresh capabilities when opened: adopt
-`NSMenuDelegate`, assign the delegate to the appropriate menu, and invoke
-`updateDatabaseMenuItems()` in `menuNeedsUpdate(_:)`. A switch inside the web
-view must immediately affect availability of native Import/Export. Existing
-native transfer actions already call the runtime; verify they use current
-paths and still handle the bridge's fatal-error return correctly.
+## macOS application and package
 
-Review `packaging/macos/runtime_bridge.h` and `.cpp` to confirm block 1 removed
-the cached capability and changed the initial seed path. Update any stale
-comments, but do not reintroduce a separate native registry or selection.
+Update `packaging/macos/main.swift`:
 
-In `packaging/macos/runtime-smoke.c`, describe its first argument as a
-configuration directory. In `packaging/macos/package.sh`, write complete
-`app.toml` and `personal.toml` files under the smoke-test directory and pass
-that directory to the smoke binary. Also update the staged example files used
-by the packaged browser suite; this script currently copies the Linux example
-to satisfy those checks, so changing only the smoke config is insufficient.
+- Remove the single-file `configFile` property and pass
+  `supportDirectory.path` to `cha_runtime_import_initial_database` and
+  `cha_runtime_create`.
+- On first run, create missing `app.toml` and `personal.toml` files. Select
+  `Personal`, retain the native app's current web/logging values, and put
+  `data = "cha.sqlite3"` and `modify = "modify"` in the vault file. Never
+  overwrite an existing file.
+- Change the Import explanation that mentions `modify in cha.toml` to refer to
+  the active vault's configuration.
+- Refresh Database menu availability whenever that menu opens. Use
+  `NSMenuDelegate` and call the existing `updateDatabaseMenuItems()` from
+  `menuNeedsUpdate(_:)`.
 
-The archive must include the intended new repository configuration files in
-`cha-config/` instead of `cha.toml`. Copy those files explicitly, not an entire
-mutable local configuration directory that could contain `.env` or OAuth
-credentials.
+Update `packaging/macos/package.sh` and its runtime smoke fixture to pass a
+directory containing both TOML files. Stage the Linux
+`cha-config.example/` directory for the packaged browser checks. Replace the
+archive's copy of root `cha.toml` with explicit copies of the tracked
+`cha-config/app.toml` and `cha-config/dev.toml`; do not copy the whole mutable
+directory. The runtime bridge already accepts a directory and reads the current
+vault's capabilities, so it should need no functional changes.
 
-### Linux examples, launchers, and package checks
+## Linux package and launchers
 
 Replace `packaging/linux/cha.toml.example` with:
 
-- `packaging/linux/cha-config.example/app.toml`: `vault = "Personal"` plus
-  today's complete web/logging example settings.
-- `packaging/linux/cha-config.example/personal.toml`: `vault_name = "Personal"`,
-  `data = "cha.sqlite3"`, and commented optional mirror/modify examples.
-
-In `bin/start-cha.sh`, use `CONFIG='../cha-config'`. Require a directory
-containing `app.toml`. Update the setup hint to copy the example directory and
-seed the explicitly named vault:
-
-```bash
-cp -R "$here/cha-config.example" "$config"
-"$here/chaweb" --config="$config" --vault="Personal" --import "$import_seed"
+```text
+packaging/linux/cha-config.example/
+├── app.toml
+└── personal.toml
 ```
 
-Retain the launcher's current process/port handling. Do not turn it into a
-supervisor or use process restarting to implement switching.
+Use the examples above and update these consumers:
 
-Update these producers and consumers together:
+- `bin/start-cha.sh`: default to `../cha-config`, require `app.toml`, show how
+  to copy the example directory, and initialize with
+  `--vault="Personal" --import "$import_seed"`.
+- `bin/start-cha.bat`: make the equivalent path, setup-message, and import
+  changes. Do not add Windows packaging work.
+- `scripts/package-linux.sh`: copy `cha-config.example/` into the package.
+- `scripts/check-linux-package.sh`: expect the two example files and verify
+  their essential values and launcher command. Keep the existing package and
+  private-file checks; do not build another TOML validator in shell.
+- `scripts/test-linux-package-upgrade.sh`: generate temporary `app.toml` and
+  vault files and pass an explicit vault to import. Keep the existing proof
+  that replacing the application directory preserves the external database.
+- `webapp/e2e/start-cha.mjs`: require both example files in packaged mode
+  instead of `cha.toml.example`.
 
-- `scripts/package-linux.sh`: stage the new example directory.
-- `scripts/check-linux-package.sh`: expected top-level and nested entries,
-  configuration content checks, launcher default, and setup/import hint.
-- `scripts/test-linux-package-upgrade.sh`: use temporary directory configs and
-  explicit `--vault` for maintenance. Test the documented manual cutover;
-  do not imply that old single-file configurations still work automatically.
-- `webapp/e2e/start-cha.mjs`: require
-  `cha-config.example/app.toml` and its vault example in packaged mode instead
-  of `cha.toml.example`. Preserve its directory generation and two-vault test
-  setup from the earlier blocks.
-- `packaging/macos/package.sh`: stage that same example layout for its browser
-  package tests, and update corresponding comments/assertions.
+## Development files
 
-### Development configuration and Makefile
-
-Update `Makefile` usage and arguments:
-
-- `make import-dev CONFIG=/path/to/cha-config VAULT=Personal` supplies
-  `--vault="$(VAULT)"`. Require a non-empty `VAULT` along with `CONFIG` and
-  provide an accurate usage error.
-- `make run-web-dev CONFIG=/path/to/cha-config` passes the directory and does
-  not pass `--vault` in server mode.
-- `make run` uses the updated launcher's default configuration directory.
-
-Replace tracked root `cha.toml` with tracked `cha-config/app.toml` selecting
-`Dev` (`port = 0`, other web/logging values retained with paths adjusted) and
-`cha-config/dev.toml`:
+Replace root `cha.toml` with tracked `cha-config/app.toml` and
+`cha-config/dev.toml`. The app file selects `Dev` and retains the current
+development web/logging values. The vault file is:
 
 ```toml
 vault_name = "Dev"
@@ -230,54 +119,49 @@ data = "../cha.sqlite3"
 modify = "/tmp/modify"
 ```
 
-The development database remains at its existing root location. Update
-`.gitignore` to ignore `/cha-config/*` except those two intended tracked files;
-check that `openai-auth.json` and `.env` there are ignored. Preserve other
-existing secret/database ignores. Do not move private root `.env` or
-`cha.sqlite3.openai-auth.json`; document the manual move for the user.
+Update `.gitignore` so only those two files under `/cha-config/` are tracked.
+Local vault files, `.env`, `openai-auth.json`, databases, and logs remain
+ignored.
 
-### Documentation and manual migration
+Update `Makefile`:
 
-Update `README.md`: setup/copy/seed commands, application and vault TOML
-examples, configuration-directory `.env` and OAuth locations, CLI usage,
-Linux package contents, and migration steps. Include the explicit `VAULT`
-argument for `make import-dev`.
+- `make import-dev CONFIG=/path/to/cha-config VAULT=Personal` requires both
+  variables and passes `--vault="$(VAULT)"`.
+- `make run-web-dev CONFIG=/path/to/cha-config` passes the directory without
+  `--vault`.
+- `make run` continues through the updated launcher.
 
-Update `docs/MaintainerGuide.md`: the configuration-sources/location table,
-configuration examples, environment and credential paragraphs, maintenance
-commands, and the list of files deliberately excluded from workspace export.
-Distinguish console explicit source/destination arguments from native `modify`.
+## Documentation and migration
 
-Update `docs/web-ui/api-requirements.md` to include `vault_name` and `vaults`
-in bootstrap and describe snapshot identity/switching where that document
-describes those contracts. In `webapp/src/api/README.md`, note that
-`switchVault` is a 204 mutation like deletion.
+Update `README.md` and `docs/MaintainerGuide.md` where they describe setup,
+configuration, maintenance commands, package contents, `.env`, and OAuth
+credentials. Keep the explanation concise. Document this manual migration:
 
-Document the one-time manual migration accurately:
+1. Create a configuration directory. Put selection and web/logging settings in
+   `app.toml`; put data, mirror, and modify paths in a vault TOML file.
+2. Adjust relative paths for the new base directory. For a root database this
+   commonly changes `data = "cha.sqlite3"` to `data = "../cha.sqlite3"`; the
+   database itself does not move.
+3. Move `.env` to the configuration directory if it was beside the database.
+4. Move `<database>.openai-auth.json` to
+   `<config-directory>/openai-auth.json`, preserving private permissions, or
+   sign in again.
 
-1. Create the configuration directory. Move web/logging settings into
-   `app.toml`, add its required `vault`, and move data/mirror/modify settings
-   into a named vault file. There is no automatic compatibility path.
-2. Adjust relative paths if the configuration files move to a different
-   directory. For example, root `data = "cha.sqlite3"` becomes
-   `data = "../cha.sqlite3"` when using the new root `cha-config/` directory.
-   Existing database files need not move.
-3. Move `.env` from the database directory to the configuration directory by
-   hand. Shell variables still take precedence.
-4. Move `<database>.openai-auth.json` to `openai-auth.json` in the configuration
-   directory by hand, preserving private permissions, or sign in again through
-   Settings. Do not copy credentials into example files or package artifacts.
-5. Keep the database filename when retaining its R2 backup identity. R2 objects
-   are not renamed to vault names.
+There is no automatic migration or old single-file compatibility. R2 object
+keys still come from database filenames.
 
-Use `rg` to find stale config-file examples, usage text, generated configs, and
-package assertions. Leave references to the historical `app.toml` inside an
-import source alone; it is unrelated to the reserved application config file.
+Update `docs/web-ui/api-requirements.md` for the actual browser contract:
+bootstrap has `vault_name` and `vaults`, and
+`POST /api/v1/vault/switch` is followed by a full reload on success. Do not add
+vault identity to session snapshots. In `webapp/src/api/README.md`, describe
+`switchVault` as an empty 204 mutation.
+
+Use `rg` to find remaining user-facing references to the old external
+`cha.toml`. Leave unrelated `app.toml` files inside import workspaces alone.
 
 ## Verification
 
-Establish baseline results for available C++/browser checks before editing.
-After changes run from the repository root:
+Run:
 
 ```bash
 make test
@@ -285,71 +169,11 @@ make test
 make web-e2e
 ```
 
-Run `bash -n` separately on each edited shell script, including the launcher,
-Linux package/check/upgrade scripts, and macOS packaging script. Run the
-existing Linux package validation/upgrade workflow and
-`make package-linux VERSION=dev` in a supported packaging environment. On a
-Mac with Xcode, run `./packaging/macos/package.sh <version>` with an appropriate
-local test version; this must cover the runtime smoke test and packaged browser
-checks. If a platform/toolchain is unavailable, identify the exact unrun checks
-and run the available compile/fixture checks. Do not claim full platform
-verification from `make build` alone.
+Run `bash -n` on every edited shell script and run the existing Linux package
+integrity and upgrade checks. On macOS, run the package script or its available
+Swift/runtime smoke checks. Report any unavailable platform check explicitly.
 
-Inspect actual package contents and native first-run output. Test using two
-isolated vaults with distinct databases and optional settings: switch in the
-web view, reopen the Database menu, exercise the current vault's native
-operations, and restart to check saved selection. Verify a fresh native seed
-creates the configured missing database without console `--vault`, and does
-not replace an existing database. Do not use live R2 credentials for acceptance;
-use existing local transfer mocks/fixtures where transfer verification needs
-credentials.
-
-## Final acceptance checklist
-
-Map every item to an existing/new test or a documented manual result. Reuse
-earlier block tests; add a focused missing test instead of repeating whole
-suites without a reason. This checklist is evidence to collect, not an
-assertion that the checks already passed.
-
-- [ ] Configuration: directory-only `--config`, complete strict app/vault
-      parsing, empty registry, unknown selection, canonical sorting/matching,
-      duplicate names/data paths/filenames, and unsafe modify paths behave as
-      specified; missing nonselected databases remain discoverable.
-- [ ] Startup and credentials: a bad selected database fails startup; `.env`
-      loads from the configuration directory before provider/workspace use,
-      inherited values win, and OAuth uses the private application-wide file.
-- [ ] Console: missing/unknown `--vault` fails before touching data; import
-      creates its explicitly selected missing database; all four operations
-      use the selected data and never persist console selection.
-- [ ] Runtime switching: A-to-B-to-A keeps the listener/port and stable owners,
-      closes old live sessions while preserving stored sessions, publishes the
-      right workspace, and uses the new paths for every maintenance operation.
-- [ ] Failure paths: no-op, unknown target, database/mirror pre-check failure,
-      drain timeout, busy lease, and fatal reopen match their contracts.
-      Mirror rebuild/config-save failures log without failing a completed
-      switch; saved config remains whole on write failure.
-- [ ] Concurrency: maintenance cannot capture old paths before its lock;
-      bootstrap and compound repository/mirror operations cannot mix vaults;
-      target mirror rebuilding does not re-enter the repository lock. Record
-      the block-2 TSan result or run it if evidence is unavailable.
-- [ ] Providers/auth: login and pending device authorization survive switching;
-      a cancelled slow provider tail does not block switching teardown and
-      new requests use the target workspace's definitions.
-- [ ] Protocol: bootstrap and all snapshots have correct canonical identity;
-      switch route validation, 204 success, and 400/500 errors are covered.
-- [ ] Browser: selector layout and pending/error states, full reload to `/`,
-      snapshot/refresh mismatch rejection, normal matching snapshot behavior,
-      and bounded recovery of a missing old session are covered.
-- [ ] Native app: first-run config/seed, directory arguments, dynamic menu
-      capabilities, current-vault operations, error handling, and saved
-      selection on restart are verified.
-- [ ] Packages/development: examples, launchers, Makefile, E2E package checks,
-      smoke setup, and archives agree on the directory layout; no private
-      runtime files are included in version control or packages.
-- [ ] Documentation: setup and maintenance examples are valid; manual path,
-      `.env`, and OAuth migration and unchanged R2 object identity are clear.
-
-Finish with a concise report of completed integration, tests/platform results,
-and any specifically outstanding manual checks. No later implementation block
-is planned; do not call the feature fully verified while hiding a required
-unrun platform check.
+Inspect the package tree: both example TOML files must be present, and no
+private `.env`, OAuth file, database, log, or lease may be included. The import
+seed's placeholder `.env` is expected. Finish with a concise change and test
+report.

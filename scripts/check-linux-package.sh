@@ -29,7 +29,8 @@ fi
 for required in \
     chaweb \
     start-cha.sh \
-    cha.toml.example \
+    cha-config.example/app.toml \
+    cha-config.example/personal.toml \
     import-seed/.env \
     web/index.html; do
     if [ ! -f "$application/$required" ]; then
@@ -44,20 +45,26 @@ if [ ! -x "$application/chaweb" ] || [ ! -x "$application/start-cha.sh" ]; then
 fi
 
 actual_entries=$(find "$application" -mindepth 1 -maxdepth 1 -exec basename {} \; | LC_ALL=C sort)
-expected_entries=$(printf '%s\n' chaweb cha.toml.example import-seed start-cha.sh web | LC_ALL=C sort)
+expected_entries=$(printf '%s\n' chaweb cha-config.example import-seed start-cha.sh web | LC_ALL=C sort)
 if [ "$actual_entries" != "$expected_entries" ]; then
     echo "package check: application directory has unexpected top-level entries" >&2
     printf '%s\n' "$actual_entries" >&2
     exit 1
 fi
 
-config="$application/cha.toml.example"
-if ! grep -Eq '^data[[:space:]]*=[[:space:]]*"cha\.sqlite3"[[:space:]]*$' "$config" \
-    || ! grep -Eq '^\[web\][[:space:]]*$' "$config" \
-    || ! grep -Eq '^host[[:space:]]*=[[:space:]]*"0\.0\.0\.0"[[:space:]]*$' "$config" \
-    || ! grep -Eq '^port[[:space:]]*=[[:space:]]*8086[[:space:]]*$' "$config" \
-    || ! grep -Eq '^\[logging\][[:space:]]*$' "$config"; then
-    echo "package check: cha.toml.example is not the expected unified config" >&2
+app_config="$application/cha-config.example/app.toml"
+vault_config="$application/cha-config.example/personal.toml"
+if ! grep -Eq '^vault[[:space:]]*=[[:space:]]*"Personal"[[:space:]]*$' "$app_config" \
+    || ! grep -Eq '^\[web\][[:space:]]*$' "$app_config" \
+    || ! grep -Eq '^host[[:space:]]*=[[:space:]]*"0\.0\.0\.0"[[:space:]]*$' "$app_config" \
+    || ! grep -Eq '^port[[:space:]]*=[[:space:]]*8086[[:space:]]*$' "$app_config" \
+    || ! grep -Eq '^\[logging\][[:space:]]*$' "$app_config"; then
+    echo "package check: cha-config.example/app.toml is not the expected application config" >&2
+    exit 1
+fi
+if ! grep -Eq '^vault_name[[:space:]]*=[[:space:]]*"Personal"[[:space:]]*$' "$vault_config" \
+    || ! grep -Eq '^data[[:space:]]*=[[:space:]]*"cha\.sqlite3"[[:space:]]*$' "$vault_config"; then
+    echo "package check: cha-config.example/personal.toml is not the expected vault config" >&2
     exit 1
 fi
 
@@ -145,7 +152,8 @@ done
 if find "$application" -type f \( \
     -name '*.sqlite3' -o -name '*.sqlite' -o -name '*.db' \
     -o -name '*-wal' -o -name '*-shm' -o -name '*-journal' \
-    -o -name '*.cha-lock' -o -name '*.openai-auth.json' \) -print -quit | grep -q .; then
+    -o -name '*.cha-lock' -o -name '*.openai-auth.json' \
+    -o -name 'openai-auth.json' \) -print -quit | grep -q .; then
     echo "package check: a database, sidecar, journal, or lock leaked into the application" >&2
     exit 1
 fi
@@ -160,7 +168,7 @@ shell_quote() {
 }
 launcher_config=$(launcher_setting CONFIG)
 launcher_import_seed=$(launcher_setting IMPORT_SEED)
-if [ "$launcher_config" != "$(shell_quote ../cha.toml)" ] \
+if [ "$launcher_config" != "$(shell_quote ../cha-config)" ] \
     || [ "$launcher_import_seed" != "$(shell_quote import-seed)" ]; then
     echo "package check: launcher settings do not match the package layout" >&2
     exit 1
@@ -170,10 +178,11 @@ if grep -q -- '--workspace' "$application/start-cha.sh" \
     || ! grep -Fq -- 'config_setting=${CHA_CONFIG:-"$CONFIG"}' \
         "$application/start-cha.sh" \
     || ! grep -Fq -- '--config="$config"' "$application/start-cha.sh" \
+    || ! grep -Fq -- '$config/app.toml' "$application/start-cha.sh" \
     || ! grep -Fq -- \
-        'echo "  \"$here/chaweb\" --config=\"$config\" --import \"$import_seed\""' \
+        'echo "  \"$here/chaweb\" --config=\"$config\" --vault=\"Personal\" --import \"$import_seed\""' \
         "$application/start-cha.sh"; then
-    echo "package check: launcher must use the external unified config" >&2
+    echo "package check: launcher must use the external configuration directory" >&2
     exit 1
 fi
 

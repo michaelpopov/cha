@@ -215,8 +215,8 @@ keys use its SHA-256 implementation, independently of curl's TLS backend.
 | [src/web](../src/web) | Native protocol, routes, actor, Markdown mirror, mailbox, lifecycle, shutdown |
 | [webapp/src](../webapp/src) | Browser state, transcript presentation, composer, and API client |
 | [tests](../tests) | Behavioral examples grouped by the same subsystem boundaries |
-| [cha.toml](../cha.toml) | External process-configuration example included beside CHA.app in the macOS zip |
-| [packaging/linux/cha.toml.example](../packaging/linux/cha.toml.example) | External process-configuration example |
+| [cha-config](../cha-config) | Tracked development configuration directory included beside CHA.app in the macOS zip |
+| [packaging/linux/cha-config.example](../packaging/linux/cha-config.example) | External process-configuration example |
 | [packaging/linux/import-seed](../packaging/linux/import-seed) | A configuration source tree to compare against the loaders and import filter |
 | [packaging/macos](../packaging/macos) | Swift launcher, C bridge, smoke test, and macOS packaging script |
 
@@ -378,37 +378,37 @@ policy or a reusable mechanism.
 The public command parser accepts exactly these customer-facing forms:
 
 ```text
-chaweb --config=CONFIG [--root PATH]
-chaweb --config=CONFIG --import DIRECTORY
-chaweb --config=CONFIG --export DIRECTORY
-chaweb --config=CONFIG --upload
-chaweb --config=CONFIG --download
+chaweb --config=CONFIG_DIR [--root PATH]
+chaweb --config=CONFIG_DIR --vault=NAME --import DIRECTORY
+chaweb --config=CONFIG_DIR --vault=NAME --export DIRECTORY
+chaweb --config=CONFIG_DIR --vault=NAME --upload
+chaweb --config=CONFIG_DIR --vault=NAME --download
 ```
 
-Every mode requires the external unified config. The parser accepts both
-`--config=CONFIG` and `--config CONFIG`; `--root` is a runtime-only
-application-asset root. The four offline modes are mutually exclusive. Upload
-and download use the R2 bucket URL and S3 credentials from
-`CHA_R2_URL`, `CHA_R2_ACCESS_KEY_ID`, and
+Every mode requires the configuration directory. The parser accepts both
+`--config=CONFIG_DIR` and `--config CONFIG_DIR`; `--root` is a runtime-only
+application-asset root. `--vault` is required for the four offline modes, which
+are mutually exclusive. Upload and download use the R2 bucket URL and S3
+credentials from `CHA_R2_URL`, `CHA_R2_ACCESS_KEY_ID`, and
 `CHA_R2_SECRET_ACCESS_KEY`; the configured database filename becomes the object
 key.
 
 The Linux package includes `start-cha.sh`, which supplies `--root`, starts
-`chaweb` in the background, and uses `../cha.toml` by default. A nonempty
+`chaweb` in the background, and uses `../cha-config` by default. A nonempty
 `CHA_CONFIG` overrides that default for the launcher only; the executable
 itself still requires `--config`. Absolute override paths are used directly,
 while relative paths resolve from the directory containing `start-cha.sh`:
 
 ```sh
-CHA_CONFIG=/etc/cha/cha.toml ./start-cha.sh
+CHA_CONFIG=/etc/cha/cha-config ./start-cha.sh
 ```
 
-The TOML shape is:
+`app.toml` selects the startup vault and holds web and logging settings. Each
+other `.toml` file is one vault:
 
 ```toml
-data = "/var/lib/cha/workspace.sqlite3"
-mirror = "/home/user/cha-mirror"
-modify = "/home/user/cha-modify"
+# app.toml
+vault = "Personal"
 
 [web]
 host = "0.0.0.0"
@@ -419,20 +419,29 @@ file = "logs/cha.log"
 level = "info"
 ```
 
+```toml
+# personal.toml
+vault_name = "Personal"
+data = "/var/lib/cha/workspace.sqlite3"
+mirror = "/home/user/cha-mirror"
+modify = "/home/user/cha-modify"
+```
+
 `mirror` is optional; omitting it disables filesystem mirroring. `modify` is
 also optional and names the directory used by CHA.app's Import and Export menu
 items. Relative `data`, `mirror`, `modify`, and `logging.file` values resolve
-from the external config's directory. A `modify` directory may not contain the
-external config or database, because the macOS Export operation replaces that
-directory. The mirror root must already exist and be a directory. Console
-Import additionally requires the config file to be outside the source
-workspace, preventing the process config itself from becoming an imported
-metadata row. Console Import and Export acquire the same non-blocking database
+from the configuration directory. A `modify` directory may not contain the
+configuration directory or database, because the macOS Export operation
+replaces that directory. The mirror root must already exist and be a directory.
+Console Import additionally requires the configuration directory to be outside
+the source workspace, preventing process config files from becoming imported
+metadata rows. Console Import and Export acquire the same non-blocking database
 lease as runtime, so they remain deliberately offline.
 
-The macOS zip contains `CHA.app` and the root `cha.toml` example. CHA.app keeps
-its active config at `~/Library/Application Support/CHA/cha.toml`; a new active
-config uses `modify = "modify"`, relative to that directory.
+The macOS zip contains `CHA.app` and the tracked `cha-config` example. CHA.app
+keeps its active config at `~/Library/Application Support/CHA/`; a new active
+config writes `app.toml` selecting `Personal` and `personal.toml` with
+`modify = "modify"`, relative to that directory.
 
 A new database is created only after a source has been collected and validated
 successfully. Normal runtime and export require schema v2. Schema v1 is the
@@ -677,15 +686,15 @@ that tree, point its `data` setting at the existing `workspace.sqlite3`, then
 run the import and restart with the same configuration:
 
 ```console
-$ chaweb --config=/srv/cha/cha.toml --import /srv/cha/workspace
-$ chaweb --config=/srv/cha/cha.toml
+$ chaweb --config=/srv/cha/cha-config --vault=Personal --import /srv/cha/workspace
+$ chaweb --config=/srv/cha/cha-config
 ```
 
 The first command upgrades a valid v1 database in place, preserving its
 sessions while importing the directory metadata. The second command is normal
-server mode; it reads application settings from `cha.toml` and all workspace
-content from SQLite. The metadata tree may remain as a backup, but runtime no
-longer reads it.
+server mode; it reads application settings from the configuration directory
+and all workspace content from SQLite. The metadata tree may remain as a
+backup, but runtime no longer reads it.
 
 `has_legacy_session_databases()` in
 [session_storage_layout.cpp](../src/session/session_storage_layout.cpp) is a

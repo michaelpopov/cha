@@ -36,10 +36,16 @@ CPack*.cmake
 
 .env
 !/packaging/linux/import-seed/.env
+openai-auth.json
 *.sqlite3
 *.openai-auth.json
 *.log
 *.cha-lock
+
+# Development configuration directory: track only the app file and the Dev vault.
+/cha-config/*
+!/cha-config/app.toml
+!/cha-config/dev.toml
 
 # Local backups
 *.bac

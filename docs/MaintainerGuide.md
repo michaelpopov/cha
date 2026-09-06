@@ -38,7 +38,7 @@ Follow these rules before changing anything:
    are loaded together, so an error in an otherwise unused forum can prevent
    CHA from starting.
 8. Import into the real database only when explicitly requested, after
-   identifying the exact external `cha.toml`, stopping CHA, and reviewing the
+   identifying the exact configuration directory, stopping CHA, and reviewing the
    destructive effects described in [Import and export](#12-import-and-export).
 
 For commands concerning the example on this machine, use this exact root:
@@ -58,10 +58,10 @@ CHA configuration can appear in several places. They have different roles.
 | --- | --- | --- |
 | An exported directory such as `~/var/modify/` | Human-editable workspace bundle | Yes |
 | `packaging/linux/import-seed/` | Initial configuration shipped in a Linux package | Only when explicitly requested |
-| The SQLite file named by external `cha.toml`'s `data` field | Authoritative runtime configuration and sessions | Never by hand |
+| The SQLite file named by the active vault's `data` field | Authoritative runtime configuration and sessions | Never by hand |
 | A `cha-runtime-*` directory under the system temporary directory | Private materialization of committed SQLite rows | Never |
-| `<database>.openai-auth.json` | OpenAI subscription OAuth credentials | Only through Settings → OpenAI |
-| `.env` beside the SQLite database | Runtime API-key environment values | Carefully, as a secret |
+| `<config-directory>/openai-auth.json` | OpenAI subscription OAuth credentials | Only through Settings → OpenAI |
+| `.env` in the configuration directory | Runtime API-key environment values | Carefully, as a secret |
 
 Normal runtime reads configuration from SQLite. It does not continue reading
 the directory that was imported. Therefore editing `~/var/modify/` alone does
@@ -80,13 +80,13 @@ can overwrite changes made through the UI. Do not replace a user's existing
 edit directory merely to refresh it without first preserving or reviewing its
 contents.
 
-The external application configuration, commonly named `cha.toml`, is not
-part of a workspace import. It selects the database and runtime paths:
+The external application configuration is a directory, not part of a workspace
+import. `app.toml` selects the startup vault and holds web and logging
+settings. Each other `.toml` file is one vault:
 
 ```toml
-data = "/absolute/path/workspace.sqlite3"
-mirror = "/optional/session/mirror"
-modify = "/optional/editable/export/directory"
+# app.toml
+vault = "Personal"
 
 [web]
 host = "127.0.0.1"
@@ -97,9 +97,20 @@ file = "/absolute/path/cha.log"
 level = "info"
 ```
 
+```toml
+# personal.toml
+vault_name = "Personal"
+data = "/absolute/path/workspace.sqlite3"
+mirror = "/optional/session/mirror"
+modify = "/optional/editable/export/directory"
+```
+
 `mirror` and `modify` are optional. Relative `data`, `mirror`, `modify`, and
-`logging.file` values are resolved relative to the external `cha.toml`.
-The config file must be outside a directory passed to `--import`.
+`logging.file` values are resolved relative to the configuration directory.
+That directory must be outside a directory passed to `--import`. There is no
+automatic migration from a single `cha.toml`; create the directory, split
+selection/web/logging into `app.toml` and data paths into a vault file, adjust
+relative paths, and move `.env` and `openai-auth.json` into the directory.
 
 ## 3. Workspace directory map
 
@@ -522,14 +533,13 @@ api_key_env = "OPEN_ROUTER_API_KEY"
 
 The environment variable's value is not placed in `config.toml`. A missing key
 does not prevent workspace loading, but an actual request that needs it will
-fail. Runtime loads a `.env` file from the directory containing the configured
-SQLite database, without overriding variables already inherited by the
-process.
+fail. Runtime loads a `.env` file from the configuration directory, without
+overriding variables already inherited by the process.
 
 An optional `.env` at the root of an import source is parsed and overlaid only
 while the import is validated. It is **not** stored in SQLite and is not
-exported. Put runtime API keys in the service environment or in `.env` beside
-the database. Protect that file as a secret.
+exported. Put runtime API keys in the service environment or in `.env` in the
+configuration directory. Protect that file as a secret.
 
 ### OpenAI subscription OAuth provider
 
@@ -572,11 +582,11 @@ create a login. The user connects in the application's Settings page under
 OpenAI. CHA stores the resulting process-wide credentials in:
 
 ```text
-<exact-database-path>.openai-auth.json
+<config-directory>/openai-auth.json
 ```
 
-For example, `/srv/cha/workspace.sqlite3` uses
-`/srv/cha/workspace.sqlite3.openai-auth.json`. All
+For example, `/srv/cha/cha-config` uses
+`/srv/cha/cha-config/openai-auth.json`. All
 `openai_subscription` providers in that CHA process share this one connected
 ChatGPT account. The credential file is excluded from workspace import/export
 and must never be copied into a configuration bundle or committed. Disconnect
@@ -843,12 +853,14 @@ cmake --preset ninja
 cmake --build --preset ninja --target chaweb_app
 
 VALIDATION_ROOT="$(mktemp -d)"
-cp packaging/linux/cha.toml.example "$VALIDATION_ROOT/cha.toml"
+cp -R packaging/linux/cha-config.example "$VALIDATION_ROOT/cha-config"
 ./build/ninja/chaweb \
-  --config="$VALIDATION_ROOT/cha.toml" \
+  --config="$VALIDATION_ROOT/cha-config" \
+  --vault=Personal \
   --import /absolute/path/to/workspace
 ./build/ninja/chaweb \
-  --config="$VALIDATION_ROOT/cha.toml" \
+  --config="$VALIDATION_ROOT/cha-config" \
+  --vault=Personal \
   --export "$VALIDATION_ROOT/exported"
 find "$VALIDATION_ROOT/exported" -type f -print | sort
 ```
@@ -895,7 +907,8 @@ Export requires a destination that is missing or empty:
 
 ```sh
 /absolute/path/chaweb \
-  --config=/absolute/path/cha.toml \
+  --config=/absolute/path/cha-config \
+  --vault=Personal \
   --export /absolute/path/empty-export-directory
 ```
 
@@ -903,7 +916,8 @@ After editing and disposable validation, import only when explicitly approved:
 
 ```sh
 /absolute/path/chaweb \
-  --config=/absolute/path/cha.toml \
+  --config=/absolute/path/cha-config \
+  --vault=Personal \
   --import /absolute/path/edited-workspace
 ```
 
@@ -914,10 +928,11 @@ schema-2 database. It preserves sessions only for forum IDs that survive.
 Before a production import:
 
 1. identify and stop the exact CHA process;
-2. identify the exact `cha.toml` and resolve its `data` path;
+2. identify the exact configuration directory and resolve the target vault's
+   `data` path;
 3. make an offline, recoverable backup of the database and relevant secret
-   files, including `<database>.openai-auth.json` when present, according to
-   the user's backup practice;
+   files, including `<config-directory>/openai-auth.json` when present,
+   according to the user's backup practice;
 4. review forum IDs for removals or renames;
 5. run disposable validation;
 6. import;
@@ -929,9 +944,9 @@ Do not copy a live SQLite file casually; CHA uses WAL and sidecar files.
 
 These are not workspace configuration rows and are not exported:
 
-- external `cha.toml`;
-- source or database-adjacent `.env`;
-- `<database>.openai-auth.json` OAuth credentials;
+- the configuration directory (`app.toml` and vault files);
+- source or configuration-directory `.env`;
+- `<config-directory>/openai-auth.json` OAuth credentials;
 - SQLite databases, journals, WAL/SHM sidecars, and `.cha-lock` files;
 - session mirror output;
 - files other than `.toml` and `.md`.
@@ -996,8 +1011,8 @@ guide:
 - `src/characters/character_config.cpp` and `.h`: provider endpoint and enum
   semantics;
 - `src/providers/openai_oauth.cpp`: OAuth credential lifecycle;
-- `src/web/application_runtime.cpp`: database-adjacent OAuth credential path
-  and runtime maintenance operations;
+- `src/web/application_runtime.cpp`: configuration-directory OAuth credential
+  path and runtime maintenance operations;
 - `packaging/linux/import-seed/`: minimal package seed;
 - `tests/application/unit_workspace.cpp` and
   `tests/application/unit_workspace_config_store.cpp`: executable examples of
