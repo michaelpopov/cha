@@ -174,6 +174,7 @@ add_library(cha_core STATIC
     src/util/public_name.cpp
     src/util/text.cpp
     src/util/text_template.cpp
+    src/util/toml_file.cpp
     src/chat/character.cpp
     src/chat/transcript.cpp
     src/characters/character.cpp
@@ -293,6 +294,7 @@ if(BUILD_TESTING)
         tests/util/unit_text_template.cpp
         tests/util/unit_public_name.cpp
         tests/util/unit_utf8_path.cpp
+        tests/util/unit_toml_file.cpp
         tests/chat/unit_transcript.cpp
         tests/agents/unit_model_context.cpp
         tests/providers/unit_providers.cpp
@@ -379,6 +381,13 @@ if(BUILD_TESTING)
     target_link_libraries(
         cha_web_tests PRIVATE cha_web cha_sqlite3 GTest::gtest_main)
     target_include_directories(cha_web_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+    if(TARGET cha_lease_test_helper)
+        target_compile_definitions(
+            cha_web_tests
+            PRIVATE
+                CHA_LEASE_TEST_HELPER="$<TARGET_FILE:cha_lease_test_helper>")
+        add_dependencies(cha_web_tests cha_lease_test_helper)
+    endif()
     cha_enable_warnings(cha_web_tests)
 
     add_executable(

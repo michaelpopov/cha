@@ -497,6 +497,60 @@ TEST_F(SessionRepositoryTest, MaintenanceFencesRepositoryReadsAndWrites) {
     EXPECT_NO_THROW((void)list.get());
 }
 
+TEST_F(SessionRepositoryTest, RetargetReadsTheNewDatabaseWithoutChangingTheWorkspaceRoot) {
+    SessionRepository repository = make_repository();
+    (void)repository.create("lobby", "On A");
+
+    test::TestWorkspace other;
+    const std::filesystem::path other_welcome = other.root() / "welcome";
+    create_private_directory(other_welcome);
+    const std::filesystem::path other_database =
+        test::import_test_database(other.root(), other.root() / "b.sqlite3");
+    loadws(other.root());
+    {
+        SessionRepository other_repository(
+            other_database,
+            other.root(),
+            other_welcome,
+            {{std::string(temporary_forum), std::string(temporary_session)},
+             "Welcome"});
+        (void)other_repository.create("lobby", "On B");
+    }
+    loadws(fixture_.root());
+
+    const std::filesystem::path original = repository.database_path();
+    {
+        SessionRepository::MaintenanceGuard maintenance =
+            repository.reserve_maintenance();
+        const std::filesystem::path prepared =
+            maintenance.prepare_retarget(other_database);
+        EXPECT_EQ(
+            prepared,
+            std::filesystem::weakly_canonical(
+                std::filesystem::absolute(other_database)));
+        maintenance.retarget(prepared);
+    }
+
+    EXPECT_NE(repository.database_path(), original);
+    const std::vector<StoredSession> listed = repository.list("lobby");
+    ASSERT_EQ(listed.size(), 1U);
+    EXPECT_EQ(listed[0].label, "On B");
+}
+
+TEST_F(SessionRepositoryTest, PrepareRetargetRejectsAMissingFileWithoutChangingThePath) {
+    SessionRepository repository = make_repository();
+    const std::filesystem::path original = repository.database_path();
+    const std::filesystem::path missing = fixture_.root() / "missing.sqlite3";
+    {
+        SessionRepository::MaintenanceGuard maintenance =
+            repository.reserve_maintenance();
+        EXPECT_THROW(
+            (void)maintenance.prepare_retarget(missing), std::runtime_error);
+    }
+    EXPECT_EQ(repository.database_path(), original);
+    EXPECT_TRUE(repository.list("lobby").empty());
+}
+
 TEST_F(SessionRepositoryTest, CompetingWriterWaitsAtImmediateTransactionStart) {
     using namespace std::chrono_literals;
     const SessionRepository repository = make_repository();

@@ -6,13 +6,12 @@
 #include "util/public_name.h"
 #include "util/text.h"
 #include "util/text_template.h"
+#include "util/toml_file.h"
 
 #include <nlohmann/json.hpp>
 #include <toml++/toml.hpp>
 
 #include <algorithm>
-#include <atomic>
-#include <chrono>
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
@@ -88,47 +87,7 @@ std::string read_text(
 }
 
 toml::table read_toml(const std::filesystem::path& path, std::string_view kind) {
-    std::ifstream input(path, std::ios::binary);
-    if (!input) {
-        throw std::runtime_error(
-            "Failed to read " + std::string(kind) + " '" + utf8_path(path) + "'");
-    }
-    return toml::parse(input, utf8_path(path));
-}
-
-std::filesystem::path temporary_config_path(
-    const std::filesystem::path& path) {
-    static std::atomic_uint64_t sequence{};
-    std::filesystem::path temporary = path;
-    temporary += ".temp."
-        + std::to_string(
-            std::chrono::steady_clock::now().time_since_epoch().count())
-        + "." + std::to_string(sequence.fetch_add(1, std::memory_order_relaxed));
-    return temporary;
-}
-
-template<typename Mutate>
-void rewrite_config(
-    const std::filesystem::path& path,
-    Mutate mutate) {
-    toml::table table = read_toml(path, "config file");
-    mutate(table);
-    const std::filesystem::path temporary = temporary_config_path(path);
-    try {
-        std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
-        output << table << '\n';
-        output.flush();
-        if (!output) {
-            throw std::runtime_error(
-                "Failed to write temporary config '" + utf8_path(temporary) + "'");
-        }
-        output.close();
-        std::filesystem::rename(temporary, path);
-    } catch (...) {
-        std::error_code ignored;
-        std::filesystem::remove(temporary, ignored);
-        throw;
-    }
+    return read_toml_file(path, kind);
 }
 
 template<typename Value>
@@ -1389,7 +1348,7 @@ void Workspace::write_character_settings(
         throw std::invalid_argument(
             "The selected provider does not support web search");
     }
-    rewrite_config(config->second, [&](toml::table& table) {
+    rewrite_toml_file(config->second, [&](toml::table& table) {
         table.insert_or_assign("provider", std::string(provider_id));
         if (style_id) table.insert_or_assign("style", std::string(*style_id));
         else table.erase("style");
@@ -1426,7 +1385,7 @@ void Workspace::write_forum_default_character(
             "Character '" + std::string(character_id)
             + "' is not a member of forum '" + std::string(forum_id) + "'");
     }
-    rewrite_config(config->second, [&](toml::table& table) {
+    rewrite_toml_file(config->second, [&](toml::table& table) {
         table.erase("default_agent");
         table.insert_or_assign("default_character", std::string(character_id));
     });
@@ -1445,7 +1404,7 @@ void Workspace::write_forum_default_persona(
         throw std::invalid_argument(
             "Persona '" + std::string(persona_id) + "' does not exist");
     }
-    rewrite_config(config->second, [&](toml::table& table) {
+    rewrite_toml_file(config->second, [&](toml::table& table) {
         table.insert_or_assign("default_persona", std::string(persona_id));
     });
 }

@@ -2,22 +2,38 @@
 
 #include "chat/session_identity.h"
 #include "chat/transcript.h"
+#include "session/session_repository.h"
 #include "session/stored_session.h"
 
 #include <filesystem>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
-
-namespace cha {
-
-class SessionRepository;
-
-} // namespace cha
+#include <vector>
 
 namespace cha::web {
+
+struct MirrorRebuildInput {
+    struct Forum {
+        std::string id;
+        std::string display_name;
+    };
+    struct Session {
+        StoredSession stored;
+        std::vector<TranscriptEntry> history;
+    };
+
+    std::vector<Forum> forums;
+    std::vector<Session> sessions;
+};
+
+[[nodiscard]] MirrorRebuildInput mirror_rebuild_input(
+    const SessionRepository& sessions);
+[[nodiscard]] MirrorRebuildInput mirror_rebuild_input(
+    const SessionRepository::MaintenanceGuard& sessions);
 
 // A best-effort runtime projection of persistent sessions into Markdown files.
 // Construction performs the initial synchronization and therefore fails when
@@ -25,6 +41,7 @@ namespace cha::web {
 // mirroring never changes the outcome of an already-persisted session update.
 class SessionMirror final {
 public:
+    SessionMirror();
     SessionMirror(
         std::filesystem::path root,
         const SessionRepository& sessions);
@@ -37,6 +54,9 @@ public:
         const FullSessionId& identity,
         std::string_view label,
         std::span<const TranscriptEntry> entries);
+    void retarget(
+        std::optional<std::filesystem::path> root,
+        MirrorRebuildInput input);
 
 private:
     struct MirroredSession {
@@ -52,7 +72,7 @@ private:
         std::string_view label,
         std::span<const TranscriptEntry> entries);
 
-    std::filesystem::path root_;
+    std::optional<std::filesystem::path> root_;
     std::map<std::string, std::filesystem::path, std::less<>> forums_;
     std::map<FullSessionId, MirroredSession, std::less<>> sessions_;
     std::mutex mutex_;

@@ -67,6 +67,11 @@ public:
         // and the process unable to serve.
         void close();
         void reopen();
+        // Points the closed store at another database. Acquires that path's
+        // process lease before releasing the old lease or changing the stored
+        // path. reopen() then validates and publishes the database at the new
+        // path into the same private tree.
+        void retarget(const std::filesystem::path& database_path);
 
     private:
         struct Impl;
@@ -87,7 +92,7 @@ public:
     [[nodiscard]] const std::filesystem::path& private_root() const noexcept;
     [[nodiscard]] const std::filesystem::path& workspace_path() const noexcept;
     [[nodiscard]] const std::filesystem::path& welcome_path() const noexcept;
-    [[nodiscard]] const std::filesystem::path& database_path() const noexcept;
+    [[nodiscard]] std::filesystem::path database_path() const;
     [[nodiscard]] MaintenanceGuard reserve_maintenance();
     WorkspaceConfigEditResult apply_character_settings(
         std::string_view character_id,

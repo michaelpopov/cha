@@ -902,7 +902,7 @@ struct WorkspaceConfigStore::Impl {
     std::optional<SessionLease> lease;
     std::unique_ptr<Database> database;
     std::optional<RuntimePrivateRoot> tree;
-    std::mutex mutex;
+    mutable std::recursive_mutex mutex;
 
     void rematerialize_workspace() {
         if (consume_runtime_fault(WorkspaceConfigFault::restore)) {
@@ -1002,7 +1002,7 @@ struct WorkspaceConfigStore::MaintenanceGuard::Impl {
         : store(&store), lock(store.mutex) {}
 
     WorkspaceConfigStore::Impl* store;
-    std::unique_lock<std::mutex> lock;
+    std::unique_lock<std::recursive_mutex> lock;
     bool closed{};
 };
 
@@ -1025,6 +1025,19 @@ void WorkspaceConfigStore::MaintenanceGuard::close() {
     }
     impl_->store->database.reset();
     impl_->closed = true;
+}
+
+void WorkspaceConfigStore::MaintenanceGuard::retarget(
+    const std::filesystem::path& database_path) {
+    if (!impl_ || !impl_->closed) {
+        throw std::logic_error("Workspace database is not closed");
+    }
+    WorkspaceConfigStore::Impl& store = *impl_->store;
+    std::filesystem::path next = normalize_path(database_path);
+    (void)require_existing_directory(next.parent_path(), "Database parent");
+    SessionLease lease = SessionLease::acquire(next, busy_message(next));
+    store.lease = std::move(lease);
+    store.database_path = std::move(next);
 }
 
 void WorkspaceConfigStore::MaintenanceGuard::reopen() {
@@ -1112,8 +1125,8 @@ const std::filesystem::path& WorkspaceConfigStore::welcome_path()
     return impl_->tree->welcome();
 }
 
-const std::filesystem::path& WorkspaceConfigStore::database_path()
-    const noexcept {
+std::filesystem::path WorkspaceConfigStore::database_path() const {
+    const std::lock_guard lock(impl_->mutex);
     return impl_->database_path;
 }
 

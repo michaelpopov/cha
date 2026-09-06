@@ -9,10 +9,12 @@
 #include "workspace/workspace.h"
 
 #include <filesystem>
+#include <optional>
 #include <set>
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace cha::web {
 namespace {
@@ -90,41 +92,93 @@ std::string mirror_path_name(std::string_view display_name) {
     return result.empty() ? "session" : result;
 }
 
-SessionMirror::SessionMirror(
-    std::filesystem::path root,
-    const SessionRepository& repository)
-    : root_(std::move(root)) {
-    require_directory(root_);
+namespace {
 
+template<typename List, typename History>
+MirrorRebuildInput collect_mirror_input(List list, History history) {
     const std::shared_ptr<const Workspace> workspace = getws();
     if (!workspace) throw std::runtime_error("Workspace is not loaded");
 
-    std::set<std::filesystem::path> used_forums;
+    MirrorRebuildInput input;
     for (const WorkspaceForum& forum : workspace->forums()) {
         if (forum.id == entrance_id) continue;
-        const std::string base = mirror_path_name(forum.display_name);
-        std::filesystem::path path;
-        for (std::size_t suffix{};; ++suffix) {
-            path = root_ / numbered_name(base, suffix);
-            if (used_forums.insert(path).second) break;
+        input.forums.push_back({forum.id, forum.display_name});
+        for (const StoredSession& stored : list(forum.id)) {
+            input.sessions.push_back({stored, history(stored.identity)});
         }
-        require_directory_or_create(path);
-        forums_.emplace(forum.id, std::move(path));
     }
+    return input;
+}
 
-    for (const auto& [forum_id, directory] : forums_) {
-        (void)directory;
-        for (const StoredSession& stored : repository.list(forum_id)) {
+} // namespace
+
+MirrorRebuildInput mirror_rebuild_input(const SessionRepository& sessions) {
+    return collect_mirror_input(
+        [&sessions](std::string_view forum_id) {
+            return sessions.list(forum_id);
+        },
+        [&sessions](const FullSessionId& identity) {
+            return sessions.history(identity);
+        });
+}
+
+MirrorRebuildInput mirror_rebuild_input(
+    const SessionRepository::MaintenanceGuard& sessions) {
+    return collect_mirror_input(
+        [&sessions](std::string_view forum_id) {
+            return sessions.list(forum_id);
+        },
+        [&sessions](const FullSessionId& identity) {
+            return sessions.history(identity);
+        });
+}
+
+SessionMirror::SessionMirror() = default;
+
+SessionMirror::SessionMirror(
+    std::filesystem::path root,
+    const SessionRepository& repository) {
+    retarget(std::move(root), mirror_rebuild_input(repository));
+}
+
+void SessionMirror::retarget(
+    std::optional<std::filesystem::path> root,
+    MirrorRebuildInput input) {
+    const std::lock_guard lock(mutex_);
+    forums_.clear();
+    sessions_.clear();
+    root_.reset();
+    if (!root) return;
+
+    try {
+        require_directory(*root);
+        std::set<std::filesystem::path> used_forums;
+        for (const MirrorRebuildInput::Forum& forum : input.forums) {
+            const std::string base = mirror_path_name(forum.display_name);
+            std::filesystem::path path;
+            for (std::size_t suffix{};; ++suffix) {
+                path = *root / numbered_name(base, suffix);
+                if (used_forums.insert(path).second) break;
+            }
+            require_directory_or_create(path);
+            forums_.emplace(forum.id, std::move(path));
+        }
+
+        for (const MirrorRebuildInput::Session& session : input.sessions) {
             const std::filesystem::path path =
-                allocate_session_path(stored.identity, stored.label);
-            sessions_.emplace(stored.identity, MirroredSession{
-                stored.label, path});
+                allocate_session_path(session.stored.identity, session.stored.label);
+            sessions_.emplace(session.stored.identity, MirroredSession{
+                session.stored.label, path});
             create_private_file(
                 path,
-                session_markdown(
-                    stored.label,
-                    repository.history(stored.identity)));
+                session_markdown(session.stored.label, session.history));
         }
+        root_ = std::move(root);
+    } catch (...) {
+        forums_.clear();
+        sessions_.clear();
+        root_.reset();
+        throw;
     }
 }
 
@@ -162,7 +216,7 @@ void SessionMirror::update(
     std::span<const TranscriptEntry> entries) {
     try {
         const std::lock_guard lock(mutex_);
-        if (!forums_.contains(identity.forum_id)) return;
+        if (!root_ || !forums_.contains(identity.forum_id)) return;
         update_locked(identity, label, entries);
     } catch (const std::exception& error) {
         log_warn(

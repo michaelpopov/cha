@@ -189,22 +189,9 @@ std::vector<SessionListing> sessions_for(
     return result;
 }
 
-std::vector<RecentSession> recent_sessions(
-    const SessionRepository& sessions) {
-    std::vector<RecentSession> result;
-    for (const StoredSession& stored : sessions.recent()) {
-        result.push_back({
-            stored.identity.forum_id,
-            stored.identity.session_id,
-            stored.label,
-            stored.updated_at});
-    }
-    return result;
-}
-
 Bootstrap bootstrap_for(
     const Workspace& workspace,
-    const SessionRepository& sessions,
+    const std::vector<StoredSession>& recent,
     const InitialSelection& initial) {
     Bootstrap bootstrap{.initial_forum_id = initial.session.forum_id,
                         .initial_session_id = initial.session.session_id};
@@ -217,7 +204,14 @@ Bootstrap bootstrap_for(
     for (const WorkspaceForum& forum : workspace.forums()) {
         bootstrap.forums.push_back(forum_summary(forum, workspace));
     }
-    bootstrap.recent_sessions = recent_sessions(sessions);
+    bootstrap.recent_sessions.reserve(recent.size());
+    for (const StoredSession& stored : recent) {
+        bootstrap.recent_sessions.push_back({
+            stored.identity.forum_id,
+            stored.identity.session_id,
+            stored.label,
+            stored.updated_at});
+    }
     return bootstrap;
 }
 
@@ -252,9 +246,15 @@ void LobbyRoutes::install(httplib::Server& server) const {
     });
 
     server.Get("/api/v1/bootstrap", [sessions, initial](const httplib::Request&, httplib::Response& response) {
-        const auto current = published_workspace();
+        std::shared_ptr<const Workspace> current;
+        std::vector<StoredSession> recent;
+        {
+            const auto access = sessions->lock_shared();
+            current = access.workspace();
+            recent = access.recent();
+        }
         set_json_response(response, 200, nlohmann::json(
-            bootstrap_for(*current, *sessions, initial)));
+            bootstrap_for(*current, recent, initial)));
     });
 
     server.Get(R"(/api/v1/characters/([^/]+))", [](const httplib::Request& request, httplib::Response& response) {
@@ -377,7 +377,8 @@ void LobbyRoutes::install(httplib::Server& server) const {
                 })) return;
         if (!validate_route_session_label(response, label, true)) return;
         try {
-            const StoredSession created = sessions->create(forum, std::move(label));
+            const auto access = sessions->lock_shared();
+            const StoredSession created = access.create(forum, std::move(label));
             if (mirror) mirror->add(created);
             set_json_response(response, 201, nlohmann::json(CreateSessionSuccess{
                 created.identity.session_id, created.label}));
@@ -463,12 +464,13 @@ void LobbyRoutes::install(httplib::Server& server) const {
                 return set_error_response(response, 500,
                     {ErrorCode::internal_error, "The request could not be completed."});
             }
-            const StoredSession renamed = sessions->rename(key, std::move(label));
+            const auto access = sessions->lock_shared();
+            const StoredSession renamed = access.rename(key, std::move(label));
             if (mirror) {
                 mirror->update(
                     renamed.identity,
                     renamed.label,
-                    sessions->history(renamed.identity));
+                    access.history(renamed.identity));
             }
             log_info(session_event(key, "rename_committed"));
             set_json_response(response, 200, nlohmann::json(SessionLabelResult{

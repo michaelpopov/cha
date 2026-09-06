@@ -27,6 +27,7 @@
 #include <vector>
 
 #ifndef _WIN32
+#include "support/lease_test_process.h"
 #include <sys/stat.h>
 #endif
 
@@ -1208,6 +1209,67 @@ TEST_F(
             .find("second"),
         std::string::npos);
 }
+
+TEST_F(RuntimeWorkspaceConfigStoreTest, RetargetReopensTheNewDatabaseInTheSameTree) {
+    test::TestWorkspace other;
+    other.add_persona("beta", "Beta");
+    const std::filesystem::path other_database =
+        other.root() / "other.sqlite3";
+    (void)import_workspace_configuration(other.root(), other_database);
+
+    const auto store = open_store();
+    const std::filesystem::path workspace = store->workspace_path();
+    const std::filesystem::path welcome = store->welcome_path();
+    EXPECT_EQ(getws()->find_persona("beta"), nullptr);
+
+    {
+        auto maintenance = store->reserve_maintenance();
+        EXPECT_THROW(maintenance.retarget(other_database), std::logic_error);
+        maintenance.close();
+        maintenance.retarget(other_database);
+        maintenance.reopen();
+    }
+
+    EXPECT_EQ(store->workspace_path(), workspace);
+    EXPECT_EQ(store->welcome_path(), welcome);
+    EXPECT_EQ(
+        store->database_path(),
+        std::filesystem::weakly_canonical(
+            std::filesystem::absolute(other_database)));
+    ASSERT_NE(getws()->find_persona("beta"), nullptr);
+    EXPECT_THROW(
+        (void)WorkspaceConfigStore::open(other_database), SessionBusyError);
+#ifndef _WIN32
+    EXPECT_EQ(
+        test::probe_lease(database()), test::LeaseProbeResult::acquired);
+    EXPECT_EQ(
+        test::probe_lease(other_database), test::LeaseProbeResult::busy);
+#endif
+}
+
+#ifndef _WIN32
+TEST_F(RuntimeWorkspaceConfigStoreTest, BusyRetargetKeepsTheOldDatabase) {
+    test::TestWorkspace other;
+    const std::filesystem::path other_database =
+        other.root() / "busy.sqlite3";
+    (void)import_workspace_configuration(other.root(), other_database);
+
+    const auto store = open_store();
+    const std::filesystem::path original = store->database_path();
+    test::LeaseHolderProcess holder(other_database);
+    {
+        auto maintenance = store->reserve_maintenance();
+        maintenance.close();
+        EXPECT_THROW(maintenance.retarget(other_database), SessionBusyError);
+        EXPECT_EQ(store->database_path(), original);
+        maintenance.reopen();
+    }
+    EXPECT_EQ(store->database_path(), original);
+    EXPECT_NE(getws()->find_character("guide"), nullptr);
+    EXPECT_THROW(
+        (void)WorkspaceConfigStore::open(original), SessionBusyError);
+}
+#endif
 
 void expect_package_seed_subscription(const ModelBackendConfig& config) {
     EXPECT_EQ(config.auth, ProviderAuth::openai_subscription);

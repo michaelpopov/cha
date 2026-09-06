@@ -41,6 +41,9 @@ struct ApplicationCommand {
     // Browser automation uses this command-line-only seam to prove a real
     // disconnect/unload/reopen cycle without adding thirty seconds per run.
     std::optional<int> test_idle_grace_ms;
+    // Test-only bound for vault-switch drain. Production always uses the
+    // ordinary shutdown grace.
+    std::optional<int> test_shutdown_grace_ms;
 };
 
 ConfigurationDirectory load_configuration_directory(

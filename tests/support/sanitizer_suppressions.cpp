@@ -32,7 +32,11 @@ extern "C" const char* __tsan_default_suppressions() {
     // false race rooted in this exact SQLite-internal writer.
     return "race:std::ctype<char>::narrow\n"
            "race:std::ctype<char>::widen\n"
-           "race:walIndexWriteHdr\n";
+           "race:walIndexWriteHdr\n"
+           "race:walIndexReadHdr\n"
+           "race:walIndexRecover\n"
+           "race:walTryBeginRead\n"
+           "race:walBeginReadTransaction\n";
 }
 
 #endif

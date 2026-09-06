@@ -5,9 +5,16 @@
 #include "workspace/workspace_config_store.h"
 
 #include <memory>
+#include <stdexcept>
 #include <string>
+#include <string_view>
 
 namespace cha::web {
+
+class UnknownVaultError : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
+};
 
 // Owns one complete running web application. The command-line executable and
 // the macOS in-process bridge share this composition root; only the requested
@@ -29,6 +36,7 @@ public:
     void shutdown();
 
     [[nodiscard]] VaultDefinition current_vault() const;
+    void switch_vault(std::string_view name);
     [[nodiscard]] R2DatabaseTransfer upload_database();
     [[nodiscard]] R2DatabaseTransfer download_database();
     [[nodiscard]] WorkspaceConfigTransfer import_configuration();

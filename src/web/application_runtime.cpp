@@ -4,8 +4,12 @@
 #include "providers/provider_client.h"
 #include "providers/providers.h"
 #include "session/session_repository.h"
+#include "session/workspace_session_database.h"
 #include "util/environment.h"
 #include "util/logging.h"
+#include "util/path_name.h"
+#include "util/private_filesystem.h"
+#include "util/toml_file.h"
 #include "web/current_vault.h"
 #include "workspace/builtins.h"
 #include "workspace/session_open.h"
@@ -22,16 +26,19 @@
 #include "web/web_settings.h"
 
 #include <httplib.h>
+#include <toml++/toml.hpp>
 
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <thread>
+#include <type_traits>
 #include <utility>
 #include <variant>
 
@@ -41,15 +48,45 @@ namespace {
 void configure_test_idle_grace(
     WebSettings& settings,
     const ApplicationCommand& command) {
-    if (!command.test_idle_grace_ms) return;
-    settings.idle_grace =
-        std::chrono::milliseconds(*command.test_idle_grace_ms);
-    settings.orphan_limit = std::max(
-        settings.orphan_limit, settings.idle_grace);
-    const auto max_interval = std::max(
-        std::chrono::milliseconds{1}, settings.idle_grace / 2);
-    settings.sse_heartbeat_interval = std::min(
-        settings.sse_heartbeat_interval, max_interval);
+    if (command.test_idle_grace_ms) {
+        settings.idle_grace =
+            std::chrono::milliseconds(*command.test_idle_grace_ms);
+        settings.orphan_limit = std::max(
+            settings.orphan_limit, settings.idle_grace);
+        const auto max_interval = std::max(
+            std::chrono::milliseconds{1}, settings.idle_grace / 2);
+        settings.sse_heartbeat_interval = std::min(
+            settings.sse_heartbeat_interval, max_interval);
+    }
+    if (command.test_shutdown_grace_ms) {
+        settings.shutdown_grace =
+            std::chrono::milliseconds(*command.test_shutdown_grace_ms);
+    }
+}
+
+void require_switchable_database(const std::filesystem::path& database) {
+    const WorkspaceDatabaseState state =
+        inspect_workspace_session_database(database);
+    if (state == WorkspaceDatabaseState::valid_v2) return;
+    if (state == WorkspaceDatabaseState::missing) {
+        throw std::runtime_error(
+            "Workspace session database '" + utf8_path(database)
+            + "' does not exist");
+    }
+    if (state == WorkspaceDatabaseState::valid_v1) {
+        throw std::runtime_error(
+            "Workspace session database '" + utf8_path(database)
+            + "' is a valid CHA schema-1 database");
+    }
+    if (state == WorkspaceDatabaseState::wrong_application_id
+        || state == WorkspaceDatabaseState::unsupported_version) {
+        throw std::runtime_error(
+            "Workspace session database '" + utf8_path(database)
+            + "' has an unsupported schema");
+    }
+    throw std::runtime_error(
+        "Workspace session database '" + utf8_path(database)
+        + "' is not a valid CHA database");
 }
 
 void log_startup(const WebSettings& settings) {
@@ -127,14 +164,15 @@ struct ApplicationRuntime::Impl {
         const auto seed = TemporarySessionSeed{
             {std::string(entrance_id), std::string(welcome_id)},
             std::string(welcome_name)};
-        sessions = std::make_shared<const SessionRepository>(
+        sessions = std::make_shared<SessionRepository>(
             store->database_path(),
             store->workspace_path(),
             store->welcome_path(),
             seed);
+        mirror = std::make_shared<SessionMirror>();
         if (command.vault.mirror) {
-            mirror = std::make_shared<SessionMirror>(
-                *command.vault.mirror, *sessions);
+            mirror->retarget(
+                *command.vault.mirror, mirror_rebuild_input(*sessions));
         }
 
         auto opener = [this](
@@ -142,14 +180,12 @@ struct ApplicationRuntime::Impl {
                           std::shared_ptr<WakeNotifier> notifier) {
             OpenedSession opened = open_session(
                 *sessions, identity, providers, std::move(notifier), *store);
-            if (mirror) {
-                const auto selected_mirror = mirror;
-                opened.mirror = [selected_mirror, identity](
-                                    std::string_view label,
-                                    std::span<const TranscriptEntry> entries) {
-                    selected_mirror->update(identity, label, entries);
-                };
-            }
+            const auto selected_mirror = mirror;
+            opened.mirror = [selected_mirror, identity](
+                                std::string_view label,
+                                std::span<const TranscriptEntry> entries) {
+                selected_mirror->update(identity, label, entries);
+            };
             return opened;
         };
         live_sessions = std::make_unique<LiveSessionManager>(settings, opener);
@@ -159,9 +195,10 @@ struct ApplicationRuntime::Impl {
     // there, such as a start() that failed after the providers were built.
     ~Impl() { providers.shutdown(); }
 
-    template<typename Operation>
-    auto maintain_database(Operation operation) {
-        const std::lock_guard lifecycle(lifecycle_mutex);
+    template<typename Operation, typename AfterReopen = std::nullptr_t>
+    auto maintain_locked(
+        Operation&& operation,
+        AfterReopen&& after_reopen = nullptr) {
         if (unusable) {
             throw WorkspaceRestartRequiredError(
                 "The workspace database could not be reopened after an earlier "
@@ -183,21 +220,45 @@ struct ApplicationRuntime::Impl {
         // mutex: without it a configuration edit can still be inside its own
         // SQLite transaction, and the checkpoint below would report busy.
         auto database = store->reserve_maintenance();
-        const SessionRepository::MaintenanceGuard repository =
+        SessionRepository::MaintenanceGuard repository =
             sessions->reserve_maintenance();
         repository.checkpoint();
         database.close();
         bool reopened = false;
 
         try {
-            auto result = operation();
-            reopen(database, repository);
-            reopened = true;
-            return result;
+            using Result = std::invoke_result_t<
+                Operation,
+                WorkspaceConfigStore::MaintenanceGuard&,
+                SessionRepository::MaintenanceGuard&>;
+            if constexpr (std::is_void_v<Result>) {
+                operation(database, repository);
+                reopen(database, repository);
+                reopened = true;
+                if constexpr (!std::is_null_pointer_v<
+                                  std::decay_t<AfterReopen>>) {
+                    after_reopen(database, repository);
+                }
+            } else {
+                auto result = operation(database, repository);
+                reopen(database, repository);
+                reopened = true;
+                if constexpr (!std::is_null_pointer_v<
+                                  std::decay_t<AfterReopen>>) {
+                    after_reopen(database, repository);
+                }
+                return result;
+            }
         } catch (...) {
             if (!reopened) reopen_after_failure(database, repository);
             throw;
         }
+    }
+
+    template<typename Operation>
+    auto maintain_database(Operation&& operation) {
+        const std::lock_guard lifecycle(lifecycle_mutex);
+        return maintain_locked(std::forward<Operation>(operation));
     }
 
     void reopen(
@@ -233,7 +294,7 @@ struct ApplicationRuntime::Impl {
     WebSettings settings;
     CurrentVault current_vault_;
     std::unique_ptr<WorkspaceConfigStore> store;
-    std::shared_ptr<const SessionRepository> sessions;
+    std::shared_ptr<SessionRepository> sessions;
     std::shared_ptr<SessionMirror> mirror;
     std::unique_ptr<OpenAiOAuth> openai_auth;
     Providers providers;
@@ -264,6 +325,60 @@ std::unique_ptr<ApplicationRuntime> ApplicationRuntime::open(
 
 VaultDefinition ApplicationRuntime::current_vault() const {
     return impl_->current_vault_.get();
+}
+
+void ApplicationRuntime::switch_vault(std::string_view name) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    const VaultDefinition* const target =
+        find_vault(impl_->command.vaults, name);
+    if (target == nullptr) {
+        throw UnknownVaultError(
+            "Unknown vault '" + std::string(name) + "'");
+    }
+    if (same_vault_name(impl_->current_vault_.get().name, target->name)) {
+        return;
+    }
+    require_switchable_database(target->data);
+    if (target->mirror) require_directory(*target->mirror);
+    const VaultDefinition selected = *target;
+    impl_->maintain_locked(
+        [this, selected](
+            WorkspaceConfigStore::MaintenanceGuard& database,
+            SessionRepository::MaintenanceGuard& repository) {
+            const std::filesystem::path prepared =
+                repository.prepare_retarget(selected.data);
+            database.retarget(prepared);
+            repository.retarget(std::move(prepared));
+            impl_->current_vault_.set(selected);
+        },
+        [this, selected](
+            WorkspaceConfigStore::MaintenanceGuard&,
+            SessionRepository::MaintenanceGuard& repository) {
+            try {
+                if (selected.mirror) {
+                    impl_->mirror->retarget(
+                        *selected.mirror, mirror_rebuild_input(repository));
+                } else {
+                    impl_->mirror->retarget(std::nullopt, {});
+                }
+            } catch (const std::exception& error) {
+                log_warn(
+                    "Session mirror rebuild failed: "
+                    + std::string(error.what()));
+                impl_->mirror->retarget(std::nullopt, {});
+            }
+            try {
+                rewrite_toml_file(
+                    impl_->command.config_directory / "app.toml",
+                    [&](toml::table& table) {
+                        table.insert_or_assign("vault", selected.name);
+                    });
+            } catch (const std::exception& error) {
+                log_warn(
+                    "Failed to persist vault selection: "
+                    + std::string(error.what()));
+            }
+        });
 }
 
 int ApplicationRuntime::start(int port_override) {
@@ -351,7 +466,7 @@ void ApplicationRuntime::shutdown() {
 }
 
 R2DatabaseTransfer ApplicationRuntime::upload_database() {
-    return impl_->maintain_database([this] {
+    return impl_->maintain_database([this](auto&, auto&) {
         const VaultDefinition vault = impl_->current_vault_.get();
         return upload_database_to_r2(
             vault.data, R2DatabaseLease::already_held);
@@ -359,7 +474,7 @@ R2DatabaseTransfer ApplicationRuntime::upload_database() {
 }
 
 R2DatabaseTransfer ApplicationRuntime::download_database() {
-    return impl_->maintain_database([this] {
+    return impl_->maintain_database([this](auto&, auto&) {
         const VaultDefinition vault = impl_->current_vault_.get();
         return download_database_from_r2(
             vault.data, R2DatabaseLease::already_held);
@@ -367,7 +482,7 @@ R2DatabaseTransfer ApplicationRuntime::download_database() {
 }
 
 WorkspaceConfigTransfer ApplicationRuntime::import_configuration() {
-    return impl_->maintain_database([this] {
+    return impl_->maintain_database([this](auto&, auto&) {
         const VaultDefinition vault = impl_->current_vault_.get();
         if (!vault.modify) {
             throw std::runtime_error(
@@ -381,7 +496,7 @@ WorkspaceConfigTransfer ApplicationRuntime::import_configuration() {
 }
 
 WorkspaceConfigTransfer ApplicationRuntime::export_configuration() {
-    return impl_->maintain_database([this] {
+    return impl_->maintain_database([this](auto&, auto&) {
         const VaultDefinition vault = impl_->current_vault_.get();
         if (!vault.modify) {
             throw std::runtime_error(
