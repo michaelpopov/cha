@@ -41,7 +41,9 @@ using WorkspacePersona = Persona;
 // expansion are stored on WorkspaceForumMember.
 struct WorkspaceCharacter {
     CharacterMetadata character;
-    std::string provider_id;
+    // A character not yet assigned to a forum may remain a draft until its
+    // provider is selected in Settings.
+    std::optional<std::string> provider_id;
     std::optional<std::string> style_id;
     std::optional<std::string> reasoning_effort;
     std::optional<WebSearchMode> web_search;
@@ -136,6 +138,10 @@ public:
         std::optional<std::string_view> style_id,
         std::optional<std::string_view> reasoning_effort = std::nullopt,
         std::optional<WebSearchMode> web_search = std::nullopt) const;
+    void write_character_definition(
+        std::string_view character_id,
+        std::string_view display_name,
+        std::optional<std::string_view> markdown = std::nullopt) const;
     void write_persona(
         std::string_view persona_id,
         std::string_view display_name,
@@ -143,6 +149,10 @@ public:
     void create_persona(
         std::string_view persona_id,
         std::string_view display_name) const;
+    void create_character(
+        std::string_view character_id,
+        std::string_view display_name,
+        std::string_view description) const;
     void write_forum_default_character(
         std::string_view forum_id,
         std::string_view character_id) const;

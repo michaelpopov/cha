@@ -216,6 +216,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/characters": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create a draft character
+         * @description Creates a writable character with a generated stable identifier, an
+         *     empty `PROFILE.md`, and a fixed `CHARACTER.md` wrapper that includes
+         *     the application's shared character-voice instructions. A provider and
+         *     style are deliberately left unset; the character cannot be used by a
+         *     forum until a provider is selected. If the shared voice file is absent
+         *     from an older vault, character creation installs it without replacing
+         *     an existing customized copy.
+         */
+        post: operations["createCharacter"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/characters/{character_id}": {
         parameters: {
             query?: never;
@@ -252,6 +278,38 @@ export interface paths {
          *     `reloading`. The server does not reopen anything.
          */
         patch: operations["updateCharacter"];
+        trace?: never;
+    };
+    "/api/v1/characters/{character_id}/definition": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Stable URL-safe character identifier. */
+                character_id: components["parameters"]["CharacterId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Update a character name or definition
+         * @description Rewrites `display_name` in the character's `character.toml`, replaces
+         *     its editable definition content, or does both. For characters created
+         *     through the API, the fixed `CHARACTER.md` wrapper remains intact and
+         *     the content is stored in `PROFILE.md`. Omitted fields keep their
+         *     current values. The built-in Assistant and missing characters return
+         *     `404`.
+         *
+         *     After a write that actually changes a value, the server asks live
+         *     sessions in every forum containing the character to shut down with
+         *     `reloading`. The server does not reopen anything.
+         */
+        patch: operations["updateCharacterDefinition"];
         trace?: never;
     };
     "/api/v1/personas": {
@@ -747,6 +805,10 @@ export interface components {
             available_styles: components["schemas"]["StyleOption"][];
             writable: boolean;
         };
+        CreateCharacterRequest: {
+            display_name: string;
+            description: string;
+        };
         UpdateCharacterRequest: {
             provider: string;
             style: string | null;
@@ -754,6 +816,10 @@ export interface components {
             reasoning_effort: "low" | "medium" | "high" | "xhigh" | null;
             /** @enum {string|null} */
             web_search: "off" | "auto" | "required" | null;
+        };
+        UpdateCharacterDefinitionRequest: {
+            display_name?: string;
+            character_markdown?: string;
         };
         PersonaDetail: {
             id: components["schemas"]["Identifier"];
@@ -1181,6 +1247,34 @@ export interface operations {
             500: components["responses"]["InternalError"];
         };
     };
+    createCharacter: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateCharacterRequest"];
+            };
+        };
+        responses: {
+            /** @description The new draft character. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CharacterDetail"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["ForbiddenMutation"];
+            413: components["responses"]["BodyTooLarge"];
+            500: components["responses"]["InternalError"];
+        };
+    };
     getCharacter: {
         parameters: {
             query?: never;
@@ -1219,6 +1313,38 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["UpdateCharacterRequest"];
+            };
+        };
+        responses: {
+            /** @description Character details after the write. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CharacterDetail"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["ForbiddenMutation"];
+            404: components["responses"]["NotFound"];
+            413: components["responses"]["BodyTooLarge"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    updateCharacterDefinition: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Stable URL-safe character identifier. */
+                character_id: components["parameters"]["CharacterId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateCharacterDefinitionRequest"];
             };
         };
         responses: {

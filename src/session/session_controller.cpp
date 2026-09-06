@@ -322,7 +322,8 @@ std::vector<CharacterRuntimeInfo> SessionController::current_runtime_info(
         const WorkspaceCharacter* const configured =
             current.find_character(member.character_id);
         const WorkspaceProvider* const provider = configured == nullptr
-            ? nullptr : current.find_provider(configured->provider_id);
+            || !configured->provider_id
+            ? nullptr : current.find_provider(*configured->provider_id);
         if (provider == nullptr) {
             throw std::logic_error("Workspace character has no provider");
         }

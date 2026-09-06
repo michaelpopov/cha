@@ -149,9 +149,22 @@ export function fixtureClient(overrides: Partial<ChaClient> = {}): ChaClient {
   return {
     getBootstrap: async () => bootstrapFixture,
     getCharacter: async () => characterDetailFixture,
+    createCharacter: async ({ display_name, description }) => ({
+      ...characterDetailFixture,
+      id: 'character_1',
+      display_name,
+      description,
+      character_markdown: '',
+      provider: null,
+      style: null,
+    }),
     updateCharacter: async (_characterId, settings) => ({
       ...characterDetailFixture,
       ...settings,
+    }),
+    updateCharacterDefinition: async (_characterId, update) => ({
+      ...characterDetailFixture,
+      ...update,
     }),
     getPersona: async () => personaDetailFixture,
     createPersona: async ({ display_name }) => ({

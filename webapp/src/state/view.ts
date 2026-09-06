@@ -1,4 +1,9 @@
-import type { Bootstrap, PersonaDetail, SessionSnapshot } from '../api/client';
+import type {
+  Bootstrap,
+  CharacterDetail,
+  PersonaDetail,
+  SessionSnapshot,
+} from '../api/client';
 import type { AppendEvent } from '../api/events';
 
 export type MainView =
@@ -7,6 +12,7 @@ export type MainView =
   | 'new-persona'
   | 'persona-detail'
   | 'characters'
+  | 'new-character'
   | 'character-detail'
   | 'character-settings'
   | 'forums'
@@ -87,8 +93,11 @@ export type AppAction =
   | { type: 'persona-created'; persona: PersonaDetail }
   | { type: 'persona-updated'; persona: PersonaDetail }
   | { type: 'show-characters' }
+  | { type: 'show-new-character' }
   | { type: 'inspect-character'; characterId: string }
   | { type: 'character-detail-loaded'; characterId: string; writable: boolean }
+  | { type: 'character-created'; character: CharacterDetail }
+  | { type: 'character-updated'; character: CharacterDetail }
   | { type: 'show-character-settings' }
   | { type: 'show-forums' }
   | { type: 'select-forum'; forumId: string }
@@ -274,6 +283,8 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         characterSettingsAvailable: false,
         ...idleSessionOperation(),
       };
+    case 'show-new-character':
+      return { ...state, mainView: 'new-character', ...idleSessionOperation() };
     case 'inspect-character':
       return {
         ...state,
@@ -289,6 +300,67 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       // whether the one now on screen offers its settings.
       if (action.characterId !== state.inspectedCharacterId) return state;
       return { ...state, characterSettingsAvailable: action.writable };
+    case 'character-created': {
+      if (!state.bootstrap) return state;
+      const character = action.character;
+      const characters = [
+        ...state.bootstrap.characters,
+        {
+          id: character.id,
+          display_name: character.display_name,
+          ...(character.description === undefined
+            ? {} : { description: character.description }),
+          appearance: character.appearance,
+        },
+      ].sort((left, right) => left.display_name.localeCompare(right.display_name));
+      return {
+        ...state,
+        mainView: 'character-detail',
+        bootstrap: { ...state.bootstrap, characters },
+        inspectedCharacterId: character.id,
+        characterSettingsAvailable: character.writable,
+        ...idleSessionOperation(),
+      };
+    }
+    case 'character-updated': {
+      if (!state.bootstrap) return state;
+      const character = action.character;
+      const summary = {
+        id: character.id,
+        display_name: character.display_name,
+        ...(character.description === undefined
+          ? {} : { description: character.description }),
+        appearance: character.appearance,
+      };
+      const updateMembers = <T extends { id: string }>(members: T[]) => (
+        members.map((member) => member.id === character.id
+          ? { ...member, ...summary }
+          : member)
+      );
+      const bootstrap = {
+        ...state.bootstrap,
+        characters: updateMembers(state.bootstrap.characters),
+        forums: state.bootstrap.forums.map((forum) => ({
+          ...forum,
+          members: updateMembers(forum.members),
+        })),
+      };
+      const sessionSnapshot = state.sessionSnapshot ? {
+        ...state.sessionSnapshot,
+        characters: updateMembers(state.sessionSnapshot.characters),
+        forum: {
+          ...state.sessionSnapshot.forum,
+          members: updateMembers(state.sessionSnapshot.forum.members),
+        },
+        generation: state.sessionSnapshot.generation.character_id === character.id
+          ? {
+            ...state.sessionSnapshot.generation,
+            character_display_name: character.display_name,
+          }
+          : state.sessionSnapshot.generation,
+      } : null;
+      return { ...state, bootstrap, sessionSnapshot };
+    }
     case 'show-character-settings':
       return { ...state, mainView: 'character-settings', ...idleSessionOperation() };
     case 'show-forums':
@@ -397,9 +469,11 @@ export function navigationTitle(state: AppState): string | null {
         ({ id }) => id === state.inspectedPersonaId,
       )?.display_name ?? 'Persona';
     case 'characters': return 'Characters';
-    // The screen names the character itself, in the row that opens its
-    // settings, so a header repeating the name would only take space.
-    case 'character-detail': return null;
+    case 'new-character': return 'New character';
+    case 'character-detail':
+      return state.bootstrap?.characters.find(
+        ({ id }) => id === state.inspectedCharacterId,
+      )?.display_name ?? 'Character';
     case 'character-settings': return 'Settings';
     case 'forums': return 'Forums';
     case 'sessions': return 'Sessions';

@@ -316,6 +316,48 @@ void LobbyRoutes::install(httplib::Server& server) const {
             nlohmann::json(persona_detail(*current, *created)));
     });
 
+    server.Post("/api/v1/characters",
+        [settings, config](const httplib::Request& request,
+                           httplib::Response& response) {
+        if (!validate_json_mutation(request, response)) return;
+        CreateCharacterRequest create;
+        if (!parse_route_json_body(
+                request, response, settings.request_body_limit,
+                [&create](const nlohmann::json& json) {
+                    create = parse_create_character_request(json);
+                })) return;
+
+        const auto workspace = published_workspace();
+        std::string id;
+        for (std::size_t suffix = 1;; ++suffix) {
+            const std::string candidate = "character_" + std::to_string(suffix);
+            if (workspace->find_character(candidate) == nullptr
+                && workspace->find_persona(candidate) == nullptr) {
+                id = candidate;
+                break;
+            }
+        }
+        try {
+            config->apply_character_create(
+                id, create.display_name, create.description);
+        } catch (const std::invalid_argument&) {
+            return set_error_response(response, 400,
+                {ErrorCode::bad_request, "Invalid character."});
+        } catch (const WorkspaceRestartRequiredError& error) {
+            return set_error_response(response, 500,
+                {ErrorCode::internal_error, error.what()});
+        }
+        const auto current = published_workspace();
+        const WorkspaceCharacter* created = current->find_character(id);
+        if (created == nullptr) {
+            return set_error_response(response, 500,
+                {ErrorCode::internal_error, "The character could not be created."});
+        }
+        set_json_response(
+            response, 201,
+            nlohmann::json(character_detail(*current, *created)));
+    });
+
     server.Get(R"(/api/v1/characters/([^/]+))", [](const httplib::Request& request, httplib::Response& response) {
         const auto workspace = published_workspace();
         const std::string id = request.matches[1];
@@ -351,7 +393,8 @@ void LobbyRoutes::install(httplib::Server& server) const {
                 [&update](const nlohmann::json& json) {
                     update = parse_character_settings_update(json);
                 })) return;
-        const bool changed = update.provider != character->provider_id
+        const bool changed = !character->provider_id
+            || update.provider != *character->provider_id
             || update.style != character->style_id
             || update.reasoning_effort != character->reasoning_effort
             || update.web_search != character->web_search;
@@ -370,6 +413,56 @@ void LobbyRoutes::install(httplib::Server& server) const {
         } catch (const std::invalid_argument&) {
             return set_error_response(response, 400,
                 {ErrorCode::bad_request, "Invalid character settings."});
+        } catch (const WorkspaceRestartRequiredError& error) {
+            return set_error_response(response, 500,
+                {ErrorCode::internal_error, error.what()});
+        }
+        const auto current = published_workspace();
+        const WorkspaceCharacter* updated = current->find_character(id);
+        if (updated == nullptr) {
+            return set_route_not_found(response, "That character was not found.");
+        }
+        set_json_response(
+            response, 200,
+            nlohmann::json(character_detail(*current, *updated)));
+    });
+
+    server.Patch(R"(/api/v1/characters/([^/]+)/definition)",
+        [live_sessions, settings, config](const httplib::Request& request,
+                                          httplib::Response& response) {
+        const auto workspace = published_workspace();
+        const std::string id = request.matches[1];
+        if (!is_valid_route_component(id)) {
+            return set_route_not_found(response, "That character was not found.");
+        }
+        const WorkspaceCharacter* character = workspace->find_character(id);
+        if (character == nullptr || !workspace->character_is_writable(id)) {
+            return set_route_not_found(response, "That character was not found.");
+        }
+        if (!validate_json_mutation(request, response)) return;
+        CharacterDefinitionUpdate update;
+        if (!parse_route_json_body(
+                request, response, settings.request_body_limit,
+                [&update](const nlohmann::json& json) {
+                    update = parse_character_definition_update(json);
+                })) return;
+        const std::string& display_name = update.display_name
+            ? *update.display_name : character->character.display_name;
+        const bool changed = display_name != character->character.display_name
+            || update.character_markdown.has_value();
+        try {
+            if (changed) {
+                const WorkspaceConfigEditResult edited =
+                    config->apply_character_definition(
+                        id, display_name,
+                        update.character_markdown
+                            ? std::optional<std::string_view>(*update.character_markdown)
+                            : std::nullopt);
+                request_reload(*live_sessions, edited.affected_forum_ids);
+            }
+        } catch (const std::invalid_argument&) {
+            return set_error_response(response, 400,
+                {ErrorCode::bad_request, "Invalid character."});
         } catch (const WorkspaceRestartRequiredError& error) {
             return set_error_response(response, 500,
                 {ErrorCode::internal_error, error.what()});

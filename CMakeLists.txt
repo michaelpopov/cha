@@ -167,6 +167,8 @@ target_compile_definitions(
 
 add_library(cha_core STATIC
     ${CMAKE_CURRENT_BINARY_DIR}/generated/application_guide.cpp
+    ${CMAKE_CURRENT_BINARY_DIR}/generated/character_voice.cpp
+    ${CMAKE_CURRENT_BINARY_DIR}/generated/new_character_template.cpp
     src/util/environment.cpp
     src/util/private_filesystem.cpp
     src/util/logging.cpp
@@ -205,8 +207,22 @@ add_library(cha_core STATIC
 add_custom_command(
     OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/generated/application_guide.cpp
     COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/generated
-    COMMAND ${CMAKE_COMMAND} -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/resources/application-guide.md -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/generated/application_guide.cpp -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_text.cmake
+    COMMAND ${CMAKE_COMMAND} -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/resources/application-guide.md -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/generated/application_guide.cpp -DSYMBOL=embedded_application_guide -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_text.cmake
     DEPENDS resources/application-guide.md cmake/embed_text.cmake
+    VERBATIM)
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/generated/character_voice.cpp
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/generated
+    COMMAND ${CMAKE_COMMAND} -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/resources/characters/character-voice.md -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/generated/character_voice.cpp -DSYMBOL=embedded_character_voice -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_text.cmake
+    DEPENDS resources/characters/character-voice.md cmake/embed_text.cmake
+    VERBATIM)
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/generated/new_character_template.cpp
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/generated
+    COMMAND ${CMAKE_COMMAND} -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/resources/characters/CHARACTER.md -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/generated/new_character_template.cpp -DSYMBOL=embedded_new_character_template -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_text.cmake
+    DEPENDS resources/characters/CHARACTER.md cmake/embed_text.cmake
     VERBATIM)
 
 target_compile_features(cha_core PUBLIC cxx_std_20)

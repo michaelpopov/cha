@@ -301,6 +301,46 @@ TEST(Workspace, LoadsNestedDefinitionsAndKeepsCatalogsOrdered) {
     EXPECT_EQ(workspace.forums().front().display_name, "Entrance");
 }
 
+TEST(Workspace, AllowsProviderlessDraftOutsideForumsOnly) {
+    test::TestWorkspace fixture;
+    const std::filesystem::path draft =
+        fixture.root() / "characters" / "draft";
+    std::filesystem::create_directories(draft);
+    std::ofstream(draft / "character.toml")
+        << "display_name = \"Draft\"\n"
+           "description = \"Not configured yet.\"\n";
+    std::ofstream(draft / "CHARACTER.md") << "Draft profile\n";
+
+    const Workspace workspace = Workspace::load(fixture.root());
+    const WorkspaceCharacter* character = workspace.find_character("draft");
+    ASSERT_NE(character, nullptr);
+    EXPECT_FALSE(character->provider_id);
+
+    std::filesystem::create_directories(
+        fixture.root() / "forums" / "lobby" / "members" / "draft");
+    EXPECT_THROW((void)Workspace::load(fixture.root()), std::runtime_error);
+}
+
+TEST(Workspace, NewCharacterPreservesAnExistingSharedVoice) {
+    test::TestWorkspace fixture;
+    const std::filesystem::path shared_voice =
+        fixture.root() / "characters" / "character-voice.md";
+    std::ofstream(shared_voice) << "Customized shared voice.\n";
+
+    const Workspace workspace = Workspace::load(fixture.root());
+    workspace.create_character("newcomer", "Newcomer", "A new character.");
+
+    EXPECT_EQ(file_bytes(shared_voice), "Customized shared voice.\n");
+    EXPECT_EQ(
+        file_bytes(
+            fixture.root() / "characters" / "newcomer" / "CHARACTER.md"),
+        "$$(../character-voice.md)\n\n"
+        "<character_profile>\n$$(PROFILE.md)\n</character_profile>\n");
+    const Workspace reloaded = Workspace::load(fixture.root());
+    ASSERT_NE(reloaded.find_character("newcomer"), nullptr);
+    EXPECT_TRUE(reloaded.find_character("newcomer")->markdown.empty());
+}
+
 TEST(Workspace, RejectsBrokenReferencesAndIdentityCollisions) {
     {
         test::TestWorkspace fixture;

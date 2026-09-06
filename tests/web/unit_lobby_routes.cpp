@@ -515,6 +515,16 @@ httplib::Result patch_character(
         "application/json");
 }
 
+httplib::Result patch_character_definition(
+    TestServer& server,
+    std::string_view id,
+    const nlohmann::json& update) {
+    return server.client().Patch(
+        "/api/v1/characters/" + std::string(id) + "/definition",
+        update.dump(),
+        "application/json");
+}
+
 httplib::Result patch_persona(
     TestServer& server,
     std::string_view id,
@@ -530,6 +540,13 @@ httplib::Result create_persona(
     const nlohmann::json& request) {
     return server.client().Post(
         "/api/v1/personas", request.dump(), "application/json");
+}
+
+httplib::Result create_character(
+    TestServer& server,
+    const nlohmann::json& request) {
+    return server.client().Post(
+        "/api/v1/characters", request.dump(), "application/json");
 }
 
 TEST(LobbyRoutes, CreatesPersonaInTheDatabaseAndBootstrap) {
@@ -571,6 +588,73 @@ TEST(LobbyRoutes, CreatesPersonaInTheDatabaseAndBootstrap) {
     expect_error(
         create_persona(server, nlohmann::json::object()),
         400, "bad_request");
+}
+
+TEST(LobbyRoutes, CreatesDraftCharacterAndUploadsItsProfile) {
+    test::TestWorkspace fixture;
+    const LobbyGraph graph(fixture.root());
+    LiveSessionManager manager(lobby_settings(2), counting_opener(graph));
+    TestServer server(graph, manager);
+
+    const auto created = create_character(server, {
+        {"display_name", "Mentor"},
+        {"description", "A thoughtful guide."},
+    });
+    ASSERT_TRUE(created);
+    ASSERT_EQ(created->status, 201);
+    const nlohmann::json created_body = body(created);
+    EXPECT_EQ(created_body["id"], "character_1");
+    EXPECT_EQ(created_body["display_name"], "Mentor");
+    EXPECT_EQ(created_body["description"], "A thoughtful guide.");
+    EXPECT_EQ(created_body["character_markdown"], "");
+    EXPECT_TRUE(created_body["provider"].is_null());
+    EXPECT_TRUE(created_body["style"].is_null());
+    EXPECT_EQ(created_body["writable"], true);
+
+    const std::filesystem::path database = graph.store->database_path();
+    const std::string config = config_row(
+        database, "characters/character_1/character.toml");
+    EXPECT_NE(config.find("Mentor"), std::string::npos);
+    EXPECT_NE(config.find("A thoughtful guide."), std::string::npos);
+    EXPECT_EQ(config.find("provider"), std::string::npos);
+    EXPECT_EQ(config.find("style"), std::string::npos);
+    constexpr std::string_view wrapper =
+        "$$(../character-voice.md)\n\n"
+        "<character_profile>\n$$(PROFILE.md)\n</character_profile>\n";
+    EXPECT_EQ(
+        config_row(database, "characters/character_1/CHARACTER.md"),
+        wrapper);
+    const std::string voice =
+        config_row(database, "characters/character-voice.md");
+    EXPECT_NE(voice.find("# Character Voice System Prompt"), std::string::npos);
+    EXPECT_NE(voice.find("## Response discipline"), std::string::npos);
+    EXPECT_EQ(
+        config_row(database, "characters/character_1/PROFILE.md"), "");
+
+    const auto uploaded = patch_character_definition(
+        server, "character_1", {{"character_markdown", "# Mentor\n"}});
+    ASSERT_TRUE(uploaded);
+    ASSERT_EQ(uploaded->status, 200);
+    EXPECT_EQ(body(uploaded)["character_markdown"], "# Mentor");
+    EXPECT_EQ(
+        config_row(database, "characters/character_1/CHARACTER.md"),
+        wrapper);
+    EXPECT_EQ(
+        config_row(database, "characters/character_1/PROFILE.md"),
+        "# Mentor\n");
+
+    expect_error(
+        create_character(server, {
+            {"display_name", "Mentor"},
+            {"description", "Another guide."},
+        }),
+        400, "bad_request", "Invalid character.");
+    expect_error(
+        create_character(server, {
+            {"display_name", "Another"},
+            {"description", ""},
+        }),
+        400, "bad_request", "Invalid character.");
 }
 
 TEST(LobbyRoutes, PatchesPersonaNameAndMarkdownInTheDatabase) {
@@ -652,6 +736,61 @@ TEST(LobbyRoutes, ReloadsAForumUsingTheChangedPersona) {
         std::this_thread::sleep_for(10ms);
     }
     EXPECT_FALSE(session_is_live(manager, key));
+}
+
+TEST(LobbyRoutes, PatchesCharacterNameAndMarkdownInTheDatabase) {
+    test::TestWorkspace fixture;
+    const auto config_path =
+        fixture.root() / "characters" / "guide" / "character.toml";
+    const auto markdown_path =
+        fixture.root() / "characters" / "guide" / "CHARACTER.md";
+    const LobbyGraph graph(fixture.root());
+    LiveSessionManager manager(lobby_settings(2), counting_opener(graph));
+    TestServer server(graph, manager);
+
+    const std::string config_before = read_bytes(config_path);
+    const std::string markdown_before = read_bytes(markdown_path);
+    const auto saved = patch_character_definition(server, "guide", {
+        {"display_name", "Mentor"},
+        {"character_markdown", "# Updated character\n"},
+    });
+    ASSERT_TRUE(saved);
+    ASSERT_EQ(saved->status, 200);
+    const nlohmann::json saved_body = body(saved);
+    EXPECT_EQ(saved_body["display_name"], "Mentor");
+    EXPECT_EQ(saved_body["character_markdown"], "# Updated character\n");
+    EXPECT_EQ(saved_body["writable"], true);
+    EXPECT_EQ(read_bytes(config_path), config_before);
+    EXPECT_EQ(read_bytes(markdown_path), markdown_before);
+    EXPECT_NE(
+        config_row(graph.store->database_path(), "characters/guide/character.toml")
+            .find("Mentor"),
+        std::string::npos);
+    EXPECT_EQ(
+        config_row(graph.store->database_path(), "characters/guide/CHARACTER.md"),
+        "# Updated character\n");
+
+    const auto bootstrap = server.client().Get("/api/v1/bootstrap");
+    ASSERT_TRUE(bootstrap);
+    ASSERT_EQ(bootstrap->status, 200);
+    const nlohmann::json bootstrap_body = body(bootstrap);
+    const auto character = std::ranges::find_if(
+        bootstrap_body["characters"],
+        [](const nlohmann::json& value) { return value["id"] == "guide"; });
+    ASSERT_NE(character, bootstrap_body["characters"].end());
+    EXPECT_EQ((*character)["display_name"], "Mentor");
+
+    expect_error(
+        patch_character_definition(
+            server, "guide", {{"display_name", "Assistant"}}),
+        400, "bad_request", "Invalid character.");
+    expect_error(
+        patch_character_definition(
+            server, "builtin-assistant", {{"display_name", "Helper"}}),
+        404, "not_found", "That character was not found.");
+    expect_error(
+        patch_character_definition(server, "guide", nlohmann::json::object()),
+        400, "bad_request");
 }
 
 TEST(LobbyRoutes, PatchesCharacterSettingsAndLeavesTheFileAloneOnABadName) {

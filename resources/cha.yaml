@@ -224,6 +224,41 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /api/v1/characters:
+    post:
+      tags: [Discovery]
+      operationId: createCharacter
+      summary: Create a draft character
+      description: |
+        Creates a writable character with a generated stable identifier, an
+        empty `PROFILE.md`, and a fixed `CHARACTER.md` wrapper that includes
+        the application's shared character-voice instructions. A provider and
+        style are deliberately left unset; the character cannot be used by a
+        forum until a provider is selected. If the shared voice file is absent
+        from an older vault, character creation installs it without replacing
+        an existing customized copy.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCharacterRequest"
+      responses:
+        "201":
+          description: The new draft character.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CharacterDetail"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/ForbiddenMutation"
+        "413":
+          $ref: "#/components/responses/BodyTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /api/v1/characters/{character_id}:
     parameters:
       - $ref: "#/components/parameters/CharacterId"
@@ -267,6 +302,48 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/UpdateCharacterRequest"
+      responses:
+        "200":
+          description: Character details after the write.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CharacterDetail"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/ForbiddenMutation"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/BodyTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/characters/{character_id}/definition:
+    parameters:
+      - $ref: "#/components/parameters/CharacterId"
+    patch:
+      tags: [Discovery]
+      operationId: updateCharacterDefinition
+      summary: Update a character name or definition
+      description: |
+        Rewrites `display_name` in the character's `character.toml`, replaces
+        its editable definition content, or does both. For characters created
+        through the API, the fixed `CHARACTER.md` wrapper remains intact and
+        the content is stored in `PROFILE.md`. Omitted fields keep their
+        current values. The built-in Assistant and missing characters return
+        `404`.
+
+        After a write that actually changes a value, the server asks live
+        sessions in every forum containing the character to shut down with
+        `reloading`. The server does not reopen anything.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateCharacterDefinitionRequest"
       responses:
         "200":
           description: Character details after the write.
@@ -1285,6 +1362,16 @@ components:
         writable:
           type: boolean
 
+    CreateCharacterRequest:
+      type: object
+      additionalProperties: false
+      required: [display_name, description]
+      properties:
+        display_name:
+          type: string
+        description:
+          type: string
+
     UpdateCharacterRequest:
       type: object
       additionalProperties: false
@@ -1300,6 +1387,16 @@ components:
         web_search:
           type: [string, "null"]
           enum: [off, auto, required, null]
+
+    UpdateCharacterDefinitionRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        display_name:
+          type: string
+        character_markdown:
+          type: string
 
     PersonaDetail:
       type: object

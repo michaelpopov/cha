@@ -29,6 +29,7 @@ describe('application navigation reducer', () => {
     const conversation = state.activeConversation;
     const actions: AppAction[] = [
       { type: 'show-characters' },
+      { type: 'show-new-character' },
       { type: 'inspect-character', characterId: 'guide' },
       { type: 'show-characters' },
       { type: 'show-forums' },
@@ -172,8 +173,7 @@ describe('application navigation reducer', () => {
     let state = readyState();
     state = appReducer(state, { type: 'inspect-character', characterId: 'guide' });
     expect(state.characterSettingsAvailable).toBe(false);
-    // The character's own screen names it in the column, not in the header.
-    expect(navigationTitle(state)).toBeNull();
+    expect(navigationTitle(state)).toBe('Guide');
 
     state = appReducer(state, {
       type: 'character-detail-loaded', characterId: 'guide', writable: true,
@@ -197,6 +197,33 @@ describe('application navigation reducer', () => {
       type: 'character-detail-loaded', characterId: 'assistant', writable: false,
     });
     expect(state.characterSettingsAvailable).toBe(false);
+  });
+
+  it('adds a created draft character and opens its detail', () => {
+    const character = {
+      ...bootstrapFixture.characters[1],
+      character_markdown: '',
+      provider: null,
+      style: null,
+      reasoning_effort: null,
+      web_search: null,
+      available_providers: [],
+      available_styles: [],
+      writable: true,
+      id: 'character_1',
+      display_name: 'Mentor',
+      description: 'A thoughtful guide.',
+    };
+    const state = appReducer(readyState(), { type: 'character-created', character });
+
+    expect(state.mainView).toBe('character-detail');
+    expect(state.inspectedCharacterId).toBe('character_1');
+    expect(state.characterSettingsAvailable).toBe(true);
+    expect(state.bootstrap?.characters).toContainEqual(expect.objectContaining({
+      id: 'character_1',
+      display_name: 'Mentor',
+      description: 'A thoughtful guide.',
+    }));
   });
 
   it('preserves conversation and character-settings state on the Settings page', () => {

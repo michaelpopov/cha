@@ -1281,6 +1281,21 @@ TEST(WorkspaceConfigStore, ImportsPackageSeedWithoutApiKey) {
         inspect_workspace_session_database(database),
         WorkspaceDatabaseState::valid_v2);
 
+    {
+        Database imported(database, Database::Mode::read_only);
+        const std::vector<ConfigFile> rows =
+            read_workspace_config_files(imported);
+        const auto voice = std::ranges::find(
+            rows, "characters/character-voice.md", &ConfigFile::name);
+        ASSERT_NE(voice, rows.end());
+        EXPECT_NE(
+            voice->content.find("# Character Voice System Prompt"),
+            std::string::npos);
+        EXPECT_NE(
+            voice->content.find("## Response discipline"),
+            std::string::npos);
+    }
+
     const auto store = WorkspaceConfigStore::open(database);
     const auto workspace = getws();
     ASSERT_NE(workspace, nullptr);

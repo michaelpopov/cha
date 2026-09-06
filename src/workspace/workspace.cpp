@@ -27,6 +27,8 @@
 namespace cha {
 
 std::string_view embedded_application_guide();
+std::string_view embedded_character_voice();
+std::string_view embedded_new_character_template();
 
 namespace {
 
@@ -506,7 +508,8 @@ bool provider_supports_web_search(const ModelBackendConfig& config) {
 CharacterConfig load_character_config(
     const std::filesystem::path& path,
     bool definition,
-    bool allow_reserved_name = false) {
+    bool allow_reserved_name = false,
+    bool require_provider = false) {
     const toml::table table = read_toml(path, "character config");
     static constexpr std::string_view definition_fields[]{
         "display_name", "description", "provider", "style", "reasoning_effort",
@@ -545,7 +548,7 @@ CharacterConfig load_character_config(
                 "Character config '" + utf8_path(path)
                 + "' requires non-empty display_name");
         }
-        if (!result.provider_id || result.provider_id->empty()) {
+        if (require_provider && (!result.provider_id || result.provider_id->empty())) {
             throw std::runtime_error(
                 "Character config '" + utf8_path(path)
                 + "' requires non-empty provider");
@@ -558,7 +561,7 @@ CharacterConfig load_character_config(
         if (result.description) {
             validate_description(*result.description, "Character", path);
         }
-        require_path_component(*result.provider_id, path);
+        if (result.provider_id) require_path_component(*result.provider_id, path);
         if (result.style_id) require_path_component(*result.style_id, path);
         if (result.reasoning_effort
             && !valid_character_reasoning_effort(*result.reasoning_effort)) {
@@ -835,9 +838,9 @@ Workspace Workspace::load(std::filesystem::path root) {
                 "Character '" + id + "' requires character.toml and CHARACTER.md");
         }
         const CharacterConfig config = load_character_config(config_path, true);
-        const WorkspaceProvider* provider =
-            workspace.find_provider(*config.provider_id);
-        if (provider == nullptr) {
+        const WorkspaceProvider* provider = config.provider_id
+            ? workspace.find_provider(*config.provider_id) : nullptr;
+        if (config.provider_id && provider == nullptr) {
             const auto failure = provider_errors.find(*config.provider_id);
             if (failure != provider_errors.end()) {
                 throw std::runtime_error(
@@ -847,6 +850,10 @@ Workspace Workspace::load(std::filesystem::path root) {
             throw std::runtime_error(
                 "Character '" + id + "' references unknown provider '"
                 + *config.provider_id + "'");
+        }
+        if (config.web_search && !provider) {
+            throw std::runtime_error(
+                "Character '" + id + "' enables web search without a provider");
         }
         if (config.web_search && *config.web_search != WebSearchMode::off
             && !provider_supports_web_search(provider->config)) {
@@ -889,7 +896,7 @@ Workspace Workspace::load(std::filesystem::path root) {
                 .tags = config.tags,
                 .appearance = appearance,
             },
-            .provider_id = *config.provider_id,
+            .provider_id = config.provider_id,
             .style_id = config.style_id,
             .reasoning_effort = config.reasoning_effort,
             .web_search = config.web_search,
@@ -903,7 +910,7 @@ Workspace Workspace::load(std::filesystem::path root) {
     const std::filesystem::path assistant_path =
         workspace.root_ / "system" / "assistant" / "character.toml";
     const CharacterConfig assistant =
-        load_character_config(assistant_path, true, true);
+        load_character_config(assistant_path, true, true, true);
     if (workspace.find_provider(*assistant.provider_id) == nullptr) {
         const auto failure = provider_errors.find(*assistant.provider_id);
         if (failure != provider_errors.end()) {
@@ -998,6 +1005,11 @@ Workspace Workspace::load(std::filesystem::path root) {
                 throw std::runtime_error(
                     "Forum '" + id + "' member '" + member_id
                     + "' has no character definition");
+            }
+            if (!workspace.find_character(member_id)->provider_id) {
+                throw std::runtime_error(
+                    "Forum '" + id + "' member '" + member_id
+                    + "' has no provider");
             }
             member_ids.push_back(member_id);
         }
@@ -1293,7 +1305,8 @@ CharacterDefinition Workspace::character_definition(
     }
     const WorkspaceCharacter* const character = find_character(character_id);
     const WorkspaceProvider* const provider = character == nullptr
-        ? nullptr : find_provider(character->provider_id);
+        || !character->provider_id
+        ? nullptr : find_provider(*character->provider_id);
     if (character == nullptr || provider == nullptr) {
         throw std::logic_error("Workspace contains an invalid forum member");
     }
@@ -1322,6 +1335,47 @@ bool Workspace::character_is_writable(std::string_view id) const noexcept {
 
 bool Workspace::persona_is_writable(std::string_view id) const noexcept {
     return persona_directories_.contains(std::string(id));
+}
+
+void Workspace::write_character_definition(
+    std::string_view character_id,
+    std::string_view display_name,
+    std::optional<std::string_view> markdown) const {
+    const auto config = character_config_paths_.find(std::string(character_id));
+    if (config == character_config_paths_.end()) {
+        throw std::runtime_error(
+            "Character '" + std::string(character_id)
+            + "' has no writable configuration");
+    }
+    try {
+        validate_public_name(display_name, "Character name", config->second, true);
+    } catch (const std::runtime_error&) {
+        throw std::invalid_argument("Invalid character name");
+    }
+    if (is_reserved_participant(display_name)) {
+        throw std::invalid_argument("Reserved character name");
+    }
+    for (const WorkspaceCharacter& character : characters_) {
+        if (character.character.id != character_id
+            && ascii_iequals(character.character.display_name, display_name)) {
+            throw std::invalid_argument("Duplicate character name");
+        }
+    }
+    for (const WorkspacePersona& persona : personas_) {
+        if (ascii_iequals(persona.display_name, display_name)) {
+            throw std::invalid_argument("Character name conflicts with a persona");
+        }
+    }
+    rewrite_toml_file(config->second, [&](toml::table& table) {
+        table.insert_or_assign("display_name", std::string(display_name));
+    });
+    if (markdown) {
+        const WorkspaceCharacter* character = find_character(character_id);
+        const std::filesystem::path filename = character != nullptr
+                && character->prompt_template == embedded_new_character_template()
+            ? "PROFILE.md" : "CHARACTER.md";
+        create_private_file(config->second.parent_path() / filename, *markdown);
+    }
 }
 
 void Workspace::write_persona(
@@ -1394,6 +1448,57 @@ void Workspace::create_persona(
     config.insert("display_name", std::string(display_name));
     write_toml_file(config_path, config);
     create_private_file(directory / "PERSONA.md", "");
+}
+
+void Workspace::create_character(
+    std::string_view character_id,
+    std::string_view display_name,
+    std::string_view description) const {
+    try {
+        validate_workspace_character_id(character_id);
+    } catch (const std::runtime_error&) {
+        throw std::invalid_argument("Invalid character ID");
+    }
+    if (find_character(character_id) != nullptr
+        || find_persona(character_id) != nullptr) {
+        throw std::invalid_argument("Duplicate character ID");
+    }
+    const std::filesystem::path directory =
+        root_ / "characters" / std::string(character_id);
+    const std::filesystem::path config_path = directory / "character.toml";
+    try {
+        validate_public_name(display_name, "Character name", config_path, true);
+        validate_description(description, "Character", config_path);
+    } catch (const std::runtime_error&) {
+        throw std::invalid_argument("Invalid character");
+    }
+    if (is_reserved_participant(display_name)) {
+        throw std::invalid_argument("Reserved character name");
+    }
+    for (const WorkspaceCharacter& character : characters_) {
+        if (ascii_iequals(character.character.display_name, display_name)) {
+            throw std::invalid_argument("Duplicate character name");
+        }
+    }
+    for (const WorkspacePersona& persona : personas_) {
+        if (ascii_iequals(persona.display_name, display_name)) {
+            throw std::invalid_argument("Character name conflicts with a persona");
+        }
+    }
+
+    create_private_directory(directory);
+    toml::table config;
+    config.insert("display_name", std::string(display_name));
+    config.insert("description", std::string(description));
+    write_toml_file(config_path, config);
+    const std::filesystem::path shared_voice =
+        root_ / "characters" / "character-voice.md";
+    if (!std::filesystem::exists(shared_voice)) {
+        create_private_file(shared_voice, embedded_character_voice());
+    }
+    create_private_file(
+        directory / "CHARACTER.md", embedded_new_character_template());
+    create_private_file(directory / "PROFILE.md", "");
 }
 
 void Workspace::write_character_settings(

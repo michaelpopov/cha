@@ -674,6 +674,7 @@ function RosterDetailScreen({
 
 interface RosterDetailProps extends NavigationScreenProps {
   client: ChaClient;
+  reloadVersion?: number;
 }
 
 export function PersonasScreen({ state, dispatch, sessionReport }: NavigationScreenProps) {
@@ -871,6 +872,18 @@ export function CharactersScreen({ state, dispatch, sessionReport }: NavigationS
     <section className="cha-screen cha-navigation" aria-label="Characters navigation">
       {sessionReport}
       <div className="cha-roster">
+        <button
+          className="cha-list-action"
+          onClick={() => dispatch({ type: 'show-new-character' })}
+          type="button"
+        >
+          <span className="cha-list-icon"><PlusIcon /></span>
+          <span className="cha-list-copy">
+            <span className="cha-primary-line">New character</span>
+            <span className="cha-secondary-line">Enter a name to begin</span>
+          </span>
+          <ChevronRightIcon className="cha-chevron" />
+        </button>
         {state.bootstrap?.characters.map((character) => (
           <RosterRow
             description={character.description}
@@ -884,27 +897,90 @@ export function CharactersScreen({ state, dispatch, sessionReport }: NavigationS
   );
 }
 
-// Names the character whose description is on screen, and — when the character
-// has settings to change — opens them. Same row the Sessions list uses to reach
-// its forum: navigation belongs in the reading column, beside what it is about.
-function CharacterHeader({ state, dispatch }: DiscoveryScreenProps) {
-  const name = state.bootstrap?.characters.find(
-    ({ id }) => id === state.inspectedCharacterId,
-  )?.display_name;
-  if (!name) return null;
-  if (!state.characterSettingsAvailable) {
-    return <p className="cha-header-name">{name}</p>;
+export function NewCharacterScreen({
+  dispatch,
+  client,
+  sessionReport,
+}: RosterDetailProps) {
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const trimmedName = name.trim();
+  const trimmedDescription = description.trim();
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!trimmedName || !trimmedDescription || saving) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const character = await client.createCharacter({
+        display_name: trimmedName,
+        description: trimmedDescription,
+      });
+      dispatch({ type: 'character-created', character });
+    } catch (failure: unknown) {
+      setError(publicErrorMessage(failure, 'The character could not be created.'));
+      setSaving(false);
+    }
   }
+
   return (
-    <button
-      aria-label={`${name} settings`}
-      className="cha-header-row"
-      onClick={() => dispatch({ type: 'show-character-settings' })}
-      type="button"
-    >
-      <span className="cha-primary-line">{name}</span>
-      <ChevronRightIcon className="cha-chevron" />
-    </button>
+    <section className="cha-screen cha-navigation" aria-label="New character navigation">
+      <button
+        className="cha-back-row"
+        onClick={() => dispatch({ type: 'show-characters' })}
+        type="button"
+      >
+        <ChevronLeftIcon />
+        <span>Characters</span>
+      </button>
+      {sessionReport}
+      <form className="cha-new-character" onSubmit={(event) => void submit(event)}>
+        <label htmlFor="cha-character-name">Name</label>
+        <input
+          autoComplete="off"
+          autoFocus
+          className="cha-form-control"
+          disabled={saving}
+          id="cha-character-name"
+          onChange={(event) => setName(event.target.value)}
+          placeholder="e.g. Cheburashka"
+          type="text"
+          value={name}
+        />
+        <label htmlFor="cha-character-description">Description</label>
+        <input
+          autoComplete="off"
+          className="cha-form-control"
+          disabled={saving}
+          id="cha-character-description"
+          onChange={(event) => setDescription(event.target.value)}
+          placeholder="A short description shown in the character list"
+          type="text"
+          value={description}
+        />
+        {error && <p className="cha-error-message" role="alert">{error}</p>}
+        <div className="cha-new-character-actions">
+          <button
+            className="cha-button cha-button-ghost"
+            disabled={saving}
+            onClick={() => dispatch({ type: 'show-characters' })}
+            type="button"
+          >
+            Cancel
+          </button>
+          <button
+            className="cha-button cha-button-primary"
+            disabled={!trimmedName || !trimmedDescription || saving}
+            type="submit"
+          >
+            Create character
+          </button>
+        </div>
+      </form>
+    </section>
   );
 }
 
@@ -912,6 +988,7 @@ export function CharacterDetailScreen({
   state,
   dispatch,
   client,
+  reloadVersion = 0,
   sessionReport,
 }: RosterDetailProps) {
   const load = useCallback(
@@ -929,13 +1006,23 @@ export function CharacterDetailScreen({
         absent: 'No character is selected.',
         loading: 'Loading character…',
         failed: 'Character detail could not be loaded.',
-        empty: 'This character has no CHARACTER.md definition.',
+        empty: 'This character has no definition yet.',
       }}
       load={load}
       onBack={() => dispatch({ type: 'show-characters' })}
+      reloadVersion={reloadVersion}
       sessionReport={sessionReport}
       subjectId={state.inspectedCharacterId}
-      subtitle={<CharacterHeader dispatch={dispatch} state={state} />}
+      toolbarAction={state.characterSettingsAvailable ? (
+        <button
+          className="cha-character-settings-link"
+          onClick={() => dispatch({ type: 'show-character-settings' })}
+          type="button"
+        >
+          <span>Settings</span>
+          <ChevronRightIcon />
+        </button>
+      ) : undefined}
     />
   );
 }

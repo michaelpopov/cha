@@ -1159,6 +1159,19 @@ WorkspaceConfigEditResult WorkspaceConfigStore::apply_character_settings(
     });
 }
 
+WorkspaceConfigEditResult WorkspaceConfigStore::apply_character_definition(
+    std::string_view character_id,
+    std::string_view display_name,
+    std::optional<std::string_view> markdown) {
+    return impl_->edit([&](const Workspace& workspace) {
+        std::vector<std::string> affected =
+            forums_using_character(workspace, character_id);
+        workspace.write_character_definition(
+            character_id, display_name, markdown);
+        return affected;
+    });
+}
+
 WorkspaceConfigEditResult WorkspaceConfigStore::apply_persona_update(
     std::string_view persona_id,
     std::string_view display_name,
@@ -1176,6 +1189,16 @@ WorkspaceConfigEditResult WorkspaceConfigStore::apply_persona_create(
     std::string_view display_name) {
     return impl_->edit([&](const Workspace& workspace) {
         workspace.create_persona(persona_id, display_name);
+        return std::vector<std::string>{};
+    });
+}
+
+WorkspaceConfigEditResult WorkspaceConfigStore::apply_character_create(
+    std::string_view character_id,
+    std::string_view display_name,
+    std::string_view description) {
+    return impl_->edit([&](const Workspace& workspace) {
+        workspace.create_character(character_id, display_name, description);
         return std::vector<std::string>{};
     });
 }

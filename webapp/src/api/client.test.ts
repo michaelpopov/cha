@@ -49,12 +49,17 @@ describe('CHA API client', () => {
       reasoning_effort: null,
       web_search: null,
     });
+    await client.updateCharacterDefinition('a b', { display_name: 'Guide' });
     await client.getOpenAiAuth();
     await client.startOpenAiAuth();
     await client.pollOpenAiAuth();
     await client.disconnectOpenAiAuth();
     await client.switchVault('Projects');
     await client.createPersona({ display_name: 'Project manager' });
+    await client.createCharacter({
+      display_name: 'Mentor',
+      description: 'A thoughtful guide.',
+    });
 
     expect(fetcher.mock.calls.map(([url]) => url)).toEqual([
       '/api/v1/bootstrap',
@@ -72,12 +77,14 @@ describe('CHA API client', () => {
       '/s/forum/session/api/v1/actions/stop',
       '/s/forum/session/api/v1/actions/default-character',
       '/api/v1/characters/a%20b',
+      '/api/v1/characters/a%20b/definition',
       '/api/v1/openai/auth',
       '/api/v1/openai/auth/login',
       '/api/v1/openai/auth/poll',
       '/api/v1/openai/auth/disconnect',
       '/api/v1/vault/switch',
       '/api/v1/personas',
+      '/api/v1/characters',
     ]);
 
     expect(fetcher.mock.calls[0][1]?.method).toBeUndefined();
@@ -101,20 +108,25 @@ describe('CHA API client', () => {
     expect(fetcher.mock.calls[14][1]?.body).toBe(
       '{"provider":"terra","style":null,"reasoning_effort":null,"web_search":null}',
     );
-    expect(fetcher.mock.calls[15][1]?.method).toBeUndefined();
-    expect(new Headers(fetcher.mock.calls[15][1]?.headers).get('Accept')).toBe('application/json');
-    expect(fetcher.mock.calls[16][1]?.method).toBe('POST');
-    expect(new Headers(fetcher.mock.calls[16][1]?.headers).get('Content-Type'))
-      .toBe('application/json');
-    expect(fetcher.mock.calls[16][1]?.body).toBe('{}');
+    expect(fetcher.mock.calls[15][1]?.method).toBe('PATCH');
+    expect(fetcher.mock.calls[15][1]?.body).toBe('{"display_name":"Guide"}');
+    expect(fetcher.mock.calls[16][1]?.method).toBeUndefined();
+    expect(new Headers(fetcher.mock.calls[16][1]?.headers).get('Accept')).toBe('application/json');
     expect(fetcher.mock.calls[17][1]?.method).toBe('POST');
-    expect(fetcher.mock.calls[17][1]?.body).toBe('{}');
+    expect(new Headers(fetcher.mock.calls[17][1]?.headers).get('Content-Type'))
+      .toBe('application/json');
     expect(fetcher.mock.calls[18][1]?.method).toBe('POST');
     expect(fetcher.mock.calls[18][1]?.body).toBe('{}');
     expect(fetcher.mock.calls[19][1]?.method).toBe('POST');
-    expect(fetcher.mock.calls[19][1]?.body).toBe('{"vault_name":"Projects"}');
+    expect(fetcher.mock.calls[19][1]?.body).toBe('{}');
     expect(fetcher.mock.calls[20][1]?.method).toBe('POST');
-    expect(fetcher.mock.calls[20][1]?.body).toBe('{"display_name":"Project manager"}');
+    expect(fetcher.mock.calls[20][1]?.body).toBe('{"vault_name":"Projects"}');
+    expect(fetcher.mock.calls[21][1]?.method).toBe('POST');
+    expect(fetcher.mock.calls[21][1]?.body).toBe('{"display_name":"Project manager"}');
+    expect(fetcher.mock.calls[22][1]?.method).toBe('POST');
+    expect(fetcher.mock.calls[22][1]?.body).toBe(
+      '{"display_name":"Mentor","description":"A thoughtful guide."}',
+    );
     expect(sessionEventsUrl('f one', 's/two')).toBe('/s/f%20one/s%2Ftwo/api/v1/events');
   });
 

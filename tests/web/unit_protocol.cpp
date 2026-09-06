@@ -372,6 +372,26 @@ TEST(WebProtocol, ParsesRouteSpecificCommandPayloads) {
         }),
         std::invalid_argument);
 
+    const CharacterDefinitionUpdate definition =
+        parse_character_definition_update({
+            {"display_name", "Mentor"},
+            {"character_markdown", "# Voice"},
+        });
+    EXPECT_EQ(definition.display_name, "Mentor");
+    EXPECT_EQ(definition.character_markdown, "# Voice");
+    EXPECT_FALSE(parse_character_definition_update({
+        {"display_name", "Mentor"},
+    }).character_markdown);
+    EXPECT_THROW(
+        (void)parse_character_definition_update({}),
+        std::invalid_argument);
+    EXPECT_THROW(
+        (void)parse_character_definition_update({{"display_name", 1}}),
+        std::invalid_argument);
+    EXPECT_THROW(
+        (void)parse_character_definition_update({{"unknown", "value"}}),
+        std::invalid_argument);
+
     const PersonaUpdate persona = parse_persona_update({
         {"display_name", "Editor"},
         {"persona_markdown", "# Notes"},
@@ -424,6 +444,13 @@ TEST(WebProtocol, ParsesRouteSpecificCommandPayloads) {
     EXPECT_EQ(
         parse_create_persona_name({{"display_name", "Project manager"}}),
         "Project manager");
+    const CreateCharacterRequest create_character =
+        parse_create_character_request({
+            {"display_name", "Mentor"},
+            {"description", "A thoughtful guide."},
+        });
+    EXPECT_EQ(create_character.display_name, "Mentor");
+    EXPECT_EQ(create_character.description, "A thoughtful guide.");
     EXPECT_EQ(parse_rename_session_label({{"label", "Renamed"}}), "Renamed");
     EXPECT_EQ(parse_rename_session_label({{"label", ""}}), "");
     EXPECT_EQ(parse_vault_switch_name({{"vault_name", "Projects"}}), "Projects");
@@ -435,6 +462,9 @@ TEST(WebProtocol, ParsesRouteSpecificCommandPayloads) {
         std::invalid_argument);
     EXPECT_THROW(
         (void)parse_create_persona_name({}),
+        std::invalid_argument);
+    EXPECT_THROW(
+        (void)parse_create_character_request({{"display_name", "Mentor"}}),
         std::invalid_argument);
     EXPECT_THROW(
         (void)parse_create_persona_name({

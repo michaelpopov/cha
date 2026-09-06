@@ -191,11 +191,21 @@ struct StyleOption {
     bool operator==(const StyleOption&) const = default;
 };
 
+struct CreateCharacterRequest {
+    std::string display_name;
+    std::string description;
+};
+
 struct CharacterSettingsUpdate {
     std::string provider;
     std::optional<std::string> style;
     std::optional<std::string> reasoning_effort;
     std::optional<WebSearchMode> web_search;
+};
+
+struct CharacterDefinitionUpdate {
+    std::optional<std::string> display_name;
+    std::optional<std::string> character_markdown;
 };
 
 struct CharacterDetail {

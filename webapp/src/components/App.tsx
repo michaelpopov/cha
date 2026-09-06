@@ -4,6 +4,7 @@ import {
   useReducer,
   useRef,
   useState,
+  type ChangeEvent,
   type Dispatch,
   type FormEvent,
 } from 'react';
@@ -37,7 +38,7 @@ import {
   type AppAction,
   type AppState,
 } from '../state/view';
-import { CheckIcon, CloseIcon, EditIcon, SidebarIcon } from './Icons';
+import { CheckIcon, CloseIcon, EditIcon, FileUpIcon, SidebarIcon } from './Icons';
 import { OpenAiConnectionScreen } from './OpenAiConnection';
 import {
   CharacterDetailScreen,
@@ -47,6 +48,7 @@ import {
   ForumDetailScreen,
   ForumsScreen,
   NewPersonaScreen,
+  NewCharacterScreen,
   NewSessionScreen,
   PersonaDetailScreen,
   PersonasScreen,
@@ -66,6 +68,7 @@ interface ScreenProps extends ChatActions {
   onOpenSession(forumId: string, sessionId: string): Promise<boolean>;
   onRetrySession(): void;
   catalogRevision: number;
+  characterRevision: number;
 }
 
 function Screen({
@@ -81,6 +84,7 @@ function Screen({
   onStopGeneration,
   onSubmitInput,
   catalogRevision,
+  characterRevision,
 }: ScreenProps) {
   // A session can be opened from the sidebar while any navigation screen is
   // showing, so each one carries the report rather than only the two screens
@@ -127,10 +131,19 @@ function Screen({
     case 'characters': return (
       <CharactersScreen state={state} dispatch={dispatch} sessionReport={sessionReport} />
     );
+    case 'new-character': return (
+      <NewCharacterScreen
+        client={client}
+        dispatch={dispatch}
+        sessionReport={sessionReport}
+        state={state}
+      />
+    );
     case 'character-detail': return (
       <CharacterDetailScreen
         client={client}
         dispatch={dispatch}
+        reloadVersion={characterRevision}
         sessionReport={sessionReport}
         state={state}
       />
@@ -245,6 +258,7 @@ function SessionOperationState({
 const inPlaceActions = new Set<AppAction['type']>([
   'toggle-sidebar',
   'character-detail-loaded',
+  'character-updated',
   'persona-detail-loaded',
   'persona-updated',
 ]);
@@ -362,6 +376,172 @@ function PersonaTitleEditor({
   );
 }
 
+function CharacterTitleEditor({
+  client,
+  dispatch,
+  state,
+}: {
+  client: ChaClient;
+  dispatch: Dispatch<AppAction>;
+  state: AppState;
+}) {
+  const characterId = state.inspectedCharacterId;
+  const name = state.bootstrap?.characters.find(({ id }) => id === characterId)?.display_name;
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(name ?? '');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setEditing(false);
+    setDraft(name ?? '');
+    setError(null);
+  }, [characterId, name]);
+
+  if (!characterId || !name) return null;
+  if (!state.characterSettingsAvailable) return <h1>{name}</h1>;
+
+  function cancel() {
+    setDraft(name ?? '');
+    setEditing(false);
+    setError(null);
+  }
+
+  async function save(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const displayName = draft.trim();
+    if (!characterId || !displayName || saving) return;
+    if (displayName === name) {
+      setEditing(false);
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const character = await client.updateCharacterDefinition(characterId, {
+        display_name: displayName,
+      });
+      dispatch({ type: 'character-updated', character });
+      setEditing(false);
+    } catch (failure: unknown) {
+      setError(publicErrorMessage(failure, 'Character name could not be saved.'));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!editing) {
+    return (
+      <button
+        aria-label={`Rename ${name}`}
+        className="cha-persona-title-trigger"
+        onClick={() => setEditing(true)}
+        type="button"
+      >
+        <span>{name}</span>
+        <EditIcon />
+      </button>
+    );
+  }
+
+  return (
+    <form className="cha-persona-title-form" onSubmit={(event) => void save(event)}>
+      <input
+        aria-label="Character name"
+        autoFocus
+        disabled={saving}
+        onChange={(event) => setDraft(event.target.value)}
+        onFocus={(event) => event.currentTarget.select()}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') cancel();
+        }}
+        value={draft}
+      />
+      <button
+        aria-label="Save character name"
+        className="cha-title-icon-action"
+        disabled={saving || draft.trim() === ''}
+        type="submit"
+      >
+        <CheckIcon />
+      </button>
+      <button
+        aria-label="Cancel renaming"
+        className="cha-title-icon-action"
+        disabled={saving}
+        onClick={cancel}
+        type="button"
+      >
+        <CloseIcon />
+      </button>
+      {error && <span className="cha-persona-title-error" role="alert">{error}</span>}
+    </form>
+  );
+}
+
+function CharacterDefinitionUpload({
+  client,
+  dispatch,
+  onUpdated,
+  state,
+}: {
+  client: ChaClient;
+  dispatch: Dispatch<AppAction>;
+  onUpdated(): void;
+  state: AppState;
+}) {
+  const input = useRef<HTMLInputElement>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => setError(null), [state.inspectedCharacterId]);
+
+  async function replaceFromFile(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    const characterId = state.inspectedCharacterId;
+    if (!file || !characterId || saving) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const character = await client.updateCharacterDefinition(characterId, {
+        character_markdown: await file.text(),
+      });
+      dispatch({ type: 'character-updated', character });
+      onUpdated();
+    } catch (failure: unknown) {
+      setError(publicErrorMessage(
+        failure,
+        'Character definition could not be replaced.',
+      ));
+    } finally {
+      setSaving(false);
+      if (input.current) input.current.value = '';
+    }
+  }
+
+  return (
+    <div className="cha-character-topbar-action">
+      <input
+        accept=".md,.txt,text/markdown,text/plain"
+        className="cha-file-input"
+        onChange={(event) => void replaceFromFile(event)}
+        ref={input}
+        type="file"
+      />
+      <button
+        aria-label="Replace character definition from file"
+        className="cha-compact-icon-action"
+        disabled={saving}
+        onClick={() => input.current?.click()}
+        type="button"
+      >
+        <FileUpIcon />
+      </button>
+      {error && <span className="cha-character-upload-error" role="alert">{error}</span>}
+    </div>
+  );
+}
+
 interface AppProps {
   client?: ChaClient;
   connectSessionEvents?: SessionEventsConnector;
@@ -407,6 +587,7 @@ export function App({
   const [initialRouteReady, setInitialRouteReady] = useState(false);
   const [bootstrapAttempt, setBootstrapAttempt] = useState(0);
   const [catalogRevision, setCatalogRevision] = useState(0);
+  const [characterRevision, setCharacterRevision] = useState(0);
   // The epoch this render was built from. The ref below is what asynchronous
   // work compares against; this is what a render can compare against without
   // reading that ref while rendering.
@@ -1045,10 +1226,23 @@ export function App({
           <div className="cha-topbar-title">
             {state.mainView === 'persona-detail'
               ? <PersonaTitleEditor client={client} dispatch={navigate} state={state} />
+              : state.mainView === 'character-detail'
+                ? <CharacterTitleEditor client={client} dispatch={navigate} state={state} />
               : title && <h1>{title}</h1>}
           </div>
           {/* Balances the leading control so a navigation title stays centred. */}
           {title && <div className="cha-topbar-balance" aria-hidden="true" />}
+          {state.mainView === 'character-detail'
+            && state.characterSettingsAvailable
+            && state.inspectedCharacterId
+            && (
+              <CharacterDefinitionUpload
+                client={client}
+                dispatch={navigate}
+                onUpdated={() => setCharacterRevision((revision) => revision + 1)}
+                state={state}
+              />
+            )}
         </header>
         {!ready && <BootstrapState onRetry={retryBootstrap} state={state} />}
         {ready && wholeApplication && (
@@ -1061,6 +1255,7 @@ export function App({
         {ready && !wholeApplication && (
           <Screen
             catalogRevision={catalogRevision}
+            characterRevision={characterRevision}
             client={client}
             dispatch={navigate}
             onCreateSession={createConversation}

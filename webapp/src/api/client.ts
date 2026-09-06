@@ -2,7 +2,10 @@ import type { components } from './schema';
 
 export type Bootstrap = components['schemas']['Bootstrap'];
 export type CharacterDetail = components['schemas']['CharacterDetail'];
+export type CreateCharacterRequest = components['schemas']['CreateCharacterRequest'];
 export type UpdateCharacterRequest = components['schemas']['UpdateCharacterRequest'];
+export type UpdateCharacterDefinitionRequest =
+  components['schemas']['UpdateCharacterDefinitionRequest'];
 export type PersonaDetail = components['schemas']['PersonaDetail'];
 export type CreatePersonaRequest = components['schemas']['CreatePersonaRequest'];
 export type UpdatePersonaRequest = components['schemas']['UpdatePersonaRequest'];
@@ -83,7 +86,12 @@ export function publicErrorMessage(failure: unknown, fallback: string): string {
 export interface ChaClient {
   getBootstrap(): Promise<Bootstrap>;
   getCharacter(characterId: string): Promise<CharacterDetail>;
+  createCharacter(request: CreateCharacterRequest): Promise<CharacterDetail>;
   updateCharacter(characterId: string, settings: UpdateCharacterRequest): Promise<CharacterDetail>;
+  updateCharacterDefinition(
+    characterId: string,
+    update: UpdateCharacterDefinitionRequest,
+  ): Promise<CharacterDetail>;
   getPersona(personaId: string): Promise<PersonaDetail>;
   createPersona(request: CreatePersonaRequest): Promise<PersonaDetail>;
   updatePersona(personaId: string, update: UpdatePersonaRequest): Promise<PersonaDetail>;
@@ -248,10 +256,22 @@ export function createChaClient(
       `/api/v1/characters/${component(characterId)}`,
     ),
 
+    createCharacter: (request) => requestJson<CharacterDetail>(
+      fetcher,
+      '/api/v1/characters',
+      jsonMutation(request),
+    ),
+
     updateCharacter: (characterId, settings) => requestJson<CharacterDetail>(
       fetcher,
       `/api/v1/characters/${component(characterId)}`,
       jsonMutation(settings, 'PATCH'),
+    ),
+
+    updateCharacterDefinition: (characterId, update) => requestJson<CharacterDetail>(
+      fetcher,
+      `/api/v1/characters/${component(characterId)}/definition`,
+      jsonMutation(update, 'PATCH'),
     ),
 
     getPersona: (personaId) => requestJson<PersonaDetail>(
