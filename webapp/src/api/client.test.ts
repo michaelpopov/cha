@@ -2,11 +2,17 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   ChaError,
+  ChaProtocolError,
   ChaUnavailableError,
   createChaClient,
   sessionEventsUrl,
 } from './client';
-import { snapshotFixture } from '../test/fixtures';
+import {
+  characterDetailFixture,
+  forumDetailFixture,
+  personaDetailFixture,
+  snapshotFixture,
+} from '../test/fixtures';
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -20,13 +26,20 @@ describe('CHA API client', () => {
     const fetcher = vi.fn<(
       input: RequestInfo | URL,
       init?: RequestInit,
-    ) => Promise<Response>>(async (input) => (
-      String(input).endsWith('/download')
-        ? new Response('# Session\n', { headers: { 'Content-Type': 'text/markdown' } })
-        : String(input).endsWith('/api/v1/session')
-        ? jsonResponse(snapshotFixture)
-        : jsonResponse({})
-    ));
+    ) => Promise<Response>>(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith('/download')) {
+        return new Response('# Session\n', { headers: { 'Content-Type': 'text/markdown' } });
+      }
+      if (url.endsWith('/api/v1/session')) return jsonResponse(snapshotFixture);
+      if (url.includes('/characters')) return jsonResponse(characterDetailFixture);
+      if (url.includes('/personas')) return jsonResponse(personaDetailFixture);
+      if (url.endsWith('/sessions') && init?.method === undefined) return jsonResponse([]);
+      if (url.includes('/forums/') || url === '/api/v1/forums') {
+        return jsonResponse(forumDetailFixture);
+      }
+      return jsonResponse({});
+    });
     const client = createChaClient(fetcher);
 
     await client.getBootstrap();
@@ -200,6 +213,15 @@ describe('CHA API client', () => {
   it('rejects a session snapshot whose shape the contract does not describe', async () => {
     const client = createChaClient(async () => jsonResponse({ session_id: 'one' }));
     await expect(client.getSessionSnapshot('forum', 'one')).rejects.toThrow(TypeError);
+  });
+
+  it('rejects malformed detail and listing responses at the API boundary', async () => {
+    const client = createChaClient(async () => jsonResponse({ id: 'incomplete' }));
+
+    await expect(client.getCharacter('guide')).rejects.toBeInstanceOf(ChaProtocolError);
+    await expect(client.getPersona('reader')).rejects.toBeInstanceOf(ChaProtocolError);
+    await expect(client.getForum('lobby')).rejects.toBeInstanceOf(ChaProtocolError);
+    await expect(client.listSessions('lobby')).rejects.toBeInstanceOf(ChaProtocolError);
   });
 
   it('reports OpenAI auth errors through the existing envelope', async () => {

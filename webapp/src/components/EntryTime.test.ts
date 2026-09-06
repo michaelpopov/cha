@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { formatEntryTime } from './Screens';
+import { formatEntryTime } from './ChatScreen';
 
 // Local-time constructor values: an entry from this morning and one from
 // last year, both relative to a local noon.

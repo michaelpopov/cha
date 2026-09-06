@@ -6,7 +6,7 @@ import { ChaError, type ChaClient, type SessionSnapshot } from '../api/client';
 import type { SessionEventHandlers } from '../api/events';
 import { bootstrapFixture, fixtureClient, plainVoice, snapshotFixture } from '../test/fixtures';
 import { App } from './App';
-import { formatEntryTime } from './Screens';
+import { formatEntryTime } from './ChatScreen';
 
 function drivableEvents() {
   const handlers: SessionEventHandlers[] = [];
@@ -383,6 +383,34 @@ describe('live chat', () => {
     await act(async () => accept({ clear_input: true }));
 
     expect(input).toHaveValue('Second message');
+  });
+
+  it('opens a new conversation with an empty composer', async () => {
+    const user = userEvent.setup();
+    const events = drivableEvents();
+    const planning: SessionSnapshot = {
+      ...snapshotFixture,
+      forum: bootstrapFixture.forums[1],
+      session_id: 'planning',
+      session_label: 'Planning',
+      characters: [bootstrapFixture.characters[1]],
+      default_character_id: 'guide',
+    };
+    const client = fixtureClient({
+      getSessionSnapshot: async (forumId) => forumId === 'lobby' ? planning : snapshotFixture,
+    });
+    render(<App client={client} connectSessionEvents={events.connect} />);
+    await attachInitial(events);
+
+    await user.type(screen.getByRole('textbox', { name: 'Message' }), 'Only for Welcome');
+    const recent = within(screen.getByLabelText('Recent sessions'));
+    await user.click(recent.getByRole('button', { name: /^Planning/ }));
+    await waitFor(() => expect(events.connections[1]?.key).toBe('lobby/planning'));
+    act(() => events.handlers[1].onSnapshot(planning));
+
+    const input = await screen.findByRole('textbox', { name: 'Message' });
+    await waitFor(() => expect(input).toBeEnabled());
+    expect(input).toHaveValue('');
   });
 
   // The server holds a mutation until its command deadline, so a request left

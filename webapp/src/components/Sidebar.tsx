@@ -144,6 +144,7 @@ export function Sidebar({
   const recents = state.bootstrap?.recent_sessions;
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [dialog, setDialog] = useState<DialogState | null>(null);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
   const [vaultPending, setVaultPending] = useState(false);
   const [vaultError, setVaultError] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -155,6 +156,7 @@ export function Sidebar({
 
   function openMenu(event: MouseEvent, session: SelectedSession, anchor: HTMLElement) {
     event.preventDefault();
+    setDownloadError(null);
     const rect = anchor.getBoundingClientRect();
     const x = event.type === 'contextmenu' ? event.clientX : rect.right;
     const y = event.type === 'contextmenu' ? event.clientY : rect.bottom;
@@ -270,6 +272,7 @@ export function Sidebar({
           );
         })}
       </div>
+      {downloadError && <p className="cha-error-message" role="alert">{downloadError}</p>}
       {vaultError && <p className="cha-error-message" role="alert">{vaultError}</p>}
       <div className="cha-sidebar-footer">
         <select
@@ -312,7 +315,12 @@ export function Sidebar({
               closeMenu(false);
               void onDownloadSession(
                 selected.forumId, selected.sessionId, selected.label,
-              ).finally(() => {
+              ).catch((failure: unknown) => {
+                setDownloadError(publicErrorMessage(
+                  failure,
+                  'The session could not be downloaded.',
+                ));
+              }).finally(() => {
                 if (selected.restoreFocus?.isConnected) selected.restoreFocus.focus();
               });
             }}

@@ -87,6 +87,29 @@ describe('Sidebar session actions', () => {
     expect(onOpen).not.toHaveBeenCalled();
   });
 
+  it('reports a download failure in the sidebar', async () => {
+    const user = userEvent.setup();
+    const onDownload = vi.fn(async () => {
+      throw new ChaError(500, 'internal_error', 'Could not download session.');
+    });
+    render(
+      <Sidebar
+        dispatch={vi.fn()}
+        onDeleteSession={vi.fn(async () => undefined)}
+        onDownloadSession={onDownload}
+        onOpenSession={vi.fn(async () => true)}
+        onRenameSession={vi.fn(async () => undefined)}
+        onSwitchVault={vi.fn(async () => undefined)}
+        state={readyState()}
+      />,
+    );
+
+    await user.click(screen.getByLabelText('Actions for Planning'));
+    await user.click(screen.getByRole('menuitem', { name: 'Download' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not download session.');
+  });
+
   it('confirms deletion before invoking it', async () => {
     const user = userEvent.setup();
     const onDelete = vi.fn(async () => undefined);

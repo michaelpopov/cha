@@ -45,7 +45,7 @@ describe('character settings screen', () => {
       reasoning_effort: 'high' as const,
       web_search: 'auto' as const,
     }));
-    renderSettings(fixtureClient({ updateCharacter }));
+    const dispatch = renderSettings(fixtureClient({ updateCharacter }));
 
     expect(await screen.findByLabelText('Provider')).toHaveValue('terra');
     expect(screen.getByRole('option', { name: 'Select provider' })).toBeDisabled();
@@ -73,6 +73,10 @@ describe('character settings screen', () => {
       reasoning_effort: 'high',
       web_search: 'auto',
     }));
+    expect(dispatch).toHaveBeenCalledWith({
+      type: 'character-updated',
+      character: expect.objectContaining({ id: 'guide', style: 'mono-large' }),
+    });
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
   });
 

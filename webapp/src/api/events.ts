@@ -1,5 +1,6 @@
 import type { components } from './schema';
 import { isSessionSnapshot, sessionEventsUrl, type SessionSnapshot } from './client';
+import { isRecord } from './guards';
 
 export type AppendEvent = components['schemas']['AppendEvent'];
 
@@ -31,10 +32,6 @@ export interface SessionEventConnection {
 
 const streamFailure: SessionStreamFailure = Object.freeze({ kind: 'stream_failure' });
 const streamSuperseded: SessionStreamFailure = Object.freeze({ kind: 'superseded' });
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 function isAppend(value: unknown): value is AppendEvent {
   if (!isRecord(value) || !isRecord(value.target)) return false;

@@ -4,9 +4,7 @@ import {
   useReducer,
   useRef,
   useState,
-  type ChangeEvent,
   type Dispatch,
-  type FormEvent,
 } from 'react';
 
 import {
@@ -38,13 +36,14 @@ import {
   type AppAction,
   type AppState,
 } from '../state/view';
-import { CheckIcon, CloseIcon, EditIcon, FileUpIcon, SidebarIcon } from './Icons';
 import { OpenAiConnectionScreen } from './OpenAiConnection';
+import { ChatScreen, type ChatActions } from './ChatScreen';
+import { AppErrorBoundary } from './AppErrorBoundary';
+import { TopBar } from './TopBar';
 import {
   CharacterDetailScreen,
   CharacterSettingsScreen,
   CharactersScreen,
-  ChatScreen,
   ForumDetailScreen,
   ForumMembersScreen,
   ForumsScreen,
@@ -56,7 +55,6 @@ import {
   PersonasScreen,
   SessionOperationReport,
   SessionsScreen,
-  type ChatActions,
 } from './Screens';
 import { Sidebar } from './Sidebar';
 
@@ -294,441 +292,6 @@ export type SessionEventsConnector = (
 
 function defaultReload() {
   window.location.assign('/');
-}
-
-function PersonaTitleEditor({
-  client,
-  dispatch,
-  state,
-}: {
-  client: ChaClient;
-  dispatch: Dispatch<AppAction>;
-  state: AppState;
-}) {
-  const personaId = state.inspectedPersonaId;
-  const name = state.bootstrap?.personas.find(({ id }) => id === personaId)?.display_name;
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(name ?? '');
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    setEditing(false);
-    setDraft(name ?? '');
-    setError(null);
-  }, [name, personaId]);
-
-  if (!personaId || !name) return null;
-  if (!state.personaEditingAvailable) return <h1>{name}</h1>;
-
-  function cancel() {
-    setDraft(name ?? '');
-    setEditing(false);
-    setError(null);
-  }
-
-  async function save(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const displayName = draft.trim();
-    if (!personaId || !displayName || saving) return;
-    if (displayName === name) {
-      setEditing(false);
-      return;
-    }
-    setSaving(true);
-    setError(null);
-    try {
-      const persona = await client.updatePersona(personaId, {
-        display_name: displayName,
-      });
-      dispatch({ type: 'persona-updated', persona });
-      setEditing(false);
-    } catch (failure: unknown) {
-      setError(publicErrorMessage(failure, 'Persona name could not be saved.'));
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  if (!editing) {
-    return (
-      <button
-        aria-label={`Rename ${name}`}
-        className="cha-persona-title-trigger"
-        onClick={() => setEditing(true)}
-        type="button"
-      >
-        <span>{name}</span>
-        <EditIcon />
-      </button>
-    );
-  }
-
-  return (
-    <form className="cha-persona-title-form" onSubmit={(event) => void save(event)}>
-      <input
-        aria-label="Persona name"
-        autoFocus
-        disabled={saving}
-        onChange={(event) => setDraft(event.target.value)}
-        onFocus={(event) => event.currentTarget.select()}
-        onKeyDown={(event) => {
-          if (event.key === 'Escape') cancel();
-        }}
-        value={draft}
-      />
-      <button
-        aria-label="Save persona name"
-        className="cha-title-icon-action"
-        disabled={saving || draft.trim() === ''}
-        type="submit"
-      >
-        <CheckIcon />
-      </button>
-      <button
-        aria-label="Cancel renaming"
-        className="cha-title-icon-action"
-        disabled={saving}
-        onClick={cancel}
-        type="button"
-      >
-        <CloseIcon />
-      </button>
-      {error && <span className="cha-persona-title-error" role="alert">{error}</span>}
-    </form>
-  );
-}
-
-function CharacterTitleEditor({
-  client,
-  dispatch,
-  state,
-}: {
-  client: ChaClient;
-  dispatch: Dispatch<AppAction>;
-  state: AppState;
-}) {
-  const characterId = state.inspectedCharacterId;
-  const name = state.bootstrap?.characters.find(({ id }) => id === characterId)?.display_name;
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(name ?? '');
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    setEditing(false);
-    setDraft(name ?? '');
-    setError(null);
-  }, [characterId, name]);
-
-  if (!characterId || !name) return null;
-  if (!state.characterSettingsAvailable) return <h1>{name}</h1>;
-
-  function cancel() {
-    setDraft(name ?? '');
-    setEditing(false);
-    setError(null);
-  }
-
-  async function save(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const displayName = draft.trim();
-    if (!characterId || !displayName || saving) return;
-    if (displayName === name) {
-      setEditing(false);
-      return;
-    }
-    setSaving(true);
-    setError(null);
-    try {
-      const character = await client.updateCharacterDefinition(characterId, {
-        display_name: displayName,
-      });
-      dispatch({ type: 'character-updated', character });
-      setEditing(false);
-    } catch (failure: unknown) {
-      setError(publicErrorMessage(failure, 'Character name could not be saved.'));
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  if (!editing) {
-    return (
-      <button
-        aria-label={`Rename ${name}`}
-        className="cha-persona-title-trigger"
-        onClick={() => setEditing(true)}
-        type="button"
-      >
-        <span>{name}</span>
-        <EditIcon />
-      </button>
-    );
-  }
-
-  return (
-    <form className="cha-persona-title-form" onSubmit={(event) => void save(event)}>
-      <input
-        aria-label="Character name"
-        autoFocus
-        disabled={saving}
-        onChange={(event) => setDraft(event.target.value)}
-        onFocus={(event) => event.currentTarget.select()}
-        onKeyDown={(event) => {
-          if (event.key === 'Escape') cancel();
-        }}
-        value={draft}
-      />
-      <button
-        aria-label="Save character name"
-        className="cha-title-icon-action"
-        disabled={saving || draft.trim() === ''}
-        type="submit"
-      >
-        <CheckIcon />
-      </button>
-      <button
-        aria-label="Cancel renaming"
-        className="cha-title-icon-action"
-        disabled={saving}
-        onClick={cancel}
-        type="button"
-      >
-        <CloseIcon />
-      </button>
-      {error && <span className="cha-persona-title-error" role="alert">{error}</span>}
-    </form>
-  );
-}
-
-function CharacterDefinitionUpload({
-  client,
-  dispatch,
-  onUpdated,
-  state,
-}: {
-  client: ChaClient;
-  dispatch: Dispatch<AppAction>;
-  onUpdated(): void;
-  state: AppState;
-}) {
-  const input = useRef<HTMLInputElement>(null);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => setError(null), [state.inspectedCharacterId]);
-
-  async function replaceFromFile(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    const characterId = state.inspectedCharacterId;
-    if (!file || !characterId || saving) return;
-    setSaving(true);
-    setError(null);
-    try {
-      const character = await client.updateCharacterDefinition(characterId, {
-        character_markdown: await file.text(),
-      });
-      dispatch({ type: 'character-updated', character });
-      onUpdated();
-    } catch (failure: unknown) {
-      setError(publicErrorMessage(
-        failure,
-        'Character definition could not be replaced.',
-      ));
-    } finally {
-      setSaving(false);
-      if (input.current) input.current.value = '';
-    }
-  }
-
-  return (
-    <div className="cha-definition-topbar-action">
-      <input
-        accept=".md,.txt,text/markdown,text/plain"
-        className="cha-file-input"
-        onChange={(event) => void replaceFromFile(event)}
-        ref={input}
-        type="file"
-      />
-      <button
-        aria-label="Replace character definition from file"
-        className="cha-compact-icon-action"
-        disabled={saving}
-        onClick={() => input.current?.click()}
-        type="button"
-      >
-        <FileUpIcon />
-      </button>
-      {error && <span className="cha-definition-upload-error" role="alert">{error}</span>}
-    </div>
-  );
-}
-
-function ForumTitleEditor({
-  client,
-  dispatch,
-  state,
-}: {
-  client: ChaClient;
-  dispatch: Dispatch<AppAction>;
-  state: AppState;
-}) {
-  const forumId = state.currentForumId;
-  const name = state.bootstrap?.forums.find(({ id }) => id === forumId)?.display_name;
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(name ?? '');
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    setEditing(false);
-    setDraft(name ?? '');
-    setError(null);
-  }, [forumId, name]);
-
-  if (!forumId || !name) return null;
-  if (!state.forumEditingAvailable) return <h1>{name}</h1>;
-
-  function cancel() {
-    setDraft(name ?? '');
-    setEditing(false);
-    setError(null);
-  }
-
-  async function save(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const displayName = draft.trim();
-    if (!forumId || !displayName || saving) return;
-    if (displayName === name) {
-      setEditing(false);
-      return;
-    }
-    setSaving(true);
-    setError(null);
-    try {
-      const forum = await client.updateForum(forumId, {
-        display_name: displayName,
-      });
-      dispatch({ type: 'forum-updated', forum });
-      setEditing(false);
-    } catch (failure: unknown) {
-      setError(publicErrorMessage(failure, 'Forum name could not be saved.'));
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  if (!editing) {
-    return (
-      <button
-        aria-label={`Rename ${name}`}
-        className="cha-persona-title-trigger"
-        onClick={() => setEditing(true)}
-        type="button"
-      >
-        <span>{name}</span>
-        <EditIcon />
-      </button>
-    );
-  }
-
-  return (
-    <form className="cha-persona-title-form" onSubmit={(event) => void save(event)}>
-      <input
-        aria-label="Forum name"
-        autoFocus
-        disabled={saving}
-        onChange={(event) => setDraft(event.target.value)}
-        onFocus={(event) => event.currentTarget.select()}
-        onKeyDown={(event) => {
-          if (event.key === 'Escape') cancel();
-        }}
-        value={draft}
-      />
-      <button
-        aria-label="Save forum name"
-        className="cha-title-icon-action"
-        disabled={saving || draft.trim() === ''}
-        type="submit"
-      >
-        <CheckIcon />
-      </button>
-      <button
-        aria-label="Cancel renaming"
-        className="cha-title-icon-action"
-        disabled={saving}
-        onClick={cancel}
-        type="button"
-      >
-        <CloseIcon />
-      </button>
-      {error && <span className="cha-persona-title-error" role="alert">{error}</span>}
-    </form>
-  );
-}
-
-function ForumDefinitionUpload({
-  client,
-  dispatch,
-  onUpdated,
-  state,
-}: {
-  client: ChaClient;
-  dispatch: Dispatch<AppAction>;
-  onUpdated(): void;
-  state: AppState;
-}) {
-  const input = useRef<HTMLInputElement>(null);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => setError(null), [state.currentForumId]);
-
-  async function replaceFromFile(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    const forumId = state.currentForumId;
-    if (!file || !forumId || saving) return;
-    setSaving(true);
-    setError(null);
-    try {
-      const forum = await client.updateForum(forumId, {
-        forum_markdown: await file.text(),
-      });
-      dispatch({ type: 'forum-updated', forum });
-      onUpdated();
-    } catch (failure: unknown) {
-      setError(publicErrorMessage(
-        failure,
-        'Forum definition could not be replaced.',
-      ));
-    } finally {
-      setSaving(false);
-      if (input.current) input.current.value = '';
-    }
-  }
-
-  return (
-    <div className="cha-definition-topbar-action">
-      <input
-        accept=".md,.txt,text/markdown,text/plain"
-        className="cha-file-input"
-        onChange={(event) => void replaceFromFile(event)}
-        ref={input}
-        type="file"
-      />
-      <button
-        aria-label="Replace forum definition from file"
-        className="cha-compact-icon-action"
-        disabled={saving}
-        onClick={() => input.current?.click()}
-        type="button"
-      >
-        <FileUpIcon />
-      </button>
-      {error && <span className="cha-definition-upload-error" role="alert">{error}</span>}
-    </div>
-  );
 }
 
 interface AppProps {
@@ -1281,14 +844,10 @@ export function App({
     sessionId: string,
     label: string,
   ) => {
-    try {
-      await saveMarkdownDownload(
-        label,
-        () => client.downloadSession(forumId, sessionId),
-      );
-    } catch (failure: unknown) {
-      window.alert(publicErrorMessage(failure, 'The session could not be downloaded.'));
-    }
+    await saveMarkdownDownload(
+      label,
+      () => client.downloadSession(forumId, sessionId),
+    );
   }, [client]);
 
   const deleteSession = useCallback(async (forumId: string, sessionId: string) => {
@@ -1387,93 +946,59 @@ export function App({
   const wholeApplication = state.sessionOperation !== 'idle' && state.mainView === 'chat';
 
   return (
-    <div
-      className={`cha-app ${state.sidebarOpen ? 'is-sidebar-open' : ''}`}
-      data-sidebar={state.sidebarOpen ? 'open' : 'closed'}
-    >
-      <Sidebar
-        dispatch={navigate}
-        onDeleteSession={deleteSession}
-        onDownloadSession={downloadSession}
-        onOpenSession={openConversation}
-        onRenameSession={renameSession}
-        onSwitchVault={switchVault}
-        state={state}
-      />
-      <main className="cha-main" data-view={state.mainView}>
-        <header className="cha-topbar">
-          <div className="cha-topbar-lead">
-            <button
-              aria-expanded={state.sidebarOpen}
-              aria-label={state.sidebarOpen ? 'Hide sidebar' : 'Show sidebar'}
-              className="cha-icon-action"
-              onClick={() => dispatch({ type: 'toggle-sidebar' })}
-              type="button"
-            >
-              <SidebarIcon />
-            </button>
-          </div>
-          <div className="cha-topbar-title">
-            {state.mainView === 'persona-detail'
-              ? <PersonaTitleEditor client={client} dispatch={navigate} state={state} />
-              : state.mainView === 'character-detail'
-                ? <CharacterTitleEditor client={client} dispatch={navigate} state={state} />
-                : state.mainView === 'forum-detail'
-                  ? <ForumTitleEditor client={client} dispatch={navigate} state={state} />
-              : title && <h1>{title}</h1>}
-          </div>
-          {/* Balances the leading control so a navigation title stays centred. */}
-          {title && <div className="cha-topbar-balance" aria-hidden="true" />}
-          {state.mainView === 'character-detail'
-            && state.characterSettingsAvailable
-            && state.inspectedCharacterId
-            && (
-              <CharacterDefinitionUpload
-                client={client}
-                dispatch={navigate}
-                onUpdated={() => setCharacterRevision((revision) => revision + 1)}
-                state={state}
-              />
-            )}
-          {state.mainView === 'forum-detail'
-            && state.forumEditingAvailable
-            && state.currentForumId
-            && (
-              <ForumDefinitionUpload
-                client={client}
-                dispatch={navigate}
-                onUpdated={() => setForumRevision((revision) => revision + 1)}
-                state={state}
-              />
-            )}
-        </header>
-        {!ready && <BootstrapState onRetry={retryBootstrap} state={state} />}
-        {ready && wholeApplication && (
-          <SessionOperationState
-            onRetry={retrySessionOpen}
-            onReturnToWelcome={returnToWelcome}
-            state={state}
-          />
-        )}
-        {ready && !wholeApplication && (
-          <Screen
-            catalogRevision={catalogRevision}
-            characterRevision={characterRevision}
-            forumRevision={forumRevision}
+    <AppErrorBoundary onReload={reload}>
+      <div
+        className={`cha-app ${state.sidebarOpen ? 'is-sidebar-open' : ''}`}
+        data-sidebar={state.sidebarOpen ? 'open' : 'closed'}
+      >
+        <Sidebar
+          dispatch={navigate}
+          onDeleteSession={deleteSession}
+          onDownloadSession={downloadSession}
+          onOpenSession={openConversation}
+          onRenameSession={renameSession}
+          onSwitchVault={switchVault}
+          state={state}
+        />
+        <main className="cha-main" data-view={state.mainView}>
+          <TopBar
             client={client}
             dispatch={navigate}
-            onCreateSession={createConversation}
-            onOpenSession={openConversation}
-            onRetryStream={retryStream}
-            onRetrySession={retrySessionOpen}
-            onReturnToWelcome={returnToWelcome}
-            onSetDefaultCharacter={setDefaultCharacter}
-            onStopGeneration={stopGeneration}
-            onSubmitInput={submitInput}
+            onCharacterDefinitionUpdated={() => (
+              setCharacterRevision((revision) => revision + 1)
+            )}
+            onForumDefinitionUpdated={() => setForumRevision((revision) => revision + 1)}
             state={state}
+            title={title}
           />
-        )}
-      </main>
-    </div>
+          {!ready && <BootstrapState onRetry={retryBootstrap} state={state} />}
+          {ready && wholeApplication && (
+            <SessionOperationState
+              onRetry={retrySessionOpen}
+              onReturnToWelcome={returnToWelcome}
+              state={state}
+            />
+          )}
+          {ready && !wholeApplication && (
+            <Screen
+              catalogRevision={catalogRevision}
+              characterRevision={characterRevision}
+              forumRevision={forumRevision}
+              client={client}
+              dispatch={navigate}
+              onCreateSession={createConversation}
+              onOpenSession={openConversation}
+              onRetryStream={retryStream}
+              onRetrySession={retrySessionOpen}
+              onReturnToWelcome={returnToWelcome}
+              onSetDefaultCharacter={setDefaultCharacter}
+              onStopGeneration={stopGeneration}
+              onSubmitInput={submitInput}
+              state={state}
+            />
+          )}
+        </main>
+      </div>
+    </AppErrorBoundary>
   );
 }

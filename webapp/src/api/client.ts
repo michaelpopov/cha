@@ -1,4 +1,5 @@
 import type { components } from './schema';
+import { hasIdentity, isRecord } from './guards';
 
 export type Bootstrap = components['schemas']['Bootstrap'];
 export type CharacterDetail = components['schemas']['CharacterDetail'];
@@ -126,8 +127,68 @@ export interface ChaClient {
   switchVault(vaultName: string): Promise<void>;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+function isOneOf(value: unknown, choices: readonly unknown[]): boolean {
+  return choices.includes(value);
+}
+
+function isCharacterAppearance(value: unknown): value is CharacterAppearance {
+  return isRecord(value)
+    && isOneOf(value.font, ['sans', 'serif', 'mono'])
+    && isOneOf(value.style, ['normal', 'italic'])
+    && isOneOf(value.weight, ['light', 'normal', 'medium', 'semibold', 'bold'])
+    && isOneOf(value.size, ['small', 'normal', 'large'])
+    && isOneOf(value.text_color, ['normal', 'muted', 'accent']);
+}
+
+function isCharacterSummary(value: unknown): boolean {
+  return isRecord(value) && hasIdentity(value) && isCharacterAppearance(value.appearance);
+}
+
+function isCharacterDetail(value: unknown): value is CharacterDetail {
+  return isCharacterSummary(value)
+    && isRecord(value)
+    && typeof value.character_markdown === 'string'
+    && (value.provider === null || typeof value.provider === 'string')
+    && (value.style === null || typeof value.style === 'string')
+    && isOneOf(value.reasoning_effort, ['low', 'medium', 'high', 'xhigh', null])
+    && isOneOf(value.web_search, ['off', 'auto', 'required', null])
+    && Array.isArray(value.available_providers)
+    && value.available_providers.every((option) => isRecord(option)
+      && typeof option.id === 'string' && typeof option.label === 'string')
+    && Array.isArray(value.available_styles)
+    && value.available_styles.every((option) => isRecord(option)
+      && typeof option.id === 'string'
+      && typeof option.label === 'string'
+      && isCharacterAppearance(option.appearance))
+    && typeof value.writable === 'boolean';
+}
+
+function isPersonaDetail(value: unknown): value is PersonaDetail {
+  return isRecord(value)
+    && hasIdentity(value)
+    && typeof value.persona_markdown === 'string'
+    && typeof value.writable === 'boolean';
+}
+
+function isForumDetail(value: unknown): value is ForumDetail {
+  return isRecord(value)
+    && hasIdentity(value)
+    && typeof value.default_character_id === 'string'
+    && typeof value.default_persona_id === 'string'
+    && typeof value.default_persona_display_name === 'string'
+    && Array.isArray(value.members)
+    && value.members.every(isCharacterSummary)
+    && typeof value.forum_markdown === 'string'
+    && typeof value.writable === 'boolean';
+}
+
+function isSessionListingArray(value: unknown): value is SessionListing[] {
+  return Array.isArray(value) && value.every((session) => isRecord(session)
+    && typeof session.id === 'string'
+    && typeof session.label === 'string'
+    && typeof session.live === 'boolean'
+    && typeof session.updated_at === 'number'
+    && Number.isFinite(session.updated_at));
 }
 
 // A snapshot arrives two ways, over this request and over the event stream, and
@@ -191,6 +252,17 @@ async function requestJson<T>(
 
   if (!response.ok) throw errorFrom(response.status, payload);
   return payload as T;
+}
+
+async function requestValidated<T>(
+  fetcher: Fetcher,
+  url: string,
+  validate: (value: unknown) => value is T,
+  init: RequestInit = {},
+): Promise<T> {
+  const payload = await requestJson<unknown>(fetcher, url, init);
+  if (!validate(payload)) throw new ChaProtocolError();
+  return payload;
 }
 
 async function requestEmpty(
@@ -260,72 +332,84 @@ export function createChaClient(
   return {
     getBootstrap: () => requestJson<Bootstrap>(fetcher, '/api/v1/bootstrap'),
 
-    getCharacter: (characterId) => requestJson<CharacterDetail>(
+    getCharacter: (characterId) => requestValidated(
       fetcher,
       `/api/v1/characters/${component(characterId)}`,
+      isCharacterDetail,
     ),
 
-    createCharacter: (request) => requestJson<CharacterDetail>(
+    createCharacter: (request) => requestValidated(
       fetcher,
       '/api/v1/characters',
+      isCharacterDetail,
       jsonMutation(request),
     ),
 
-    updateCharacter: (characterId, settings) => requestJson<CharacterDetail>(
+    updateCharacter: (characterId, settings) => requestValidated(
       fetcher,
       `/api/v1/characters/${component(characterId)}`,
+      isCharacterDetail,
       jsonMutation(settings, 'PATCH'),
     ),
 
-    updateCharacterDefinition: (characterId, update) => requestJson<CharacterDetail>(
+    updateCharacterDefinition: (characterId, update) => requestValidated(
       fetcher,
       `/api/v1/characters/${component(characterId)}/definition`,
+      isCharacterDetail,
       jsonMutation(update, 'PATCH'),
     ),
 
-    getPersona: (personaId) => requestJson<PersonaDetail>(
+    getPersona: (personaId) => requestValidated(
       fetcher,
       `/api/v1/personas/${component(personaId)}`,
+      isPersonaDetail,
     ),
 
-    createPersona: (request) => requestJson<PersonaDetail>(
+    createPersona: (request) => requestValidated(
       fetcher,
       '/api/v1/personas',
+      isPersonaDetail,
       jsonMutation(request),
     ),
 
-    updatePersona: (personaId, update) => requestJson<PersonaDetail>(
+    updatePersona: (personaId, update) => requestValidated(
       fetcher,
       `/api/v1/personas/${component(personaId)}`,
+      isPersonaDetail,
       jsonMutation(update, 'PATCH'),
     ),
 
-    getForum: (forumId) => requestJson<ForumDetail>(
+    getForum: (forumId) => requestValidated(
       fetcher,
       `/api/v1/forums/${component(forumId)}`,
+      isForumDetail,
     ),
 
-    createForum: (request) => requestJson<ForumDetail>(
+    createForum: (request) => requestValidated(
       fetcher,
       '/api/v1/forums',
+      isForumDetail,
       jsonMutation(request),
     ),
 
-    updateForum: (forumId, update) => requestJson<ForumDetail>(
+    updateForum: (forumId, update) => requestValidated(
       fetcher,
       `/api/v1/forums/${component(forumId)}`,
+      isForumDetail,
       jsonMutation(update, 'PATCH'),
     ),
 
-    updateForumMembers: (forumId, update) => requestJson<ForumDetail>(
+    updateForumMembers: (forumId, update) => requestValidated(
       fetcher,
       `/api/v1/forums/${component(forumId)}/members`,
+      isForumDetail,
       jsonMutation(update, 'PUT'),
     ),
 
-    listSessions: (forumId) => requestJson<SessionListing[]>(
+    listSessions: (forumId) => requestValidated(
       fetcher,
       `/api/v1/forums/${component(forumId)}/sessions`,
+      isSessionListingArray,
     ),
 
     createSession: (forumId, label) => requestJson<CreateSessionResult>(
