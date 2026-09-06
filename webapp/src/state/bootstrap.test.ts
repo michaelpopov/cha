@@ -55,4 +55,26 @@ describe('validateBootstrap', () => {
 
     expect(() => validateBootstrap(response)).toThrow(TypeError);
   });
+
+  it.each([
+    ['missing vault_name', (value: Record<string, unknown>) => {
+      delete value.vault_name;
+    }],
+    ['empty vault_name', (value: Record<string, unknown>) => {
+      value.vault_name = '';
+    }],
+    ['empty vaults', (value: Record<string, unknown>) => {
+      value.vaults = [];
+    }],
+    ['blank vault list entry', (value: Record<string, unknown>) => {
+      value.vaults = ['Personal', ''];
+    }],
+    ['active name absent from vaults', (value: Record<string, unknown>) => {
+      value.vaults = ['Projects'];
+    }],
+  ])('rejects %s', (_name, corrupt) => {
+    const response = structuredClone(bootstrapFixture) as unknown as Record<string, unknown>;
+    corrupt(response);
+    expect(() => validateBootstrap(response)).toThrow(TypeError);
+  });
 });

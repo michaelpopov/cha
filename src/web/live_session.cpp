@@ -279,6 +279,7 @@ bool LiveSession::open_controller() {
             throw std::runtime_error("Session opener returned no controller");
         }
         label_ = std::move(opened.label);
+        vault_name_ = std::move(opened.vault_name);
         controller_ = std::move(opened.controller);
         persist_default_character_ = std::move(opened.persist_default_character);
         persist_default_persona_ = std::move(opened.persist_default_persona);
@@ -517,12 +518,16 @@ void LiveSession::apply_notification(OwnerNotification notification) {
     }
 }
 
-SessionSnapshot LiveSession::make_snapshot() {
+SessionSnapshot LiveSession::make_snapshot(
+    SessionLifecycle lifecycle,
+    std::optional<ShutdownReason> shutdown_reason) {
     // The borrowed view lives only for this expression; to_snapshot() copies
     // everything it needs into the returned owning value.
-    return to_snapshot(
+    SessionSnapshot snapshot = to_snapshot(
         identity_, label_, controller_->view(),
-        presentation(SessionLifecycle::running));
+        presentation(lifecycle, shutdown_reason));
+    snapshot.vault_name = vault_name_;
+    return snapshot;
 }
 
 WebPresentationState LiveSession::presentation(
@@ -617,10 +622,8 @@ void LiveSession::log_generation_transitions(const SessionSnapshot& current) {
 }
 
 void LiveSession::publish_final(ShutdownReason reason) {
-    SessionSnapshot snapshot = to_snapshot(
-        identity_, label_, controller_->view(),
-        presentation(SessionLifecycle::stopping, reason));
-    mailbox_->publish(SnapshotEvent{std::move(snapshot)});
+    mailbox_->publish(SnapshotEvent{
+        make_snapshot(SessionLifecycle::stopping, reason)});
 }
 
 void LiveSession::log_fatal_once() noexcept {

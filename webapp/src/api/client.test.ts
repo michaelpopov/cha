@@ -52,6 +52,7 @@ describe('CHA API client', () => {
     await client.startOpenAiAuth();
     await client.pollOpenAiAuth();
     await client.disconnectOpenAiAuth();
+    await client.switchVault('Projects');
 
     expect(fetcher.mock.calls.map(([url]) => url)).toEqual([
       '/api/v1/bootstrap',
@@ -72,6 +73,7 @@ describe('CHA API client', () => {
       '/api/v1/openai/auth/login',
       '/api/v1/openai/auth/poll',
       '/api/v1/openai/auth/disconnect',
+      '/api/v1/vault/switch',
     ]);
 
     expect(fetcher.mock.calls[0][1]?.method).toBeUndefined();
@@ -103,7 +105,24 @@ describe('CHA API client', () => {
     expect(fetcher.mock.calls[16][1]?.body).toBe('{}');
     expect(fetcher.mock.calls[17][1]?.method).toBe('POST');
     expect(fetcher.mock.calls[17][1]?.body).toBe('{}');
+    expect(fetcher.mock.calls[18][1]?.method).toBe('POST');
+    expect(fetcher.mock.calls[18][1]?.body).toBe('{"vault_name":"Projects"}');
     expect(sessionEventsUrl('f one', 's/two')).toBe('/s/f%20one/s%2Ftwo/api/v1/events');
+  });
+
+  it('accepts an empty 204 from switchVault and reports switch errors', async () => {
+    const ok = createChaClient(async () => new Response(null, { status: 204 }));
+    await expect(ok.switchVault('Projects')).resolves.toBeUndefined();
+
+    const failed = createChaClient(async () => jsonResponse({
+      error: { code: 'bad_request', message: 'Unknown vault.' },
+    }, 400));
+    await expect(failed.switchVault('missing')).rejects.toEqual(expect.objectContaining({
+      name: 'ChaError',
+      status: 400,
+      code: 'bad_request',
+      message: 'Unknown vault.',
+    }));
   });
 
   it('turns the error envelope into one ChaError shape', async () => {
@@ -141,6 +160,12 @@ describe('CHA API client', () => {
 
   it('rejects a session snapshot whose shape the contract does not describe', async () => {
     const client = createChaClient(async () => jsonResponse({ session_id: 'one' }));
+    await expect(client.getSessionSnapshot('forum', 'one')).rejects.toThrow(TypeError);
+  });
+
+  it('rejects a session snapshot that omits vault_name', async () => {
+    const { vault_name: _ignored, ...withoutVault } = snapshotFixture;
+    const client = createChaClient(async () => jsonResponse(withoutVault));
     await expect(client.getSessionSnapshot('forum', 'one')).rejects.toThrow(TypeError);
   });
 

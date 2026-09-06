@@ -1159,6 +1159,153 @@ TEST(ApplicationRuntime, ConcurrentCreateDoesNotMirrorAcrossVaults) {
     runtime->shutdown();
 }
 
+httplib::Result post_switch(
+    httplib::Client& client,
+    std::string_view name,
+    const httplib::Headers& headers = kRuntimeCookie) {
+    return client.Post(
+        "/api/v1/vault/switch",
+        headers,
+        nlohmann::json{{"vault_name", name}}.dump(),
+        "application/json");
+}
+
+void expect_error_envelope(
+    const httplib::Result& result,
+    int status,
+    std::string_view code) {
+    ASSERT_TRUE(result);
+    EXPECT_EQ(result->status, status);
+    const auto json = nlohmann::json::parse(result->body);
+    ASSERT_TRUE(json.contains("error"));
+    EXPECT_EQ(json["error"]["code"].get<std::string>(), code);
+    EXPECT_TRUE(json["error"]["message"].is_string());
+    EXPECT_FALSE(json["error"]["message"].get<std::string>().empty());
+}
+
+TEST(ApplicationRuntime, SwitchRouteSwitchesAToBAndMapsFailures) {
+    TwoVaultRuntime pair;
+    seed_lobby_session(pair.database_a, "Stored on A");
+    auto runtime = ApplicationRuntime::open(pair.command, "private-test-token");
+    const int port = runtime->start();
+    httplib::Client client("127.0.0.1", port);
+    const std::string live = create_lobby_session(client, "Live on A");
+    ASSERT_FALSE(live.empty());
+    ASSERT_TRUE(open_lobby_session(client, live));
+
+    const auto switched = post_switch(client, "b");
+    ASSERT_TRUE(switched);
+    EXPECT_EQ(switched->status, 204) << switched->body;
+    EXPECT_EQ(runtime->current_vault().name, "B");
+
+    httplib::Client after("127.0.0.1", port);
+    const auto bootstrap_b = get_bootstrap(after);
+    EXPECT_EQ(bootstrap_b.at("vault_name").get<std::string>(), "B");
+    EXPECT_EQ(
+        bootstrap_b.at("vaults"),
+        nlohmann::json::array({"A", "B"}));
+    EXPECT_TRUE(bootstrap_has_persona(bootstrap_b, "beta"));
+    EXPECT_FALSE(bootstrap_has_persona(bootstrap_b, "alpha"));
+    EXPECT_EQ(after.Get("/health", kRuntimeCookie)->status, 200);
+
+    const auto old_snapshot = after.Get(
+        "/s/lobby/" + live + "/api/v1/session", kRuntimeCookie);
+    ASSERT_TRUE(old_snapshot);
+    EXPECT_EQ(old_snapshot->status, 409);
+
+    const std::string on_b = create_lobby_session(after, "Live on B");
+    ASSERT_FALSE(on_b.empty());
+    ASSERT_TRUE(open_lobby_session(after, on_b));
+    const auto new_snapshot = after.Get(
+        "/s/lobby/" + on_b + "/api/v1/session", kRuntimeCookie);
+    ASSERT_TRUE(new_snapshot);
+    ASSERT_EQ(new_snapshot->status, 200) << new_snapshot->body;
+    EXPECT_EQ(
+        nlohmann::json::parse(new_snapshot->body).at("vault_name").get<std::string>(),
+        "B");
+
+    const toml::table table =
+        read_toml_file(pair.command.config_directory / "app.toml", "config file");
+    EXPECT_EQ(table["vault"].value<std::string>(), "B");
+
+    const auto again = post_switch(after, "B");
+    ASSERT_TRUE(again);
+    EXPECT_EQ(again->status, 204) << again->body;
+    const auto listing = after.Get("/api/v1/forums/lobby/sessions", kRuntimeCookie);
+    ASSERT_TRUE(listing);
+    bool running = false;
+    for (const auto& session : nlohmann::json::parse(listing->body)) {
+        if (session.at("id").get<std::string>() == on_b) {
+            running = session.at("live").get<bool>();
+        }
+    }
+    EXPECT_TRUE(running);
+
+    expect_error_envelope(post_switch(after, "missing"), 400, "bad_request");
+    const auto malformed = after.Post(
+        "/api/v1/vault/switch",
+        kRuntimeCookie,
+        R"({"vault_name":1})",
+        "application/json");
+    expect_error_envelope(malformed, 400, "bad_request");
+    const auto extra = after.Post(
+        "/api/v1/vault/switch",
+        kRuntimeCookie,
+        R"({"vault_name":"A","extra":true})",
+        "application/json");
+    expect_error_envelope(extra, 400, "bad_request");
+    const auto wrong_type = after.Post(
+        "/api/v1/vault/switch",
+        kRuntimeCookie,
+        R"({"vault_name":"A"})",
+        "text/plain");
+    expect_error_envelope(wrong_type, 400, "bad_request");
+    httplib::Headers foreign = kRuntimeCookie;
+    foreign.emplace("Origin", "http://other.example");
+    const auto origin = after.Post(
+        "/api/v1/vault/switch",
+        foreign,
+        R"({"vault_name":"A"})",
+        "application/json");
+    expect_error_envelope(origin, 403, "forbidden_origin");
+
+    runtime->shutdown();
+}
+
+TEST(ApplicationRuntime, SwitchRouteReportsPrecheckAndMaintenanceFailures) {
+    TwoVaultRuntime pair;
+    auto runtime = ApplicationRuntime::open(pair.command, "private-test-token");
+    const int port = runtime->start();
+    httplib::Client client("127.0.0.1", port);
+    const std::string live = create_lobby_session(client, "Still live");
+    ASSERT_FALSE(live.empty());
+    ASSERT_TRUE(open_lobby_session(client, live));
+
+    std::filesystem::remove(pair.database_b);
+    expect_error_envelope(post_switch(client, "B"), 500, "internal_error");
+    EXPECT_EQ(runtime->current_vault().name, "A");
+    const auto listing = client.Get("/api/v1/forums/lobby/sessions", kRuntimeCookie);
+    ASSERT_TRUE(listing);
+    bool running = false;
+    for (const auto& session : nlohmann::json::parse(listing->body)) {
+        if (session.at("id").get<std::string>() == live) {
+            running = session.at("live").get<bool>();
+        }
+    }
+    EXPECT_TRUE(running);
+    runtime->shutdown();
+}
+
+TEST(ApplicationRuntime, SwitchRouteReportsAFatalReopenThroughTheErrorEnvelope) {
+    TwoVaultRuntime pair(false, true);
+    auto runtime = ApplicationRuntime::open(pair.command, "private-test-token");
+    const int port = runtime->start();
+    httplib::Client client("127.0.0.1", port);
+    force_next_workspace_config_fault(WorkspaceConfigFault::restore);
+    expect_error_envelope(post_switch(client, "B"), 500, "internal_error");
+    runtime->shutdown();
+}
+
 TEST(ApplicationRuntime, OauthStatusSurvivesASwitch) {
     TwoVaultRuntime pair;
     write_runtime_auth(pair.command.config_directory);

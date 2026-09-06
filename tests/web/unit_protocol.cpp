@@ -152,6 +152,23 @@ TEST(WebProtocol, SerializesSpecifiedSuccessListingAndErrorBodies) {
                  {"message", "Too large"},
              }},
         }));
+    Bootstrap bootstrap;
+    bootstrap.initial_forum_id = "entrance";
+    bootstrap.initial_session_id = "welcome";
+    bootstrap.vault_name = "Personal";
+    bootstrap.vaults = {"Personal", "Projects"};
+    EXPECT_EQ(
+        nlohmann::json(bootstrap),
+        nlohmann::json({
+            {"vault_name", "Personal"},
+            {"vaults", {"Personal", "Projects"}},
+            {"initial_forum_id", "entrance"},
+            {"initial_session_id", "welcome"},
+            {"personas", nlohmann::json::array()},
+            {"characters", nlohmann::json::array()},
+            {"forums", nlohmann::json::array()},
+            {"recent_sessions", nlohmann::json::array()},
+        }));
 }
 
 TEST(WebProtocol, SerializesSnapshotMailboxPayloadAndTargetAwareAppend) {
@@ -182,10 +199,12 @@ TEST(WebProtocol, SerializesSnapshotMailboxPayloadAndTargetAwareAppend) {
         .notice = std::string{"<notice>"},
         .lifecycle = SessionLifecycle::stopping,
         .shutdown_reason = ShutdownReason::session_failed,
+        .vault_name = "Personal",
     };
 
     const auto value = nlohmann::json(SnapshotEvent{std::move(snapshot)});
     const nlohmann::json expected = {
+        {"vault_name", "Personal"},
         {"default_character_id", "guide"},
         {"forum", {{"display_name", "Forum"}, {"id", "forum"}, {"default_character_id", ""}, {"default_persona_id", ""}, {"default_persona_display_name", ""}, {"members", nlohmann::json::array()}}},
         {"generation",
@@ -390,11 +409,18 @@ TEST(WebProtocol, ParsesRouteSpecificCommandPayloads) {
     EXPECT_EQ(parse_create_session_label({{"label", "Notes"}}), "Notes");
     EXPECT_EQ(parse_rename_session_label({{"label", "Renamed"}}), "Renamed");
     EXPECT_EQ(parse_rename_session_label({{"label", ""}}), "");
+    EXPECT_EQ(parse_vault_switch_name({{"vault_name", "Projects"}}), "Projects");
     EXPECT_THROW(
         (void)parse_create_session_label({}),
         std::invalid_argument);
     EXPECT_THROW(
         (void)parse_create_session_label({{"label", "Notes"}, {"extra", true}}),
+        std::invalid_argument);
+    EXPECT_THROW(
+        (void)parse_vault_switch_name({}),
+        std::invalid_argument);
+    EXPECT_THROW(
+        (void)parse_vault_switch_name({{"vault_name", 1}}),
         std::invalid_argument);
 
     EXPECT_NO_THROW(parse_empty_object(nlohmann::json::object()));

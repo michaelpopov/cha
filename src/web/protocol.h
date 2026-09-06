@@ -91,6 +91,8 @@ struct SessionSnapshot {
     std::optional<std::string> notice;
     SessionLifecycle lifecycle{SessionLifecycle::starting};
     std::optional<ShutdownReason> shutdown_reason;
+    // Captured when the live session opens, not looked up at serialize time.
+    std::string vault_name;
     bool operator==(const SessionSnapshot&) const = default;
 };
 
@@ -174,6 +176,8 @@ struct Bootstrap {
     std::vector<CharacterSummary> characters;
     std::vector<ForumSummary> forums;
     std::vector<RecentSession> recent_sessions;
+    std::string vault_name;
+    std::vector<std::string> vaults;
 };
 
 struct ProviderOption {

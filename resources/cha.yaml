@@ -105,6 +105,37 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /api/v1/vault/switch:
+    post:
+      tags: [Service]
+      operationId: switchVault
+      summary: Switch the active vault
+      description: |
+        Switches the shared process-wide vault. The name is matched
+        ASCII-case-insensitively against the startup registry. Success is
+        `204` after the operation completes, including when the requested
+        vault is already active. The HTTP listener and port do not change.
+
+        After success the initiating page reloads `/` in the target vault.
+        `Cache-Control` is `no-store`, including error responses.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VaultSwitchRequest"
+      responses:
+        "204":
+          description: The vault is now the requested vault, or already was.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/ForbiddenMutation"
+        "413":
+          $ref: "#/components/responses/BodyTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /api/v1/openai/auth:
     get:
       tags: [OpenAI]
@@ -1067,10 +1098,21 @@ components:
         updated_at:
           $ref: "#/components/schemas/UnixTimestamp"
 
+    VaultSwitchRequest:
+      type: object
+      additionalProperties: false
+      required: [vault_name]
+      properties:
+        vault_name:
+          type: string
+          minLength: 1
+
     Bootstrap:
       type: object
       additionalProperties: false
       required:
+        - vault_name
+        - vaults
         - initial_forum_id
         - initial_session_id
         - personas
@@ -1078,6 +1120,15 @@ components:
         - forums
         - recent_sessions
       properties:
+        vault_name:
+          type: string
+          minLength: 1
+        vaults:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            minLength: 1
         initial_forum_id:
           $ref: "#/components/schemas/Identifier"
         initial_session_id:
@@ -1361,6 +1412,7 @@ components:
       type: object
       additionalProperties: false
       required:
+        - vault_name
         - forum
         - session_id
         - session_label
@@ -1370,6 +1422,9 @@ components:
         - generation
         - lifecycle
       properties:
+        vault_name:
+          type: string
+          minLength: 1
         forum:
           $ref: "#/components/schemas/ForumSummary"
         session_id:

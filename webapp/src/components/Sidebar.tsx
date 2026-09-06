@@ -20,6 +20,7 @@ interface SidebarProps {
   onDownloadSession(forumId: string, sessionId: string, label: string): Promise<void>;
   onRenameSession(forumId: string, sessionId: string, label: string): Promise<void>;
   onDeleteSession(forumId: string, sessionId: string): Promise<void>;
+  onSwitchVault(vaultName: string): void;
 }
 
 interface SelectedSession {
@@ -137,6 +138,7 @@ export function Sidebar({
   onOpenSession,
   onRenameSession,
   onDeleteSession,
+  onSwitchVault,
 }: SidebarProps) {
   const forums = new Map(state.bootstrap?.forums.map((forum) => [forum.id, forum]));
   const recents = state.bootstrap?.recent_sessions;
@@ -254,17 +256,37 @@ export function Sidebar({
           );
         })}
       </div>
-      <button
-        aria-current={state.mainView === 'settings' ? 'page' : undefined}
-        aria-label="Settings"
-        className={`cha-sidebar-settings ${state.mainView === 'settings' ? 'is-current' : ''}`}
-        disabled={state.bootstrapStatus !== 'ready'}
-        onClick={() => dispatch({ type: 'show-settings' })}
-        title="Settings"
-        type="button"
-      >
-        <SettingsIcon />
-      </button>
+      {state.vaultSwitch.status === 'failed' && state.vaultSwitch.message && (
+        <p className="cha-error-message" role="alert">{state.vaultSwitch.message}</p>
+      )}
+      <div className="cha-sidebar-footer">
+        <select
+          aria-label="Vault"
+          className="cha-vault-select"
+          disabled={state.bootstrapStatus !== 'ready' || state.vaultSwitch.status === 'pending'}
+          onChange={(event) => {
+            const name = event.target.value;
+            if (name === state.bootstrap?.vault_name) return;
+            onSwitchVault(name);
+          }}
+          value={state.bootstrap?.vault_name ?? ''}
+        >
+          {state.bootstrap?.vaults.map((name) => (
+            <option key={name} value={name}>{name}</option>
+          ))}
+        </select>
+        <button
+          aria-current={state.mainView === 'settings' ? 'page' : undefined}
+          aria-label="Settings"
+          className={`cha-sidebar-settings ${state.mainView === 'settings' ? 'is-current' : ''}`}
+          disabled={state.bootstrapStatus !== 'ready'}
+          onClick={() => dispatch({ type: 'show-settings' })}
+          title="Settings"
+          type="button"
+        >
+          <SettingsIcon />
+        </button>
+      </div>
       {menu && createPortal(
         <div
           className="cha-session-menu"

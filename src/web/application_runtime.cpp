@@ -16,16 +16,21 @@
 #include "workspace/workspace.h"
 #include "workspace/workspace_config_store.h"
 #include "web/asset_handler.h"
+#include "web/http_response.h"
 #include "web/http_server.h"
+#include "web/json.h"
 #include "web/live_session_manager.h"
 #include "web/lobby_routes.h"
 #include "web/openai_auth_routes.h"
+#include "web/protocol.h"
+#include "web/route_support.h"
 #include "web/server_shutdown.h"
 #include "web/session_mirror.h"
 #include "web/session_routes.h"
 #include "web/web_settings.h"
 
 #include <httplib.h>
+#include <nlohmann/json.hpp>
 #include <toml++/toml.hpp>
 
 #include <algorithm>
@@ -180,6 +185,7 @@ struct ApplicationRuntime::Impl {
                           std::shared_ptr<WakeNotifier> notifier) {
             OpenedSession opened = open_session(
                 *sessions, identity, providers, std::move(notifier), *store);
+            opened.vault_name = current_vault_.get().name;
             const auto selected_mirror = mirror;
             opened.mirror = [selected_mirror, identity](
                                 std::string_view label,
@@ -405,13 +411,49 @@ int ApplicationRuntime::start(int port_override) {
     assets.install(*server);
     const InitialSelection initial{
         {std::string(entrance_id), std::string(welcome_id)}};
+    std::vector<std::string> vault_names;
+    vault_names.reserve(impl_->command.vaults.size());
+    for (const VaultDefinition& vault : impl_->command.vaults) {
+        vault_names.push_back(vault.name);
+    }
     LobbyRoutes(
         impl_->sessions,
         initial,
         *impl_->live_sessions,
         impl_->settings,
         *impl_->store,
+        impl_->current_vault_,
+        std::move(vault_names),
         impl_->mirror).install(*server);
+    ApplicationRuntime* const runtime = this;
+    const WebSettings settings = impl_->settings;
+    server->Post(
+        "/api/v1/vault/switch",
+        [runtime, settings](
+            const httplib::Request& request, httplib::Response& response) {
+            if (!validate_json_mutation(request, response)) return;
+            std::string vault_name;
+            if (!parse_route_json_body(
+                    request,
+                    response,
+                    settings.request_body_limit,
+                    [&vault_name](const nlohmann::json& json) {
+                        vault_name = parse_vault_switch_name(json);
+                    })) {
+                return;
+            }
+            try {
+                runtime->switch_vault(vault_name);
+            } catch (const UnknownVaultError& error) {
+                return set_error_response(
+                    response, 400, {ErrorCode::bad_request, error.what()});
+            } catch (const std::exception& error) {
+                return set_error_response(
+                    response, 500, {ErrorCode::internal_error, error.what()});
+            }
+            response.status = 204;
+            response.set_header("Cache-Control", "no-store");
+        });
     OpenAiAuthRoutes(*impl_->openai_auth, impl_->settings).install(*server);
     SessionRoutes(
         *impl_->live_sessions, impl_->settings, assets).install(*server);

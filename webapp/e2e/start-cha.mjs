@@ -14,15 +14,22 @@ const publishedWorkspace = process.env.CHA_E2E_WORKSPACE
 const publishedDatabase = process.env.CHA_E2E_DATABASE
   ? resolve(process.env.CHA_E2E_DATABASE)
   : null;
-const databaseArtifacts = publishedDatabase
-  ? [
-      publishedDatabase,
-      `${publishedDatabase}-wal`,
-      `${publishedDatabase}-shm`,
-      `${publishedDatabase}-journal`,
-      `${publishedDatabase}.cha-lock`,
-    ]
-  : [];
+const publishedDatabaseB = publishedDatabase
+  ? resolve(dirname(publishedDatabase), 'cha-b.sqlite3')
+  : null;
+function databaseArtifactsFor(path) {
+  return [
+    path,
+    `${path}-wal`,
+    `${path}-shm`,
+    `${path}-journal`,
+    `${path}.cha-lock`,
+  ];
+}
+const databaseArtifacts = [
+  ...(publishedDatabase ? databaseArtifactsFor(publishedDatabase) : []),
+  ...(publishedDatabaseB ? databaseArtifactsFor(publishedDatabaseB) : []),
+];
 for (const [label, path] of [
   ['workspace', publishedWorkspace],
   ...databaseArtifacts.map((path) => ['database artifact', path]),
@@ -40,6 +47,9 @@ if (publishedWorkspace) {
 }
 if (publishedDatabase) {
   await mkdir(dirname(publishedDatabase), { recursive: true });
+}
+if (publishedDatabaseB) {
+  await mkdir(dirname(publishedDatabaseB), { recursive: true });
 }
 const temporary = await mkdtemp(resolve(tmpdir(), 'cha-webapp-e2e-'));
 let child;
@@ -63,12 +73,19 @@ const executable = packagedApplication
   ? resolve(application, 'chaweb')
   : resolve(repository, 'build/ninja/chaweb');
 const workspace = publishedWorkspace ?? resolve(temporary, 'workspace');
+const workspaceB = resolve(temporary, 'workspace-b');
 const database = publishedDatabase ?? resolve(temporary, 'cha.sqlite3');
+const databaseB = publishedDatabaseB ?? resolve(temporary, 'cha-b.sqlite3');
 const config = resolve(temporary, 'cha-config');
 const apiPort = Number(process.env.CHA_E2E_PORT ?? '8080');
 const modelPort = apiPort + 2;
 
 await cp(resolve(project, 'e2e/fixtures/workspace'), workspace, {
+  recursive: true,
+  force: false,
+  errorOnExist: true,
+});
+await cp(resolve(project, 'e2e/fixtures/workspace'), workspaceB, {
   recursive: true,
   force: false,
   errorOnExist: true,
@@ -120,9 +137,7 @@ const modelServer = createServer((request, response) => {
 });
 // The mock server's port is the one setting that cannot be committed, so the
 // harness rewrites the named provider selected by the character definition.
-await writeFile(
-  resolve(workspace, 'system/providers/test/config.toml'),
-  `host = "127.0.0.1"
+const providerConfig = `host = "127.0.0.1"
 port = ${modelPort}
 mode = "net"
 model = "browser-test"
@@ -130,7 +145,14 @@ api = "chat_completions"
 web_search = "off"
 stream = true
 https = false
-`,
+`;
+await writeFile(
+  resolve(workspace, 'system/providers/test/config.toml'),
+  providerConfig,
+);
+await writeFile(
+  resolve(workspaceB, 'system/providers/test/config.toml'),
+  providerConfig,
 );
 await mkdir(config, { recursive: true });
 await writeFile(
@@ -150,6 +172,12 @@ await writeFile(
   resolve(config, 'e2e.toml'),
   `vault_name = "E2E"
 data = ${JSON.stringify(database)}
+`,
+);
+await writeFile(
+  resolve(config, 'projects.toml'),
+  `vault_name = "Projects"
+data = ${JSON.stringify(databaseB)}
 `,
 );
 
@@ -194,7 +222,22 @@ const importCode = await new Promise((resolveExit, reject) => {
 if (importCode !== 0) {
   throw new Error(`Offline import failed with exit code ${importCode}`);
 }
+const importerB = spawn(executable, [
+  '--config', config,
+  '--vault=Projects',
+  '--import', workspaceB,
+], { stdio: 'inherit' });
+const importBCode = await new Promise((resolveExit, reject) => {
+  importerB.once('error', reject);
+  importerB.once('exit', (code, signal) => {
+    resolveExit(code ?? (signal ? 1 : 0));
+  });
+});
+if (importBCode !== 0) {
+  throw new Error(`Offline Projects import failed with exit code ${importBCode}`);
+}
 await rm(workspace, { recursive: true, force: true });
+await rm(workspaceB, { recursive: true, force: true });
 
 await new Promise((resolveListen, reject) => {
   modelServer.once('error', reject);

@@ -99,6 +99,11 @@ std::string parse_rename_session_label(const nlohmann::json& json) {
     return required_string(json, "label");
 }
 
+std::string parse_vault_switch_name(const nlohmann::json& json) {
+    exact_keys(json, {"vault_name"});
+    return required_string(json, "vault_name");
+}
+
 std::optional<std::string> nullable_string(
     const nlohmann::json& json,
     std::string_view key) {

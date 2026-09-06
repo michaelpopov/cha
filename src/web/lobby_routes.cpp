@@ -5,6 +5,7 @@
 #include "session/not_found_error.h"
 #include "session/session_label.h"
 #include "session/session_repository.h"
+#include "web/current_vault.h"
 #include "web/http_response.h"
 #include "web/json.h"
 #include "web/protocol.h"
@@ -192,7 +193,9 @@ std::vector<SessionListing> sessions_for(
 Bootstrap bootstrap_for(
     const Workspace& workspace,
     const std::vector<StoredSession>& recent,
-    const InitialSelection& initial) {
+    const InitialSelection& initial,
+    std::string vault_name,
+    std::vector<std::string> vaults) {
     Bootstrap bootstrap{.initial_forum_id = initial.session.forum_id,
                         .initial_session_id = initial.session.session_id};
     for (const WorkspacePersona& persona : workspace.personas()) {
@@ -212,6 +215,8 @@ Bootstrap bootstrap_for(
             stored.label,
             stored.updated_at});
     }
+    bootstrap.vault_name = std::move(vault_name);
+    bootstrap.vaults = std::move(vaults);
     return bootstrap;
 }
 
@@ -223,11 +228,15 @@ LobbyRoutes::LobbyRoutes(
     LiveSessionManager& live_sessions,
     WebSettings settings,
     WorkspaceConfigStore& config,
+    CurrentVault& current_vault,
+    std::vector<std::string> vault_names,
     std::shared_ptr<SessionMirror> mirror)
     : sessions_(std::move(sessions)),
       initial_(std::move(initial)), live_sessions_(live_sessions),
       settings_(std::move(settings)),
       config_(&config),
+      current_vault_(&current_vault),
+      vault_names_(std::move(vault_names)),
       mirror_(std::move(mirror)) {
     if (!sessions_) throw std::invalid_argument("Lobby routes need a session repository");
 }
@@ -238,6 +247,8 @@ void LobbyRoutes::install(httplib::Server& server) const {
     LiveSessionManager* const live_sessions = &live_sessions_;
     const WebSettings settings = settings_;
     WorkspaceConfigStore* const config = config_;
+    CurrentVault* const current_vault = current_vault_;
+    const std::vector<std::string> vault_names = vault_names_;
     const std::shared_ptr<SessionMirror> mirror = mirror_;
     server.Get("/health", [live_sessions](const httplib::Request&, httplib::Response& response) {
         const LiveSessionManagerSnapshot snapshot = live_sessions->snapshot();
@@ -245,16 +256,20 @@ void LobbyRoutes::install(httplib::Server& server) const {
             {"ready", true}, {"live_session_count", snapshot.live_session_count}});
     });
 
-    server.Get("/api/v1/bootstrap", [sessions, initial](const httplib::Request&, httplib::Response& response) {
+    server.Get("/api/v1/bootstrap", [sessions, initial, current_vault, vault_names](
+                                        const httplib::Request&, httplib::Response& response) {
         std::shared_ptr<const Workspace> current;
         std::vector<StoredSession> recent;
+        std::string vault_name;
         {
             const auto access = sessions->lock_shared();
+            vault_name = current_vault->get().name;
             current = access.workspace();
             recent = access.recent();
         }
         set_json_response(response, 200, nlohmann::json(
-            bootstrap_for(*current, recent, initial)));
+            bootstrap_for(
+                *current, recent, initial, std::move(vault_name), vault_names)));
     });
 
     server.Get(R"(/api/v1/characters/([^/]+))", [](const httplib::Request& request, httplib::Response& response) {

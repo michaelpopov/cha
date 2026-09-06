@@ -45,6 +45,16 @@ export function validateBootstrap(value: unknown): Bootstrap {
       throw new TypeError(`Bootstrap is missing ${field}.`);
     }
   }
+  if (typeof value.vault_name !== 'string' || value.vault_name.length === 0) {
+    throw new TypeError('Bootstrap is missing vault_name.');
+  }
+  if (!Array.isArray(value.vaults) || value.vaults.length === 0
+      || !value.vaults.every((name) => typeof name === 'string' && name.length > 0)) {
+    throw new TypeError('Bootstrap is missing vaults.');
+  }
+  if (!value.vaults.includes(value.vault_name)) {
+    throw new TypeError('Bootstrap vault_name is absent from vaults.');
+  }
 
   const { personas, characters, forums, recent_sessions: recentSessions } = value;
   if (!Array.isArray(personas)) throw new TypeError('Bootstrap is missing personas.');

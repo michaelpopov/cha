@@ -1,4 +1,5 @@
 #include "web/asset_handler.h"
+#include "web/current_vault.h"
 #include "web/http_server.h"
 #include "web/lobby_routes.h"
 #include "web/live_session_manager.h"
@@ -70,7 +71,8 @@ public:
         AssetHandler(graph.root() / "web").install(server_);
         LobbyRoutes(
             graph.sessions(), LobbyGraph::initial_selection(),
-            live_sessions, settings, *graph.store).install(server_);
+            live_sessions, settings, *graph.store,
+            current_vault_, {"Personal", "Projects"}).install(server_);
         if (installer) installer(server_);
         port_ = server_.bind_to_any_port("127.0.0.1");
         if (port_ < 0) throw std::runtime_error("Could not bind test server");
@@ -90,6 +92,7 @@ public:
     int port() const noexcept { return port_; }
 
 private:
+    CurrentVault current_vault_{VaultDefinition{.name = "Personal"}};
     httplib::Server server_;
     int port_{};
     std::thread thread_;
@@ -193,6 +196,8 @@ TEST(LobbyRoutes, ServesBootstrapDiscoveryAndHealthWithoutSessionDataInHealth) {
     ASSERT_TRUE(bootstrap);
     EXPECT_EQ(bootstrap->status, 200);
     const nlohmann::json bootstrap_body = body(bootstrap);
+    EXPECT_EQ(bootstrap_body["vault_name"], "Personal");
+    EXPECT_EQ(bootstrap_body["vaults"], nlohmann::json::array({"Personal", "Projects"}));
     EXPECT_EQ(bootstrap_body["initial_forum_id"], "builtin-entrance");
     EXPECT_EQ(bootstrap_body["initial_session_id"], "builtin-welcome");
     EXPECT_EQ(bootstrap_body["forums"].size(), 2);

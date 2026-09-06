@@ -28,6 +28,9 @@ struct OpenedSession {
     // Optional initial presentation notice. Production currently leaves this
     // empty; test openers use it to exercise startup-notice behavior.
     std::optional<std::string> notice;
+    // Canonical active vault name at open time. Production fills this;
+    // low-level test openers may leave it empty.
+    std::string vault_name;
 };
 
 } // namespace cha

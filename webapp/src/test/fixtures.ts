@@ -15,6 +15,8 @@ export const plainVoice: CharacterAppearance = {
 };
 
 export const bootstrapFixture: Bootstrap = {
+  vault_name: 'Personal',
+  vaults: ['Personal', 'Projects'],
   initial_forum_id: 'entrance',
   initial_session_id: 'welcome',
   personas: [
@@ -126,6 +128,7 @@ export const waitingAuth: OpenAiAuth = {
 export const connectedAuth: OpenAiAuth = { status: 'connected' };
 
 export const snapshotFixture: SessionSnapshot = {
+  vault_name: 'Personal',
   forum: bootstrapFixture.forums[0],
   session_id: 'welcome',
   session_label: 'Welcome',
@@ -166,6 +169,7 @@ export function fixtureClient(overrides: Partial<ChaClient> = {}): ChaClient {
     startOpenAiAuth: async () => signedOutAuth,
     pollOpenAiAuth: async () => signedOutAuth,
     disconnectOpenAiAuth: async () => signedOutAuth,
+    switchVault: async () => undefined,
     ...overrides,
   };
 }

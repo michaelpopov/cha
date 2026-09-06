@@ -137,7 +137,9 @@ private:
     void owner_loop();
     void execute(OwnerCommand command);
     void apply_notification(OwnerNotification notification);
-    [[nodiscard]] SessionSnapshot make_snapshot();
+    [[nodiscard]] SessionSnapshot make_snapshot(
+        SessionLifecycle lifecycle = SessionLifecycle::running,
+        std::optional<ShutdownReason> shutdown_reason = std::nullopt);
     [[nodiscard]] WebPresentationState presentation(
         SessionLifecycle lifecycle,
         std::optional<ShutdownReason> shutdown_reason = std::nullopt) const;
@@ -179,6 +181,7 @@ private:
     // on that thread; none of this needs the lifecycle mutex.
     std::unique_ptr<SessionController> controller_;
     std::string label_;
+    std::string vault_name_;
     std::function<void(std::string_view)> persist_default_character_;
     std::function<void(std::string_view)> persist_default_persona_;
     std::function<void(

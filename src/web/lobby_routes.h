@@ -4,6 +4,8 @@
 #include "web/web_settings.h"
 
 #include <memory>
+#include <string>
+#include <vector>
 
 namespace httplib {
 class Server;
@@ -16,6 +18,7 @@ class WorkspaceConfigStore;
 
 namespace cha::web {
 
+class CurrentVault;
 class LiveSessionManager;
 class SessionMirror;
 
@@ -33,6 +36,8 @@ public:
         LiveSessionManager& live_sessions,
         WebSettings settings,
         WorkspaceConfigStore& config,
+        CurrentVault& current_vault,
+        std::vector<std::string> vault_names,
         std::shared_ptr<SessionMirror> mirror = {});
 
     void install(httplib::Server& server) const;
@@ -43,6 +48,8 @@ private:
     LiveSessionManager& live_sessions_;
     WebSettings settings_;
     WorkspaceConfigStore* config_;
+    CurrentVault* current_vault_;
+    std::vector<std::string> vault_names_;
     std::shared_ptr<SessionMirror> mirror_;
 };
 

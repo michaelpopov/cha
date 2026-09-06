@@ -98,6 +98,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/vault/switch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Switch the active vault
+         * @description Switches the shared process-wide vault. The name is matched
+         *     ASCII-case-insensitively against the startup registry. Success is
+         *     `204` after the operation completes, including when the requested
+         *     vault is already active. The HTTP listener and port do not change.
+         *
+         *     After success the initiating page reloads `/` in the target vault.
+         *     `Cache-Control` is `no-store`, including error responses.
+         */
+        post: operations["switchVault"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/openai/auth": {
         parameters: {
             query?: never;
@@ -651,7 +677,12 @@ export interface components {
             session_label: string;
             updated_at: components["schemas"]["UnixTimestamp"];
         };
+        VaultSwitchRequest: {
+            vault_name: string;
+        };
         Bootstrap: {
+            vault_name: string;
+            vaults: string[];
             initial_forum_id: components["schemas"]["Identifier"];
             initial_session_id: components["schemas"]["Identifier"];
             personas: components["schemas"]["PersonaSummary"][];
@@ -763,6 +794,7 @@ export interface components {
             reasoning_text: string;
         };
         SessionSnapshot: {
+            vault_name: string;
             forum: components["schemas"]["ForumSummary"];
             session_id: components["schemas"]["Identifier"];
             session_label: string;
@@ -1021,6 +1053,32 @@ export interface operations {
                     "application/json": components["schemas"]["Bootstrap"];
                 };
             };
+            500: components["responses"]["InternalError"];
+        };
+    };
+    switchVault: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VaultSwitchRequest"];
+            };
+        };
+        responses: {
+            /** @description The vault is now the requested vault, or already was. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["ForbiddenMutation"];
+            413: components["responses"]["BodyTooLarge"];
             500: components["responses"]["InternalError"];
         };
     };

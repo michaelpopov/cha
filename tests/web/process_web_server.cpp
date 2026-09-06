@@ -10,6 +10,7 @@
 #include "web/http_server.h"
 #include "workspace/workspace_config_store.h"
 #include "web/asset_handler.h"
+#include "web/current_vault.h"
 #include "web/live_session_manager.h"
 #include "web/lobby_routes.h"
 #include "web/server_shutdown.h"
@@ -1401,9 +1402,11 @@ TEST(ServerShutdownCoordinatorProcess, ShutdownWakesARealHttpOpenBeforeOwnerComm
         });
     ReleaseOpeningGateOnExit release_gate(gate);
     httplib::Server server;
+    CurrentVault current_vault{VaultDefinition{.name = "Personal"}};
     LobbyRoutes(
         graph.sessions(), test::WebGraph::initial_selection(),
-        live_sessions, settings, *graph.store).install(server);
+        live_sessions, settings, *graph.store,
+        current_vault, {"Personal"}).install(server);
     const int port = server.bind_to_any_port("127.0.0.1");
     ASSERT_GT(port, 0);
     configure_http_server(server, settings);

@@ -168,6 +168,27 @@ describe('application navigation reducer', () => {
     expect(state.mainView).toBe('chat');
   });
 
+  it('tracks vault switch pending and failed states and resets them on bootstrap', () => {
+    let state = readyState();
+    expect(state.vaultSwitch).toEqual({ status: 'idle', message: null });
+
+    state = appReducer(state, { type: 'vault-switch-started' });
+    expect(state.vaultSwitch).toEqual({ status: 'pending', message: null });
+    expect(state.bootstrap?.vault_name).toBe('Personal');
+
+    state = appReducer(state, {
+      type: 'vault-switch-failed',
+      message: 'The vault could not be switched.',
+    });
+    expect(state.vaultSwitch).toEqual({
+      status: 'failed',
+      message: 'The vault could not be switched.',
+    });
+
+    state = appReducer(state, { type: 'bootstrap-loaded', bootstrap: bootstrapFixture });
+    expect(state.vaultSwitch).toEqual({ status: 'idle', message: null });
+  });
+
   it('tracks character-settings availability only for the inspected character', () => {
     let state = readyState();
     state = appReducer(state, { type: 'inspect-character', characterId: 'guide' });

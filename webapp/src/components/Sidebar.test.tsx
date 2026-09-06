@@ -24,6 +24,7 @@ describe('Sidebar session actions', () => {
         onDownloadSession={vi.fn(async () => undefined)}
         onOpenSession={vi.fn(async () => true)}
         onRenameSession={vi.fn(async () => undefined)}
+        onSwitchVault={vi.fn()}
         state={readyState()}
       />,
     );
@@ -52,6 +53,7 @@ describe('Sidebar session actions', () => {
         onDownloadSession={onDownload}
         onOpenSession={onOpen}
         onRenameSession={vi.fn(async () => undefined)}
+        onSwitchVault={vi.fn()}
         state={readyState()}
       />,
     );
@@ -72,6 +74,7 @@ describe('Sidebar session actions', () => {
         onDownloadSession={vi.fn(async () => undefined)}
         onOpenSession={vi.fn(async () => true)}
         onRenameSession={vi.fn(async () => undefined)}
+        onSwitchVault={vi.fn()}
         state={readyState()}
       />,
     );
@@ -93,6 +96,7 @@ describe('Sidebar session actions', () => {
         onDownloadSession={vi.fn(async () => undefined)}
         onOpenSession={vi.fn(async () => true)}
         onRenameSession={vi.fn(async () => undefined)}
+        onSwitchVault={vi.fn()}
         state={readyState()}
       />,
     );
@@ -130,6 +134,7 @@ describe('Sidebar session actions', () => {
         onDownloadSession={vi.fn(async () => undefined)}
         onOpenSession={vi.fn(async () => true)}
         onRenameSession={vi.fn(async () => undefined)}
+        onSwitchVault={vi.fn()}
         state={readyState()}
       />,
     );
@@ -149,6 +154,7 @@ describe('Sidebar session actions', () => {
         onDownloadSession={vi.fn(async () => undefined)}
         onOpenSession={vi.fn(async () => true)}
         onRenameSession={vi.fn(async () => undefined)}
+        onSwitchVault={vi.fn()}
         state={readyState()}
       />,
     );
@@ -174,6 +180,7 @@ describe('Sidebar session actions', () => {
         onDownloadSession={vi.fn(async () => undefined)}
         onOpenSession={vi.fn(async () => true)}
         onRenameSession={onRename}
+        onSwitchVault={vi.fn()}
         state={readyState()}
       />,
     );
@@ -202,6 +209,7 @@ describe('Sidebar session actions', () => {
         onDownloadSession={vi.fn(async () => undefined)}
         onOpenSession={vi.fn(async () => true)}
         onRenameSession={vi.fn(async () => undefined)}
+        onSwitchVault={vi.fn()}
         state={readyState()}
       />,
     );
@@ -212,5 +220,118 @@ describe('Sidebar session actions', () => {
     expect(screen.getByRole('button', { name: 'Working…' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled();
     finish();
+  });
+});
+
+describe('Sidebar vault selector', () => {
+  it('lists bootstrap vaults and keeps the active name selected', () => {
+    render(
+      <Sidebar
+        dispatch={vi.fn()}
+        onDeleteSession={vi.fn(async () => undefined)}
+        onDownloadSession={vi.fn(async () => undefined)}
+        onOpenSession={vi.fn(async () => true)}
+        onRenameSession={vi.fn(async () => undefined)}
+        onSwitchVault={vi.fn()}
+        state={readyState()}
+      />,
+    );
+
+    const selector = screen.getByLabelText('Vault');
+    expect(selector).toHaveValue('Personal');
+    expect(selector).toBeEnabled();
+    expect([...selector.querySelectorAll('option')].map((option) => option.value))
+      .toEqual(['Personal', 'Projects']);
+    expect(screen.getByLabelText('Settings')).toBeInTheDocument();
+  });
+
+  it('does nothing when the active vault is selected again', async () => {
+    const user = userEvent.setup();
+    const onSwitchVault = vi.fn();
+    render(
+      <Sidebar
+        dispatch={vi.fn()}
+        onDeleteSession={vi.fn(async () => undefined)}
+        onDownloadSession={vi.fn(async () => undefined)}
+        onOpenSession={vi.fn(async () => true)}
+        onRenameSession={vi.fn(async () => undefined)}
+        onSwitchVault={onSwitchVault}
+        state={readyState()}
+      />,
+    );
+
+    await user.selectOptions(screen.getByLabelText('Vault'), 'Personal');
+    expect(onSwitchVault).not.toHaveBeenCalled();
+  });
+
+  it('reports a selection and disables the control while switching', async () => {
+    const user = userEvent.setup();
+    const onSwitchVault = vi.fn();
+    const { rerender } = render(
+      <Sidebar
+        dispatch={vi.fn()}
+        onDeleteSession={vi.fn(async () => undefined)}
+        onDownloadSession={vi.fn(async () => undefined)}
+        onOpenSession={vi.fn(async () => true)}
+        onRenameSession={vi.fn(async () => undefined)}
+        onSwitchVault={onSwitchVault}
+        state={readyState()}
+      />,
+    );
+
+    await user.selectOptions(screen.getByLabelText('Vault'), 'Projects');
+    expect(onSwitchVault).toHaveBeenCalledWith('Projects');
+
+    rerender(
+      <Sidebar
+        dispatch={vi.fn()}
+        onDeleteSession={vi.fn(async () => undefined)}
+        onDownloadSession={vi.fn(async () => undefined)}
+        onOpenSession={vi.fn(async () => true)}
+        onRenameSession={vi.fn(async () => undefined)}
+        onSwitchVault={onSwitchVault}
+        state={appReducer(readyState(), { type: 'vault-switch-started' })}
+      />,
+    );
+    expect(screen.getByLabelText('Vault')).toBeDisabled();
+    expect(screen.getByLabelText('Vault')).toHaveValue('Personal');
+  });
+
+  it('shows a recoverable failure without changing the selected vault', () => {
+    const failed = appReducer(readyState(), {
+      type: 'vault-switch-failed',
+      message: 'The vault could not be switched.',
+    });
+    render(
+      <Sidebar
+        dispatch={vi.fn()}
+        onDeleteSession={vi.fn(async () => undefined)}
+        onDownloadSession={vi.fn(async () => undefined)}
+        onOpenSession={vi.fn(async () => true)}
+        onRenameSession={vi.fn(async () => undefined)}
+        onSwitchVault={vi.fn()}
+        state={failed}
+      />,
+    );
+
+    expect(screen.getByRole('alert')).toHaveTextContent('The vault could not be switched.');
+    expect(screen.getByLabelText('Vault')).toHaveValue('Personal');
+    expect(screen.getByLabelText('Vault')).toBeEnabled();
+  });
+
+  it('disables the selector until bootstrap is ready', () => {
+    render(
+      <Sidebar
+        dispatch={vi.fn()}
+        onDeleteSession={vi.fn(async () => undefined)}
+        onDownloadSession={vi.fn(async () => undefined)}
+        onOpenSession={vi.fn(async () => true)}
+        onRenameSession={vi.fn(async () => undefined)}
+        onSwitchVault={vi.fn()}
+        state={initialAppState}
+      />,
+    );
+
+    expect(screen.getByLabelText('Vault')).toBeDisabled();
   });
 });
