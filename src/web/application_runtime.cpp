@@ -454,7 +454,8 @@ int ApplicationRuntime::start(int port_override) {
         *impl_->live_sessions,
         impl_->settings,
         *impl_->store,
-        *impl_->api_keys).install(*server);
+        *impl_->api_keys,
+        *impl_->openai_auth).install(*server);
     SessionRoutes(
         *impl_->live_sessions, impl_->settings, assets).install(*server);
     log_startup(impl_->settings);

@@ -222,6 +222,7 @@ export function fixtureClient(overrides: Partial<ChaClient> = {}): ChaClient {
     listProviders: async () => [],
     createProvider: async () => { throw new Error('No provider fixture'); },
     getProvider: async () => { throw new Error('No provider fixture'); },
+    testProvider: async () => undefined,
     updateProvider: async () => { throw new Error('No provider fixture'); },
     deleteProvider: async () => undefined,
     listStyles: async () => [],

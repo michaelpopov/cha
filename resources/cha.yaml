@@ -240,6 +240,33 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /api/v1/providers/{provider_id}/test:
+    parameters:
+      - name: provider_id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/Identifier"
+    post:
+      tags: [Settings]
+      operationId: testProvider
+      summary: Test candidate settings with a basic inference request
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProviderUpdate"
+      responses:
+        "204":
+          description: Provider responded successfully.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /api/v1/styles:
     get:
       tags: [Settings]
@@ -1917,6 +1944,7 @@ components:
         - web_search
         - cache_retention
         - writable
+        - used_by
       properties:
         id:
           $ref: "#/components/schemas/Identifier"
@@ -1968,6 +1996,10 @@ components:
           enum: [off, short, long]
         writable:
           type: boolean
+        used_by:
+          type: array
+          items:
+            type: string
 
     StyleUpdate:
       type: object
@@ -2003,7 +2035,7 @@ components:
     StyleDetail:
       type: object
       additionalProperties: false
-      required: [id, display_name, font, style, weight, size, text_color, writable]
+      required: [id, display_name, font, style, weight, size, text_color, writable, used_by]
       properties:
         id:
           $ref: "#/components/schemas/Identifier"
@@ -2026,6 +2058,10 @@ components:
           enum: [normal, muted, accent]
         writable:
           type: boolean
+        used_by:
+          type: array
+          items:
+            type: string
 
     ApiKeyDetail:
       type: object

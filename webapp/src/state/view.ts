@@ -62,8 +62,13 @@ export interface AppState {
   personaEditingAvailable: boolean;
   forumEditingAvailable: boolean;
   inspectedProviderId: string | null;
+  inspectedProviderName: string | null;
+  providerEditingAvailable: boolean;
   inspectedStyleId: string | null;
+  inspectedStyleName: string | null;
+  styleEditingAvailable: boolean;
   inspectedApiKeyId: string | null;
+  inspectedApiKeyName: string | null;
   currentDefaultCharacterId: string | null;
   sessionOperation: 'idle' | 'pending' | 'failed';
   sessionOperationMessage: string | null;
@@ -88,8 +93,13 @@ export const initialAppState: AppState = {
   personaEditingAvailable: false,
   forumEditingAvailable: false,
   inspectedProviderId: null,
+  inspectedProviderName: null,
+  providerEditingAvailable: false,
   inspectedStyleId: null,
+  inspectedStyleName: null,
+  styleEditingAvailable: false,
   inspectedApiKeyId: null,
+  inspectedApiKeyName: null,
   currentDefaultCharacterId: null,
   sessionOperation: 'idle',
   sessionOperationMessage: null,
@@ -135,13 +145,19 @@ export type AppAction =
   | { type: 'show-settings' }
   | { type: 'show-settings-providers' }
   | { type: 'show-settings-new-provider' }
-  | { type: 'inspect-provider'; providerId: string }
+  | { type: 'inspect-provider'; providerId: string; providerName: string }
+  | { type: 'provider-detail-loaded'; providerId: string; providerName: string; writable: boolean }
+  | { type: 'provider-updated'; providerId: string; providerName: string; writable: boolean }
   | { type: 'show-settings-styles' }
   | { type: 'show-settings-new-style' }
-  | { type: 'inspect-style'; styleId: string }
+  | { type: 'inspect-style'; styleId: string; styleName: string }
+  | { type: 'style-detail-loaded'; styleId: string; styleName: string; writable: boolean }
+  | { type: 'style-updated'; styleId: string; styleName: string; writable: boolean }
   | { type: 'show-settings-api-keys' }
   | { type: 'show-settings-new-api-key' }
-  | { type: 'inspect-api-key'; apiKeyId: string }
+  | { type: 'inspect-api-key'; apiKeyId: string; apiKeyName: string }
+  | { type: 'api-key-detail-loaded'; apiKeyId: string; apiKeyName: string }
+  | { type: 'api-key-updated'; apiKeyId: string; apiKeyName: string }
   | { type: 'show-chat' }
   | { type: 'session-operation-started'; message: string }
   | { type: 'session-operation-failed'; message: string; retryable?: boolean }
@@ -518,7 +534,12 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     case 'show-settings':
       return { ...state, mainView: 'settings', ...idleSessionOperation() };
     case 'show-settings-providers':
-      return { ...state, mainView: 'settings-providers', ...idleSessionOperation() };
+      return {
+        ...state,
+        mainView: 'settings-providers',
+        providerEditingAvailable: false,
+        ...idleSessionOperation(),
+      };
     case 'show-settings-new-provider':
       return { ...state, mainView: 'settings-new-provider', ...idleSessionOperation() };
     case 'inspect-provider':
@@ -526,10 +547,33 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         ...state,
         mainView: 'settings-provider',
         inspectedProviderId: action.providerId,
+        inspectedProviderName: action.providerName,
+        providerEditingAvailable: action.providerId === state.inspectedProviderId
+          ? state.providerEditingAvailable
+          : false,
         ...idleSessionOperation(),
       };
+    case 'provider-detail-loaded':
+      if (action.providerId !== state.inspectedProviderId) return state;
+      return {
+        ...state,
+        inspectedProviderName: action.providerName,
+        providerEditingAvailable: action.writable,
+      };
+    case 'provider-updated':
+      if (action.providerId !== state.inspectedProviderId) return state;
+      return {
+        ...state,
+        inspectedProviderName: action.providerName,
+        providerEditingAvailable: action.writable,
+      };
     case 'show-settings-styles':
-      return { ...state, mainView: 'settings-styles', ...idleSessionOperation() };
+      return {
+        ...state,
+        mainView: 'settings-styles',
+        styleEditingAvailable: false,
+        ...idleSessionOperation(),
+      };
     case 'show-settings-new-style':
       return { ...state, mainView: 'settings-new-style', ...idleSessionOperation() };
     case 'inspect-style':
@@ -537,7 +581,25 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         ...state,
         mainView: 'settings-style',
         inspectedStyleId: action.styleId,
+        inspectedStyleName: action.styleName,
+        styleEditingAvailable: action.styleId === state.inspectedStyleId
+          ? state.styleEditingAvailable
+          : false,
         ...idleSessionOperation(),
+      };
+    case 'style-detail-loaded':
+      if (action.styleId !== state.inspectedStyleId) return state;
+      return {
+        ...state,
+        inspectedStyleName: action.styleName,
+        styleEditingAvailable: action.writable,
+      };
+    case 'style-updated':
+      if (action.styleId !== state.inspectedStyleId) return state;
+      return {
+        ...state,
+        inspectedStyleName: action.styleName,
+        styleEditingAvailable: action.writable,
       };
     case 'show-settings-api-keys':
       return { ...state, mainView: 'settings-api-keys', ...idleSessionOperation() };
@@ -548,8 +610,13 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         ...state,
         mainView: 'settings-api-key',
         inspectedApiKeyId: action.apiKeyId,
+        inspectedApiKeyName: action.apiKeyName,
         ...idleSessionOperation(),
       };
+    case 'api-key-detail-loaded':
+    case 'api-key-updated':
+      if (action.apiKeyId !== state.inspectedApiKeyId) return state;
+      return { ...state, inspectedApiKeyName: action.apiKeyName };
     case 'show-chat':
       return { ...state, mainView: 'chat', ...idleSessionOperation() };
     case 'session-operation-started':
@@ -655,13 +722,13 @@ export function navigationTitle(state: AppState): string | null {
     case 'settings': return 'Settings';
     case 'settings-providers': return 'Providers';
     case 'settings-new-provider': return 'New provider';
-    case 'settings-provider': return 'Provider';
+    case 'settings-provider': return state.inspectedProviderName ?? 'Provider';
     case 'settings-styles': return 'Styles';
     case 'settings-new-style': return 'New style';
-    case 'settings-style': return 'Style';
+    case 'settings-style': return state.inspectedStyleName ?? 'Style';
     case 'settings-api-keys': return 'API Keys';
     case 'settings-new-api-key': return 'New API key';
-    case 'settings-api-key': return 'API Key';
+    case 'settings-api-key': return state.inspectedApiKeyName ?? 'API Key';
     case 'chat': return null;
   }
 }

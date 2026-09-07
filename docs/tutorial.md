@@ -595,6 +595,31 @@ Read the provider loader in
 `Workspace::character_definition()` copies it into the request-owned value
 passed to provider code.
 
+The provider screen is deliberately not a generic editor for every
+`ModelBackendConfig` field. It shows the editable display name, Model, Base URL,
+API format, and Credentials. Base URL is split back into `host` and
+`base_path` while retaining its scheme and non-default port. Saves force
+network mode and streaming, clear provider-level `reasoning_effort`, and set
+`web_search = "off"`. Characters own the user-facing reasoning and web-search
+choices.
+
+Credentials is an explicit choice. A normal provider refers to a secret in the
+process-owned `ApiKeyStore`; the secret never enters workspace configuration or
+a browser response. `OpenAI OAuth` selects `openai_subscription` authentication
+and therefore requires the Responses API and the exact
+`https://chatgpt.com/backend-api/codex` base URL. `No credentials` clears both
+forms of authentication. Legacy `api_key_env` configurations can still load,
+but the browser editor neither lists environment variables nor preserves one
+when the provider is saved.
+
+The provider `Test` action also stays narrow. The browser sends the current
+candidate as the same `ProviderUpdate` used by Save, and `SettingsRoutes` calls
+`ProviderClient` directly with one synthetic empty-history request asking for
+`OK`. It does not persist the candidate, reload live sessions, start a live
+session, create a transcript, or involve the `Providers` supervisor. The probe
+forces the real network path, turns web search off, uses fixed 10-second overall
+and idle timeouts, and treats a completed provider response as success.
+
 ### 8.4 Prompt construction
 
 `Workspace::load()` combines:
@@ -1183,6 +1208,25 @@ GET  /s/{forum}/{session}/api/v1/events
 POST /s/{forum}/{session}/api/v1/input
 POST /s/{forum}/{session}/api/v1/actions/stop
 POST /s/{forum}/{session}/api/v1/actions/default-character
+```
+
+`SettingsRoutes` owns provider and saved-key configuration separately from live
+session routes. Its provider probe receives a complete candidate in the request
+body but does not commit it:
+
+```text
+GET    /api/v1/providers
+POST   /api/v1/providers
+GET    /api/v1/providers/{provider_id}
+PATCH  /api/v1/providers/{provider_id}
+DELETE /api/v1/providers/{provider_id}
+POST   /api/v1/providers/{provider_id}/test
+
+GET    /api/v1/api-keys
+POST   /api/v1/api-keys
+PATCH  /api/v1/api-keys/{api_key_id}
+PUT    /api/v1/api-keys/{api_key_id}/value
+DELETE /api/v1/api-keys/{api_key_id}
 ```
 
 `default-agent` remains a compatibility alias for `default-character`; new

@@ -6,6 +6,7 @@ import {
   ChaUnavailableError,
   createChaClient,
   sessionEventsUrl,
+  type ProviderUpdate,
 } from './client';
 import {
   characterDetailFixture,
@@ -185,6 +186,42 @@ describe('CHA API client', () => {
       code: 'bad_request',
       message: 'Unknown vault.',
     }));
+  });
+
+  it('posts candidate settings when testing a provider', async () => {
+    const fetcher = vi.fn<(
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => Promise<Response>>(async () => new Response(null, { status: 204 }));
+    const client = createChaClient(fetcher);
+    const candidate: ProviderUpdate = {
+      display_name: 'OpenAI',
+      host: 'api.openai.com',
+      port: 443,
+      base_path: '',
+      mode: 'net',
+      model: 'gpt-5',
+      stream: true,
+      temperature: null,
+      max_tokens: null,
+      timeout_s: 600,
+      idle_timeout_s: 60,
+      api_key: 'api_key_1',
+      api_key_env: null,
+      reasoning_effort: '',
+      reasoning_format: 'auto',
+      https: true,
+      api: 'responses',
+      auth: 'none',
+      web_search: 'off',
+      cache_retention: 'short',
+    };
+
+    await expect(client.testProvider('Open AI', candidate)).resolves.toBeUndefined();
+    expect(fetcher).toHaveBeenCalledOnce();
+    expect(fetcher.mock.calls[0][0]).toBe('/api/v1/providers/Open%20AI/test');
+    expect(fetcher.mock.calls[0][1]?.method).toBe('POST');
+    expect(fetcher.mock.calls[0][1]?.body).toBe(JSON.stringify(candidate));
   });
 
   it('turns the error envelope into one ChaError shape', async () => {

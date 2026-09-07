@@ -181,6 +181,8 @@ interface TopBarProps {
   onCharacterDefinitionUpdated(): void;
   onForumDefinitionUpdated(): void;
   onPersonaDefinitionUpdated(): void;
+  onProviderUpdated(): void;
+  onStyleUpdated(): void;
   state: AppState;
   title: string | null;
 }
@@ -216,6 +218,8 @@ export function TopBar({
   onCharacterDefinitionUpdated,
   onForumDefinitionUpdated,
   onPersonaDefinitionUpdated,
+  onProviderUpdated,
+  onStyleUpdated,
   state,
   title,
 }: TopBarProps) {
@@ -236,6 +240,12 @@ export function TopBar({
   )?.display_name;
   const forumId = state.currentForumId;
   const forumName = state.bootstrap?.forums.find(({ id }) => id === forumId)?.display_name;
+  const providerId = state.inspectedProviderId;
+  const providerName = state.inspectedProviderName ?? undefined;
+  const styleId = state.inspectedStyleId;
+  const styleName = state.inspectedStyleName ?? undefined;
+  const apiKeyId = state.inspectedApiKeyId;
+  const apiKeyName = state.inspectedApiKeyName ?? undefined;
 
   useEffect(() => {
     setConfirmingDelete(null);
@@ -247,7 +257,7 @@ export function TopBar({
     setEditorReady(false);
     setEditorSaving(false);
     setEditorError(null);
-  }, [characterId, forumId, personaId, state.mainView]);
+  }, [apiKeyId, characterId, forumId, personaId, providerId, state.mainView, styleId]);
 
   let titleControl = title && <h1>{title}</h1>;
   if (state.mainView === 'persona-detail') {
@@ -289,6 +299,72 @@ export function TopBar({
           dispatch({ type: 'forum-updated', forum });
         }}
         subject="Forum"
+      />
+    );
+  } else if (state.mainView === 'settings-provider') {
+    titleControl = (
+      <EditableTitle
+        available={state.providerEditingAvailable}
+        id={providerId}
+        name={providerName}
+        onSave={async (displayName) => {
+          const provider = await client.getProvider(providerId!);
+          const { id: _id, used_by: _usedBy, writable: _writable, ...update } = provider;
+          const saved = await client.updateProvider(providerId!, {
+            ...update,
+            display_name: displayName,
+          });
+          dispatch({
+            type: 'provider-updated',
+            providerId: saved.id,
+            providerName: saved.display_name,
+            writable: saved.writable,
+          });
+          onProviderUpdated();
+        }}
+        subject="Provider"
+      />
+    );
+  } else if (state.mainView === 'settings-style') {
+    titleControl = (
+      <EditableTitle
+        available={state.styleEditingAvailable}
+        id={styleId}
+        name={styleName}
+        onSave={async (displayName) => {
+          const style = (await client.listStyles()).find(({ id }) => id === styleId);
+          if (!style) throw new Error('That style was not found.');
+          const { id: _id, used_by: _usedBy, writable: _writable, ...update } = style;
+          const saved = await client.updateStyle(styleId!, {
+            ...update,
+            display_name: displayName,
+          });
+          dispatch({
+            type: 'style-updated',
+            styleId: saved.id,
+            styleName: saved.display_name,
+            writable: saved.writable,
+          });
+          onStyleUpdated();
+        }}
+        subject="Style"
+      />
+    );
+  } else if (state.mainView === 'settings-api-key') {
+    titleControl = (
+      <EditableTitle
+        available
+        id={apiKeyId}
+        name={apiKeyName}
+        onSave={async (displayName) => {
+          const saved = await client.renameApiKey(apiKeyId!, displayName);
+          dispatch({
+            type: 'api-key-updated',
+            apiKeyId: saved.id,
+            apiKeyName: saved.display_name,
+          });
+        }}
+        subject="API key"
       />
     );
   }

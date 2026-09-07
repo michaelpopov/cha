@@ -163,6 +163,25 @@ export interface paths {
         patch: operations["updateProvider"];
         trace?: never;
     };
+    "/api/v1/providers/{provider_id}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider_id: components["schemas"]["Identifier"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Test candidate settings with a basic inference request */
+        post: operations["testProvider"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/styles": {
         parameters: {
             query?: never;
@@ -1057,6 +1076,7 @@ export interface components {
             /** @enum {string} */
             cache_retention: "off" | "short" | "long";
             writable: boolean;
+            used_by: string[];
         };
         StyleUpdate: {
             display_name: string;
@@ -1088,6 +1108,7 @@ export interface components {
             /** @enum {string} */
             text_color: "normal" | "muted" | "accent";
             writable: boolean;
+            used_by: string[];
         };
         ApiKeyDetail: {
             id: components["schemas"]["Identifier"];
@@ -1647,6 +1668,33 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ProviderDetail"];
                 };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    testProvider: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider_id: components["schemas"]["Identifier"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProviderUpdate"];
+            };
+        };
+        responses: {
+            /** @description Provider responded successfully. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             400: components["responses"]["BadRequest"];
             404: components["responses"]["NotFound"];

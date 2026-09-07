@@ -1443,6 +1443,11 @@ select:disabled {
   border-color: currentColor;
 }
 
+.cha-provider-save-action,
+.cha-provider-delete-action {
+  width: 8rem;
+}
+
 @media (max-width: 34rem) {
   .cha-settings-form-grid {
     grid-template-columns: 1fr;

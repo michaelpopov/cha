@@ -8,6 +8,7 @@ class Server;
 
 namespace cha {
 class ApiKeyStore;
+class OpenAiOAuth;
 class WorkspaceConfigStore;
 }
 
@@ -21,7 +22,8 @@ public:
         LiveSessionManager& live_sessions,
         WebSettings settings,
         WorkspaceConfigStore& config,
-        ApiKeyStore& api_keys);
+        ApiKeyStore& api_keys,
+        OpenAiOAuth& openai_auth);
 
     void install(httplib::Server& server) const;
 
@@ -30,6 +32,7 @@ private:
     WebSettings settings_;
     WorkspaceConfigStore* config_;
     ApiKeyStore* api_keys_;
+    OpenAiOAuth* openai_auth_;
 };
 
 } // namespace cha::web

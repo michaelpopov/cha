@@ -1174,6 +1174,33 @@ character, forum-default, and member layers.</p>
 <code>ModelBackendConfig</code> directly;
 <code>Workspace::character_definition()</code> copies it into the
 request-owned value passed to provider code.</p>
+<p>The provider screen is deliberately not a generic editor for every
+<code>ModelBackendConfig</code> field. It shows the editable display name,
+Model, Base URL, API format, and Credentials. Base URL is split back into
+<code>host</code> and <code>base_path</code> while retaining its scheme and
+non-default port. Saves force network mode and streaming, clear
+provider-level <code>reasoning_effort</code>, and set
+<code>web_search = &quot;off&quot;</code>. Characters own the user-facing reasoning
+and web-search choices.</p>
+<p>Credentials is an explicit choice. A normal provider refers to a
+secret in the process-owned <code>ApiKeyStore</code>; the secret never
+enters workspace configuration or a browser response.
+<code>OpenAI OAuth</code> selects <code>openai_subscription</code>
+authentication and therefore requires the Responses API and the exact
+<code>https://chatgpt.com/backend-api/codex</code> base URL.
+<code>No credentials</code> clears both forms of authentication. Legacy
+<code>api_key_env</code> configurations can still load, but the browser
+editor neither lists environment variables nor preserves one when the
+provider is saved.</p>
+<p>The provider <code>Test</code> action also stays narrow. The browser
+sends the current candidate as the same <code>ProviderUpdate</code> used
+by Save, and <code>SettingsRoutes</code> calls <code>ProviderClient</code>
+directly with one synthetic empty-history request asking for
+<code>OK</code>. It does not persist the candidate, reload live sessions,
+start a live session, create a transcript, or involve the
+<code>Providers</code> supervisor. The probe forces the real network path,
+turns web search off, uses fixed 10-second overall and idle timeouts, and
+treats a completed provider response as success.</p>
 <h3 id="84-prompt-construction">8.4 Prompt construction</h3>
 <p><code>Workspace::load()</code> combines:</p>
 <ul>
@@ -1789,6 +1816,21 @@ GET  /s/{forum}/{session}/api/v1/events
 POST /s/{forum}/{session}/api/v1/input
 POST /s/{forum}/{session}/api/v1/actions/stop
 POST /s/{forum}/{session}/api/v1/actions/default-character</code></pre>
+<p><code>SettingsRoutes</code> owns provider and saved-key configuration
+separately from live session routes. Its provider probe receives a
+complete candidate in the request body but does not commit it:</p>
+<pre class="text"><code>GET    /api/v1/providers
+POST   /api/v1/providers
+GET    /api/v1/providers/{provider_id}
+PATCH  /api/v1/providers/{provider_id}
+DELETE /api/v1/providers/{provider_id}
+POST   /api/v1/providers/{provider_id}/test
+
+GET    /api/v1/api-keys
+POST   /api/v1/api-keys
+PATCH  /api/v1/api-keys/{api_key_id}
+PUT    /api/v1/api-keys/{api_key_id}/value
+DELETE /api/v1/api-keys/{api_key_id}</code></pre>
 <p><code>default-agent</code> remains a compatibility alias for
 <code>default-character</code>; new code uses character vocabulary.</p>
 <p>The route files should mostly validate HTTP input, map

@@ -107,6 +107,17 @@ function LoadFailure({ message, retry }: { message: string; retry(): void }) {
   );
 }
 
+function UsedBy({ empty, items }: { empty: string; items: string[] }) {
+  return (
+    <section className="cha-settings-usage">
+      <h2>Used by</h2>
+      {items.length
+        ? <ul>{items.map((item) => <li key={item}>{item}</li>)}</ul>
+        : <p>{empty}</p>}
+    </section>
+  );
+}
+
 export function ProvidersScreen({ client, dispatch, sessionReport }: SettingsScreenProps) {
   const [providers, setProviders] = useState<ProviderSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -146,7 +157,11 @@ export function ProvidersScreen({ client, dispatch, sessionReport }: SettingsScr
               icon={<SettingsIcon />}
               key={provider.id}
               label={provider.display_name}
-              onClick={() => dispatch({ type: 'inspect-provider', providerId: provider.id })}
+              onClick={() => dispatch({
+                type: 'inspect-provider',
+                providerId: provider.id,
+                providerName: provider.display_name,
+              })}
             />
           ))}
         </div>
@@ -167,7 +182,11 @@ export function NewProviderScreen({ client, dispatch, sessionReport }: SettingsS
     setError(null);
     try {
       const created = await client.createProvider({ display_name: name.trim() });
-      dispatch({ type: 'inspect-provider', providerId: created.id });
+      dispatch({
+        type: 'inspect-provider',
+        providerId: created.id,
+        providerName: created.display_name,
+      });
     } catch (failure: unknown) {
       setError(publicErrorMessage(failure, 'The provider could not be created.'));
       setSaving(false);
@@ -189,23 +208,72 @@ export function NewProviderScreen({ client, dispatch, sessionReport }: SettingsS
 }
 
 function providerUpdate(detail: ProviderDetail): ProviderUpdate {
-  const { id: _id, writable: _writable, ...update } = detail;
+  const { id: _id, used_by: _usedBy, writable: _writable, ...update } = detail;
   return update;
 }
 
-function optionalNumber(value: string): number | null {
-  if (value === '') return null;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
+const openAiOAuthCredential = 'openai_oauth';
+
+function providerDraft(detail: ProviderDetail, keys: ApiKeyDetail[]): ProviderUpdate {
+  const update = providerUpdate(detail);
+  const usesOpenAiOAuth = update.auth === 'openai_subscription';
+  return {
+    ...update,
+    api_key: !usesOpenAiOAuth && keys.some(({ id }) => id === update.api_key)
+      ? update.api_key : null,
+    api_key_env: null,
+    auth: usesOpenAiOAuth ? 'openai_subscription' : 'none',
+  };
 }
 
-export function ProviderScreen({ client, dispatch, sessionReport, state }: SettingsScreenProps) {
+function providerBaseUrl(provider: ProviderUpdate): string {
+  const defaultPort = provider.https ? 443 : 80;
+  const port = provider.port === defaultPort ? '' : `:${provider.port}`;
+  return `${provider.https ? 'https' : 'http'}://${provider.host}${port}${provider.base_path}`;
+}
+
+function parseProviderBaseUrl(value: string): {
+  host: string;
+  port: number;
+  basePath: string;
+  https: boolean;
+} | null {
+  try {
+    const url = new URL(value);
+    const https = url.protocol === 'https:';
+    if ((!https && url.protocol !== 'http:') || url.username || url.password
+        || url.search || url.hash) {
+      return null;
+    }
+    const basePath = url.pathname === '/'
+      ? '' : url.pathname.replace(/\/+$/, '');
+    const port = url.port ? Number(url.port) : (https ? 443 : 80);
+    return url.hostname ? { host: url.hostname, port, basePath, https } : null;
+  } catch {
+    return null;
+  }
+}
+
+interface ProviderScreenProps extends SettingsScreenProps {
+  reloadVersion?: number;
+}
+
+export function ProviderScreen({
+  client,
+  dispatch,
+  reloadVersion = 0,
+  sessionReport,
+  state,
+}: ProviderScreenProps) {
   const id = state.inspectedProviderId;
   const [detail, setDetail] = useState<ProviderDetail | null>(null);
   const [draft, setDraft] = useState<ProviderUpdate | null>(null);
+  const [baseUrl, setBaseUrl] = useState('');
   const [keys, setKeys] = useState<ApiKeyDetail[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testSucceeded, setTestSucceeded] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [revision, setRevision] = useState(0);
@@ -215,38 +283,125 @@ export function ProviderScreen({ client, dispatch, sessionReport, state }: Setti
     setDetail(null);
     setDraft(null);
     setError(null);
+    setTestSucceeded(false);
     if (!id) return () => { current = false; };
     void Promise.all([client.getProvider(id), client.listApiKeys()]).then(
       ([provider, loadedKeys]) => {
         if (!current) return;
         setDetail(provider);
-        setDraft(providerUpdate(provider));
+        setDraft(providerDraft(provider, loadedKeys));
+        setBaseUrl(providerBaseUrl(provider));
         setKeys(loadedKeys);
+        dispatch({
+          type: 'provider-detail-loaded',
+          providerId: provider.id,
+          providerName: provider.display_name,
+          writable: provider.writable,
+        });
       },
       (failure: unknown) => {
         if (current) setError(publicErrorMessage(failure, 'Provider settings could not be loaded.'));
       },
     );
     return () => { current = false; };
-  }, [client, id, revision]);
+  }, [client, dispatch, id, reloadVersion, revision]);
 
   function change<Key extends keyof ProviderUpdate>(key: Key, value: ProviderUpdate[Key]) {
     setDraft((current) => current ? { ...current, [key]: value } : current);
+    setError(null);
+    setTestSucceeded(false);
+  }
+
+  function changeCredential(value: string) {
+    setDraft((current) => current ? {
+      ...current,
+      api_key: value === openAiOAuthCredential ? null : value || null,
+      api_key_env: null,
+      auth: value === openAiOAuthCredential ? 'openai_subscription' : 'none',
+    } : current);
+    setError(null);
+    setTestSucceeded(false);
+  }
+
+  function candidateUpdate(): ProviderUpdate | null {
+    if (!draft) return null;
+    const connection = parseProviderBaseUrl(baseUrl);
+    if (!connection) {
+      setError('Base URL must be an HTTP or HTTPS address without credentials, query, or fragment.');
+      return null;
+    }
+    const usesOpenAiOAuth = draft.auth === 'openai_subscription';
+    if (usesOpenAiOAuth
+        && (!connection.https
+          || connection.port !== 443
+          || connection.host !== 'chatgpt.com'
+          || connection.basePath !== '/backend-api/codex')) {
+      setError('OpenAI OAuth requires Base URL https://chatgpt.com/backend-api/codex.');
+      return null;
+    }
+    if (usesOpenAiOAuth && draft.api !== 'responses') {
+      setError('OpenAI OAuth requires the Responses API format.');
+      return null;
+    }
+    return {
+      ...draft,
+      host: connection.host,
+      port: connection.port,
+      base_path: connection.basePath,
+      mode: 'net',
+      https: connection.https,
+      stream: true,
+      api_key: usesOpenAiOAuth ? null : draft.api_key,
+      api_key_env: null,
+      auth: usesOpenAiOAuth ? 'openai_subscription' : 'none',
+      reasoning_effort: '',
+      web_search: 'off',
+      temperature: usesOpenAiOAuth ? null : draft.temperature,
+      max_tokens: usesOpenAiOAuth ? null : draft.max_tokens,
+      cache_retention: usesOpenAiOAuth ? 'off' : draft.cache_retention,
+    };
   }
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!id || !draft || saving || deleting) return;
+    if (!id || saving || deleting) return;
+    const candidate = candidateUpdate();
+    if (!candidate) return;
     setSaving(true);
     setError(null);
     try {
-      const updated = await client.updateProvider(id, draft);
+      const updated = await client.updateProvider(id, candidate);
       setDetail(updated);
-      setDraft(providerUpdate(updated));
+      setDraft(providerDraft(updated, keys));
+      setBaseUrl(providerBaseUrl(updated));
+      setTestSucceeded(false);
+      dispatch({
+        type: 'provider-updated',
+        providerId: updated.id,
+        providerName: updated.display_name,
+        writable: updated.writable,
+      });
     } catch (failure: unknown) {
       setError(publicErrorMessage(failure, 'Provider settings could not be saved.'));
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function runTest() {
+    if (!id || saving || testing || deleting) return;
+    const candidate = candidateUpdate();
+    if (!candidate) return;
+    setTesting(true);
+    setTestSucceeded(false);
+    setError(null);
+    try {
+      await client.testProvider(id, candidate);
+      setTestSucceeded(true);
+    } catch (failure: unknown) {
+      setError(publicErrorMessage(failure, 'Provider test failed.'));
+    } finally {
+      setTesting(false);
     }
   }
 
@@ -264,9 +419,22 @@ export function ProviderScreen({ client, dispatch, sessionReport, state }: Setti
     }
   }
 
-  const dirty = detail !== null && draft !== null
-    && JSON.stringify(providerUpdate(detail)) !== JSON.stringify(draft);
-  const missingKey = draft?.api_key && !keys.some(({ id: keyId }) => keyId === draft.api_key);
+  const dirty = detail !== null && draft !== null && (
+    draft.model !== detail.model
+    || draft.api !== detail.api
+    || draft.auth !== detail.auth
+    || draft.api_key !== (keys.some(({ id: keyId }) => keyId === detail.api_key)
+      ? detail.api_key : null)
+    || baseUrl !== providerBaseUrl(detail)
+  );
+
+  function reset() {
+    if (!detail) return;
+    setDraft(providerDraft(detail, keys));
+    setBaseUrl(providerBaseUrl(detail));
+    setError(null);
+    setTestSucceeded(false);
+  }
 
   return (
     <section className="cha-screen cha-navigation" aria-label="Provider settings">
@@ -279,55 +447,26 @@ export function ProviderScreen({ client, dispatch, sessionReport, state }: Setti
       {error && !detail && <LoadFailure message={error} retry={() => setRevision((value) => value + 1)} />}
       {detail && draft && (
         <form className="cha-settings-form" onSubmit={(event) => void save(event)}>
-          <fieldset disabled={saving || deleting || !detail.writable}>
-            <legend>Identity</legend>
-            <label>Name<input className="cha-form-control" onChange={(event) => change('display_name', event.target.value)} value={draft.display_name} /></label>
+          <fieldset aria-label="Provider details" disabled={saving || testing || deleting || !detail.writable}>
             <label>Model<input className="cha-form-control" onChange={(event) => change('model', event.target.value)} value={draft.model} /></label>
-          </fieldset>
-          <fieldset disabled={saving || deleting || !detail.writable}>
-            <legend>Connection</legend>
-            <label>Host<input className="cha-form-control" onChange={(event) => change('host', event.target.value)} value={draft.host} /></label>
+            <label>Base URL<input className="cha-form-control" onChange={(event) => { setBaseUrl(event.target.value); setError(null); setTestSucceeded(false); }} placeholder="https://api.openai.com" type="url" value={baseUrl} /></label>
             <div className="cha-settings-form-grid">
-              <label>Port<input className="cha-form-control" min="1" max="65535" onChange={(event) => change('port', Number(event.target.value))} type="number" value={draft.port} /></label>
-              <label>Protocol<select className="cha-form-control" onChange={(event) => change('https', event.target.value === 'https')} value={draft.https ? 'https' : 'http'}><option value="https">HTTPS</option><option value="http">HTTP</option></select></label>
-            </div>
-            <label>Base path<input className="cha-form-control" onChange={(event) => change('base_path', event.target.value)} placeholder="/api" value={draft.base_path} /></label>
-            <div className="cha-settings-form-grid">
-              <label>API<select className="cha-form-control" onChange={(event) => change('api', event.target.value as ProviderUpdate['api'])} value={draft.api}><option value="responses">Responses</option><option value="chat_completions">Chat completions</option></select></label>
-              <label>Mode<select className="cha-form-control" onChange={(event) => change('mode', event.target.value as ProviderUpdate['mode'])} value={draft.mode}><option value="net">Network</option><option value="test">Test</option></select></label>
-            </div>
-          </fieldset>
-          <fieldset disabled={saving || deleting || !detail.writable}>
-            <legend>Authentication</legend>
-            <label>Authentication<select className="cha-form-control" onChange={(event) => { const auth = event.target.value as ProviderUpdate['auth']; change('auth', auth); if (auth === 'openai_subscription') { change('api_key', null); change('api_key_env', null); } }} value={draft.auth}><option value="none">API key or none</option><option value="openai_subscription">ChatGPT subscription</option></select></label>
-            <label>Saved API key<select className="cha-form-control" disabled={draft.auth === 'openai_subscription'} onChange={(event) => { change('api_key', event.target.value || null); if (event.target.value) change('api_key_env', null); }} value={draft.api_key ?? ''}><option value="">No saved key</option>{keys.map((key) => <option key={key.id} value={key.id}>{key.display_name}</option>)}{missingKey && <option value={draft.api_key!}>Missing key ({draft.api_key})</option>}</select></label>
-            <label>Environment variable<input className="cha-form-control" disabled={draft.auth === 'openai_subscription'} onChange={(event) => { change('api_key_env', event.target.value || null); if (event.target.value) change('api_key', null); }} placeholder="Optional legacy setting" value={draft.api_key_env ?? ''} /></label>
-          </fieldset>
-          <fieldset disabled={saving || deleting || !detail.writable}>
-            <legend>Defaults</legend>
-            <div className="cha-settings-form-grid">
-              <label>Temperature<input className="cha-form-control" max="2" min="0" onChange={(event) => change('temperature', optionalNumber(event.target.value))} step="0.1" type="number" value={draft.temperature ?? ''} /></label>
-              <label>Maximum tokens<input className="cha-form-control" min="1" onChange={(event) => change('max_tokens', optionalNumber(event.target.value))} type="number" value={draft.max_tokens ?? ''} /></label>
-              <label>Timeout (seconds)<input className="cha-form-control" min="1" onChange={(event) => change('timeout_s', Number(event.target.value))} type="number" value={draft.timeout_s} /></label>
-              <label>Idle timeout (seconds)<input className="cha-form-control" min="1" onChange={(event) => change('idle_timeout_s', Number(event.target.value))} type="number" value={draft.idle_timeout_s} /></label>
-            </div>
-            <label>Reasoning effort<input className="cha-form-control" onChange={(event) => change('reasoning_effort', event.target.value)} placeholder="Provider default" value={draft.reasoning_effort} /></label>
-            <div className="cha-settings-form-grid">
-              <label>Reasoning format<select className="cha-form-control" onChange={(event) => change('reasoning_format', event.target.value as ProviderUpdate['reasoning_format'])} value={draft.reasoning_format}><option value="auto">Automatic</option><option value="none">None</option><option value="reasoning_content">reasoning_content</option><option value="reasoning">reasoning</option></select></label>
-              <label>Web search<select className="cha-form-control" onChange={(event) => change('web_search', event.target.value as ProviderUpdate['web_search'])} value={draft.web_search}><option value="off">Off</option><option value="auto">Automatic</option><option value="required">Required</option></select></label>
-              <label>Cache retention<select className="cha-form-control" onChange={(event) => change('cache_retention', event.target.value as ProviderUpdate['cache_retention'])} value={draft.cache_retention}><option value="off">Off</option><option value="short">Short</option><option value="long">Long</option></select></label>
-              <label className="cha-settings-check"><input checked={draft.stream} onChange={(event) => change('stream', event.target.checked)} type="checkbox" /> Stream responses</label>
+              <label>API format<select className="cha-form-control" onChange={(event) => change('api', event.target.value as ProviderUpdate['api'])} value={draft.api}><option value="responses">Responses</option><option value="chat_completions">Chat completions</option></select></label>
+              <label>Credentials<select className="cha-form-control" onChange={(event) => changeCredential(event.target.value)} value={draft.auth === 'openai_subscription'
+                ? openAiOAuthCredential : draft.api_key ?? ''}><option value="">No credentials</option><option value={openAiOAuthCredential}>OpenAI OAuth</option>{keys.map((key) => <option key={key.id} value={key.id}>{key.display_name}</option>)}</select></label>
             </div>
           </fieldset>
           {!detail.writable && <p>This provider is read-only.</p>}
+          <UsedBy empty="No characters use this provider." items={detail.used_by} />
           {error && <p className="cha-error-message" role="alert">{error}</p>}
-          <p className="cha-settings-note">Saving restarts sessions that use this provider. Providers assigned to characters cannot be deleted.</p>
+          {testSucceeded && <p className="cha-settings-saved" role="status"><span aria-hidden="true" className="cha-settings-status-marker" /> Provider responded successfully.</p>}
           <div className="cha-settings-form-actions">
-            <button className="cha-button cha-button-ghost" disabled={!dirty || saving || deleting} onClick={() => setDraft(providerUpdate(detail))} type="button">Reset</button>
-            <button className="cha-button cha-button-primary" disabled={!dirty || saving || deleting || !detail.writable} type="submit">{saving ? 'Saving…' : 'Save provider'}</button>
+            <button className="cha-button" disabled={saving || testing || deleting} onClick={() => void runTest()} type="button">{testing ? 'Testing…' : 'Test'}</button>
+            <button className="cha-button cha-button-ghost" disabled={!dirty || saving || testing || deleting} onClick={reset} type="button">Cancel</button>
+            <button className="cha-button cha-button-primary cha-provider-save-action" disabled={!dirty || saving || testing || deleting || !detail.writable} type="submit">{saving ? 'Saving…' : 'Save changes'}</button>
           </div>
           <div className="cha-settings-form-actions">
-            <button className="cha-button cha-button-danger" disabled={saving || deleting || !detail.writable} onClick={() => setConfirming(true)} type="button">{deleting ? 'Deleting…' : 'Delete provider'}</button>
+            <button className="cha-button cha-button-danger cha-provider-delete-action" disabled={saving || testing || deleting || !detail.writable} onClick={() => setConfirming(true)} type="button">{deleting ? 'Deleting…' : 'Delete provider'}</button>
           </div>
         </form>
       )}
@@ -365,7 +504,7 @@ export function StylesScreen({ client, dispatch, sessionReport }: SettingsScreen
       {styles === null && !error && <p className="cha-state-message" role="status">Loading styles…</p>}
       {error && <LoadFailure message={error} retry={() => setRevision((value) => value + 1)} />}
       {styles && <div className="cha-list"><SettingsRow description="Start with a neutral character style" icon={<PlusIcon />} label="New style" onClick={() => dispatch({ type: 'show-settings-new-style' })} />{styles.length === 0 && <p className="cha-empty-list">No styles configured</p>}{styles.map((style) => (
-        <SettingsRow description={`${style.font} · ${style.weight} · ${style.size}`} icon={<CharacterIcon />} key={style.id} label={style.display_name} onClick={() => dispatch({ type: 'inspect-style', styleId: style.id })} />
+        <SettingsRow description={`${style.font} · ${style.weight} · ${style.size}`} icon={<CharacterIcon />} key={style.id} label={style.display_name} onClick={() => dispatch({ type: 'inspect-style', styleId: style.id, styleName: style.display_name })} />
       ))}</div>}
     </section>
   );
@@ -383,7 +522,7 @@ export function NewStyleScreen({ client, dispatch, sessionReport }: SettingsScre
     setError(null);
     try {
       const created = await client.createStyle({ display_name: name.trim() });
-      dispatch({ type: 'inspect-style', styleId: created.id });
+      dispatch({ type: 'inspect-style', styleId: created.id, styleName: created.display_name });
     } catch (failure: unknown) {
       setError(publicErrorMessage(failure, 'The style could not be created.'));
       setSaving(false);
@@ -405,11 +544,21 @@ export function NewStyleScreen({ client, dispatch, sessionReport }: SettingsScre
 }
 
 function styleUpdate(detail: StyleDetail): StyleUpdate {
-  const { id: _id, writable: _writable, ...update } = detail;
+  const { id: _id, used_by: _usedBy, writable: _writable, ...update } = detail;
   return update;
 }
 
-export function StyleScreen({ client, dispatch, sessionReport, state }: SettingsScreenProps) {
+interface StyleScreenProps extends SettingsScreenProps {
+  reloadVersion?: number;
+}
+
+export function StyleScreen({
+  client,
+  dispatch,
+  reloadVersion = 0,
+  sessionReport,
+  state,
+}: StyleScreenProps) {
   const id = state.inspectedStyleId;
   const [detail, setDetail] = useState<StyleDetail | null>(null);
   const [draft, setDraft] = useState<StyleUpdate | null>(null);
@@ -431,11 +580,17 @@ export function StyleScreen({ client, dispatch, sessionReport, state }: Settings
         if (!loaded) return setError('That style was not found.');
         setDetail(loaded);
         setDraft(styleUpdate(loaded));
+        dispatch({
+          type: 'style-detail-loaded',
+          styleId: loaded.id,
+          styleName: loaded.display_name,
+          writable: loaded.writable,
+        });
       },
       (failure: unknown) => { if (current) setError(publicErrorMessage(failure, 'Style settings could not be loaded.')); },
     );
     return () => { current = false; };
-  }, [client, id, revision]);
+  }, [client, dispatch, id, reloadVersion, revision]);
 
   function change<Key extends keyof StyleUpdate>(key: Key, value: StyleUpdate[Key]) {
     setDraft((current) => current ? { ...current, [key]: value } : current);
@@ -485,9 +640,7 @@ export function StyleScreen({ client, dispatch, sessionReport, state }: Settings
       {error && !detail && <LoadFailure message={error} retry={() => setRevision((value) => value + 1)} />}
       {detail && draft && (
         <form className="cha-settings-form" onSubmit={(event) => void save(event)}>
-          <fieldset disabled={saving || deleting || !detail.writable}>
-            <legend>Style</legend>
-            <label>Name<input className="cha-form-control" onChange={(event) => change('display_name', event.target.value)} value={draft.display_name} /></label>
+          <fieldset aria-label="Style settings" disabled={saving || deleting || !detail.writable}>
             <div className="cha-settings-form-grid">
               <label>Font<select className="cha-form-control" onChange={(event) => change('font', event.target.value as StyleUpdate['font'])} value={draft.font}><option value="sans">Sans</option><option value="serif">Serif</option><option value="mono">Mono</option></select></label>
               <label>Slant<select className="cha-form-control" onChange={(event) => change('style', event.target.value as StyleUpdate['style'])} value={draft.style}><option value="normal">Normal</option><option value="italic">Italic</option></select></label>
@@ -497,8 +650,8 @@ export function StyleScreen({ client, dispatch, sessionReport, state }: Settings
             </div>
           </fieldset>
           <p className={`cha-style-sample cha-message-text${appearance ? voiceClasses(appearance) : ''}`}>The chief task in life is this…</p>
+          <UsedBy empty="No characters use this style." items={detail.used_by} />
           {error && <p className="cha-error-message" role="alert">{error}</p>}
-          <p className="cha-settings-note">Saving restarts sessions whose characters use this style. Styles assigned to characters cannot be deleted.</p>
           <div className="cha-settings-form-actions"><button className="cha-button cha-button-ghost" disabled={!dirty || saving || deleting} onClick={() => setDraft(styleUpdate(detail))} type="button">Reset</button><button className="cha-button cha-button-primary" disabled={!dirty || saving || deleting || !detail.writable} type="submit">{saving ? 'Saving…' : 'Save style'}</button></div>
           <div className="cha-settings-form-actions">
             <button className="cha-button cha-button-danger" disabled={saving || deleting || !detail.writable} onClick={() => setConfirming(true)} type="button">{deleting ? 'Deleting…' : 'Delete style'}</button>
@@ -538,7 +691,7 @@ export function ApiKeysScreen({ client, dispatch, sessionReport }: SettingsScree
       {sessionReport}
       {keys === null && !error && <p className="cha-state-message" role="status">Loading API keys…</p>}
       {error && <LoadFailure message={error} retry={() => setRevision((value) => value + 1)} />}
-      {keys && <div className="cha-list"><SettingsRow description="Save a secret on this device" icon={<PlusIcon />} label="New API key" onClick={() => dispatch({ type: 'show-settings-new-api-key' })} />{keys.length === 0 && <p className="cha-empty-list">No API keys saved</p>}{keys.map((key) => <SettingsRow description={key.used_by.length ? `Used by ${key.used_by.join(', ')}` : 'Saved locally · Not in use'} icon={<KeyIcon />} key={key.id} label={key.display_name} onClick={() => dispatch({ type: 'inspect-api-key', apiKeyId: key.id })} />)}</div>}
+      {keys && <div className="cha-list"><SettingsRow description="Save a secret on this device" icon={<PlusIcon />} label="New API key" onClick={() => dispatch({ type: 'show-settings-new-api-key' })} />{keys.length === 0 && <p className="cha-empty-list">No API keys saved</p>}{keys.map((key) => <SettingsRow description={key.used_by.length ? `Used by ${key.used_by.join(', ')}` : 'Saved locally · Not in use'} icon={<KeyIcon />} key={key.id} label={key.display_name} onClick={() => dispatch({ type: 'inspect-api-key', apiKeyId: key.id, apiKeyName: key.display_name })} />)}</div>}
     </section>
   );
 }
@@ -556,7 +709,7 @@ export function NewApiKeyScreen({ client, dispatch, sessionReport }: SettingsScr
     try {
       const created = await client.createApiKey({ display_name: name.trim(), value });
       setValue('');
-      dispatch({ type: 'inspect-api-key', apiKeyId: created.id });
+      dispatch({ type: 'inspect-api-key', apiKeyId: created.id, apiKeyName: created.display_name });
     } catch (failure: unknown) {
       setError(publicErrorMessage(failure, 'The API key could not be saved.'));
       setSaving(false);
@@ -579,9 +732,8 @@ export function NewApiKeyScreen({ client, dispatch, sessionReport }: SettingsScr
 export function ApiKeyScreen({ client, dispatch, sessionReport, state }: SettingsScreenProps) {
   const id = state.inspectedApiKeyId;
   const [key, setKey] = useState<ApiKeyDetail | null>(null);
-  const [name, setName] = useState('');
   const [replacement, setReplacement] = useState('');
-  const [busy, setBusy] = useState<'name' | 'value' | 'delete' | null>(null);
+  const [busy, setBusy] = useState<'value' | 'delete' | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
@@ -596,21 +748,17 @@ export function ApiKeyScreen({ client, dispatch, sessionReport, state }: Setting
         const loaded = keys.find((candidate) => candidate.id === id);
         if (!loaded) return setError('That API key was not found.');
         setKey(loaded);
-        setName(loaded.display_name);
+        dispatch({
+          type: 'api-key-detail-loaded',
+          apiKeyId: loaded.id,
+          apiKeyName: loaded.display_name,
+        });
       },
       (failure: unknown) => { if (current) setError(publicErrorMessage(failure, 'The API key could not be loaded.')); },
     );
     return () => { current = false; };
-  }, [client, id, revision]);
+  }, [client, dispatch, id, revision]);
 
-  async function rename(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!id || !key || !name.trim() || busy) return;
-    setBusy('name'); setError(null);
-    try { const updated = await client.renameApiKey(id, name.trim()); setKey(updated); setName(updated.display_name); }
-    catch (failure: unknown) { setError(publicErrorMessage(failure, 'The API key name could not be saved.')); }
-    finally { setBusy(null); }
-  }
   async function replace(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!id || !replacement || busy) return;
@@ -633,19 +781,18 @@ export function ApiKeyScreen({ client, dispatch, sessionReport, state }: Setting
       {!id && <p className="cha-state-message">No API key is selected.</p>}
       {id && !key && !error && <p className="cha-state-message" role="status">Loading API key…</p>}
       {error && !key && <LoadFailure message={error} retry={() => setRevision((value) => value + 1)} />}
-      {key && <div className="cha-settings-form">
-        <form onSubmit={(event) => void rename(event)}><fieldset disabled={busy !== null}><legend>Key details</legend><label>Name<input className="cha-form-control" onChange={(event) => setName(event.target.value)} value={name} /></label><p className="cha-settings-saved"><span className="cha-settings-status-marker" /> Saved locally</p><div className="cha-settings-form-actions"><button className="cha-button cha-button-primary" disabled={!name.trim() || name.trim() === key.display_name || busy !== null} type="submit">Save name</button></div></fieldset></form>
-        <form onSubmit={(event) => void replace(event)}><fieldset disabled={busy !== null}><legend>Replace value</legend><label>New API key<input autoComplete="off" className="cha-form-control" onChange={(event) => setReplacement(event.target.value)} placeholder="Paste replacement key" type="password" value={replacement} /></label><div className="cha-settings-form-actions"><button className="cha-button cha-button-primary" disabled={!replacement || busy !== null} type="submit">Replace value</button></div></fieldset></form>
-        <section className="cha-settings-usage"><h2>Used by</h2>{key.used_by.length ? <ul>{key.used_by.map((provider) => <li key={provider}>{provider}</li>)}</ul> : <p>No providers reference this key.</p>}</section>
+      {key && <form className="cha-settings-form" onSubmit={(event) => void replace(event)}>
+        <fieldset disabled={busy !== null}><label>New API key<input autoComplete="off" className="cha-form-control" onChange={(event) => setReplacement(event.target.value)} placeholder="Paste replacement key" type="password" value={replacement} /></label><div className="cha-settings-form-actions"><button className="cha-button cha-button-primary" disabled={!replacement || busy !== null} type="submit">{busy === 'value' ? 'Saving…' : 'Save'}</button></div></fieldset>
+        <UsedBy empty="No providers reference this key." items={key.used_by} />
         {error && <p className="cha-error-message" role="alert">{error}</p>}
         <div className="cha-settings-form-actions">
           <button className="cha-button cha-button-danger" disabled={busy !== null} onClick={() => setConfirming(true)} type="button">{busy === 'delete' ? 'Removing…' : 'Remove API key'}</button>
         </div>
-      </div>}
+      </form>}
       {confirming && (
         <ConfirmDialog
           confirmLabel="Remove API key"
-          message={`Remove “${key?.display_name ?? 'this key'}” from this device? Providers using it will stop authenticating.`}
+          message={`Remove “${state.inspectedApiKeyName ?? 'this key'}” from this device? Providers using it will stop authenticating.`}
           onCancel={() => setConfirming(false)}
           onConfirm={() => void remove()}
           title="Remove API key?"

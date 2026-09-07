@@ -1,6 +1,8 @@
 #include "web/settings_routes.h"
 
 #include "providers/api_key_store.h"
+#include "providers/openai_oauth.h"
+#include "providers/provider_client.h"
 #include "web/http_response.h"
 #include "web/protocol.h"
 #include "web/route_support.h"
@@ -10,6 +12,7 @@
 #include <httplib.h>
 #include <nlohmann/json.hpp>
 
+#include <atomic>
 #include <cmath>
 #include <cstddef>
 #include <filesystem>
@@ -31,6 +34,42 @@ std::shared_ptr<const Workspace> published_workspace() {
     auto workspace = getws();
     if (!workspace) throw std::runtime_error("Workspace is not loaded");
     return workspace;
+}
+
+GenerationResult test_provider(
+    std::string_view provider_id,
+    ModelBackendConfig config,
+    OpenAiOAuth& openai_auth,
+    ApiKeyStore& api_keys) {
+    config.mode = Mode::net;
+    config.timeout_s = 10;
+    config.idle_timeout_s = 10;
+    config.web_search = WebSearchMode::off;
+    const CharacterMetadata character{
+        .id = "provider-test",
+        .display_name = "Provider Test",
+    };
+    const auto definition = std::make_shared<const CharacterDefinition>(
+        CharacterDefinition{
+            .character = character,
+            .provider = {std::string(provider_id), std::move(config)},
+        });
+    const GenerationRequest request{
+        .history = std::make_shared<const ModelHistory>(),
+        .run = {
+            .session = {"provider-test", "provider-test"},
+            .request_id = 1,
+            .target = character,
+            .author = {"provider-test-user", "User"},
+            .prompt_text = "Reply with OK.",
+        },
+    };
+    ProviderClient client(definition, &openai_auth, &api_keys);
+    const std::atomic_bool cancellation{false};
+    return client.perform(
+        client.prepare(request),
+        [](GenerationDelta) {},
+        cancellation);
 }
 
 std::string_view mode_name(Mode value) {
@@ -66,7 +105,34 @@ std::string_view cache_retention_name(CacheRetention value) {
     throw std::logic_error("Invalid cache retention");
 }
 
-Json provider_json(const WorkspaceProvider& provider, bool writable) {
+std::vector<std::string> characters_using_provider(
+    const Workspace& workspace,
+    std::string_view provider_id) {
+    std::vector<std::string> result;
+    for (const WorkspaceCharacter& character : workspace.characters()) {
+        if (character.provider_id == provider_id) {
+            result.push_back(character.character.display_name);
+        }
+    }
+    return result;
+}
+
+std::vector<std::string> characters_using_style(
+    const Workspace& workspace,
+    std::string_view style_id) {
+    std::vector<std::string> result;
+    for (const WorkspaceCharacter& character : workspace.characters()) {
+        if (character.style_id == style_id) {
+            result.push_back(character.character.display_name);
+        }
+    }
+    return result;
+}
+
+Json provider_json(
+    const WorkspaceProvider& provider,
+    bool writable,
+    std::vector<std::string> used_by) {
     const ModelBackendConfig& config = provider.config;
     return {
         {"id", provider.id},
@@ -95,6 +161,7 @@ Json provider_json(const WorkspaceProvider& provider, bool writable) {
         {"web_search", to_string(config.web_search)},
         {"cache_retention", cache_retention_name(config.cache_retention)},
         {"writable", writable},
+        {"used_by", std::move(used_by)},
     };
 }
 
@@ -107,7 +174,10 @@ Json provider_summary_json(const WorkspaceProvider& provider) {
     };
 }
 
-Json style_json(const WorkspaceStyle& style, bool writable) {
+Json style_json(
+    const WorkspaceStyle& style,
+    bool writable,
+    std::vector<std::string> used_by) {
     return {
         {"id", style.id},
         {"display_name", style.label},
@@ -117,6 +187,7 @@ Json style_json(const WorkspaceStyle& style, bool writable) {
         {"size", to_string(style.appearance.size)},
         {"text_color", to_string(style.appearance.text_color)},
         {"writable", writable},
+        {"used_by", std::move(used_by)},
     };
 }
 
@@ -319,16 +390,19 @@ SettingsRoutes::SettingsRoutes(
     LiveSessionManager& live_sessions,
     WebSettings settings,
     WorkspaceConfigStore& config,
-    ApiKeyStore& api_keys)
+    ApiKeyStore& api_keys,
+    OpenAiOAuth& openai_auth)
     : live_sessions_(&live_sessions),
       settings_(std::move(settings)),
       config_(&config),
-      api_keys_(&api_keys) {}
+      api_keys_(&api_keys),
+      openai_auth_(&openai_auth) {}
 
 void SettingsRoutes::install(httplib::Server& server) const {
     LiveSessionManager* const live_sessions = live_sessions_;
     WorkspaceConfigStore* const config = config_;
     ApiKeyStore* const api_keys = api_keys_;
+    OpenAiOAuth* const openai_auth = openai_auth_;
     const WebSettings settings = settings_;
 
     server.Get("/api/v1/providers", [](const httplib::Request&, httplib::Response& response) {
@@ -376,7 +450,9 @@ void SettingsRoutes::install(httplib::Server& server) const {
                 {ErrorCode::internal_error, "The provider could not be created."});
         }
         set_json_response(response, 201, provider_json(
-            *created, current->provider_is_writable(id)));
+            *created,
+            current->provider_is_writable(id),
+            characters_using_provider(*current, id)));
     });
 
     server.Get(R"(/api/v1/providers/([^/]+))", [](const httplib::Request& request, httplib::Response& response) {
@@ -387,7 +463,46 @@ void SettingsRoutes::install(httplib::Server& server) const {
             return set_route_not_found(response, "That provider was not found.");
         }
         set_json_response(response, 200, provider_json(
-            *provider, workspace->provider_is_writable(id)));
+            *provider,
+            workspace->provider_is_writable(id),
+            characters_using_provider(*workspace, id)));
+    });
+
+    server.Post(R"(/api/v1/providers/([^/]+)/test)", [api_keys, openai_auth, settings](const httplib::Request& request, httplib::Response& response) {
+        const std::string id = request.matches[1];
+        const auto workspace = published_workspace();
+        const WorkspaceProvider* provider = workspace->find_provider(id);
+        if (!is_valid_route_component(id) || provider == nullptr) {
+            return set_route_not_found(response, "That provider was not found.");
+        }
+        if (!validate_json_mutation(request, response)) return;
+        ProviderUpdate candidate;
+        if (!parse_route_json_body(
+                request, response, settings.request_body_limit,
+                [&](const Json& json) {
+                    candidate = parse_provider_update(json);
+                })) {
+            return;
+        }
+        try {
+            const GenerationResult result = test_provider(
+                id, std::move(candidate.config), *openai_auth, *api_keys);
+            if (result.outcome != GenerationOutcome::completed) {
+                const std::string reason = result.message.empty()
+                    ? "The provider returned an error." : result.message;
+                return set_error_response(response, 400, {
+                    ErrorCode::bad_request,
+                    "Provider test failed: " + reason,
+                });
+            }
+            response.status = 204;
+            response.set_header("Cache-Control", "no-store");
+        } catch (const std::exception& error) {
+            set_error_response(response, 400, {
+                ErrorCode::bad_request,
+                "Provider test failed: " + std::string(error.what()),
+            });
+        }
     });
 
     server.Patch(R"(/api/v1/providers/([^/]+))", [live_sessions, config, settings](const httplib::Request& request, httplib::Response& response) {
@@ -421,7 +536,9 @@ void SettingsRoutes::install(httplib::Server& server) const {
                 {ErrorCode::internal_error, "The provider could not be updated."});
         }
         set_json_response(response, 200, provider_json(
-            *updated, current->provider_is_writable(id)));
+            *updated,
+            current->provider_is_writable(id),
+            characters_using_provider(*current, id)));
     });
 
     server.Delete(R"(/api/v1/providers/([^/]+))", [config](const httplib::Request& request, httplib::Response& response) {
@@ -454,7 +571,10 @@ void SettingsRoutes::install(httplib::Server& server) const {
         const auto workspace = published_workspace();
         Json result = Json::array();
         for (const WorkspaceStyle& style : workspace->styles()) {
-            result.push_back(style_json(style, workspace->style_is_writable(style.id)));
+            result.push_back(style_json(
+                style,
+                workspace->style_is_writable(style.id),
+                characters_using_style(*workspace, style.id)));
         }
         set_json_response(response, 200, result);
     });
@@ -495,7 +615,9 @@ void SettingsRoutes::install(httplib::Server& server) const {
                 {ErrorCode::internal_error, "The style could not be created."});
         }
         set_json_response(response, 201, style_json(
-            *created, current->style_is_writable(id)));
+            *created,
+            current->style_is_writable(id),
+            characters_using_style(*current, id)));
     });
 
     server.Patch(R"(/api/v1/styles/([^/]+))", [live_sessions, config, settings](const httplib::Request& request, httplib::Response& response) {
@@ -529,7 +651,9 @@ void SettingsRoutes::install(httplib::Server& server) const {
                 {ErrorCode::internal_error, "The style could not be updated."});
         }
         set_json_response(response, 200, style_json(
-            *updated, current->style_is_writable(id)));
+            *updated,
+            current->style_is_writable(id),
+            characters_using_style(*current, id)));
     });
 
     server.Delete(R"(/api/v1/styles/([^/]+))", [config](const httplib::Request& request, httplib::Response& response) {

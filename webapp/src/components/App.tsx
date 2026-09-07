@@ -82,6 +82,8 @@ interface ScreenProps extends ChatActions {
   characterRevision: number;
   forumRevision: number;
   personaRevision: number;
+  providerRevision: number;
+  styleRevision: number;
 }
 
 function Screen({
@@ -100,6 +102,8 @@ function Screen({
   characterRevision,
   forumRevision,
   personaRevision,
+  providerRevision,
+  styleRevision,
 }: ScreenProps) {
   // A session can be opened from the sidebar while any navigation screen is
   // showing, so each one carries the report rather than only the two screens
@@ -233,7 +237,13 @@ function Screen({
       <NewProviderScreen client={client} dispatch={dispatch} sessionReport={sessionReport} state={state} />
     );
     case 'settings-provider': return (
-      <ProviderScreen client={client} dispatch={dispatch} sessionReport={sessionReport} state={state} />
+      <ProviderScreen
+        client={client}
+        dispatch={dispatch}
+        reloadVersion={providerRevision}
+        sessionReport={sessionReport}
+        state={state}
+      />
     );
     case 'settings-styles': return (
       <StylesScreen client={client} dispatch={dispatch} sessionReport={sessionReport} state={state} />
@@ -242,7 +252,13 @@ function Screen({
       <NewStyleScreen client={client} dispatch={dispatch} sessionReport={sessionReport} state={state} />
     );
     case 'settings-style': return (
-      <StyleScreen client={client} dispatch={dispatch} sessionReport={sessionReport} state={state} />
+      <StyleScreen
+        client={client}
+        dispatch={dispatch}
+        reloadVersion={styleRevision}
+        sessionReport={sessionReport}
+        state={state}
+      />
     );
     case 'settings-api-keys': return (
       <ApiKeysScreen client={client} dispatch={dispatch} sessionReport={sessionReport} state={state} />
@@ -324,6 +340,12 @@ const inPlaceActions = new Set<AppAction['type']>([
   'persona-updated',
   'forum-detail-loaded',
   'forum-updated',
+  'provider-detail-loaded',
+  'provider-updated',
+  'style-detail-loaded',
+  'style-updated',
+  'api-key-detail-loaded',
+  'api-key-updated',
 ]);
 
 export type SessionEventsConnector = (
@@ -384,6 +406,8 @@ export function App({
   const [characterRevision, setCharacterRevision] = useState(0);
   const [forumRevision, setForumRevision] = useState(0);
   const [personaRevision, setPersonaRevision] = useState(0);
+  const [providerRevision, setProviderRevision] = useState(0);
+  const [styleRevision, setStyleRevision] = useState(0);
   // The epoch this render was built from. The ref below is what asynchronous
   // work compares against; this is what a render can compare against without
   // reading that ref while rendering.
@@ -1036,6 +1060,8 @@ export function App({
             )}
             onForumDefinitionUpdated={() => setForumRevision((revision) => revision + 1)}
             onPersonaDefinitionUpdated={() => setPersonaRevision((revision) => revision + 1)}
+            onProviderUpdated={() => setProviderRevision((revision) => revision + 1)}
+            onStyleUpdated={() => setStyleRevision((revision) => revision + 1)}
             state={state}
             title={title}
           />
@@ -1053,6 +1079,8 @@ export function App({
               characterRevision={characterRevision}
               forumRevision={forumRevision}
               personaRevision={personaRevision}
+              providerRevision={providerRevision}
+              styleRevision={styleRevision}
               client={client}
               dispatch={navigate}
               onCreateSession={createConversation}

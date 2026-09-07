@@ -391,6 +391,7 @@
         <li><a href="#conversation">Having a conversation</a></li>
         <li><a href="#commands">Chat commands</a></li>
         <li><a href="#character-settings">Character settings</a></li>
+        <li><a href="#provider-settings">Provider settings</a></li>
         <li><a href="#database-maintenance">Backing up and editing CHA data</a></li>
         <li><a href="#exporting">Downloading conversations</a></li>
         <li><a href="#privacy">Privacy and data</a></li>
@@ -646,6 +647,10 @@
           On a small screen, open the sidebar when you need it and close it to give
           the conversation more room.
         </p>
+        <p>
+          Select the Settings gear at the bottom of the sidebar to manage the
+          OpenAI connection, providers, character styles, and saved API keys.
+        </p>
       </section>
 
       <section id="sessions">
@@ -867,8 +872,95 @@
         </div>
       </section>
 
+      <section id="provider-settings">
+        <h2>9. Provider settings</h2>
+        <p>
+          A provider tells CHA which model endpoint to use and how to authenticate
+          there. Select the Settings gear, then <strong>Providers</strong>. Choose an
+          existing provider or select <strong>New provider</strong> and enter a name.
+        </p>
+
+        <h3>Configure the provider</h3>
+        <div class="table-wrap">
+          <table>
+            <caption>Provider settings</caption>
+            <thead>
+              <tr>
+                <th scope="col">Setting</th>
+                <th scope="col">What to enter</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Model</td>
+                <td>The exact model name accepted by the provider.</td>
+              </tr>
+              <tr>
+                <td>Base URL</td>
+                <td>The provider's HTTP or HTTPS address, including a port or base path when required. Use HTTPS except for a local endpoint.</td>
+              </tr>
+              <tr>
+                <td>API format</td>
+                <td><strong>Responses</strong> or <strong>Chat completions</strong>, according to the endpoint.</td>
+              </tr>
+              <tr>
+                <td>Credentials</td>
+                <td>A saved API key, <strong>OpenAI OAuth</strong>, or <strong>No credentials</strong>.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          The provider's name appears as the page title. Select the pencil beside
+          it to rename the provider without changing its identity.
+        </p>
+
+        <h3>Use a saved API key</h3>
+        <ol class="steps">
+          <li>Open Settings and select <strong>API Keys</strong>.</li>
+          <li>Select <strong>New API key</strong>, enter a recognizable name, paste the secret, and save it.</li>
+          <li>Return to the provider and choose that name under <strong>Credentials</strong>.</li>
+          <li>Select <strong>Save changes</strong>.</li>
+        </ol>
+        <p>
+          Only keys explicitly saved under API Keys appear in the Credentials
+          list. Their secret values stay in the local application configuration
+          and are not returned to the browser.
+        </p>
+
+        <h3>Use OpenAI OAuth</h3>
+        <p>
+          Connect the ChatGPT account in Settings under <strong>OpenAI</strong>,
+          then choose <strong>OpenAI OAuth</strong> under Credentials. This choice
+          requires API format <strong>Responses</strong> and Base URL
+          <code>https://chatgpt.com/backend-api/codex</code>. Choosing it records
+          the intended authentication method; it does not connect an account by
+          itself.
+        </p>
+
+        <h3>Test the provider</h3>
+        <ol class="steps">
+          <li>Enter the provider settings you want to check.</li>
+          <li>Select <strong>Test</strong> before saving.</li>
+          <li>Wait for <strong>Provider responded successfully.</strong> or follow the reported error, then save the tested settings.</li>
+        </ol>
+        <p>
+          The test sends a small request using the settings currently in the form.
+          It does not save them, include a conversation, create a session, or use
+          web search. The test uses a 10-second timeout and may consume a small
+          amount of provider usage.
+        </p>
+
+        <h3>Delete a provider</h3>
+        <p>
+          Select <strong>Delete provider</strong> and confirm. CHA will not delete a
+          provider while a character still uses it; assign those characters to a
+          different provider first.
+        </p>
+      </section>
+
       <section id="database-maintenance">
-        <h2>9. Backing up and editing CHA data</h2>
+        <h2>10. Backing up and editing CHA data</h2>
         <p class="lead">
           The <strong>Database</strong> menu can export or import workspace
           configuration and can upload or download the complete database. These
@@ -952,7 +1044,7 @@ CHA_R2_SECRET_ACCESS_KEY=your-secret-access-key</code></pre>
       </section>
 
       <section id="exporting">
-        <h2>10. Downloading conversations</h2>
+        <h2>11. Downloading conversations</h2>
         <p>
           Use <strong>Download</strong> in a session's action menu to save a Markdown
           file. Markdown is plain text that remains readable in an ordinary text
@@ -975,7 +1067,7 @@ Then choose one small act and do it completely.</code></pre>
       </section>
 
       <section id="privacy">
-        <h2>11. Privacy and data</h2>
+        <h2>12. Privacy and data</h2>
         <ul>
           <li>
             In the standalone Mac application, saved conversations and settings
@@ -999,7 +1091,8 @@ Then choose one small act and do it completely.</code></pre>
             configured R2 bucket and protected by that account's access controls.
           </li>
           <li>
-            Your API key is stored on the Mac and should be treated like a password.
+            API keys and OpenAI OAuth credentials are stored on the Mac and should
+            be treated like passwords.
           </li>
         </ul>
         <div class="warning">
@@ -1012,7 +1105,7 @@ Then choose one small act and do it completely.</code></pre>
       </section>
 
       <section id="troubleshooting">
-        <h2>12. Troubleshooting</h2>
+        <h2>13. Troubleshooting</h2>
         <div class="table-wrap">
           <table>
             <caption>Common problems</caption>
@@ -1037,7 +1130,7 @@ Then choose one small act and do it completely.</code></pre>
               </tr>
               <tr>
                 <td>A reply fails immediately.</td>
-                <td>Check the internet connection. Choose <strong>CHA &gt; Change API Key…</strong>, save a valid key, quit CHA, and open it again.</td>
+                <td>Check the internet connection. Open Settings → Providers, select the provider, save any changes, and select <strong>Test</strong>. Check its saved API key under API Keys or reconnect under OpenAI if the provider uses OAuth.</td>
               </tr>
               <tr>
                 <td>A reply stops during generation.</td>
@@ -1069,7 +1162,7 @@ Then choose one small act and do it completely.</code></pre>
       </section>
 
       <section id="glossary">
-        <h2>13. Glossary</h2>
+        <h2>14. Glossary</h2>
         <div class="table-wrap">
           <table>
             <caption>Useful terms</caption>
@@ -1082,6 +1175,7 @@ Then choose one small act and do it completely.</code></pre>
               <tr><td>Context</td><td>Earlier messages and instructions sent to the model to help it prepare the next answer.</td></tr>
               <tr><td>Forum</td><td>A group of characters, defaults, and saved sessions.</td></tr>
               <tr><td>Markdown</td><td>A readable plain-text format used for downloaded conversations.</td></tr>
+              <tr><td>OAuth</td><td>A way for CHA to use a connected account without placing an API key in the provider.</td></tr>
               <tr><td>Persona</td><td>The identity used for the human side of a conversation.</td></tr>
               <tr><td>Provider</td><td>The AI company and model that generate a character's answers.</td></tr>
               <tr><td>Session</td><td>One conversation saved inside a forum.</td></tr>

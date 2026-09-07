@@ -139,6 +139,7 @@ export interface ChaClient {
   listProviders(): Promise<ProviderSummary[]>;
   createProvider(request: CreateProviderRequest): Promise<ProviderDetail>;
   getProvider(providerId: string): Promise<ProviderDetail>;
+  testProvider(providerId: string, candidate: ProviderUpdate): Promise<void>;
   updateProvider(providerId: string, update: ProviderUpdate): Promise<ProviderDetail>;
   deleteProvider(providerId: string): Promise<void>;
   listStyles(): Promise<StyleDetail[]>;
@@ -236,7 +237,9 @@ function isProviderDetail(value: unknown): value is ProviderDetail {
     && isOneOf(value.auth, ['none', 'openai_subscription'])
     && isOneOf(value.web_search, ['off', 'auto', 'required'])
     && isOneOf(value.cache_retention, ['off', 'short', 'long'])
-    && typeof value.writable === 'boolean';
+    && typeof value.writable === 'boolean'
+    && Array.isArray(value.used_by)
+    && value.used_by.every((name) => typeof name === 'string');
 }
 
 function isStyleDetail(value: unknown): value is StyleDetail {
@@ -246,7 +249,9 @@ function isStyleDetail(value: unknown): value is StyleDetail {
     && isOneOf(value.weight, ['light', 'normal', 'medium', 'semibold', 'bold'])
     && isOneOf(value.size, ['small', 'normal', 'large'])
     && isOneOf(value.text_color, ['normal', 'muted', 'accent'])
-    && typeof value.writable === 'boolean';
+    && typeof value.writable === 'boolean'
+    && Array.isArray(value.used_by)
+    && value.used_by.every((name) => typeof name === 'string');
 }
 
 function isApiKeyDetail(value: unknown): value is ApiKeyDetail {
@@ -600,6 +605,12 @@ export function createChaClient(
       fetcher,
       `/api/v1/providers/${component(providerId)}`,
       isProviderDetail,
+    ),
+
+    testProvider: (providerId, candidate) => requestEmpty(
+      fetcher,
+      `/api/v1/providers/${component(providerId)}/test`,
+      jsonMutation(candidate),
     ),
 
     updateProvider: (providerId, update) => requestValidated(

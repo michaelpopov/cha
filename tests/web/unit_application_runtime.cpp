@@ -188,6 +188,8 @@ TEST(ApplicationRuntime, StoresApiKeysLocallyAndReferencesThemFromProviders) {
         "serif",
         "font = \"serif\"\nstyle = \"normal\"\nweight = \"normal\"\n"
         "size = \"normal\"\ntext_color = \"normal\"\n");
+    workspace.write_character_config(
+        "display_name = \"Guide\"\nprovider = \"test\"\nstyle = \"serif\"\n");
     const std::filesystem::path database =
         test::import_test_database(workspace.root());
     const ApplicationCommand command = make_command(workspace, database);
@@ -214,7 +216,11 @@ TEST(ApplicationRuntime, StoresApiKeysLocallyAndReferencesThemFromProviders) {
     ASSERT_TRUE(provider_result);
     ASSERT_EQ(provider_result->status, 200) << provider_result->body;
     nlohmann::json provider = nlohmann::json::parse(provider_result->body);
+    EXPECT_EQ(
+        provider.at("used_by"),
+        nlohmann::json::array({"Assistant", "Guide"}));
     provider.erase("id");
+    provider.erase("used_by");
     provider.erase("writable");
     provider["api_key"] = key.at("id");
     provider["api_key_env"] = nullptr;
@@ -233,6 +239,51 @@ TEST(ApplicationRuntime, StoresApiKeysLocallyAndReferencesThemFromProviders) {
         getws()->find_provider("test")->config.api_key_id,
         "api_key_1");
 
+    const auto empty_provider_test = client.Post(
+        "/api/v1/providers/test/test",
+        kRuntimeCookie,
+        "{}",
+        "application/json");
+    ASSERT_TRUE(empty_provider_test);
+    EXPECT_EQ(empty_provider_test->status, 400) << empty_provider_test->body;
+
+    const std::string stream =
+        "data: {\"type\":\"response.output_text.delta\",\"delta\":\"OK\"}\n\n"
+        "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n";
+    MockHttpServer model_server({
+        http_response("text/event-stream", stream),
+    });
+    model_server.start();
+    provider["host"] = "127.0.0.1";
+    provider["port"] = model_server.port();
+    provider["base_path"] = "";
+    provider["mode"] = "test";
+    provider["model"] = "candidate-model";
+    provider["https"] = false;
+    provider["api"] = "responses";
+    provider["reasoning_effort"] = "";
+    provider["web_search"] = "off";
+    const auto provider_test = client.Post(
+        "/api/v1/providers/test/test",
+        kRuntimeCookie,
+        provider.dump(),
+        "application/json");
+    ASSERT_TRUE(provider_test);
+    EXPECT_EQ(provider_test->status, 204) << provider_test->body;
+    model_server.join();
+    ASSERT_EQ(model_server.requests().size(), 1U);
+    EXPECT_TRUE(model_server.requests().front().starts_with(
+        "POST /v1/responses HTTP/1.1"));
+    const nlohmann::json tested_body = nlohmann::json::parse(
+        request_body(model_server.requests().front()));
+    EXPECT_EQ(tested_body.at("model"), "candidate-model");
+    EXPECT_EQ(tested_body.at("input").size(), 1U);
+    EXPECT_FALSE(tested_body.contains("instructions"));
+    EXPECT_FALSE(tested_body.contains("reasoning"));
+    EXPECT_FALSE(tested_body.contains("tools"));
+    EXPECT_EQ(getws()->find_provider("test")->config.host, "test");
+    EXPECT_EQ(getws()->find_provider("test")->config.model, "fake");
+
     const auto keys = client.Get("/api/v1/api-keys", kRuntimeCookie);
     ASSERT_TRUE(keys);
     ASSERT_EQ(keys->status, 200) << keys->body;
@@ -248,6 +299,16 @@ TEST(ApplicationRuntime, StoresApiKeysLocallyAndReferencesThemFromProviders) {
         "application/json");
     ASSERT_TRUE(deleted_key);
     ASSERT_EQ(deleted_key->status, 204) << deleted_key->body;
+    const auto failed_provider_test = client.Post(
+        "/api/v1/providers/test/test",
+        kRuntimeCookie,
+        provider.dump(),
+        "application/json");
+    ASSERT_TRUE(failed_provider_test);
+    EXPECT_EQ(failed_provider_test->status, 400) << failed_provider_test->body;
+    EXPECT_EQ(
+        nlohmann::json::parse(failed_provider_test->body).at("error").at("code"),
+        "bad_request");
     const auto unrelated_key = client.Post(
         "/api/v1/api-keys",
         kRuntimeCookie,
@@ -264,7 +325,9 @@ TEST(ApplicationRuntime, StoresApiKeysLocallyAndReferencesThemFromProviders) {
     ASSERT_TRUE(styles);
     ASSERT_EQ(styles->status, 200) << styles->body;
     nlohmann::json style = nlohmann::json::parse(styles->body).front();
+    EXPECT_EQ(style.at("used_by"), nlohmann::json::array({"Guide"}));
     style.erase("id");
+    style.erase("used_by");
     style.erase("writable");
     style["display_name"] = "Editorial";
     style["weight"] = "bold";

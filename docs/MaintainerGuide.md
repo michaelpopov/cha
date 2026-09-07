@@ -60,8 +60,9 @@ CHA configuration can appear in several places. They have different roles.
 | `packaging/linux/import-seed/` | Initial configuration shipped in a Linux package | Only when explicitly requested |
 | The SQLite file named by the active vault's `data` field | Authoritative runtime configuration and sessions | Never by hand |
 | A `cha-runtime-*` directory under the system temporary directory | Private materialization of committed SQLite rows | Never |
+| `<config-directory>/api-keys.json` | API keys saved through Settings | Only through Settings → API Keys |
 | `<config-directory>/openai-auth.json` | OpenAI subscription OAuth credentials | Only through Settings → OpenAI |
-| `.env` in the configuration directory | Runtime API-key environment values | Carefully, as a secret |
+| `.env` in the configuration directory | Legacy runtime API-key environment values | Carefully, as a secret |
 
 Normal runtime reads configuration from SQLite. It does not continue reading
 the directory that was imported. Therefore editing `~/var/modify/` alone does
@@ -487,13 +488,16 @@ global character definition. The built-in Assistant does the same in
 `system/assistant/character.toml`. Provider fields in forum defaults or member
 overrides do not provide inheritance and should not be used.
 
-Provider labels shown by the UI are derived from IDs: `open_router` and
-`open-router` become `Open router`.
+`display_name` is the name shown by the UI. If it is omitted, the name is
+derived from the provider ID: `open_router` and `open-router` become
+`Open router`. The pencil beside the provider title edits `display_name`; the
+stable provider ID does not change.
 
 ### Provider fields
 
 | Field | Required/default | Meaning and constraints |
 | --- | --- | --- |
+| `display_name` | derived from ID | User-facing provider name |
 | `host` | required | Host name without scheme or path |
 | `port` | effectively required | Integer `1..65535`; omitted becomes invalid `0` |
 | `base_path` | `""` | Optional leading path; must start with `/`, not end with `/`, and contain no query, fragment, or whitespace |
@@ -505,7 +509,8 @@ Provider labels shown by the UI are derived from IDs: `open_router` and
 | `max_tokens` | omitted | Positive output-token limit |
 | `timeout_s` | `600` | Positive overall request timeout |
 | `idle_timeout_s` | `60` | Positive timeout after response bytes stop arriving |
-| `api_key_env` | `""` | Environment variable containing an API key |
+| `api_key` | `""` | ID of an API key stored in `<config-directory>/api-keys.json` |
+| `api_key_env` | `""` | Legacy environment variable containing an API key; not exposed by the provider editor |
 | `reasoning_effort` | `""` | Provider default forwarded to the backend |
 | `reasoning_format` | `"auto"` | `auto`, `none`, `reasoning_content`, or `reasoning` |
 | `api` | `"responses"` | `responses` or `chat_completions` |
@@ -516,6 +521,41 @@ Provider labels shown by the UI are derived from IDs: `open_router` and
 Unknown fields are rejected. A malformed unused provider is logged and omitted;
 if any character selects it, workspace loading fails with the provider error.
 Do not leave knowingly malformed unused provider directories behind.
+
+### Provider editor
+
+The browser editor intentionally exposes only settings that distinguish one
+normal provider from another:
+
+- the provider name, edited with the pencil beside the title;
+- Model;
+- Base URL;
+- API format (`Responses` or `Chat completions`);
+- Credentials: a key created under Settings → API Keys, `OpenAI OAuth`, or
+  `No credentials`.
+
+API format and Credentials share one row. Base URL combines `host` and
+`base_path`, and also carries the HTTP/HTTPS choice and any non-default port.
+Saving through this screen fixes `mode = "net"`, `stream = true`, clears the
+provider-level `reasoning_effort`, and sets `web_search = "off"`. Character
+settings remain the place to select reasoning effort and web search.
+
+The editor does not offer environment variables as credentials. Saving a
+provider replaces any legacy `api_key_env` selection with the explicit
+Credentials choice.
+
+`Test` exercises the candidate currently shown in the form, including unsaved
+changes. It does not write configuration or reload live sessions. The route
+accepts the same `ProviderUpdate` body as Save and sends one small,
+empty-history request asking the selected model to reply with `OK`. It forces
+network mode, disables web search, and uses fixed 10-second overall and idle
+timeouts. It calls `ProviderClient` directly and creates no session or
+transcript. A successful non-error response returns HTTP 204; provider and
+authentication failures are reported as a bad request. The probe can consume a
+small amount of provider usage.
+
+`Delete provider` succeeds only when no character or built-in Assistant uses
+the provider.
 
 For ordinary providers, CHA constructs endpoints as follows:
 
@@ -529,43 +569,46 @@ chat_completions: {scheme}://{host}:{port}{base_path}/v1/chat/completions
 Direct OpenAI Responses API:
 
 ```toml
+display_name = "Sol"
 host = "api.openai.com"
 port = 443
 https = true
 mode = "net"
 model = "gpt-5.6-sol"
-reasoning_effort = "low"
-stream = true
-api = "responses"
-web_search = "off"
-api_key_env = "OPENAI_API_KEY"
+api_key = "api_key_1"
 ```
 
 OpenAI-compatible Chat Completions endpoint under a base path:
 
 ```toml
+display_name = "OpenRouter"
 host = "openrouter.ai"
 port = 443
 base_path = "/api"
 https = true
 mode = "net"
 model = "qwen/qwen3.8-max"
-reasoning_effort = "low"
-stream = true
 api = "chat_completions"
-web_search = "off"
-api_key_env = "OPEN_ROUTER_API_KEY"
+api_key = "api_key_2"
 ```
 
-The environment variable's value is not placed in `config.toml`. A missing key
-does not prevent workspace loading, but an actual request that needs it will
-fail. Runtime loads a `.env` file from the configuration directory, without
-overriding variables already inherited by the process.
+Create keys under Settings → API Keys before selecting them in a provider.
+The `api_key` value is an opaque local ID, not the secret. Secrets are stored in
+`<config-directory>/api-keys.json`, are never returned to the browser, and are
+excluded from workspace import/export. A missing referenced key does not
+prevent workspace loading, but requests and `Test` fail when they try to use it.
+
+For compatibility, a hand-authored provider may still use `api_key_env` instead
+of `api_key`. Runtime loads a `.env` file from the configuration directory
+without overriding variables already inherited by the process. The provider
+editor does not show environment variables and removes `api_key_env` the next
+time that provider is saved.
 
 An optional `.env` at the root of an import source is parsed and overlaid only
 while the import is validated. It is **not** stored in SQLite and is not
-exported. Put runtime API keys in the service environment or in `.env` in the
-configuration directory. Protect that file as a secret.
+exported. When maintaining a legacy environment-based provider, put its runtime
+key in the service environment or in `.env` in the configuration directory.
+Protect that file as a secret.
 
 ### OpenAI subscription OAuth provider
 
@@ -593,7 +636,7 @@ For this auth type, all of the following are mandatory invariants:
 - `base_path = "/backend-api/codex"`;
 - `mode = "net"` and `api = "responses"`;
 - `stream = true`;
-- no `api_key_env`;
+- no `api_key` or `api_key_env`;
 - no `temperature` or `max_tokens`;
 - `web_search = "off"`;
 - `cache_retention = "off"` must be explicit because its ordinary default is
@@ -620,6 +663,10 @@ through the UI rather than editing the JSON. If no account is connected,
 characters using this provider fail with `Sign in to ChatGPT before using this
 provider.` A rejected or unusable login requires reconnecting in Settings.
 
+In the provider editor, selecting `OpenAI OAuth` makes this intent explicit and
+requires API format `Responses` and Base URL
+`https://chatgpt.com/backend-api/codex`.
+
 ### Web search compatibility
 
 `web_search` other than `off` is accepted for:
@@ -633,16 +680,21 @@ provider default and a character override.
 
 ### Add a provider
 
-1. Choose a provider ID and create
-   `system/providers/<id>/config.toml`.
-2. Use the smallest suitable example above and add only needed optional fields.
-3. For API-key auth, arrange the runtime environment separately. Never put the
-   key in TOML.
-4. Change the intended global character definitions and/or Assistant to
-   `provider = "<id>"`.
-5. Validate the workspace. Validation does not make a network request.
-6. If connectivity testing was requested, run CHA and send a real prompt with
-   one assigned character. For OAuth, connect in Settings first.
+The normal path is entirely in Settings:
+
+1. For API-key authentication, create the key under Settings → API Keys.
+   For OAuth, connect the ChatGPT account under Settings → OpenAI.
+2. Open Settings → Providers, select `New provider`, and enter its name.
+3. Set Model, Base URL, API format, and Credentials.
+4. Select `Test`. Fix any reported endpoint, credential, or provider error,
+   then save the tested settings.
+5. Select the provider in the intended character settings.
+
+For a hand-authored import bundle, choose a provider ID, create
+`system/providers/<id>/config.toml`, use the smallest suitable example above,
+and add only needed optional fields. Change the intended global character
+definitions and/or Assistant to `provider = "<id>"`, then validate the
+workspace. Validation itself does not make a network request.
 
 Removing a provider requires first changing every character and the Assistant
 that references it. Search with:
@@ -957,8 +1009,9 @@ Before a production import:
 2. identify the exact configuration directory and resolve the target vault's
    `data` path;
 3. make an offline, recoverable backup of the database and relevant secret
-   files, including `<config-directory>/openai-auth.json` when present,
-   according to the user's backup practice;
+   files, including `<config-directory>/api-keys.json` and
+   `<config-directory>/openai-auth.json` when present, according to the user's
+   backup practice;
 4. review forum IDs for removals or renames;
 5. run disposable validation;
 6. import;
@@ -972,6 +1025,7 @@ These are not workspace configuration rows and are not exported:
 
 - the configuration directory (`app.toml` and vault files);
 - source or configuration-directory `.env`;
+- `<config-directory>/api-keys.json` saved API keys;
 - `<config-directory>/openai-auth.json` OAuth credentials;
 - SQLite databases, journals, WAL/SHM sidecars, and `.cha-lock` files;
 - session mirror output;
@@ -998,8 +1052,8 @@ Before reporting completion, verify the relevant subset:
 - Production import was not performed unless the user explicitly requested it.
 
 When a real provider change is applied, configuration validation is not a
-connectivity test. Also run an application smoke test with an assigned
-character when the user asks for connectivity verification.
+connectivity test. Run `Test` against the candidate before saving when the user
+asks for connectivity verification.
 
 ## 14. Troubleshooting map
 
@@ -1010,6 +1064,7 @@ character when the user asks for connectivity verification.
 | `references unknown style` | Missing or invalid style config |
 | `default character ... is not a member` | Forum config points to an ID without a direct member directory |
 | `references unknown persona` | `default_persona` does not match a loaded persona ID |
+| `Provider test failed: ...` | Candidate endpoint, model, credential selection, provider availability, or network failure |
 | duplicate character/persona ID | Two nested definitions have the same leaf directory name |
 | display-name conflict | Character and persona public names must be globally unique case-insensitively |
 | `unknown variable` | `$${...}` has no value in the merged prompt scope |
@@ -1038,12 +1093,15 @@ guide:
 - `src/util/public_name.cpp`: public-name and description validation;
 - `src/characters/character_config.cpp` and `.h`: provider endpoint and enum
   semantics;
+- `src/providers/api_key_store.cpp` and `.h`: locally saved API-key lifecycle;
 - `src/providers/openai_oauth.cpp`: OAuth credential lifecycle;
+- `src/web/settings_routes.cpp`: provider/key mutations and the direct provider
+  test probe;
 - `src/web/application_config.cpp`: application and vault configuration
   discovery, validation, and command-line selection;
 - `src/web/application_runtime.cpp`: active-vault switching,
-  configuration-directory OAuth credentials, and runtime maintenance
-  operations;
+  configuration-directory API keys and OAuth credentials, and runtime
+  maintenance operations;
 - `packaging/macos/main.swift`: native first-run configuration ownership and
   database menu behavior;
 - `packaging/linux/import-seed/`: minimal package seed;
