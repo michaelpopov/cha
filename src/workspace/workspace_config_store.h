@@ -1,6 +1,7 @@
 #pragma once
 
 #include "characters/character_config.h"
+#include "chat/character.h"
 #include "session/session_lease.h"
 
 #include <cstddef>
@@ -106,6 +107,8 @@ public:
         std::string_view character_id,
         std::string_view display_name,
         std::optional<std::string_view> markdown = std::nullopt);
+    WorkspaceConfigEditResult apply_character_delete(
+        std::string_view character_id);
     WorkspaceConfigEditResult apply_persona_update(
         std::string_view persona_id,
         std::string_view display_name,
@@ -113,6 +116,8 @@ public:
     WorkspaceConfigEditResult apply_persona_create(
         std::string_view persona_id,
         std::string_view display_name);
+    WorkspaceConfigEditResult apply_persona_delete(
+        std::string_view persona_id);
     WorkspaceConfigEditResult apply_character_create(
         std::string_view character_id,
         std::string_view display_name,
@@ -125,6 +130,8 @@ public:
         std::string_view forum_id,
         std::string_view display_name,
         std::string_view markdown);
+    WorkspaceConfigEditResult apply_forum_delete(
+        std::string_view forum_id);
     WorkspaceConfigEditResult apply_forum_members(
         std::string_view forum_id,
         std::span<const std::string> character_ids);
@@ -134,6 +141,24 @@ public:
     WorkspaceConfigEditResult apply_forum_default_persona(
         std::string_view forum_id,
         std::string_view persona_id);
+    WorkspaceConfigEditResult apply_provider_update(
+        std::string_view provider_id,
+        std::string_view display_name,
+        const ModelBackendConfig& config);
+    WorkspaceConfigEditResult apply_provider_create(
+        std::string_view provider_id,
+        std::string_view display_name);
+    WorkspaceConfigEditResult apply_provider_delete(
+        std::string_view provider_id);
+    WorkspaceConfigEditResult apply_style_update(
+        std::string_view style_id,
+        std::string_view display_name,
+        const CharacterAppearance& appearance);
+    WorkspaceConfigEditResult apply_style_create(
+        std::string_view style_id,
+        std::string_view display_name);
+    WorkspaceConfigEditResult apply_style_delete(
+        std::string_view style_id);
 
 private:
     struct Impl;

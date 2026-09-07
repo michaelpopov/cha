@@ -22,7 +22,16 @@ export type MainView =
   | 'forum-detail'
   | 'forum-members'
   | 'new-session'
-  | 'settings';
+  | 'settings'
+  | 'settings-providers'
+  | 'settings-new-provider'
+  | 'settings-provider'
+  | 'settings-styles'
+  | 'settings-new-style'
+  | 'settings-style'
+  | 'settings-api-keys'
+  | 'settings-new-api-key'
+  | 'settings-api-key';
 
 export type BootstrapStatus = 'loading' | 'ready' | 'failed' | 'incompatible';
 export type StreamStatus =
@@ -52,6 +61,9 @@ export interface AppState {
   inspectedPersonaId: string | null;
   personaEditingAvailable: boolean;
   forumEditingAvailable: boolean;
+  inspectedProviderId: string | null;
+  inspectedStyleId: string | null;
+  inspectedApiKeyId: string | null;
   currentDefaultCharacterId: string | null;
   sessionOperation: 'idle' | 'pending' | 'failed';
   sessionOperationMessage: string | null;
@@ -75,6 +87,9 @@ export const initialAppState: AppState = {
   inspectedPersonaId: null,
   personaEditingAvailable: false,
   forumEditingAvailable: false,
+  inspectedProviderId: null,
+  inspectedStyleId: null,
+  inspectedApiKeyId: null,
   currentDefaultCharacterId: null,
   sessionOperation: 'idle',
   sessionOperationMessage: null,
@@ -97,12 +112,14 @@ export type AppAction =
   | { type: 'persona-detail-loaded'; personaId: string; writable: boolean }
   | { type: 'persona-created'; persona: PersonaDetail }
   | { type: 'persona-updated'; persona: PersonaDetail }
+  | { type: 'persona-deleted'; personaId: string }
   | { type: 'show-characters' }
   | { type: 'show-new-character' }
   | { type: 'inspect-character'; characterId: string }
   | { type: 'character-detail-loaded'; characterId: string; writable: boolean }
   | { type: 'character-created'; character: CharacterDetail }
   | { type: 'character-updated'; character: CharacterDetail }
+  | { type: 'character-deleted'; characterId: string }
   | { type: 'show-character-settings' }
   | { type: 'show-forums' }
   | { type: 'show-new-forum' }
@@ -113,8 +130,18 @@ export type AppAction =
   | { type: 'show-forum-members' }
   | { type: 'forum-detail-loaded'; forumId: string; writable: boolean }
   | { type: 'forum-updated'; forum: ForumDetail }
+  | { type: 'forum-deleted'; forumId: string }
   | { type: 'show-new-session' }
   | { type: 'show-settings' }
+  | { type: 'show-settings-providers' }
+  | { type: 'show-settings-new-provider' }
+  | { type: 'inspect-provider'; providerId: string }
+  | { type: 'show-settings-styles' }
+  | { type: 'show-settings-new-style' }
+  | { type: 'inspect-style'; styleId: string }
+  | { type: 'show-settings-api-keys' }
+  | { type: 'show-settings-new-api-key' }
+  | { type: 'inspect-api-key'; apiKeyId: string }
   | { type: 'show-chat' }
   | { type: 'session-operation-started'; message: string }
   | { type: 'session-operation-failed'; message: string; retryable?: boolean }
@@ -285,6 +312,18 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         : state.sessionSnapshot;
       return { ...state, bootstrap, sessionSnapshot };
     }
+    case 'persona-deleted':
+      return {
+        ...state,
+        mainView: 'personas',
+        bootstrap: state.bootstrap ? {
+          ...state.bootstrap,
+          personas: state.bootstrap.personas.filter(({ id }) => id !== action.personaId),
+        } : null,
+        inspectedPersonaId: null,
+        personaEditingAvailable: false,
+        ...idleSessionOperation(),
+      };
     case 'show-characters':
       return {
         ...state,
@@ -371,6 +410,20 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       } : null;
       return { ...state, bootstrap, sessionSnapshot };
     }
+    case 'character-deleted':
+      return {
+        ...state,
+        mainView: 'characters',
+        bootstrap: state.bootstrap ? {
+          ...state.bootstrap,
+          characters: state.bootstrap.characters.filter(
+            ({ id }) => id !== action.characterId,
+          ),
+        } : null,
+        inspectedCharacterId: null,
+        characterSettingsAvailable: false,
+        ...idleSessionOperation(),
+      };
     case 'show-character-settings':
       return { ...state, mainView: 'character-settings', ...idleSessionOperation() };
     case 'show-forums':
@@ -435,10 +488,68 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         forumEditingAvailable: writable,
       };
     }
+    case 'forum-deleted': {
+      const activeDeleted = state.activeConversation?.forumId === action.forumId;
+      return {
+        ...state,
+        mainView: 'forums',
+        bootstrap: state.bootstrap ? {
+          ...state.bootstrap,
+          forums: state.bootstrap.forums.filter(({ id }) => id !== action.forumId),
+          recent_sessions: state.bootstrap.recent_sessions.filter(
+            ({ forum_id }) => forum_id !== action.forumId,
+          ),
+        } : null,
+        currentForumId: null,
+        forumEditingAvailable: false,
+        ...(activeDeleted ? {
+          activeConversation: null,
+          activeConversationLabel: null,
+          currentDefaultCharacterId: null,
+          sessionSnapshot: null,
+          streamStatus: 'idle' as const,
+          streamMessage: null,
+        } : {}),
+        ...idleSessionOperation(),
+      };
+    }
     case 'show-new-session':
       return { ...state, mainView: 'new-session', ...idleSessionOperation() };
     case 'show-settings':
       return { ...state, mainView: 'settings', ...idleSessionOperation() };
+    case 'show-settings-providers':
+      return { ...state, mainView: 'settings-providers', ...idleSessionOperation() };
+    case 'show-settings-new-provider':
+      return { ...state, mainView: 'settings-new-provider', ...idleSessionOperation() };
+    case 'inspect-provider':
+      return {
+        ...state,
+        mainView: 'settings-provider',
+        inspectedProviderId: action.providerId,
+        ...idleSessionOperation(),
+      };
+    case 'show-settings-styles':
+      return { ...state, mainView: 'settings-styles', ...idleSessionOperation() };
+    case 'show-settings-new-style':
+      return { ...state, mainView: 'settings-new-style', ...idleSessionOperation() };
+    case 'inspect-style':
+      return {
+        ...state,
+        mainView: 'settings-style',
+        inspectedStyleId: action.styleId,
+        ...idleSessionOperation(),
+      };
+    case 'show-settings-api-keys':
+      return { ...state, mainView: 'settings-api-keys', ...idleSessionOperation() };
+    case 'show-settings-new-api-key':
+      return { ...state, mainView: 'settings-new-api-key', ...idleSessionOperation() };
+    case 'inspect-api-key':
+      return {
+        ...state,
+        mainView: 'settings-api-key',
+        inspectedApiKeyId: action.apiKeyId,
+        ...idleSessionOperation(),
+      };
     case 'show-chat':
       return { ...state, mainView: 'chat', ...idleSessionOperation() };
     case 'session-operation-started':
@@ -542,6 +653,15 @@ export function navigationTitle(state: AppState): string | null {
     case 'forum-members': return 'Members';
     case 'new-session': return 'New session';
     case 'settings': return 'Settings';
+    case 'settings-providers': return 'Providers';
+    case 'settings-new-provider': return 'New provider';
+    case 'settings-provider': return 'Provider';
+    case 'settings-styles': return 'Styles';
+    case 'settings-new-style': return 'New style';
+    case 'settings-style': return 'Style';
+    case 'settings-api-keys': return 'API Keys';
+    case 'settings-new-api-key': return 'New API key';
+    case 'settings-api-key': return 'API Key';
     case 'chat': return null;
   }
 }

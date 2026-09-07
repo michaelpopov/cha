@@ -238,6 +238,12 @@ TEST(LobbyRoutes, ServesBootstrapDiscoveryAndHealthWithoutSessionDataInHealth) {
     ASSERT_EQ(workspace_character->status, 200);
     const nlohmann::json workspace_character_body = body(workspace_character);
     EXPECT_EQ(workspace_character_body["character_markdown"], "Profile Guide");
+    EXPECT_EQ(
+        workspace_character_body["editable_markdown"],
+        "Agent instructions\n"
+        "<character_profile>\n"
+        "$$(PROFILE.md)\n"
+        "</character_profile>\n");
     EXPECT_EQ(workspace_character_body["appearance"], (*guide)["appearance"]);
     EXPECT_EQ(workspace_character_body["provider"], "test");
     EXPECT_TRUE(workspace_character_body["style"].is_null());
@@ -558,6 +564,10 @@ httplib::Result create_forum(
         "/api/v1/forums", request.dump(), "application/json");
 }
 
+httplib::Result delete_resource(TestServer& server, std::string_view route) {
+    return server.client().Delete(std::string(route), "{}", "application/json");
+}
+
 httplib::Result patch_forum(
     TestServer& server,
     std::string_view id,
@@ -636,6 +646,7 @@ TEST(LobbyRoutes, CreatesDraftCharacterAndUploadsItsProfile) {
     EXPECT_EQ(created_body["display_name"], "Mentor");
     EXPECT_EQ(created_body["description"], "A thoughtful guide.");
     EXPECT_EQ(created_body["character_markdown"], "");
+    EXPECT_EQ(created_body["editable_markdown"], "");
     EXPECT_TRUE(created_body["provider"].is_null());
     EXPECT_TRUE(created_body["style"].is_null());
     EXPECT_EQ(created_body["writable"], true);
@@ -665,6 +676,7 @@ TEST(LobbyRoutes, CreatesDraftCharacterAndUploadsItsProfile) {
     ASSERT_TRUE(uploaded);
     ASSERT_EQ(uploaded->status, 200);
     EXPECT_EQ(body(uploaded)["character_markdown"], "# Mentor");
+    EXPECT_EQ(body(uploaded)["editable_markdown"], "# Mentor\n");
     EXPECT_EQ(
         config_row(database, "characters/character_1/CHARACTER.md"),
         wrapper);
@@ -748,6 +760,99 @@ TEST(LobbyRoutes, CreatesForumWithTheSelectedPersona) {
     expect_error(
         create_forum(server, nlohmann::json::object()),
         400, "bad_request");
+}
+
+TEST(LobbyRoutes, DeletesOnlyUnusedPersonasAndCharacters) {
+    test::TestWorkspace fixture;
+    std::ofstream(fixture.root() / "forums" / "lobby" / "config.toml")
+        << "display_name = \"The Lobby\"\n"
+           "default_persona = \"reader\"\n";
+    const LobbyGraph graph(fixture.root());
+    LiveSessionManager manager(lobby_settings(2), counting_opener(graph));
+    TestServer server(graph, manager);
+
+    expect_error(
+        delete_resource(server, "/api/v1/characters/guide"),
+        409, "bad_request",
+        "This character is still used by one or more forums.");
+    expect_error(
+        delete_resource(server, "/api/v1/personas/reader"),
+        409, "bad_request",
+        "This persona is still used by one or more forums.");
+    expect_error(
+        delete_resource(server, "/api/v1/characters/builtin-assistant"),
+        404, "not_found", "That character was not found.");
+    expect_error(
+        delete_resource(server, "/api/v1/personas/builtin-guest"),
+        404, "not_found", "That persona was not found.");
+
+    const nlohmann::json persona = body(create_persona(
+        server, {{"display_name", "Unused reader"}}));
+    const nlohmann::json character = body(create_character(server, {
+        {"display_name", "Unused guide"},
+        {"description", "Not assigned to a forum."},
+    }));
+    const std::string persona_id = persona["id"];
+    const std::string character_id = character["id"];
+
+    const auto deleted_persona = delete_resource(
+        server, "/api/v1/personas/" + persona_id);
+    ASSERT_TRUE(deleted_persona);
+    EXPECT_EQ(deleted_persona->status, 204);
+    const auto deleted_character = delete_resource(
+        server, "/api/v1/characters/" + character_id);
+    ASSERT_TRUE(deleted_character);
+    EXPECT_EQ(deleted_character->status, 204);
+
+    expect_error(
+        server.client().Get("/api/v1/personas/" + persona_id),
+        404, "not_found", "That persona was not found.");
+    expect_error(
+        server.client().Get("/api/v1/characters/" + character_id),
+        404, "not_found", "That character was not found.");
+    EXPECT_TRUE(config_row(
+        graph.store->database_path(),
+        "personas/" + persona_id + "/persona.toml").empty());
+    EXPECT_TRUE(config_row(
+        graph.store->database_path(),
+        "characters/" + character_id + "/character.toml").empty());
+}
+
+TEST(LobbyRoutes, DeletesAForumAndAllOfItsSessions) {
+    test::TestWorkspace fixture;
+    const LobbyGraph graph(fixture.root());
+    LiveSessionManager manager(lobby_settings(2), counting_opener(graph));
+    TestServer server(graph, manager);
+    const std::string live_id = create_session(server, "One");
+    ASSERT_FALSE(live_id.empty());
+    ASSERT_FALSE(create_session(server, "Two").empty());
+    const auto opened = server.client().Post(
+        "/api/v1/forums/lobby/sessions/" + live_id + "/open",
+        "{}", "application/json");
+    ASSERT_TRUE(opened);
+    ASSERT_EQ(opened->status, 200);
+
+    const auto deleted = delete_resource(server, "/api/v1/forums/lobby");
+    ASSERT_TRUE(deleted);
+    EXPECT_EQ(deleted->status, 204);
+    expect_error(
+        server.client().Get("/api/v1/forums/lobby"),
+        404, "not_found");
+    expect_error(
+        server.client().Get("/api/v1/forums/lobby/sessions"),
+        404, "not_found");
+    EXPECT_TRUE(config_row(
+        graph.store->database_path(), "forums/lobby/config.toml").empty());
+    const auto deadline = std::chrono::steady_clock::now() + 2s;
+    while (session_is_live(manager, {"lobby", live_id})
+           && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(10ms);
+    }
+    EXPECT_FALSE(session_is_live(manager, {"lobby", live_id}));
+
+    expect_error(
+        delete_resource(server, "/api/v1/forums/builtin-entrance"),
+        404, "not_found", "That forum was not found.");
 }
 
 TEST(LobbyRoutes, PatchesPersonaNameAndMarkdownInTheDatabase) {

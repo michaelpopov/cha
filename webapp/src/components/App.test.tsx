@@ -278,6 +278,69 @@ it('replaces persona Markdown from the compact file action', async () => {
   expect(screen.getByText('Fresh text.')).toBeInTheDocument();
 });
 
+it('edits persona Markdown as pasted text and cancels without saving', async () => {
+  const user = userEvent.setup();
+  let detail = personaDetailFixture;
+  const getPersona = vi.fn(async () => detail);
+  const updatePersona = vi.fn(async (_personaId, update) => {
+    detail = { ...detail, ...update };
+    return detail;
+  });
+  render(<App client={fixtureClient({ getPersona, updatePersona })} />);
+  await user.click(await screen.findByRole('button', { name: 'Personas' }));
+  await user.click(within(screen.getByLabelText('Personas navigation'))
+    .getByRole('button', { name: /Reader/ }));
+
+  const edit = await screen.findByRole('button', { name: 'Edit persona profile' });
+  await user.click(edit);
+  let editor = screen.getByRole('textbox', { name: 'Edit persona profile text' });
+  await waitFor(() => expect(editor).toHaveValue(personaDetailFixture.persona_markdown));
+  await user.click(screen.getByRole('button', { name: 'Clear' }));
+  expect(editor).toHaveValue('');
+  expect(screen.getByRole('button', { name: 'Clear' })).toBeDisabled();
+  await user.type(editor, '# Discarded');
+  await user.click(screen.getByRole('button', { name: 'Cancel' }));
+  expect(updatePersona).not.toHaveBeenCalled();
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+  await user.click(edit);
+  editor = screen.getByRole('textbox', { name: 'Edit persona profile text' });
+  await waitFor(() => expect(editor).toBeEnabled());
+  await user.clear(editor);
+  await user.type(editor, '# Typed profile\n\nPasted text.');
+  await user.click(screen.getByRole('button', { name: 'Save' }));
+
+  await waitFor(() => expect(updatePersona).toHaveBeenCalledWith('reader', {
+    persona_markdown: '# Typed profile\n\nPasted text.',
+  }));
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(await screen.findByRole('heading', { name: 'Typed profile' })).toBeInTheDocument();
+});
+
+it('deletes a persona from the skull action beside upload after confirmation', async () => {
+  const user = userEvent.setup();
+  const deletePersona = vi.fn(async () => undefined);
+  render(<App client={fixtureClient({ deletePersona })} />);
+  await user.click(await screen.findByRole('button', { name: 'Personas' }));
+  await user.click(within(screen.getByLabelText('Personas navigation'))
+    .getByRole('button', { name: /Reader/ }));
+
+  const upload = await screen.findByRole('button', {
+    name: 'Replace persona description from file',
+  });
+  const remove = screen.getByRole('button', { name: 'Delete Reader' });
+  expect(upload.parentElement?.parentElement).toBe(remove.parentElement);
+  await user.click(remove);
+  expect(screen.getByRole('dialog')).toHaveTextContent(
+    'Delete “Reader”? This permanently removes its profile. This cannot be undone.',
+  );
+  await user.click(screen.getByRole('button', { name: 'Delete persona' }));
+
+  await waitFor(() => expect(deletePersona).toHaveBeenCalledWith('reader'));
+  const personas = await screen.findByLabelText('Personas navigation');
+  expect(within(personas).queryByRole('button', { name: /Reader/ })).not.toBeInTheDocument();
+});
+
 it('reports a persona with no PERSONA.md rather than an empty screen', async () => {
   const getPersona = vi.fn(async () => ({ ...personaDetailFixture, persona_markdown: '' }));
   render(<App client={fixtureClient({ getPersona })} />);
@@ -318,10 +381,52 @@ it('loads character detail and renders the restricted Markdown presentation', as
     .getByRole('button', { name: 'Settings' })).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Replace character definition from file' }))
     .toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Edit character definition' }))
+    .toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Delete Guide' })).toBeInTheDocument();
 
   fireEvent.click(within(screen.getByLabelText('Character detail navigation'))
     .getByRole('button', { name: 'Characters' }));
   expect(screen.getByRole('heading', { name: 'Characters' })).toBeInTheDocument();
+});
+
+it('loads a character editor from the unexpanded editable source', async () => {
+  const user = userEvent.setup();
+  const getCharacter = vi.fn(async () => ({
+    ...characterDetailFixture,
+    character_markdown: '# Expanded Guide',
+    editable_markdown: '# Source\n\n$${character.display_name}',
+  }));
+  render(<App client={fixtureClient({ getCharacter })} />);
+  await user.click(await screen.findByRole('button', { name: 'Characters' }));
+  await user.click(screen.getByRole('button', { name: /Guide/ }));
+  await user.click(await screen.findByRole('button', { name: 'Edit character definition' }));
+
+  const editor = screen.getByRole('textbox', { name: 'Edit character definition text' });
+  await waitFor(() => expect(editor).toHaveValue(
+    '# Source\n\n$${character.display_name}',
+  ));
+});
+
+it('keeps a character on screen and shows the server message when deletion is refused', async () => {
+  const user = userEvent.setup();
+  const deleteCharacter = vi.fn(async () => {
+    throw new ChaError(
+      409,
+      'bad_request',
+      'This character is still used by one or more forums.',
+    );
+  });
+  render(<App client={fixtureClient({ deleteCharacter })} />);
+  await user.click(await screen.findByRole('button', { name: 'Characters' }));
+  await user.click(screen.getByRole('button', { name: /Guide/ }));
+  await user.click(await screen.findByRole('button', { name: 'Delete Guide' }));
+  await user.click(screen.getByRole('button', { name: 'Delete character' }));
+
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    'This character is still used by one or more forums.',
+  );
+  expect(screen.getByRole('button', { name: 'Rename Guide' })).toBeInTheDocument();
 });
 
 it('creates a providerless character draft and adds it to the roster immediately', async () => {
@@ -522,11 +627,35 @@ it('names the forum above its sessions and opens its FORUM.md description', asyn
   expect(screen.getByRole('button', { name: 'Rename The Lobby' })).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Replace forum definition from file' }))
     .toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Edit forum description' }))
+    .toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Delete The Lobby' })).toBeInTheDocument();
   expect(screen.getByText('Guide · speaking as Reader')).toBeInTheDocument();
 
   fireEvent.click(within(screen.getByLabelText('Forum detail navigation'))
     .getByRole('button', { name: 'Sessions' }));
   expect(screen.getByRole('heading', { name: 'Sessions' })).toBeInTheDocument();
+});
+
+it('deletes a forum and removes its sessions from navigation after confirmation', async () => {
+  const user = userEvent.setup();
+  const deleteForum = vi.fn(async () => undefined);
+  render(<App client={fixtureClient({ deleteForum })} />);
+  await user.click(await screen.findByRole('button', { name: 'Forums' }));
+  await user.click(screen.getByRole('button', { name: 'The LobbyGuide' }));
+  await user.click(within(screen.getByLabelText('Forum sessions navigation'))
+    .getByRole('button', { name: 'The LobbyGuide' }));
+  await user.click(await screen.findByRole('button', { name: 'Delete The Lobby' }));
+
+  expect(screen.getByRole('dialog')).toHaveTextContent(
+    'Delete “The Lobby”? This permanently removes the forum and all of its sessions.',
+  );
+  await user.click(screen.getByRole('button', { name: 'Delete forum' }));
+
+  await waitFor(() => expect(deleteForum).toHaveBeenCalledWith('lobby'));
+  const forums = await screen.findByLabelText('Forums navigation');
+  expect(within(forums).queryByRole('button', { name: /The Lobby/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /^Planning/ })).not.toBeInTheDocument();
 });
 
 it('renames a writable forum in place and updates its navigation immediately', async () => {

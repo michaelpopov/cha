@@ -77,6 +77,9 @@ describe('CHA API client', () => {
     await client.getForum('f one');
     await client.updateForum('f one', { display_name: 'Brain Trust' });
     await client.updateForumMembers('f one', { character_ids: ['guide', 'critic'] });
+    await client.deletePersona('read er');
+    await client.deleteCharacter('a b');
+    await client.deleteForum('f one');
 
     expect(fetcher.mock.calls.map(([url]) => url)).toEqual([
       '/api/v1/bootstrap',
@@ -106,6 +109,9 @@ describe('CHA API client', () => {
       '/api/v1/forums/f%20one',
       '/api/v1/forums/f%20one',
       '/api/v1/forums/f%20one/members',
+      '/api/v1/personas/read%20er',
+      '/api/v1/characters/a%20b',
+      '/api/v1/forums/f%20one',
     ]);
 
     expect(fetcher.mock.calls[0][1]?.method).toBeUndefined();
@@ -123,6 +129,10 @@ describe('CHA API client', () => {
     expect(new Headers(fetcher.mock.calls[8][1]?.headers).get('Accept')).toBe('text/markdown');
     expect(fetcher.mock.calls[9][1]?.body).toBe('{}');
     expect(fetcher.mock.calls[11][1]?.body).toBe('{"text":"Hello"}');
+    for (const call of fetcher.mock.calls.slice(-3)) {
+      expect(call[1]?.method).toBe('DELETE');
+      expect(call[1]?.body).toBe('{}');
+    }
     expect(fetcher.mock.calls[12][1]?.body).toBe('{}');
     expect(fetcher.mock.calls[13][1]?.body).toBe('{"character_id":"guide"}');
     expect(fetcher.mock.calls[14][1]?.method).toBe('PATCH');

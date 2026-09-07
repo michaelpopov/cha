@@ -292,6 +292,7 @@ void to_json(nlohmann::json& json, const StyleOption& value) {
 void to_json(nlohmann::json& json, const CharacterDetail& value) {
     json = nlohmann::json(value.summary);
     json["character_markdown"] = value.character_markdown;
+    json["editable_markdown"] = value.editable_markdown;
     json["provider"] = value.provider ? nlohmann::json(*value.provider) : nlohmann::json(nullptr);
     json["style"] = value.style ? nlohmann::json(*value.style) : nlohmann::json(nullptr);
     json["reasoning_effort"] = value.reasoning_effort

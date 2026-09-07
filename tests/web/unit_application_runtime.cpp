@@ -182,6 +182,164 @@ TEST(ApplicationRuntime, UsesEphemeralPortAndRequiresPrivateCookie) {
     runtime->shutdown();
 }
 
+TEST(ApplicationRuntime, StoresApiKeysLocallyAndReferencesThemFromProviders) {
+    test::TestWorkspace workspace;
+    workspace.write_style(
+        "serif",
+        "font = \"serif\"\nstyle = \"normal\"\nweight = \"normal\"\n"
+        "size = \"normal\"\ntext_color = \"normal\"\n");
+    const std::filesystem::path database =
+        test::import_test_database(workspace.root());
+    const ApplicationCommand command = make_command(workspace, database);
+    auto runtime = ApplicationRuntime::open(command, "private-test-token");
+    const int port = runtime->start();
+    httplib::Client client("127.0.0.1", port);
+
+    const auto created = client.Post(
+        "/api/v1/api-keys",
+        kRuntimeCookie,
+        R"({"display_name":"Router key","value":"private-router-secret"})",
+        "application/json");
+    ASSERT_TRUE(created);
+    ASSERT_EQ(created->status, 201) << created->body;
+    EXPECT_EQ(created->body.find("private-router-secret"), std::string::npos);
+    const nlohmann::json key = nlohmann::json::parse(created->body);
+    EXPECT_EQ(key.at("id"), "api_key_1");
+    EXPECT_TRUE(key.at("has_value"));
+    EXPECT_TRUE(std::filesystem::is_regular_file(
+        command.config_directory / "api-keys.json"));
+
+    const auto provider_result = client.Get(
+        "/api/v1/providers/test", kRuntimeCookie);
+    ASSERT_TRUE(provider_result);
+    ASSERT_EQ(provider_result->status, 200) << provider_result->body;
+    nlohmann::json provider = nlohmann::json::parse(provider_result->body);
+    provider.erase("id");
+    provider.erase("writable");
+    provider["api_key"] = key.at("id");
+    provider["api_key_env"] = nullptr;
+    const auto updated = client.Patch(
+        "/api/v1/providers/test",
+        kRuntimeCookie,
+        provider.dump(),
+        "application/json");
+    ASSERT_TRUE(updated);
+    ASSERT_EQ(updated->status, 200) << updated->body;
+    EXPECT_EQ(
+        nlohmann::json::parse(updated->body).at("api_key"),
+        "api_key_1");
+    ASSERT_NE(getws()->find_provider("test"), nullptr);
+    EXPECT_EQ(
+        getws()->find_provider("test")->config.api_key_id,
+        "api_key_1");
+
+    const auto keys = client.Get("/api/v1/api-keys", kRuntimeCookie);
+    ASSERT_TRUE(keys);
+    ASSERT_EQ(keys->status, 200) << keys->body;
+    const nlohmann::json list = nlohmann::json::parse(keys->body);
+    ASSERT_EQ(list.size(), 1U);
+    EXPECT_EQ(list.front().at("used_by"), nlohmann::json::array({"Test"}));
+    EXPECT_EQ(keys->body.find("private-router-secret"), std::string::npos);
+
+    const auto deleted_key = client.Delete(
+        "/api/v1/api-keys/api_key_1",
+        kRuntimeCookie,
+        "{}",
+        "application/json");
+    ASSERT_TRUE(deleted_key);
+    ASSERT_EQ(deleted_key->status, 204) << deleted_key->body;
+    const auto unrelated_key = client.Post(
+        "/api/v1/api-keys",
+        kRuntimeCookie,
+        R"({"display_name":"Unrelated key","value":"private-unrelated-secret"})",
+        "application/json");
+    ASSERT_TRUE(unrelated_key);
+    ASSERT_EQ(unrelated_key->status, 201) << unrelated_key->body;
+    EXPECT_EQ(
+        nlohmann::json::parse(unrelated_key->body).at("id"),
+        "api_key_2");
+    EXPECT_EQ(getws()->find_provider("test")->config.api_key_id, "api_key_1");
+
+    const auto styles = client.Get("/api/v1/styles", kRuntimeCookie);
+    ASSERT_TRUE(styles);
+    ASSERT_EQ(styles->status, 200) << styles->body;
+    nlohmann::json style = nlohmann::json::parse(styles->body).front();
+    style.erase("id");
+    style.erase("writable");
+    style["display_name"] = "Editorial";
+    style["weight"] = "bold";
+    const auto updated_style = client.Patch(
+        "/api/v1/styles/serif",
+        kRuntimeCookie,
+        style.dump(),
+        "application/json");
+    ASSERT_TRUE(updated_style);
+    ASSERT_EQ(updated_style->status, 200) << updated_style->body;
+    EXPECT_EQ(
+        nlohmann::json::parse(updated_style->body).at("display_name"),
+        "Editorial");
+    ASSERT_NE(getws()->find_style("serif"), nullptr);
+    EXPECT_EQ(
+        getws()->find_style("serif")->appearance.weight,
+        CharacterWeight::bold);
+
+    const auto created_provider = client.Post(
+        "/api/v1/providers",
+        kRuntimeCookie,
+        R"({"display_name":"OpenRouter"})",
+        "application/json");
+    ASSERT_TRUE(created_provider);
+    ASSERT_EQ(created_provider->status, 201) << created_provider->body;
+    const nlohmann::json new_provider =
+        nlohmann::json::parse(created_provider->body);
+    EXPECT_EQ(new_provider.at("id"), "provider_1");
+    EXPECT_EQ(new_provider.at("display_name"), "OpenRouter");
+    EXPECT_EQ(new_provider.at("host"), "api.openai.com");
+    ASSERT_NE(getws()->find_provider("provider_1"), nullptr);
+
+    const auto used_provider_delete = client.Delete(
+        "/api/v1/providers/test",
+        kRuntimeCookie,
+        "{}",
+        "application/json");
+    ASSERT_TRUE(used_provider_delete);
+    EXPECT_EQ(used_provider_delete->status, 409) << used_provider_delete->body;
+    ASSERT_NE(getws()->find_provider("test"), nullptr);
+
+    const auto provider_delete = client.Delete(
+        "/api/v1/providers/provider_1",
+        kRuntimeCookie,
+        "{}",
+        "application/json");
+    ASSERT_TRUE(provider_delete);
+    EXPECT_EQ(provider_delete->status, 204) << provider_delete->body;
+    EXPECT_EQ(getws()->find_provider("provider_1"), nullptr);
+
+    const auto created_style = client.Post(
+        "/api/v1/styles",
+        kRuntimeCookie,
+        R"({"display_name":"Quiet"})",
+        "application/json");
+    ASSERT_TRUE(created_style);
+    ASSERT_EQ(created_style->status, 201) << created_style->body;
+    const nlohmann::json new_style = nlohmann::json::parse(created_style->body);
+    EXPECT_EQ(new_style.at("id"), "style_1");
+    EXPECT_EQ(new_style.at("display_name"), "Quiet");
+    EXPECT_EQ(new_style.at("font"), "sans");
+    ASSERT_NE(getws()->find_style("style_1"), nullptr);
+
+    const auto style_delete = client.Delete(
+        "/api/v1/styles/style_1",
+        kRuntimeCookie,
+        "{}",
+        "application/json");
+    ASSERT_TRUE(style_delete);
+    EXPECT_EQ(style_delete->status, 204) << style_delete->body;
+    EXPECT_EQ(getws()->find_style("style_1"), nullptr);
+
+    runtime->shutdown();
+}
+
 TEST(ApplicationRuntime, UploadsInProcessAndResumesAnOpenSession) {
     ScopedEnvironmentVariable url("CHA_R2_URL");
     ScopedEnvironmentVariable access("CHA_R2_ACCESS_KEY_ID");

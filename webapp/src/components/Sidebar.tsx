@@ -46,6 +46,19 @@ const navigation = [
   { action: 'show-forums' as const, views: ['forums', 'new-forum', 'sessions', 'forum-detail', 'forum-members', 'new-session'] as MainView[], label: 'Forums', icon: ForumsIcon },
 ];
 
+const settingsViews: MainView[] = [
+  'settings',
+  'settings-providers',
+  'settings-new-provider',
+  'settings-provider',
+  'settings-styles',
+  'settings-new-style',
+  'settings-style',
+  'settings-api-keys',
+  'settings-new-api-key',
+  'settings-api-key',
+];
+
 function SessionDialog({
   kind,
   session,
@@ -93,7 +106,7 @@ function SessionDialog({
   }
 
   return createPortal(
-    <dialog className="cha-session-dialog" onCancel={onClose} ref={dialog}>
+    <dialog className="cha-dialog" onCancel={onClose} ref={dialog}>
       <form method="dialog" onSubmit={(event) => void submit(event)}>
         <h2>{kind === 'rename' ? 'Rename session' : 'Delete session?'}</h2>
         {kind === 'rename' ? (
@@ -287,9 +300,9 @@ export function Sidebar({
           ))}
         </select>
         <button
-          aria-current={state.mainView === 'settings' ? 'page' : undefined}
+          aria-current={settingsViews.includes(state.mainView) ? 'page' : undefined}
           aria-label="Settings"
-          className={`cha-sidebar-settings ${state.mainView === 'settings' ? 'is-current' : ''}`}
+          className={`cha-sidebar-settings ${settingsViews.includes(state.mainView) ? 'is-current' : ''}`}
           disabled={state.bootstrapStatus !== 'ready'}
           onClick={() => dispatch({ type: 'show-settings' })}
           title="Settings"

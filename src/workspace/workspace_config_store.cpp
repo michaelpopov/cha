@@ -43,6 +43,7 @@ constexpr std::array sidecar_suffixes{
 
 constexpr std::array skeleton_directories{
     std::string_view("system/providers"),
+    std::string_view("system/styles"),
     std::string_view("personas"),
     std::string_view("characters"),
     std::string_view("forums"),
@@ -496,6 +497,42 @@ std::vector<std::string> forums_using_persona(
     return result;
 }
 
+std::vector<std::string> forums_using_provider(
+    const Workspace& workspace,
+    std::string_view provider_id) {
+    std::vector<std::string> result;
+    for (const WorkspaceForum& forum : workspace.forums()) {
+        const bool used = std::ranges::any_of(
+            forum.members,
+            [&](const WorkspaceForumMember& member) {
+                const WorkspaceCharacter* character =
+                    workspace.find_character(member.character_id);
+                return character != nullptr && character->provider_id
+                    && *character->provider_id == provider_id;
+            });
+        if (used) result.push_back(forum.id);
+    }
+    return result;
+}
+
+std::vector<std::string> forums_using_style(
+    const Workspace& workspace,
+    std::string_view style_id) {
+    std::vector<std::string> result;
+    for (const WorkspaceForum& forum : workspace.forums()) {
+        const bool used = std::ranges::any_of(
+            forum.members,
+            [&](const WorkspaceForumMember& member) {
+                const WorkspaceCharacter* character =
+                    workspace.find_character(member.character_id);
+                return character != nullptr && character->style_id
+                    && *character->style_id == style_id;
+            });
+        if (used) result.push_back(forum.id);
+    }
+    return result;
+}
+
 void remove_created_database(const std::filesystem::path& path) noexcept {
     std::error_code ignored;
     std::filesystem::remove(path, ignored);
@@ -943,7 +980,9 @@ struct WorkspaceConfigStore::Impl {
     }
 
     template<typename Writer>
-    WorkspaceConfigEditResult edit(Writer&& writer) {
+    WorkspaceConfigEditResult edit(
+        Writer&& writer,
+        std::string_view deleted_forum_id = {}) {
         const std::lock_guard lock(mutex);
         const std::shared_ptr<const Workspace> published = getws();
         if (!published || published->root() != tree->workspace()) {
@@ -970,6 +1009,17 @@ struct WorkspaceConfigStore::Impl {
                 fail_path("Forced SQLite write failure");
             }
             replace_workspace_config_files(*database, rows);
+            if (!deleted_forum_id.empty()) {
+                storage::SqliteStatement delete_sessions = database->prepare(
+                    "DELETE FROM sessions WHERE forum_key IN ("
+                    "SELECT forum_key FROM forums WHERE forum_id = ?1)",
+                    deleted_forum_id);
+                delete_sessions.run();
+                storage::SqliteStatement delete_forum = database->prepare(
+                    "DELETE FROM forums WHERE forum_id = ?1",
+                    deleted_forum_id);
+                delete_forum.run();
+            }
             if (consume_runtime_fault(WorkspaceConfigFault::sqlite_commit)) {
                 fail_path("Forced SQLite commit failure");
             }
@@ -1172,6 +1222,14 @@ WorkspaceConfigEditResult WorkspaceConfigStore::apply_character_definition(
     });
 }
 
+WorkspaceConfigEditResult WorkspaceConfigStore::apply_character_delete(
+    std::string_view character_id) {
+    return impl_->edit([&](const Workspace& workspace) {
+        workspace.delete_character(character_id);
+        return std::vector<std::string>{};
+    });
+}
+
 WorkspaceConfigEditResult WorkspaceConfigStore::apply_persona_update(
     std::string_view persona_id,
     std::string_view display_name,
@@ -1189,6 +1247,14 @@ WorkspaceConfigEditResult WorkspaceConfigStore::apply_persona_create(
     std::string_view display_name) {
     return impl_->edit([&](const Workspace& workspace) {
         workspace.create_persona(persona_id, display_name);
+        return std::vector<std::string>{};
+    });
+}
+
+WorkspaceConfigEditResult WorkspaceConfigStore::apply_persona_delete(
+    std::string_view persona_id) {
+    return impl_->edit([&](const Workspace& workspace) {
+        workspace.delete_persona(persona_id);
         return std::vector<std::string>{};
     });
 }
@@ -1223,6 +1289,14 @@ WorkspaceConfigEditResult WorkspaceConfigStore::apply_forum_update(
     });
 }
 
+WorkspaceConfigEditResult WorkspaceConfigStore::apply_forum_delete(
+    std::string_view forum_id) {
+    return impl_->edit([&](const Workspace& workspace) {
+        workspace.delete_forum(forum_id);
+        return std::vector<std::string>{std::string(forum_id)};
+    }, forum_id);
+}
+
 WorkspaceConfigEditResult WorkspaceConfigStore::apply_forum_members(
     std::string_view forum_id,
     std::span<const std::string> character_ids) {
@@ -1247,6 +1321,64 @@ WorkspaceConfigEditResult WorkspaceConfigStore::apply_forum_default_persona(
     return impl_->edit([&](const Workspace& workspace) {
         workspace.write_forum_default_persona(forum_id, persona_id);
         return std::vector<std::string>{std::string(forum_id)};
+    });
+}
+
+WorkspaceConfigEditResult WorkspaceConfigStore::apply_provider_update(
+    std::string_view provider_id,
+    std::string_view display_name,
+    const ModelBackendConfig& config) {
+    return impl_->edit([&](const Workspace& workspace) {
+        std::vector<std::string> affected =
+            forums_using_provider(workspace, provider_id);
+        workspace.write_provider(provider_id, display_name, config);
+        return affected;
+    });
+}
+
+WorkspaceConfigEditResult WorkspaceConfigStore::apply_provider_create(
+    std::string_view provider_id,
+    std::string_view display_name) {
+    return impl_->edit([&](const Workspace& workspace) {
+        workspace.create_provider(provider_id, display_name);
+        return std::vector<std::string>{};
+    });
+}
+
+WorkspaceConfigEditResult WorkspaceConfigStore::apply_provider_delete(
+    std::string_view provider_id) {
+    return impl_->edit([&](const Workspace& workspace) {
+        workspace.delete_provider(provider_id);
+        return std::vector<std::string>{};
+    });
+}
+
+WorkspaceConfigEditResult WorkspaceConfigStore::apply_style_update(
+    std::string_view style_id,
+    std::string_view display_name,
+    const CharacterAppearance& appearance) {
+    return impl_->edit([&](const Workspace& workspace) {
+        std::vector<std::string> affected =
+            forums_using_style(workspace, style_id);
+        workspace.write_style(style_id, display_name, appearance);
+        return affected;
+    });
+}
+
+WorkspaceConfigEditResult WorkspaceConfigStore::apply_style_create(
+    std::string_view style_id,
+    std::string_view display_name) {
+    return impl_->edit([&](const Workspace& workspace) {
+        workspace.create_style(style_id, display_name);
+        return std::vector<std::string>{};
+    });
+}
+
+WorkspaceConfigEditResult WorkspaceConfigStore::apply_style_delete(
+    std::string_view style_id) {
+    return impl_->edit([&](const Workspace& workspace) {
+        workspace.delete_style(style_id);
+        return std::vector<std::string>{};
     });
 }
 

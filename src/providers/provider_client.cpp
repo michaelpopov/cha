@@ -1,5 +1,7 @@
 #include "providers/provider_client.h"
 
+#include "providers/api_key_store.h"
+
 #include "characters/character.h"
 #include "characters/character_config.h"
 #include "providers/chat_completions_api.h"
@@ -471,6 +473,13 @@ ProviderClient::ProviderClient(
     SharedCharacterDefinition definition,
     OpenAiOAuth* oauth,
     ProviderHttpTransport transport)
+    : ProviderClient(std::move(definition), oauth, nullptr, std::move(transport)) {}
+
+ProviderClient::ProviderClient(
+    SharedCharacterDefinition definition,
+    OpenAiOAuth* oauth,
+    ApiKeyStore* api_keys,
+    ProviderHttpTransport transport)
     : definition_(std::move(definition)),
       oauth_(oauth),
       transport_(std::move(transport)) {
@@ -490,7 +499,14 @@ ProviderClient::ProviderClient(
         throw std::runtime_error(
             "OpenAI subscription provider requires an authentication owner");
     }
-    if (!config.api_key_env.empty()) {
+    if (!config.api_key_id.empty()) {
+        if (api_keys == nullptr) {
+            throw std::runtime_error(
+                "Provider requires the saved API key '" + config.api_key_id
+                + "', but API key storage is unavailable");
+        }
+        api_key_ = api_keys->value(config.api_key_id);
+    } else if (!config.api_key_env.empty()) {
         const char* api_key = std::getenv(config.api_key_env.c_str());
         if (!api_key || *api_key == '\0') {
             throw std::runtime_error(

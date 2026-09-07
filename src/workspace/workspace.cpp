@@ -207,21 +207,55 @@ std::string option_label(std::string_view id) {
     return label;
 }
 
+std::string_view mode_name(Mode value) {
+    return value == Mode::net ? "net" : "test";
+}
+
+std::string_view api_name(ProviderApi value) {
+    return value == ProviderApi::chat_completions
+        ? "chat_completions" : "responses";
+}
+
+std::string_view auth_name(ProviderAuth value) {
+    return value == ProviderAuth::openai_subscription
+        ? "openai_subscription" : "none";
+}
+
+std::string_view reasoning_format_name(ReasoningFormat value) {
+    switch (value) {
+    case ReasoningFormat::automatic: return "auto";
+    case ReasoningFormat::none: return "none";
+    case ReasoningFormat::reasoning_content: return "reasoning_content";
+    case ReasoningFormat::reasoning: return "reasoning";
+    }
+    throw std::invalid_argument("Invalid reasoning format");
+}
+
+std::string_view cache_retention_name(CacheRetention value) {
+    switch (value) {
+    case CacheRetention::off: return "off";
+    case CacheRetention::short_: return "short";
+    case CacheRetention::long_: return "long";
+    }
+    throw std::invalid_argument("Invalid cache retention");
+}
+
 WorkspaceProvider load_provider(const std::filesystem::path& directory) {
     const std::string id = utf8_path(directory.filename());
     require_path_component(id, directory.parent_path());
     const std::filesystem::path path = directory / "config.toml";
     const toml::table table = read_toml(path, "provider config");
     static constexpr std::string_view fields[]{
-        "host", "port", "base_path", "mode", "model", "stream",
+        "display_name", "host", "port", "base_path", "mode", "model", "stream",
         "temperature", "max_tokens", "timeout_s", "idle_timeout_s",
-        "api_key_env", "reasoning_effort", "reasoning_format", "https",
+        "api_key", "api_key_env", "reasoning_effort", "reasoning_format", "https",
         "api", "auth", "web_search", "cache_retention"};
     reject_unknown_fields(table, path, fields, "Provider config");
 
     WorkspaceProvider provider{
         .id = id,
-        .label = option_label(id),
+        .label = optional_value<std::string>(
+            table, path, "display_name", "a string").value_or(option_label(id)),
         .config = {
             .host = required_string(table, path, "host"),
             .port = optional_value<int>(table, path, "port", "an integer").value_or(0),
@@ -241,6 +275,8 @@ WorkspaceProvider load_provider(const std::filesystem::path& directory) {
                 table, path, "timeout_s", "an integer").value_or(600),
             .idle_timeout_s = optional_value<int>(
                 table, path, "idle_timeout_s", "an integer").value_or(60),
+            .api_key_id = optional_value<std::string>(
+                table, path, "api_key", "a string").value_or(""),
             .api_key_env = optional_value<std::string>(
                 table, path, "api_key_env", "a string").value_or(""),
             .reasoning_effort = optional_value<std::string>(
@@ -261,7 +297,8 @@ WorkspaceProvider load_provider(const std::filesystem::path& directory) {
                 ProviderApi::responses),
             .auth = choice(
                 table, path, "auth",
-                {{"openai_subscription", ProviderAuth::openai_subscription}},
+                {{"none", ProviderAuth::none},
+                 {"openai_subscription", ProviderAuth::openai_subscription}},
                 ProviderAuth::none),
             .web_search = choice(
                 table, path, "web_search",
@@ -279,6 +316,12 @@ WorkspaceProvider load_provider(const std::filesystem::path& directory) {
     };
 
     const ModelBackendConfig& config = provider.config;
+    validate_public_name(provider.label, "Provider name", path);
+    if (!config.api_key_id.empty() && !config.api_key_env.empty()) {
+        throw std::runtime_error(
+            "Provider config '" + utf8_path(path)
+            + "' cannot set both api_key and api_key_env");
+    }
     if (config.port < 1 || config.port > 65535) {
         throw std::runtime_error(
             "Provider config '" + utf8_path(path)
@@ -320,6 +363,7 @@ WorkspaceProvider load_provider(const std::filesystem::path& directory) {
             || config.mode != Mode::net
             || config.api != ProviderApi::responses
             || !config.stream
+            || !config.api_key_id.empty()
             || !config.api_key_env.empty()
             || config.temperature
             || config.max_tokens
@@ -339,11 +383,12 @@ WorkspaceStyle load_style(const std::filesystem::path& directory) {
     const std::filesystem::path path = directory / "config.toml";
     const toml::table table = read_toml(path, "style config");
     static constexpr std::string_view fields[]{
-        "font", "style", "weight", "size", "text_color"};
+        "display_name", "font", "style", "weight", "size", "text_color"};
     reject_unknown_fields(table, path, fields, "Style config");
-    return {
+    WorkspaceStyle loaded{
         .id = id,
-        .label = option_label(id),
+        .label = optional_value<std::string>(
+            table, path, "display_name", "a string").value_or(option_label(id)),
         .appearance = {
             .font = choice(
                 table, path, "font",
@@ -377,6 +422,8 @@ WorkspaceStyle load_style(const std::filesystem::path& directory) {
                 CharacterTextColor::normal),
         },
     };
+    validate_public_name(loaded.label, "Style name", path);
+    return loaded;
 }
 
 bool is_persona_id(std::string_view id) {
@@ -761,7 +808,10 @@ Workspace Workspace::load(std::filesystem::path root) {
     for (const std::filesystem::path& directory :
          direct_subdirectories(providers_directory)) {
         try {
-            workspace.providers_.push_back(load_provider(directory));
+            WorkspaceProvider provider = load_provider(directory);
+            workspace.provider_config_paths_.emplace(
+                provider.id, directory / "config.toml");
+            workspace.providers_.push_back(std::move(provider));
         } catch (const std::exception& error) {
             provider_errors.emplace(
                 utf8_path(directory.filename()), error.what());
@@ -785,7 +835,10 @@ Workspace Workspace::load(std::filesystem::path root) {
         for (const std::filesystem::path& directory :
              direct_subdirectories(styles_directory)) {
             try {
-                workspace.styles_.push_back(load_style(directory));
+                WorkspaceStyle style = load_style(directory);
+                workspace.style_config_paths_.emplace(
+                    style.id, directory / "config.toml");
+                workspace.styles_.push_back(std::move(style));
             } catch (const std::exception& error) {
                 log_warn(
                     "Style '" + utf8_path(directory.filename())
@@ -888,6 +941,10 @@ Workspace Workspace::load(std::filesystem::path root) {
         };
         const std::string prompt_template =
             read_text(prompt_path, "character prompt");
+        const std::string editable_markdown =
+            prompt_template == embedded_new_character_template()
+            ? read_text(directory / "PROFILE.md", "character profile")
+            : prompt_template;
         workspace.characters_.push_back({
             .character = {
                 .id = id,
@@ -904,6 +961,7 @@ Workspace Workspace::load(std::filesystem::path root) {
             .prompt_template = prompt_template,
             .markdown = character_description(
                 expand_template_file(prompt_path, description_options)),
+            .editable_markdown = editable_markdown,
         });
     }
 
@@ -952,6 +1010,7 @@ Workspace Workspace::load(std::filesystem::path root) {
         .prompt_variables = assistant.prompt_variables,
         .prompt_template = std::string(embedded_application_guide()),
         .markdown = std::string(embedded_application_guide()),
+        .editable_markdown = std::string(embedded_application_guide()),
     });
     std::ranges::sort(
         workspace.characters_, {},
@@ -1345,6 +1404,204 @@ bool Workspace::forum_is_writable(std::string_view id) const noexcept {
     return forum_config_paths_.contains(std::string(id));
 }
 
+bool Workspace::provider_is_writable(std::string_view id) const noexcept {
+    return provider_config_paths_.contains(std::string(id));
+}
+
+bool Workspace::style_is_writable(std::string_view id) const noexcept {
+    return style_config_paths_.contains(std::string(id));
+}
+
+void Workspace::write_provider(
+    std::string_view provider_id,
+    std::string_view display_name,
+    const ModelBackendConfig& provider) const {
+    const auto path = provider_config_paths_.find(std::string(provider_id));
+    if (path == provider_config_paths_.end()) {
+        throw std::runtime_error(
+            "Provider '" + std::string(provider_id)
+            + "' has no writable configuration");
+    }
+    try {
+        validate_public_name(display_name, "Provider name", path->second);
+    } catch (const std::runtime_error&) {
+        throw std::invalid_argument("Invalid provider name");
+    }
+    if (!provider.api_key_id.empty() && !provider.api_key_env.empty()) {
+        throw std::invalid_argument(
+            "A provider cannot use both a saved API key and an environment variable");
+    }
+
+    toml::table table;
+    table.insert("display_name", std::string(display_name));
+    table.insert("host", provider.host);
+    table.insert("port", provider.port);
+    if (!provider.base_path.empty()) table.insert("base_path", provider.base_path);
+    table.insert("mode", mode_name(provider.mode));
+    table.insert("model", provider.model);
+    table.insert("stream", provider.stream);
+    if (provider.temperature) table.insert("temperature", *provider.temperature);
+    if (provider.max_tokens) table.insert("max_tokens", *provider.max_tokens);
+    table.insert("timeout_s", provider.timeout_s);
+    table.insert("idle_timeout_s", provider.idle_timeout_s);
+    if (!provider.api_key_id.empty()) table.insert("api_key", provider.api_key_id);
+    if (!provider.api_key_env.empty()) {
+        table.insert("api_key_env", provider.api_key_env);
+    }
+    if (!provider.reasoning_effort.empty()) {
+        table.insert("reasoning_effort", provider.reasoning_effort);
+    }
+    table.insert("reasoning_format", reasoning_format_name(provider.reasoning_format));
+    table.insert("https", provider.https);
+    table.insert("api", api_name(provider.api));
+    table.insert("auth", auth_name(provider.auth));
+    table.insert("web_search", to_string(provider.web_search));
+    table.insert("cache_retention", cache_retention_name(provider.cache_retention));
+    write_toml_file(path->second, table);
+    try {
+        (void)load_provider(path->second.parent_path());
+    } catch (const std::runtime_error&) {
+        throw std::invalid_argument("Invalid provider settings");
+    }
+}
+
+void Workspace::create_provider(
+    std::string_view provider_id,
+    std::string_view display_name) const {
+    const std::filesystem::path directory =
+        root_ / "system" / "providers" / std::string(provider_id);
+    const std::filesystem::path path = directory / "config.toml";
+    try {
+        require_path_component(provider_id, directory.parent_path());
+        validate_public_name(display_name, "Provider name", path);
+    } catch (const std::runtime_error&) {
+        throw std::invalid_argument("Invalid provider");
+    }
+    if (find_provider(provider_id) != nullptr
+        || std::filesystem::exists(directory)) {
+        throw std::invalid_argument("Duplicate provider");
+    }
+
+    create_private_directory(directory);
+    toml::table table;
+    table.insert("display_name", std::string(display_name));
+    table.insert("host", "api.openai.com");
+    table.insert("port", 443);
+    table.insert("mode", "net");
+    table.insert("model", "gpt-5");
+    table.insert("stream", true);
+    table.insert("timeout_s", 600);
+    table.insert("idle_timeout_s", 60);
+    table.insert("reasoning_format", "auto");
+    table.insert("https", true);
+    table.insert("api", "responses");
+    table.insert("auth", "none");
+    table.insert("web_search", "off");
+    table.insert("cache_retention", "short");
+    write_toml_file(path, table);
+    (void)load_provider(directory);
+}
+
+void Workspace::delete_provider(std::string_view provider_id) const {
+    const auto path = provider_config_paths_.find(std::string(provider_id));
+    if (path == provider_config_paths_.end()) {
+        throw std::runtime_error(
+            "Provider '" + std::string(provider_id)
+            + "' has no writable configuration");
+    }
+    for (const WorkspaceCharacter& character : characters_) {
+        if (character.provider_id && *character.provider_id == provider_id) {
+            throw std::invalid_argument("Provider is in use");
+        }
+    }
+    std::error_code error;
+    std::filesystem::remove_all(path->second.parent_path(), error);
+    if (error) {
+        throw std::runtime_error(
+            "Failed to remove provider '" + std::string(provider_id)
+            + "': " + error.message());
+    }
+}
+
+void Workspace::write_style(
+    std::string_view style_id,
+    std::string_view display_name,
+    const CharacterAppearance& appearance) const {
+    const auto path = style_config_paths_.find(std::string(style_id));
+    if (path == style_config_paths_.end()) {
+        throw std::runtime_error(
+            "Style '" + std::string(style_id)
+            + "' has no writable configuration");
+    }
+    try {
+        validate_public_name(display_name, "Style name", path->second);
+    } catch (const std::runtime_error&) {
+        throw std::invalid_argument("Invalid style name");
+    }
+    toml::table table;
+    table.insert("display_name", std::string(display_name));
+    table.insert("font", to_string(appearance.font));
+    table.insert("style", to_string(appearance.style));
+    table.insert("weight", to_string(appearance.weight));
+    table.insert("size", to_string(appearance.size));
+    table.insert("text_color", to_string(appearance.text_color));
+    write_toml_file(path->second, table);
+    try {
+        (void)load_style(path->second.parent_path());
+    } catch (const std::runtime_error&) {
+        throw std::invalid_argument("Invalid style settings");
+    }
+}
+
+void Workspace::create_style(
+    std::string_view style_id,
+    std::string_view display_name) const {
+    const std::filesystem::path directory =
+        root_ / "system" / "styles" / std::string(style_id);
+    const std::filesystem::path path = directory / "config.toml";
+    try {
+        require_path_component(style_id, directory.parent_path());
+        validate_public_name(display_name, "Style name", path);
+    } catch (const std::runtime_error&) {
+        throw std::invalid_argument("Invalid style");
+    }
+    if (find_style(style_id) != nullptr || std::filesystem::exists(directory)) {
+        throw std::invalid_argument("Duplicate style");
+    }
+
+    create_private_directory(directory);
+    toml::table table;
+    table.insert("display_name", std::string(display_name));
+    table.insert("font", "sans");
+    table.insert("style", "normal");
+    table.insert("weight", "normal");
+    table.insert("size", "normal");
+    table.insert("text_color", "normal");
+    write_toml_file(path, table);
+    (void)load_style(directory);
+}
+
+void Workspace::delete_style(std::string_view style_id) const {
+    const auto path = style_config_paths_.find(std::string(style_id));
+    if (path == style_config_paths_.end()) {
+        throw std::runtime_error(
+            "Style '" + std::string(style_id)
+            + "' has no writable configuration");
+    }
+    for (const WorkspaceCharacter& character : characters_) {
+        if (character.style_id && *character.style_id == style_id) {
+            throw std::invalid_argument("Style is in use");
+        }
+    }
+    std::error_code error;
+    std::filesystem::remove_all(path->second.parent_path(), error);
+    if (error) {
+        throw std::runtime_error(
+            "Failed to remove style '" + std::string(style_id)
+            + "': " + error.message());
+    }
+}
+
 void Workspace::write_character_definition(
     std::string_view character_id,
     std::string_view display_name,
@@ -1386,6 +1643,30 @@ void Workspace::write_character_definition(
     }
 }
 
+void Workspace::delete_character(std::string_view character_id) const {
+    const auto path = character_config_paths_.find(std::string(character_id));
+    if (path == character_config_paths_.end()) {
+        throw std::runtime_error(
+            "Character '" + std::string(character_id)
+            + "' has no writable configuration");
+    }
+    for (const WorkspaceForum& forum : forums_) {
+        const bool used = std::ranges::any_of(
+            forum.members,
+            [&](const WorkspaceForumMember& member) {
+                return member.character_id == character_id;
+            });
+        if (used) throw std::invalid_argument("Character is in use");
+    }
+    std::error_code error;
+    std::filesystem::remove_all(path->second.parent_path(), error);
+    if (error) {
+        throw std::runtime_error(
+            "Failed to remove character '" + std::string(character_id)
+            + "': " + error.message());
+    }
+}
+
 void Workspace::write_persona(
     std::string_view persona_id,
     std::string_view display_name,
@@ -1420,6 +1701,27 @@ void Workspace::write_persona(
         table.insert_or_assign("display_name", std::string(display_name));
     });
     create_private_file(directory->second / "PERSONA.md", markdown);
+}
+
+void Workspace::delete_persona(std::string_view persona_id) const {
+    const auto directory = persona_directories_.find(std::string(persona_id));
+    if (directory == persona_directories_.end()) {
+        throw std::runtime_error(
+            "Persona '" + std::string(persona_id)
+            + "' has no writable configuration");
+    }
+    for (const WorkspaceForum& forum : forums_) {
+        if (forum.default_persona_id == persona_id) {
+            throw std::invalid_argument("Persona is in use");
+        }
+    }
+    std::error_code error;
+    std::filesystem::remove_all(directory->second, error);
+    if (error) {
+        throw std::runtime_error(
+            "Failed to remove persona '" + std::string(persona_id)
+            + "': " + error.message());
+    }
 }
 
 void Workspace::create_persona(
@@ -1544,6 +1846,22 @@ void Workspace::create_forum(
     create_private_directory(directory / "members");
     create_private_directory(member);
     create_private_file(member / "character.toml", "# Forum member\n");
+}
+
+void Workspace::delete_forum(std::string_view forum_id) const {
+    const auto path = forum_config_paths_.find(std::string(forum_id));
+    if (path == forum_config_paths_.end()) {
+        throw std::runtime_error(
+            "Forum '" + std::string(forum_id)
+            + "' has no writable configuration");
+    }
+    std::error_code error;
+    std::filesystem::remove_all(path->second.parent_path(), error);
+    if (error) {
+        throw std::runtime_error(
+            "Failed to remove forum '" + std::string(forum_id)
+            + "': " + error.message());
+    }
 }
 
 void Workspace::write_character_settings(

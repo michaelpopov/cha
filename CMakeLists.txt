@@ -181,6 +181,7 @@ add_library(cha_core STATIC
     src/chat/transcript.cpp
     src/characters/character.cpp
     src/characters/model_context.cpp
+    src/providers/api_key_store.cpp
     src/providers/providers.cpp
     src/providers/provider_client.cpp
     src/providers/openai_oauth.cpp
@@ -267,6 +268,7 @@ add_library(cha_web STATIC
     src/web/session_projection.cpp
     src/web/server_shutdown.cpp
     src/web/session_routes.cpp
+    src/web/settings_routes.cpp
     src/web/live_session.cpp
     src/web/live_session_manager.cpp
     src/web/sse_mailbox.cpp
@@ -314,6 +316,7 @@ if(BUILD_TESTING)
         tests/chat/unit_transcript.cpp
         tests/agents/unit_model_context.cpp
         tests/providers/unit_providers.cpp
+        tests/providers/unit_api_key_store.cpp
         tests/providers/unit_openai_oauth.cpp
         tests/providers/unit_chat_completions_api.cpp
         tests/providers/unit_responses_api.cpp

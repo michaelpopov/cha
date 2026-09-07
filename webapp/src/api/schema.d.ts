@@ -124,6 +124,140 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/providers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List inference providers */
+        get: operations["listProviders"];
+        put?: never;
+        /** Create an inference provider */
+        post: operations["createProvider"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/providers/{provider_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider_id: components["schemas"]["Identifier"];
+            };
+            cookie?: never;
+        };
+        /** Get inference provider settings */
+        get: operations["getProvider"];
+        put?: never;
+        post?: never;
+        /** Delete an unused inference provider */
+        delete: operations["deleteProvider"];
+        options?: never;
+        head?: never;
+        /** Replace editable inference provider settings */
+        patch: operations["updateProvider"];
+        trace?: never;
+    };
+    "/api/v1/styles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List character styles */
+        get: operations["listStyles"];
+        put?: never;
+        /** Create a character style */
+        post: operations["createStyle"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/styles/{style_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                style_id: components["schemas"]["Identifier"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete an unused character style */
+        delete: operations["deleteStyle"];
+        options?: never;
+        head?: never;
+        /** Replace editable character style settings */
+        patch: operations["updateStyle"];
+        trace?: never;
+    };
+    "/api/v1/api-keys": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List saved API keys without their secret values */
+        get: operations["listApiKeys"];
+        put?: never;
+        /** Store a new API key locally */
+        post: operations["createApiKey"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/api-keys/{api_key_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                api_key_id: components["schemas"]["Identifier"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove a saved API key */
+        delete: operations["deleteApiKey"];
+        options?: never;
+        head?: never;
+        /** Rename a saved API key */
+        patch: operations["renameApiKey"];
+        trace?: never;
+    };
+    "/api/v1/api-keys/{api_key_id}/value": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                api_key_id: components["schemas"]["Identifier"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** Replace a saved API key value */
+        put: operations["replaceApiKeyValue"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/openai/auth": {
         parameters: {
             query?: never;
@@ -261,7 +395,12 @@ export interface paths {
         get: operations["getCharacter"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Delete an unused character
+         * @description Permanently removes a writable character and its definition. A
+         *     character that is still a member of a forum cannot be deleted.
+         */
+        delete: operations["deleteCharacter"];
         options?: never;
         head?: never;
         /**
@@ -351,7 +490,12 @@ export interface paths {
         get: operations["getPersona"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Delete an unused persona
+         * @description Permanently removes a writable persona and its profile. A persona that
+         *     is still selected by a forum cannot be deleted.
+         */
+        delete: operations["deletePersona"];
         options?: never;
         head?: never;
         /**
@@ -411,7 +555,12 @@ export interface paths {
         get: operations["getForum"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Delete a forum and its sessions
+         * @description Permanently removes a writable forum and every session stored in it.
+         *     The built-in Entrance cannot be deleted.
+         */
+        delete: operations["deleteForum"];
         options?: never;
         head?: never;
         /**
@@ -842,6 +991,120 @@ export interface components {
             id: components["schemas"]["Identifier"];
             label: string;
         };
+        ProviderSummary: {
+            id: components["schemas"]["Identifier"];
+            display_name: string;
+            model: string;
+            host: string;
+        };
+        CreateProviderRequest: {
+            display_name: string;
+        };
+        ProviderUpdate: {
+            display_name: string;
+            host: string;
+            port: number;
+            base_path: string;
+            /** @enum {string} */
+            mode: "net" | "test";
+            model: string;
+            stream: boolean;
+            temperature: number | null;
+            max_tokens: number | null;
+            timeout_s: number;
+            idle_timeout_s: number;
+            api_key: string | null;
+            api_key_env: string | null;
+            reasoning_effort: string;
+            /** @enum {string} */
+            reasoning_format: "auto" | "none" | "reasoning_content" | "reasoning";
+            https: boolean;
+            /** @enum {string} */
+            api: "chat_completions" | "responses";
+            /** @enum {string} */
+            auth: "none" | "openai_subscription";
+            /** @enum {string} */
+            web_search: "off" | "auto" | "required";
+            /** @enum {string} */
+            cache_retention: "off" | "short" | "long";
+        };
+        ProviderDetail: {
+            id: components["schemas"]["Identifier"];
+            display_name: string;
+            host: string;
+            port: number;
+            base_path: string;
+            /** @enum {string} */
+            mode: "net" | "test";
+            model: string;
+            stream: boolean;
+            temperature: number | null;
+            max_tokens: number | null;
+            timeout_s: number;
+            idle_timeout_s: number;
+            api_key: string | null;
+            api_key_env: string | null;
+            reasoning_effort: string;
+            /** @enum {string} */
+            reasoning_format: "auto" | "none" | "reasoning_content" | "reasoning";
+            https: boolean;
+            /** @enum {string} */
+            api: "chat_completions" | "responses";
+            /** @enum {string} */
+            auth: "none" | "openai_subscription";
+            /** @enum {string} */
+            web_search: "off" | "auto" | "required";
+            /** @enum {string} */
+            cache_retention: "off" | "short" | "long";
+            writable: boolean;
+        };
+        StyleUpdate: {
+            display_name: string;
+            /** @enum {string} */
+            font: "sans" | "serif" | "mono";
+            /** @enum {string} */
+            style: "normal" | "italic";
+            /** @enum {string} */
+            weight: "light" | "normal" | "medium" | "semibold" | "bold";
+            /** @enum {string} */
+            size: "small" | "normal" | "large";
+            /** @enum {string} */
+            text_color: "normal" | "muted" | "accent";
+        };
+        CreateStyleRequest: {
+            display_name: string;
+        };
+        StyleDetail: {
+            id: components["schemas"]["Identifier"];
+            display_name: string;
+            /** @enum {string} */
+            font: "sans" | "serif" | "mono";
+            /** @enum {string} */
+            style: "normal" | "italic";
+            /** @enum {string} */
+            weight: "light" | "normal" | "medium" | "semibold" | "bold";
+            /** @enum {string} */
+            size: "small" | "normal" | "large";
+            /** @enum {string} */
+            text_color: "normal" | "muted" | "accent";
+            writable: boolean;
+        };
+        ApiKeyDetail: {
+            id: components["schemas"]["Identifier"];
+            display_name: string;
+            has_value: boolean;
+            used_by: string[];
+        };
+        CreateApiKeyRequest: {
+            display_name: string;
+            value: string;
+        };
+        RenameApiKeyRequest: {
+            display_name: string;
+        };
+        ReplaceApiKeyValueRequest: {
+            value: string;
+        };
         StyleOption: {
             id: components["schemas"]["Identifier"];
             label: string;
@@ -852,7 +1115,10 @@ export interface components {
             display_name: string;
             description?: string;
             appearance: components["schemas"]["CharacterAppearance"];
+            /** @description Template-expanded Markdown used for display. */
             character_markdown: string;
+            /** @description Verbatim Markdown accepted by the definition editor. */
+            editable_markdown: string;
             provider: string | null;
             style: string | null;
             /** @enum {string|null} */
@@ -1256,6 +1522,371 @@ export interface operations {
             500: components["responses"]["InternalError"];
         };
     };
+    listProviders: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Provider summaries. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderSummary"][];
+                };
+            };
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createProvider: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateProviderRequest"];
+            };
+        };
+        responses: {
+            /** @description Created provider settings. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderDetail"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getProvider: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider_id: components["schemas"]["Identifier"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Provider settings. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderDetail"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    deleteProvider: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider_id: components["schemas"]["Identifier"];
+            };
+            cookie?: never;
+        };
+        requestBody: components["requestBodies"]["EmptyJsonObject"];
+        responses: {
+            /** @description Provider deleted. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: components["responses"]["NotFound"];
+            /** @description A character still uses this provider. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            500: components["responses"]["InternalError"];
+        };
+    };
+    updateProvider: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider_id: components["schemas"]["Identifier"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProviderUpdate"];
+            };
+        };
+        responses: {
+            /** @description Updated provider settings. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderDetail"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listStyles: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Style settings. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StyleDetail"][];
+                };
+            };
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createStyle: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateStyleRequest"];
+            };
+        };
+        responses: {
+            /** @description Created style settings. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StyleDetail"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    deleteStyle: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                style_id: components["schemas"]["Identifier"];
+            };
+            cookie?: never;
+        };
+        requestBody: components["requestBodies"]["EmptyJsonObject"];
+        responses: {
+            /** @description Style deleted. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: components["responses"]["NotFound"];
+            /** @description A character still uses this style. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            500: components["responses"]["InternalError"];
+        };
+    };
+    updateStyle: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                style_id: components["schemas"]["Identifier"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StyleUpdate"];
+            };
+        };
+        responses: {
+            /** @description Updated style settings. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StyleDetail"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listApiKeys: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Saved key metadata. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiKeyDetail"][];
+                };
+            };
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createApiKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateApiKeyRequest"];
+            };
+        };
+        responses: {
+            /** @description Stored key metadata. The value is never returned. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiKeyDetail"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    deleteApiKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                api_key_id: components["schemas"]["Identifier"];
+            };
+            cookie?: never;
+        };
+        requestBody: components["requestBodies"]["EmptyJsonObject"];
+        responses: {
+            /** @description API key removed. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    renameApiKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                api_key_id: components["schemas"]["Identifier"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RenameApiKeyRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated key metadata. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiKeyDetail"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    replaceApiKeyValue: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                api_key_id: components["schemas"]["Identifier"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReplaceApiKeyValueRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated key metadata. The value is never returned. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiKeyDetail"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
     getOpenAiAuth: {
         parameters: {
             query?: never;
@@ -1367,6 +1998,41 @@ export interface operations {
                 };
             };
             404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    deleteCharacter: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Stable URL-safe character identifier. */
+                character_id: components["parameters"]["CharacterId"];
+            };
+            cookie?: never;
+        };
+        requestBody: components["requestBodies"]["EmptyJsonObject"];
+        responses: {
+            /** @description Character deleted. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["ForbiddenMutation"];
+            404: components["responses"]["NotFound"];
+            /** @description A forum still uses this character. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            413: components["responses"]["BodyTooLarge"];
             500: components["responses"]["InternalError"];
         };
     };
@@ -1487,6 +2153,41 @@ export interface operations {
             500: components["responses"]["InternalError"];
         };
     };
+    deletePersona: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Stable URL-safe persona identifier. */
+                persona_id: components["parameters"]["PersonaId"];
+            };
+            cookie?: never;
+        };
+        requestBody: components["requestBodies"]["EmptyJsonObject"];
+        responses: {
+            /** @description Persona deleted. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["ForbiddenMutation"];
+            404: components["responses"]["NotFound"];
+            /** @description A forum still uses this persona. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            413: components["responses"]["BodyTooLarge"];
+            500: components["responses"]["InternalError"];
+        };
+    };
     updatePersona: {
         parameters: {
             query?: never;
@@ -1569,6 +2270,32 @@ export interface operations {
                 };
             };
             404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    deleteForum: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Stable URL-safe forum identifier. */
+                forum_id: components["parameters"]["ForumId"];
+            };
+            cookie?: never;
+        };
+        requestBody: components["requestBodies"]["EmptyJsonObject"];
+        responses: {
+            /** @description Forum and sessions deleted. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["ForbiddenMutation"];
+            404: components["responses"]["NotFound"];
+            413: components["responses"]["BodyTooLarge"];
             500: components["responses"]["InternalError"];
         };
     };

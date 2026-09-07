@@ -57,6 +57,17 @@ import {
   SessionsScreen,
 } from './Screens';
 import { Sidebar } from './Sidebar';
+import {
+  ApiKeyScreen,
+  ApiKeysScreen,
+  NewApiKeyScreen,
+  NewProviderScreen,
+  NewStyleScreen,
+  ProviderScreen,
+  ProvidersScreen,
+  StyleScreen,
+  StylesScreen,
+} from './Settings';
 
 export const liveRetryDelays = [250, 500, 1_000, 2_000, 4_000] as const;
 
@@ -70,6 +81,7 @@ interface ScreenProps extends ChatActions {
   catalogRevision: number;
   characterRevision: number;
   forumRevision: number;
+  personaRevision: number;
 }
 
 function Screen({
@@ -87,6 +99,7 @@ function Screen({
   catalogRevision,
   characterRevision,
   forumRevision,
+  personaRevision,
 }: ScreenProps) {
   // A session can be opened from the sidebar while any navigation screen is
   // showing, so each one carries the report rather than only the two screens
@@ -126,6 +139,7 @@ function Screen({
       <PersonaDetailScreen
         client={client}
         dispatch={dispatch}
+        reloadVersion={personaRevision}
         sessionReport={sessionReport}
         state={state}
       />
@@ -207,9 +221,37 @@ function Screen({
     case 'settings': return (
       <OpenAiConnectionScreen
         client={client}
+        dispatch={dispatch}
         sessionReport={sessionReport}
         state={state}
       />
+    );
+    case 'settings-providers': return (
+      <ProvidersScreen client={client} dispatch={dispatch} sessionReport={sessionReport} state={state} />
+    );
+    case 'settings-new-provider': return (
+      <NewProviderScreen client={client} dispatch={dispatch} sessionReport={sessionReport} state={state} />
+    );
+    case 'settings-provider': return (
+      <ProviderScreen client={client} dispatch={dispatch} sessionReport={sessionReport} state={state} />
+    );
+    case 'settings-styles': return (
+      <StylesScreen client={client} dispatch={dispatch} sessionReport={sessionReport} state={state} />
+    );
+    case 'settings-new-style': return (
+      <NewStyleScreen client={client} dispatch={dispatch} sessionReport={sessionReport} state={state} />
+    );
+    case 'settings-style': return (
+      <StyleScreen client={client} dispatch={dispatch} sessionReport={sessionReport} state={state} />
+    );
+    case 'settings-api-keys': return (
+      <ApiKeysScreen client={client} dispatch={dispatch} sessionReport={sessionReport} state={state} />
+    );
+    case 'settings-new-api-key': return (
+      <NewApiKeyScreen client={client} dispatch={dispatch} sessionReport={sessionReport} state={state} />
+    );
+    case 'settings-api-key': return (
+      <ApiKeyScreen client={client} dispatch={dispatch} sessionReport={sessionReport} state={state} />
     );
   }
 }
@@ -341,6 +383,7 @@ export function App({
   const [catalogRevision, setCatalogRevision] = useState(0);
   const [characterRevision, setCharacterRevision] = useState(0);
   const [forumRevision, setForumRevision] = useState(0);
+  const [personaRevision, setPersonaRevision] = useState(0);
   // The epoch this render was built from. The ref below is what asynchronous
   // work compares against; this is what a render can compare against without
   // reading that ref while rendering.
@@ -867,6 +910,27 @@ export function App({
   }, [client, navigate, refreshBootstrap, resetLiveSession, runMutation,
     state.activeConversation]);
 
+  const deletePersona = useCallback(async (personaId: string) => {
+    await client.deletePersona(personaId);
+    navigate({ type: 'persona-deleted', personaId });
+  }, [client, navigate]);
+
+  const deleteCharacter = useCallback(async (characterId: string) => {
+    await client.deleteCharacter(characterId);
+    navigate({ type: 'character-deleted', characterId });
+  }, [client, navigate]);
+
+  const deleteForum = useCallback(async (forumId: string) => {
+    await client.deleteForum(forumId);
+    if (state.activeConversation?.forumId === forumId) {
+      resetLiveSession();
+      retryTarget.current = null;
+      window.history.replaceState(null, '', '/');
+    }
+    navigate({ type: 'forum-deleted', forumId });
+    setCatalogRevision((revision) => revision + 1);
+  }, [client, navigate, resetLiveSession, state.activeConversation]);
+
   useEffect(() => {
     if (state.bootstrapStatus !== 'ready' || initialRouteHandled.current) return;
     initialRouteHandled.current = true;
@@ -964,10 +1028,14 @@ export function App({
           <TopBar
             client={client}
             dispatch={navigate}
+            onDeleteCharacter={deleteCharacter}
+            onDeleteForum={deleteForum}
+            onDeletePersona={deletePersona}
             onCharacterDefinitionUpdated={() => (
               setCharacterRevision((revision) => revision + 1)
             )}
             onForumDefinitionUpdated={() => setForumRevision((revision) => revision + 1)}
+            onPersonaDefinitionUpdated={() => setPersonaRevision((revision) => revision + 1)}
             state={state}
             title={title}
           />
@@ -984,6 +1052,7 @@ export function App({
               catalogRevision={catalogRevision}
               characterRevision={characterRevision}
               forumRevision={forumRevision}
+              personaRevision={personaRevision}
               client={client}
               dispatch={navigate}
               onCreateSession={createConversation}

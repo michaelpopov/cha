@@ -126,6 +126,7 @@ CharacterDetail character_detail(
     CharacterDetail detail{
         .summary = character_summary(character),
         .character_markdown = character.markdown,
+        .editable_markdown = character.editable_markdown,
     };
     detail.writable = workspace.character_is_writable(character.character.id);
     if (detail.writable) {
@@ -422,6 +423,34 @@ void LobbyRoutes::install(httplib::Server& server) const {
         set_json_response(response, 200, nlohmann::json(character_detail(*workspace, *character)));
     });
 
+    server.Delete(R"(/api/v1/characters/([^/]+))",
+        [settings, config](const httplib::Request& request,
+                           httplib::Response& response) {
+        const auto workspace = published_workspace();
+        const std::string id = request.matches[1];
+        if (!is_valid_route_component(id)
+            || workspace->find_character(id) == nullptr
+            || !workspace->character_is_writable(id)) {
+            return set_route_not_found(response, "That character was not found.");
+        }
+        if (!validate_json_mutation(request, response)) return;
+        if (!parse_route_json_body(
+                request, response, settings.request_body_limit,
+                [](const nlohmann::json& json) { parse_empty_object(json); })) return;
+        try {
+            config->apply_character_delete(id);
+        } catch (const std::invalid_argument&) {
+            return set_error_response(response, 409,
+                {ErrorCode::bad_request,
+                 "This character is still used by one or more forums."});
+        } catch (const WorkspaceRestartRequiredError& error) {
+            return set_error_response(response, 500,
+                {ErrorCode::internal_error, error.what()});
+        }
+        response.status = 204;
+        response.set_header("Cache-Control", "no-store");
+    });
+
     server.Patch(R"(/api/v1/characters/([^/]+))",
         [live_sessions, settings, config](const httplib::Request& request,
                                   httplib::Response& response) {
@@ -541,6 +570,34 @@ void LobbyRoutes::install(httplib::Server& server) const {
         set_json_response(response, 200, nlohmann::json(persona_detail(*workspace, *persona)));
     });
 
+    server.Delete(R"(/api/v1/personas/([^/]+))",
+        [settings, config](const httplib::Request& request,
+                           httplib::Response& response) {
+        const auto workspace = published_workspace();
+        const std::string id = request.matches[1];
+        if (!is_valid_route_component(id)
+            || workspace->find_persona(id) == nullptr
+            || !workspace->persona_is_writable(id)) {
+            return set_route_not_found(response, "That persona was not found.");
+        }
+        if (!validate_json_mutation(request, response)) return;
+        if (!parse_route_json_body(
+                request, response, settings.request_body_limit,
+                [](const nlohmann::json& json) { parse_empty_object(json); })) return;
+        try {
+            config->apply_persona_delete(id);
+        } catch (const std::invalid_argument&) {
+            return set_error_response(response, 409,
+                {ErrorCode::bad_request,
+                 "This persona is still used by one or more forums."});
+        } catch (const WorkspaceRestartRequiredError& error) {
+            return set_error_response(response, 500,
+                {ErrorCode::internal_error, error.what()});
+        }
+        response.status = 204;
+        response.set_header("Cache-Control", "no-store");
+    });
+
     server.Patch(R"(/api/v1/personas/([^/]+))",
         [live_sessions, settings, config](const httplib::Request& request,
                                           httplib::Response& response) {
@@ -599,6 +656,32 @@ void LobbyRoutes::install(httplib::Server& server) const {
         if (forum == nullptr) return set_route_not_found(response);
         set_json_response(
             response, 200, nlohmann::json(forum_detail(*workspace, *forum)));
+    });
+
+    server.Delete(R"(/api/v1/forums/([^/]+))",
+        [live_sessions, settings, config](const httplib::Request& request,
+                                          httplib::Response& response) {
+        const auto workspace = published_workspace();
+        const std::string id = request.matches[1];
+        if (!is_valid_route_component(id)
+            || workspace->find_forum(id) == nullptr
+            || !workspace->forum_is_writable(id)) {
+            return set_route_not_found(response, "That forum was not found.");
+        }
+        if (!validate_json_mutation(request, response)) return;
+        if (!parse_route_json_body(
+                request, response, settings.request_body_limit,
+                [](const nlohmann::json& json) { parse_empty_object(json); })) return;
+        try {
+            const WorkspaceConfigEditResult edited =
+                config->apply_forum_delete(id);
+            request_reload(*live_sessions, edited.affected_forum_ids);
+        } catch (const WorkspaceRestartRequiredError& error) {
+            return set_error_response(response, 500,
+                {ErrorCode::internal_error, error.what()});
+        }
+        response.status = 204;
+        response.set_header("Cache-Control", "no-store");
     });
 
     server.Patch(R"(/api/v1/forums/([^/]+))",

@@ -216,6 +216,7 @@ struct CharacterDefinitionUpdate {
 struct CharacterDetail {
     CharacterSummary summary;
     std::string character_markdown;
+    std::string editable_markdown;
     std::optional<std::string> provider;
     std::optional<std::string> style;
     std::optional<std::string> reasoning_effort;

@@ -77,6 +77,7 @@ export const characterDetailFixture: CharacterDetail = {
   description: 'A deterministic test character',
   appearance: serifItalicVoice,
   character_markdown: '# Guide dossier\n\nA **careful** guide.\n\n- Listen\n- Respond',
+  editable_markdown: '# Guide dossier\n\nA **careful** guide.\n\n- Listen\n- Respond',
   provider: 'terra',
   style: 'serif-italic',
   reasoning_effort: null,
@@ -167,6 +168,7 @@ export function fixtureClient(overrides: Partial<ChaClient> = {}): ChaClient {
       ...characterDetailFixture,
       ...update,
     }),
+    deleteCharacter: async () => undefined,
     getPersona: async () => personaDetailFixture,
     createPersona: async ({ display_name }) => ({
       id: 'persona_1',
@@ -178,6 +180,7 @@ export function fixtureClient(overrides: Partial<ChaClient> = {}): ChaClient {
       ...personaDetailFixture,
       ...update,
     }),
+    deletePersona: async () => undefined,
     getForum: async () => forumDetailFixture,
     createForum: async ({ display_name, persona_id }) => ({
       ...forumDetailFixture,
@@ -195,6 +198,7 @@ export function fixtureClient(overrides: Partial<ChaClient> = {}): ChaClient {
       ...forumDetailFixture,
       ...update,
     }),
+    deleteForum: async () => undefined,
     updateForumMembers: async (_forumId, update) => ({
       ...forumDetailFixture,
       members: bootstrapFixture.characters.filter(({ id }) => (
@@ -215,6 +219,26 @@ export function fixtureClient(overrides: Partial<ChaClient> = {}): ChaClient {
     startOpenAiAuth: async () => signedOutAuth,
     pollOpenAiAuth: async () => signedOutAuth,
     disconnectOpenAiAuth: async () => signedOutAuth,
+    listProviders: async () => [],
+    createProvider: async () => { throw new Error('No provider fixture'); },
+    getProvider: async () => { throw new Error('No provider fixture'); },
+    updateProvider: async () => { throw new Error('No provider fixture'); },
+    deleteProvider: async () => undefined,
+    listStyles: async () => [],
+    createStyle: async () => { throw new Error('No style fixture'); },
+    updateStyle: async () => { throw new Error('No style fixture'); },
+    deleteStyle: async () => undefined,
+    listApiKeys: async () => [],
+    createApiKey: async ({ display_name }) => ({
+      id: 'api_key_1', display_name, has_value: true, used_by: [],
+    }),
+    renameApiKey: async (id, display_name) => ({
+      id, display_name, has_value: true, used_by: [],
+    }),
+    replaceApiKeyValue: async (id) => ({
+      id, display_name: 'API key', has_value: true, used_by: [],
+    }),
+    deleteApiKey: async () => undefined,
     switchVault: async () => undefined,
     ...overrides,
   };

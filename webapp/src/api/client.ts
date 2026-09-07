@@ -24,6 +24,15 @@ export type SessionSnapshot = components['schemas']['SessionSnapshot'];
 export type CommandResult = components['schemas']['CommandResult'];
 export type InputRequest = components['schemas']['InputRequest'];
 export type OpenAiAuth = components['schemas']['OpenAiAuth'];
+export type ProviderSummary = components['schemas']['ProviderSummary'];
+export type ProviderDetail = components['schemas']['ProviderDetail'];
+export type CreateProviderRequest = components['schemas']['CreateProviderRequest'];
+export type ProviderUpdate = components['schemas']['ProviderUpdate'];
+export type StyleDetail = components['schemas']['StyleDetail'];
+export type CreateStyleRequest = components['schemas']['CreateStyleRequest'];
+export type StyleUpdate = components['schemas']['StyleUpdate'];
+export type ApiKeyDetail = components['schemas']['ApiKeyDetail'];
+export type CreateApiKeyRequest = components['schemas']['CreateApiKeyRequest'];
 export type ErrorCode = components['schemas']['ErrorResponse']['error']['code'];
 
 // Generated API unions are compile-time only. Keeping the runtime list checked
@@ -96,12 +105,15 @@ export interface ChaClient {
     characterId: string,
     update: UpdateCharacterDefinitionRequest,
   ): Promise<CharacterDetail>;
+  deleteCharacter(characterId: string): Promise<void>;
   getPersona(personaId: string): Promise<PersonaDetail>;
   createPersona(request: CreatePersonaRequest): Promise<PersonaDetail>;
   updatePersona(personaId: string, update: UpdatePersonaRequest): Promise<PersonaDetail>;
+  deletePersona(personaId: string): Promise<void>;
   getForum(forumId: string): Promise<ForumDetail>;
   createForum(request: CreateForumRequest): Promise<ForumDetail>;
   updateForum(forumId: string, update: UpdateForumRequest): Promise<ForumDetail>;
+  deleteForum(forumId: string): Promise<void>;
   updateForumMembers(
     forumId: string,
     update: UpdateForumMembersRequest,
@@ -124,6 +136,20 @@ export interface ChaClient {
   startOpenAiAuth(): Promise<OpenAiAuth>;
   pollOpenAiAuth(): Promise<OpenAiAuth>;
   disconnectOpenAiAuth(): Promise<OpenAiAuth>;
+  listProviders(): Promise<ProviderSummary[]>;
+  createProvider(request: CreateProviderRequest): Promise<ProviderDetail>;
+  getProvider(providerId: string): Promise<ProviderDetail>;
+  updateProvider(providerId: string, update: ProviderUpdate): Promise<ProviderDetail>;
+  deleteProvider(providerId: string): Promise<void>;
+  listStyles(): Promise<StyleDetail[]>;
+  createStyle(request: CreateStyleRequest): Promise<StyleDetail>;
+  updateStyle(styleId: string, update: StyleUpdate): Promise<StyleDetail>;
+  deleteStyle(styleId: string): Promise<void>;
+  listApiKeys(): Promise<ApiKeyDetail[]>;
+  createApiKey(request: CreateApiKeyRequest): Promise<ApiKeyDetail>;
+  renameApiKey(apiKeyId: string, displayName: string): Promise<ApiKeyDetail>;
+  replaceApiKeyValue(apiKeyId: string, value: string): Promise<ApiKeyDetail>;
+  deleteApiKey(apiKeyId: string): Promise<void>;
   switchVault(vaultName: string): Promise<void>;
 }
 
@@ -148,6 +174,7 @@ function isCharacterDetail(value: unknown): value is CharacterDetail {
   return isCharacterSummary(value)
     && isRecord(value)
     && typeof value.character_markdown === 'string'
+    && typeof value.editable_markdown === 'string'
     && (value.provider === null || typeof value.provider === 'string')
     && (value.style === null || typeof value.style === 'string')
     && isOneOf(value.reasoning_effort, ['low', 'medium', 'high', 'xhigh', null])
@@ -180,6 +207,53 @@ function isForumDetail(value: unknown): value is ForumDetail {
     && value.members.every(isCharacterSummary)
     && typeof value.forum_markdown === 'string'
     && typeof value.writable === 'boolean';
+}
+
+function isProviderSummary(value: unknown): value is ProviderSummary {
+  return isRecord(value) && hasIdentity(value)
+    && typeof value.model === 'string' && typeof value.host === 'string';
+}
+
+function isProviderDetail(value: unknown): value is ProviderDetail {
+  return isRecord(value) && hasIdentity(value)
+    && typeof value.model === 'string' && typeof value.host === 'string'
+    && isOneOf(value.mode, ['net', 'test'])
+    && typeof value.port === 'number'
+    && Number.isInteger(value.port)
+    && typeof value.base_path === 'string'
+    && typeof value.stream === 'boolean'
+    && (value.temperature === null || typeof value.temperature === 'number')
+    && (value.max_tokens === null || (typeof value.max_tokens === 'number'
+      && Number.isInteger(value.max_tokens)))
+    && typeof value.timeout_s === 'number'
+    && typeof value.idle_timeout_s === 'number'
+    && (value.api_key === null || typeof value.api_key === 'string')
+    && (value.api_key_env === null || typeof value.api_key_env === 'string')
+    && typeof value.reasoning_effort === 'string'
+    && isOneOf(value.reasoning_format, ['auto', 'none', 'reasoning_content', 'reasoning'])
+    && typeof value.https === 'boolean'
+    && isOneOf(value.api, ['chat_completions', 'responses'])
+    && isOneOf(value.auth, ['none', 'openai_subscription'])
+    && isOneOf(value.web_search, ['off', 'auto', 'required'])
+    && isOneOf(value.cache_retention, ['off', 'short', 'long'])
+    && typeof value.writable === 'boolean';
+}
+
+function isStyleDetail(value: unknown): value is StyleDetail {
+  return isRecord(value) && hasIdentity(value)
+    && isOneOf(value.font, ['sans', 'serif', 'mono'])
+    && isOneOf(value.style, ['normal', 'italic'])
+    && isOneOf(value.weight, ['light', 'normal', 'medium', 'semibold', 'bold'])
+    && isOneOf(value.size, ['small', 'normal', 'large'])
+    && isOneOf(value.text_color, ['normal', 'muted', 'accent'])
+    && typeof value.writable === 'boolean';
+}
+
+function isApiKeyDetail(value: unknown): value is ApiKeyDetail {
+  return isRecord(value) && hasIdentity(value)
+    && typeof value.has_value === 'boolean'
+    && Array.isArray(value.used_by)
+    && value.used_by.every((name) => typeof name === 'string');
 }
 
 function isSessionListingArray(value: unknown): value is SessionListing[] {
@@ -359,6 +433,12 @@ export function createChaClient(
       jsonMutation(update, 'PATCH'),
     ),
 
+    deleteCharacter: (characterId) => requestEmpty(
+      fetcher,
+      `/api/v1/characters/${component(characterId)}`,
+      jsonMutation({}, 'DELETE'),
+    ),
+
     getPersona: (personaId) => requestValidated(
       fetcher,
       `/api/v1/personas/${component(personaId)}`,
@@ -379,6 +459,12 @@ export function createChaClient(
       jsonMutation(update, 'PATCH'),
     ),
 
+    deletePersona: (personaId) => requestEmpty(
+      fetcher,
+      `/api/v1/personas/${component(personaId)}`,
+      jsonMutation({}, 'DELETE'),
+    ),
+
     getForum: (forumId) => requestValidated(
       fetcher,
       `/api/v1/forums/${component(forumId)}`,
@@ -397,6 +483,12 @@ export function createChaClient(
       `/api/v1/forums/${component(forumId)}`,
       isForumDetail,
       jsonMutation(update, 'PATCH'),
+    ),
+
+    deleteForum: (forumId) => requestEmpty(
+      fetcher,
+      `/api/v1/forums/${component(forumId)}`,
+      jsonMutation({}, 'DELETE'),
     ),
 
     updateForumMembers: (forumId, update) => requestValidated(
@@ -488,6 +580,100 @@ export function createChaClient(
       fetcher,
       '/api/v1/openai/auth/disconnect',
       jsonMutation({}),
+    ),
+
+    listProviders: () => requestValidated(
+      fetcher,
+      '/api/v1/providers',
+      (value): value is ProviderSummary[] => Array.isArray(value)
+        && value.every(isProviderSummary),
+    ),
+
+    createProvider: (request) => requestValidated(
+      fetcher,
+      '/api/v1/providers',
+      isProviderDetail,
+      jsonMutation(request),
+    ),
+
+    getProvider: (providerId) => requestValidated(
+      fetcher,
+      `/api/v1/providers/${component(providerId)}`,
+      isProviderDetail,
+    ),
+
+    updateProvider: (providerId, update) => requestValidated(
+      fetcher,
+      `/api/v1/providers/${component(providerId)}`,
+      isProviderDetail,
+      jsonMutation(update, 'PATCH'),
+    ),
+
+    deleteProvider: (providerId) => requestEmpty(
+      fetcher,
+      `/api/v1/providers/${component(providerId)}`,
+      jsonMutation({}, 'DELETE'),
+    ),
+
+    listStyles: () => requestValidated(
+      fetcher,
+      '/api/v1/styles',
+      (value): value is StyleDetail[] => Array.isArray(value)
+        && value.every(isStyleDetail),
+    ),
+
+    createStyle: (request) => requestValidated(
+      fetcher,
+      '/api/v1/styles',
+      isStyleDetail,
+      jsonMutation(request),
+    ),
+
+    updateStyle: (styleId, update) => requestValidated(
+      fetcher,
+      `/api/v1/styles/${component(styleId)}`,
+      isStyleDetail,
+      jsonMutation(update, 'PATCH'),
+    ),
+
+    deleteStyle: (styleId) => requestEmpty(
+      fetcher,
+      `/api/v1/styles/${component(styleId)}`,
+      jsonMutation({}, 'DELETE'),
+    ),
+
+    listApiKeys: () => requestValidated(
+      fetcher,
+      '/api/v1/api-keys',
+      (value): value is ApiKeyDetail[] => Array.isArray(value)
+        && value.every(isApiKeyDetail),
+    ),
+
+    createApiKey: (request) => requestValidated(
+      fetcher,
+      '/api/v1/api-keys',
+      isApiKeyDetail,
+      jsonMutation(request),
+    ),
+
+    renameApiKey: (apiKeyId, displayName) => requestValidated(
+      fetcher,
+      `/api/v1/api-keys/${component(apiKeyId)}`,
+      isApiKeyDetail,
+      jsonMutation({ display_name: displayName }, 'PATCH'),
+    ),
+
+    replaceApiKeyValue: (apiKeyId, value) => requestValidated(
+      fetcher,
+      `/api/v1/api-keys/${component(apiKeyId)}/value`,
+      isApiKeyDetail,
+      jsonMutation({ value }, 'PUT'),
+    ),
+
+    deleteApiKey: (apiKeyId) => requestEmpty(
+      fetcher,
+      `/api/v1/api-keys/${component(apiKeyId)}`,
+      jsonMutation({}, 'DELETE'),
     ),
 
     switchVault: (vaultName) => requestEmpty(

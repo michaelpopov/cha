@@ -3,6 +3,7 @@ import {
   useRef,
   useState,
   type ReactNode,
+  type Dispatch,
 } from 'react';
 
 import {
@@ -10,7 +11,8 @@ import {
   type ChaClient,
   type OpenAiAuth,
 } from '../api/client';
-import type { AppState } from '../state/view';
+import type { AppAction, AppState } from '../state/view';
+import { SettingsNavigation } from './Settings';
 
 type AuthMutation = 'login' | 'poll' | 'disconnect';
 
@@ -18,6 +20,7 @@ interface OpenAiConnectionScreenProps {
   state: AppState;
   client: ChaClient;
   sessionReport: ReactNode;
+  dispatch?: Dispatch<AppAction>;
 }
 
 function verificationHref(snapshot: OpenAiAuth): string | null {
@@ -29,6 +32,7 @@ function verificationHref(snapshot: OpenAiAuth): string | null {
 
 export function OpenAiConnectionScreen({
   client,
+  dispatch,
   sessionReport,
 }: OpenAiConnectionScreenProps) {
   const [snapshot, setSnapshot] = useState<OpenAiAuth | null>(null);
@@ -161,6 +165,7 @@ export function OpenAiConnectionScreen({
   return (
     <section className="cha-screen cha-navigation cha-settings" aria-label="Settings">
       {sessionReport}
+      {dispatch && <SettingsNavigation dispatch={dispatch} />}
       <section className="cha-settings-card" aria-labelledby="cha-openai-settings-title">
         <header className="cha-settings-card-header">
           <h2 id="cha-openai-settings-title">OpenAI</h2>

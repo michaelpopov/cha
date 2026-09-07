@@ -316,6 +316,10 @@ select:disabled {
   text-align: center;
 }
 
+.cha-topbar.has-actions .cha-topbar-title {
+  padding-inline: 6rem;
+}
+
 .cha-topbar-title h1 {
   margin: 0;
   overflow: hidden;
@@ -422,12 +426,19 @@ select:disabled {
   width: 2.65rem;
 }
 
-.cha-definition-topbar-action {
+.cha-topbar-actions {
   position: absolute;
   z-index: 4;
   top: 50%;
   right: max(1rem, calc((100% - var(--cha-column)) / 2 + 1.2rem));
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
   transform: translateY(-50%);
+}
+
+.cha-definition-topbar-action {
+  position: relative;
 }
 
 .cha-definition-upload-error {
@@ -445,6 +456,32 @@ select:disabled {
   box-shadow: 0 0.4rem 1.2rem rgb(0 0 0 / 18%);
   font-size: 0.78rem;
   font-weight: 430;
+}
+
+.cha-text-editor-dialog {
+  width: min(52rem, calc(100vw - 2rem));
+  max-width: none;
+}
+
+.cha-text-editor-dialog form {
+  display: grid;
+  gap: 1rem;
+}
+
+.cha-text-editor-dialog textarea {
+  width: 100%;
+  min-height: min(60vh, 32rem);
+  resize: vertical;
+  padding: 0.85rem;
+  border: 1px solid var(--input);
+  border-radius: 0.65rem;
+  color: var(--foreground);
+  background: var(--background);
+  font: 0.9rem/1.5 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.cha-text-editor-clear {
+  margin-right: auto;
 }
 
 .cha-session-menu {
@@ -472,7 +509,7 @@ select:disabled {
   background: var(--accent);
 }
 
-.cha-session-dialog {
+.cha-dialog {
   width: min(28rem, calc(100% - 2rem));
   padding: 1.25rem;
   border: 1px solid var(--border);
@@ -482,16 +519,16 @@ select:disabled {
   box-shadow: 0 1rem 3rem rgb(0 0 0 / 25%);
 }
 
-.cha-session-dialog::backdrop {
+.cha-dialog::backdrop {
   background: rgb(0 0 0 / 35%);
 }
 
-.cha-session-dialog h2 {
+.cha-dialog h2 {
   margin: 0 0 0.8rem;
   font-size: 1.1rem;
 }
 
-.cha-session-dialog label {
+.cha-dialog label {
   display: grid;
   gap: 0.45rem;
 }
@@ -654,6 +691,16 @@ select:disabled {
 .cha-compact-icon-action:hover {
   color: var(--accent-foreground);
   background: var(--accent);
+}
+
+.cha-danger-icon-action {
+  border-color: light-dark(rgb(213 155 150), rgb(128 64 61));
+  color: light-dark(rgb(174 45 36), rgb(255 145 136));
+}
+
+.cha-danger-icon-action:hover {
+  color: light-dark(rgb(145 32 25), rgb(255 177 170));
+  background: light-dark(rgb(255 238 236), rgb(62 30 29));
 }
 
 .cha-compact-icon-action svg {
@@ -1217,6 +1264,19 @@ select:disabled {
   color: var(--muted-foreground);
 }
 
+.cha-settings-links {
+  display: grid;
+  border-top: 1px solid var(--border);
+}
+
+.cha-settings-row {
+  border-radius: 0;
+}
+
+.cha-settings-row + .cha-settings-row {
+  border-top: 1px solid var(--border);
+}
+
 .cha-settings-connection,
 .cha-settings-feedback {
   display: flex;
@@ -1284,6 +1344,111 @@ select:disabled {
   letter-spacing: 0.12em;
 }
 
+.cha-settings-form {
+  display: grid;
+  width: min(100%, 36rem);
+  gap: 1rem;
+  margin: 0.5rem auto 0;
+}
+
+.cha-settings-form fieldset {
+  display: grid;
+  gap: 0.8rem;
+  margin: 0;
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  background: var(--secondary);
+}
+
+.cha-settings-form legend {
+  padding: 0 0.35rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.cha-settings-form label {
+  display: grid;
+  gap: 0.35rem;
+  color: var(--muted-foreground);
+  font-size: 0.82rem;
+}
+
+.cha-settings-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+
+.cha-settings-form .cha-settings-check {
+  display: flex;
+  min-height: 2.25rem;
+  align-items: center;
+  gap: 0.55rem;
+  color: var(--foreground);
+}
+
+.cha-settings-check input {
+  width: 1.1rem;
+  height: 1.1rem;
+  margin: 0;
+  accent-color: var(--primary);
+}
+
+.cha-settings-form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.cha-settings-note,
+.cha-settings-usage p {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 0.85rem;
+}
+
+.cha-settings-saved {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0;
+  color: var(--muted-foreground);
+}
+
+.cha-settings-saved .cha-settings-status-marker {
+  border-color: var(--primary);
+  background: var(--primary);
+}
+
+.cha-settings-usage {
+  padding: 0.2rem 0.2rem 0;
+}
+
+.cha-settings-usage h2 {
+  margin: 0 0 0.4rem;
+  font-size: 0.95rem;
+}
+
+.cha-settings-usage ul {
+  margin: 0;
+  padding-left: 1.25rem;
+}
+
+/* Shaped like the primary action it sits under, so a stack of form buttons
+   lines up, and coloured so the destructive one is never mistaken for it. */
+.cha-button-danger {
+  color: light-dark(rgb(174 45 36), rgb(255 145 136));
+  border-color: currentColor;
+}
+
+@media (max-width: 34rem) {
+  .cha-settings-form-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .cha-style-sample {
   margin: 0;
   padding: 0.7rem 0.85rem;
@@ -1332,7 +1497,7 @@ select:disabled {
     padding-inline: 1rem;
   }
 
-  .cha-definition-topbar-action {
+  .cha-topbar-actions {
     right: 1rem;
   }
 

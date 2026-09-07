@@ -1,10 +1,8 @@
 import {
   useCallback,
   useEffect,
-  useRef,
   useState,
   type Dispatch,
-  type ChangeEvent,
   type FormEvent,
   type ReactNode,
 } from 'react';
@@ -22,7 +20,6 @@ import { voiceClasses } from './characterAppearance';
 import {
   ChevronLeftIcon,
   ChevronRightIcon,
-  FileUpIcon,
   MessageIcon,
   PlusIcon,
 } from './Icons';
@@ -266,12 +263,9 @@ export function PersonaDetailScreen({
   state,
   dispatch,
   client,
+  reloadVersion = 0,
   sessionReport,
 }: RosterDetailProps) {
-  const fileInput = useRef<HTMLInputElement>(null);
-  const [reloadVersion, setReloadVersion] = useState(0);
-  const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
   const load = useCallback(
     (personaId: string) => client.getPersona(personaId).then((detail) => {
       dispatch({
@@ -283,50 +277,6 @@ export function PersonaDetailScreen({
     }),
     [client, dispatch],
   );
-
-  async function replaceFromFile(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    const personaId = state.inspectedPersonaId;
-    if (!file || !personaId || saving) return;
-    setSaving(true);
-    setSaveError(null);
-    try {
-      const persona = await client.updatePersona(personaId, {
-        persona_markdown: await file.text(),
-      });
-      dispatch({ type: 'persona-updated', persona });
-      setReloadVersion((version) => version + 1);
-    } catch (failure: unknown) {
-      setSaveError(publicErrorMessage(
-        failure,
-        'Persona description could not be replaced.',
-      ));
-    } finally {
-      setSaving(false);
-      if (fileInput.current) fileInput.current.value = '';
-    }
-  }
-
-  const uploadAction = state.personaEditingAvailable && state.inspectedPersonaId ? (
-    <>
-      <input
-        accept=".md,.txt,text/markdown,text/plain"
-        className="cha-file-input"
-        onChange={(event) => void replaceFromFile(event)}
-        ref={fileInput}
-        type="file"
-      />
-      <button
-        aria-label="Replace persona description from file"
-        className="cha-compact-icon-action"
-        disabled={saving}
-        onClick={() => fileInput.current?.click()}
-        type="button"
-      >
-        <FileUpIcon />
-      </button>
-    </>
-  ) : undefined;
 
   return (
     <RosterDetailScreen
@@ -341,12 +291,8 @@ export function PersonaDetailScreen({
       load={load}
       onBack={() => dispatch({ type: 'show-personas' })}
       reloadVersion={reloadVersion}
-      report={saveError && (
-        <p className="cha-state-message cha-error-message" role="alert">{saveError}</p>
-      )}
       sessionReport={sessionReport}
       subjectId={state.inspectedPersonaId}
-      toolbarAction={uploadAction}
     />
   );
 }

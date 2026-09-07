@@ -203,6 +203,7 @@ describe('application navigation reducer', () => {
     const character = {
       ...bootstrapFixture.characters[1],
       character_markdown: '',
+      editable_markdown: '',
       provider: null,
       style: null,
       reasoning_effort: null,

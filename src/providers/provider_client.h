@@ -12,6 +12,7 @@
 namespace cha {
 
 class OpenAiOAuth;
+class ApiKeyStore;
 
 // The narrow transport construction seam. Each call creates one independent
 // backend from the same immutable character snapshot selected by the caller.
@@ -48,6 +49,11 @@ public:
         SharedCharacterDefinition definition,
         OpenAiOAuth* oauth,
         ProviderHttpTransport transport);
+    ProviderClient(
+        SharedCharacterDefinition definition,
+        OpenAiOAuth* oauth,
+        ApiKeyStore* api_keys,
+        ProviderHttpTransport transport = {});
     ~ProviderClient() override;
 
     ProviderClient(const ProviderClient&) = delete;

@@ -34,6 +34,7 @@ struct ModelBackendConfig {
     std::optional<int> max_tokens;
     int timeout_s{600};
     int idle_timeout_s{60};
+    std::string api_key_id;
     std::string api_key_env;
     std::string reasoning_effort;
     ReasoningFormat reasoning_format{ReasoningFormat::automatic};

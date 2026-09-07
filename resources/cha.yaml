@@ -27,6 +27,7 @@ tags:
   - name: Shell
   - name: Service
   - name: Discovery
+  - name: Settings
   - name: OpenAI
   - name: Stored sessions
   - name: Live sessions
@@ -133,6 +134,310 @@ paths:
           $ref: "#/components/responses/ForbiddenMutation"
         "413":
           $ref: "#/components/responses/BodyTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/providers:
+    get:
+      tags: [Settings]
+      operationId: listProviders
+      summary: List inference providers
+      responses:
+        "200":
+          description: Provider summaries.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ProviderSummary"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    post:
+      tags: [Settings]
+      operationId: createProvider
+      summary: Create an inference provider
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateProviderRequest"
+      responses:
+        "201":
+          description: Created provider settings.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProviderDetail"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/providers/{provider_id}:
+    parameters:
+      - name: provider_id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/Identifier"
+    get:
+      tags: [Settings]
+      operationId: getProvider
+      summary: Get inference provider settings
+      responses:
+        "200":
+          description: Provider settings.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProviderDetail"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    patch:
+      tags: [Settings]
+      operationId: updateProvider
+      summary: Replace editable inference provider settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProviderUpdate"
+      responses:
+        "200":
+          description: Updated provider settings.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProviderDetail"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      tags: [Settings]
+      operationId: deleteProvider
+      summary: Delete an unused inference provider
+      requestBody:
+        $ref: "#/components/requestBodies/EmptyJsonObject"
+      responses:
+        "204":
+          description: Provider deleted.
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: A character still uses this provider.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/styles:
+    get:
+      tags: [Settings]
+      operationId: listStyles
+      summary: List character styles
+      responses:
+        "200":
+          description: Style settings.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/StyleDetail"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    post:
+      tags: [Settings]
+      operationId: createStyle
+      summary: Create a character style
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateStyleRequest"
+      responses:
+        "201":
+          description: Created style settings.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StyleDetail"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/styles/{style_id}:
+    parameters:
+      - name: style_id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/Identifier"
+    patch:
+      tags: [Settings]
+      operationId: updateStyle
+      summary: Replace editable character style settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StyleUpdate"
+      responses:
+        "200":
+          description: Updated style settings.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StyleDetail"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      tags: [Settings]
+      operationId: deleteStyle
+      summary: Delete an unused character style
+      requestBody:
+        $ref: "#/components/requestBodies/EmptyJsonObject"
+      responses:
+        "204":
+          description: Style deleted.
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: A character still uses this style.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/api-keys:
+    get:
+      tags: [Settings]
+      operationId: listApiKeys
+      summary: List saved API keys without their secret values
+      responses:
+        "200":
+          description: Saved key metadata.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ApiKeyDetail"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    post:
+      tags: [Settings]
+      operationId: createApiKey
+      summary: Store a new API key locally
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateApiKeyRequest"
+      responses:
+        "201":
+          description: Stored key metadata. The value is never returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiKeyDetail"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/api-keys/{api_key_id}:
+    parameters:
+      - name: api_key_id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/Identifier"
+    patch:
+      tags: [Settings]
+      operationId: renameApiKey
+      summary: Rename a saved API key
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RenameApiKeyRequest"
+      responses:
+        "200":
+          description: Updated key metadata.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiKeyDetail"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      tags: [Settings]
+      operationId: deleteApiKey
+      summary: Remove a saved API key
+      requestBody:
+        $ref: "#/components/requestBodies/EmptyJsonObject"
+      responses:
+        "204":
+          description: API key removed.
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/api-keys/{api_key_id}/value:
+    parameters:
+      - name: api_key_id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/Identifier"
+    put:
+      tags: [Settings]
+      operationId: replaceApiKeyValue
+      summary: Replace a saved API key value
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReplaceApiKeyValueRequest"
+      responses:
+        "200":
+          description: Updated key metadata. The value is never returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiKeyDetail"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -320,6 +625,35 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+    delete:
+      tags: [Discovery]
+      operationId: deleteCharacter
+      summary: Delete an unused character
+      description: |
+        Permanently removes a writable character and its definition. A
+        character that is still a member of a forum cannot be deleted.
+      requestBody:
+        $ref: "#/components/requestBodies/EmptyJsonObject"
+      responses:
+        "204":
+          description: Character deleted.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/ForbiddenMutation"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: A forum still uses this character.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "413":
+          $ref: "#/components/responses/BodyTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /api/v1/characters/{character_id}/definition:
     parameters:
       - $ref: "#/components/parameters/CharacterId"
@@ -448,6 +782,34 @@ paths:
           $ref: "#/components/responses/BodyTooLarge"
         "500":
           $ref: "#/components/responses/InternalError"
+    delete:
+      tags: [Discovery]
+      operationId: deletePersona
+      summary: Delete an unused persona
+      description: |
+        Permanently removes a writable persona and its profile. A persona that
+        is still selected by a forum cannot be deleted.
+      requestBody:
+        $ref: "#/components/requestBodies/EmptyJsonObject"
+      responses:
+        "204":
+          description: Persona deleted.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/ForbiddenMutation"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: A forum still uses this persona.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "413":
+          $ref: "#/components/responses/BodyTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
 
   /api/v1/forums:
     post:
@@ -530,6 +892,28 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ForumDetail"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/ForbiddenMutation"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/BodyTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      tags: [Discovery]
+      operationId: deleteForum
+      summary: Delete a forum and its sessions
+      description: |
+        Permanently removes a writable forum and every session stored in it.
+        The built-in Entrance cannot be deleted.
+      requestBody:
+        $ref: "#/components/requestBodies/EmptyJsonObject"
+      responses:
+        "204":
+          description: Forum and sessions deleted.
         "400":
           $ref: "#/components/responses/BadRequest"
         "403":
@@ -1406,6 +1790,285 @@ components:
         label:
           type: string
 
+    ProviderSummary:
+      type: object
+      additionalProperties: false
+      required: [id, display_name, model, host]
+      properties:
+        id:
+          $ref: "#/components/schemas/Identifier"
+        display_name:
+          type: string
+        model:
+          type: string
+        host:
+          type: string
+
+    CreateProviderRequest:
+      type: object
+      additionalProperties: false
+      required: [display_name]
+      properties:
+        display_name:
+          type: string
+
+    ProviderUpdate:
+      type: object
+      additionalProperties: false
+      required:
+        - display_name
+        - host
+        - port
+        - base_path
+        - mode
+        - model
+        - stream
+        - temperature
+        - max_tokens
+        - timeout_s
+        - idle_timeout_s
+        - api_key
+        - api_key_env
+        - reasoning_effort
+        - reasoning_format
+        - https
+        - api
+        - auth
+        - web_search
+        - cache_retention
+      properties:
+        display_name:
+          type: string
+        host:
+          type: string
+        port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+        base_path:
+          type: string
+        mode:
+          type: string
+          enum: [net, test]
+        model:
+          type: string
+        stream:
+          type: boolean
+        temperature:
+          type: [number, "null"]
+          minimum: 0
+          maximum: 2
+        max_tokens:
+          type: [integer, "null"]
+          minimum: 1
+        timeout_s:
+          type: integer
+          minimum: 1
+        idle_timeout_s:
+          type: integer
+          minimum: 1
+        api_key:
+          type: [string, "null"]
+        api_key_env:
+          type: [string, "null"]
+        reasoning_effort:
+          type: string
+        reasoning_format:
+          type: string
+          enum: [auto, none, reasoning_content, reasoning]
+        https:
+          type: boolean
+        api:
+          type: string
+          enum: [chat_completions, responses]
+        auth:
+          type: string
+          enum: [none, openai_subscription]
+        web_search:
+          type: string
+          enum: [off, auto, required]
+        cache_retention:
+          type: string
+          enum: [off, short, long]
+
+    ProviderDetail:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - display_name
+        - host
+        - port
+        - base_path
+        - mode
+        - model
+        - stream
+        - temperature
+        - max_tokens
+        - timeout_s
+        - idle_timeout_s
+        - api_key
+        - api_key_env
+        - reasoning_effort
+        - reasoning_format
+        - https
+        - api
+        - auth
+        - web_search
+        - cache_retention
+        - writable
+      properties:
+        id:
+          $ref: "#/components/schemas/Identifier"
+        display_name:
+          type: string
+        host:
+          type: string
+        port:
+          type: integer
+        base_path:
+          type: string
+        mode:
+          type: string
+          enum: [net, test]
+        model:
+          type: string
+        stream:
+          type: boolean
+        temperature:
+          type: [number, "null"]
+        max_tokens:
+          type: [integer, "null"]
+        timeout_s:
+          type: integer
+        idle_timeout_s:
+          type: integer
+        api_key:
+          type: [string, "null"]
+        api_key_env:
+          type: [string, "null"]
+        reasoning_effort:
+          type: string
+        reasoning_format:
+          type: string
+          enum: [auto, none, reasoning_content, reasoning]
+        https:
+          type: boolean
+        api:
+          type: string
+          enum: [chat_completions, responses]
+        auth:
+          type: string
+          enum: [none, openai_subscription]
+        web_search:
+          type: string
+          enum: [off, auto, required]
+        cache_retention:
+          type: string
+          enum: [off, short, long]
+        writable:
+          type: boolean
+
+    StyleUpdate:
+      type: object
+      additionalProperties: false
+      required: [display_name, font, style, weight, size, text_color]
+      properties:
+        display_name:
+          type: string
+        font:
+          type: string
+          enum: [sans, serif, mono]
+        style:
+          type: string
+          enum: [normal, italic]
+        weight:
+          type: string
+          enum: [light, normal, medium, semibold, bold]
+        size:
+          type: string
+          enum: [small, normal, large]
+        text_color:
+          type: string
+          enum: [normal, muted, accent]
+
+    CreateStyleRequest:
+      type: object
+      additionalProperties: false
+      required: [display_name]
+      properties:
+        display_name:
+          type: string
+
+    StyleDetail:
+      type: object
+      additionalProperties: false
+      required: [id, display_name, font, style, weight, size, text_color, writable]
+      properties:
+        id:
+          $ref: "#/components/schemas/Identifier"
+        display_name:
+          type: string
+        font:
+          type: string
+          enum: [sans, serif, mono]
+        style:
+          type: string
+          enum: [normal, italic]
+        weight:
+          type: string
+          enum: [light, normal, medium, semibold, bold]
+        size:
+          type: string
+          enum: [small, normal, large]
+        text_color:
+          type: string
+          enum: [normal, muted, accent]
+        writable:
+          type: boolean
+
+    ApiKeyDetail:
+      type: object
+      additionalProperties: false
+      required: [id, display_name, has_value, used_by]
+      properties:
+        id:
+          $ref: "#/components/schemas/Identifier"
+        display_name:
+          type: string
+        has_value:
+          type: boolean
+        used_by:
+          type: array
+          items:
+            type: string
+
+    CreateApiKeyRequest:
+      type: object
+      additionalProperties: false
+      required: [display_name, value]
+      properties:
+        display_name:
+          type: string
+        value:
+          type: string
+
+    RenameApiKeyRequest:
+      type: object
+      additionalProperties: false
+      required: [display_name]
+      properties:
+        display_name:
+          type: string
+
+    ReplaceApiKeyValueRequest:
+      type: object
+      additionalProperties: false
+      required: [value]
+      properties:
+        value:
+          type: string
+
     StyleOption:
       type: object
       additionalProperties: false
@@ -1426,6 +2089,7 @@ components:
         - display_name
         - appearance
         - character_markdown
+        - editable_markdown
         - provider
         - style
         - reasoning_effort
@@ -1444,6 +2108,10 @@ components:
           $ref: "#/components/schemas/CharacterAppearance"
         character_markdown:
           type: string
+          description: Template-expanded Markdown used for display.
+        editable_markdown:
+          type: string
+          description: Verbatim Markdown accepted by the definition editor.
         provider:
           type: [string, "null"]
         style:

@@ -107,6 +107,7 @@ TEST(WebProtocol, SerializesSpecifiedSuccessListingAndErrorBodies) {
         nlohmann::json(CharacterDetail{
             .summary = {"guide", "Guide"},
             .character_markdown = "Prompt",
+            .editable_markdown = "Source",
             .provider = "terra",
             .style = std::nullopt,
             .reasoning_effort = "high",
@@ -122,6 +123,7 @@ TEST(WebProtocol, SerializesSpecifiedSuccessListingAndErrorBodies) {
             {"display_name", "Guide"},
             {"appearance", default_appearance()},
             {"character_markdown", "Prompt"},
+            {"editable_markdown", "Source"},
             {"provider", "terra"},
             {"style", nullptr},
             {"reasoning_effort", "high"},
