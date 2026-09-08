@@ -13,6 +13,7 @@ struct VaultDefinition {
     std::filesystem::path data;
     std::optional<std::filesystem::path> mirror;
     std::optional<std::filesystem::path> modify;
+    std::filesystem::path source;
 };
 
 struct ConfigurationDirectory {
@@ -51,6 +52,9 @@ ConfigurationDirectory load_configuration_directory(
 bool same_vault_name(std::string_view left, std::string_view right);
 const VaultDefinition* find_vault(
     const std::vector<VaultDefinition>& vaults, std::string_view name);
+void validate_vault_definitions(
+    const std::filesystem::path& directory,
+    const std::vector<VaultDefinition>& vaults);
 
 // Parses the public command line and its required configuration directory.
 // Relative paths in that directory's files are resolved from the directory.

@@ -423,8 +423,8 @@ TEST_F(WorkspaceConfigStoreTest, RejectsMatchingSymlinksAndSkipsSymlinkedDirecto
     EXPECT_GE(count, 8U);
 }
 
-TEST_F(WorkspaceConfigStoreTest, UsesDotenvForValidationWithoutStoringIt) {
-    constexpr char variable[] = "CHA_IMPORT_STORE_CREDENTIAL_A1B2";
+TEST_F(WorkspaceConfigStoreTest, IgnoresDotenvInsteadOfStoringOrLoadingIt) {
+    constexpr char variable[] = "CHA_IMPORT_STORE_IGNORED_CREDENTIAL_A1B2";
     ScopedEnvironmentVariable guard(variable);
     ASSERT_TRUE(unset_environment_variable(variable));
     workspace_.write_provider(
@@ -433,10 +433,10 @@ TEST_F(WorkspaceConfigStoreTest, UsesDotenvForValidationWithoutStoringIt) {
         "port = 443\n"
         "mode = \"net\"\n"
         "model = \"secured\"\n"
-        "api_key_env = \"CHA_IMPORT_STORE_CREDENTIAL_A1B2\"\n");
+        "api_key = \"api_key_1\"\n");
     workspace_.write_character_config(
         "display_name = \"Guide\"\nprovider = \"secured\"\n");
-    write_bytes(source() / ".env", "CHA_IMPORT_STORE_CREDENTIAL_A1B2=secret-key\n");
+    write_bytes(source() / ".env", "CHA_IMPORT_STORE_IGNORED_CREDENTIAL_A1B2=secret-key\n");
 
     EXPECT_EQ(std::getenv(variable), nullptr);
     EXPECT_NO_THROW((void)import_from_source());
@@ -450,63 +450,29 @@ TEST_F(WorkspaceConfigStoreTest, UsesDotenvForValidationWithoutStoringIt) {
     }
 }
 
-TEST_F(WorkspaceConfigStoreTest, UsesInheritedEnvironmentValuesIncludingEmpty) {
-    constexpr char variable[] = "CHA_IMPORT_STORE_INHERITED_C3D4";
-    ScopedEnvironmentVariable guard(variable);
+TEST_F(WorkspaceConfigStoreTest, ImportsAnUnresolvedSavedApiKeyReference) {
     workspace_.write_provider(
         "secured",
         "host = \"example.test\"\n"
         "port = 443\n"
         "mode = \"net\"\n"
         "model = \"secured\"\n"
-        "api_key_env = \"CHA_IMPORT_STORE_INHERITED_C3D4\"\n");
+        "api_key = \"api_key_1\"\n");
     workspace_.write_character_config(
         "display_name = \"Guide\"\nprovider = \"secured\"\n");
-    write_bytes(source() / ".env", "CHA_IMPORT_STORE_INHERITED_C3D4=from-file\n");
-
-    ASSERT_TRUE(set_environment_variable(variable, "from-process"));
-    EXPECT_NO_THROW((void)import_from_source());
-    EXPECT_STREQ(std::getenv(variable), "from-process");
-
-    std::filesystem::remove(database());
-    ASSERT_TRUE(set_environment_variable(variable, ""));
-    if (std::getenv(variable) == nullptr) {
-        GTEST_SKIP() << "this platform does not retain empty environment values";
-    }
-    EXPECT_NO_THROW((void)import_from_source());
-    EXPECT_STREQ(std::getenv(variable), "");
-    EXPECT_EQ(
-        inspect_workspace_session_database(database()),
-        WorkspaceDatabaseState::valid_v2);
-}
-
-TEST_F(WorkspaceConfigStoreTest, ImportsAKeylessApiKeyProvider) {
-    constexpr char variable[] = "CHA_IMPORT_STORE_MISSING_KEY_E5F6";
-    ScopedEnvironmentVariable guard(variable);
-    ASSERT_TRUE(unset_environment_variable(variable));
-    workspace_.write_provider(
-        "secured",
-        "host = \"example.test\"\n"
-        "port = 443\n"
-        "mode = \"net\"\n"
-        "model = \"secured\"\n"
-        "api_key_env = \"CHA_IMPORT_STORE_MISSING_KEY_E5F6\"\n");
-    workspace_.write_character_config(
-        "display_name = \"Guide\"\nprovider = \"secured\"\n");
-    EXPECT_EQ(std::getenv(variable), nullptr);
     EXPECT_NO_THROW((void)import_from_source());
     EXPECT_EQ(
         inspect_workspace_session_database(database()),
         WorkspaceDatabaseState::valid_v2);
 }
 
-TEST_F(WorkspaceConfigStoreTest, RejectsMalformedDotenvWithoutStoringIt) {
+TEST_F(WorkspaceConfigStoreTest, IgnoresMalformedDotenvWithoutStoringIt) {
     write_bytes(source() / ".env", "not a valid entry\n");
 
-    EXPECT_THROW((void)import_from_source(), std::runtime_error);
+    EXPECT_NO_THROW((void)import_from_source());
     EXPECT_EQ(
         inspect_workspace_session_database(database()),
-        WorkspaceDatabaseState::missing);
+        WorkspaceDatabaseState::valid_v2);
 }
 
 TEST_F(WorkspaceConfigStoreTest, AcceptsCollectedMarkdownIncludesAndRejectsExcludedText) {
@@ -1259,7 +1225,7 @@ void expect_package_seed_subscription(const ModelBackendConfig& config) {
     EXPECT_EQ(config.api, ProviderApi::responses);
     EXPECT_EQ(config.model, "gpt-5.6-terra");
     EXPECT_TRUE(config.stream);
-    EXPECT_TRUE(config.api_key_env.empty());
+    EXPECT_TRUE(config.api_key_id.empty());
     EXPECT_FALSE(config.temperature);
     EXPECT_FALSE(config.max_tokens);
     EXPECT_EQ(config.web_search, WebSearchMode::off);
@@ -1267,16 +1233,11 @@ void expect_package_seed_subscription(const ModelBackendConfig& config) {
 }
 
 TEST(WorkspaceConfigStore, ImportsPackageSeedWithoutApiKey) {
-    ScopedEnvironmentVariable guard("OPENAI_API_KEY");
-    ASSERT_TRUE(unset_environment_variable("OPENAI_API_KEY"));
-    EXPECT_EQ(std::getenv("OPENAI_API_KEY"), nullptr);
-
     test::TestWorkspace fixture;
     const std::filesystem::path database = fixture.root() / "imported.sqlite3";
     EXPECT_NO_THROW(
         (void)import_workspace_configuration(
             std::filesystem::path(CHA_IMPORT_SEED_DIRECTORY), database));
-    EXPECT_EQ(std::getenv("OPENAI_API_KEY"), nullptr);
     EXPECT_EQ(
         inspect_workspace_session_database(database),
         WorkspaceDatabaseState::valid_v2);
@@ -1303,12 +1264,6 @@ TEST(WorkspaceConfigStore, ImportsPackageSeedWithoutApiKey) {
     const WorkspaceProvider* const chatgpt = workspace->find_provider("chatgpt");
     ASSERT_NE(chatgpt, nullptr);
     expect_package_seed_subscription(chatgpt->config);
-
-    const WorkspaceProvider* const terra = workspace->find_provider("terra");
-    ASSERT_NE(terra, nullptr);
-    EXPECT_EQ(terra->config.auth, ProviderAuth::none);
-    EXPECT_EQ(terra->config.api_key_env, "OPENAI_API_KEY");
-    EXPECT_EQ(terra->config.model, "gpt-5.6-terra");
 
     EXPECT_EQ(
         workspace->find_character(workspace_assistant_id)->provider_id,

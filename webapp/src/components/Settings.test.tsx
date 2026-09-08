@@ -2,7 +2,7 @@ import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
-import type { ProviderDetail, StyleDetail } from '../api/client';
+import type { ProviderDetail, StyleDetail, VaultDetail } from '../api/client';
 import { initialAppState } from '../state/view';
 import { fixtureClient } from '../test/fixtures';
 import {
@@ -11,9 +11,11 @@ import {
   NewApiKeyScreen,
   NewProviderScreen,
   NewStyleScreen,
+  NewVaultScreen,
   ProviderScreen,
   SettingsNavigation,
   StyleScreen,
+  VaultScreen,
 } from './Settings';
 import { TopBar } from './TopBar';
 
@@ -31,7 +33,6 @@ const provider: ProviderDetail = {
   timeout_s: 600,
   idle_timeout_s: 60,
   api_key: null,
-  api_key_env: 'OPENROUTER_API_KEY',
   reasoning_effort: '',
   reasoning_format: 'auto',
   https: true,
@@ -55,15 +56,150 @@ const style: StyleDetail = {
   used_by: ['Guide'],
 };
 
+const vaults: VaultDetail[] = [
+  {
+    display_name: 'Personal',
+    data_path: '/data/personal.sqlite3',
+    mirror_path: null,
+    modify_path: '/work/personal',
+    active: true,
+    can_delete: false,
+  },
+  {
+    display_name: 'Projects',
+    data_path: '/data/projects.sqlite3',
+    mirror_path: '/mirror/projects',
+    modify_path: null,
+    active: false,
+    can_delete: true,
+  },
+];
+
 describe('Settings screens', () => {
-  it('shows Providers, Styles, and API Keys as peer settings destinations', async () => {
+  it('shows Vaults above Providers, Styles, and API Keys', async () => {
     const dispatch = vi.fn();
     render(<SettingsNavigation dispatch={dispatch} />);
 
+    const destinations = screen.getAllByRole('button');
+    expect(destinations[0]).toHaveAccessibleName(/Vaults/);
     expect(screen.getByRole('button', { name: /Providers/ })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Styles/ })).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: /API Keys/ }));
     expect(dispatch).toHaveBeenCalledWith({ type: 'show-settings-api-keys' });
+  });
+
+  it('creates a copied vault without activating it', async () => {
+    const created: VaultDetail = {
+      display_name: 'Archive',
+      data_path: '/data/archive.sqlite3',
+      mirror_path: '/mirror/archive',
+      modify_path: null,
+      active: false,
+      can_delete: true,
+    };
+    const createVault = vi.fn(async () => created);
+    const dispatch = vi.fn();
+    render(
+      <NewVaultScreen
+        client={fixtureClient({ listVaults: async () => vaults, createVault })}
+        dispatch={dispatch}
+        sessionReport={null}
+        state={initialAppState}
+      />,
+    );
+
+    await userEvent.type(await screen.findByLabelText('Display name'), 'Archive');
+    await userEvent.type(screen.getByLabelText('Database path'), '/data/archive.sqlite3');
+    await userEvent.type(screen.getByLabelText(/Mirror path/), '/mirror/archive');
+    await userEvent.selectOptions(screen.getByLabelText('Initial database'), 'Projects');
+    await userEvent.click(screen.getByRole('button', { name: 'Create vault' }));
+
+    expect(createVault).toHaveBeenCalledWith({
+      display_name: 'Archive',
+      data_path: '/data/archive.sqlite3',
+      mirror_path: '/mirror/archive',
+      modify_path: null,
+      copy_from: 'Projects',
+    });
+    expect(dispatch).toHaveBeenCalledWith({ type: 'vault-created', vault: created });
+  });
+
+  it('creates an empty vault when no database is selected', async () => {
+    const created: VaultDetail = {
+      display_name: 'Empty',
+      data_path: '/data/empty.sqlite3',
+      mirror_path: null,
+      modify_path: null,
+      active: false,
+      can_delete: true,
+    };
+    const createVault = vi.fn(async () => created);
+    const dispatch = vi.fn();
+    render(
+      <NewVaultScreen
+        client={fixtureClient({ listVaults: async () => vaults, createVault })}
+        dispatch={dispatch}
+        sessionReport={null}
+        state={initialAppState}
+      />,
+    );
+
+    await userEvent.type(await screen.findByLabelText('Display name'), 'Empty');
+    await userEvent.type(screen.getByLabelText('Database path'), '/data/empty.sqlite3');
+    expect(screen.getByLabelText('Initial database')).toHaveValue('');
+    await userEvent.click(screen.getByRole('button', { name: 'Create vault' }));
+
+    expect(createVault).toHaveBeenCalledWith({
+      display_name: 'Empty',
+      data_path: '/data/empty.sqlite3',
+      mirror_path: null,
+      modify_path: null,
+      copy_from: null,
+    });
+    expect(dispatch).toHaveBeenCalledWith({ type: 'vault-created', vault: created });
+  });
+
+  it('edits and removes an inactive vault while preserving its database', async () => {
+    const updateVault = vi.fn(async (_name, update) => ({
+      ...vaults[1],
+      ...update,
+    }));
+    const deleteVault = vi.fn(async () => undefined);
+    const dispatch = vi.fn();
+    render(
+      <VaultScreen
+        client={fixtureClient({
+          listVaults: async () => vaults,
+          updateVault,
+          deleteVault,
+        })}
+        dispatch={dispatch}
+        sessionReport={null}
+        state={{ ...initialAppState, inspectedVaultName: 'Projects' }}
+      />,
+    );
+
+    const name = await screen.findByLabelText('Display name');
+    await userEvent.clear(name);
+    await userEvent.type(name, 'Archive');
+    await userEvent.clear(screen.getByLabelText(/Modify path/));
+    await userEvent.type(screen.getByLabelText(/Modify path/), '/work/archive');
+    await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    expect(updateVault).toHaveBeenCalledWith('Projects', {
+      display_name: 'Archive',
+      mirror_path: '/mirror/projects',
+      modify_path: '/work/archive',
+    });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Delete vault' }));
+    expect(screen.getByText(/database and folders will be kept/)).toBeInTheDocument();
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole(
+      'button', { name: 'Delete vault' },
+    ));
+    expect(deleteVault).toHaveBeenCalledWith('Projects');
+    expect(dispatch).toHaveBeenCalledWith({
+      type: 'vault-deleted', vaultName: 'Projects',
+    });
   });
 
   it('creates an API key without retaining its value on screen', async () => {
@@ -92,7 +228,7 @@ describe('Settings screens', () => {
     expect(screen.getByLabelText('API key')).toHaveValue('');
   });
 
-  it('stores a saved-key reference in a provider and clears its legacy env reference', async () => {
+  it('stores a saved-key reference in a provider', async () => {
     const updateProvider = vi.fn(async (_id, update) => ({
       id: 'router', used_by: provider.used_by, writable: true, ...update,
     }));
@@ -115,7 +251,7 @@ describe('Settings screens', () => {
 
     expect(updateProvider).toHaveBeenCalledWith(
       'router',
-      expect.objectContaining({ api_key: 'api_key_1', api_key_env: null }),
+      expect.objectContaining({ api_key: 'api_key_1' }),
     );
   });
 
@@ -132,12 +268,44 @@ describe('Settings screens', () => {
         state={initialAppState}
       />,
     );
-    await userEvent.type(screen.getByLabelText('Name'), 'OpenRouter');
+    await userEvent.type(await screen.findByLabelText('Name'), 'OpenRouter');
     await userEvent.click(screen.getByRole('button', { name: 'Create provider' }));
 
-    expect(createProvider).toHaveBeenCalledWith({ display_name: 'OpenRouter' });
+    expect(createProvider).toHaveBeenCalledWith({
+      display_name: 'OpenRouter', copy_from: null,
+    });
     expect(dispatch).toHaveBeenCalledWith({
       type: 'inspect-provider', providerId: 'provider_1', providerName: 'OpenRouter',
+    });
+  });
+
+  it('creates a provider by copying existing settings', async () => {
+    const createProvider = vi.fn(async ({ display_name }: { display_name: string }) => ({
+      ...provider, id: 'provider_1', display_name,
+    }));
+    render(
+      <NewProviderScreen
+        client={fixtureClient({
+          createProvider,
+          listProviders: async () => [{
+            id: provider.id,
+            display_name: provider.display_name,
+            model: provider.model,
+            host: provider.host,
+          }],
+        })}
+        dispatch={vi.fn()}
+        sessionReport={null}
+        state={initialAppState}
+      />,
+    );
+
+    await userEvent.type(await screen.findByLabelText('Name'), 'OpenRouter copy');
+    await userEvent.selectOptions(screen.getByLabelText('Initial settings'), provider.id);
+    await userEvent.click(screen.getByRole('button', { name: 'Create provider' }));
+
+    expect(createProvider).toHaveBeenCalledWith({
+      display_name: 'OpenRouter copy', copy_from: provider.id,
     });
   });
 
@@ -193,7 +361,6 @@ describe('Settings screens', () => {
 
     expect(testProvider).toHaveBeenCalledWith(provider.id, expect.objectContaining({
       model: 'openai/gpt-5-candidate',
-      api_key_env: null,
       reasoning_effort: '',
     }));
     expect(updateProvider).not.toHaveBeenCalled();
@@ -241,7 +408,6 @@ describe('Settings screens', () => {
       stream: true,
       web_search: 'off',
       reasoning_effort: '',
-      api_key_env: null,
       auth: 'none',
       timeout_s: 600,
       reasoning_format: 'auto',
@@ -257,7 +423,6 @@ describe('Settings screens', () => {
       base_path: '/backend-api/codex',
       api: 'responses',
       auth: 'openai_subscription',
-      api_key_env: null,
       cache_retention: 'off',
     };
     const updateProvider = vi.fn(async (_id, update) => ({
@@ -284,7 +449,6 @@ describe('Settings screens', () => {
     expect(updateProvider).toHaveBeenCalledWith(oauthProvider.id, expect.objectContaining({
       auth: 'openai_subscription',
       api_key: null,
-      api_key_env: null,
       host: 'chatgpt.com',
       base_path: '/backend-api/codex',
       api: 'responses',

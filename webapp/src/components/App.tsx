@@ -63,10 +63,13 @@ import {
   NewApiKeyScreen,
   NewProviderScreen,
   NewStyleScreen,
+  NewVaultScreen,
   ProviderScreen,
   ProvidersScreen,
   StyleScreen,
   StylesScreen,
+  VaultScreen,
+  VaultsScreen,
 } from './Settings';
 
 export const liveRetryDelays = [250, 500, 1_000, 2_000, 4_000] as const;
@@ -229,6 +232,15 @@ function Screen({
         sessionReport={sessionReport}
         state={state}
       />
+    );
+    case 'settings-vaults': return (
+      <VaultsScreen client={client} dispatch={dispatch} sessionReport={sessionReport} state={state} />
+    );
+    case 'settings-new-vault': return (
+      <NewVaultScreen client={client} dispatch={dispatch} sessionReport={sessionReport} state={state} />
+    );
+    case 'settings-vault': return (
+      <VaultScreen client={client} dispatch={dispatch} sessionReport={sessionReport} state={state} />
     );
     case 'settings-providers': return (
       <ProvidersScreen client={client} dispatch={dispatch} sessionReport={sessionReport} state={state} />
@@ -433,6 +445,11 @@ export function App({
   // Bumped by every navigation intent. An open that finishes after the epoch
   // moved on belongs to a conversation the user has already left.
   const navigation = useRef(0);
+
+  useEffect(() => {
+    const vaultName = state.bootstrap?.vault_name;
+    document.title = vaultName ? `CHA: ${vaultName}` : 'CHA';
+  }, [state.bootstrap?.vault_name]);
 
   useEffect(() => {
     if (request.current?.client !== client) {

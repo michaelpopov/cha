@@ -65,7 +65,6 @@ static int check(const char* what, int status, int expected) {
 
 int main(int argc, const char* argv[]) {
     if (argc != 4) return 2;
-    if (unsetenv("OPENAI_API_KEY") != 0) return 1;
     if (unsetenv("CHA_R2_URL") != 0
         || unsetenv("CHA_R2_ACCESS_KEY_ID") != 0
         || unsetenv("CHA_R2_SECRET_ACCESS_KEY") != 0) {

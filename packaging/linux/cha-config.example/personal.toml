@@ -1,4 +1,4 @@
 vault_name = "Personal"
 data = "cha.sqlite3"
-# mirror = "mirror"
-# modify = "modify"
+# mirror = "/absolute/path/to/mirror"
+# modify = "/absolute/path/to/modify"

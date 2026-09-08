@@ -129,7 +129,6 @@ iconutil -c icns "$iconset" -o "$resources/AppIcon.icns"
 
 chmod 755 "$contents/MacOS/CHA" "$contents/Frameworks/libChaRuntime.dylib"
 chmod -R u=rwX,go=rX "$resources/web" "$resources/import-seed"
-chmod 600 "$resources/import-seed/.env"
 
 echo "==> Checking application bundle"
 plutil -lint "$contents/Info.plist"
@@ -146,7 +145,7 @@ if [ "$icon_width" != "16" ]; then
     exit 1
 fi
 if [ ! -f "$resources/web/index.html" ] \
-    || [ ! -f "$resources/import-seed/.env" ]; then
+    || [ ! -d "$resources/import-seed/system" ]; then
     echo "package check: application resources are incomplete" >&2
     exit 1
 fi
@@ -202,7 +201,7 @@ EOF
 cat >"$bundle_test/personal.toml" <<EOF
 vault_name = "Personal"
 data = "cha.sqlite3"
-modify = "modify"
+modify = "$bundle_test/modify"
 EOF
 xcrun clang \
     -target "arm64-apple-macos$deployment_target" \
@@ -234,7 +233,6 @@ chmod 755 "$test_application"
 chmod 755 "$test_application/chaweb" "$test_application/start-cha.sh"
 chmod -R u=rwX,go=rX "$test_application/web" "$test_application/import-seed" \
     "$test_application/cha-config.example"
-chmod 600 "$test_application/import-seed/.env"
 
 "$repository/scripts/check-linux-package.sh" "$test_application"
 (cd "$webapp" && \

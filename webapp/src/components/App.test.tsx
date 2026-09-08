@@ -109,6 +109,12 @@ function renderAt(width: number) {
   return render(<App client={fixtureClient()} />);
 }
 
+it('names the window after the active vault', async () => {
+  render(<App client={fixtureClient()} />);
+
+  await waitFor(() => expect(document.title).toBe('CHA: Personal'));
+});
+
 describe.each([
   ['desktop', 1280],
   ['iPhone', 390],
@@ -1388,7 +1394,7 @@ it('shows a clear incompatible-response state instead of a blank screen', async 
 
 it('names an unavailable API, hides arbitrary exception details, and retries startup', async () => {
   const getBootstrap = vi.fn()
-    .mockRejectedValueOnce(new Error('read /private/customer/.env: OPENAI_API_KEY=secret'))
+    .mockRejectedValueOnce(new Error('read /private/customer/.env: CHA_R2_SECRET_ACCESS_KEY=secret'))
     .mockResolvedValueOnce(bootstrapFixture);
   render(<App client={fixtureClient({ getBootstrap })} connectSessionEvents={inertSessionEvents} />);
 

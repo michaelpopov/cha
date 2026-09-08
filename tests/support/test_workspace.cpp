@@ -79,9 +79,11 @@ void write_provider_config(
     if (config.temperature) file << "temperature = " << *config.temperature << '\n';
     if (config.max_tokens) file << "max_tokens = " << *config.max_tokens << '\n';
     file << "timeout_s = " << config.timeout_s << '\n'
-         << "idle_timeout_s = " << config.idle_timeout_s << '\n'
-         << "api_key_env = " << quoted(config.api_key_env) << '\n'
-         << "reasoning_effort = " << quoted(config.reasoning_effort) << '\n'
+         << "idle_timeout_s = " << config.idle_timeout_s << '\n';
+    if (!config.api_key_id.empty()) {
+        file << "api_key = " << quoted(config.api_key_id) << '\n';
+    }
+    file << "reasoning_effort = " << quoted(config.reasoning_effort) << '\n'
          << "reasoning_format = " << quoted(reasoning_format_name(config.reasoning_format)) << '\n'
          << "https = " << (config.https ? "true" : "false") << '\n'
          << "api = " << quoted(api_name(config.api)) << '\n';

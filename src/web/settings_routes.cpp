@@ -151,8 +151,6 @@ Json provider_json(
         {"idle_timeout_s", config.idle_timeout_s},
         {"api_key", config.api_key_id.empty()
             ? Json(nullptr) : Json(config.api_key_id)},
-        {"api_key_env", config.api_key_env.empty()
-            ? Json(nullptr) : Json(config.api_key_env)},
         {"reasoning_effort", config.reasoning_effort},
         {"reasoning_format", reasoning_format_name(config.reasoning_format)},
         {"https", config.https},
@@ -248,7 +246,7 @@ struct ProviderUpdate {
 };
 
 ProviderUpdate parse_provider_update(const Json& json) {
-    static constexpr std::size_t field_count = 20;
+    static constexpr std::size_t field_count = 19;
     if (!json.is_object() || json.size() != field_count) {
         throw std::invalid_argument("Invalid provider");
     }
@@ -267,7 +265,6 @@ ProviderUpdate parse_provider_update(const Json& json) {
     result.config.timeout_s = required<int>(json, "timeout_s");
     result.config.idle_timeout_s = required<int>(json, "idle_timeout_s");
     result.config.api_key_id = nullable_string(json, "api_key").value_or("");
-    result.config.api_key_env = nullable_string(json, "api_key_env").value_or("");
     result.config.reasoning_effort = required<std::string>(json, "reasoning_effort");
     result.config.reasoning_format = choice<ReasoningFormat>(
         required<std::string>(json, "reasoning_format"),
@@ -346,6 +343,21 @@ std::string parse_create_name(const Json& json) {
     return required<std::string>(json, "display_name");
 }
 
+struct ProviderCreate {
+    std::string display_name;
+    std::string copy_from;
+};
+
+ProviderCreate parse_provider_create(const Json& json) {
+    if (!json.is_object() || json.size() != 2) {
+        throw std::invalid_argument("Invalid provider");
+    }
+    return {
+        .display_name = required<std::string>(json, "display_name"),
+        .copy_from = nullable_string(json, "copy_from").value_or(""),
+    };
+}
+
 bool provider_is_used(const Workspace& workspace, std::string_view provider_id) {
     for (const WorkspaceCharacter& character : workspace.characters()) {
         if (character.provider_id == provider_id) return true;
@@ -416,10 +428,10 @@ void SettingsRoutes::install(httplib::Server& server) const {
 
     server.Post("/api/v1/providers", [config, settings](const httplib::Request& request, httplib::Response& response) {
         if (!validate_json_mutation(request, response)) return;
-        std::string display_name;
+        ProviderCreate create;
         if (!parse_route_json_body(
                 request, response, settings.request_body_limit,
-                [&](const Json& json) { display_name = parse_create_name(json); })) {
+                [&](const Json& json) { create = parse_provider_create(json); })) {
             return;
         }
 
@@ -436,7 +448,8 @@ void SettingsRoutes::install(httplib::Server& server) const {
             }
         }
         try {
-            config->apply_provider_create(id, display_name);
+            config->apply_provider_create(
+                id, create.display_name, create.copy_from);
         } catch (const std::invalid_argument&) {
             return set_error_response(response, 400,
                 {ErrorCode::bad_request, "Invalid provider."});

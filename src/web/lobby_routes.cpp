@@ -281,10 +281,12 @@ void LobbyRoutes::install(httplib::Server& server) const {
                                         const httplib::Request&, httplib::Response& response) {
         const std::shared_ptr<const Workspace> current = published_workspace();
         const std::vector<StoredSession> recent = sessions->recent();
+        auto [vault, current_names] = current_vault->snapshot();
+        if (current_names.empty()) current_names = vault_names;
         set_json_response(response, 200, nlohmann::json(
             bootstrap_for(
                 *current, recent, initial,
-                current_vault->get().name, vault_names)));
+                std::move(vault.name), std::move(current_names))));
     });
 
     server.Post("/api/v1/personas",

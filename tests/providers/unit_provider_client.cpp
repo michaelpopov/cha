@@ -204,10 +204,6 @@ TEST(ProviderClient, RejectsAnAlreadyCancelledRequestBeforeDispatch) {
 }
 
 TEST(ProviderClient, StreamsDeltasAndBuildsTheProviderRequest) {
-    constexpr std::string_view api_key_variable =
-        "CHA_PROVIDER_CLIENT_AUTHORIZATION_TEST_KEY";
-    ScopedEnvironmentVariable environment{std::string(api_key_variable)};
-    ASSERT_TRUE(set_environment_variable(api_key_variable, "test-key"));
     const std::string stream =
         "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\n"
         "data: {\"choices\":[{\"delta\":{\"content\":\" world\"}}]}\n\n"
@@ -219,7 +215,6 @@ TEST(ProviderClient, StreamsDeltasAndBuildsTheProviderRequest) {
     configured.provider.config.temperature = 0.25;
     configured.provider.config.max_tokens = 200;
     configured.provider.config.reasoning_effort = "medium";
-    configured.provider.config.api_key_env = api_key_variable;
     configured.system_prompt = "Be concise.";
     const SharedCharacterDefinition definition =
         share_character_definitions({std::move(configured)}).front();
@@ -252,7 +247,7 @@ TEST(ProviderClient, StreamsDeltasAndBuildsTheProviderRequest) {
     mock.join();
     ASSERT_EQ(mock.requests().size(), 1U);
     EXPECT_TRUE(mock.requests().front().starts_with("POST /v1/chat/completions HTTP/1.1"));
-    EXPECT_NE(mock.requests().front().find("Authorization: Bearer test-key"), std::string::npos);
+    EXPECT_EQ(mock.requests().front().find("Authorization: Bearer"), std::string::npos);
     const Json body = Json::parse(request_body(mock.requests().front()));
     EXPECT_EQ(body["model"], "configured-model");
     EXPECT_TRUE(body["stream"]);
@@ -1237,21 +1232,30 @@ private:
     std::size_t next{};
 };
 
-TEST(ProviderClient, MissingApiKeyFailsWhenTheProviderIsUsed) {
-    constexpr std::string_view variable = "CHA_PROVIDER_CLIENT_MISSING_KEY_8C2A";
-    ScopedEnvironmentVariable environment{std::string(variable)};
-    ASSERT_TRUE(unset_environment_variable(variable));
+TEST(ProviderClient, MissingSavedApiKeyFailsWhenTheProviderIsUsed) {
+    const std::filesystem::path directory = std::filesystem::temp_directory_path()
+        / ("cha_provider_missing_key_" + std::to_string(
+            std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::filesystem::create_directories(directory);
+    struct Cleanup {
+        std::filesystem::path path;
+        ~Cleanup() { std::filesystem::remove_all(path); }
+    } cleanup{directory};
+    ApiKeyStore keys(directory / "api-keys.json");
     CharacterDefinition definition = network_definition(1, false);
-    definition.provider.config.api_key_env = std::string(variable);
+    definition.provider.config.api_key_id = "api_key_99";
     try {
-        (void)ProviderClient(shared_definition(std::move(definition)));
+        (void)ProviderClient(
+            shared_definition(std::move(definition)), nullptr, &keys);
         FAIL() << "expected missing API key rejection";
     } catch (const std::runtime_error& error) {
-        EXPECT_NE(std::string(error.what()).find(variable), std::string::npos);
+        EXPECT_NE(std::string(error.what()).find("api_key_99"), std::string::npos);
     }
 }
 
 TEST(ProviderClient, UsesASavedApiKeyWithoutReadingTheEnvironment) {
+    ScopedEnvironmentVariable environment("OPENAI_API_KEY");
+    ASSERT_TRUE(set_environment_variable("OPENAI_API_KEY", "environment-secret"));
     const std::filesystem::path directory = std::filesystem::temp_directory_path()
         / ("cha_provider_saved_key_" + std::to_string(
             std::chrono::steady_clock::now().time_since_epoch().count()));
@@ -1292,6 +1296,47 @@ TEST(ProviderClient, UsesASavedApiKeyWithoutReadingTheEnvironment) {
         std::ranges::find(
             requests.front().headers,
             "Authorization: Bearer saved-secret"),
+        requests.front().headers.end());
+    EXPECT_EQ(
+        std::ranges::find(
+            requests.front().headers,
+            "Authorization: Bearer environment-secret"),
+        requests.front().headers.end());
+}
+
+TEST(ProviderClient, DoesNotUseAProcessEnvironmentKeyAsFallback) {
+    ScopedEnvironmentVariable environment("OPENAI_API_KEY");
+    ASSERT_TRUE(set_environment_variable("OPENAI_API_KEY", "environment-secret"));
+    CharacterDefinition definition = network_definition(443, false);
+    std::vector<ProviderHttpRequest> requests;
+    ProviderClient client(
+        shared_definition(std::move(definition)),
+        nullptr,
+        nullptr,
+        [&requests](
+            const ProviderHttpRequest& request,
+            const std::atomic_bool&) {
+            requests.push_back(request);
+            return ProviderHttpResponse{
+                .status = 200,
+                .content_type = "application/json",
+                .body = R"({"choices":[{"message":{"content":"Answer"}}]})",
+            };
+        });
+    Transcript transcript;
+    const GenerationRequest request = client_request(transcript, 82, "Question");
+    std::atomic_bool cancellation{false};
+    const GenerationResult result = complete(
+        client, request, transcript, [](GenerationDelta) {}, cancellation);
+
+    EXPECT_EQ(result.outcome, GenerationOutcome::completed);
+    ASSERT_EQ(requests.size(), 1U);
+    EXPECT_EQ(
+        std::ranges::find_if(
+            requests.front().headers,
+            [](const std::string& header) {
+                return header.starts_with("Authorization:");
+            }),
         requests.front().headers.end());
 }
 

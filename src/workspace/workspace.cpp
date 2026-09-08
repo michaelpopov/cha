@@ -248,7 +248,7 @@ WorkspaceProvider load_provider(const std::filesystem::path& directory) {
     static constexpr std::string_view fields[]{
         "display_name", "host", "port", "base_path", "mode", "model", "stream",
         "temperature", "max_tokens", "timeout_s", "idle_timeout_s",
-        "api_key", "api_key_env", "reasoning_effort", "reasoning_format", "https",
+        "api_key", "reasoning_effort", "reasoning_format", "https",
         "api", "auth", "web_search", "cache_retention"};
     reject_unknown_fields(table, path, fields, "Provider config");
 
@@ -277,8 +277,6 @@ WorkspaceProvider load_provider(const std::filesystem::path& directory) {
                 table, path, "idle_timeout_s", "an integer").value_or(60),
             .api_key_id = optional_value<std::string>(
                 table, path, "api_key", "a string").value_or(""),
-            .api_key_env = optional_value<std::string>(
-                table, path, "api_key_env", "a string").value_or(""),
             .reasoning_effort = optional_value<std::string>(
                 table, path, "reasoning_effort", "a string").value_or(""),
             .reasoning_format = choice(
@@ -317,11 +315,6 @@ WorkspaceProvider load_provider(const std::filesystem::path& directory) {
 
     const ModelBackendConfig& config = provider.config;
     validate_public_name(provider.label, "Provider name", path);
-    if (!config.api_key_id.empty() && !config.api_key_env.empty()) {
-        throw std::runtime_error(
-            "Provider config '" + utf8_path(path)
-            + "' cannot set both api_key and api_key_env");
-    }
     if (config.port < 1 || config.port > 65535) {
         throw std::runtime_error(
             "Provider config '" + utf8_path(path)
@@ -364,7 +357,6 @@ WorkspaceProvider load_provider(const std::filesystem::path& directory) {
             || config.api != ProviderApi::responses
             || !config.stream
             || !config.api_key_id.empty()
-            || !config.api_key_env.empty()
             || config.temperature
             || config.max_tokens
             || config.web_search != WebSearchMode::off
@@ -1427,11 +1419,6 @@ void Workspace::write_provider(
     } catch (const std::runtime_error&) {
         throw std::invalid_argument("Invalid provider name");
     }
-    if (!provider.api_key_id.empty() && !provider.api_key_env.empty()) {
-        throw std::invalid_argument(
-            "A provider cannot use both a saved API key and an environment variable");
-    }
-
     toml::table table;
     table.insert("display_name", std::string(display_name));
     table.insert("host", provider.host);
@@ -1445,9 +1432,6 @@ void Workspace::write_provider(
     table.insert("timeout_s", provider.timeout_s);
     table.insert("idle_timeout_s", provider.idle_timeout_s);
     if (!provider.api_key_id.empty()) table.insert("api_key", provider.api_key_id);
-    if (!provider.api_key_env.empty()) {
-        table.insert("api_key_env", provider.api_key_env);
-    }
     if (!provider.reasoning_effort.empty()) {
         table.insert("reasoning_effort", provider.reasoning_effort);
     }
@@ -1467,7 +1451,8 @@ void Workspace::write_provider(
 
 void Workspace::create_provider(
     std::string_view provider_id,
-    std::string_view display_name) const {
+    std::string_view display_name,
+    std::string_view copy_from) const {
     const std::filesystem::path directory =
         root_ / "system" / "providers" / std::string(provider_id);
     const std::filesystem::path path = directory / "config.toml";
@@ -1482,22 +1467,31 @@ void Workspace::create_provider(
         throw std::invalid_argument("Duplicate provider");
     }
 
-    create_private_directory(directory);
     toml::table table;
-    table.insert("display_name", std::string(display_name));
-    table.insert("host", "api.openai.com");
-    table.insert("port", 443);
-    table.insert("mode", "net");
-    table.insert("model", "gpt-5");
-    table.insert("stream", true);
-    table.insert("timeout_s", 600);
-    table.insert("idle_timeout_s", 60);
-    table.insert("reasoning_format", "auto");
-    table.insert("https", true);
-    table.insert("api", "responses");
-    table.insert("auth", "none");
-    table.insert("web_search", "off");
-    table.insert("cache_retention", "short");
+    if (copy_from.empty()) {
+        table.insert("display_name", std::string(display_name));
+        table.insert("host", "api.openai.com");
+        table.insert("port", 443);
+        table.insert("mode", "net");
+        table.insert("model", "gpt-5");
+        table.insert("stream", true);
+        table.insert("timeout_s", 600);
+        table.insert("idle_timeout_s", 60);
+        table.insert("reasoning_format", "auto");
+        table.insert("https", true);
+        table.insert("api", "responses");
+        table.insert("auth", "none");
+        table.insert("web_search", "off");
+        table.insert("cache_retention", "short");
+    } else {
+        const auto source = provider_config_paths_.find(std::string(copy_from));
+        if (source == provider_config_paths_.end()) {
+            throw std::invalid_argument("Unknown provider to copy");
+        }
+        table = read_toml(source->second, "provider config");
+        table.insert_or_assign("display_name", std::string(display_name));
+    }
+    create_private_directory(directory);
     write_toml_file(path, table);
     (void)load_provider(directory);
 }

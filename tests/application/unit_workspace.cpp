@@ -408,29 +408,19 @@ TEST(Workspace, TemplateIncludesResolveUnderThePhysicalRoot) {
         std::string::npos);
 }
 
-TEST(Workspace, OverlayMakesADotenvApiKeyVisibleDuringLoad) {
+TEST(Workspace, RejectsEnvironmentBasedProviderCredentials) {
     test::TestWorkspace fixture;
-    constexpr char variable[] = "CHA_WORKSPACE_TEST_OVERLAY_CREDENTIAL_9F3A";
-    ASSERT_TRUE(unset_environment_variable(variable));
     fixture.write_provider(
         "secured",
         "host = \"example.test\"\n"
         "port = 443\n"
         "mode = \"net\"\n"
         "model = \"secured\"\n"
-        "api_key_env = \"CHA_WORKSPACE_TEST_OVERLAY_CREDENTIAL_9F3A\"\n");
+        "api_key_env = \"OPENAI_API_KEY\"\n");
     fixture.write_character_config(
         "display_name = \"Guide\"\nprovider = \"secured\"\n");
 
-    EXPECT_NO_THROW((void)Workspace::load(fixture.root()));
-
-    const std::vector<DotenvEntry> entries{{variable, "secret-key"}};
-    {
-        ScopedEnvironmentOverlay overlay(entries);
-        EXPECT_NO_THROW((void)Workspace::load(fixture.root()));
-        EXPECT_STREQ(std::getenv(variable), "secret-key");
-    }
-    EXPECT_EQ(std::getenv(variable), nullptr);
+    EXPECT_THROW((void)Workspace::load(fixture.root()), std::runtime_error);
 }
 
 TEST(Workspace, OverlayCleansUpWhenProviderValidationThrows) {
@@ -456,26 +446,76 @@ TEST(Workspace, OverlayCleansUpWhenProviderValidationThrows) {
     EXPECT_EQ(std::getenv(inserted), nullptr);
 }
 
-TEST(Workspace, LoadsASelectedProviderWhenApiKeyIsMissing) {
+TEST(Workspace, LoadsASelectedProviderWithASavedApiKeyReference) {
     test::TestWorkspace fixture;
-    constexpr std::string_view variable =
-        "CHA_WORKSPACE_TEST_MISSING_CREDENTIAL_71C1";
-    ASSERT_TRUE(unset_environment_variable(variable));
     fixture.write_provider(
         "secured",
         "host = \"example.test\"\n"
         "port = 443\n"
         "mode = \"net\"\n"
         "model = \"secured\"\n"
-        "api_key_env = \"CHA_WORKSPACE_TEST_MISSING_CREDENTIAL_71C1\"\n");
+        "api_key = \"api_key_1\"\n");
     fixture.write_character_config(
         "display_name = \"Guide\"\nprovider = \"secured\"\n");
 
     const Workspace workspace = Workspace::load(fixture.root());
     const WorkspaceProvider* const provider = workspace.find_provider("secured");
     ASSERT_NE(provider, nullptr);
-    EXPECT_EQ(provider->config.api_key_env, variable);
+    EXPECT_EQ(provider->config.api_key_id, "api_key_1");
     EXPECT_EQ(provider->config.auth, ProviderAuth::none);
+}
+
+TEST(Workspace, CreatesAProviderByCopyingExistingSettings) {
+    test::TestWorkspace fixture;
+    fixture.write_provider(
+        "source",
+        "display_name = \"Source\"\n"
+        "host = \"example.test\"\n"
+        "port = 8443\n"
+        "base_path = \"/models\"\n"
+        "mode = \"net\"\n"
+        "model = \"source-model\"\n"
+        "stream = false\n"
+        "temperature = 0.25\n"
+        "max_tokens = 321\n"
+        "timeout_s = 42\n"
+        "idle_timeout_s = 7\n"
+        "api_key = \"api_key_1\"\n"
+        "reasoning_effort = \"high\"\n"
+        "reasoning_format = \"reasoning\"\n"
+        "https = true\n"
+        "api = \"chat_completions\"\n"
+        "auth = \"none\"\n"
+        "web_search = \"off\"\n"
+        "cache_retention = \"long\"\n");
+
+    const Workspace workspace = Workspace::load(fixture.root());
+    workspace.create_provider("copied", "Copied provider", "source");
+
+    const Workspace reloaded = Workspace::load(fixture.root());
+    const WorkspaceProvider* const copied = reloaded.find_provider("copied");
+    ASSERT_NE(copied, nullptr);
+    EXPECT_EQ(copied->label, "Copied provider");
+    EXPECT_EQ(copied->config.host, "example.test");
+    EXPECT_EQ(copied->config.port, 8443);
+    EXPECT_EQ(copied->config.base_path, "/models");
+    EXPECT_EQ(copied->config.model, "source-model");
+    EXPECT_FALSE(copied->config.stream);
+    EXPECT_EQ(copied->config.temperature, 0.25);
+    EXPECT_EQ(copied->config.max_tokens, 321);
+    EXPECT_EQ(copied->config.timeout_s, 42);
+    EXPECT_EQ(copied->config.idle_timeout_s, 7);
+    EXPECT_EQ(copied->config.api_key_id, "api_key_1");
+    EXPECT_EQ(copied->config.reasoning_effort, "high");
+    EXPECT_EQ(copied->config.reasoning_format, ReasoningFormat::reasoning);
+    EXPECT_EQ(copied->config.api, ProviderApi::chat_completions);
+    EXPECT_EQ(copied->config.cache_retention, CacheRetention::long_);
+
+    EXPECT_THROW(
+        workspace.create_provider("bad_copy", "Bad copy", "missing"),
+        std::invalid_argument);
+    EXPECT_FALSE(std::filesystem::exists(
+        fixture.root() / "system" / "providers" / "bad_copy"));
 }
 
 TEST(Workspace, WritesConfigurationWithoutChangingTheLoadedInstance) {
@@ -680,7 +720,7 @@ TEST(Workspace, LoadsOpenAiSubscriptionProvider) {
     EXPECT_EQ(provider->config.api, ProviderApi::responses);
     EXPECT_EQ(provider->config.model, "gpt-5.6-terra");
     EXPECT_TRUE(provider->config.stream);
-    EXPECT_TRUE(provider->config.api_key_env.empty());
+    EXPECT_TRUE(provider->config.api_key_id.empty());
     EXPECT_FALSE(provider->config.temperature);
     EXPECT_FALSE(provider->config.max_tokens);
     EXPECT_EQ(provider->config.web_search, WebSearchMode::off);
@@ -708,7 +748,7 @@ TEST(Workspace, RejectsInvalidOpenAiSubscriptionSettings) {
     const std::vector<std::string> invalid{
         subscription_provider_toml("temperature = 0.2\n"),
         subscription_provider_toml("max_tokens = 128\n"),
-        subscription_provider_toml("api_key_env = \"OPENAI_API_KEY\"\n"),
+        subscription_provider_toml("api_key = \"api_key_1\"\n"),
         "auth = \"openai_subscription\"\n"
         "host = \"api.openai.com\"\nport = 443\nhttps = true\n"
         "base_path = \"/backend-api/codex\"\nmode = \"net\"\n"

@@ -113,7 +113,7 @@ paths:
       summary: Switch the active vault
       description: |
         Switches the shared process-wide vault. The name is matched
-        ASCII-case-insensitively against the startup registry. Success is
+        ASCII-case-insensitively against the configured registry. Success is
         `204` after the operation completes, including when the requested
         vault is already active. The HTTP listener and port do not change.
 
@@ -128,6 +128,101 @@ paths:
       responses:
         "204":
           description: The vault is now the requested vault, or already was.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/ForbiddenMutation"
+        "413":
+          $ref: "#/components/responses/BodyTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/vaults:
+    get:
+      tags: [Settings]
+      operationId: listVaults
+      summary: List configured vaults
+      responses:
+        "200":
+          description: Vault settings, ordered by display name.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/VaultDetail"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    post:
+      tags: [Settings]
+      operationId: createVault
+      summary: Create an empty vault or copy an existing vault database
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateVaultRequest"
+      responses:
+        "201":
+          description: Created vault settings. The active vault is unchanged.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VaultDetail"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/ForbiddenMutation"
+        "413":
+          $ref: "#/components/responses/BodyTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    patch:
+      tags: [Settings]
+      operationId: updateVault
+      summary: Update a vault's display name and optional paths
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateVaultRequest"
+      responses:
+        "200":
+          description: Updated vault settings.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VaultDetail"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "403":
+          $ref: "#/components/responses/ForbiddenMutation"
+        "413":
+          $ref: "#/components/responses/BodyTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      tags: [Settings]
+      operationId: deleteVault
+      summary: Remove an inactive vault from the registry
+      description: The database, mirror, and modify files are retained.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeleteVaultRequest"
+      responses:
+        "204":
+          description: Vault removed from the registry.
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The vault is active or is the last configured vault.
         "400":
           $ref: "#/components/responses/BadRequest"
         "403":
@@ -1763,6 +1858,81 @@ components:
           type: string
           minLength: 1
 
+    VaultDetail:
+      type: object
+      additionalProperties: false
+      required:
+        - display_name
+        - data_path
+        - mirror_path
+        - modify_path
+        - active
+        - can_delete
+      properties:
+        display_name:
+          type: string
+          minLength: 1
+        data_path:
+          type: string
+          minLength: 1
+        mirror_path:
+          type: [string, "null"]
+          description: Absolute mirror directory path.
+        modify_path:
+          type: [string, "null"]
+          description: Absolute editable-workspace directory path.
+        active:
+          type: boolean
+        can_delete:
+          type: boolean
+
+    CreateVaultRequest:
+      type: object
+      additionalProperties: false
+      required: [display_name, data_path, mirror_path, modify_path, copy_from]
+      properties:
+        display_name:
+          type: string
+          minLength: 1
+        data_path:
+          type: string
+          minLength: 1
+        mirror_path:
+          type: [string, "null"]
+          description: Absolute mirror directory path.
+        modify_path:
+          type: [string, "null"]
+          description: Absolute editable-workspace directory path.
+        copy_from:
+          type: [string, "null"]
+
+    UpdateVaultRequest:
+      type: object
+      additionalProperties: false
+      required: [vault_name, display_name, mirror_path, modify_path]
+      properties:
+        vault_name:
+          type: string
+          minLength: 1
+        display_name:
+          type: string
+          minLength: 1
+        mirror_path:
+          type: [string, "null"]
+          description: Absolute mirror directory path.
+        modify_path:
+          type: [string, "null"]
+          description: Absolute editable-workspace directory path.
+
+    DeleteVaultRequest:
+      type: object
+      additionalProperties: false
+      required: [vault_name]
+      properties:
+        vault_name:
+          type: string
+          minLength: 1
+
     Bootstrap:
       type: object
       additionalProperties: false
@@ -1834,10 +2004,13 @@ components:
     CreateProviderRequest:
       type: object
       additionalProperties: false
-      required: [display_name]
+      required: [display_name, copy_from]
       properties:
         display_name:
           type: string
+        copy_from:
+          type: [string, "null"]
+          description: Existing provider ID whose settings should be copied.
 
     ProviderUpdate:
       type: object
@@ -1855,7 +2028,6 @@ components:
         - timeout_s
         - idle_timeout_s
         - api_key
-        - api_key_env
         - reasoning_effort
         - reasoning_format
         - https
@@ -1896,8 +2068,6 @@ components:
           minimum: 1
         api_key:
           type: [string, "null"]
-        api_key_env:
-          type: [string, "null"]
         reasoning_effort:
           type: string
         reasoning_format:
@@ -1935,7 +2105,6 @@ components:
         - timeout_s
         - idle_timeout_s
         - api_key
-        - api_key_env
         - reasoning_effort
         - reasoning_format
         - https
@@ -1972,8 +2141,6 @@ components:
         idle_timeout_s:
           type: integer
         api_key:
-          type: [string, "null"]
-        api_key_env:
           type: [string, "null"]
         reasoning_effort:
           type: string

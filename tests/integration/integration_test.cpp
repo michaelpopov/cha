@@ -17,7 +17,6 @@
 
 #include <chrono>
 #include <cstddef>
-#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -40,31 +39,6 @@ test::TestNotifier& notifier() {
     static test::TestNotifier instance;
     return instance;
 }
-
-class ScopedEnvironmentVariable {
-public:
-    ScopedEnvironmentVariable(std::string name, std::string value)
-        : name_(std::move(name)) {
-        if (const char* current = std::getenv(name_.c_str())) previous_ = current;
-        if (!previous_ || previous_->empty()) {
-            if (!set_environment_variable(name_, value)) {
-                throw std::runtime_error("Failed to set integration-test environment variable");
-            }
-        }
-    }
-
-    ~ScopedEnvironmentVariable() {
-        if (previous_) {
-            (void)set_environment_variable(name_, *previous_);
-        } else {
-            (void)unset_environment_variable(name_);
-        }
-    }
-
-private:
-    std::string name_;
-    std::optional<std::string> previous_;
-};
 
 std::vector<TranscriptEntry> copy_entries(TranscriptView transcript) {
     const auto entries = transcript.entries;
@@ -340,11 +314,6 @@ struct LobbySetup {
 
 LobbySetup lobby_setup() {
     const std::filesystem::path root{CHA_WORKSPACE_DIRECTORY};
-    // The mock transports below replace every loaded provider before use, but
-    // workspace loading correctly validates every referenced credential name.
-    ScopedEnvironmentVariable openai_key("OPENAI_API_KEY", "integration-test-key");
-    ScopedEnvironmentVariable openrouter_key("OPEN_ROUTER_API_KEY", "integration-test-key");
-    ScopedEnvironmentVariable gemini_key("GEMINI_API_KEY", "integration-test-key");
     const Workspace workspace = Workspace::load(root);
     const WorkspaceForum* const forum = workspace.find_forum("lobby");
     if (forum == nullptr) throw std::runtime_error("Checked-in workspace has no lobby forum");
@@ -397,7 +366,7 @@ void point_at(CharacterDefinition& definition, int port) {
     definition.provider.config.web_search = WebSearchMode::off;
     definition.provider.config.stream = false;
     // The local mock server does not require authentication.
-    definition.provider.config.api_key_env.clear();
+    definition.provider.config.api_key_id.clear();
 }
 
 std::string answer(std::string_view text) {

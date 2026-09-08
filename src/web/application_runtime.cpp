@@ -10,6 +10,8 @@
 #include "util/environment.h"
 #include "util/logging.h"
 #include "util/path_name.h"
+#include "util/public_name.h"
+#include "util/text.h"
 #include "util/toml_file.h"
 #include "web/current_vault.h"
 #include "workspace/builtins.h"
@@ -47,6 +49,7 @@
 #include <thread>
 #include <utility>
 #include <variant>
+#include <vector>
 
 namespace cha::web {
 namespace {
@@ -155,6 +158,156 @@ ProviderClientFactory shared_openai_provider_factory(
     };
 }
 
+std::filesystem::path normalized_vault_path(
+    const std::filesystem::path& config_directory,
+    const std::filesystem::path& value) {
+    if (value.empty()) throw std::invalid_argument("A vault path is empty");
+    const std::filesystem::path resolved = value.is_relative()
+        ? config_directory / value : value;
+    return std::filesystem::weakly_canonical(
+        std::filesystem::absolute(resolved));
+}
+
+std::optional<std::filesystem::path> normalized_absolute_vault_path(
+    const std::optional<std::filesystem::path>& value,
+    std::string_view field) {
+    if (!value) return std::nullopt;
+    if (value->empty() || !value->is_absolute()) {
+        throw std::invalid_argument(
+            "The " + std::string(field) + " path must be absolute");
+    }
+    return std::filesystem::weakly_canonical(*value);
+}
+
+toml::table vault_definition_table(const VaultDefinition& vault) {
+    toml::table table;
+    table.insert("vault_name", vault.name);
+    table.insert("data", utf8_path(vault.data));
+    if (vault.mirror) table.insert("mirror", utf8_path(*vault.mirror));
+    if (vault.modify) table.insert("modify", utf8_path(*vault.modify));
+    return table;
+}
+
+std::filesystem::path next_vault_file(
+    const std::filesystem::path& config_directory) {
+    for (std::size_t suffix = 1;; ++suffix) {
+        const std::filesystem::path candidate =
+            config_directory / ("vault-" + std::to_string(suffix) + ".toml");
+        if (!std::filesystem::exists(candidate)) return candidate;
+    }
+}
+
+void validate_candidate_vaults(
+    const std::filesystem::path& config_directory,
+    const std::vector<VaultDefinition>& vaults) {
+    try {
+        for (const VaultDefinition& vault : vaults) {
+            validate_public_name(vault.name, "vault_name", vault.source);
+        }
+        validate_vault_definitions(config_directory, vaults);
+    } catch (const std::runtime_error& error) {
+        throw std::invalid_argument(error.what());
+    }
+}
+
+bool is_workspace_directory(const std::filesystem::path& path) {
+    try {
+        (void)Workspace::load(path);
+        return true;
+    } catch (const std::exception&) {
+        return false;
+    }
+}
+
+void validate_vault_paths(const VaultDefinition& vault) {
+    if (vault.mirror && !std::filesystem::is_directory(*vault.mirror)) {
+        throw std::invalid_argument(
+            "The mirror path must be an existing directory");
+    }
+    if (!vault.modify || !std::filesystem::exists(*vault.modify)) return;
+    if (!std::filesystem::is_directory(*vault.modify)) {
+        throw std::invalid_argument(
+            "The modify path must be a directory");
+    }
+    if (std::filesystem::is_empty(*vault.modify)) return;
+    if (!is_workspace_directory(*vault.modify)) {
+        throw std::invalid_argument(
+            "The modify path must be empty or contain a valid CHA workspace");
+    }
+}
+
+void clear_existing_export(const std::filesystem::path& destination) {
+    if (!std::filesystem::is_directory(destination)
+        || std::filesystem::is_empty(destination)) {
+        return;
+    }
+    if (!is_workspace_directory(destination)) {
+        throw std::runtime_error(
+            "Export destination '" + utf8_path(destination)
+            + "' is not a valid CHA workspace; refusing to replace it");
+    }
+    std::filesystem::remove_all(destination);
+}
+
+const std::string& required_json_string(
+    const nlohmann::json& json,
+    std::string_view key) {
+    const std::string name(key);
+    if (!json.is_object() || !json.contains(name) || !json.at(name).is_string()) {
+        throw std::invalid_argument("Invalid vault settings");
+    }
+    return json.at(name).get_ref<const std::string&>();
+}
+
+std::optional<std::filesystem::path> nullable_json_path(
+    const nlohmann::json& json,
+    std::string_view key) {
+    const std::string name(key);
+    if (!json.is_object() || !json.contains(name)) {
+        throw std::invalid_argument("Invalid vault settings");
+    }
+    if (json.at(name).is_null()) return std::nullopt;
+    if (!json.at(name).is_string()) {
+        throw std::invalid_argument("Invalid vault settings");
+    }
+    const std::string value = json.at(name).get<std::string>();
+    if (value.empty()) throw std::invalid_argument("Invalid vault settings");
+    return path_from_utf8(value);
+}
+
+std::optional<std::string> nullable_json_string(
+    const nlohmann::json& json,
+    std::string_view key) {
+    const std::string name(key);
+    if (!json.is_object() || !json.contains(name)) {
+        throw std::invalid_argument("Invalid vault settings");
+    }
+    if (json.at(name).is_null()) return std::nullopt;
+    if (!json.at(name).is_string()) {
+        throw std::invalid_argument("Invalid vault settings");
+    }
+    const std::string value = json.at(name).get<std::string>();
+    if (value.empty()) throw std::invalid_argument("Invalid vault settings");
+    return value;
+}
+
+nlohmann::json vault_json(
+    const VaultDefinition& vault,
+    std::string_view active_name,
+    std::size_t vault_count) {
+    return {
+        {"display_name", vault.name},
+        {"data_path", utf8_path(vault.data)},
+        {"mirror_path", vault.mirror
+            ? nlohmann::json(utf8_path(*vault.mirror)) : nlohmann::json(nullptr)},
+        {"modify_path", vault.modify
+            ? nlohmann::json(utf8_path(*vault.modify)) : nlohmann::json(nullptr)},
+        {"active", same_vault_name(vault.name, active_name)},
+        {"can_delete", vault_count > 1
+            && !same_vault_name(vault.name, active_name)},
+    };
+}
+
 } // namespace
 
 struct ApplicationRuntime::Impl {
@@ -172,6 +325,7 @@ struct ApplicationRuntime::Impl {
               command.config_directory / "openai-auth.json")),
           providers(shared_openai_provider_factory(
               openai_auth.get(), api_keys.get())) {
+        publish_vault_names();
         configure_test_idle_grace(settings, command);
         const auto seed = TemporarySessionSeed{
             {std::string(entrance_id), std::string(welcome_id)},
@@ -183,7 +337,14 @@ struct ApplicationRuntime::Impl {
             seed);
         mirror = std::make_shared<SessionMirror>();
         if (command.vault.mirror) {
-            mirror->rebuild(*command.vault.mirror, *sessions);
+            try {
+                mirror->rebuild(*command.vault.mirror, *sessions);
+            } catch (const std::exception& error) {
+                log_warn(
+                    "Session mirror rebuild failed: "
+                    + std::string(error.what()));
+                mirror->rebuild(std::nullopt, *sessions);
+            }
         }
 
         auto opener = [this](
@@ -200,6 +361,24 @@ struct ApplicationRuntime::Impl {
             return opened;
         };
         live_sessions = std::make_unique<LiveSessionManager>(settings, opener);
+    }
+
+    void publish_vault_names() {
+        std::vector<std::string> names;
+        names.reserve(command.vaults.size());
+        for (const VaultDefinition& vault : command.vaults) {
+            names.push_back(vault.name);
+        }
+        current_vault_.set_names(std::move(names));
+    }
+
+    void publish_vault(VaultDefinition vault) {
+        std::vector<std::string> names;
+        names.reserve(command.vaults.size());
+        for (const VaultDefinition& configured : command.vaults) {
+            names.push_back(configured.name);
+        }
+        current_vault_.set(std::move(vault), std::move(names));
     }
 
     // shutdown() covers the running case; this covers the paths that never got
@@ -289,7 +468,7 @@ struct ApplicationRuntime::Impl {
     std::unique_ptr<LiveSessionManager> live_sessions;
     std::unique_ptr<httplib::Server> server;
     std::thread listener;
-    std::mutex lifecycle_mutex;
+    mutable std::mutex lifecycle_mutex;
     bool started{};
     bool stopped{};
     // Set when the workspace database could not be reopened. The HTTP server is
@@ -314,6 +493,155 @@ std::unique_ptr<ApplicationRuntime> ApplicationRuntime::open(
 
 VaultDefinition ApplicationRuntime::current_vault() const {
     return impl_->current_vault_.get();
+}
+
+VaultRegistrySnapshot ApplicationRuntime::vault_snapshot() const {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    return {impl_->command.vaults, impl_->current_vault_.get()};
+}
+
+VaultDefinition ApplicationRuntime::create_vault(VaultCreate create) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    const VaultDefinition* copied = nullptr;
+    if (create.copy_from) {
+        copied = find_vault(impl_->command.vaults, *create.copy_from);
+        if (copied == nullptr) {
+            throw std::invalid_argument("The source vault was not found");
+        }
+    }
+
+    VaultDefinition candidate{
+        .name = std::move(create.display_name),
+        .data = normalized_vault_path(
+            impl_->command.config_directory, create.data),
+        .mirror = normalized_absolute_vault_path(create.mirror, "mirror"),
+        .modify = normalized_absolute_vault_path(create.modify, "modify"),
+        .source = next_vault_file(impl_->command.config_directory),
+    };
+    if (!std::filesystem::is_directory(candidate.data.parent_path())) {
+        throw std::invalid_argument("The database parent directory does not exist");
+    }
+    std::error_code status_error;
+    const std::filesystem::file_status data_status =
+        std::filesystem::symlink_status(candidate.data, status_error);
+    if (status_error && status_error != std::errc::no_such_file_or_directory) {
+        throw std::runtime_error("The database path could not be inspected");
+    }
+    if (data_status.type() != std::filesystem::file_type::not_found) {
+        throw std::invalid_argument("The database path already exists");
+    }
+    validate_vault_paths(candidate);
+
+    std::vector<VaultDefinition> updated = impl_->command.vaults;
+    updated.push_back(candidate);
+    validate_candidate_vaults(impl_->command.config_directory, updated);
+
+    write_toml_file(candidate.source, vault_definition_table(candidate));
+    try {
+        if (copied != nullptr) {
+            copy_workspace_session_database(copied->data, candidate.data);
+        } else {
+            create_workspace_session_database_from_configuration(
+                impl_->current_vault_.get().data, candidate.data);
+        }
+    } catch (...) {
+        std::error_code ignored;
+        std::filesystem::remove(candidate.source, ignored);
+        throw;
+    }
+
+    std::sort(
+        updated.begin(), updated.end(),
+        [](const VaultDefinition& left, const VaultDefinition& right) {
+            return fold_ascii(left.name) < fold_ascii(right.name);
+        });
+    impl_->command.vaults = std::move(updated);
+    impl_->publish_vault_names();
+    return candidate;
+}
+
+VaultDefinition ApplicationRuntime::update_vault(
+    std::string_view current_name,
+    VaultUpdate update) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    const auto found = std::find_if(
+        impl_->command.vaults.begin(), impl_->command.vaults.end(),
+        [current_name](const VaultDefinition& vault) {
+            return same_vault_name(vault.name, current_name);
+        });
+    if (found == impl_->command.vaults.end()) {
+        throw std::out_of_range("The vault was not found");
+    }
+
+    const VaultDefinition previous = *found;
+    VaultDefinition candidate = previous;
+    candidate.name = std::move(update.display_name);
+    candidate.mirror = normalized_absolute_vault_path(update.mirror, "mirror");
+    candidate.modify = normalized_absolute_vault_path(update.modify, "modify");
+    validate_vault_paths(candidate);
+
+    std::vector<VaultDefinition> updated = impl_->command.vaults;
+    updated[static_cast<std::size_t>(found - impl_->command.vaults.begin())] =
+        candidate;
+    validate_candidate_vaults(impl_->command.config_directory, updated);
+
+    const bool active = same_vault_name(
+        impl_->current_vault_.get().name, previous.name);
+    write_toml_file(candidate.source, vault_definition_table(candidate));
+    try {
+        if (active) {
+            rewrite_toml_file(
+                impl_->command.config_directory / "app.toml",
+                [&](toml::table& table) {
+                    table.insert_or_assign("vault", candidate.name);
+                });
+        }
+    } catch (...) {
+        write_toml_file(previous.source, vault_definition_table(previous));
+        throw;
+    }
+
+    std::sort(
+        updated.begin(), updated.end(),
+        [](const VaultDefinition& left, const VaultDefinition& right) {
+            return fold_ascii(left.name) < fold_ascii(right.name);
+        });
+    impl_->command.vaults = std::move(updated);
+    if (active) {
+        impl_->command.vault = candidate;
+        impl_->publish_vault(candidate);
+        try {
+            impl_->mirror->rebuild(candidate.mirror, *impl_->sessions);
+        } catch (const std::exception& error) {
+            log_warn(
+                "Session mirror rebuild failed: " + std::string(error.what()));
+            impl_->mirror->rebuild(std::nullopt, *impl_->sessions);
+        }
+    } else {
+        impl_->publish_vault_names();
+    }
+    return candidate;
+}
+
+void ApplicationRuntime::delete_vault(std::string_view name) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    const auto found = std::find_if(
+        impl_->command.vaults.begin(), impl_->command.vaults.end(),
+        [name](const VaultDefinition& vault) {
+            return same_vault_name(vault.name, name);
+        });
+    if (found == impl_->command.vaults.end()) {
+        throw std::out_of_range("The vault was not found");
+    }
+    if (impl_->command.vaults.size() == 1) {
+        throw std::invalid_argument("The last vault cannot be deleted");
+    }
+    if (same_vault_name(impl_->current_vault_.get().name, found->name)) {
+        throw std::invalid_argument("The active vault cannot be deleted");
+    }
+    (void)std::filesystem::remove(found->source);
+    impl_->command.vaults.erase(found);
+    impl_->publish_vault_names();
 }
 
 void ApplicationRuntime::switch_vault(std::string_view name) {
@@ -422,6 +750,121 @@ int ApplicationRuntime::start(int port_override) {
         impl_->mirror).install(*server);
     ApplicationRuntime* const runtime = this;
     const WebSettings settings = impl_->settings;
+    server->Get(
+        "/api/v1/vaults",
+        [runtime](const httplib::Request&, httplib::Response& response) {
+            const VaultRegistrySnapshot snapshot = runtime->vault_snapshot();
+            nlohmann::json result = nlohmann::json::array();
+            for (const VaultDefinition& vault : snapshot.vaults) {
+                result.push_back(vault_json(
+                    vault, snapshot.active.name, snapshot.vaults.size()));
+            }
+            set_json_response(response, 200, result);
+        });
+    server->Post(
+        "/api/v1/vaults",
+        [runtime, settings](
+            const httplib::Request& request, httplib::Response& response) {
+            if (!validate_json_mutation(request, response)) return;
+            VaultCreate create;
+            if (!parse_route_json_body(
+                    request, response, settings.request_body_limit,
+                    [&create](const nlohmann::json& json) {
+                        if (!json.is_object() || json.size() != 5) {
+                            throw std::invalid_argument("Invalid vault settings");
+                        }
+                        create.display_name =
+                            required_json_string(json, "display_name");
+                        create.data = path_from_utf8(
+                            required_json_string(json, "data_path"));
+                        create.mirror = nullable_json_path(json, "mirror_path");
+                        create.modify = nullable_json_path(json, "modify_path");
+                        create.copy_from =
+                            nullable_json_string(json, "copy_from");
+                    })) return;
+            try {
+                const VaultDefinition created =
+                    runtime->create_vault(std::move(create));
+                const VaultRegistrySnapshot snapshot =
+                    runtime->vault_snapshot();
+                set_json_response(
+                    response, 201,
+                    vault_json(
+                        created, snapshot.active.name, snapshot.vaults.size()));
+            } catch (const std::invalid_argument& error) {
+                set_error_response(
+                    response, 400, {ErrorCode::bad_request, error.what()});
+            } catch (const std::exception& error) {
+                set_error_response(
+                    response, 500, {ErrorCode::internal_error, error.what()});
+            }
+        });
+    server->Patch(
+        "/api/v1/vaults",
+        [runtime, settings](
+            const httplib::Request& request, httplib::Response& response) {
+            if (!validate_json_mutation(request, response)) return;
+            std::string name;
+            VaultUpdate update;
+            if (!parse_route_json_body(
+                    request, response, settings.request_body_limit,
+                    [&name, &update](const nlohmann::json& json) {
+                        if (!json.is_object() || json.size() != 4) {
+                            throw std::invalid_argument("Invalid vault settings");
+                        }
+                        name = required_json_string(json, "vault_name");
+                        update.display_name =
+                            required_json_string(json, "display_name");
+                        update.mirror = nullable_json_path(json, "mirror_path");
+                        update.modify = nullable_json_path(json, "modify_path");
+                    })) return;
+            try {
+                const VaultDefinition updated =
+                    runtime->update_vault(name, std::move(update));
+                const VaultRegistrySnapshot snapshot =
+                    runtime->vault_snapshot();
+                set_json_response(
+                    response, 200,
+                    vault_json(
+                        updated, snapshot.active.name, snapshot.vaults.size()));
+            } catch (const std::out_of_range&) {
+                set_route_not_found(response, "That vault was not found.");
+            } catch (const std::invalid_argument& error) {
+                set_error_response(
+                    response, 400, {ErrorCode::bad_request, error.what()});
+            } catch (const std::exception& error) {
+                set_error_response(
+                    response, 500, {ErrorCode::internal_error, error.what()});
+            }
+        });
+    server->Delete(
+        "/api/v1/vaults",
+        [runtime, settings](
+            const httplib::Request& request, httplib::Response& response) {
+            if (!validate_json_mutation(request, response)) return;
+            std::string name;
+            if (!parse_route_json_body(
+                    request, response, settings.request_body_limit,
+                    [&name](const nlohmann::json& json) {
+                        if (!json.is_object() || json.size() != 1) {
+                            throw std::invalid_argument("Invalid vault settings");
+                        }
+                        name = required_json_string(json, "vault_name");
+                    })) return;
+            try {
+                runtime->delete_vault(name);
+                response.status = 204;
+                response.set_header("Cache-Control", "no-store");
+            } catch (const std::out_of_range&) {
+                set_route_not_found(response, "That vault was not found.");
+            } catch (const std::invalid_argument& error) {
+                set_error_response(
+                    response, 409, {ErrorCode::bad_request, error.what()});
+            } catch (const std::exception& error) {
+                set_error_response(
+                    response, 500, {ErrorCode::internal_error, error.what()});
+            }
+        });
     server->Post(
         "/api/v1/vault/switch",
         [runtime, settings](
@@ -545,9 +988,7 @@ WorkspaceConfigTransfer ApplicationRuntime::export_configuration() {
             throw std::runtime_error(
                 "Application config requires 'modify' for Export");
         }
-        if (std::filesystem::is_directory(*vault.modify)) {
-            std::filesystem::remove_all(*vault.modify);
-        }
+        clear_existing_export(*vault.modify);
         return export_workspace_configuration(
             vault.data,
             *vault.modify,

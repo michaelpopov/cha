@@ -4,6 +4,7 @@ import type {
   ForumDetail,
   PersonaDetail,
   SessionSnapshot,
+  VaultDetail,
 } from '../api/client';
 import type { AppendEvent } from '../api/events';
 
@@ -23,6 +24,9 @@ export type MainView =
   | 'forum-members'
   | 'new-session'
   | 'settings'
+  | 'settings-vaults'
+  | 'settings-new-vault'
+  | 'settings-vault'
   | 'settings-providers'
   | 'settings-new-provider'
   | 'settings-provider'
@@ -61,6 +65,7 @@ export interface AppState {
   inspectedPersonaId: string | null;
   personaEditingAvailable: boolean;
   forumEditingAvailable: boolean;
+  inspectedVaultName: string | null;
   inspectedProviderId: string | null;
   inspectedProviderName: string | null;
   providerEditingAvailable: boolean;
@@ -92,6 +97,7 @@ export const initialAppState: AppState = {
   inspectedPersonaId: null,
   personaEditingAvailable: false,
   forumEditingAvailable: false,
+  inspectedVaultName: null,
   inspectedProviderId: null,
   inspectedProviderName: null,
   providerEditingAvailable: false,
@@ -143,6 +149,12 @@ export type AppAction =
   | { type: 'forum-deleted'; forumId: string }
   | { type: 'show-new-session' }
   | { type: 'show-settings' }
+  | { type: 'show-settings-vaults' }
+  | { type: 'show-settings-new-vault' }
+  | { type: 'inspect-vault'; vaultName: string }
+  | { type: 'vault-created'; vault: VaultDetail }
+  | { type: 'vault-updated'; previousName: string; vault: VaultDetail }
+  | { type: 'vault-deleted'; vaultName: string }
   | { type: 'show-settings-providers' }
   | { type: 'show-settings-new-provider' }
   | { type: 'inspect-provider'; providerId: string; providerName: string }
@@ -533,6 +545,58 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return { ...state, mainView: 'new-session', ...idleSessionOperation() };
     case 'show-settings':
       return { ...state, mainView: 'settings', ...idleSessionOperation() };
+    case 'show-settings-vaults':
+      return {
+        ...state,
+        mainView: 'settings-vaults',
+        inspectedVaultName: null,
+        ...idleSessionOperation(),
+      };
+    case 'show-settings-new-vault':
+      return { ...state, mainView: 'settings-new-vault', ...idleSessionOperation() };
+    case 'inspect-vault':
+      return {
+        ...state,
+        mainView: 'settings-vault',
+        inspectedVaultName: action.vaultName,
+        ...idleSessionOperation(),
+      };
+    case 'vault-created':
+      return {
+        ...state,
+        mainView: 'settings-vault',
+        inspectedVaultName: action.vault.display_name,
+        bootstrap: state.bootstrap ? {
+          ...state.bootstrap,
+          vaults: [...state.bootstrap.vaults, action.vault.display_name]
+            .sort((left, right) => left.localeCompare(right)),
+        } : null,
+        ...idleSessionOperation(),
+      };
+    case 'vault-updated':
+      return {
+        ...state,
+        inspectedVaultName: action.vault.display_name,
+        bootstrap: state.bootstrap ? {
+          ...state.bootstrap,
+          vault_name: state.bootstrap.vault_name === action.previousName
+            ? action.vault.display_name : state.bootstrap.vault_name,
+          vaults: state.bootstrap.vaults.map((name) => (
+            name === action.previousName ? action.vault.display_name : name
+          )).sort((left, right) => left.localeCompare(right)),
+        } : null,
+      };
+    case 'vault-deleted':
+      return {
+        ...state,
+        mainView: 'settings-vaults',
+        inspectedVaultName: null,
+        bootstrap: state.bootstrap ? {
+          ...state.bootstrap,
+          vaults: state.bootstrap.vaults.filter((name) => name !== action.vaultName),
+        } : null,
+        ...idleSessionOperation(),
+      };
     case 'show-settings-providers':
       return {
         ...state,
@@ -720,6 +784,9 @@ export function navigationTitle(state: AppState): string | null {
     case 'forum-members': return 'Members';
     case 'new-session': return 'New session';
     case 'settings': return 'Settings';
+    case 'settings-vaults': return 'Vaults';
+    case 'settings-new-vault': return 'New vault';
+    case 'settings-vault': return state.inspectedVaultName ?? 'Vault';
     case 'settings-providers': return 'Providers';
     case 'settings-new-provider': return 'New provider';
     case 'settings-provider': return state.inspectedProviderName ?? 'Provider';

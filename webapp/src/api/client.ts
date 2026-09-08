@@ -24,6 +24,9 @@ export type SessionSnapshot = components['schemas']['SessionSnapshot'];
 export type CommandResult = components['schemas']['CommandResult'];
 export type InputRequest = components['schemas']['InputRequest'];
 export type OpenAiAuth = components['schemas']['OpenAiAuth'];
+export type VaultDetail = components['schemas']['VaultDetail'];
+export type CreateVaultRequest = components['schemas']['CreateVaultRequest'];
+export type VaultUpdate = Omit<components['schemas']['UpdateVaultRequest'], 'vault_name'>;
 export type ProviderSummary = components['schemas']['ProviderSummary'];
 export type ProviderDetail = components['schemas']['ProviderDetail'];
 export type CreateProviderRequest = components['schemas']['CreateProviderRequest'];
@@ -136,6 +139,10 @@ export interface ChaClient {
   startOpenAiAuth(): Promise<OpenAiAuth>;
   pollOpenAiAuth(): Promise<OpenAiAuth>;
   disconnectOpenAiAuth(): Promise<OpenAiAuth>;
+  listVaults(): Promise<VaultDetail[]>;
+  createVault(request: CreateVaultRequest): Promise<VaultDetail>;
+  updateVault(vaultName: string, update: VaultUpdate): Promise<VaultDetail>;
+  deleteVault(vaultName: string): Promise<void>;
   listProviders(): Promise<ProviderSummary[]>;
   createProvider(request: CreateProviderRequest): Promise<ProviderDetail>;
   getProvider(providerId: string): Promise<ProviderDetail>;
@@ -215,6 +222,16 @@ function isProviderSummary(value: unknown): value is ProviderSummary {
     && typeof value.model === 'string' && typeof value.host === 'string';
 }
 
+function isVaultDetail(value: unknown): value is VaultDetail {
+  return isRecord(value)
+    && typeof value.display_name === 'string'
+    && typeof value.data_path === 'string'
+    && (value.mirror_path === null || typeof value.mirror_path === 'string')
+    && (value.modify_path === null || typeof value.modify_path === 'string')
+    && typeof value.active === 'boolean'
+    && typeof value.can_delete === 'boolean';
+}
+
 function isProviderDetail(value: unknown): value is ProviderDetail {
   return isRecord(value) && hasIdentity(value)
     && typeof value.model === 'string' && typeof value.host === 'string'
@@ -229,7 +246,6 @@ function isProviderDetail(value: unknown): value is ProviderDetail {
     && typeof value.timeout_s === 'number'
     && typeof value.idle_timeout_s === 'number'
     && (value.api_key === null || typeof value.api_key === 'string')
-    && (value.api_key_env === null || typeof value.api_key_env === 'string')
     && typeof value.reasoning_effort === 'string'
     && isOneOf(value.reasoning_format, ['auto', 'none', 'reasoning_content', 'reasoning'])
     && typeof value.https === 'boolean'
@@ -585,6 +601,33 @@ export function createChaClient(
       fetcher,
       '/api/v1/openai/auth/disconnect',
       jsonMutation({}),
+    ),
+
+    listVaults: () => requestValidated(
+      fetcher,
+      '/api/v1/vaults',
+      (value): value is VaultDetail[] => Array.isArray(value)
+        && value.every(isVaultDetail),
+    ),
+
+    createVault: (request) => requestValidated(
+      fetcher,
+      '/api/v1/vaults',
+      isVaultDetail,
+      jsonMutation(request),
+    ),
+
+    updateVault: (vaultName, update) => requestValidated(
+      fetcher,
+      '/api/v1/vaults',
+      isVaultDetail,
+      jsonMutation({ vault_name: vaultName, ...update }, 'PATCH'),
+    ),
+
+    deleteVault: (vaultName) => requestEmpty(
+      fetcher,
+      '/api/v1/vaults',
+      jsonMutation({ vault_name: vaultName }, 'DELETE'),
     ),
 
     listProviders: () => requestValidated(

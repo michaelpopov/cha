@@ -31,7 +31,6 @@ for required in \
     start-cha.sh \
     cha-config.example/app.toml \
     cha-config.example/personal.toml \
-    import-seed/.env \
     web/index.html; do
     if [ ! -f "$application/$required" ]; then
         echo "package check: missing $required" >&2
@@ -78,7 +77,7 @@ for required_directory in characters forums system; do
 done
 
 seed_entries=$(find "$seed" -mindepth 1 -maxdepth 1 -exec basename {} \; | LC_ALL=C sort)
-expected_seed_entries=$(printf '%s\n' .env characters forums system | LC_ALL=C sort)
+expected_seed_entries=$(printf '%s\n' characters forums system | LC_ALL=C sort)
 if [ "$seed_entries" != "$expected_seed_entries" ]; then
     echo "package check: import seed contains unexpected top-level entries" >&2
     printf '%s\n' "$seed_entries" >&2
@@ -86,32 +85,21 @@ if [ "$seed_entries" != "$expected_seed_entries" ]; then
 fi
 
 unexpected_seed_file=$(find "$seed" -type f \
-    ! -name '.env' ! -iname '*.toml' ! -iname '*.md' -print -quit)
+    ! -iname '*.toml' ! -iname '*.md' -print -quit)
 if [ -n "$unexpected_seed_file" ]; then
     echo "package check: import seed contains unsupported file $unexpected_seed_file" >&2
     exit 1
 fi
 
-if find "$seed" -mindepth 2 -name '.env' -print -quit | grep -q . \
+if find "$seed" -name '.env' -print -quit | grep -q . \
     || find "$seed" ! -type d ! -type f -print -quit | grep -q .; then
-    echo "package check: import seed contains a nested .env or non-regular entry" >&2
-    exit 1
-fi
-
-env_value=$(grep -Ev '^[[:space:]]*(#|$)' "$seed/.env")
-if [ "$env_value" != 'OPENAI_API_KEY=replace-with-your-openai-api-key' ]; then
-    echo "package check: import seed must contain only the documented key placeholder" >&2
-    exit 1
-fi
-if [ "$(file_mode "$seed/.env")" != "600" ]; then
-    echo "package check: import-seed/.env must have mode 600" >&2
+    echo "package check: import seed contains a .env or non-regular entry" >&2
     exit 1
 fi
 
 chatgpt="$seed/system/providers/chatgpt/config.toml"
-terra="$seed/system/providers/terra/config.toml"
-if [ ! -f "$chatgpt" ] || [ ! -f "$terra" ]; then
-    echo "package check: import seed is missing required providers" >&2
+if [ ! -f "$chatgpt" ]; then
+    echo "package check: import seed is missing the subscription provider" >&2
     exit 1
 fi
 if ! grep -Eq '^auth[[:space:]]*=[[:space:]]*"openai_subscription"[[:space:]]*$' "$chatgpt" \
@@ -129,11 +117,6 @@ if ! grep -Eq '^auth[[:space:]]*=[[:space:]]*"openai_subscription"[[:space:]]*$'
     || grep -Eq '^temperature[[:space:]]*=' "$chatgpt" \
     || grep -Eq '^max_tokens[[:space:]]*=' "$chatgpt"; then
     echo "package check: chatgpt provider is not the subscription seed" >&2
-    exit 1
-fi
-if ! grep -Eq '^api_key_env[[:space:]]*=[[:space:]]*"OPENAI_API_KEY"[[:space:]]*$' "$terra" \
-    || grep -Eq '^auth[[:space:]]*=[[:space:]]*"openai_subscription"' "$terra"; then
-    echo "package check: terra API-key provider is missing" >&2
     exit 1
 fi
 if ! grep -Eq '^provider[[:space:]]*=[[:space:]]*"chatgpt"[[:space:]]*$' \
@@ -167,9 +150,7 @@ shell_quote() {
     printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
 }
 launcher_config=$(launcher_setting CONFIG)
-launcher_import_seed=$(launcher_setting IMPORT_SEED)
-if [ "$launcher_config" != "$(shell_quote ../cha-config)" ] \
-    || [ "$launcher_import_seed" != "$(shell_quote import-seed)" ]; then
+if [ "$launcher_config" != "$(shell_quote ../cha-config)" ]; then
     echo "package check: launcher settings do not match the package layout" >&2
     exit 1
 fi
@@ -178,9 +159,7 @@ if grep -q -- '--workspace' "$application/start-cha.sh" \
     || ! grep -Fq -- 'config_setting=${CHA_CONFIG:-"$CONFIG"}' \
         "$application/start-cha.sh" \
     || ! grep -Fq -- '--config="$config"' "$application/start-cha.sh" \
-    || ! grep -Fq -- '$config/app.toml' "$application/start-cha.sh" \
-    || ! grep -Fq -- \
-        'echo "  \"$here/chaweb\" --config=\"$config\" --vault=\"Personal\" --import \"$import_seed\""' \
+    || ! grep -Fq -- 'mkdir -m 700 -- "$config"' \
         "$application/start-cha.sh"; then
     echo "package check: launcher must use the external configuration directory" >&2
     exit 1

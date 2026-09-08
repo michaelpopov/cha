@@ -150,6 +150,37 @@ TEST(WorkspaceSessionDatabase, CreatesValidEmptyDatabaseAndEnablesWal) {
     EXPECT_NO_THROW(checkpoint_workspace_session_database(path));
 }
 
+TEST(WorkspaceSessionDatabase, CreatesSessionEmptyDatabaseFromConfiguration) {
+    test::TestWorkspace workspace;
+    const std::filesystem::path source = workspace.root() / "source.sqlite3";
+    const std::filesystem::path destination =
+        workspace.root() / "destination.sqlite3";
+    create_empty_workspace_session_database(source);
+    const std::vector<ConfigFile> configuration{
+        {"system/example.toml", "value = true\n"},
+    };
+    {
+        Database database(source, Database::Mode::read_write);
+        storage::SqliteTransaction transaction(database);
+        replace_workspace_config_files(database, configuration);
+        seed_session_rows(database);
+        transaction.commit();
+    }
+
+    create_workspace_session_database_from_configuration(source, destination);
+
+    Database database(destination, Database::Mode::read_only);
+    EXPECT_NO_THROW(validate_workspace_session_database_identity(database));
+    EXPECT_NO_THROW(validate_workspace_session_contents(database));
+    expect_config_rows(read_workspace_config_files(database), configuration);
+    Statement sessions = database.prepare("SELECT COUNT(*) FROM sessions");
+    ASSERT_TRUE(sessions.step());
+    EXPECT_EQ(sessions.integer(0), 0);
+    Statement forums = database.prepare("SELECT COUNT(*) FROM forums");
+    ASSERT_TRUE(forums.step());
+    EXPECT_EQ(forums.integer(0), 0);
+}
+
 TEST(WorkspaceSessionDatabase, RecoversAnInterruptedFirstCreation) {
     test::TestWorkspace workspace;
     const std::filesystem::path path =

@@ -145,7 +145,8 @@ public:
         const ModelBackendConfig& config) const;
     void create_provider(
         std::string_view provider_id,
-        std::string_view display_name) const;
+        std::string_view display_name,
+        std::string_view copy_from = {}) const;
     void delete_provider(std::string_view provider_id) const;
     void write_style(
         std::string_view style_id,

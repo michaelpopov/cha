@@ -188,6 +188,55 @@ describe('CHA API client', () => {
     }));
   });
 
+  it('lists, creates, updates, and deletes vaults through the shared route', async () => {
+    const vault = {
+      display_name: 'Projects',
+      data_path: '/data/projects.sqlite3',
+      mirror_path: null,
+      modify_path: '/work/projects',
+      active: false,
+      can_delete: true,
+    };
+    const fetcher = vi.fn<(
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => Promise<Response>>(async (_input, init) => (
+      init?.method === 'DELETE'
+        ? new Response(null, { status: 204 })
+        : jsonResponse(init?.method ? vault : [vault])
+    ));
+    const client = createChaClient(fetcher);
+
+    await expect(client.listVaults()).resolves.toEqual([vault]);
+    await client.createVault({
+      display_name: 'Projects',
+      data_path: '/data/projects.sqlite3',
+      mirror_path: null,
+      modify_path: '/work/projects',
+      copy_from: 'Personal',
+    });
+    await client.updateVault('Projects', {
+      display_name: 'Archive',
+      mirror_path: '/mirror/archive',
+      modify_path: null,
+    });
+    await client.deleteVault('Archive');
+
+    expect(fetcher.mock.calls.map(([url]) => url)).toEqual([
+      '/api/v1/vaults',
+      '/api/v1/vaults',
+      '/api/v1/vaults',
+      '/api/v1/vaults',
+    ]);
+    expect(fetcher.mock.calls[1][1]?.method).toBe('POST');
+    expect(fetcher.mock.calls[2][1]?.method).toBe('PATCH');
+    expect(fetcher.mock.calls[2][1]?.body).toBe(
+      '{"vault_name":"Projects","display_name":"Archive","mirror_path":"/mirror/archive","modify_path":null}',
+    );
+    expect(fetcher.mock.calls[3][1]?.method).toBe('DELETE');
+    expect(fetcher.mock.calls[3][1]?.body).toBe('{"vault_name":"Archive"}');
+  });
+
   it('posts candidate settings when testing a provider', async () => {
     const fetcher = vi.fn<(
       input: RequestInfo | URL,
@@ -207,7 +256,6 @@ describe('CHA API client', () => {
       timeout_s: 600,
       idle_timeout_s: 60,
       api_key: 'api_key_1',
-      api_key_env: null,
       reasoning_effort: '',
       reasoning_format: 'auto',
       https: true,

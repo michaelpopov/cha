@@ -4,7 +4,6 @@
 #include "session/session_storage_layout.h"
 #include "session/sqlite_storage.h"
 #include "session/workspace_session_database.h"
-#include "util/environment.h"
 #include "util/path_name.h"
 #include "util/private_filesystem.h"
 #include "workspace/workspace.h"
@@ -599,16 +598,9 @@ std::string busy_message(const std::filesystem::path& database) {
 }
 
 void validate_materialized_source(
-    const std::vector<ConfigFile>& rows,
-    const std::filesystem::path& source) {
+    const std::vector<ConfigFile>& rows) {
     TemporaryPrivateRoot root;
     materialize_config_files(root.workspace(), rows);
-    std::vector<DotenvEntry> entries;
-    const std::filesystem::path dotenv = source / ".env";
-    if (std::filesystem::exists(inspected_status(dotenv))) {
-        entries = parse_dotenv(dotenv);
-    }
-    ScopedEnvironmentOverlay overlay(entries);
     (void)Workspace::load(root.workspace());
 }
 
@@ -863,7 +855,7 @@ WorkspaceConfigTransfer import_workspace_configuration(
     }
 
     PrunedImport pruned = prune_imported_rows(collect_config_rows(source));
-    validate_materialized_source(pruned.rows, source);
+    validate_materialized_source(pruned.rows);
 
     secure_workspace_session_database_files(database);
     commit_imported_rows(database, pruned.rows, pruned.forums);
@@ -1338,9 +1330,10 @@ WorkspaceConfigEditResult WorkspaceConfigStore::apply_provider_update(
 
 WorkspaceConfigEditResult WorkspaceConfigStore::apply_provider_create(
     std::string_view provider_id,
-    std::string_view display_name) {
+    std::string_view display_name,
+    std::string_view copy_from) {
     return impl_->edit([&](const Workspace& workspace) {
-        workspace.create_provider(provider_id, display_name);
+        workspace.create_provider(provider_id, display_name, copy_from);
         return std::vector<std::string>{};
     });
 }

@@ -5,15 +5,36 @@
 #include "workspace/workspace_config_store.h"
 
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace cha::web {
 
 class UnknownVaultError : public std::runtime_error {
 public:
     using std::runtime_error::runtime_error;
+};
+
+struct VaultCreate {
+    std::string display_name;
+    std::filesystem::path data;
+    std::optional<std::filesystem::path> mirror;
+    std::optional<std::filesystem::path> modify;
+    std::optional<std::string> copy_from;
+};
+
+struct VaultUpdate {
+    std::string display_name;
+    std::optional<std::filesystem::path> mirror;
+    std::optional<std::filesystem::path> modify;
+};
+
+struct VaultRegistrySnapshot {
+    std::vector<VaultDefinition> vaults;
+    VaultDefinition active;
 };
 
 // Owns one complete running web application. The command-line executable and
@@ -36,6 +57,12 @@ public:
     void shutdown();
 
     [[nodiscard]] VaultDefinition current_vault() const;
+    [[nodiscard]] VaultRegistrySnapshot vault_snapshot() const;
+    [[nodiscard]] VaultDefinition create_vault(VaultCreate create);
+    [[nodiscard]] VaultDefinition update_vault(
+        std::string_view current_name,
+        VaultUpdate update);
+    void delete_vault(std::string_view name);
     void switch_vault(std::string_view name);
     [[nodiscard]] R2DatabaseTransfer upload_database();
     [[nodiscard]] R2DatabaseTransfer download_database();

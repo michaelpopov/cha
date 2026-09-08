@@ -72,7 +72,6 @@ chmod 755 "$temporary"
 chmod 755 "$temporary/chaweb" "$temporary/start-cha.sh"
 chmod -R u=rwX,go=rX "$temporary/web" "$temporary/import-seed" \
     "$temporary/cha-config.example"
-chmod 600 "$temporary/import-seed/.env"
 
 "$repository/scripts/check-linux-package.sh" "$temporary"
 

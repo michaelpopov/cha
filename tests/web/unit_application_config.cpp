@@ -1,6 +1,9 @@
 #include "web/application_config.h"
 
+#include "session/sqlite_storage.h"
+#include "session/workspace_session_database.h"
 #include "util/path_name.h"
+#include "workspace/workspace_config_store.h"
 
 #include <gtest/gtest.h>
 
@@ -128,6 +131,69 @@ TEST_F(ApplicationConfigTest, LoadsUnifiedExternalConfigWithEqualsSyntax) {
     EXPECT_FALSE(command.download);
 }
 
+TEST_F(ApplicationConfigTest, BootstrapsAnEmptyConfigurationDirectory) {
+    std::filesystem::remove_all(config_);
+    std::filesystem::create_directory(config_);
+
+    const ApplicationCommand command = load({
+        "chaweb", "--config=" + config_.string(), "--root", root_.string()});
+
+    EXPECT_EQ(command.vault.name, "Default");
+    EXPECT_EQ(command.vaults.size(), 1U);
+    EXPECT_EQ(
+        command.vault.source,
+        std::filesystem::weakly_canonical(config_ / "default.toml"));
+    EXPECT_EQ(
+        command.vault.data,
+        std::filesystem::weakly_canonical(config_ / "default.sqlite3"));
+    EXPECT_EQ(
+        command.vault.modify,
+        std::filesystem::weakly_canonical(config_ / "modify"));
+    EXPECT_EQ(command.host, "127.0.0.1");
+    EXPECT_EQ(command.port, 8086);
+    EXPECT_TRUE(std::filesystem::is_regular_file(config_ / "app.toml"));
+    EXPECT_TRUE(std::filesystem::is_regular_file(config_ / "default.toml"));
+
+    {
+        storage::SqliteDatabase database(
+            command.vault.data, storage::SqliteDatabase::Mode::read_only);
+        EXPECT_NO_THROW(validate_workspace_session_contents(database));
+        const std::vector<ConfigFile> configuration =
+            read_workspace_config_files(database);
+        ASSERT_EQ(configuration.size(), 2U);
+        EXPECT_EQ(configuration[0].name, "system/assistant/character.toml");
+        EXPECT_EQ(
+            configuration[1].name,
+            "system/providers/chatgpt/config.toml");
+        storage::SqliteStatement sessions =
+            database.prepare("SELECT COUNT(*) FROM sessions");
+        ASSERT_TRUE(sessions.step());
+        EXPECT_EQ(sessions.integer(0), 0);
+    }
+    EXPECT_NO_THROW((void)WorkspaceConfigStore::open(command.vault.data));
+}
+
+TEST_F(ApplicationConfigTest, DoesNotBootstrapANonemptyOrOfflineDirectory) {
+    std::filesystem::remove_all(config_);
+    std::filesystem::create_directory(config_);
+    std::ofstream(config_ / "keep.txt") << "keep\n";
+
+    const std::string nonempty =
+        error_text({"chaweb", "--config=" + config_.string()});
+    EXPECT_NE(nonempty.find("Failed to read application config"), std::string::npos)
+        << nonempty;
+    EXPECT_FALSE(std::filesystem::exists(config_ / "default.toml"));
+    EXPECT_FALSE(std::filesystem::exists(config_ / "default.sqlite3"));
+
+    std::filesystem::remove(config_ / "keep.txt");
+    const std::string offline = error_text({
+        "chaweb", "--config=" + config_.string(), "--vault=Default",
+        "--import", import_.string()});
+    EXPECT_NE(offline.find("Failed to read application config"), std::string::npos)
+        << offline;
+    EXPECT_TRUE(std::filesystem::is_empty(config_));
+}
+
 TEST_F(ApplicationConfigTest, AcceptsSeparatedConfigOptionAndAbsolutePaths) {
     const std::filesystem::path database = root_ / "absolute.sqlite3";
     const std::filesystem::path log = root_ / "absolute.log";
@@ -157,34 +223,48 @@ TEST_F(ApplicationConfigTest, AcceptsZeroAsAnEphemeralPort) {
     EXPECT_EQ(command.port, 0);
 }
 
-TEST_F(ApplicationConfigTest, LoadsOptionalMirrorRelativeToConfig) {
+TEST_F(ApplicationConfigTest, LoadsOptionalAbsoluteMirrorAndModifyPaths) {
+    const std::filesystem::path mirror = root_ / "mirror";
+    const std::filesystem::path modify = root_ / "modify";
+    write_vault(
+        "personal.toml",
+        "Personal",
+        "../data/workspace.sqlite3",
+        "mirror = " + toml_path(mirror) + "\n"
+        "modify = " + toml_path(modify) + "\n");
+
+    const ApplicationCommand command =
+        load({"chaweb", "--config", config_.string()});
+    ASSERT_TRUE(command.vault.mirror);
+    ASSERT_TRUE(command.vault.modify);
+    EXPECT_EQ(
+        *command.vault.mirror,
+        std::filesystem::weakly_canonical(mirror));
+    EXPECT_EQ(
+        *command.vault.modify,
+        std::filesystem::weakly_canonical(modify));
+}
+
+TEST_F(ApplicationConfigTest, RejectsRelativeMirrorAndModifyPaths) {
     write_vault(
         "personal.toml",
         "Personal",
         "../data/workspace.sqlite3",
         "mirror = \"../mirror\"\n");
+    EXPECT_NE(
+        error_text({"chaweb", "--config", config_.string()})
+            .find("absolute path 'mirror'"),
+        std::string::npos);
 
-    const ApplicationCommand command =
-        load({"chaweb", "--config", config_.string()});
-    ASSERT_TRUE(command.vault.mirror);
-    EXPECT_EQ(
-        *command.vault.mirror,
-        std::filesystem::weakly_canonical(root_ / "mirror"));
-}
-
-TEST_F(ApplicationConfigTest, LoadsOptionalModifyRelativeToConfig) {
     write_vault(
         "personal.toml",
         "Personal",
         "../data/workspace.sqlite3",
         "modify = \"../modify\"\n");
-
-    const ApplicationCommand command =
-        load({"chaweb", "--config", config_.string()});
-    ASSERT_TRUE(command.vault.modify);
-    EXPECT_EQ(
-        *command.vault.modify,
-        std::filesystem::weakly_canonical(root_ / "modify"));
+    EXPECT_NE(
+        error_text({"chaweb", "--config", config_.string()})
+            .find("absolute path 'modify'"),
+        std::string::npos);
 }
 
 TEST_F(ApplicationConfigTest, RejectsModifyContainingConfigOrDatabase) {
@@ -192,7 +272,7 @@ TEST_F(ApplicationConfigTest, RejectsModifyContainingConfigOrDatabase) {
         "personal.toml",
         "Personal",
         "../data/workspace.sqlite3",
-        "modify = \"..\"\n");
+        "modify = " + toml_path(root_) + "\n");
 
     const std::string error =
         error_text({"chaweb", "--config", config_.string()});

@@ -7,4 +7,3 @@ model = "mistralai/mistral-large"
 stream = true
 api = "chat_completions"
 web_search = "off"
-api_key_env = "OPEN_ROUTER_API_KEY"

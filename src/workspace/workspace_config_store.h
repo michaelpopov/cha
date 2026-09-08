@@ -147,7 +147,8 @@ public:
         const ModelBackendConfig& config);
     WorkspaceConfigEditResult apply_provider_create(
         std::string_view provider_id,
-        std::string_view display_name);
+        std::string_view display_name,
+        std::string_view copy_from = {});
     WorkspaceConfigEditResult apply_provider_delete(
         std::string_view provider_id);
     WorkspaceConfigEditResult apply_style_update(

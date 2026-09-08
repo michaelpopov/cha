@@ -110,7 +110,7 @@ export interface paths {
         /**
          * Switch the active vault
          * @description Switches the shared process-wide vault. The name is matched
-         *     ASCII-case-insensitively against the startup registry. Success is
+         *     ASCII-case-insensitively against the configured registry. Success is
          *     `204` after the operation completes, including when the requested
          *     vault is already active. The HTTP listener and port do not change.
          *
@@ -122,6 +122,29 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/api/v1/vaults": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List configured vaults */
+        get: operations["listVaults"];
+        put?: never;
+        /** Create an empty vault or copy an existing vault database */
+        post: operations["createVault"];
+        /**
+         * Remove an inactive vault from the registry
+         * @description The database, mirror, and modify files are retained.
+         */
+        delete: operations["deleteVault"];
+        options?: never;
+        head?: never;
+        /** Update a vault's display name and optional paths */
+        patch: operations["updateVault"];
         trace?: never;
     };
     "/api/v1/providers": {
@@ -995,6 +1018,36 @@ export interface components {
         VaultSwitchRequest: {
             vault_name: string;
         };
+        VaultDetail: {
+            display_name: string;
+            data_path: string;
+            /** @description Absolute mirror directory path. */
+            mirror_path: string | null;
+            /** @description Absolute editable-workspace directory path. */
+            modify_path: string | null;
+            active: boolean;
+            can_delete: boolean;
+        };
+        CreateVaultRequest: {
+            display_name: string;
+            data_path: string;
+            /** @description Absolute mirror directory path. */
+            mirror_path: string | null;
+            /** @description Absolute editable-workspace directory path. */
+            modify_path: string | null;
+            copy_from: string | null;
+        };
+        UpdateVaultRequest: {
+            vault_name: string;
+            display_name: string;
+            /** @description Absolute mirror directory path. */
+            mirror_path: string | null;
+            /** @description Absolute editable-workspace directory path. */
+            modify_path: string | null;
+        };
+        DeleteVaultRequest: {
+            vault_name: string;
+        };
         Bootstrap: {
             vault_name: string;
             vaults: string[];
@@ -1018,6 +1071,8 @@ export interface components {
         };
         CreateProviderRequest: {
             display_name: string;
+            /** @description Existing provider ID whose settings should be copied. */
+            copy_from: string | null;
         };
         ProviderUpdate: {
             display_name: string;
@@ -1033,7 +1088,6 @@ export interface components {
             timeout_s: number;
             idle_timeout_s: number;
             api_key: string | null;
-            api_key_env: string | null;
             reasoning_effort: string;
             /** @enum {string} */
             reasoning_format: "auto" | "none" | "reasoning_content" | "reasoning";
@@ -1062,7 +1116,6 @@ export interface components {
             timeout_s: number;
             idle_timeout_s: number;
             api_key: string | null;
-            api_key_env: string | null;
             reasoning_effort: string;
             /** @enum {string} */
             reasoning_format: "auto" | "none" | "reasoning_content" | "reasoning";
@@ -1539,6 +1592,118 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             403: components["responses"]["ForbiddenMutation"];
+            413: components["responses"]["BodyTooLarge"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listVaults: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Vault settings, ordered by display name. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VaultDetail"][];
+                };
+            };
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createVault: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateVaultRequest"];
+            };
+        };
+        responses: {
+            /** @description Created vault settings. The active vault is unchanged. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VaultDetail"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["ForbiddenMutation"];
+            413: components["responses"]["BodyTooLarge"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    deleteVault: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeleteVaultRequest"];
+            };
+        };
+        responses: {
+            /** @description Vault removed from the registry. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["ForbiddenMutation"];
+            404: components["responses"]["NotFound"];
+            /** @description The vault is active or is the last configured vault. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            413: components["responses"]["BodyTooLarge"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    updateVault: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateVaultRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated vault settings. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VaultDetail"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["ForbiddenMutation"];
+            404: components["responses"]["NotFound"];
             413: components["responses"]["BodyTooLarge"];
             500: components["responses"]["InternalError"];
         };

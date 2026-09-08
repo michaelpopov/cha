@@ -1,6 +1,9 @@
 #include "web/application_config.h"
 
+#include "session/sqlite_storage.h"
+#include "session/workspace_session_database.h"
 #include "util/path_name.h"
+#include "util/private_filesystem.h"
 #include "util/public_name.h"
 #include "util/text.h"
 
@@ -11,6 +14,7 @@
 #include <fstream>
 #include <initializer_list>
 #include <optional>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -225,6 +229,20 @@ std::filesystem::path resolve_config_path(
     return std::filesystem::weakly_canonical(std::filesystem::absolute(path));
 }
 
+std::filesystem::path resolve_absolute_vault_path(
+    const std::filesystem::path& source,
+    std::string_view field,
+    std::string_view value,
+    std::string_view kind) {
+    const std::filesystem::path path = path_from_utf8(value);
+    if (!path.is_absolute()) {
+        throw std::runtime_error(
+            std::string(kind) + " '" + utf8_path(source)
+            + "' requires an absolute path '" + std::string(field) + "'.");
+    }
+    return std::filesystem::weakly_canonical(path);
+}
+
 toml::table parse_toml_file(
     const std::filesystem::path& source,
     std::string_view kind) {
@@ -300,17 +318,18 @@ LoadedVault load_vault_definition(
     LoadedVault loaded;
     loaded.source = source;
     loaded.definition.name = name;
+    loaded.definition.source = source;
     loaded.definition.data =
         resolve_config_path(directory, source, "data", data, kind);
     if (root.contains("mirror")) {
         const std::string value = required_string(root, source, "mirror", kind);
         loaded.definition.mirror =
-            resolve_config_path(directory, source, "mirror", value, kind);
+            resolve_absolute_vault_path(source, "mirror", value, kind);
     }
     if (root.contains("modify")) {
         const std::string value = required_string(root, source, "modify", kind);
         loaded.definition.modify =
-            resolve_config_path(directory, source, "modify", value, kind);
+            resolve_absolute_vault_path(source, "modify", value, kind);
     }
     return loaded;
 }
@@ -387,6 +406,80 @@ void reject_runtime_option_in_offline_mode(
         "be used with " + std::string(offline) + ".");
 }
 
+void bootstrap_configuration_directory(
+    const std::filesystem::path& directory) {
+    const std::filesystem::path root =
+        std::filesystem::weakly_canonical(std::filesystem::absolute(directory));
+    if (!std::filesystem::is_empty(root)) return;
+
+    const std::filesystem::path app = root / "app.toml";
+    const std::filesystem::path vault = root / "default.toml";
+    const std::filesystem::path database_path = root / "default.sqlite3";
+    bool database_created = false;
+    bool vault_created = false;
+    try {
+        create_empty_workspace_session_database(database_path);
+        database_created = true;
+        {
+            storage::SqliteDatabase database(
+                database_path, storage::SqliteDatabase::Mode::read_write);
+            const std::vector<ConfigFile> configuration{
+                {
+                    "system/assistant/character.toml",
+                    "display_name = \"Assistant\"\nprovider = \"chatgpt\"\n",
+                },
+                {
+                    "system/providers/chatgpt/config.toml",
+                    "auth = \"openai_subscription\"\n"
+                    "host = \"chatgpt.com\"\n"
+                    "port = 443\n"
+                    "https = true\n"
+                    "base_path = \"/backend-api/codex\"\n"
+                    "mode = \"net\"\n"
+                    "api = \"responses\"\n"
+                    "model = \"gpt-5.6-terra\"\n"
+                    "stream = true\n"
+                    "web_search = \"off\"\n"
+                    "cache_retention = \"off\"\n",
+                },
+            };
+            storage::SqliteTransaction transaction(database);
+            replace_workspace_config_files(database, configuration);
+            transaction.commit();
+            validate_workspace_session_contents(database);
+        }
+        toml::table vault_config;
+        vault_config.insert("vault_name", "Default");
+        vault_config.insert("data", "default.sqlite3");
+        vault_config.insert("modify", utf8_path(root / "modify"));
+        std::ostringstream vault_contents;
+        vault_contents << vault_config << '\n';
+        create_private_file(vault, vault_contents.str());
+        vault_created = true;
+        create_private_file(
+            app,
+            "vault = \"Default\"\n\n"
+            "[web]\n"
+            "host = \"127.0.0.1\"\n"
+            "port = 8086\n\n"
+            "[logging]\n"
+            "file = \"logs/cha.log\"\n"
+            "level = \"info\"\n");
+    } catch (...) {
+        std::error_code ignored;
+        if (vault_created) std::filesystem::remove(vault, ignored);
+        if (database_created) {
+            std::filesystem::remove(database_path, ignored);
+            for (const std::string_view suffix : {"-journal", "-wal", "-shm"}) {
+                std::filesystem::path sidecar = database_path;
+                sidecar += suffix;
+                std::filesystem::remove(sidecar, ignored);
+            }
+        }
+        throw;
+    }
+}
+
 } // namespace
 
 bool same_vault_name(std::string_view left, std::string_view right) {
@@ -399,6 +492,17 @@ const VaultDefinition* find_vault(
         if (same_vault_name(vault.name, name)) return &vault;
     }
     return nullptr;
+}
+
+void validate_vault_definitions(
+    const std::filesystem::path& directory,
+    const std::vector<VaultDefinition>& vaults) {
+    std::vector<LoadedVault> loaded;
+    loaded.reserve(vaults.size());
+    for (const VaultDefinition& vault : vaults) {
+        loaded.push_back({vault, vault.source});
+    }
+    validate_vault_registry(directory, loaded);
 }
 
 ConfigurationDirectory load_configuration_directory(
@@ -529,6 +633,7 @@ ApplicationCommand parse_application_command(
             "Option '--vault' cannot be used in server mode.");
     }
 
+    if (!offline) bootstrap_configuration_directory(*options.config);
     const ConfigurationDirectory settings =
         load_configuration_directory(*options.config);
     if (options.import_directory

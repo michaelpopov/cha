@@ -15,6 +15,8 @@ import {
   type ProviderUpdate,
   type StyleDetail,
   type StyleUpdate,
+  type VaultDetail,
+  type VaultUpdate,
 } from '../api/client';
 import type { AppAction, AppState } from '../state/view';
 import { voiceClasses } from './characterAppearance';
@@ -23,6 +25,7 @@ import {
   CharacterIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
+  DatabaseIcon,
   KeyIcon,
   PlusIcon,
   SettingsIcon,
@@ -72,9 +75,15 @@ export function SettingsNavigation({ dispatch }: { dispatch: Dispatch<AppAction>
     <section className="cha-settings-card" aria-labelledby="cha-configuration-settings-title">
       <header className="cha-settings-card-header">
         <h2 id="cha-configuration-settings-title">Configuration</h2>
-        <p>Configure inference and how characters appear.</p>
+        <p>Configure vaults, inference, and character appearance.</p>
       </header>
       <div className="cha-settings-links">
+        <SettingsRow
+          description="Databases, mirrors, and editable workspace paths"
+          icon={<DatabaseIcon />}
+          label="Vaults"
+          onClick={() => dispatch({ type: 'show-settings-vaults' })}
+        />
         <SettingsRow
           description="Endpoints, models, defaults, and authentication"
           icon={<SettingsIcon />}
@@ -94,6 +103,266 @@ export function SettingsNavigation({ dispatch }: { dispatch: Dispatch<AppAction>
           onClick={() => dispatch({ type: 'show-settings-api-keys' })}
         />
       </div>
+    </section>
+  );
+}
+
+export function VaultsScreen({ client, dispatch, sessionReport }: SettingsScreenProps) {
+  const [vaults, setVaults] = useState<VaultDetail[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [revision, setRevision] = useState(0);
+
+  useEffect(() => {
+    let current = true;
+    setVaults(null);
+    setError(null);
+    void client.listVaults().then(
+      (loaded) => { if (current) setVaults(loaded); },
+      (failure: unknown) => {
+        if (current) setError(publicErrorMessage(failure, 'Vaults could not be loaded.'));
+      },
+    );
+    return () => { current = false; };
+  }, [client, revision]);
+
+  return (
+    <section className="cha-screen cha-navigation" aria-label="Vaults settings">
+      <BackToSettings dispatch={dispatch} />
+      {sessionReport}
+      {vaults === null && !error && <p className="cha-state-message" role="status">Loading vaults…</p>}
+      {error && <LoadFailure message={error} retry={() => setRevision((value) => value + 1)} />}
+      {vaults && (
+        <div className="cha-list">
+          <SettingsRow
+            description="Create an empty vault or copy an existing one"
+            icon={<PlusIcon />}
+            label="New vault"
+            onClick={() => dispatch({ type: 'show-settings-new-vault' })}
+          />
+          {vaults.map((vault) => (
+            <SettingsRow
+              description={`${vault.active ? 'Active · ' : ''}${vault.data_path}`}
+              icon={<DatabaseIcon />}
+              key={vault.display_name}
+              label={vault.display_name}
+              onClick={() => dispatch({
+                type: 'inspect-vault',
+                vaultName: vault.display_name,
+              })}
+            />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+export function NewVaultScreen({ client, dispatch, sessionReport }: SettingsScreenProps) {
+  const [vaults, setVaults] = useState<VaultDetail[] | null>(null);
+  const [name, setName] = useState('');
+  const [dataPath, setDataPath] = useState('');
+  const [mirrorPath, setMirrorPath] = useState('');
+  const [modifyPath, setModifyPath] = useState('');
+  const [copyFrom, setCopyFrom] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let current = true;
+    void client.listVaults().then(
+      (loaded) => {
+        if (!current) return;
+        setVaults(loaded);
+      },
+      (failure: unknown) => {
+        if (current) setError(publicErrorMessage(failure, 'Vaults could not be loaded.'));
+      },
+    );
+    return () => { current = false; };
+  }, [client]);
+
+  async function save(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!name.trim() || !dataPath.trim() || saving) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const created = await client.createVault({
+        display_name: name.trim(),
+        data_path: dataPath.trim(),
+        mirror_path: mirrorPath.trim() || null,
+        modify_path: modifyPath.trim() || null,
+        copy_from: copyFrom || null,
+      });
+      dispatch({ type: 'vault-created', vault: created });
+    } catch (failure: unknown) {
+      setError(publicErrorMessage(failure, 'The vault could not be created.'));
+      setSaving(false);
+    }
+  }
+
+  const ready = vaults !== null && vaults.length > 0;
+  return (
+    <section className="cha-screen cha-navigation" aria-label="New vault settings">
+      <button className="cha-back-row" onClick={() => dispatch({ type: 'show-settings-vaults' })} type="button"><ChevronLeftIcon /><span>Vaults</span></button>
+      {sessionReport}
+      {!ready && !error && <p className="cha-state-message" role="status">Loading vaults…</p>}
+      {ready && (
+        <form className="cha-settings-form" onSubmit={(event) => void save(event)}>
+          <fieldset disabled={saving}>
+            <legend>Vault details</legend>
+            <label>Display name<input autoFocus className="cha-form-control" onChange={(event) => setName(event.target.value)} placeholder="e.g. Projects" value={name} /></label>
+            <label>Database path<input className="cha-form-control" onChange={(event) => setDataPath(event.target.value)} placeholder="/path/to/projects.sqlite3" value={dataPath} /></label>
+            <label>Initial database<select className="cha-form-control" onChange={(event) => setCopyFrom(event.target.value)} value={copyFrom}><option value="">New empty vault</option>{vaults.map((vault) => <option key={vault.display_name} value={vault.display_name}>Copy {vault.display_name}</option>)}</select></label>
+            <label>Mirror path (absolute, optional)<input className="cha-form-control" onChange={(event) => setMirrorPath(event.target.value)} placeholder="/path/to/mirror" value={mirrorPath} /></label>
+            <label>Modify path (absolute, optional)<input className="cha-form-control" onChange={(event) => setModifyPath(event.target.value)} placeholder="/path/to/editable-workspace" value={modifyPath} /></label>
+          </fieldset>
+          <p className="cha-settings-note">{copyFrom ? 'The selected database is copied.' : 'The vault starts with no saved sessions.'} The active vault does not change.</p>
+          {error && <p className="cha-error-message" role="alert">{error}</p>}
+          <div className="cha-settings-form-actions"><button className="cha-button cha-button-ghost" disabled={saving} onClick={() => dispatch({ type: 'show-settings-vaults' })} type="button">Cancel</button><button className="cha-button cha-button-primary" disabled={!name.trim() || !dataPath.trim() || saving} type="submit">{saving ? 'Creating…' : 'Create vault'}</button></div>
+        </form>
+      )}
+      {error && !ready && <p className="cha-error-message" role="alert">{error}</p>}
+    </section>
+  );
+}
+
+function vaultUpdate(
+  displayName: string,
+  mirrorPath: string,
+  modifyPath: string,
+): VaultUpdate {
+  return {
+    display_name: displayName.trim(),
+    mirror_path: mirrorPath.trim() || null,
+    modify_path: modifyPath.trim() || null,
+  };
+}
+
+export function VaultScreen({ client, dispatch, sessionReport, state }: SettingsScreenProps) {
+  const selectedName = state.inspectedVaultName;
+  const [detail, setDetail] = useState<VaultDetail | null>(null);
+  const [vaultCount, setVaultCount] = useState(0);
+  const [name, setName] = useState('');
+  const [mirrorPath, setMirrorPath] = useState('');
+  const [modifyPath, setModifyPath] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [revision, setRevision] = useState(0);
+
+  useEffect(() => {
+    let current = true;
+    setDetail(null);
+    setError(null);
+    if (!selectedName) return () => { current = false; };
+    void client.listVaults().then(
+      (loaded) => {
+        if (!current) return;
+        setVaultCount(loaded.length);
+        const found = loaded.find(({ display_name: currentName }) => currentName === selectedName);
+        if (!found) {
+          setError('That vault was not found.');
+          return;
+        }
+        setDetail(found);
+        setName(found.display_name);
+        setMirrorPath(found.mirror_path ?? '');
+        setModifyPath(found.modify_path ?? '');
+      },
+      (failure: unknown) => {
+        if (current) setError(publicErrorMessage(failure, 'Vault settings could not be loaded.'));
+      },
+    );
+    return () => { current = false; };
+  }, [client, revision, selectedName]);
+
+  async function save(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!detail || !selectedName || !name.trim() || saving || deleting) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const updated = await client.updateVault(
+        selectedName,
+        vaultUpdate(name, mirrorPath, modifyPath),
+      );
+      setDetail(updated);
+      setName(updated.display_name);
+      setMirrorPath(updated.mirror_path ?? '');
+      setModifyPath(updated.modify_path ?? '');
+      dispatch({ type: 'vault-updated', previousName: selectedName, vault: updated });
+    } catch (failure: unknown) {
+      setError(publicErrorMessage(failure, 'Vault settings could not be saved.'));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function remove() {
+    setConfirming(false);
+    if (!detail || !selectedName || saving || deleting || !detail.can_delete) return;
+    setDeleting(true);
+    setError(null);
+    try {
+      await client.deleteVault(selectedName);
+      dispatch({ type: 'vault-deleted', vaultName: selectedName });
+    } catch (failure: unknown) {
+      setError(publicErrorMessage(failure, 'The vault could not be deleted.'));
+      setDeleting(false);
+    }
+  }
+
+  const dirty = detail !== null && (
+    name.trim() !== detail.display_name
+    || (mirrorPath.trim() || null) !== detail.mirror_path
+    || (modifyPath.trim() || null) !== detail.modify_path
+  );
+
+  function reset() {
+    if (!detail) return;
+    setName(detail.display_name);
+    setMirrorPath(detail.mirror_path ?? '');
+    setModifyPath(detail.modify_path ?? '');
+    setError(null);
+  }
+
+  return (
+    <section className="cha-screen cha-navigation" aria-label="Vault settings">
+      <button className="cha-back-row" onClick={() => dispatch({ type: 'show-settings-vaults' })} type="button"><ChevronLeftIcon /><span>Vaults</span></button>
+      {sessionReport}
+      {!selectedName && <p className="cha-state-message">No vault is selected.</p>}
+      {selectedName && !detail && !error && <p className="cha-state-message" role="status">Loading vault…</p>}
+      {error && !detail && <LoadFailure message={error} retry={() => setRevision((value) => value + 1)} />}
+      {detail && (
+        <form className="cha-settings-form" onSubmit={(event) => void save(event)}>
+          <fieldset disabled={saving || deleting}>
+            <legend>Vault details</legend>
+            <label>Display name<input className="cha-form-control" onChange={(event) => { setName(event.target.value); setError(null); }} value={name} /></label>
+            <label>Database path<input className="cha-form-control" readOnly value={detail.data_path} /></label>
+            <label>Mirror path (absolute, optional)<input className="cha-form-control" onChange={(event) => { setMirrorPath(event.target.value); setError(null); }} value={mirrorPath} /></label>
+            <label>Modify path (absolute, optional)<input className="cha-form-control" onChange={(event) => { setModifyPath(event.target.value); setError(null); }} value={modifyPath} /></label>
+          </fieldset>
+          {detail.active && <p className="cha-settings-note">This vault is active. Rename and path changes apply without switching vaults.</p>}
+          {!detail.can_delete && <p className="cha-settings-note">{vaultCount === 1 ? 'The last vault cannot be deleted.' : 'Switch to another vault before deleting this one.'}</p>}
+          {error && <p className="cha-error-message" role="alert">{error}</p>}
+          <div className="cha-settings-form-actions">
+            <button className="cha-button cha-button-ghost" disabled={!dirty || saving || deleting} onClick={reset} type="button">Cancel</button>
+            <button className="cha-button cha-button-primary" disabled={!dirty || !name.trim() || saving || deleting} type="submit">{saving ? 'Saving…' : 'Save changes'}</button>
+          </div>
+          <div className="cha-settings-form-actions"><button className="cha-button cha-button-danger" disabled={!detail.can_delete || saving || deleting} onClick={() => setConfirming(true)} type="button">{deleting ? 'Deleting…' : 'Delete vault'}</button></div>
+        </form>
+      )}
+      {confirming && (
+        <ConfirmDialog
+          confirmLabel="Delete vault"
+          message={`Remove “${detail?.display_name ?? 'this vault'}” from CHA? Its database and folders will be kept.`}
+          onCancel={() => setConfirming(false)}
+          onConfirm={() => void remove()}
+          title="Delete vault?"
+        />
+      )}
     </section>
   );
 }
@@ -145,7 +414,7 @@ export function ProvidersScreen({ client, dispatch, sessionReport }: SettingsScr
       {providers && (
         <div className="cha-list">
           <SettingsRow
-            description="Start with a basic OpenAI-compatible provider"
+            description="Start from defaults or copy existing settings"
             icon={<PlusIcon />}
             label="New provider"
             onClick={() => dispatch({ type: 'show-settings-new-provider' })}
@@ -172,16 +441,32 @@ export function ProvidersScreen({ client, dispatch, sessionReport }: SettingsScr
 
 export function NewProviderScreen({ client, dispatch, sessionReport }: SettingsScreenProps) {
   const [name, setName] = useState('');
+  const [providers, setProviders] = useState<ProviderSummary[] | null>(null);
+  const [copyFrom, setCopyFrom] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => {
+    let current = true;
+    void client.listProviders().then(
+      (loaded) => { if (current) setProviders(loaded); },
+      (failure: unknown) => {
+        if (current) setError(publicErrorMessage(failure, 'Providers could not be loaded.'));
+      },
+    );
+    return () => { current = false; };
+  }, [client]);
+
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!name.trim() || saving) return;
+    if (!name.trim() || providers === null || saving) return;
     setSaving(true);
     setError(null);
     try {
-      const created = await client.createProvider({ display_name: name.trim() });
+      const created = await client.createProvider({
+        display_name: name.trim(),
+        copy_from: copyFrom || null,
+      });
       dispatch({
         type: 'inspect-provider',
         providerId: created.id,
@@ -197,12 +482,20 @@ export function NewProviderScreen({ client, dispatch, sessionReport }: SettingsS
     <section className="cha-screen cha-navigation" aria-label="New provider settings">
       <button className="cha-back-row" onClick={() => dispatch({ type: 'show-settings-providers' })} type="button"><ChevronLeftIcon /><span>Providers</span></button>
       {sessionReport}
-      <form className="cha-settings-form" onSubmit={(event) => void save(event)}>
-        <fieldset disabled={saving}><legend>Provider details</legend><label>Name<input autoFocus className="cha-form-control" onChange={(event) => setName(event.target.value)} placeholder="e.g. OpenRouter" value={name} /></label></fieldset>
-        <p className="cha-settings-note">After creation, you can configure the endpoint, model, and API key.</p>
-        {error && <p className="cha-error-message" role="alert">{error}</p>}
-        <div className="cha-settings-form-actions"><button className="cha-button cha-button-ghost" disabled={saving} onClick={() => dispatch({ type: 'show-settings-providers' })} type="button">Cancel</button><button className="cha-button cha-button-primary" disabled={!name.trim() || saving} type="submit">{saving ? 'Creating…' : 'Create provider'}</button></div>
-      </form>
+      {providers === null && !error && <p className="cha-state-message" role="status">Loading providers…</p>}
+      {providers !== null && (
+        <form className="cha-settings-form" onSubmit={(event) => void save(event)}>
+          <fieldset disabled={saving}>
+            <legend>Provider details</legend>
+            <label>Name<input autoFocus className="cha-form-control" onChange={(event) => setName(event.target.value)} placeholder="e.g. OpenRouter" value={name} /></label>
+            <label>Initial settings<select className="cha-form-control" onChange={(event) => setCopyFrom(event.target.value)} value={copyFrom}><option value="">Default provider settings</option>{providers.map((provider) => <option key={provider.id} value={provider.id}>Copy {provider.display_name}</option>)}</select></label>
+          </fieldset>
+          <p className="cha-settings-note">{copyFrom ? 'The selected provider settings, including its saved API-key selection, are copied.' : 'After creation, you can configure the endpoint, model, and API key.'}</p>
+          {error && <p className="cha-error-message" role="alert">{error}</p>}
+          <div className="cha-settings-form-actions"><button className="cha-button cha-button-ghost" disabled={saving} onClick={() => dispatch({ type: 'show-settings-providers' })} type="button">Cancel</button><button className="cha-button cha-button-primary" disabled={!name.trim() || saving} type="submit">{saving ? 'Creating…' : 'Create provider'}</button></div>
+        </form>
+      )}
+      {error && providers === null && <p className="cha-error-message" role="alert">{error}</p>}
     </section>
   );
 }
@@ -221,7 +514,6 @@ function providerDraft(detail: ProviderDetail, keys: ApiKeyDetail[]): ProviderUp
     ...update,
     api_key: !usesOpenAiOAuth && keys.some(({ id }) => id === update.api_key)
       ? update.api_key : null,
-    api_key_env: null,
     auth: usesOpenAiOAuth ? 'openai_subscription' : 'none',
   };
 }
@@ -316,7 +608,6 @@ export function ProviderScreen({
     setDraft((current) => current ? {
       ...current,
       api_key: value === openAiOAuthCredential ? null : value || null,
-      api_key_env: null,
       auth: value === openAiOAuthCredential ? 'openai_subscription' : 'none',
     } : current);
     setError(null);
@@ -352,7 +643,6 @@ export function ProviderScreen({
       https: connection.https,
       stream: true,
       api_key: usesOpenAiOAuth ? null : draft.api_key,
-      api_key_env: null,
       auth: usesOpenAiOAuth ? 'openai_subscription' : 'none',
       reasoning_effort: '',
       web_search: 'off',

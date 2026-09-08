@@ -7,4 +7,3 @@ reasoning_effort = "none"
 stream = true
 api = "responses"
 web_search = "off"
-api_key_env = "OPENAI_API_KEY"

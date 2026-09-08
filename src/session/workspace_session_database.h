@@ -57,6 +57,13 @@ void upgrade_workspace_session_database_from_v1(
 // creation. A valid v1 database is never upgraded or deleted at runtime.
 void create_empty_workspace_session_database(
     const std::filesystem::path& path);
+// Copies workspace configuration into a new database without copying sessions.
+void create_workspace_session_database_from_configuration(
+    const std::filesystem::path& source,
+    const std::filesystem::path& destination);
+void copy_workspace_session_database(
+    const std::filesystem::path& source,
+    const std::filesystem::path& destination);
 void secure_workspace_session_database_files(
     const std::filesystem::path& path);
 void initialize_workspace_session_database_runtime(

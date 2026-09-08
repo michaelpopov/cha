@@ -250,6 +250,42 @@ describe('application navigation reducer', () => {
     expect(state.characterSettingsAvailable).toBe(true);
   });
 
+  it('updates the vault selector without activating a newly created vault', () => {
+    let state = readyState();
+    state = appReducer(state, {
+      type: 'vault-created',
+      vault: {
+        display_name: 'Archive',
+        data_path: '/data/archive.sqlite3',
+        mirror_path: null,
+        modify_path: null,
+        active: false,
+        can_delete: true,
+      },
+    });
+    expect(state.bootstrap?.vault_name).toBe('Personal');
+    expect(state.bootstrap?.vaults).toEqual(['Archive', 'Personal', 'Projects']);
+    expect(state.mainView).toBe('settings-vault');
+
+    state = appReducer(state, {
+      type: 'vault-updated',
+      previousName: 'Personal',
+      vault: {
+        display_name: 'Home',
+        data_path: '/data/personal.sqlite3',
+        mirror_path: null,
+        modify_path: null,
+        active: true,
+        can_delete: false,
+      },
+    });
+    expect(state.bootstrap?.vault_name).toBe('Home');
+    expect(state.bootstrap?.vaults).toEqual(['Archive', 'Home', 'Projects']);
+
+    state = appReducer(state, { type: 'vault-deleted', vaultName: 'Archive' });
+    expect(state.bootstrap?.vaults).toEqual(['Home', 'Projects']);
+  });
+
   it('ignores a character detail that finished loading after the reader left it', () => {
     let state = readyState();
     state = appReducer(state, { type: 'inspect-character', characterId: 'assistant' });

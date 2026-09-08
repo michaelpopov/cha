@@ -5,19 +5,13 @@ import WebKit
 private let applicationName = "CHA"
 
 private enum LauncherError: LocalizedError {
-    case setupCancelled
     case incompleteApplication
-    case invalidAPIKey
     case cannotStart
 
     var errorDescription: String? {
         switch self {
-        case .setupCancelled:
-            return nil
         case .incompleteApplication:
             return "This copy of CHA is incomplete. Replace it with a fresh copy and try again."
-        case .invalidAPIKey:
-            return "The API key must not be empty or contain a line break."
         case .cannotStart:
             return "CHA couldn't open. Close CHA if it is already running, then try again."
         }
@@ -77,6 +71,7 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
     private let fileManager = FileManager.default
     private var window: NSWindow!
     private var webView: WKWebView!
+    private var webViewTitleObservation: NSKeyValueObservation?
     private var runtime: OpaquePointer?
     private var runtimeURL: URL?
     private var runtimeToken = ""
@@ -92,18 +87,6 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
     private var supportDirectory: URL {
         fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent(applicationName, isDirectory: true)
-    }
-
-    private var appConfigFile: URL {
-        supportDirectory.appendingPathComponent("app.toml")
-    }
-
-    private var personalVaultFile: URL {
-        supportDirectory.appendingPathComponent("personal.toml")
-    }
-
-    private var environmentFile: URL {
-        supportDirectory.appendingPathComponent(".env")
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -150,12 +133,6 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
             withTitle: "About \(applicationName)",
             action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)),
             keyEquivalent: "")
-        applicationMenu.addItem(.separator())
-        let apiKeyItem = applicationMenu.addItem(
-            withTitle: "Change API Key…",
-            action: #selector(changeAPIKey(_:)),
-            keyEquivalent: "")
-        apiKeyItem.target = self
         applicationMenu.addItem(.separator())
         applicationMenu.addItem(
             withTitle: "Quit \(applicationName)",
@@ -249,40 +226,6 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
 
     private func prepareApplicationData() throws {
         try createPrivateDirectory(supportDirectory)
-        try createPrivateDirectory(supportDirectory.appendingPathComponent("logs", isDirectory: true))
-
-        // app.toml marks completed first-run setup. Write the vault first so a
-        // partial failure can be retried; once app.toml exists, vault files are
-        // entirely the user's and are never recreated.
-        if !fileManager.fileExists(atPath: appConfigFile.path) {
-            if !fileManager.fileExists(atPath: personalVaultFile.path) {
-                try writePrivateFile("""
-                    vault_name = "Personal"
-                    data = "cha.sqlite3"
-                    modify = "modify"
-
-                    """, to: personalVaultFile)
-            }
-            try writePrivateFile("""
-                vault = "Personal"
-
-                # CHA.app does not use this section. It always listens on
-                # 127.0.0.1 on a port the system picks, reachable only from
-                # CHA's own window. The settings are here because the shared
-                # configuration format requires them.
-                [web]
-                host = "127.0.0.1"
-                port = 0
-
-                [logging]
-                file = "logs/cha.log"
-                level = "info"
-
-                """, to: appConfigFile)
-        }
-
-        try applyInheritedOrSavedAPIKey()
-        try importInitialDatabase()
     }
 
     private func createPrivateDirectory(_ url: URL) throws {
@@ -293,142 +236,12 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
         try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: url.path)
     }
 
-    private func writePrivateFile(_ contents: String, to url: URL) throws {
-        try contents.write(to: url, atomically: true, encoding: .utf8)
-        try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
-    }
-
-    // Inherited process environment wins. Otherwise the saved .env is exported
-    // so the shared runtime sees the same key chaweb would. A missing key is
-    // not a launch error; providers that need one fail when they are used.
-    private func applyInheritedOrSavedAPIKey() throws {
-        if let inherited = ProcessInfo.processInfo.environment["OPENAI_API_KEY"],
-           !inherited.isEmpty {
-            return
-        }
-        guard let saved = savedAPIKey() else { return }
-        guard setenv("OPENAI_API_KEY", saved, 1) == 0 else {
-            throw LauncherError.cannotStart
-        }
-    }
-
-    private func savedAPIKey() -> String? {
-        // The same reading chaweb's dotenv parser gives the file: the entry may
-        // be indented, and the value is trimmed before one matching pair of
-        // quotes comes off. Anything else would work under chaweb but not here,
-        // because the key this returns is exported over the file.
-        let contents = (try? String(contentsOf: environmentFile, encoding: .utf8)) ?? ""
-        for line in contents.split(whereSeparator: \.isNewline) {
-            let entry = line.trimmingCharacters(in: .whitespaces)
-            guard entry.hasPrefix("OPENAI_API_KEY=") else { continue }
-            var value = entry.dropFirst("OPENAI_API_KEY=".count)
-                .trimmingCharacters(in: .whitespaces)
-            if value.count >= 2,
-               (value.hasPrefix("\"") && value.hasSuffix("\""))
-                   || (value.hasPrefix("'") && value.hasSuffix("'")) {
-                value.removeFirst()
-                value.removeLast()
-            }
-            if !value.isEmpty {
-                return String(value)
-            }
-        }
-        return nil
-    }
-
-    private func saveAPIKey(_ value: String) throws {
-        var lines = ((try? String(contentsOf: environmentFile, encoding: .utf8)) ?? "")
-            .components(separatedBy: .newlines)
-        var replaced = false
-        for index in lines.indices {
-            let entry = lines[index].trimmingCharacters(in: .whitespaces)
-            if entry.hasPrefix("OPENAI_API_KEY=") {
-                lines[index] = "OPENAI_API_KEY=\(value)"
-                replaced = true
-                break
-            }
-        }
-        if !replaced {
-            while lines.last == "" { lines.removeLast() }
-            lines.append("OPENAI_API_KEY=\(value)")
-        }
-        try writePrivateFile(lines.joined(separator: "\n") + "\n", to: environmentFile)
-    }
-
-    private func askForAPIKey(title: String, cancelTitle: String) throws -> String {
-        let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 360, height: 24))
-        field.placeholderString = "OpenAI API key"
-
-        let alert = NSAlert()
-        alert.messageText = title
-        alert.informativeText = "Enter the OpenAI API key CHA should use. It will be stored securely on this Mac."
-        alert.accessoryView = field
-        alert.addButton(withTitle: "Continue")
-        alert.addButton(withTitle: cancelTitle)
-        alert.window.initialFirstResponder = field
-
-        guard alert.runModal() == .alertFirstButtonReturn else {
-            throw LauncherError.setupCancelled
-        }
-
-        let value = field.stringValue.trimmingCharacters(in: .whitespaces)
-        guard !value.isEmpty, !value.contains("\n"), !value.contains("\r") else {
-            throw LauncherError.invalidAPIKey
-        }
-        return value
-    }
-
-    // The key is read once at launch, so a corrected one applies to the next
-    // run. Restarting CHA underneath a live conversation would be more
-    // machinery than a mistyped key is worth.
-    @objc private func changeAPIKey(_ sender: Any?) {
-        do {
-            let value = try askForAPIKey(title: "Change API Key", cancelTitle: "Cancel")
-            try saveAPIKey(value)
-            showNotice(
-                "API key saved",
-                detail: "CHA uses the new key the next time it starts.")
-        } catch LauncherError.setupCancelled {
-            // The dialog was dismissed.
-        } catch {
-            showNotice(
-                "CHA could not save the API key",
-                detail: "Quit CHA, open it again, and retry the change.")
-        }
-    }
-
     private func showNotice(_ message: String, detail: String) {
         let alert = NSAlert()
         alert.messageText = message
         alert.informativeText = detail
         alert.addButton(withTitle: "OK")
         alert.runModal()
-    }
-
-    private func bundledURL(_ name: String, isDirectory: Bool = false) throws -> URL {
-        guard let resources = Bundle.main.resourceURL else {
-            throw LauncherError.incompleteApplication
-        }
-        let url = resources.appendingPathComponent(name, isDirectory: isDirectory)
-        guard fileManager.fileExists(atPath: url.path) else {
-            throw LauncherError.incompleteApplication
-        }
-        return url
-    }
-
-    // Only seeds a database that is not there yet; the runtime decides that,
-    // because app.toml names the startup vault. Import does not
-    // require an API key.
-    private func importInitialDatabase() throws {
-        let seed = try bundledURL("import-seed", isDirectory: true)
-        var bridgeError: UnsafeMutablePointer<CChar>?
-        let imported = supportDirectory.path.withCString { configPath in
-            seed.path.withCString { seedPath in
-                cha_runtime_import_initial_database(
-                    configPath, seedPath, &bridgeError)
-            }
-        }
-        guard imported != 0 else { throw takeBridgeError(bridgeError) }
     }
 
     private func takeBridgeError(
@@ -475,6 +288,12 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
         webView = view
         window.contentView = view
         window.makeFirstResponder(view)
+        webViewTitleObservation = view.observe(\.title, options: [.new]) {
+            [weak self] _, _ in
+            Task { @MainActor [weak self] in
+                self?.updateWindowTitle()
+            }
+        }
 
         let properties: [HTTPCookiePropertyKey: Any] = [
             .domain: "127.0.0.1",
@@ -562,7 +381,7 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
                     return
                 }
                 guard !self.quitting else { return }
-                self.window.title = applicationName
+                self.updateWindowTitle()
 
                 if succeeded < 0 {
                     return self.showFatalError(RuntimeBridgeError(
@@ -593,6 +412,16 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
                     "\(operation.title) complete",
                     detail: detail)
             }
+        }
+    }
+
+    private func updateWindowTitle() {
+        guard !databaseOperationInProgress else { return }
+        let title = webView?.title?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let title, !title.isEmpty {
+            window.title = title
+        } else {
+            window.title = applicationName
         }
     }
 

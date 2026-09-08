@@ -17,7 +17,6 @@
 #include <array>
 #include <charconv>
 #include <chrono>
-#include <cstdlib>
 #include <exception>
 #include <limits>
 #include <memory>
@@ -506,14 +505,6 @@ ProviderClient::ProviderClient(
                 + "', but API key storage is unavailable");
         }
         api_key_ = api_keys->value(config.api_key_id);
-    } else if (!config.api_key_env.empty()) {
-        const char* api_key = std::getenv(config.api_key_env.c_str());
-        if (!api_key || *api_key == '\0') {
-            throw std::runtime_error(
-                "Environment variable '" + config.api_key_env
-                + "' configured as api_key_env is not set");
-        }
-        api_key_ = api_key;
     }
 
     if (config.mode == Mode::net && !transport_) {

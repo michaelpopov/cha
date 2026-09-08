@@ -1,7 +1,6 @@
 #include "providers/providers.h"
 #include "support/test_generations.h"
 #include "support/test_notifier.h"
-#include "util/environment.h"
 #include "util/logging.h"
 
 #include <gtest/gtest.h>
@@ -9,7 +8,6 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
-#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -138,25 +136,6 @@ bool wait_for_expired(const std::weak_ptr<T>& weak) {
     }
     return weak.expired();
 }
-
-class ScopedEnvironmentVariable {
-public:
-    explicit ScopedEnvironmentVariable(std::string name) : name_(std::move(name)) {
-        if (const char* value = std::getenv(name_.c_str())) previous_ = value;
-    }
-
-    ~ScopedEnvironmentVariable() {
-        if (previous_) {
-            (void)set_environment_variable(name_, *previous_);
-        } else {
-            (void)unset_environment_variable(name_);
-        }
-    }
-
-private:
-    std::string name_;
-    std::optional<std::string> previous_;
-};
 
 void release(const std::shared_ptr<BackendState>& state) {
     {
@@ -599,40 +578,17 @@ TEST(Providers, InvalidInputReturnsFailedTerminalWithoutLaunching) {
     EXPECT_EQ(state->constructed, 0);
 }
 
-TEST(Providers, DefaultFactoryResolvesCredentialsForEachRequest) {
-    constexpr std::string_view variable = "CHA_PROVIDERS_DEFAULT_CLIENT_KEY";
-    ScopedEnvironmentVariable environment{std::string(variable)};
-    ASSERT_TRUE(set_environment_variable(variable, "first-key"));
-
+TEST(Providers, DefaultFactoryReportsUnavailableSavedKeyStorage) {
     CharacterDefinition configured = *definition();
-    configured.provider.config.api_key_env = variable;
+    configured.provider.config.api_key_id = "api_key_1";
     const auto character = std::make_shared<const CharacterDefinition>(configured);
     auto notifier = std::make_shared<test::NoopNotifier>();
-    {
-        Providers providers;
-        auto first = providers.make_request(input(character, 1), notifier);
-        auto second = providers.make_request(input(character, 2), notifier);
-
-        const std::vector<GenerationEvent> first_events = receive_terminal(first);
-        const std::vector<GenerationEvent> second_events = receive_terminal(second);
-        ASSERT_EQ(first_events.size(), 2U);
-        ASSERT_EQ(second_events.size(), 2U);
-        EXPECT_EQ(std::get<GenerationEventDelta>(first_events.front()).text, "Question");
-        EXPECT_EQ(std::get<GenerationEventDelta>(second_events.front()).text, "Question");
-        EXPECT_TRUE(std::holds_alternative<GenerationCompleted>(first_events.back()));
-        EXPECT_TRUE(std::holds_alternative<GenerationCompleted>(second_events.back()));
-        providers.shutdown();
-    }
-
-    ASSERT_TRUE(unset_environment_variable(variable));
-    {
-        Providers providers;
-        auto request = providers.make_request(input(character, 3), notifier);
-        const GenerationFailed failure = std::get<GenerationFailed>(
-            receive_terminal(request).back());
-        EXPECT_NE(failure.message.find(std::string(variable)), std::string::npos);
-        providers.shutdown();
-    }
+    Providers providers;
+    auto request = providers.make_request(input(character, 1), notifier);
+    const GenerationFailed failure = std::get<GenerationFailed>(
+        receive_terminal(request).back());
+    EXPECT_NE(failure.message.find("API key storage is unavailable"), std::string::npos);
+    providers.shutdown();
 }
 
 TEST(Providers, MakeRequestRacingWithShutdownLeavesEveryCallerWithATerminal) {

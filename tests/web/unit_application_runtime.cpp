@@ -223,7 +223,6 @@ TEST(ApplicationRuntime, StoresApiKeysLocallyAndReferencesThemFromProviders) {
     provider.erase("used_by");
     provider.erase("writable");
     provider["api_key"] = key.at("id");
-    provider["api_key_env"] = nullptr;
     const auto updated = client.Patch(
         "/api/v1/providers/test",
         kRuntimeCookie,
@@ -349,7 +348,7 @@ TEST(ApplicationRuntime, StoresApiKeysLocallyAndReferencesThemFromProviders) {
     const auto created_provider = client.Post(
         "/api/v1/providers",
         kRuntimeCookie,
-        R"({"display_name":"OpenRouter"})",
+        R"({"display_name":"OpenRouter","copy_from":null})",
         "application/json");
     ASSERT_TRUE(created_provider);
     ASSERT_EQ(created_provider->status, 201) << created_provider->body;
@@ -359,6 +358,22 @@ TEST(ApplicationRuntime, StoresApiKeysLocallyAndReferencesThemFromProviders) {
     EXPECT_EQ(new_provider.at("display_name"), "OpenRouter");
     EXPECT_EQ(new_provider.at("host"), "api.openai.com");
     ASSERT_NE(getws()->find_provider("provider_1"), nullptr);
+
+    const auto copied_provider = client.Post(
+        "/api/v1/providers",
+        kRuntimeCookie,
+        R"({"display_name":"Test copy","copy_from":"test"})",
+        "application/json");
+    ASSERT_TRUE(copied_provider);
+    ASSERT_EQ(copied_provider->status, 201) << copied_provider->body;
+    const nlohmann::json provider_copy =
+        nlohmann::json::parse(copied_provider->body);
+    EXPECT_EQ(provider_copy.at("id"), "provider_2");
+    EXPECT_EQ(provider_copy.at("display_name"), "Test copy");
+    EXPECT_EQ(provider_copy.at("host"), "test");
+    EXPECT_EQ(provider_copy.at("model"), "fake");
+    EXPECT_EQ(provider_copy.at("api_key"), "api_key_1");
+    ASSERT_NE(getws()->find_provider("provider_2"), nullptr);
 
     const auto used_provider_delete = client.Delete(
         "/api/v1/providers/test",
@@ -377,6 +392,15 @@ TEST(ApplicationRuntime, StoresApiKeysLocallyAndReferencesThemFromProviders) {
     ASSERT_TRUE(provider_delete);
     EXPECT_EQ(provider_delete->status, 204) << provider_delete->body;
     EXPECT_EQ(getws()->find_provider("provider_1"), nullptr);
+
+    const auto copied_provider_delete = client.Delete(
+        "/api/v1/providers/provider_2",
+        kRuntimeCookie,
+        "{}",
+        "application/json");
+    ASSERT_TRUE(copied_provider_delete);
+    EXPECT_EQ(copied_provider_delete->status, 204) << copied_provider_delete->body;
+    EXPECT_EQ(getws()->find_provider("provider_2"), nullptr);
 
     const auto created_style = client.Post(
         "/api/v1/styles",
@@ -502,18 +526,36 @@ TEST(ApplicationRuntime, ExportsInProcessAndReplacesModifyDirectory) {
     const std::filesystem::path database =
         test::import_test_database(workspace.root());
     const std::filesystem::path modify = workspace.root() / "modify";
-    std::filesystem::create_directories(modify);
-    std::ofstream(modify / "stale.txt") << "stale";
     ApplicationCommand command = make_command(workspace, database, modify);
     auto runtime = ApplicationRuntime::open(command, "private-test-token");
     (void)runtime->start();
 
+    (void)runtime->export_configuration();
+    std::ofstream(modify / "stale.txt") << "stale";
     const WorkspaceConfigTransfer transferred =
         runtime->export_configuration();
     EXPECT_GT(transferred.file_count, 0U);
     EXPECT_FALSE(std::filesystem::exists(modify / "stale.txt"));
     EXPECT_TRUE(std::filesystem::is_regular_file(
         modify / "forums" / "lobby" / "config.toml"));
+    runtime->shutdown();
+}
+
+TEST(ApplicationRuntime, ExportRefusesToReplaceAnUnrelatedDirectory) {
+    test::TestWorkspace workspace;
+    const std::filesystem::path database =
+        test::import_test_database(workspace.root());
+    const std::filesystem::path modify = workspace.root() / "modify";
+    std::filesystem::create_directories(modify);
+    std::ofstream(modify / "keep.txt") << "keep";
+    ApplicationCommand command = make_command(workspace, database, modify);
+    auto runtime = ApplicationRuntime::open(command, "private-test-token");
+    (void)runtime->start();
+
+    EXPECT_THROW(
+        (void)runtime->export_configuration(),
+        std::runtime_error);
+    EXPECT_TRUE(std::filesystem::is_regular_file(modify / "keep.txt"));
     runtime->shutdown();
 }
 
@@ -782,20 +824,92 @@ TEST(ApplicationRuntime, OpensTheConfiguredVaultAndFailsIfItsDatabaseIsMissing) 
         std::runtime_error);
 }
 
-TEST(ApplicationRuntime, LoadsConfigDirectoryDotenvAndIgnoresDatabaseAdjacent) {
-    constexpr char variable[] = "CHA_RUNTIME_CONFIG_DOTENV_E8F1";
-    ScopedEnvironmentVariable guard(variable);
-    ASSERT_TRUE(unset_environment_variable(variable));
+TEST(ApplicationRuntime, StartsWithADefaultVaultFromAnEmptyConfigDirectory) {
+    test::TestWorkspace workspace;
+    const std::filesystem::path config = workspace.root() / "empty-config";
+    const std::filesystem::path application_root =
+        workspace.root() / "runtime-assets";
+    std::filesystem::create_directory(config);
+    std::filesystem::create_directories(application_root / "web");
+    std::ofstream(application_root / "web" / "index.html")
+        << "<!doctype html><title>CHA</title>";
+    const std::vector<std::string> arguments{
+        "chaweb",
+        "--config=" + config.string(),
+        "--root=" + application_root.string(),
+    };
+    std::vector<const char*> pointers;
+    for (const std::string& argument : arguments) {
+        pointers.push_back(argument.c_str());
+    }
+    const ApplicationCommand command = parse_application_command(
+        static_cast<int>(pointers.size()), pointers.data());
+
+    auto runtime = ApplicationRuntime::open(command, "private-test-token");
+    const int port = runtime->start(0);
+    httplib::Client client("127.0.0.1", port);
+    const auto response = client.Get("/api/v1/bootstrap", kRuntimeCookie);
+    ASSERT_TRUE(response);
+    ASSERT_EQ(response->status, 200) << response->body;
+    const nlohmann::json bootstrap = nlohmann::json::parse(response->body);
+
+    EXPECT_EQ(runtime->current_vault().name, "Default");
+    EXPECT_EQ(
+        runtime->current_vault().modify,
+        std::filesystem::weakly_canonical(config / "modify"));
+    EXPECT_EQ(bootstrap.at("vault_name"), "Default");
+    EXPECT_EQ(bootstrap.at("vaults"), nlohmann::json::array({"Default"}));
+    EXPECT_TRUE(std::filesystem::is_regular_file(config / "app.toml"));
+    EXPECT_TRUE(std::filesystem::is_regular_file(config / "default.toml"));
+    EXPECT_TRUE(std::filesystem::is_regular_file(config / "default.sqlite3"));
+    {
+        storage::SqliteDatabase database(
+            config / "default.sqlite3",
+            storage::SqliteDatabase::Mode::read_only);
+        storage::SqliteStatement sessions =
+            database.prepare("SELECT COUNT(*) FROM sessions");
+        ASSERT_TRUE(sessions.step());
+        EXPECT_EQ(sessions.integer(0), 0);
+    }
+    runtime->shutdown();
+}
+
+TEST(ApplicationRuntime, StartsWhenTheConfiguredMirrorIsUnavailable) {
+    test::TestWorkspace workspace;
+    const std::filesystem::path database =
+        test::import_test_database(workspace.root());
+    const std::filesystem::path missing_mirror =
+        workspace.root() / "missing-mirror";
+    const ApplicationCommand command = make_command(
+        workspace, database, std::nullopt, missing_mirror);
+
+    auto runtime = ApplicationRuntime::open(command, "private-test-token");
+    EXPECT_NO_THROW((void)runtime->start());
+    runtime->shutdown();
+}
+
+TEST(ApplicationRuntime, LoadsR2SettingsFromConfigDotenv) {
+    ScopedEnvironmentVariable url("CHA_R2_URL");
+    ScopedEnvironmentVariable access("CHA_R2_ACCESS_KEY_ID");
+    ScopedEnvironmentVariable secret("CHA_R2_SECRET_ACCESS_KEY");
+    ASSERT_TRUE(unset_environment_variable("CHA_R2_URL"));
+    ASSERT_TRUE(unset_environment_variable("CHA_R2_ACCESS_KEY_ID"));
+    ASSERT_TRUE(unset_environment_variable("CHA_R2_SECRET_ACCESS_KEY"));
     test::TestWorkspace workspace;
     const std::filesystem::path database =
         test::import_test_database(workspace.root());
     const ApplicationCommand command = make_command(workspace, database);
     std::ofstream(command.config_directory / ".env")
-        << "CHA_RUNTIME_CONFIG_DOTENV_E8F1=from-config\n";
+        << "CHA_R2_URL=https://account.example/bucket\n"
+        << "CHA_R2_ACCESS_KEY_ID=access\n"
+        << "CHA_R2_SECRET_ACCESS_KEY=secret\n";
     std::ofstream(database.parent_path() / ".env")
-        << "CHA_RUNTIME_CONFIG_DOTENV_E8F1=from-database\n";
+        << "CHA_R2_URL=https://ignored.example/bucket\n";
     auto runtime = ApplicationRuntime::open(command, "private-test-token");
-    EXPECT_STREQ(std::getenv(variable), "from-config");
+    EXPECT_STREQ(
+        std::getenv("CHA_R2_URL"), "https://account.example/bucket");
+    EXPECT_STREQ(std::getenv("CHA_R2_ACCESS_KEY_ID"), "access");
+    EXPECT_STREQ(std::getenv("CHA_R2_SECRET_ACCESS_KEY"), "secret");
     runtime->shutdown();
 }
 
@@ -1330,6 +1444,282 @@ TEST(ApplicationRuntime, SwitchRouteSwitchesVaultAndMapsUnknownNames) {
         "B");
 
     expect_error_envelope(post_switch(client, "missing"), 400, "bad_request");
+    runtime->shutdown();
+}
+
+TEST(ApplicationRuntime, VaultRoutesCreateUpdateAndDeleteWithoutSwitching) {
+    TwoVaultRuntime pair;
+    seed_lobby_session(pair.database_a, "Copy me");
+    auto runtime = ApplicationRuntime::open(pair.command, "private-test-token");
+    const int port = runtime->start();
+    httplib::Client client("127.0.0.1", port);
+
+    const std::filesystem::path copied_database =
+        pair.workspace_a.root() / "copied.sqlite3";
+    const std::filesystem::path mirror =
+        pair.workspace_a.root() / "copied-mirror";
+    const std::filesystem::path modify =
+        pair.workspace_a.root() / "copied-modify";
+    const auto relative_mirror = client.Post(
+        "/api/v1/vaults",
+        kRuntimeCookie,
+        nlohmann::json{
+            {"display_name", "Copied"},
+            {"data_path", copied_database.string()},
+            {"mirror_path", "relative-mirror"},
+            {"modify_path", nullptr},
+            {"copy_from", "A"},
+        }.dump(),
+        "application/json");
+    expect_error_envelope(relative_mirror, 400, "bad_request");
+    EXPECT_FALSE(std::filesystem::exists(copied_database));
+
+    const auto created = client.Post(
+        "/api/v1/vaults",
+        kRuntimeCookie,
+        nlohmann::json{
+            {"display_name", "Copied"},
+            {"data_path", copied_database.string()},
+            {"mirror_path", nullptr},
+            {"modify_path", nullptr},
+            {"copy_from", "A"},
+        }.dump(),
+        "application/json");
+    ASSERT_TRUE(created);
+    ASSERT_EQ(created->status, 201) << created->body;
+    EXPECT_FALSE(nlohmann::json::parse(created->body).at("active").get<bool>());
+    EXPECT_EQ(
+        inspect_workspace_session_database(copied_database),
+        WorkspaceDatabaseState::valid_v2);
+    {
+        storage::SqliteDatabase copied(
+            copied_database, storage::SqliteDatabase::Mode::read_only);
+        const std::vector<ConfigFile> files = read_workspace_config_files(copied);
+        EXPECT_NE(
+            std::find_if(
+                files.begin(), files.end(),
+                [](const ConfigFile& file) {
+                    return file.name == "personas/alpha/persona.toml";
+                }),
+            files.end());
+        storage::SqliteStatement sessions =
+            copied.prepare("SELECT COUNT(*) FROM sessions");
+        ASSERT_TRUE(sessions.step());
+        EXPECT_EQ(sessions.integer(0), 1);
+    }
+
+    auto bootstrap = get_bootstrap(client);
+    EXPECT_EQ(bootstrap.at("vault_name"), "A");
+    EXPECT_EQ(
+        bootstrap.at("vaults"),
+        nlohmann::json::array({"A", "B", "Copied"}));
+
+    const auto relative_modify = client.Patch(
+        "/api/v1/vaults",
+        kRuntimeCookie,
+        nlohmann::json{
+            {"vault_name", "Copied"},
+            {"display_name", "Archive"},
+            {"mirror_path", nullptr},
+            {"modify_path", "relative-modify"},
+        }.dump(),
+        "application/json");
+    expect_error_envelope(relative_modify, 400, "bad_request");
+
+    const auto invalid_mirror = client.Patch(
+        "/api/v1/vaults",
+        kRuntimeCookie,
+        nlohmann::json{
+            {"vault_name", "Copied"},
+            {"display_name", "Archive"},
+            {"mirror_path", mirror.string()},
+            {"modify_path", modify.string()},
+        }.dump(),
+        "application/json");
+    expect_error_envelope(invalid_mirror, 400, "bad_request");
+    std::filesystem::create_directories(mirror);
+
+    const std::filesystem::path unrelated =
+        pair.workspace_a.root() / "unrelated";
+    std::filesystem::create_directory(unrelated);
+    std::ofstream(unrelated / "keep.txt") << "keep";
+    const auto invalid_modify = client.Patch(
+        "/api/v1/vaults",
+        kRuntimeCookie,
+        nlohmann::json{
+            {"vault_name", "Copied"},
+            {"display_name", "Archive"},
+            {"mirror_path", mirror.string()},
+            {"modify_path", unrelated.string()},
+        }.dump(),
+        "application/json");
+    expect_error_envelope(invalid_modify, 400, "bad_request");
+    EXPECT_TRUE(std::filesystem::is_regular_file(unrelated / "keep.txt"));
+
+    const auto updated = client.Patch(
+        "/api/v1/vaults",
+        kRuntimeCookie,
+        nlohmann::json{
+            {"vault_name", "Copied"},
+            {"display_name", "Archive"},
+            {"mirror_path", mirror.string()},
+            {"modify_path", modify.string()},
+        }.dump(),
+        "application/json");
+    ASSERT_TRUE(updated);
+    ASSERT_EQ(updated->status, 200) << updated->body;
+    const nlohmann::json updated_body = nlohmann::json::parse(updated->body);
+    EXPECT_EQ(updated_body.at("display_name"), "Archive");
+    EXPECT_EQ(
+        updated_body.at("mirror_path"),
+        std::filesystem::weakly_canonical(mirror).string());
+    EXPECT_EQ(
+        updated_body.at("modify_path"),
+        std::filesystem::weakly_canonical(modify).string());
+    EXPECT_EQ(get_bootstrap(client).at("vault_name"), "A");
+    const ConfigurationDirectory persisted =
+        load_configuration_directory(pair.command.config_directory);
+    const VaultDefinition* const archived =
+        find_vault(persisted.vaults, "Archive");
+    ASSERT_NE(archived, nullptr);
+    EXPECT_EQ(archived->mirror, std::filesystem::weakly_canonical(mirror));
+    EXPECT_EQ(archived->modify, std::filesystem::weakly_canonical(modify));
+
+    const auto removed = client.Delete(
+        "/api/v1/vaults",
+        kRuntimeCookie,
+        nlohmann::json{{"vault_name", "Archive"}}.dump(),
+        "application/json");
+    ASSERT_TRUE(removed);
+    EXPECT_EQ(removed->status, 204) << removed->body;
+    EXPECT_TRUE(std::filesystem::exists(copied_database));
+    bootstrap = get_bootstrap(client);
+    EXPECT_EQ(bootstrap.at("vaults"), nlohmann::json::array({"A", "B"}));
+
+    runtime->shutdown();
+}
+
+TEST(ApplicationRuntime, VaultRoutesCreateAnEmptyUsableVaultWithoutSwitching) {
+    TwoVaultRuntime pair;
+    seed_lobby_session(pair.database_a, "Do not copy");
+    auto runtime = ApplicationRuntime::open(pair.command, "private-test-token");
+    const int port = runtime->start();
+    httplib::Client client("127.0.0.1", port);
+
+    const std::filesystem::path empty_database =
+        pair.workspace_a.root() / "empty.sqlite3";
+    const auto created = client.Post(
+        "/api/v1/vaults",
+        kRuntimeCookie,
+        nlohmann::json{
+            {"display_name", "Empty"},
+            {"data_path", empty_database.string()},
+            {"mirror_path", nullptr},
+            {"modify_path", nullptr},
+            {"copy_from", nullptr},
+        }.dump(),
+        "application/json");
+    ASSERT_TRUE(created);
+    ASSERT_EQ(created->status, 201) << created->body;
+    EXPECT_FALSE(nlohmann::json::parse(created->body).at("active").get<bool>());
+    EXPECT_EQ(get_bootstrap(client).at("vault_name"), "A");
+
+    {
+        storage::SqliteDatabase empty(
+            empty_database, storage::SqliteDatabase::Mode::read_only);
+        storage::SqliteStatement sessions =
+            empty.prepare("SELECT COUNT(*) FROM sessions");
+        ASSERT_TRUE(sessions.step());
+        EXPECT_EQ(sessions.integer(0), 0);
+        const std::vector<ConfigFile> files = read_workspace_config_files(empty);
+        EXPECT_NE(
+            std::find_if(
+                files.begin(), files.end(),
+                [](const ConfigFile& file) {
+                    return file.name == "personas/alpha/persona.toml";
+                }),
+            files.end());
+    }
+
+    const auto switched = post_switch(client, "Empty");
+    ASSERT_TRUE(switched);
+    EXPECT_EQ(switched->status, 204) << switched->body;
+    const auto bootstrap = get_bootstrap(client);
+    EXPECT_EQ(bootstrap.at("vault_name"), "Empty");
+    EXPECT_TRUE(bootstrap_has_persona(bootstrap, "alpha"));
+    runtime->shutdown();
+}
+
+TEST(ApplicationRuntime, VaultRoutesProtectTheActiveAndLastVault) {
+    TwoVaultRuntime pair;
+    auto runtime = ApplicationRuntime::open(pair.command, "private-test-token");
+    const int port = runtime->start();
+    httplib::Client client("127.0.0.1", port);
+
+    expect_error_envelope(
+        client.Delete(
+            "/api/v1/vaults",
+            kRuntimeCookie,
+            nlohmann::json{{"vault_name", "A"}}.dump(),
+            "application/json"),
+        409,
+        "bad_request");
+
+    const VaultDefinition* const b = find_vault(pair.command.vaults, "B");
+    ASSERT_NE(b, nullptr);
+    ASSERT_TRUE(std::filesystem::remove(b->source));
+    const auto removed = client.Delete(
+        "/api/v1/vaults",
+        kRuntimeCookie,
+        nlohmann::json{{"vault_name", "B"}}.dump(),
+        "application/json");
+    ASSERT_TRUE(removed);
+    ASSERT_EQ(removed->status, 204) << removed->body;
+    expect_error_envelope(
+        client.Delete(
+            "/api/v1/vaults",
+            kRuntimeCookie,
+            nlohmann::json{{"vault_name", "A"}}.dump(),
+            "application/json"),
+        409,
+        "bad_request");
+    EXPECT_TRUE(std::filesystem::exists(pair.database_b));
+
+    runtime->shutdown();
+}
+
+TEST(ApplicationRuntime, VaultRoutesRenameTheActiveVaultWithoutSwitching) {
+    TwoVaultRuntime pair;
+    auto runtime = ApplicationRuntime::open(pair.command, "private-test-token");
+    const int port = runtime->start();
+    httplib::Client client("127.0.0.1", port);
+
+    const auto updated = client.Patch(
+        "/api/v1/vaults",
+        kRuntimeCookie,
+        nlohmann::json{
+            {"vault_name", "A"},
+            {"display_name", "Personal"},
+            {"mirror_path", nullptr},
+            {"modify_path", nullptr},
+        }.dump(),
+        "application/json");
+    ASSERT_TRUE(updated);
+    ASSERT_EQ(updated->status, 200) << updated->body;
+    EXPECT_TRUE(nlohmann::json::parse(updated->body).at("active").get<bool>());
+
+    const nlohmann::json bootstrap = get_bootstrap(client);
+    EXPECT_EQ(bootstrap.at("vault_name"), "Personal");
+    EXPECT_EQ(
+        bootstrap.at("vaults"), nlohmann::json::array({"B", "Personal"}));
+    EXPECT_EQ(
+        read_toml_file(pair.command.config_directory / "app.toml", "config file")
+            ["vault"].value<std::string>(),
+        "Personal");
+    EXPECT_EQ(
+        runtime->current_vault().data,
+        std::filesystem::weakly_canonical(pair.database_a));
+
     runtime->shutdown();
 }
 

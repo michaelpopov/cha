@@ -119,7 +119,7 @@ its completion object. A compatible provider that omits a field is logged as
 `unreported` rather than estimated locally.
 
 Each provider lives in `system/providers/<id>/config.toml`. Its file contains
-the connection, model, protocol, and authentication-environment settings:
+the connection, model, protocol, and optional saved-key reference:
 
 ```toml
 host = "api.openai.com"
@@ -131,7 +131,7 @@ reasoning_effort = "low"
 stream = true
 api = "responses"          # responses | chat_completions
 web_search = "off"         # required | auto | off
-api_key_env = "OPENAI_API_KEY"
+api_key = "api_key_1"
 cache_retention = "short"  # off | short | long
 timeout_s = 600
 idle_timeout_s = 60
@@ -207,17 +207,16 @@ Search queries, progress, retrieved pages, annotations, and tool-call details
 stay inside the provider interaction. Only the character's synthesized answer
 text enters the transcript.
 
-Provider secrets belong in the inherited environment or optional `.env` in the
-configuration directory. An inherited value wins over `.env`, even when the
-inherited value is empty. Import temporarily overlays only otherwise-absent
-variables while it validates providers, then restores the process environment
-even when validation fails. OpenAI subscription credentials live in
+Provider secrets are managed on the Settings > API Keys screen and stored in
+`api-keys.json` in the application configuration directory. Provider configs
+contain only the selected key ID; they never read model credentials from the
+process environment or `.env`. OpenAI subscription credentials live in
 `openai-auth.json` in the same directory.
 
 Normal startup takes the application root for installed `web/` assets from the
-executable directory, or from `--root`. Relative `data`, `mirror`, `modify`, and
-`logging.file` paths resolve against the configuration directory. Template
-includes resolve beneath the private materialized workspace.
+executable directory, or from `--root`. Relative `data` and `logging.file` paths
+resolve against the configuration directory; `mirror` and `modify` must be
+absolute. Template includes resolve beneath the private materialized workspace.
 
 ### Command line and configuration maintenance
 
@@ -265,8 +264,8 @@ character, and a forum's default persona; each persists through SQLite before
 publication.
 
 The database, rollback journal, WAL/SHM sidecars, companion lock, private
-runtime tree, configuration-directory `.env`, and `openai-auth.json` must
-remain accessible only to their owner.
+runtime tree, `api-keys.json`, configuration-directory `.env`, and
+`openai-auth.json` must remain accessible only to their owner.
 CHA enforces this for files it manages. Naively copying a live WAL database is
 unsafe; the R2 commands acquire the database lease, and upload checkpoints the
 WAL before transferring the main database file.
@@ -354,9 +353,8 @@ Do not delete the old backup as part of the cutover. Backup retention and
 eventual removal are operator decisions.
 
 The Linux package contains `cha-config.example/` and `import-seed/` as source
-material, not live storage. Copy the example directory to `../cha-config`,
-replace the secret placeholder, and initialize the configured database
-explicitly with
+material, not live storage. Copy the example directory to `../cha-config` and
+initialize the configured database explicitly with
 `chaweb --config=../cha-config --vault="Personal" --import import-seed`
 before running `start-cha.sh`. The real configuration and database remain
 outside the replaceable application directory; the launcher writes process
@@ -370,18 +368,18 @@ installation:
 2. Adjust relative paths for the new base directory. For a root database this
    commonly changes `data = "cha.sqlite3"` to `data = "../cha.sqlite3"`; the
    database itself does not move.
-3. Move `.env` to the configuration directory if it was beside the database.
+3. Move `.env` to the configuration directory if it contains R2 settings.
 4. Move `<database>.openai-auth.json` to
    `<config-directory>/openai-auth.json`, preserving private permissions, or
    sign in again.
 
 R2 object keys still come from database filenames.
 
-`CHA.app` performs its own setup. On first launch it asks for an OpenAI API key
-and prepares everything it needs. Later launches reuse the conversations and
+`CHA.app` performs its own setup. On first launch it creates an empty Default
+vault. Add model credentials from Settings > API Keys and select one in the
+provider's Credentials field. Later launches reuse the conversations and
 settings already on that Mac, so replacing `CHA.app` upgrades the application
-without removing them. Choose **Change API Key…** from the CHA menu to save a
-new key for the next launch.
+without removing them.
 
 `chaweb` loads discovery — the roster, descriptions, and Markdown shown in
 Personas, Characters, and Forums — from the database as one validated immutable

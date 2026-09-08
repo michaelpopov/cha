@@ -78,6 +78,15 @@ export function KeyIcon(props: IconProps) {
   );
 }
 
+export function DatabaseIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <ellipse cx="12" cy="5" rx="7" ry="3" {...stroke} />
+      <path d="M5 5v7c0 1.7 3.1 3 7 3s7-1.3 7-3V5M5 12v7c0 1.7 3.1 3 7 3s7-1.3 7-3v-7" {...stroke} />
+    </Icon>
+  );
+}
+
 export function MessageIcon(props: IconProps) {
   return (
     <Icon {...props}>

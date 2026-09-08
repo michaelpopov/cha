@@ -119,6 +119,32 @@ void remove_database_files_noexcept(
     }
 }
 
+void require_regular_database_source(const std::filesystem::path& source) {
+    std::error_code error;
+    const std::filesystem::file_status status =
+        std::filesystem::symlink_status(source, error);
+    if (error || !std::filesystem::is_regular_file(status)) {
+        throw std::runtime_error(
+            "Workspace session database is not a valid CHA database at '"
+            + utf8_path(source) + "'");
+    }
+}
+
+void require_missing_database_destination(
+    const std::filesystem::path& destination) {
+    std::error_code error;
+    const std::filesystem::file_status status =
+        std::filesystem::symlink_status(destination, error);
+    if (error && error != std::errc::no_such_file_or_directory) {
+        throw std::system_error(error, "Failed to inspect destination");
+    }
+    if (status.type() != std::filesystem::file_type::not_found) {
+        throw std::runtime_error(
+            "Workspace session database already exists at '"
+            + utf8_path(destination) + "'");
+    }
+}
+
 void create_config_table(Database& database) {
     database.execute(config_table_sql);
 }
@@ -563,6 +589,69 @@ void create_empty_workspace_session_database(
         transaction.commit();
     } catch (...) {
         remove_database_files_noexcept(path);
+        throw;
+    }
+}
+
+void create_workspace_session_database_from_configuration(
+    const std::filesystem::path& source,
+    const std::filesystem::path& destination) {
+    require_regular_database_source(source);
+    require_missing_database_destination(destination);
+    try {
+        Database input(source, Database::Mode::read_only);
+        validate_workspace_session_database_identity(input);
+        validate_workspace_session_contents(input);
+        const std::vector<ConfigFile> configuration =
+            read_workspace_config_files(input);
+
+        create_empty_workspace_session_database(destination);
+        Database output(destination, Database::Mode::read_write);
+        storage::SqliteTransaction transaction(output);
+        replace_workspace_config_files(output, configuration);
+        transaction.commit();
+        validate_workspace_session_database_identity(output);
+        validate_workspace_session_contents(output);
+    } catch (...) {
+        remove_database_files_noexcept(destination);
+        throw;
+    }
+    try {
+        secure_workspace_session_database_files(destination);
+    } catch (...) {
+        remove_database_files_noexcept(destination);
+        throw;
+    }
+}
+
+void copy_workspace_session_database(
+    const std::filesystem::path& source,
+    const std::filesystem::path& destination) {
+    require_regular_database_source(source);
+    require_missing_database_destination(destination);
+    try {
+        Database input(source, Database::Mode::read_only);
+        validate_workspace_session_database_identity(input);
+        validate_workspace_session_contents(input);
+
+        Database output(destination, Database::Mode::read_write_create);
+        sqlite3_backup* const backup = sqlite3_backup_init(
+            output.handle(), "main", input.handle(), "main");
+        if (backup == nullptr) output.fail(sqlite3_errcode(output.handle()));
+        const int copied = sqlite3_backup_step(backup, -1);
+        const int finished = sqlite3_backup_finish(backup);
+        if (copied != SQLITE_DONE) output.fail(copied);
+        if (finished != SQLITE_OK) output.fail(finished);
+        validate_workspace_session_database_identity(output);
+        validate_workspace_session_contents(output);
+    } catch (...) {
+        remove_database_files_noexcept(destination);
+        throw;
+    }
+    try {
+        secure_workspace_session_database_files(destination);
+    } catch (...) {
+        remove_database_files_noexcept(destination);
         throw;
     }
 }
