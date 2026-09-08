@@ -10,6 +10,7 @@
 
 #include <toml++/toml.hpp>
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>

@@ -244,8 +244,8 @@ target_link_libraries(
         uv_a
         nlohmann_json::nlohmann_json
         tomlplusplus::tomlplusplus
-    PRIVATE
         cha_sqlite3
+    PRIVATE
         spdlog::spdlog
         OpenSSL::Crypto
 )

@@ -1,4 +1,5 @@
 #include "characters/character.h"
+#include "providers/api_key_store.h"
 #include "providers/providers.h"
 #include "session/session_controller.h"
 #include "characters/character_config.h"
@@ -17,6 +18,7 @@
 
 #include <chrono>
 #include <cstddef>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -111,6 +113,15 @@ CharacterDefinition integration_definition(bool stream) {
     return definition;
 }
 
+std::string save_integration_api_key(ApiKeyStore& api_keys) {
+    const char* const value = std::getenv("OPENAI_API_KEY");
+    if (value == nullptr || *value == '\0') {
+        throw std::runtime_error(
+            "OPENAI_API_KEY is required for live integration tests");
+    }
+    return api_keys.create("Integration test", value).id;
+}
+
 GenerationEvent wait_for_generation_event(
     ProviderRequest& request,
     IntegrationDeadline deadline) {
@@ -151,13 +162,19 @@ GenerationEvent wait_for_generation_event(
 
 ChatResult run_chat(bool stream) {
     CharacterDefinition definition = integration_definition(stream);
+    test::TestWorkspace credential_directory;
+    ApiKeyStore api_keys(credential_directory.root() / "api-keys.json");
+    definition.provider.config.api_key_id = save_integration_api_key(api_keys);
     const CharacterMetadata target = definition.character;
     Transcript transcript;
     std::vector<CharacterDefinition> definitions;
     definitions.push_back(std::move(definition));
     const std::vector<SharedCharacterDefinition> shared =
         share_character_definitions(std::move(definitions));
-    Providers providers;
+    Providers providers([&api_keys](SharedCharacterDefinition character) {
+        return std::make_unique<ProviderClient>(
+            std::move(character), nullptr, &api_keys);
+    });
 
     const std::string input = "Reply with one short sentence confirming that the connection works.";
     GenerationRequest request{
@@ -182,7 +199,10 @@ ChatResult run_chat(bool stream) {
             ++result.chunks;
             result.response += delta->text;
         } else {
-            EXPECT_TRUE(std::holds_alternative<GenerationCompleted>(event));
+            EXPECT_TRUE(std::holds_alternative<GenerationCompleted>(event))
+                << (std::holds_alternative<GenerationFailed>(event)
+                        ? std::get<GenerationFailed>(event).message
+                        : "Unexpected terminal generation event");
             break;
         }
     }
@@ -193,13 +213,19 @@ ChatResult run_chat(bool stream) {
 
 ChatResult run_cancelled_chat() {
     CharacterDefinition definition = integration_definition(true);
+    test::TestWorkspace credential_directory;
+    ApiKeyStore api_keys(credential_directory.root() / "api-keys.json");
+    definition.provider.config.api_key_id = save_integration_api_key(api_keys);
     const CharacterMetadata target = definition.character;
     Transcript transcript;
     std::vector<CharacterDefinition> definitions;
     definitions.push_back(std::move(definition));
     const std::vector<SharedCharacterDefinition> shared =
         share_character_definitions(std::move(definitions));
-    Providers providers;
+    Providers providers([&api_keys](SharedCharacterDefinition character) {
+        return std::make_unique<ProviderClient>(
+            std::move(character), nullptr, &api_keys);
+    });
 
     const std::string input = "Write a detailed essay of at least two thousand words about distributed systems.";
     GenerationRequest request{
@@ -225,7 +251,10 @@ ChatResult run_cancelled_chat() {
             result.response += delta->text;
             request_handle->cancel();
         } else {
-            EXPECT_TRUE(std::holds_alternative<GenerationCancelled>(event));
+            EXPECT_TRUE(std::holds_alternative<GenerationCancelled>(event))
+                << (std::holds_alternative<GenerationFailed>(event)
+                        ? std::get<GenerationFailed>(event).message
+                        : "Unexpected terminal generation event");
             break;
         }
     }
