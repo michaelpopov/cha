@@ -25,14 +25,6 @@ int32_t cha_runtime_port(const ChaRuntime* runtime);
 int32_t cha_runtime_can_modify(const ChaRuntime* runtime);
 int32_t cha_runtime_can_transfer_r2(const ChaRuntime* runtime);
 
-// Seeds the startup vault named by app.toml from seed_path. Does nothing and
-// reports success when that database already exists, so the launcher can call
-// it on every start without a user-facing --vault argument. config_path is
-// the configuration directory.
-int32_t cha_runtime_import_initial_database(
-    const char* config_path,
-    const char* seed_path,
-    char** error);
 // Return 1 on success and 0 on a failure the caller can retry. -1 means the
 // workspace database could not be reopened afterwards: this process can no
 // longer serve and must quit.

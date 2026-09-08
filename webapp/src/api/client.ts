@@ -253,6 +253,8 @@ function isProviderDetail(value: unknown): value is ProviderDetail {
     && isOneOf(value.auth, ['none', 'openai_subscription'])
     && isOneOf(value.web_search, ['off', 'auto', 'required'])
     && isOneOf(value.cache_retention, ['off', 'short', 'long'])
+    && Array.isArray(value.openrouter_targets)
+    && value.openrouter_targets.every((target) => typeof target === 'string')
     && typeof value.writable === 'boolean'
     && Array.isArray(value.used_by)
     && value.used_by.every((name) => typeof name === 'string');

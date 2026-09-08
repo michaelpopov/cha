@@ -225,7 +225,7 @@ keys use its SHA-256 implementation, independently of curl's TLS backend.
 | [src/web](../src/web) | Native protocol, routes, actor, Markdown mirror, mailbox, lifecycle, shutdown |
 | [webapp/src](../webapp/src) | Browser state, transcript presentation, composer, and API client |
 | [tests](../tests) | Behavioral examples grouped by the same subsystem boundaries |
-| [cha-config](../cha-config) | Tracked development configuration directory included beside CHA.app in the macOS zip |
+| [cha-config](../cha-config) | Tracked development configuration directory used by local runs |
 | [packaging/linux/cha-config.example](../packaging/linux/cha-config.example) | External process-configuration example |
 | [packaging/linux/import-seed](../packaging/linux/import-seed) | A configuration source tree to compare against the loaders and import filter |
 | [packaging/macos](../packaging/macos) | Swift launcher, C bridge, smoke test, and macOS packaging script |
@@ -455,13 +455,13 @@ require a restart, while Settings → Vaults mutates the in-memory registry and
 the corresponding file together. Server mode uses the selection in `app.toml`;
 the offline modes use `--vault` and never change the saved selection.
 
-The macOS zip contains `CHA.app` and the tracked `cha-config` example. CHA.app
-keeps its active config at `~/Library/Application Support/CHA/`. In server
-mode, an empty configuration directory is bootstrapped by the C++ application
-with `app.toml`, `default.toml`, `default.sqlite3`, and an absolute `modify`
-path. The `Default` vault has no saved sessions and starts with the built-in
-Assistant configured for ChatGPT OAuth. Bootstrap does not run for a nonempty
-directory or for offline commands.
+The macOS `.tar.gz` archive contains only `CHA.app`; it does not include the
+Linux import seed or a configuration example. CHA.app keeps its active config
+at `~/Library/Application Support/CHA/`. In server mode, an empty configuration
+directory is bootstrapped by the C++ application with `app.toml`, `default.toml`,
+`default.sqlite3`, and an absolute `modify` path. The `Default` vault has no
+saved sessions and starts with the built-in Assistant configured for ChatGPT
+OAuth. Bootstrap does not run for a nonempty directory or for offline commands.
 
 A new database is created only after a source has been collected and validated
 successfully. Normal runtime and export require schema v2. Schema v1 is the

@@ -16,6 +16,27 @@ bool is_openrouter_host(std::string_view host) {
     return ascii_iequals(host, "openrouter.ai");
 }
 
+bool valid_openrouter_targets(const ModelBackendConfig& config) {
+    if (config.openrouter_targets.empty()) return true;
+    if (!is_openrouter_host(config.host)) return false;
+
+    for (std::size_t index = 0;
+         index < config.openrouter_targets.size();
+         ++index) {
+        const std::string& target = config.openrouter_targets[index];
+        if (target.empty()) return false;
+        for (const unsigned char value : target) {
+            if (value <= 0x20 || value == 0x7f) return false;
+        }
+        for (std::size_t earlier = 0; earlier < index; ++earlier) {
+            if (ascii_iequals(target, config.openrouter_targets[earlier])) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 std::string_view to_string(WebSearchMode value) {
     switch (value) {
     case WebSearchMode::off: return "off";

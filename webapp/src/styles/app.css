@@ -1380,6 +1380,12 @@ select:disabled {
   gap: 0.8rem;
 }
 
+.cha-provider-targets {
+  min-height: 5rem;
+  resize: vertical;
+  font-family: var(--font-mono);
+}
+
 .cha-settings-form .cha-settings-check {
   display: flex;
   min-height: 2.25rem;

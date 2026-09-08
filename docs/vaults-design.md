@@ -319,9 +319,11 @@ Migration from a single configuration file is manual:
 5. Move `<database>.openai-auth.json` to `openai-auth.json` in the configuration
    directory, or sign in again.
 
-Packages provide `cha-config.example/app.toml` and `personal.toml`. They never
-contain private credentials or databases. Model API keys must be created in
-Settings → API Keys, which writes the process-wide `api-keys.json`.
+The Linux package provides `cha-config.example/app.toml` and `personal.toml`.
+The macOS archive contains only `CHA.app`, which bootstraps its configuration
+directory on first launch. Neither package contains private credentials or
+databases. Model API keys must be created in Settings → API Keys, which writes
+the process-wide `api-keys.json`.
 
 ## Verification
 

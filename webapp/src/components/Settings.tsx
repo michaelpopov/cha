@@ -524,6 +524,14 @@ function providerBaseUrl(provider: ProviderUpdate): string {
   return `${provider.https ? 'https' : 'http'}://${provider.host}${port}${provider.base_path}`;
 }
 
+function openRouterTargetsText(targets: string[] | undefined): string {
+  return targets?.join('\n') ?? '';
+}
+
+function isOpenRouterHost(host: string): boolean {
+  return host.replace(/\.$/, '').toLowerCase() === 'openrouter.ai';
+}
+
 function parseProviderBaseUrl(value: string): {
   host: string;
   port: number;
@@ -546,6 +554,11 @@ function parseProviderBaseUrl(value: string): {
   }
 }
 
+function isOpenRouterBaseUrl(value: string): boolean {
+  const connection = parseProviderBaseUrl(value);
+  return connection !== null && isOpenRouterHost(connection.host);
+}
+
 interface ProviderScreenProps extends SettingsScreenProps {
   reloadVersion?: number;
 }
@@ -561,6 +574,7 @@ export function ProviderScreen({
   const [detail, setDetail] = useState<ProviderDetail | null>(null);
   const [draft, setDraft] = useState<ProviderUpdate | null>(null);
   const [baseUrl, setBaseUrl] = useState('');
+  const [openRouterTargets, setOpenRouterTargets] = useState('');
   const [keys, setKeys] = useState<ApiKeyDetail[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -574,6 +588,7 @@ export function ProviderScreen({
     let current = true;
     setDetail(null);
     setDraft(null);
+    setOpenRouterTargets('');
     setError(null);
     setTestSucceeded(false);
     if (!id) return () => { current = false; };
@@ -583,6 +598,7 @@ export function ProviderScreen({
         setDetail(provider);
         setDraft(providerDraft(provider, loadedKeys));
         setBaseUrl(providerBaseUrl(provider));
+        setOpenRouterTargets(openRouterTargetsText(provider.openrouter_targets));
         setKeys(loadedKeys);
         dispatch({
           type: 'provider-detail-loaded',
@@ -634,6 +650,14 @@ export function ProviderScreen({
       setError('OpenAI OAuth requires the Responses API format.');
       return null;
     }
+    const targets = isOpenRouterHost(connection.host)
+      ? openRouterTargets.split(/\r?\n/).map((target) => target.trim()).filter(Boolean)
+      : [];
+    if (targets.some((target) => /\s/.test(target))
+        || new Set(targets.map((target) => target.toLowerCase())).size !== targets.length) {
+      setError('Inference targets must be unique OpenRouter provider slugs, one per line.');
+      return null;
+    }
     return {
       ...draft,
       host: connection.host,
@@ -649,6 +673,7 @@ export function ProviderScreen({
       temperature: usesOpenAiOAuth ? null : draft.temperature,
       max_tokens: usesOpenAiOAuth ? null : draft.max_tokens,
       cache_retention: usesOpenAiOAuth ? 'off' : draft.cache_retention,
+      openrouter_targets: targets,
     };
   }
 
@@ -664,6 +689,7 @@ export function ProviderScreen({
       setDetail(updated);
       setDraft(providerDraft(updated, keys));
       setBaseUrl(providerBaseUrl(updated));
+      setOpenRouterTargets(openRouterTargetsText(updated.openrouter_targets));
       setTestSucceeded(false);
       dispatch({
         type: 'provider-updated',
@@ -716,12 +742,14 @@ export function ProviderScreen({
     || draft.api_key !== (keys.some(({ id: keyId }) => keyId === detail.api_key)
       ? detail.api_key : null)
     || baseUrl !== providerBaseUrl(detail)
+    || openRouterTargets !== openRouterTargetsText(detail.openrouter_targets)
   );
 
   function reset() {
     if (!detail) return;
     setDraft(providerDraft(detail, keys));
     setBaseUrl(providerBaseUrl(detail));
+    setOpenRouterTargets(openRouterTargetsText(detail.openrouter_targets));
     setError(null);
     setTestSucceeded(false);
   }
@@ -745,6 +773,7 @@ export function ProviderScreen({
               <label>Credentials<select className="cha-form-control" onChange={(event) => changeCredential(event.target.value)} value={draft.auth === 'openai_subscription'
                 ? openAiOAuthCredential : draft.api_key ?? ''}><option value="">No credentials</option><option value={openAiOAuthCredential}>OpenAI OAuth</option>{keys.map((key) => <option key={key.id} value={key.id}>{key.display_name}</option>)}</select></label>
             </div>
+            {isOpenRouterBaseUrl(baseUrl) && <label>Inference targets<textarea className="cha-form-control cha-provider-targets" onChange={(event) => { setOpenRouterTargets(event.target.value); setError(null); setTestSucceeded(false); }} rows={3} value={openRouterTargets} /></label>}
           </fieldset>
           {!detail.writable && <p>This provider is read-only.</p>}
           <UsedBy empty="No characters use this provider." items={detail.used_by} />

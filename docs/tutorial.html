@@ -766,8 +766,7 @@ client</td>
 </tr>
 <tr>
 <td><a href="../cha-config">cha-config</a></td>
-<td>Tracked development configuration directory included beside CHA.app
-in the macOS zip</td>
+<td>Tracked development configuration directory used by local runs</td>
 </tr>
 <tr>
 <td><a href="../packaging/linux/cha-config.example">packaging/linux/cha-config.example</a></td>
@@ -1022,11 +1021,12 @@ files require a restart, while Settings → Vaults mutates the in-memory
 registry and the corresponding file together. Server mode uses the
 selection in <code>app.toml</code>; the offline modes use
 <code>--vault</code> and never change the saved selection.</p>
-<p>The macOS zip contains <code>CHA.app</code> and the tracked
-<code>cha-config</code> example. CHA.app keeps its active config at
-<code>~/Library/Application Support/CHA/</code>. In server mode, an
-empty configuration directory is bootstrapped by the C++ application
-with <code>app.toml</code>, <code>default.toml</code>,
+<p>The macOS <code>.tar.gz</code> archive contains only
+<code>CHA.app</code>; it does not include the Linux import seed or a
+configuration example. CHA.app keeps its active config at
+<code>~/Library/Application Support/CHA/</code>. In server mode, an empty
+configuration directory is bootstrapped by the C++ application with
+<code>app.toml</code>, <code>default.toml</code>,
 <code>default.sqlite3</code>, and an absolute <code>modify</code> path.
 The <code>Default</code> vault has no saved sessions and starts with the
 built-in Assistant configured for ChatGPT OAuth. Bootstrap does not run

@@ -168,6 +168,7 @@ TEST(Workspace, ResolvesCompleteProviderAndStyleValues) {
     EXPECT_EQ(provider->config.reasoning_format, ReasoningFormat::reasoning);
     EXPECT_EQ(provider->config.web_search, WebSearchMode::automatic);
     EXPECT_EQ(provider->config.cache_retention, CacheRetention::long_);
+    EXPECT_TRUE(provider->config.openrouter_targets.empty());
 
     const WorkspaceCharacter* const character = workspace.find_character("guide");
     ASSERT_NE(character, nullptr);
@@ -192,6 +193,45 @@ TEST(Workspace, ResolvesCompleteProviderAndStyleValues) {
     EXPECT_EQ(runtime.web_search, WebSearchMode::required);
     EXPECT_EQ(provider->config.reasoning_effort, "high");
     EXPECT_EQ(provider->config.web_search, WebSearchMode::automatic);
+}
+
+TEST(Workspace, LoadsAndWritesOpenRouterTargets) {
+    test::TestWorkspace fixture;
+    fixture.write_provider(
+        "router",
+        "host = \"openrouter.ai\"\n"
+        "port = 443\n"
+        "https = true\n"
+        "model = \"moonshotai/kimi-k2.6\"\n"
+        "openrouter_targets = [\"CoreWeave\", \"Crusoe\"]\n");
+
+    const Workspace workspace = Workspace::load(fixture.root());
+    const WorkspaceProvider* provider = workspace.find_provider("router");
+    ASSERT_NE(provider, nullptr);
+    EXPECT_EQ(
+        provider->config.openrouter_targets,
+        (std::vector<std::string>{"CoreWeave", "Crusoe"}));
+
+    workspace.write_provider("router", provider->label, provider->config);
+    const Workspace reloaded = Workspace::load(fixture.root());
+    ASSERT_NE(reloaded.find_provider("router"), nullptr);
+    EXPECT_EQ(
+        reloaded.find_provider("router")->config.openrouter_targets,
+        (std::vector<std::string>{"CoreWeave", "Crusoe"}));
+}
+
+TEST(Workspace, RejectsInvalidOpenRouterTargets) {
+    ModelBackendConfig config;
+    config.host = "openrouter.ai";
+    config.openrouter_targets = {"CoreWeave", "coreweave"};
+    EXPECT_FALSE(valid_openrouter_targets(config));
+
+    config.openrouter_targets = {"Core Weave"};
+    EXPECT_FALSE(valid_openrouter_targets(config));
+
+    config.host = "api.openai.com";
+    config.openrouter_targets = {"CoreWeave"};
+    EXPECT_FALSE(valid_openrouter_targets(config));
 }
 
 TEST(Workspace, AllowsCharacterChatWebSearchOnlyForOpenRouter) {

@@ -157,6 +157,15 @@ std::string build_chat_completions_request_body(
     if (!config.reasoning_effort.empty()) {
         body["reasoning_effort"] = config.reasoning_effort;
     }
+    if (!config.openrouter_targets.empty()) {
+        if (!valid_openrouter_targets(config)) {
+            throw std::logic_error("Invalid OpenRouter inference targets");
+        }
+        body["provider"] = {
+            {"order", config.openrouter_targets},
+            {"allow_fallbacks", false},
+        };
+    }
     if (config.web_search != WebSearchMode::off) {
         if (!is_openrouter_host(config.host)) {
             throw std::logic_error(

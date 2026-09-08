@@ -220,6 +220,54 @@ TEST(ApplicationRuntime, ExposesLegacyNamedCredentialsAsSavedApiKeys) {
     runtime->shutdown();
 }
 
+TEST(ApplicationRuntime, PreservesOpenRouterTargetsForLegacyProviderUpdates) {
+    test::TestWorkspace workspace;
+    workspace.write_provider(
+        "router",
+        "host = \"openrouter.ai\"\n"
+        "port = 443\n"
+        "https = true\n"
+        "model = \"moonshotai/kimi-k2.6\"\n"
+        "openrouter_targets = [\"CoreWeave\"]\n");
+    const std::filesystem::path database =
+        test::import_test_database(workspace.root());
+    const ApplicationCommand command = make_command(workspace, database);
+    auto runtime = ApplicationRuntime::open(command, "private-test-token");
+    const int port = runtime->start();
+    httplib::Client client("127.0.0.1", port);
+
+    const auto result = client.Get(
+        "/api/v1/providers/router", kRuntimeCookie);
+    ASSERT_TRUE(result);
+    ASSERT_EQ(result->status, 200) << result->body;
+    nlohmann::json update = nlohmann::json::parse(result->body);
+    EXPECT_EQ(
+        update.at("openrouter_targets"),
+        nlohmann::json::array({"CoreWeave"}));
+    update.erase("id");
+    update.erase("used_by");
+    update.erase("writable");
+    update.erase("openrouter_targets");
+    update["model"] = "moonshotai/kimi-k2.6-updated";
+
+    const auto updated = client.Patch(
+        "/api/v1/providers/router",
+        kRuntimeCookie,
+        update.dump(),
+        "application/json");
+    ASSERT_TRUE(updated);
+    ASSERT_EQ(updated->status, 200) << updated->body;
+    EXPECT_EQ(
+        nlohmann::json::parse(updated->body).at("openrouter_targets"),
+        nlohmann::json::array({"CoreWeave"}));
+    ASSERT_NE(getws()->find_provider("router"), nullptr);
+    EXPECT_EQ(
+        getws()->find_provider("router")->config.openrouter_targets,
+        (std::vector<std::string>{"CoreWeave"}));
+
+    runtime->shutdown();
+}
+
 TEST(ApplicationRuntime, StoresApiKeysLocallyAndReferencesThemFromProviders) {
     test::TestWorkspace workspace;
     workspace.write_style(
@@ -254,12 +302,14 @@ TEST(ApplicationRuntime, StoresApiKeysLocallyAndReferencesThemFromProviders) {
     ASSERT_TRUE(provider_result);
     ASSERT_EQ(provider_result->status, 200) << provider_result->body;
     nlohmann::json provider = nlohmann::json::parse(provider_result->body);
+    EXPECT_EQ(provider.at("openrouter_targets"), nlohmann::json::array());
     EXPECT_EQ(
         provider.at("used_by"),
         nlohmann::json::array({"Assistant", "Guide"}));
     provider.erase("id");
     provider.erase("used_by");
     provider.erase("writable");
+    provider.erase("openrouter_targets");
     provider["api_key"] = key.at("id");
     const auto updated = client.Patch(
         "/api/v1/providers/test",

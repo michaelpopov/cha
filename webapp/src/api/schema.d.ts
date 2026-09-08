@@ -1100,6 +1100,7 @@ export interface components {
             web_search: "off" | "auto" | "required";
             /** @enum {string} */
             cache_retention: "off" | "short" | "long";
+            openrouter_targets?: string[];
         };
         ProviderDetail: {
             id: components["schemas"]["Identifier"];
@@ -1128,6 +1129,7 @@ export interface components {
             web_search: "off" | "auto" | "required";
             /** @enum {string} */
             cache_retention: "off" | "short" | "long";
+            openrouter_targets: string[];
             writable: boolean;
             used_by: string[];
         };

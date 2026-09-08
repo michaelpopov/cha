@@ -165,6 +165,7 @@ Json provider_json(
         {"auth", auth_name(config.auth)},
         {"web_search", to_string(config.web_search)},
         {"cache_retention", cache_retention_name(config.cache_retention)},
+        {"openrouter_targets", config.openrouter_targets},
         {"writable", writable},
         {"used_by", std::move(used_by)},
     };
@@ -252,9 +253,14 @@ struct ProviderUpdate {
     ModelBackendConfig config;
 };
 
-ProviderUpdate parse_provider_update(const Json& json) {
-    static constexpr std::size_t field_count = 19;
-    if (!json.is_object() || json.size() != field_count) {
+ProviderUpdate parse_provider_update(
+    const Json& json,
+    const std::vector<std::string>& existing_openrouter_targets) {
+    static constexpr std::size_t legacy_field_count = 19;
+    const bool includes_openrouter_targets =
+        json.is_object() && json.contains("openrouter_targets");
+    if (!json.is_object()
+        || json.size() != legacy_field_count + includes_openrouter_targets) {
         throw std::invalid_argument("Invalid provider");
     }
     ProviderUpdate result;
@@ -298,6 +304,15 @@ ProviderUpdate parse_provider_update(const Json& json) {
         {{"off", CacheRetention::off},
          {"short", CacheRetention::short_},
          {"long", CacheRetention::long_}});
+    if (includes_openrouter_targets) {
+        result.config.openrouter_targets =
+            required<std::vector<std::string>>(json, "openrouter_targets");
+    } else if (is_openrouter_host(result.config.host)) {
+        result.config.openrouter_targets = existing_openrouter_targets;
+    }
+    if (!valid_openrouter_targets(result.config)) {
+        throw std::invalid_argument("Invalid OpenRouter inference targets");
+    }
     return result;
 }
 
@@ -505,7 +520,8 @@ void SettingsRoutes::install(httplib::Server& server) const {
         if (!parse_route_json_body(
                 request, response, settings.request_body_limit,
                 [&](const Json& json) {
-                    candidate = parse_provider_update(json);
+                    candidate = parse_provider_update(
+                        json, provider->config.openrouter_targets);
                 })) {
             return;
         }
@@ -533,7 +549,8 @@ void SettingsRoutes::install(httplib::Server& server) const {
     server.Patch(R"(/api/v1/providers/([^/]+))", [api_keys, live_sessions, config, settings](const httplib::Request& request, httplib::Response& response) {
         const std::string id = request.matches[1];
         const auto workspace = published_workspace();
-        if (!is_valid_route_component(id) || workspace->find_provider(id) == nullptr
+        const WorkspaceProvider* provider = workspace->find_provider(id);
+        if (!is_valid_route_component(id) || provider == nullptr
             || !workspace->provider_is_writable(id)) {
             return set_route_not_found(response, "That provider was not found.");
         }
@@ -541,7 +558,10 @@ void SettingsRoutes::install(httplib::Server& server) const {
         ProviderUpdate update;
         if (!parse_route_json_body(
                 request, response, settings.request_body_limit,
-                [&](const Json& json) { update = parse_provider_update(json); })) {
+                [&](const Json& json) {
+                    update = parse_provider_update(
+                        json, provider->config.openrouter_targets);
+                })) {
             return;
         }
         try {

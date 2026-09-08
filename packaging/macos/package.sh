@@ -59,7 +59,8 @@ if ! command -v xcrun >/dev/null 2>&1; then
 fi
 
 destination="$output_parent/CHA.app"
-archive="$output_parent/CHA-macos-$version.zip"
+archive="$output_parent/CHA-macos-$version.tar.gz"
+legacy_archive="$output_parent/CHA-macos-$version.zip"
 temporary="$output_parent/.cha-macos-$version.tmp.$$"
 archive_contents="$temporary/archive"
 application="$archive_contents/CHA.app"
@@ -120,7 +121,6 @@ sed -e "s/@VERSION@/$version/g" \
     "$repository/packaging/macos/Info.plist.in" \
     > "$contents/Info.plist"
 cp "$native_build/libChaRuntime.dylib" "$contents/Frameworks/libChaRuntime.dylib"
-cp -R "$repository/packaging/linux/import-seed" "$resources/import-seed"
 cp -R "$webapp/dist/." "$resources/web/"
 
 iconset="$temporary/AppIcon.iconset"
@@ -128,7 +128,7 @@ xcrun swift "$repository/packaging/macos/make-icon.swift" "$iconset"
 iconutil -c icns "$iconset" -o "$resources/AppIcon.icns"
 
 chmod 755 "$contents/MacOS/CHA" "$contents/Frameworks/libChaRuntime.dylib"
-chmod -R u=rwX,go=rX "$resources/web" "$resources/import-seed"
+chmod -R u=rwX,go=rX "$resources/web"
 
 echo "==> Checking application bundle"
 plutil -lint "$contents/Info.plist"
@@ -144,8 +144,7 @@ if [ "$icon_width" != "16" ]; then
     echo "package check: icon representations are not their named pixel size" >&2
     exit 1
 fi
-if [ ! -f "$resources/web/index.html" ] \
-    || [ ! -d "$resources/import-seed/system" ]; then
+if [ ! -f "$resources/web/index.html" ]; then
     echo "package check: application resources are incomplete" >&2
     exit 1
 fi
@@ -186,23 +185,8 @@ done
 
 echo "==> Testing the embedded runtime from the assembled bundle"
 bundle_test="$temporary/bundle-test"
-mkdir -p "$bundle_test/logs"
-cat >"$bundle_test/app.toml" <<EOF
-vault = "Personal"
-
-[web]
-host = "127.0.0.1"
-port = 0
-
-[logging]
-file = "logs/cha.log"
-level = "info"
-EOF
-cat >"$bundle_test/personal.toml" <<EOF
-vault_name = "Personal"
-data = "cha.sqlite3"
-modify = "$bundle_test/modify"
-EOF
+bundle_config="$bundle_test/config"
+mkdir -p "$bundle_config"
 xcrun clang \
     -target "arm64-apple-macos$deployment_target" \
     -I "$repository/packaging/macos" \
@@ -211,8 +195,7 @@ xcrun clang \
     "$repository/packaging/macos/runtime-smoke.c" \
     -o "$bundle_test/runtime-smoke"
 DYLD_LIBRARY_PATH="$contents/Frameworks" "$bundle_test/runtime-smoke" \
-    "$bundle_test" \
-    "$resources/import-seed" \
+    "$bundle_config" \
     "$resources"
 cmake -E remove_directory "$bundle_test"
 
@@ -227,7 +210,8 @@ cp "$native_build/chaweb" "$test_application/chaweb"
 cp "$repository/bin/start-cha.sh" "$test_application/start-cha.sh"
 cp -R "$repository/packaging/linux/cha-config.example" \
     "$test_application/cha-config.example"
-cp -R "$resources/import-seed" "$test_application/import-seed"
+cp -R "$repository/packaging/linux/import-seed" \
+    "$test_application/import-seed"
 cp -R "$resources/web" "$test_application/web"
 chmod 755 "$test_application"
 chmod 755 "$test_application/chaweb" "$test_application/start-cha.sh"
@@ -246,12 +230,9 @@ codesign --force --sign - --timestamp=none "$contents/Frameworks/libChaRuntime.d
 codesign --force --sign - --timestamp=none "$application"
 codesign --verify --deep --strict "$application"
 
-echo "==> Writing copyable archive"
-mkdir -p "$archive_contents/cha-config"
-cp "$repository/cha-config/app.toml" "$archive_contents/cha-config/app.toml"
-cp "$repository/cha-config/dev.toml" "$archive_contents/cha-config/dev.toml"
-rm -f "$archive"
-ditto -c -k --sequesterRsrc "$archive_contents" "$archive"
+echo "==> Writing distribution archive"
+rm -f "$archive" "$legacy_archive"
+COPYFILE_DISABLE=1 tar -czf "$archive" -C "$archive_contents" "CHA.app"
 
 if [ -e "$destination" ]; then
     cmake -E remove_directory "$destination"

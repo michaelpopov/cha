@@ -40,6 +40,7 @@ const provider: ProviderDetail = {
   auth: 'none',
   web_search: 'off',
   cache_retention: 'short',
+  openrouter_targets: [],
   writable: true,
   used_by: ['Guide'],
 };
@@ -328,6 +329,8 @@ describe('Settings screens', () => {
     expect(screen.getByLabelText('Base URL')).toHaveValue('https://openrouter.ai/api');
     expect(screen.getByLabelText('API format')).toHaveValue('chat_completions');
     expect(screen.getByLabelText('Credentials')).toBeInTheDocument();
+    const targets = screen.getByLabelText('Inference targets');
+    expect(targets).toHaveValue('');
     expect(screen.queryByLabelText('Name')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Host')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Port')).not.toBeInTheDocument();
@@ -335,8 +338,42 @@ describe('Settings screens', () => {
     expect(screen.queryByLabelText('Reasoning effort')).not.toBeInTheDocument();
     expect(screen.getByLabelText('API format').parentElement?.parentElement)
       .toBe(screen.getByLabelText('Credentials').parentElement?.parentElement);
+    expect(screen.getByLabelText('API format').parentElement?.parentElement?.nextElementSibling)
+      .toBe(targets.parentElement);
     expect(screen.getByText('Used by')).toBeInTheDocument();
     expect(screen.getByText('Guide')).toBeInTheDocument();
+  });
+
+  it('saves ordered OpenRouter inference targets', async () => {
+    const configured = {
+      ...provider,
+      openrouter_targets: ['CoreWeave'],
+    };
+    const updateProvider = vi.fn(async (_id, update) => ({
+      id: configured.id, used_by: configured.used_by, writable: true, ...update,
+    }));
+    render(
+      <ProviderScreen
+        client={fixtureClient({
+          getProvider: async () => configured,
+          listApiKeys: async () => [],
+          updateProvider,
+        })}
+        dispatch={vi.fn()}
+        sessionReport={null}
+        state={{ ...initialAppState, inspectedProviderId: configured.id }}
+      />,
+    );
+
+    const targets = await screen.findByLabelText('Inference targets');
+    expect(targets).toHaveValue('CoreWeave');
+    await userEvent.clear(targets);
+    await userEvent.type(targets, 'CoreWeave{enter}Crusoe');
+    await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+
+    expect(updateProvider).toHaveBeenCalledWith(configured.id, expect.objectContaining({
+      openrouter_targets: ['CoreWeave', 'Crusoe'],
+    }));
   });
 
   it('tests unsaved provider settings without saving them', async () => {
@@ -394,6 +431,7 @@ describe('Settings screens', () => {
 
     expect(await screen.findByLabelText('Base URL'))
       .toHaveValue('http://127.0.0.1:11434/openai');
+    expect(screen.queryByLabelText('Inference targets')).not.toBeInTheDocument();
     const model = screen.getByLabelText('Model');
     await userEvent.clear(model);
     await userEvent.type(model, 'local-model');

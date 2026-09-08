@@ -123,6 +123,31 @@ std::string required_string(
     return *value;
 }
 
+std::vector<std::string> optional_string_array(
+    const toml::table& table,
+    const std::filesystem::path& path,
+    std::string_view key) {
+    if (!table.contains(key)) return {};
+    const toml::array* values = table[key].as_array();
+    if (values == nullptr) {
+        throw std::runtime_error(
+            "Config file '" + utf8_path(path) + "' requires array '"
+            + std::string(key) + "'");
+    }
+    std::vector<std::string> result;
+    result.reserve(values->size());
+    for (const toml::node& node : *values) {
+        const std::optional<std::string> value = node.value<std::string>();
+        if (!value) {
+            throw std::runtime_error(
+                "Config file '" + utf8_path(path) + "' requires string values in '"
+                + std::string(key) + "'");
+        }
+        result.push_back(*value);
+    }
+    return result;
+}
+
 void reject_unknown_fields(
     const toml::table& table,
     const std::filesystem::path& path,
@@ -249,7 +274,7 @@ WorkspaceProvider load_provider(const std::filesystem::path& directory) {
         "display_name", "host", "port", "base_path", "mode", "model", "stream",
         "temperature", "max_tokens", "timeout_s", "idle_timeout_s",
         "api_key", "api_key_env", "reasoning_effort", "reasoning_format", "https",
-        "api", "auth", "web_search", "cache_retention"};
+        "api", "auth", "web_search", "cache_retention", "openrouter_targets"};
     reject_unknown_fields(table, path, fields, "Provider config");
 
     WorkspaceProvider provider{
@@ -312,6 +337,8 @@ WorkspaceProvider load_provider(const std::filesystem::path& directory) {
                  {"short", CacheRetention::short_},
                  {"long", CacheRetention::long_}},
                 CacheRetention::short_),
+            .openrouter_targets = optional_string_array(
+                table, path, "openrouter_targets"),
         },
     };
 
@@ -348,6 +375,11 @@ WorkspaceProvider load_provider(const std::filesystem::path& directory) {
             || config.base_path.find_first_of("?# \t\r\n") != std::string::npos)) {
         throw std::runtime_error(
             "Provider config '" + utf8_path(path) + "' has invalid base_path");
+    }
+    if (!valid_openrouter_targets(config)) {
+        throw std::runtime_error(
+            "Provider config '" + utf8_path(path)
+            + "' has invalid OpenRouter inference targets");
     }
     if (config.web_search != WebSearchMode::off
         && !provider_supports_web_search(config)) {
@@ -1456,6 +1488,13 @@ void Workspace::write_provider(
     table.insert("auth", auth_name(provider.auth));
     table.insert("web_search", to_string(provider.web_search));
     table.insert("cache_retention", cache_retention_name(provider.cache_retention));
+    if (!provider.openrouter_targets.empty()) {
+        toml::array targets;
+        for (const std::string& target : provider.openrouter_targets) {
+            targets.push_back(target);
+        }
+        table.insert("openrouter_targets", std::move(targets));
+    }
     write_toml_file(path->second, table);
     try {
         (void)load_provider(path->second.parent_path());

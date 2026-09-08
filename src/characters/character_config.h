@@ -3,6 +3,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace cha {
 
@@ -45,8 +46,12 @@ struct ModelBackendConfig {
     ProviderAuth auth{ProviderAuth::none};
     WebSearchMode web_search{default_web_search_mode};
     CacheRetention cache_retention{CacheRetention::short_};
+    // OpenRouter provider slugs tried in order. An empty list leaves routing to
+    // OpenRouter; a non-empty list restricts fallback to these targets.
+    std::vector<std::string> openrouter_targets;
 };
 
+bool valid_openrouter_targets(const ModelBackendConfig& config);
 std::string provider_endpoint(const ModelBackendConfig& config);
 
 struct ProviderSelection {

@@ -95,6 +95,16 @@ void write_provider_config(
     }
     file << "web_search = " << quoted(web_search_name(config.web_search)) << '\n'
          << "cache_retention = " << quoted(retention_name(config.cache_retention)) << '\n';
+    if (!config.openrouter_targets.empty()) {
+        file << "openrouter_targets = [";
+        for (std::size_t index = 0;
+             index < config.openrouter_targets.size();
+             ++index) {
+            if (index != 0) file << ", ";
+            file << quoted(config.openrouter_targets[index]);
+        }
+        file << "]\n";
+    }
 }
 
 void write_style_config(

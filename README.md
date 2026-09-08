@@ -419,7 +419,9 @@ Browser development is documented in
 `make package-linux VERSION=<version>` or
 `make package-macos VERSION=<version>`. The Linux command writes an application
 directory and `.tar.gz` archive under `packages/`; the macOS command writes
-`packages/CHA.app` and `packages/CHA-macos-<version>.zip`. Packaging requires
+`packages/CHA.app` and `packages/CHA-macos-<version>.tar.gz`. The macOS archive
+contains only `CHA.app`; the app creates its configuration and database on first
+launch. Packaging requires
 the Node.js version in `webapp/.node-version`, including npm and npx.
 
 The macOS package must be built on an Apple Silicon Mac with the Xcode command

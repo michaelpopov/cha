@@ -454,18 +454,18 @@
         <h3>Install the application</h3>
         <ol class="steps">
           <li>
-            Obtain <code>CHA-macos-&lt;version&gt;.zip</code> or <code>CHA.app</code>
+            Obtain <code>CHA-macos-&lt;version&gt;.tar.gz</code> or <code>CHA.app</code>
             from a source you trust.
           </li>
           <li>
-            If you received a ZIP file, double-click it in Finder. Finder extracts
-            <code>CHA.app</code> and a <code>cha-config</code> configuration example.
+            If you received a <code>.tar.gz</code> file, double-click it in Finder.
+            Finder extracts <code>CHA.app</code>, the archive's only item.
           </li>
           <li>Open a second Finder window and select <strong>Applications</strong>.</li>
           <li>Drag <code>CHA.app</code> into the Applications folder.</li>
           <li>
             Open Applications and double-click <strong>CHA</strong>. Do not open
-            the application from inside the ZIP file and do not move or edit files
+            the application before extracting it and do not move or edit files
             inside <code>CHA.app</code>.
           </li>
         </ol>
@@ -568,7 +568,7 @@
         <h3>Install an updated version</h3>
         <ol class="steps">
           <li>Quit CHA completely.</li>
-          <li>Extract the new <code>CHA.app</code> if it arrived in a ZIP file.</li>
+          <li>Extract the new <code>CHA.app</code> if it arrived in a <code>.tar.gz</code> file.</li>
           <li>Drag the new copy into Applications.</li>
           <li>Select <strong>Replace</strong> when Finder asks what to do.</li>
           <li>Open CHA normally. Existing settings and saved conversations remain.</li>
@@ -576,11 +576,11 @@
 
         <h3>Copy CHA to another Mac</h3>
         <p>
-          Copy the ZIP file or <code>CHA.app</code> to the other Mac, place CHA in
-          that Mac's Applications folder, and follow the first-launch steps above.
-          The application can be copied, but credentials, vault databases, and
-          saved conversations do not travel with it. The other Mac starts with
-          its own Default vault.
+          Copy the <code>.tar.gz</code> file or <code>CHA.app</code> to the other
+          Mac, place CHA in that Mac's Applications folder, and follow the
+          first-launch steps above. The application can be copied, but credentials,
+          vault databases, and saved conversations do not travel with it. The other
+          Mac starts with its own Default vault.
         </p>
       </section>
 
@@ -1026,9 +1026,9 @@
 
         <h3>Find the active configuration files</h3>
         <p>
-          The <code>cha-config</code> extracted from the ZIP is an example. The
-          application uses <code>~/Library/Application Support/CHA</code>. A
-          fresh installation begins with these files; credential files appear
+          The distribution archive contains only <code>CHA.app</code>. The
+          application creates and uses <code>~/Library/Application Support/CHA</code>.
+          A fresh installation begins with these files; credential files appear
           after they are used:
         </p>
         <pre><code>~/Library/Application Support/CHA/app.toml
@@ -1192,7 +1192,7 @@ Then choose one small act and do it completely.</code></pre>
               </tr>
               <tr>
                 <td>CHA says that this copy is incomplete.</td>
-                <td>Delete only the application, obtain a fresh ZIP file, extract it again, and move the new <code>CHA.app</code> into Applications. Saved conversations remain on the Mac.</td>
+                <td>Delete only the application, obtain a fresh <code>.tar.gz</code> file, extract it again, and move the new <code>CHA.app</code> into Applications. Saved conversations remain on the Mac.</td>
               </tr>
               <tr>
                 <td>A reply fails immediately.</td>

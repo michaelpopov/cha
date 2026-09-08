@@ -287,9 +287,35 @@ TEST(ProviderClient, OmitsEmptySystemPromptAndEscapesTranscriptContent) {
     const Json body = Json::parse(request_body(mock.requests().front()));
     EXPECT_FALSE(body.contains("temperature"));
     EXPECT_FALSE(body.contains("max_tokens"));
+    EXPECT_FALSE(body.contains("provider"));
     ASSERT_EQ(body["messages"].size(), 1U);
     EXPECT_EQ(body["messages"][0]["role"], "user");
     EXPECT_EQ(body["messages"][0]["content"], "from You:\n" + prompt);
+}
+
+TEST(ProviderClient, RestrictsOpenRouterTargetsForBothApiFormats) {
+    Transcript transcript;
+    const GenerationRequest request = client_request(transcript, 92, "Question");
+    CharacterDefinition definition = network_definition(443, false);
+    definition.provider.config.host = "OPENROUTER.AI.";
+    definition.provider.config.https = true;
+    definition.provider.config.openrouter_targets = {"CoreWeave", "Crusoe"};
+
+    ProviderClient chat_client(shared_definition(definition));
+    const Json chat_body = Json::parse(chat_client.prepare(request).bytes);
+    EXPECT_EQ(chat_body["provider"], Json({
+        {"order", Json::array({"CoreWeave", "Crusoe"})},
+        {"allow_fallbacks", false},
+    }));
+
+    definition.provider.config.api = ProviderApi::responses;
+    ProviderClient responses_client(shared_definition(std::move(definition)));
+    const Json responses_body = Json::parse(
+        responses_client.prepare(request).bytes);
+    EXPECT_EQ(responses_body["provider"], Json({
+        {"order", Json::array({"CoreWeave", "Crusoe"})},
+        {"allow_fallbacks", false},
+    }));
 }
 
 TEST(ProviderClient, RejectsInvalidUtf8WhenPreparingRequest) {

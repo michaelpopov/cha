@@ -263,6 +263,7 @@ describe('CHA API client', () => {
       auth: 'none',
       web_search: 'off',
       cache_retention: 'short',
+      openrouter_targets: [],
     };
 
     await expect(client.testProvider('Open AI', candidate)).resolves.toBeUndefined();

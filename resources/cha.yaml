@@ -2087,6 +2087,10 @@ components:
         cache_retention:
           type: string
           enum: [off, short, long]
+        openrouter_targets:
+          type: array
+          items:
+            type: string
 
     ProviderDetail:
       type: object
@@ -2112,6 +2116,7 @@ components:
         - auth
         - web_search
         - cache_retention
+        - openrouter_targets
         - writable
         - used_by
       properties:
@@ -2161,6 +2166,10 @@ components:
         cache_retention:
           type: string
           enum: [off, short, long]
+        openrouter_targets:
+          type: array
+          items:
+            type: string
         writable:
           type: boolean
         used_by:

@@ -64,7 +64,7 @@ static int check(const char* what, int status, int expected) {
 }
 
 int main(int argc, const char* argv[]) {
-    if (argc != 4) return 2;
+    if (argc != 3) return 2;
     if (unsetenv("CHA_R2_URL") != 0
         || unsetenv("CHA_R2_ACCESS_KEY_ID") != 0
         || unsetenv("CHA_R2_SECRET_ACCESS_KEY") != 0) {
@@ -73,10 +73,7 @@ int main(int argc, const char* argv[]) {
 
     static const char* const token = "package-private-token";
     char* error = NULL;
-    if (!cha_runtime_import_initial_database(argv[1], argv[2], &error)) {
-        return fail(error);
-    }
-    ChaRuntime* runtime = cha_runtime_create(argv[1], argv[3], token, &error);
+    ChaRuntime* runtime = cha_runtime_create(argv[1], argv[2], token, &error);
     if (!runtime) return fail(error);
     if (!cha_runtime_can_modify(runtime)
         || cha_runtime_can_transfer_r2(runtime)) {

@@ -123,6 +123,15 @@ std::string build_responses_request_body(
     if (!config.reasoning_effort.empty()) {
         body["reasoning"] = Json{{"effort", config.reasoning_effort}};
     }
+    if (!config.openrouter_targets.empty()) {
+        if (!valid_openrouter_targets(config)) {
+            throw std::logic_error("Invalid OpenRouter inference targets");
+        }
+        body["provider"] = {
+            {"order", config.openrouter_targets},
+            {"allow_fallbacks", false},
+        };
+    }
     if (!subscription) {
         if (config.temperature) {
             body["temperature"] = *config.temperature;

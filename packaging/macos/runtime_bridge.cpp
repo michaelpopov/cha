@@ -1,7 +1,6 @@
 #include "runtime_bridge.h"
 
 #include "util/logging.h"
-#include "util/path_name.h"
 #include "web/application_config.h"
 #include "web/application_runtime.h"
 #include "workspace/workspace_config_store.h"
@@ -9,20 +8,14 @@
 #include <cstdlib>
 #include <cstring>
 #include <exception>
-#include <filesystem>
 #include <memory>
 #include <new>
-#include <stdexcept>
 #include <string>
 
 using cha::WorkspaceConfigTransfer;
-using cha::import_workspace_configuration;
-using cha::path_from_utf8;
 using cha::web::ApplicationCommand;
 using cha::web::ApplicationRuntime;
 using cha::web::R2DatabaseTransfer;
-using cha::web::find_vault;
-using cha::web::load_configuration_directory;
 using cha::web::parse_application_command;
 
 struct ChaRuntime {
@@ -198,38 +191,6 @@ int32_t cha_runtime_can_transfer_r2(const ChaRuntime* runtime) {
         && environment_is_set("CHA_R2_ACCESS_KEY_ID")
         && environment_is_set("CHA_R2_SECRET_ACCESS_KEY")
         ? 1 : 0;
-}
-
-int32_t cha_runtime_import_initial_database(
-    const char* config_path,
-    const char* seed_path,
-    char** error) {
-    clear_error(error);
-    if (!config_path || !seed_path) {
-        set_error(error, "CHA setup configuration is incomplete");
-        return 0;
-    }
-    try {
-        const auto config = load_configuration_directory(
-            path_from_utf8(config_path));
-        const auto* const vault =
-            find_vault(config.vaults, config.startup_vault);
-        if (vault == nullptr) {
-            throw std::runtime_error(
-                "Application config does not name a discovered vault");
-        }
-        // app.toml names the startup vault, so the decision to seed one
-        // belongs here rather than in a launcher that would have to guess.
-        if (std::filesystem::is_regular_file(vault->data)) return 1;
-        const WorkspaceConfigTransfer result =
-            import_workspace_configuration(
-                path_from_utf8(seed_path), vault->data);
-        (void)result;
-        return 1;
-    } catch (...) {
-        set_current_error(error);
-        return 0;
-    }
 }
 
 int32_t cha_runtime_upload(
