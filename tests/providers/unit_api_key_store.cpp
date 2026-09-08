@@ -39,9 +39,14 @@ TEST_F(ApiKeyStoreTest, CreatesUpdatesReloadsAndRemovesASecret) {
     EXPECT_EQ(created.display_name, "OpenRouter");
     EXPECT_TRUE(created.has_value);
     EXPECT_EQ(store.value(created.id), "secret-one");
+    ASSERT_TRUE(store.find_by_name("OpenRouter"));
+    EXPECT_EQ(store.find_by_name("OpenRouter")->id, created.id);
+    EXPECT_EQ(store.value_by_name("OpenRouter"), "secret-one");
 
     const ApiKeyInfo renamed = store.rename(created.id, "Router");
     EXPECT_EQ(renamed.display_name, "Router");
+    EXPECT_FALSE(store.find_by_name("OpenRouter"));
+    EXPECT_EQ(store.value_by_name("Router"), "secret-one");
     EXPECT_EQ(store.replace(created.id, "secret-two").id, created.id);
 
     ApiKeyStore reopened(path);
@@ -100,6 +105,7 @@ TEST_F(ApiKeyStoreTest, RejectsMalformedFilesAndInvalidValues) {
     EXPECT_THROW(store.create("", "secret"), std::invalid_argument);
     EXPECT_THROW(store.create("Valid", ""), std::invalid_argument);
     EXPECT_THROW(store.create("Valid", "line\nbreak"), std::invalid_argument);
+    EXPECT_THROW((void)store.value_by_name("Missing"), std::runtime_error);
 
     std::filesystem::remove(path);
     {

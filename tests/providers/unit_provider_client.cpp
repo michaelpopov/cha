@@ -1304,6 +1304,80 @@ TEST(ProviderClient, UsesASavedApiKeyWithoutReadingTheEnvironment) {
         requests.front().headers.end());
 }
 
+TEST(ProviderClient, ResolvesALegacyEnvironmentNameOnlyFromSavedApiKeys) {
+    ScopedEnvironmentVariable environment("OPEN_ROUTER_API_KEY");
+    ASSERT_TRUE(set_environment_variable(
+        "OPEN_ROUTER_API_KEY", "environment-secret"));
+    const std::filesystem::path directory = std::filesystem::temp_directory_path()
+        / ("cha_provider_named_key_" + std::to_string(
+            std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::filesystem::create_directories(directory);
+    struct Cleanup {
+        std::filesystem::path path;
+        ~Cleanup() { std::filesystem::remove_all(path); }
+    } cleanup{directory};
+    ApiKeyStore keys(directory / "api-keys.json");
+    (void)keys.create("OPEN_ROUTER_API_KEY", "saved-secret");
+
+    CharacterDefinition definition = network_definition(443, false);
+    definition.provider.config.api_key_env = "OPEN_ROUTER_API_KEY";
+    std::vector<ProviderHttpRequest> requests;
+    ProviderClient client(
+        shared_definition(std::move(definition)),
+        nullptr,
+        &keys,
+        [&requests](
+            const ProviderHttpRequest& request,
+            const std::atomic_bool&) {
+            requests.push_back(request);
+            return ProviderHttpResponse{
+                .status = 200,
+                .content_type = "application/json",
+                .body = R"({"choices":[{"message":{"content":"Answer"}}]})",
+            };
+        });
+    Transcript transcript;
+    const GenerationRequest request = client_request(transcript, 82, "Question");
+    std::atomic_bool cancellation{false};
+    EXPECT_EQ(
+        complete(client, request, transcript, [](GenerationDelta) {}, cancellation)
+            .outcome,
+        GenerationOutcome::completed);
+    ASSERT_EQ(requests.size(), 1U);
+    EXPECT_NE(
+        std::ranges::find(
+            requests.front().headers,
+            "Authorization: Bearer saved-secret"),
+        requests.front().headers.end());
+    EXPECT_EQ(
+        std::ranges::find(
+            requests.front().headers,
+            "Authorization: Bearer environment-secret"),
+        requests.front().headers.end());
+}
+
+TEST(ProviderClient, MissingLegacyNamedKeyDoesNotFallBackToTheEnvironment) {
+    ScopedEnvironmentVariable environment("OPEN_ROUTER_API_KEY");
+    ASSERT_TRUE(set_environment_variable(
+        "OPEN_ROUTER_API_KEY", "environment-secret"));
+    const std::filesystem::path directory = std::filesystem::temp_directory_path()
+        / ("cha_provider_missing_named_key_" + std::to_string(
+            std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::filesystem::create_directories(directory);
+    struct Cleanup {
+        std::filesystem::path path;
+        ~Cleanup() { std::filesystem::remove_all(path); }
+    } cleanup{directory};
+    ApiKeyStore keys(directory / "api-keys.json");
+    CharacterDefinition definition = network_definition(443, false);
+    definition.provider.config.api_key_env = "OPEN_ROUTER_API_KEY";
+
+    EXPECT_THROW(
+        (void)ProviderClient(
+            shared_definition(std::move(definition)), nullptr, &keys),
+        std::runtime_error);
+}
+
 TEST(ProviderClient, DoesNotUseAProcessEnvironmentKeyAsFallback) {
     ScopedEnvironmentVariable environment("OPENAI_API_KEY");
     ASSERT_TRUE(set_environment_variable("OPENAI_API_KEY", "environment-secret"));

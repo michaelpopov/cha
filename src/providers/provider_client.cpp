@@ -505,6 +505,13 @@ ProviderClient::ProviderClient(
                 + "', but API key storage is unavailable");
         }
         api_key_ = api_keys->value(config.api_key_id);
+    } else if (!config.api_key_env.empty()) {
+        if (api_keys == nullptr) {
+            throw std::runtime_error(
+                "Provider requires the saved API key named '" + config.api_key_env
+                + "', but API key storage is unavailable");
+        }
+        api_key_ = api_keys->value_by_name(config.api_key_env);
     }
 
     if (config.mode == Mode::net && !transport_) {

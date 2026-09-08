@@ -141,6 +141,18 @@ std::optional<ApiKeyInfo> ApiKeyStore::find(std::string_view id) const {
     return info(found->first, found->second);
 }
 
+std::optional<ApiKeyInfo> ApiKeyStore::find_by_name(
+    std::string_view display_name) const {
+    const std::lock_guard lock(mutex_);
+    std::optional<ApiKeyInfo> result;
+    for (const auto& [id, record] : records_) {
+        if (record.display_name != display_name) continue;
+        if (result) return std::nullopt;
+        result = info(id, record);
+    }
+    return result;
+}
+
 std::string ApiKeyStore::value(std::string_view id) const {
     const std::lock_guard lock(mutex_);
     const auto found = records_.find(id);
@@ -149,6 +161,24 @@ std::string ApiKeyStore::value(std::string_view id) const {
             "API key '" + std::string(id) + "' does not exist");
     }
     return found->second.value;
+}
+
+std::string ApiKeyStore::value_by_name(std::string_view display_name) const {
+    const std::lock_guard lock(mutex_);
+    const Record* result = nullptr;
+    for (const auto& [id, record] : records_) {
+        if (record.display_name != display_name) continue;
+        if (result != nullptr) {
+            throw std::runtime_error(
+                "API key name '" + std::string(display_name) + "' is ambiguous");
+        }
+        result = &record;
+    }
+    if (result == nullptr) {
+        throw std::runtime_error(
+            "API key named '" + std::string(display_name) + "' does not exist");
+    }
+    return result->value;
 }
 
 ApiKeyInfo ApiKeyStore::create(

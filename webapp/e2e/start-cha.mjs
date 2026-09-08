@@ -188,7 +188,6 @@ if (packagedApplication) {
     'chaweb',
     'cha-config.example/app.toml',
     'cha-config.example/personal.toml',
-    'import-seed/.env',
     'start-cha.sh',
     'web/index.html',
   ]) {

@@ -132,8 +132,16 @@ std::vector<std::string> characters_using_style(
 Json provider_json(
     const WorkspaceProvider& provider,
     bool writable,
-    std::vector<std::string> used_by) {
+    std::vector<std::string> used_by,
+    const ApiKeyStore& api_keys) {
     const ModelBackendConfig& config = provider.config;
+    Json api_key = config.api_key_id.empty()
+        ? Json(nullptr) : Json(config.api_key_id);
+    if (api_key.is_null() && !config.api_key_env.empty()) {
+        if (const auto named = api_keys.find_by_name(config.api_key_env)) {
+            api_key = named->id;
+        }
+    }
     return {
         {"id", provider.id},
         {"display_name", provider.label},
@@ -149,8 +157,7 @@ Json provider_json(
             ? Json(*config.max_tokens) : Json(nullptr)},
         {"timeout_s", config.timeout_s},
         {"idle_timeout_s", config.idle_timeout_s},
-        {"api_key", config.api_key_id.empty()
-            ? Json(nullptr) : Json(config.api_key_id)},
+        {"api_key", std::move(api_key)},
         {"reasoning_effort", config.reasoning_effort},
         {"reasoning_format", reasoning_format_name(config.reasoning_format)},
         {"https", config.https},
@@ -374,10 +381,13 @@ bool style_is_used(const Workspace& workspace, std::string_view style_id) {
 
 std::vector<std::string> providers_using_key(
     const Workspace& workspace,
-    std::string_view key_id) {
+    const ApiKeyInfo& key) {
     std::vector<std::string> result;
     for (const WorkspaceProvider& provider : workspace.providers()) {
-        if (provider.config.api_key_id == key_id) result.push_back(provider.label);
+        if (provider.config.api_key_id == key.id
+            || provider.config.api_key_env == key.display_name) {
+            result.push_back(provider.label);
+        }
     }
     return result;
 }
@@ -387,7 +397,7 @@ Json key_json(const ApiKeyInfo& key, const Workspace& workspace) {
         {"id", key.id},
         {"display_name", key.display_name},
         {"has_value", key.has_value},
-        {"used_by", providers_using_key(workspace, key.id)},
+        {"used_by", providers_using_key(workspace, key)},
     };
 }
 
@@ -426,7 +436,7 @@ void SettingsRoutes::install(httplib::Server& server) const {
         set_json_response(response, 200, result);
     });
 
-    server.Post("/api/v1/providers", [config, settings](const httplib::Request& request, httplib::Response& response) {
+    server.Post("/api/v1/providers", [api_keys, config, settings](const httplib::Request& request, httplib::Response& response) {
         if (!validate_json_mutation(request, response)) return;
         ProviderCreate create;
         if (!parse_route_json_body(
@@ -465,10 +475,11 @@ void SettingsRoutes::install(httplib::Server& server) const {
         set_json_response(response, 201, provider_json(
             *created,
             current->provider_is_writable(id),
-            characters_using_provider(*current, id)));
+            characters_using_provider(*current, id),
+            *api_keys));
     });
 
-    server.Get(R"(/api/v1/providers/([^/]+))", [](const httplib::Request& request, httplib::Response& response) {
+    server.Get(R"(/api/v1/providers/([^/]+))", [api_keys](const httplib::Request& request, httplib::Response& response) {
         const auto workspace = published_workspace();
         const std::string id = request.matches[1];
         const WorkspaceProvider* provider = workspace->find_provider(id);
@@ -478,7 +489,8 @@ void SettingsRoutes::install(httplib::Server& server) const {
         set_json_response(response, 200, provider_json(
             *provider,
             workspace->provider_is_writable(id),
-            characters_using_provider(*workspace, id)));
+            characters_using_provider(*workspace, id),
+            *api_keys));
     });
 
     server.Post(R"(/api/v1/providers/([^/]+)/test)", [api_keys, openai_auth, settings](const httplib::Request& request, httplib::Response& response) {
@@ -518,7 +530,7 @@ void SettingsRoutes::install(httplib::Server& server) const {
         }
     });
 
-    server.Patch(R"(/api/v1/providers/([^/]+))", [live_sessions, config, settings](const httplib::Request& request, httplib::Response& response) {
+    server.Patch(R"(/api/v1/providers/([^/]+))", [api_keys, live_sessions, config, settings](const httplib::Request& request, httplib::Response& response) {
         const std::string id = request.matches[1];
         const auto workspace = published_workspace();
         if (!is_valid_route_component(id) || workspace->find_provider(id) == nullptr
@@ -551,7 +563,8 @@ void SettingsRoutes::install(httplib::Server& server) const {
         set_json_response(response, 200, provider_json(
             *updated,
             current->provider_is_writable(id),
-            characters_using_provider(*current, id)));
+            characters_using_provider(*current, id),
+            *api_keys));
     });
 
     server.Delete(R"(/api/v1/providers/([^/]+))", [config](const httplib::Request& request, httplib::Response& response) {

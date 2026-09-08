@@ -408,7 +408,7 @@ TEST(Workspace, TemplateIncludesResolveUnderThePhysicalRoot) {
         std::string::npos);
 }
 
-TEST(Workspace, RejectsEnvironmentBasedProviderCredentials) {
+TEST(Workspace, LoadsLegacyProviderCredentialNamesWithoutUsingTheEnvironment) {
     test::TestWorkspace fixture;
     fixture.write_provider(
         "secured",
@@ -420,7 +420,11 @@ TEST(Workspace, RejectsEnvironmentBasedProviderCredentials) {
     fixture.write_character_config(
         "display_name = \"Guide\"\nprovider = \"secured\"\n");
 
-    EXPECT_THROW((void)Workspace::load(fixture.root()), std::runtime_error);
+    const Workspace workspace = Workspace::load(fixture.root());
+    const WorkspaceProvider* const provider = workspace.find_provider("secured");
+    ASSERT_NE(provider, nullptr);
+    EXPECT_TRUE(provider->config.api_key_id.empty());
+    EXPECT_EQ(provider->config.api_key_env, "OPENAI_API_KEY");
 }
 
 TEST(Workspace, OverlayCleansUpWhenProviderValidationThrows) {

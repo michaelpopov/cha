@@ -1,5 +1,6 @@
 #include "web/application_runtime.h"
 
+#include "providers/api_key_store.h"
 #include "session/session_lease.h"
 #include "session/session_repository.h"
 #include "session/sqlite_storage.h"
@@ -178,6 +179,43 @@ TEST(ApplicationRuntime, UsesEphemeralPortAndRequiresPrivateCookie) {
             {"Cookie", "CHA_RUNTIME=private-test-token"}});
     ASSERT_TRUE(accepted);
     EXPECT_EQ(accepted->status, 200);
+
+    runtime->shutdown();
+}
+
+TEST(ApplicationRuntime, ExposesLegacyNamedCredentialsAsSavedApiKeys) {
+    test::TestWorkspace workspace;
+    workspace.write_provider(
+        "test",
+        "host = \"test\"\n"
+        "port = 1\n"
+        "mode = \"test\"\n"
+        "model = \"fake\"\n"
+        "api_key_env = \"OPENAI_API_KEY\"\n");
+    const std::filesystem::path database =
+        test::import_test_database(workspace.root());
+    const ApplicationCommand command = make_command(workspace, database);
+    ApiKeyStore key_store(command.config_directory / "api-keys.json");
+    const ApiKeyInfo key = key_store.create("OPENAI_API_KEY", "saved-secret");
+
+    auto runtime = ApplicationRuntime::open(command, "private-test-token");
+    const int port = runtime->start();
+    httplib::Client client("127.0.0.1", port);
+
+    const auto provider_result = client.Get(
+        "/api/v1/providers/test", kRuntimeCookie);
+    ASSERT_TRUE(provider_result);
+    ASSERT_EQ(provider_result->status, 200) << provider_result->body;
+    EXPECT_EQ(
+        nlohmann::json::parse(provider_result->body).at("api_key"),
+        key.id);
+
+    const auto keys_result = client.Get("/api/v1/api-keys", kRuntimeCookie);
+    ASSERT_TRUE(keys_result);
+    ASSERT_EQ(keys_result->status, 200) << keys_result->body;
+    const nlohmann::json keys = nlohmann::json::parse(keys_result->body);
+    ASSERT_EQ(keys.size(), 1U);
+    EXPECT_EQ(keys.front().at("used_by"), nlohmann::json::array({"Test"}));
 
     runtime->shutdown();
 }

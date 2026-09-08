@@ -29,7 +29,11 @@ public:
 
     [[nodiscard]] std::vector<ApiKeyInfo> list() const;
     [[nodiscard]] std::optional<ApiKeyInfo> find(std::string_view id) const;
+    [[nodiscard]] std::optional<ApiKeyInfo> find_by_name(
+        std::string_view display_name) const;
     [[nodiscard]] std::string value(std::string_view id) const;
+    [[nodiscard]] std::string value_by_name(
+        std::string_view display_name) const;
 
     ApiKeyInfo create(std::string_view display_name, std::string_view value);
     ApiKeyInfo rename(std::string_view id, std::string_view display_name);

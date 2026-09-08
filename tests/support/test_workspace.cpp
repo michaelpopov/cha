@@ -83,6 +83,9 @@ void write_provider_config(
     if (!config.api_key_id.empty()) {
         file << "api_key = " << quoted(config.api_key_id) << '\n';
     }
+    if (!config.api_key_env.empty()) {
+        file << "api_key_env = " << quoted(config.api_key_env) << '\n';
+    }
     file << "reasoning_effort = " << quoted(config.reasoning_effort) << '\n'
          << "reasoning_format = " << quoted(reasoning_format_name(config.reasoning_format)) << '\n'
          << "https = " << (config.https ? "true" : "false") << '\n'

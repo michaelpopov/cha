@@ -248,7 +248,7 @@ WorkspaceProvider load_provider(const std::filesystem::path& directory) {
     static constexpr std::string_view fields[]{
         "display_name", "host", "port", "base_path", "mode", "model", "stream",
         "temperature", "max_tokens", "timeout_s", "idle_timeout_s",
-        "api_key", "reasoning_effort", "reasoning_format", "https",
+        "api_key", "api_key_env", "reasoning_effort", "reasoning_format", "https",
         "api", "auth", "web_search", "cache_retention"};
     reject_unknown_fields(table, path, fields, "Provider config");
 
@@ -277,6 +277,8 @@ WorkspaceProvider load_provider(const std::filesystem::path& directory) {
                 table, path, "idle_timeout_s", "an integer").value_or(60),
             .api_key_id = optional_value<std::string>(
                 table, path, "api_key", "a string").value_or(""),
+            .api_key_env = optional_value<std::string>(
+                table, path, "api_key_env", "a string").value_or(""),
             .reasoning_effort = optional_value<std::string>(
                 table, path, "reasoning_effort", "a string").value_or(""),
             .reasoning_format = choice(
@@ -315,6 +317,11 @@ WorkspaceProvider load_provider(const std::filesystem::path& directory) {
 
     const ModelBackendConfig& config = provider.config;
     validate_public_name(provider.label, "Provider name", path);
+    if (!config.api_key_id.empty() && !config.api_key_env.empty()) {
+        throw std::runtime_error(
+            "Provider config '" + utf8_path(path)
+            + "' cannot set both api_key and api_key_env");
+    }
     if (config.port < 1 || config.port > 65535) {
         throw std::runtime_error(
             "Provider config '" + utf8_path(path)
@@ -357,6 +364,7 @@ WorkspaceProvider load_provider(const std::filesystem::path& directory) {
             || config.api != ProviderApi::responses
             || !config.stream
             || !config.api_key_id.empty()
+            || !config.api_key_env.empty()
             || config.temperature
             || config.max_tokens
             || config.web_search != WebSearchMode::off
@@ -1419,6 +1427,10 @@ void Workspace::write_provider(
     } catch (const std::runtime_error&) {
         throw std::invalid_argument("Invalid provider name");
     }
+    if (!provider.api_key_id.empty() && !provider.api_key_env.empty()) {
+        throw std::invalid_argument(
+            "A provider cannot use both a saved API key ID and a legacy key name");
+    }
     toml::table table;
     table.insert("display_name", std::string(display_name));
     table.insert("host", provider.host);
@@ -1432,6 +1444,9 @@ void Workspace::write_provider(
     table.insert("timeout_s", provider.timeout_s);
     table.insert("idle_timeout_s", provider.idle_timeout_s);
     if (!provider.api_key_id.empty()) table.insert("api_key", provider.api_key_id);
+    if (!provider.api_key_env.empty()) {
+        table.insert("api_key_env", provider.api_key_env);
+    }
     if (!provider.reasoning_effort.empty()) {
         table.insert("reasoning_effort", provider.reasoning_effort);
     }
