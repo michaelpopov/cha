@@ -62,7 +62,7 @@ CHA configuration can appear in several places. They have different roles.
 | A `cha-runtime-*` directory under the system temporary directory | Private materialization of committed SQLite rows | Never |
 | `<config-directory>/api-keys.json` | API keys saved through Settings | Only through Settings → API Keys |
 | `<config-directory>/openai-auth.json` | OpenAI subscription OAuth credentials | Only through Settings → OpenAI |
-| `.env` in the configuration directory | Legacy runtime API-key environment values | Carefully, as a secret |
+| `.env` in the configuration directory | Optional Cloudflare R2 settings | Carefully, as a secret |
 
 Normal runtime reads configuration from SQLite. It does not continue reading
 the directory that was imported. Therefore editing `~/var/modify/` alone does
@@ -71,6 +71,11 @@ not alter a running application. The normal lifecycle is:
 ```text
 SQLite database -> export directory -> edit -> validate -> import -> SQLite database
 ```
+
+Provider and style definitions are workspace configuration and therefore live
+inside each vault's SQLite database. API-key values do not: the one
+process-wide `api-keys.json` is shared by every vault and is excluded from
+workspace import/export.
 
 An old export can also be stale. CHA can update a character's provider, style,
 reasoning effort, and web-search setting, and a forum's default character and
@@ -106,21 +111,36 @@ mirror = "/optional/session/mirror"
 modify = "/optional/editable/export/directory"
 ```
 
-`mirror` and `modify` are optional. Relative `data`, `mirror`, `modify`, and
-`logging.file` values are resolved relative to the configuration directory.
-That directory must be outside a directory passed to `--import`. There is no
-automatic migration from a single `cha.toml`; create the directory, split
+`mirror` and `modify` are optional and must be absolute when present. The
+`mirror` path saved through Settings must already be a directory. An existing
+`modify` path must be an empty directory or a valid CHA workspace. `data` and
+`logging.file` may be relative to the configuration directory. That directory
+must be outside a directory passed to `--import`. There is no automatic
+migration from a single `cha.toml`; create the directory, split
 selection/web/logging into `app.toml` and data paths into a vault file, adjust
-relative paths, and move `.env` and `openai-auth.json` into the directory.
+paths, and move `openai-auth.json` into the directory. A configuration-directory
+`.env`, when used, supplies only the three R2 settings described below.
+Export revalidates a nonempty modify directory and refuses to replace it unless
+it is a valid CHA workspace.
 
-### Vault switching
+### Vault management and switching
 
-Vault files are discovered when CHA starts. Restart CHA after adding, removing,
-or editing a vault file. Selecting a vault in the browser changes the vault for
-the whole running process, including Import, Export, Upload, and Download. A
-successful switch closes live sessions, opens the selected database, and
-reloads the initiating page at Welcome. Other open tabs may need to be reloaded
-manually.
+Vault files are discovered when CHA starts. Direct filesystem edits still
+require a restart, but Settings → Vaults can create, rename, update, and remove
+vault definitions in the running application. Creating a vault without a copy
+source carries the active vault's workspace configuration into a new database
+without its sessions. Choosing an existing vault as the source copies its full
+database, including sessions. Neither choice makes the new vault active.
+
+The Settings screen can change a vault's display name, `mirror`, and `modify`;
+the database path is fixed after creation. Only an inactive vault can be
+removed, and the last vault cannot be removed. Removal deletes the vault's TOML
+definition but deliberately keeps its database, mirror, and modify directories.
+
+Selecting a vault in the browser changes the vault for the whole running
+process, including Import, Export, Upload, and Download. A successful switch
+closes live sessions, opens the selected database, and reloads the initiating
+page at Welcome. Other open tabs may need to be reloaded manually.
 
 Failures have deliberately small, explicit outcomes:
 
@@ -133,11 +153,13 @@ Failures have deliberately small, explicit outcomes:
 | The new selection cannot be saved to `app.toml` | The switch succeeds for the running process. The next launch uses the previously saved vault. |
 
 The macOS application stores this directory at
-`~/Library/Application Support/CHA`. A missing `app.toml` marks first-run setup:
-the launcher creates `personal.toml` if needed, then creates `app.toml`. Once
-`app.toml` exists, the launcher does not recreate deleted vault files. Before
-deleting the selected vault file, change the `vault` value in `app.toml` to an
-existing vault or CHA will fail on its next launch.
+`~/Library/Application Support/CHA`. In normal server mode, an empty
+configuration directory is bootstrapped with `app.toml`, `default.toml`,
+`default.sqlite3`, and an absolute `modify` path. The resulting vault is named
+`Default`; it has no saved sessions and contains the built-in Assistant with a
+ChatGPT OAuth provider. Bootstrap does not run for offline commands or for a
+nonempty directory. When the workspace loads, the macOS main window title is
+`CHA: <Vault name>`.
 
 ## 3. Workspace directory map
 
@@ -145,7 +167,6 @@ A representative workspace looks like this:
 
 ```text
 workspace/
-├── .env                                      # optional, validation only
 ├── personas/
 │   └── michael/
 │       ├── persona.toml                      # required persona metadata
@@ -510,7 +531,7 @@ stable provider ID does not change.
 | `timeout_s` | `600` | Positive overall request timeout |
 | `idle_timeout_s` | `60` | Positive timeout after response bytes stop arriving |
 | `api_key` | `""` | ID of an API key stored in `<config-directory>/api-keys.json` |
-| `api_key_env` | `""` | Legacy environment variable containing an API key; not exposed by the provider editor |
+| `api_key_env` | `""` | Legacy field spelling; its value is resolved as an exact display name in `<config-directory>/api-keys.json`, never as an environment variable |
 | `reasoning_effort` | `""` | Provider default forwarded to the backend |
 | `reasoning_format` | `"auto"` | `auto`, `none`, `reasoning_content`, or `reasoning` |
 | `api` | `"responses"` | `responses` or `chat_completions` |
@@ -598,17 +619,19 @@ The `api_key` value is an opaque local ID, not the secret. Secrets are stored in
 excluded from workspace import/export. A missing referenced key does not
 prevent workspace loading, but requests and `Test` fail when they try to use it.
 
-For compatibility, a hand-authored provider may still use `api_key_env` instead
-of `api_key`. Runtime loads a `.env` file from the configuration directory
-without overriding variables already inherited by the process. The provider
-editor does not show environment variables and removes `api_key_env` the next
-time that provider is saved.
+For limited compatibility, a hand-authored provider may still use
+`api_key_env = "Name"` instead of `api_key`. Despite the old field name, CHA
+looks for one API-key record whose display name is exactly `Name` in
+`api-keys.json`; it never consults `.env` or the process environment for model
+credentials. A missing or ambiguous name does not prevent workspace loading,
+but that provider's requests and `Test` fail. When the name resolves, the
+provider editor shows the matching saved key and writes the normal opaque
+`api_key` ID when saved.
 
-An optional `.env` at the root of an import source is parsed and overlaid only
-while the import is validated. It is **not** stored in SQLite and is not
-exported. When maintaining a legacy environment-based provider, put its runtime
-key in the service environment or in `.env` in the configuration directory.
-Protect that file as a secret.
+A root `.env` in an import source is ignored and is never stored or exported.
+The configuration-directory `.env` and inherited process environment remain
+available only for `CHA_R2_URL`, `CHA_R2_ACCESS_KEY_ID`, and
+`CHA_R2_SECRET_ACCESS_KEY`.
 
 ### OpenAI subscription OAuth provider
 
@@ -684,8 +707,10 @@ The normal path is entirely in Settings:
 
 1. For API-key authentication, create the key under Settings → API Keys.
    For OAuth, connect the ChatGPT account under Settings → OpenAI.
-2. Open Settings → Providers, select `New provider`, and enter its name.
-3. Set Model, Base URL, API format, and Credentials.
+2. Open Settings → Providers, select `New provider`, and enter its name. Start
+   from the default OpenAI settings or copy the settings of an existing
+   provider, including its saved API-key selection.
+3. Set or review Model, Base URL, API format, and Credentials.
 4. Select `Test`. Fix any reported endpoint, credential, or provider error,
    then save the tested settings.
 5. Select the provider in the intended character settings.
@@ -1024,7 +1049,7 @@ Do not copy a live SQLite file casually; CHA uses WAL and sidecar files.
 These are not workspace configuration rows and are not exported:
 
 - the configuration directory (`app.toml` and vault files);
-- source or configuration-directory `.env`;
+- a source `.env` (ignored) and the configuration-directory `.env` used by R2;
 - `<config-directory>/api-keys.json` saved API keys;
 - `<config-directory>/openai-auth.json` OAuth credentials;
 - SQLite databases, journals, WAL/SHM sidecars, and `.cha-lock` files;
@@ -1085,8 +1110,7 @@ guide:
 - `src/workspace/workspace.cpp`: schemas, IDs, references, prompt composition,
   built-ins, and runtime-editable fields;
 - `src/workspace/workspace_config_store.cpp`: accepted import files,
-  materialization, validation, pruning, import/export, `.env`, and database
-  replacement;
+  materialization, validation, pruning, import/export, and database replacement;
 - `src/util/text_template.cpp` and `.h`: prompt macros, scopes, containment,
   and limits;
 - `src/util/path_name.cpp`: path component and forum ID validation;
@@ -1095,15 +1119,15 @@ guide:
   semantics;
 - `src/providers/api_key_store.cpp` and `.h`: locally saved API-key lifecycle;
 - `src/providers/openai_oauth.cpp`: OAuth credential lifecycle;
-- `src/web/settings_routes.cpp`: provider/key mutations and the direct provider
-  test probe;
+- `src/web/settings_routes.cpp`: provider, style, and key mutations plus the
+  direct provider test probe;
 - `src/web/application_config.cpp`: application and vault configuration
   discovery, validation, and command-line selection;
-- `src/web/application_runtime.cpp`: active-vault switching,
-  configuration-directory API keys and OAuth credentials, and runtime
-  maintenance operations;
-- `packaging/macos/main.swift`: native first-run configuration ownership and
-  database menu behavior;
+- `src/web/application_runtime.cpp`: vault creation/update/deletion and active
+  switching, configuration-directory API keys and OAuth credentials, and
+  runtime maintenance operations;
+- `packaging/macos/main.swift`: native runtime ownership, database menu
+  behavior, and window-title synchronization;
 - `packaging/linux/import-seed/`: minimal package seed;
 - `tests/application/unit_workspace.cpp` and
   `tests/application/unit_workspace_config_store.cpp`: executable examples of

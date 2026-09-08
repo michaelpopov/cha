@@ -947,9 +947,10 @@ the source of work.</p>
 <h3 id="73-configuration-helpers">7.3 Configuration helpers</h3>
 <p>The other utilities support important boundaries:</p>
 <ul>
-<li><code>environment.*</code> parses <code>.env</code>, preserves
-inherited values (including empty ones), and supports import&#39;s temporary
-overlay of absent values.</li>
+<li><code>environment.*</code> parses the application-level
+<code>.env</code> without overriding inherited values. Production uses
+it only for optional R2 storage settings; model credentials come from
+<code>api-keys.json</code> or OpenAI OAuth.</li>
 <li><code>path_name.*</code> and <code>utf8_path.*</code> keep
 filesystem and URL identifiers explicit.</li>
 <li><code>public_name.*</code> centralizes visible-name validation.</li>
@@ -1004,41 +1005,50 @@ logging settings. Each other <code>.toml</code> file is one vault:</p>
 <span id="cb8-5"><a href="#cb8-5" aria-hidden="true" tabindex="-1"></a><span class="dt">modify</span> <span class="op">=</span> <span class="st">&quot;/home/user/cha-modify&quot;</span></span></code></pre></div>
 <p><code>mirror</code> is optional; omitting it disables filesystem
 mirroring. <code>modify</code> is also optional and names the directory
-used by CHA.app&#39;s Import and Export menu items. Relative
-<code>data</code>, <code>mirror</code>, <code>modify</code>, and
-<code>logging.file</code> values resolve from the configuration
-directory. A <code>modify</code> directory may not contain the
-configuration directory or database, because the macOS Export operation
-replaces that directory. The mirror root must already exist and be a
-directory. Console Import additionally requires the configuration
-directory to be outside the source workspace, preventing process config
-files from becoming imported metadata rows. Console Import and Export
-acquire the same non-blocking database lease as runtime, so they remain
-deliberately offline.</p>
-<p>The vault registry is loaded once at startup. Adding, removing, or
-editing a vault file therefore requires a restart. Server mode uses the
+used by CHA.app&#39;s Import and Export menu items. Both paths must be
+absolute. A mirror saved through Settings must already exist as a
+directory. An existing modify path must be empty or contain a valid CHA
+workspace. <code>data</code> and <code>logging.file</code> may be
+relative to the configuration directory. A <code>modify</code>
+directory may not contain the configuration directory or database,
+because the macOS Export operation replaces it. Console Import
+additionally requires the configuration directory to be outside the
+source workspace, preventing process config files from becoming
+imported metadata rows. Console Import and Export acquire the same
+non-blocking database lease as runtime, so they remain deliberately
+offline.</p>
+<p>The vault registry is discovered at startup. Direct edits to its TOML
+files require a restart, while Settings → Vaults mutates the in-memory
+registry and the corresponding file together. Server mode uses the
 selection in <code>app.toml</code>; the offline modes use
 <code>--vault</code> and never change the saved selection.</p>
 <p>The macOS zip contains <code>CHA.app</code> and the tracked
 <code>cha-config</code> example. CHA.app keeps its active config at
-<code>~/Library/Application Support/CHA/</code>. A missing
-<code>app.toml</code> is its first-run marker: the launcher creates
-<code>personal.toml</code> if needed, then creates <code>app.toml</code>
-selecting <code>Personal</code>. Once <code>app.toml</code> exists, the
-launcher treats vault files as user-owned configuration and does not
-recreate a deleted <code>personal.toml</code>.</p>
+<code>~/Library/Application Support/CHA/</code>. In server mode, an
+empty configuration directory is bootstrapped by the C++ application
+with <code>app.toml</code>, <code>default.toml</code>,
+<code>default.sqlite3</code>, and an absolute <code>modify</code> path.
+The <code>Default</code> vault has no saved sessions and starts with the
+built-in Assistant configured for ChatGPT OAuth. Bootstrap does not run
+for a nonempty directory or for offline commands.</p>
 <p>A new database is created only after a source has been collected and
 validated successfully. Normal runtime and export require schema v2.
 Schema v1 is the unified sessions-only database; only import can add the
 <code>config</code> table and advance it to v2 while preserving session
 rows.</p>
-<p><code>.env</code> is one of the durable database rows. The database,
-journal/WAL/SHM sidecars, lock, private root, and exported
-<code>.env</code> use owner-only access (POSIX <code>0600</code> files
-and <code>0700</code> private directories, with private Windows DACLs).
-A unified database therefore needs secret-grade access and backup
-discipline. There is no database backup command here, and copying a live
-WAL database naively is unsafe.</p>
+<p>Provider and style TOML are durable rows in each vault&#39;s SQLite
+database. Inference secrets are deliberately outside that database: API
+keys live in the process-wide
+<code>&lt;config-directory&gt;/api-keys.json</code>, and ChatGPT OAuth
+credentials live in <code>openai-auth.json</code>. Workspace import
+ignores <code>.env</code>, and <code>.env</code> is never stored or
+exported. The application-level <code>.env</code> and inherited process
+environment remain available only for the three R2 settings.</p>
+<p>The database, journal/WAL/SHM sidecars, lock, private root, and
+credential JSON files use owner-only access (POSIX <code>0600</code>
+files and <code>0700</code> private directories, with private Windows
+DACLs). There is no database backup command here, and copying a live WAL
+database naively is unsafe.</p>
 <p>Mirroring deliberately creates a second, plaintext representation of
 session content outside SQLite. Mirrored Markdown files are written
 atomically with owner-only access (<code>0600</code> on POSIX), and
@@ -1053,18 +1063,22 @@ an owner.</p>
 <p>Startup proceeds in this order:</p>
 <ol type="1">
 <li><code>parse_application_command()</code> requires
-<code>--config</code>. It reads <code>app.toml</code>, discovers and
-validates the vault files, resolves relative paths from the
-configuration directory, selects the startup or command-line vault, and
-separates runtime from the four offline modes.</li>
+<code>--config</code>. In server mode it first bootstraps an empty
+configuration directory. It then reads <code>app.toml</code>, discovers
+and validates the vault files, resolves <code>data</code> and logging
+paths from the configuration directory, requires absolute
+<code>mirror</code> and <code>modify</code> paths, selects the startup or
+command-line vault, and separates runtime from the four offline
+modes.</li>
 <li><code>WorkspaceConfigStore::open()</code> acquires the database
 companion-file lease, rejects anything except valid schema v2, secures
 the database/sidecars, and enables WAL.</li>
 <li>The store creates one private root with <code>workspace/</code> and
 <code>welcome/</code>, materializes every <code>config</code> row under
-<code>workspace/</code>, loads <code>.env</code> without overriding
-inherited values, and validates/publishes a complete
-<code>Workspace</code>.</li>
+<code>workspace/</code>, and validates/publishes a complete
+<code>Workspace</code>. <code>ApplicationRuntime</code> separately opens
+the process-wide API-key and OAuth stores and loads optional R2
+settings.</li>
 <li>File logging is initialized from the already parsed external
 settings, and the HTTP server later binds the configured
 <code>[web]</code> host and port. Neither setting belongs to
@@ -1076,8 +1090,8 @@ lease or private root.</li>
 <li>If <code>mirror</code> is configured, <code>SessionMirror</code>
 validates the existing root, creates any missing display-named forum
 directories, and writes every active persistent session through the
-existing Markdown formatter. Any failure here aborts startup;
-Entrance/Welcome is excluded.</li>
+existing Markdown formatter. A failure is logged and leaves mirroring
+disabled; Entrance/Welcome is excluded.</li>
 <li>The process-owned <code>Providers</code> supervisor is
 constructed.</li>
 <li><code>LiveSessionManager</code> is given an opener lambda that calls
@@ -1143,9 +1157,9 @@ caller holds the returned <code>shared_ptr</code> while it reads
 references from the workspace.</p>
 <p>The schema-v2 <code>config</code> table contains exactly
 <code>name</code> and <code>content</code>. Import collects regular
-workspace <code>.toml</code> and <code>.md</code> files and optional
-root <code>.env</code>; it follows no symlinks and stores no other
-types. Legacy root <code>app.toml</code> and <code>workspace.toml</code>
+workspace <code>.toml</code> and <code>.md</code> files, ignores a root
+<code>.env</code>, follows no symlinks, and stores no other types.
+Legacy root <code>app.toml</code> and <code>workspace.toml</code>
 are explicitly excluded and prohibited as database config names. The
 unified external config is also outside the import tree. A template
 include must itself be stored, so <code>snippet.txt</code> is not
@@ -1182,16 +1196,24 @@ non-default port. Saves force network mode and streaming, clear
 provider-level <code>reasoning_effort</code>, and set
 <code>web_search = &quot;off&quot;</code>. Characters own the user-facing reasoning
 and web-search choices.</p>
+<p>Creating a provider starts either from the small default OpenAI
+configuration or from a selected existing provider. Copying carries
+every provider setting, including the selected saved-key ID, and changes
+only the display name and new stable provider ID. The user can review
+and test the result before assigning it to a character.</p>
 <p>Credentials is an explicit choice. A normal provider refers to a
 secret in the process-owned <code>ApiKeyStore</code>; the secret never
 enters workspace configuration or a browser response.
 <code>OpenAI OAuth</code> selects <code>openai_subscription</code>
 authentication and therefore requires the Responses API and the exact
 <code>https://chatgpt.com/backend-api/codex</code> base URL.
-<code>No credentials</code> clears both forms of authentication. Legacy
-<code>api_key_env</code> configurations can still load, but the browser
-editor neither lists environment variables nor preserves one when the
-provider is saved.</p>
+<code>No credentials</code> clears both forms of authentication. The
+legacy field spelling <code>api_key_env = &quot;Name&quot;</code> is accepted only
+as a lookup by exact display name in <code>api-keys.json</code>; the
+process environment is never consulted for model access. A missing or
+ambiguous name fails when that provider is used. A resolvable legacy
+name appears as the matching saved key in the editor and is written as
+the normal opaque <code>api_key</code> ID when the provider is saved.</p>
 <p>The provider <code>Test</code> action also stays narrow. The browser
 sends the current candidate as the same <code>ProviderUpdate</code> used
 by Save, and <code>SettingsRoutes</code> calls <code>ProviderClient</code>
@@ -1816,15 +1838,22 @@ GET  /s/{forum}/{session}/api/v1/events
 POST /s/{forum}/{session}/api/v1/input
 POST /s/{forum}/{session}/api/v1/actions/stop
 POST /s/{forum}/{session}/api/v1/actions/default-character</code></pre>
-<p><code>SettingsRoutes</code> owns provider and saved-key configuration
-separately from live session routes. Its provider probe receives a
-complete candidate in the request body but does not commit it:</p>
+<p><code>SettingsRoutes</code> owns provider, style, and saved-key
+configuration separately from live session routes. Vault routes are
+installed by <code>ApplicationRuntime</code> because they mutate its
+process-wide registry. The provider probe receives a complete candidate
+in the request body but does not commit it:</p>
 <pre class="text"><code>GET    /api/v1/providers
 POST   /api/v1/providers
 GET    /api/v1/providers/{provider_id}
 PATCH  /api/v1/providers/{provider_id}
 DELETE /api/v1/providers/{provider_id}
 POST   /api/v1/providers/{provider_id}/test
+
+GET    /api/v1/vaults
+POST   /api/v1/vaults
+PATCH  /api/v1/vaults
+DELETE /api/v1/vaults
 
 GET    /api/v1/api-keys
 POST   /api/v1/api-keys
@@ -1850,15 +1879,17 @@ outlive the manager&#39;s map entry after the owner thread has finished.</p>
 <tbody>
 <tr>
 <td><code>application_config.*</code></td>
-<td>Parse <code>app.toml</code> and the vault registry, resolve the
-selected database and optional <code>mirror</code>/<code>modify</code>
-paths, and select the process mode and runtime asset root</td>
+<td>Bootstrap an empty server configuration, parse
+<code>app.toml</code> and the vault registry, resolve the selected
+database, require absolute optional
+<code>mirror</code>/<code>modify</code> paths, and select the process mode
+and runtime asset root</td>
 </tr>
 <tr>
 <td><code>application_runtime.*</code>,
 <code>current_vault.h</code></td>
-<td>Compose one running application, hold the active vault, and
-serialize vault switching with in-process database maintenance</td>
+<td>Compose one running application, hold and edit the vault registry,
+and serialize vault switching with in-process database maintenance</td>
 </tr>
 <tr>
 <td><code>asset_handler.*</code></td>
@@ -2193,11 +2224,41 @@ the same objects before and after the switch. Only their
 database-dependent state changes. Other browser tabs receive no
 broadcast; their old live sessions have closed, and those tabs may need
 a manual reload.</p>
+<p>The browser also sets <code>document.title</code> to
+<code>CHA: &lt;Vault name&gt;</code>. CHA.app observes the web view title and
+applies it to the native main window, temporarily overriding it only
+while a Database menu operation is in progress.</p>
 <p>There is one fatal edge after step 5 starts. If the target cannot be
 reopened after the database paths change, <code>CurrentVault</code> and
 <code>app.toml</code> still name the old vault, but the store and
 repository cannot safely serve it. The runtime marks itself unusable and
 stops the HTTP server. The application must restart.</p>
+<h3 id="138-creating-editing-and-removing-vaults">13.8 Creating,
+editing, and removing vaults</h3>
+<p>Settings → Vaults calls the collection route without switching
+databases:</p>
+<ol type="1">
+<li>Create validates a new display name, unused database path, absolute
+optional mirror/modify paths, and all cross-vault path constraints. With
+no copy source, it creates a database containing the active workspace
+configuration but no sessions. With a source, SQLite&#39;s backup path
+copies the complete source database, including sessions. It then adds a
+generated <code>vault-N.toml</code> definition to the runtime registry.
+The active vault is unchanged.</li>
+<li>Update can rename a vault and change its mirror or modify path; the
+database path is intentionally read-only. Renaming the active vault also
+rewrites the selection in <code>app.toml</code>. An active mirror is
+rebuilt immediately, and a rebuild error disables mirroring without
+taking down the application.</li>
+<li>Delete removes only an inactive vault&#39;s definition. It rejects the
+active vault and the last remaining vault, and keeps the database and
+related directories so removing a registry entry does not destroy user
+data.</li>
+</ol>
+<p>The UI requires a saved mirror to be an existing directory. A saved
+modify path may be absent, missing, empty, or an already valid CHA
+workspace; this prevents Export from replacing an unrelated nonempty
+directory.</p>
 <h2 id="14-state-machines-to-keep-in-your-head">14. State machines to
 keep in your head</h2>
 <h3 id="141-turn-persistence">14.1 Turn persistence</h3>
@@ -2423,8 +2484,9 @@ successful vault cutover. Their failures are logged without rolling back
 the open target; persistence failure means the next launch uses the
 previously saved vault.</li>
 <li>A configured mirror whose root is missing or unusable, or whose
-initial synchronization fails, is a startup failure. Later mirror-update
-failures are warnings because SQLite has already committed the
+initial synchronization fails, is logged and leaves mirroring disabled.
+Settings rejects such a mirror before saving it. Later mirror-update
+failures are also warnings because SQLite has already committed the
 authoritative change.</li>
 <li>A runtime configuration failure before commit rematerializes the old
 rows and leaves durable and published state old. The rare failure after
@@ -2575,7 +2637,7 @@ atomicity</td>
 </tr>
 <tr>
 <td>Composition root, private cookie, in-process transfers, and vault
-switching</td>
+lifecycle</td>
 <td><a href="../tests/web/unit_application_runtime.cpp">tests/web/unit_application_runtime.cpp</a></td>
 </tr>
 <tr>
@@ -2583,9 +2645,10 @@ switching</td>
 <td><a href="../tests/web/process_web_server.cpp">tests/web/process_web_server.cpp</a></td>
 </tr>
 <tr>
-<td>Browser transcript, composer, and vault selector</td>
+<td>Browser transcript, composer, vault selector, and settings</td>
 <td><a href="../webapp/src/components/LiveChat.test.tsx">webapp/src/components/LiveChat.test.tsx</a>,
-<a href="../webapp/src/components/App.test.tsx">App.test.tsx</a></td>
+<a href="../webapp/src/components/App.test.tsx">App.test.tsx</a>,
+<a href="../webapp/src/components/Settings.test.tsx">Settings.test.tsx</a></td>
 </tr>
 </tbody>
 </table>

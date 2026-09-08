@@ -30,7 +30,7 @@ cha-config/
 ├── app.toml
 ├── personal.toml
 ├── projects.toml
-├── .env
+├── api-keys.json
 └── openai-auth.json
 ```
 
@@ -53,16 +53,17 @@ Every other direct-child `.toml` file defines one vault:
 ```toml
 vault_name = "Personal"
 data = "personal.sqlite3"
-# mirror = "personal-mirror"
-# modify = "personal-edit"
+# mirror = "/Users/alice/CHA/mirror"
+# modify = "/Users/alice/CHA/modify"
 ```
 
 The filename does not identify the vault. `vault_name` is the displayed and
-saved name. Relative `data`, `mirror`, and `modify` paths resolve from the
-configuration directory.
+saved name. A relative `data` path resolves from the configuration directory.
+`mirror` and `modify` must be absolute paths.
 
-CHA reads vault definitions once at startup. Adding, removing, or editing a
-definition takes effect after restart. A successful switch only changes the
+CHA discovers vault definitions at startup. Direct file edits take effect after
+restart. Settings → Vaults updates the file and the running registry together,
+without changing the active vault. A successful switch only changes the
 `vault` value in `app.toml`.
 
 ### Validation
@@ -76,6 +77,9 @@ data:
   while preserving the spelling from `vault_name`.
 - Vault names, normalized database paths, and database filenames must be
   unique. Database filenames are unique because they remain R2 object names.
+- `mirror` and `modify` paths are absolute. Settings accepts a mirror only when
+  it is an existing directory. An existing modify directory must be empty or a
+  valid CHA workspace.
 - A `modify` directory cannot overlap another `modify` directory, a configured
   database, or the configuration directory. Export replaces this directory.
 - Mirror paths do not participate in cross-vault collision validation. The
@@ -87,15 +91,24 @@ startup and runtime switching require the selected database to be valid.
 
 ## Application-wide files
 
-`.env` and `openai-auth.json` live in the configuration directory rather than
-inside a vault. CHA loads `.env` once at startup without overriding variables
-already present in the process environment. Console commands continue to use
-that process environment.
+`api-keys.json`, `openai-auth.json`, and an optional `.env` live in the
+configuration directory rather than inside a vault. API keys used for model
+access exist only in `api-keys.json`; providers in a vault refer to their opaque
+IDs. `openai-auth.json` holds the process-wide ChatGPT OAuth session. The
+optional `.env` is loaded once without overriding inherited values and is used
+only for R2 storage settings.
+
+The compatibility field `api_key_env = "Name"` does not read the environment.
+It resolves `Name` as an exact API-key display name in `api-keys.json`. A
+missing or ambiguous name fails when that provider is used, not while the vault
+is loaded. Saving the provider through Settings converts a resolvable name to
+the normal opaque `api_key` ID.
 
 One `OpenAiOAuth` owner uses `openai-auth.json` for the life of the process.
 Login, logout, and pending device authorization therefore apply to every vault
-and survive a switch. Neither file is included in workspace import/export,
-session mirrors, or R2 transfers.
+and survive a switch. Neither credential file is included in workspace
+import/export, session mirrors, or R2 transfers. Provider and style definitions,
+by contrast, are configuration rows inside each vault's SQLite database.
 
 Provider definitions still come from the active workspace. The process-wide
 provider supervisor needs no vault-switch behavior: closing live sessions
@@ -104,9 +117,9 @@ workspace.
 
 ## Startup and console commands
 
-At startup CHA discovers the vaults, loads the application-wide environment and
-OAuth owner, and opens the database selected by `app.toml`. Failure to open that
-database fails startup.
+At startup CHA discovers the vaults, opens the process-wide key and OAuth
+stores, loads optional R2 environment settings, and opens the database selected
+by `app.toml`. Failure to open that database fails startup.
 
 Console maintenance must name a vault explicitly:
 
@@ -235,15 +248,39 @@ live sessions close and their existing recovery behavior applies. They may need
 a manual reload. This is an accepted consequence of keeping a process-global
 feature simple for a personal application.
 
+Settings shows Vaults above Providers, Styles, and API Keys. The collection API
+supports listing, creating, updating, and deleting definitions through
+`/api/v1/vaults`.
+
+Creating a vault has two database choices:
+
+- **New empty vault** copies the active vault's workspace configuration but no
+  sessions into a new database.
+- **Copy an existing vault** copies that vault's complete SQLite database,
+  including configuration and sessions.
+
+Both choices add the vault to the selector without making it active. Creation
+also records the display name, a new database path, and optional absolute
+mirror and modify paths. Later edits can rename the display name or change the
+mirror and modify paths; the database path is read-only.
+
+Deletion is registry-only: it removes the vault TOML and keeps the database and
+directories. The active vault cannot be deleted, and the last vault cannot be
+deleted.
+
 ## macOS application
 
 The native application passes its Application Support directory as the
-configuration path. On first run it creates `app.toml` selecting `Personal` and
-`personal.toml` pointing to `cha.sqlite3` and `modify` beneath that directory.
+configuration path. When normal server startup finds that directory empty, the
+C++ configuration layer creates `app.toml`, `default.toml`, and
+`default.sqlite3`. The new `Default` vault has an absolute `modify` path, no
+saved sessions, and a minimal workspace containing the built-in Assistant and
+ChatGPT OAuth provider. Bootstrap does not run for a nonempty directory or an
+offline command.
 
-The pre-runtime seed bridge reads `app.toml`, discovers the selected vault, and
-creates that database if it is missing. It does not need a separate `--vault`
-argument and does not change the selection.
+The browser title is `CHA: <Vault name>`. The native launcher observes that
+title and applies it to the main window after startup and after a vault switch;
+a Database operation temporarily shows its progress title.
 
 Native Import, Export, Upload, and Download always consult the current vault.
 The Database menu refreshes when opened so Import/Export availability follows
@@ -254,13 +291,17 @@ the selected vault's optional `modify` path.
 | Failure | Result |
 | --- | --- |
 | Invalid configuration or startup vault | Startup fails. |
+| Startup mirror cannot be rebuilt | Startup continues with mirroring inactive. |
 | Console command omits or misnames `--vault` | It fails before touching vault data. |
+| Create/update paths fail validation | The request is rejected and the registry is unchanged. |
+| Delete targets the active or last vault | The request is rejected. |
 | Switch target is unknown | The old vault remains active. |
 | Target lease is busy or target database is invalid | The switch fails before live sessions are paused. |
 | Live sessions do not drain in time | The old vault remains active and admission resumes. |
 | Reopen fails after the database path changes | The runtime requires restart; the saved selection is unchanged. |
 | Mirror rebuild fails | The switch succeeds with mirroring inactive. |
 | Saving `app.toml` fails | The switch succeeds; the next launch uses the previously saved vault. |
+| Export target is a nonempty directory that is not a CHA workspace | Export refuses to replace it. |
 
 The `app.toml` rewrite uses a temporary sibling file and rename, so a failed
 save does not leave a truncated configuration.
@@ -272,26 +313,29 @@ Migration from a single configuration file is manual:
 1. Create a configuration directory.
 2. Move web and logging settings into `app.toml` and add the selected `vault`;
    move `data`, `mirror`, and `modify` into a vault file and add `vault_name`.
-3. Adjust relative paths for the new directory. Existing databases do not need
-   to move.
-4. Move `.env` into the configuration directory.
+3. Adjust the data path for the new directory and make `mirror` and `modify`
+   absolute. Existing databases do not need to move.
+4. Put any R2-only `.env` in the configuration directory.
 5. Move `<database>.openai-auth.json` to `openai-auth.json` in the configuration
    directory, or sign in again.
 
 Packages provide `cha-config.example/app.toml` and `personal.toml`. They never
-contain private credentials or databases. The import seed's placeholder `.env`
-is intentional.
+contain private credentials or databases. Model API keys must be created in
+Settings → API Keys, which writes the process-wide `api-keys.json`.
 
 ## Verification
 
 Tests should cover the behavior at its actual boundaries:
 
-- configuration discovery, validation, command selection, and credentials;
+- configuration bootstrap, discovery, validation, command selection, and
+  credentials;
 - switching between two databases, early lease/validation failures, drain
   failure, fatal reopen, mirror failure, and selection persistence;
+- runtime vault creation with and without a copy source, updates, active/last
+  deletion protection, and preservation of deleted-vault data;
 - bootstrap fields, switch endpoint responses, selector pending/error behavior,
   and the initiating-page reload;
-- native first-run files and current-vault menu capabilities; and
+- native first-run files, current-vault menu capabilities, and window title;
 - launcher and package contents using the directory layout.
 
 There is no need for snapshot-identity, cross-tab mismatch, generic retarget,
@@ -303,12 +347,11 @@ Vaults do not add:
 
 - more than one active vault;
 - per-browser or per-user selection;
-- UI for creating or editing vault definitions;
 - live rescanning or filesystem watching;
-- per-vault `.env` or OAuth credentials;
+- per-vault API keys, `.env`, or OAuth credentials;
 - automatic migration or compatibility with single-file `--config`;
 - automatic cross-tab reload; or
 - process restart as the normal switching mechanism.
 
-The feature remains a fixed list of local database configurations, one current
-selection, and one explicit database-switch operation.
+The feature remains a small process-wide list of local database configurations,
+one current selection, and one explicit database-switch operation.

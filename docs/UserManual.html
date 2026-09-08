@@ -391,6 +391,7 @@
         <li><a href="#conversation">Having a conversation</a></li>
         <li><a href="#commands">Chat commands</a></li>
         <li><a href="#character-settings">Character settings</a></li>
+        <li><a href="#vault-settings">Vault settings</a></li>
         <li><a href="#provider-settings">Provider settings</a></li>
         <li><a href="#database-maintenance">Backing up and editing CHA data</a></li>
         <li><a href="#exporting">Downloading conversations</a></li>
@@ -443,10 +444,10 @@
           </li>
           <li>An internet connection for AI-generated replies.</li>
           <li>
-            An OpenAI Platform API key. If you do not have one, sign in to the
-            <a href="https://platform.openai.com/api-keys">OpenAI API key page</a>
-            and create a key. Treat the key like a password: do not share it or
-            include it in messages or downloaded conversations.
+            Either a ChatGPT account that can use the configured model, or an
+            API key for the model provider you intend to use. Treat API keys
+            like passwords: do not share them or include them in messages or
+            downloaded conversations.
           </li>
         </ul>
 
@@ -503,17 +504,19 @@
 
         <h3>Complete the first launch</h3>
         <ol class="steps">
-          <li>Wait for the <strong>Set up CHA</strong> window to appear.</li>
-          <li>Paste the OpenAI API key into the protected field.</li>
-          <li>Select <strong>Continue</strong>.</li>
           <li>
-            Wait while CHA prepares itself. The main window opens at the
-            <strong>Welcome</strong> session when setup is complete.
+            Wait while CHA creates the <strong>Default</strong> vault. The main
+            window opens at the <strong>Welcome</strong> session, with the title
+            <strong>CHA: Default</strong>.
           </li>
+          <li>Open Settings and select <strong>OpenAI</strong>.</li>
+          <li>Select <strong>Connect ChatGPT</strong> and complete the sign-in.</li>
         </ol>
         <p>
-          CHA remembers the key, settings, and saved conversations on that Mac.
-          You do not need to repeat setup each time the application opens.
+          The Default vault starts with the built-in Assistant configured to use
+          the connected ChatGPT account. You can instead add a model API key and
+          provider under Settings. CHA remembers its settings, credentials, and
+          saved conversations on that Mac.
         </p>
         <p>
           The Welcome session is temporary. It is useful for a quick conversation,
@@ -554,13 +557,13 @@
           </li>
         </ul>
 
-        <h3>Change the OpenAI API key</h3>
-        <ol class="steps">
-          <li>Choose <strong>CHA &gt; Change API Key…</strong>.</li>
-          <li>Paste the replacement key and select <strong>Continue</strong>.</li>
-          <li>Select <strong>OK</strong> after CHA confirms that the key was saved.</li>
-          <li>Quit CHA and open it again. The new key is used after the restart.</li>
-        </ol>
+        <h3>Change model credentials</h3>
+        <p>
+          Open Settings → <strong>API Keys</strong> to add, rename, replace, or
+          remove an API key. Open Settings → <strong>OpenAI</strong> to connect or
+          disconnect ChatGPT. Saved API-key changes are available to providers
+          immediately.
+        </p>
 
         <h3>Install an updated version</h3>
         <ol class="steps">
@@ -575,9 +578,9 @@
         <p>
           Copy the ZIP file or <code>CHA.app</code> to the other Mac, place CHA in
           that Mac's Applications folder, and follow the first-launch steps above.
-          The application can be copied, but the OpenAI API key and saved
-          conversations do not travel with it. The other Mac starts with its own
-          setup and its own conversations.
+          The application can be copied, but credentials, vault databases, and
+          saved conversations do not travel with it. The other Mac starts with
+          its own Default vault.
         </p>
       </section>
 
@@ -648,8 +651,10 @@
           the conversation more room.
         </p>
         <p>
-          Select the Settings gear at the bottom of the sidebar to manage the
-          OpenAI connection, providers, character styles, and saved API keys.
+          Select the Settings gear at the bottom of the sidebar to manage
+          vaults, the OpenAI connection, providers, character styles, and saved
+          API keys. The vault selector beside Settings changes the active vault
+          for the whole application.
         </p>
       </section>
 
@@ -872,12 +877,60 @@
         </div>
       </section>
 
+      <section id="vault-settings">
+        <h2>9. Vault settings</h2>
+        <p>
+          A vault is one CHA database with its own workspace configuration and
+          conversations. The selector beside Settings shows the active vault.
+          Selecting another vault closes live sessions, opens that database,
+          reloads the window at Welcome, and updates the window title.
+        </p>
+
+        <h3>Create a vault</h3>
+        <ol class="steps">
+          <li>Open Settings and select <strong>Vaults</strong>.</li>
+          <li>Select <strong>New vault</strong> and enter a display name.</li>
+          <li>
+            Enter an unused database path whose parent directory already
+            exists.
+          </li>
+          <li>
+            Under <strong>Initial database</strong>, choose <strong>New empty
+            vault</strong> or copy an existing vault.
+          </li>
+          <li>Add optional mirror and modify paths, then select <strong>Create vault</strong>.</li>
+        </ol>
+        <p>
+          A new empty vault receives the active vault's characters, personas,
+          forums, providers, and styles, but no saved sessions. Copying an
+          existing vault copies its complete database, including saved sessions.
+          Creating either kind adds it to the vault list but does not make it
+          active.
+        </p>
+
+        <h3>Edit or remove a vault</h3>
+        <p>
+          Select a vault under Settings → Vaults to rename it or change its
+          optional mirror and modify paths. Both paths must be absolute. A
+          mirror must already be a directory. A modify path may not exist yet;
+          if it exists and is nonempty, it must already contain a valid CHA
+          workspace. The database path cannot be changed after creation.
+        </p>
+        <p>
+          Only an inactive vault can be removed, and CHA always keeps at least
+          one vault. Removing a vault deletes its entry from CHA but keeps its
+          database and folders on disk.
+        </p>
+      </section>
+
       <section id="provider-settings">
-        <h2>9. Provider settings</h2>
+        <h2>10. Provider settings</h2>
         <p>
           A provider tells CHA which model endpoint to use and how to authenticate
           there. Select the Settings gear, then <strong>Providers</strong>. Choose an
           existing provider or select <strong>New provider</strong> and enter a name.
+          A new provider can start with the default OpenAI settings or copy all
+          settings from an existing provider, including its saved API-key choice.
         </p>
 
         <h3>Configure the provider</h3>
@@ -925,7 +978,10 @@
         <p>
           Only keys explicitly saved under API Keys appear in the Credentials
           list. Their secret values stay in the local application configuration
-          and are not returned to the browser.
+          file <code>api-keys.json</code>, are shared by all vaults, and are not
+          returned to the browser. CHA never reads model API keys from
+          <code>.env</code> or process environment variables. If a provider refers
+          to a key that no longer exists, that provider fails when tested or used.
         </p>
 
         <h3>Use OpenAI OAuth</h3>
@@ -960,7 +1016,7 @@
       </section>
 
       <section id="database-maintenance">
-        <h2>10. Backing up and editing CHA data</h2>
+        <h2>11. Backing up and editing CHA data</h2>
         <p class="lead">
           The <strong>Database</strong> menu can export or import workspace
           configuration and can upload or download the complete database. These
@@ -971,25 +1027,32 @@
         <h3>Find the active configuration files</h3>
         <p>
           The <code>cha-config</code> extracted from the ZIP is an example. The
-          application uses its active files here:
+          application uses <code>~/Library/Application Support/CHA</code>. A
+          fresh installation begins with these files; credential files appear
+          after they are used:
         </p>
         <pre><code>~/Library/Application Support/CHA/app.toml
-~/Library/Application Support/CHA/personal.toml
-~/Library/Application Support/CHA/.env</code></pre>
+~/Library/Application Support/CHA/default.toml
+~/Library/Application Support/CHA/default.sqlite3
+~/Library/Application Support/CHA/api-keys.json
+~/Library/Application Support/CHA/openai-auth.json
+~/Library/Application Support/CHA/.env  (optional, R2 only)</code></pre>
         <p>
           In Finder, choose <strong>Go &gt; Go to Folder…</strong>, enter
           <code>~/Library/Application Support/CHA</code>, and select
-          <strong>Go</strong>. Quit and reopen CHA after changing either active
-          file so the new settings and menu availability take effect.
+          <strong>Go</strong>. Additional vaults have their own generated TOML
+          files and database paths. Use Settings rather than editing credential
+          files by hand. Direct edits to <code>app.toml</code> or a vault TOML
+          require restarting CHA.
         </p>
 
         <h3>Export, edit, and import workspace configuration</h3>
         <p>
           The optional <code>modify</code> setting in the active vault's
-          configuration names the directory used by both operations. A
-          relative path starts from the configuration directory:
+          configuration names the directory used by both operations. Set it
+          under Settings → Vaults. It must be an absolute path:
         </p>
-        <pre><code>modify = "modify"</code></pre>
+        <pre><code>modify = "/Users/your-name/Documents/CHA/modify"</code></pre>
         <p>
           When this setting is absent, <strong>Import</strong> and
           <strong>Export</strong> are disabled. To edit workspace configuration:
@@ -997,9 +1060,10 @@
         <ol class="steps">
           <li>Wait for any current AI reply to finish.</li>
           <li>
-            Choose <strong>Database &gt; Export</strong>. CHA deletes an existing
-            directory at the configured <code>modify</code> path, recreates it,
-            and writes the current workspace configuration there.
+            Choose <strong>Database &gt; Export</strong>. CHA replaces an existing
+            valid CHA workspace at the configured <code>modify</code> path, or
+            creates the directory, and writes the current workspace
+            configuration there.
           </li>
           <li>Edit the exported <code>.toml</code> or <code>.md</code> files.</li>
           <li>Choose <strong>Database &gt; Import…</strong> and confirm the change.</li>
@@ -1007,7 +1071,8 @@
         </ol>
         <div class="warning">
           <p>
-            Export permanently replaces the existing <code>modify</code>
+            Export permanently replaces an existing valid CHA workspace at the
+            <code>modify</code> path. It refuses to replace an unrelated nonempty
             directory. Copy out any edits you still need before exporting again.
             Import replaces the complete workspace configuration and can remove
             sessions belonging to forums that are no longer configured.
@@ -1018,8 +1083,9 @@
         <p>
           Upload and Download use Cloudflare R2 through its S3-compatible API.
           They are enabled only when all three of these entries have nonempty
-          values in the active <code>.env</code> file or the environment that
-          launched CHA:
+          values in the configuration-directory <code>.env</code> file or the
+          environment that launched CHA. This file is for R2 only; model API
+          keys belong in <code>api-keys.json</code>:
         </p>
         <pre><code>CHA_R2_URL=https://example.r2.cloudflarestorage.com/bucket
 CHA_R2_ACCESS_KEY_ID=your-access-key-id
@@ -1044,7 +1110,7 @@ CHA_R2_SECRET_ACCESS_KEY=your-secret-access-key</code></pre>
       </section>
 
       <section id="exporting">
-        <h2>11. Downloading conversations</h2>
+        <h2>12. Downloading conversations</h2>
         <p>
           Use <strong>Download</strong> in a session's action menu to save a Markdown
           file. Markdown is plain text that remains readable in an ordinary text
@@ -1067,7 +1133,7 @@ Then choose one small act and do it completely.</code></pre>
       </section>
 
       <section id="privacy">
-        <h2>12. Privacy and data</h2>
+        <h2>13. Privacy and data</h2>
         <ul>
           <li>
             In the standalone Mac application, saved conversations and settings
@@ -1105,7 +1171,7 @@ Then choose one small act and do it completely.</code></pre>
       </section>
 
       <section id="troubleshooting">
-        <h2>13. Troubleshooting</h2>
+        <h2>14. Troubleshooting</h2>
         <div class="table-wrap">
           <table>
             <caption>Common problems</caption>
@@ -1150,7 +1216,7 @@ Then choose one small act and do it completely.</code></pre>
               </tr>
               <tr>
                 <td>Import and Export are disabled.</td>
-                <td>Add a nonempty <code>modify</code> path to the active vault's configuration, then quit and reopen CHA.</td>
+                <td>Open Settings → Vaults, select the active vault, and add an absolute <code>modify</code> path.</td>
               </tr>
               <tr>
                 <td>Upload and Download are disabled.</td>
@@ -1162,7 +1228,7 @@ Then choose one small act and do it completely.</code></pre>
       </section>
 
       <section id="glossary">
-        <h2>14. Glossary</h2>
+        <h2>15. Glossary</h2>
         <div class="table-wrap">
           <table>
             <caption>Useful terms</caption>
@@ -1179,6 +1245,7 @@ Then choose one small act and do it completely.</code></pre>
               <tr><td>Persona</td><td>The identity used for the human side of a conversation.</td></tr>
               <tr><td>Provider</td><td>The AI company and model that generate a character's answers.</td></tr>
               <tr><td>Session</td><td>One conversation saved inside a forum.</td></tr>
+              <tr><td>Vault</td><td>One CHA database containing its own workspace configuration and conversations.</td></tr>
             </tbody>
           </table>
         </div>
