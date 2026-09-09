@@ -1,12 +1,18 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ChaError, type ChaClient, type SessionSnapshot } from '../api/client';
 import type { SessionEventHandlers } from '../api/events';
 import { bootstrapFixture, fixtureClient, plainVoice, snapshotFixture } from '../test/fixtures';
+import { VoiceInputSession } from '../voiceInput';
 import { App } from './App';
 import { formatEntryTime } from './ChatScreen';
+
+afterEach(() => {
+  delete window.chaVoiceInput;
+  vi.restoreAllMocks();
+});
 
 function drivableEvents() {
   const handlers: SessionEventHandlers[] = [];
@@ -297,6 +303,85 @@ describe('live chat', () => {
 
     await user.click(screen.getByRole('button', { name: 'Send message' }));
     await waitFor(() => expect(input).toHaveValue(''));
+  });
+
+  it('appends native voice blocks and waits for the final block before sending', async () => {
+    window.chaVoiceInput = {
+      url: 'https://api.openai.com/v1/audio/transcriptions',
+      apiKey: 'secret',
+      model: 'gpt-4o-mini-transcribe',
+      blockDurationMs: 5_000,
+    };
+    vi.spyOn(VoiceInputSession, 'supported').mockReturnValue(true);
+    let appendVoice = (_text: string) => {};
+    let finishRecording = () => {};
+    const stopped = new Promise<void>((resolve) => { finishRecording = resolve; });
+    const voiceSession = {
+      stop: vi.fn(() => stopped),
+      cancel: vi.fn(),
+    } as unknown as VoiceInputSession;
+    const startVoiceInput = vi.spyOn(VoiceInputSession, 'start').mockImplementation(
+      async (_configuration, onTranscription) => {
+        appendVoice = onTranscription;
+        return voiceSession;
+      },
+    );
+    const events = drivableEvents();
+    const submitInput = vi.fn(async () => ({ clear_input: true }));
+    render(
+      <App
+        client={fixtureClient({ submitInput })}
+        connectSessionEvents={events.connect}
+      />,
+    );
+    await attachInitial(events);
+
+    const input = screen.getByRole('textbox', { name: 'Message' });
+    fireEvent.click(screen.getByRole('button', { name: 'Start voice input' }));
+    await screen.findByRole('button', { name: 'Stop voice input' });
+    expect(startVoiceInput.mock.calls[0]?.[0].languages).toEqual(['en']);
+    fireEvent.change(input, { target: { value: 'Typed' } });
+    act(() => {
+      appendVoice('spoken');
+      appendVoice('words.');
+    });
+    expect(input).toHaveValue('Typed spoken words.');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    expect(voiceSession.stop).toHaveBeenCalledOnce();
+    expect(submitInput).not.toHaveBeenCalled();
+    act(() => appendVoice('Final block.'));
+    await act(async () => finishRecording());
+    await waitFor(() => expect(submitInput).toHaveBeenCalledWith(
+      'entrance', 'welcome', { text: 'Typed spoken words. Final block.' },
+    ));
+
+  });
+
+  it('uses Russian voice input when composer transliteration is enabled', async () => {
+    window.chaVoiceInput = {
+      url: 'https://api.openai.com/v1/audio/transcriptions',
+      apiKey: 'secret',
+      model: 'gpt-transcribe',
+      blockDurationMs: 10_000,
+    };
+    vi.spyOn(VoiceInputSession, 'supported').mockReturnValue(true);
+    const voiceSession = {
+      stop: vi.fn(async () => {}),
+      cancel: vi.fn(),
+    } as unknown as VoiceInputSession;
+    const startVoiceInput = vi.spyOn(VoiceInputSession, 'start')
+      .mockResolvedValue(voiceSession);
+    const events = drivableEvents();
+    render(<App client={fixtureClient()} connectSessionEvents={events.connect} />);
+    await attachInitial(events);
+
+    const toggle = screen.getByRole('button', { name: 'Latin to Russian transliteration' });
+    await userEvent.setup().click(toggle);
+    fireEvent.click(screen.getByRole('button', { name: 'Start voice input' }));
+
+    await waitFor(() => expect(startVoiceInput).toHaveBeenCalledOnce());
+    expect(startVoiceInput.mock.calls[0]?.[0].languages).toEqual(['ru']);
   });
 
   it('sends a draft with Enter and adds a line with Ctrl+Enter', async () => {

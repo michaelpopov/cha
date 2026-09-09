@@ -213,6 +213,33 @@ std::string required_string(
     return *value;
 }
 
+std::vector<std::string> optional_string_array(
+    const toml::table& table,
+    const std::filesystem::path& source,
+    std::string_view name,
+    std::string_view kind) {
+    if (!table.contains(name)) return {};
+    const toml::array* const values = table[name].as_array();
+    if (values == nullptr) {
+        throw std::runtime_error(
+            std::string(kind) + " '" + utf8_path(source)
+            + "' requires an array '" + std::string(name) + "'.");
+    }
+    std::vector<std::string> result;
+    result.reserve(values->size());
+    for (const toml::node& node : *values) {
+        const std::optional<std::string> value = node.value<std::string>();
+        if (!value || value->empty()) {
+            throw std::runtime_error(
+                std::string(kind) + " '" + utf8_path(source)
+                + "' requires non-empty string values in '"
+                + std::string(name) + "'.");
+        }
+        result.push_back(*value);
+    }
+    return result;
+}
+
 std::filesystem::path resolve_config_path(
     const std::filesystem::path& directory,
     const std::filesystem::path& source,
@@ -518,7 +545,11 @@ ConfigurationDirectory load_configuration_directory(
     const std::filesystem::path app_file = root / "app.toml";
     const toml::table app = parse_toml_file(app_file, app_kind);
     reject_unknown_fields(
-        app, app_file, {"vault", "web", "logging"}, "root", app_kind);
+        app,
+        app_file,
+        {"vault", "web", "logging", "voice_input"},
+        "root",
+        app_kind);
     const std::string configured_vault =
         required_string(app, app_file, "vault", app_kind);
     const toml::table& web = required_table(app, app_file, "web", app_kind);
@@ -538,6 +569,43 @@ ConfigurationDirectory load_configuration_directory(
         required_string(logging, app_file, "file", app_kind);
     const std::string log_level =
         required_string(logging, app_file, "level", app_kind);
+    std::optional<VoiceInputConfig> voice_input;
+    if (app.contains("voice_input")) {
+        const toml::table& voice =
+            required_table(app, app_file, "voice_input", app_kind);
+        reject_unknown_fields(
+            voice,
+            app_file,
+            {"url", "api_key", "model", "languages", "keywords",
+             "block_duration_s"},
+            "[voice_input]",
+            app_kind);
+        VoiceInputConfig configuration{
+            .url = required_string(voice, app_file, "url", app_kind),
+            .api_key_id =
+                required_string(voice, app_file, "api_key", app_kind),
+        };
+        if (voice.contains("model")) {
+            configuration.model =
+                required_string(voice, app_file, "model", app_kind);
+        }
+        configuration.languages = optional_string_array(
+            voice, app_file, "languages", app_kind);
+        configuration.keywords = optional_string_array(
+            voice, app_file, "keywords", app_kind);
+        if (voice.contains("block_duration_s")) {
+            const std::optional<int> duration =
+                voice["block_duration_s"].value<int>();
+            if (!duration || *duration < 1 || *duration > 3600) {
+                throw std::runtime_error(
+                    std::string(app_kind) + " '" + utf8_path(app_file)
+                    + "' requires an integer 'block_duration_s' between 1 "
+                      "and 3600 in [voice_input].");
+            }
+            configuration.block_duration_s = *duration;
+        }
+        voice_input = std::move(configuration);
+    }
 
     std::vector<std::filesystem::path> vault_files;
     for (const std::filesystem::directory_entry& entry :
@@ -585,6 +653,7 @@ ConfigurationDirectory load_configuration_directory(
         .log_file = resolve_config_path(
             root, app_file, "logging.file", log_file, app_kind),
         .log_level = log_level,
+        .voice_input = std::move(voice_input),
     };
 }
 
@@ -678,6 +747,7 @@ ApplicationCommand parse_application_command(
         .log_file = settings.log_file,
         .log_level = settings.log_level,
         .test_idle_grace_ms = options.test_idle_grace_ms,
+        .voice_input = settings.voice_input,
     };
 }
 

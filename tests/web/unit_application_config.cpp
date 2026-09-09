@@ -129,6 +129,92 @@ TEST_F(ApplicationConfigTest, LoadsUnifiedExternalConfigWithEqualsSyntax) {
     EXPECT_FALSE(command.export_directory);
     EXPECT_FALSE(command.upload);
     EXPECT_FALSE(command.download);
+    EXPECT_FALSE(command.voice_input);
+}
+
+TEST_F(ApplicationConfigTest, LoadsOptionalVoiceInputConfiguration) {
+    write_app(
+        "vault = \"Personal\"\n"
+        "[web]\nhost = \"127.0.0.1\"\nport = 8080\n"
+        "[logging]\nfile = \"logs/cha.log\"\nlevel = \"info\"\n"
+        "[voice_input]\n"
+        "url = \"https://api.openai.com/v1/audio/transcriptions\"\n"
+        "api_key = \"api_key_7\"\n");
+
+    const ApplicationCommand command =
+        load({"chaweb", "--config", config_.string()});
+    ASSERT_TRUE(command.voice_input);
+    EXPECT_EQ(
+        command.voice_input->url,
+        "https://api.openai.com/v1/audio/transcriptions");
+    EXPECT_EQ(command.voice_input->api_key_id, "api_key_7");
+    EXPECT_EQ(command.voice_input->model, "gpt-4o-mini-transcribe");
+    EXPECT_TRUE(command.voice_input->languages.empty());
+    EXPECT_TRUE(command.voice_input->keywords.empty());
+    EXPECT_EQ(command.voice_input->block_duration_s, 5);
+}
+
+TEST_F(ApplicationConfigTest, LoadsVoiceInputOverrides) {
+    write_app(
+        "vault = \"Personal\"\n"
+        "[web]\nhost = \"127.0.0.1\"\nport = 8080\n"
+        "[logging]\nfile = \"logs/cha.log\"\nlevel = \"info\"\n"
+        "[voice_input]\n"
+        "url = \"https://api.openai.com/v1/audio/transcriptions\"\n"
+        "api_key = \"api_key_7\"\n"
+        "model = \"gpt-4o-transcribe\"\n"
+        "languages = [\"ru\", \"en\"]\n"
+        "keywords = [\"запятая\", \"comma\"]\n"
+        "block_duration_s = 15\n");
+
+    const ApplicationCommand command =
+        load({"chaweb", "--config", config_.string()});
+    ASSERT_TRUE(command.voice_input);
+    EXPECT_EQ(command.voice_input->model, "gpt-4o-transcribe");
+    EXPECT_EQ(
+        command.voice_input->languages,
+        (std::vector<std::string>{"ru", "en"}));
+    EXPECT_EQ(
+        command.voice_input->keywords,
+        (std::vector<std::string>{"запятая", "comma"}));
+    EXPECT_EQ(command.voice_input->block_duration_s, 15);
+}
+
+TEST_F(ApplicationConfigTest, RejectsIncompleteVoiceInputConfiguration) {
+    const std::string prefix =
+        "vault = \"Personal\"\n"
+        "[web]\nhost = \"127.0.0.1\"\nport = 8080\n"
+        "[logging]\nfile = \"logs/cha.log\"\nlevel = \"info\"\n";
+
+    write_app(prefix + "[voice_input]\nurl = \"https://example.com\"\n");
+    EXPECT_NE(
+        error_text({"chaweb", "--config", config_.string()})
+            .find("api_key"),
+        std::string::npos);
+
+    write_app(
+        prefix + "[voice_input]\nurl = \"https://example.com\"\n"
+        "api_key = \"secret\"\nunexpected = true\n");
+    EXPECT_NE(
+        error_text({"chaweb", "--config", config_.string()})
+            .find("unknown field 'unexpected'"),
+        std::string::npos);
+
+    write_app(
+        prefix + "[voice_input]\nurl = \"https://example.com\"\n"
+        "api_key = \"api_key_1\"\nblock_duration_s = 0\n");
+    EXPECT_NE(
+        error_text({"chaweb", "--config", config_.string()})
+            .find("between 1 and 3600"),
+        std::string::npos);
+
+    write_app(
+        prefix + "[voice_input]\nurl = \"https://example.com\"\n"
+        "api_key = \"api_key_1\"\nlanguages = [\"ru\", 7]\n");
+    EXPECT_NE(
+        error_text({"chaweb", "--config", config_.string()})
+            .find("non-empty string values in 'languages'"),
+        std::string::npos);
 }
 
 TEST_F(ApplicationConfigTest, BootstrapsAnEmptyConfigurationDirectory) {

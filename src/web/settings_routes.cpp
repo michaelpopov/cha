@@ -407,12 +407,17 @@ std::vector<std::string> providers_using_key(
     return result;
 }
 
-Json key_json(const ApiKeyInfo& key, const Workspace& workspace) {
+Json key_json(
+    const ApiKeyInfo& key,
+    const Workspace& workspace,
+    std::string_view voice_input_api_key_id) {
+    std::vector<std::string> used_by = providers_using_key(workspace, key);
+    if (key.id == voice_input_api_key_id) used_by.emplace_back("Voice input");
     return {
         {"id", key.id},
         {"display_name", key.display_name},
         {"has_value", key.has_value},
-        {"used_by", providers_using_key(workspace, key)},
+        {"used_by", std::move(used_by)},
     };
 }
 
@@ -428,12 +433,14 @@ SettingsRoutes::SettingsRoutes(
     WebSettings settings,
     WorkspaceConfigStore& config,
     ApiKeyStore& api_keys,
-    OpenAiOAuth& openai_auth)
+    OpenAiOAuth& openai_auth,
+    std::string voice_input_api_key_id)
     : live_sessions_(&live_sessions),
       settings_(std::move(settings)),
       config_(&config),
       api_keys_(&api_keys),
-      openai_auth_(&openai_auth) {}
+      openai_auth_(&openai_auth),
+      voice_input_api_key_id_(std::move(voice_input_api_key_id)) {}
 
 void SettingsRoutes::install(httplib::Server& server) const {
     LiveSessionManager* const live_sessions = live_sessions_;
@@ -441,6 +448,7 @@ void SettingsRoutes::install(httplib::Server& server) const {
     ApiKeyStore* const api_keys = api_keys_;
     OpenAiOAuth* const openai_auth = openai_auth_;
     const WebSettings settings = settings_;
+    const std::string voice_input_api_key_id = voice_input_api_key_id_;
 
     server.Get("/api/v1/providers", [](const httplib::Request&, httplib::Response& response) {
         const auto workspace = published_workspace();
@@ -728,16 +736,20 @@ void SettingsRoutes::install(httplib::Server& server) const {
         }
     });
 
-    server.Get("/api/v1/api-keys", [api_keys](const httplib::Request&, httplib::Response& response) {
-        const auto workspace = published_workspace();
-        Json result = Json::array();
-        for (const ApiKeyInfo& key : api_keys->list()) {
-            result.push_back(key_json(key, *workspace));
-        }
-        set_json_response(response, 200, result);
-    });
+    server.Get(
+        "/api/v1/api-keys",
+        [api_keys, voice_input_api_key_id](
+            const httplib::Request&, httplib::Response& response) {
+            const auto workspace = published_workspace();
+            Json result = Json::array();
+            for (const ApiKeyInfo& key : api_keys->list()) {
+                result.push_back(key_json(
+                    key, *workspace, voice_input_api_key_id));
+            }
+            set_json_response(response, 200, result);
+        });
 
-    server.Post("/api/v1/api-keys", [api_keys, settings](const httplib::Request& request, httplib::Response& response) {
+    server.Post("/api/v1/api-keys", [api_keys, settings, voice_input_api_key_id](const httplib::Request& request, httplib::Response& response) {
         if (!validate_json_mutation(request, response)) return;
         std::string display_name;
         std::string value;
@@ -752,7 +764,8 @@ void SettingsRoutes::install(httplib::Server& server) const {
                 })) return;
         try {
             const ApiKeyInfo created = api_keys->create(display_name, value);
-            set_json_response(response, 201, key_json(created, *published_workspace()));
+            set_json_response(response, 201, key_json(
+                created, *published_workspace(), voice_input_api_key_id));
         } catch (const std::invalid_argument&) {
             set_error_response(response, 400,
                 {ErrorCode::bad_request, "Invalid API key."});
@@ -761,7 +774,7 @@ void SettingsRoutes::install(httplib::Server& server) const {
         }
     });
 
-    server.Patch(R"(/api/v1/api-keys/([^/]+))", [api_keys, settings](const httplib::Request& request, httplib::Response& response) {
+    server.Patch(R"(/api/v1/api-keys/([^/]+))", [api_keys, settings, voice_input_api_key_id](const httplib::Request& request, httplib::Response& response) {
         if (!validate_json_mutation(request, response)) return;
         const std::string id = request.matches[1];
         std::string display_name;
@@ -775,7 +788,8 @@ void SettingsRoutes::install(httplib::Server& server) const {
                 })) return;
         try {
             const ApiKeyInfo updated = api_keys->rename(id, display_name);
-            set_json_response(response, 200, key_json(updated, *published_workspace()));
+            set_json_response(response, 200, key_json(
+                updated, *published_workspace(), voice_input_api_key_id));
         } catch (const std::out_of_range&) {
             set_route_not_found(response, "That API key was not found.");
         } catch (const std::invalid_argument&) {
@@ -786,7 +800,7 @@ void SettingsRoutes::install(httplib::Server& server) const {
         }
     });
 
-    server.Put(R"(/api/v1/api-keys/([^/]+)/value)", [api_keys, settings](const httplib::Request& request, httplib::Response& response) {
+    server.Put(R"(/api/v1/api-keys/([^/]+)/value)", [api_keys, settings, voice_input_api_key_id](const httplib::Request& request, httplib::Response& response) {
         if (!validate_json_mutation(request, response)) return;
         const std::string id = request.matches[1];
         std::string value;
@@ -800,7 +814,8 @@ void SettingsRoutes::install(httplib::Server& server) const {
                 })) return;
         try {
             const ApiKeyInfo updated = api_keys->replace(id, value);
-            set_json_response(response, 200, key_json(updated, *published_workspace()));
+            set_json_response(response, 200, key_json(
+                updated, *published_workspace(), voice_input_api_key_id));
         } catch (const std::out_of_range&) {
             set_route_not_found(response, "That API key was not found.");
         } catch (const std::invalid_argument&) {

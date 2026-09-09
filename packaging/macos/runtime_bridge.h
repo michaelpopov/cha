@@ -24,6 +24,20 @@ void cha_runtime_destroy(ChaRuntime* runtime);
 int32_t cha_runtime_port(const ChaRuntime* runtime);
 int32_t cha_runtime_can_modify(const ChaRuntime* runtime);
 int32_t cha_runtime_can_transfer_r2(const ChaRuntime* runtime);
+// These pointers remain valid until cha_runtime_destroy(). They return null
+// when voice input is not configured; the duration returns zero.
+const char* cha_runtime_voice_input_url(const ChaRuntime* runtime);
+const char* cha_runtime_voice_input_api_key(const ChaRuntime* runtime);
+const char* cha_runtime_voice_input_model(const ChaRuntime* runtime);
+int32_t cha_runtime_voice_input_language_count(const ChaRuntime* runtime);
+const char* cha_runtime_voice_input_language(
+    const ChaRuntime* runtime,
+    int32_t index);
+int32_t cha_runtime_voice_input_keyword_count(const ChaRuntime* runtime);
+const char* cha_runtime_voice_input_keyword(
+    const ChaRuntime* runtime,
+    int32_t index);
+int32_t cha_runtime_voice_input_block_duration_s(const ChaRuntime* runtime);
 
 // Return 1 on success and 0 on a failure the caller can retry. -1 means the
 // workspace database could not be reopened afterwards: this process can no

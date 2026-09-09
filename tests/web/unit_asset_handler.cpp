@@ -19,8 +19,10 @@ namespace {
 
 class AssetServer {
 public:
-    explicit AssetServer(const std::filesystem::path& web_root) {
-        AssetHandler(web_root).install(server_);
+    explicit AssetServer(
+        const std::filesystem::path& web_root,
+        std::optional<std::string> connect_url = std::nullopt) {
+        AssetHandler(web_root, std::move(connect_url)).install(server_);
         port_ = server_.bind_to_any_port("127.0.0.1");
         if (port_ <= 0) throw std::runtime_error("Could not bind asset test server");
         configure_http_server(server_, {});
@@ -81,6 +83,32 @@ TEST(AssetHandler, ServesShellAndHashedAssetsWithProductionHeaders) {
               "text/javascript; charset=utf-8");
     EXPECT_EQ(asset->get_header_value("Cache-Control"),
               "public, max-age=31536000, immutable");
+}
+
+TEST(AssetHandler, AllowsTheConfiguredConnectionOrigin) {
+    test::TestWorkspace fixture;
+    AssetServer server(
+        fixture.root() / "web",
+        "https://api.openai.com/v1/audio/transcriptions");
+
+    const auto shell = server.client().Get("/");
+    ASSERT_TRUE(shell);
+    EXPECT_EQ(shell->status, 200);
+    EXPECT_EQ(
+        shell->get_header_value("Content-Security-Policy"),
+        "default-src 'none'; script-src 'self'; style-src 'self'; "
+        "img-src 'self' data:; font-src 'self'; "
+        "connect-src 'self' https://api.openai.com; "
+        "base-uri 'none'; form-action 'none'; frame-ancestors 'none'");
+}
+
+TEST(AssetHandler, RejectsAnInvalidConfiguredConnectionUrl) {
+    test::TestWorkspace fixture;
+    EXPECT_THROW(
+        (void)AssetHandler(
+            fixture.root() / "web",
+            "https://api.openai.com; script-src *"),
+        std::invalid_argument);
 }
 
 TEST(AssetHandler, RejectsUnsafeAndUnsupportedAssetPaths) {

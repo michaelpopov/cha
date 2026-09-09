@@ -730,7 +730,11 @@ int ApplicationRuntime::start(int port_override) {
             });
     }
 
-    const AssetHandler assets(impl_->command.root / "web");
+    const AssetHandler assets(
+        impl_->command.root / "web",
+        !impl_->access_token.empty() && impl_->command.voice_input
+            ? std::optional<std::string>(impl_->command.voice_input->url)
+            : std::nullopt);
     assets.install(*server);
     const InitialSelection initial{
         {std::string(entrance_id), std::string(welcome_id)}};
@@ -898,7 +902,10 @@ int ApplicationRuntime::start(int port_override) {
         impl_->settings,
         *impl_->store,
         *impl_->api_keys,
-        *impl_->openai_auth).install(*server);
+        *impl_->openai_auth,
+        impl_->command.voice_input
+            ? impl_->command.voice_input->api_key_id
+            : std::string{}).install(*server);
     SessionRoutes(
         *impl_->live_sessions, impl_->settings, assets).install(*server);
     log_startup(impl_->settings);

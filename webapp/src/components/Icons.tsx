@@ -137,6 +137,15 @@ export function StopIcon(props: IconProps) {
   );
 }
 
+export function MicrophoneIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect height="11" rx="4" width="7" x="8.5" y="3" {...stroke} />
+      <path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3M8.5 21h7" {...stroke} />
+    </Icon>
+  );
+}
+
 export function PlusIcon(props: IconProps) {
   return (
     <Icon {...props}>

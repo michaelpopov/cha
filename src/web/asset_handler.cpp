@@ -21,10 +21,41 @@ namespace {
 constexpr std::string_view shell_cache = "no-cache";
 constexpr std::string_view asset_cache =
     "public, max-age=31536000, immutable";
-constexpr std::string_view content_security_policy =
+constexpr std::string_view content_security_policy_before_connect =
     "default-src 'none'; script-src 'self'; style-src 'self'; "
-    "img-src 'self' data:; font-src 'self'; connect-src 'self'; "
+    "img-src 'self' data:; font-src 'self'; connect-src 'self'";
+constexpr std::string_view content_security_policy_after_connect =
+    "; "
     "base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+
+std::string connection_origin(std::string_view url) {
+    const std::size_t authority_start = url.starts_with("https://") ? 8
+        : url.starts_with("http://") ? 7 : 0;
+    if (authority_start == 0) {
+        throw std::invalid_argument(
+            "Voice input URL must be an absolute HTTP or HTTPS URL");
+    }
+    const std::size_t authority_end = url.find_first_of("/?#", authority_start);
+    const std::string_view authority = url.substr(
+        authority_start,
+        authority_end == std::string_view::npos
+            ? std::string_view::npos : authority_end - authority_start);
+    if (authority.empty()
+        || authority.find_first_not_of(
+            "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-:[]")
+            != std::string_view::npos) {
+        throw std::invalid_argument("Voice input URL has an invalid host");
+    }
+    return std::string(url.substr(0, authority_start)) + std::string(authority);
+}
+
+std::string make_content_security_policy(
+    const std::optional<std::string>& connect_url) {
+    std::string policy(content_security_policy_before_connect);
+    if (connect_url) policy += " " + connection_origin(*connect_url);
+    policy += content_security_policy_after_connect;
+    return policy;
+}
 
 void set_not_found(httplib::Response& response) {
     set_error_response(
@@ -62,7 +93,10 @@ std::optional<std::string> read_file(const std::filesystem::path& path) {
 
 // The shell answers both '/' and the session deep link, so the two routes
 // share this rather than each setting the headers themselves.
-void write_shell(httplib::Response& response, const std::string& shell) {
+void write_shell(
+    httplib::Response& response,
+    const std::string& shell,
+    const std::string& content_security_policy) {
     response.set_header("Cache-Control", std::string(shell_cache));
     response.set_header(
         "Content-Security-Policy", std::string(content_security_policy));
@@ -84,8 +118,11 @@ bool is_below(
 
 } // namespace
 
-AssetHandler::AssetHandler(std::filesystem::path web_root)
-    : web_root_(std::filesystem::weakly_canonical(std::move(web_root))) {
+AssetHandler::AssetHandler(
+    std::filesystem::path web_root,
+    std::optional<std::string> connect_url)
+    : web_root_(std::filesystem::weakly_canonical(std::move(web_root))),
+      content_security_policy_(make_content_security_policy(connect_url)) {
     const std::filesystem::path index = web_root_ / "index.html";
     if (!std::filesystem::is_regular_file(index)) {
         throw std::runtime_error(
@@ -102,8 +139,11 @@ AssetHandler::AssetHandler(std::filesystem::path web_root)
 
 void AssetHandler::install(httplib::Server& server) const {
     const std::string shell = shell_;
-    server.Get("/", [shell](const httplib::Request&, httplib::Response& response) {
-        write_shell(response, shell);
+    const std::string content_security_policy = content_security_policy_;
+    server.Get("/", [shell, content_security_policy](
+                        const httplib::Request&,
+                        httplib::Response& response) {
+        write_shell(response, shell, content_security_policy);
     });
     const std::filesystem::path web_root = web_root_;
     server.Get(
@@ -131,7 +171,7 @@ void AssetHandler::install(httplib::Server& server) const {
 }
 
 void AssetHandler::set_shell(httplib::Response& response) const {
-    write_shell(response, shell_);
+    write_shell(response, shell_, content_security_policy_);
 }
 
 } // namespace cha::web

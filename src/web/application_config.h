@@ -16,6 +16,15 @@ struct VaultDefinition {
     std::filesystem::path source;
 };
 
+struct VoiceInputConfig {
+    std::string url;
+    std::string api_key_id;
+    std::string model{"gpt-4o-mini-transcribe"};
+    std::vector<std::string> languages;
+    std::vector<std::string> keywords;
+    int block_duration_s{5};
+};
+
 struct ConfigurationDirectory {
     std::filesystem::path directory;
     std::string startup_vault;
@@ -24,6 +33,7 @@ struct ConfigurationDirectory {
     int port{};
     std::filesystem::path log_file;
     std::string log_level;
+    std::optional<VoiceInputConfig> voice_input;
 };
 
 struct ApplicationCommand {
@@ -45,6 +55,7 @@ struct ApplicationCommand {
     // Test-only bound for vault-switch drain. Production always uses the
     // ordinary shutdown grace.
     std::optional<int> test_shutdown_grace_ms;
+    std::optional<VoiceInputConfig> voice_input;
 };
 
 ConfigurationDirectory load_configuration_directory(

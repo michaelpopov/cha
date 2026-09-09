@@ -19,7 +19,17 @@ import {
   type SessionSnapshot,
 } from '../api/client';
 import type { AppAction, AppState } from '../state/view';
-import { SendIcon, StopIcon, TargetIcon } from './Icons';
+import {
+  appendTranscription,
+  getVoiceInputConfiguration,
+  VoiceInputSession,
+} from '../voiceInput';
+import {
+  MicrophoneIcon,
+  SendIcon,
+  StopIcon,
+  TargetIcon,
+} from './Icons';
 import { TransliterationToggle, useTransliteration } from './TransliterationMode';
 import { voiceClasses } from './characterAppearance';
 
@@ -40,6 +50,12 @@ interface ChatScreenProps extends ChatActions {
 
 function actionMessage(failure: unknown): string {
   return publicErrorMessage(failure, 'The action could not be completed. Try again.');
+}
+
+function voiceInputMessage(failure: unknown): string {
+  return failure instanceof DOMException && failure.name === 'NotAllowedError'
+    ? 'Microphone access was denied. Allow it in System Settings and try again.'
+    : 'Voice input stopped because transcription failed. Try again.';
 }
 
 // How close to the end still counts as following the conversation. A few pixels
@@ -164,9 +180,21 @@ export function ChatScreen({
   onSubmitInput,
 }: ChatScreenProps) {
   const [draft, setDraft] = useState('');
+  const draftRef = useRef('');
+
+  function updateDraft(next: string) {
+    draftRef.current = next;
+    setDraft(next);
+  }
+
   const transliteration = useTransliteration<HTMLTextAreaElement>(draft);
   const [actionError, setActionError] = useState<string | null>(null);
   const [pendingAction, setPendingAction] = useState<'send' | 'stop' | 'target' | null>(null);
+  const [voiceInputState, setVoiceInputState] = useState<
+    'idle' | 'starting' | 'recording' | 'finishing'
+  >('idle');
+  const voiceInputSession = useRef<VoiceInputSession | null>(null);
+  const voiceInputAttempt = useRef(0);
   const transcriptEnd = useRef<HTMLDivElement | null>(null);
   const composerInput = transliteration.field;
   const chatArea = useRef<HTMLElement | null>(null);
@@ -186,12 +214,19 @@ export function ChatScreen({
   const character = snapshot?.characters.find(
     ({ id }) => id === state.currentDefaultCharacterId,
   ) ?? state.bootstrap?.characters.find(({ id }) => id === state.currentDefaultCharacterId);
-  const recording = state.currentDefaultCharacterId === '-';
+  const recordingTarget = state.currentDefaultCharacterId === '-';
   const ended = snapshot && snapshot.lifecycle !== 'running' ? endedMessage(snapshot) : null;
   const connected = state.streamStatus === 'connected' && snapshot !== null && !ended;
   const generationActive = generation?.active === true;
   const sessionAvailable = snapshot !== null && !ended;
-  const canSend = connected && pendingAction === null && draft.trim().length > 0;
+  const voiceConfiguration = getVoiceInputConfiguration();
+  const voiceInputAvailable = voiceConfiguration !== null && VoiceInputSession.supported();
+  const voiceInputActive = voiceInputState !== 'idle';
+  const canSend = connected
+    && pendingAction === null
+    && voiceInputState !== 'starting'
+    && voiceInputState !== 'finishing'
+    && (draft.trim().length > 0 || voiceInputState === 'recording');
   const voices = useMemo(
     () => new Map((snapshot?.characters ?? []).map(({ id, appearance }) => [id, appearance])),
     [snapshot?.characters],
@@ -210,6 +245,14 @@ export function ChatScreen({
   useEffect(() => {
     followingLatest.current = true;
   }, [conversationKey]);
+
+  // A recording belongs to the conversation in which it started.
+  useEffect(() => () => {
+    voiceInputAttempt.current += 1;
+    voiceInputSession.current?.cancel();
+    voiceInputSession.current = null;
+    setVoiceInputState('idle');
+  }, [conversationKey, sessionAvailable]);
 
   // Following the newest text is the default, but a reader who has scrolled up
   // keeps their place: a stream that yanked the view back on every token would
@@ -299,14 +342,19 @@ export function ChatScreen({
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (generationActive || !canSend) return;
-    const submitted = draft;
     setPendingAction('send');
     setActionError(null);
     try {
+      if (!await finishVoiceInput()) return;
+      const submitted = draftRef.current;
+      if (!submitted.trim()) return;
       const result = await onSubmitInput(submitted);
       // Typing may continue while the send is in flight; only the text that was
       // actually sent is cleared.
-      if (result.clear_input) setDraft((current) => (current === submitted ? '' : current));
+      if (result.clear_input) {
+        const current = draftRef.current;
+        updateDraft(current === submitted ? '' : current);
+      }
     } catch (failure: unknown) {
       // A failed send deliberately leaves the draft untouched.
       setActionError(actionMessage(failure));
@@ -324,7 +372,8 @@ export function ChatScreen({
     if (event.ctrlKey) {
       event.preventDefault();
       const { selectionEnd, selectionStart } = event.currentTarget;
-      setDraft((current) => `${current.slice(0, selectionStart)}\n${current.slice(selectionEnd)}`);
+      const current = draftRef.current;
+      updateDraft(`${current.slice(0, selectionStart)}\n${current.slice(selectionEnd)}`);
       return;
     }
     event.preventDefault();
@@ -357,6 +406,72 @@ export function ChatScreen({
       setPendingAction(null);
     }
   }
+
+  async function finishVoiceInput(): Promise<boolean> {
+    const session = voiceInputSession.current;
+    if (!session) return true;
+    setVoiceInputState('finishing');
+    try {
+      await session.stop();
+      if (voiceInputSession.current === session) voiceInputSession.current = null;
+      setVoiceInputState('idle');
+      return true;
+    } catch (failure: unknown) {
+      if (voiceInputSession.current === session) voiceInputSession.current = null;
+      setVoiceInputState('idle');
+      setActionError(voiceInputMessage(failure));
+      return false;
+    }
+  }
+
+  async function toggleVoiceInput() {
+    if (voiceInputSession.current) {
+      await finishVoiceInput();
+      return;
+    }
+    if (!voiceConfiguration || !voiceInputAvailable || !sessionAvailable) return;
+
+    const attempt = ++voiceInputAttempt.current;
+    setVoiceInputState('starting');
+    setActionError(null);
+    let session: VoiceInputSession | null = null;
+    try {
+      session = await VoiceInputSession.start(
+        {
+          ...voiceConfiguration,
+          languages: [transliteration.enabled ? 'ru' : 'en'],
+        },
+        (text) => {
+          if (voiceInputSession.current !== session) return;
+          updateDraft(appendTranscription(draftRef.current, text));
+        },
+        (failure) => {
+          if (voiceInputSession.current !== session) return;
+          voiceInputSession.current = null;
+          setVoiceInputState('idle');
+          setActionError(voiceInputMessage(failure));
+        },
+      );
+      if (voiceInputAttempt.current !== attempt) {
+        session.cancel();
+        return;
+      }
+      voiceInputSession.current = session;
+      setVoiceInputState('recording');
+    } catch (failure: unknown) {
+      if (voiceInputAttempt.current !== attempt) return;
+      setVoiceInputState('idle');
+      setActionError(voiceInputMessage(failure));
+    }
+  }
+
+  const voiceInputLabel = voiceInputState === 'idle'
+    ? 'Start voice input'
+    : voiceInputState === 'recording'
+      ? 'Stop voice input'
+      : voiceInputState === 'starting'
+        ? 'Starting voice input'
+        : 'Finishing transcription';
 
   // While the stream is down its own narration is the more useful message, so
   // the ended notice speaks only for a session whose end arrived intact.
@@ -473,49 +588,72 @@ export function ChatScreen({
           title="Drag to resize; double-click to reset"
         />
         <form className="cha-composer" onSubmit={submit}>
-          <label className="cha-target-select" title="Choose target character">
-            <TargetIcon />
-            <select
-              aria-label="Choose target character"
-              disabled={!connected || pendingAction !== null}
-              onChange={(event) => void chooseTarget(event.target.value)}
-              value={state.currentDefaultCharacterId ?? ''}
-            >
-              {recording && <option value="-">Recording</option>}
-              {snapshot?.characters.map((member) => (
-                <option key={member.id} value={member.id}>{member.display_name}</option>
-              ))}
-            </select>
-          </label>
           <textarea
             aria-label="Message"
             autoComplete="off"
             disabled={!sessionAvailable}
-            onChange={(event) => setDraft(transliteration.convert(event, draft))}
+            onChange={(event) => {
+              const next = transliteration.convert(event, draft);
+              updateDraft(next);
+            }}
             onKeyDown={submitOnEnter}
-            placeholder={recording
+            placeholder={recordingTarget
               ? 'Recording — saved, not sent'
               : `Message ${character?.display_name ?? 'character'}`}
             ref={composerInput}
             rows={1}
             value={draft}
           />
-          <button
-            aria-label={generationActive ? 'Stop generation' : 'Send message'}
-            className={`cha-composer-action ${generationActive ? 'cha-stop' : 'cha-send'}`}
-            disabled={generationActive
-              ? pendingAction !== null || !sessionAvailable
-              : !canSend}
-            onClick={generationActive ? () => void stop() : undefined}
-            type={generationActive ? 'button' : 'submit'}
-          >
-            {generationActive ? <StopIcon /> : <SendIcon />}
-          </button>
+          <div className="cha-composer-controls">
+            <label className="cha-target-select" title="Choose target character">
+              <TargetIcon />
+              <select
+                aria-label="Choose target character"
+                disabled={!connected || pendingAction !== null}
+                onChange={(event) => void chooseTarget(event.target.value)}
+                value={state.currentDefaultCharacterId ?? ''}
+              >
+                {recordingTarget && <option value="-">Recording</option>}
+                {snapshot?.characters.map((member) => (
+                  <option key={member.id} value={member.id}>{member.display_name}</option>
+                ))}
+              </select>
+            </label>
+            <div className="cha-composer-actions">
+              {voiceInputAvailable && (
+                <button
+                  aria-label={voiceInputLabel}
+                  aria-pressed={voiceInputActive}
+                  className={`cha-composer-action cha-voice-input${voiceInputActive ? ' is-active' : ''}`}
+                  disabled={!sessionAvailable
+                    || pendingAction !== null
+                    || voiceInputState === 'starting'
+                    || voiceInputState === 'finishing'}
+                  onClick={() => void toggleVoiceInput()}
+                  title={voiceInputLabel}
+                  type="button"
+                >
+                  <MicrophoneIcon />
+                </button>
+              )}
+              <button
+                aria-label={generationActive ? 'Stop generation' : 'Send message'}
+                className={`cha-composer-action ${generationActive ? 'cha-stop' : 'cha-send'}`}
+                disabled={generationActive
+                  ? pendingAction !== null || !sessionAvailable
+                  : !canSend}
+                onClick={generationActive ? () => void stop() : undefined}
+                type={generationActive ? 'button' : 'submit'}
+              >
+                {generationActive ? <StopIcon /> : <SendIcon />}
+              </button>
+            </div>
+          </div>
         </form>
         <div className="cha-chat-status" aria-label="Current chat context">
           <span>{forum?.display_name ?? 'Unknown forum'}</span>
           <span>From: {forum?.default_persona_display_name ?? 'Unknown persona'}</span>
-          <span>To: {recording ? 'Recording' : (character?.display_name ?? 'Unknown character')}</span>
+          <span>To: {recordingTarget ? 'Recording' : (character?.display_name ?? 'Unknown character')}</span>
           <TransliterationToggle
             disabled={!sessionAvailable}
             transliteration={transliteration}

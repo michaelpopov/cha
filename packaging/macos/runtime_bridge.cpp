@@ -1,5 +1,6 @@
 #include "runtime_bridge.h"
 
+#include "providers/api_key_store.h"
 #include "util/logging.h"
 #include "web/application_config.h"
 #include "web/application_runtime.h"
@@ -10,8 +11,10 @@
 #include <exception>
 #include <memory>
 #include <new>
+#include <optional>
 #include <string>
 
+using cha::ApiKeyStore;
 using cha::WorkspaceConfigTransfer;
 using cha::web::ApplicationCommand;
 using cha::web::ApplicationRuntime;
@@ -20,6 +23,8 @@ using cha::web::parse_application_command;
 
 struct ChaRuntime {
     std::unique_ptr<ApplicationRuntime> application;
+    std::optional<cha::web::VoiceInputConfig> voice_input;
+    std::string voice_input_api_key;
     int port{};
     bool logging{};
 };
@@ -141,6 +146,13 @@ ChaRuntime* cha_runtime_create(
         cha::initialize_diagnostic_logging(
             command.log_file, command.log_level);
         runtime->logging = true;
+        runtime->voice_input = command.voice_input;
+        if (runtime->voice_input) {
+            ApiKeyStore api_keys(
+                command.config_directory / "api-keys.json");
+            runtime->voice_input_api_key =
+                api_keys.value(runtime->voice_input->api_key_id);
+        }
         runtime->application = ApplicationRuntime::open(
             command, access_token);
         runtime->port = runtime->application->start();
@@ -191,6 +203,60 @@ int32_t cha_runtime_can_transfer_r2(const ChaRuntime* runtime) {
         && environment_is_set("CHA_R2_ACCESS_KEY_ID")
         && environment_is_set("CHA_R2_SECRET_ACCESS_KEY")
         ? 1 : 0;
+}
+
+const char* cha_runtime_voice_input_url(const ChaRuntime* runtime) {
+    return runtime && runtime->voice_input
+        ? runtime->voice_input->url.c_str() : nullptr;
+}
+
+const char* cha_runtime_voice_input_api_key(const ChaRuntime* runtime) {
+    return runtime && runtime->voice_input
+        ? runtime->voice_input_api_key.c_str() : nullptr;
+}
+
+const char* cha_runtime_voice_input_model(const ChaRuntime* runtime) {
+    return runtime && runtime->voice_input
+        ? runtime->voice_input->model.c_str() : nullptr;
+}
+
+int32_t cha_runtime_voice_input_language_count(const ChaRuntime* runtime) {
+    return runtime && runtime->voice_input
+        ? static_cast<int32_t>(runtime->voice_input->languages.size()) : 0;
+}
+
+const char* cha_runtime_voice_input_language(
+    const ChaRuntime* runtime,
+    int32_t index) {
+    if (!runtime || !runtime->voice_input || index < 0
+        || static_cast<std::size_t>(index)
+            >= runtime->voice_input->languages.size()) {
+        return nullptr;
+    }
+    return runtime->voice_input->languages[static_cast<std::size_t>(index)]
+        .c_str();
+}
+
+int32_t cha_runtime_voice_input_keyword_count(const ChaRuntime* runtime) {
+    return runtime && runtime->voice_input
+        ? static_cast<int32_t>(runtime->voice_input->keywords.size()) : 0;
+}
+
+const char* cha_runtime_voice_input_keyword(
+    const ChaRuntime* runtime,
+    int32_t index) {
+    if (!runtime || !runtime->voice_input || index < 0
+        || static_cast<std::size_t>(index)
+            >= runtime->voice_input->keywords.size()) {
+        return nullptr;
+    }
+    return runtime->voice_input->keywords[static_cast<std::size_t>(index)]
+        .c_str();
+}
+
+int32_t cha_runtime_voice_input_block_duration_s(const ChaRuntime* runtime) {
+    return runtime && runtime->voice_input
+        ? runtime->voice_input->block_duration_s : 0;
 }
 
 int32_t cha_runtime_upload(

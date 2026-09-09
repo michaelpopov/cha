@@ -281,6 +281,9 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
     private func showApplication() {
         guard webView == nil, let runtimeURL else { return }
         let configuration = WKWebViewConfiguration()
+        if let script = voiceInputConfigurationScript() {
+            configuration.userContentController.addUserScript(script)
+        }
         let view = WKWebView(frame: .zero, configuration: configuration)
         view.allowsMagnification = true
         view.navigationDelegate = self
@@ -309,6 +312,45 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
         view.configuration.websiteDataStore.httpCookieStore.setCookie(cookie) {
             view.load(URLRequest(url: runtimeURL))
         }
+    }
+
+    private func voiceInputConfigurationScript() -> WKUserScript? {
+        guard let runtime,
+              let url = cha_runtime_voice_input_url(runtime),
+              let apiKey = cha_runtime_voice_input_api_key(runtime),
+              let model = cha_runtime_voice_input_model(runtime) else {
+            return nil
+        }
+        var languages: [String] = []
+        for index in 0..<Int(cha_runtime_voice_input_language_count(runtime)) {
+            if let language = cha_runtime_voice_input_language(runtime, Int32(index)) {
+                languages.append(String(cString: language))
+            }
+        }
+        var keywords: [String] = []
+        for index in 0..<Int(cha_runtime_voice_input_keyword_count(runtime)) {
+            if let keyword = cha_runtime_voice_input_keyword(runtime, Int32(index)) {
+                keywords.append(String(cString: keyword))
+            }
+        }
+        let configuration: [String: Any] = [
+            "url": String(cString: url),
+            "apiKey": String(cString: apiKey),
+            "model": String(cString: model),
+            "languages": languages,
+            "keywords": keywords,
+            "blockDurationMs":
+                Int(cha_runtime_voice_input_block_duration_s(runtime)) * 1_000,
+        ]
+        guard JSONSerialization.isValidJSONObject(configuration),
+              let data = try? JSONSerialization.data(withJSONObject: configuration),
+              let json = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+        return WKUserScript(
+            source: "Object.defineProperty(window, 'chaVoiceInput', { value: \(json) });",
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true)
     }
 
     @objc private func uploadDatabase(_ sender: Any?) {
@@ -492,6 +534,23 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
         panel.beginSheetModal(for: window) { result in
             completionHandler(result == .OK ? panel.urls : nil)
         }
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        requestMediaCapturePermissionFor origin: WKSecurityOrigin,
+        initiatedByFrame frame: WKFrameInfo,
+        type: WKMediaCaptureType,
+        decisionHandler: @escaping (WKPermissionDecision) -> Void) {
+        guard type == .microphone,
+              let runtimeURL,
+              origin.protocol == runtimeURL.scheme,
+              origin.host == runtimeURL.host,
+              origin.port == runtimeURL.port else {
+            decisionHandler(.deny)
+            return
+        }
+        decisionHandler(.grant)
     }
 
     private func isApplicationURL(_ url: URL) -> Bool {

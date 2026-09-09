@@ -1055,17 +1055,33 @@ select:disabled {
 }
 
 .cha-composer {
-  display: grid;
+  display: flex;
   width: 100%;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: end;
-  gap: 0.55rem;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.25rem;
   margin: 0 auto;
   padding: 0.5rem;
   border: 1px solid var(--border);
   border-radius: 1.4rem;
   color: var(--secondary-foreground);
   background: var(--secondary);
+}
+
+.cha-composer-controls,
+.cha-composer-actions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+}
+
+.cha-composer-controls {
+  justify-content: space-between;
+}
+
+.cha-composer-actions {
+  gap: 0.55rem;
+  margin-left: auto;
 }
 
 .cha-composer-action {
@@ -1116,6 +1132,7 @@ select:disabled {
   width: 100%;
   min-height: 1.5em;
   min-width: 0;
+  padding: 0.15rem 0.55rem 0.1rem;
   border: 0;
   outline: 0;
   color: inherit;
@@ -1134,6 +1151,25 @@ select:disabled {
 .cha-send {
   color: var(--primary-foreground);
   background: var(--primary);
+}
+
+.cha-voice-input {
+  color: var(--muted-foreground);
+}
+
+.cha-voice-input:hover:not(:disabled) {
+  color: var(--accent-foreground);
+  background: var(--accent);
+}
+
+.cha-voice-input.is-active {
+  color: var(--primary-foreground);
+  background: light-dark(rgb(202 57 45), rgb(255 116 105));
+}
+
+.cha-voice-input:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
 }
 
 .cha-stop {

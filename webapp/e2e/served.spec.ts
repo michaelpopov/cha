@@ -45,3 +45,36 @@ test('serves hashed assets as immutable', async ({ page }) => {
   expect(asset.status()).toBe(200);
   expect(asset.headers()['cache-control']).toBe('public, max-age=31536000, immutable');
 });
+
+test('keeps the native composer controls below its full-width text area', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(window, 'chaVoiceInput', {
+      value: {
+        url: 'https://api.openai.com/v1/audio/transcriptions',
+        apiKey: 'test-key',
+        model: 'gpt-4o-mini-transcribe',
+        blockDurationMs: 5_000,
+      },
+    });
+  });
+  await page.goto('/');
+
+  const composer = page.locator('.cha-composer');
+  const input = page.getByRole('textbox', { name: 'Message' });
+  const controls = page.locator('.cha-composer-controls');
+  await expect(page.getByRole('button', { name: 'Start voice input' })).toBeVisible();
+
+  const boxes = await Promise.all([
+    composer.boundingBox(),
+    input.boundingBox(),
+    controls.boundingBox(),
+  ]);
+  const [composerBox, inputBox, controlsBox] = boxes;
+  expect(composerBox).not.toBeNull();
+  expect(inputBox).not.toBeNull();
+  expect(controlsBox).not.toBeNull();
+  expect(inputBox?.width ?? 0).toBeGreaterThan((composerBox?.width ?? 0) - 40);
+  expect(controlsBox?.y ?? 0).toBeGreaterThanOrEqual(
+    (inputBox?.y ?? 0) + (inputBox?.height ?? 0),
+  );
+});

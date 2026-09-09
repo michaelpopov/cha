@@ -220,6 +220,42 @@ TEST(ApplicationRuntime, ExposesLegacyNamedCredentialsAsSavedApiKeys) {
     runtime->shutdown();
 }
 
+TEST(ApplicationRuntime, ReportsVoiceInputApiKeyUsage) {
+    test::TestWorkspace workspace;
+    const std::filesystem::path database =
+        test::import_test_database(workspace.root());
+    ApplicationCommand command = make_command(workspace, database);
+    ApiKeyStore key_store(command.config_directory / "api-keys.json");
+    const ApiKeyInfo key = key_store.create("OpenAI", "voice-secret");
+    command.voice_input = VoiceInputConfig{
+        .url = "https://api.openai.com/v1/audio/transcriptions",
+        .api_key_id = key.id,
+    };
+
+    auto runtime = ApplicationRuntime::open(command, "private-test-token");
+    const int port = runtime->start();
+    httplib::Client client("127.0.0.1", port);
+
+    const auto response = client.Get("/api/v1/api-keys", kRuntimeCookie);
+    ASSERT_TRUE(response);
+    ASSERT_EQ(response->status, 200) << response->body;
+    const nlohmann::json keys = nlohmann::json::parse(response->body);
+    ASSERT_EQ(keys.size(), 1U);
+    EXPECT_EQ(
+        keys.front().at("used_by"),
+        nlohmann::json::array({"Voice input"}));
+
+    const auto shell = client.Get("/", kRuntimeCookie);
+    ASSERT_TRUE(shell);
+    ASSERT_EQ(shell->status, 200);
+    EXPECT_NE(
+        shell->get_header_value("Content-Security-Policy").find(
+            "connect-src 'self' https://api.openai.com;"),
+        std::string::npos);
+
+    runtime->shutdown();
+}
+
 TEST(ApplicationRuntime, PreservesOpenRouterTargetsForLegacyProviderUpdates) {
     test::TestWorkspace workspace;
     workspace.write_provider(

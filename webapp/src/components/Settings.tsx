@@ -1103,7 +1103,7 @@ export function ApiKeyScreen({ client, dispatch, sessionReport, state }: Setting
       {error && !key && <LoadFailure message={error} retry={() => setRevision((value) => value + 1)} />}
       {key && <form className="cha-settings-form" onSubmit={(event) => void replace(event)}>
         <fieldset disabled={busy !== null}><label>New API key<input autoComplete="off" className="cha-form-control" onChange={(event) => setReplacement(event.target.value)} placeholder="Paste replacement key" type="password" value={replacement} /></label><div className="cha-settings-form-actions"><button className="cha-button cha-button-primary" disabled={!replacement || busy !== null} type="submit">{busy === 'value' ? 'Saving…' : 'Save'}</button></div></fieldset>
-        <UsedBy empty="No providers reference this key." items={key.used_by} />
+        <UsedBy empty="Nothing references this key." items={key.used_by} />
         {error && <p className="cha-error-message" role="alert">{error}</p>}
         <div className="cha-settings-form-actions">
           <button className="cha-button cha-button-danger" disabled={busy !== null} onClick={() => setConfirming(true)} type="button">{busy === 'delete' ? 'Removing…' : 'Remove API key'}</button>
@@ -1112,7 +1112,7 @@ export function ApiKeyScreen({ client, dispatch, sessionReport, state }: Setting
       {confirming && (
         <ConfirmDialog
           confirmLabel="Remove API key"
-          message={`Remove “${state.inspectedApiKeyName ?? 'this key'}” from this device? Providers using it will stop authenticating.`}
+          message={`Remove “${state.inspectedApiKeyName ?? 'this key'}” from this device? Features using it will stop authenticating.`}
           onCancel={() => setConfirming(false)}
           onConfirm={() => void remove()}
           title="Remove API key?"

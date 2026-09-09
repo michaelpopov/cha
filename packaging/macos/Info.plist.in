@@ -33,5 +33,7 @@
     </dict>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>CHA uses the microphone to transcribe speech into your message.</string>
 </dict>
 </plist>
