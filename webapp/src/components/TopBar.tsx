@@ -20,6 +20,7 @@ import {
   TextLinesIcon,
 } from './Icons';
 import { TextEditorDialog } from './TextEditorDialog';
+import { TransliterationToggle, useTransliteration } from './TransliterationMode';
 
 interface EditableTitleProps {
   available: boolean;
@@ -32,6 +33,7 @@ interface EditableTitleProps {
 function EditableTitle({ available, id, name, onSave, subject }: EditableTitleProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(name ?? '');
+  const transliteration = useTransliteration<HTMLInputElement>(draft);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -91,13 +93,15 @@ function EditableTitle({ available, id, name, onSave, subject }: EditableTitlePr
         aria-label={`${subject} name`}
         autoFocus
         disabled={saving}
-        onChange={(event) => setDraft(event.target.value)}
+        onChange={(event) => setDraft(transliteration.convert(event, draft))}
         onFocus={(event) => event.currentTarget.select()}
         onKeyDown={(event) => {
           if (event.key === 'Escape') cancel();
         }}
+        ref={transliteration.field}
         value={draft}
       />
+      <TransliterationToggle disabled={saving} transliteration={transliteration} />
       <button
         aria-label={`Save ${lowerSubject} name`}
         className="cha-title-icon-action"

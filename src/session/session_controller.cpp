@@ -22,6 +22,69 @@ namespace {
 
 constexpr std::string_view generation_stopped_notice = "Generation stopped";
 
+enum class TimestampPrefixResult {
+    incomplete,
+    matched,
+    rejected,
+};
+
+struct TimestampPrefixMatch {
+    TimestampPrefixResult result;
+    std::size_t end{};
+};
+
+TimestampPrefixMatch match_timestamp_prefix(std::string_view text) {
+    std::size_t position = 0;
+    while (position < text.size() && is_space(text[position])) {
+        ++position;
+    }
+    if (position == text.size()) {
+        return {TimestampPrefixResult::incomplete};
+    }
+
+    constexpr std::string_view shape = "[####-##-##T##:##:##";
+    for (const char expected : shape) {
+        if (position == text.size()) {
+            return {TimestampPrefixResult::incomplete};
+        }
+        const char actual = text[position++];
+        const bool matches = expected == '#'
+            ? actual >= '0' && actual <= '9'
+            : actual == expected;
+        if (!matches) {
+            return {TimestampPrefixResult::rejected};
+        }
+    }
+
+    if (position == text.size()) {
+        return {TimestampPrefixResult::incomplete};
+    }
+    if (text[position] == '.') {
+        ++position;
+        const std::size_t fraction_start = position;
+        while (position < text.size()
+               && text[position] >= '0' && text[position] <= '9') {
+            ++position;
+        }
+        if (position == text.size()) {
+            return {TimestampPrefixResult::incomplete};
+        }
+        if (position == fraction_start) {
+            return {TimestampPrefixResult::rejected};
+        }
+    }
+    if (text[position++] != 'Z') {
+        return {TimestampPrefixResult::rejected};
+    }
+    if (position == text.size()) {
+        return {TimestampPrefixResult::incomplete};
+    }
+    if (text[position++] != ']') {
+        return {TimestampPrefixResult::rejected};
+    }
+    return {TimestampPrefixResult::matched, position};
+}
+
 void append_line(std::string& text, std::string_view line) {
     if (!text.empty()) text += '\n';
     text += line;
@@ -998,6 +1061,10 @@ void SessionController::apply(const GenerationEventDelta& event, ControllerUpdat
         return;
     }
     if (event.kind == GenerationDeltaKind::answer) {
+        const std::string text = filter_answer_timestamp(event.text);
+        if (text.empty()) {
+            return;
+        }
         // Opening the response entry also changes the phase, so only growth of
         // an already-answering entry is a pure append.
         const bool structural = active_->phase != ResponsePhase::answering;
@@ -1008,13 +1075,13 @@ void SessionController::apply(const GenerationEventDelta& event, ControllerUpdat
         }
         // Capture the target before the text moves into transcript storage.
         const EntryId entry_id = active_->response_entry_id;
-        transcript_.append_answer(entry_id, event.text);
+        transcript_.append_answer(entry_id, text);
         active_->phase = ResponsePhase::answering;
         if (structural) {
             require_snapshot(update);
             return;
         }
-        merge(update, {.state = TextAppend{EntryTextTarget{entry_id}, event.text}});
+        merge(update, {.state = TextAppend{EntryTextTarget{entry_id}, text}});
         return;
     }
     // The first reasoning chunk establishes visible request state. Later
@@ -1035,6 +1102,7 @@ void SessionController::apply(const GenerationCompleted& event, ControllerUpdate
     if (!matches(event.request_id)) {
         return;
     }
+    flush_pending_answer_text(update);
     if (active_->phase != ResponsePhase::answering) {
         fail_active_response(
             "Generation finished without answer content", active_->character_id, update);
@@ -1062,6 +1130,7 @@ void SessionController::apply(const GenerationCancelled& event, ControllerUpdate
     if (!matches(event.request_id)) {
         return;
     }
+    flush_pending_answer_text(update);
     if (active_->phase == ResponsePhase::answering) {
         const TranscriptEntry response =
             response_entry(EntryStatus::cancelled);
@@ -1095,6 +1164,54 @@ void SessionController::apply(const GenerationFailed& event, ControllerUpdate& u
         fail_active_response(event.message, active_->character_id, update);
         finish_generation_run(update);
     }
+}
+
+std::string SessionController::filter_answer_timestamp(std::string_view text) {
+    if (active_->answer_timestamp_state == AnswerTimestampState::passthrough) {
+        return std::string(text);
+    }
+
+    active_->pending_answer_text.append(text);
+    if (active_->answer_timestamp_state == AnswerTimestampState::checking) {
+        const TimestampPrefixMatch match =
+            match_timestamp_prefix(active_->pending_answer_text);
+        if (match.result == TimestampPrefixResult::incomplete) {
+            return {};
+        }
+        if (match.result == TimestampPrefixResult::rejected) {
+            active_->answer_timestamp_state = AnswerTimestampState::passthrough;
+            return std::exchange(active_->pending_answer_text, {});
+        }
+        active_->pending_answer_text.erase(0, match.end);
+        active_->answer_timestamp_state =
+            AnswerTimestampState::skipping_whitespace;
+    }
+
+    const auto content = std::ranges::find_if_not(
+        active_->pending_answer_text,
+        is_space);
+    active_->pending_answer_text.erase(
+        active_->pending_answer_text.begin(), content);
+    if (active_->pending_answer_text.empty()) {
+        return {};
+    }
+    active_->answer_timestamp_state = AnswerTimestampState::passthrough;
+    return std::exchange(active_->pending_answer_text, {});
+}
+
+void SessionController::flush_pending_answer_text(ControllerUpdate& update) {
+    if (active_->answer_timestamp_state != AnswerTimestampState::checking
+        || active_->pending_answer_text.empty()) {
+        return;
+    }
+    active_->answer_timestamp_state = AnswerTimestampState::passthrough;
+    apply(
+        GenerationEventDelta{
+            active_->request_id,
+            GenerationDeltaKind::answer,
+            std::exchange(active_->pending_answer_text, {}),
+        },
+        update);
 }
 
 void SessionController::fail_active_response(

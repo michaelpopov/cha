@@ -871,6 +871,63 @@ TEST(SessionController, KeepsReasoningEphemeralWhileAnswerEntersTranscript) {
     EXPECT_EQ(restored, live);
 }
 
+TEST(SessionController, RemovesStreamedModelTimestampBeforeTranscriptStorage) {
+    TemporaryJournal temporary;
+    auto controller = test::from_test_backends(
+        test::one_backend(std::make_unique<ScriptedBackend>()),
+        temporary.path,
+        notifier());
+
+    (void)controller->submit_prompt("operator", "Question");
+    EXPECT_FALSE(has_state_update(
+        controller->handle_generation_event(GenerationEventDelta{
+            1, GenerationDeltaKind::answer, " \n[2026-09-",
+        })));
+    EXPECT_FALSE(has_state_update(
+        controller->handle_generation_event(GenerationEventDelta{
+            1, GenerationDeltaKind::answer, "08T23:07:08Z]\n\n",
+        })));
+    EXPECT_EQ(controller->view().generation.phase, ResponsePhase::waiting);
+    ASSERT_EQ(controller->view().transcript.entries.size(), 1U);
+
+    EXPECT_TRUE(requires_snapshot(
+        controller->handle_generation_event(GenerationEventDelta{
+            1, GenerationDeltaKind::answer, "Clean answer",
+        })));
+    const ControllerUpdate suffix =
+        controller->handle_generation_event(GenerationEventDelta{
+            1, GenerationDeltaKind::answer, " continued",
+        });
+    ASSERT_NE(text_append(suffix), nullptr);
+    EXPECT_EQ(text_append(suffix)->text, " continued");
+    (void)controller->handle_generation_event(GenerationCompleted{1});
+
+    const std::vector<TranscriptEntry> live =
+        copy_entries(controller->view().transcript);
+    ASSERT_EQ(live.size(), 2U);
+    EXPECT_EQ(live.back().text, "Clean answer continued");
+    EXPECT_EQ(load_transcript_entries(temporary.path), live);
+}
+
+TEST(SessionController, PreservesLeadingBracketedTextThatIsNotATimestamp) {
+    TemporaryJournal temporary;
+    auto controller = test::from_test_backends(
+        test::one_backend(std::make_unique<ScriptedBackend>(
+            GenerationResult{},
+            std::vector<std::string>{"[Draft] Answer"})),
+        temporary.path,
+        notifier());
+
+    (void)controller->submit_prompt("operator", "Question");
+    receive_until_idle(*controller);
+
+    const std::vector<TranscriptEntry> live =
+        copy_entries(controller->view().transcript);
+    ASSERT_EQ(live.size(), 2U);
+    EXPECT_EQ(live.back().text, "[Draft] Answer");
+    EXPECT_EQ(load_transcript_entries(temporary.path), live);
+}
+
 TEST(SessionController, ReasoningOnlyCancellationLeavesNoTranscriptEntry) {
     TemporaryJournal temporary;
     auto controller = test::from_test_backends(

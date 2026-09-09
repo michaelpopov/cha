@@ -253,7 +253,7 @@ describe('live chat', () => {
     expect(document.querySelectorAll('.cha-repeated-prompt-divider')).toHaveLength(1);
   });
 
-  it('hides an echoed UTC metadata prefix from a character response', async () => {
+  it('hides an indented echoed UTC metadata line from a character response', async () => {
     const events = drivableEvents();
     render(<App client={fixtureClient()} connectSessionEvents={events.connect} />);
     await attachInitial(events, {
@@ -261,13 +261,14 @@ describe('live chat', () => {
       transcript: [{
         id: 1, kind: 'character', participant_id: 'assistant', display_name: 'Assistant',
         addressed_to: '', addressed_to_name: '',
-        text: '[2026-08-18T22:11:46Z]\nHello anyway!', status: 'complete', created_at: 1_787_120_306,
+        text: '  [2026-08-18T22:11:46.123Z]\r\n\r\nHello anyway!',
+        status: 'complete', created_at: 1_787_120_306,
       }],
     });
 
     const response = document.querySelector('.cha-message-text');
     expect(response).toHaveTextContent('Hello anyway!');
-    expect(response).not.toHaveTextContent('[2026-08-18T22:11:46Z]');
+    expect(response).not.toHaveTextContent('[2026-08-18T22:11:46.123Z]');
   });
 
   it('submits with the forum persona, clears accepted input, and preserves a failed draft', async () => {
@@ -298,7 +299,7 @@ describe('live chat', () => {
     await waitFor(() => expect(input).toHaveValue(''));
   });
 
-  it('adds a line with Enter and sends a draft with Ctrl+Enter', async () => {
+  it('sends a draft with Enter and adds a line with Ctrl+Enter', async () => {
     const user = userEvent.setup();
     const events = drivableEvents();
     const submitInput = vi.fn(async () => ({ clear_input: true }));
@@ -315,16 +316,32 @@ describe('live chat', () => {
     expect(input).toHaveAttribute('rows', '1');
     Object.defineProperty(input, 'scrollHeight', { configurable: true, value: 72 });
 
-    await user.type(input, 'First line{Enter}Second line');
+    await user.type(input, 'First line{Control>}{Enter}{/Control}Second line');
 
     expect(input).toHaveValue('First line\nSecond line');
     expect(input).toHaveStyle({ height: '72px' });
     expect(submitInput).not.toHaveBeenCalled();
 
-    await user.type(input, '{Control>}{Enter}{/Control}');
+    await user.type(input, '{Enter}');
     await waitFor(() => expect(submitInput).toHaveBeenCalledWith(
       'entrance', 'welcome', { text: 'First line\nSecond line' },
     ));
+  });
+
+  it('transliterates Latin typing to Russian when the composer mode is enabled', async () => {
+    const user = userEvent.setup();
+    const events = drivableEvents();
+    render(<App client={fixtureClient()} connectSessionEvents={events.connect} />);
+    await attachInitial(events);
+
+    const input = screen.getByRole('textbox', { name: 'Message' });
+    const toggle = screen.getByRole('button', { name: 'Latin to Russian transliteration' });
+    expect(toggle).toHaveAttribute('aria-pressed', 'false');
+
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute('aria-pressed', 'true');
+    await user.type(input, "Privet, shhuka mozhet s+hodit' v raj+on.");
+    expect(input).toHaveValue('Привет, щука может сходить в район.');
   });
 
   it('resizes the message editor in both directions and clamps its height', async () => {

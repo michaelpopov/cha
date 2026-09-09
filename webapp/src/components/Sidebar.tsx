@@ -12,6 +12,7 @@ import { createPortal } from 'react-dom';
 import { publicErrorMessage } from '../api/client';
 import type { AppAction, AppState, MainView } from '../state/view';
 import { CharacterIcon, ForumsIcon, MoreIcon, PersonasIcon, SettingsIcon } from './Icons';
+import { TransliteratingInput } from './TransliterationMode';
 
 interface SidebarProps {
   state: AppState;
@@ -110,18 +111,17 @@ function SessionDialog({
       <form method="dialog" onSubmit={(event) => void submit(event)}>
         <h2>{kind === 'rename' ? 'Rename session' : 'Delete session?'}</h2>
         {kind === 'rename' ? (
-          <label>
-            Session name
-            <input
-              autoFocus
-              className="cha-form-control"
-              disabled={pending}
-              maxLength={200}
-              onChange={(event) => setLabel(event.target.value)}
-              onFocus={(event) => event.currentTarget.select()}
-              value={label}
-            />
-          </label>
+          <TransliteratingInput
+            autoFocus
+            className="cha-form-control"
+            disabled={pending}
+            id="cha-rename-session"
+            label="Session name"
+            maxLength={200}
+            onFocus={(event) => event.currentTarget.select()}
+            onValueChange={setLabel}
+            value={label}
+          />
         ) : (
           <p>Delete “{session.label}”? It will be removed from CHA and cannot be reopened.</p>
         )}

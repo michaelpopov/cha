@@ -30,6 +30,7 @@ import {
   PlusIcon,
   SettingsIcon,
 } from './Icons';
+import { TransliteratingInput } from './TransliterationMode';
 
 interface SettingsScreenProps {
   client: ChaClient;
@@ -211,7 +212,7 @@ export function NewVaultScreen({ client, dispatch, sessionReport }: SettingsScre
         <form className="cha-settings-form" onSubmit={(event) => void save(event)}>
           <fieldset disabled={saving}>
             <legend>Vault details</legend>
-            <label>Display name<input autoFocus className="cha-form-control" onChange={(event) => setName(event.target.value)} placeholder="e.g. Projects" value={name} /></label>
+            <TransliteratingInput autoFocus className="cha-form-control" id="cha-new-vault-name" label="Display name" onValueChange={setName} placeholder="e.g. Projects" value={name} />
             <label>Database path<input className="cha-form-control" onChange={(event) => setDataPath(event.target.value)} placeholder="/path/to/projects.sqlite3" value={dataPath} /></label>
             <label>Initial database<select className="cha-form-control" onChange={(event) => setCopyFrom(event.target.value)} value={copyFrom}><option value="">New empty vault</option>{vaults.map((vault) => <option key={vault.display_name} value={vault.display_name}>Copy {vault.display_name}</option>)}</select></label>
             <label>Mirror path (absolute, optional)<input className="cha-form-control" onChange={(event) => setMirrorPath(event.target.value)} placeholder="/path/to/mirror" value={mirrorPath} /></label>
@@ -339,7 +340,7 @@ export function VaultScreen({ client, dispatch, sessionReport, state }: Settings
         <form className="cha-settings-form" onSubmit={(event) => void save(event)}>
           <fieldset disabled={saving || deleting}>
             <legend>Vault details</legend>
-            <label>Display name<input className="cha-form-control" onChange={(event) => { setName(event.target.value); setError(null); }} value={name} /></label>
+            <TransliteratingInput className="cha-form-control" id="cha-vault-name" label="Display name" onValueChange={(value) => { setName(value); setError(null); }} value={name} />
             <label>Database path<input className="cha-form-control" readOnly value={detail.data_path} /></label>
             <label>Mirror path (absolute, optional)<input className="cha-form-control" onChange={(event) => { setMirrorPath(event.target.value); setError(null); }} value={mirrorPath} /></label>
             <label>Modify path (absolute, optional)<input className="cha-form-control" onChange={(event) => { setModifyPath(event.target.value); setError(null); }} value={modifyPath} /></label>
@@ -487,7 +488,7 @@ export function NewProviderScreen({ client, dispatch, sessionReport }: SettingsS
         <form className="cha-settings-form" onSubmit={(event) => void save(event)}>
           <fieldset disabled={saving}>
             <legend>Provider details</legend>
-            <label>Name<input autoFocus className="cha-form-control" onChange={(event) => setName(event.target.value)} placeholder="e.g. OpenRouter" value={name} /></label>
+            <TransliteratingInput autoFocus className="cha-form-control" id="cha-new-provider-name" label="Name" onValueChange={setName} placeholder="e.g. OpenRouter" value={name} />
             <label>Initial settings<select className="cha-form-control" onChange={(event) => setCopyFrom(event.target.value)} value={copyFrom}><option value="">Default provider settings</option>{providers.map((provider) => <option key={provider.id} value={provider.id}>Copy {provider.display_name}</option>)}</select></label>
           </fieldset>
           <p className="cha-settings-note">{copyFrom ? 'The selected provider settings, including its saved API-key selection, are copied.' : 'After creation, you can configure the endpoint, model, and API key.'}</p>
@@ -853,7 +854,7 @@ export function NewStyleScreen({ client, dispatch, sessionReport }: SettingsScre
       <button className="cha-back-row" onClick={() => dispatch({ type: 'show-settings-styles' })} type="button"><ChevronLeftIcon /><span>Styles</span></button>
       {sessionReport}
       <form className="cha-settings-form" onSubmit={(event) => void save(event)}>
-        <fieldset disabled={saving}><legend>Style details</legend><label>Name<input autoFocus className="cha-form-control" onChange={(event) => setName(event.target.value)} placeholder="e.g. Editorial" value={name} /></label></fieldset>
+        <fieldset disabled={saving}><legend>Style details</legend><TransliteratingInput autoFocus className="cha-form-control" id="cha-new-style-name" label="Name" onValueChange={setName} placeholder="e.g. Editorial" value={name} /></fieldset>
         <p className="cha-settings-note">After creation, you can choose typography, size, and color.</p>
         {error && <p className="cha-error-message" role="alert">{error}</p>}
         <div className="cha-settings-form-actions"><button className="cha-button cha-button-ghost" disabled={saving} onClick={() => dispatch({ type: 'show-settings-styles' })} type="button">Cancel</button><button className="cha-button cha-button-primary" disabled={!name.trim() || saving} type="submit">{saving ? 'Creating…' : 'Create style'}</button></div>
@@ -1039,7 +1040,7 @@ export function NewApiKeyScreen({ client, dispatch, sessionReport }: SettingsScr
       <button className="cha-back-row" onClick={() => dispatch({ type: 'show-settings-api-keys' })} type="button"><ChevronLeftIcon /><span>API Keys</span></button>
       {sessionReport}
       <form className="cha-settings-form" onSubmit={(event) => void save(event)}>
-        <fieldset disabled={saving}><legend>Key details</legend><label>Name<input autoFocus autoComplete="off" className="cha-form-control" onChange={(event) => setName(event.target.value)} placeholder="e.g. OpenRouter" value={name} /></label><label>API key<input autoComplete="off" className="cha-form-control" onChange={(event) => setValue(event.target.value)} placeholder="Paste key" type="password" value={value} /></label></fieldset>
+        <fieldset disabled={saving}><legend>Key details</legend><TransliteratingInput autoFocus autoComplete="off" className="cha-form-control" id="cha-new-api-key-name" label="Name" onValueChange={setName} placeholder="e.g. OpenRouter" value={name} /><label>API key<input autoComplete="off" className="cha-form-control" onChange={(event) => setValue(event.target.value)} placeholder="Paste key" type="password" value={value} /></label></fieldset>
         <p className="cha-settings-note">The value is stored only in the local application config and is never returned to the browser.</p>
         {error && <p className="cha-error-message" role="alert">{error}</p>}
         <div className="cha-settings-form-actions"><button className="cha-button cha-button-ghost" disabled={saving} onClick={() => dispatch({ type: 'show-settings-api-keys' })} type="button">Cancel</button><button className="cha-button cha-button-primary" disabled={!name.trim() || !value || saving} type="submit">{saving ? 'Saving…' : 'Save API key'}</button></div>

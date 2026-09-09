@@ -16,6 +16,7 @@ import {
 } from '../api/client';
 import { sessionOperationState, type AppAction, type AppState } from '../state/view';
 import { Markdown } from './Markdown';
+import { TransliteratingInput } from './TransliterationMode';
 import { voiceClasses } from './characterAppearance';
 import {
   ChevronLeftIcon,
@@ -224,14 +225,14 @@ export function NewPersonaScreen({
       </button>
       {sessionReport}
       <form className="cha-new-persona" onSubmit={(event) => void submit(event)}>
-        <label htmlFor="cha-persona-name">Persona name</label>
-        <input
+        <TransliteratingInput
           autoComplete="off"
           autoFocus
           className="cha-form-control"
           disabled={saving}
           id="cha-persona-name"
-          onChange={(event) => setName(event.target.value)}
+          label="Persona name"
+          onValueChange={setName}
           placeholder="e.g. Project manager"
           type="text"
           value={name}
@@ -368,25 +369,25 @@ export function NewCharacterScreen({
       </button>
       {sessionReport}
       <form className="cha-new-character" onSubmit={(event) => void submit(event)}>
-        <label htmlFor="cha-character-name">Name</label>
-        <input
+        <TransliteratingInput
           autoComplete="off"
           autoFocus
           className="cha-form-control"
           disabled={saving}
           id="cha-character-name"
-          onChange={(event) => setName(event.target.value)}
+          label="Name"
+          onValueChange={setName}
           placeholder="e.g. Cheburashka"
           type="text"
           value={name}
         />
-        <label htmlFor="cha-character-description">Description</label>
-        <input
+        <TransliteratingInput
           autoComplete="off"
           className="cha-form-control"
           disabled={saving}
           id="cha-character-description"
-          onChange={(event) => setDescription(event.target.value)}
+          label="Description"
+          onValueChange={setDescription}
           placeholder="A short description shown in the character list"
           type="text"
           value={description}
@@ -765,14 +766,14 @@ export function NewForumScreen({
       </button>
       {sessionReport}
       <form className="cha-new-forum" onSubmit={(event) => void submit(event)}>
-        <label htmlFor="cha-forum-name">Name</label>
-        <input
+        <TransliteratingInput
           autoComplete="off"
           autoFocus
           className="cha-form-control"
           disabled={saving}
           id="cha-forum-name"
-          onChange={(event) => setName(event.target.value)}
+          label="Name"
+          onValueChange={setName}
           placeholder="e.g. Brain Trust"
           type="text"
           value={name}
@@ -1186,14 +1187,14 @@ export function NewSessionScreen({
       </button>
       {sessionReport}
       <form className="cha-new-session" onSubmit={submit}>
-        <label htmlFor="cha-session-name">Session name</label>
-        <input
+        <TransliteratingInput
           autoComplete="off"
           autoFocus
           className="cha-form-control"
           disabled={sessionPending}
           id="cha-session-name"
-          onChange={(event) => setName(event.target.value)}
+          label="Session name"
+          onValueChange={setName}
           placeholder="e.g. Architecture review"
           type="text"
           value={name}

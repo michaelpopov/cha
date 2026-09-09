@@ -241,17 +241,18 @@ it('renames a writable persona in place and updates the roster immediately', asy
   await user.click(await screen.findByRole('button', { name: 'Rename Reader' }));
   const input = screen.getByRole('textbox', { name: 'Persona name' });
   await user.clear(input);
-  await user.type(input, 'Editor');
+  await user.click(screen.getByRole('button', { name: 'Latin to Russian transliteration' }));
+  await user.type(input, 'Redaktor');
   await user.click(screen.getByRole('button', { name: 'Save persona name' }));
 
   await waitFor(() => expect(updatePersona).toHaveBeenCalledWith(
-    'reader', { display_name: 'Editor' },
+    'reader', { display_name: 'Редактор' },
   ));
-  expect(await screen.findByRole('button', { name: 'Rename Editor' })).toBeInTheDocument();
+  expect(await screen.findByRole('button', { name: 'Rename Редактор' })).toBeInTheDocument();
   fireEvent.click(within(screen.getByLabelText('Persona detail navigation'))
     .getByRole('button', { name: 'Personas' }));
   expect(within(screen.getByLabelText('Personas navigation'))
-    .getByRole('button', { name: /Editor/ })).toBeInTheDocument();
+    .getByRole('button', { name: /Редактор/ })).toBeInTheDocument();
 });
 
 it('replaces persona Markdown from the compact file action', async () => {
@@ -313,14 +314,16 @@ it('edits persona Markdown as pasted text and cancels without saving', async () 
   editor = screen.getByRole('textbox', { name: 'Edit persona profile text' });
   await waitFor(() => expect(editor).toBeEnabled());
   await user.clear(editor);
-  await user.type(editor, '# Typed profile\n\nPasted text.');
+  await user.type(editor, '# ');
+  await user.click(screen.getByRole('button', { name: 'Latin to Russian transliteration' }));
+  await user.type(editor, 'Privet');
   await user.click(screen.getByRole('button', { name: 'Save' }));
 
   await waitFor(() => expect(updatePersona).toHaveBeenCalledWith('reader', {
-    persona_markdown: '# Typed profile\n\nPasted text.',
+    persona_markdown: '# Привет',
   }));
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-  expect(await screen.findByRole('heading', { name: 'Typed profile' })).toBeInTheDocument();
+  expect(await screen.findByRole('heading', { name: 'Привет' })).toBeInTheDocument();
 });
 
 it('deletes a persona from the skull action beside upload after confirmation', async () => {
@@ -902,6 +905,69 @@ it('trims a required name, creates then opens it, and refreshes Recent', async (
   );
   expect(screen.getByRole('button', { name: 'Architecture reviewThe Lobby' }))
     .toHaveAttribute('aria-current', 'page');
+});
+
+it('transliterates Latin typing to Russian in a human-facing name field', async () => {
+  const user = userEvent.setup();
+  const createSession = vi.fn(async (_forumId: string, label: string) => ({
+    id: 'created',
+    label,
+  }));
+  render(<App
+    client={fixtureClient({ listSessions: async () => [], createSession })}
+    connectSessionEvents={inertSessionEvents}
+  />);
+
+  await user.click(await screen.findByRole('button', { name: 'Forums' }));
+  await user.click(screen.getByRole('button', { name: 'The LobbyGuide' }));
+  await user.click(await screen.findByRole('button', { name: 'New sessionEnter a name to begin' }));
+
+  const name = screen.getByRole('textbox', { name: 'Session name' });
+  const toggle = screen.getByRole('button', { name: 'Latin to Russian transliteration' });
+  await user.click(toggle);
+  expect(name).toHaveFocus();
+  await user.type(name, 'Obzor arhitektury');
+  await user.click(screen.getByRole('button', { name: 'Start session' }));
+
+  await waitFor(() => expect(createSession).toHaveBeenCalledWith(
+    'lobby', 'Обзор архитектуры',
+  ));
+});
+
+it('toggles Russian transliteration application-wide with Ctrl+Shift+Y', async () => {
+  const user = userEvent.setup();
+  render(<App client={fixtureClient()} connectSessionEvents={inertSessionEvents} />);
+
+  await screen.findByRole('textbox', { name: 'Message' });
+  let toggle = screen.getByRole('button', { name: 'Latin to Russian transliteration' });
+  expect(toggle).toHaveAttribute('aria-pressed', 'false');
+  expect(fireEvent.keyDown(window, {
+    code: 'KeyY',
+    ctrlKey: true,
+    key: 'Y',
+    shiftKey: true,
+  })).toBe(false);
+  await waitFor(() => expect(screen.getByRole('button', {
+    name: 'Latin to Russian transliteration',
+  })).toHaveAttribute('aria-pressed', 'true'));
+
+  await user.click(screen.getByRole('button', { name: 'Personas' }));
+  await user.click(screen.getByRole('button', { name: 'New personaEnter a name to begin' }));
+  const name = screen.getByRole('textbox', { name: 'Persona name' });
+  toggle = screen.getByRole('button', { name: 'Latin to Russian transliteration' });
+  expect(toggle).toHaveAttribute('aria-pressed', 'true');
+  await user.type(name, 'Redaktor');
+  expect(name).toHaveValue('Редактор');
+
+  fireEvent.keyDown(window, {
+    code: 'KeyY',
+    ctrlKey: true,
+    key: 'Y',
+    shiftKey: true,
+  });
+  await waitFor(() => expect(toggle).toHaveAttribute('aria-pressed', 'false'));
+  await user.type(name, ' Test');
+  expect(name).toHaveValue('Редактор Test');
 });
 
 it('refreshes Recent and an open forum catalog after a sidebar rename', async () => {

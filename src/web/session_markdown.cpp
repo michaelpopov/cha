@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <ctime>
+#include <regex>
 
 namespace cha::web {
 namespace {
@@ -64,6 +65,19 @@ std::string compact_text(std::string_view source) {
     return result;
 }
 
+std::string exported_entry_text(const TranscriptEntry& entry) {
+    std::string_view source = entry.text;
+    if (entry.kind == EntryKind::character) {
+        static const std::regex timestamp_prefix(
+            R"(^\s*\[[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?Z\]\s*)");
+        std::match_results<std::string_view::const_iterator> match;
+        if (std::regex_search(source.begin(), source.end(), match, timestamp_prefix)) {
+            source.remove_prefix(match.length());
+        }
+    }
+    return compact_text(source);
+}
+
 std::string local_start_time(std::int64_t unix_seconds) {
     if (unix_seconds == 0) return {};
 
@@ -111,7 +125,7 @@ std::string session_markdown(
             if (repeated) continue;
         }
         result += "\n" + speaker_badge(entry.display_name) + " · ";
-        result += compact_text(entry.text);
+        result += exported_entry_text(entry);
         result += '\n';
     }
     return result;

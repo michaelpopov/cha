@@ -99,6 +99,17 @@ TEST(SessionMarkdown, CompactsParagraphsWithinOneMessage) {
         "\n`Guide` · First paragraph.  \nSecond paragraph.\n");
 }
 
+TEST(SessionMarkdown, OmitsModelTimestampFromLegacyStoredResponse) {
+    TranscriptEntry response = make_character_entry(
+        1, "guide", "Guide", "  [2026-09-08T23:07:08.123Z]\n\nAnswer",
+        EntryStatus::complete, 1);
+    response.created_at = 0;
+
+    EXPECT_EQ(session_markdown("Plan", {&response, 1}),
+        "<!-- CHA session: Plan -->\n"
+        "\n`Guide` · Answer\n");
+}
+
 TEST(SessionMarkdown, OmitsTransientCoverMarkers) {
     TranscriptEntry response = make_character_entry(
         2, "guide", "Guide", "Off the record.", EntryStatus::complete, 1);

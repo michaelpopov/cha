@@ -57,6 +57,7 @@ import {
   SessionsScreen,
 } from './Screens';
 import { Sidebar } from './Sidebar';
+import { TransliterationProvider } from './TransliterationMode';
 import {
   ApiKeyScreen,
   ApiKeysScreen,
@@ -1052,67 +1053,69 @@ export function App({
 
   return (
     <AppErrorBoundary onReload={reload}>
-      <div
-        className={`cha-app ${state.sidebarOpen ? 'is-sidebar-open' : ''}`}
-        data-sidebar={state.sidebarOpen ? 'open' : 'closed'}
-      >
-        <Sidebar
-          dispatch={navigate}
-          onDeleteSession={deleteSession}
-          onDownloadSession={downloadSession}
-          onOpenSession={openConversation}
-          onRenameSession={renameSession}
-          onSwitchVault={switchVault}
-          state={state}
-        />
-        <main className="cha-main" data-view={state.mainView}>
-          <TopBar
-            client={client}
+      <TransliterationProvider>
+        <div
+          className={`cha-app ${state.sidebarOpen ? 'is-sidebar-open' : ''}`}
+          data-sidebar={state.sidebarOpen ? 'open' : 'closed'}
+        >
+          <Sidebar
             dispatch={navigate}
-            onDeleteCharacter={deleteCharacter}
-            onDeleteForum={deleteForum}
-            onDeletePersona={deletePersona}
-            onCharacterDefinitionUpdated={() => (
-              setCharacterRevision((revision) => revision + 1)
-            )}
-            onForumDefinitionUpdated={() => setForumRevision((revision) => revision + 1)}
-            onPersonaDefinitionUpdated={() => setPersonaRevision((revision) => revision + 1)}
-            onProviderUpdated={() => setProviderRevision((revision) => revision + 1)}
-            onStyleUpdated={() => setStyleRevision((revision) => revision + 1)}
+            onDeleteSession={deleteSession}
+            onDownloadSession={downloadSession}
+            onOpenSession={openConversation}
+            onRenameSession={renameSession}
+            onSwitchVault={switchVault}
             state={state}
-            title={title}
           />
-          {!ready && <BootstrapState onRetry={retryBootstrap} state={state} />}
-          {ready && wholeApplication && (
-            <SessionOperationState
-              onRetry={retrySessionOpen}
-              onReturnToWelcome={returnToWelcome}
-              state={state}
-            />
-          )}
-          {ready && !wholeApplication && (
-            <Screen
-              catalogRevision={catalogRevision}
-              characterRevision={characterRevision}
-              forumRevision={forumRevision}
-              personaRevision={personaRevision}
-              providerRevision={providerRevision}
-              styleRevision={styleRevision}
+          <main className="cha-main" data-view={state.mainView}>
+            <TopBar
               client={client}
               dispatch={navigate}
-              onCreateSession={createConversation}
-              onOpenSession={openConversation}
-              onRetryStream={retryStream}
-              onRetrySession={retrySessionOpen}
-              onReturnToWelcome={returnToWelcome}
-              onSetDefaultCharacter={setDefaultCharacter}
-              onStopGeneration={stopGeneration}
-              onSubmitInput={submitInput}
+              onDeleteCharacter={deleteCharacter}
+              onDeleteForum={deleteForum}
+              onDeletePersona={deletePersona}
+              onCharacterDefinitionUpdated={() => (
+                setCharacterRevision((revision) => revision + 1)
+              )}
+              onForumDefinitionUpdated={() => setForumRevision((revision) => revision + 1)}
+              onPersonaDefinitionUpdated={() => setPersonaRevision((revision) => revision + 1)}
+              onProviderUpdated={() => setProviderRevision((revision) => revision + 1)}
+              onStyleUpdated={() => setStyleRevision((revision) => revision + 1)}
               state={state}
+              title={title}
             />
-          )}
-        </main>
-      </div>
+            {!ready && <BootstrapState onRetry={retryBootstrap} state={state} />}
+            {ready && wholeApplication && (
+              <SessionOperationState
+                onRetry={retrySessionOpen}
+                onReturnToWelcome={returnToWelcome}
+                state={state}
+              />
+            )}
+            {ready && !wholeApplication && (
+              <Screen
+                catalogRevision={catalogRevision}
+                characterRevision={characterRevision}
+                forumRevision={forumRevision}
+                personaRevision={personaRevision}
+                providerRevision={providerRevision}
+                styleRevision={styleRevision}
+                client={client}
+                dispatch={navigate}
+                onCreateSession={createConversation}
+                onOpenSession={openConversation}
+                onRetryStream={retryStream}
+                onRetrySession={retrySessionOpen}
+                onReturnToWelcome={returnToWelcome}
+                onSetDefaultCharacter={setDefaultCharacter}
+                onStopGeneration={stopGeneration}
+                onSubmitInput={submitInput}
+                state={state}
+              />
+            )}
+          </main>
+        </div>
+      </TransliterationProvider>
     </AppErrorBoundary>
   );
 }

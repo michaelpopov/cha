@@ -1,6 +1,8 @@
 import { useEffect, useRef, type FormEvent } from 'react';
 import { createPortal } from 'react-dom';
 
+import { TransliterationToggle, useTransliteration } from './TransliterationMode';
+
 export function TextEditorDialog({
   error,
   loading,
@@ -23,7 +25,8 @@ export function TextEditorDialog({
   value: string;
 }) {
   const dialog = useRef<HTMLDialogElement | null>(null);
-  const editor = useRef<HTMLTextAreaElement | null>(null);
+  const transliteration = useTransliteration<HTMLTextAreaElement>(value);
+  const editor = transliteration.field;
 
   useEffect(() => {
     if (typeof dialog.current?.showModal === 'function') dialog.current.showModal();
@@ -57,7 +60,7 @@ export function TextEditorDialog({
           aria-label={`${title} text`}
           autoFocus
           disabled={!ready || loading || saving}
-          onChange={(event) => onChange(event.target.value)}
+          onChange={(event) => onChange(transliteration.convert(event, value))}
           placeholder={loading ? 'Loading…' : 'Enter or paste Markdown here'}
           ref={editor}
           spellCheck={false}
@@ -65,6 +68,10 @@ export function TextEditorDialog({
         />
         {error && <p className="cha-error-message" role="alert">{error}</p>}
         <div className="cha-dialog-actions">
+          <TransliterationToggle
+            disabled={!ready || loading || saving}
+            transliteration={transliteration}
+          />
           <button
             className="cha-button cha-button-ghost cha-text-editor-clear"
             disabled={!ready || loading || saving || value === ''}

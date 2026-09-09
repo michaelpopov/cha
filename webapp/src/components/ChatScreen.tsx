@@ -20,6 +20,7 @@ import {
 } from '../api/client';
 import type { AppAction, AppState } from '../state/view';
 import { SendIcon, StopIcon, TargetIcon } from './Icons';
+import { TransliterationToggle, useTransliteration } from './TransliterationMode';
 import { voiceClasses } from './characterAppearance';
 
 // The chat controls App owns, declared once so the screen and the router that
@@ -46,10 +47,10 @@ function actionMessage(failure: unknown): string {
 // first time it scrolled itself.
 const followSlack = 24;
 
-// Entry creation time already has its own UI below a message. A model can echo
-// the UTC metadata it receives as a leading line, but that is not response text
-// for the reader to see.
-const echoedTimestampPrefix = /^\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\]\s*/;
+// Older stored transcripts can contain a model-echoed UTC metadata line. Entry
+// creation time already has its own UI below the message, so hide that legacy
+// prefix here as well.
+const echoedTimestampPrefix = /^\s*\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\]\s*/;
 
 function visibleEntryText(kind: string, text: string): string {
   return kind === 'character' ? text.replace(echoedTimestampPrefix, '') : text;
@@ -163,10 +164,11 @@ export function ChatScreen({
   onSubmitInput,
 }: ChatScreenProps) {
   const [draft, setDraft] = useState('');
+  const transliteration = useTransliteration<HTMLTextAreaElement>(draft);
   const [actionError, setActionError] = useState<string | null>(null);
   const [pendingAction, setPendingAction] = useState<'send' | 'stop' | 'target' | null>(null);
   const transcriptEnd = useRef<HTMLDivElement | null>(null);
-  const composerInput = useRef<HTMLTextAreaElement | null>(null);
+  const composerInput = transliteration.field;
   const chatArea = useRef<HTMLElement | null>(null);
   const composerResize = useRef<{
     pointerId: number;
@@ -313,12 +315,18 @@ export function ChatScreen({
     }
   }
 
-  // Enter keeps its native textarea behavior and adds a line. Ctrl+Enter is the
-  // explicit send shortcut. IME composition has to finish before Enter can be
-  // interpreted as the command.
+  // Enter is the quick way to send. Ctrl+Enter inserts a line explicitly: it
+  // is not a consistently native textarea shortcut, so relying on the browser
+  // would make multiline drafts depend on the platform. IME composition has to
+  // finish before Enter can be interpreted as the command.
   function submitOnEnter(event: KeyboardEvent<HTMLTextAreaElement>) {
     if (event.key !== 'Enter' || event.nativeEvent.isComposing) return;
-    if (!event.ctrlKey) return;
+    if (event.ctrlKey) {
+      event.preventDefault();
+      const { selectionEnd, selectionStart } = event.currentTarget;
+      setDraft((current) => `${current.slice(0, selectionStart)}\n${current.slice(selectionEnd)}`);
+      return;
+    }
     event.preventDefault();
     if (!canSend || generationActive) return;
     event.currentTarget.form?.requestSubmit();
@@ -483,7 +491,7 @@ export function ChatScreen({
             aria-label="Message"
             autoComplete="off"
             disabled={!sessionAvailable}
-            onChange={(event) => setDraft(event.target.value)}
+            onChange={(event) => setDraft(transliteration.convert(event, draft))}
             onKeyDown={submitOnEnter}
             placeholder={recording
               ? 'Recording — saved, not sent'
@@ -508,6 +516,10 @@ export function ChatScreen({
           <span>{forum?.display_name ?? 'Unknown forum'}</span>
           <span>From: {forum?.default_persona_display_name ?? 'Unknown persona'}</span>
           <span>To: {recording ? 'Recording' : (character?.display_name ?? 'Unknown character')}</span>
+          <TransliterationToggle
+            disabled={!sessionAvailable}
+            transliteration={transliteration}
+          />
         </div>
       </div>
     </section>

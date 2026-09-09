@@ -103,6 +103,12 @@ public:
     void shutdown();
 
 private:
+    enum class AnswerTimestampState {
+        checking,
+        skipping_whitespace,
+        passthrough,
+    };
+
     struct ActiveResponse {
         RequestId request_id{};
         EntryId response_entry_id{};
@@ -110,6 +116,9 @@ private:
         std::string character_display_name;
         ResponsePhase phase{ResponsePhase::waiting};
         std::string reasoning_text;
+        AnswerTimestampState answer_timestamp_state{
+            AnswerTimestampState::checking};
+        std::string pending_answer_text;
         // The stamp of the live streaming entry, captured when it opens so the
         // record later handed to the journal carries the same created_at.
         std::int64_t response_created_at{};
@@ -171,6 +180,8 @@ private:
     void apply(const GenerationCompleted& event, ControllerUpdate& update);
     void apply(const GenerationCancelled& event, ControllerUpdate& update);
     void apply(const GenerationFailed& event, ControllerUpdate& update);
+    [[nodiscard]] std::string filter_answer_timestamp(std::string_view text);
+    void flush_pending_answer_text(ControllerUpdate& update);
     void fail_active_response(
         std::string message,
         ParticipantId participant_id,

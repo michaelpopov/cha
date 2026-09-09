@@ -135,6 +135,7 @@ select:disabled {
 .cha-persona-title-trigger,
 .cha-title-icon-action,
 .cha-composer-action,
+.cha-transliteration-toggle,
 .cha-back-row,
 .cha-button {
   appearance: none;
@@ -1159,6 +1160,44 @@ select:disabled {
   text-overflow: ellipsis;
 }
 
+.cha-chat-status > .cha-transliteration-toggle {
+  margin-left: auto;
+}
+
+.cha-transliteration-toggle {
+  height: 1.4rem;
+  flex: none;
+  padding: 0 0.45rem;
+  border-radius: 0.7rem;
+  color: var(--muted-foreground);
+  font-size: 0.72rem;
+  font-weight: 650;
+}
+
+.cha-transliteration-toggle:hover {
+  color: var(--accent-foreground);
+  background: var(--accent);
+}
+
+.cha-transliteration-toggle[aria-pressed='true'] {
+  color: var(--primary-foreground);
+  background: var(--primary);
+}
+
+.cha-transliterating-input {
+  display: grid;
+  min-width: 0;
+  gap: 0.35rem;
+}
+
+.cha-transliterating-field {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.4rem;
+}
+
 .cha-new-session,
 .cha-new-persona,
 .cha-new-character,
@@ -1167,6 +1206,13 @@ select:disabled {
   width: min(100%, 30rem);
   gap: 0.8rem;
   margin: 1.2rem auto 0;
+}
+
+.cha-new-session .cha-transliterating-input,
+.cha-new-persona .cha-transliterating-input,
+.cha-new-character .cha-transliterating-input,
+.cha-new-forum .cha-transliterating-input {
+  gap: 0.8rem;
 }
 
 .cha-form-control {
