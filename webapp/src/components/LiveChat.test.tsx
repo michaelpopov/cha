@@ -343,6 +343,88 @@ describe('live chat', () => {
     await waitFor(() => expect(input).toHaveValue(''));
   });
 
+  it('sends to all characters without changing the session default', async () => {
+    const user = userEvent.setup();
+    const events = drivableEvents();
+    const submitInput = vi.fn()
+      .mockRejectedValueOnce(new ChaError(400, 'bad_request', 'The prompt was not accepted.'))
+      .mockResolvedValue({ clear_input: true });
+    const setDefaultCharacter = vi.fn(async () => ({ clear_input: false }));
+    const snapshot: SessionSnapshot = {
+      ...snapshotFixture,
+      forum: {
+        ...snapshotFixture.forum,
+        members: bootstrapFixture.characters,
+      },
+      characters: bootstrapFixture.characters,
+    };
+    const nextSnapshot: SessionSnapshot = {
+      ...snapshotFixture,
+      forum: bootstrapFixture.forums[1],
+      session_id: 'planning',
+      session_label: 'Planning',
+      characters: [bootstrapFixture.characters[1]],
+      default_character_id: 'guide',
+    };
+    render(
+      <App
+        client={fixtureClient({
+          getSessionSnapshot: async (forumId) => (
+            forumId === 'lobby' ? nextSnapshot : snapshot
+          ),
+          listSessions: async () => [{
+            id: 'planning', label: 'Planning', live: false, updated_at: 1,
+          }],
+          setDefaultCharacter,
+          submitInput,
+        })}
+        connectSessionEvents={events.connect}
+      />,
+    );
+    await attachInitial(events, snapshot);
+
+    const chooser = screen.getByRole('combobox', { name: 'Choose message target' });
+    const input = screen.getByRole('textbox', { name: 'Message' });
+    expect(within(chooser).getByRole('option', { name: 'All characters' }))
+      .toBeInTheDocument();
+
+    await user.selectOptions(chooser, '*');
+    expect(setDefaultCharacter).not.toHaveBeenCalled();
+    expect(chooser).toHaveValue('*');
+    expect(input).toHaveAttribute('placeholder', 'Message all characters');
+    expect(screen.getByLabelText('Current chat context')).toHaveTextContent('To: All characters');
+
+    await user.type(input, 'Shared question');
+    await user.click(screen.getByRole('button', { name: 'Send message' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('not accepted');
+    expect(submitInput).toHaveBeenLastCalledWith(
+      'entrance', 'welcome', { text: '/mcast Shared question' },
+    );
+    expect(input).toHaveValue('Shared question');
+    expect(chooser).toHaveValue('*');
+
+    await user.click(screen.getByRole('button', { name: 'Send message' }));
+    await waitFor(() => expect(input).toHaveValue(''));
+    expect(chooser).toHaveValue('*');
+
+    await user.type(input, '@Guide is part of the question');
+    await user.click(screen.getByRole('button', { name: 'Send message' }));
+    await waitFor(() => expect(input).toHaveValue(''));
+    expect(submitInput).toHaveBeenLastCalledWith(
+      'entrance', 'welcome', { text: '/mcast @@Guide is part of the question' },
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Forums' }));
+    await user.click(screen.getByRole('button', { name: 'The LobbyGuide' }));
+    const sessions = await screen.findByRole('region', { name: 'Forum sessions navigation' });
+    await user.click(within(sessions).getByRole('button', { name: /^Planning/ }));
+    const nextChooser = await screen.findByRole('combobox', { name: 'Choose message target' });
+    const nextInput = screen.getByRole('textbox', { name: 'Message' });
+    await waitFor(() => expect(nextChooser).toHaveValue('guide'));
+    expect(nextInput).toHaveAttribute('placeholder', 'Message Guide');
+    expect(screen.getByLabelText('Current chat context')).toHaveTextContent('To: Guide');
+  });
+
   it('appends realtime voice deltas and waits for the final transcript before sending', async () => {
     window.chaVoiceInput = {
       url: 'https://api.openai.com/v1/realtime/calls',
@@ -666,7 +748,7 @@ describe('live chat', () => {
     await attachInitial(events, snapshot);
 
     await user.selectOptions(
-      screen.getByRole('combobox', { name: 'Choose target character' }),
+      screen.getByRole('combobox', { name: 'Choose message target' }),
       'guide',
     );
     await waitFor(() => expect(setDefaultCharacter).toHaveBeenCalledWith(
@@ -678,14 +760,13 @@ describe('live chat', () => {
     expect(screen.getByLabelText('Current chat context')).toHaveTextContent('To: Guide');
   });
 
-  it('shows the recording state while the default is the null target', async () => {
+  it('offers recording as a target and follows authoritative target changes', async () => {
     const user = userEvent.setup();
     const events = drivableEvents();
     const setDefaultCharacter = vi.fn(async () => ({ clear_input: false }));
     const snapshot: SessionSnapshot = {
       ...snapshotFixture,
       characters: bootstrapFixture.characters,
-      default_character_id: '-',
     };
     render(
       <App
@@ -695,12 +776,19 @@ describe('live chat', () => {
     );
     await attachInitial(events, snapshot);
 
-    const chooser = screen.getByRole('combobox', { name: 'Choose target character' });
+    const chooser = screen.getByRole('combobox', { name: 'Choose message target' });
+    expect(within(chooser).getByRole('option', { name: 'Self-notes' })).toBeInTheDocument();
+    await user.selectOptions(chooser, '-');
+    await waitFor(() => expect(setDefaultCharacter).toHaveBeenCalledWith(
+      'entrance', 'welcome', '-',
+    ));
+    expect(screen.getByLabelText('Current chat context')).toHaveTextContent('To: Assistant');
+
+    act(() => events.handlers[0].onSnapshot({ ...snapshot, default_character_id: '-' }));
     expect(chooser).toHaveValue('-');
-    expect(within(chooser).getByRole('option', { name: 'Recording' })).toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: 'Message' }))
-      .toHaveAttribute('placeholder', 'Recording — saved, not sent');
-    expect(screen.getByLabelText('Current chat context')).toHaveTextContent('To: Recording');
+      .toHaveAttribute('placeholder', 'Self-notes — saved, not sent');
+    expect(screen.getByLabelText('Current chat context')).toHaveTextContent('To: Self-notes');
 
     // Choosing a real character leaves recording mode through the typed setter.
     await user.selectOptions(chooser, 'guide');
@@ -708,10 +796,9 @@ describe('live chat', () => {
       'entrance', 'welcome', 'guide',
     ));
 
-    // With a real default the sentinel option is absent again.
     act(() => events.handlers[0].onSnapshot({ ...snapshot, default_character_id: 'guide' }));
     await waitFor(() => expect(chooser).toHaveValue('guide'));
-    expect(within(chooser).queryByRole('option', { name: 'Recording' })).toBeNull();
+    expect(within(chooser).getByRole('option', { name: 'Self-notes' })).toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: 'Message' }))
       .toHaveAttribute('placeholder', 'Message Guide');
     expect(screen.getByLabelText('Current chat context')).toHaveTextContent('To: Guide');

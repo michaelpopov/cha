@@ -227,7 +227,7 @@ TEST(TextInput, RecordsNullAgentMessagesAndNeverPersistsTheSentinelDefault) {
     EXPECT_TRUE(mode.clear_input);
     EXPECT_FALSE(mode.persist_default_character_id.has_value());
     ASSERT_TRUE(mode.session.notice);
-    EXPECT_NE(mode.session.notice->find("Recording"), std::string::npos);
+    EXPECT_NE(mode.session.notice->find("Self-notes"), std::string::npos);
 
     // Plain messages record while the mode is active.
     const CommandResult plain =

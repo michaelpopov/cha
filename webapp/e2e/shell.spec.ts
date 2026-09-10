@@ -12,7 +12,7 @@ async function startLobbySession(page: Page, name: string): Promise<string> {
   await page.getByRole('button', { name: /New session\s+Enter a name to begin/ }).click();
   await page.getByRole('textbox', { name: 'Session name' }).fill(name);
   await page.getByRole('button', { name: 'Start session' }).click();
-  await expect(page.getByRole('combobox', { name: 'Choose target character' })).toBeEnabled();
+  await expect(page.getByRole('combobox', { name: 'Choose message target' })).toBeEnabled();
   return page.url();
 }
 
@@ -376,7 +376,7 @@ test('rapid Recent navigation settles on the last requested session without an e
   }
 
   await expect(page.getByText(labels.at(-1) ?? '', { exact: true }).last()).toBeVisible();
-  await expect(page.getByRole('combobox', { name: 'Choose target character' }))
+  await expect(page.getByRole('combobox', { name: 'Choose message target' }))
     .toBeEnabled({ timeout: 15_000 });
   await expect(page.getByRole('alert')).toHaveCount(0);
 });
@@ -425,7 +425,7 @@ test('hands the session to the device that opened it last', async ({ page, conte
   await second.goto(sessionUrl);
   // The page opened last is live immediately, with no wait for the first one
   // to give the session up.
-  await expect(second.getByRole('combobox', { name: 'Choose target character' }))
+  await expect(second.getByRole('combobox', { name: 'Choose message target' }))
     .toBeEnabled({ timeout: 15_000 });
   // The page it displaced parks with its transcript instead of reconnecting.
   await expect(page.getByRole('alert')).toContainText(
@@ -436,7 +436,7 @@ test('hands the session to the device that opened it last', async ({ page, conte
 
   // Going back to the first device is the same one gesture in reverse.
   await page.getByRole('button', { name: 'Continue here' }).click();
-  await expect(page.getByRole('combobox', { name: 'Choose target character' }))
+  await expect(page.getByRole('combobox', { name: 'Choose message target' }))
     .toBeEnabled({ timeout: 10_000 });
   await expect(second.getByRole('alert')).toContainText(
     'This conversation moved to another device',
@@ -477,7 +477,7 @@ test('recovers a dropped stream and keeps the conversation on screen', async ({ 
   }), { times: 1 });
   await viewer.goto(`/s/lobby/${sessionId}/`);
 
-  await expect(viewer.getByRole('combobox', { name: 'Choose target character' }))
+  await expect(viewer.getByRole('combobox', { name: 'Choose message target' }))
     .toBeEnabled({ timeout: 15_000 });
   await expect(viewer.locator('.cha-message.is-human').last()).toContainText(prompt);
   await expect(viewer.locator('.cha-message.is-character').last()).toContainText(prompt);
@@ -511,7 +511,7 @@ test('re-opens after a real disconnect and server idle unload', async ({ page, c
   }), { times: 1 });
   await viewer.goto(sessionUrl);
 
-  await expect(viewer.getByRole('combobox', { name: 'Choose target character' }))
+  await expect(viewer.getByRole('combobox', { name: 'Choose message target' }))
     .toBeEnabled({ timeout: 15_000 });
   await expect(viewer.getByText(sessionName, { exact: true }).last()).toBeVisible();
   expect(snapshotRequests).toBeGreaterThanOrEqual(3);

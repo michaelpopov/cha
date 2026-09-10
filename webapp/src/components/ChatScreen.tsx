@@ -67,6 +67,16 @@ function voiceInputMessage(failure: unknown): string {
 // of slack absorbs sub-pixel rounding, which would otherwise unpin the view the
 // first time it scrolled itself.
 const followSlack = 24;
+const allCharactersTarget = '*';
+
+function multicastSubmission(text: string): string {
+  if (text.startsWith('/')) return text;
+  const firstText = text.search(/\S/);
+  const escaped = firstText >= 0 && text[firstText] === '@'
+    ? `${text.slice(0, firstText)}@${text.slice(firstText)}`
+    : text;
+  return `/mcast ${escaped}`;
+}
 
 // Older stored transcripts can contain a model-echoed UTC metadata line. Entry
 // creation time already has its own UI below the message, so hide that legacy
@@ -211,6 +221,7 @@ export function ChatScreen({
   onSubmitInput,
 }: ChatScreenProps) {
   const [draft, setDraft] = useState('');
+  const [sendToAll, setSendToAll] = useState(false);
   const draftRef = useRef('');
 
   function updateDraft(next: string) {
@@ -250,7 +261,8 @@ export function ChatScreen({
   const character = snapshot?.characters.find(
     ({ id }) => id === state.currentDefaultCharacterId,
   ) ?? state.bootstrap?.characters.find(({ id }) => id === state.currentDefaultCharacterId);
-  const recordingTarget = state.currentDefaultCharacterId === '-';
+  const recordingDefault = state.currentDefaultCharacterId === '-';
+  const recordingTarget = recordingDefault && !sendToAll;
   const ended = snapshot && snapshot.lifecycle !== 'running' ? endedMessage(snapshot) : null;
   const connected = state.streamStatus === 'connected' && snapshot !== null && !ended;
   const generationActive = generation?.active === true;
@@ -281,6 +293,7 @@ export function ChatScreen({
   // the reader had left the previous one.
   useEffect(() => {
     followingLatest.current = true;
+    setSendToAll(false);
   }, [conversationKey]);
 
   // A recording belongs to the conversation in which it started.
@@ -428,7 +441,9 @@ export function ChatScreen({
       if (!await finishVoiceInput()) return;
       const submitted = draftRef.current;
       if (!submitted.trim()) return;
-      const result = await onSubmitInput(submitted);
+      const result = await onSubmitInput(
+        sendToAll ? multicastSubmission(submitted) : submitted,
+      );
       // Typing may continue while the send is in flight; only the text that was
       // actually sent is cleared.
       if (result.clear_input) {
@@ -475,11 +490,20 @@ export function ChatScreen({
   }
 
   async function chooseTarget(characterId: string) {
-    if (!characterId || characterId === state.currentDefaultCharacterId || pendingAction) return;
+    if (!characterId || pendingAction) return;
+    if (characterId === allCharactersTarget) {
+      setSendToAll(true);
+      return;
+    }
+    if (characterId === state.currentDefaultCharacterId) {
+      setSendToAll(false);
+      return;
+    }
     setPendingAction('target');
     setActionError(null);
     try {
       await onSetDefaultCharacter(characterId);
+      setSendToAll(false);
     } catch (failure: unknown) {
       setActionError(actionMessage(failure));
     } finally {
@@ -686,23 +710,26 @@ export function ChatScreen({
               updateDraft(next);
             }}
             onKeyDown={submitOnEnter}
-            placeholder={recordingTarget
-              ? 'Recording — saved, not sent'
+            placeholder={sendToAll
+              ? 'Message all characters'
+              : recordingTarget
+              ? 'Self-notes — saved, not sent'
               : `Message ${character?.display_name ?? 'character'}`}
             ref={composerInput}
             rows={1}
             value={draft}
           />
           <div className="cha-composer-controls">
-            <label className="cha-target-select" title="Choose target character">
+            <label className="cha-target-select" title="Choose message target">
               <TargetIcon />
               <select
-                aria-label="Choose target character"
+                aria-label="Choose message target"
                 disabled={!connected || pendingAction !== null}
                 onChange={(event) => void chooseTarget(event.target.value)}
-                value={state.currentDefaultCharacterId ?? ''}
+                value={sendToAll ? allCharactersTarget : (state.currentDefaultCharacterId ?? '')}
               >
-                {recordingTarget && <option value="-">Recording</option>}
+                <option value={allCharactersTarget}>All characters</option>
+                <option value="-">Self-notes</option>
                 {snapshot?.characters.map((member) => (
                   <option key={member.id} value={member.id}>{member.display_name}</option>
                 ))}
@@ -742,7 +769,11 @@ export function ChatScreen({
         <div className="cha-chat-status" aria-label="Current chat context">
           <span>{forum?.display_name ?? 'Unknown forum'}</span>
           <span>From: {forum?.default_persona_display_name ?? 'Unknown persona'}</span>
-          <span>To: {recordingTarget ? 'Recording' : (character?.display_name ?? 'Unknown character')}</span>
+          <span>To: {sendToAll
+            ? 'All characters'
+            : recordingTarget
+              ? 'Self-notes'
+              : (character?.display_name ?? 'Unknown character')}</span>
           <TransliterationToggle
             disabled={!sessionAvailable}
             transliteration={transliteration}

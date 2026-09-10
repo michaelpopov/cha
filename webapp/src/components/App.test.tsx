@@ -1532,7 +1532,7 @@ it('does not let a late OpenAI status replace a view selected after Settings', a
 
 it('contains the main navigation and a Settings gear instead of an OpenAI row', async () => {
   renderAt(1280);
-  expect(await screen.findByRole('combobox', { name: 'Choose target character' })).toBeDisabled();
+  expect(await screen.findByRole('combobox', { name: 'Choose message target' })).toBeDisabled();
   expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
   expect(screen.getByRole('button', { name: 'Settings' })).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'OpenAI' })).not.toBeInTheDocument();

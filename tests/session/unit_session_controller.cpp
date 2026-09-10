@@ -1871,11 +1871,12 @@ TEST(SessionController, RecordsPlainMessagesInSessionLocalRecordingMode) {
         temporary.path,
         notifier());
 
-    const ControllerUpdate mode = controller->set_default_character("-");
-    EXPECT_TRUE(mode.input_consumed);
+    const ControllerUpdate mode =
+        controller->set_default_character_by_id("-");
+    EXPECT_FALSE(mode.input_consumed);
     EXPECT_TRUE(requires_snapshot(mode));
     ASSERT_TRUE(mode.notice);
-    EXPECT_NE(mode.notice->find("Recording"), std::string::npos);
+    EXPECT_NE(mode.notice->find("Self-notes"), std::string::npos);
     EXPECT_EQ(controller->view().default_character_id, null_agent_handle);
 
     const ControllerUpdate first =

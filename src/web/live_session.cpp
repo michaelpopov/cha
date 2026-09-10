@@ -452,7 +452,8 @@ void LiveSession::execute(OwnerCommand command) {
         } else if constexpr (std::is_same_v<T, SetDefaultCharacterCommand>) {
             CommandResult result{
                 .session = controller.set_default_character_by_id(value.character_id)};
-            if (requires_snapshot(result.session)) {
+            if (requires_snapshot(result.session)
+                && controller.view().default_character_id != null_agent_handle) {
                 result.persist_default_character_id =
                     std::string(controller.view().default_character_id);
             }

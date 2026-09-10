@@ -316,6 +316,16 @@ TEST(LiveSession, RoutesRawAndTypedCommandsOnOneOwnerThread) {
         host->submit(SetDefaultCharacterCommand{"guide"}, 2s)));
     EXPECT_EQ(persisted_default, "guide");
 
+    EXPECT_TRUE(std::holds_alternative<CommandResult>(
+        host->submit(SetDefaultCharacterCommand{"-"}, 2s)));
+    EXPECT_EQ(persisted_default, "guide");
+    const auto recording = host->snapshot(2s);
+    ASSERT_TRUE(std::holds_alternative<SessionSnapshot>(recording));
+    EXPECT_EQ(std::get<SessionSnapshot>(recording).default_character_id, "-");
+
+    EXPECT_TRUE(std::holds_alternative<CommandResult>(
+        host->submit(SetDefaultCharacterCommand{"guide"}, 2s)));
+
     const auto renamed = host->submit(RenameSessionCommand{"Renamed live"}, 2s);
     ASSERT_TRUE(std::holds_alternative<SessionLabelResult>(renamed));
     EXPECT_EQ(std::get<SessionLabelResult>(renamed).label, "Renamed live");

@@ -865,7 +865,7 @@ ControllerUpdate SessionController::set_default_character(std::string_view handl
         default_character_id_ = std::string(null_agent_handle);
         require_snapshot(update);
         update.notice =
-            "Recording to @- — messages are saved to the transcript but not"
+            "Self-notes (@-) — messages are saved to the transcript but not"
             " sent to a model. Use /@<name> to resume.";
         return update;
     }
@@ -889,6 +889,14 @@ ControllerUpdate SessionController::set_default_character_by_id(std::string_view
     }
     // This typed action submits no editor text, so it never clears a draft.
     ControllerUpdate update;
+    if (id == null_agent_handle) {
+        default_character_id_ = std::string(null_agent_handle);
+        require_snapshot(update);
+        update.notice =
+            "Self-notes (@-) — messages are saved to the transcript but not"
+            " sent to a model. Choose a character to resume.";
+        return update;
+    }
     const std::shared_ptr<const Workspace> current = workspace();
     const CharacterMetadata* character =
         current->find_forum_character(identity_.forum_id, id);
