@@ -40,6 +40,7 @@ const char* cha_runtime_voice_input_keyword(
 // Returns null unless api-keys.json contains one key named
 // ELEVENLABS_API_KEY. This credential is consumed only by the macOS shell.
 const char* cha_runtime_text_to_speech_api_key(const ChaRuntime* runtime);
+const char* cha_runtime_text_to_speech_model(const ChaRuntime* runtime);
 
 // Return 1 on success and 0 on a failure the caller can retry. -1 means the
 // workspace database could not be reopened afterwards: this process can no

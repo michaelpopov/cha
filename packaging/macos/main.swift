@@ -357,13 +357,14 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
 
     private func textToSpeechConfigurationScript() -> WKUserScript? {
         guard let runtime,
-              let apiKey = cha_runtime_text_to_speech_api_key(runtime) else {
+              let apiKey = cha_runtime_text_to_speech_api_key(runtime),
+              let model = cha_runtime_text_to_speech_model(runtime) else {
             return nil
         }
         let configuration: [String: Any] = [
             "url": "https://api.elevenlabs.io/v1/text-to-speech/JBFqnCBsd6RMkjVDRZzb?output_format=mp3_44100_128",
             "apiKey": String(cString: apiKey),
-            "model": "eleven_multilingual_v2",
+            "model": String(cString: model),
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: configuration),
               let json = String(data: data, encoding: .utf8) else {

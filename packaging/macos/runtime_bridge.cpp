@@ -26,6 +26,7 @@ struct ChaRuntime {
     std::optional<cha::web::VoiceInputConfig> voice_input;
     std::string voice_input_api_key;
     std::string text_to_speech_api_key;
+    std::string text_to_speech_model;
     int port{};
     bool logging{};
 };
@@ -151,6 +152,7 @@ ChaRuntime* cha_runtime_create(
             command.log_file, command.log_level);
         runtime->logging = true;
         runtime->voice_input = command.voice_input;
+        runtime->text_to_speech_model = command.text_to_speech_model;
         ApiKeyStore api_keys(
             command.config_directory / "api-keys.json");
         if (runtime->voice_input) {
@@ -267,6 +269,11 @@ const char* cha_runtime_voice_input_keyword(
 const char* cha_runtime_text_to_speech_api_key(const ChaRuntime* runtime) {
     return runtime && !runtime->text_to_speech_api_key.empty()
         ? runtime->text_to_speech_api_key.c_str() : nullptr;
+}
+
+const char* cha_runtime_text_to_speech_model(const ChaRuntime* runtime) {
+    return runtime && !runtime->text_to_speech_model.empty()
+        ? runtime->text_to_speech_model.c_str() : nullptr;
 }
 
 int32_t cha_runtime_upload(

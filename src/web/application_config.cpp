@@ -547,7 +547,7 @@ ConfigurationDirectory load_configuration_directory(
     reject_unknown_fields(
         app,
         app_file,
-        {"vault", "web", "logging", "voice_input"},
+        {"vault", "web", "logging", "voice_input", "text_to_speech"},
         "root",
         app_kind);
     const std::string configured_vault =
@@ -597,6 +597,19 @@ ConfigurationDirectory load_configuration_directory(
             voice, app_file, "keywords", app_kind);
         voice_input = std::move(configuration);
     }
+    std::string text_to_speech_model(default_text_to_speech_model);
+    if (app.contains("text_to_speech")) {
+        const toml::table& speech =
+            required_table(app, app_file, "text_to_speech", app_kind);
+        reject_unknown_fields(
+            speech,
+            app_file,
+            {"model"},
+            "[text_to_speech]",
+            app_kind);
+        text_to_speech_model =
+            required_string(speech, app_file, "model", app_kind);
+    }
 
     std::vector<std::filesystem::path> vault_files;
     for (const std::filesystem::directory_entry& entry :
@@ -645,6 +658,7 @@ ConfigurationDirectory load_configuration_directory(
             root, app_file, "logging.file", log_file, app_kind),
         .log_level = log_level,
         .voice_input = std::move(voice_input),
+        .text_to_speech_model = std::move(text_to_speech_model),
     };
 }
 
@@ -739,6 +753,7 @@ ApplicationCommand parse_application_command(
         .log_level = settings.log_level,
         .test_idle_grace_ms = options.test_idle_grace_ms,
         .voice_input = settings.voice_input,
+        .text_to_speech_model = settings.text_to_speech_model,
     };
 }
 

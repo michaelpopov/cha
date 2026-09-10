@@ -130,6 +130,40 @@ TEST_F(ApplicationConfigTest, LoadsUnifiedExternalConfigWithEqualsSyntax) {
     EXPECT_FALSE(command.upload);
     EXPECT_FALSE(command.download);
     EXPECT_FALSE(command.voice_input);
+    EXPECT_EQ(command.text_to_speech_model, "eleven_multilingual_v2");
+}
+
+TEST_F(ApplicationConfigTest, LoadsTextToSpeechModel) {
+    write_app(
+        "vault = \"Personal\"\n"
+        "[web]\nhost = \"127.0.0.1\"\nport = 8080\n"
+        "[logging]\nfile = \"logs/cha.log\"\nlevel = \"info\"\n"
+        "[text_to_speech]\n"
+        "model = \"eleven_flash_v2_5\"\n");
+
+    const ApplicationCommand command =
+        load({"chaweb", "--config", config_.string()});
+    EXPECT_EQ(command.text_to_speech_model, "eleven_flash_v2_5");
+}
+
+TEST_F(ApplicationConfigTest, RejectsInvalidTextToSpeechConfiguration) {
+    const std::string prefix =
+        "vault = \"Personal\"\n"
+        "[web]\nhost = \"127.0.0.1\"\nport = 8080\n"
+        "[logging]\nfile = \"logs/cha.log\"\nlevel = \"info\"\n";
+
+    write_app(prefix + "[text_to_speech]\nmodel = \"\"\n");
+    EXPECT_NE(
+        error_text({"chaweb", "--config", config_.string()}).find("model"),
+        std::string::npos);
+
+    write_app(
+        prefix + "[text_to_speech]\nmodel = \"eleven_flash_v2_5\"\n"
+        "unexpected = true\n");
+    EXPECT_NE(
+        error_text({"chaweb", "--config", config_.string()})
+            .find("unknown field 'unexpected'"),
+        std::string::npos);
 }
 
 TEST_F(ApplicationConfigTest, LoadsOptionalVoiceInputConfiguration) {
