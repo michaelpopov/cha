@@ -627,6 +627,25 @@ ControllerUpdate SessionController::uncover_conversation() {
     };
 }
 
+ControllerUpdate SessionController::delete_turn(EntryId response_entry_id) {
+    if (is_generating()) {
+        return busy_notice();
+    }
+    if (!transcript_.can_delete_turn(response_entry_id)) {
+        return {.notice = "Response was not found"};
+    }
+    persist(
+        "delete a transcript turn",
+        [this, response_entry_id] { journal_.delete_turn(response_entry_id); });
+    if (!transcript_.delete_turn(response_entry_id)) {
+        throw std::logic_error("Durable turn was missing from the transcript");
+    }
+    return {
+        .state = SnapshotRequired{},
+        .input_consumed = true,
+    };
+}
+
 ControllerUpdate SessionController::start_multicast(
     std::string_view author_id,
     std::string text,

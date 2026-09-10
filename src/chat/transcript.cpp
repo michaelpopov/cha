@@ -233,6 +233,42 @@ void Transcript::replace_entries(std::vector<TranscriptEntry> entries) {
     ++revision_;
 }
 
+bool Transcript::can_delete_turn(EntryId response_entry_id) const {
+    if (open_entry_id_) return false;
+    const auto response = std::ranges::find(
+        entries_, response_entry_id, &TranscriptEntry::id);
+    if (response == entries_.end()
+        || response->kind != EntryKind::character
+        || !response->request_id) {
+        return false;
+    }
+    return std::ranges::any_of(entries_, [request_id = response->request_id](
+                                             const TranscriptEntry& entry) {
+        return entry.kind == EntryKind::human
+            && entry.request_id == request_id;
+    });
+}
+
+bool Transcript::delete_turn(EntryId response_entry_id) {
+    if (!can_delete_turn(response_entry_id)) return false;
+    const auto response = std::ranges::find(
+        entries_, response_entry_id, &TranscriptEntry::id);
+    const RequestId request_id = *response->request_id;
+    std::erase_if(entries_, [request_id](const TranscriptEntry& entry) {
+        return entry.request_id == request_id;
+    });
+    if (covered_until_ && std::ranges::none_of(
+            entries_, [boundary = *covered_until_](const TranscriptEntry& entry) {
+                const bool marker = entry.kind == EntryKind::notice
+                    && entry.text.empty();
+                return entry.id < boundary && !marker;
+            })) {
+        covered_until_.reset();
+    }
+    ++revision_;
+    return true;
+}
+
 bool Transcript::cover(
     EntryId marker_id,
     std::optional<EntryId> through_entry_id) {

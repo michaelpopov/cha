@@ -28,6 +28,7 @@ import {
   getVoiceInputConfiguration,
   VoiceInputSession,
 } from '../voiceInput';
+import { ConfirmDialog } from './ConfirmDialog';
 import {
   EyeIcon,
   EyeOffIcon,
@@ -36,6 +37,7 @@ import {
   SpeakerIcon,
   StopIcon,
   TargetIcon,
+  TrashIcon,
 } from './Icons';
 import { TransliterationToggle, useTransliteration } from './TransliterationMode';
 import { voiceClasses } from './characterAppearance';
@@ -44,6 +46,7 @@ import { voiceClasses } from './characterAppearance';
 // feeds it cannot drift apart.
 export interface ChatActions {
   onCoverConversation(throughEntryId: number): Promise<CommandResult>;
+  onDeleteTurn(responseEntryId: number): Promise<CommandResult>;
   onRetryStream(): void;
   onReturnToWelcome(): void;
   onSetDefaultCharacter(characterId: string): Promise<CommandResult>;
@@ -126,17 +129,19 @@ function TranscriptMessage({
   appearance,
   speechState,
   onToggleSpeech,
-  coverDisabled,
+  actionDisabled,
   onCover,
   onUncover,
+  onDelete,
 }: {
   entry: SessionSnapshot['transcript'][number];
   appearance: CharacterAppearance | undefined;
   speechState: 'idle' | 'loading' | 'playing';
   onToggleSpeech(entry: SessionSnapshot['transcript'][number]): void;
-  coverDisabled: boolean;
+  actionDisabled: boolean;
   onCover?: (entry: SessionSnapshot['transcript'][number]) => void;
   onUncover?: () => void;
+  onDelete?: (entry: SessionSnapshot['transcript'][number]) => void;
 }) {
   const canRead = entry.kind === 'character'
     && entry.status === 'complete'
@@ -144,6 +149,7 @@ function TranscriptMessage({
   const canCover = entry.kind === 'character'
     && (entry.status === 'complete' || entry.status === 'cancelled')
     && entry.created_at !== null;
+  const canDelete = canCover && entry.request_id !== undefined;
   const speechLabel = speechState === 'loading'
     ? `Generating audio for ${entry.display_name}'s response`
     : speechState === 'playing'
@@ -194,12 +200,24 @@ function TranscriptMessage({
             <button
               aria-label={coverLabel}
               className={`cha-message-action${onUncover ? ' is-active' : ''}`}
-              disabled={coverDisabled}
+              disabled={actionDisabled}
               onClick={() => onUncover ? onUncover() : onCover?.(entry)}
               title={coverLabel}
               type="button"
             >
               {onUncover ? <EyeIcon /> : <EyeOffIcon />}
+            </button>
+          )}
+          {canDelete && onDelete && (
+            <button
+              aria-label={`Delete ${entry.display_name}'s response and its prompt`}
+              className="cha-message-action cha-danger-icon-action"
+              disabled={actionDisabled}
+              onClick={() => onDelete(entry)}
+              title={`Delete ${entry.display_name}'s response and its prompt`}
+              type="button"
+            >
+              <TrashIcon />
             </button>
           )}
         </div>
@@ -234,6 +252,7 @@ export function ChatScreen({
   onRetryStream,
   onReturnToWelcome,
   onCoverConversation,
+  onDeleteTurn,
   onSetDefaultCharacter,
   onStopGeneration,
   onSubmitInput,
@@ -251,7 +270,7 @@ export function ChatScreen({
   const transliteration = useTransliteration<HTMLTextAreaElement>(draft);
   const [actionError, setActionError] = useState<string | null>(null);
   const [pendingAction, setPendingAction] = useState<
-    'send' | 'stop' | 'target' | 'cover' | null
+    'send' | 'stop' | 'target' | 'cover' | 'delete' | null
   >(null);
   const [voiceInputState, setVoiceInputState] = useState<
     'idle' | 'starting' | 'recording' | 'finishing'
@@ -263,6 +282,10 @@ export function ChatScreen({
   const [spokenEntry, setSpokenEntry] = useState<{
     id: number;
     state: 'loading' | 'playing';
+  } | null>(null);
+  const [turnToDelete, setTurnToDelete] = useState<{
+    id: number;
+    displayName: string;
   } | null>(null);
   const composerInput = transliteration.field;
   const chatArea = useRef<HTMLElement | null>(null);
@@ -318,6 +341,7 @@ export function ChatScreen({
   useEffect(() => {
     followingLatest.current = true;
     setSendToAll(false);
+    setTurnToDelete(null);
   }, [conversationKey]);
 
   // A recording belongs to the conversation in which it started.
@@ -378,6 +402,24 @@ export function ChatScreen({
     try {
       if (throughEntryId === undefined) await onUncoverConversation();
       else await onCoverConversation(throughEntryId);
+    } catch (failure: unknown) {
+      setActionError(actionMessage(failure));
+    } finally {
+      setPendingAction(null);
+    }
+  }
+
+  async function deleteTurn(responseEntryId: number) {
+    if (!connected || generationActive || pendingAction) return;
+    setPendingAction('delete');
+    setActionError(null);
+    try {
+      if (spokenEntry?.id === responseEntryId) {
+        textToSpeechSession.current?.stop();
+        textToSpeechSession.current = null;
+        setSpokenEntry(null);
+      }
+      await onDeleteTurn(responseEntryId);
     } catch (failure: unknown) {
       setActionError(actionMessage(failure));
     } finally {
@@ -658,12 +700,16 @@ export function ChatScreen({
                 {dividerBefore && <hr className="cha-repeated-prompt-divider" />}
                 <TranscriptMessage
                   appearance={voices.get(entry.participant_id)}
-                  coverDisabled={!connected || generationActive || pendingAction !== null}
+                  actionDisabled={!connected || generationActive || pendingAction !== null}
                   entry={entry}
                   onCover={entry.id === boundaryEntryId
                     ? undefined
                     : (coveredEntry) => changeCover(coveredEntry.id)}
                   onToggleSpeech={toggleSpeech}
+                  onDelete={(response) => setTurnToDelete({
+                    id: response.id,
+                    displayName: response.display_name,
+                  })}
                   onUncover={entry.id === boundaryEntryId ? () => changeCover() : undefined}
                   speechState={spokenEntry?.id === entry.id ? spokenEntry.state : 'idle'}
                 />
@@ -676,10 +722,14 @@ export function ChatScreen({
             {dividerBefore && <hr className="cha-repeated-prompt-divider" />}
             <TranscriptMessage
               appearance={voices.get(entry.participant_id)}
-              coverDisabled={!connected || generationActive || pendingAction !== null}
+              actionDisabled={!connected || generationActive || pendingAction !== null}
               entry={entry}
               onCover={(coveredEntry) => changeCover(coveredEntry.id)}
               onToggleSpeech={toggleSpeech}
+              onDelete={(response) => setTurnToDelete({
+                id: response.id,
+                displayName: response.display_name,
+              })}
               speechState={spokenEntry?.id === entry.id ? spokenEntry.state : 'idle'}
             />
           </Fragment>
@@ -828,6 +878,19 @@ export function ChatScreen({
           />
         </div>
       </div>
+      {turnToDelete && (
+        <ConfirmDialog
+          confirmLabel="Delete response"
+          message={`Delete ${turnToDelete.displayName}'s response and the prompt that generated it? This cannot be undone.`}
+          onCancel={() => setTurnToDelete(null)}
+          onConfirm={() => {
+            const responseEntryId = turnToDelete.id;
+            setTurnToDelete(null);
+            void deleteTurn(responseEntryId);
+          }}
+          title="Delete response?"
+        />
+      )}
     </section>
   );
 }

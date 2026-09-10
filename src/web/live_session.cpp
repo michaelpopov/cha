@@ -83,7 +83,7 @@ std::string_view generation_terminal_status(
     return "unknown";
 }
 
-static_assert(std::variant_size_v<WebCommand> == 8);
+static_assert(std::variant_size_v<WebCommand> == 9);
 
 } // namespace
 
@@ -453,6 +453,8 @@ void LiveSession::execute(OwnerCommand command) {
             return {.session = controller.cover_conversation(value.through_entry_id)};
         } else if constexpr (std::is_same_v<T, UncoverCommand>) {
             return {.session = controller.uncover_conversation()};
+        } else if constexpr (std::is_same_v<T, DeleteTurnCommand>) {
+            return {.session = controller.delete_turn(value.response_entry_id)};
         } else if constexpr (std::is_same_v<T, SetDefaultCharacterCommand>) {
             CommandResult result{
                 .session = controller.set_default_character_by_id(value.character_id)};

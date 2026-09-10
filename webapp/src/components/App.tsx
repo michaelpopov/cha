@@ -98,6 +98,7 @@ function Screen({
   onOpenSession,
   onRetrySession,
   onCoverConversation,
+  onDeleteTurn,
   onRetryStream,
   onReturnToWelcome,
   onSetDefaultCharacter,
@@ -127,6 +128,7 @@ function Screen({
       <ChatScreen
         dispatch={dispatch}
         onCoverConversation={onCoverConversation}
+        onDeleteTurn={onDeleteTurn}
         onRetryStream={onRetryStream}
         onReturnToWelcome={onReturnToWelcome}
         onSetDefaultCharacter={onSetDefaultCharacter}
@@ -916,6 +918,16 @@ export function App({
     ));
   }, [client, runMutation, state.activeConversation]);
 
+  const deleteTurn = useCallback((responseEntryId: number) => {
+    const active = state.activeConversation;
+    if (!active) return Promise.reject(new Error('No live conversation is selected.'));
+    return runMutation(active, 'delete-turn', () => client.deleteTurn(
+      active.forumId,
+      active.sessionId,
+      { response_entry_id: responseEntryId },
+    ));
+  }, [client, runMutation, state.activeConversation]);
+
   const stopGeneration = useCallback(() => {
     const active = state.activeConversation;
     if (!active) return Promise.reject(new Error('No live conversation is selected.'));
@@ -1126,6 +1138,7 @@ export function App({
                 client={client}
                 dispatch={navigate}
                 onCoverConversation={coverConversation}
+                onDeleteTurn={deleteTurn}
                 onCreateSession={createConversation}
                 onOpenSession={openConversation}
                 onRetryStream={retryStream}

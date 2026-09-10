@@ -206,6 +206,55 @@ TEST(Transcript, ReplacesEntries) {
     EXPECT_EQ(transcript.view().entries.size(), 2U);
 }
 
+TEST(Transcript, DeletesAResponseAndItsPromptAsOneTurn) {
+    Transcript transcript;
+    transcript.add_entry(human(1, "First question", 10));
+    transcript.add_entry(make_character_entry(
+        2, "reviewer-id", "Reviewer", "First answer", EntryStatus::complete, 10));
+    transcript.add_entry(human(3, "Second question", 11));
+    transcript.add_entry(make_character_entry(
+        4, "reviewer-id", "Reviewer", "Second answer", EntryStatus::complete, 11));
+    const std::size_t revision = transcript.view().revision;
+
+    EXPECT_TRUE(transcript.can_delete_turn(2));
+    EXPECT_TRUE(transcript.delete_turn(2));
+    EXPECT_EQ(transcript.view().revision, revision + 1);
+    expect_entries(
+        transcript.view().entries,
+        {
+            human(3, "Second question", 11),
+            make_character_entry(
+                4, "reviewer-id", "Reviewer", "Second answer", EntryStatus::complete, 11),
+        });
+    EXPECT_FALSE(transcript.delete_turn(1));
+    EXPECT_FALSE(transcript.delete_turn(99));
+}
+
+TEST(Transcript, DoesNotDeleteATurnWhileItsResponseIsStreaming) {
+    Transcript transcript;
+    transcript.add_entry(human(1, "Question", 10));
+    transcript.begin_entry(make_character_entry(
+        2, "reviewer-id", "Reviewer", {}, EntryStatus::streaming, 10));
+
+    EXPECT_FALSE(transcript.can_delete_turn(2));
+    EXPECT_FALSE(transcript.delete_turn(2));
+    EXPECT_EQ(transcript.view().entries.size(), 2U);
+}
+
+TEST(Transcript, ClearsACoverBoundaryWhenDeletingItsOnlyCoveredTurn) {
+    Transcript transcript;
+    transcript.add_entry(human(1, "Question", 10));
+    transcript.add_entry(make_character_entry(
+        2, "reviewer-id", "Reviewer", "Answer", EntryStatus::complete, 10));
+    EXPECT_TRUE(transcript.cover(3));
+    ASSERT_EQ(transcript.view().covered_until, 3U);
+
+    EXPECT_TRUE(transcript.delete_turn(2));
+
+    EXPECT_EQ(transcript.view().covered_until, std::nullopt);
+    expect_entries(transcript.view().entries, {make_cover_marker(3)});
+}
+
 TEST(Transcript, ManagesCoverBoundaryAndTransientMarkersAtomically) {
     Transcript transcript;
 
@@ -531,6 +580,25 @@ TEST(SessionJournal, ReplaysIdentifiedTypedTurnOutcomes) {
             human(3, "Second", 8),
             make_error_entry(4, "Unavailable", 8, "guide-id"),
         });
+    journal.reset();
+    std::filesystem::remove(path);
+}
+
+TEST(SessionJournal, DeletesACompletedTurnWithoutReusingItsIds) {
+    const auto path = temporary_path("cha_delete_turn_journal_");
+    create_test_database(path);
+    auto journal = std::make_unique<SessionJournal>(path);
+    journal->start_turn(7, human(1, "Question", 7));
+    journal->complete_turn(7, make_character_entry(
+        2, "guide-id", "Guide", "Answer", EntryStatus::complete, 7));
+
+    journal->delete_turn(2);
+
+    const SessionRestore restored = load_session_state(path);
+    EXPECT_TRUE(restored.entries.empty());
+    EXPECT_EQ(restored.next_request_id, 8U);
+    EXPECT_EQ(restored.next_entry_id, 3U);
+    EXPECT_THROW(journal->delete_turn(2), std::invalid_argument);
     journal.reset();
     std::filesystem::remove(path);
 }

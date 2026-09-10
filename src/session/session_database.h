@@ -79,6 +79,7 @@ public:
     void complete_turn(RequestId request_id, const TranscriptEntry& response);
     void cancel_turn(RequestId request_id, std::optional<TranscriptEntry> response);
     void fail_turn(RequestId request_id, const TranscriptEntry& error);
+    void delete_turn(EntryId response_entry_id);
     void rename(std::string_view label);
 
 private:

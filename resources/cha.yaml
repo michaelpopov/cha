@@ -1569,6 +1569,38 @@ paths:
         "503":
           $ref: "#/components/responses/CommandUnavailable"
 
+  /s/{forum_id}/{session_id}/api/v1/actions/delete-turn:
+    parameters:
+      - $ref: "#/components/parameters/ForumId"
+      - $ref: "#/components/parameters/SessionId"
+    post:
+      tags: [Live sessions]
+      operationId: deleteTurn
+      summary: Delete a response and its prompt
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeleteTurnRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/CommandAccepted"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/ForbiddenMutation"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/SessionNotLive"
+        "413":
+          $ref: "#/components/responses/BodyTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/CommandUnavailable"
+
   /s/{forum_id}/{session_id}/api/v1/actions/default-character:
     parameters:
       - $ref: "#/components/parameters/ForumId"
@@ -2600,6 +2632,15 @@ components:
       required: [through_entry_id]
       properties:
         through_entry_id:
+          type: integer
+          minimum: 1
+
+    DeleteTurnRequest:
+      type: object
+      additionalProperties: false
+      required: [response_entry_id]
+      properties:
+        response_entry_id:
           type: integer
           minimum: 1
 

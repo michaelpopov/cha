@@ -203,6 +203,74 @@ describe('live chat', () => {
     expect(stop).toHaveBeenCalledOnce();
   });
 
+  it('deletes a response with the prompt that generated it', async () => {
+    const deleteTurn = vi.fn(async () => ({ clear_input: false }));
+    const events = drivableEvents();
+    const transcript: SessionSnapshot['transcript'] = [
+      {
+        id: 1, kind: 'human', participant_id: 'guest', display_name: 'Guest',
+        addressed_to: 'assistant', addressed_to_name: 'Assistant',
+        text: 'Question', status: 'complete', request_id: 5, created_at: 1_700_000_000,
+      },
+      {
+        id: 2, kind: 'character', participant_id: 'assistant', display_name: 'Assistant',
+        addressed_to: '', addressed_to_name: '',
+        text: 'Answer', status: 'complete', request_id: 5, created_at: 1_700_000_001,
+      },
+    ];
+    render(<App
+      client={fixtureClient({ deleteTurn })}
+      connectSessionEvents={events.connect}
+    />);
+    await attachInitial(events, { ...snapshotFixture, transcript });
+
+    fireEvent.click(screen.getByRole('button', {
+      name: "Delete Assistant's response and its prompt",
+    }));
+    const dialog = within(await screen.findByRole('dialog'));
+    expect(dialog.getByText(/This cannot be undone/)).toBeInTheDocument();
+    expect(deleteTurn).not.toHaveBeenCalled();
+    fireEvent.click(dialog.getByRole('button', { name: 'Delete response' }));
+    await waitFor(() => expect(deleteTurn).toHaveBeenCalledWith(
+      'entrance', 'welcome', { response_entry_id: 2 },
+    ));
+
+    act(() => events.handlers[0].onSnapshot({
+      ...snapshotFixture,
+      transcript: [],
+    }));
+    expect(screen.queryByText('Question')).not.toBeInTheDocument();
+    expect(screen.queryByText('Answer')).not.toBeInTheDocument();
+  });
+
+  it('keeps a response when deletion is cancelled', async () => {
+    const deleteTurn = vi.fn(async () => ({ clear_input: false }));
+    const events = drivableEvents();
+    render(<App
+      client={fixtureClient({ deleteTurn })}
+      connectSessionEvents={events.connect}
+    />);
+    await attachInitial(events, {
+      ...snapshotFixture,
+      transcript: [{
+        id: 2, kind: 'character', participant_id: 'assistant', display_name: 'Assistant',
+        addressed_to: '', addressed_to_name: '', text: 'Keep me', status: 'complete',
+        request_id: 5, created_at: 1_700_000_001,
+      }],
+    });
+
+    fireEvent.click(screen.getByRole('button', {
+      name: "Delete Assistant's response and its prompt",
+    }));
+    fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', {
+      name: 'Cancel',
+    }));
+
+    expect(deleteTurn).not.toHaveBeenCalled();
+    expect(screen.getByText('Keep me')).toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
   it('covers through a cancelled response and shows one uncover control', async () => {
     const coverConversation = vi.fn(async () => ({ clear_input: false }));
     const uncoverConversation = vi.fn(async () => ({ clear_input: false }));

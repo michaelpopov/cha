@@ -323,6 +323,12 @@ The `Transcript` class enforces several central invariants:
 - An error entry has failed status.
 - A live streaming entry cannot be stored as a terminal record.
 
+`Transcript::delete_turn()` accepts the entry ID of a saved character response
+and removes every transcript entry with that request ID: the response and its
+matching human prompt. It refuses streaming or unidentified entries. If the
+deletion leaves no non-marker content below the active cover boundary, it also
+clears that now-orphaned boundary.
+
 The factory functions (`make_human_entry`, `make_character_entry`, and so on)
 make valid intent visible at call sites. Validation still exists at boundaries;
 factories are not a reason to trust arbitrary loaded data.
@@ -1152,8 +1158,8 @@ Parsing is divided among:
 The parser belongs in `web` because it adapts one input protocol. The
 controller exposes typed actions and remains usable without slash-command
 syntax. Only `/mcast` remains a raw command. Character selection, stopping
-generation, and covering or uncovering model context use typed Web UI actions
-instead.
+generation, covering or uncovering model context, and deleting a completed turn
+use typed Web UI actions instead.
 
 ### 12.4 The owner loop
 
@@ -1229,6 +1235,9 @@ GET  /s/{forum}/{session}/api/v1/session
 GET  /s/{forum}/{session}/api/v1/events
 POST /s/{forum}/{session}/api/v1/input
 POST /s/{forum}/{session}/api/v1/actions/stop
+POST /s/{forum}/{session}/api/v1/actions/cover
+POST /s/{forum}/{session}/api/v1/actions/uncover
+POST /s/{forum}/{session}/api/v1/actions/delete-turn
 POST /s/{forum}/{session}/api/v1/actions/default-character
 ```
 
@@ -1379,6 +1388,14 @@ the optional voice output control; selecting it posts the response ID as
 `through_entry_id`. Only the response at the active boundary changes to an
 uncover control, so the action stays in place without creating duplicate
 controls.
+
+Saved character responses also expose a red delete control. It opens the
+in-page `ConfirmDialog` rather than `window.confirm`, because the macOS
+`WKWebView` shell does not implement JavaScript confirmation panels. Confirming
+posts the response entry ID as `response_entry_id`; the controller and journal
+then remove the response and its matching prompt and publish a fresh snapshot.
+The control is unavailable during generation and does not appear for Self-notes,
+failed turns, or cancelled turns that never recorded response text.
 
 The horizontal line above the composer is also its resize handle. Dragging it
 up or down changes the textarea's height while the transcript consumes the
@@ -1584,6 +1601,11 @@ SQLite enforces at most one started turn and one prompt per turn. Every journal
 transition is transactional. On startup, a leftover started turn means the
 previous process was interrupted; restore creates an `InterruptedTurn`, and the
 controller repairs it to failed before normal operation.
+
+Deleting a saved response is transactional too: `SessionJournal::delete_turn()`
+removes the prompt and response entries before removing their turn row. The
+session's next request and entry counters keep advancing, so deleted IDs are
+never reused.
 
 ### 14.2 Live actor lifecycle
 

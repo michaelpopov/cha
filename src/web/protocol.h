@@ -109,6 +109,10 @@ struct CoverCommand {
 
 struct UncoverCommand {};
 
+struct DeleteTurnCommand {
+    EntryId response_entry_id{};
+};
+
 struct SetDefaultCharacterCommand {
     CharacterId character_id;
 };
@@ -137,6 +141,7 @@ using WebCommand = std::variant<
     StopCommand,
     CoverCommand,
     UncoverCommand,
+    DeleteTurnCommand,
     SetDefaultCharacterCommand,
     RenameSessionCommand,
     SnapshotCommand,

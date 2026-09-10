@@ -749,21 +749,28 @@
           <strong>Stop</strong>. Select it to stop generation.
         </p>
 
-        <h3>Limit or restore model context</h3>
+        <h3>Use response controls</h3>
         <p>
           Small controls appear beside the timestamp below each AI response. When
           voice output is configured, the speaker button reads a completed response
           aloud. Select the crossed-out eye button to cover the conversation through
-          that response. The covered section remains visible, but later AI requests
-          do not receive it as context.
+          that response. Select the red trash button to remove that response and the
+          prompt that generated it. CHA asks for confirmation because this deletion
+          is permanent and cannot be undone.
         </p>
         <p>
-          The button stays beside the response that established the boundary and
-          changes to an eye. Select it to restore the entire conversation to model
-          context. Selecting the crossed-out eye beside an earlier covered response
-          moves the boundary backward and exposes the responses after it. These
-          controls are unavailable while CHA is generating a reply, and the cover
-          boundary is cleared when the session is reopened.
+          Covered conversation remains visible, but later AI requests do not receive
+          it as context. The eye button stays beside the response that established the
+          boundary. Select it to restore the entire conversation to model context.
+          Selecting the crossed-out eye beside an earlier covered response moves the
+          boundary backward and exposes the responses after it.
+        </p>
+        <p>
+          Delete is offered only for a saved AI response that has its matching prompt;
+          it does not apply to Self-notes, failed turns, or prompts stopped before an
+          answer was recorded. Response controls are unavailable while CHA is
+          generating a reply. A cover boundary is cleared when the session is reopened,
+          or when deleting a turn leaves no covered conversation beneath it.
         </p>
 
         <h3>Write in any language</h3>

@@ -83,6 +83,7 @@ describe('CHA API client', () => {
     });
     await client.coverConversation('forum', 'session', { through_entry_id: 7 });
     await client.uncoverConversation('forum', 'session');
+    await client.deleteTurn('forum', 'session', { response_entry_id: 8 });
     await client.deletePersona('read er');
     await client.deleteCharacter('a b');
     await client.deleteForum('f one');
@@ -117,6 +118,7 @@ describe('CHA API client', () => {
       '/api/v1/forums/f%20one/members',
       '/s/forum/session/api/v1/actions/cover',
       '/s/forum/session/api/v1/actions/uncover',
+      '/s/forum/session/api/v1/actions/delete-turn',
       '/api/v1/personas/read%20er',
       '/api/v1/characters/a%20b',
       '/api/v1/forums/f%20one',
@@ -139,6 +141,7 @@ describe('CHA API client', () => {
     expect(fetcher.mock.calls[11][1]?.body).toBe('{"text":"Hello"}');
     expect(fetcher.mock.calls[27][1]?.body).toBe('{"through_entry_id":7}');
     expect(fetcher.mock.calls[28][1]?.body).toBe('{}');
+    expect(fetcher.mock.calls[29][1]?.body).toBe('{"response_entry_id":8}');
     for (const call of fetcher.mock.calls.slice(-3)) {
       expect(call[1]?.method).toBe('DELETE');
       expect(call[1]?.body).toBe('{}');

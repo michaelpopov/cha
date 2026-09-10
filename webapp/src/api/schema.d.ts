@@ -944,6 +944,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/s/{forum_id}/{session_id}/api/v1/actions/delete-turn": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Stable URL-safe forum identifier. */
+                forum_id: components["parameters"]["ForumId"];
+                /** @description Stable URL-safe session identifier. */
+                session_id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Delete a response and its prompt */
+        post: operations["deleteTurn"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/s/{forum_id}/{session_id}/api/v1/actions/default-character": {
         parameters: {
             query?: never;
@@ -1327,6 +1349,9 @@ export interface components {
         };
         CoverRequest: {
             through_entry_id: number;
+        };
+        DeleteTurnRequest: {
+            response_entry_id: number;
         };
         SetDefaultCharacterRequest: {
             character_id: string;
@@ -3052,6 +3077,34 @@ export interface operations {
             cookie?: never;
         };
         requestBody: components["requestBodies"]["EmptyJsonObject"];
+        responses: {
+            200: components["responses"]["CommandAccepted"];
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["ForbiddenMutation"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["SessionNotLive"];
+            413: components["responses"]["BodyTooLarge"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["CommandUnavailable"];
+        };
+    };
+    deleteTurn: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Stable URL-safe forum identifier. */
+                forum_id: components["parameters"]["ForumId"];
+                /** @description Stable URL-safe session identifier. */
+                session_id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeleteTurnRequest"];
+            };
+        };
         responses: {
             200: components["responses"]["CommandAccepted"];
             400: components["responses"]["BadRequest"];

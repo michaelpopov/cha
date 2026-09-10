@@ -152,6 +152,8 @@ public:
     void finish_entry(EntryId entry_id, EntryStatus status);
     void discard_entry(EntryId entry_id);
     void replace_entries(std::vector<TranscriptEntry> entries);
+    [[nodiscard]] bool can_delete_turn(EntryId response_entry_id) const;
+    [[nodiscard]] bool delete_turn(EntryId response_entry_id);
 
     // Each successful mutation also appends its transient presentation marker.
     [[nodiscard]] bool cover(

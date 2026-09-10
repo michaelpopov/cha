@@ -644,6 +644,43 @@ void SessionJournal::fail_turn(
         TurnState::failed, &error);
 }
 
+void SessionJournal::delete_turn(EntryId response_entry_id) {
+    Transaction transaction(impl_->database);
+    std::optional<RequestId> request_id;
+    {
+        Statement response = impl_->database.prepare(
+            "SELECT request_id FROM entries WHERE session_key = ?1 "
+            "AND entry_id = ?2 AND kind = 1",
+            impl_->session_key,
+            sqlite_id(response_entry_id, "Transcript entry ID"));
+        if (response.step() && !response.is_null(0)) {
+            request_id = unsigned_id(response.integer(0), "request ID");
+        }
+    }
+    if (!request_id) {
+        throw std::invalid_argument(
+            "Response entry does not identify a completed turn");
+    }
+    Statement entries = impl_->database.prepare(
+        "DELETE FROM entries WHERE session_key = ?1 AND request_id = ?2",
+        impl_->session_key,
+        sqlite_id(*request_id, "Request ID"));
+    entries.run();
+    if (impl_->database.changes() != 2) {
+        throw std::runtime_error("Turn does not contain one prompt and response");
+    }
+    Statement turn = impl_->database.prepare(
+        "DELETE FROM turns WHERE session_key = ?1 AND request_id = ?2",
+        impl_->session_key,
+        sqlite_id(*request_id, "Request ID"));
+    turn.run();
+    if (impl_->database.changes() != 1) {
+        throw std::runtime_error("Failed to delete transcript turn");
+    }
+    touch_session(impl_->database, impl_->session_key);
+    transaction.commit();
+}
+
 void SessionJournal::rename(std::string_view label) {
     Transaction transaction(impl_->database);
     Statement update = impl_->database.prepare(

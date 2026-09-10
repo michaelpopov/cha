@@ -94,6 +94,15 @@ CoverCommand parse_cover_command(const nlohmann::json& json) {
     return {static_cast<EntryId>(value.get<std::int64_t>())};
 }
 
+DeleteTurnCommand parse_delete_turn_command(const nlohmann::json& json) {
+    exact_keys(json, {"response_entry_id"});
+    const nlohmann::json& value = json.at("response_entry_id");
+    if (!value.is_number_integer() || value.get<std::int64_t>() <= 0) {
+        throw std::invalid_argument("Invalid web command");
+    }
+    return {static_cast<EntryId>(value.get<std::int64_t>())};
+}
+
 SetDefaultCharacterCommand parse_default_character_command(
     const nlohmann::json& json) {
     exact_keys(json, {"character_id"});

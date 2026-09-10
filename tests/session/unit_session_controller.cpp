@@ -1166,6 +1166,27 @@ TEST(SessionController, KeepsCoverMarkersOutOfTheSessionDatabase) {
     EXPECT_TRUE(load_transcript_entries(temporary.path).empty());
 }
 
+TEST(SessionController, DeletesAResponseAndItsPromptFromMemoryAndStorage) {
+    TemporaryJournal temporary;
+    auto controller = test::from_test_backends(
+        test::one_backend(std::make_unique<ScriptedBackend>(
+            GenerationResult{}, std::vector<std::string>{"Answer"})),
+        temporary.path,
+        notifier());
+
+    (void)controller->submit_prompt("operator", "Question");
+    receive_until_idle(*controller);
+    ASSERT_EQ(controller->view().transcript.entries.size(), 2U);
+
+    const ControllerUpdate deleted = controller->delete_turn(2);
+
+    EXPECT_TRUE(has_state_update(deleted));
+    EXPECT_TRUE(deleted.input_consumed);
+    EXPECT_TRUE(controller->view().transcript.entries.empty());
+    EXPECT_TRUE(load_transcript_entries(temporary.path).empty());
+    EXPECT_EQ(controller->delete_turn(2).notice, "Response was not found");
+}
+
 TEST(SessionController, CoversEarlierTurnsForTheNextRequestAndUncoversThemLater) {
     TemporaryJournal temporary;
     auto backend = std::make_unique<ScriptedBackend>(
@@ -1229,6 +1250,7 @@ TEST(SessionController, RejectsCoverCommandsWhileActive) {
 
     EXPECT_EQ(busy_controller->cover_conversation().notice, generation_in_progress_notice);
     EXPECT_EQ(busy_controller->uncover_conversation().notice, generation_in_progress_notice);
+    EXPECT_EQ(busy_controller->delete_turn(2).notice, generation_in_progress_notice);
     busy_controller->shutdown();
 }
 

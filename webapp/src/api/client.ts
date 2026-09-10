@@ -24,6 +24,7 @@ export type SessionSnapshot = components['schemas']['SessionSnapshot'];
 export type CommandResult = components['schemas']['CommandResult'];
 export type InputRequest = components['schemas']['InputRequest'];
 export type CoverRequest = components['schemas']['CoverRequest'];
+export type DeleteTurnRequest = components['schemas']['DeleteTurnRequest'];
 export type OpenAiAuth = components['schemas']['OpenAiAuth'];
 export type VaultDetail = components['schemas']['VaultDetail'];
 export type CreateVaultRequest = components['schemas']['CreateVaultRequest'];
@@ -136,6 +137,11 @@ export interface ChaClient {
     request: CoverRequest,
   ): Promise<CommandResult>;
   uncoverConversation(forumId: string, sessionId: string): Promise<CommandResult>;
+  deleteTurn(
+    forumId: string,
+    sessionId: string,
+    request: DeleteTurnRequest,
+  ): Promise<CommandResult>;
   stopGeneration(forumId: string, sessionId: string): Promise<CommandResult>;
   setDefaultCharacter(
     forumId: string,
@@ -594,6 +600,12 @@ export function createChaClient(
       fetcher,
       sessionApiUrl(forumId, sessionId, 'actions/uncover'),
       jsonMutation({}),
+    ),
+
+    deleteTurn: (forumId, sessionId, input) => requestJson<CommandResult>(
+      fetcher,
+      sessionApiUrl(forumId, sessionId, 'actions/delete-turn'),
+      jsonMutation(input),
     ),
 
     stopGeneration: (forumId, sessionId) => requestJson<CommandResult>(

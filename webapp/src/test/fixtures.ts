@@ -219,6 +219,7 @@ export function fixtureClient(overrides: Partial<ChaClient> = {}): ChaClient {
     submitInput: async () => ({ clear_input: true }),
     coverConversation: async () => ({ clear_input: false }),
     uncoverConversation: async () => ({ clear_input: false }),
+    deleteTurn: async () => ({ clear_input: false }),
     stopGeneration: async () => ({ clear_input: false }),
     setDefaultCharacter: async () => ({ clear_input: false }),
     getOpenAiAuth: async () => signedOutAuth,
