@@ -865,9 +865,6 @@ select:disabled {
 }
 
 .cha-covered-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
   color: var(--muted-foreground);
   font-size: 0.72rem;
 }

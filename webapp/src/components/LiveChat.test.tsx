@@ -262,7 +262,14 @@ describe('live chat', () => {
       covered_until: 7,
     }));
     expect(screen.getAllByRole('button', { name: 'Uncover transcript' })).toHaveLength(1);
-    fireEvent.click(screen.getByRole('button', { name: 'Uncover transcript' }));
+    const boundaryResponse = screen.getByText('Partial answer').closest('article');
+    if (!boundaryResponse) throw new Error('Expected the boundary response article');
+    expect(within(boundaryResponse).getByRole('button', { name: 'Uncover transcript' }))
+      .toBeInTheDocument();
+    expect(screen.getByRole('button', {
+      name: "Cover transcript through Assistant's response",
+    })).toBeInTheDocument();
+    fireEvent.click(within(boundaryResponse).getByRole('button', { name: 'Uncover transcript' }));
     await waitFor(() => expect(uncoverConversation).toHaveBeenCalledWith(
       'entrance', 'welcome',
     ));

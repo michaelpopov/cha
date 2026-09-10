@@ -1373,10 +1373,12 @@ ends and the next response to the same prompt begins without seeing the whole
 prompt again.
 
 The snapshot's `covered_until` field is the browser's only cover boundary.
-Entries before it appear in a shaded `Covered conversation` section with one
-uncover control in the section header. Complete and cancelled character
-responses with timestamps expose a cover control beside the optional voice
-output control; selecting it posts the response ID as `through_entry_id`.
+Entries before it appear in a shaded `Covered conversation` section. Complete
+and cancelled character responses with timestamps expose a cover control beside
+the optional voice output control; selecting it posts the response ID as
+`through_entry_id`. Only the response at the active boundary changes to an
+uncover control, so the action stays in place without creating duplicate
+controls.
 
 The horizontal line above the composer is also its resize handle. Dragging it
 up or down changes the textarea's height while the transcript consumes the

@@ -1049,7 +1049,7 @@ the choice, the reason, the main risk, and the next check.</code></pre>
               <tr><td>Record a note</td><td><code>@- My planning note</code></td><td>Saves text into the transcript without calling a model.</td></tr>
               <tr><td>Save several Self-notes</td><td>Choose <strong>Self-notes</strong> in the target menu</td><td>Makes ordinary messages save-only until you choose a character again.</td></tr>
               <tr><td>Start a fresh phase</td><td>Select the crossed-out eye beside a response</td><td>Keeps the conversation through that response visible but hides it from later model context.</td></tr>
-              <tr><td>Bring history back</td><td>Select the eye in the <strong>Covered conversation</strong> header</td><td>Restores the covered conversation to model context.</td></tr>
+              <tr><td>Bring history back</td><td>Select the eye beside the response that set the boundary</td><td>Restores the covered conversation to model context.</td></tr>
             </tbody>
           </table>
 
@@ -1158,7 +1158,7 @@ the choice, the reason, the main risk, and the next check.</code></pre>
         <section id="commands">
           <p class="section-kicker">10 · Keep nearby</p>
           <h2>Chat input and context card</h2>
-          <p class="section-intro">The multicast command must begin at the very start of the message. Character names may be a full display name, an unambiguous part of one, or a character ID. Context controls appear beside responses and on the covered section.</p>
+          <p class="section-intro">The multicast command must begin at the very start of the message. Character names may be a full display name, an unambiguous part of one, or a character ID. Context controls stay beside the responses they affect.</p>
 
           <table>
             <thead>
@@ -1166,7 +1166,7 @@ the choice, the reason, the main risk, and the next check.</code></pre>
             </thead>
             <tbody>
               <tr><td>Crossed-out eye beside a response</td><td>Cover the conversation through that response.</td></tr>
-              <tr><td>Eye in <strong>Covered conversation</strong></td><td>Restore the full conversation to model context.</td></tr>
+              <tr><td>Eye beside the boundary response</td><td>Restore the full conversation to model context.</td></tr>
               <tr><td><code>/mcast @A @B question</code></td><td>Send the same prompt to several forum characters.</td></tr>
               <tr><td><code>@@example</code></td><td>Send literal text beginning with an at-sign.</td></tr>
             </tbody>

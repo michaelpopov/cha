@@ -128,6 +128,7 @@ function TranscriptMessage({
   onToggleSpeech,
   coverDisabled,
   onCover,
+  onUncover,
 }: {
   entry: SessionSnapshot['transcript'][number];
   appearance: CharacterAppearance | undefined;
@@ -135,6 +136,7 @@ function TranscriptMessage({
   onToggleSpeech(entry: SessionSnapshot['transcript'][number]): void;
   coverDisabled: boolean;
   onCover?: (entry: SessionSnapshot['transcript'][number]) => void;
+  onUncover?: () => void;
 }) {
   const canRead = entry.kind === 'character'
     && entry.status === 'complete'
@@ -147,7 +149,9 @@ function TranscriptMessage({
     : speechState === 'playing'
       ? `Stop reading ${entry.display_name}'s response`
       : `Read ${entry.display_name}'s response aloud`;
-  const coverLabel = `Cover transcript through ${entry.display_name}'s response`;
+  const coverLabel = onUncover
+    ? 'Uncover transcript'
+    : `Cover transcript through ${entry.display_name}'s response`;
   return (
     <article
       className={`cha-message is-${entry.kind}`}
@@ -186,16 +190,16 @@ function TranscriptMessage({
               {speechState === 'playing' ? <StopIcon /> : <SpeakerIcon />}
             </button>
           )}
-          {canCover && onCover && (
+          {canCover && (onCover || onUncover) && (
             <button
               aria-label={coverLabel}
-              className="cha-message-action"
+              className={`cha-message-action${onUncover ? ' is-active' : ''}`}
               disabled={coverDisabled}
-              onClick={() => onCover(entry)}
+              onClick={() => onUncover ? onUncover() : onCover?.(entry)}
               title={coverLabel}
               type="button"
             >
-              <EyeOffIcon />
+              {onUncover ? <EyeIcon /> : <EyeOffIcon />}
             </button>
           )}
         </div>
@@ -305,6 +309,9 @@ export function ChatScreen({
   const uncoveredEntries = coveredUntil === null
     ? transcriptEntries
     : transcriptEntries.filter(({ entry }) => entry.id >= coveredUntil);
+  const boundaryEntryId = coveredEntries.length > 0
+    ? coveredEntries[coveredEntries.length - 1].entry.id
+    : null;
 
   // A different conversation starts at its own end rather than inheriting where
   // the reader had left the previous one.
@@ -645,16 +652,6 @@ export function ChatScreen({
           <section aria-label="Covered conversation" className="cha-covered">
             <div className="cha-covered-header">
               <span>Covered conversation</span>
-              <button
-                aria-label="Uncover transcript"
-                className="cha-message-action is-active"
-                disabled={!connected || generationActive || pendingAction !== null}
-                onClick={() => changeCover()}
-                title="Uncover transcript"
-                type="button"
-              >
-                <EyeIcon />
-              </button>
             </div>
             {coveredEntries.map(({ entry, dividerBefore }) => (
               <Fragment key={entry.id}>
@@ -663,7 +660,11 @@ export function ChatScreen({
                   appearance={voices.get(entry.participant_id)}
                   coverDisabled={!connected || generationActive || pendingAction !== null}
                   entry={entry}
+                  onCover={entry.id === boundaryEntryId
+                    ? undefined
+                    : (coveredEntry) => changeCover(coveredEntry.id)}
                   onToggleSpeech={toggleSpeech}
+                  onUncover={entry.id === boundaryEntryId ? () => changeCover() : undefined}
                   speechState={spokenEntry?.id === entry.id ? spokenEntry.state : 'idle'}
                 />
               </Fragment>
