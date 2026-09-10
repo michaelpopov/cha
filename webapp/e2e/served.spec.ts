@@ -50,10 +50,9 @@ test('keeps the native composer controls below its full-width text area', async 
   await page.addInitScript(() => {
     Object.defineProperty(window, 'chaVoiceInput', {
       value: {
-        url: 'https://api.openai.com/v1/audio/transcriptions',
+        url: 'https://api.openai.com/v1/realtime/calls',
         apiKey: 'test-key',
-        model: 'gpt-4o-mini-transcribe',
-        blockDurationMs: 5_000,
+        model: 'gpt-live-transcribe',
       },
     });
   });

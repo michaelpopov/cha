@@ -89,7 +89,7 @@ TEST(AssetHandler, AllowsTheConfiguredConnectionOrigin) {
     test::TestWorkspace fixture;
     AssetServer server(
         fixture.root() / "web",
-        "https://api.openai.com/v1/audio/transcriptions");
+        "https://api.openai.com/v1/realtime/calls");
 
     const auto shell = server.client().Get("/");
     ASSERT_TRUE(shell);

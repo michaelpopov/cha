@@ -17,12 +17,11 @@ struct VaultDefinition {
 };
 
 struct VoiceInputConfig {
-    std::string url;
+    std::string url{"https://api.openai.com/v1/realtime/calls"};
     std::string api_key_id;
-    std::string model{"gpt-4o-mini-transcribe"};
+    std::string model{"gpt-live-transcribe"};
     std::vector<std::string> languages;
     std::vector<std::string> keywords;
-    int block_duration_s{5};
 };
 
 struct ConfigurationDirectory {

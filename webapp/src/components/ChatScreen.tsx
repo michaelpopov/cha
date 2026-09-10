@@ -432,6 +432,7 @@ export function ChatScreen({
     if (!voiceConfiguration || !voiceInputAvailable || !sessionAvailable) return;
 
     const attempt = ++voiceInputAttempt.current;
+    let receivedVoiceDelta = false;
     setVoiceInputState('starting');
     setActionError(null);
     let session: VoiceInputSession | null = null;
@@ -442,11 +443,15 @@ export function ChatScreen({
           languages: [transliteration.enabled ? 'ru' : 'en'],
         },
         (text) => {
-          if (voiceInputSession.current !== session) return;
-          updateDraft(appendTranscription(draftRef.current, text));
+          if (voiceInputAttempt.current !== attempt) return;
+          if (!text) return;
+          updateDraft(receivedVoiceDelta
+            ? draftRef.current + text
+            : appendTranscription(draftRef.current, text));
+          receivedVoiceDelta = true;
         },
         (failure) => {
-          if (voiceInputSession.current !== session) return;
+          if (voiceInputAttempt.current !== attempt) return;
           voiceInputSession.current = null;
           setVoiceInputState('idle');
           setActionError(voiceInputMessage(failure));

@@ -633,8 +633,6 @@ private:
             {"model", model},
             {"languages", nlohmann::json::array()},
             {"keywords", nlohmann::json::array()},
-            {"blockDurationMs",
-             cha_runtime_voice_input_block_duration_s(runtime_) * 1000},
         };
         for (int32_t index = 0;
              index < cha_runtime_voice_input_language_count(runtime_);

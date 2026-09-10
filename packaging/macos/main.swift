@@ -339,8 +339,6 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
             "model": String(cString: model),
             "languages": languages,
             "keywords": keywords,
-            "blockDurationMs":
-                Int(cha_runtime_voice_input_block_duration_s(runtime)) * 1_000,
         ]
         guard JSONSerialization.isValidJSONObject(configuration),
               let data = try? JSONSerialization.data(withJSONObject: configuration),

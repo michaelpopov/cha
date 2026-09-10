@@ -305,12 +305,11 @@ describe('live chat', () => {
     await waitFor(() => expect(input).toHaveValue(''));
   });
 
-  it('appends native voice blocks and waits for the final block before sending', async () => {
+  it('appends realtime voice deltas and waits for the final transcript before sending', async () => {
     window.chaVoiceInput = {
-      url: 'https://api.openai.com/v1/audio/transcriptions',
+      url: 'https://api.openai.com/v1/realtime/calls',
       apiKey: 'secret',
-      model: 'gpt-4o-mini-transcribe',
-      blockDurationMs: 5_000,
+      model: 'gpt-live-transcribe',
     };
     vi.spyOn(VoiceInputSession, 'supported').mockReturnValue(true);
     let appendVoice = (_text: string) => {};
@@ -343,27 +342,26 @@ describe('live chat', () => {
     fireEvent.change(input, { target: { value: 'Typed' } });
     act(() => {
       appendVoice('spoken');
-      appendVoice('words.');
+      appendVoice(' words.');
     });
     expect(input).toHaveValue('Typed spoken words.');
 
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
     expect(voiceSession.stop).toHaveBeenCalledOnce();
     expect(submitInput).not.toHaveBeenCalled();
-    act(() => appendVoice('Final block.'));
+    act(() => appendVoice(' Final words.'));
     await act(async () => finishRecording());
     await waitFor(() => expect(submitInput).toHaveBeenCalledWith(
-      'entrance', 'welcome', { text: 'Typed spoken words. Final block.' },
+      'entrance', 'welcome', { text: 'Typed spoken words. Final words.' },
     ));
 
   });
 
   it('uses Russian voice input when composer transliteration is enabled', async () => {
     window.chaVoiceInput = {
-      url: 'https://api.openai.com/v1/audio/transcriptions',
+      url: 'https://api.openai.com/v1/realtime/calls',
       apiKey: 'secret',
-      model: 'gpt-transcribe',
-      blockDurationMs: 10_000,
+      model: 'gpt-live-transcribe',
     };
     vi.spyOn(VoiceInputSession, 'supported').mockReturnValue(true);
     const voiceSession = {

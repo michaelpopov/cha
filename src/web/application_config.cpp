@@ -576,15 +576,17 @@ ConfigurationDirectory load_configuration_directory(
         reject_unknown_fields(
             voice,
             app_file,
-            {"url", "api_key", "model", "languages", "keywords",
-             "block_duration_s"},
+            {"url", "api_key", "model", "languages", "keywords"},
             "[voice_input]",
             app_kind);
         VoiceInputConfig configuration{
-            .url = required_string(voice, app_file, "url", app_kind),
             .api_key_id =
                 required_string(voice, app_file, "api_key", app_kind),
         };
+        if (voice.contains("url")) {
+            configuration.url =
+                required_string(voice, app_file, "url", app_kind);
+        }
         if (voice.contains("model")) {
             configuration.model =
                 required_string(voice, app_file, "model", app_kind);
@@ -593,17 +595,6 @@ ConfigurationDirectory load_configuration_directory(
             voice, app_file, "languages", app_kind);
         configuration.keywords = optional_string_array(
             voice, app_file, "keywords", app_kind);
-        if (voice.contains("block_duration_s")) {
-            const std::optional<int> duration =
-                voice["block_duration_s"].value<int>();
-            if (!duration || *duration < 1 || *duration > 3600) {
-                throw std::runtime_error(
-                    std::string(app_kind) + " '" + utf8_path(app_file)
-                    + "' requires an integer 'block_duration_s' between 1 "
-                      "and 3600 in [voice_input].");
-            }
-            configuration.block_duration_s = *duration;
-        }
         voice_input = std::move(configuration);
     }
 

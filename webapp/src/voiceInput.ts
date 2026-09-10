@@ -4,7 +4,6 @@ export interface VoiceInputConfiguration {
   model: string;
   languages?: string[];
   keywords?: string[];
-  blockDurationMs: number;
 }
 
 declare global {
@@ -21,8 +20,6 @@ export function getVoiceInputConfiguration(): VoiceInputConfiguration | null {
       && typeof configuration.model === 'string' && configuration.model.length > 0
       && isStringArray(configuration.languages)
       && isStringArray(configuration.keywords)
-      && Number.isInteger(configuration.blockDurationMs)
-      && configuration.blockDurationMs > 0
     ? configuration
     : null;
 }
@@ -78,75 +75,86 @@ function normalizeDictationCommands(transcription: string): string {
   return result.replace(/[ \t]*\n[ \t]*/g, '\n');
 }
 
-function recordingMimeType(): string | undefined {
-  return [
-    'audio/mp4',
-    'audio/webm;codecs=opus',
-    'audio/webm',
-    'audio/ogg;codecs=opus',
-  ].find((type) => MediaRecorder.isTypeSupported(type));
-}
-
-function recordingExtension(type: string): string {
-  if (type.includes('mp4')) return 'mp4';
-  if (type.includes('ogg')) return 'ogg';
-  return 'webm';
-}
-
-async function transcribe(
+async function connect(
   configuration: VoiceInputConfiguration,
-  audio: Blob,
-  signal: AbortSignal,
-): Promise<string> {
+  peer: RTCPeerConnection,
+): Promise<void> {
+  const offer = await peer.createOffer();
+  await peer.setLocalDescription(offer);
+  if (!offer.sdp) throw new Error('Voice input could not create an audio connection.');
+
   const body = new FormData();
-  body.append('file', audio, `voice.${recordingExtension(audio.type)}`);
-  body.append('model', configuration.model);
-  body.append('response_format', 'json');
-  for (const language of configuration.languages ?? []) {
-    body.append('languages[]', language);
-  }
-  for (const keyword of configuration.keywords ?? []) {
-    body.append('keywords[]', keyword);
-  }
+  body.set('sdp', offer.sdp);
+  body.set('session', JSON.stringify({
+    type: 'transcription',
+    audio: {
+      input: {
+        transcription: {
+          model: configuration.model,
+          languages: configuration.languages,
+          keywords: configuration.keywords,
+          delay: 'low',
+        },
+        turn_detection: null,
+      },
+    },
+  }));
   const response = await fetch(configuration.url, {
     method: 'POST',
     headers: { Authorization: `Bearer ${configuration.apiKey}` },
     body,
-    signal,
   });
-  if (!response.ok) throw new Error('The transcription request failed.');
-  const result: unknown = await response.json();
-  if (!result || typeof result !== 'object'
-      || !('text' in result) || typeof result.text !== 'string') {
-    throw new TypeError('The transcription response was invalid.');
-  }
-  return result.text;
+  if (!response.ok) throw new Error('The realtime transcription request failed.');
+  await peer.setRemoteDescription({ type: 'answer', sdp: await response.text() });
 }
 
-// A fresh recorder for each block makes every upload a self-contained audio
-// file. MediaRecorder time slices are pieces of one larger file and later
-// pieces are not guaranteed to be independently decodable.
 export class VoiceInputSession {
-  private readonly abort = new AbortController();
-  private readonly mimeType = recordingMimeType();
-  private recorder: MediaRecorder | null = null;
-  private blockDone: Promise<void> = Promise.resolve();
-  private finishBlock: (() => void) | null = null;
-  private timer: number | null = null;
-  private pending: Promise<void> = Promise.resolve();
+  private readonly opened: Promise<void>;
+  private readonly completed: Promise<void>;
+  private openSession: (() => void) | null = null;
+  private rejectSession: ((failure: unknown) => void) | null = null;
+  private completeSession: (() => void) | null = null;
   private failure: unknown = null;
   private stopping = false;
   private cancelled = false;
+  private transcriptCompleted = false;
+  private transcript = '';
 
   private constructor(
-    private readonly configuration: VoiceInputConfiguration,
     private readonly stream: MediaStream,
+    private readonly peer: RTCPeerConnection,
+    private readonly events: RTCDataChannel,
     private readonly onTranscription: (text: string) => void,
     private readonly onFailure: (failure: unknown) => void,
-  ) {}
+  ) {
+    this.opened = new Promise((resolve, reject) => {
+      this.openSession = resolve;
+      this.rejectSession = reject;
+    });
+    this.completed = new Promise((resolve) => { this.completeSession = resolve; });
+    events.addEventListener('open', () => {
+      this.openSession?.();
+      this.openSession = null;
+      this.rejectSession = null;
+    });
+    events.addEventListener('message', ({ data }) => this.handleEvent(data));
+    events.addEventListener('error', () => {
+      this.fail(new Error('The realtime transcription connection failed.'));
+    });
+    events.addEventListener('close', () => {
+      if (!this.cancelled && !this.transcriptCompleted) {
+        this.fail(new Error('The realtime transcription connection closed.'));
+      }
+    });
+    peer.addEventListener('connectionstatechange', () => {
+      if (peer.connectionState === 'failed') {
+        this.fail(new Error('The realtime transcription connection failed.'));
+      }
+    });
+  }
 
   static supported(): boolean {
-    return typeof MediaRecorder !== 'undefined'
+    return typeof RTCPeerConnection !== 'undefined'
       && typeof navigator.mediaDevices?.getUserMedia === 'function';
   }
 
@@ -159,14 +167,19 @@ export class VoiceInputSession {
       throw new Error('Voice input is unavailable.');
     }
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    const session = new VoiceInputSession(
-      configuration, stream, onTranscription, onFailure,
-    );
+    let session: VoiceInputSession | null = null;
     try {
-      session.startBlock();
+      const peer = new RTCPeerConnection();
+      for (const track of stream.getAudioTracks()) peer.addTrack(track, stream);
+      const events = peer.createDataChannel('oai-events');
+      session = new VoiceInputSession(
+        stream, peer, events, onTranscription, onFailure,
+      );
+      await Promise.all([connect(configuration, peer), session.opened]);
       return session;
     } catch (failure) {
-      session.stopTracks();
+      if (session) session.cancel();
+      else for (const track of stream.getTracks()) track.stop();
       throw failure;
     }
   }
@@ -174,13 +187,15 @@ export class VoiceInputSession {
   async stop(): Promise<void> {
     if (!this.stopping) {
       this.stopping = true;
-      this.clearTimer();
-      await this.stopBlock();
       this.stopTracks();
-    } else {
-      await this.blockDone;
+      try {
+        this.events.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
+      } catch (failure) {
+        this.fail(failure);
+      }
     }
-    await this.pending;
+    await this.completed;
+    this.closeTransport();
     if (this.failure) throw this.failure;
   }
 
@@ -188,85 +203,63 @@ export class VoiceInputSession {
     if (this.cancelled) return;
     this.cancelled = true;
     this.stopping = true;
-    this.clearTimer();
-    this.abort.abort();
-    if (this.recorder?.state === 'recording') this.recorder.stop();
     this.stopTracks();
+    this.transcriptCompleted = true;
+    this.completeSession?.();
+    this.completeSession = null;
+    this.openSession?.();
+    this.openSession = null;
+    this.rejectSession = null;
+    this.closeTransport();
   }
 
-  private startBlock(): void {
-    const chunks: Blob[] = [];
-    const recorder = this.mimeType
-      ? new MediaRecorder(this.stream, { mimeType: this.mimeType })
-      : new MediaRecorder(this.stream);
-    this.recorder = recorder;
-    this.blockDone = new Promise((resolve) => { this.finishBlock = resolve; });
-    recorder.ondataavailable = ({ data }) => {
-      if (data.size > 0) chunks.push(data);
-    };
-    recorder.onerror = () => this.fail(new Error('Audio recording failed.'));
-    recorder.onstop = () => {
-      this.recorder = null;
-      if (!this.cancelled && chunks.length > 0) {
-        this.enqueue(new Blob(chunks, { type: recorder.mimeType || chunks[0].type }));
-      }
-      this.finishBlock?.();
-      this.finishBlock = null;
-    };
-    recorder.start();
-    this.timer = window.setTimeout(
-      () => void this.rotateBlock(), this.configuration.blockDurationMs,
-    );
-  }
-
-  private async rotateBlock(): Promise<void> {
-    this.timer = null;
+  private handleEvent(data: unknown): void {
+    if (this.cancelled || typeof data !== 'string') return;
+    let event: unknown;
     try {
-      await this.stopBlock();
-      if (!this.stopping && !this.failure) this.startBlock();
-    } catch (failure) {
-      this.fail(failure);
+      event = JSON.parse(data);
+    } catch {
+      return this.fail(new Error('The realtime transcription response was invalid.'));
     }
-  }
-
-  private async stopBlock(): Promise<void> {
-    if (this.recorder?.state === 'recording') this.recorder.stop();
-    await this.blockDone;
-  }
-
-  private enqueue(audio: Blob): void {
-    // Start every upload as soon as its block closes. The small ordering chain
-    // delays only editor updates, so a slower response cannot make recording
-    // fall further and further behind while results still append in order.
-    const request = transcribe(this.configuration, audio, this.abort.signal).then(
-      (text) => ({ text } as const),
-      (failure: unknown) => ({ failure } as const),
-    );
-    this.pending = this.pending
-      .then(async () => {
-        if (this.cancelled || this.failure) return;
-        const result = await request;
-        if ('failure' in result) throw result.failure;
-        if (!this.cancelled) this.onTranscription(result.text);
-      })
-      .catch((failure: unknown) => this.fail(failure));
+    if (!event || typeof event !== 'object' || !('type' in event)) return;
+    if (event.type === 'conversation.item.input_audio_transcription.delta'
+        && 'delta' in event && typeof event.delta === 'string') {
+      this.transcript += event.delta;
+      this.onTranscription(event.delta);
+    } else if (event.type === 'conversation.item.input_audio_transcription.completed') {
+      if ('transcript' in event && typeof event.transcript === 'string'
+          && event.transcript.startsWith(this.transcript)) {
+        const remainder = event.transcript.slice(this.transcript.length);
+        if (remainder) this.onTranscription(remainder);
+      }
+      this.transcriptCompleted = true;
+      this.completeSession?.();
+      this.completeSession = null;
+    } else if (event.type === 'error') {
+      const message = 'error' in event && event.error && typeof event.error === 'object'
+        && 'message' in event.error && typeof event.error.message === 'string'
+        ? event.error.message
+        : 'Realtime transcription failed.';
+      this.fail(new Error(message));
+    }
   }
 
   private fail(failure: unknown): void {
     if (this.failure || this.cancelled) return;
     this.failure = failure;
     this.stopping = true;
-    this.clearTimer();
-    this.abort.abort();
-    if (this.recorder?.state === 'recording') this.recorder.stop();
     this.stopTracks();
+    this.completeSession?.();
+    this.completeSession = null;
+    this.rejectSession?.(failure);
+    this.rejectSession = null;
+    this.closeTransport();
     this.onFailure(failure);
   }
 
-  private clearTimer(): void {
-    if (this.timer === null) return;
-    window.clearTimeout(this.timer);
-    this.timer = null;
+  private closeTransport(): void {
+    if (this.events.readyState !== 'closed') this.events.close();
+    if (this.peer.connectionState !== 'closed') this.peer.close();
   }
 
   private stopTracks(): void {

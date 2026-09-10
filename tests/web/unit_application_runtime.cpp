@@ -228,7 +228,6 @@ TEST(ApplicationRuntime, ReportsVoiceInputApiKeyUsage) {
     ApiKeyStore key_store(command.config_directory / "api-keys.json");
     const ApiKeyInfo key = key_store.create("OpenAI", "voice-secret");
     command.voice_input = VoiceInputConfig{
-        .url = "https://api.openai.com/v1/audio/transcriptions",
         .api_key_id = key.id,
     };
 

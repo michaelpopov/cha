@@ -138,7 +138,6 @@ TEST_F(ApplicationConfigTest, LoadsOptionalVoiceInputConfiguration) {
         "[web]\nhost = \"127.0.0.1\"\nport = 8080\n"
         "[logging]\nfile = \"logs/cha.log\"\nlevel = \"info\"\n"
         "[voice_input]\n"
-        "url = \"https://api.openai.com/v1/audio/transcriptions\"\n"
         "api_key = \"api_key_7\"\n");
 
     const ApplicationCommand command =
@@ -146,12 +145,11 @@ TEST_F(ApplicationConfigTest, LoadsOptionalVoiceInputConfiguration) {
     ASSERT_TRUE(command.voice_input);
     EXPECT_EQ(
         command.voice_input->url,
-        "https://api.openai.com/v1/audio/transcriptions");
+        "https://api.openai.com/v1/realtime/calls");
     EXPECT_EQ(command.voice_input->api_key_id, "api_key_7");
-    EXPECT_EQ(command.voice_input->model, "gpt-4o-mini-transcribe");
+    EXPECT_EQ(command.voice_input->model, "gpt-live-transcribe");
     EXPECT_TRUE(command.voice_input->languages.empty());
     EXPECT_TRUE(command.voice_input->keywords.empty());
-    EXPECT_EQ(command.voice_input->block_duration_s, 5);
 }
 
 TEST_F(ApplicationConfigTest, LoadsVoiceInputOverrides) {
@@ -160,24 +158,23 @@ TEST_F(ApplicationConfigTest, LoadsVoiceInputOverrides) {
         "[web]\nhost = \"127.0.0.1\"\nport = 8080\n"
         "[logging]\nfile = \"logs/cha.log\"\nlevel = \"info\"\n"
         "[voice_input]\n"
-        "url = \"https://api.openai.com/v1/audio/transcriptions\"\n"
+        "url = \"https://example.com/realtime\"\n"
         "api_key = \"api_key_7\"\n"
-        "model = \"gpt-4o-transcribe\"\n"
+        "model = \"gpt-live-transcribe\"\n"
         "languages = [\"ru\", \"en\"]\n"
-        "keywords = [\"запятая\", \"comma\"]\n"
-        "block_duration_s = 15\n");
+        "keywords = [\"запятая\", \"comma\"]\n");
 
     const ApplicationCommand command =
         load({"chaweb", "--config", config_.string()});
     ASSERT_TRUE(command.voice_input);
-    EXPECT_EQ(command.voice_input->model, "gpt-4o-transcribe");
+    EXPECT_EQ(command.voice_input->url, "https://example.com/realtime");
+    EXPECT_EQ(command.voice_input->model, "gpt-live-transcribe");
     EXPECT_EQ(
         command.voice_input->languages,
         (std::vector<std::string>{"ru", "en"}));
     EXPECT_EQ(
         command.voice_input->keywords,
         (std::vector<std::string>{"запятая", "comma"}));
-    EXPECT_EQ(command.voice_input->block_duration_s, 15);
 }
 
 TEST_F(ApplicationConfigTest, RejectsIncompleteVoiceInputConfiguration) {
@@ -198,14 +195,6 @@ TEST_F(ApplicationConfigTest, RejectsIncompleteVoiceInputConfiguration) {
     EXPECT_NE(
         error_text({"chaweb", "--config", config_.string()})
             .find("unknown field 'unexpected'"),
-        std::string::npos);
-
-    write_app(
-        prefix + "[voice_input]\nurl = \"https://example.com\"\n"
-        "api_key = \"api_key_1\"\nblock_duration_s = 0\n");
-    EXPECT_NE(
-        error_text({"chaweb", "--config", config_.string()})
-            .find("between 1 and 3600"),
         std::string::npos);
 
     write_app(

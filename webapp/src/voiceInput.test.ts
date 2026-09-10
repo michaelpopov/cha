@@ -18,16 +18,15 @@ describe('voice input', () => {
   it('reads only a complete native configuration', () => {
     expect(getVoiceInputConfiguration()).toBeNull();
     window.chaVoiceInput = {
-      url: 'https://api.openai.com/v1/audio/transcriptions',
+      url: 'https://api.openai.com/v1/realtime/calls',
       apiKey: 'secret',
-      model: 'gpt-4o-mini-transcribe',
+      model: 'gpt-live-transcribe',
       languages: ['ru', 'en'],
       keywords: ['запятая', 'comma'],
-      blockDurationMs: 5_000,
     };
     expect(getVoiceInputConfiguration()).toEqual(window.chaVoiceInput);
     window.chaVoiceInput = {
-      url: '', apiKey: 'secret', model: 'gpt-4o-mini-transcribe', blockDurationMs: 5_000,
+      url: '', apiKey: 'secret', model: 'gpt-live-transcribe',
     };
     expect(getVoiceInputConfiguration()).toBeNull();
   });
@@ -51,75 +50,111 @@ describe('voice input', () => {
     expect(appendTranscription('', 'First new line Second')).toBe('First\nSecond');
   });
 
-  it('uploads ordered, self-contained blocks and flushes the final block', async () => {
-    vi.useFakeTimers();
+  it('streams transcript deltas and commits the final turn before stopping', async () => {
     const stopTrack = vi.fn();
+    const audioTrack = { kind: 'audio', stop: stopTrack } as unknown as MediaStreamTrack;
     Object.defineProperty(navigator, 'mediaDevices', {
       configurable: true,
       value: { getUserMedia: vi.fn(async () => ({
-        getTracks: () => [{ stop: stopTrack }],
+        getAudioTracks: () => [audioTrack],
+        getTracks: () => [audioTrack],
       })) },
     });
 
-    class FakeMediaRecorder {
-      static isTypeSupported(type: string) { return type === 'audio/mp4'; }
-      readonly mimeType: string;
-      state: RecordingState = 'inactive';
-      ondataavailable: ((event: BlobEvent) => void) | null = null;
-      onerror: ((event: Event) => void) | null = null;
-      onstop: ((event: Event) => void) | null = null;
+    class FakeDataChannel extends EventTarget {
+      readyState: RTCDataChannelState = 'connecting';
+      readonly sent: string[] = [];
 
-      constructor(_stream: MediaStream, options?: MediaRecorderOptions) {
-        this.mimeType = options?.mimeType ?? 'audio/mp4';
+      send(data: string) { this.sent.push(data); }
+      open() {
+        this.readyState = 'open';
+        this.dispatchEvent(new Event('open'));
       }
-
-      start() { this.state = 'recording'; }
-
-      stop() {
-        this.state = 'inactive';
-        this.ondataavailable?.({ data: new Blob(['audio'], { type: this.mimeType }) } as BlobEvent);
-        this.onstop?.(new Event('stop'));
+      message(data: object) {
+        this.dispatchEvent(new MessageEvent('message', { data: JSON.stringify(data) }));
+      }
+      close() {
+        this.readyState = 'closed';
+        this.dispatchEvent(new Event('close'));
       }
     }
-    vi.stubGlobal('MediaRecorder', FakeMediaRecorder);
-    const fetcher = vi.fn()
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ text: 'First block.' }) })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ text: 'Second block.' }) });
+    const channel = new FakeDataChannel();
+
+    class FakePeerConnection extends EventTarget {
+      connectionState: RTCPeerConnectionState = 'new';
+      addTrack = vi.fn();
+      createDataChannel() {
+        return channel as unknown as RTCDataChannel;
+      }
+      async createOffer() {
+        return { type: 'offer', sdp: 'test offer' } as RTCSessionDescriptionInit;
+      }
+      async setLocalDescription() {}
+      async setRemoteDescription() { channel.open(); }
+      close() { this.connectionState = 'closed'; }
+    }
+    vi.stubGlobal('RTCPeerConnection', FakePeerConnection);
+    const fetcher = vi.fn().mockResolvedValue({
+      ok: true,
+      text: async () => 'test answer',
+    });
     vi.stubGlobal('fetch', fetcher);
     const received: string[] = [];
     const session = await VoiceInputSession.start(
       {
-        url: 'https://api.openai.com/v1/audio/transcriptions',
+        url: 'https://api.openai.com/v1/realtime/calls',
         apiKey: 'secret',
-        model: 'gpt-transcribe',
+        model: 'gpt-live-transcribe',
         languages: ['ru', 'en'],
         keywords: ['восклицательный знак', 'exclamation sign'],
-        blockDurationMs: 15_000,
       },
       (text) => received.push(text),
       () => {},
     );
 
-    await vi.advanceTimersByTimeAsync(14_999);
-    expect(received).toEqual([]);
-    await vi.advanceTimersByTimeAsync(1);
-    expect(received).toEqual(['First block.']);
-    const firstRequest = fetcher.mock.calls[0];
-    expect(firstRequest[0]).toBe('https://api.openai.com/v1/audio/transcriptions');
-    expect(firstRequest[1].headers).toEqual({ Authorization: 'Bearer secret' });
-    const firstBody = firstRequest[1].body as FormData;
-    expect(firstBody.get('model')).toBe('gpt-transcribe');
-    expect(firstBody.has('prompt')).toBe(false);
-    expect(firstBody.get('response_format')).toBe('json');
-    expect(firstBody.getAll('languages[]')).toEqual(['ru', 'en']);
-    expect(firstBody.getAll('keywords[]')).toEqual([
-      'восклицательный знак', 'exclamation sign',
-    ]);
-    expect((firstBody.get('file') as File).name).toBe('voice.mp4');
+    expect(fetcher).toHaveBeenCalledOnce();
+    const request = fetcher.mock.calls[0];
+    expect(request[0]).toBe('https://api.openai.com/v1/realtime/calls');
+    expect(request[1].headers).toEqual({ Authorization: 'Bearer secret' });
+    const body = request[1].body as FormData;
+    expect(body.get('sdp')).toBe('test offer');
+    expect(JSON.parse(body.get('session') as string)).toEqual({
+      type: 'transcription',
+      audio: {
+        input: {
+          transcription: {
+            model: 'gpt-live-transcribe',
+            languages: ['ru', 'en'],
+            keywords: ['восклицательный знак', 'exclamation sign'],
+            delay: 'low',
+          },
+          turn_detection: null,
+        },
+      },
+    });
 
-    await session.stop();
-    expect(received).toEqual(['First block.', 'Second block.']);
-    expect(fetcher).toHaveBeenCalledTimes(2);
+    channel.message({
+      type: 'conversation.item.input_audio_transcription.delta', delta: 'Hello',
+    });
+    channel.message({
+      type: 'conversation.item.input_audio_transcription.delta', delta: ' world.',
+    });
+    expect(received).toEqual(['Hello', ' world.']);
+
+    const stopping = session.stop();
+    expect(channel.sent.map((event) => JSON.parse(event))).toEqual([
+      { type: 'input_audio_buffer.commit' },
+    ]);
+    let stopped = false;
+    void stopping.then(() => { stopped = true; });
+    await Promise.resolve();
+    expect(stopped).toBe(false);
+    channel.message({
+      type: 'conversation.item.input_audio_transcription.completed',
+      transcript: 'Hello world.',
+    });
+    await stopping;
+    expect(stopped).toBe(true);
     expect(stopTrack).toHaveBeenCalled();
   });
 });

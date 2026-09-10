@@ -254,11 +254,6 @@ const char* cha_runtime_voice_input_keyword(
         .c_str();
 }
 
-int32_t cha_runtime_voice_input_block_duration_s(const ChaRuntime* runtime) {
-    return runtime && runtime->voice_input
-        ? runtime->voice_input->block_duration_s : 0;
-}
-
 int32_t cha_runtime_upload(
     ChaRuntime* runtime,
     uint64_t* byte_count,
