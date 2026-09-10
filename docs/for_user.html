@@ -1,0 +1,1198 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="A friendly user guide to conversations, personas, characters, forums, and sessions in the CHA web application.">
+  <title>CHA — User Guide</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --page: light-dark(#f7f9fc, #111820);
+      --paper: light-dark(#ffffff, #18222c);
+      --paper-strong: light-dark(#f1f7ff, #152c40);
+      --ink: light-dark(#17212b, #eef5fb);
+      --muted: light-dark(#5c6875, #a9b7c5);
+      --line: light-dark(#d8e0e8, #314150);
+      --blue: light-dark(#1672bb, #70baff);
+      --blue-strong: light-dark(#0f5d9d, #9dceff);
+      --blue-soft: light-dark(#e7f3ff, #16354d);
+      --gold: light-dark(#9a6514, #f0bf6b);
+      --gold-soft: light-dark(#fff5dc, #3a2e1c);
+      --green: light-dark(#1f7452, #75d4ad);
+      --green-soft: light-dark(#e9f7f0, #19372c);
+      --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --serif: Georgia, "Times New Roman", serif;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      --rail: 15.5rem;
+      --content: 66rem;
+    }
+
+    * { box-sizing: border-box; }
+
+    html {
+      scroll-behavior: smooth;
+      scroll-padding-top: 1.5rem;
+    }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 92% 3%, color-mix(in srgb, var(--blue) 9%, transparent), transparent 26rem),
+        var(--page);
+      font-family: var(--sans);
+      font-size: 16px;
+      line-height: 1.65;
+    }
+
+    a { color: var(--blue-strong); }
+    a:hover { text-decoration-thickness: 2px; }
+
+    :focus-visible {
+      outline: 3px solid color-mix(in srgb, var(--blue) 66%, transparent);
+      outline-offset: 3px;
+      border-radius: .25rem;
+    }
+
+    .skip-link {
+      position: fixed;
+      z-index: 20;
+      top: .75rem;
+      left: .75rem;
+      padding: .65rem .9rem;
+      color: white;
+      background: #0f5d9d;
+      border-radius: .55rem;
+      transform: translateY(-180%);
+    }
+
+    .skip-link:focus { transform: translateY(0); }
+
+    .shell {
+      display: grid;
+      grid-template-columns: var(--rail) minmax(0, 1fr);
+      min-height: 100vh;
+    }
+
+    .rail {
+      position: sticky;
+      top: 0;
+      align-self: start;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      padding: 2rem 1.4rem 1.5rem;
+      border-right: 1px solid var(--line);
+      background: color-mix(in srgb, var(--paper) 92%, transparent);
+      backdrop-filter: blur(16px);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: .75rem;
+      margin-bottom: 2.2rem;
+      color: var(--ink);
+      text-decoration: none;
+    }
+
+    .brand-mark {
+      display: grid;
+      place-items: center;
+      width: 2.5rem;
+      height: 2.5rem;
+      border-radius: .8rem;
+      color: white;
+      background: linear-gradient(145deg, #208ce1, #155a92);
+      box-shadow: 0 8px 20px rgb(18 104 171 / 22%);
+      font-size: 1.35rem;
+      font-weight: 760;
+      letter-spacing: -.08em;
+    }
+
+    .brand-copy { line-height: 1.1; }
+    .brand-copy strong { display: block; font-size: 1rem; }
+    .brand-copy span { color: var(--muted); font-size: .76rem; }
+
+    .rail-label {
+      margin: 0 0 .55rem .55rem;
+      color: var(--muted);
+      font-size: .68rem;
+      font-weight: 720;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+
+    .rail nav {
+      display: grid;
+      gap: .15rem;
+    }
+
+    .rail nav a {
+      display: flex;
+      align-items: center;
+      gap: .7rem;
+      padding: .48rem .58rem;
+      color: var(--muted);
+      border-radius: .55rem;
+      text-decoration: none;
+      font-size: .86rem;
+      font-weight: 590;
+    }
+
+    .rail nav a::before {
+      content: "";
+      width: .42rem;
+      height: .42rem;
+      flex: 0 0 auto;
+      border: 1.5px solid currentColor;
+      border-radius: 50%;
+      opacity: .62;
+    }
+
+    .rail nav a:hover {
+      color: var(--blue-strong);
+      background: var(--blue-soft);
+    }
+
+    .rail-note {
+      margin-top: auto;
+      padding: .9rem;
+      color: var(--muted);
+      border: 1px solid var(--line);
+      border-radius: .75rem;
+      background: var(--page);
+      font-size: .76rem;
+      line-height: 1.45;
+    }
+
+    main {
+      min-width: 0;
+      padding: 0 clamp(1.25rem, 4vw, 4.5rem) 5rem;
+    }
+
+    .hero,
+    .content {
+      width: min(100%, var(--content));
+      margin-inline: auto;
+    }
+
+    .hero {
+      padding: clamp(4.5rem, 10vw, 8rem) 0 4rem;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: .5rem;
+      margin-bottom: 1.25rem;
+      color: var(--blue-strong);
+      font-size: .76rem;
+      font-weight: 760;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+
+    .eyebrow::before {
+      content: "";
+      width: 1.8rem;
+      height: 2px;
+      background: currentColor;
+    }
+
+    h1,
+    h2,
+    h3,
+    p { margin-top: 0; }
+
+    h1 {
+      max-width: 13ch;
+      margin-bottom: 1.2rem;
+      font-family: var(--serif);
+      font-size: clamp(3.2rem, 8vw, 6.8rem);
+      font-weight: 500;
+      letter-spacing: -.055em;
+      line-height: .96;
+    }
+
+    h1 em {
+      color: var(--blue-strong);
+      font-weight: 500;
+    }
+
+    .lede {
+      max-width: 44rem;
+      margin-bottom: 2rem;
+      color: var(--muted);
+      font-size: clamp(1.08rem, 2vw, 1.3rem);
+      line-height: 1.55;
+    }
+
+    .hero-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: .75rem;
+    }
+
+    .button {
+      display: inline-flex;
+      align-items: center;
+      gap: .55rem;
+      min-height: 2.8rem;
+      padding: .65rem 1rem;
+      border: 1px solid var(--line);
+      border-radius: .75rem;
+      color: var(--ink);
+      background: var(--paper);
+      box-shadow: 0 4px 16px rgb(31 57 81 / 6%);
+      text-decoration: none;
+      font-weight: 660;
+    }
+
+    .button.primary {
+      color: white;
+      border-color: #176bab;
+      background: linear-gradient(145deg, #238ede, #1768a7);
+    }
+
+    .content > section {
+      padding: 4.5rem 0;
+      border-top: 1px solid var(--line);
+    }
+
+    .section-kicker {
+      margin-bottom: .45rem;
+      color: var(--blue-strong);
+      font-size: .72rem;
+      font-weight: 760;
+      letter-spacing: .11em;
+      text-transform: uppercase;
+    }
+
+    h2 {
+      max-width: 22ch;
+      margin-bottom: 1.1rem;
+      font-family: var(--serif);
+      font-size: clamp(2.15rem, 5vw, 3.7rem);
+      font-weight: 500;
+      letter-spacing: -.035em;
+      line-height: 1.08;
+    }
+
+    h3 {
+      margin-bottom: .55rem;
+      font-size: 1.02rem;
+      line-height: 1.35;
+    }
+
+    .section-intro {
+      max-width: 45rem;
+      margin-bottom: 2rem;
+      color: var(--muted);
+      font-size: 1.05rem;
+    }
+
+    .plain-list,
+    .steps {
+      padding-left: 1.2rem;
+    }
+
+    .plain-list li,
+    .steps li { margin-bottom: .55rem; }
+
+    .concepts {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: .8rem;
+      margin: 2rem 0;
+    }
+
+    .concept {
+      position: relative;
+      min-height: 11.5rem;
+      padding: 1.15rem;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 1rem;
+      background: var(--paper);
+      box-shadow: 0 8px 28px rgb(31 57 81 / 5%);
+    }
+
+    .concept::after {
+      position: absolute;
+      right: -.25rem;
+      bottom: -1.2rem;
+      color: color-mix(in srgb, var(--blue) 11%, transparent);
+      font-family: var(--serif);
+      font-size: 6.5rem;
+      line-height: 1;
+    }
+
+    .concept.persona::after { content: "F"; }
+    .concept.character::after { content: "T"; }
+    .concept.forum::after { content: "W"; }
+    .concept.session::after { content: "S"; }
+
+    .concept-tag {
+      display: inline-block;
+      margin-bottom: 1.35rem;
+      padding: .24rem .5rem;
+      color: var(--blue-strong);
+      border-radius: 999px;
+      background: var(--blue-soft);
+      font-family: var(--mono);
+      font-size: .67rem;
+      font-weight: 700;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+    }
+
+    .concept p {
+      position: relative;
+      z-index: 1;
+      margin: 0;
+      color: var(--muted);
+      font-size: .88rem;
+      line-height: 1.5;
+    }
+
+    .formula {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: center;
+      gap: .65rem;
+      margin: 2rem 0 0;
+      padding: 1.4rem;
+      border-radius: 1rem;
+      background: var(--paper-strong);
+      font-weight: 690;
+    }
+
+    .formula span {
+      padding: .4rem .7rem;
+      border: 1px solid color-mix(in srgb, var(--blue) 28%, var(--line));
+      border-radius: .55rem;
+      background: var(--paper);
+    }
+
+    .formula b { color: var(--blue-strong); font-size: 1.2rem; }
+
+    .start-grid,
+    .scenario-grid,
+    .mini-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 1rem;
+    }
+
+    .card,
+    .scenario,
+    .note,
+    .warning {
+      border: 1px solid var(--line);
+      border-radius: 1rem;
+      background: var(--paper);
+    }
+
+    .card,
+    .scenario { padding: 1.35rem; }
+
+    .card p:last-child,
+    .scenario p:last-child,
+    .note p:last-child,
+    .warning p:last-child { margin-bottom: 0; }
+
+    .number {
+      display: grid;
+      place-items: center;
+      width: 2rem;
+      height: 2rem;
+      margin-bottom: 1rem;
+      color: white;
+      border-radius: .65rem;
+      background: var(--blue);
+      font-family: var(--mono);
+      font-size: .76rem;
+      font-weight: 750;
+    }
+
+    .card p,
+    .scenario p { color: var(--muted); }
+
+    .path {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: .42rem;
+      margin: 1.3rem 0;
+    }
+
+    .path span {
+      padding: .28rem .55rem;
+      border: 1px solid var(--line);
+      border-radius: .48rem;
+      background: var(--paper);
+      font-size: .78rem;
+      font-weight: 650;
+    }
+
+    .path b { color: var(--muted); font-weight: 500; }
+
+    .note,
+    .warning {
+      margin: 1.4rem 0;
+      padding: 1rem 1.1rem;
+      border-left-width: 4px;
+    }
+
+    .note {
+      border-left-color: var(--green);
+      background: var(--green-soft);
+    }
+
+    .warning {
+      border-left-color: var(--gold);
+      background: var(--gold-soft);
+    }
+
+    .note strong,
+    .warning strong { display: block; margin-bottom: .2rem; }
+
+    .two-column {
+      display: grid;
+      grid-template-columns: minmax(0, 1.1fr) minmax(17rem, .9fr);
+      gap: clamp(1.5rem, 5vw, 4rem);
+      align-items: start;
+    }
+
+    .sample {
+      position: relative;
+      margin: 1.4rem 0;
+      padding: 1.2rem;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: .9rem;
+      background: color-mix(in srgb, var(--paper) 82%, var(--page));
+    }
+
+    .sample::before {
+      content: attr(data-label);
+      display: block;
+      margin-bottom: .85rem;
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: .66rem;
+      font-weight: 700;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    pre {
+      margin: 0;
+      overflow-x: auto;
+      white-space: pre-wrap;
+      color: var(--ink);
+      font-family: var(--mono);
+      font-size: .79rem;
+      line-height: 1.65;
+    }
+
+    code {
+      padding: .1em .32em;
+      border-radius: .28rem;
+      background: color-mix(in srgb, var(--blue-soft) 75%, transparent);
+      font-family: var(--mono);
+      font-size: .86em;
+    }
+
+    pre code { padding: 0; background: transparent; font-size: inherit; }
+
+    .conversation {
+      display: grid;
+      gap: .8rem;
+      margin: 1.5rem 0;
+      padding: 1rem;
+      border: 1px solid var(--line);
+      border-radius: 1rem;
+      background: var(--page);
+    }
+
+    .bubble {
+      width: min(88%, 35rem);
+      padding: .8rem .95rem;
+      border: 1px solid var(--line);
+      border-radius: .9rem;
+      background: var(--paper);
+    }
+
+    .bubble.you {
+      margin-left: auto;
+      background: var(--blue-soft);
+    }
+
+    .speaker {
+      display: block;
+      margin-bottom: .25rem;
+      color: var(--blue-strong);
+      font-size: .7rem;
+      font-weight: 760;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+    }
+
+    .bubble p { margin: 0; font-size: .88rem; line-height: 1.55; }
+
+    .scenario {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .scenario-index {
+      margin-bottom: .8rem;
+      color: var(--blue-strong);
+      font-family: var(--mono);
+      font-size: .7rem;
+      font-weight: 750;
+    }
+
+    .cast {
+      margin: auto 0 1rem;
+      padding-top: .8rem;
+      color: var(--muted);
+      font-size: .78rem;
+    }
+
+    .prompt {
+      padding: .85rem;
+      border-radius: .7rem;
+      background: var(--blue-soft);
+      font-family: var(--serif);
+      font-size: .92rem;
+      line-height: 1.5;
+    }
+
+    table {
+      width: 100%;
+      margin: 1.4rem 0;
+      border-collapse: collapse;
+      border: 1px solid var(--line);
+      background: var(--paper);
+      font-size: .88rem;
+    }
+
+    th,
+    td {
+      padding: .75rem .85rem;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      color: var(--muted);
+      background: var(--page);
+      font-size: .7rem;
+      letter-spacing: .07em;
+      text-transform: uppercase;
+    }
+
+    td:first-child { white-space: nowrap; }
+
+    details {
+      margin: .7rem 0;
+      border: 1px solid var(--line);
+      border-radius: .8rem;
+      background: var(--paper);
+    }
+
+    summary {
+      padding: .9rem 1rem;
+      cursor: pointer;
+      font-weight: 700;
+    }
+
+    details > div { padding: 0 1rem 1rem; }
+
+    .fine-print {
+      color: var(--muted);
+      font-size: .82rem;
+    }
+
+    footer {
+      width: min(100%, var(--content));
+      margin-inline: auto;
+      padding: 2.5rem 0 0;
+      color: var(--muted);
+      border-top: 1px solid var(--line);
+      font-size: .82rem;
+    }
+
+    .back-top {
+      display: inline-block;
+      margin-top: .7rem;
+    }
+
+    @media (max-width: 940px) {
+      .shell { display: block; }
+
+      .rail {
+        position: relative;
+        display: block;
+        width: 100%;
+        height: auto;
+        padding: 1rem 1.25rem;
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .brand { margin-bottom: .8rem; }
+      .rail-label,
+      .rail-note { display: none; }
+
+      .rail nav {
+        display: flex;
+        gap: .25rem;
+        overflow-x: auto;
+        padding-bottom: .2rem;
+      }
+
+      .rail nav a { flex: 0 0 auto; }
+      .rail nav a::before { display: none; }
+      main { padding-top: 0; }
+      .hero { padding-top: 4rem; }
+    }
+
+    @media (max-width: 760px) {
+      .concepts,
+      .start-grid,
+      .scenario-grid,
+      .mini-grid,
+      .two-column { grid-template-columns: 1fr; }
+
+      .concept { min-height: 9rem; }
+      td:first-child { white-space: normal; }
+    }
+
+    @media (max-width: 540px) {
+      main { padding-inline: 1rem; }
+      .hero { padding-top: 3rem; }
+      h1 { font-size: 3.25rem; }
+      .content > section { padding: 3.5rem 0; }
+
+      table,
+      thead,
+      tbody,
+      tr,
+      th,
+      td { display: block; }
+
+      thead { display: none; }
+      tr { padding: .4rem 0; border-bottom: 1px solid var(--line); }
+      td { padding: .35rem .75rem; border: 0; }
+      td:first-child { color: var(--blue-strong); font-weight: 700; }
+    }
+
+    @media print {
+      :root { color-scheme: light; }
+      body { background: white; font-size: 10.5pt; }
+      .shell { display: block; }
+      .rail,
+      .hero-actions,
+      .back-top { display: none; }
+      main { padding: 0; }
+      .hero,
+      .content,
+      footer { width: 100%; }
+      .hero { padding: 1cm 0; }
+      .content > section { padding: .7cm 0; break-inside: avoid; }
+      .card,
+      .scenario,
+      .concept,
+      .sample,
+      .conversation,
+      details { box-shadow: none; break-inside: avoid; }
+      details > div { display: block; }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Skip to the guide</a>
+
+  <div class="shell" id="top">
+    <aside class="rail" aria-label="Guide navigation">
+      <a class="brand" href="#top">
+        <span class="brand-mark" aria-hidden="true">c</span>
+        <span class="brand-copy"><strong>CHA</strong><span>Web user guide</span></span>
+      </a>
+
+      <p class="rail-label">In this guide</p>
+      <nav>
+        <a href="#what-is-cha">What CHA does</a>
+        <a href="#mental-model">The four pieces</a>
+        <a href="#first-chat">Your first chat</a>
+        <a href="#personas">Personas</a>
+        <a href="#characters">Characters</a>
+        <a href="#forums">Forums</a>
+        <a href="#conversations">Better conversations</a>
+        <a href="#scenarios">Scenario ideas</a>
+        <a href="#settings">Light settings tour</a>
+        <a href="#commands">Command card</a>
+      </nav>
+
+      <p class="rail-note">Tip: CHA itself has a built-in <strong>Welcome</strong> conversation. Ask Assistant about the workspace whenever you feel lost.</p>
+    </aside>
+
+    <main id="main-content">
+      <header class="hero">
+        <div class="eyebrow">User guide · web edition</div>
+        <h1>Many minds, <em>one room</em> at a time.</h1>
+        <p class="lede">CHA is a personal place for conversations with AI characters. You decide who you are speaking as, who is in the room, and what kind of conversation the room is meant to hold.</p>
+        <div class="hero-actions">
+          <a class="button primary" href="#first-chat">Start with one conversation <span aria-hidden="true">→</span></a>
+          <a class="button" href="#characters">Create a character</a>
+          <a class="button" href="#scenarios">Borrow a scenario</a>
+        </div>
+      </header>
+
+      <div class="content">
+        <section id="what-is-cha">
+          <p class="section-kicker">01 · The idea</p>
+          <h2>A conversation studio, not just a chat box</h2>
+          <p class="section-intro">A normal chatbot gives you one general assistant. CHA lets you build a small world of distinct participants and return to their conversations over time.</p>
+
+          <div class="start-grid">
+            <article class="card">
+              <h3>Think with contrasting voices</h3>
+              <p>Ask a careful planner, a skeptical critic, and an imaginative explorer to look at the same decision. Their differences are often more useful than one polished consensus.</p>
+            </article>
+            <article class="card">
+              <h3>Create durable contexts</h3>
+              <p>Keep a forum for a book project, another for career reflection, and another for language practice. Each forum carries its own cast and shared instructions.</p>
+            </article>
+            <article class="card">
+              <h3>Return to an ongoing thread</h3>
+              <p>Named sessions preserve their transcripts. Reopen an old design review, continue a long correspondence, or download the conversation as Markdown.</p>
+            </article>
+            <article class="card">
+              <h3>Shape the relationship</h3>
+              <p>A persona tells characters who is speaking. A character definition shapes who answers. A forum tells everyone what kind of room they are in.</p>
+            </article>
+          </div>
+
+          <div class="note">
+            <strong>Welcome is your safe starting point</strong>
+            <p>When CHA opens, you arrive in <em>Entrance / Welcome</em> as the built-in <em>Guest</em>, speaking with <em>Assistant</em>. Welcome is temporary and disappears when the server stops. Sessions you create inside your own forums are stored.</p>
+          </div>
+        </section>
+
+        <section id="mental-model">
+          <p class="section-kicker">02 · The mental model</p>
+          <h2>From, to, where—and the conversation itself</h2>
+          <p class="section-intro">These four pieces unlock the whole application. If a reply feels wrong, ask which piece should change.</p>
+
+          <div class="concepts">
+            <article class="concept persona">
+              <span class="concept-tag">From</span>
+              <h3>Persona</h3>
+              <p>Who you are speaking as: Guest, a project lead, yourself, a fictional narrator, or any useful point of view.</p>
+            </article>
+            <article class="concept character">
+              <span class="concept-tag">To</span>
+              <h3>Character</h3>
+              <p>The AI participant answering you, with a defined identity, temperament, expertise, and conversational voice.</p>
+            </article>
+            <article class="concept forum">
+              <span class="concept-tag">Where</span>
+              <h3>Forum</h3>
+              <p>The room: its purpose, house rules, shared context, persona, and roster of available characters.</p>
+            </article>
+            <article class="concept session">
+              <span class="concept-tag">Record</span>
+              <h3>Session</h3>
+              <p>One named, saved conversation inside a forum. A forum may hold many sessions with the same cast.</p>
+            </article>
+          </div>
+
+          <div class="formula" aria-label="Persona speaks to a character inside a forum, and the exchange is saved in a session">
+            <span>Persona</span><b aria-hidden="true">→</b><span>Character</span><b aria-hidden="true">@</b><span>Forum</span><b aria-hidden="true">→</b><span>Session</span>
+          </div>
+        </section>
+
+        <section id="first-chat">
+          <p class="section-kicker">03 · First steps</p>
+          <h2>Start a useful conversation in a minute</h2>
+          <p class="section-intro">If your workspace already has a forum, you can begin without configuring anything.</p>
+
+          <div class="start-grid">
+            <article class="card">
+              <div class="number">01</div>
+              <h3>Choose a forum</h3>
+              <p>Open the sidebar and select <strong>Forums</strong>. Each row shows a forum name and either its description or its cast.</p>
+            </article>
+            <article class="card">
+              <div class="number">02</div>
+              <h3>Open or create a session</h3>
+              <p>Select the forum, then open an existing session or choose <strong>New session</strong>. Give it a useful name such as “Launch decision” or “Chapter 3”.</p>
+            </article>
+            <article class="card">
+              <div class="number">03</div>
+              <h3>Check From and To</h3>
+              <p>The status line below the message box shows the forum, the persona after <strong>From:</strong>, and the current character after <strong>To:</strong>.</p>
+            </article>
+            <article class="card">
+              <div class="number">04</div>
+              <h3>Send a message</h3>
+              <p>Press <strong>Enter</strong> to send. Use <strong>Ctrl+Enter</strong> for a new line. While a reply is arriving, the send button becomes a stop button.</p>
+            </article>
+          </div>
+
+          <h3>Useful chat controls</h3>
+          <ul class="plain-list">
+            <li>Use the target menu beside the message box to switch the forum’s default character.</li>
+            <li>Start a message with <code>@Name</code> to address one character for that message without changing the default.</li>
+            <li>If a microphone button appears, you can dictate into the draft before sending.</li>
+            <li>The message editor grows as you type; drag its top edge to resize it manually.</li>
+            <li>Recent sessions appear in the sidebar. Their <strong>…</strong> menu can download, rename, or delete them.</li>
+          </ul>
+
+          <div class="warning">
+            <strong>Deletion means deletion</strong>
+            <p>Deleting a session removes it from CHA. Deleting a forum removes the forum and all sessions inside it. Download any transcript you want to keep first.</p>
+          </div>
+        </section>
+
+        <section id="personas">
+          <p class="section-kicker">04 · Personas</p>
+          <h2>Give the conversation a clear “you”</h2>
+          <div class="two-column">
+            <div>
+              <p>A persona describes the human side of the exchange. It can tell characters your background, priorities, preferred style of help, or the role you are playing today. Your messages appear under that persona’s name.</p>
+              <p>Opening a persona in the <strong>Personas</strong> list only shows its profile—it does not activate it.</p>
+
+              <h3>Create a persona in the web UI</h3>
+              <div class="path" aria-label="Navigation path">
+                <span>Personas</span><b>›</b><span>New persona</span><b>›</b><span>Name</span><b>›</b><span>Create persona</span>
+              </div>
+              <ol class="steps">
+                <li>Enter a display name such as “Maya — Product Lead”.</li>
+                <li>On the new persona’s page, choose the text-lines button in the top bar to edit its profile, or the upload button to replace it from a Markdown or text file.</li>
+                <li>In a session, type <code>/!Maya</code> (or another unambiguous part of the name) to speak as that persona. This also saves it as the forum’s default persona.</li>
+              </ol>
+
+              <div class="note">
+                <strong>Write for relevance, not biography</strong>
+                <p>A few details that improve answers are better than a life story. Include what you are trying to do, what you know already, what tends not to help, and how candid or structured you want the conversation to be.</p>
+              </div>
+            </div>
+
+            <div class="sample" data-label="Example persona profile">
+              <pre><code># Maya — product lead
+
+I lead a small team building tools for researchers.
+I know the product well but I am not an infrastructure
+expert.
+
+Help me separate user value from implementation fashion.
+Challenge vague success criteria. Prefer one concrete
+next experiment over a long programme of work.
+
+I welcome direct disagreement, but explain technical
+trade-offs in plain language.</code></pre>
+            </div>
+          </div>
+
+          <p class="fine-print">Persona profiles become part of the context sent to the selected model provider. Do not put passwords, API keys, or information you would not want included in a model request.</p>
+        </section>
+
+        <section id="characters">
+          <p class="section-kicker">05 · Characters</p>
+          <h2>Create someone worth talking to</h2>
+          <p class="section-intro">A good character is not merely “helpful.” It notices particular things, values some evidence over other evidence, has a recognizable way of reasoning, and is allowed to disagree.</p>
+
+          <div class="path" aria-label="Navigation path">
+            <span>Characters</span><b>›</b><span>New character</span><b>›</b><span>Name + description</span><b>›</b><span>Create character</span>
+          </div>
+
+          <div class="mini-grid">
+            <article class="card">
+              <h3>1. Name the promise</h3>
+              <p>The short description appears in the character list. Make it tell you why this participant belongs in your cast: “A skeptical editor who finds unsupported leaps,” not “A helpful assistant.”</p>
+            </article>
+            <article class="card">
+              <h3>2. Write the definition</h3>
+              <p>After creation, the definition is blank. Use the text-lines button in the top bar to edit it, or upload a Markdown/text file. Describe the character directly: identity, attention, values, manner, limits, and behavior.</p>
+            </article>
+            <article class="card">
+              <h3>3. Choose a provider</h3>
+              <p>Open <strong>Settings</strong> on the character page. Select an available provider. Optionally choose reasoning effort, web search behavior, and a visual style. A new character needs a provider before it can answer.</p>
+            </article>
+            <article class="card">
+              <h3>4. Put them in a forum</h3>
+              <p>Open the forum, select its name above the session list, choose <strong>Members</strong>, check the character, and save. At least one character must remain in every forum.</p>
+            </article>
+          </div>
+
+          <div class="sample" data-label="Example character definition">
+            <pre><code># Rowan, the skeptical editor
+
+You are Rowan, an experienced developmental editor.
+You care about the reader's attention more than the
+author's attachment to a passage.
+
+Notice unsupported claims, buried stakes, false urgency,
+and places where elegant prose is doing the work of an
+argument. Ask what the piece is truly trying to change in
+the reader.
+
+Be candid but not theatrical. Do not rewrite everything.
+Identify the one revision that would improve the piece
+most, explain why, and wait for the author's response.</code></pre>
+          </div>
+
+          <h3>A richer historical-character recipe</h3>
+          <p>For a historical thinker, describe more than famous quotations. Include their circumstances, tensions, habits of attention, blind spots, characteristic arguments, and what they could not honestly know. Ask them to reason from inside their worldview rather than announce “As X, I would…”.</p>
+
+          <div class="warning">
+            <strong>Saving character settings restarts affected sessions</strong>
+            <p>If a character is answering, that answer can be lost. Finish or stop the current reply before changing the character’s provider, reasoning, search, or style settings.</p>
+          </div>
+        </section>
+
+        <section id="forums">
+          <p class="section-kicker">06 · Forums</p>
+          <h2>Design the room, then invite the cast</h2>
+          <p class="section-intro">A forum is a reusable conversational setting. Its description is also shared instruction for the characters in that forum, so it can establish a purpose, relationship, procedure, or house rules.</p>
+
+          <div class="path" aria-label="Navigation path">
+            <span>Forums</span><b>›</b><span>New forum</span><b>›</b><span>Name + persona</span><b>›</b><span>Create forum</span>
+          </div>
+
+          <ol class="steps">
+            <li>Choose the persona that will speak in the forum.</li>
+            <li>The forum begins with the built-in Assistant as its only member, so it is immediately usable.</li>
+            <li>Click the forum name above its session list to open the forum page.</li>
+            <li>Use the text-lines button to write the forum description. Use <strong>Members</strong> to add or remove characters.</li>
+            <li>Choose a default character from the chat target menu, or type <code>/@Name</code> in a session.</li>
+          </ol>
+
+          <div class="sample" data-label="Example forum description — Decision Room">
+            <pre><code># Decision Room
+
+This forum exists to improve consequential decisions,
+not to manufacture agreement.
+
+Separate facts, assumptions, values, and reversible bets.
+Each character should contribute the concern most native
+to their point of view. Do not repeat another character's
+argument merely to sound complete.
+
+When the decision is mature, help the persona state:
+the choice, the reason, the main risk, and the next check.</code></pre>
+          </div>
+
+          <h3>Three forum patterns that work well</h3>
+          <div class="mini-grid">
+            <article class="card">
+              <h3>A standing council</h3>
+              <p>Keep the same complementary cast for recurring decisions: a domain expert, a skeptic, and a practical operator.</p>
+            </article>
+            <article class="card">
+              <h3>A project room</h3>
+              <p>Give a forum one body of work and open a session per topic: research questions, outline, draft review, launch notes.</p>
+            </article>
+            <article class="card">
+              <h3>A salon</h3>
+              <p>Bring together characters with real philosophical or aesthetic differences and ask questions without forcing consensus.</p>
+            </article>
+            <article class="card">
+              <h3>A rehearsal room</h3>
+              <p>Create characters representing an interviewer, stakeholder, customer, or critic, then practice difficult exchanges.</p>
+            </article>
+          </div>
+        </section>
+
+        <section id="conversations">
+          <p class="section-kicker">07 · Conversation craft</p>
+          <h2>Let the cast disagree productively</h2>
+          <p class="section-intro">The most interesting CHA conversations use the shared transcript. Characters can see relevant contributions from the other forum members, so later replies can challenge, sharpen, or extend what has already been said.</p>
+
+          <div class="conversation" aria-label="Example multi-character conversation">
+            <div class="bubble you">
+              <span class="speaker">You · Maya</span>
+              <p><code>/mcast @Rowan @Inez</code> We have six weeks. Should we cut onboarding research and build the requested dashboard now?</p>
+            </div>
+            <div class="bubble">
+              <span class="speaker">Rowan · skeptic</span>
+              <p>You have framed research as delay and building as progress. What evidence says the dashboard is the obstacle?</p>
+            </div>
+            <div class="bubble">
+              <span class="speaker">Inez · operator</span>
+              <p>Six weeks is enough for neither certainty nor a broad build. Interview five recent drop-offs, then prototype the narrowest disputed workflow.</p>
+            </div>
+            <div class="bubble you">
+              <span class="speaker">You · Maya</span>
+              <p><code>@Rowan</code> Assume the request came from our largest customer. What would change your objection?</p>
+            </div>
+          </div>
+
+          <h3>Conversation moves worth trying</h3>
+          <table>
+            <thead>
+              <tr><th>Move</th><th>What to type</th><th>Why it helps</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>Ask one voice</td><td><code>@Rowan What premise is weakest?</code></td><td>Targets one character for this turn.</td></tr>
+              <tr><td>Ask several</td><td><code>/mcast @Rowan @Inez Your question</code></td><td>Creates contrasting answers in the shared transcript.</td></tr>
+              <tr><td>Record a note</td><td><code>@- My planning note</code></td><td>Saves text into the transcript without calling a model.</td></tr>
+              <tr><td>Enter recording mode</td><td><code>/@-</code></td><td>Makes ordinary messages save-only until you choose a character again.</td></tr>
+              <tr><td>Start a fresh phase</td><td><code>/cover</code></td><td>Keeps earlier text visible but hides it from later model context.</td></tr>
+              <tr><td>Bring history back</td><td><code>/uncover</code></td><td>Restores the covered conversation to model context.</td></tr>
+            </tbody>
+          </table>
+
+          <div class="note">
+            <strong>Use recording mode for raw material</strong>
+            <p>Switch to <code>/@-</code>, paste notes or dictate a rough account, then choose a character from the target menu. Your notes remain shared history, but no character replies while you are recording.</p>
+          </div>
+        </section>
+
+        <section id="scenarios">
+          <p class="section-kicker">08 · Ready-made ideas</p>
+          <h2>Six conversations to make your own</h2>
+          <p class="section-intro">Mix original roles, historical figures, and practical specialists. The prompt is only a doorway; follow whichever answer makes the conversation more interesting.</p>
+
+          <div class="scenario-grid">
+            <article class="scenario">
+              <span class="scenario-index">SCENARIO 01</span>
+              <h3>The pre-mortem council</h3>
+              <p>Explore a plan as though it has already failed. Let each character find a different failure mode.</p>
+              <div class="cast"><strong>Cast:</strong> Operator · Skeptic · Customer advocate</div>
+              <div class="prompt">“It is six months from now and this launch failed. Give me the most plausible story of what happened—and the earliest sign we ignored.”</div>
+            </article>
+
+            <article class="scenario">
+              <span class="scenario-index">SCENARIO 02</span>
+              <h3>The manuscript table</h3>
+              <p>Separate structural, reader, and sentence-level feedback instead of asking one general editor to do everything.</p>
+              <div class="cast"><strong>Cast:</strong> Developmental editor · Curious reader · Stylist</div>
+              <div class="prompt">“Do not rewrite this yet. Tell me where your attention rises, where it drops, and what promise the opening seems to make.”</div>
+            </article>
+
+            <article class="scenario">
+              <span class="scenario-index">SCENARIO 03</span>
+              <h3>A historical salon</h3>
+              <p>Give historical characters grounded profiles and let their genuine differences emerge around a modern problem.</p>
+              <div class="cast"><strong>Cast:</strong> Seneca · Epictetus · Marcus Aurelius</div>
+              <div class="prompt">“My work is successful, but I resent how much of my attention it owns. Which part of this is fortune—and which part is my consent?”</div>
+            </article>
+
+            <article class="scenario">
+              <span class="scenario-index">SCENARIO 04</span>
+              <h3>The architecture review</h3>
+              <p>Make trade-offs visible before code hardens them into facts.</p>
+              <div class="cast"><strong>Cast:</strong> Minimalist architect · Reliability engineer · Future maintainer</div>
+              <div class="prompt">“Here is the smallest design I think will work. Which failure deserves prevention now, and which complexity should wait for evidence?”</div>
+            </article>
+
+            <article class="scenario">
+              <span class="scenario-index">SCENARIO 05</span>
+              <h3>The difficult rehearsal</h3>
+              <p>Practice a conversation with a character who has believable goals rather than one trained to be agreeable.</p>
+              <div class="cast"><strong>Cast:</strong> Impatient executive · Trusted peer coach</div>
+              <div class="prompt">“You believe my proposal is too slow and too cautious. Challenge me as you would in the meeting; pause after each objection so I can answer.”</div>
+            </article>
+
+            <article class="scenario">
+              <span class="scenario-index">SCENARIO 06</span>
+              <h3>The curiosity walk</h3>
+              <p>Use a warm but opinionated character to turn an ordinary observation into a surprising line of inquiry.</p>
+              <div class="cast"><strong>Cast:</strong> Naturalist · Urban historian · Childlike questioner</div>
+              <div class="prompt">“I noticed three different kinds of moss on one wall today. Ask me questions that could turn that small observation into an hour of exploration.”</div>
+            </article>
+          </div>
+        </section>
+
+        <section id="settings">
+          <p class="section-kicker">09 · Behind the scenes</p>
+          <h2>Three settings, lightly explained</h2>
+          <p class="section-intro">If CHA already answers successfully, you can leave these alone. They exist so different characters and workspaces can behave differently.</p>
+
+          <div class="mini-grid">
+            <article class="card">
+              <h3>Providers choose the model connection</h3>
+              <p>A provider names the endpoint, model, and default inference behavior used by a character. Each character selects one provider in its Settings. API keys are managed separately under <strong>Settings → API Keys</strong>.</p>
+            </article>
+            <article class="card">
+              <h3>Vaults keep worlds separate</h3>
+              <p>A vault is a separate CHA database and workspace. Use the selector at the bottom of the sidebar to switch. A personal vault and a project vault can have different forums, characters, and sessions.</p>
+            </article>
+            <article class="card">
+              <h3>Styles change appearance, not thought</h3>
+              <p>A style is a reusable typography and color preset for character messages. It helps you recognize voices visually; it does not change the character’s personality or model.</p>
+            </article>
+          </div>
+
+          <details>
+            <summary>A little more about providers</summary>
+            <div>
+              <p>Most users only need to pick an existing provider on a character’s Settings screen. Reasoning effort and web search can inherit the provider default or be overridden for that character. Web search must be supported by the selected provider.</p>
+            </div>
+          </details>
+          <details>
+            <summary>A little more about vaults</summary>
+            <div>
+              <p>Vault settings can also name optional mirror and editable-workspace paths. Those are advanced storage features. Creating a vault can start empty or copy an existing vault; creating it does not automatically switch to it.</p>
+            </div>
+          </details>
+          <details>
+            <summary>A little more about styles</summary>
+            <div>
+              <p>Styles combine a font family, slant, weight, size, and text color. Use <code>/style name</code> for a session-only appearance override, <code>/style</code> to report the current override, and <code>/style default</code> to return to the configured style.</p>
+            </div>
+          </details>
+        </section>
+
+        <section id="commands">
+          <p class="section-kicker">10 · Keep nearby</p>
+          <h2>Chat command card</h2>
+          <p class="section-intro">Commands must begin at the very start of the message. Names may be a full display name, an unambiguous part of one, or a character/persona ID.</p>
+
+          <table>
+            <thead>
+              <tr><th>Command</th><th>Effect</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>/clear</code></td><td>Clear the session transcript.</td></tr>
+              <tr><td><code>/cover</code> / <code>/uncover</code></td><td>Hide earlier conversation from model context, or restore it.</td></tr>
+              <tr><td><code>/mcast @A @B question</code></td><td>Send the same prompt to several forum characters.</td></tr>
+              <tr><td><code>/info</code></td><td>Show information about the current session.</td></tr>
+              <tr><td><code>/characters</code></td><td>List the characters in this forum. <code>/agents</code> is an older alias.</td></tr>
+              <tr><td><code>/@Name</code></td><td>Choose and save the forum’s default character.</td></tr>
+              <tr><td><code>/@-</code></td><td>Enter recording mode: save messages without generating replies.</td></tr>
+              <tr><td><code>/!Name</code></td><td>Choose and save the forum’s persona.</td></tr>
+              <tr><td><code>/style name</code></td><td>Override the current character’s appearance for this session only.</td></tr>
+              <tr><td><code>/stop</code></td><td>Stop the current generation.</td></tr>
+              <tr><td><code>/exit</code></td><td>Close the live session. The stored conversation remains saved.</td></tr>
+              <tr><td><code>@@example</code></td><td>Send literal text beginning with an at-sign.</td></tr>
+            </tbody>
+          </table>
+
+          <div class="warning">
+            <strong>Small edits can have wide effects</strong>
+            <p>Changing a character definition, persona profile, forum description, membership, provider, or style may restart related live sessions. Finish important in-progress answers before editing shared configuration.</p>
+          </div>
+          <p class="fine-print">The built-in Guest, Assistant, and Entrance are read-only. Before deleting one of your own characters, remove it from every forum. Before deleting a persona, make sure no forum is using it.</p>
+        </section>
+      </div>
+
+      <footer>
+        <p><strong>CHA web user guide.</strong> Designed to be read in a browser or printed. The exact characters, forums, providers, styles, and vaults you see depend on the active workspace.</p>
+        <a class="back-top" href="#top">Back to top ↑</a>
+      </footer>
+    </main>
+  </div>
+</body>
+</html>
