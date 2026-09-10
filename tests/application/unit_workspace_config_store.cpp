@@ -980,8 +980,10 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, SuccessfulEditUpdatesFilesDatabaseAndWor
     EXPECT_EQ(forum_result.affected_forum_ids, std::vector<std::string>{"lobby"});
     EXPECT_EQ(getws()->find_forum("lobby")->default_character_id, "writer");
 
+    const std::vector<std::string> member_ids{"guide", "writer"};
     const WorkspaceConfigEditResult persona_result =
-        store->apply_forum_default_persona("lobby", "reader");
+        store->apply_forum_members_and_persona(
+            "lobby", member_ids, "reader");
     EXPECT_EQ(persona_result.affected_forum_ids, std::vector<std::string>{"lobby"});
     EXPECT_EQ(getws()->find_forum("lobby")->default_persona_id, "reader");
     EXPECT_NE(file_bytes(forum).find("reader"), std::string::npos);
@@ -995,6 +997,7 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, SuccessfulEditUpdatesFilesDatabaseAndWor
 TEST_F(RuntimeWorkspaceConfigStoreTest, SerializesTwoEditsAndEditReadInteraction) {
     const auto store = open_store();
     const std::filesystem::path workspace_root = store->workspace_path();
+    const std::vector<std::string> member_ids{"guide", "writer"};
     std::atomic<bool> stop{false};
     std::thread reader([&] {
         while (!stop.load()) {
@@ -1007,7 +1010,8 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, SerializesTwoEditsAndEditReadInteraction
         store->apply_character_settings("guide", "second", std::nullopt);
     });
     std::thread second([&] {
-        store->apply_forum_default_persona("lobby", "reader");
+        store->apply_forum_members_and_persona(
+            "lobby", member_ids, "reader");
     });
     first.join();
     second.join();

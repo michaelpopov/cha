@@ -696,7 +696,7 @@ it('renames a writable forum in place and updates its navigation immediately', a
     .getByRole('button', { name: 'Brain TrustGuide' })).toBeInTheDocument();
 });
 
-it('edits a forum’s members and keeps Save aligned with the form actions', async () => {
+it('edits a forum’s members and persona with one Save action', async () => {
   const user = userEvent.setup();
   const bootstrap = structuredClone(bootstrapFixture);
   const critic = {
@@ -709,6 +709,10 @@ it('edits a forum’s members and keeps Save aligned with the form actions', asy
   const updateForumMembers = vi.fn(async (_forumId, update) => ({
     ...forumDetailFixture,
     default_character_id: update.character_ids[0],
+    default_persona_id: update.persona_id,
+    default_persona_display_name: bootstrap.personas.find(
+      ({ id }) => id === update.persona_id,
+    )?.display_name ?? update.persona_id,
     members: bootstrap.characters.filter(({ id }) => update.character_ids.includes(id)),
   }));
   render(<App client={fixtureClient({
@@ -725,22 +729,29 @@ it('edits a forum’s members and keeps Save aligned with the form actions', asy
   expect(screen.getByRole('heading', { name: 'Members' })).toBeInTheDocument();
   expect(screen.getByRole('checkbox', { name: 'Guide' })).toBeChecked();
   expect(screen.getByRole('checkbox', { name: 'Critic' })).not.toBeChecked();
+  const persona = screen.getByRole('combobox', { name: 'Persona' });
+  expect(persona).toHaveValue('reader');
   const save = screen.getByRole('button', { name: 'Save' });
   expect(save).toBeDisabled();
   expect(save.parentElement).toHaveClass('cha-forum-members-actions');
 
+  await user.selectOptions(persona, 'guest');
+  expect(save).toBeEnabled();
+  await user.selectOptions(persona, 'reader');
+  expect(save).toBeDisabled();
   await user.click(screen.getByRole('checkbox', { name: 'Guide' }));
   await user.click(screen.getByRole('checkbox', { name: 'Critic' }));
+  await user.selectOptions(persona, 'guest');
   expect(save).toBeEnabled();
   await user.click(save);
 
   await waitFor(() => expect(updateForumMembers).toHaveBeenCalledWith(
-    'lobby', { character_ids: ['critic'] },
+    'lobby', { character_ids: ['critic'], persona_id: 'guest' },
   ));
   expect(save).toBeDisabled();
   await user.click(within(screen.getByLabelText('Forum members navigation'))
     .getByRole('button', { name: 'The Lobby' }));
-  expect(await screen.findByText('Critic · speaking as Reader')).toBeInTheDocument();
+  expect(await screen.findByText('Critic · speaking as Guest')).toBeInTheDocument();
 });
 
 it('replaces forum Markdown from the topbar file action', async () => {

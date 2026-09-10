@@ -669,9 +669,10 @@ export interface paths {
         };
         get?: never;
         /**
-         * Replace a forum's members
-         * @description Replaces the complete member list of a writable forum. At least one
-         *     configured character is required. If the existing
+         * Replace a forum's members and persona
+         * @description Replaces the complete member list and persona of a writable forum. At
+         *     least one configured character and a configured persona are required.
+         *     If the existing
          *     default character is removed, the first remaining character becomes
          *     the default. Live sessions in the forum are asked to reload.
          */
@@ -1256,6 +1257,7 @@ export interface components {
         };
         UpdateForumMembersRequest: {
             character_ids: components["schemas"]["Identifier"][];
+            persona_id: components["schemas"]["Identifier"];
         };
         CreateSessionRequest: {
             label: string;

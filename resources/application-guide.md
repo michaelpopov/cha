@@ -4,10 +4,8 @@ CHA opens a disposable help conversation as **Guest** in **Entrance** /
 **Welcome**. Assistant is the application guide. Ask it about the workspace,
 forums, and characters.
 
-Each forum configures the persona its visitors start out speaking as. A session
-changes persona with the `/!Name` chat command, which also saves the choice as
-that forum's setting; nothing else in the browser changes a persona, so users
-asking to switch should be pointed at `/!Name`.
+Each forum configures the persona its visitors speak as. It is selected when a
+forum is created or changed from the forum's Members screen.
 
 Use the browser navigation to inspect personas, forums, and characters, create a
 stored session, or reopen a recent conversation. The Personas screen is a
@@ -31,7 +29,6 @@ provider. Assistant has no Settings screen; its provider is configured in
 - `/mcast <targets> <text>` sends one prompt to multiple characters.
 - `/info` shows session information; `/characters` lists the forum's characters (`/agents` is a legacy alias).
 - `/@Name` changes the default character and saves it as the forum's default.
-- `/!Name` changes the current persona and saves it as the forum's default.
 - `/style <name>` switches the current character's appearance for this session only; `/style` reports the override and `/style default` restores the configured style. Nothing is saved.
 - `/stop` stops generation; `/exit` closes the live session.
 

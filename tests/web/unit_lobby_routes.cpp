@@ -587,10 +587,14 @@ httplib::Result patch_forum(
 httplib::Result put_forum_members(
     TestServer& server,
     std::string_view id,
-    const nlohmann::json& character_ids) {
+    const nlohmann::json& character_ids,
+    std::string_view persona_id = "reader") {
     return server.client().Put(
         "/api/v1/forums/" + std::string(id) + "/members",
-        nlohmann::json({{"character_ids", character_ids}}).dump(),
+        nlohmann::json({
+            {"character_ids", character_ids},
+            {"persona_id", persona_id},
+        }).dump(),
         "application/json");
 }
 
@@ -1010,7 +1014,7 @@ TEST(LobbyRoutes, PatchesForumNameAndMarkdownInTheDatabase) {
         400, "bad_request");
 }
 
-TEST(LobbyRoutes, ReplacesForumMembersAndDefaultInTheDatabase) {
+TEST(LobbyRoutes, ReplacesForumMembersPersonaAndDefaultInTheDatabase) {
     test::TestWorkspace fixture;
     const auto critic = fixture.root() / "characters" / "critic";
     std::filesystem::create_directories(critic);
@@ -1055,13 +1059,15 @@ TEST(LobbyRoutes, ReplacesForumMembersAndDefaultInTheDatabase) {
         "# Forum member\n");
 
     const auto replaced = put_forum_members(
-        server, "lobby", nlohmann::json::array({"critic"}));
+        server, "lobby", nlohmann::json::array({"critic"}), "builtin-guest");
     ASSERT_TRUE(replaced);
     ASSERT_EQ(replaced->status, 200) << replaced->body;
     const nlohmann::json replaced_body = body(replaced);
     ASSERT_EQ(replaced_body["members"].size(), 1);
     EXPECT_EQ(replaced_body["members"][0]["id"], "critic");
     EXPECT_EQ(replaced_body["default_character_id"], "critic");
+    EXPECT_EQ(replaced_body["default_persona_id"], "builtin-guest");
+    EXPECT_EQ(replaced_body["default_persona_display_name"], "Guest");
     EXPECT_TRUE(config_row(
         graph.store->database_path(),
         "forums/lobby/members/guide/character.toml").empty());
@@ -1069,6 +1075,7 @@ TEST(LobbyRoutes, ReplacesForumMembersAndDefaultInTheDatabase) {
         graph.store->database_path(), "forums/lobby/config.toml");
     EXPECT_NE(forum_config.find("default_character"), std::string::npos);
     EXPECT_NE(forum_config.find("critic"), std::string::npos);
+    EXPECT_NE(forum_config.find("builtin-guest"), std::string::npos);
 
     const auto bootstrap = server.client().Get("/api/v1/bootstrap");
     ASSERT_TRUE(bootstrap);
@@ -1080,6 +1087,7 @@ TEST(LobbyRoutes, ReplacesForumMembersAndDefaultInTheDatabase) {
     ASSERT_NE(forum, bootstrap_forums.end());
     ASSERT_EQ((*forum)["members"].size(), 1);
     EXPECT_EQ((*forum)["members"][0]["id"], "critic");
+    EXPECT_EQ((*forum)["default_persona_id"], "builtin-guest");
 
     const auto deadline = std::chrono::steady_clock::now() + 2s;
     while (session_is_live(manager, key)
@@ -1093,7 +1101,13 @@ TEST(LobbyRoutes, ReplacesForumMembersAndDefaultInTheDatabase) {
         400, "bad_request");
     expect_error(
         put_forum_members(server, "lobby", nlohmann::json::array({"draft"})),
-        400, "bad_request", "Select at least one configured character.");
+        400, "bad_request",
+        "Select a configured persona and at least one configured character.");
+    expect_error(
+        put_forum_members(
+            server, "lobby", nlohmann::json::array({"guide"}), "missing"),
+        400, "bad_request",
+        "Select a configured persona and at least one configured character.");
     expect_error(
         put_forum_members(
             server, "builtin-entrance",

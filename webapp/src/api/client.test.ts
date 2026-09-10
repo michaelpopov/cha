@@ -77,7 +77,10 @@ describe('CHA API client', () => {
     await client.createForum({ display_name: 'Brain Trust', persona_id: 'reader' });
     await client.getForum('f one');
     await client.updateForum('f one', { display_name: 'Brain Trust' });
-    await client.updateForumMembers('f one', { character_ids: ['guide', 'critic'] });
+    await client.updateForumMembers('f one', {
+      character_ids: ['guide', 'critic'],
+      persona_id: 'reader',
+    });
     await client.deletePersona('read er');
     await client.deleteCharacter('a b');
     await client.deleteForum('f one');
@@ -168,7 +171,7 @@ describe('CHA API client', () => {
     expect(fetcher.mock.calls[25][1]?.body).toBe('{"display_name":"Brain Trust"}');
     expect(fetcher.mock.calls[26][1]?.method).toBe('PUT');
     expect(fetcher.mock.calls[26][1]?.body).toBe(
-      '{"character_ids":["guide","critic"]}',
+      '{"character_ids":["guide","critic"],"persona_id":"reader"}',
     );
     expect(sessionEventsUrl('f one', 's/two')).toBe('/s/f%20one/s%2Ftwo/api/v1/events');
   });

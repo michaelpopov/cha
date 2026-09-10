@@ -19,8 +19,8 @@ HTTP or protocol type in `cha_core`. Its permanent session-owner thread is the s
 a `SessionController`; HTTP workers exchange only owning commands and results
 with it.
 
-A persona is a property of the session, not of the submitter. A session starts
-from its forum's configured persona and `/!Name` changes it. `GET
+A persona is a property of the session, not of the submitter. A session uses
+its forum's configured persona. `GET
 /api/v1/bootstrap` returns the immutable discovery view, including stable IDs,
 display summaries, built-ins, and Recent; it deliberately exposes no prompt
 text. Each `ForumSummary` carries its `default_persona_id` and
@@ -59,10 +59,9 @@ an actor that appears in neither is one that has yet to read the published
 configuration at all.
 
 There is no whole-workspace HTTP mutation. Operators stop the process and use
-database export/edit/import for other configuration changes. The two other
-narrow online writes are the forum default character and forum default persona;
-they use the same validate/commit/publish store path and restart affected live
-sessions.
+database export/edit/import for other configuration changes. The narrow online
+writes for a forum's default character and its members/persona use the same
+validate/commit/publish store path and restart affected live sessions.
 
 A submitted input body is exactly `{"text": "<text>"}`. Naming a persona is
 rejected rather than ignored, so a client written against an older shape fails
@@ -70,16 +69,16 @@ visibly. `LiveSession` supplies the session's current persona ID from the
 controller view, and `SessionController` resolves it against the workspace
 roster, so a submitter still cannot choose who a message is attributed to. A
 live session serves one browser connection at a time — the newest one, because
-the reader moves between devices — and the persona changes
-only through `/!Name`, which also saves the choice as the forum's default and
-restarts the forum's live sessions so agent prompts carry that persona.
+the reader moves between devices. Changing the forum's persona from the Members
+screen saves it together with the member list and restarts the forum's live
+sessions so agent prompts carry that persona.
 
 ## Chat input grammar
 
 The raw-input owner path recognizes optional leading character mentions and
 the commands `/clear`, `/cover`, `/uncover`, `/mcast`, `/info`,
-`/characters` (`/agents` is a legacy alias), `/@Name`, `/!Name`,
-`/style`, `/stop`, and `/exit`. Mentions and multicast recipient
+`/characters` (`/agents` is a legacy alias), `/@Name`, `/style`, `/stop`, and
+`/exit`. Mentions and multicast recipient
 handles remain unresolved until `SessionController` applies the forum's
 authoritative character rules. While generation is active, only a bare
 `/stop` is dispatched; other input remains in the browser editor.

@@ -180,7 +180,6 @@ private:
     std::unique_ptr<SessionController> controller_;
     std::string label_;
     std::function<void(std::string_view)> persist_default_character_;
-    std::function<void(std::string_view)> persist_default_persona_;
     std::function<void(
         std::string_view,
         std::span<const TranscriptEntry>)> mirror_;

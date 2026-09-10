@@ -90,7 +90,6 @@ public:
     [[nodiscard]] ControllerUpdate character_information();
     [[nodiscard]] ControllerUpdate set_default_character(std::string_view handle);
     [[nodiscard]] ControllerUpdate set_default_character_by_id(std::string_view id);
-    [[nodiscard]] ControllerUpdate set_default_persona(std::string_view handle);
     // Runtime appearance override for the current default character: an empty
     // name reports the override state, "default" restores the configured style,
     // anything else is resolved and swapped in. Session-scoped only; nothing is

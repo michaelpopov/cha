@@ -879,21 +879,25 @@ export function ForumMembersScreen({
   const forumId = state.currentForumId;
   const forum = state.bootstrap?.forums.find(({ id }) => id === forumId);
   const available = state.bootstrap?.characters ?? [];
+  const personas = state.bootstrap?.personas ?? [];
   const memberKey = forum?.members.map(({ id }) => id).sort().join('\0') ?? '';
   const [selected, setSelected] = useState<Set<string>>(
     () => new Set(forum?.members.map(({ id }) => id)),
   );
+  const [personaId, setPersonaId] = useState(forum?.default_persona_id ?? '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     setSelected(new Set(forum?.members.map(({ id }) => id)));
+    setPersonaId(forum?.default_persona_id ?? '');
     setError(null);
-  }, [forumId, memberKey]);
+  }, [forumId, memberKey, forum?.default_persona_id]);
 
   const dirty = forum !== undefined && (
     selected.size !== forum.members.length
     || forum.members.some(({ id }) => !selected.has(id))
+    || personaId !== forum.default_persona_id
   );
 
   function toggle(characterId: string) {
@@ -908,12 +912,13 @@ export function ForumMembersScreen({
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!forumId || !dirty || selected.size === 0 || saving) return;
+    if (!forumId || !dirty || selected.size === 0 || !personaId || saving) return;
     setSaving(true);
     setError(null);
     try {
       const updated = await client.updateForumMembers(forumId, {
         character_ids: [...selected],
+        persona_id: personaId,
       });
       dispatch({ type: 'forum-updated', forum: updated });
     } catch (failure: unknown) {
@@ -937,6 +942,21 @@ export function ForumMembersScreen({
       {!forum && <p className="cha-state-message">No forum is selected.</p>}
       {forum && (
         <form className="cha-forum-members" onSubmit={(event) => void save(event)}>
+          <select
+            aria-label="Persona"
+            className="cha-form-control"
+            disabled={saving}
+            id="cha-forum-members-persona"
+            onChange={(event) => {
+              setPersonaId(event.target.value);
+              setError(null);
+            }}
+            value={personaId}
+          >
+            {personas.map((persona) => (
+              <option key={persona.id} value={persona.id}>{persona.display_name}</option>
+            ))}
+          </select>
           <div className="cha-member-list">
             {available.map((character) => (
               <label className="cha-member-row" key={character.id}>
@@ -954,7 +974,7 @@ export function ForumMembersScreen({
           <div className="cha-forum-members-actions">
             <button
               className="cha-button cha-button-primary"
-              disabled={!dirty || selected.size === 0 || saving}
+              disabled={!dirty || selected.size === 0 || !personaId || saving}
               type="submit"
             >
               Save

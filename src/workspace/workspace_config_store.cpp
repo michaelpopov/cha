@@ -1290,11 +1290,16 @@ WorkspaceConfigEditResult WorkspaceConfigStore::apply_forum_delete(
     }, forum_id);
 }
 
-WorkspaceConfigEditResult WorkspaceConfigStore::apply_forum_members(
+WorkspaceConfigEditResult WorkspaceConfigStore::apply_forum_members_and_persona(
     std::string_view forum_id,
-    std::span<const std::string> character_ids) {
+    std::span<const std::string> character_ids,
+    std::string_view persona_id) {
     return impl_->edit([&](const Workspace& workspace) {
+        if (workspace.find_persona(persona_id) == nullptr) {
+            throw std::invalid_argument("Invalid persona");
+        }
         workspace.write_forum_members(forum_id, character_ids);
+        workspace.write_forum_default_persona(forum_id, persona_id);
         return std::vector<std::string>{std::string(forum_id)};
     });
 }
@@ -1304,15 +1309,6 @@ WorkspaceConfigEditResult WorkspaceConfigStore::apply_forum_default_character(
     std::string_view character_id) {
     return impl_->edit([&](const Workspace& workspace) {
         workspace.write_forum_default_character(forum_id, character_id);
-        return std::vector<std::string>{std::string(forum_id)};
-    });
-}
-
-WorkspaceConfigEditResult WorkspaceConfigStore::apply_forum_default_persona(
-    std::string_view forum_id,
-    std::string_view persona_id) {
-    return impl_->edit([&](const Workspace& workspace) {
-        workspace.write_forum_default_persona(forum_id, persona_id);
         return std::vector<std::string>{std::string(forum_id)};
     });
 }

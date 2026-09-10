@@ -754,12 +754,14 @@ void LobbyRoutes::install(httplib::Server& server) const {
                 })) return;
         try {
             const WorkspaceConfigEditResult edited =
-                config->apply_forum_members(id, update.character_ids);
+                config->apply_forum_members_and_persona(
+                    id, update.character_ids, update.persona_id);
             request_reload(*live_sessions, edited.affected_forum_ids);
         } catch (const std::invalid_argument&) {
             return set_error_response(response, 400,
                 {ErrorCode::bad_request,
-                 "Select at least one configured character."});
+                 "Select a configured persona and at least one configured "
+                 "character."});
         } catch (const WorkspaceRestartRequiredError& error) {
             return set_error_response(response, 500,
                 {ErrorCode::internal_error, error.what()});

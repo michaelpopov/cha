@@ -16,7 +16,6 @@ enum class CommandKind {
     exit,
     characters,
     set_default,
-    set_persona,
     session_style,
     unknown,
 };

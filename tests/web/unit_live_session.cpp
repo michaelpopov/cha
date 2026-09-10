@@ -282,16 +282,12 @@ TEST(LiveSession, RoutesRawAndTypedCommandsOnOneOwnerThread) {
     auto guide = std::make_shared<test::BackendControls>();
     auto scribe = std::make_shared<test::BackendControls>();
     std::optional<std::string> persisted_default;
-    std::optional<std::string> persisted_persona;
-    SessionOpener opener = [path = file.path(), guide, scribe, &persisted_default,
-                             &persisted_persona](
+    SessionOpener opener = [path = file.path(), guide, scribe, &persisted_default](
                                const FullSessionId& identity,
                                std::shared_ptr<WakeNotifier> notifier) {
         std::vector<std::unique_ptr<test::DescribedModelBackend>> backends;
         backends.push_back(test::scripted_backend(guide, "guide", "Guide"));
         backends.push_back(test::scripted_backend(scribe, "scribe", "Scribe"));
-        // Two personas so the session starts on Operator and /!Rea is a real
-        // switch that persists, rather than a no-op re-selection.
         OpenedSession opened = test::open_scripted_session(
             identity, path, notifier, std::move(backends), {},
             PersonaRoster{
@@ -300,9 +296,6 @@ TEST(LiveSession, RoutesRawAndTypedCommandsOnOneOwnerThread) {
             });
         opened.persist_default_character = [&persisted_default](std::string_view id) {
             persisted_default = std::string(id);
-        };
-        opened.persist_default_persona = [&persisted_persona](std::string_view id) {
-            persisted_persona = std::string(id);
         };
         return opened;
     };
@@ -318,10 +311,6 @@ TEST(LiveSession, RoutesRawAndTypedCommandsOnOneOwnerThread) {
     EXPECT_TRUE(std::holds_alternative<CommandResult>(
         host->submit(RawCommand{"/@Scribe"}, 2s)));
     EXPECT_EQ(persisted_default, "scribe");
-
-    EXPECT_TRUE(std::holds_alternative<CommandResult>(
-        host->submit(RawCommand{"/!Rea"}, 2s)));
-    EXPECT_EQ(persisted_persona, "reader");
 
     EXPECT_TRUE(std::holds_alternative<CommandResult>(
         host->submit(SetDefaultCharacterCommand{"guide"}, 2s)));

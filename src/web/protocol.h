@@ -39,8 +39,8 @@ enum class ErrorCode {
 // The lobby publishes the workspace-wide persona roster for discovery: the
 // browser lists these and reads one persona's Markdown from
 // /api/v1/personas/{id}. A session starts from its forum configuration and can
-// change its current attribution with /!Name; a session snapshot deliberately
-// does not carry the full roster.
+// use that attribution for its lifetime; a session snapshot deliberately does
+// not carry the full roster.
 struct PersonaSummary {
     std::string id;
     std::string display_name;
@@ -142,7 +142,6 @@ struct CommandResult {
     // A successful default-character command also carries the canonical ID so
     // the session owner can update the forum configuration before publishing.
     std::optional<CharacterId> persist_default_character_id;
-    std::optional<std::string> persist_default_persona_id;
 };
 
 struct CreateSessionSuccess {
@@ -245,6 +244,7 @@ struct ForumUpdate {
 
 struct ForumMembersUpdate {
     std::vector<CharacterId> character_ids;
+    std::string persona_id;
 };
 
 struct ForumDetail {

@@ -110,7 +110,7 @@ TEST_F(SessionOpenTest, OpensWelcomeThroughTheSamePath) {
         workspace_guest_id);
 }
 
-TEST_F(SessionOpenTest, DefaultWritesSurviveRestartAndExport) {
+TEST_F(SessionOpenTest, DefaultCharacterWriteSurvivesRestartAndExport) {
     sessions_.reset();
     store_.reset();
     fixture_.add_character("writer", "Writer");
@@ -128,26 +128,21 @@ TEST_F(SessionOpenTest, DefaultWritesSurviveRestartAndExport) {
         const std::string after_character = config_content(
             store_->database_path(), "forums/lobby/config.toml");
         EXPECT_NE(after_character.find("writer"), std::string::npos);
-
-        opened.persist_default_persona("reader");
     }
 
     const std::shared_ptr<const Workspace> workspace = getws();
     ASSERT_NE(workspace->find_forum("lobby"), nullptr);
     EXPECT_EQ(workspace->find_forum("lobby")->default_character_id, "writer");
-    EXPECT_EQ(workspace->find_forum("lobby")->default_persona_id, "reader");
 
     const std::string forum = config_content(
         store_->database_path(), "forums/lobby/config.toml");
     EXPECT_NE(forum.find("writer"), std::string::npos);
-    EXPECT_NE(forum.find("reader"), std::string::npos);
 
     sessions_.reset();
     store_.reset();
     open_runtime();
     ASSERT_NE(getws()->find_forum("lobby"), nullptr);
     EXPECT_EQ(getws()->find_forum("lobby")->default_character_id, "writer");
-    EXPECT_EQ(getws()->find_forum("lobby")->default_persona_id, "reader");
     EXPECT_EQ(sessions_->prepare(stored.identity).label, "Stored");
 
     sessions_.reset();
@@ -161,7 +156,6 @@ TEST_F(SessionOpenTest, DefaultWritesSurviveRestartAndExport) {
         std::istreambuf_iterator<char>(exported_forum),
         std::istreambuf_iterator<char>()};
     EXPECT_NE(exported_content.find("writer"), std::string::npos);
-    EXPECT_NE(exported_content.find("reader"), std::string::npos);
 }
 
 TEST_F(SessionOpenTest, SourceDirectoryEditsDoNotAffectOpening) {

@@ -32,7 +32,6 @@ The chat input also accepts these controller-level commands:
 | `/info`, `/characters` | Inspect the session and its characters (`/agents` remains an alias). |
 | `/@Name` | Change and save the forum's default character. |
 | `/@-` | Enter recording mode: plain messages are saved to the transcript but not sent to a model. Session-local — `-` is never saved as the forum default. |
-| `/!Name` | Change and save the forum's current persona. |
 | `/style <name>` | Override the current character's appearance (font, slant, weight, size) for this session only; `/style` reports the override and `/style default` restores the configured style. Nothing is saved. |
 | `/stop` | Stop generation. |
 | `/exit` | Close the live session. |
@@ -67,10 +66,9 @@ changes the live session immediately and saves that ID to the forum config, so
 the next session in that forum starts with it. CHA validates this narrow online
 edit, commits the complete configuration to SQLite, and then publishes it.
 
-`/!Name` selects the persona speaking for the current session. It accepts an
-unambiguous, case-insensitive full or partial persona ID or display name, then
-saves the selected ID as `default_persona` in the forum config. Later prompts
-in the session are attributed to that persona.
+A forum's persona is selected when the forum is created or from its Members
+screen. Saving Members stores the selected ID as `default_persona` in the forum
+config and reloads the forum's live sessions.
 
 The external application configuration is a directory. `app.toml` selects the
 startup vault and holds web and logging settings. Each other `.toml` file is

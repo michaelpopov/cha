@@ -132,15 +132,13 @@ public:
         std::string_view markdown);
     WorkspaceConfigEditResult apply_forum_delete(
         std::string_view forum_id);
-    WorkspaceConfigEditResult apply_forum_members(
+    WorkspaceConfigEditResult apply_forum_members_and_persona(
         std::string_view forum_id,
-        std::span<const std::string> character_ids);
+        std::span<const std::string> character_ids,
+        std::string_view persona_id);
     WorkspaceConfigEditResult apply_forum_default_character(
         std::string_view forum_id,
         std::string_view character_id);
-    WorkspaceConfigEditResult apply_forum_default_persona(
-        std::string_view forum_id,
-        std::string_view persona_id);
     WorkspaceConfigEditResult apply_provider_update(
         std::string_view provider_id,
         std::string_view display_name,

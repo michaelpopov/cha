@@ -201,6 +201,10 @@ export function fixtureClient(overrides: Partial<ChaClient> = {}): ChaClient {
     deleteForum: async () => undefined,
     updateForumMembers: async (_forumId, update) => ({
       ...forumDetailFixture,
+      default_persona_id: update.persona_id,
+      default_persona_display_name: bootstrapFixture.personas.find(
+        ({ id }) => id === update.persona_id,
+      )?.display_name ?? update.persona_id,
       members: bootstrapFixture.characters.filter(({ id }) => (
         update.character_ids.includes(id)
       )),

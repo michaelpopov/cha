@@ -429,17 +429,26 @@ TEST(WebProtocol, ParsesRouteSpecificCommandPayloads) {
 
     const ForumMembersUpdate members = parse_forum_members_update({
         {"character_ids", {"guide", "critic"}},
+        {"persona_id", "reader"},
     });
     EXPECT_EQ(members.character_ids,
         (std::vector<std::string>{"guide", "critic"}));
+    EXPECT_EQ(members.persona_id, "reader");
     EXPECT_THROW(
-        (void)parse_forum_members_update({{"character_ids", {}}}),
+        (void)parse_forum_members_update({
+            {"character_ids", {}}, {"persona_id", "reader"}}),
         std::invalid_argument);
     EXPECT_THROW(
-        (void)parse_forum_members_update({{"character_ids", {"guide", "guide"}}}),
+        (void)parse_forum_members_update({
+            {"character_ids", {"guide", "guide"}}, {"persona_id", "reader"}}),
         std::invalid_argument);
     EXPECT_THROW(
-        (void)parse_forum_members_update({{"character_ids", {1}}}),
+        (void)parse_forum_members_update({
+            {"character_ids", {1}}, {"persona_id", "reader"}}),
+        std::invalid_argument);
+    EXPECT_THROW(
+        (void)parse_forum_members_update({
+            {"character_ids", {"guide"}}, {"persona_id", ""}}),
         std::invalid_argument);
     EXPECT_THROW(
         (void)parse_forum_members_update({{"members", {"guide"}}}),

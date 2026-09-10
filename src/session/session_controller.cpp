@@ -150,37 +150,6 @@ std::string prompt_cache_key(
     return result;
 }
 
-// An exact ID or display name wins outright; otherwise every prefix match is
-// collected so an ambiguous handle can name its candidates.
-std::vector<const Persona*> matching_personas(
-    const PersonaRoster& personas,
-    std::string_view handle) {
-    for (const Persona& persona : personas) {
-        if (ascii_iequals(persona.id, handle)
-            || ascii_iequals(persona.display_name, handle)) {
-            return {&persona};
-        }
-    }
-    std::vector<const Persona*> matches;
-    for (const Persona& persona : personas) {
-        if (starts_with_folded(persona.id, handle)
-            || starts_with_folded(persona.display_name, handle)
-            || starts_with_name_word(persona.display_name, handle)) {
-            matches.push_back(&persona);
-        }
-    }
-    return matches;
-}
-
-std::string persona_handle_list(const PersonaRoster& personas) {
-    std::string result;
-    for (const Persona& persona : personas) {
-        if (!result.empty()) result += ", ";
-        result += "!" + persona.display_name;
-    }
-    return result;
-}
-
 std::string format_handle_resolution_notice(
     std::string_view handle,
     const HandleResolution& resolution,
@@ -930,43 +899,6 @@ ControllerUpdate SessionController::set_default_character_by_id(std::string_view
     default_character_id_ = character->id;
     require_snapshot(update);
     update.notice = "Default character is now " + character->display_name;
-    return update;
-}
-
-ControllerUpdate SessionController::set_default_persona(std::string_view handle) {
-    if (is_generating()) {
-        return busy_notice();
-    }
-    ControllerUpdate update{.input_consumed = true};
-    if (handle.empty()) {
-        update.notice = "Usage: /!PersonaName";
-        return update;
-    }
-    const SharedPersonaRoster personas = current_personas();
-    const std::vector<const Persona*> matches = matching_personas(*personas, handle);
-    if (matches.empty()) {
-        update.notice = "Unknown persona !" + std::string(handle)
-            + ". Personas in this workspace: " + persona_handle_list(*personas);
-        return update;
-    }
-    if (matches.size() > 1) {
-        update.notice = "Ambiguous persona !" + std::string(handle) + ": matches ";
-        for (std::size_t index = 0; index < matches.size(); ++index) {
-            if (index) update.notice->append(", ");
-            update.notice->append("!" + matches[index]->display_name);
-        }
-        update.notice->append(". Type more of the name.");
-        return update;
-    }
-    const Persona* const selected = matches.front();
-    // Re-selecting the current persona is a no-op: skip the snapshot so the
-    // input route neither re-persists the forum default nor reloads the
-    // forum's live sessions for a change that did not happen.
-    if (selected->id != default_persona_id_) {
-        default_persona_id_ = selected->id;
-        require_snapshot(update);
-    }
-    update.notice = "Current persona is now " + selected->display_name;
     return update;
 }
 

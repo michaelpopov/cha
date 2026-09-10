@@ -233,12 +233,15 @@ ForumUpdate parse_forum_update(const nlohmann::json& json) {
 }
 
 ForumMembersUpdate parse_forum_members_update(const nlohmann::json& json) {
-    exact_keys(json, {"character_ids"});
+    exact_keys(json, {"character_ids", "persona_id"});
     const nlohmann::json& ids = json.at("character_ids");
-    if (!ids.is_array() || ids.empty()) {
+    const nlohmann::json& persona_id = json.at("persona_id");
+    if (!ids.is_array() || ids.empty() || !persona_id.is_string()
+        || persona_id.get_ref<const std::string&>().empty()) {
         throw std::invalid_argument("Invalid web command");
     }
     ForumMembersUpdate update;
+    update.persona_id = persona_id.get<std::string>();
     std::set<std::string> unique;
     for (const nlohmann::json& id : ids) {
         if (!id.is_string()) throw std::invalid_argument("Invalid web command");

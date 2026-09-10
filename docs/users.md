@@ -464,18 +464,15 @@ Remove the session-global persona path:
 
 - `SessionController::default_persona_id_`;
 - `ControllerView::default_persona_id`;
-- `SessionController::set_default_persona()`;
-- the initial persona constructor arguments;
-- `OpenedSession::persist_default_persona`;
-- the `/!Name` server command and forum-default write it triggers.
+- the initial persona constructor arguments.
 
 `WorkspaceForum::default_persona_id` remains. It is static configuration and
 the initial browser choice, not mutable session state. Session projection
 should read it directly from `WorkspaceForum`.
 
-The first UI should use an ordinary persona picker. Preserving `/!Name` as a
-browser-local shortcut can be considered later; duplicating persona handle
-resolution in TypeScript is not required for the initial implementation.
+The first UI should use an ordinary persona picker. Persona selection does not
+need a browser-local command shortcut or persona handle resolution in
+TypeScript.
 
 ## 10. One live actor, several readers
 
@@ -620,8 +617,7 @@ Remove protocol statements that currently promise:
 - no authentication;
 - one browser per live session;
 - takeover and `superseded` events;
-- session-wide current persona attribution;
-- `/!Name` persisting the forum default.
+- session-wide current persona attribution.
 
 Session snapshots remain common, non-personalized values. They should carry
 the forum's configured default persona only as forum metadata. The browser's
@@ -751,7 +747,7 @@ membership, but a newly connected browser still takes over the one stream.
 
 1. Add `persona_id` to `InputRequest` and browser state.
 2. Pass the selected persona through the trusted owner command.
-3. Remove controller-wide persona state and `/!Name` persistence.
+3. Remove the remaining controller-wide persona state.
 4. Project the forum's configured default persona directly from `Workspace`.
 5. Make synchronous command notices private to the caller.
 6. Add controller, route, projection, and component tests for two different

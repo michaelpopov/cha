@@ -82,15 +82,8 @@ TEST(Command, ParsesTheStyleCommandArgument) {
     EXPECT_EQ(parse_command("/stylex").kind, CommandKind::unknown);
 }
 
-TEST(Command, ParsesThePersonaCommandHandle) {
-    const Command named = parse_command("/!Reader");
-    EXPECT_EQ(named.kind, CommandKind::set_persona);
-    EXPECT_EQ(named.handle, "Reader");
-    EXPECT_TRUE(named.argument.empty());
-
-    const Command by_id = parse_command("/!michael");
-    EXPECT_EQ(by_id.kind, CommandKind::set_persona);
-    EXPECT_EQ(by_id.handle, "michael");
+TEST(Command, DoesNotRecognizeTheRemovedPersonaCommand) {
+    EXPECT_EQ(parse_command("/!Reader").kind, CommandKind::unknown);
 }
 
 TEST(Command, ReportsABareSlashAtAsSetDefaultWithoutAHandle) {
@@ -116,7 +109,7 @@ TEST(Command, SeparatesTheDefaultCharacterHandleFromAnArgument) {
 TEST(Command, ListsOnlyCommandsAcceptedByTheWebRawInputPath) {
     EXPECT_EQ(
         command_names(),
-        "/clear, /cover, /uncover, /mcast, /info, /characters, /agents, /@Name, /!Name, /style, /stop, /exit");
+        "/clear, /cover, /uncover, /mcast, /info, /characters, /agents, /@Name, /style, /stop, /exit");
 }
 
 } // namespace

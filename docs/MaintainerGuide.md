@@ -292,8 +292,9 @@ no prompt body.
 
 Every forum chooses its active starting persona with `default_persona` in the
 forum's `config.toml`. If omitted, CHA uses the built-in `guest` persona. A user
-can change a forum's saved default persona at runtime; that narrow online edit
-rewrites the forum configuration stored in SQLite.
+can change a forum's saved default persona from its Members screen. Saving
+rewrites the forum's members and persona together in the configuration stored
+in SQLite.
 
 ### Add a persona
 

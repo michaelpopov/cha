@@ -50,10 +50,6 @@ OpenedSession open_session(
                                          std::string_view character_id) {
             (void)config.apply_forum_default_character(forum_id, character_id);
         },
-        .persist_default_persona = [&config, forum_id = forum->id](
-                                       std::string_view persona_id) {
-            (void)config.apply_forum_default_persona(forum_id, persona_id);
-        },
     };
 }
 

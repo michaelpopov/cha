@@ -1591,7 +1591,7 @@ TEST(WebServerProcess, ReloadsASessionDespiteAStaleForumProvider) {
     EXPECT_TRUE(stream.wait_for_end(5s));
 }
 
-TEST(WebServerProcess, ReloadsAForumsLiveSessionsAfterAPersonaSwitch) {
+TEST(WebServerProcess, ReloadsAForumsLiveSessionsAfterMembersAndPersonaSave) {
     test::TestWorkspace workspace;
     const auto circle = workspace.root() / "forums" / "circle";
     std::filesystem::create_directories(circle / "members" / "guide");
@@ -1636,12 +1636,12 @@ TEST(WebServerProcess, ReloadsAForumsLiveSessionsAfterAPersonaSwitch) {
     StreamingRequest other_stream(port, other_path + "api/v1/events");
     ASSERT_TRUE(other_stream.wait_for_snapshot());
 
-    const auto switched = client.Post(
-        first_path + "api/v1/input",
-        R"({"text":"/!Reader"})",
+    const auto saved = client.Put(
+        "/api/v1/forums/lobby/members",
+        R"({"character_ids":["guide"],"persona_id":"reader"})",
         "application/json");
-    ASSERT_TRUE(switched);
-    ASSERT_EQ(switched->status, 200) << switched->body;
+    ASSERT_TRUE(saved);
+    ASSERT_EQ(saved->status, 200) << saved->body;
     ASSERT_TRUE(first_stream.wait_for_shutdown_reason("reloading"));
     ASSERT_TRUE(second_stream.wait_for_shutdown_reason("reloading"));
     EXPECT_FALSE(other_stream.wait_for_shutdown_reason("reloading", 200ms));

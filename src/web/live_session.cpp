@@ -281,7 +281,6 @@ bool LiveSession::open_controller() {
         label_ = std::move(opened.label);
         controller_ = std::move(opened.controller);
         persist_default_character_ = std::move(opened.persist_default_character);
-        persist_default_persona_ = std::move(opened.persist_default_persona);
         mirror_ = std::move(opened.mirror);
         if (mirror_) {
             mirrored_revision_ = controller_->view().transcript.revision;
@@ -481,19 +480,6 @@ void LiveSession::execute(OwnerCommand command) {
             outcome.session.notice =
                 outcome.session.notice.value_or(std::string()) + " (not saved)";
             outcome.persist_default_character_id.reset();
-        }
-    }
-    if (outcome.persist_default_persona_id && persist_default_persona_) {
-        try {
-            persist_default_persona_(*outcome.persist_default_persona_id);
-        } catch (const std::bad_alloc&) {
-            throw;
-        } catch (const std::exception& error) {
-            log_warn(session_log(
-                identity_, "default_persona_not_saved " + std::string(error.what())));
-            outcome.session.notice =
-                outcome.session.notice.value_or(std::string()) + " (not saved)";
-            outcome.persist_default_persona_id.reset();
         }
     }
     const bool presentation_changed = apply_notice(outcome.session.notice);
@@ -696,7 +682,6 @@ void LiveSession::teardown(ShutdownReason reason, bool skip_final_drain) noexcep
         // actor can start immediately afterwards.
         controller_.reset();
         persist_default_character_ = {};
-        persist_default_persona_ = {};
         mirror_ = {};
         log_event("controller_released_owner_finished");
     }

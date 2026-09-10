@@ -2169,45 +2169,6 @@ TEST(SessionController, HonorsNonFirstInitialDefaultWithoutReorderingForumRoster
         entries_before_agents);
 }
 
-TEST(SessionController, ResolvesCurrentPersonaByIdOrDisplayNamePrefix) {
-    TemporaryJournal temporary;
-    auto controller = test::from_test_backends(
-        test::one_backend(std::make_unique<ScriptedBackend>()),
-        PersonaRoster{
-            {.id = "michael", .display_name = "Michael"},
-            {.id = "michelle", .display_name = "Michelle"},
-            {.id = "reader", .display_name = "Reader"},
-        },
-        temporary.path,
-        notifier());
-
-    const ControllerUpdate by_name = controller->set_default_persona("Rea");
-    EXPECT_TRUE(by_name.input_consumed);
-    EXPECT_TRUE(requires_snapshot(by_name));
-    EXPECT_EQ(by_name.notice, "Current persona is now Reader");
-    EXPECT_EQ(controller->view().default_persona_id, "reader");
-    ASSERT_NE(getws()->find_persona("reader"), nullptr);
-    EXPECT_EQ(getws()->find_persona("reader")->display_name, "Reader");
-
-    const ControllerUpdate by_id = controller->set_default_persona("MICHAEL");
-    EXPECT_EQ(by_id.notice, "Current persona is now Michael");
-    EXPECT_EQ(controller->view().default_persona_id, "michael");
-
-    // Re-selecting the current persona confirms it but requests no snapshot, so
-    // the input route neither re-persists nor reloads for a non-change.
-    const ControllerUpdate unchanged = controller->set_default_persona("michael");
-    EXPECT_EQ(unchanged.notice, "Current persona is now Michael");
-    EXPECT_FALSE(requires_snapshot(unchanged));
-    EXPECT_EQ(controller->view().default_persona_id, "michael");
-
-    EXPECT_EQ(
-        controller->set_default_persona("mic").notice,
-        "Ambiguous persona !mic: matches !Michael, !Michelle. Type more of the name.");
-    EXPECT_EQ(
-        controller->set_default_persona("nobody").notice,
-        "Unknown persona !nobody. Personas in this workspace: !Guest, !Michael, !Michelle, !Reader");
-}
-
 // Foreign-history addressing is a transcript concern; covered in persona_session/transcript tests.
 
 TEST(SessionController, ShutdownCancelsAndPersistsAnActiveTurn) {

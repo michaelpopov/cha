@@ -585,12 +585,13 @@ materialization while `snippet.md` can be. Import validates a byte-identical
 private materialization before it commits the complete row set.
 
 Normal requests never read the import or export directory. The narrow browser
-edits are character provider/style, forum default character, and forum default
-persona. `WorkspaceConfigStore` serializes each one, edits its private tree,
-loads a complete candidate, replaces all configuration rows in one SQLite
-transaction, and publishes after commit. There is no generation, type, control,
-or revision column. Other edits use stop/export/edit/import/restart in console
-mode, or the in-process Export/Edit/Import workflow in CHA.app.
+edits are character provider/style, forum default character, and the combined
+forum members/persona update. `WorkspaceConfigStore` serializes each one, edits
+its private tree, loads a complete candidate, replaces all configuration rows
+in one SQLite transaction, and publishes after commit. There is no generation,
+type, control, or revision column. Other edits use
+stop/export/edit/import/restart in console mode, or the in-process
+Export/Edit/Import workflow in CHA.app.
 
 ### 8.3 Provider selection
 
