@@ -50,6 +50,11 @@ SessionSnapshot to_snapshot(
         .lifecycle = presentation.lifecycle,
         .shutdown_reason = presentation.shutdown_reason,
     };
+    for (TranscriptEntry& entry : snapshot.transcript) {
+        if (entry.kind == EntryKind::character) {
+            entry.text = remove_source_references(entry.text);
+        }
+    }
     snapshot.characters.reserve(workspace_forum->members.size());
     for (const WorkspaceForumMember& member : workspace_forum->members) {
         const WorkspaceCharacter* const character =

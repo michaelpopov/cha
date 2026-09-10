@@ -10,6 +10,11 @@ bool is_space(char character);
 std::size_t find_whitespace(std::string_view value);
 std::string_view trim_view(std::string_view value);
 std::string fold_ascii(std::string_view value);
+// Returns the prefix that can be filtered without exposing a source reference
+// that may be split across later streaming chunks.
+std::size_t complete_source_reference_prefix(std::string_view value);
+// Removes complete model-emitted parenthesized Markdown source links.
+std::string remove_source_references(std::string_view value);
 
 // Case-insensitive handle matching, shared by the character and persona
 // resolvers so both spell "same name" the same way. These compare in place

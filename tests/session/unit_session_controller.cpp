@@ -928,6 +928,136 @@ TEST(SessionController, PreservesLeadingBracketedTextThatIsNotATimestamp) {
     EXPECT_EQ(load_transcript_entries(temporary.path), live);
 }
 
+TEST(SessionController, RemovesStreamedSourceReferencesBeforeTranscriptStorage) {
+    TemporaryJournal temporary;
+    auto controller = test::from_test_backends(
+        test::one_backend(std::make_unique<ScriptedBackend>()),
+        temporary.path,
+        notifier());
+
+    (void)controller->submit_prompt("operator", "Question");
+    EXPECT_TRUE(requires_snapshot(
+        controller->handle_generation_event(GenerationEventDelta{
+            1, GenerationDeltaKind::answer, "The quote. ",
+        })));
+    EXPECT_FALSE(has_state_update(
+        controller->handle_generation_event(GenerationEventDelta{
+            1, GenerationDeltaKind::answer, "([classics.mit",
+        })));
+    EXPECT_FALSE(has_state_update(
+        controller->handle_generation_event(GenerationEventDelta{
+            1, GenerationDeltaKind::answer,
+            ".edu](https://classics.mit.edu/meditations?utm_source=openai))",
+        })));
+    (void)controller->handle_generation_event(GenerationCompleted{1});
+
+    const std::vector<TranscriptEntry> live =
+        copy_entries(controller->view().transcript);
+    ASSERT_EQ(live.size(), 2U);
+    EXPECT_EQ(live.back().text, "The quote. ");
+    EXPECT_EQ(load_transcript_entries(temporary.path), live);
+}
+
+TEST(SessionController, PreservesBoldParentheticalTextThatIsNotALink) {
+    TemporaryJournal temporary;
+    auto controller = test::from_test_backends(
+        test::one_backend(std::make_unique<ScriptedBackend>(
+            GenerationResult{},
+            std::vector<std::string>{
+                "Values **([a, b])** matter. Read more "
+                "([example.com](https://example.com/source))"})),
+        temporary.path,
+        notifier());
+
+    (void)controller->submit_prompt("operator", "Question");
+    receive_until_idle(*controller);
+
+    const std::vector<TranscriptEntry> live =
+        copy_entries(controller->view().transcript);
+    ASSERT_EQ(live.size(), 2U);
+    EXPECT_EQ(live.back().text, "Values **([a, b])** matter. Read more ");
+    EXPECT_EQ(load_transcript_entries(temporary.path), live);
+}
+
+TEST(SessionController, DoesNotFreezeAfterANonCitationParenthetical) {
+    TemporaryJournal temporary;
+    auto controller = test::from_test_backends(
+        test::one_backend(std::make_unique<ScriptedBackend>()),
+        temporary.path,
+        notifier());
+
+    (void)controller->submit_prompt("operator", "Question");
+    EXPECT_TRUE(requires_snapshot(
+        controller->handle_generation_event(GenerationEventDelta{
+            1, GenerationDeltaKind::answer, "Intro **([a, b])** ",
+        })));
+    const ControllerUpdate continuation =
+        controller->handle_generation_event(GenerationEventDelta{
+            1, GenerationDeltaKind::answer, "continues",
+        });
+    ASSERT_NE(text_append(continuation), nullptr);
+    EXPECT_EQ(text_append(continuation)->text, "continues");
+    (void)controller->handle_generation_event(GenerationCompleted{1});
+
+    const std::vector<TranscriptEntry> live =
+        copy_entries(controller->view().transcript);
+    ASSERT_EQ(live.size(), 2U);
+    EXPECT_EQ(live.back().text, "Intro **([a, b])** continues");
+    EXPECT_EQ(load_transcript_entries(temporary.path), live);
+}
+
+TEST(SessionController, ReleasesAnOverlongUnterminatedReferenceCandidate) {
+    TemporaryJournal temporary;
+    auto controller = test::from_test_backends(
+        test::one_backend(std::make_unique<ScriptedBackend>()),
+        temporary.path,
+        notifier());
+
+    (void)controller->submit_prompt("operator", "Question");
+    EXPECT_TRUE(requires_snapshot(
+        controller->handle_generation_event(GenerationEventDelta{
+            1, GenerationDeltaKind::answer, "Intro ",
+        })));
+    const std::string long_literal = "([" + std::string(600, 'x');
+    const ControllerUpdate released =
+        controller->handle_generation_event(GenerationEventDelta{
+            1, GenerationDeltaKind::answer, long_literal,
+        });
+    ASSERT_NE(text_append(released), nullptr);
+    EXPECT_EQ(text_append(released)->text, long_literal);
+    (void)controller->handle_generation_event(GenerationCompleted{1});
+
+    const std::vector<TranscriptEntry> live =
+        copy_entries(controller->view().transcript);
+    ASSERT_EQ(live.size(), 2U);
+    EXPECT_EQ(live.back().text, "Intro " + long_literal);
+    EXPECT_EQ(load_transcript_entries(temporary.path), live);
+}
+
+TEST(SessionController, TreatsACitationOnlyAnswerAsMissingContent) {
+    TemporaryJournal temporary;
+    auto controller = test::from_test_backends(
+        test::one_backend(std::make_unique<ScriptedBackend>()),
+        temporary.path,
+        notifier());
+
+    (void)controller->submit_prompt("operator", "Question");
+    EXPECT_FALSE(has_state_update(
+        controller->handle_generation_event(GenerationEventDelta{
+            1, GenerationDeltaKind::answer,
+            "([example.com](https://example.com/source))",
+        })));
+    EXPECT_TRUE(requires_snapshot(
+        controller->handle_generation_event(GenerationCompleted{1})));
+
+    const std::vector<TranscriptEntry> live =
+        copy_entries(controller->view().transcript);
+    ASSERT_EQ(live.size(), 2U);
+    EXPECT_EQ(live.back().kind, EntryKind::error);
+    EXPECT_EQ(live.back().text, "Generation finished without answer content");
+    EXPECT_EQ(load_transcript_entries(temporary.path), live);
+}
+
 TEST(SessionController, ReasoningOnlyCancellationLeavesNoTranscriptEntry) {
     TemporaryJournal temporary;
     auto controller = test::from_test_backends(

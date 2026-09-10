@@ -1057,27 +1057,9 @@ void SessionController::apply(const GenerationEventDelta& event, ControllerUpdat
         return;
     }
     if (event.kind == GenerationDeltaKind::answer) {
-        const std::string text = filter_answer_timestamp(event.text);
-        if (text.empty()) {
-            return;
-        }
-        // Opening the response entry also changes the phase, so only growth of
-        // an already-answering entry is a pure append.
-        const bool structural = active_->phase != ResponsePhase::answering;
-        if (structural) {
-            TranscriptEntry opened = response_entry(EntryStatus::streaming);
-            active_->response_created_at = opened.created_at;
-            transcript_.begin_entry(std::move(opened));
-        }
-        // Capture the target before the text moves into transcript storage.
-        const EntryId entry_id = active_->response_entry_id;
-        transcript_.append_answer(entry_id, text);
-        active_->phase = ResponsePhase::answering;
-        if (structural) {
-            require_snapshot(update);
-            return;
-        }
-        merge(update, {.state = TextAppend{EntryTextTarget{entry_id}, text}});
+        append_answer_text(
+            filter_source_references(filter_answer_timestamp(event.text)),
+            update);
         return;
     }
     // The first reasoning chunk establishes visible request state. Later
@@ -1094,11 +1076,36 @@ void SessionController::apply(const GenerationEventDelta& event, ControllerUpdat
     merge(update, {.state = TextAppend{ReasoningTextTarget{request_id}, event.text}});
 }
 
+void SessionController::append_answer_text(
+    std::string text,
+    ControllerUpdate& update) {
+    if (text.empty()) return;
+
+    // Opening the response entry also changes the phase, so only growth of an
+    // already-answering entry is a pure append.
+    const bool structural = active_->phase != ResponsePhase::answering;
+    if (structural) {
+        TranscriptEntry opened = response_entry(EntryStatus::streaming);
+        active_->response_created_at = opened.created_at;
+        transcript_.begin_entry(std::move(opened));
+    }
+    const EntryId entry_id = active_->response_entry_id;
+    transcript_.append_answer(entry_id, text);
+    active_->phase = ResponsePhase::answering;
+    if (structural) {
+        require_snapshot(update);
+        return;
+    }
+    merge(update, {.state = TextAppend{EntryTextTarget{entry_id}, std::move(text)}});
+}
+
 void SessionController::apply(const GenerationCompleted& event, ControllerUpdate& update) {
     if (!matches(event.request_id)) {
         return;
     }
     flush_pending_answer_text(update);
+    // A source-only response has no usable answer after filtering and follows
+    // the existing empty-response failure path; completed entries cannot be empty.
     if (active_->phase != ResponsePhase::answering) {
         fail_active_response(
             "Generation finished without answer content", active_->character_id, update);
@@ -1195,19 +1202,27 @@ std::string SessionController::filter_answer_timestamp(std::string_view text) {
     return std::exchange(active_->pending_answer_text, {});
 }
 
+std::string SessionController::filter_source_references(std::string_view text) {
+    std::string& pending = active_->pending_source_reference;
+    pending.append(text);
+    const std::size_t safe = complete_source_reference_prefix(pending);
+    std::string result = remove_source_references(
+        std::string_view(pending).substr(0, safe));
+    pending.erase(0, safe);
+    return result;
+}
+
 void SessionController::flush_pending_answer_text(ControllerUpdate& update) {
-    if (active_->answer_timestamp_state != AnswerTimestampState::checking
-        || active_->pending_answer_text.empty()) {
-        return;
+    if (active_->answer_timestamp_state == AnswerTimestampState::checking
+        && !active_->pending_answer_text.empty()) {
+        active_->answer_timestamp_state = AnswerTimestampState::passthrough;
+        append_answer_text(
+            filter_source_references(
+                std::exchange(active_->pending_answer_text, {})),
+            update);
     }
-    active_->answer_timestamp_state = AnswerTimestampState::passthrough;
-    apply(
-        GenerationEventDelta{
-            active_->request_id,
-            GenerationDeltaKind::answer,
-            std::exchange(active_->pending_answer_text, {}),
-        },
-        update);
+    append_answer_text(
+        std::exchange(active_->pending_source_reference, {}), update);
 }
 
 void SessionController::fail_active_response(

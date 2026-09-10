@@ -151,6 +151,23 @@ TEST(SessionProjection, RetainsNoBorrowIntoTheControllerBackingState) {
     EXPECT_EQ(snapshot.generation.reasoning_text, "Thinking");
 }
 
+TEST(SessionProjection, RemovesSourceReferencesFromHistoricalEntries) {
+    publish_projection_workspace();
+    BackingState state = populated_state();
+    state.transcript[0].text =
+        "Keep human link **([example.com](https://example.com/source))**";
+    state.transcript[1].text =
+        "Quote ([gutenberg.org](https://www.gutenberg.org/files/3600/"
+        "3600-h/3600-h?utm_source=openai))";
+
+    const SessionSnapshot snapshot =
+        to_snapshot(test_identity, "Label", state.view(), {});
+
+    EXPECT_EQ(snapshot.transcript[0].text, state.transcript[0].text);
+    EXPECT_EQ(snapshot.transcript[1].text, "Quote ");
+    EXPECT_NE(state.transcript[1].text.find("gutenberg.org"), std::string::npos);
+}
+
 TEST(SessionProjection, ProjectsWorkspaceDataWithEmptySessionState) {
     publish_projection_workspace();
     const SessionSnapshot snapshot = to_snapshot(

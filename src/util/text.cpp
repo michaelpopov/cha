@@ -1,6 +1,7 @@
 #include "util/text.h"
 
 #include <cctype>
+#include <regex>
 
 namespace cha {
 
@@ -39,6 +40,21 @@ std::string fold_ascii(std::string_view value) {
 
 namespace {
 
+constexpr std::string_view source_reference_start = "([";
+constexpr std::size_t maximum_source_reference_size = 512;
+
+const std::regex& source_reference_pattern() {
+    static const std::regex pattern(
+        R"(\(\[[^\]\r\n]+\]\(https?://[^)\r\n]+\)\))",
+        std::regex::ECMAScript | std::regex::icase);
+    return pattern;
+}
+
+std::size_t possible_source_reference_start(std::string_view text) {
+    if (!text.empty() && text.back() == '(') return text.size() - 1;
+    return text.size();
+}
+
 char fold_character(char value) {
     return value >= 'A' && value <= 'Z'
         ? static_cast<char>(value - 'A' + 'a')
@@ -46,6 +62,52 @@ char fold_character(char value) {
 }
 
 } // namespace
+
+std::size_t complete_source_reference_prefix(std::string_view value) {
+    std::size_t position = 0;
+    while (true) {
+        const std::size_t start = value.find(source_reference_start, position);
+        if (start == std::string_view::npos) {
+            const std::string_view tail = value.substr(position);
+            return position + possible_source_reference_start(tail);
+        }
+
+        const std::string_view candidate = value.substr(start);
+        std::match_results<std::string_view::const_iterator> match;
+        if (std::regex_search(
+                candidate.begin(), candidate.end(), match,
+                source_reference_pattern(),
+                std::regex_constants::match_continuous)) {
+            position = start + match.length();
+            continue;
+        }
+
+        const std::size_t next =
+            candidate.find(source_reference_start, source_reference_start.size());
+        if (next != std::string_view::npos) {
+            position = start + next;
+            continue;
+        }
+        // A normal parenthetical is already known not to be a source
+        // reference and need not stall streaming while more prose arrives.
+        const std::size_t literal_end =
+            candidate.find("])", source_reference_start.size());
+        if (literal_end != std::string_view::npos) {
+            position = start + literal_end + 2;
+            continue;
+        }
+        if (candidate.size() > maximum_source_reference_size) {
+            position = start + source_reference_start.size();
+            continue;
+        }
+        return start;
+    }
+}
+
+std::string remove_source_references(std::string_view value) {
+    return std::regex_replace(
+        std::string(value), source_reference_pattern(), std::string{});
+}
 
 bool ascii_iequals(std::string_view left, std::string_view right) {
     if (left.size() != right.size()) {

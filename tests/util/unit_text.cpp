@@ -5,9 +5,25 @@
 
 #include <filesystem>
 #include <string>
+#include <vector>
 
 namespace cha {
 namespace {
+
+std::string filter_source_references_in_chunks(
+    std::string_view input,
+    std::size_t chunk_size) {
+    std::string pending;
+    std::string result;
+    for (std::size_t position = 0; position < input.size(); position += chunk_size) {
+        pending.append(input.substr(position, chunk_size));
+        const std::size_t safe = complete_source_reference_prefix(pending);
+        result += remove_source_references(
+            std::string_view(pending).substr(0, safe));
+        pending.erase(0, safe);
+    }
+    return result + remove_source_references(pending);
+}
 
 TEST(Text, TrimsAllStandardWhitespaceWithoutCopying) {
     const std::string_view input = "\r\n \tvalue \v\f";
@@ -27,6 +43,59 @@ TEST(Text, FoldsOnlyAsciiLetters) {
     EXPECT_EQ(
         fold_ascii("\xD0\x98\xD0\xB2\xD0\xB0\xD0\xBD"),
         "\xD0\x98\xD0\xB2\xD0\xB0\xD0\xBD");
+}
+
+TEST(Text, RemovesModelSourceReferences) {
+    EXPECT_EQ(
+        remove_source_references(
+            "Quote ([example.com](https://example.com/source)) done"),
+        "Quote  done");
+    EXPECT_EQ(
+        remove_source_references(
+            "Quote ([gutenberg.org](https://www.gutenberg.org/files/3600/"
+            "3600-h/3600-h?utm_source=openai)) done"),
+        "Quote  done");
+    EXPECT_EQ(
+        remove_source_references("Keep **([this text))** intact"),
+        "Keep **([this text))** intact");
+    EXPECT_EQ(
+        remove_source_references(
+            "Values **([a, b])** matter. Read more "
+            "([example.com](https://example.com/source))"),
+        "Values **([a, b])** matter. Read more ");
+}
+
+TEST(Text, HoldsBackOnlyPlausibleIncompleteSourceReferences) {
+    EXPECT_EQ(complete_source_reference_prefix("Intro (["), 6U);
+    constexpr std::string_view normal_parenthetical =
+        "Intro **([a, b])** continues";
+    EXPECT_EQ(
+        complete_source_reference_prefix(normal_parenthetical),
+        normal_parenthetical.size());
+
+    const std::string long_literal = "Intro ([" + std::string(600, 'x');
+    EXPECT_EQ(
+        complete_source_reference_prefix(long_literal),
+        long_literal.size());
+}
+
+TEST(Text, StreamingAndWholeSourceReferenceFilteringAgree) {
+    const std::vector<std::string> inputs{
+        "Quote ([example.com](https://example.com/source)) done",
+        "Values **([a, b])** matter. Read more "
+            "([example.com](https://example.com/source))",
+        "Quote ([gutenberg.org](https://www.gutenberg.org/files/3600/"
+            "3600-h/3600-h?utm_source=openai)) done",
+        "Intro ([unterminated",
+        "Intro ([" + std::string(600, 'x'),
+    };
+    for (const std::string& input : inputs) {
+        for (std::size_t chunk_size = 1; chunk_size <= 12; ++chunk_size) {
+            EXPECT_EQ(
+                filter_source_references_in_chunks(input, chunk_size),
+                remove_source_references(input));
+        }
+    }
 }
 
 TEST(PathName, AcceptsOneSafePathComponent) {
