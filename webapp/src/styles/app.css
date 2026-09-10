@@ -864,6 +864,14 @@ select:disabled {
   background: var(--covered-surface);
 }
 
+.cha-covered-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--muted-foreground);
+  font-size: 0.72rem;
+}
+
 .cha-chat-welcome {
   color: var(--muted-foreground);
   text-align: center;
@@ -930,7 +938,7 @@ select:disabled {
   gap: 0.22rem;
 }
 
-.cha-speech-button {
+.cha-message-action {
   display: inline-grid;
   width: 1.3rem;
   height: 1.3rem;
@@ -942,17 +950,17 @@ select:disabled {
   cursor: pointer;
 }
 
-.cha-speech-button svg {
+.cha-message-action svg {
   width: 0.92rem;
   height: 0.92rem;
 }
 
-.cha-speech-button:hover:not(:disabled),
-.cha-speech-button.is-active {
+.cha-message-action:hover:not(:disabled),
+.cha-message-action.is-active {
   color: var(--foreground);
 }
 
-.cha-speech-button:disabled {
+.cha-message-action:disabled {
   cursor: wait;
   opacity: 0.65;
 }

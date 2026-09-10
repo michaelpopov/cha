@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -82,6 +83,15 @@ nlohmann::json parse_json_body(
 RawCommand parse_input_command(const nlohmann::json& json) {
     exact_keys(json, {"text"});
     return {required_string(json, "text")};
+}
+
+CoverCommand parse_cover_command(const nlohmann::json& json) {
+    exact_keys(json, {"through_entry_id"});
+    const nlohmann::json& value = json.at("through_entry_id");
+    if (!value.is_number_integer() || value.get<std::int64_t>() <= 0) {
+        throw std::invalid_argument("Invalid web command");
+    }
+    return {static_cast<EntryId>(value.get<std::int64_t>())};
 }
 
 SetDefaultCharacterCommand parse_default_character_command(

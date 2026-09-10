@@ -900,6 +900,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/s/{forum_id}/{session_id}/api/v1/actions/cover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Stable URL-safe forum identifier. */
+                forum_id: components["parameters"]["ForumId"];
+                /** @description Stable URL-safe session identifier. */
+                session_id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cover the transcript through an entry */
+        post: operations["coverConversation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/s/{forum_id}/{session_id}/api/v1/actions/uncover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Stable URL-safe forum identifier. */
+                forum_id: components["parameters"]["ForumId"];
+                /** @description Stable URL-safe session identifier. */
+                session_id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Uncover the transcript */
+        post: operations["uncoverConversation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/s/{forum_id}/{session_id}/api/v1/actions/default-character": {
         parameters: {
             query?: never;
@@ -1281,6 +1325,9 @@ export interface components {
             /** @description Input text, limited by the server's configured prompt byte limit. */
             text: string;
         };
+        CoverRequest: {
+            through_entry_id: number;
+        };
         SetDefaultCharacterRequest: {
             character_id: string;
         };
@@ -1319,6 +1366,7 @@ export interface components {
             characters: components["schemas"]["CharacterSummary"][];
             default_character_id: components["schemas"]["Identifier"];
             transcript: components["schemas"]["TranscriptEntry"][];
+            covered_until?: components["schemas"]["UnsignedInteger"];
             generation: components["schemas"]["GenerationState"];
             notice?: string;
             /** @enum {string} */
@@ -2940,6 +2988,58 @@ export interface operations {
         };
     };
     stopGeneration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Stable URL-safe forum identifier. */
+                forum_id: components["parameters"]["ForumId"];
+                /** @description Stable URL-safe session identifier. */
+                session_id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody: components["requestBodies"]["EmptyJsonObject"];
+        responses: {
+            200: components["responses"]["CommandAccepted"];
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["ForbiddenMutation"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["SessionNotLive"];
+            413: components["responses"]["BodyTooLarge"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["CommandUnavailable"];
+        };
+    };
+    coverConversation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Stable URL-safe forum identifier. */
+                forum_id: components["parameters"]["ForumId"];
+                /** @description Stable URL-safe session identifier. */
+                session_id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CoverRequest"];
+            };
+        };
+        responses: {
+            200: components["responses"]["CommandAccepted"];
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["ForbiddenMutation"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["SessionNotLive"];
+            413: components["responses"]["BodyTooLarge"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["CommandUnavailable"];
+        };
+    };
+    uncoverConversation: {
         parameters: {
             query?: never;
             header?: never;

@@ -389,7 +389,7 @@
         <li><a href="#navigation">Finding your way around</a></li>
         <li><a href="#sessions">Creating and managing sessions</a></li>
         <li><a href="#conversation">Having a conversation</a></li>
-        <li><a href="#commands">Chat commands</a></li>
+        <li><a href="#commands">Chat command</a></li>
         <li><a href="#character-settings">Character settings</a></li>
         <li><a href="#vault-settings">Vault settings</a></li>
         <li><a href="#provider-settings">Provider settings</a></li>
@@ -749,6 +749,22 @@
           <strong>Stop</strong>. Select it to stop generation.
         </p>
 
+        <h3>Limit or restore model context</h3>
+        <p>
+          Small controls appear beside the timestamp below each AI response. When
+          voice output is configured, the speaker button reads a completed response
+          aloud. Select the crossed-out eye button to cover the conversation through
+          that response. The covered section remains visible, but later AI requests
+          do not receive it as context.
+        </p>
+        <p>
+          Select the eye button in the <strong>Covered conversation</strong> header
+          to restore the entire conversation to model context. Covering an earlier
+          response moves the boundary backward and exposes the responses after it.
+          These controls are unavailable while CHA is generating a reply, and the
+          cover boundary is cleared when the session is reopened.
+        </p>
+
         <h3>Write in any language</h3>
         <p>
           Enter text directly in the language you want to use. For a different
@@ -758,10 +774,10 @@
       </section>
 
       <section id="commands">
-        <h2>7. Chat commands</h2>
+        <h2>7. Chat command</h2>
         <p>
-          Commands begin with a slash and are entered in the same box as an ordinary
-          message. The following commands are available during a session.
+          The multicast command begins with a slash and is entered in the same box
+          as an ordinary message.
         </p>
         <div class="table-wrap">
           <table>
@@ -774,16 +790,6 @@
               </tr>
             </thead>
             <tbody>
-              <tr>
-                <td><code>/cover</code></td>
-                <td>Keep earlier messages visible, but leave them out of later AI requests.</td>
-                <td>Useful when the conversation has changed subject.</td>
-              </tr>
-              <tr>
-                <td><code>/uncover</code></td>
-                <td>Return covered messages to the context used for future replies.</td>
-                <td>&nbsp;</td>
-              </tr>
               <tr>
                 <td><code>/mcast</code></td>
                 <td>Send one prompt to more than one character.</td>

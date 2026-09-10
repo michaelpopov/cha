@@ -301,7 +301,9 @@ TEST(LiveSession, RoutesRawAndTypedCommandsOnOneOwnerThread) {
     };
     LiveSessionHost host(test_settings(), std::move(opener));
 
-    const auto covered = host->submit(RawCommand{"/cover"}, 2s);
+    ASSERT_TRUE(std::holds_alternative<CommandResult>(
+        host->submit(RawCommand{"@- Note"}, 2s)));
+    const auto covered = host->submit(CoverCommand{1}, 2s);
     ASSERT_TRUE(std::holds_alternative<CommandResult>(covered));
     EXPECT_TRUE(has_state_update(std::get<CommandResult>(covered).session));
 
@@ -416,7 +418,7 @@ TEST(LiveSession, MirrorsOnlyDurableRoundTripRenameAndCoverBoundaries) {
     }
 
     ASSERT_TRUE(std::holds_alternative<CommandResult>(
-        host->submit(RawCommand{"/cover"}, 2s)));
+        host->submit(CoverCommand{2}, 2s)));
     {
         const std::lock_guard lock(mirror_mutex);
         EXPECT_EQ(mirror_count, 4U);

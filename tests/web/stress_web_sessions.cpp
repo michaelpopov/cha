@@ -140,10 +140,10 @@ TEST(WebSessionStress, ConcurrentSessionsKeepCommandsOnIndependentQueues) {
     results.reserve(commands_per_session * 2);
     for (unsigned int index = 0; index != commands_per_session; ++index) {
         results.push_back(std::async(std::launch::async, [&first] {
-            return first->submit(RawCommand{"/uncover"}, 10s);
+            return first->submit(UncoverCommand{}, 10s);
         }));
         results.push_back(std::async(std::launch::async, [&second] {
-            return second->submit(RawCommand{"/uncover"}, 10s);
+            return second->submit(UncoverCommand{}, 10s);
         }));
     }
     for (auto& result : results) {
@@ -201,13 +201,13 @@ TEST(WebSessionStress, BlockedOwnerDoesNotDelayAnotherSession) {
     });
     ASSERT_TRUE(gate.wait_until_entered());
     EXPECT_TRUE(std::holds_alternative<CommandResult>(
-        healthy->submit(RawCommand{"/uncover"}, 10s)));
+        healthy->submit(UncoverCommand{}, 10s)));
     EXPECT_EQ(
         std::get<ErrorCode>(blocked_command.get()), ErrorCode::command_timeout);
 
     gate.release();
     EXPECT_TRUE(std::holds_alternative<CommandResult>(
-        healthy->submit(RawCommand{"/uncover"}, 10s)));
+        healthy->submit(UncoverCommand{}, 10s)));
     ASSERT_TRUE(blocked_controls->wait_until_running());
     blocked_controls->finish();
     manager.begin_shutdown();
@@ -339,7 +339,7 @@ TEST(WebSessionStress, FatalSessionDoesNotInterruptItsPeer) {
     std::vector<std::future<CommandSubmitResult>> commands;
     for (int index = 0; index != 40; ++index) {
         commands.push_back(std::async(std::launch::async, [&] {
-            return healthy_session->submit(RawCommand{"/uncover"}, 10s);
+            return healthy_session->submit(UncoverCommand{}, 10s);
         }));
     }
     for (auto& command : commands) {
@@ -433,7 +433,7 @@ TEST(WebSessionStress, ConcurrentWorkspaceLifecycleKeepsMailboxesAndRowsIndepend
     for (LiveSessionHandle& session : handles) {
         LiveSession* const target = session.get();
         commands.push_back(std::async(std::launch::async, [target] {
-            return target->submit(RawCommand{"/uncover"}, 10s);
+            return target->submit(UncoverCommand{}, 10s);
         }));
     }
     for (auto& command : commands) {

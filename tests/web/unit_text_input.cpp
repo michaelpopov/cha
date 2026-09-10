@@ -120,7 +120,7 @@ TEST(TextInput, DispatchesTheRemainingSlashCommands) {
 
     for (const std::string_view removed : {
              "/clear", "/info", "/characters", "/agents", "/@Guide",
-             "/style sans-bold", "/stop", "/exit"}) {
+             "/style sans-bold", "/cover", "/uncover", "/stop", "/exit"}) {
         const CommandResult result =
             handle_text_input(*controller, "operator", std::string(removed));
         EXPECT_TRUE(result.clear_input) << removed;
@@ -133,17 +133,6 @@ TEST(TextInput, DispatchesTheRemainingSlashCommands) {
         handle_text_input(*controller, "operator", "/mcast");
     EXPECT_TRUE(empty_multicast.clear_input);
     EXPECT_EQ(empty_multicast.session.notice, "Multicast prompt is empty");
-
-    EXPECT_TRUE(has_state_update(handle_text_input(*controller, "operator", "/cover").session));
-    EXPECT_TRUE(has_state_update(handle_text_input(*controller, "operator", "/cover").session));
-    EXPECT_TRUE(has_state_update(handle_text_input(*controller, "operator", "/uncover").session));
-    EXPECT_EQ(
-        copy_entries(controller->view().transcript),
-        (std::vector<TranscriptEntry>{
-            make_cover_marker(1),
-            make_cover_marker(2),
-            make_uncover_marker(3),
-        }));
 }
 
 TEST(TextInput, ParsesAnAddressedPromptBeforeSubmission) {
@@ -264,11 +253,11 @@ TEST(TextInput, PreservesDraftsDuringGeneration) {
         blocked.session.notice,
         "Generation in progress; use the Stop button");
 
-    const CommandResult covered_while_active =
-        handle_text_input(*controller, "operator", "/cover");
-    EXPECT_FALSE(covered_while_active.clear_input);
+    const CommandResult multicast_while_active =
+        handle_text_input(*controller, "operator", "/mcast Question");
+    EXPECT_FALSE(multicast_while_active.clear_input);
     EXPECT_EQ(
-        covered_while_active.session.notice,
+        multicast_while_active.session.notice,
         "Generation in progress; use the Stop button");
 
     const CommandResult stop_with_argument =
@@ -301,13 +290,10 @@ TEST(TextInput, SeparatesDraftClearingFromControllerAcceptance) {
     EXPECT_FALSE(removed_command.session.input_consumed);
     EXPECT_TRUE(removed_command.clear_input);
 
-    // A recognized command that fails its precondition still consumes the line
-    // it was typed on. Only composed prompt text survives a rejection.
-    const CommandResult nothing_to_uncover =
-        handle_text_input(*controller, "operator", "/uncover");
-    EXPECT_TRUE(nothing_to_uncover.session.input_consumed);
-    EXPECT_TRUE(nothing_to_uncover.clear_input);
-    EXPECT_FALSE(has_state_update(nothing_to_uncover.session));
+    const CommandResult rejected_multicast =
+        handle_text_input(*controller, "operator", "/mcast");
+    EXPECT_TRUE(rejected_multicast.clear_input);
+    EXPECT_FALSE(has_state_update(rejected_multicast.session));
 
     controller->shutdown();
     const CommandResult undispatchable =

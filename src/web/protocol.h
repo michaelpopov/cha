@@ -87,6 +87,7 @@ struct SessionSnapshot {
     std::vector<CharacterSummary> characters;
     CharacterId default_character_id;
     std::vector<cha::TranscriptEntry> transcript;
+    std::optional<EntryId> covered_until;
     GenerationStatus generation;
     std::optional<std::string> notice;
     SessionLifecycle lifecycle{SessionLifecycle::starting};
@@ -101,6 +102,12 @@ struct RawCommand {
 };
 
 struct StopCommand {};
+
+struct CoverCommand {
+    EntryId through_entry_id{};
+};
+
+struct UncoverCommand {};
 
 struct SetDefaultCharacterCommand {
     CharacterId character_id;
@@ -128,6 +135,8 @@ struct SseConnectResult {
 using WebCommand = std::variant<
     RawCommand,
     StopCommand,
+    CoverCommand,
+    UncoverCommand,
     SetDefaultCharacterCommand,
     RenameSessionCommand,
     SnapshotCommand,

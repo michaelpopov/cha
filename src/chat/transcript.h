@@ -87,6 +87,7 @@ struct TranscriptView {
     std::span<const TranscriptEntry> entries;
     std::size_t revision{};
     std::optional<EntryId> open_entry_id;
+    std::optional<EntryId> covered_until;
 
     [[nodiscard]] bool empty() const noexcept {
         return entries.empty();
@@ -153,7 +154,9 @@ public:
     void replace_entries(std::vector<TranscriptEntry> entries);
 
     // Each successful mutation also appends its transient presentation marker.
-    void cover(EntryId marker_id);
+    [[nodiscard]] bool cover(
+        EntryId marker_id,
+        std::optional<EntryId> through_entry_id = std::nullopt);
     [[nodiscard]] bool uncover(EntryId marker_id);
 
     [[nodiscard]] TranscriptView view() const noexcept;

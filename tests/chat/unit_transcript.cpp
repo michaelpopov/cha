@@ -215,7 +215,7 @@ TEST(Transcript, ManagesCoverBoundaryAndTransientMarkersAtomically) {
     transcript.add_entry(human(1, "Hidden prompt", 1));
     transcript.add_entry(make_character_entry(
         2, "reviewer-id", "Reviewer", "Hidden answer", EntryStatus::complete, 1));
-    transcript.cover(3);
+    EXPECT_TRUE(transcript.cover(3));
 
     EXPECT_EQ(transcript.model_history().covered_until, 3U);
     expect_entries(
@@ -237,14 +237,14 @@ TEST(Transcript, RepeatedCoverMovesTheBoundaryAndEachMarkerChangesOneRevision) {
     transcript.add_entry(human(2, "Earlier", 1));
     const TranscriptView before = transcript.view();
 
-    transcript.cover(5);
+    EXPECT_TRUE(transcript.cover(5));
     const TranscriptView covered = transcript.view();
     EXPECT_EQ(covered.revision, before.revision + 1);
     EXPECT_EQ(transcript.model_history().covered_until, 3U);
 
     transcript.add_entry(human(6, "Hidden", 2));
     const TranscriptView before_move = transcript.view();
-    transcript.cover(9);
+    EXPECT_TRUE(transcript.cover(9));
     const TranscriptView moved = transcript.view();
     EXPECT_EQ(moved.revision, before_move.revision + 1);
     EXPECT_EQ(transcript.model_history().covered_until, 7U);
@@ -254,14 +254,34 @@ TEST(Transcript, RepeatedCoverMovesTheBoundaryAndEachMarkerChangesOneRevision) {
     EXPECT_EQ(uncovered.revision, moved.revision + 1);
 }
 
+TEST(Transcript, CoversThroughASelectedEarlierEntry) {
+    Transcript transcript;
+    transcript.add_entry(human(1, "First", 1));
+    transcript.add_entry(make_character_entry(
+        2, "reviewer-id", "Reviewer", "First answer", EntryStatus::complete, 1));
+    transcript.add_entry(human(4, "Second", 2));
+    transcript.add_entry(make_character_entry(
+        5, "reviewer-id", "Reviewer", "Second answer", EntryStatus::complete, 2));
+
+    EXPECT_TRUE(transcript.cover(6, 2));
+    EXPECT_EQ(transcript.model_history().covered_until, 4U);
+    EXPECT_EQ(transcript.view().covered_until, 4U);
+    EXPECT_EQ(transcript.view().entries.back(), make_cover_marker(6));
+
+    const TranscriptView before_missing_target = transcript.view();
+    EXPECT_FALSE(transcript.cover(7, 99));
+    EXPECT_EQ(transcript.view().revision, before_missing_target.revision);
+    EXPECT_EQ(transcript.view().entries.size(), before_missing_target.entries.size());
+}
+
 TEST(Transcript, RejectsCoverMutationsWhileAnEntryIsStreaming) {
     Transcript transcript;
     transcript.add_entry(human(1, "Earlier", 1));
-    transcript.cover(2);
+    EXPECT_TRUE(transcript.cover(2));
     transcript.begin_entry(make_character_entry(
         3, "reviewer-id", "Reviewer", {}, EntryStatus::streaming, 2));
 
-    EXPECT_THROW(transcript.cover(4), std::logic_error);
+    EXPECT_THROW((void)transcript.cover(4), std::logic_error);
     EXPECT_THROW((void)transcript.uncover(4), std::logic_error);
     EXPECT_EQ(transcript.model_history().covered_until, 2U);
 }
@@ -269,7 +289,7 @@ TEST(Transcript, RejectsCoverMutationsWhileAnEntryIsStreaming) {
 TEST(Transcript, ReplacingEntriesDropsTheCoverBoundary) {
     Transcript transcript;
     transcript.add_entry(human(1, "Hidden", 1));
-    transcript.cover(2);
+    EXPECT_TRUE(transcript.cover(2));
     ASSERT_TRUE(transcript.model_history().covered_until);
 
     transcript.replace_entries({human(20, "Restored", 2)});
@@ -298,7 +318,7 @@ TEST(Transcript, ModelHistoryOwnsOneAtomicModelContextSnapshot) {
 TEST(Transcript, ModelHistoryIncludesCoverProjectionState) {
     Transcript transcript;
     transcript.add_entry(human(1, "Hidden", 2));
-    transcript.cover(2);
+    EXPECT_TRUE(transcript.cover(2));
 
     const ModelHistory history = transcript.model_history();
 

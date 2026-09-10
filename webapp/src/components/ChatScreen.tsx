@@ -29,6 +29,8 @@ import {
   VoiceInputSession,
 } from '../voiceInput';
 import {
+  EyeIcon,
+  EyeOffIcon,
   MicrophoneIcon,
   SendIcon,
   SpeakerIcon,
@@ -41,11 +43,13 @@ import { voiceClasses } from './characterAppearance';
 // The chat controls App owns, declared once so the screen and the router that
 // feeds it cannot drift apart.
 export interface ChatActions {
+  onCoverConversation(throughEntryId: number): Promise<CommandResult>;
   onRetryStream(): void;
   onReturnToWelcome(): void;
   onSetDefaultCharacter(characterId: string): Promise<CommandResult>;
   onStopGeneration(): Promise<CommandResult>;
   onSubmitInput(text: string): Promise<CommandResult>;
+  onUncoverConversation(): Promise<CommandResult>;
 }
 
 interface ChatScreenProps extends ChatActions {
@@ -117,36 +121,33 @@ function visibleTranscriptEntries(entries: SessionSnapshot['transcript']) {
   return visible;
 }
 
-function activeCoverMarkerId(entries: SessionSnapshot['transcript']): number | null {
-  for (let index = entries.length - 1; index >= 0; index -= 1) {
-    const entry = entries[index];
-    const marker = entry.kind === 'notice'
-      && entry.text === ''
-      && (entry.display_name === 'cover' || entry.display_name === 'uncover');
-    if (marker) return entry.display_name === 'cover' ? entry.id : null;
-  }
-  return null;
-}
-
 function TranscriptMessage({
   entry,
   appearance,
   speechState,
   onToggleSpeech,
+  coverDisabled,
+  onCover,
 }: {
   entry: SessionSnapshot['transcript'][number];
   appearance: CharacterAppearance | undefined;
   speechState: 'idle' | 'loading' | 'playing';
   onToggleSpeech(entry: SessionSnapshot['transcript'][number]): void;
+  coverDisabled: boolean;
+  onCover?: (entry: SessionSnapshot['transcript'][number]) => void;
 }) {
   const canRead = entry.kind === 'character'
     && entry.status === 'complete'
+    && entry.created_at !== null;
+  const canCover = entry.kind === 'character'
+    && (entry.status === 'complete' || entry.status === 'cancelled')
     && entry.created_at !== null;
   const speechLabel = speechState === 'loading'
     ? `Generating audio for ${entry.display_name}'s response`
     : speechState === 'playing'
       ? `Stop reading ${entry.display_name}'s response`
       : `Read ${entry.display_name}'s response aloud`;
+  const coverLabel = `Cover transcript through ${entry.display_name}'s response`;
   return (
     <article
       className={`cha-message is-${entry.kind}`}
@@ -176,13 +177,25 @@ function TranscriptMessage({
           {canRead && getTextToSpeechConfiguration() && (
             <button
               aria-label={speechLabel}
-              className={`cha-speech-button${speechState !== 'idle' ? ' is-active' : ''}`}
+              className={`cha-message-action${speechState !== 'idle' ? ' is-active' : ''}`}
               disabled={speechState === 'loading'}
               onClick={() => onToggleSpeech(entry)}
               title={speechLabel}
               type="button"
             >
               {speechState === 'playing' ? <StopIcon /> : <SpeakerIcon />}
+            </button>
+          )}
+          {canCover && onCover && (
+            <button
+              aria-label={coverLabel}
+              className="cha-message-action"
+              disabled={coverDisabled}
+              onClick={() => onCover(entry)}
+              title={coverLabel}
+              type="button"
+            >
+              <EyeOffIcon />
             </button>
           )}
         </div>
@@ -216,9 +229,11 @@ export function ChatScreen({
   dispatch,
   onRetryStream,
   onReturnToWelcome,
+  onCoverConversation,
   onSetDefaultCharacter,
   onStopGeneration,
   onSubmitInput,
+  onUncoverConversation,
 }: ChatScreenProps) {
   const [draft, setDraft] = useState('');
   const [sendToAll, setSendToAll] = useState(false);
@@ -231,7 +246,9 @@ export function ChatScreen({
 
   const transliteration = useTransliteration<HTMLTextAreaElement>(draft);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [pendingAction, setPendingAction] = useState<'send' | 'stop' | 'target' | null>(null);
+  const [pendingAction, setPendingAction] = useState<
+    'send' | 'stop' | 'target' | 'cover' | null
+  >(null);
   const [voiceInputState, setVoiceInputState] = useState<
     'idle' | 'starting' | 'recording' | 'finishing'
   >('idle');
@@ -281,13 +298,13 @@ export function ChatScreen({
     [snapshot?.characters],
   );
   const transcriptEntries = snapshot ? visibleTranscriptEntries(snapshot.transcript) : [];
-  const coverMarkerId = snapshot ? activeCoverMarkerId(snapshot.transcript) : null;
-  const coveredEntries = coverMarkerId === null
+  const coveredUntil = snapshot?.covered_until ?? null;
+  const coveredEntries = coveredUntil === null
     ? []
-    : transcriptEntries.filter(({ entry }) => entry.id < coverMarkerId);
-  const uncoveredEntries = coverMarkerId === null
+    : transcriptEntries.filter(({ entry }) => entry.id < coveredUntil);
+  const uncoveredEntries = coveredUntil === null
     ? transcriptEntries
-    : transcriptEntries.filter(({ entry }) => entry.id > coverMarkerId);
+    : transcriptEntries.filter(({ entry }) => entry.id >= coveredUntil);
 
   // A different conversation starts at its own end rather than inheriting where
   // the reader had left the previous one.
@@ -345,6 +362,20 @@ export function ChatScreen({
         setActionError('This response could not be read aloud. Try again.');
       }
     });
+  }
+
+  async function changeCover(throughEntryId?: number) {
+    if (!connected || generationActive || pendingAction) return;
+    setPendingAction('cover');
+    setActionError(null);
+    try {
+      if (throughEntryId === undefined) await onUncoverConversation();
+      else await onCoverConversation(throughEntryId);
+    } catch (failure: unknown) {
+      setActionError(actionMessage(failure));
+    } finally {
+      setPendingAction(null);
+    }
   }
 
   // Following the newest text is the default, but a reader who has scrolled up
@@ -612,11 +643,25 @@ export function ChatScreen({
         )}
         {coveredEntries.length > 0 && (
           <section aria-label="Covered conversation" className="cha-covered">
+            <div className="cha-covered-header">
+              <span>Covered conversation</span>
+              <button
+                aria-label="Uncover transcript"
+                className="cha-message-action is-active"
+                disabled={!connected || generationActive || pendingAction !== null}
+                onClick={() => changeCover()}
+                title="Uncover transcript"
+                type="button"
+              >
+                <EyeIcon />
+              </button>
+            </div>
             {coveredEntries.map(({ entry, dividerBefore }) => (
               <Fragment key={entry.id}>
                 {dividerBefore && <hr className="cha-repeated-prompt-divider" />}
                 <TranscriptMessage
                   appearance={voices.get(entry.participant_id)}
+                  coverDisabled={!connected || generationActive || pendingAction !== null}
                   entry={entry}
                   onToggleSpeech={toggleSpeech}
                   speechState={spokenEntry?.id === entry.id ? spokenEntry.state : 'idle'}
@@ -630,7 +675,9 @@ export function ChatScreen({
             {dividerBefore && <hr className="cha-repeated-prompt-divider" />}
             <TranscriptMessage
               appearance={voices.get(entry.participant_id)}
+              coverDisabled={!connected || generationActive || pendingAction !== null}
               entry={entry}
+              onCover={(coveredEntry) => changeCover(coveredEntry.id)}
               onToggleSpeech={toggleSpeech}
               speechState={spokenEntry?.id === entry.id ? spokenEntry.state : 'idle'}
             />

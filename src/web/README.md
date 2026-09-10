@@ -76,10 +76,10 @@ sessions so agent prompts carry that persona.
 ## Chat input grammar
 
 The raw-input owner path recognizes optional leading character mentions and
-the commands `/cover`, `/uncover`, and `/mcast`. Mentions and multicast
-recipient handles remain unresolved until `SessionController` applies the
-forum's authoritative character rules. While generation is active, input
-remains in the browser editor and the typed Stop action handles cancellation.
+the `/mcast` command. Mentions and multicast recipient handles remain
+unresolved until `SessionController` applies the forum's authoritative
+character rules. While generation is active, input remains in the browser
+editor and the typed Stop action handles cancellation.
 
 This grammar is web policy, not a reusable core or terminal abstraction.
 `handle_text_input()` returns the same `CommandResult` completed back

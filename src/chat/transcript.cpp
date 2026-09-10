@@ -1,6 +1,8 @@
 #include "chat/transcript.h"
 
+#include <algorithm>
 #include <chrono>
+#include <iterator>
 #include <stdexcept>
 #include <utility>
 
@@ -231,16 +233,27 @@ void Transcript::replace_entries(std::vector<TranscriptEntry> entries) {
     ++revision_;
 }
 
-void Transcript::cover(EntryId marker_id) {
+bool Transcript::cover(
+    EntryId marker_id,
+    std::optional<EntryId> through_entry_id) {
     if (open_entry_id_) {
         throw std::logic_error("Cannot cover a transcript while an entry is streaming");
+    }
+    EntryId covered_until = boundary();
+    if (through_entry_id) {
+        const auto target = std::ranges::find(
+            entries_, *through_entry_id, &TranscriptEntry::id);
+        if (target == entries_.end()) return false;
+        const auto next = std::next(target);
+        covered_until = next == entries_.end() ? marker_id : next->id;
     }
     TranscriptEntry marker = make_cover_marker(marker_id);
     require_terminal_transcript_entry(marker);
     require_next_id(marker.id);
-    covered_until_ = boundary();
+    covered_until_ = covered_until;
     entries_.push_back(std::move(marker));
     ++revision_;
+    return true;
 }
 
 bool Transcript::uncover(EntryId marker_id) {
@@ -260,7 +273,7 @@ bool Transcript::uncover(EntryId marker_id) {
 }
 
 TranscriptView Transcript::view() const noexcept {
-    return {entries_, revision_, open_entry_id_};
+    return {entries_, revision_, open_entry_id_, covered_until_};
 }
 
 ModelHistory Transcript::model_history() const {

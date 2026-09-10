@@ -15,8 +15,8 @@ TEST(Command, TreatsOrdinaryInputAsText) {
 
 TEST(Command, RecognizesOnlyConversationContextCommands) {
     EXPECT_EQ(parse_command("/mcast").kind, CommandKind::mcast);
-    EXPECT_EQ(parse_command("/cover").kind, CommandKind::cover);
-    EXPECT_EQ(parse_command("/uncover").kind, CommandKind::uncover);
+    EXPECT_EQ(parse_command("/cover").kind, CommandKind::unknown);
+    EXPECT_EQ(parse_command("/uncover").kind, CommandKind::unknown);
     EXPECT_EQ(parse_command("/clear").kind, CommandKind::unknown);
     EXPECT_EQ(parse_command("/info").kind, CommandKind::unknown);
     EXPECT_EQ(parse_command("/characters").kind, CommandKind::unknown);
@@ -35,7 +35,7 @@ TEST(Command, CapturesMulticastText) {
 }
 
 TEST(Command, ListsOnlyCommandsAcceptedByTheWebRawInputPath) {
-    EXPECT_EQ(command_names(), "/cover, /uncover, /mcast");
+    EXPECT_EQ(command_names(), "/mcast");
 }
 
 } // namespace

@@ -593,11 +593,16 @@ void SessionController::cancel_generation_requests() noexcept {
     }
 }
 
-ControllerUpdate SessionController::cover_conversation() {
+ControllerUpdate SessionController::cover_conversation(
+    std::optional<EntryId> through_entry_id) {
     if (is_generating()) {
         return busy_notice();
     }
-    transcript_.cover(next_entry_id_);
+    if (!transcript_.cover(next_entry_id_, through_entry_id)) {
+        return {
+            .notice = "Cover target was not found",
+        };
+    }
     ++next_entry_id_;
     return {
         .state = SnapshotRequired{},

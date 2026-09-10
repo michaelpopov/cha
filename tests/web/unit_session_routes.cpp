@@ -213,6 +213,39 @@ TEST(SessionRoutes, ServesLivePageSnapshotAndOwnerQueuedCommands) {
     manager.begin_shutdown();
 }
 
+TEST(SessionRoutes, CoversThroughATargetEntryAndUncoversWithTypedActions) {
+    SessionFiles files;
+    auto controls = std::make_shared<test::BackendControls>();
+    LiveSessionManager manager(route_settings(), session_opener(files, controls));
+    ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(
+        manager.open({"lobby", "one"}, 5s)));
+    RouteServer server(manager, route_settings());
+    const std::string base = "/s/lobby/one";
+
+    const auto input = server.client().Post(
+        base + "/api/v1/input",
+        R"({"text":"@- Note"})",
+        "application/json");
+    ASSERT_TRUE(input);
+    EXPECT_EQ(input->status, 200);
+
+    const auto cover = server.client().Post(
+        base + "/api/v1/actions/cover",
+        R"({"through_entry_id":1})",
+        "application/json");
+    ASSERT_TRUE(cover);
+    EXPECT_EQ(cover->status, 200);
+    EXPECT_EQ(json_body(server.client().Get(base + "/api/v1/session"))["covered_until"], 2);
+
+    const auto uncover = server.client().Post(
+        base + "/api/v1/actions/uncover", "{}", "application/json");
+    ASSERT_TRUE(uncover);
+    EXPECT_EQ(uncover->status, 200);
+    EXPECT_FALSE(json_body(server.client().Get(base + "/api/v1/session"))
+        .contains("covered_until"));
+    manager.begin_shutdown();
+}
+
 TEST(SessionRoutes, EventsStartWithASnapshotAndIgnoreLastEventId) {
     SessionFiles files;
     auto controls = std::make_shared<test::BackendControls>();
@@ -500,6 +533,8 @@ TEST(SessionRoutes, ServesTheShellForANonLiveSessionAndRejectsInvalidBodiesBefor
     expect_error(server.client().Post("/s/lobby/missing/api/v1/input", "{}", "text/plain"), 400, "bad_request");
     expect_error(server.client().Post("/s/lobby/missing/api/v1/input", R"({"text":"123456789"})", "application/json"), 413, "prompt_too_large");
     expect_error(server.client().Post("/s/lobby/missing/api/v1/actions/stop", R"({"extra":true})", "application/json"), 400, "bad_request");
+    expect_error(server.client().Post("/s/lobby/missing/api/v1/actions/cover", R"({"through_entry_id":0})", "application/json"), 400, "bad_request");
+    expect_error(server.client().Post("/s/lobby/missing/api/v1/actions/uncover", R"({"extra":true})", "application/json"), 400, "bad_request");
     expect_error(server.client().Post("/s/lobby/missing/api/v1/actions/default-character", R"({"character_id":""})", "application/json"), 400, "bad_request");
     expect_error(server.client().Post("/s/lobby/missing/api/v1/close", "{}", "application/json"), 404, "not_found");
     expect_error(server.client().Get("/s/lobby/missing/api/v1/status"), 404, "not_found");

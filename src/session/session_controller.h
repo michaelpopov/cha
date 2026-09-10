@@ -76,7 +76,8 @@ public:
         std::string_view author_id,
         std::string text,
         std::string handle = {});
-    [[nodiscard]] ControllerUpdate cover_conversation();
+    [[nodiscard]] ControllerUpdate cover_conversation(
+        std::optional<EntryId> through_entry_id = std::nullopt);
     [[nodiscard]] ControllerUpdate uncover_conversation();
     // The web text grammar submits handles; resolution and all target
     // validation stay here with the forum's authoritative character set.

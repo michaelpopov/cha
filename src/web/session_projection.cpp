@@ -38,6 +38,7 @@ SessionSnapshot to_snapshot(
             controller.transcript.entries.begin(),
             controller.transcript.entries.end(),
         },
+        .covered_until = controller.transcript.covered_until,
         .generation = {
             .active = controller.generation.active,
             .request_id = controller.generation.request_id,

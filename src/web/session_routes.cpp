@@ -167,6 +167,27 @@ void SessionRoutes::install(httplib::Server& server) const {
         if (!session) return set_not_live(response);
         set_command_result(response, session->submit(StopCommand{}, settings.command_deadline));
     });
+    server.Post(std::string(base) + R"(/api/v1/actions/cover)", [live_sessions, settings](const httplib::Request& request, httplib::Response& response) {
+        const std::optional<FullSessionId> key = validate_key(request, response);
+        if (!key) return;
+        if (!validate_json_mutation(request, response)) return;
+        CoverCommand command;
+        if (!parse_route_json_body(request, response, settings.request_body_limit, [&command](const nlohmann::json& json) {
+                command = parse_cover_command(json);
+            })) return;
+        LiveSessionHandle session = live_sessions->lookup(*key);
+        if (!session) return set_not_live(response);
+        set_command_result(response, session->submit(command, settings.command_deadline));
+    });
+    server.Post(std::string(base) + R"(/api/v1/actions/uncover)", [live_sessions, settings](const httplib::Request& request, httplib::Response& response) {
+        const std::optional<FullSessionId> key = validate_key(request, response);
+        if (!key) return;
+        if (!validate_json_mutation(request, response)) return;
+        if (!parse_route_json_body(request, response, settings.request_body_limit, [](const nlohmann::json& json) { parse_empty_object(json); })) return;
+        LiveSessionHandle session = live_sessions->lookup(*key);
+        if (!session) return set_not_live(response);
+        set_command_result(response, session->submit(UncoverCommand{}, settings.command_deadline));
+    });
     const auto set_default_character_handler =
         [live_sessions, settings](const httplib::Request& request, httplib::Response& response) {
         const std::optional<FullSessionId> key = validate_key(request, response);

@@ -23,6 +23,7 @@ export type OpenSessionResult = components['schemas']['OpenSessionResult'];
 export type SessionSnapshot = components['schemas']['SessionSnapshot'];
 export type CommandResult = components['schemas']['CommandResult'];
 export type InputRequest = components['schemas']['InputRequest'];
+export type CoverRequest = components['schemas']['CoverRequest'];
 export type OpenAiAuth = components['schemas']['OpenAiAuth'];
 export type VaultDetail = components['schemas']['VaultDetail'];
 export type CreateVaultRequest = components['schemas']['CreateVaultRequest'];
@@ -129,6 +130,12 @@ export interface ChaClient {
   openSession(forumId: string, sessionId: string): Promise<OpenSessionResult>;
   getSessionSnapshot(forumId: string, sessionId: string): Promise<SessionSnapshot>;
   submitInput(forumId: string, sessionId: string, input: InputRequest): Promise<CommandResult>;
+  coverConversation(
+    forumId: string,
+    sessionId: string,
+    request: CoverRequest,
+  ): Promise<CommandResult>;
+  uncoverConversation(forumId: string, sessionId: string): Promise<CommandResult>;
   stopGeneration(forumId: string, sessionId: string): Promise<CommandResult>;
   setDefaultCharacter(
     forumId: string,
@@ -303,6 +310,10 @@ export function isSessionSnapshot(value: unknown): value is SessionSnapshot {
     && Array.isArray(value.characters)
     && typeof value.default_character_id === 'string'
     && Array.isArray(value.transcript)
+    && (value.covered_until === undefined
+      || (typeof value.covered_until === 'number'
+        && Number.isSafeInteger(value.covered_until)
+        && value.covered_until > 0))
     && isRecord(value.generation)
     && typeof value.lifecycle === 'string';
 }
@@ -571,6 +582,18 @@ export function createChaClient(
       fetcher,
       sessionApiUrl(forumId, sessionId, 'input'),
       jsonMutation(input),
+    ),
+
+    coverConversation: (forumId, sessionId, input) => requestJson<CommandResult>(
+      fetcher,
+      sessionApiUrl(forumId, sessionId, 'actions/cover'),
+      jsonMutation(input),
+    ),
+
+    uncoverConversation: (forumId, sessionId) => requestJson<CommandResult>(
+      fetcher,
+      sessionApiUrl(forumId, sessionId, 'actions/uncover'),
+      jsonMutation({}),
     ),
 
     stopGeneration: (forumId, sessionId) => requestJson<CommandResult>(

@@ -1149,6 +1149,9 @@ TEST(SessionController, KeepsCoverMarkersOutOfTheSessionDatabase) {
     const ControllerUpdate nothing_to_uncover = controller->uncover_conversation();
     EXPECT_EQ(nothing_to_uncover.notice, "Nothing to uncover");
     EXPECT_TRUE(nothing_to_uncover.input_consumed);
+    const ControllerUpdate missing_target = controller->cover_conversation(99);
+    EXPECT_EQ(missing_target.notice, "Cover target was not found");
+    EXPECT_FALSE(missing_target.input_consumed);
     EXPECT_TRUE(has_state_update(controller->cover_conversation()));
     EXPECT_TRUE(has_state_update(controller->cover_conversation()));
     EXPECT_TRUE(has_state_update(controller->uncover_conversation()));

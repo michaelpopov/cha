@@ -13,8 +13,6 @@ struct CommandDescriptor {
 };
 
 constexpr std::array descriptors{
-    CommandDescriptor{"/cover", CommandKind::cover},
-    CommandDescriptor{"/uncover", CommandKind::uncover},
     CommandDescriptor{"/mcast", CommandKind::mcast},
 };
 

@@ -26,7 +26,6 @@ The chat input also accepts these controller-level commands:
 
 | Command | Purpose |
 | --- | --- |
-| `/cover`, `/uncover` | Hide all earlier conversation from model context, or restore it. |
 | `/mcast` | Send one prompt to multiple forum characters. |
 
 Leading `@Name` addresses a prompt to one character. `@@` starts literal text

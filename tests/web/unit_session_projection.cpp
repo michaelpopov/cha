@@ -16,6 +16,7 @@ struct BackingState {
     std::string default_character_id;
     std::string default_persona_id{"persona"};
     std::vector<cha::TranscriptEntry> transcript;
+    std::optional<EntryId> covered_until;
     std::string character_id;
     std::string character_display_name;
     std::string reasoning_text;
@@ -28,6 +29,7 @@ struct BackingState {
                 .entries = transcript,
                 .revision = 42,
                 .open_entry_id = 2,
+                .covered_until = covered_until,
             },
             .generation = {
                 .active = true,
@@ -148,6 +150,17 @@ TEST(SessionProjection, RetainsNoBorrowIntoTheControllerBackingState) {
     EXPECT_EQ(snapshot.transcript.back().text, "Failure");
     EXPECT_EQ(snapshot.generation.character_display_name, "Guide");
     EXPECT_EQ(snapshot.generation.reasoning_text, "Thinking");
+}
+
+TEST(SessionProjection, CopiesTheActiveCoverBoundary) {
+    publish_projection_workspace();
+    BackingState state = populated_state();
+    state.covered_until = 2;
+
+    const SessionSnapshot snapshot =
+        to_snapshot(test_identity, "Label", state.view(), {});
+
+    EXPECT_EQ(snapshot.covered_until, 2U);
 }
 
 TEST(SessionProjection, RemovesSourceReferencesFromHistoricalEntries) {

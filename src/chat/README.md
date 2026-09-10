@@ -95,7 +95,7 @@ Generation workers never read it; the controller captures an immutable
 | `finish_entry` | Closes it as `complete` or `cancelled`, re-checking the content rules. |
 | `discard_entry` | Drops the open entry entirely — used when a turn fails mid-stream. |
 | `replace_entries` | Installs a restored transcript, validating order and terminality, and resets the cover boundary. |
-| `cover` | Hides every entry before the current boundary from model context and appends `[cover]`. |
+| `cover` | Hides entries through the selected entry from model context and appends `[cover]`. |
 | `uncover` | Clears the boundary and appends `[uncover]`. |
 
 Every presentation-changing mutation bumps `revision`, and every entry ID must
@@ -106,7 +106,8 @@ be strictly greater than the last. Renderers use `revision` to detect change.
 `covered_until` is an optional entry-ID boundary. While set, every earlier
 entry remains visible on screen but is excluded from model context.
 `model_history()` copies the boundary with the entries for immutable backend
-input. Calling `cover` again moves the boundary forward; `uncover` clears it.
+input. Calling `cover` again replaces the boundary, so it can move forward or
+backward; `uncover` clears it.
 
 The boundary and markers are not persisted. `replace_entries()` also resets
 the boundary.

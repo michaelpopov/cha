@@ -8,6 +8,8 @@
 #include <httplib.h>
 #include <nlohmann/json.hpp>
 
+#include <cstdint>
+#include <limits>
 #include <optional>
 #include <string>
 #include <utility>
@@ -191,6 +193,7 @@ TEST(WebProtocol, SerializesSnapshotMailboxPayloadAndTargetAwareAppend) {
             .request_id = 3,
             .created_at = 1700000000,
         }},
+        .covered_until = 7,
         .generation = {
             .active = true,
             .request_id = 3,
@@ -221,6 +224,7 @@ TEST(WebProtocol, SerializesSnapshotMailboxPayloadAndTargetAwareAppend) {
         {"notice", "<notice>"},
         {"characters", {{{"display_name", "Guide"}, {"id", "guide"},
             {"appearance", default_appearance()}}}},
+        {"covered_until", 7},
         {"session_id", "session"},
         {"session_label", "Label"},
         {"shutdown_reason", "session_failed"},
@@ -328,6 +332,10 @@ TEST(WebProtocol, ParsesRouteSpecificCommandPayloads) {
     ASSERT_TRUE(std::holds_alternative<RawCommand>(input));
     EXPECT_EQ(std::get<RawCommand>(input).text, "hello");
 
+    const WebCommand cover = parse_cover_command({{"through_entry_id", 7}});
+    ASSERT_TRUE(std::holds_alternative<CoverCommand>(cover));
+    EXPECT_EQ(std::get<CoverCommand>(cover).through_entry_id, 7U);
+
     const WebCommand default_character =
         parse_default_character_command({{"character_id", "guide"}});
     ASSERT_TRUE(std::holds_alternative<SetDefaultCharacterCommand>(default_character));
@@ -337,11 +345,23 @@ TEST(WebProtocol, ParsesRouteSpecificCommandPayloads) {
 
     const WebCommand stop = StopCommand{};
     EXPECT_TRUE(std::holds_alternative<StopCommand>(stop));
+    const WebCommand uncover = UncoverCommand{};
+    EXPECT_TRUE(std::holds_alternative<UncoverCommand>(uncover));
     EXPECT_THROW(
         (void)parse_input_command({{"type", "input"}, {"text", "hello"}}),
         std::invalid_argument);
     EXPECT_THROW(
         (void)parse_input_command({{"text", 1}}),
+        std::invalid_argument);
+    EXPECT_THROW(
+        (void)parse_cover_command({{"through_entry_id", 0}}),
+        std::invalid_argument);
+    EXPECT_THROW(
+        (void)parse_cover_command({{"through_entry_id", "7"}}),
+        std::invalid_argument);
+    EXPECT_THROW(
+        (void)parse_cover_command({
+            {"through_entry_id", std::numeric_limits<std::uint64_t>::max()}}),
         std::invalid_argument);
     // Author attribution is the forum's to decide, so naming one is refused
     // rather than quietly ignored.

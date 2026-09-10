@@ -203,6 +203,71 @@ describe('live chat', () => {
     expect(stop).toHaveBeenCalledOnce();
   });
 
+  it('covers through a cancelled response and shows one uncover control', async () => {
+    const coverConversation = vi.fn(async () => ({ clear_input: false }));
+    const uncoverConversation = vi.fn(async () => ({ clear_input: false }));
+    const events = drivableEvents();
+    const transcript: SessionSnapshot['transcript'] = [
+      {
+        id: 1, kind: 'human', participant_id: 'guest', display_name: 'Guest',
+        addressed_to: 'assistant', addressed_to_name: 'Assistant',
+        text: 'Question', status: 'complete', created_at: 1_700_000_000,
+      },
+      {
+        id: 2, kind: 'character', participant_id: 'assistant', display_name: 'Assistant',
+        addressed_to: '', addressed_to_name: '',
+        text: 'Answer', status: 'complete', created_at: 1_700_000_001,
+      },
+      {
+        id: 3, kind: 'human', participant_id: 'guest', display_name: 'Guest',
+        addressed_to: 'guide', addressed_to_name: 'Guide',
+        text: 'Follow-up', status: 'complete', created_at: 1_700_000_002,
+      },
+      {
+        id: 4, kind: 'character', participant_id: 'guide', display_name: 'Guide',
+        addressed_to: '', addressed_to_name: '',
+        text: 'More detail', status: 'complete', created_at: 1_700_000_003,
+      },
+      {
+        id: 5, kind: 'human', participant_id: 'guest', display_name: 'Guest',
+        addressed_to: 'critic', addressed_to_name: 'Critic',
+        text: 'Last question', status: 'complete', created_at: 1_700_000_004,
+      },
+      {
+        id: 6, kind: 'character', participant_id: 'critic', display_name: 'Critic',
+        addressed_to: '', addressed_to_name: '',
+        text: 'Partial answer', status: 'cancelled', created_at: 1_700_000_005,
+      },
+    ];
+    render(<App
+      client={fixtureClient({ coverConversation, uncoverConversation })}
+      connectSessionEvents={events.connect}
+    />);
+    await attachInitial(events, { ...snapshotFixture, transcript });
+
+    fireEvent.click(screen.getByRole('button', {
+      name: "Cover transcript through Critic's response",
+    }));
+    await waitFor(() => expect(coverConversation).toHaveBeenCalledWith(
+      'entrance', 'welcome', { through_entry_id: 6 },
+    ));
+
+    act(() => events.handlers[0].onSnapshot({
+      ...snapshotFixture,
+      transcript: [...transcript, {
+        id: 7, kind: 'notice', participant_id: '', display_name: 'cover',
+        addressed_to: '', addressed_to_name: '', text: '', status: 'complete',
+        created_at: null,
+      }],
+      covered_until: 7,
+    }));
+    expect(screen.getAllByRole('button', { name: 'Uncover transcript' })).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: 'Uncover transcript' }));
+    await waitFor(() => expect(uncoverConversation).toHaveBeenCalledWith(
+      'entrance', 'welcome',
+    ));
+  });
+
   it('shades the active covered prefix and removes the shading after uncover', async () => {
     const events = drivableEvents();
     const human = (id: number, text: string): SessionSnapshot['transcript'][number] => ({
@@ -231,7 +296,11 @@ describe('live chat', () => {
     ];
 
     render(<App client={fixtureClient()} connectSessionEvents={events.connect} />);
-    await attachInitial(events, { ...snapshotFixture, transcript: firstCover });
+    await attachInitial(events, {
+      ...snapshotFixture,
+      transcript: firstCover,
+      covered_until: 3,
+    });
 
     let covered = screen.getByRole('region', { name: 'Covered conversation' });
     expect(within(covered).getByText('Earlier question')).toBeInTheDocument();
@@ -243,6 +312,7 @@ describe('live chat', () => {
     act(() => events.handlers[0].onSnapshot({
       ...snapshotFixture,
       transcript: secondCover,
+      covered_until: 5,
     }));
 
     covered = screen.getByRole('region', { name: 'Covered conversation' });

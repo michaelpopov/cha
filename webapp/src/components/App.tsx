@@ -97,11 +97,13 @@ function Screen({
   onCreateSession,
   onOpenSession,
   onRetrySession,
+  onCoverConversation,
   onRetryStream,
   onReturnToWelcome,
   onSetDefaultCharacter,
   onStopGeneration,
   onSubmitInput,
+  onUncoverConversation,
   catalogRevision,
   characterRevision,
   forumRevision,
@@ -124,11 +126,13 @@ function Screen({
     case 'chat': return (
       <ChatScreen
         dispatch={dispatch}
+        onCoverConversation={onCoverConversation}
         onRetryStream={onRetryStream}
         onReturnToWelcome={onReturnToWelcome}
         onSetDefaultCharacter={onSetDefaultCharacter}
         onStopGeneration={onStopGeneration}
         onSubmitInput={onSubmitInput}
+        onUncoverConversation={onUncoverConversation}
         state={state}
       />
     );
@@ -893,6 +897,25 @@ export function App({
     ));
   }, [client, runMutation, state.activeConversation]);
 
+  const coverConversation = useCallback((throughEntryId: number) => {
+    const active = state.activeConversation;
+    if (!active) return Promise.reject(new Error('No live conversation is selected.'));
+    return runMutation(active, 'cover', () => client.coverConversation(
+      active.forumId,
+      active.sessionId,
+      { through_entry_id: throughEntryId },
+    ));
+  }, [client, runMutation, state.activeConversation]);
+
+  const uncoverConversation = useCallback(() => {
+    const active = state.activeConversation;
+    if (!active) return Promise.reject(new Error('No live conversation is selected.'));
+    return runMutation(active, 'cover', () => client.uncoverConversation(
+      active.forumId,
+      active.sessionId,
+    ));
+  }, [client, runMutation, state.activeConversation]);
+
   const stopGeneration = useCallback(() => {
     const active = state.activeConversation;
     if (!active) return Promise.reject(new Error('No live conversation is selected.'));
@@ -1102,6 +1125,7 @@ export function App({
                 styleRevision={styleRevision}
                 client={client}
                 dispatch={navigate}
+                onCoverConversation={coverConversation}
                 onCreateSession={createConversation}
                 onOpenSession={openConversation}
                 onRetryStream={retryStream}
@@ -1110,6 +1134,7 @@ export function App({
                 onSetDefaultCharacter={setDefaultCharacter}
                 onStopGeneration={stopGeneration}
                 onSubmitInput={submitInput}
+                onUncoverConversation={uncoverConversation}
                 state={state}
               />
             )}

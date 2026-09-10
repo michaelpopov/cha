@@ -1509,6 +1509,66 @@ paths:
         "503":
           $ref: "#/components/responses/CommandUnavailable"
 
+  /s/{forum_id}/{session_id}/api/v1/actions/cover:
+    parameters:
+      - $ref: "#/components/parameters/ForumId"
+      - $ref: "#/components/parameters/SessionId"
+    post:
+      tags: [Live sessions]
+      operationId: coverConversation
+      summary: Cover the transcript through an entry
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CoverRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/CommandAccepted"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/ForbiddenMutation"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/SessionNotLive"
+        "413":
+          $ref: "#/components/responses/BodyTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/CommandUnavailable"
+
+  /s/{forum_id}/{session_id}/api/v1/actions/uncover:
+    parameters:
+      - $ref: "#/components/parameters/ForumId"
+      - $ref: "#/components/parameters/SessionId"
+    post:
+      tags: [Live sessions]
+      operationId: uncoverConversation
+      summary: Uncover the transcript
+      requestBody:
+        $ref: "#/components/requestBodies/EmptyJsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/CommandAccepted"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/ForbiddenMutation"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/SessionNotLive"
+        "413":
+          $ref: "#/components/responses/BodyTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/CommandUnavailable"
+
   /s/{forum_id}/{session_id}/api/v1/actions/default-character:
     parameters:
       - $ref: "#/components/parameters/ForumId"
@@ -2534,6 +2594,15 @@ components:
           type: string
           description: Input text, limited by the server's configured prompt byte limit.
 
+    CoverRequest:
+      type: object
+      additionalProperties: false
+      required: [through_entry_id]
+      properties:
+        through_entry_id:
+          type: integer
+          minimum: 1
+
     SetDefaultCharacterRequest:
       type: object
       additionalProperties: false
@@ -2639,6 +2708,8 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/TranscriptEntry"
+        covered_until:
+          $ref: "#/components/schemas/UnsignedInteger"
         generation:
           $ref: "#/components/schemas/GenerationState"
         notice:

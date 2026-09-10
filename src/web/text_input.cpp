@@ -56,26 +56,8 @@ CommandResult handle_text_input(
     if (command.kind == CommandKind::mcast) {
         return handle_multicast_input(controller, author_id, command.argument);
     }
-    if (!command.argument.empty() && command.kind != CommandKind::unknown) {
-        result.clear_input = true;
-        result.session.notice = "Command does not accept arguments";
-        return result;
-    }
-    switch (command.kind) {
-    case CommandKind::cover:
-        result.session = controller.cover_conversation(); break;
-    case CommandKind::uncover:
-        result.session = controller.uncover_conversation(); break;
-    case CommandKind::mcast:
-        return result;
-    case CommandKind::unknown:
-        result.clear_input = true;
-        result.session.notice = "Unknown command. Commands: " + command_names();
-        return result;
-    case CommandKind::text:
-        return result;
-    }
-    result.clear_input = result.session.input_consumed;
+    result.clear_input = true;
+    result.session.notice = "Unknown command. Commands: " + command_names();
     return result;
 }
 

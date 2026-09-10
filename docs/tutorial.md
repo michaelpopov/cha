@@ -335,11 +335,12 @@ Two transcript concepts are easy to conflate:
 - `covered_until` is an optional entry-ID boundary; earlier entries are omitted
   from model context.
 
-`/cover` adds a transient marker and moves the boundary to the current point,
-so the conversation through the immediately preceding message is omitted from
-later model requests. Calling it again moves the boundary forward. `/uncover`
-adds its own marker and clears the boundary, restoring the full conversation to
-model context. The markers and boundary are not durable session history.
+`Transcript::cover()` adds a transient marker and sets the boundary immediately
+after the selected entry, so the conversation through that entry is omitted
+from later model requests. Selecting a different entry replaces the boundary;
+it may move forward or backward. `Transcript::uncover()` adds its own marker and
+clears the boundary, restoring the full conversation to model context. The
+markers and boundary are not durable session history.
 
 The version-2 SQLite schema still stores `history_epoch` so databases cleared
 by older CHA builds restore the correct active history. The current application
@@ -1150,8 +1151,9 @@ Parsing is divided among:
 
 The parser belongs in `web` because it adapts one input protocol. The
 controller exposes typed actions and remains usable without slash-command
-syntax. Only `/cover`, `/uncover`, and `/mcast` remain raw commands. Character
-selection and stopping generation use typed Web UI actions instead.
+syntax. Only `/mcast` remains a raw command. Character selection, stopping
+generation, and covering or uncovering model context use typed Web UI actions
+instead.
 
 ### 12.4 The owner loop
 
@@ -1362,13 +1364,19 @@ non-regular targets and atomically replaces a regular file.
 ### 12.9 Browser transcript and composer
 
 The browser's presentation behavior is concentrated in
-[webapp/src/components/Screens.tsx](../webapp/src/components/Screens.tsx), with
+[webapp/src/components/ChatScreen.tsx](../webapp/src/components/ChatScreen.tsx), with
 layout rules in [webapp/src/styles/app.css](../webapp/src/styles/app.css).
 `visibleTranscriptEntries()` suppresses the duplicate human prompts stored for
 multicast, but marks the next visible response so the renderer inserts an
 unlabelled horizontal divider. Readers can therefore see where one response
 ends and the next response to the same prompt begins without seeing the whole
 prompt again.
+
+The snapshot's `covered_until` field is the browser's only cover boundary.
+Entries before it appear in a shaded `Covered conversation` section with one
+uncover control in the section header. Complete and cancelled character
+responses with timestamps expose a cover control beside the optional voice
+output control; selecting it posts the response ID as `through_entry_id`.
 
 The horizontal line above the composer is also its resize handle. Dragging it
 up or down changes the textarea's height while the transcript consumes the

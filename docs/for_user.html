@@ -1041,15 +1041,15 @@ the choice, the reason, the main risk, and the next check.</code></pre>
           <h3>Conversation moves worth trying</h3>
           <table>
             <thead>
-              <tr><th>Move</th><th>What to type</th><th>Why it helps</th></tr>
+              <tr><th>Move</th><th>What to do</th><th>Why it helps</th></tr>
             </thead>
             <tbody>
               <tr><td>Ask one voice</td><td><code>@Rowan What premise is weakest?</code></td><td>Targets one character for this turn.</td></tr>
               <tr><td>Ask several</td><td><code>/mcast @Rowan @Inez Your question</code></td><td>Creates contrasting answers in the shared transcript.</td></tr>
               <tr><td>Record a note</td><td><code>@- My planning note</code></td><td>Saves text into the transcript without calling a model.</td></tr>
               <tr><td>Save several Self-notes</td><td>Choose <strong>Self-notes</strong> in the target menu</td><td>Makes ordinary messages save-only until you choose a character again.</td></tr>
-              <tr><td>Start a fresh phase</td><td><code>/cover</code></td><td>Keeps earlier text visible but hides it from later model context.</td></tr>
-              <tr><td>Bring history back</td><td><code>/uncover</code></td><td>Restores the covered conversation to model context.</td></tr>
+              <tr><td>Start a fresh phase</td><td>Select the crossed-out eye beside a response</td><td>Keeps the conversation through that response visible but hides it from later model context.</td></tr>
+              <tr><td>Bring history back</td><td>Select the eye in the <strong>Covered conversation</strong> header</td><td>Restores the covered conversation to model context.</td></tr>
             </tbody>
           </table>
 
@@ -1157,15 +1157,16 @@ the choice, the reason, the main risk, and the next check.</code></pre>
 
         <section id="commands">
           <p class="section-kicker">10 · Keep nearby</p>
-          <h2>Chat command card</h2>
-          <p class="section-intro">Commands must begin at the very start of the message. Character names may be a full display name, an unambiguous part of one, or a character ID.</p>
+          <h2>Chat input and context card</h2>
+          <p class="section-intro">The multicast command must begin at the very start of the message. Character names may be a full display name, an unambiguous part of one, or a character ID. Context controls appear beside responses and on the covered section.</p>
 
           <table>
             <thead>
-              <tr><th>Command</th><th>Effect</th></tr>
+              <tr><th>Control or input</th><th>Effect</th></tr>
             </thead>
             <tbody>
-              <tr><td><code>/cover</code> / <code>/uncover</code></td><td>Hide earlier conversation from model context, or restore it.</td></tr>
+              <tr><td>Crossed-out eye beside a response</td><td>Cover the conversation through that response.</td></tr>
+              <tr><td>Eye in <strong>Covered conversation</strong></td><td>Restore the full conversation to model context.</td></tr>
               <tr><td><code>/mcast @A @B question</code></td><td>Send the same prompt to several forum characters.</td></tr>
               <tr><td><code>@@example</code></td><td>Send literal text beginning with an at-sign.</td></tr>
             </tbody>

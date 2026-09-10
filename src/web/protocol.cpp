@@ -237,6 +237,7 @@ void to_json(nlohmann::json& json, const SessionSnapshot& value) {
         {"generation", generation_json(value.generation)},
         {"lifecycle", to_string(value.lifecycle)},
     };
+    put_optional(json, "covered_until", value.covered_until);
     put_optional(json, "notice", value.notice);
     if (value.shutdown_reason) {
         json["shutdown_reason"] = to_string(*value.shutdown_reason);

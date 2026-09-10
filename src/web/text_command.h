@@ -7,8 +7,6 @@ namespace cha::web {
 
 enum class CommandKind {
     text,
-    cover,
-    uncover,
     mcast,
     unknown,
 };
