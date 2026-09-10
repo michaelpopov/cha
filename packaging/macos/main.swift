@@ -284,6 +284,10 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
         if let script = voiceInputConfigurationScript() {
             configuration.userContentController.addUserScript(script)
         }
+        if let script = textToSpeechConfigurationScript() {
+            configuration.userContentController.addUserScript(script)
+        }
+        configuration.mediaTypesRequiringUserActionForPlayback = []
         let view = WKWebView(frame: .zero, configuration: configuration)
         view.allowsMagnification = true
         view.navigationDelegate = self
@@ -347,6 +351,26 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
         }
         return WKUserScript(
             source: "Object.defineProperty(window, 'chaVoiceInput', { value: \(json) });",
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true)
+    }
+
+    private func textToSpeechConfigurationScript() -> WKUserScript? {
+        guard let runtime,
+              let apiKey = cha_runtime_text_to_speech_api_key(runtime) else {
+            return nil
+        }
+        let configuration: [String: Any] = [
+            "url": "https://api.elevenlabs.io/v1/text-to-speech/JBFqnCBsd6RMkjVDRZzb?output_format=mp3_44100_128",
+            "apiKey": String(cString: apiKey),
+            "model": "eleven_multilingual_v2",
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: configuration),
+              let json = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+        return WKUserScript(
+            source: "Object.defineProperty(window, 'chaTextToSpeech', { value: \(json) });",
             injectionTime: .atDocumentStart,
             forMainFrameOnly: true)
     }

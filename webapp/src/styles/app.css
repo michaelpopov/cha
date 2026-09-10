@@ -924,6 +924,39 @@ select:disabled {
   font-weight: 400;
 }
 
+.cha-message-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.22rem;
+}
+
+.cha-speech-button {
+  display: inline-grid;
+  width: 1.3rem;
+  height: 1.3rem;
+  padding: 0;
+  border: 0;
+  place-items: center;
+  color: var(--muted-foreground);
+  background: transparent;
+  cursor: pointer;
+}
+
+.cha-speech-button svg {
+  width: 0.92rem;
+  height: 0.92rem;
+}
+
+.cha-speech-button:hover:not(:disabled),
+.cha-speech-button.is-active {
+  color: var(--foreground);
+}
+
+.cha-speech-button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
 .cha-repeated-prompt-divider {
   width: 100%;
   margin: 0.15rem 0;

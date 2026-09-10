@@ -5,12 +5,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ChaError, type ChaClient, type SessionSnapshot } from '../api/client';
 import type { SessionEventHandlers } from '../api/events';
 import { bootstrapFixture, fixtureClient, plainVoice, snapshotFixture } from '../test/fixtures';
+import { TextToSpeechSession } from '../textToSpeech';
 import { VoiceInputSession } from '../voiceInput';
 import { App } from './App';
 import { formatEntryTime } from './ChatScreen';
 
 afterEach(() => {
   delete window.chaVoiceInput;
+  delete window.chaTextToSpeech;
   vi.restoreAllMocks();
 });
 
@@ -163,6 +165,42 @@ describe('live chat', () => {
       .toBe(new Date(1_700_000_000 * 1000).toISOString());
     expect(stamped?.textContent).toBe(formatEntryTime(1_700_000_000));
     expect(articles[1].querySelector('.cha-message-time')).toBeNull();
+  });
+
+  it('offers text to speech only for completed model responses in the macOS shell', async () => {
+    const play = vi.spyOn(TextToSpeechSession.prototype, 'play').mockResolvedValue();
+    const stop = vi.spyOn(TextToSpeechSession.prototype, 'stop');
+    window.chaTextToSpeech = {
+      url: 'https://api.elevenlabs.io/v1/text-to-speech/voice',
+      apiKey: 'secret',
+      model: 'eleven_multilingual_v2',
+    };
+    const events = drivableEvents();
+    render(<App client={fixtureClient()} connectSessionEvents={events.connect} />);
+    await attachInitial(events, {
+      ...snapshotFixture,
+      transcript: [
+        {
+          id: 1, kind: 'human', participant_id: 'guest', display_name: 'Guest',
+          addressed_to: 'assistant', addressed_to_name: 'Assistant',
+          text: 'Question', status: 'complete', created_at: 1_700_000_000,
+        },
+        {
+          id: 2, kind: 'character', participant_id: 'assistant', display_name: 'Assistant',
+          addressed_to: '', addressed_to_name: '',
+          text: 'Answer', status: 'complete', created_at: 1_700_000_001,
+        },
+      ],
+    });
+
+    expect(screen.queryByRole('button', { name: "Read Guest's response aloud" }))
+      .not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: "Read Assistant's response aloud" }));
+    expect(play).toHaveBeenCalledOnce();
+    fireEvent.click(await screen.findByRole('button', {
+      name: "Stop reading Assistant's response",
+    }));
+    expect(stop).toHaveBeenCalledOnce();
   });
 
   it('shades the active covered prefix and removes the shading after uncover', async () => {

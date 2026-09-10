@@ -25,6 +25,7 @@ struct ChaRuntime {
     std::unique_ptr<ApplicationRuntime> application;
     std::optional<cha::web::VoiceInputConfig> voice_input;
     std::string voice_input_api_key;
+    std::string text_to_speech_api_key;
     int port{};
     bool logging{};
 };
@@ -71,6 +72,9 @@ ApplicationCommand runtime_command(
     // configuration format requires it.
     command.host = "127.0.0.1";
     command.port = 0;
+#ifdef __APPLE__
+    command.native_connect_urls.push_back("https://api.elevenlabs.io");
+#endif
     return command;
 }
 
@@ -147,12 +151,18 @@ ChaRuntime* cha_runtime_create(
             command.log_file, command.log_level);
         runtime->logging = true;
         runtime->voice_input = command.voice_input;
+        ApiKeyStore api_keys(
+            command.config_directory / "api-keys.json");
         if (runtime->voice_input) {
-            ApiKeyStore api_keys(
-                command.config_directory / "api-keys.json");
             runtime->voice_input_api_key =
                 api_keys.value(runtime->voice_input->api_key_id);
         }
+#ifdef __APPLE__
+        if (const auto key = api_keys.find_by_name("ELEVENLABS_API_KEY");
+            key && key->has_value) {
+            runtime->text_to_speech_api_key = api_keys.value(key->id);
+        }
+#endif
         runtime->application = ApplicationRuntime::open(
             command, access_token);
         runtime->port = runtime->application->start();
@@ -252,6 +262,11 @@ const char* cha_runtime_voice_input_keyword(
     }
     return runtime->voice_input->keywords[static_cast<std::size_t>(index)]
         .c_str();
+}
+
+const char* cha_runtime_text_to_speech_api_key(const ChaRuntime* runtime) {
+    return runtime && !runtime->text_to_speech_api_key.empty()
+        ? runtime->text_to_speech_api_key.c_str() : nullptr;
 }
 
 int32_t cha_runtime_upload(

@@ -734,7 +734,8 @@ int ApplicationRuntime::start(int port_override) {
         impl_->command.root / "web",
         !impl_->access_token.empty() && impl_->command.voice_input
             ? std::optional<std::string>(impl_->command.voice_input->url)
-            : std::nullopt);
+            : std::nullopt,
+        impl_->command.native_connect_urls);
     assets.install(*server);
     const InitialSelection initial{
         {std::string(entrance_id), std::string(welcome_id)}};

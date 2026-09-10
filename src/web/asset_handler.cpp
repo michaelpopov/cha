@@ -23,7 +23,7 @@ constexpr std::string_view asset_cache =
     "public, max-age=31536000, immutable";
 constexpr std::string_view content_security_policy_before_connect =
     "default-src 'none'; script-src 'self'; style-src 'self'; "
-    "img-src 'self' data:; font-src 'self'; connect-src 'self'";
+    "img-src 'self' data:; font-src 'self'; media-src blob:; connect-src 'self'";
 constexpr std::string_view content_security_policy_after_connect =
     "; "
     "base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
@@ -50,9 +50,13 @@ std::string connection_origin(std::string_view url) {
 }
 
 std::string make_content_security_policy(
-    const std::optional<std::string>& connect_url) {
+    const std::optional<std::string>& connect_url,
+    const std::vector<std::string>& additional_connect_urls) {
     std::string policy(content_security_policy_before_connect);
     if (connect_url) policy += " " + connection_origin(*connect_url);
+    for (const std::string& url : additional_connect_urls) {
+        policy += " " + connection_origin(url);
+    }
     policy += content_security_policy_after_connect;
     return policy;
 }
@@ -120,9 +124,11 @@ bool is_below(
 
 AssetHandler::AssetHandler(
     std::filesystem::path web_root,
-    std::optional<std::string> connect_url)
+    std::optional<std::string> connect_url,
+    std::vector<std::string> additional_connect_urls)
     : web_root_(std::filesystem::weakly_canonical(std::move(web_root))),
-      content_security_policy_(make_content_security_policy(connect_url)) {
+      content_security_policy_(make_content_security_policy(
+          connect_url, additional_connect_urls)) {
     const std::filesystem::path index = web_root_ / "index.html";
     if (!std::filesystem::is_regular_file(index)) {
         throw std::runtime_error(

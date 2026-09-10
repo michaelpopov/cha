@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace httplib {
 class Server;
@@ -17,7 +18,8 @@ class AssetHandler {
 public:
     explicit AssetHandler(
         std::filesystem::path web_root,
-        std::optional<std::string> connect_url = std::nullopt);
+        std::optional<std::string> connect_url = std::nullopt,
+        std::vector<std::string> additional_connect_urls = {});
 
     void install(httplib::Server& server) const;
     void set_shell(httplib::Response& response) const;

@@ -20,6 +20,10 @@ import {
 } from '../api/client';
 import type { AppAction, AppState } from '../state/view';
 import {
+  getTextToSpeechConfiguration,
+  TextToSpeechSession,
+} from '../textToSpeech';
+import {
   appendTranscription,
   getVoiceInputConfiguration,
   VoiceInputSession,
@@ -27,6 +31,7 @@ import {
 import {
   MicrophoneIcon,
   SendIcon,
+  SpeakerIcon,
   StopIcon,
   TargetIcon,
 } from './Icons';
@@ -116,10 +121,22 @@ function activeCoverMarkerId(entries: SessionSnapshot['transcript']): number | n
 function TranscriptMessage({
   entry,
   appearance,
+  speechState,
+  onToggleSpeech,
 }: {
   entry: SessionSnapshot['transcript'][number];
   appearance: CharacterAppearance | undefined;
+  speechState: 'idle' | 'loading' | 'playing';
+  onToggleSpeech(entry: SessionSnapshot['transcript'][number]): void;
 }) {
+  const canRead = entry.kind === 'character'
+    && entry.status === 'complete'
+    && entry.created_at !== null;
+  const speechLabel = speechState === 'loading'
+    ? `Generating audio for ${entry.display_name}'s response`
+    : speechState === 'playing'
+      ? `Stop reading ${entry.display_name}'s response`
+      : `Read ${entry.display_name}'s response aloud`;
   return (
     <article
       className={`cha-message is-${entry.kind}`}
@@ -138,13 +155,27 @@ function TranscriptMessage({
       {entry.status === 'cancelled' && <div className="cha-entry-status">Stopped</div>}
       {entry.status === 'failed' && <div className="cha-entry-status">Failed</div>}
       {entry.created_at !== null && (
-        <time
-          className="cha-message-time"
-          dateTime={new Date(entry.created_at * 1000).toISOString()}
-          title={new Date(entry.created_at * 1000).toLocaleString()}
-        >
-          {formatEntryTime(entry.created_at)}
-        </time>
+        <div className="cha-message-meta">
+          <time
+            className="cha-message-time"
+            dateTime={new Date(entry.created_at * 1000).toISOString()}
+            title={new Date(entry.created_at * 1000).toLocaleString()}
+          >
+            {formatEntryTime(entry.created_at)}
+          </time>
+          {canRead && getTextToSpeechConfiguration() && (
+            <button
+              aria-label={speechLabel}
+              className={`cha-speech-button${speechState !== 'idle' ? ' is-active' : ''}`}
+              disabled={speechState === 'loading'}
+              onClick={() => onToggleSpeech(entry)}
+              title={speechLabel}
+              type="button"
+            >
+              {speechState === 'playing' ? <StopIcon /> : <SpeakerIcon />}
+            </button>
+          )}
+        </div>
       )}
     </article>
   );
@@ -196,6 +227,11 @@ export function ChatScreen({
   const voiceInputSession = useRef<VoiceInputSession | null>(null);
   const voiceInputAttempt = useRef(0);
   const transcriptEnd = useRef<HTMLDivElement | null>(null);
+  const textToSpeechSession = useRef<TextToSpeechSession | null>(null);
+  const [spokenEntry, setSpokenEntry] = useState<{
+    id: number;
+    state: 'loading' | 'playing';
+  } | null>(null);
   const composerInput = transliteration.field;
   const chatArea = useRef<HTMLElement | null>(null);
   const composerResize = useRef<{
@@ -221,6 +257,7 @@ export function ChatScreen({
   const sessionAvailable = snapshot !== null && !ended;
   const voiceConfiguration = getVoiceInputConfiguration();
   const voiceInputAvailable = voiceConfiguration !== null && VoiceInputSession.supported();
+  const textToSpeechConfiguration = getTextToSpeechConfiguration();
   const voiceInputActive = voiceInputState !== 'idle';
   const canSend = connected
     && pendingAction === null
@@ -253,6 +290,49 @@ export function ChatScreen({
     voiceInputSession.current = null;
     setVoiceInputState('idle');
   }, [conversationKey, sessionAvailable]);
+
+  useEffect(() => () => {
+    textToSpeechSession.current?.stop();
+    textToSpeechSession.current = null;
+    setSpokenEntry(null);
+  }, [conversationKey]);
+
+  function toggleSpeech(entry: SessionSnapshot['transcript'][number]) {
+    if (spokenEntry?.id === entry.id) {
+      textToSpeechSession.current?.stop();
+      textToSpeechSession.current = null;
+      setSpokenEntry(null);
+      return;
+    }
+    if (!textToSpeechConfiguration) return;
+
+    textToSpeechSession.current?.stop();
+    const session = new TextToSpeechSession(
+      textToSpeechConfiguration,
+      visibleEntryText(entry.kind, entry.text),
+      () => {
+        if (textToSpeechSession.current !== session) return;
+        textToSpeechSession.current = null;
+        setSpokenEntry(null);
+      },
+    );
+    textToSpeechSession.current = session;
+    setSpokenEntry({ id: entry.id, state: 'loading' });
+    setActionError(null);
+    void session.play().then(() => {
+      if (textToSpeechSession.current === session) {
+        setSpokenEntry({ id: entry.id, state: 'playing' });
+      }
+    }).catch((failure: unknown) => {
+      if (textToSpeechSession.current !== session) return;
+      session.stop();
+      textToSpeechSession.current = null;
+      setSpokenEntry(null);
+      if (!(failure instanceof DOMException && failure.name === 'AbortError')) {
+        setActionError('This response could not be read aloud. Try again.');
+      }
+    });
+  }
 
   // Following the newest text is the default, but a reader who has scrolled up
   // keeps their place: a stream that yanked the view back on every token would
@@ -514,6 +594,8 @@ export function ChatScreen({
                 <TranscriptMessage
                   appearance={voices.get(entry.participant_id)}
                   entry={entry}
+                  onToggleSpeech={toggleSpeech}
+                  speechState={spokenEntry?.id === entry.id ? spokenEntry.state : 'idle'}
                 />
               </Fragment>
             ))}
@@ -525,6 +607,8 @@ export function ChatScreen({
             <TranscriptMessage
               appearance={voices.get(entry.participant_id)}
               entry={entry}
+              onToggleSpeech={toggleSpeech}
+              speechState={spokenEntry?.id === entry.id ? spokenEntry.state : 'idle'}
             />
           </Fragment>
         ))}

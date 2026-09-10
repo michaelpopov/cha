@@ -21,8 +21,12 @@ class AssetServer {
 public:
     explicit AssetServer(
         const std::filesystem::path& web_root,
-        std::optional<std::string> connect_url = std::nullopt) {
-        AssetHandler(web_root, std::move(connect_url)).install(server_);
+        std::optional<std::string> connect_url = std::nullopt,
+        std::vector<std::string> additional_connect_urls = {}) {
+        AssetHandler(
+            web_root,
+            std::move(connect_url),
+            std::move(additional_connect_urls)).install(server_);
         port_ = server_.bind_to_any_port("127.0.0.1");
         if (port_ <= 0) throw std::runtime_error("Could not bind asset test server");
         configure_http_server(server_, {});
@@ -73,7 +77,8 @@ TEST(AssetHandler, ServesShellAndHashedAssetsWithProductionHeaders) {
     EXPECT_EQ(
         shell->get_header_value("Content-Security-Policy"),
         "default-src 'none'; script-src 'self'; style-src 'self'; "
-        "img-src 'self' data:; font-src 'self'; connect-src 'self'; "
+        "img-src 'self' data:; font-src 'self'; media-src blob:; "
+        "connect-src 'self'; "
         "base-uri 'none'; form-action 'none'; frame-ancestors 'none'");
 
     const auto asset = server.client().Get("/assets/app.js");
@@ -97,9 +102,24 @@ TEST(AssetHandler, AllowsTheConfiguredConnectionOrigin) {
     EXPECT_EQ(
         shell->get_header_value("Content-Security-Policy"),
         "default-src 'none'; script-src 'self'; style-src 'self'; "
-        "img-src 'self' data:; font-src 'self'; "
+        "img-src 'self' data:; font-src 'self'; media-src blob:; "
         "connect-src 'self' https://api.openai.com; "
         "base-uri 'none'; form-action 'none'; frame-ancestors 'none'");
+}
+
+TEST(AssetHandler, AllowsNativeShellConnectionOrigins) {
+    test::TestWorkspace fixture;
+    AssetServer server(
+        fixture.root() / "web",
+        std::nullopt,
+        {"https://api.elevenlabs.io/v1/text-to-speech/voice"});
+
+    const auto shell = server.client().Get("/");
+    ASSERT_TRUE(shell);
+    EXPECT_NE(
+        shell->get_header_value("Content-Security-Policy").find(
+            "connect-src 'self' https://api.elevenlabs.io;"),
+        std::string::npos);
 }
 
 TEST(AssetHandler, RejectsAnInvalidConfiguredConnectionUrl) {

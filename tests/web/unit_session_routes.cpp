@@ -490,7 +490,8 @@ TEST(SessionRoutes, ServesTheShellForANonLiveSessionAndRejectsInvalidBodiesBefor
     EXPECT_EQ(
         page->get_header_value("Content-Security-Policy"),
         "default-src 'none'; script-src 'self'; style-src 'self'; "
-        "img-src 'self' data:; font-src 'self'; connect-src 'self'; "
+        "img-src 'self' data:; font-src 'self'; media-src blob:; "
+        "connect-src 'self'; "
         "base-uri 'none'; form-action 'none'; frame-ancestors 'none'");
     expect_error(server.client().Get("/s/lobby/missing/api/v1/session"), 409, "session_not_live");
     expect_error(server.client().Get("/s/%2e%2e/missing/api/v1/session"), 404, "not_found");

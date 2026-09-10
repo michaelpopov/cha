@@ -55,6 +55,9 @@ struct ApplicationCommand {
     // ordinary shutdown grace.
     std::optional<int> test_shutdown_grace_ms;
     std::optional<VoiceInputConfig> voice_input;
+    // Extra browser connection targets supplied only by a native shell. They
+    // are not configurable by the served web application.
+    std::vector<std::string> native_connect_urls;
 };
 
 ConfigurationDirectory load_configuration_directory(
