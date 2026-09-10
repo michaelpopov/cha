@@ -39,16 +39,11 @@ CommandResult handle_text_input(
     if (input.empty()) {
         return result;
     }
-    const Command command = parse_command(input);
     if (controller.is_generating()) {
-        if (command.kind == CommandKind::stop && command.argument.empty()) {
-            result.session = controller.request_stop();
-            result.clear_input = true;
-            return result;
-        }
         result.session.notice = std::string(generation_in_progress_notice);
         return result;
     }
+    const Command command = parse_command(input);
     if (command.kind == CommandKind::text) {
         AddressedPrompt prompt = parse_addressed_prompt(input);
         result.session = controller.submit_prompt(
@@ -61,48 +56,18 @@ CommandResult handle_text_input(
     if (command.kind == CommandKind::mcast) {
         return handle_multicast_input(controller, author_id, command.argument);
     }
-    if (command.kind == CommandKind::session_style) {
-        result.clear_input = true;
-        result.session = controller.set_session_style(command.argument);
-        return result;
-    }
     if (!command.argument.empty() && command.kind != CommandKind::unknown) {
         result.clear_input = true;
         result.session.notice = "Command does not accept arguments";
         return result;
     }
     switch (command.kind) {
-    case CommandKind::clear:
-        result.session = controller.clear_transcript(); break;
     case CommandKind::cover:
         result.session = controller.cover_conversation(); break;
     case CommandKind::uncover:
         result.session = controller.uncover_conversation(); break;
     case CommandKind::mcast:
         return result;
-    case CommandKind::session_style:
-        return result;
-    case CommandKind::info:
-        result.session = controller.session_information(); break;
-    case CommandKind::stop:
-        result.session = controller.request_stop();
-        result.clear_input = true;
-        return result;
-    case CommandKind::exit:
-        result.clear_input = true;
-        result.close_session = true;
-        return result;
-    case CommandKind::characters:
-        result.session = controller.character_information(); break;
-    case CommandKind::set_default:
-        result.session = controller.set_default_character(command.handle);
-        // `-` is session-local and must not be written to config.
-        if (requires_snapshot(result.session)
-            && controller.view().default_character_id != null_agent_handle) {
-            result.persist_default_character_id =
-                std::string(controller.view().default_character_id);
-        }
-        break;
     case CommandKind::unknown:
         result.clear_input = true;
         result.session.notice = "Unknown command. Commands: " + command_names();

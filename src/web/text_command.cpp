@@ -7,30 +7,15 @@
 namespace cha::web {
 namespace {
 
-enum class CommandForm {
-    exact,
-    handle_suffix,
-};
-
 struct CommandDescriptor {
     std::string_view name;
     CommandKind kind;
-    CommandForm form{CommandForm::exact};
 };
 
 constexpr std::array descriptors{
-    CommandDescriptor{"/clear", CommandKind::clear},
     CommandDescriptor{"/cover", CommandKind::cover},
     CommandDescriptor{"/uncover", CommandKind::uncover},
     CommandDescriptor{"/mcast", CommandKind::mcast},
-    CommandDescriptor{"/info", CommandKind::info},
-    CommandDescriptor{"/characters", CommandKind::characters},
-    // Compatibility alias retained for existing scripts and muscle memory.
-    CommandDescriptor{"/agents", CommandKind::characters},
-    CommandDescriptor{"/@", CommandKind::set_default, CommandForm::handle_suffix},
-    CommandDescriptor{"/style", CommandKind::session_style},
-    CommandDescriptor{"/stop", CommandKind::stop},
-    CommandDescriptor{"/exit", CommandKind::exit},
 };
 
 } // namespace
@@ -46,16 +31,8 @@ Command parse_command(std::string_view input) {
         separator == std::string_view::npos ? "" : std::string(trim_view(input.substr(separator)));
 
     for (const CommandDescriptor& descriptor : descriptors) {
-        if (descriptor.form == CommandForm::exact) {
-            if (name == descriptor.name) {
-                return {descriptor.kind, argument};
-            }
-        } else if (name.starts_with(descriptor.name)) {
-            return {
-                descriptor.kind,
-                argument,
-                std::string(name.substr(descriptor.name.size())),
-            };
+        if (name == descriptor.name) {
+            return {descriptor.kind, argument};
         }
     }
     return {CommandKind::unknown, argument};
@@ -66,7 +43,6 @@ std::string command_names() {
     for (const CommandDescriptor& descriptor : descriptors) {
         if (!result.empty()) result += ", ";
         result += descriptor.name;
-        if (descriptor.form == CommandForm::handle_suffix) result += "Name";
     }
     return result;
 }

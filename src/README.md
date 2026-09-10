@@ -16,7 +16,7 @@ cha_core -> curl / sqlite / libuv / threads / toml++ / spdlog
 ```
 
 `cha_core` contains no `web/` or executable sources. The browser chat grammar is
-part of `cha_web`, including its editor-clearing and `/exit` lifecycle policy.
+part of `cha_web`, including its editor-clearing policy.
 HTTP workers never access a `SessionController` directly; they submit bounded
 commands to a registry-owned session thread.
 
@@ -63,7 +63,7 @@ is copied into protocol snapshots or append events and delivered through an
 `SessionController` retains only request handles while it applies streamed
 events and persists turn transitions; every provider request owns its own
 worker, client, curl handle, cancellation state, and event queue. The owner
-thread never waits for provider cleanup during `/stop` or controller teardown.
+thread never waits for provider cleanup during a Stop action or controller teardown.
 `WorkspaceConfigStore` owns the one process-lifetime database lease.
 `SessionRepository` receives explicit database, materialized-workspace, and
 Welcome paths; it owns none of those outer resources. Each live actor owns a

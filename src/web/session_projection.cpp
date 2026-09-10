@@ -62,23 +62,11 @@ SessionSnapshot to_snapshot(
         if (character == nullptr) {
             throw std::logic_error("Forum member has no workspace character");
         }
-        CharacterAppearance appearance = character->character.appearance;
-        if (controller.style_overrides != nullptr) {
-            const auto selected = controller.style_overrides->find(
-                character->character.id);
-            if (selected != controller.style_overrides->end()) {
-                const WorkspaceStyle* const style =
-                    workspace->find_style(selected->second);
-                if (style != nullptr) {
-                    appearance = style->appearance;
-                }
-            }
-        }
         snapshot.characters.push_back({
             .id = character->character.id,
             .display_name = character->character.display_name,
             .description = character->character.description,
-            .appearance = appearance,
+            .appearance = character->character.appearance,
         });
     }
     snapshot.forum.members = snapshot.characters;

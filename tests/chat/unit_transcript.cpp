@@ -195,20 +195,15 @@ TEST(Transcript, RequiresAnswerTextForTerminalCharacterEntries) {
         require_storable_transcript_entry(transcript.view().entries.back()));
 }
 
-TEST(Transcript, ReplacesAndClearsEntries) {
+TEST(Transcript, ReplacesEntries) {
     Transcript transcript;
     transcript.add_entry(make_notice_entry(1, "Old"));
-    const std::size_t initial_epoch = transcript.view().history_epoch;
     transcript.replace_entries({
         human(2, "Restored"),
         make_character_entry(3, "guide-id", "Guide", "Welcome", EntryStatus::complete),
     });
 
     EXPECT_EQ(transcript.view().entries.size(), 2U);
-    EXPECT_EQ(transcript.view().history_epoch, initial_epoch + 1);
-    transcript.clear();
-    EXPECT_TRUE(transcript.view().entries.empty());
-    EXPECT_EQ(transcript.view().history_epoch, initial_epoch + 2);
 }
 
 TEST(Transcript, ManagesCoverBoundaryAndTransientMarkersAtomically) {
@@ -235,8 +230,6 @@ TEST(Transcript, ManagesCoverBoundaryAndTransientMarkersAtomically) {
     EXPECT_TRUE(transcript.uncover(4));
     EXPECT_EQ(transcript.model_history().covered_until, std::nullopt);
     expect_same_entry(transcript.view().entries.back(), make_uncover_marker(4));
-    transcript.clear();
-    EXPECT_EQ(transcript.model_history().covered_until, std::nullopt);
 }
 
 TEST(Transcript, RepeatedCoverMovesTheBoundaryAndEachMarkerChangesOneRevision) {
@@ -247,7 +240,6 @@ TEST(Transcript, RepeatedCoverMovesTheBoundaryAndEachMarkerChangesOneRevision) {
     transcript.cover(5);
     const TranscriptView covered = transcript.view();
     EXPECT_EQ(covered.revision, before.revision + 1);
-    EXPECT_EQ(covered.history_epoch, before.history_epoch);
     EXPECT_EQ(transcript.model_history().covered_until, 3U);
 
     transcript.add_entry(human(6, "Hidden", 2));
@@ -255,13 +247,11 @@ TEST(Transcript, RepeatedCoverMovesTheBoundaryAndEachMarkerChangesOneRevision) {
     transcript.cover(9);
     const TranscriptView moved = transcript.view();
     EXPECT_EQ(moved.revision, before_move.revision + 1);
-    EXPECT_EQ(moved.history_epoch, before_move.history_epoch);
     EXPECT_EQ(transcript.model_history().covered_until, 7U);
 
     EXPECT_TRUE(transcript.uncover(12));
     const TranscriptView uncovered = transcript.view();
     EXPECT_EQ(uncovered.revision, moved.revision + 1);
-    EXPECT_EQ(uncovered.history_epoch, moved.history_epoch);
 }
 
 TEST(Transcript, RejectsCoverMutationsWhileAnEntryIsStreaming) {
@@ -419,19 +409,24 @@ TEST(SessionDatabase, RejectsAStreamingTerminalResponse) {
     std::filesystem::remove(path);
 }
 
-TEST(SessionJournal, ReplaysOnlyTheCurrentEpochAfterClear) {
-    const auto path = temporary_path("cha_journal_");
+TEST(SessionJournal, ContinuesAnOlderDatabaseAtItsStoredEpoch) {
+    const auto path = temporary_path("cha_journal_epoch_");
     create_test_database(path);
-    auto journal = std::make_unique<SessionJournal>(path);
-    journal->start_turn(1, human(1, "Old question", 1));
-    journal->complete_turn(1, make_character_entry(
-        2,
-        "reviewer-id",
-        "Reviewer",
-        "Old answer",
-        EntryStatus::complete,
-        1));
-    journal->clear();
+    {
+        SessionJournal journal(path);
+        journal.start_turn(1, human(1, "Old question", 1));
+        journal.complete_turn(1, make_character_entry(
+            2,
+            "reviewer-id",
+            "Reviewer",
+            "Old answer",
+            EntryStatus::complete,
+            1));
+    }
+    ASSERT_EQ(
+        raw_execute(path, "UPDATE sessions SET history_epoch = 2"),
+        SQLITE_OK);
+
     const TranscriptEntry current_prompt = human(3, "Current question", 2);
     const TranscriptEntry current_response = make_character_entry(
         4,
@@ -440,13 +435,15 @@ TEST(SessionJournal, ReplaysOnlyTheCurrentEpochAfterClear) {
         "Current answer",
         EntryStatus::complete,
         2);
-    journal->start_turn(2, current_prompt);
-    journal->complete_turn(2, current_response);
+    {
+        SessionJournal journal(path);
+        journal.start_turn(2, current_prompt);
+        journal.complete_turn(2, current_response);
+    }
 
     EXPECT_EQ(
         load_transcript_entries(path),
         (std::vector<TranscriptEntry>{current_prompt, current_response}));
-    journal.reset();
     std::filesystem::remove(path);
 }
 
@@ -583,7 +580,6 @@ TEST(SessionJournal, RefreshesUpdatedAtForEveryDurableMutationPath) {
         journal->fail_turn(
             3, make_error_entry(6, "Unavailable", 3, "reviewer-id"));
     });
-    expect_timestamp_refresh(path, [&] { journal->clear(); });
     expect_timestamp_refresh(path, [&] { journal->rename("Renamed"); });
 
     journal.reset();

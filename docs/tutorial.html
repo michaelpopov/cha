@@ -904,13 +904,10 @@ invariants:</p>
 <code>make_character_entry</code>, and so on) make valid intent visible
 at call sites. Validation still exists at boundaries; factories are not
 a reason to trust arbitrary loaded data.</p>
-<h3 id="62-revision-history-epoch-and-cover-state">6.2 Revision, history
-epoch, and cover state</h3>
-<p>Three transcript concepts are easy to conflate:</p>
+<h3 id="62-revision-and-cover-state">6.2 Revision and cover state</h3>
+<p>Two transcript concepts are easy to conflate:</p>
 <ul>
 <li><code>revision</code> changes on presentation mutations.</li>
-<li><code>history_epoch</code> changes when the visible logical history
-is replaced or cleared.</li>
 <li><code>covered_until</code> is an optional entry-ID boundary; earlier
 entries are omitted from model context.</li>
 </ul>
@@ -919,9 +916,11 @@ the current point, so the conversation through the immediately preceding
 message is omitted from later model requests. Calling it again moves the
 boundary forward. <code>/uncover</code> adds its own marker and clears
 the boundary, restoring the full conversation to model context. The
-markers and boundary are not durable session history.
-<code>/clear</code> does not delete old SQLite rows; it advances the
-durable history epoch so restoration selects only the current epoch.</p>
+markers and boundary are not durable session history.</p>
+<p>The version-2 SQLite schema still stores <code>history_epoch</code> so
+databases cleared by older CHA builds restore the correct active history.
+The current application does not expose transcript clearing and never
+advances the stored epoch.</p>
 <p>Checkpoint: explain why <code>Transcript::model_history()</code>
 returns an owning value while <code>Transcript::view()</code> returns a
 borrowed span.</p>
@@ -1760,12 +1759,10 @@ methods.</li>
 </ul>
 <p>The parser belongs in <code>web</code> because it adapts one input
 protocol. The controller exposes typed actions and remains usable
-without slash-command syntax. <code>/style</code> is a presentation-only
-command: <code>set_session_style()</code> resolves the name in the
-current <code>Workspace</code> and stores only the selected style ID as
-session state. The next snapshot overlays that style on Workspace
-character data. It has no backend or busy guard, and its mutating forms
-carry a snapshot. It is runtime-only.</p>
+without slash-command syntax. Only <code>/cover</code>,
+<code>/uncover</code>, and <code>/mcast</code> remain raw commands.
+Character selection and stopping generation use typed Web UI actions
+instead.</p>
 <h3 id="124-the-owner-loop">12.4 The owner loop</h3>
 <p><code>LiveSession::owner_loop()</code> repeatedly:</p>
 <ol type="1">
@@ -1780,8 +1777,8 @@ changed;</li>
 wake or deadline.</li>
 </ol>
 <p>Bounding both drains prevents an endless command stream from starving
-model events and prevents a hot model stream from starving commands such
-as <code>/stop</code>.</p>
+model events and prevents a hot model stream from starving typed actions
+such as Stop.</p>
 <h3 id="125-sse-mailbox">12.5 SSE mailbox</h3>
 <p><code>SseMailbox</code> is the one cross-thread presentation channel
 from owner to HTTP stream writer. It holds at most one in-flight payload
@@ -1967,7 +1964,7 @@ continuing without a handle.</p>
 <p>Vault switching reuses the live-session, store, and repository
 reservations; it does not construct a second runtime or introduce
 another transaction layer. The complete cutover is traced in section
-13.7.</p>
+13.6.</p>
 <p>The Swift Database menu asks the C bridge which operations are
 available. Import and Export are enabled only when <code>modify</code>
 was present in the parsed TOML. Upload and Download are enabled only
@@ -2008,12 +2005,10 @@ transcript span and never retains it.
 <code>LiveSession::mirror_if_changed()</code> holds the last mirrored
 transcript revision and label. Transcript changes remain pending while
 generation is active, then completion, cancellation, or failure writes
-the terminal state. <code>/clear</code> also changes the revision and
-writes immediately. A label change is handled even during generation so
-the old file is renamed promptly; the final response causes another
-write if transcript content subsequently changes. Unrelated snapshot
-state, such as a default-character selection, does not rewrite the
-file.</p>
+the terminal state. A label change is handled even during generation so
+the old file is renamed promptly; the final response causes another write
+if transcript content subsequently changes. Unrelated snapshot state,
+such as a default-character selection, does not rewrite the file.</p>
 <p>Initial synchronization is strict because a configured but unusable
 mirror is a startup configuration failure. After startup,
 <code>SessionMirror::update()</code> catches filesystem errors and logs
@@ -2172,20 +2167,7 @@ style.</li>
 <p>Do not add an explicit <code>openConversation()</code> for
 <code>reloading</code>: that dispatch would force the main view back to
 Chat.</p>
-<h3 id="136-clear">13.6 Clear</h3>
-<ol type="1">
-<li><code>/clear</code> is rejected while the controller is busy.</li>
-<li><code>SessionJournal::clear()</code> verifies no turn is started and
-increments the durable <code>history_epoch</code> in a transaction.</li>
-<li><code>Transcript::clear()</code> removes current in-memory entries,
-resets cover state, and increments its local epoch/revision.</li>
-<li>A snapshot replaces browser state.</li>
-<li><code>mirror_if_changed()</code> sees the new revision and replaces
-the Markdown file with the now-empty current transcript.</li>
-</ol>
-<p>Old rows remain in the database as history from an earlier epoch.
-Restoration loads only the current epoch.</p>
-<h3 id="137-switching-vaults">13.7 Switching vaults</h3>
+<h3 id="136-switching-vaults">13.6 Switching vaults</h3>
 <p>The switch changes which local database the existing runtime uses. It
 does not move or copy data:</p>
 <ol type="1">
@@ -2234,7 +2216,7 @@ reopened after the database paths change, <code>CurrentVault</code> and
 <code>app.toml</code> still name the old vault, but the store and
 repository cannot safely serve it. The runtime marks itself unusable and
 stops the HTTP server. The application must restart.</p>
-<h3 id="138-creating-editing-and-removing-vaults">13.8 Creating,
+<h3 id="137-creating-editing-and-removing-vaults">13.7 Creating,
 editing, and removing vaults</h3>
 <p>Settings → Vaults calls the collection route without switching
 databases:</p>
@@ -2895,9 +2877,9 @@ entries, but is excluded from listing, opening, rename, and history.</p>
 <p><strong>Controller view:</strong> A short-lived borrowed view of
 controller state, consumed synchronously to make an owning web
 snapshot.</p>
-<p><strong>History epoch:</strong> A durable generation of logical
-transcript history. <code>/clear</code> advances it rather than deleting
-older rows.</p>
+<p><strong>History epoch:</strong> A compatibility field in the version-2
+database schema. Older CHA builds advanced it when clearing a transcript;
+current builds retain it only to restore those databases correctly.</p>
 <p><strong>Lease:</strong> Cross-process exclusive ownership of the
 unified database. Normal runtime holds it through
 <code>WorkspaceConfigStore</code>; console maintenance modes acquire the

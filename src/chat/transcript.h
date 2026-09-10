@@ -87,7 +87,6 @@ struct TranscriptView {
     std::span<const TranscriptEntry> entries;
     std::size_t revision{};
     std::optional<EntryId> open_entry_id;
-    std::size_t history_epoch{};
 
     [[nodiscard]] bool empty() const noexcept {
         return entries.empty();
@@ -151,7 +150,6 @@ public:
     void append_answer(EntryId entry_id, std::string_view text);
     void finish_entry(EntryId entry_id, EntryStatus status);
     void discard_entry(EntryId entry_id);
-    void clear();
     void replace_entries(std::vector<TranscriptEntry> entries);
 
     // Each successful mutation also appends its transient presentation marker.
@@ -170,7 +168,6 @@ private:
     std::size_t revision_{};
     std::optional<EntryId> open_entry_id_;
     std::optional<EntryId> covered_until_;
-    std::size_t history_epoch_{};
 };
 
 } // namespace cha

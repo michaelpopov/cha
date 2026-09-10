@@ -540,8 +540,8 @@ active connection IDs. Its rules become:
 The actor still unloads after the existing grace period once everybody leaves.
 An active generation may continue until the existing orphan limit.
 
-`/exit` must no longer stop the shared actor. Leaving a session is a browser
-navigation and stream-close operation. A future explicit "close for everyone"
+Leaving a session is a browser navigation and stream-close operation; prompt
+text cannot stop the shared actor. A future explicit "close for everyone"
 action is unnecessary while any member can already delete the session or let
 it unload naturally.
 

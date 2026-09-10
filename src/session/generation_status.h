@@ -10,7 +10,7 @@
 namespace cha {
 
 inline constexpr std::string_view generation_in_progress_notice =
-    "Generation in progress; use /stop, Esc, or Ctrl-C";
+    "Generation in progress; use the Stop button";
 
 enum class ResponsePhase {
     waiting,

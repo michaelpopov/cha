@@ -350,13 +350,6 @@ TEST_F(SessionRepositoryTest, KeepsTwoSessionsInOneDatabaseIsolated) {
     EXPECT_EQ(repository.prepare(second.identity).restore.entries,
         (std::vector<TranscriptEntry>{second_prompt}));
 
-    {
-        SessionJournal first_journal(first.database_path, first.session_key);
-        first_journal.clear();
-    }
-    EXPECT_TRUE(repository.prepare(first.identity).restore.entries.empty());
-    EXPECT_EQ(repository.prepare(second.identity).restore.entries,
-        (std::vector<TranscriptEntry>{second_prompt}));
 }
 
 TEST_F(SessionRepositoryTest, ReadsHistoryWhileAnotherSessionHasAStartedTurn) {

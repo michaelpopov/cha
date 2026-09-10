@@ -488,10 +488,9 @@ void LiveSession::execute(OwnerCommand command) {
     // clear_input and the notice.
     publish_update(std::move(outcome.session.state), presentation_changed);
     mirror_if_changed();
-    const bool close_session =
-        outcome.session.session_ended || outcome.close_session;
+    const bool session_ended = outcome.session.session_ended;
     (void)command.reply->complete(std::move(outcome));
-    if (close_session) {
+    if (session_ended) {
         (void)mark_stopping(ShutdownReason::browser_disconnected);
     }
 }

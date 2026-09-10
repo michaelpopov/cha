@@ -111,41 +111,29 @@ private:
     std::string id_{"guide-id"};
 };
 
-TEST(TextInput, DispatchesSlashCommandsAndOwnsExitSyntax) {
+TEST(TextInput, DispatchesTheRemainingSlashCommands) {
     TemporaryTextSession temporary;
     auto controller = test::from_test_workspace(
         std::vector<CharacterDefinition>{definition()},
         temporary.path,
         notifier());
 
-    const CommandResult invalid_argument =
-        handle_text_input(*controller, "operator", "/clear later");
-    EXPECT_TRUE(invalid_argument.clear_input);
-    EXPECT_EQ(
-        invalid_argument.session.notice,
-        "Command does not accept arguments");
-    const CommandResult idle_stop_with_argument =
-        handle_text_input(*controller, "operator", "/stop later");
-    EXPECT_TRUE(idle_stop_with_argument.clear_input);
-    EXPECT_EQ(
-        idle_stop_with_argument.session.notice,
-        "Command does not accept arguments");
-
-    const CommandResult unknown =
-        handle_text_input(*controller, "operator", "/unknown");
-    EXPECT_TRUE(unknown.clear_input);
-    ASSERT_TRUE(unknown.session.notice);
-    EXPECT_NE(unknown.session.notice->find("Unknown command"), std::string::npos);
-    EXPECT_NE(unknown.session.notice->find("/mcast"), std::string::npos);
+    for (const std::string_view removed : {
+             "/clear", "/info", "/characters", "/agents", "/@Guide",
+             "/style sans-bold", "/stop", "/exit"}) {
+        const CommandResult result =
+            handle_text_input(*controller, "operator", std::string(removed));
+        EXPECT_TRUE(result.clear_input) << removed;
+        ASSERT_TRUE(result.session.notice) << removed;
+        EXPECT_NE(result.session.notice->find("Unknown command"), std::string::npos)
+            << removed;
+    }
 
     const CommandResult empty_multicast =
         handle_text_input(*controller, "operator", "/mcast");
     EXPECT_TRUE(empty_multicast.clear_input);
     EXPECT_EQ(empty_multicast.session.notice, "Multicast prompt is empty");
 
-    EXPECT_EQ(
-        handle_text_input(*controller, "not-a-persona", "/clear").session.notice,
-        "Transcript cleared");
     EXPECT_TRUE(has_state_update(handle_text_input(*controller, "operator", "/cover").session));
     EXPECT_TRUE(has_state_update(handle_text_input(*controller, "operator", "/cover").session));
     EXPECT_TRUE(has_state_update(handle_text_input(*controller, "operator", "/uncover").session));
@@ -156,30 +144,6 @@ TEST(TextInput, DispatchesSlashCommandsAndOwnsExitSyntax) {
             make_cover_marker(2),
             make_uncover_marker(3),
         }));
-    const CommandResult information =
-        handle_text_input(*controller, "operator", "/info");
-    ASSERT_TRUE(information.session.notice);
-    EXPECT_NE(
-        information.session.notice->find("Transcript entries: 3"),
-        std::string::npos);
-    const CommandResult characters =
-        handle_text_input(*controller, "operator", "/characters");
-    ASSERT_TRUE(characters.session.notice);
-    EXPECT_NE(characters.session.notice->find("@Guide"), std::string::npos);
-    const CommandResult set_default =
-        handle_text_input(*controller, "operator", "/@Gui");
-    EXPECT_EQ(set_default.session.notice, "Default character is now Guide");
-    EXPECT_EQ(set_default.persist_default_character_id, "guide-id");
-
-    const CommandResult idle_stop =
-        handle_text_input(*controller, "operator", "/stop");
-    EXPECT_TRUE(idle_stop.clear_input);
-    EXPECT_EQ(idle_stop.session.notice, "No generation is active");
-
-    const CommandResult exit =
-        handle_text_input(*controller, "operator", "/exit");
-    EXPECT_TRUE(exit.clear_input);
-    EXPECT_TRUE(exit.close_session);
 }
 
 TEST(TextInput, ParsesAnAddressedPromptBeforeSubmission) {
@@ -203,7 +167,7 @@ TEST(TextInput, ParsesAnAddressedPromptBeforeSubmission) {
     controller->shutdown();
 }
 
-TEST(TextInput, RecordsNullAgentMessagesAndNeverPersistsTheSentinelDefault) {
+TEST(TextInput, RecordsAnInlineSelfNote) {
     TemporaryTextSession temporary;
     auto controller = test::from_test_workspace(
         std::vector<CharacterDefinition>{definition()},
@@ -221,24 +185,6 @@ TEST(TextInput, RecordsNullAgentMessagesAndNeverPersistsTheSentinelDefault) {
         controller->view().transcript.entries.front().text,
         "thinking out loud");
 
-    // `/@-` enters session-local recording mode; `-` is not persisted.
-    const CommandResult mode =
-        handle_text_input(*controller, "operator", "/@-");
-    EXPECT_TRUE(mode.clear_input);
-    EXPECT_FALSE(mode.persist_default_character_id.has_value());
-    ASSERT_TRUE(mode.session.notice);
-    EXPECT_NE(mode.session.notice->find("Self-notes"), std::string::npos);
-
-    // Plain messages record while the mode is active.
-    const CommandResult plain =
-        handle_text_input(*controller, "operator", "another thought");
-    EXPECT_TRUE(plain.clear_input);
-    EXPECT_EQ(controller->view().transcript.entries.size(), 2U);
-
-    // Switching back to a real character persists it exactly as before.
-    const CommandResult resumed =
-        handle_text_input(*controller, "operator", "/@Guide");
-    EXPECT_EQ(resumed.persist_default_character_id, "guide-id");
     controller->shutdown();
 }
 
@@ -303,7 +249,7 @@ TEST(TextInput, DelegatesMulticastRecipientResolutionBeforeStartingAnyChild) {
     EXPECT_TRUE(controller->view().transcript.entries.empty());
 }
 
-TEST(TextInput, PreservesDraftsAndAcceptsStopDuringGeneration) {
+TEST(TextInput, PreservesDraftsDuringGeneration) {
     TemporaryTextSession temporary;
     auto controller = test::from_test_backends(
         test::one_backend(std::make_unique<BlockingBackend>()),
@@ -316,30 +262,31 @@ TEST(TextInput, PreservesDraftsAndAcceptsStopDuringGeneration) {
     EXPECT_FALSE(blocked.clear_input);
     EXPECT_EQ(
         blocked.session.notice,
-        "Generation in progress; use /stop, Esc, or Ctrl-C");
+        "Generation in progress; use the Stop button");
 
     const CommandResult covered_while_active =
         handle_text_input(*controller, "operator", "/cover");
     EXPECT_FALSE(covered_while_active.clear_input);
     EXPECT_EQ(
         covered_while_active.session.notice,
-        "Generation in progress; use /stop, Esc, or Ctrl-C");
+        "Generation in progress; use the Stop button");
 
     const CommandResult stop_with_argument =
         handle_text_input(*controller, "operator", "/stop later");
     EXPECT_FALSE(stop_with_argument.clear_input);
     EXPECT_EQ(
         stop_with_argument.session.notice,
-        "Generation in progress; use /stop, Esc, or Ctrl-C");
+        "Generation in progress; use the Stop button");
 
     const CommandResult stopping =
         handle_text_input(*controller, "operator", "/stop");
-    EXPECT_TRUE(stopping.clear_input);
-    EXPECT_EQ(stopping.session.notice, "Stopping generation...");
+    EXPECT_FALSE(stopping.clear_input);
+    EXPECT_EQ(stopping.session.notice, "Generation in progress; use the Stop button");
+    (void)controller->request_stop();
     controller->shutdown();
 }
 
-TEST(TextInput, SeparatesDraftClearingFromControllerAcceptanceAndExit) {
+TEST(TextInput, SeparatesDraftClearingFromControllerAcceptance) {
     TemporaryTextSession temporary;
     auto controller = test::from_test_workspace(
         std::vector<CharacterDefinition>{definition()}, temporary.path, notifier());
@@ -349,20 +296,10 @@ TEST(TextInput, SeparatesDraftClearingFromControllerAcceptanceAndExit) {
     EXPECT_FALSE(unknown_author.session.input_consumed);
     EXPECT_FALSE(unknown_author.clear_input);
 
-    const CommandResult empty_default =
-        handle_text_input(*controller, "operator", "/@");
-    EXPECT_TRUE(empty_default.session.input_consumed);
-    EXPECT_TRUE(empty_default.clear_input);
-
-    const CommandResult unresolved_default =
-        handle_text_input(*controller, "operator", "/@Nobody");
-    EXPECT_TRUE(unresolved_default.session.input_consumed);
-    EXPECT_TRUE(unresolved_default.clear_input);
-
-    const CommandResult parse_error =
+    const CommandResult removed_command =
         handle_text_input(*controller, "operator", "/clear later");
-    EXPECT_FALSE(parse_error.session.input_consumed);
-    EXPECT_TRUE(parse_error.clear_input);
+    EXPECT_FALSE(removed_command.session.input_consumed);
+    EXPECT_TRUE(removed_command.clear_input);
 
     // A recognized command that fails its precondition still consumes the line
     // it was typed on. Only composed prompt text survives a rejection.
@@ -372,77 +309,11 @@ TEST(TextInput, SeparatesDraftClearingFromControllerAcceptanceAndExit) {
     EXPECT_TRUE(nothing_to_uncover.clear_input);
     EXPECT_FALSE(has_state_update(nothing_to_uncover.session));
 
-    const CommandResult exit_result =
-        handle_text_input(*controller, "operator", "/exit");
-    EXPECT_TRUE(exit_result.clear_input);
-    EXPECT_TRUE(exit_result.close_session);
-    EXPECT_FALSE(exit_result.session.session_ended);
-
     controller->shutdown();
     const CommandResult undispatchable =
         handle_text_input(*controller, "operator", "Another question");
     EXPECT_FALSE(undispatchable.session.input_consumed);
     EXPECT_FALSE(undispatchable.clear_input);
-}
-
-TEST(TextInput, DispatchesTheStyleCommandWithoutPersisting) {
-    TemporaryTextSession temporary;
-    test::TestController controller(
-        std::vector<CharacterDefinition>{definition()},
-        test::operator_roster(),
-        "guide-id",
-        temporary.path,
-        std::shared_ptr<WakeNotifier>(&notifier(), [](WakeNotifier*) {}),
-        {},
-        {},
-        {},
-        {},
-        {{"sans-bold", {CharacterFont::sans, CharacterSlant::normal,
-                        CharacterWeight::bold, CharacterScale::normal}}});
-
-    const CommandResult set =
-        handle_text_input(*controller, "operator", "/style sans-bold");
-    EXPECT_TRUE(set.clear_input);
-    EXPECT_TRUE(requires_snapshot(set.session));
-    EXPECT_EQ(
-        set.session.notice,
-        "Guide now uses style 'sans-bold' for this session.");
-    // A runtime override never triggers the persistence callbacks.
-    EXPECT_FALSE(set.persist_default_character_id);
-
-    const CommandResult report =
-        handle_text_input(*controller, "operator", "/style");
-    EXPECT_TRUE(report.clear_input);
-    EXPECT_EQ(
-        report.session.notice,
-        "Guide's style override for this session is 'sans-bold'.");
-
-    const CommandResult unknown =
-        handle_text_input(*controller, "operator", "/style nope");
-    EXPECT_TRUE(unknown.clear_input);
-    EXPECT_EQ(
-        unknown.session.notice,
-        "Unknown style 'nope'. Available styles: sans-bold");
-
-    controller->shutdown();
-}
-
-TEST(TextInput, RejectsTheStyleCommandDuringGeneration) {
-    TemporaryTextSession temporary;
-    auto controller = test::from_test_backends(
-        test::one_backend(std::make_unique<BlockingBackend>()),
-        temporary.path,
-        notifier());
-
-    (void)handle_text_input(*controller, "operator", "Question");
-    const CommandResult blocked =
-        handle_text_input(*controller, "operator", "/style sans-bold");
-    EXPECT_FALSE(blocked.clear_input);
-    EXPECT_EQ(
-        blocked.session.notice,
-        "Generation in progress; use /stop, Esc, or Ctrl-C");
-
-    controller->shutdown();
 }
 
 } // namespace

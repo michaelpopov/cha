@@ -36,7 +36,7 @@ later targets remain buffered until their ordered foreground turn is active.
 Operational request failures are terminal events, so a committed turn is never
 stranded.
 
-`/stop` cancels every request, drops non-foreground handles immediately, and
+The Stop action cancels every request, drops non-foreground handles immediately, and
 continues to drain only the durable foreground queue until its terminal event
 is persisted. It then clears session-visible busy state without waiting for
 the cancelled workers to unregister. Controller destruction similarly cancels

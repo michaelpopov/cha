@@ -644,30 +644,6 @@ void SessionJournal::fail_turn(
         TurnState::failed, &error);
 }
 
-void SessionJournal::clear() {
-    Transaction transaction(impl_->database);
-    Statement active = impl_->database.prepare(
-        "SELECT EXISTS(SELECT 1 FROM turns "
-        "WHERE session_key = ?1 AND state = 0)",
-        impl_->session_key);
-    if (!active.step()) {
-        throw std::runtime_error("Failed to inspect active session turn");
-    }
-    if (active.integer(0) != 0) {
-        throw std::logic_error(
-            "Cannot clear a session while a turn is active");
-    }
-    Statement clear = impl_->database.prepare(
-        "UPDATE sessions SET history_epoch = history_epoch + 1, "
-        "updated_at = ?1 WHERE session_key = ?2 AND archived_at IS NULL",
-        session_timestamp(), impl_->session_key);
-    clear.run();
-    if (impl_->database.changes() != 1) {
-        throw std::runtime_error("Failed to clear active session");
-    }
-    transaction.commit();
-}
-
 void SessionJournal::rename(std::string_view label) {
     Transaction transaction(impl_->database);
     Statement update = impl_->database.prepare(

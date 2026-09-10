@@ -25,16 +25,6 @@ struct CharacterDefinition {
     std::string system_prompt;
 };
 
-struct CharacterRuntimeInfo {
-    CharacterId id;
-    std::string model;
-    std::string api;
-    bool streaming{};
-};
-
-CharacterRuntimeInfo character_runtime_info(
-    const CharacterDefinition& definition);
-
 using SharedCharacterDefinition = std::shared_ptr<const CharacterDefinition>;
 
 std::vector<SharedCharacterDefinition> share_character_definitions(

@@ -218,11 +218,8 @@ TEST(ProviderClient, StreamsDeltasAndBuildsTheProviderRequest) {
     configured.system_prompt = "Be concise.";
     const SharedCharacterDefinition definition =
         share_character_definitions({std::move(configured)}).front();
-    const CharacterRuntimeInfo runtime = character_runtime_info(*definition);
-    EXPECT_EQ(runtime.id, "assistant");
-    EXPECT_EQ(runtime.model, "configured-model");
-    EXPECT_TRUE(runtime.api.ends_with("/v1/chat/completions"));
-    EXPECT_TRUE(runtime.streaming);
+    EXPECT_TRUE(provider_endpoint(definition->provider.config).ends_with(
+        "/v1/chat/completions"));
     std::atomic_bool cancellation{false};
     ProviderClient client(definition);
     Transcript transcript;
@@ -265,7 +262,7 @@ TEST(ProviderClient, StreamsDeltasAndBuildsTheProviderRequest) {
           R"({"kind":"character","speaker":"Other","text":"Other answer"})"}},
         {{"role", "user"}, {"content", "from You:\nQuestion"}},
     }));
-    EXPECT_TRUE(character_runtime_info(*definition).api.ends_with(
+    EXPECT_TRUE(provider_endpoint(definition->provider.config).ends_with(
         "/v1/chat/completions"));
 }
 
@@ -927,7 +924,7 @@ TEST(ProviderClient, StreamsResponsesApiAnswerAndBuildsResponsesRequest) {
     mock.join();
     ASSERT_EQ(mock.requests().size(), 1U);
     EXPECT_TRUE(mock.requests().front().starts_with("POST /v1/responses HTTP/1.1"));
-    EXPECT_TRUE(character_runtime_info(*shared).api.ends_with("/v1/responses"));
+    EXPECT_TRUE(provider_endpoint(shared->provider.config).ends_with("/v1/responses"));
     const Json body = Json::parse(request_body(mock.requests().front()));
     EXPECT_EQ(body["model"], "configured-model");
     EXPECT_TRUE(body["stream"]);
@@ -966,7 +963,7 @@ TEST(ProviderClient, PrefixesProviderEndpointsWithConfiguredBasePath) {
     mock.join();
     ASSERT_EQ(mock.requests().size(), 1U);
     EXPECT_TRUE(mock.requests().front().starts_with("POST /api/v1/chat/completions HTTP/1.1"));
-    EXPECT_TRUE(character_runtime_info(*shared).api.ends_with(
+    EXPECT_TRUE(provider_endpoint(shared->provider.config).ends_with(
         "/api/v1/chat/completions"));
 }
 
@@ -1493,7 +1490,7 @@ TEST(ProviderClient, StreamsSubscriptionRequestWithChaIdentity) {
     ASSERT_EQ(captured.size(), 1U);
     EXPECT_EQ(captured.front().url, "https://chatgpt.com/backend-api/codex/responses");
     EXPECT_EQ(
-        character_runtime_info(*shared).api,
+        provider_endpoint(shared->provider.config),
         "https://chatgpt.com/backend-api/codex/responses");
     const auto has_header = [&captured](std::string_view header) {
         return std::ranges::find(captured.front().headers, header)

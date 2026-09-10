@@ -327,13 +327,11 @@ The factory functions (`make_human_entry`, `make_character_entry`, and so on)
 make valid intent visible at call sites. Validation still exists at boundaries;
 factories are not a reason to trust arbitrary loaded data.
 
-### 6.2 Revision, history epoch, and cover state
+### 6.2 Revision and cover state
 
-Three transcript concepts are easy to conflate:
+Two transcript concepts are easy to conflate:
 
 - `revision` changes on presentation mutations.
-- `history_epoch` changes when the visible logical history is replaced or
-  cleared.
 - `covered_until` is an optional entry-ID boundary; earlier entries are omitted
   from model context.
 
@@ -342,8 +340,10 @@ so the conversation through the immediately preceding message is omitted from
 later model requests. Calling it again moves the boundary forward. `/uncover`
 adds its own marker and clears the boundary, restoring the full conversation to
 model context. The markers and boundary are not durable session history.
-`/clear` does not delete old SQLite rows; it advances the durable history epoch
-so restoration selects only the current epoch.
+
+The version-2 SQLite schema still stores `history_epoch` so databases cleared
+by older CHA builds restore the correct active history. The current application
+does not expose transcript clearing and never advances the stored epoch.
 
 Checkpoint: explain why `Transcript::model_history()` returns an owning value
 while `Transcript::view()` returns a borrowed span.
@@ -1150,11 +1150,8 @@ Parsing is divided among:
 
 The parser belongs in `web` because it adapts one input protocol. The
 controller exposes typed actions and remains usable without slash-command
-syntax. `/style` is a presentation-only command: `set_session_style()` resolves
-the name in the current `Workspace` and stores only the selected style ID as
-session state. The next snapshot overlays that style on Workspace character
-data. It has no backend or busy guard, and its mutating forms carry a snapshot.
-It is runtime-only.
+syntax. Only `/cover`, `/uncover`, and `/mcast` remain raw commands. Character
+selection and stopping generation use typed Web UI actions instead.
 
 ### 12.4 The owner loop
 
@@ -1170,7 +1167,8 @@ It is runtime-only.
    deadline.
 
 Bounding both drains prevents an endless command stream from starving model
-events and prevents a hot model stream from starving commands such as `/stop`.
+events and prevents a hot model stream from starving typed actions such as
+Stop.
 
 ### 12.5 SSE mailbox
 
@@ -1348,12 +1346,11 @@ session receives a synchronous callback through `OpenedSession`; the callback
 accepts only a call-scoped transcript span and never retains it.
 `LiveSession::mirror_if_changed()` holds the last mirrored transcript revision
 and label. Transcript changes remain pending while generation is active, then
-completion, cancellation, or failure writes the terminal state. `/clear` also
-changes the revision and writes immediately. A label change is handled even
-during generation so the old file is renamed promptly; the final response
-causes another write if transcript content subsequently changes. Unrelated
-snapshot state, such as a default-character selection, does not rewrite the
-file.
+completion, cancellation, or failure writes the terminal state. A label change
+is handled even during generation so the old file is renamed promptly; the
+final response causes another write if transcript content subsequently changes.
+Unrelated snapshot state, such as a default-character selection, does not
+rewrite the file.
 
 Initial synchronization is strict because a configured but unusable mirror is
 a startup configuration failure. After startup, `SessionMirror::update()`
@@ -1495,21 +1492,7 @@ On the server:
 Do not add an explicit `openConversation()` for `reloading`: that dispatch
 would force the main view back to Chat.
 
-### 13.6 Clear
-
-1. `/clear` is rejected while the controller is busy.
-2. `SessionJournal::clear()` verifies no turn is started and increments the
-   durable `history_epoch` in a transaction.
-3. `Transcript::clear()` removes current in-memory entries, resets cover
-   state, and increments its local epoch/revision.
-4. A snapshot replaces browser state.
-5. `mirror_if_changed()` sees the new revision and replaces the Markdown file
-   with the now-empty current transcript.
-
-Old rows remain in the database as history from an earlier epoch. Restoration
-loads only the current epoch.
-
-### 13.7 Switching vaults
+### 13.6 Switching vaults
 
 The switch changes which local database the existing runtime uses. It does not
 move or copy data:
@@ -1555,7 +1538,7 @@ after the database paths change, `CurrentVault` and `app.toml` still name the
 old vault, but the store and repository cannot safely serve it. The runtime
 marks itself unusable and stops the HTTP server. The application must restart.
 
-### 13.8 Creating, editing, and removing vaults
+### 13.7 Creating, editing, and removing vaults
 
 Settings → Vaults calls the collection route without switching databases:
 
@@ -1997,8 +1980,9 @@ turns and entries, but is excluded from listing, opening, rename, and history.
 **Controller view:** A short-lived borrowed view of controller state, consumed synchronously to make
 an owning web snapshot.
 
-**History epoch:** A durable generation of logical transcript history. `/clear` advances it rather
-than deleting older rows.
+**History epoch:** A compatibility field in the version-2 database schema.
+Older CHA builds advanced it when clearing a transcript; current builds retain
+it only to restore those databases correctly.
 
 **Lease:** Cross-process exclusive ownership of the unified database. Normal
 runtime holds it through `WorkspaceConfigStore`; console maintenance modes

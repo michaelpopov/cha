@@ -677,29 +677,6 @@ TEST(SessionController, BoundsGenerationEventDrains) {
     EXPECT_FALSE(controller->receive_events(2).full);
 }
 
-TEST(SessionController, ClearMakesTheNextRequestSeeOnlyPostClearContext) {
-    TemporaryJournal temporary;
-    auto backend = std::make_unique<ScriptedBackend>(
-        GenerationResult{}, std::vector<std::string>{"Answer"});
-    ScriptedBackend* backend_view = backend.get();
-    auto controller = test::from_test_backends(
-        test::one_backend(std::move(backend)),
-        temporary.path,
-        notifier());
-
-    (void)controller->submit_prompt("operator", "First");
-    receive_until_idle(*controller);
-    (void)controller->clear_transcript();
-    (void)controller->submit_prompt("operator", "Second");
-    receive_until_idle(*controller);
-
-    ASSERT_EQ(backend_view->model_contexts.size(), 2U);
-    EXPECT_EQ(
-        context_without_timestamp_metadata(
-            backend_view->inputs[1], backend_view->system_prompt),
-        (std::vector<ModelMessage>{operator_prompt("Second")}));
-}
-
 TEST(SessionController, PersistsAnIdentifiedCancelledResponse) {
     TemporaryJournal temporary;
     auto controller = test::from_test_backends(
@@ -1162,42 +1139,6 @@ TEST(SessionController, ReplacesPartialOutputWithATypedError) {
     EXPECT_EQ(load_transcript_entries(temporary.path), entries);
 }
 
-TEST(SessionController, OwnsClearAndInformationSemantics) {
-    TemporaryJournal temporary;
-    const TranscriptEntry existing =
-        test::human_entry(1, {"operator", "You"}, {"guide-id", "Guide"}, "Existing", 1);
-    {
-        SessionJournal journal(temporary.path);
-        journal.start_turn(1, existing);
-        journal.cancel_turn(1, std::nullopt);
-    }
-    auto controller = test::from_test_backends(
-        test::one_backend(std::make_unique<ScriptedBackend>()),
-        temporary.path,
-        notifier(),
-        restore_with({existing}, 2, 2));
-
-    const ControllerUpdate cleared =
-        controller->clear_transcript();
-    EXPECT_EQ(cleared.notice, "Transcript cleared");
-    EXPECT_TRUE(controller->view().transcript.entries.empty());
-    EXPECT_TRUE(load_transcript_entries(temporary.path).empty());
-
-    const ControllerUpdate info = controller->session_information();
-    ASSERT_TRUE(info.notice);
-    EXPECT_NE(
-        info.notice->find("Transcript entries: 0"),
-        std::string::npos);
-    EXPECT_NE(
-        info.notice->find(
-            "* @Guide  test-model  http://127.0.0.1:1/v1/responses  streaming"),
-        std::string::npos);
-    EXPECT_EQ(info.notice->find("Model:"), std::string::npos);
-    EXPECT_TRUE(controller->view().transcript.entries.empty());
-    EXPECT_TRUE(load_transcript_entries(temporary.path).empty());
-
-}
-
 TEST(SessionController, KeepsCoverMarkersOutOfTheSessionDatabase) {
     TemporaryJournal temporary;
     auto controller = test::from_test_backends(
@@ -1274,7 +1215,7 @@ TEST(SessionController, CoversEarlierTurnsForTheNextRequestAndUncoversThemLater)
         }));
 }
 
-TEST(SessionController, RejectsCoverCommandsWhileActiveAndClearResetsTheBoundary) {
+TEST(SessionController, RejectsCoverCommandsWhileActive) {
     TemporaryJournal busy_temporary;
     auto busy_controller = test::from_test_backends(
         test::one_backend(std::make_unique<ScriptedBackend>(
@@ -1286,16 +1227,6 @@ TEST(SessionController, RejectsCoverCommandsWhileActiveAndClearResetsTheBoundary
     EXPECT_EQ(busy_controller->cover_conversation().notice, generation_in_progress_notice);
     EXPECT_EQ(busy_controller->uncover_conversation().notice, generation_in_progress_notice);
     busy_controller->shutdown();
-
-    TemporaryJournal clear_temporary;
-    auto clear_controller = test::from_test_backends(
-        test::one_backend(std::make_unique<ScriptedBackend>()),
-        clear_temporary.path,
-        notifier());
-    EXPECT_TRUE(has_state_update(clear_controller->cover_conversation()));
-    EXPECT_EQ(clear_controller->clear_transcript().notice, "Transcript cleared");
-    EXPECT_EQ(clear_controller->uncover_conversation().notice, "Nothing to uncover");
-    EXPECT_TRUE(clear_controller->view().transcript.entries.empty());
 }
 
 TEST(SessionController, MulticastCommitsTargetsInOrderWithIsolatedContexts) {
@@ -1411,8 +1342,6 @@ TEST(SessionController, StopPreventsNextMulticastActivation) {
     (void)stop_controller->start_multicast("operator",
         "Question", {"One", "Two"});
     EXPECT_EQ(stop_controller->submit_prompt("operator", "Another").notice,
-              generation_in_progress_notice);
-    EXPECT_EQ(stop_controller->clear_transcript().notice,
               generation_in_progress_notice);
     EXPECT_EQ(stop_controller->cover_conversation().notice,
               generation_in_progress_notice);
@@ -1899,7 +1828,8 @@ TEST(SessionController, RecordsPlainMessagesInSessionLocalRecordingMode) {
     EXPECT_EQ(load_transcript_entries(temporary.path), entries);
 
     // Switching back to a real character resumes normal dispatch.
-    const ControllerUpdate resumed = controller->set_default_character("Guide");
+    const ControllerUpdate resumed =
+        controller->set_default_character_by_id("guide-id");
     EXPECT_EQ(resumed.notice, "Default character is now Guide");
     EXPECT_EQ(controller->view().default_character_id, "guide-id");
     const ControllerUpdate answered =
@@ -1925,7 +1855,7 @@ TEST(SessionController, RejectsEmptyNullAgentMessagesWithoutRecording) {
 
     // An empty plain submission in recording mode is a silent no-op, exactly
     // as in normal mode.
-    (void)controller->set_default_character("-");
+    (void)controller->set_default_character_by_id("-");
     const ControllerUpdate empty_plain =
         controller->submit_prompt("operator", "");
     EXPECT_FALSE(empty_plain.input_consumed);
@@ -1950,7 +1880,7 @@ TEST(SessionController, RejectsNullAgentRecordingDuringGeneration) {
     EXPECT_FALSE(blocked.input_consumed);
     EXPECT_EQ(
         blocked.notice,
-        "Generation in progress; use /stop, Esc, or Ctrl-C");
+        "Generation in progress; use the Stop button");
     EXPECT_TRUE(controller->view().transcript.entries.size() == 1U);
 
     (void)controller->request_stop();
@@ -1973,7 +1903,7 @@ TEST(SessionController, RejectsNewOperationsDuringGeneration) {
     EXPECT_FALSE(blocked.input_consumed);
     EXPECT_EQ(
         blocked.notice,
-        "Generation in progress; use /stop, Esc, or Ctrl-C");
+        "Generation in progress; use the Stop button");
     const ControllerUpdate stopping =
         controller->request_stop();
     EXPECT_FALSE(stopping.input_consumed);
@@ -2118,8 +2048,8 @@ TEST(SessionController, HonorsNonFirstInitialDefaultWithoutReorderingForumRoster
     EXPECT_EQ(guide_view->inputs.size(), 1U);
 
     const ControllerUpdate default_changed =
-        controller->set_default_character("Gui");
-    EXPECT_TRUE(default_changed.input_consumed);
+        controller->set_default_character_by_id("guide-id");
+    EXPECT_FALSE(default_changed.input_consumed);
     EXPECT_EQ(default_changed.notice, "Default character is now Guide");
     (void)controller->submit_prompt("operator", "next");
     receive_until_idle(*controller);
@@ -2147,27 +2077,6 @@ TEST(SessionController, HonorsNonFirstInitialDefaultWithoutReorderingForumRoster
     EXPECT_NE(rejected.notice->find("@nobody"), std::string::npos);
     EXPECT_EQ(controller->view().transcript.entries.size(), entries_before_rejection);
 
-    const std::vector<TranscriptEntry> entries_before_agents =
-        copy_entries(controller->view().transcript);
-    const ControllerUpdate characters = controller->character_information();
-    EXPECT_TRUE(characters.input_consumed);
-    ASSERT_TRUE(characters.notice);
-    EXPECT_NE(
-        characters.notice->find("Any unambiguous prefix works."),
-        std::string::npos);
-    EXPECT_EQ(characters.notice->find("Cheburashka"), std::string::npos);
-    EXPECT_NE(characters.notice->find("@Ismael"), std::string::npos);
-    EXPECT_LT(characters.notice->find("@Guide"), characters.notice->find("@Ismael"));
-    EXPECT_LT(characters.notice->find("* @Ismael"), characters.notice->find("@Ismael"));
-    const ControllerUpdate info = controller->session_information();
-    ASSERT_TRUE(info.notice);
-    EXPECT_NE(info.notice->find("* @Ismael"), std::string::npos);
-    EXPECT_EQ(
-        copy_entries(controller->view().transcript),
-        entries_before_agents);
-    EXPECT_EQ(
-        load_transcript_entries(temporary.path),
-        entries_before_agents);
 }
 
 // Foreign-history addressing is a transcript concern; covered in persona_session/transcript tests.
@@ -2292,28 +2201,20 @@ TEST(SessionController, ClassifiesIgnoredAndAmbiguousDeltasConservatively) {
         controller->handle_generation_event(GenerationFailed{2, "boom"})));
 }
 
-TEST(SessionController, CommandsRequestSnapshotsAndNoticesAloneDoNot) {
+TEST(SessionController, CommandsReportTheirStateEffects) {
     TemporaryJournal temporary;
     auto controller = test::from_test_backends(
         test::one_backend(std::make_unique<ScriptedBackend>()),
         temporary.path,
         notifier());
 
-    // Informational commands change no retained state.
-    const ControllerUpdate information = controller->session_information();
-    EXPECT_FALSE(has_state_update(information));
-    EXPECT_TRUE(information.input_consumed);
-    ASSERT_TRUE(information.notice);
-    EXPECT_FALSE(information.notice->empty());
-
     // A rejected default change is a notice without a state effect.
-    const ControllerUpdate unknown = controller->set_default_character("nobody");
+    const ControllerUpdate unknown =
+        controller->set_default_character_by_id("nobody");
     EXPECT_FALSE(has_state_update(unknown));
 
     // An accepted one is structural.
-    EXPECT_TRUE(requires_snapshot(controller->set_default_character("Guide")));
     EXPECT_TRUE(requires_snapshot(controller->set_default_character_by_id("guide-id")));
-    EXPECT_TRUE(requires_snapshot(controller->clear_transcript()));
     EXPECT_TRUE(requires_snapshot(controller->cover_conversation()));
     EXPECT_TRUE(requires_snapshot(controller->cover_conversation()));
     EXPECT_TRUE(requires_snapshot(controller->uncover_conversation()));
@@ -2379,15 +2280,6 @@ TEST(SessionController, ReportsSemanticStateAndInputConsumptionIndependently) {
     EXPECT_FALSE(has_state_update(unknown));
     EXPECT_FALSE(unknown.input_consumed);
 
-    const ControllerUpdate information = controller->session_information();
-    EXPECT_FALSE(has_state_update(information));
-    EXPECT_TRUE(information.input_consumed);
-    ASSERT_TRUE(information.notice);
-
-    const ControllerUpdate empty_handle = controller->set_default_character({});
-    EXPECT_FALSE(has_state_update(empty_handle));
-    EXPECT_TRUE(empty_handle.input_consumed);
-
     const ControllerUpdate typed_default =
         controller->set_default_character_by_id("guide-id");
     EXPECT_TRUE(has_state_update(typed_default));
@@ -2452,285 +2344,6 @@ TEST(SessionController, ThreadLaunchFailureClosesTheCommittedTurn) {
     ASSERT_EQ(entries.size(), 2U);
     EXPECT_EQ(entries.front().text, "Question");
     EXPECT_EQ(entries.back().status, EntryStatus::failed);
-}
-
-// Shared observation of every backend one factory builds: the configs it was
-// given, plus optional gates for the busy and factory-failure tests.
-struct ProviderFactoryObservation {
-    std::vector<ModelBackendConfig> configs;
-    std::atomic_bool hold_perform{};
-    std::atomic_bool entered_perform{};
-    std::atomic_bool fail_next{};
-};
-
-// Answers with its configured model name, so the transcript says which
-// backend served a prompt.
-class ProviderFactoryBackend final : public ModelBackend {
-public:
-    ProviderFactoryBackend(
-        SharedCharacterDefinition definition,
-        std::shared_ptr<ProviderFactoryObservation> observation)
-        : definition_(std::move(definition)), observation_(std::move(observation)) {
-    }
-
-    RequestPayload prepare(const GenerationRequest& input) override {
-        return {.bytes = input.run.prompt_text};
-    }
-
-    GenerationResult perform(
-        RequestPayload,
-        const GenerationDeltaSink& on_delta,
-        const std::atomic_bool& cancellation) override {
-        observation_->entered_perform.store(true, std::memory_order_release);
-        while (observation_->hold_perform.load(std::memory_order_acquire)
-               && !cancellation.load(std::memory_order_acquire)) {
-            std::this_thread::yield();
-        }
-        on_delta({GenerationDeltaKind::answer, "answer-" + definition_->provider.config.model});
-        return {};
-    }
-
-private:
-    SharedCharacterDefinition definition_;
-    std::shared_ptr<ProviderFactoryObservation> observation_;
-};
-
-ProviderClientFactory provider_recording_factory(
-    const std::shared_ptr<ProviderFactoryObservation>& observation) {
-    return [observation](SharedCharacterDefinition definition) {
-        if (observation->fail_next.exchange(false)) {
-            throw std::runtime_error("backend construction failed");
-        }
-        observation->configs.push_back(definition->provider.config);
-        return std::unique_ptr<ModelBackend>(
-            new ProviderFactoryBackend(std::move(definition), observation));
-    };
-}
-
-CharacterAppearance bold_appearance() {
-    return {CharacterFont::sans, CharacterSlant::normal, CharacterWeight::bold,
-            CharacterScale::normal};
-}
-
-// The distinct configured appearance every style_test_definition carries, so a
-// reset is observable as a return to it rather than to the plain default.
-CharacterAppearance style_configured_appearance() {
-    return {CharacterFont::mono, CharacterSlant::italic, CharacterWeight::normal,
-            CharacterScale::small};
-}
-
-CharacterDefinition style_test_definition(std::string id, std::string name) {
-    CharacterDefinition definition =
-        provider_test_definition(std::move(id), std::move(name));
-    definition.character.appearance = style_configured_appearance();
-    return definition;
-}
-
-test::TestController style_test_controller(
-    const std::filesystem::path& database_path,
-    std::vector<CharacterDefinition> definitions,
-    const std::shared_ptr<ProviderFactoryObservation>& observation) {
-    return test::TestController(
-        std::move(definitions),
-        test::operator_roster(),
-        "guide-id",
-        database_path,
-        std::shared_ptr<WakeNotifier>(&notifier(), [](WakeNotifier*) {}),
-        {},
-        provider_recording_factory(observation),
-        {},
-        {},
-        {{"bold", bold_appearance()}});
-}
-
-CharacterAppearance appearance_in_view(
-    SessionController& controller, std::string_view id) {
-    const std::shared_ptr<const Workspace> workspace = getws();
-    const WorkspaceCharacter* const character = workspace->find_character(id);
-    if (character != nullptr) {
-        CharacterAppearance appearance = character->character.appearance;
-        const ControllerView view = controller.view();
-        const auto selected = view.style_overrides->find(std::string(id));
-        if (selected != view.style_overrides->end()) {
-            const WorkspaceStyle* const style = workspace->find_style(selected->second);
-            if (style != nullptr) appearance = style->appearance;
-        }
-        return appearance;
-    }
-    ADD_FAILURE() << "character not in view: " << id;
-    return {};
-}
-
-TEST(SessionController, StyleOverrideSetsTheAppearanceForOneCharacterAndSnapshots) {
-    TemporaryJournal temporary;
-    auto observation = std::make_shared<ProviderFactoryObservation>();
-    auto controller = style_test_controller(
-        temporary.path,
-        {
-            style_test_definition("guide-id", "Guide"),
-            style_test_definition("other-id", "Other"),
-        },
-        observation);
-
-    const ControllerUpdate update = controller->set_session_style("bold");
-    EXPECT_TRUE(update.input_consumed);
-    EXPECT_TRUE(requires_snapshot(update));
-    EXPECT_EQ(update.notice, "Guide now uses style 'bold' for this session.");
-    EXPECT_EQ(appearance_in_view(*controller, "guide-id"), bold_appearance());
-    EXPECT_EQ(appearance_in_view(*controller, "other-id"), style_configured_appearance())
-        << "only the default character's appearance changes";
-}
-
-TEST(SessionController, StyleOverrideReportsAndResets) {
-    TemporaryJournal temporary;
-    auto observation = std::make_shared<ProviderFactoryObservation>();
-    auto controller = style_test_controller(
-        temporary.path,
-        {style_test_definition("guide-id", "Guide")},
-        observation);
-
-    const ControllerUpdate report = controller->set_session_style("");
-    EXPECT_FALSE(requires_snapshot(report)) << "the report form is notice-only";
-    EXPECT_EQ(report.notice, "Guide is using its configured style for this session.");
-
-    (void)controller->set_session_style("bold");
-    EXPECT_EQ(
-        controller->set_session_style("").notice,
-        "Guide's style override for this session is 'bold'.");
-
-    const ControllerUpdate reset = controller->set_session_style("default");
-    EXPECT_TRUE(requires_snapshot(reset));
-    EXPECT_EQ(reset.notice, "Guide is back to its configured style for this session.");
-    EXPECT_EQ(appearance_in_view(*controller, "guide-id"), style_configured_appearance());
-    EXPECT_EQ(
-        controller->set_session_style("").notice,
-        "Guide is using its configured style for this session.");
-}
-
-TEST(SessionController, StyleOverrideFollowsTheCharacterNotTheDefaultSlot) {
-    TemporaryJournal temporary;
-    auto observation = std::make_shared<ProviderFactoryObservation>();
-    auto controller = style_test_controller(
-        temporary.path,
-        {
-            style_test_definition("guide-id", "Guide"),
-            style_test_definition("other-id", "Other"),
-        },
-        observation);
-
-    (void)controller->set_session_style("bold");
-    (void)controller->set_default_character("Other");
-    EXPECT_EQ(
-        controller->set_session_style("").notice,
-        "Other is using its configured style for this session.");
-
-    (void)controller->set_default_character("Guide");
-    EXPECT_EQ(
-        controller->set_session_style("").notice,
-        "Guide's style override for this session is 'bold'.");
-    EXPECT_EQ(appearance_in_view(*controller, "guide-id"), bold_appearance());
-}
-
-TEST(SessionController, StyleCommandsStayIdleWhileRecording) {
-    TemporaryJournal temporary;
-    auto observation = std::make_shared<ProviderFactoryObservation>();
-    auto controller = style_test_controller(
-        temporary.path,
-        {style_test_definition("guide-id", "Guide")},
-        observation);
-
-    (void)controller->set_default_character("-");
-    const char* const recording_notice =
-        "No character is selected while recording. Use /@<name> to resume.";
-    for (const char* name : {"", "default", "bold"}) {
-        const ControllerUpdate update = controller->set_session_style(name);
-        EXPECT_TRUE(update.input_consumed);
-        EXPECT_FALSE(requires_snapshot(update));
-        EXPECT_EQ(update.notice, recording_notice);
-    }
-    EXPECT_EQ(appearance_in_view(*controller, "guide-id"), style_configured_appearance());
-
-    (void)controller->set_default_character("Guide");
-    EXPECT_EQ(
-        controller->set_session_style("").notice,
-        "Guide is using its configured style for this session.");
-    EXPECT_EQ(appearance_in_view(*controller, "guide-id"), style_configured_appearance());
-}
-
-TEST(SessionController, UnknownStyleLeavesTheAppearanceAlone) {
-    TemporaryJournal temporary;
-    auto observation = std::make_shared<ProviderFactoryObservation>();
-    auto controller = style_test_controller(
-        temporary.path,
-        {style_test_definition("guide-id", "Guide")},
-        observation);
-
-    const ControllerUpdate unknown = controller->set_session_style("nope");
-    EXPECT_FALSE(requires_snapshot(unknown));
-    EXPECT_EQ(
-        unknown.notice,
-        "Unknown style 'nope'. Available styles: bold configured-0");
-    EXPECT_EQ(appearance_in_view(*controller, "guide-id"), style_configured_appearance());
-    EXPECT_EQ(
-        controller->set_session_style("").notice,
-        "Guide is using its configured style for this session.");
-
-}
-
-TEST(SessionController, UnknownStyleIsReportedFromWorkspace) {
-    TemporaryJournal temporary;
-    auto controller = test::from_test_backends(
-        test::one_backend(std::make_unique<ScriptedBackend>()),
-        temporary.path,
-        notifier());
-
-    const ControllerUpdate update = controller->set_session_style("bold");
-    EXPECT_TRUE(update.input_consumed);
-    EXPECT_EQ(update.notice, "Unknown style 'bold'. Available styles:");
-}
-
-TEST(SessionController, ClearingTheTranscriptKeepsTheStyleOverride) {
-    TemporaryJournal temporary;
-    auto observation = std::make_shared<ProviderFactoryObservation>();
-    auto controller = style_test_controller(
-        temporary.path,
-        {style_test_definition("guide-id", "Guide")},
-        observation);
-
-    (void)controller->set_session_style("bold");
-    (void)controller->clear_transcript();
-    EXPECT_EQ(appearance_in_view(*controller, "guide-id"), bold_appearance());
-    EXPECT_EQ(
-        controller->set_session_style("").notice,
-        "Guide's style override for this session is 'bold'.");
-}
-
-TEST(SessionController, StyleOverrideSucceedsWhileGenerating) {
-    TemporaryJournal temporary;
-    auto observation = std::make_shared<ProviderFactoryObservation>();
-    observation->hold_perform.store(true);
-    auto controller = style_test_controller(
-        temporary.path,
-        {style_test_definition("guide-id", "Guide")},
-        observation);
-
-    (void)controller->submit_prompt("operator", "Question");
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
-    while (!observation->entered_perform.load(std::memory_order_acquire)
-           && std::chrono::steady_clock::now() < deadline) {
-        std::this_thread::yield();
-    }
-    ASSERT_TRUE(observation->entered_perform.load(std::memory_order_acquire));
-
-    // No busy guard here: the web grammar's gate is what rejects the command
-    // mid-generation. The typed action itself succeeds.
-    const ControllerUpdate update = controller->set_session_style("bold");
-    EXPECT_TRUE(requires_snapshot(update));
-    EXPECT_EQ(update.notice, "Guide now uses style 'bold' for this session.");
-    EXPECT_EQ(appearance_in_view(*controller, "guide-id"), bold_appearance());
-
-    observation->hold_perform.store(false);
-    (void)receive_until_idle(*controller);
 }
 
 } // namespace

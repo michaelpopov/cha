@@ -975,7 +975,7 @@ most, explain why, and wait for the author's response.</code></pre>
             <li>The forum begins with the built-in Assistant as its only member, so it is immediately usable.</li>
             <li>Click the forum name above its session list to open the forum page.</li>
             <li>Use the text-lines button to write the forum description. Use <strong>Members</strong> to change the persona or add and remove characters.</li>
-            <li>Choose a default character from the chat target menu, or type <code>/@Name</code> in a session.</li>
+            <li>Choose a default character from the chat target menu.</li>
           </ol>
 
           <div class="sample" data-label="Example forum description — Decision Room">
@@ -1047,15 +1047,15 @@ the choice, the reason, the main risk, and the next check.</code></pre>
               <tr><td>Ask one voice</td><td><code>@Rowan What premise is weakest?</code></td><td>Targets one character for this turn.</td></tr>
               <tr><td>Ask several</td><td><code>/mcast @Rowan @Inez Your question</code></td><td>Creates contrasting answers in the shared transcript.</td></tr>
               <tr><td>Record a note</td><td><code>@- My planning note</code></td><td>Saves text into the transcript without calling a model.</td></tr>
-              <tr><td>Enter recording mode</td><td><code>/@-</code></td><td>Makes ordinary messages save-only until you choose a character again.</td></tr>
+              <tr><td>Save several Self-notes</td><td>Choose <strong>Self-notes</strong> in the target menu</td><td>Makes ordinary messages save-only until you choose a character again.</td></tr>
               <tr><td>Start a fresh phase</td><td><code>/cover</code></td><td>Keeps earlier text visible but hides it from later model context.</td></tr>
               <tr><td>Bring history back</td><td><code>/uncover</code></td><td>Restores the covered conversation to model context.</td></tr>
             </tbody>
           </table>
 
           <div class="note">
-            <strong>Use recording mode for raw material</strong>
-            <p>Switch to <code>/@-</code>, paste notes or dictate a rough account, then choose a character from the target menu. Your notes remain shared history, but no character replies while you are recording.</p>
+            <strong>Use Self-notes for raw material</strong>
+            <p>Choose <strong>Self-notes</strong> in the target menu, paste notes or dictate a rough account, then choose a character again. Your notes remain shared history, but no character replies while Self-notes is selected.</p>
           </div>
         </section>
 
@@ -1150,7 +1150,7 @@ the choice, the reason, the main risk, and the next check.</code></pre>
           <details>
             <summary>A little more about styles</summary>
             <div>
-              <p>Styles combine a font family, slant, weight, size, and text color. Use <code>/style name</code> for a session-only appearance override, <code>/style</code> to report the current override, and <code>/style default</code> to return to the configured style.</p>
+              <p>Styles combine a font family, slant, weight, size, and text color. Configure a character’s style from its Settings screen.</p>
             </div>
           </details>
         </section>
@@ -1165,16 +1165,8 @@ the choice, the reason, the main risk, and the next check.</code></pre>
               <tr><th>Command</th><th>Effect</th></tr>
             </thead>
             <tbody>
-              <tr><td><code>/clear</code></td><td>Clear the session transcript.</td></tr>
               <tr><td><code>/cover</code> / <code>/uncover</code></td><td>Hide earlier conversation from model context, or restore it.</td></tr>
               <tr><td><code>/mcast @A @B question</code></td><td>Send the same prompt to several forum characters.</td></tr>
-              <tr><td><code>/info</code></td><td>Show information about the current session.</td></tr>
-              <tr><td><code>/characters</code></td><td>List the characters in this forum. <code>/agents</code> is an older alias.</td></tr>
-              <tr><td><code>/@Name</code></td><td>Choose and save the forum’s default character.</td></tr>
-              <tr><td><code>/@-</code></td><td>Enter recording mode: save messages without generating replies.</td></tr>
-              <tr><td><code>/style name</code></td><td>Override the current character’s appearance for this session only.</td></tr>
-              <tr><td><code>/stop</code></td><td>Stop the current generation.</td></tr>
-              <tr><td><code>/exit</code></td><td>Close the live session. The stored conversation remains saved.</td></tr>
               <tr><td><code>@@example</code></td><td>Send literal text beginning with an at-sign.</td></tr>
             </tbody>
           </table>

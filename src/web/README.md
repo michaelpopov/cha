@@ -76,19 +76,15 @@ sessions so agent prompts carry that persona.
 ## Chat input grammar
 
 The raw-input owner path recognizes optional leading character mentions and
-the commands `/clear`, `/cover`, `/uncover`, `/mcast`, `/info`,
-`/characters` (`/agents` is a legacy alias), `/@Name`, `/style`, `/stop`, and
-`/exit`. Mentions and multicast recipient
-handles remain unresolved until `SessionController` applies the forum's
-authoritative character rules. While generation is active, only a bare
-`/stop` is dispatched; other input remains in the browser editor.
+the commands `/cover`, `/uncover`, and `/mcast`. Mentions and multicast
+recipient handles remain unresolved until `SessionController` applies the
+forum's authoritative character rules. While generation is active, input
+remains in the browser editor and the typed Stop action handles cancellation.
 
 This grammar is web policy, not a reusable core or terminal abstraction.
-`/exit` explicitly requests that the `LiveSession` close the live web
-session. `handle_text_input()` returns the same `CommandResult` completed back
+`handle_text_input()` returns the same `CommandResult` completed back
 to the HTTP request: it owns the controller's `ControllerUpdate`, `clear_input`,
-and the internal `close_session` decision. JSON exposes only `clear_input` and
-the update's optional notice.
+and optional notice. JSON exposes only `clear_input` and the notice.
 
 ## The live-session actor
 

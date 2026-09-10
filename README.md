@@ -26,15 +26,8 @@ The chat input also accepts these controller-level commands:
 
 | Command | Purpose |
 | --- | --- |
-| `/clear` | Clear the transcript. |
 | `/cover`, `/uncover` | Hide all earlier conversation from model context, or restore it. |
 | `/mcast` | Send one prompt to multiple forum characters. |
-| `/info`, `/characters` | Inspect the session and its characters (`/agents` remains an alias). |
-| `/@Name` | Change and save the forum's default character. |
-| `/@-` | Enter recording mode: plain messages are saved to the transcript but not sent to a model. Session-local — `-` is never saved as the forum default. |
-| `/style <name>` | Override the current character's appearance (font, slant, weight, size) for this session only; `/style` reports the override and `/style default` restores the configured style. Nothing is saved. |
-| `/stop` | Stop generation. |
-| `/exit` | Close the live session. |
 
 Leading `@Name` addresses a prompt to one character. `@@` starts literal text
 with an at-sign. A handle may be a display name, an unambiguous part of one, or
@@ -42,9 +35,9 @@ the character's ID — useful when the display name is spelled differently or
 written in another script.
 
 The reserved handle `-` is the null target: `@- <text>` records one message in
-the transcript without calling a model or producing a reply, and `/@-` switches
-the session into recording mode so plain messages are recorded the same way
-until `/@Name` or the target selector switches back. Recorded messages are
+the transcript without calling a model or producing a reply. Choosing
+Self-notes in the target selector records plain messages the same way until
+the selector switches back to a character. Recorded messages are
 durable and reach a later character as shared conversation history, never as a
 message addressed to it.
 
@@ -61,9 +54,9 @@ speaks as. Persona, character, and forum definitions have a public
 
 A forum's `config.toml` can name its starting character with
 `default_character = "character-id"`. The ID must be a forum member; when the
-setting is omitted, the first member ID in lexicographic order is used. `/@Name`
-changes the live session immediately and saves that ID to the forum config, so
-the next session in that forum starts with it. CHA validates this narrow online
+setting is omitted, the first member ID in lexicographic order is used. The
+chat target selector changes the live session immediately and saves that ID to
+the forum config, so the next session in that forum starts with it. CHA validates this narrow online
 edit, commits the complete configuration to SQLite, and then publishes it.
 
 A forum's persona is selected when the forum is created or from its Members
@@ -103,7 +96,8 @@ mirror = "/home/user/cha-mirror"
 The optional `mirror` setting continuously writes each persistent session as
 Markdown under a display-named forum directory; omit it to disable mirroring.
 The root directory must already exist, sessions are refreshed after terminal
-responses and clears, renamed with their sessions, and retained after deletion.
+responses and context-boundary changes, renamed with their sessions, and
+retained after deletion.
 This copies transcripts out of the SQLite workspace into plain files. CHA
 writes those files with mode `0600`, but does not change permissions on the
 configured root or existing forum directories, so choose the location

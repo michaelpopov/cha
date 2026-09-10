@@ -19,16 +19,6 @@ std::vector<SharedCharacterDefinition> share_character_definitions(
     return shared;
 }
 
-CharacterRuntimeInfo character_runtime_info(
-    const CharacterDefinition& definition) {
-    return {
-        .id = definition.character.id,
-        .model = definition.provider.config.model,
-        .api = provider_endpoint(definition.provider.config),
-        .streaming = definition.provider.config.stream,
-    };
-}
-
 void validate_character_id(std::string_view id) {
     if (id.empty()) {
         throw std::invalid_argument("Character ID cannot be empty");

@@ -18,7 +18,6 @@
 #include <optional>
 #include <string>
 #include <string_view>
-#include <unordered_map>
 #include <vector>
 
 namespace cha {
@@ -28,7 +27,7 @@ struct WorkspaceForum;
 
 // One live chat session, and the only object a front end needs in order to run a chat. It has two
 // halves: read-only session state (transcript, forum characters, defaults, generation
-// status) and commands (submit a prompt, clear, stop, switch defaults, drain
+// status) and commands (submit a prompt, stop, switch defaults, drain
 // generation events), each returning a ControllerUpdate instead of touching a frontend. It owns
 // the Transcript, SessionJournal, and session-visible request handles. Provider execution itself
 // belongs to the process-owned Providers instance. Command syntax,
@@ -77,7 +76,6 @@ public:
         std::string_view author_id,
         std::string text,
         std::string handle = {});
-    [[nodiscard]] ControllerUpdate clear_transcript();
     [[nodiscard]] ControllerUpdate cover_conversation();
     [[nodiscard]] ControllerUpdate uncover_conversation();
     // The web text grammar submits handles; resolution and all target
@@ -86,15 +84,7 @@ public:
         std::string_view author_id,
         std::string text,
         std::vector<std::string> handles);
-    [[nodiscard]] ControllerUpdate session_information();
-    [[nodiscard]] ControllerUpdate character_information();
-    [[nodiscard]] ControllerUpdate set_default_character(std::string_view handle);
     [[nodiscard]] ControllerUpdate set_default_character_by_id(std::string_view id);
-    // Runtime appearance override for the current default character: an empty
-    // name reports the override state, "default" restores the configured style,
-    // anything else is resolved and swapped in. Session-scoped only; nothing is
-    // persisted. Mutating forms carry a browser-visible snapshot.
-    [[nodiscard]] ControllerUpdate set_session_style(std::string_view name);
     [[nodiscard]] ControllerUpdate request_stop();
     void rename(std::string_view label);
     [[nodiscard]] ControllerUpdate handle_generation_event(GenerationEvent event);
@@ -141,15 +131,6 @@ private:
         std::string_view id) const;
     [[nodiscard]] std::shared_ptr<const Workspace> workspace() const;
     [[nodiscard]] SharedPersonaRoster current_personas() const;
-    [[nodiscard]] std::vector<CharacterRuntimeInfo> current_runtime_info(
-        const Workspace& workspace,
-        const WorkspaceForum& forum) const;
-    [[nodiscard]] CharacterMetadata styled_character(
-        const Workspace& workspace,
-        const CharacterMetadata& character) const;
-    [[nodiscard]] CharacterAppearance resolve_style(
-        const Workspace& workspace,
-        std::string_view name) const;
     [[nodiscard]] ControllerGenerationView generation_view() const noexcept;
     ControllerUpdate busy_notice() const;
     [[nodiscard]] std::optional<EntryIdentity> resolve_author(
@@ -204,8 +185,6 @@ private:
     FullSessionId identity_;
     CharacterId default_character_id_;
     std::string default_persona_id_;
-    // Selected names are session-scoped and never persisted.
-    std::unordered_map<CharacterId, std::string> style_overrides_;
     RequestId next_request_id_{1};
     EntryId next_entry_id_{1};
     std::optional<ActiveResponse> active_;

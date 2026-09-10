@@ -164,10 +164,10 @@ TEST_F(SessionOpenTest, SourceDirectoryEditsDoNotAffectOpening) {
         "display_name = \"Renamed\"\nprovider = \"test\"\n");
 
     OpenedSession unchanged = open(first.identity);
-    ASSERT_TRUE(unchanged.controller->character_information().notice);
-    EXPECT_NE(
-        unchanged.controller->character_information().notice->find("Guide"),
-        std::string::npos);
+    ASSERT_NE(getws()->find_character("guide"), nullptr);
+    EXPECT_EQ(
+        getws()->find_character("guide")->character.display_name,
+        "Guide");
 
     unchanged.controller.reset();
     sessions_.reset();
@@ -175,10 +175,10 @@ TEST_F(SessionOpenTest, SourceDirectoryEditsDoNotAffectOpening) {
     reimport_fixture();
     const StoredSession second = sessions_->create("lobby", "Second");
     OpenedSession reloaded = open(second.identity);
-    ASSERT_TRUE(reloaded.controller->character_information().notice);
-    EXPECT_NE(
-        reloaded.controller->character_information().notice->find("Renamed"),
-        std::string::npos);
+    ASSERT_NE(getws()->find_character("guide"), nullptr);
+    EXPECT_EQ(
+        getws()->find_character("guide")->character.display_name,
+        "Renamed");
 }
 
 TEST_F(SessionOpenTest, ReportsMissingForumAndSession) {

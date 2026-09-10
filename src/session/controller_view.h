@@ -5,7 +5,6 @@
 
 #include <optional>
 #include <string_view>
-#include <unordered_map>
 
 namespace cha {
 
@@ -30,7 +29,6 @@ struct ControllerGenerationView {
 struct ControllerView {
     std::string_view default_character_id;
     std::string_view default_persona_id;
-    const std::unordered_map<CharacterId, std::string>* style_overrides{};
     TranscriptView transcript;
     ControllerGenerationView generation;
 };

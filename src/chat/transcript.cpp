@@ -213,16 +213,6 @@ void Transcript::discard_entry(EntryId entry_id) {
     ++revision_;
 }
 
-void Transcript::clear() {
-    if (open_entry_id_) {
-        throw std::logic_error("Cannot clear a transcript while an entry is streaming");
-    }
-    entries_.clear();
-    covered_until_.reset();
-    ++revision_;
-    ++history_epoch_;
-}
-
 void Transcript::replace_entries(std::vector<TranscriptEntry> entries) {
     if (open_entry_id_) {
         throw std::logic_error("Cannot replace entries while an entry is streaming");
@@ -239,7 +229,6 @@ void Transcript::replace_entries(std::vector<TranscriptEntry> entries) {
     entries_ = std::move(entries);
     covered_until_.reset();
     ++revision_;
-    ++history_epoch_;
 }
 
 void Transcript::cover(EntryId marker_id) {
@@ -271,7 +260,7 @@ bool Transcript::uncover(EntryId marker_id) {
 }
 
 TranscriptView Transcript::view() const noexcept {
-    return {entries_, revision_, open_entry_id_, history_epoch_};
+    return {entries_, revision_, open_entry_id_};
 }
 
 ModelHistory Transcript::model_history() const {

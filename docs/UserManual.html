@@ -722,7 +722,8 @@
 
         <h3>Ask several characters</h3>
         <p>
-          Use <code>/mcast</code> to send one prompt to several forum members:
+          Choose <strong>All characters</strong> in the target menu to ask every
+          forum member, or use <code>/mcast</code> to name several members:
         </p>
         <pre><code>/mcast @Seneca @Epictetus What matters most here?</code></pre>
         <p>
@@ -730,7 +731,7 @@
           reply, so it remains clear where one answer ends and the next begins.
         </p>
 
-        <h3>Record a message without an AI reply</h3>
+        <h3>Save a Self-note without an AI reply</h3>
         <p>
           Start a message with <code>@-</code> to add it to the conversation without
           asking a character to respond:
@@ -738,15 +739,14 @@
         <pre><code>@- I made the decision this morning.</code></pre>
         <p>
           The note is saved in the conversation history. A character selected later
-          can use it as context. Use <code>/@-</code> to stay in recording mode until
-          you choose a character again.
+          can use it as context. Choose <strong>Self-notes</strong> in the target menu
+          to keep saving messages without replies until you choose a character again.
         </p>
 
         <h3>Stop a reply</h3>
         <p>
           While CHA is generating an answer, the Send button changes to
-          <strong>Stop</strong>. Select it to stop generation. You can also use the
-          <code>/stop</code> command.
+          <strong>Stop</strong>. Select it to stop generation.
         </p>
 
         <h3>Write in any language</h3>
@@ -775,11 +775,6 @@
             </thead>
             <tbody>
               <tr>
-                <td><code>/clear</code></td>
-                <td>Clear the current transcript and begin with an empty conversation.</td>
-                <td>Use with care if you still need the earlier exchange.</td>
-              </tr>
-              <tr>
                 <td><code>/cover</code></td>
                 <td>Keep earlier messages visible, but leave them out of later AI requests.</td>
                 <td>Useful when the conversation has changed subject.</td>
@@ -793,41 +788,6 @@
                 <td><code>/mcast</code></td>
                 <td>Send one prompt to more than one character.</td>
                 <td><code>/mcast @One @Two Your question</code></td>
-              </tr>
-              <tr>
-                <td><code>/info</code></td>
-                <td>Show information about the current session.</td>
-                <td>&nbsp;</td>
-              </tr>
-              <tr>
-                <td><code>/characters</code></td>
-                <td>List the characters in the current forum.</td>
-                <td><code>/agents</code> is an older name for the same command.</td>
-              </tr>
-              <tr>
-                <td><code>/@Name</code></td>
-                <td>Choose the default character and save that choice for the forum.</td>
-                <td><code>/@Seneca</code></td>
-              </tr>
-              <tr>
-                <td><code>/@-</code></td>
-                <td>Enter recording mode, in which messages are saved without AI replies.</td>
-                <td>This choice applies only to the current session.</td>
-              </tr>
-              <tr>
-                <td><code>/style name</code></td>
-                <td>Change the conversation's visual text style for this session.</td>
-                <td>Use <code>/style</code> to see the current style and <code>/style default</code> to restore it.</td>
-              </tr>
-              <tr>
-                <td><code>/stop</code></td>
-                <td>Stop the reply that is being generated.</td>
-                <td>&nbsp;</td>
-              </tr>
-              <tr>
-                <td><code>/exit</code></td>
-                <td>Close the live session.</td>
-                <td>You can open a saved session again later.</td>
               </tr>
             </tbody>
           </table>
@@ -1205,7 +1165,7 @@ Then choose one small act and do it completely.</code></pre>
               </tr>
               <tr>
                 <td>The wrong character answers.</td>
-                <td>Check the <strong>To</strong> value above the message box. Use <code>/@Name</code> to choose a default or begin one message with <code>@Name</code>.</td>
+                <td>Check the <strong>To</strong> value above the message box. Use the target menu to choose a default or begin one message with <code>@Name</code>.</td>
               </tr>
               <tr>
                 <td>The wrong persona is shown.</td>

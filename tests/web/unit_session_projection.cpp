@@ -28,7 +28,6 @@ struct BackingState {
                 .entries = transcript,
                 .revision = 42,
                 .open_entry_id = 2,
-                .history_epoch = 9,
             },
             .generation = {
                 .active = true,

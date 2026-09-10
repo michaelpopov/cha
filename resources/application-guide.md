@@ -24,13 +24,11 @@ provider. Assistant has no Settings screen; its provider is configured in
 
 ## Commands
 
-- `/clear` clears the transcript.
 - `/cover` hides all earlier conversation from model context; `/uncover` restores it.
 - `/mcast <targets> <text>` sends one prompt to multiple characters.
-- `/info` shows session information; `/characters` lists the forum's characters (`/agents` is a legacy alias).
-- `/@Name` changes the default character and saves it as the forum's default.
-- `/style <name>` switches the current character's appearance for this session only; `/style` reports the override and `/style default` restores the configured style. Nothing is saved.
-- `/stop` stops generation; `/exit` closes the live session.
+
+Use the target selector to choose a character, all characters, or Self-notes.
+Use the Stop button to stop generation.
 
 Start a prompt with `@Name` to address one character. Use `@@` for a literal
 leading at-sign. Character handles are matched case-insensitively when the

@@ -55,8 +55,9 @@ LoadedSessionDatabase load_session_database(
     const std::filesystem::path& path,
     const FullSessionId& expected_identity);
 
-// Current-epoch durable rows only. Unlike restore, this read does not
-// synthesize interruption errors.
+// Active-epoch durable rows only. Epoch remains part of the v2 on-disk format
+// so databases cleared by older builds continue to expose the right history.
+// New sessions never advance it.
 std::vector<TranscriptEntry> load_session_history(
     const std::filesystem::path& path,
     const FullSessionId& expected_identity);
@@ -78,7 +79,6 @@ public:
     void complete_turn(RequestId request_id, const TranscriptEntry& response);
     void cancel_turn(RequestId request_id, std::optional<TranscriptEntry> response);
     void fail_turn(RequestId request_id, const TranscriptEntry& error);
-    void clear();
     void rename(std::string_view label);
 
 private:

@@ -94,17 +94,12 @@ Generation workers never read it; the controller captures an immutable
 | `append_answer` | Appends answer text to the open entry only. |
 | `finish_entry` | Closes it as `complete` or `cancelled`, re-checking the content rules. |
 | `discard_entry` | Drops the open entry entirely — used when a turn fails mid-stream. |
-| `clear` | Empties the visible history, resets the cover boundary, and bumps `history_epoch`. |
-| `replace_entries` | Installs a restored transcript, validating order and terminality; resets the cover boundary and bumps `history_epoch`. |
+| `replace_entries` | Installs a restored transcript, validating order and terminality, and resets the cover boundary. |
 | `cover` | Hides every entry before the current boundary from model context and appends `[cover]`. |
 | `uncover` | Clears the boundary and appends `[uncover]`. |
 
 Every presentation-changing mutation bumps `revision`, and every entry ID must
-be strictly greater than the last. Renderers use `revision` to detect change
-and `history_epoch` to detect that everything they had drawn is now invalid.
-The marker-producing cover mutations bump `revision` for their marker
-like any other insertion, but leave `history_epoch` alone: nothing already
-drawn becomes invalid.
+be strictly greater than the last. Renderers use `revision` to detect change.
 
 ### The cover boundary
 
@@ -113,8 +108,8 @@ entry remains visible on screen but is excluded from model context.
 `model_history()` copies the boundary with the entries for immutable backend
 input. Calling `cover` again moves the boundary forward; `uncover` clears it.
 
-The boundary and markers are not persisted. `clear()` and `replace_entries()`
-also reset the boundary.
+The boundary and markers are not persisted. `replace_entries()` also resets
+the boundary.
 
 ### Streaming entry lifecycle
 
@@ -126,7 +121,7 @@ stateDiagram-v2
     Open --> Closed: finish_entry, complete or cancelled
     Open --> Closed: discard_entry, entry removed
     note right of Open
-        While open: no add_entry, no clear,
+        While open: no add_entry,
         no replace_entries, no cover mutation.
     end note
 ```

@@ -301,15 +301,15 @@ TEST(LiveSession, RoutesRawAndTypedCommandsOnOneOwnerThread) {
     };
     LiveSessionHost host(test_settings(), std::move(opener));
 
-    const auto info = host->submit(RawCommand{"/info"}, 2s);
-    ASSERT_TRUE(std::holds_alternative<CommandResult>(info));
-    EXPECT_TRUE(std::get<CommandResult>(info).session.notice);
+    const auto covered = host->submit(RawCommand{"/cover"}, 2s);
+    ASSERT_TRUE(std::holds_alternative<CommandResult>(covered));
+    EXPECT_TRUE(has_state_update(std::get<CommandResult>(covered).session));
 
     EXPECT_TRUE(std::holds_alternative<CommandResult>(
         host->submit(StopCommand{}, 2s)));
 
     EXPECT_TRUE(std::holds_alternative<CommandResult>(
-        host->submit(RawCommand{"/@Scribe"}, 2s)));
+        host->submit(SetDefaultCharacterCommand{"scribe"}, 2s)));
     EXPECT_EQ(persisted_default, "scribe");
 
     EXPECT_TRUE(std::holds_alternative<CommandResult>(
@@ -337,7 +337,7 @@ TEST(LiveSession, RoutesRawAndTypedCommandsOnOneOwnerThread) {
     EXPECT_EQ(read_session_database_metadata(file.path()).label, "Renamed live");
 }
 
-TEST(LiveSession, MirrorsOnlyDurableRoundTripRenameAndClearBoundaries) {
+TEST(LiveSession, MirrorsOnlyDurableRoundTripRenameAndCoverBoundaries) {
     test::TemporarySessionFile file("live_session_mirror_boundaries");
     auto controls = std::make_shared<test::BackendControls>();
     std::mutex mirror_mutex;
@@ -416,11 +416,11 @@ TEST(LiveSession, MirrorsOnlyDurableRoundTripRenameAndClearBoundaries) {
     }
 
     ASSERT_TRUE(std::holds_alternative<CommandResult>(
-        host->submit(RawCommand{"/clear"}, 2s)));
+        host->submit(RawCommand{"/cover"}, 2s)));
     {
         const std::lock_guard lock(mirror_mutex);
         EXPECT_EQ(mirror_count, 4U);
-        EXPECT_TRUE(mirrored_entries.empty());
+        EXPECT_EQ(mirrored_entries.size(), 3U);
     }
 
     ASSERT_TRUE(std::holds_alternative<CommandResult>(
@@ -442,8 +442,8 @@ TEST(LiveSession, MirrorsOnlyDurableRoundTripRenameAndClearBoundaries) {
     {
         const std::lock_guard lock(mirror_mutex);
         EXPECT_EQ(mirror_count, 5U);
-        ASSERT_EQ(mirrored_entries.size(), 1U);
-        EXPECT_EQ(mirrored_entries.front().text, "Cancelled question");
+        ASSERT_EQ(mirrored_entries.size(), 4U);
+        EXPECT_EQ(mirrored_entries.back().text, "Cancelled question");
     }
 }
 
@@ -465,7 +465,7 @@ TEST(LiveSession, KeepsADefaultCharacterThatCouldNotBeSaved) {
     };
     LiveSessionHost host(test_settings(), std::move(opener));
 
-    const auto result = host->submit(RawCommand{"/@Scribe"}, 2s);
+    const auto result = host->submit(SetDefaultCharacterCommand{"scribe"}, 2s);
     ASSERT_TRUE(std::holds_alternative<CommandResult>(result));
     const auto& notice = std::get<CommandResult>(result).session.notice;
     ASSERT_TRUE(notice);
@@ -943,20 +943,6 @@ TEST(LiveSession, GenerationFinalizationReevaluatesDisconnectDeadline) {
     // which the clock has already passed.
     controls->finish();
     EXPECT_TRUE(wait_for_finished(host.handle()));
-}
-
-TEST(LiveSession, ExitRequestFromRawInputStopsTheSession) {
-    test::TemporarySessionFile file("live_session_exit");
-    auto controls = std::make_shared<test::BackendControls>();
-    LiveSessionHost host(test_settings(), scripted_opener(file.path(), controls));
-
-    const auto exited = host->submit(RawCommand{"/exit"}, 2s);
-    ASSERT_TRUE(std::holds_alternative<CommandResult>(exited));
-    EXPECT_TRUE(std::get<CommandResult>(exited).close_session);
-    EXPECT_TRUE(wait_for_finished(host.handle()));
-    EXPECT_EQ(
-        std::get<ErrorCode>(host->submit(StopCommand{}, 1s)),
-        ErrorCode::session_not_live);
 }
 
 TEST(LiveSession, StalledReaderExpiresTheBoundedFinalDrain) {
