@@ -287,7 +287,7 @@ TEST_F(OpenAiOAuthTest, StartUsesIntervalStringAndWaitsBeforeFirstPoll) {
     EXPECT_EQ(requests()[0].content_type, "application/json");
     EXPECT_EQ(requests()[0].timeout, 15s);
     const Json body = Json::parse(requests()[0].body);
-    EXPECT_EQ(body.at("client_id"), kClientId);
+    EXPECT_EQ(body.at("client_id").get<std::string>(), kClientId);
 
     const OpenAiOAuthSnapshot early = oauth.poll();
     EXPECT_EQ(early.state, OpenAiOAuthState::waiting);

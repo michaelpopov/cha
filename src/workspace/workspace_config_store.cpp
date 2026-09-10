@@ -137,7 +137,7 @@ bool is_forum_member_directory(std::string_view name) {
 std::string stored_name_from(
     const std::filesystem::path& source,
     const std::filesystem::path& file) {
-    return file.lexically_relative(source).generic_string();
+    return generic_utf8_path(file.lexically_relative(source));
 }
 
 std::filesystem::path join_stored_name(

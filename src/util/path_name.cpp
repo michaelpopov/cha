@@ -69,6 +69,13 @@ std::string utf8_path(const std::filesystem::path& path) {
         value.size());
 }
 
+std::string generic_utf8_path(const std::filesystem::path& path) {
+    const std::u8string value = path.generic_u8string();
+    return std::string(
+        reinterpret_cast<const char*>(value.data()),
+        value.size());
+}
+
 std::filesystem::path path_from_utf8(std::string_view value) {
     std::u8string encoded;
     encoded.reserve(value.size());

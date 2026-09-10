@@ -2,12 +2,11 @@
 
 #include "session/session_lease.h"
 #include "session/workspace_session_database.h"
+#include "util/crypto.h"
 #include "util/path_name.h"
 #include "util/private_filesystem.h"
 
 #include <curl/curl.h>
-#include <openssl/evp.h>
-#include <openssl/hmac.h>
 
 #include <algorithm>
 #include <array>
@@ -272,70 +271,22 @@ std::string hex_bytes(const unsigned char* bytes, std::size_t size) {
     return result;
 }
 
-std::string sha256(std::string_view contents) {
-    std::array<unsigned char, EVP_MAX_MD_SIZE> digest{};
-    unsigned int size{};
-    if (EVP_Digest(
-            contents.data(), contents.size(), digest.data(), &size,
-            EVP_sha256(), nullptr) != 1) {
-        throw std::runtime_error("Failed to hash R2 request");
-    }
-    return hex_bytes(digest.data(), size);
+std::string sha256_hex(std::string_view contents) {
+    const Sha256Digest digest = sha256_digest(contents);
+    return hex_bytes(digest.data(), digest.size());
 }
 
-std::string sha256_file(const std::filesystem::path& path) {
-    using DigestContext = std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)>;
-    DigestContext context(EVP_MD_CTX_new(), &EVP_MD_CTX_free);
-    if (!context || EVP_DigestInit_ex(context.get(), EVP_sha256(), nullptr) != 1) {
-        throw std::runtime_error(
-            "Failed to initialize database hash for '" + utf8_path(path) + "'");
-    }
-
-    std::ifstream input(path, std::ios::binary);
-    if (!input) {
-        throw std::runtime_error(
-            "Failed to read database '" + utf8_path(path) + "'");
-    }
-    std::array<char, 64 * 1024> buffer{};
-    while (input) {
-        input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
-        const std::streamsize bytes = input.gcount();
-        if (bytes > 0
-            && EVP_DigestUpdate(
-                   context.get(), buffer.data(), static_cast<std::size_t>(bytes))
-                != 1) {
-            throw std::runtime_error(
-                "Failed to hash database '" + utf8_path(path) + "'");
-        }
-    }
-    if (!input.eof()) {
-        throw std::runtime_error(
-            "Failed while reading database '" + utf8_path(path) + "'");
-    }
-
-    std::array<unsigned char, EVP_MAX_MD_SIZE> digest{};
-    unsigned int size{};
-    if (EVP_DigestFinal_ex(context.get(), digest.data(), &size) != 1) {
-        throw std::runtime_error(
-            "Failed to finish database hash for '" + utf8_path(path) + "'");
-    }
-    return hex_bytes(digest.data(), size);
+std::string sha256_file_hex(const std::filesystem::path& path) {
+    const Sha256Digest digest = sha256_file_digest(path);
+    return hex_bytes(digest.data(), digest.size());
 }
 
-std::string hmac_sha256(std::string_view key, std::string_view contents) {
-    if (key.size() > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
-        throw std::runtime_error("R2 signing key is too large");
-    }
-    std::array<unsigned char, EVP_MAX_MD_SIZE> digest{};
-    unsigned int size{};
-    if (HMAC(
-            EVP_sha256(), key.data(), static_cast<int>(key.size()),
-            reinterpret_cast<const unsigned char*>(contents.data()),
-            contents.size(), digest.data(), &size) == nullptr) {
-        throw std::runtime_error("Failed to sign R2 request");
-    }
+std::string hmac_sha256_bytes(
+    std::string_view key,
+    std::string_view contents) {
+    const Sha256Digest digest = hmac_sha256_digest(key, contents);
     return std::string(
-        reinterpret_cast<const char*>(digest.data()), size);
+        reinterpret_cast<const char*>(digest.data()), digest.size());
 }
 
 SigningTime signing_time() {
@@ -378,14 +329,14 @@ std::string authorization_header(
     const std::string scope = time.date + "/auto/s3/aws4_request";
     const std::string string_to_sign =
         std::string(algorithm) + "\n" + time.timestamp + "\n" + scope + "\n"
-        + sha256(canonical_request);
+        + sha256_hex(canonical_request);
 
-    const std::string date_key = hmac_sha256(
+    const std::string date_key = hmac_sha256_bytes(
         "AWS4" + settings.secret_key, time.date);
-    const std::string region_key = hmac_sha256(date_key, "auto");
-    const std::string service_key = hmac_sha256(region_key, "s3");
-    const std::string signing_key = hmac_sha256(service_key, "aws4_request");
-    const std::string signature = hmac_sha256(signing_key, string_to_sign);
+    const std::string region_key = hmac_sha256_bytes(date_key, "auto");
+    const std::string service_key = hmac_sha256_bytes(region_key, "s3");
+    const std::string signing_key = hmac_sha256_bytes(service_key, "aws4_request");
+    const std::string signature = hmac_sha256_bytes(signing_key, string_to_sign);
     return "Authorization: " + std::string(algorithm) + " Credential="
         + settings.access_key + "/" + scope + ", SignedHeaders="
         + std::string(signed_headers) + ", Signature="
@@ -623,7 +574,7 @@ R2DatabaseTransfer upload_database_to_r2(
     }
 
     const R2Settings settings = load_r2_settings(database);
-    const std::string payload_hash = sha256_file(database);
+    const std::string payload_hash = sha256_file_hex(database);
     const std::uintmax_t byte_count = std::filesystem::file_size(database);
     if (byte_count
         > static_cast<std::uintmax_t>(
@@ -691,7 +642,7 @@ R2DatabaseTransfer download_database_from_r2(
             + utf8_path(temporary.get()) + "'");
     }
 
-    const std::string payload_hash = sha256({});
+    const std::string payload_hash = sha256_hex({});
     (void)curl_global();
     CurlHandle curl;
     CurlHeaders headers;

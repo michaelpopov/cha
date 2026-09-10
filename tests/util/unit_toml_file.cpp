@@ -88,7 +88,7 @@ TEST_F(TomlFileTest, LeavesTheOriginalUnchangedWhenMutationThrows) {
     const std::filesystem::path file = path();
     const std::string original =
         "vault = \"A\"\n[logging]\nlevel = \"info\"\n";
-    std::ofstream(file) << original;
+    std::ofstream(file, std::ios::binary) << original;
 
     EXPECT_THROW(
         rewrite_toml_file(file, [](toml::table&) {

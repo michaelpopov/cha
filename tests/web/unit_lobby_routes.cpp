@@ -164,9 +164,13 @@ TEST(LobbyRoutes, ServesBootstrapDiscoveryAndHealthWithoutSessionDataInHealth) {
         "display_name = \"Guide\"\n"
         "description = \"Explains the workspace\"\n"
         "provider = \"test\"\n");
-    std::ofstream(fixture.root() / "characters" / "guide" / "PROFILE.md")
+    std::ofstream(
+        fixture.root() / "characters" / "guide" / "PROFILE.md",
+        std::ios::binary)
         << "Profile $${character.display_name}\n";
-    std::ofstream(fixture.root() / "characters" / "guide" / "CHARACTER.md")
+    std::ofstream(
+        fixture.root() / "characters" / "guide" / "CHARACTER.md",
+        std::ios::binary)
         << "Agent instructions\n"
            "<character_profile>\n"
            "$$(PROFILE.md)\n"
@@ -174,7 +178,9 @@ TEST(LobbyRoutes, ServesBootstrapDiscoveryAndHealthWithoutSessionDataInHealth) {
     std::ofstream(fixture.root() / "forums" / "lobby" / "config.toml")
         << "display_name = \"The Lobby\"\n"
            "description = \"Where visitors arrive\"\n";
-    std::ofstream(fixture.root() / "forums" / "lobby" / "FORUM.md")
+    std::ofstream(
+        fixture.root() / "forums" / "lobby" / "FORUM.md",
+        std::ios::binary)
         << "# House rules\n"
            "\n"
            "A deliberate place to talk.\n";

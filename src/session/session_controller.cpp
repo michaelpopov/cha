@@ -1,6 +1,7 @@
 #include "session/session_controller.h"
 
 #include "session/session_label.h"
+#include "util/crypto.h"
 #include "util/logging.h"
 #include "util/text.h"
 #include "workspace/workspace.h"
@@ -10,7 +11,6 @@
 #include <chrono>
 #include <exception>
 #include <limits>
-#include <openssl/sha.h>
 #include <sstream>
 #include <stdexcept>
 #include <unordered_set>
@@ -139,11 +139,7 @@ std::string prompt_cache_key(
     });
     if (ascii && key.size() <= 64) return key;
 
-    std::array<unsigned char, SHA256_DIGEST_LENGTH> digest{};
-    SHA256(
-        reinterpret_cast<const unsigned char*>(key.data()),
-        key.size(),
-        digest.data());
+    const Sha256Digest digest = sha256_digest(key);
     constexpr char hex[] = "0123456789abcdef";
     std::string result;
     result.reserve(digest.size() * 2);

@@ -86,7 +86,8 @@ std::string display_path(
         return ".";
     }
     if (path_is_under(root_canonical, path)) {
-        return utf8_path(std::filesystem::relative(path, root_canonical));
+        return generic_utf8_path(
+            std::filesystem::relative(path, root_canonical));
     }
     return utf8_path(path);
 }
@@ -337,7 +338,7 @@ std::filesystem::path resolve_include_path(
     if (relative.empty()) {
         throw_expansion_error(state, "empty include path");
     }
-    if (relative.is_absolute()) {
+    if (relative.has_root_path()) {
         throw_expansion_error(state, "include path must be relative");
     }
 

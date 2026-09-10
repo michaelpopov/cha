@@ -23,6 +23,13 @@ TEST(Utf8Path, ConstructsNativePathsFromUtf8Text) {
         "workspace/na\xc3\xafve/\xe6\x9d\xb1\xe4\xba\xac.sqlite3");
 }
 
+TEST(Utf8Path, ProducesPortableUtf8Separators) {
+    EXPECT_EQ(
+        generic_utf8_path(path_from_utf8(
+            "workspace/na\xc3\xafve/\xe6\x9d\xb1\xe4\xba\xac.sqlite3")),
+        "workspace/na\xc3\xafve/\xe6\x9d\xb1\xe4\xba\xac.sqlite3");
+}
+
 #ifdef _WIN32
 TEST(Utf8Path, ConvertsWindowsCommandLineText) {
     EXPECT_EQ(

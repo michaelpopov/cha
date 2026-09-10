@@ -259,7 +259,7 @@ TEST_F(WorkspaceConfigStoreTest, RoundTripsAcceptedFilesByteForByte) {
     write_bytes(source() / "empty.md", "");
     write_bytes(source() / "shared" / "nested.toml", "value = 1\n");
     write_bytes(
-        source() / "shared" / "notes-юникод.md",
+        source() / path_from_utf8("shared/notes-юникод.md"),
         "Привет\n");
     write_bytes(source() / ".env", "CHA_UNUSED=1\n");
     write_bytes(source() / "ignored.txt", "not stored\n");
@@ -382,6 +382,14 @@ TEST_F(WorkspaceConfigStoreTest, DoesNotRequireLegacyRootSettingsFiles) {
 }
 
 TEST_F(WorkspaceConfigStoreTest, RejectsUnsafeAndUnsupportedStoredNames) {
+#ifdef _WIN32
+    EXPECT_THROW(
+        validate_stored_config_name("C:host.toml"),
+        std::runtime_error);
+    EXPECT_THROW(
+        validate_stored_config_name("bad\\name.toml"),
+        std::runtime_error);
+#else
     write_bytes(source() / "C:host.toml", "host = 1\n");
     EXPECT_THROW((void)import_from_source(), std::runtime_error);
 
@@ -391,6 +399,7 @@ TEST_F(WorkspaceConfigStoreTest, RejectsUnsafeAndUnsupportedStoredNames) {
     EXPECT_EQ(
         inspect_workspace_session_database(database()),
         WorkspaceDatabaseState::missing);
+#endif
 }
 
 TEST_F(WorkspaceConfigStoreTest, RejectsMatchingSymlinksAndSkipsSymlinkedDirectories) {

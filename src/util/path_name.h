@@ -14,6 +14,10 @@ std::filesystem::path executable_directory();
 // persisted text. std::filesystem keeps native UTF-16 paths on Windows.
 std::string utf8_path(const std::filesystem::path& path);
 
+// Returns a UTF-8 path with '/' separators for persisted relative names and
+// platform-independent diagnostics.
+std::string generic_utf8_path(const std::filesystem::path& path);
+
 // Constructs a native filesystem path from UTF-8 application text.
 std::filesystem::path path_from_utf8(std::string_view value);
 

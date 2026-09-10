@@ -392,9 +392,9 @@ server from starting; the reported error names that forum and its source.
 
 ## Build and test
 
-Native configuration currently requires OpenSSL development headers and
-libraries on every platform. The Ninja preset fetches the other vendored
-dependencies when needed.
+Native configuration uses Windows CNG on Windows and requires OpenSSL
+development headers and libraries on other platforms. The Ninja preset fetches
+the other vendored dependencies when needed.
 
 ```sh
 cmake --preset ninja

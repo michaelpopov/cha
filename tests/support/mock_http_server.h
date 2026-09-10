@@ -1,19 +1,27 @@
 #pragma once
 
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
 #include <arpa/inet.h>
+#include <netinet/in.h>
+#include <poll.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#endif
+
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <condition_variable>
 #include <exception>
+#include <limits>
 #include <mutex>
-#include <netinet/in.h>
-#include <poll.h>
 #include <stdexcept>
 #include <string>
 #include <string_view>
-#include <sys/socket.h>
 #include <thread>
-#include <unistd.h>
 #include <utility>
 #include <vector>
 
@@ -24,6 +32,22 @@ namespace cha {
 // an ephemeral port reported by port(), serves one connection per scripted response on its own
 // thread, and rethrows any failure from that thread in join().
 class MockHttpServer {
+#ifdef _WIN32
+    using Socket = SOCKET;
+    using PollDescriptor = WSAPOLLFD;
+    static constexpr Socket invalid_socket = INVALID_SOCKET;
+    static constexpr int socket_error = SOCKET_ERROR;
+    static constexpr short read_event = POLLRDNORM;
+    static constexpr int shutdown_both = SD_BOTH;
+#else
+    using Socket = int;
+    using PollDescriptor = pollfd;
+    static constexpr Socket invalid_socket = -1;
+    static constexpr int socket_error = -1;
+    static constexpr short read_event = POLLIN;
+    static constexpr int shutdown_both = SHUT_RDWR;
+#endif
+
 public:
     explicit MockHttpServer(
         std::vector<std::string> responses,
@@ -32,8 +56,16 @@ public:
       : responses_(std::move(responses)),
         wait_for_client_close_(wait_for_client_close),
         hold_response_open_(hold_response_open) {
+#ifdef _WIN32
+        WSADATA sockets{};
+        if (WSAStartup(MAKEWORD(2, 2), &sockets) != 0) {
+            throw std::runtime_error("Failed to initialize mock server sockets");
+        }
+        sockets_initialized_ = true;
+#endif
         listener_ = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-        if (listener_ == -1) {
+        if (listener_ == invalid_socket) {
+            cleanup_sockets();
             throw std::runtime_error("Failed to create mock server socket");
         }
 
@@ -48,20 +80,28 @@ public:
         if (::bind(
                 listener_,
                 reinterpret_cast<const sockaddr*>(&address),
-                sizeof(address))
-                == -1
-            || ::listen(listener_, 4) == -1) {
-            ::close(listener_);
+                static_cast<int>(sizeof(address)))
+                == socket_error
+            || ::listen(listener_, 4) == socket_error) {
+            close_socket(listener_);
+            listener_ = invalid_socket;
+            cleanup_sockets();
             throw std::runtime_error("Failed to bind mock server socket");
         }
 
+#ifdef _WIN32
+        int address_length = sizeof(address);
+#else
         socklen_t address_length = sizeof(address);
+#endif
         if (::getsockname(
                 listener_,
                 reinterpret_cast<sockaddr*>(&address),
                 &address_length)
-            == -1) {
-            ::close(listener_);
+            == socket_error) {
+            close_socket(listener_);
+            listener_ = invalid_socket;
+            cleanup_sockets();
             throw std::runtime_error("Failed to read mock server port");
         }
 #if defined(__APPLE__) && defined(__MACH__)
@@ -75,9 +115,10 @@ public:
         if (thread_.joinable()) {
             thread_.join();
         }
-        if (listener_ != -1) {
-            ::close(listener_);
+        if (listener_ != invalid_socket) {
+            close_socket(listener_);
         }
+        cleanup_sockets();
     }
 
     MockHttpServer(const MockHttpServer&) = delete;
@@ -91,7 +132,7 @@ public:
         thread_ = std::thread([this] {
             try {
                 for (const std::string& response : responses_) {
-                    const int client = accept_connection();
+                    const Socket client = accept_connection();
                     {
                         std::lock_guard lock(requests_mutex_);
                         requests_.push_back(read_request(client));
@@ -104,8 +145,8 @@ public:
                     if (wait_for_client_close_) {
                         wait_for_client_close(client);
                     }
-                    ::shutdown(client, SHUT_RDWR);
-                    ::close(client);
+                    ::shutdown(client, shutdown_both);
+                    close_socket(client);
                 }
             } catch (...) {
                 error_ = std::current_exception();
@@ -137,28 +178,56 @@ public:
     }
 
 private:
-    [[nodiscard]] int accept_connection() const {
-        pollfd descriptor{listener_, POLLIN, 0};
-        if (::poll(&descriptor, 1, 5000) != 1) {
+    static void close_socket(Socket socket) {
+#ifdef _WIN32
+        ::closesocket(socket);
+#else
+        ::close(socket);
+#endif
+    }
+
+    void cleanup_sockets() {
+#ifdef _WIN32
+        if (sockets_initialized_) {
+            WSACleanup();
+            sockets_initialized_ = false;
+        }
+#endif
+    }
+
+    static int wait_for_socket(PollDescriptor& descriptor) {
+#ifdef _WIN32
+        return ::WSAPoll(&descriptor, 1, 5000);
+#else
+        return ::poll(&descriptor, 1, 5000);
+#endif
+    }
+
+    [[nodiscard]] Socket accept_connection() const {
+        PollDescriptor descriptor{listener_, read_event, 0};
+        if (wait_for_socket(descriptor) != 1) {
             throw std::runtime_error("Timed out waiting for mock client");
         }
 
-        const int client = ::accept(listener_, nullptr, nullptr);
-        if (client == -1) {
+        const Socket client = ::accept(listener_, nullptr, nullptr);
+        if (client == invalid_socket) {
             throw std::runtime_error("Failed to accept mock client");
         }
         return client;
     }
 
-    [[nodiscard]] static std::string read_request(int client) {
+    [[nodiscard]] static std::string read_request(Socket client) {
         std::string request;
         std::array<char, 4096> buffer{};
         std::size_t expected_size = std::string::npos;
 
         while (expected_size == std::string::npos
             || request.size() < expected_size) {
-            const ssize_t bytes =
-                ::recv(client, buffer.data(), buffer.size(), 0);
+            const auto bytes = ::recv(
+                client,
+                buffer.data(),
+                static_cast<int>(buffer.size()),
+                0);
             if (bytes <= 0) {
                 throw std::runtime_error(
                     "Failed to read mock HTTP request");
@@ -194,10 +263,12 @@ private:
         return request;
     }
 
-    static void send_all(int client, std::string_view response) {
+    static void send_all(Socket client, std::string_view response) {
         while (!response.empty()) {
-            const ssize_t bytes =
-                ::send(client, response.data(), response.size(), 0);
+            const int chunk = static_cast<int>(std::min<std::size_t>(
+                response.size(),
+                static_cast<std::size_t>(std::numeric_limits<int>::max())));
+            const auto bytes = ::send(client, response.data(), chunk, 0);
             if (bytes <= 0) {
                 throw std::runtime_error(
                     "Failed to send mock HTTP response");
@@ -206,13 +277,13 @@ private:
         }
     }
 
-    static void wait_for_client_close(int client) {
-        pollfd descriptor{
+    static void wait_for_client_close(Socket client) {
+        PollDescriptor descriptor{
             client,
-            POLLIN | POLLHUP | POLLERR,
+            static_cast<short>(read_event | POLLHUP | POLLERR),
             0,
         };
-        if (::poll(&descriptor, 1, 5000) != 1) {
+        if (wait_for_socket(descriptor) != 1) {
             throw std::runtime_error(
                 "Timed out waiting for mock client to close");
         }
@@ -224,7 +295,10 @@ private:
         }
     }
 
-    int listener_{-1};
+    Socket listener_{invalid_socket};
+#ifdef _WIN32
+    bool sockets_initialized_{};
+#endif
     int port_{};
     std::vector<std::string> responses_;
     bool wait_for_client_close_{};

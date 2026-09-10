@@ -247,7 +247,7 @@ TEST_F(OpenAiAuthRoutesTest, LoginPollAndDisconnectFollowTheSharedOwner) {
     expect_snapshot(login, "waiting");
     const Json waiting = body(login);
     EXPECT_EQ(waiting.at("user_code"), "TEST-ONLY");
-    EXPECT_EQ(waiting.at("verification_url"), kVerifyUrl);
+    EXPECT_EQ(waiting.at("verification_url").get<std::string>(), kVerifyUrl);
     EXPECT_EQ(waiting.at("attempt_expires_at"), 1'700'000'000 + 15 * 60);
     EXPECT_EQ(waiting.at("next_poll_delay_ms"), 1000);
 

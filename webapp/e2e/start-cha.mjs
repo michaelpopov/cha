@@ -69,8 +69,10 @@ const packagedApplication = process.env.CHA_E2E_APPLICATION_ROOT
   ? resolve(process.env.CHA_E2E_APPLICATION_ROOT)
   : null;
 const application = packagedApplication ?? resolve(temporary, 'application');
+const executableName = process.platform === 'win32' ? 'chaweb.exe' : 'chaweb';
+const launcherName = process.platform === 'win32' ? 'start-cha.bat' : 'start-cha.sh';
 const executable = packagedApplication
-  ? resolve(application, 'chaweb')
+  ? resolve(application, executableName)
   : resolve(repository, 'build/ninja/chaweb');
 const workspace = publishedWorkspace ?? resolve(temporary, 'workspace');
 const workspaceB = resolve(temporary, 'workspace-b');
@@ -185,10 +187,10 @@ data = ${JSON.stringify(databaseB)}
 // from this server with no development server anywhere in the path.
 if (packagedApplication) {
   for (const required of [
-    'chaweb',
+    executableName,
     'cha-config.example/app.toml',
     'cha-config.example/personal.toml',
-    'start-cha.sh',
+    launcherName,
     'web/index.html',
   ]) {
     try {

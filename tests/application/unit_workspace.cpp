@@ -55,7 +55,9 @@ TEST(Workspace, EagerlyLoadsOwnedResolvedData) {
         fixture.root() / "forums" / "lobby" / "members"
             / "character_defaults.toml")
         << "[prompt]\ngreeting = \"Welcome\"\n";
-    std::ofstream(fixture.root() / "characters" / "guide" / "CHARACTER.md")
+    std::ofstream(
+        fixture.root() / "characters" / "guide" / "CHARACTER.md",
+        std::ios::binary)
         << "$${greeting}, I am $${character.display_name} in "
            "$${forum.display_name}.\n"
            "<character_profile>\nIntrinsic Guide.\n</character_profile>\n";
@@ -296,7 +298,8 @@ TEST(Workspace, ResolvesForumMemberOverridesAndDefaultPersonaPrompt) {
         << "[prompt]\nvoice = \"member\"\n";
     std::ofstream(
         fixture.root() / "forums" / "lobby" / "members" / "guide"
-            / "CHARACTER.md")
+            / "CHARACTER.md",
+        std::ios::binary)
         << "Member prompt: $${voice}\n";
 
     const Workspace workspace = Workspace::load(fixture.root());
@@ -365,7 +368,8 @@ TEST(Workspace, NewCharacterPreservesAnExistingSharedVoice) {
     test::TestWorkspace fixture;
     const std::filesystem::path shared_voice =
         fixture.root() / "characters" / "character-voice.md";
-    std::ofstream(shared_voice) << "Customized shared voice.\n";
+    std::ofstream(shared_voice, std::ios::binary)
+        << "Customized shared voice.\n";
 
     const Workspace workspace = Workspace::load(fixture.root());
     workspace.create_character("newcomer", "Newcomer", "A new character.");

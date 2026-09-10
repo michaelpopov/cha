@@ -8,9 +8,9 @@ include(CTest)
 
 find_package(Threads REQUIRED)
 find_package(CURL QUIET)
-# Prompt-cache keys use SHA-256, so OpenSSL is required independently of the
-# TLS backend libcurl happens to use on this platform.
-find_package(OpenSSL REQUIRED)
+if(NOT WIN32)
+    find_package(OpenSSL REQUIRED)
+endif()
 
 # Keep sanitizer instrumentation opt-in so ordinary release-like builds stay
 # portable, while CI and local hardening runs use named, reproducible presets.
@@ -99,6 +99,35 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(cpp_httplib)
 
+if(WIN32)
+    # WebView2 is the Windows equivalent of the WKWebView used by CHA.app.
+    # Only the small SDK and static loader are linked here; the independently
+    # serviced Evergreen WebView2 Runtime remains a machine prerequisite.
+    FetchContent_Declare(
+        webview2_sdk
+        URL https://api.nuget.org/v3-flatcontainer/microsoft.web.webview2/1.0.4191.47/microsoft.web.webview2.1.0.4191.47.nupkg
+        URL_HASH SHA256=f492bbf547d0da329553b6727435b677579b1e9f91cc9e4a1ad029366d5f23d0
+        SOURCE_SUBDIR cmake-not-present)
+    FetchContent_MakeAvailable(webview2_sdk)
+
+    if(CMAKE_SIZEOF_VOID_P EQUAL 4)
+        set(CHA_WEBVIEW2_ARCH x86)
+    elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(ARM64|arm64|aarch64)$")
+        set(CHA_WEBVIEW2_ARCH arm64)
+    else()
+        set(CHA_WEBVIEW2_ARCH x64)
+    endif()
+
+    add_library(cha_webview2_loader STATIC IMPORTED)
+    set_target_properties(
+        cha_webview2_loader
+        PROPERTIES
+            IMPORTED_LOCATION
+                "${webview2_sdk_SOURCE_DIR}/build/native/${CHA_WEBVIEW2_ARCH}/WebView2LoaderStatic.lib"
+            INTERFACE_INCLUDE_DIRECTORIES
+                "${webview2_sdk_SOURCE_DIR}/build/native/include")
+endif()
+
 set(SPDLOG_BUILD_EXAMPLE OFF CACHE BOOL "" FORCE)
 set(SPDLOG_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(SPDLOG_BUILD_BENCH OFF CACHE BOOL "" FORCE)
@@ -170,6 +199,7 @@ add_library(cha_core STATIC
     ${CMAKE_CURRENT_BINARY_DIR}/generated/character_voice.cpp
     ${CMAKE_CURRENT_BINARY_DIR}/generated/new_character_template.cpp
     src/util/environment.cpp
+    src/util/crypto.cpp
     src/util/private_filesystem.cpp
     src/util/logging.cpp
     src/util/path_name.cpp
@@ -234,7 +264,7 @@ if(WIN32)
         PUBLIC
             NOMINMAX
             WIN32_LEAN_AND_MEAN)
-    target_link_libraries(cha_core PUBLIC advapi32)
+    target_link_libraries(cha_core PUBLIC advapi32 PRIVATE bcrypt)
 endif()
 target_link_libraries(
     cha_core
@@ -247,8 +277,10 @@ target_link_libraries(
         cha_sqlite3
     PRIVATE
         spdlog::spdlog
-        OpenSSL::Crypto
 )
+if(NOT WIN32)
+    target_link_libraries(cha_core PRIVATE OpenSSL::Crypto)
+endif()
 cha_enable_warnings(cha_core)
 
 add_library(cha_web STATIC
@@ -376,6 +408,7 @@ if(BUILD_TESTING)
         tests/web/unit_application_runtime.cpp
         tests/web/unit_application_config.cpp
         tests/web/unit_asset_handler.cpp
+        tests/web/unit_r2_database_transfer.cpp
         tests/web/unit_protocol.cpp
         tests/web/unit_session_markdown.cpp
         tests/web/unit_session_mirror.cpp
@@ -393,10 +426,6 @@ if(BUILD_TESTING)
         tests/web/unit_text_multicast.cpp
         tests/web/unit_live_session.cpp
         tests/support/test_workspace.cpp)
-    if(NOT WIN32)
-        target_sources(
-            cha_web_tests PRIVATE tests/web/unit_r2_database_transfer.cpp)
-    endif()
     target_link_libraries(
         cha_web_tests PRIVATE cha_web cha_sqlite3 GTest::gtest_main)
     target_include_directories(cha_web_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
@@ -501,6 +530,46 @@ if(APPLE)
             BUILD_WITH_INSTALL_RPATH TRUE
             MACOSX_RPATH TRUE)
     cha_enable_warnings(cha_macos_runtime)
+endif()
+if(WIN32)
+    set(CHA_PACKAGE_VERSION "development" CACHE STRING
+        "Version displayed by the Windows application")
+    set(CHA_WINDOWS_ICON "${CMAKE_CURRENT_BINARY_DIR}/generated/CHA.ico")
+    set(CHA_WINDOWS_MANIFEST
+        "${CMAKE_CURRENT_SOURCE_DIR}/packaging/windows/CHA.manifest")
+    configure_file(
+        packaging/windows/CHA.rc.in
+        ${CMAKE_CURRENT_BINARY_DIR}/generated/CHA.rc
+        @ONLY)
+    add_custom_command(
+        OUTPUT ${CHA_WINDOWS_ICON}
+        COMMAND
+            powershell -NoProfile -ExecutionPolicy Bypass
+            -File ${CMAKE_CURRENT_SOURCE_DIR}/packaging/windows/make-icon.ps1
+            -Output ${CHA_WINDOWS_ICON}
+        DEPENDS packaging/windows/make-icon.ps1
+        VERBATIM)
+    add_executable(
+        cha_windows_app WIN32
+        packaging/windows/main.cpp
+        packaging/macos/runtime_bridge.cpp
+        ${CMAKE_CURRENT_BINARY_DIR}/generated/CHA.rc
+        ${CHA_WINDOWS_ICON})
+    target_include_directories(
+        cha_windows_app PRIVATE packaging/macos)
+    target_link_libraries(
+        cha_windows_app
+        PRIVATE
+            cha_web
+            cha_webview2_loader
+            comdlg32
+            ole32
+            shell32
+            user32)
+    target_link_options(
+        cha_windows_app PRIVATE "/MANIFESTINPUT:${CHA_WINDOWS_MANIFEST}")
+    set_target_properties(cha_windows_app PROPERTIES OUTPUT_NAME CHA)
+    cha_enable_warnings(cha_windows_app)
 endif()
 add_custom_command(
     TARGET chaweb_app

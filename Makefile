@@ -1,4 +1,4 @@
-.PHONY: build build-web import-dev package-linux package-macos web-check web-stage web-e2e test itest run run-web-dev clean-san
+.PHONY: build build-web import-dev package-linux package-macos package-windows web-check web-stage web-e2e test itest run run-web-dev clean-san
 
 build:
 	cmake --preset ninja
@@ -15,6 +15,10 @@ package-linux:
 package-macos:
 	@test -n "$(VERSION)" || (echo "usage: make package-macos VERSION=<version>" >&2; exit 2)
 	./packaging/macos/package.sh "$(VERSION)"
+
+package-windows:
+	@test -n "$(VERSION)" || (echo "usage: make package-windows VERSION=<version>" >&2; exit 2)
+	powershell -NoProfile -ExecutionPolicy Bypass -File packaging/windows/package.ps1 -Version "$(VERSION)"
 
 web-check:
 	cd webapp && npm run check

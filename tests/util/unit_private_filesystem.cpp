@@ -1,4 +1,5 @@
 #include "util/private_filesystem.h"
+#include "util/path_name.h"
 
 #include <gtest/gtest.h>
 #include <sqlite3.h>
@@ -194,10 +195,11 @@ TEST_F(PrivateFilesystemTest, RequireHelpersRejectSymlinksAndWrongTypes) {
 
 TEST_F(PrivateFilesystemTest, NewSqliteFilesUseOwnerOnlyPermissions) {
     const std::filesystem::path path = directory_ / "private.sqlite3";
+    const std::string sqlite_path = utf8_path(path);
     sqlite3* handle = nullptr;
     ASSERT_EQ(
         sqlite3_open_v2(
-            path.c_str(),
+            sqlite_path.c_str(),
             &handle,
             SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE,
             nullptr),

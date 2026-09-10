@@ -85,7 +85,7 @@ TEST(SessionMarkdown, ExportsKnownTimestampsInLocalTime) {
 
     const std::string markdown = session_markdown("Plan", entries);
     EXPECT_TRUE(std::regex_search(markdown, std::regex(
-        R"(\*Started [A-Z][a-z]+ [0-9]{2}, [0-9]{4} at [0-9]{2}:[0-9]{2} [A-Z]+\*\n\n`Reader` · When was this\?\n)")));
+        R"(\*Started [A-Z][a-z]+ [0-9]{2}, [0-9]{4} at [0-9]{2}:[0-9]{2} [^*\r\n]+\*\n\n`Reader` · When was this\?\n)")));
 }
 
 TEST(SessionMarkdown, CompactsParagraphsWithinOneMessage) {
