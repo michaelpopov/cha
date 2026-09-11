@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   getTextToSpeechConfiguration,
+  TextToSpeechError,
   TextToSpeechSession,
 } from './textToSpeech';
 
@@ -138,6 +139,56 @@ describe('text to speech', () => {
       expect.objectContaining({
         body: JSON.stringify({ text: 'Read this', model_id: 'multilingual' }),
       }),
+    );
+  });
+
+  it('exposes the ElevenLabs error message and HTTP status', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      detail: {
+        message: 'The selected voice cannot process this request.',
+      },
+    }), {
+      status: 422,
+      headers: { 'Content-Type': 'application/json' },
+    }));
+    const session = new TextToSpeechSession(
+      {
+        baseUrl: 'https://example.com/speech',
+        voiceId: 'fallback',
+        outputFormat: 'mp3',
+        apiKey: 'secret',
+        model: 'multilingual',
+      },
+      { elevenlabs_voice_id: 'assigned-voice', settings: {} },
+      'Read this',
+      vi.fn(),
+    );
+
+    await expect(session.play()).rejects.toEqual(new TextToSpeechError(
+      'ElevenLabs: The selected voice cannot process this request. (HTTP 422)',
+    ));
+  });
+
+  it('uses a useful fallback when ElevenLabs does not return JSON', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('Bad gateway', {
+      status: 502,
+      headers: { 'Content-Type': 'text/plain' },
+    }));
+    const session = new TextToSpeechSession(
+      {
+        baseUrl: 'https://example.com/speech',
+        voiceId: 'fallback',
+        outputFormat: 'mp3',
+        apiKey: 'secret',
+        model: 'multilingual',
+      },
+      undefined,
+      'Read this',
+      vi.fn(),
+    );
+
+    await expect(session.play()).rejects.toThrow(
+      'ElevenLabs request failed (HTTP 502).',
     );
   });
 });

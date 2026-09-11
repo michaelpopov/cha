@@ -35,6 +35,13 @@ export function getTextToSpeechConfiguration(): TextToSpeechConfiguration | null
     : null;
 }
 
+export class TextToSpeechError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'TextToSpeechError';
+  }
+}
+
 export class TextToSpeechSession {
   private readonly request = new AbortController();
   private audio: HTMLAudioElement | null = null;
@@ -73,7 +80,9 @@ export class TextToSpeechSession {
       body: JSON.stringify(body),
       signal: this.request.signal,
     });
-    if (!response.ok) throw new Error('The speech request failed.');
+    if (!response.ok) {
+      throw new TextToSpeechError(await elevenLabsErrorMessage(response));
+    }
     if (this.stopped) return;
 
     this.objectUrl = URL.createObjectURL(await response.blob());
@@ -104,5 +113,27 @@ export class TextToSpeechSession {
     if (!this.objectUrl) return;
     URL.revokeObjectURL(this.objectUrl);
     this.objectUrl = null;
+  }
+}
+
+async function elevenLabsErrorMessage(response: Response): Promise<string> {
+  const fallback = `ElevenLabs request failed (HTTP ${response.status}).`;
+  try {
+    const parsed: unknown = await response.json();
+    if (!parsed || typeof parsed !== 'object') return fallback;
+    const root = parsed as Record<string, unknown>;
+    const detailValue = root.detail;
+    if (typeof detailValue === 'string') {
+      return detailValue.trim()
+        ? `ElevenLabs: ${detailValue.trim()} (HTTP ${response.status})`
+        : fallback;
+    }
+    const detail = detailValue && typeof detailValue === 'object'
+      ? detailValue as Record<string, unknown>
+      : root;
+    const message = typeof detail.message === 'string' ? detail.message.trim() : '';
+    return message ? `ElevenLabs: ${message} (HTTP ${response.status})` : fallback;
+  } catch {
+    return fallback;
   }
 }

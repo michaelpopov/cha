@@ -21,6 +21,7 @@ import {
 import type { AppAction, AppState } from '../state/view';
 import {
   getTextToSpeechConfiguration,
+  TextToSpeechError,
   TextToSpeechSession,
 } from '../textToSpeech';
 import {
@@ -395,7 +396,9 @@ export function ChatScreen({
       textToSpeechSession.current = null;
       setSpokenEntry(null);
       if (!(failure instanceof DOMException && failure.name === 'AbortError')) {
-        setActionError('This response could not be read aloud. Try again.');
+        setActionError(failure instanceof TextToSpeechError
+          ? failure.message
+          : 'This response could not be read aloud. Try again.');
       }
     });
   }

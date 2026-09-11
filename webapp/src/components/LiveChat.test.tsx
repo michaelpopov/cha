@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ChaError, type ChaClient, type SessionSnapshot } from '../api/client';
 import type { SessionEventHandlers } from '../api/events';
 import { bootstrapFixture, fixtureClient, plainVoice, snapshotFixture } from '../test/fixtures';
-import { TextToSpeechSession } from '../textToSpeech';
+import { TextToSpeechError, TextToSpeechSession } from '../textToSpeech';
 import { VoiceInputSession } from '../voiceInput';
 import { App } from './App';
 import { formatEntryTime } from './ChatScreen';
@@ -203,6 +203,41 @@ describe('live chat', () => {
       name: "Stop reading Assistant's response",
     }));
     expect(stop).toHaveBeenCalledOnce();
+  });
+
+  it('shows an error message returned by ElevenLabs', async () => {
+    vi.spyOn(TextToSpeechSession.prototype, 'play').mockRejectedValue(
+      new TextToSpeechError('ElevenLabs: This voice is unavailable. (HTTP 422)'),
+    );
+    window.chaTextToSpeech = {
+      baseUrl: 'https://api.elevenlabs.io/v1/text-to-speech',
+      voiceId: 'voice',
+      outputFormat: 'mp3_44100_128',
+      apiKey: 'secret',
+      model: 'eleven_multilingual_v2',
+    };
+    const events = drivableEvents();
+    render(<App client={fixtureClient()} connectSessionEvents={events.connect} />);
+    await attachInitial(events, {
+      ...snapshotFixture,
+      transcript: [{
+        id: 2,
+        kind: 'character',
+        participant_id: 'assistant',
+        display_name: 'Assistant',
+        addressed_to: '',
+        addressed_to_name: '',
+        text: 'Answer',
+        status: 'complete',
+        created_at: 1_700_000_001,
+      }],
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: "Read Assistant's response aloud" }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'ElevenLabs: This voice is unavailable. (HTTP 422)',
+    );
   });
 
   it('deletes a response with the prompt that generated it', async () => {
