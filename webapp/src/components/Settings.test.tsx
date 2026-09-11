@@ -1,10 +1,10 @@
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { ProviderDetail, StyleDetail, VaultDetail } from '../api/client';
 import { initialAppState } from '../state/view';
-import { fixtureClient } from '../test/fixtures';
+import { fixtureClient, voiceDetailFixture } from '../test/fixtures';
 import {
   ApiKeyScreen,
   ApiKeysScreen,
@@ -12,12 +12,21 @@ import {
   NewProviderScreen,
   NewStyleScreen,
   NewVaultScreen,
+  NewVoiceScreen,
   ProviderScreen,
   SettingsNavigation,
   StyleScreen,
   VaultScreen,
+  VoiceScreen,
+  VoicesScreen,
 } from './Settings';
 import { TopBar } from './TopBar';
+
+afterEach(() => {
+  delete window.chaTextToSpeech;
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 
 const provider: ProviderDetail = {
   id: 'router',
@@ -77,7 +86,7 @@ const vaults: VaultDetail[] = [
 ];
 
 describe('Settings screens', () => {
-  it('shows Vaults above Providers, Styles, and API Keys', async () => {
+  it('shows Vaults above Providers, Styles, Voices, and API Keys', async () => {
     const dispatch = vi.fn();
     render(<SettingsNavigation dispatch={dispatch} />);
 
@@ -85,6 +94,7 @@ describe('Settings screens', () => {
     expect(destinations[0]).toHaveAccessibleName(/Vaults/);
     expect(screen.getByRole('button', { name: /Providers/ })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Styles/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Voices/ })).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: /API Keys/ }));
     expect(dispatch).toHaveBeenCalledWith({ type: 'show-settings-api-keys' });
   });
@@ -548,6 +558,7 @@ describe('Settings screens', () => {
         onPersonaDefinitionUpdated={vi.fn()}
         onProviderUpdated={onProviderUpdated}
         onStyleUpdated={vi.fn()}
+        onVoiceUpdated={vi.fn()}
         state={state}
         title={provider.display_name}
       />,
@@ -639,6 +650,7 @@ describe('Settings screens', () => {
         onPersonaDefinitionUpdated={vi.fn()}
         onProviderUpdated={vi.fn()}
         onStyleUpdated={onStyleUpdated}
+        onVoiceUpdated={vi.fn()}
         state={state}
         title={style.display_name}
       />,
@@ -660,6 +672,233 @@ describe('Settings screens', () => {
       writable: true,
     });
     expect(onStyleUpdated).toHaveBeenCalledOnce();
+  });
+
+  it('lists each voice by its name and description only', async () => {
+    render(
+      <VoicesScreen
+        client={fixtureClient({ listVoices: async () => [voiceDetailFixture] })}
+        dispatch={vi.fn()}
+        sessionReport={null}
+        state={initialAppState}
+      />,
+    );
+
+    const brian = await screen.findByRole('button', { name: /Brian/ });
+    expect(brian).toHaveTextContent('Deep, resonant, comforting');
+    expect(brian).not.toHaveTextContent(voiceDetailFixture.elevenlabs_voice_id);
+    expect(brian).not.toHaveTextContent('settings');
+  });
+
+  it('registers a voice and opens its editor', async () => {
+    const createVoice = vi.fn(async () => voiceDetailFixture);
+    const dispatch = vi.fn();
+    render(
+      <NewVoiceScreen
+        client={fixtureClient({ createVoice })}
+        dispatch={dispatch}
+        sessionReport={null}
+        state={initialAppState}
+      />,
+    );
+
+    await userEvent.type(screen.getByLabelText('Name'), 'Brian');
+    await userEvent.type(screen.getByLabelText('Description'), 'Deep, resonant, comforting');
+    await userEvent.type(
+      screen.getByLabelText('ElevenLabs voice ID'),
+      voiceDetailFixture.elevenlabs_voice_id,
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Register voice' }));
+
+    expect(createVoice).toHaveBeenCalledWith({
+      display_name: 'Brian',
+      description: 'Deep, resonant, comforting',
+      elevenlabs_voice_id: voiceDetailFixture.elevenlabs_voice_id,
+    });
+    expect(dispatch).toHaveBeenCalledWith({
+      type: 'inspect-voice', voiceId: 'brian', voiceName: 'Brian',
+    });
+  });
+
+  it('edits a voice in the flat form and keeps preview text separate', async () => {
+    const updateVoice = vi.fn(async (_id, update) => ({
+      ...voiceDetailFixture,
+      ...update,
+    }));
+    render(
+      <VoiceScreen
+        client={fixtureClient({
+          listVoices: async () => [voiceDetailFixture],
+          updateVoice,
+        })}
+        dispatch={vi.fn()}
+        sessionReport={null}
+        state={{ ...initialAppState, inspectedVoiceId: 'brian' }}
+      />,
+    );
+
+    const description = await screen.findByLabelText('Description');
+    expect(screen.queryByLabelText('Name')).not.toBeInTheDocument();
+    expect(screen.queryByText('Voice details')).not.toBeInTheDocument();
+    expect(screen.queryByText('Voice source')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Blank settings keep/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Play preview' }))
+      .not.toBeInTheDocument();
+
+    await userEvent.clear(description);
+    await userEvent.type(description, 'Warm, captivating storyteller');
+    const previewText = screen.getByLabelText('Text to speak');
+    await userEvent.clear(previewText);
+    await userEvent.type(previewText, 'A custom preview sentence.');
+    await userEvent.click(screen.getByRole('button', { name: 'Save voice' }));
+
+    expect(updateVoice).toHaveBeenCalledWith('brian', {
+      display_name: 'Brian',
+      description: 'Warm, captivating storyteller',
+      elevenlabs_voice_id: voiceDetailFixture.elevenlabs_voice_id,
+      stability: 0.45,
+      similarity_boost: null,
+      style: 0.2,
+      use_speaker_boost: true,
+      speed: 0.95,
+    });
+  });
+
+  it('allows saving settings for a legacy voice without a description', async () => {
+    const legacyVoice = { ...voiceDetailFixture, description: '' };
+    const updateVoice = vi.fn(async (_id, update) => ({
+      ...legacyVoice,
+      ...update,
+    }));
+    render(
+      <VoiceScreen
+        client={fixtureClient({
+          listVoices: async () => [legacyVoice],
+          updateVoice,
+        })}
+        dispatch={vi.fn()}
+        sessionReport={null}
+        state={{ ...initialAppState, inspectedVoiceId: 'brian' }}
+      />,
+    );
+
+    const stability = await screen.findByRole('spinbutton', { name: /Stability/ });
+    await userEvent.clear(stability);
+    await userEvent.type(stability, '0.5');
+    const save = screen.getByRole('button', { name: 'Save voice' });
+    expect(save).toBeEnabled();
+    await userEvent.click(save);
+
+    expect(updateVoice).toHaveBeenCalledWith('brian', expect.objectContaining({
+      description: '',
+      stability: 0.5,
+    }));
+  });
+
+  it('previews the unsaved voice settings and editable text', async () => {
+    window.chaTextToSpeech = {
+      baseUrl: 'https://example.com/speech',
+      voiceId: 'fallback',
+      outputFormat: 'mp3',
+      apiKey: 'secret',
+      model: 'multilingual',
+    };
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(new TextEncoder().encode('audio')),
+    );
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:audio');
+    vi.stubGlobal('Audio', vi.fn(function Audio() {
+      return {
+        addEventListener: vi.fn(),
+        pause: vi.fn(),
+        play: vi.fn().mockResolvedValue(undefined),
+      };
+    }));
+    render(
+      <VoiceScreen
+        client={fixtureClient({ listVoices: async () => [voiceDetailFixture] })}
+        dispatch={vi.fn()}
+        sessionReport={null}
+        state={{ ...initialAppState, inspectedVoiceId: 'brian' }}
+      />,
+    );
+
+    const voiceId = await screen.findByLabelText('ElevenLabs voice ID');
+    await userEvent.clear(voiceId);
+    expect(screen.getByRole('button', { name: 'Play preview' })).toBeDisabled();
+    await userEvent.type(voiceId, 'unsaved-id');
+    const previewText = screen.getByLabelText('Text to speak');
+    await userEvent.clear(previewText);
+    await userEvent.type(previewText, 'Read this draft.');
+    await userEvent.click(screen.getByRole('button', { name: 'Play preview' }));
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://example.com/speech/unsaved-id?output_format=mp3',
+      expect.objectContaining({
+        body: JSON.stringify({
+          text: 'Read this draft.',
+          model_id: 'multilingual',
+          voice_settings: {
+            stability: 0.45,
+            style: 0.2,
+            use_speaker_boost: true,
+            speed: 0.95,
+          },
+        }),
+      }),
+    );
+  });
+
+  it('renames a voice from the shared editable title', async () => {
+    const updateVoice = vi.fn(async (_id, update) => ({
+      ...voiceDetailFixture,
+      ...update,
+    }));
+    const dispatch = vi.fn();
+    const onVoiceUpdated = vi.fn();
+    render(
+      <TopBar
+        client={fixtureClient({
+          listVoices: async () => [voiceDetailFixture],
+          updateVoice,
+        })}
+        dispatch={dispatch}
+        onDeleteCharacter={vi.fn()}
+        onDeleteForum={vi.fn()}
+        onDeletePersona={vi.fn()}
+        onCharacterDefinitionUpdated={vi.fn()}
+        onForumDefinitionUpdated={vi.fn()}
+        onPersonaDefinitionUpdated={vi.fn()}
+        onProviderUpdated={vi.fn()}
+        onStyleUpdated={vi.fn()}
+        onVoiceUpdated={onVoiceUpdated}
+        state={{
+          ...initialAppState,
+          mainView: 'settings-voice',
+          inspectedVoiceId: 'brian',
+          inspectedVoiceName: 'Brian',
+          voiceEditingAvailable: true,
+        }}
+        title="Brian"
+      />,
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: 'Rename Brian' }));
+    const name = screen.getByLabelText('Voice name');
+    await userEvent.clear(name);
+    await userEvent.type(name, 'George');
+    await userEvent.click(screen.getByRole('button', { name: 'Save voice name' }));
+
+    expect(updateVoice).toHaveBeenCalledWith('brian', expect.objectContaining({
+      display_name: 'George',
+    }));
+    expect(dispatch).toHaveBeenCalledWith({
+      type: 'voice-updated',
+      voiceId: 'brian',
+      voiceName: 'George',
+      writable: true,
+    });
+    expect(onVoiceUpdated).toHaveBeenCalledOnce();
   });
 
   it('deletes an unused provider from its settings screen', async () => {
@@ -827,6 +1066,7 @@ describe('Settings screens', () => {
         onPersonaDefinitionUpdated={vi.fn()}
         onProviderUpdated={vi.fn()}
         onStyleUpdated={vi.fn()}
+        onVoiceUpdated={vi.fn()}
         state={{
           ...initialAppState,
           mainView: 'settings-api-key',

@@ -48,6 +48,7 @@ struct ElevenLabsVoiceSettings {
 struct WorkspaceVoice {
     std::string id;
     std::string label;
+    std::string description;
     std::string elevenlabs_voice_id;
     ElevenLabsVoiceSettings settings;
 };
@@ -161,6 +162,8 @@ public:
         std::string_view id) const noexcept;
     [[nodiscard]] bool style_is_writable(
         std::string_view id) const noexcept;
+    [[nodiscard]] bool voice_is_writable(
+        std::string_view id) const noexcept;
 
     void write_provider(
         std::string_view provider_id,
@@ -179,11 +182,24 @@ public:
         std::string_view style_id,
         std::string_view display_name) const;
     void delete_style(std::string_view style_id) const;
+    void write_voice(
+        std::string_view voice_id,
+        std::string_view display_name,
+        std::string_view description,
+        std::string_view elevenlabs_voice_id,
+        const ElevenLabsVoiceSettings& settings) const;
+    void create_voice(
+        std::string_view voice_id,
+        std::string_view display_name,
+        std::string_view description,
+        std::string_view elevenlabs_voice_id) const;
+    void delete_voice(std::string_view voice_id) const;
 
     void write_character_settings(
         std::string_view character_id,
         std::string_view provider_id,
         std::optional<std::string_view> style_id,
+        std::optional<std::string_view> voice_id = std::nullopt,
         std::optional<std::string_view> reasoning_effort = std::nullopt,
         std::optional<WebSearchMode> web_search = std::nullopt) const;
     void write_character_definition(
@@ -246,6 +262,8 @@ private:
         provider_config_paths_;
     std::unordered_map<std::string, std::filesystem::path>
         style_config_paths_;
+    std::unordered_map<std::string, std::filesystem::path>
+        voice_config_paths_;
 };
 
 [[nodiscard]] std::shared_ptr<const Workspace> getws();

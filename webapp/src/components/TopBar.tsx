@@ -187,6 +187,7 @@ interface TopBarProps {
   onPersonaDefinitionUpdated(): void;
   onProviderUpdated(): void;
   onStyleUpdated(): void;
+  onVoiceUpdated(): void;
   state: AppState;
   title: string | null;
 }
@@ -224,6 +225,7 @@ export function TopBar({
   onPersonaDefinitionUpdated,
   onProviderUpdated,
   onStyleUpdated,
+  onVoiceUpdated,
   state,
   title,
 }: TopBarProps) {
@@ -248,6 +250,8 @@ export function TopBar({
   const providerName = state.inspectedProviderName ?? undefined;
   const styleId = state.inspectedStyleId;
   const styleName = state.inspectedStyleName ?? undefined;
+  const voiceId = state.inspectedVoiceId;
+  const voiceName = state.inspectedVoiceName ?? undefined;
   const apiKeyId = state.inspectedApiKeyId;
   const apiKeyName = state.inspectedApiKeyName ?? undefined;
 
@@ -261,7 +265,7 @@ export function TopBar({
     setEditorReady(false);
     setEditorSaving(false);
     setEditorError(null);
-  }, [apiKeyId, characterId, forumId, personaId, providerId, state.mainView, styleId]);
+  }, [apiKeyId, characterId, forumId, personaId, providerId, state.mainView, styleId, voiceId]);
 
   let titleControl = title && <h1>{title}</h1>;
   if (state.mainView === 'persona-detail') {
@@ -352,6 +356,31 @@ export function TopBar({
           onStyleUpdated();
         }}
         subject="Style"
+      />
+    );
+  } else if (state.mainView === 'settings-voice') {
+    titleControl = (
+      <EditableTitle
+        available={state.voiceEditingAvailable}
+        id={voiceId}
+        name={voiceName}
+        onSave={async (displayName) => {
+          const voice = (await client.listVoices()).find(({ id }) => id === voiceId);
+          if (!voice) throw new Error('That voice was not found.');
+          const { id: _id, used_by: _usedBy, writable: _writable, ...update } = voice;
+          const saved = await client.updateVoice(voiceId!, {
+            ...update,
+            display_name: displayName,
+          });
+          dispatch({
+            type: 'voice-updated',
+            voiceId: saved.id,
+            voiceName: saved.display_name,
+            writable: saved.writable,
+          });
+          onVoiceUpdated();
+        }}
+        subject="Voice"
       />
     );
   } else if (state.mainView === 'settings-api-key') {

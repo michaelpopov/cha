@@ -243,6 +243,44 @@ export interface paths {
         patch: operations["updateStyle"];
         trace?: never;
     };
+    "/api/v1/voices": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List speech voices */
+        get: operations["listVoices"];
+        put?: never;
+        /** Register a speech voice */
+        post: operations["createVoice"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/voices/{voice_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                voice_id: components["schemas"]["Identifier"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete an unused speech voice */
+        delete: operations["deleteVoice"];
+        options?: never;
+        head?: never;
+        /** Replace editable speech voice settings */
+        patch: operations["updateVoice"];
+        trace?: never;
+    };
     "/api/v1/api-keys": {
         parameters: {
             query?: never;
@@ -1246,6 +1284,34 @@ export interface components {
             writable: boolean;
             used_by: string[];
         };
+        VoiceUpdate: {
+            display_name: string;
+            description: string;
+            elevenlabs_voice_id: string;
+            stability: number | null;
+            similarity_boost: number | null;
+            style: number | null;
+            use_speaker_boost: boolean | null;
+            speed: number | null;
+        };
+        CreateVoiceRequest: {
+            display_name: string;
+            description: string;
+            elevenlabs_voice_id: string;
+        };
+        VoiceDetail: {
+            id: components["schemas"]["Identifier"];
+            display_name: string;
+            description: string;
+            elevenlabs_voice_id: string;
+            stability: number | null;
+            similarity_boost: number | null;
+            style: number | null;
+            use_speaker_boost: boolean | null;
+            speed: number | null;
+            writable: boolean;
+            used_by: string[];
+        };
         ApiKeyDetail: {
             id: components["schemas"]["Identifier"];
             display_name: string;
@@ -1267,23 +1333,30 @@ export interface components {
             label: string;
             appearance: components["schemas"]["CharacterAppearance"];
         };
+        VoiceOption: {
+            id: components["schemas"]["Identifier"];
+            label: string;
+        };
         CharacterDetail: {
             id: components["schemas"]["Identifier"];
             display_name: string;
             description?: string;
             appearance: components["schemas"]["CharacterAppearance"];
+            voice?: components["schemas"]["SpeechVoice"];
             /** @description Template-expanded Markdown used for display. */
             character_markdown: string;
             /** @description Verbatim Markdown accepted by the definition editor. */
             editable_markdown: string;
             provider: string | null;
             style: string | null;
+            voice_id: string | null;
             /** @enum {string|null} */
             reasoning_effort: "low" | "medium" | "high" | "xhigh" | null;
             /** @enum {string|null} */
             web_search: "off" | "auto" | "required" | null;
             available_providers: components["schemas"]["ProviderOption"][];
             available_styles: components["schemas"]["StyleOption"][];
+            available_voices: components["schemas"]["VoiceOption"][];
             writable: boolean;
         };
         CreateCharacterRequest: {
@@ -1293,6 +1366,7 @@ export interface components {
         UpdateCharacterRequest: {
             provider: string;
             style: string | null;
+            voice_id: string | null;
             /** @enum {string|null} */
             reasoning_effort: "low" | "medium" | "high" | "xhigh" | null;
             /** @enum {string|null} */
@@ -2057,6 +2131,113 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["StyleDetail"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listVoices: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Voice settings. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VoiceDetail"][];
+                };
+            };
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createVoice: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateVoiceRequest"];
+            };
+        };
+        responses: {
+            /** @description Created voice settings. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VoiceDetail"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    deleteVoice: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                voice_id: components["schemas"]["Identifier"];
+            };
+            cookie?: never;
+        };
+        requestBody: components["requestBodies"]["EmptyJsonObject"];
+        responses: {
+            /** @description Voice deleted. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: components["responses"]["NotFound"];
+            /** @description A character still uses this voice. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            500: components["responses"]["InternalError"];
+        };
+    };
+    updateVoice: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                voice_id: components["schemas"]["Identifier"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VoiceUpdate"];
+            };
+        };
+        responses: {
+            /** @description Updated voice settings. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VoiceDetail"];
                 };
             };
             400: components["responses"]["BadRequest"];

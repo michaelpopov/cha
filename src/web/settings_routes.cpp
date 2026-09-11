@@ -129,6 +129,18 @@ std::vector<std::string> characters_using_style(
     return result;
 }
 
+std::vector<std::string> characters_using_voice(
+    const Workspace& workspace,
+    std::string_view voice_id) {
+    std::vector<std::string> result;
+    for (const WorkspaceCharacter& character : workspace.characters()) {
+        if (character.voice_id == voice_id) {
+            result.push_back(character.character.display_name);
+        }
+    }
+    return result;
+}
+
 Json provider_json(
     const WorkspaceProvider& provider,
     bool writable,
@@ -197,6 +209,29 @@ Json style_json(
     };
 }
 
+Json voice_json(
+    const WorkspaceVoice& voice,
+    bool writable,
+    std::vector<std::string> used_by) {
+    const ElevenLabsVoiceSettings& settings = voice.settings;
+    return {
+        {"id", voice.id},
+        {"display_name", voice.label},
+        {"description", voice.description},
+        {"elevenlabs_voice_id", voice.elevenlabs_voice_id},
+        {"stability", settings.stability
+            ? Json(*settings.stability) : Json(nullptr)},
+        {"similarity_boost", settings.similarity_boost
+            ? Json(*settings.similarity_boost) : Json(nullptr)},
+        {"style", settings.style ? Json(*settings.style) : Json(nullptr)},
+        {"use_speaker_boost", settings.use_speaker_boost
+            ? Json(*settings.use_speaker_boost) : Json(nullptr)},
+        {"speed", settings.speed ? Json(*settings.speed) : Json(nullptr)},
+        {"writable", writable},
+        {"used_by", std::move(used_by)},
+    };
+}
+
 template<typename Value>
 Value required(const Json& json, std::string_view name) {
     const auto found = json.find(std::string(name));
@@ -228,6 +263,14 @@ std::optional<double> nullable_double(
     const double result = found->get<double>();
     if (!std::isfinite(result)) throw std::invalid_argument("Invalid field");
     return result;
+}
+
+std::optional<bool> nullable_bool(const Json& json, std::string_view name) {
+    const auto found = json.find(std::string(name));
+    if (found == json.end()) throw std::invalid_argument("Missing field");
+    if (found->is_null()) return std::nullopt;
+    if (!found->is_boolean()) throw std::invalid_argument("Invalid field");
+    return found->get<bool>();
 }
 
 std::optional<int> nullable_int(const Json& json, std::string_view name) {
@@ -358,6 +401,50 @@ StyleUpdate parse_style_update(const Json& json) {
     };
 }
 
+struct VoiceUpdate {
+    std::string display_name;
+    std::string description;
+    std::string elevenlabs_voice_id;
+    ElevenLabsVoiceSettings settings;
+};
+
+VoiceUpdate parse_voice_update(const Json& json) {
+    if (!json.is_object() || json.size() != 8) {
+        throw std::invalid_argument("Invalid voice");
+    }
+    return {
+        .display_name = required<std::string>(json, "display_name"),
+        .description = required<std::string>(json, "description"),
+        .elevenlabs_voice_id =
+            required<std::string>(json, "elevenlabs_voice_id"),
+        .settings = {
+            .stability = nullable_double(json, "stability"),
+            .similarity_boost = nullable_double(json, "similarity_boost"),
+            .style = nullable_double(json, "style"),
+            .use_speaker_boost = nullable_bool(json, "use_speaker_boost"),
+            .speed = nullable_double(json, "speed"),
+        },
+    };
+}
+
+struct VoiceCreate {
+    std::string display_name;
+    std::string description;
+    std::string elevenlabs_voice_id;
+};
+
+VoiceCreate parse_voice_create(const Json& json) {
+    if (!json.is_object() || json.size() != 3) {
+        throw std::invalid_argument("Invalid voice");
+    }
+    return {
+        .display_name = required<std::string>(json, "display_name"),
+        .description = required<std::string>(json, "description"),
+        .elevenlabs_voice_id =
+            required<std::string>(json, "elevenlabs_voice_id"),
+    };
+}
+
 std::string parse_create_name(const Json& json) {
     if (!json.is_object() || json.size() != 1) {
         throw std::invalid_argument("Invalid settings item");
@@ -390,6 +477,13 @@ bool provider_is_used(const Workspace& workspace, std::string_view provider_id) 
 bool style_is_used(const Workspace& workspace, std::string_view style_id) {
     for (const WorkspaceCharacter& character : workspace.characters()) {
         if (character.style_id == style_id) return true;
+    }
+    return false;
+}
+
+bool voice_is_used(const Workspace& workspace, std::string_view voice_id) {
+    for (const WorkspaceCharacter& character : workspace.characters()) {
+        if (character.voice_id == voice_id) return true;
     }
     return false;
 }
@@ -731,6 +825,124 @@ void SettingsRoutes::install(httplib::Server& server) const {
             set_error_response(response, 409,
                 {ErrorCode::bad_request,
                  "This style is still used by one or more characters."});
+        } catch (const WorkspaceRestartRequiredError& error) {
+            internal_error(response, error);
+        }
+    });
+
+    server.Get("/api/v1/voices", [](const httplib::Request&, httplib::Response& response) {
+        const auto workspace = published_workspace();
+        Json result = Json::array();
+        for (const WorkspaceVoice& voice : workspace->voices()) {
+            result.push_back(voice_json(
+                voice,
+                workspace->voice_is_writable(voice.id),
+                characters_using_voice(*workspace, voice.id)));
+        }
+        set_json_response(response, 200, result);
+    });
+
+    server.Post("/api/v1/voices", [config, settings](const httplib::Request& request, httplib::Response& response) {
+        if (!validate_json_mutation(request, response)) return;
+        VoiceCreate create;
+        if (!parse_route_json_body(
+                request, response, settings.request_body_limit,
+                [&](const Json& json) { create = parse_voice_create(json); })) {
+            return;
+        }
+
+        const auto workspace = published_workspace();
+        std::string id;
+        for (std::size_t suffix = 1;; ++suffix) {
+            const std::string candidate = "voice_" + std::to_string(suffix);
+            const std::filesystem::path directory =
+                workspace->root() / "system" / "voices" / candidate;
+            if (workspace->find_voice(candidate) == nullptr
+                && !std::filesystem::exists(directory)) {
+                id = candidate;
+                break;
+            }
+        }
+        try {
+            config->apply_voice_create(
+                id, create.display_name, create.description,
+                create.elevenlabs_voice_id);
+        } catch (const std::invalid_argument&) {
+            return set_error_response(response, 400,
+                {ErrorCode::bad_request, "Invalid voice."});
+        } catch (const WorkspaceRestartRequiredError& error) {
+            return internal_error(response, error);
+        }
+        const auto current = published_workspace();
+        const WorkspaceVoice* created = current->find_voice(id);
+        if (created == nullptr) {
+            return set_error_response(response, 500,
+                {ErrorCode::internal_error, "The voice could not be created."});
+        }
+        set_json_response(response, 201, voice_json(
+            *created,
+            current->voice_is_writable(id),
+            characters_using_voice(*current, id)));
+    });
+
+    server.Patch(R"(/api/v1/voices/([^/]+))", [live_sessions, config, settings](const httplib::Request& request, httplib::Response& response) {
+        const std::string id = request.matches[1];
+        const auto workspace = published_workspace();
+        if (!is_valid_route_component(id) || workspace->find_voice(id) == nullptr
+            || !workspace->voice_is_writable(id)) {
+            return set_route_not_found(response, "That voice was not found.");
+        }
+        if (!validate_json_mutation(request, response)) return;
+        VoiceUpdate update;
+        if (!parse_route_json_body(
+                request, response, settings.request_body_limit,
+                [&](const Json& json) { update = parse_voice_update(json); })) {
+            return;
+        }
+        try {
+            const WorkspaceConfigEditResult edited = config->apply_voice_update(
+                id, update.display_name, update.description,
+                update.elevenlabs_voice_id, update.settings);
+            request_reload(*live_sessions, edited.affected_forum_ids);
+        } catch (const std::invalid_argument&) {
+            return set_error_response(response, 400,
+                {ErrorCode::bad_request, "Invalid voice settings."});
+        } catch (const WorkspaceRestartRequiredError& error) {
+            return internal_error(response, error);
+        }
+        const auto current = published_workspace();
+        const WorkspaceVoice* updated = current->find_voice(id);
+        if (updated == nullptr) {
+            return set_error_response(response, 500,
+                {ErrorCode::internal_error, "The voice could not be updated."});
+        }
+        set_json_response(response, 200, voice_json(
+            *updated,
+            current->voice_is_writable(id),
+            characters_using_voice(*current, id)));
+    });
+
+    server.Delete(R"(/api/v1/voices/([^/]+))", [config](const httplib::Request& request, httplib::Response& response) {
+        const std::string id = request.matches[1];
+        const auto workspace = published_workspace();
+        if (!is_valid_route_component(id) || workspace->find_voice(id) == nullptr
+            || !workspace->voice_is_writable(id)) {
+            return set_route_not_found(response, "That voice was not found.");
+        }
+        if (!validate_json_mutation(request, response)) return;
+        if (voice_is_used(*workspace, id)) {
+            return set_error_response(response, 409,
+                {ErrorCode::bad_request,
+                 "This voice is still used by one or more characters."});
+        }
+        try {
+            config->apply_voice_delete(id);
+            response.status = 204;
+            response.set_header("Cache-Control", "no-store");
+        } catch (const std::invalid_argument&) {
+            set_error_response(response, 409,
+                {ErrorCode::bad_request,
+                 "This voice is still used by one or more characters."});
         } catch (const WorkspaceRestartRequiredError& error) {
             internal_error(response, error);
         }

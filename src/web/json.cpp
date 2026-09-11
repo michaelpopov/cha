@@ -181,10 +181,12 @@ std::optional<WebSearchMode> nullable_web_search(
 }
 
 CharacterSettingsUpdate parse_character_settings_update(const nlohmann::json& json) {
-    exact_keys(json, {"provider", "style", "reasoning_effort", "web_search"});
+    exact_keys(json, {
+        "provider", "style", "voice_id", "reasoning_effort", "web_search"});
     return {
         .provider = required_string(json, "provider"),
         .style = nullable_string(json, "style"),
+        .voice = nullable_string(json, "voice_id"),
         .reasoning_effort = nullable_reasoning_effort(json),
         .web_search = nullable_web_search(json),
     };

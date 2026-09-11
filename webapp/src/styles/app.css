@@ -977,9 +977,10 @@ select:disabled {
   white-space: pre-wrap;
 }
 
-/* One character's voice. Only a message body ever wears these: speaker names,
-   the composer and every control stay in the interface font, which is what
-   keeps a distinctive character from turning the page into a specimen sheet.
+/* One character's voice. Only a message body or its settings preview wears
+   these: speaker names, the composer and every other control stay in the
+   interface font, which keeps a distinctive character from turning the page
+   into a specimen sheet.
    The size corrections are the point of the two font rules — Georgia sets large
    for its size and the mono stack sets small, so at one shared font-size the
    three would read as three different sizes down the same column. */
@@ -1500,6 +1501,34 @@ select:disabled {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.8rem;
+}
+
+.cha-settings-section-title {
+  margin: 0.2rem 0 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.cha-voice-description,
+.cha-voice-preview-text {
+  min-height: 4.75rem;
+  padding-block: 0.6rem;
+  resize: vertical;
+}
+
+.cha-voice-preview-text {
+  min-height: 6rem;
+}
+
+.cha-voice-preview-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.cha-voice-preview-action svg {
+  width: 1rem;
+  height: 1rem;
 }
 
 .cha-provider-targets {

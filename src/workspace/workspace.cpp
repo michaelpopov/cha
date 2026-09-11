@@ -482,13 +482,15 @@ WorkspaceVoice load_voice(const std::filesystem::path& directory) {
     const std::filesystem::path path = directory / "config.toml";
     const toml::table table = read_toml(path, "voice config");
     static constexpr std::string_view fields[]{
-        "display_name", "elevenlabs_voice_id", "stability",
+        "display_name", "description", "elevenlabs_voice_id", "stability",
         "similarity_boost", "style", "use_speaker_boost", "speed"};
     reject_unknown_fields(table, path, fields, "Voice config");
     WorkspaceVoice loaded{
         .id = id,
         .label = optional_value<std::string>(
             table, path, "display_name", "a string").value_or(option_label(id)),
+        .description = optional_value<std::string>(
+            table, path, "description", "a string").value_or(""),
         .elevenlabs_voice_id = required_string(
             table, path, "elevenlabs_voice_id"),
         .settings = {
@@ -503,6 +505,9 @@ WorkspaceVoice load_voice(const std::filesystem::path& directory) {
         },
     };
     validate_public_name(loaded.label, "Voice name", path);
+    if (!loaded.description.empty()) {
+        validate_description(loaded.description, "Voice", path);
+    }
     return loaded;
 }
 
@@ -944,7 +949,10 @@ Workspace Workspace::load(std::filesystem::path root) {
     if (std::filesystem::is_directory(voices_directory)) {
         for (const std::filesystem::path& directory :
              direct_subdirectories(voices_directory)) {
-            workspace.voices_.push_back(load_voice(directory));
+            WorkspaceVoice voice = load_voice(directory);
+            workspace.voice_config_paths_.emplace(
+                voice.id, directory / "config.toml");
+            workspace.voices_.push_back(std::move(voice));
         }
     }
     std::ranges::sort(
@@ -1529,6 +1537,10 @@ bool Workspace::style_is_writable(std::string_view id) const noexcept {
     return style_config_paths_.contains(std::string(id));
 }
 
+bool Workspace::voice_is_writable(std::string_view id) const noexcept {
+    return voice_config_paths_.contains(std::string(id));
+}
+
 void Workspace::write_provider(
     std::string_view provider_id,
     std::string_view display_name,
@@ -1731,6 +1743,100 @@ void Workspace::delete_style(std::string_view style_id) const {
     if (error) {
         throw std::runtime_error(
             "Failed to remove style '" + std::string(style_id)
+            + "': " + error.message());
+    }
+}
+
+void Workspace::write_voice(
+    std::string_view voice_id,
+    std::string_view display_name,
+    std::string_view description,
+    std::string_view elevenlabs_voice_id,
+    const ElevenLabsVoiceSettings& settings) const {
+    const auto path = voice_config_paths_.find(std::string(voice_id));
+    if (path == voice_config_paths_.end()) {
+        throw std::runtime_error(
+            "Voice '" + std::string(voice_id)
+            + "' has no writable configuration");
+    }
+    try {
+        validate_public_name(display_name, "Voice name", path->second);
+        if (!description.empty()) {
+            validate_description(description, "Voice", path->second);
+        }
+    } catch (const std::runtime_error&) {
+        throw std::invalid_argument("Invalid voice details");
+    }
+    toml::table table;
+    table.insert("display_name", std::string(display_name));
+    if (!description.empty()) {
+        table.insert("description", std::string(description));
+    }
+    table.insert("elevenlabs_voice_id", std::string(elevenlabs_voice_id));
+    if (settings.stability) table.insert("stability", *settings.stability);
+    if (settings.similarity_boost) {
+        table.insert("similarity_boost", *settings.similarity_boost);
+    }
+    if (settings.style) table.insert("style", *settings.style);
+    if (settings.use_speaker_boost) {
+        table.insert("use_speaker_boost", *settings.use_speaker_boost);
+    }
+    if (settings.speed) table.insert("speed", *settings.speed);
+    write_toml_file(path->second, table);
+    try {
+        (void)load_voice(path->second.parent_path());
+    } catch (const std::runtime_error&) {
+        throw std::invalid_argument("Invalid voice settings");
+    }
+}
+
+void Workspace::create_voice(
+    std::string_view voice_id,
+    std::string_view display_name,
+    std::string_view description,
+    std::string_view elevenlabs_voice_id) const {
+    const std::filesystem::path directory =
+        root_ / "system" / "voices" / std::string(voice_id);
+    const std::filesystem::path path = directory / "config.toml";
+    try {
+        require_path_component(voice_id, directory.parent_path());
+        validate_public_name(display_name, "Voice name", path);
+        if (!description.empty()) validate_description(description, "Voice", path);
+    } catch (const std::runtime_error&) {
+        throw std::invalid_argument("Invalid voice");
+    }
+    if (elevenlabs_voice_id.empty() || find_voice(voice_id) != nullptr
+        || std::filesystem::exists(directory)) {
+        throw std::invalid_argument("Invalid voice");
+    }
+    create_private_directory(directory);
+    toml::table table;
+    table.insert("display_name", std::string(display_name));
+    if (!description.empty()) {
+        table.insert("description", std::string(description));
+    }
+    table.insert("elevenlabs_voice_id", std::string(elevenlabs_voice_id));
+    write_toml_file(path, table);
+    (void)load_voice(directory);
+}
+
+void Workspace::delete_voice(std::string_view voice_id) const {
+    const auto path = voice_config_paths_.find(std::string(voice_id));
+    if (path == voice_config_paths_.end()) {
+        throw std::runtime_error(
+            "Voice '" + std::string(voice_id)
+            + "' has no writable configuration");
+    }
+    for (const WorkspaceCharacter& character : characters_) {
+        if (character.voice_id && *character.voice_id == voice_id) {
+            throw std::invalid_argument("Voice is in use");
+        }
+    }
+    std::error_code error;
+    std::filesystem::remove_all(path->second.parent_path(), error);
+    if (error) {
+        throw std::runtime_error(
+            "Failed to remove voice '" + std::string(voice_id)
             + "': " + error.message());
     }
 }
@@ -2001,6 +2107,7 @@ void Workspace::write_character_settings(
     std::string_view character_id,
     std::string_view provider_id,
     std::optional<std::string_view> style_id,
+    std::optional<std::string_view> voice_id,
     std::optional<std::string_view> reasoning_effort,
     std::optional<WebSearchMode> web_search) const {
     const auto config = character_config_paths_.find(std::string(character_id));
@@ -2018,6 +2125,10 @@ void Workspace::write_character_settings(
         throw std::invalid_argument(
             "Style '" + std::string(*style_id) + "' does not exist");
     }
+    if (voice_id && find_voice(*voice_id) == nullptr) {
+        throw std::invalid_argument(
+            "Voice '" + std::string(*voice_id) + "' does not exist");
+    }
     if (reasoning_effort && !valid_character_reasoning_effort(*reasoning_effort)) {
         throw std::invalid_argument(
             "Reasoning effort '" + std::string(*reasoning_effort)
@@ -2032,6 +2143,8 @@ void Workspace::write_character_settings(
         table.insert_or_assign("provider", std::string(provider_id));
         if (style_id) table.insert_or_assign("style", std::string(*style_id));
         else table.erase("style");
+        if (voice_id) table.insert_or_assign("voice", std::string(*voice_id));
+        else table.erase("voice");
         if (reasoning_effort) {
             table.insert_or_assign(
                 "reasoning_effort", std::string(*reasoning_effort));

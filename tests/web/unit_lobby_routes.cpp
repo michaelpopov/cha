@@ -266,6 +266,10 @@ TEST(LobbyRoutes, ServesBootstrapDiscoveryAndHealthWithoutSessionDataInHealth) {
     EXPECT_EQ(workspace_character_body["appearance"], (*guide)["appearance"]);
     EXPECT_EQ(workspace_character_body["provider"], "test");
     EXPECT_TRUE(workspace_character_body["style"].is_null());
+    EXPECT_EQ(workspace_character_body["voice_id"], "warm-narrator");
+    EXPECT_EQ(workspace_character_body["available_voices"], nlohmann::json::array({{
+        {"id", "warm-narrator"}, {"label", "Warm Narrator"},
+    }}));
     EXPECT_EQ(workspace_character_body["writable"], true);
 
     const auto assistant_character = server.client().Get("/api/v1/characters/builtin-assistant");
@@ -276,6 +280,7 @@ TEST(LobbyRoutes, ServesBootstrapDiscoveryAndHealthWithoutSessionDataInHealth) {
     EXPECT_EQ(assistant_body["writable"], false);
     EXPECT_TRUE(assistant_body["provider"].is_null());
     EXPECT_TRUE(assistant_body["style"].is_null());
+    EXPECT_TRUE(assistant_body["voice_id"].is_null());
 
     const auto reader_persona = server.client().Get("/api/v1/personas/reader");
     ASSERT_TRUE(reader_persona);
@@ -461,7 +466,7 @@ TEST(LobbyRoutes, ReloadsASessionThatWasStillOpeningWhenTheSaveCommitted) {
 
     const auto patched = server.client().Patch(
         "/api/v1/characters/guide",
-        R"({"provider":"test","style":"mono-large","reasoning_effort":null,"web_search":null})",
+        R"({"provider":"test","style":"mono-large","voice_id":null,"reasoning_effort":null,"web_search":null})",
         "application/json");
     ASSERT_TRUE(patched);
     ASSERT_EQ(patched->status, 200) << patched->body;
@@ -535,6 +540,9 @@ httplib::Result patch_character(
     }
     if (!settings.contains("web_search")) {
         settings["web_search"] = nullptr;
+    }
+    if (!settings.contains("voice_id")) {
+        settings["voice_id"] = nullptr;
     }
     return server.client().Patch(
         "/api/v1/characters/" + std::string(id),

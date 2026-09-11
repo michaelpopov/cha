@@ -450,6 +450,94 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /api/v1/voices:
+    get:
+      tags: [Settings]
+      operationId: listVoices
+      summary: List speech voices
+      responses:
+        "200":
+          description: Voice settings.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/VoiceDetail"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    post:
+      tags: [Settings]
+      operationId: createVoice
+      summary: Register a speech voice
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateVoiceRequest"
+      responses:
+        "201":
+          description: Created voice settings.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VoiceDetail"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/voices/{voice_id}:
+    parameters:
+      - name: voice_id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/Identifier"
+    patch:
+      tags: [Settings]
+      operationId: updateVoice
+      summary: Replace editable speech voice settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VoiceUpdate"
+      responses:
+        "200":
+          description: Updated voice settings.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VoiceDetail"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      tags: [Settings]
+      operationId: deleteVoice
+      summary: Delete an unused speech voice
+      requestBody:
+        $ref: "#/components/requestBodies/EmptyJsonObject"
+      responses:
+        "204":
+          description: Voice deleted.
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: A character still uses this voice.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /api/v1/api-keys:
     get:
       tags: [Settings]
@@ -2371,6 +2459,86 @@ components:
           items:
             type: string
 
+    VoiceUpdate:
+      type: object
+      additionalProperties: false
+      required: [display_name, description, elevenlabs_voice_id, stability, similarity_boost, style, use_speaker_boost, speed]
+      properties:
+        display_name:
+          type: string
+        description:
+          type: string
+        elevenlabs_voice_id:
+          type: string
+        stability:
+          type: [number, "null"]
+          minimum: 0
+          maximum: 1
+        similarity_boost:
+          type: [number, "null"]
+          minimum: 0
+          maximum: 1
+        style:
+          type: [number, "null"]
+          minimum: 0
+          maximum: 1
+        use_speaker_boost:
+          type: [boolean, "null"]
+        speed:
+          type: [number, "null"]
+          minimum: 0.7
+          maximum: 1.2
+
+    CreateVoiceRequest:
+      type: object
+      additionalProperties: false
+      required: [display_name, description, elevenlabs_voice_id]
+      properties:
+        display_name:
+          type: string
+        description:
+          type: string
+        elevenlabs_voice_id:
+          type: string
+
+    VoiceDetail:
+      type: object
+      additionalProperties: false
+      required: [id, display_name, description, elevenlabs_voice_id, stability, similarity_boost, style, use_speaker_boost, speed, writable, used_by]
+      properties:
+        id:
+          $ref: "#/components/schemas/Identifier"
+        display_name:
+          type: string
+        description:
+          type: string
+        elevenlabs_voice_id:
+          type: string
+        stability:
+          type: [number, "null"]
+          minimum: 0
+          maximum: 1
+        similarity_boost:
+          type: [number, "null"]
+          minimum: 0
+          maximum: 1
+        style:
+          type: [number, "null"]
+          minimum: 0
+          maximum: 1
+        use_speaker_boost:
+          type: [boolean, "null"]
+        speed:
+          type: [number, "null"]
+          minimum: 0.7
+          maximum: 1.2
+        writable:
+          type: boolean
+        used_by:
+          type: array
+          items:
+            type: string
+
     ApiKeyDetail:
       type: object
       additionalProperties: false
@@ -2425,6 +2593,16 @@ components:
         appearance:
           $ref: "#/components/schemas/CharacterAppearance"
 
+    VoiceOption:
+      type: object
+      additionalProperties: false
+      required: [id, label]
+      properties:
+        id:
+          $ref: "#/components/schemas/Identifier"
+        label:
+          type: string
+
     CharacterDetail:
       type: object
       additionalProperties: false
@@ -2436,10 +2614,12 @@ components:
         - editable_markdown
         - provider
         - style
+        - voice_id
         - reasoning_effort
         - web_search
         - available_providers
         - available_styles
+        - available_voices
         - writable
       properties:
         id:
@@ -2450,6 +2630,8 @@ components:
           type: string
         appearance:
           $ref: "#/components/schemas/CharacterAppearance"
+        voice:
+          $ref: "#/components/schemas/SpeechVoice"
         character_markdown:
           type: string
           description: Template-expanded Markdown used for display.
@@ -2459,6 +2641,8 @@ components:
         provider:
           type: [string, "null"]
         style:
+          type: [string, "null"]
+        voice_id:
           type: [string, "null"]
         reasoning_effort:
           type: [string, "null"]
@@ -2474,6 +2658,10 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/StyleOption"
+        available_voices:
+          type: array
+          items:
+            $ref: "#/components/schemas/VoiceOption"
         writable:
           type: boolean
 
@@ -2490,11 +2678,13 @@ components:
     UpdateCharacterRequest:
       type: object
       additionalProperties: false
-      required: [provider, style, reasoning_effort, web_search]
+      required: [provider, style, voice_id, reasoning_effort, web_search]
       properties:
         provider:
           type: string
         style:
+          type: [string, "null"]
+        voice_id:
           type: [string, "null"]
         reasoning_effort:
           type: [string, "null"]

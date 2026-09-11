@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ChaError } from '../api/client';
 import { initialAppState, type AppState } from '../state/view';
@@ -8,8 +8,15 @@ import {
   bootstrapFixture,
   characterDetailFixture,
   fixtureClient,
+  voiceDetailFixture,
 } from '../test/fixtures';
 import { CharacterSettingsScreen } from './Screens';
+
+afterEach(() => {
+  delete window.chaTextToSpeech;
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 
 function settingsState(overrides: Partial<AppState> = {}): AppState {
   return {
@@ -37,11 +44,12 @@ function renderSettings(client = fixtureClient()) {
 }
 
 describe('character settings screen', () => {
-  it('renders the pickers, sample, and saves every character setting', async () => {
+  it('renders the pickers, styled preview text, and saves every character setting', async () => {
     const user = userEvent.setup();
     const updateCharacter = vi.fn(async () => ({
       ...characterDetailFixture,
       style: 'mono-large',
+      voice_id: 'brian',
       reasoning_effort: 'high' as const,
       web_search: 'auto' as const,
     }));
@@ -52,24 +60,31 @@ describe('character settings screen', () => {
     expect(screen.getByRole('option', { name: 'No style' })).toBeInTheDocument();
     expect(screen.getByLabelText('Reasoning effort')).toHaveValue('');
     expect(screen.getByLabelText('Web search')).toHaveValue('');
+    expect(screen.getByLabelText('Voice')).toHaveValue('');
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
-    expect(screen.getByText('The chief task in life is this…')).toHaveClass(
+    expect(screen.getByLabelText('Voice preview text')).toHaveClass(
       'cha-font-serif', 'cha-slant-italic',
     );
 
     await user.selectOptions(screen.getByLabelText('Style'), 'mono-large');
     await user.selectOptions(screen.getByLabelText('Reasoning effort'), 'high');
     await user.selectOptions(screen.getByLabelText('Web search'), 'auto');
-    expect(screen.getByText('The chief task in life is this…')).toHaveClass(
+    await user.selectOptions(screen.getByLabelText('Voice'), 'brian');
+    expect(screen.getByLabelText('Voice preview text')).toHaveClass(
       'cha-font-mono', 'cha-scale-large',
     );
     expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
-    expect(screen.getByText(/restarts the sessions using this character/)).toBeInTheDocument();
+    expect(screen.queryByText(/restarts the sessions using this character/))
+      .not.toBeInTheDocument();
+    expect(screen.queryByText('Text to speak')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Play preview' }))
+      .not.toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(updateCharacter).toHaveBeenCalledWith('guide', {
       provider: 'terra',
       style: 'mono-large',
+      voice_id: 'brian',
       reasoning_effort: 'high',
       web_search: 'auto',
     }));
@@ -78,6 +93,53 @@ describe('character settings screen', () => {
       character: expect.objectContaining({ id: 'guide', style: 'mono-large' }),
     });
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+  });
+
+  it('tests the selected unsaved voice with editable text', async () => {
+    window.chaTextToSpeech = {
+      baseUrl: 'https://example.com/speech',
+      voiceId: 'fallback',
+      outputFormat: 'mp3',
+      apiKey: 'secret',
+      model: 'multilingual',
+    };
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(new TextEncoder().encode('audio')),
+    );
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:audio');
+    vi.stubGlobal('Audio', vi.fn(function Audio() {
+      return {
+        addEventListener: vi.fn(),
+        pause: vi.fn(),
+        play: vi.fn().mockResolvedValue(undefined),
+      };
+    }));
+    renderSettings(fixtureClient({ listVoices: async () => [voiceDetailFixture] }));
+
+    await userEvent.selectOptions(await screen.findByLabelText('Voice'), 'brian');
+    const preview = screen.getByRole('button', { name: 'Play preview' });
+    expect(preview).toHaveClass('cha-button', 'cha-voice-preview-action');
+    expect(preview).not.toHaveClass('cha-button-ghost');
+    const text = screen.getByLabelText('Voice preview text');
+    await userEvent.clear(text);
+    await userEvent.type(text, 'Read this draft.');
+    await userEvent.click(screen.getByRole('button', { name: 'Play preview' }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      `https://example.com/speech/${voiceDetailFixture.elevenlabs_voice_id}?output_format=mp3`,
+      expect.objectContaining({
+        body: JSON.stringify({
+          text: 'Read this draft.',
+          model_id: 'multilingual',
+          voice_settings: {
+            stability: 0.45,
+            style: 0.2,
+            use_speaker_boost: true,
+            speed: 0.95,
+          },
+        }),
+      }),
+    ));
   });
 
   it('shows a saved provider the workspace can no longer resolve', async () => {
@@ -113,6 +175,7 @@ describe('character settings screen', () => {
     await waitFor(() => expect(updateCharacter).toHaveBeenCalledWith('guide', {
       provider: 'terra',
       style: 'mono-large',
+      voice_id: null,
       reasoning_effort: null,
       web_search: null,
     }));

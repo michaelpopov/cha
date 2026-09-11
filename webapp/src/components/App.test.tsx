@@ -1667,6 +1667,7 @@ it('reopens a live conversation after a settings save without leaving the settin
     provider: 'terra',
     reasoning_effort: null,
     style: 'mono-large',
+    voice_id: null,
     web_search: null,
   }));
 

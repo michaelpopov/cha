@@ -13,6 +13,7 @@ import {
   forumDetailFixture,
   personaDetailFixture,
   snapshotFixture,
+  voiceDetailFixture,
 } from '../test/fixtures';
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -60,6 +61,7 @@ describe('CHA API client', () => {
     await client.updateCharacter('a b', {
       provider: 'terra',
       style: null,
+      voice_id: null,
       reasoning_effort: null,
       web_search: null,
     });
@@ -150,7 +152,7 @@ describe('CHA API client', () => {
     expect(fetcher.mock.calls[13][1]?.body).toBe('{"character_id":"guide"}');
     expect(fetcher.mock.calls[14][1]?.method).toBe('PATCH');
     expect(fetcher.mock.calls[14][1]?.body).toBe(
-      '{"provider":"terra","style":null,"reasoning_effort":null,"web_search":null}',
+      '{"provider":"terra","style":null,"voice_id":null,"reasoning_effort":null,"web_search":null}',
     );
     expect(fetcher.mock.calls[15][1]?.method).toBe('PATCH');
     expect(fetcher.mock.calls[15][1]?.body).toBe('{"display_name":"Guide"}');
@@ -283,6 +285,48 @@ describe('CHA API client', () => {
     expect(fetcher.mock.calls[0][0]).toBe('/api/v1/providers/Open%20AI/test');
     expect(fetcher.mock.calls[0][1]?.method).toBe('POST');
     expect(fetcher.mock.calls[0][1]?.body).toBe(JSON.stringify(candidate));
+  });
+
+  it('lists, creates, updates, and deletes voices', async () => {
+    const fetcher = vi.fn<(
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => Promise<Response>>(async (_input, init) => (
+      init?.method === 'DELETE'
+        ? new Response(null, { status: 204 })
+        : jsonResponse(init?.method ? voiceDetailFixture : [voiceDetailFixture])
+    ));
+    const client = createChaClient(fetcher);
+    const update = {
+      display_name: 'Brian',
+      description: 'Deep, resonant, comforting',
+      elevenlabs_voice_id: 'brian-id',
+      stability: 0.4,
+      similarity_boost: null,
+      style: null,
+      use_speaker_boost: false,
+      speed: 0.9,
+    };
+
+    await expect(client.listVoices()).resolves.toEqual([voiceDetailFixture]);
+    await client.createVoice({
+      display_name: update.display_name,
+      description: update.description,
+      elevenlabs_voice_id: update.elevenlabs_voice_id,
+    });
+    await client.updateVoice('Brian voice', update);
+    await client.deleteVoice('Brian voice');
+
+    expect(fetcher.mock.calls.map(([url]) => url)).toEqual([
+      '/api/v1/voices',
+      '/api/v1/voices',
+      '/api/v1/voices/Brian%20voice',
+      '/api/v1/voices/Brian%20voice',
+    ]);
+    expect(fetcher.mock.calls[1][1]?.method).toBe('POST');
+    expect(fetcher.mock.calls[2][1]?.method).toBe('PATCH');
+    expect(fetcher.mock.calls[2][1]?.body).toBe(JSON.stringify(update));
+    expect(fetcher.mock.calls[3][1]?.method).toBe('DELETE');
   });
 
   it('turns the error envelope into one ChaError shape', async () => {

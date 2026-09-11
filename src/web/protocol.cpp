@@ -306,18 +306,25 @@ void to_json(nlohmann::json& json, const StyleOption& value) {
     };
 }
 
+void to_json(nlohmann::json& json, const VoiceOption& value) {
+    json = {{"id", value.id}, {"label", value.label}};
+}
+
 void to_json(nlohmann::json& json, const CharacterDetail& value) {
     json = nlohmann::json(value.summary);
     json["character_markdown"] = value.character_markdown;
     json["editable_markdown"] = value.editable_markdown;
     json["provider"] = value.provider ? nlohmann::json(*value.provider) : nlohmann::json(nullptr);
     json["style"] = value.style ? nlohmann::json(*value.style) : nlohmann::json(nullptr);
+    json["voice_id"] = value.voice
+        ? nlohmann::json(*value.voice) : nlohmann::json(nullptr);
     json["reasoning_effort"] = value.reasoning_effort
         ? nlohmann::json(*value.reasoning_effort) : nlohmann::json(nullptr);
     json["web_search"] = value.web_search
         ? nlohmann::json(to_string(*value.web_search)) : nlohmann::json(nullptr);
     json["available_providers"] = value.available_providers;
     json["available_styles"] = value.available_styles;
+    json["available_voices"] = value.available_voices;
     json["writable"] = value.writable;
 }
 

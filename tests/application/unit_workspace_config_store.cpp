@@ -959,7 +959,7 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, SuccessfulEditUpdatesFilesDatabaseAndWor
     const WorkspaceConfigEditResult character_result =
         store->apply_character_settings(
             "guide", "second", std::string_view{"mono"},
-            std::string_view{"high"}, WebSearchMode::automatic);
+            std::nullopt, std::string_view{"high"}, WebSearchMode::automatic);
     EXPECT_NE(
         std::find(
             character_result.affected_forum_ids.begin(),
@@ -999,6 +999,36 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, SuccessfulEditUpdatesFilesDatabaseAndWor
             ? std::string()
             : std::getenv(dotenv_variable),
         dotenv_before);
+}
+
+TEST_F(RuntimeWorkspaceConfigStoreTest, PersistsTheVoiceLifecycle) {
+    const auto store = open_store();
+    EXPECT_TRUE(store->apply_voice_create(
+        "voice_1", "Brian", "Deep, resonant, comforting", "brian-id")
+        .affected_forum_ids.empty());
+    const WorkspaceVoice* voice = getws()->find_voice("voice_1");
+    ASSERT_NE(voice, nullptr);
+    EXPECT_EQ(voice->description, "Deep, resonant, comforting");
+    EXPECT_NE(
+        stored_config(database(), "system/voices/voice_1/config.toml")
+            .find("brian-id"),
+        std::string::npos);
+
+    store->apply_character_settings(
+        "guide", "test", std::nullopt, std::string_view{"voice_1"});
+    const WorkspaceConfigEditResult updated = store->apply_voice_update(
+        "voice_1", "George", "Warm, captivating storyteller", "george-id",
+        ElevenLabsVoiceSettings{.stability = 0.4, .speed = 0.9});
+    EXPECT_EQ(updated.affected_forum_ids, std::vector<std::string>{"lobby"});
+    voice = getws()->find_voice("voice_1");
+    ASSERT_NE(voice, nullptr);
+    EXPECT_EQ(voice->label, "George");
+    EXPECT_EQ(voice->settings.stability, 0.4);
+
+    store->apply_character_settings(
+        "guide", "test", std::nullopt, std::nullopt);
+    store->apply_voice_delete("voice_1");
+    EXPECT_EQ(getws()->find_voice("voice_1"), nullptr);
 }
 
 TEST_F(RuntimeWorkspaceConfigStoreTest, SerializesTwoEditsAndEditReadInteraction) {

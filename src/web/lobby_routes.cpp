@@ -137,6 +137,7 @@ CharacterDetail character_detail(
     if (detail.writable) {
         detail.provider = character.provider_id;
         detail.style = character.style_id;
+        detail.voice = character.voice_id;
         detail.reasoning_effort = character.reasoning_effort;
         detail.web_search = character.web_search;
     }
@@ -146,6 +147,9 @@ CharacterDetail character_detail(
     for (const WorkspaceStyle& style : workspace.styles()) {
         detail.available_styles.push_back(
             {style.id, style.label, style.appearance});
+    }
+    for (const WorkspaceVoice& voice : workspace.voices()) {
+        detail.available_voices.push_back({voice.id, voice.label});
     }
     return detail;
 }
@@ -483,6 +487,7 @@ void LobbyRoutes::install(httplib::Server& server) const {
         const bool changed = !character->provider_id
             || update.provider != *character->provider_id
             || update.style != character->style_id
+            || update.voice != character->voice_id
             || update.reasoning_effort != character->reasoning_effort
             || update.web_search != character->web_search;
         try {
@@ -492,9 +497,12 @@ void LobbyRoutes::install(httplib::Server& server) const {
                 update.reasoning_effort
                 ? std::optional<std::string_view>(*update.reasoning_effort)
                 : std::nullopt;
+            const std::optional<std::string_view> voice = update.voice
+                ? std::optional<std::string_view>(*update.voice) : std::nullopt;
             if (changed) {
                 const WorkspaceConfigEditResult edited = config->apply_character_settings(
-                    id, update.provider, style, reasoning_effort, update.web_search);
+                    id, update.provider, style, voice,
+                    reasoning_effort, update.web_search);
                 request_reload(*live_sessions, edited.affected_forum_ids);
             }
         } catch (const std::invalid_argument&) {

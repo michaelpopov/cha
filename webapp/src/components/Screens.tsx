@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useRef,
   useState,
   type Dispatch,
   type FormEvent,
@@ -13,7 +14,14 @@ import {
   type CharacterDetail,
   type ForumSummary,
   type SessionListing,
+  type VoiceDetail,
 } from '../api/client';
+import {
+  getTextToSpeechConfiguration,
+  TextToSpeechError,
+  TextToSpeechSession,
+  type TextToSpeechVoice,
+} from '../textToSpeech';
 import { sessionOperationState, type AppAction, type AppState } from '../state/view';
 import { Markdown } from './Markdown';
 import { TransliteratingInput } from './TransliterationMode';
@@ -23,6 +31,8 @@ import {
   ChevronRightIcon,
   MessageIcon,
   PlusIcon,
+  SpeakerIcon,
+  StopIcon,
 } from './Icons';
 
 interface DiscoveryScreenProps {
@@ -470,6 +480,18 @@ function unresolvedOption(
   return { id: saved, label: `${saved} (not available)` };
 }
 
+function voiceForTest(voice: VoiceDetail): TextToSpeechVoice {
+  const settings: TextToSpeechVoice['settings'] = {};
+  if (voice.stability !== null) settings.stability = voice.stability;
+  if (voice.similarity_boost !== null) settings.similarity_boost = voice.similarity_boost;
+  if (voice.style !== null) settings.style = voice.style;
+  if (voice.use_speaker_boost !== null) {
+    settings.use_speaker_boost = voice.use_speaker_boost;
+  }
+  if (voice.speed !== null) settings.speed = voice.speed;
+  return { elevenlabs_voice_id: voice.elevenlabs_voice_id, settings };
+}
+
 export function CharacterSettingsScreen({
   state,
   dispatch,
@@ -481,12 +503,22 @@ export function CharacterSettingsScreen({
   const [detail, setDetail] = useState<CharacterDetail | null>(null);
   const [provider, setProvider] = useState<string | null>(null);
   const [style, setStyle] = useState<string | null>(null);
+  const [voice, setVoice] = useState<string | null>(null);
   const [reasoningEffort, setReasoningEffort] =
     useState<CharacterDetail['reasoning_effort']>(null);
   const [webSearch, setWebSearch] = useState<CharacterDetail['web_search']>(null);
+  const [voiceTestText, setVoiceTestText] = useState(
+    'The chief task in life is simply this: to identify and separate matters so that I can say clearly to myself which are externals not under my control.',
+  );
+  const [testingVoice, setTestingVoice] = useState(false);
+  const [voiceTestError, setVoiceTestError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [requestVersion, setRequestVersion] = useState(0);
+  const voiceTest = useRef<TextToSpeechSession | null>(null);
+  const speechConfiguration = getTextToSpeechConfiguration();
+
+  useEffect(() => () => voiceTest.current?.stop(), []);
 
   useEffect(() => {
     if (!characterId) return;
@@ -499,6 +531,7 @@ export function CharacterSettingsScreen({
         setDetail(loaded);
         setProvider(loaded.provider);
         setStyle(loaded.style);
+        setVoice(loaded.voice_id);
         setReasoningEffort(loaded.reasoning_effort);
         setWebSearch(loaded.web_search);
       },
@@ -514,14 +547,66 @@ export function CharacterSettingsScreen({
   }, [characterId, client, requestVersion]);
 
   function closeSettings() {
+    stopVoiceTest();
     if (characterId) dispatch({ type: 'inspect-character', characterId });
     else dispatch({ type: 'show-characters' });
+  }
+
+  function stopVoiceTest() {
+    voiceTest.current?.stop();
+    voiceTest.current = null;
+    setTestingVoice(false);
+  }
+
+  async function toggleVoiceTest() {
+    if (testingVoice) return stopVoiceTest();
+    if (!speechConfiguration || !voiceTestText.trim()) return;
+    setVoiceTestError(null);
+    let selectedVoice: TextToSpeechVoice | undefined;
+    if (voice !== null) {
+      try {
+        const registered = (await client.listVoices()).find(({ id }) => id === voice);
+        if (!registered) {
+          setVoiceTestError('That voice is not available for testing.');
+          return;
+        }
+        selectedVoice = voiceForTest(registered);
+      } catch (failure: unknown) {
+        setVoiceTestError(publicErrorMessage(
+          failure,
+          'Voice settings could not be loaded for testing.',
+        ));
+        return;
+      }
+    }
+    const session = new TextToSpeechSession(
+      speechConfiguration,
+      selectedVoice,
+      voiceTestText.trim(),
+      () => {
+        if (voiceTest.current === session) voiceTest.current = null;
+        setTestingVoice(false);
+      },
+    );
+    voiceTest.current = session;
+    setTestingVoice(true);
+    try {
+      await session.play();
+    } catch (failure: unknown) {
+      if (voiceTest.current !== session) return;
+      session.stop();
+      voiceTest.current = null;
+      setTestingVoice(false);
+      setVoiceTestError(failure instanceof TextToSpeechError
+        ? failure.message : 'Voice test could not be played.');
+    }
   }
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!characterId || !detail || provider === null || saving) return;
     if (provider === detail.provider && style === detail.style
+      && voice === detail.voice_id
       && reasoningEffort === detail.reasoning_effort
       && webSearch === detail.web_search) return;
     setSaving(true);
@@ -530,6 +615,7 @@ export function CharacterSettingsScreen({
       const saved = await client.updateCharacter(characterId, {
         provider,
         style,
+        voice_id: voice,
         reasoning_effort: reasoningEffort,
         web_search: webSearch,
       });
@@ -537,6 +623,7 @@ export function CharacterSettingsScreen({
       setDetail(saved);
       setProvider(saved.provider);
       setStyle(saved.style);
+      setVoice(saved.voice_id);
       setReasoningEffort(saved.reasoning_effort);
       setWebSearch(saved.web_search);
     } catch (failure: unknown) {
@@ -551,8 +638,11 @@ export function CharacterSettingsScreen({
     && unresolvedOption(detail.available_providers, detail.provider);
   const unresolvedStyle = detail
     && unresolvedOption(detail.available_styles, detail.style);
+  const unresolvedVoice = detail
+    && unresolvedOption(detail.available_voices, detail.voice_id);
   const dirty = detail !== null
     && (provider !== detail.provider || style !== detail.style
+      || voice !== detail.voice_id
       || reasoningEffort !== detail.reasoning_effort
       || webSearch !== detail.web_search);
 
@@ -654,12 +744,43 @@ export function CharacterSettingsScreen({
               <option value={unresolvedStyle.id}>{unresolvedStyle.label}</option>
             )}
           </select>
-          <p className={`cha-style-sample cha-message-text${voiceClasses(selectedStyle?.appearance)}`}>
-            The chief task in life is this…
-          </p>
-          <p>
-            Saving restarts the sessions using this character and loses any answer being generated.
-          </p>
+          <label htmlFor="cha-character-voice">Voice</label>
+          <select
+            className="cha-form-control"
+            disabled={saving}
+            id="cha-character-voice"
+            onChange={(event) => {
+              stopVoiceTest();
+              setVoice(event.target.value === '' ? null : event.target.value);
+            }}
+            value={voice ?? ''}
+          >
+            <option value="">Application default</option>
+            {detail.available_voices.map((option) => (
+              <option key={option.id} value={option.id}>{option.label}</option>
+            ))}
+            {unresolvedVoice && (
+              <option value={unresolvedVoice.id}>{unresolvedVoice.label}</option>
+            )}
+          </select>
+          <textarea
+            aria-label="Voice preview text"
+            className={`cha-form-control cha-voice-preview-text cha-message-text${voiceClasses(selectedStyle?.appearance)}`}
+            id="cha-character-voice-test"
+            onChange={(event) => setVoiceTestText(event.target.value)}
+            value={voiceTestText}
+          />
+          {voiceTestError && <p className="cha-error-message" role="alert">{voiceTestError}</p>}
+          {speechConfiguration && <div className="cha-new-session-actions">
+            <button
+              className="cha-button cha-voice-preview-action"
+              disabled={!testingVoice && !voiceTestText.trim()}
+              onClick={() => void toggleVoiceTest()}
+              type="button"
+            >
+              {testingVoice ? <><StopIcon /> Stop preview</> : <><SpeakerIcon /> Play preview</>}
+            </button>
+          </div>}
           <div className="cha-new-session-actions">
             <button
               className="cha-button cha-button-ghost"

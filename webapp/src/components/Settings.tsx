@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useRef,
   useState,
   type Dispatch,
   type FormEvent,
@@ -15,9 +16,17 @@ import {
   type ProviderUpdate,
   type StyleDetail,
   type StyleUpdate,
+  type VoiceDetail,
+  type VoiceUpdate,
   type VaultDetail,
   type VaultUpdate,
 } from '../api/client';
+import {
+  getTextToSpeechConfiguration,
+  TextToSpeechError,
+  TextToSpeechSession,
+  type TextToSpeechVoice,
+} from '../textToSpeech';
 import type { AppAction, AppState } from '../state/view';
 import { voiceClasses } from './characterAppearance';
 import { ConfirmDialog } from './ConfirmDialog';
@@ -28,7 +37,9 @@ import {
   DatabaseIcon,
   KeyIcon,
   PlusIcon,
+  SpeakerIcon,
   SettingsIcon,
+  StopIcon,
 } from './Icons';
 import { TransliteratingInput } from './TransliterationMode';
 
@@ -76,7 +87,7 @@ export function SettingsNavigation({ dispatch }: { dispatch: Dispatch<AppAction>
     <section className="cha-settings-card" aria-labelledby="cha-configuration-settings-title">
       <header className="cha-settings-card-header">
         <h2 id="cha-configuration-settings-title">Configuration</h2>
-        <p>Configure vaults, inference, and character appearance.</p>
+        <p>Configure vaults, inference, character appearance, and voice output.</p>
       </header>
       <div className="cha-settings-links">
         <SettingsRow
@@ -96,6 +107,12 @@ export function SettingsNavigation({ dispatch }: { dispatch: Dispatch<AppAction>
           icon={<CharacterIcon />}
           label="Styles"
           onClick={() => dispatch({ type: 'show-settings-styles' })}
+        />
+        <SettingsRow
+          description="Voices used by characters for spoken responses"
+          icon={<SpeakerIcon />}
+          label="Voices"
+          onClick={() => dispatch({ type: 'show-settings-voices' })}
         />
         <SettingsRow
           description="Secrets saved locally on this device"
@@ -986,6 +1003,281 @@ export function StyleScreen({
           onConfirm={() => void remove()}
           title="Delete style?"
         />
+      )}
+    </section>
+  );
+}
+
+export function VoicesScreen({ client, dispatch, sessionReport }: SettingsScreenProps) {
+  const [voices, setVoices] = useState<VoiceDetail[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [revision, setRevision] = useState(0);
+  useEffect(() => {
+    let current = true;
+    setVoices(null);
+    setError(null);
+    void client.listVoices().then(
+      (loaded) => { if (current) setVoices(loaded); },
+      (failure: unknown) => {
+        if (current) setError(publicErrorMessage(failure, 'Voices could not be loaded.'));
+      },
+    );
+    return () => { current = false; };
+  }, [client, revision]);
+  return (
+    <section className="cha-screen cha-navigation" aria-label="Voices settings">
+      <BackToSettings dispatch={dispatch} />
+      {sessionReport}
+      {voices === null && !error && <p className="cha-state-message" role="status">Loading voices…</p>}
+      {error && <LoadFailure message={error} retry={() => setRevision((value) => value + 1)} />}
+      {voices && (
+        <div className="cha-list">
+          <SettingsRow description="Add a voice for character speech" icon={<PlusIcon />} label="New voice" onClick={() => dispatch({ type: 'show-settings-new-voice' })} />
+          {voices.length === 0 && <p className="cha-empty-list">No voices configured</p>}
+          {voices.map((voice) => (
+            <SettingsRow
+              description={voice.description}
+              icon={<SpeakerIcon />}
+              key={voice.id}
+              label={voice.display_name}
+              onClick={() => dispatch({
+                type: 'inspect-voice',
+                voiceId: voice.id,
+                voiceName: voice.display_name,
+              })}
+            />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+export function NewVoiceScreen({ client, dispatch, sessionReport }: SettingsScreenProps) {
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const [elevenLabsVoiceId, setElevenLabsVoiceId] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function save(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!name.trim() || !description.trim() || !elevenLabsVoiceId.trim() || saving) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const created = await client.createVoice({
+        display_name: name.trim(),
+        description: description.trim(),
+        elevenlabs_voice_id: elevenLabsVoiceId.trim(),
+      });
+      dispatch({
+        type: 'inspect-voice',
+        voiceId: created.id,
+        voiceName: created.display_name,
+      });
+    } catch (failure: unknown) {
+      setError(publicErrorMessage(failure, 'The voice could not be created.'));
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="cha-screen cha-navigation" aria-label="New voice settings">
+      <button className="cha-back-row" onClick={() => dispatch({ type: 'show-settings-voices' })} type="button"><ChevronLeftIcon /><span>Voices</span></button>
+      {sessionReport}
+      <form className="cha-settings-form" onSubmit={(event) => void save(event)}>
+        <TransliteratingInput autoFocus className="cha-form-control" disabled={saving} id="cha-new-voice-name" label="Name" onValueChange={setName} placeholder="e.g. Brian" value={name} />
+        <label htmlFor="cha-new-voice-description">Description<textarea className="cha-form-control cha-voice-description" disabled={saving} id="cha-new-voice-description" onChange={(event) => setDescription(event.target.value)} placeholder="Describe how this voice sounds" value={description} /></label>
+        <label htmlFor="cha-new-elevenlabs-voice-id">ElevenLabs voice ID<input className="cha-form-control" disabled={saving} id="cha-new-elevenlabs-voice-id" onChange={(event) => setElevenLabsVoiceId(event.target.value)} placeholder="e.g. nPczCjzI2devNBz1zQrb" value={elevenLabsVoiceId} /></label>
+        {error && <p className="cha-error-message" role="alert">{error}</p>}
+        <div className="cha-settings-form-actions"><button className="cha-button cha-button-ghost" disabled={saving} onClick={() => dispatch({ type: 'show-settings-voices' })} type="button">Cancel</button><button className="cha-button cha-button-primary" disabled={!name.trim() || !description.trim() || !elevenLabsVoiceId.trim() || saving} type="submit">{saving ? 'Registering…' : 'Register voice'}</button></div>
+      </form>
+    </section>
+  );
+}
+
+function voiceUpdate(detail: VoiceDetail): VoiceUpdate {
+  const { id: _id, used_by: _usedBy, writable: _writable, ...update } = detail;
+  return update;
+}
+
+function previewVoice(update: VoiceUpdate): TextToSpeechVoice {
+  const settings: TextToSpeechVoice['settings'] = {};
+  if (update.stability !== null) settings.stability = update.stability;
+  if (update.similarity_boost !== null) settings.similarity_boost = update.similarity_boost;
+  if (update.style !== null) settings.style = update.style;
+  if (update.use_speaker_boost !== null) {
+    settings.use_speaker_boost = update.use_speaker_boost;
+  }
+  if (update.speed !== null) settings.speed = update.speed;
+  return { elevenlabs_voice_id: update.elevenlabs_voice_id, settings };
+}
+
+function optionalNumber(value: string): number | null {
+  return value === '' ? null : Number(value);
+}
+
+interface VoiceScreenProps extends SettingsScreenProps {
+  reloadVersion?: number;
+}
+
+export function VoiceScreen({
+  client,
+  dispatch,
+  reloadVersion = 0,
+  sessionReport,
+  state,
+}: VoiceScreenProps) {
+  const id = state.inspectedVoiceId;
+  const [detail, setDetail] = useState<VoiceDetail | null>(null);
+  const [draft, setDraft] = useState<VoiceUpdate | null>(null);
+  const [previewText, setPreviewText] = useState(
+    'The chief task in life is simply this: to identify and separate matters so that I can say clearly to myself which are externals not under my control.',
+  );
+  const [previewing, setPreviewing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [revision, setRevision] = useState(0);
+  const preview = useRef<TextToSpeechSession | null>(null);
+  const speechConfiguration = getTextToSpeechConfiguration();
+
+  useEffect(() => () => preview.current?.stop(), []);
+  useEffect(() => {
+    let current = true;
+    preview.current?.stop();
+    preview.current = null;
+    setPreviewing(false);
+    setDetail(null);
+    setDraft(null);
+    setError(null);
+    if (!id) return () => { current = false; };
+    void client.listVoices().then(
+      (voices) => {
+        if (!current) return;
+        const loaded = voices.find((voice) => voice.id === id);
+        if (!loaded) return setError('That voice was not found.');
+        setDetail(loaded);
+        setDraft(voiceUpdate(loaded));
+        dispatch({
+          type: 'voice-detail-loaded',
+          voiceId: loaded.id,
+          voiceName: loaded.display_name,
+          writable: loaded.writable,
+        });
+      },
+      (failure: unknown) => {
+        if (current) setError(publicErrorMessage(failure, 'Voice settings could not be loaded.'));
+      },
+    );
+    return () => { current = false; };
+  }, [client, dispatch, id, reloadVersion, revision]);
+
+  function change<Key extends keyof VoiceUpdate>(key: Key, value: VoiceUpdate[Key]) {
+    setDraft((current) => current ? { ...current, [key]: value } : current);
+  }
+
+  function stopPreview() {
+    preview.current?.stop();
+    preview.current = null;
+    setPreviewing(false);
+  }
+
+  async function togglePreview() {
+    if (previewing) return stopPreview();
+    if (!draft || !speechConfiguration || !previewText.trim()
+      || !draft.elevenlabs_voice_id.trim()) return;
+    setPreviewError(null);
+    const session = new TextToSpeechSession(
+      speechConfiguration,
+      previewVoice(draft),
+      previewText.trim(),
+      () => {
+        if (preview.current === session) preview.current = null;
+        setPreviewing(false);
+      },
+    );
+    preview.current = session;
+    setPreviewing(true);
+    try {
+      await session.play();
+    } catch (failure: unknown) {
+      if (preview.current !== session) return;
+      session.stop();
+      preview.current = null;
+      setPreviewing(false);
+      setPreviewError(failure instanceof TextToSpeechError
+        ? failure.message : 'Voice preview could not be played.');
+    }
+  }
+
+  async function save(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!id || !detail || !draft || saving || deleting) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const updated = await client.updateVoice(id, draft);
+      setDetail(updated);
+      setDraft(voiceUpdate(updated));
+    } catch (failure: unknown) {
+      setError(publicErrorMessage(failure, 'Voice settings could not be saved.'));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function remove() {
+    setConfirming(false);
+    if (!id || saving || deleting) return;
+    setDeleting(true);
+    setError(null);
+    try {
+      await client.deleteVoice(id);
+      dispatch({ type: 'show-settings-voices' });
+    } catch (failure: unknown) {
+      setError(publicErrorMessage(failure, 'The voice could not be deleted.'));
+      setDeleting(false);
+    }
+  }
+
+  const dirty = detail && draft
+    && JSON.stringify(voiceUpdate(detail)) !== JSON.stringify(draft);
+  const disabled = saving || deleting || !detail?.writable;
+  return (
+    <section className="cha-screen cha-navigation" aria-label="Voice settings">
+      <button className="cha-back-row" onClick={() => dispatch({ type: 'show-settings-voices' })} type="button"><ChevronLeftIcon /><span>Voices</span></button>
+      {sessionReport}
+      {!id && <p className="cha-state-message">No voice is selected.</p>}
+      {id && !detail && !error && <p className="cha-state-message" role="status">Loading voice…</p>}
+      {error && !detail && <LoadFailure message={error} retry={() => setRevision((value) => value + 1)} />}
+      {detail && draft && (
+        <form className="cha-settings-form cha-voice-settings-form" onSubmit={(event) => void save(event)}>
+          <label htmlFor="cha-voice-description">Description<textarea className="cha-form-control cha-voice-description" disabled={disabled} id="cha-voice-description" onChange={(event) => change('description', event.target.value)} value={draft.description} /></label>
+          <label htmlFor="cha-elevenlabs-voice-id">ElevenLabs voice ID<input className="cha-form-control" disabled={disabled} id="cha-elevenlabs-voice-id" onChange={(event) => change('elevenlabs_voice_id', event.target.value)} value={draft.elevenlabs_voice_id} /></label>
+          <h2 className="cha-settings-section-title">Delivery</h2>
+          <div className="cha-settings-form-grid">
+            <label>Stability <span>0–1</span><input className="cha-form-control" disabled={disabled} max="1" min="0" onChange={(event) => change('stability', optionalNumber(event.target.value))} step="0.01" type="number" value={draft.stability ?? ''} /></label>
+            <label>Similarity boost <span>0–1</span><input className="cha-form-control" disabled={disabled} max="1" min="0" onChange={(event) => change('similarity_boost', optionalNumber(event.target.value))} placeholder="ElevenLabs default" step="0.01" type="number" value={draft.similarity_boost ?? ''} /></label>
+            <label>Style exaggeration <span>0–1</span><input className="cha-form-control" disabled={disabled} max="1" min="0" onChange={(event) => change('style', optionalNumber(event.target.value))} step="0.01" type="number" value={draft.style ?? ''} /></label>
+            <label>Speed <span>0.7–1.2</span><input className="cha-form-control" disabled={disabled} max="1.2" min="0.7" onChange={(event) => change('speed', optionalNumber(event.target.value))} step="0.01" type="number" value={draft.speed ?? ''} /></label>
+          </div>
+          <label>Speaker boost<select className="cha-form-control" disabled={disabled} onChange={(event) => change('use_speaker_boost', event.target.value === '' ? null : event.target.value === 'true')} value={draft.use_speaker_boost === null ? '' : String(draft.use_speaker_boost)}><option value="">ElevenLabs default</option><option value="true">On</option><option value="false">Off</option></select></label>
+          <h2 className="cha-settings-section-title">Preview</h2>
+          <label htmlFor="cha-voice-preview-text">Text to speak<textarea className="cha-form-control cha-voice-preview-text" id="cha-voice-preview-text" onChange={(event) => setPreviewText(event.target.value)} value={previewText} /></label>
+          {previewError && <p className="cha-error-message" role="alert">{previewError}</p>}
+          {speechConfiguration && <div className="cha-settings-form-actions"><button className="cha-button cha-voice-preview-action" disabled={!previewing && (!previewText.trim() || !draft.elevenlabs_voice_id.trim())} onClick={() => void togglePreview()} type="button">{previewing ? <><StopIcon /> Stop preview</> : <><SpeakerIcon /> Play preview</>}</button></div>}
+          <UsedBy empty="No characters use this voice." items={detail.used_by} />
+          {error && <p className="cha-error-message" role="alert">{error}</p>}
+          <div className="cha-settings-form-actions"><button className="cha-button cha-button-ghost" disabled={!dirty || saving || deleting} onClick={() => setDraft(voiceUpdate(detail))} type="button">Reset</button><button className="cha-button cha-button-primary" disabled={!dirty || disabled || !draft.elevenlabs_voice_id.trim()} type="submit">{saving ? 'Saving…' : 'Save voice'}</button></div>
+          <div className="cha-settings-form-actions"><button className="cha-button cha-button-danger" disabled={saving || deleting || !detail.writable} onClick={() => setConfirming(true)} type="button">{deleting ? 'Deleting…' : 'Delete voice'}</button></div>
+        </form>
+      )}
+      {confirming && (
+        <ConfirmDialog confirmLabel="Delete voice" message={`Delete “${detail?.display_name ?? 'this voice'}”? This cannot be undone.`} onCancel={() => setConfirming(false)} onConfirm={() => void remove()} title="Delete voice?" />
       )}
     </section>
   );

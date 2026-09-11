@@ -16,6 +16,8 @@
 
 namespace cha {
 
+struct ElevenLabsVoiceSettings;
+
 struct WorkspaceConfigTransfer {
     std::size_t file_count{};
 };
@@ -101,6 +103,7 @@ public:
         std::string_view character_id,
         std::string_view provider_id,
         std::optional<std::string_view> style_id,
+        std::optional<std::string_view> voice_id = std::nullopt,
         std::optional<std::string_view> reasoning_effort = std::nullopt,
         std::optional<WebSearchMode> web_search = std::nullopt);
     WorkspaceConfigEditResult apply_character_definition(
@@ -158,6 +161,19 @@ public:
         std::string_view display_name);
     WorkspaceConfigEditResult apply_style_delete(
         std::string_view style_id);
+    WorkspaceConfigEditResult apply_voice_update(
+        std::string_view voice_id,
+        std::string_view display_name,
+        std::string_view description,
+        std::string_view elevenlabs_voice_id,
+        const ElevenLabsVoiceSettings& settings);
+    WorkspaceConfigEditResult apply_voice_create(
+        std::string_view voice_id,
+        std::string_view display_name,
+        std::string_view description,
+        std::string_view elevenlabs_voice_id);
+    WorkspaceConfigEditResult apply_voice_delete(
+        std::string_view voice_id);
 
 private:
     struct Impl;

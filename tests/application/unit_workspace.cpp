@@ -46,6 +46,7 @@ TEST(Workspace, EagerlyLoadsOwnedResolvedData) {
     fixture.write_voice(
         "warm-narrator",
         "display_name = \"Warm Narrator\"\n"
+        "description = \"Deep, resonant, comforting\"\n"
         "elevenlabs_voice_id = \"eleven-voice-123\"\n"
         "stability = 0.45\n"
         "similarity_boost = 0.8\n"
@@ -90,6 +91,7 @@ TEST(Workspace, EagerlyLoadsOwnedResolvedData) {
     const WorkspaceVoice* const voice = workspace.find_voice("warm-narrator");
     ASSERT_NE(voice, nullptr);
     EXPECT_EQ(voice->label, "Warm Narrator");
+    EXPECT_EQ(voice->description, "Deep, resonant, comforting");
     EXPECT_EQ(voice->elevenlabs_voice_id, "eleven-voice-123");
     EXPECT_EQ(voice->settings.stability, 0.45);
     EXPECT_EQ(voice->settings.similarity_boost, 0.8);
@@ -154,8 +156,21 @@ TEST(Workspace, LoadsAMinimalVoice) {
     const WorkspaceVoice* const voice = workspace.find_voice("plain-reader");
     ASSERT_NE(voice, nullptr);
     EXPECT_EQ(voice->label, "Plain reader");
+    EXPECT_TRUE(voice->description.empty());
     EXPECT_EQ(voice->elevenlabs_voice_id, "plain-voice-id");
     EXPECT_EQ(voice->settings, ElevenLabsVoiceSettings{});
+
+    workspace.write_voice(
+        "plain-reader", "Plain reader", "", "plain-voice-id",
+        ElevenLabsVoiceSettings{.stability = 0.4});
+    workspace.create_voice(
+        "another-reader", "Another reader", "", "another-voice-id");
+    const Workspace reloaded = Workspace::load(fixture.root());
+    ASSERT_NE(reloaded.find_voice("plain-reader"), nullptr);
+    EXPECT_TRUE(reloaded.find_voice("plain-reader")->description.empty());
+    EXPECT_EQ(reloaded.find_voice("plain-reader")->settings.stability, 0.4);
+    ASSERT_NE(reloaded.find_voice("another-reader"), nullptr);
+    EXPECT_TRUE(reloaded.find_voice("another-reader")->description.empty());
 }
 
 TEST(Workspace, RejectsInvalidVoiceConfigurationAndReferences) {
@@ -181,6 +196,53 @@ TEST(Workspace, RejectsInvalidVoiceConfigurationAndReferences) {
             "voice = \"missing\"\n");
         EXPECT_THROW((void)Workspace::load(fixture.root()), std::runtime_error);
     }
+}
+
+TEST(Workspace, CreatesUpdatesAssignsAndDeletesVoices) {
+    test::TestWorkspace fixture;
+    std::filesystem::create_directories(
+        fixture.root() / "system" / "voices");
+    const Workspace initial = Workspace::load(fixture.root());
+    initial.create_voice(
+        "voice_1", "Brian", "Deep, resonant, comforting", "brian-id");
+    EXPECT_EQ(initial.find_voice("voice_1"), nullptr);
+
+    const Workspace created = Workspace::load(fixture.root());
+    const WorkspaceVoice* voice = created.find_voice("voice_1");
+    ASSERT_NE(voice, nullptr);
+    EXPECT_EQ(voice->label, "Brian");
+    EXPECT_EQ(voice->description, "Deep, resonant, comforting");
+    EXPECT_TRUE(created.voice_is_writable("voice_1"));
+
+    created.write_voice(
+        "voice_1", "George", "Warm, captivating storyteller", "george-id",
+        ElevenLabsVoiceSettings{
+            .stability = 0.4,
+            .similarity_boost = 0.7,
+            .style = 0.2,
+            .use_speaker_boost = false,
+            .speed = 0.9,
+        });
+    const Workspace updated = Workspace::load(fixture.root());
+    voice = updated.find_voice("voice_1");
+    ASSERT_NE(voice, nullptr);
+    EXPECT_EQ(voice->label, "George");
+    EXPECT_EQ(voice->elevenlabs_voice_id, "george-id");
+    EXPECT_EQ(voice->settings.use_speaker_boost, false);
+    EXPECT_EQ(voice->settings.speed, 0.9);
+
+    updated.write_character_settings(
+        "guide", "test", std::nullopt, std::string_view{"voice_1"});
+    const Workspace assigned = Workspace::load(fixture.root());
+    EXPECT_EQ(assigned.find_character("guide")->voice_id, "voice_1");
+    EXPECT_THROW(assigned.delete_voice("voice_1"), std::invalid_argument);
+
+    assigned.write_character_settings(
+        "guide", "test", std::nullopt, std::nullopt);
+    const Workspace cleared = Workspace::load(fixture.root());
+    cleared.delete_voice("voice_1");
+    EXPECT_EQ(
+        Workspace::load(fixture.root()).find_voice("voice_1"), nullptr);
 }
 
 TEST(Workspace, OmitsAnInvalidUnusedProvider) {
@@ -647,7 +709,7 @@ TEST(Workspace, WritesConfigurationWithoutChangingTheLoadedInstance) {
     const Workspace workspace = Workspace::load(fixture.root());
     workspace.write_character_settings(
         "guide", "second", std::string_view{"mono"},
-        std::string_view{"xhigh"}, WebSearchMode::required);
+        std::nullopt, std::string_view{"xhigh"}, WebSearchMode::required);
     workspace.write_forum_default_character("lobby", "writer");
     workspace.write_forum_default_persona("lobby", "reader");
 
@@ -692,7 +754,8 @@ TEST(Workspace, RejectsInvalidWritesWithoutChangingTheConfigFile) {
         std::runtime_error);
     EXPECT_THROW(
         workspace.write_character_settings(
-            "guide", "test", std::nullopt, std::string_view{"extreme"}),
+            "guide", "test", std::nullopt, std::nullopt,
+            std::string_view{"extreme"}),
         std::invalid_argument);
     EXPECT_EQ(file_bytes(character), before);
     EXPECT_TRUE(workspace.character_is_writable("guide"));
@@ -955,7 +1018,7 @@ TEST(Workspace, RejectsOpenAiSubscriptionWebSearchOverrides) {
         const Workspace workspace = Workspace::load(fixture.root());
         EXPECT_THROW(
             workspace.write_character_settings(
-                "guide", "chatgpt", std::nullopt, std::nullopt,
+                "guide", "chatgpt", std::nullopt, std::nullopt, std::nullopt,
                 WebSearchMode::automatic),
             std::invalid_argument);
     }

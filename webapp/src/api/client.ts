@@ -37,6 +37,9 @@ export type ProviderUpdate = components['schemas']['ProviderUpdate'];
 export type StyleDetail = components['schemas']['StyleDetail'];
 export type CreateStyleRequest = components['schemas']['CreateStyleRequest'];
 export type StyleUpdate = components['schemas']['StyleUpdate'];
+export type VoiceDetail = components['schemas']['VoiceDetail'];
+export type CreateVoiceRequest = components['schemas']['CreateVoiceRequest'];
+export type VoiceUpdate = components['schemas']['VoiceUpdate'];
 export type ApiKeyDetail = components['schemas']['ApiKeyDetail'];
 export type CreateApiKeyRequest = components['schemas']['CreateApiKeyRequest'];
 export type ErrorCode = components['schemas']['ErrorResponse']['error']['code'];
@@ -167,6 +170,10 @@ export interface ChaClient {
   createStyle(request: CreateStyleRequest): Promise<StyleDetail>;
   updateStyle(styleId: string, update: StyleUpdate): Promise<StyleDetail>;
   deleteStyle(styleId: string): Promise<void>;
+  listVoices(): Promise<VoiceDetail[]>;
+  createVoice(request: CreateVoiceRequest): Promise<VoiceDetail>;
+  updateVoice(voiceId: string, update: VoiceUpdate): Promise<VoiceDetail>;
+  deleteVoice(voiceId: string): Promise<void>;
   listApiKeys(): Promise<ApiKeyDetail[]>;
   createApiKey(request: CreateApiKeyRequest): Promise<ApiKeyDetail>;
   renameApiKey(apiKeyId: string, displayName: string): Promise<ApiKeyDetail>;
@@ -224,6 +231,7 @@ function isCharacterDetail(value: unknown): value is CharacterDetail {
     && typeof value.editable_markdown === 'string'
     && (value.provider === null || typeof value.provider === 'string')
     && (value.style === null || typeof value.style === 'string')
+    && (value.voice_id === null || typeof value.voice_id === 'string')
     && isOneOf(value.reasoning_effort, ['low', 'medium', 'high', 'xhigh', null])
     && isOneOf(value.web_search, ['off', 'auto', 'required', null])
     && Array.isArray(value.available_providers)
@@ -234,6 +242,9 @@ function isCharacterDetail(value: unknown): value is CharacterDetail {
       && typeof option.id === 'string'
       && typeof option.label === 'string'
       && isCharacterAppearance(option.appearance))
+    && Array.isArray(value.available_voices)
+    && value.available_voices.every((option) => isRecord(option)
+      && typeof option.id === 'string' && typeof option.label === 'string')
     && typeof value.writable === 'boolean';
 }
 
@@ -306,6 +317,32 @@ function isStyleDetail(value: unknown): value is StyleDetail {
     && isOneOf(value.weight, ['light', 'normal', 'medium', 'semibold', 'bold'])
     && isOneOf(value.size, ['small', 'normal', 'large'])
     && isOneOf(value.text_color, ['normal', 'muted', 'accent'])
+    && typeof value.writable === 'boolean'
+    && Array.isArray(value.used_by)
+    && value.used_by.every((name) => typeof name === 'string');
+}
+
+function isNullableBoundedNumber(
+  value: unknown,
+  minimum: number,
+  maximum: number,
+): boolean {
+  return value === null
+    || (typeof value === 'number' && Number.isFinite(value)
+      && value >= minimum && value <= maximum);
+}
+
+function isVoiceDetail(value: unknown): value is VoiceDetail {
+  return isRecord(value) && hasIdentity(value)
+    && typeof value.description === 'string'
+    && typeof value.elevenlabs_voice_id === 'string'
+    && value.elevenlabs_voice_id.length > 0
+    && isNullableBoundedNumber(value.stability, 0, 1)
+    && isNullableBoundedNumber(value.similarity_boost, 0, 1)
+    && isNullableBoundedNumber(value.style, 0, 1)
+    && (value.use_speaker_boost === null
+      || typeof value.use_speaker_boost === 'boolean')
+    && isNullableBoundedNumber(value.speed, 0.7, 1.2)
     && typeof value.writable === 'boolean'
     && Array.isArray(value.used_by)
     && value.used_by.every((name) => typeof name === 'string');
@@ -757,6 +794,33 @@ export function createChaClient(
     deleteStyle: (styleId) => requestEmpty(
       fetcher,
       `/api/v1/styles/${component(styleId)}`,
+      jsonMutation({}, 'DELETE'),
+    ),
+
+    listVoices: () => requestValidated(
+      fetcher,
+      '/api/v1/voices',
+      (value): value is VoiceDetail[] => Array.isArray(value)
+        && value.every(isVoiceDetail),
+    ),
+
+    createVoice: (request) => requestValidated(
+      fetcher,
+      '/api/v1/voices',
+      isVoiceDetail,
+      jsonMutation(request),
+    ),
+
+    updateVoice: (voiceId, update) => requestValidated(
+      fetcher,
+      `/api/v1/voices/${component(voiceId)}`,
+      isVoiceDetail,
+      jsonMutation(update, 'PATCH'),
+    ),
+
+    deleteVoice: (voiceId) => requestEmpty(
+      fetcher,
+      `/api/v1/voices/${component(voiceId)}`,
       jsonMutation({}, 'DELETE'),
     ),
 

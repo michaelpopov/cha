@@ -7,6 +7,7 @@ import type {
   OpenAiAuth,
   PersonaDetail,
   SessionSnapshot,
+  VoiceDetail,
 } from '../api/client';
 
 // A character that configures nothing still carries an appearance on the wire.
@@ -71,6 +72,20 @@ export const monoLargeVoice: CharacterAppearance = {
   font: 'mono', style: 'normal', weight: 'normal', size: 'large', text_color: 'normal',
 };
 
+export const voiceDetailFixture: VoiceDetail = {
+  id: 'brian',
+  display_name: 'Brian',
+  description: 'Deep, resonant, comforting',
+  elevenlabs_voice_id: 'nPczCjzI2devNBz1zQrb',
+  stability: 0.45,
+  similarity_boost: null,
+  style: 0.2,
+  use_speaker_boost: true,
+  speed: 0.95,
+  writable: true,
+  used_by: ['Guide'],
+};
+
 export const characterDetailFixture: CharacterDetail = {
   id: 'guide',
   display_name: 'Guide',
@@ -80,6 +95,7 @@ export const characterDetailFixture: CharacterDetail = {
   editable_markdown: '# Guide dossier\n\nA **careful** guide.\n\n- Listen\n- Respond',
   provider: 'terra',
   style: 'serif-italic',
+  voice_id: null,
   reasoning_effort: null,
   web_search: null,
   available_providers: [
@@ -90,6 +106,7 @@ export const characterDetailFixture: CharacterDetail = {
     { id: 'mono-large', label: 'Mono large', appearance: monoLargeVoice },
     { id: 'serif-italic', label: 'Serif italic', appearance: serifItalicVoice },
   ],
+  available_voices: [{ id: 'brian', label: 'Brian' }],
   writable: true,
 };
 
@@ -240,6 +257,10 @@ export function fixtureClient(overrides: Partial<ChaClient> = {}): ChaClient {
     createStyle: async () => { throw new Error('No style fixture'); },
     updateStyle: async () => { throw new Error('No style fixture'); },
     deleteStyle: async () => undefined,
+    listVoices: async () => [],
+    createVoice: async () => { throw new Error('No voice fixture'); },
+    updateVoice: async () => { throw new Error('No voice fixture'); },
+    deleteVoice: async () => undefined,
     listApiKeys: async () => [],
     createApiKey: async ({ display_name }) => ({
       id: 'api_key_1', display_name, has_value: true, used_by: [],

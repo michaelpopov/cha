@@ -64,11 +64,14 @@ import {
   NewApiKeyScreen,
   NewProviderScreen,
   NewStyleScreen,
+  NewVoiceScreen,
   NewVaultScreen,
   ProviderScreen,
   ProvidersScreen,
   StyleScreen,
   StylesScreen,
+  VoiceScreen,
+  VoicesScreen,
   VaultScreen,
   VaultsScreen,
 } from './Settings';
@@ -88,6 +91,7 @@ interface ScreenProps extends ChatActions {
   personaRevision: number;
   providerRevision: number;
   styleRevision: number;
+  voiceRevision: number;
 }
 
 function Screen({
@@ -111,6 +115,7 @@ function Screen({
   personaRevision,
   providerRevision,
   styleRevision,
+  voiceRevision,
 }: ScreenProps) {
   // A session can be opened from the sidebar while any navigation screen is
   // showing, so each one carries the report rather than only the two screens
@@ -279,6 +284,21 @@ function Screen({
         state={state}
       />
     );
+    case 'settings-voices': return (
+      <VoicesScreen client={client} dispatch={dispatch} sessionReport={sessionReport} state={state} />
+    );
+    case 'settings-new-voice': return (
+      <NewVoiceScreen client={client} dispatch={dispatch} sessionReport={sessionReport} state={state} />
+    );
+    case 'settings-voice': return (
+      <VoiceScreen
+        client={client}
+        dispatch={dispatch}
+        reloadVersion={voiceRevision}
+        sessionReport={sessionReport}
+        state={state}
+      />
+    );
     case 'settings-api-keys': return (
       <ApiKeysScreen client={client} dispatch={dispatch} sessionReport={sessionReport} state={state} />
     );
@@ -363,6 +383,8 @@ const inPlaceActions = new Set<AppAction['type']>([
   'provider-updated',
   'style-detail-loaded',
   'style-updated',
+  'voice-detail-loaded',
+  'voice-updated',
   'api-key-detail-loaded',
   'api-key-updated',
 ]);
@@ -427,6 +449,7 @@ export function App({
   const [personaRevision, setPersonaRevision] = useState(0);
   const [providerRevision, setProviderRevision] = useState(0);
   const [styleRevision, setStyleRevision] = useState(0);
+  const [voiceRevision, setVoiceRevision] = useState(0);
   // The epoch this render was built from. The ref below is what asynchronous
   // work compares against; this is what a render can compare against without
   // reading that ref while rendering.
@@ -1116,6 +1139,7 @@ export function App({
               onPersonaDefinitionUpdated={() => setPersonaRevision((revision) => revision + 1)}
               onProviderUpdated={() => setProviderRevision((revision) => revision + 1)}
               onStyleUpdated={() => setStyleRevision((revision) => revision + 1)}
+              onVoiceUpdated={() => setVoiceRevision((revision) => revision + 1)}
               state={state}
               title={title}
             />
@@ -1135,6 +1159,7 @@ export function App({
                 personaRevision={personaRevision}
                 providerRevision={providerRevision}
                 styleRevision={styleRevision}
+                voiceRevision={voiceRevision}
                 client={client}
                 dispatch={navigate}
                 onCoverConversation={coverConversation}

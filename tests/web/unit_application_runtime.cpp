@@ -468,6 +468,74 @@ TEST(ApplicationRuntime, StoresApiKeysLocallyAndReferencesThemFromProviders) {
         getws()->find_style("serif")->appearance.weight,
         CharacterWeight::bold);
 
+    const auto created_voice = client.Post(
+        "/api/v1/voices",
+        kRuntimeCookie,
+        R"({"display_name":"Brian","description":"Deep, resonant, comforting","elevenlabs_voice_id":"brian-id"})",
+        "application/json");
+    ASSERT_TRUE(created_voice);
+    ASSERT_EQ(created_voice->status, 201) << created_voice->body;
+    nlohmann::json voice = nlohmann::json::parse(created_voice->body);
+    EXPECT_EQ(voice.at("id"), "voice_1");
+    EXPECT_EQ(voice.at("description"), "Deep, resonant, comforting");
+    EXPECT_TRUE(voice.at("stability").is_null());
+    ASSERT_NE(getws()->find_voice("voice_1"), nullptr);
+
+    voice.erase("id");
+    voice.erase("used_by");
+    voice.erase("writable");
+    voice["display_name"] = "George";
+    voice["description"] = "Warm, captivating storyteller";
+    voice["stability"] = 0.4;
+    voice["use_speaker_boost"] = false;
+    const auto updated_voice = client.Patch(
+        "/api/v1/voices/voice_1",
+        kRuntimeCookie,
+        voice.dump(),
+        "application/json");
+    ASSERT_TRUE(updated_voice);
+    ASSERT_EQ(updated_voice->status, 200) << updated_voice->body;
+    EXPECT_EQ(
+        nlohmann::json::parse(updated_voice->body).at("display_name"),
+        "George");
+    EXPECT_EQ(
+        getws()->find_voice("voice_1")->settings.use_speaker_boost,
+        false);
+
+    const auto assigned_voice = client.Patch(
+        "/api/v1/characters/guide",
+        kRuntimeCookie,
+        R"({"provider":"test","style":"serif","voice_id":"voice_1","reasoning_effort":null,"web_search":null})",
+        "application/json");
+    ASSERT_TRUE(assigned_voice);
+    ASSERT_EQ(assigned_voice->status, 200) << assigned_voice->body;
+    EXPECT_EQ(
+        nlohmann::json::parse(assigned_voice->body).at("voice_id"),
+        "voice_1");
+    const auto voices = client.Get("/api/v1/voices", kRuntimeCookie);
+    ASSERT_TRUE(voices);
+    ASSERT_EQ(voices->status, 200) << voices->body;
+    EXPECT_EQ(
+        nlohmann::json::parse(voices->body).front().at("used_by"),
+        nlohmann::json::array({"Guide"}));
+
+    const auto used_voice_delete = client.Delete(
+        "/api/v1/voices/voice_1", kRuntimeCookie, "{}", "application/json");
+    ASSERT_TRUE(used_voice_delete);
+    EXPECT_EQ(used_voice_delete->status, 409) << used_voice_delete->body;
+    const auto cleared_voice = client.Patch(
+        "/api/v1/characters/guide",
+        kRuntimeCookie,
+        R"({"provider":"test","style":"serif","voice_id":null,"reasoning_effort":null,"web_search":null})",
+        "application/json");
+    ASSERT_TRUE(cleared_voice);
+    ASSERT_EQ(cleared_voice->status, 200) << cleared_voice->body;
+    const auto voice_delete = client.Delete(
+        "/api/v1/voices/voice_1", kRuntimeCookie, "{}", "application/json");
+    ASSERT_TRUE(voice_delete);
+    EXPECT_EQ(voice_delete->status, 204) << voice_delete->body;
+    EXPECT_EQ(getws()->find_voice("voice_1"), nullptr);
+
     const auto created_provider = client.Post(
         "/api/v1/providers",
         kRuntimeCookie,

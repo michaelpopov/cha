@@ -223,6 +223,12 @@ struct StyleOption {
     bool operator==(const StyleOption&) const = default;
 };
 
+struct VoiceOption {
+    std::string id;
+    std::string label;
+    bool operator==(const VoiceOption&) const = default;
+};
+
 struct CreateCharacterRequest {
     std::string display_name;
     std::string description;
@@ -236,6 +242,7 @@ struct CreateForumRequest {
 struct CharacterSettingsUpdate {
     std::string provider;
     std::optional<std::string> style;
+    std::optional<std::string> voice;
     std::optional<std::string> reasoning_effort;
     std::optional<WebSearchMode> web_search;
 };
@@ -251,10 +258,12 @@ struct CharacterDetail {
     std::string editable_markdown;
     std::optional<std::string> provider;
     std::optional<std::string> style;
+    std::optional<std::string> voice;
     std::optional<std::string> reasoning_effort;
     std::optional<WebSearchMode> web_search;
     std::vector<ProviderOption> available_providers;
     std::vector<StyleOption> available_styles;
+    std::vector<VoiceOption> available_voices;
     bool writable{};
 };
 
@@ -336,6 +345,7 @@ void to_json(nlohmann::json& json, const RecentSession& value);
 void to_json(nlohmann::json& json, const Bootstrap& value);
 void to_json(nlohmann::json& json, const ProviderOption& value);
 void to_json(nlohmann::json& json, const StyleOption& value);
+void to_json(nlohmann::json& json, const VoiceOption& value);
 void to_json(nlohmann::json& json, const CharacterDetail& value);
 void to_json(nlohmann::json& json, const PersonaDetail& value);
 void to_json(nlohmann::json& json, const ForumDetail& value);

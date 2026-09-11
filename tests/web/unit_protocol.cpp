@@ -137,12 +137,14 @@ TEST(WebProtocol, SerializesSpecifiedSuccessListingAndErrorBodies) {
             .editable_markdown = "Source",
             .provider = "terra",
             .style = std::nullopt,
+            .voice = "brian",
             .reasoning_effort = "high",
             .web_search = WebSearchMode::automatic,
             .available_providers = {{"terra", "Terra"}},
             .available_styles = {{"serif-italic", "Serif italic",
-                {CharacterFont::serif, CharacterSlant::italic,
-                 CharacterWeight::normal, CharacterScale::normal}}},
+                 {CharacterFont::serif, CharacterSlant::italic,
+                  CharacterWeight::normal, CharacterScale::normal}}},
+            .available_voices = {{"brian", "Brian"}},
             .writable = true,
         }),
         nlohmann::json({
@@ -153,6 +155,7 @@ TEST(WebProtocol, SerializesSpecifiedSuccessListingAndErrorBodies) {
             {"editable_markdown", "Source"},
             {"provider", "terra"},
             {"style", nullptr},
+            {"voice_id", "brian"},
             {"reasoning_effort", "high"},
             {"web_search", "auto"},
             {"available_providers", {{{"id", "terra"}, {"label", "Terra"}}}},
@@ -162,6 +165,7 @@ TEST(WebProtocol, SerializesSpecifiedSuccessListingAndErrorBodies) {
                 {"appearance", {{"font", "serif"}, {"style", "italic"},
                     {"weight", "normal"}, {"size", "normal"}, {"text_color", "normal"}}},
             }}},
+            {"available_voices", {{{"id", "brian"}, {"label", "Brian"}}}},
             {"writable", true},
         }));
     EXPECT_EQ(
@@ -406,16 +410,19 @@ TEST(WebProtocol, ParsesRouteSpecificCommandPayloads) {
     const CharacterSettingsUpdate update = parse_character_settings_update(
         {{"provider", "qwen"},
          {"style", nullptr},
+         {"voice_id", "brian"},
          {"reasoning_effort", "xhigh"},
          {"web_search", "required"}});
     EXPECT_EQ(update.provider, "qwen");
     EXPECT_FALSE(update.style);
+    EXPECT_EQ(update.voice, "brian");
     EXPECT_EQ(update.reasoning_effort, "xhigh");
     EXPECT_EQ(update.web_search, WebSearchMode::required);
     EXPECT_THROW(
         (void)parse_character_settings_update({
             {"provider", "qwen"},
             {"style", nullptr},
+            {"voice_id", nullptr},
             {"reasoning_effort", nullptr},
         }),
         std::invalid_argument);
@@ -502,6 +509,7 @@ TEST(WebProtocol, ParsesRouteSpecificCommandPayloads) {
         (void)parse_character_settings_update({
             {"provider", 1},
             {"style", nullptr},
+            {"voice_id", nullptr},
             {"reasoning_effort", nullptr},
             {"web_search", nullptr},
         }),
@@ -510,6 +518,7 @@ TEST(WebProtocol, ParsesRouteSpecificCommandPayloads) {
         (void)parse_character_settings_update({
             {"provider", nullptr},
             {"style", nullptr},
+            {"voice_id", nullptr},
             {"reasoning_effort", nullptr},
             {"web_search", nullptr},
         }),
@@ -518,6 +527,7 @@ TEST(WebProtocol, ParsesRouteSpecificCommandPayloads) {
         (void)parse_character_settings_update({
             {"provider", "qwen"},
             {"style", nullptr},
+            {"voice_id", nullptr},
             {"reasoning_effort", "extreme"},
             {"web_search", nullptr},
         }),
@@ -526,6 +536,7 @@ TEST(WebProtocol, ParsesRouteSpecificCommandPayloads) {
         (void)parse_character_settings_update({
             {"provider", "qwen"},
             {"style", nullptr},
+            {"voice_id", nullptr},
             {"reasoning_effort", nullptr},
             {"web_search", "sometimes"},
         }),

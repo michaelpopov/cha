@@ -33,6 +33,9 @@ export type MainView =
   | 'settings-styles'
   | 'settings-new-style'
   | 'settings-style'
+  | 'settings-voices'
+  | 'settings-new-voice'
+  | 'settings-voice'
   | 'settings-api-keys'
   | 'settings-new-api-key'
   | 'settings-api-key';
@@ -72,6 +75,9 @@ export interface AppState {
   inspectedStyleId: string | null;
   inspectedStyleName: string | null;
   styleEditingAvailable: boolean;
+  inspectedVoiceId: string | null;
+  inspectedVoiceName: string | null;
+  voiceEditingAvailable: boolean;
   inspectedApiKeyId: string | null;
   inspectedApiKeyName: string | null;
   currentDefaultCharacterId: string | null;
@@ -104,6 +110,9 @@ export const initialAppState: AppState = {
   inspectedStyleId: null,
   inspectedStyleName: null,
   styleEditingAvailable: false,
+  inspectedVoiceId: null,
+  inspectedVoiceName: null,
+  voiceEditingAvailable: false,
   inspectedApiKeyId: null,
   inspectedApiKeyName: null,
   currentDefaultCharacterId: null,
@@ -165,6 +174,11 @@ export type AppAction =
   | { type: 'inspect-style'; styleId: string; styleName: string }
   | { type: 'style-detail-loaded'; styleId: string; styleName: string; writable: boolean }
   | { type: 'style-updated'; styleId: string; styleName: string; writable: boolean }
+  | { type: 'show-settings-voices' }
+  | { type: 'show-settings-new-voice' }
+  | { type: 'inspect-voice'; voiceId: string; voiceName: string }
+  | { type: 'voice-detail-loaded'; voiceId: string; voiceName: string; writable: boolean }
+  | { type: 'voice-updated'; voiceId: string; voiceName: string; writable: boolean }
   | { type: 'show-settings-api-keys' }
   | { type: 'show-settings-new-api-key' }
   | { type: 'inspect-api-key'; apiKeyId: string; apiKeyName: string }
@@ -388,6 +402,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           ...(character.description === undefined
             ? {} : { description: character.description }),
           appearance: character.appearance,
+          ...(character.voice === undefined ? {} : { voice: character.voice }),
         },
       ].sort((left, right) => left.display_name.localeCompare(right.display_name));
       return {
@@ -408,6 +423,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         ...(character.description === undefined
           ? {} : { description: character.description }),
         appearance: character.appearance,
+        ...(character.voice === undefined ? {} : { voice: character.voice }),
       };
       const updateMembers = <T extends { id: string }>(members: T[]) => (
         members.map((member) => member.id === character.id
@@ -665,6 +681,34 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         inspectedStyleName: action.styleName,
         styleEditingAvailable: action.writable,
       };
+    case 'show-settings-voices':
+      return {
+        ...state,
+        mainView: 'settings-voices',
+        voiceEditingAvailable: false,
+        ...idleSessionOperation(),
+      };
+    case 'show-settings-new-voice':
+      return { ...state, mainView: 'settings-new-voice', ...idleSessionOperation() };
+    case 'inspect-voice':
+      return {
+        ...state,
+        mainView: 'settings-voice',
+        inspectedVoiceId: action.voiceId,
+        inspectedVoiceName: action.voiceName,
+        voiceEditingAvailable: action.voiceId === state.inspectedVoiceId
+          ? state.voiceEditingAvailable
+          : false,
+        ...idleSessionOperation(),
+      };
+    case 'voice-detail-loaded':
+    case 'voice-updated':
+      if (action.voiceId !== state.inspectedVoiceId) return state;
+      return {
+        ...state,
+        inspectedVoiceName: action.voiceName,
+        voiceEditingAvailable: action.writable,
+      };
     case 'show-settings-api-keys':
       return { ...state, mainView: 'settings-api-keys', ...idleSessionOperation() };
     case 'show-settings-new-api-key':
@@ -793,6 +837,9 @@ export function navigationTitle(state: AppState): string | null {
     case 'settings-styles': return 'Styles';
     case 'settings-new-style': return 'New style';
     case 'settings-style': return state.inspectedStyleName ?? 'Style';
+    case 'settings-voices': return 'Voices';
+    case 'settings-new-voice': return 'New voice';
+    case 'settings-voice': return state.inspectedVoiceName ?? 'Voice';
     case 'settings-api-keys': return 'API Keys';
     case 'settings-new-api-key': return 'New API key';
     case 'settings-api-key': return state.inspectedApiKeyName ?? 'API Key';

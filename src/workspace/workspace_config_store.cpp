@@ -534,6 +534,24 @@ std::vector<std::string> forums_using_style(
     return result;
 }
 
+std::vector<std::string> forums_using_voice(
+    const Workspace& workspace,
+    std::string_view voice_id) {
+    std::vector<std::string> result;
+    for (const WorkspaceForum& forum : workspace.forums()) {
+        const bool used = std::ranges::any_of(
+            forum.members,
+            [&](const WorkspaceForumMember& member) {
+                const WorkspaceCharacter* character =
+                    workspace.find_character(member.character_id);
+                return character != nullptr && character->voice_id
+                    && *character->voice_id == voice_id;
+            });
+        if (used) result.push_back(forum.id);
+    }
+    return result;
+}
+
 void remove_created_database(const std::filesystem::path& path) noexcept {
     std::error_code ignored;
     std::filesystem::remove(path, ignored);
@@ -1192,13 +1210,15 @@ WorkspaceConfigEditResult WorkspaceConfigStore::apply_character_settings(
     std::string_view character_id,
     std::string_view provider_id,
     std::optional<std::string_view> style_id,
+    std::optional<std::string_view> voice_id,
     std::optional<std::string_view> reasoning_effort,
     std::optional<WebSearchMode> web_search) {
     return impl_->edit([&](const Workspace& workspace) {
         std::vector<std::string> affected =
             forums_using_character(workspace, character_id);
         workspace.write_character_settings(
-            character_id, provider_id, style_id, reasoning_effort, web_search);
+            character_id, provider_id, style_id, voice_id,
+            reasoning_effort, web_search);
         return affected;
     });
 }
@@ -1369,6 +1389,41 @@ WorkspaceConfigEditResult WorkspaceConfigStore::apply_style_delete(
     std::string_view style_id) {
     return impl_->edit([&](const Workspace& workspace) {
         workspace.delete_style(style_id);
+        return std::vector<std::string>{};
+    });
+}
+
+WorkspaceConfigEditResult WorkspaceConfigStore::apply_voice_update(
+    std::string_view voice_id,
+    std::string_view display_name,
+    std::string_view description,
+    std::string_view elevenlabs_voice_id,
+    const ElevenLabsVoiceSettings& settings) {
+    return impl_->edit([&](const Workspace& workspace) {
+        std::vector<std::string> affected =
+            forums_using_voice(workspace, voice_id);
+        workspace.write_voice(
+            voice_id, display_name, description, elevenlabs_voice_id, settings);
+        return affected;
+    });
+}
+
+WorkspaceConfigEditResult WorkspaceConfigStore::apply_voice_create(
+    std::string_view voice_id,
+    std::string_view display_name,
+    std::string_view description,
+    std::string_view elevenlabs_voice_id) {
+    return impl_->edit([&](const Workspace& workspace) {
+        workspace.create_voice(
+            voice_id, display_name, description, elevenlabs_voice_id);
+        return std::vector<std::string>{};
+    });
+}
+
+WorkspaceConfigEditResult WorkspaceConfigStore::apply_voice_delete(
+    std::string_view voice_id) {
+    return impl_->edit([&](const Workspace& workspace) {
+        workspace.delete_voice(voice_id);
         return std::vector<std::string>{};
     });
 }
