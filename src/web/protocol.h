@@ -55,6 +55,25 @@ struct SessionListing {
     std::int64_t updated_at{};
 };
 
+struct SpeechVoiceSettings {
+    std::optional<double> stability;
+    std::optional<double> similarity_boost;
+    std::optional<double> style;
+    std::optional<bool> use_speaker_boost;
+    std::optional<double> speed;
+
+    bool operator==(const SpeechVoiceSettings&) const = default;
+};
+
+struct SpeechVoice {
+    std::string id;
+    std::string display_name;
+    std::string elevenlabs_voice_id;
+    SpeechVoiceSettings settings;
+
+    bool operator==(const SpeechVoice&) const = default;
+};
+
 struct CharacterSummary {
     CharacterId id;
     std::string display_name;
@@ -62,6 +81,7 @@ struct CharacterSummary {
     // Always sent, defaults included, so the browser never has to decide what a
     // missing appearance means.
     CharacterAppearance appearance;
+    std::optional<SpeechVoice> voice;
     bool operator==(const CharacterSummary&) const = default;
 };
 

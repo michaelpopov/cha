@@ -26,6 +26,7 @@ public:
     void write_character_defaults(std::string_view contents) const;
     void write_provider(std::string_view name, std::string_view contents) const;
     void write_style(std::string_view name, std::string_view contents) const;
+    void write_voice(std::string_view name, std::string_view contents) const;
     void add_persona(
         std::string_view id,
         std::string_view display_name,

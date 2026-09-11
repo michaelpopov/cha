@@ -1878,6 +1878,43 @@ components:
           type: string
           enum: [normal, muted, accent]
 
+    SpeechVoiceSettings:
+      type: object
+      additionalProperties: false
+      properties:
+        stability:
+          type: number
+          minimum: 0
+          maximum: 1
+        similarity_boost:
+          type: number
+          minimum: 0
+          maximum: 1
+        style:
+          type: number
+          minimum: 0
+          maximum: 1
+        use_speaker_boost:
+          type: boolean
+        speed:
+          type: number
+          minimum: 0.7
+          maximum: 1.2
+
+    SpeechVoice:
+      type: object
+      additionalProperties: false
+      required: [id, display_name, elevenlabs_voice_id, settings]
+      properties:
+        id:
+          $ref: "#/components/schemas/Identifier"
+        display_name:
+          type: string
+        elevenlabs_voice_id:
+          type: string
+        settings:
+          $ref: "#/components/schemas/SpeechVoiceSettings"
+
     CharacterSummary:
       type: object
       additionalProperties: false
@@ -1891,6 +1928,8 @@ components:
           type: string
         appearance:
           $ref: "#/components/schemas/CharacterAppearance"
+        voice:
+          $ref: "#/components/schemas/SpeechVoice"
 
     ForumSummary:
       type: object

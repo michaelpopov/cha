@@ -43,11 +43,26 @@ Workspace workspace_with_characters(
 TEST(Workspace, EagerlyLoadsOwnedResolvedData) {
     test::TestWorkspace fixture;
     fixture.write_style("serif", "font = \"serif\"\nweight = \"bold\"\n");
+    fixture.write_voice(
+        "warm-narrator",
+        "display_name = \"Warm Narrator\"\n"
+        "elevenlabs_voice_id = \"eleven-voice-123\"\n"
+        "stability = 0.45\n"
+        "similarity_boost = 0.8\n"
+        "style = 0.2\n"
+        "use_speaker_boost = true\n"
+        "speed = 0.95\n");
+    std::ofstream(
+        fixture.root() / "system" / "assistant" / "character.toml")
+        << "display_name = \"Assistant\"\n"
+           "provider = \"test\"\n"
+           "voice = \"warm-narrator\"\n";
     fixture.write_character_config(
         "display_name = \"Guide\"\n"
         "description = \"A helpful guide.\"\n"
         "provider = \"test\"\n"
         "style = \"serif\"\n"
+        "voice = \"warm-narrator\"\n"
         "tags = [\"help\"]\n"
         "[prompt]\n"
         "greeting = \"Hello\"\n");
@@ -72,9 +87,19 @@ TEST(Workspace, EagerlyLoadsOwnedResolvedData) {
     EXPECT_EQ(
         workspace.find_style("serif")->appearance.font,
         CharacterFont::serif);
+    const WorkspaceVoice* const voice = workspace.find_voice("warm-narrator");
+    ASSERT_NE(voice, nullptr);
+    EXPECT_EQ(voice->label, "Warm Narrator");
+    EXPECT_EQ(voice->elevenlabs_voice_id, "eleven-voice-123");
+    EXPECT_EQ(voice->settings.stability, 0.45);
+    EXPECT_EQ(voice->settings.similarity_boost, 0.8);
+    EXPECT_EQ(voice->settings.style, 0.2);
+    EXPECT_EQ(voice->settings.use_speaker_boost, true);
+    EXPECT_EQ(voice->settings.speed, 0.95);
     ASSERT_NE(workspace.find_persona("reader"), nullptr);
     ASSERT_NE(workspace.find_character("guide"), nullptr);
     EXPECT_EQ(workspace.find_character("guide")->provider_id, "test");
+    EXPECT_EQ(workspace.find_character("guide")->voice_id, "warm-narrator");
     EXPECT_EQ(
         workspace.find_character("guide")->character.appearance.weight,
         CharacterWeight::bold);
@@ -94,6 +119,9 @@ TEST(Workspace, EagerlyLoadsOwnedResolvedData) {
     EXPECT_EQ(
         workspace.find_character(workspace_assistant_id)->provider_id,
         "test");
+    EXPECT_EQ(
+        workspace.find_character(workspace_assistant_id)->voice_id,
+        "warm-narrator");
     EXPECT_FALSE(
         workspace.find_character(workspace_assistant_id)->markdown.empty());
     ASSERT_NE(workspace.find_forum(workspace_entrance_id), nullptr);
@@ -113,6 +141,46 @@ TEST(Workspace, EagerlyLoadsOwnedResolvedData) {
         "$${greeting}, I am $${character.display_name} in "
         "$${forum.display_name}.\n"
         "<character_profile>\nIntrinsic Guide.\n</character_profile>\n");
+}
+
+TEST(Workspace, LoadsAMinimalVoice) {
+    test::TestWorkspace fixture;
+    fixture.write_voice(
+        "plain-reader",
+        "elevenlabs_voice_id = \"plain-voice-id\"\n");
+
+    const Workspace workspace = Workspace::load(fixture.root());
+
+    const WorkspaceVoice* const voice = workspace.find_voice("plain-reader");
+    ASSERT_NE(voice, nullptr);
+    EXPECT_EQ(voice->label, "Plain reader");
+    EXPECT_EQ(voice->elevenlabs_voice_id, "plain-voice-id");
+    EXPECT_EQ(voice->settings, ElevenLabsVoiceSettings{});
+}
+
+TEST(Workspace, RejectsInvalidVoiceConfigurationAndReferences) {
+    {
+        test::TestWorkspace fixture;
+        fixture.write_voice(
+            "too-fast",
+            "elevenlabs_voice_id = \"voice-id\"\nspeed = 1.3\n");
+        EXPECT_THROW((void)Workspace::load(fixture.root()), std::runtime_error);
+    }
+    {
+        test::TestWorkspace fixture;
+        fixture.write_voice(
+            "wrong-type",
+            "elevenlabs_voice_id = \"voice-id\"\nstability = \"steady\"\n");
+        EXPECT_THROW((void)Workspace::load(fixture.root()), std::runtime_error);
+    }
+    {
+        test::TestWorkspace fixture;
+        fixture.write_character_config(
+            "display_name = \"Guide\"\n"
+            "provider = \"test\"\n"
+            "voice = \"missing\"\n");
+        EXPECT_THROW((void)Workspace::load(fixture.root()), std::runtime_error);
+    }
 }
 
 TEST(Workspace, OmitsAnInvalidUnusedProvider) {

@@ -72,6 +72,21 @@ nlohmann::json appearance_json(const CharacterAppearance& value) {
     };
 }
 
+nlohmann::json speech_voice_json(const SpeechVoice& value) {
+    nlohmann::json settings = nlohmann::json::object();
+    put_optional(settings, "stability", value.settings.stability);
+    put_optional(settings, "similarity_boost", value.settings.similarity_boost);
+    put_optional(settings, "style", value.settings.style);
+    put_optional(settings, "use_speaker_boost", value.settings.use_speaker_boost);
+    put_optional(settings, "speed", value.settings.speed);
+    return {
+        {"id", value.id},
+        {"display_name", value.display_name},
+        {"elevenlabs_voice_id", value.elevenlabs_voice_id},
+        {"settings", std::move(settings)},
+    };
+}
+
 nlohmann::json append_target_json(const TextTarget& value) {
     return std::visit([](const auto& target) {
         using Target = std::decay_t<decltype(target)>;
@@ -220,6 +235,7 @@ void to_json(nlohmann::json& json, const CharacterSummary& value) {
         {"appearance", appearance_json(value.appearance)},
     };
     put_optional(json, "description", value.description);
+    if (value.voice) json["voice"] = speech_voice_json(*value.voice);
 }
 
 void to_json(nlohmann::json& json, const SessionSnapshot& value) {

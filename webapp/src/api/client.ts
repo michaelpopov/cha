@@ -16,6 +16,7 @@ export type CreateForumRequest = components['schemas']['CreateForumRequest'];
 export type UpdateForumRequest = components['schemas']['UpdateForumRequest'];
 export type UpdateForumMembersRequest = components['schemas']['UpdateForumMembersRequest'];
 export type CharacterAppearance = components['schemas']['CharacterAppearance'];
+export type SpeechVoice = components['schemas']['SpeechVoice'];
 export type SessionListing = components['schemas']['SessionListing'];
 export type CreateSessionResult = components['schemas']['CreateSessionResult'];
 export type SessionLabelResult = components['schemas']['SessionLabelResult'];
@@ -187,8 +188,33 @@ function isCharacterAppearance(value: unknown): value is CharacterAppearance {
     && isOneOf(value.text_color, ['normal', 'muted', 'accent']);
 }
 
+function isOptionalBoundedNumber(value: unknown, minimum: number, maximum: number): boolean {
+  return value === undefined
+    || (typeof value === 'number'
+      && Number.isFinite(value)
+      && value >= minimum
+      && value <= maximum);
+}
+
+function isSpeechVoice(value: unknown): value is SpeechVoice {
+  return isRecord(value)
+    && hasIdentity(value)
+    && typeof value.elevenlabs_voice_id === 'string'
+    && value.elevenlabs_voice_id.length > 0
+    && isRecord(value.settings)
+    && isOptionalBoundedNumber(value.settings.stability, 0, 1)
+    && isOptionalBoundedNumber(value.settings.similarity_boost, 0, 1)
+    && isOptionalBoundedNumber(value.settings.style, 0, 1)
+    && (value.settings.use_speaker_boost === undefined
+      || typeof value.settings.use_speaker_boost === 'boolean')
+    && isOptionalBoundedNumber(value.settings.speed, 0.7, 1.2);
+}
+
 function isCharacterSummary(value: unknown): boolean {
-  return isRecord(value) && hasIdentity(value) && isCharacterAppearance(value.appearance);
+  return isRecord(value)
+    && hasIdentity(value)
+    && isCharacterAppearance(value.appearance)
+    && (value.voice === undefined || isSpeechVoice(value.voice));
 }
 
 function isCharacterDetail(value: unknown): value is CharacterDetail {
@@ -314,6 +340,7 @@ export function isSessionSnapshot(value: unknown): value is SessionSnapshot {
     && typeof value.session_id === 'string'
     && typeof value.session_label === 'string'
     && Array.isArray(value.characters)
+    && value.characters.every(isCharacterSummary)
     && typeof value.default_character_id === 'string'
     && Array.isArray(value.transcript)
     && (value.covered_until === undefined

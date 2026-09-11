@@ -362,7 +362,9 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
             return nil
         }
         let configuration: [String: Any] = [
-            "url": "https://api.elevenlabs.io/v1/text-to-speech/JBFqnCBsd6RMkjVDRZzb?output_format=mp3_44100_128",
+            "baseUrl": "https://api.elevenlabs.io/v1/text-to-speech",
+            "voiceId": "JBFqnCBsd6RMkjVDRZzb",
+            "outputFormat": "mp3_44100_128",
             "apiKey": String(cString: apiKey),
             "model": String(cString: model),
         ]

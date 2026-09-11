@@ -1,5 +1,6 @@
 #include "web/session_projection.h"
 #include "support/test_workspace.h"
+#include "workspace/workspace.h"
 
 #include <gtest/gtest.h>
 
@@ -161,6 +162,41 @@ TEST(SessionProjection, CopiesTheActiveCoverBoundary) {
         to_snapshot(test_identity, "Label", state.view(), {});
 
     EXPECT_EQ(snapshot.covered_until, 2U);
+}
+
+TEST(SessionProjection, IncludesTheCharactersResolvedSpeechVoice) {
+    test::TestWorkspace fixture;
+    fixture.write_voice(
+        "warm-narrator",
+        "display_name = \"Warm Narrator\"\n"
+        "elevenlabs_voice_id = \"eleven-voice-123\"\n"
+        "stability = 0.45\n"
+        "speed = 0.95\n");
+    fixture.write_character_config(
+        "display_name = \"Guide\"\n"
+        "provider = \"test\"\n"
+        "voice = \"warm-narrator\"\n");
+    loadws(fixture.root());
+    BackingState state;
+    state.default_character_id = "guide";
+    state.default_persona_id = "reader";
+
+    const SessionSnapshot snapshot = to_snapshot(
+        {"lobby", "session"}, "Label", state.view(), {});
+
+    ASSERT_EQ(snapshot.characters.size(), 1U);
+    ASSERT_TRUE(snapshot.characters.front().voice);
+    EXPECT_EQ(snapshot.characters.front().voice, (SpeechVoice{
+        .id = "warm-narrator",
+        .display_name = "Warm Narrator",
+        .elevenlabs_voice_id = "eleven-voice-123",
+        .settings = {
+            .stability = 0.45,
+            .speed = 0.95,
+        },
+    }));
+    ASSERT_EQ(snapshot.forum.members.size(), 1U);
+    EXPECT_EQ(snapshot.forum.members.front().voice, snapshot.characters.front().voice);
 }
 
 TEST(SessionProjection, RemovesSourceReferencesFromHistoricalEntries) {

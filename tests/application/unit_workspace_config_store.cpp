@@ -251,6 +251,9 @@ TEST_F(WorkspaceConfigStoreTest, ReplacesV2ConfigurationAndPreservesSessions) {
 }
 
 TEST_F(WorkspaceConfigStoreTest, RoundTripsAcceptedFilesByteForByte) {
+    workspace_.write_voice(
+        "warm-narrator",
+        "elevenlabs_voice_id = \"eleven-voice-123\"\nstability = 0.45\n");
     std::string binary{"hi"};
     binary.push_back('\0');
     binary.push_back(static_cast<char>(0xFF));
@@ -290,6 +293,10 @@ TEST_F(WorkspaceConfigStoreTest, RoundTripsAcceptedFilesByteForByte) {
     EXPECT_FALSE(std::filesystem::exists(export_ / ".env"));
     EXPECT_FALSE(std::filesystem::exists(export_ / "sessions"));
     EXPECT_TRUE(std::filesystem::is_directory(export_ / "system" / "providers"));
+    EXPECT_TRUE(std::filesystem::is_directory(export_ / "system" / "voices"));
+    EXPECT_EQ(
+        file_bytes(export_ / "system" / "voices" / "warm-narrator" / "config.toml"),
+        "elevenlabs_voice_id = \"eleven-voice-123\"\nstability = 0.45\n");
     EXPECT_TRUE(std::filesystem::is_directory(export_ / "personas"));
     EXPECT_TRUE(std::filesystem::is_directory(export_ / "characters"));
     EXPECT_TRUE(std::filesystem::is_directory(export_ / "forums"));

@@ -8,6 +8,28 @@
 
 namespace cha::web {
 
+std::optional<SpeechVoice> resolve_speech_voice(
+    const Workspace& workspace,
+    const WorkspaceCharacter& character) {
+    if (!character.voice_id) return std::nullopt;
+    const WorkspaceVoice* const voice = workspace.find_voice(*character.voice_id);
+    if (voice == nullptr) {
+        throw std::logic_error("Character voice is absent from the workspace");
+    }
+    return SpeechVoice{
+        .id = voice->id,
+        .display_name = voice->label,
+        .elevenlabs_voice_id = voice->elevenlabs_voice_id,
+        .settings = {
+            .stability = voice->settings.stability,
+            .similarity_boost = voice->settings.similarity_boost,
+            .style = voice->settings.style,
+            .use_speaker_boost = voice->settings.use_speaker_boost,
+            .speed = voice->settings.speed,
+        },
+    };
+}
+
 SessionSnapshot to_snapshot(
     const FullSessionId& identity,
     std::string_view label,
@@ -68,6 +90,7 @@ SessionSnapshot to_snapshot(
             .display_name = character->character.display_name,
             .description = character->character.description,
             .appearance = character->character.appearance,
+            .voice = resolve_speech_voice(*workspace, *character),
         });
     }
     snapshot.forum.members = snapshot.characters;

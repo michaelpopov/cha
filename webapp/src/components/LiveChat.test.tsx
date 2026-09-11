@@ -171,7 +171,9 @@ describe('live chat', () => {
     const play = vi.spyOn(TextToSpeechSession.prototype, 'play').mockResolvedValue();
     const stop = vi.spyOn(TextToSpeechSession.prototype, 'stop');
     window.chaTextToSpeech = {
-      url: 'https://api.elevenlabs.io/v1/text-to-speech/voice',
+      baseUrl: 'https://api.elevenlabs.io/v1/text-to-speech',
+      voiceId: 'voice',
+      outputFormat: 'mp3_44100_128',
       apiKey: 'secret',
       model: 'eleven_multilingual_v2',
     };

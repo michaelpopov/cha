@@ -320,8 +320,12 @@ export function ChatScreen({
     && voiceInputState !== 'starting'
     && voiceInputState !== 'finishing'
     && (draft.trim().length > 0 || voiceInputState === 'recording');
-  const voices = useMemo(
+  const appearances = useMemo(
     () => new Map((snapshot?.characters ?? []).map(({ id, appearance }) => [id, appearance])),
+    [snapshot?.characters],
+  );
+  const speechVoices = useMemo(
+    () => new Map((snapshot?.characters ?? []).map(({ id, voice }) => [id, voice])),
     [snapshot?.characters],
   );
   const transcriptEntries = snapshot ? visibleTranscriptEntries(snapshot.transcript) : [];
@@ -370,6 +374,7 @@ export function ChatScreen({
     textToSpeechSession.current?.stop();
     const session = new TextToSpeechSession(
       textToSpeechConfiguration,
+      speechVoices.get(entry.participant_id),
       visibleEntryText(entry.kind, entry.text),
       () => {
         if (textToSpeechSession.current !== session) return;
@@ -699,7 +704,7 @@ export function ChatScreen({
               <Fragment key={entry.id}>
                 {dividerBefore && <hr className="cha-repeated-prompt-divider" />}
                 <TranscriptMessage
-                  appearance={voices.get(entry.participant_id)}
+                  appearance={appearances.get(entry.participant_id)}
                   actionDisabled={!connected || generationActive || pendingAction !== null}
                   entry={entry}
                   onCover={entry.id === boundaryEntryId
@@ -721,7 +726,7 @@ export function ChatScreen({
           <Fragment key={entry.id}>
             {dividerBefore && <hr className="cha-repeated-prompt-divider" />}
             <TranscriptMessage
-              appearance={voices.get(entry.participant_id)}
+              appearance={appearances.get(entry.participant_id)}
               actionDisabled={!connected || generationActive || pendingAction !== null}
               entry={entry}
               onCover={(coveredEntry) => changeCover(coveredEntry.id)}

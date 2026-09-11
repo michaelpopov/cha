@@ -44,6 +44,7 @@ constexpr std::array sidecar_suffixes{
 constexpr std::array skeleton_directories{
     std::string_view("system/providers"),
     std::string_view("system/styles"),
+    std::string_view("system/voices"),
     std::string_view("personas"),
     std::string_view("characters"),
     std::string_view("forums"),

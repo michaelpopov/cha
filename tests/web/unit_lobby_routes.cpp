@@ -160,10 +160,17 @@ bool listed_not_live(TestServer& server, std::string_view id) {
 
 TEST(LobbyRoutes, ServesBootstrapDiscoveryAndHealthWithoutSessionDataInHealth) {
     test::TestWorkspace fixture;
+    fixture.write_voice(
+        "warm-narrator",
+        "display_name = \"Warm Narrator\"\n"
+        "elevenlabs_voice_id = \"eleven-voice-123\"\n"
+        "stability = 0.45\n"
+        "speed = 0.95\n");
     fixture.write_character_config(
         "display_name = \"Guide\"\n"
         "description = \"Explains the workspace\"\n"
-        "provider = \"test\"\n");
+        "provider = \"test\"\n"
+        "voice = \"warm-narrator\"\n");
     std::ofstream(
         fixture.root() / "characters" / "guide" / "PROFILE.md",
         std::ios::binary)
@@ -214,6 +221,12 @@ TEST(LobbyRoutes, ServesBootstrapDiscoveryAndHealthWithoutSessionDataInHealth) {
         [](const nlohmann::json& character) { return character["id"] == "guide"; });
     ASSERT_NE(guide, bootstrap_body["characters"].end());
     EXPECT_EQ((*guide)["description"], "Explains the workspace");
+    EXPECT_EQ((*guide)["voice"], nlohmann::json({
+        {"id", "warm-narrator"},
+        {"display_name", "Warm Narrator"},
+        {"elevenlabs_voice_id", "eleven-voice-123"},
+        {"settings", {{"stability", 0.45}, {"speed", 0.95}}},
+    }));
     EXPECT_EQ(bootstrap_body["personas"][0]["id"], "builtin-guest");
     EXPECT_EQ(bootstrap_body["personas"][1]["id"], "reader");
     EXPECT_TRUE(bootstrap_body["recent_sessions"].is_array());

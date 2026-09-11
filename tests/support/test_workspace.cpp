@@ -176,6 +176,15 @@ void TestWorkspace::write_style(
     std::ofstream(directory / "config.toml") << contents;
 }
 
+void TestWorkspace::write_voice(
+    std::string_view name,
+    std::string_view contents) const {
+    const std::filesystem::path directory =
+        root_ / "system" / "voices" / std::string(name);
+    std::filesystem::create_directories(directory);
+    std::ofstream(directory / "config.toml") << contents;
+}
+
 void TestWorkspace::write_character_config(std::string_view contents) const {
     std::ofstream(
         root_ / "characters" / "guide" / "character.toml")

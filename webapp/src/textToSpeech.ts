@@ -1,7 +1,20 @@
 export interface TextToSpeechConfiguration {
-  url: string;
+  baseUrl: string;
+  voiceId: string;
+  outputFormat: string;
   apiKey: string;
   model: string;
+}
+
+export interface TextToSpeechVoice {
+  elevenlabs_voice_id: string;
+  settings: {
+    stability?: number;
+    similarity_boost?: number;
+    style?: number;
+    use_speaker_boost?: boolean;
+    speed?: number;
+  };
 }
 
 declare global {
@@ -13,7 +26,9 @@ declare global {
 export function getTextToSpeechConfiguration(): TextToSpeechConfiguration | null {
   const configuration = window.chaTextToSpeech;
   return configuration
-      && typeof configuration.url === 'string' && configuration.url.length > 0
+      && typeof configuration.baseUrl === 'string' && configuration.baseUrl.length > 0
+      && typeof configuration.voiceId === 'string' && configuration.voiceId.length > 0
+      && typeof configuration.outputFormat === 'string' && configuration.outputFormat.length > 0
       && typeof configuration.apiKey === 'string' && configuration.apiKey.length > 0
       && typeof configuration.model === 'string' && configuration.model.length > 0
     ? configuration
@@ -28,22 +43,34 @@ export class TextToSpeechSession {
 
   constructor(
     private readonly configuration: TextToSpeechConfiguration,
+    private readonly voice: TextToSpeechVoice | undefined,
     private readonly text: string,
     private readonly onEnded: () => void,
   ) {}
 
   async play(): Promise<void> {
-    const response = await fetch(this.configuration.url, {
+    const voiceId = this.voice?.elevenlabs_voice_id ?? this.configuration.voiceId;
+    const url = `${this.configuration.baseUrl}/${encodeURIComponent(voiceId)}`
+      + `?output_format=${encodeURIComponent(this.configuration.outputFormat)}`;
+    const body: {
+      text: string;
+      model_id: string;
+      voice_settings?: TextToSpeechVoice['settings'];
+    } = {
+      text: this.text,
+      model_id: this.configuration.model,
+    };
+    if (this.voice && Object.keys(this.voice.settings).length > 0) {
+      body.voice_settings = this.voice.settings;
+    }
+    const response = await fetch(url, {
       method: 'POST',
       headers: {
         Accept: 'audio/mpeg',
         'Content-Type': 'application/json',
         'xi-api-key': this.configuration.apiKey,
       },
-      body: JSON.stringify({
-        text: this.text,
-        model_id: this.configuration.model,
-      }),
+      body: JSON.stringify(body),
       signal: this.request.signal,
     });
     if (!response.ok) throw new Error('The speech request failed.');

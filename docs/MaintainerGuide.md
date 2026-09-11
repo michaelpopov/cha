@@ -195,15 +195,17 @@ workspace/
     ├── providers/
     │   ├── sol/config.toml                   # API-key provider
     │   └── chatgpt/config.toml               # OAuth subscription provider
-    └── styles/
-        └── serif-bold/config.toml
+    ├── styles/
+    │   └── serif-bold/config.toml
+    └── voices/
+        └── warm-narrator/config.toml
 ```
 
 The loader requires `personas/`, `characters/`, `forums/`, and
-`system/providers/` directories. `system/styles/` is optional, but every style
-referenced by a character must exist. `system/assistant/character.toml` and at
-least one usable provider are effectively required because the built-in
-Assistant must select a provider.
+`system/providers/` directories. `system/styles/` and `system/voices/` are
+optional, but every style or voice referenced by a character must exist.
+`system/assistant/character.toml` and at least one usable provider are
+effectively required because the built-in Assistant must select a provider.
 
 Only regular `.toml` and `.md` files are stored during import. Symlinks whose
 names would otherwise be imported are rejected; symlinked directories are not
@@ -225,12 +227,13 @@ personas/private/michael/persona.toml         -> persona ID "michael"
 forums/braintrust/config.toml                 -> forum ID "braintrust"
 system/providers/openrouter/config.toml       -> provider ID "openrouter"
 system/styles/serif-bold/config.toml           -> style ID "serif-bold"
+system/voices/warm-narrator/config.toml        -> voice ID "warm-narrator"
 ```
 
 Characters and personas may be nested under grouping directories. The grouping
 path is organizational only and is not a namespace. Therefore
 `characters/historical/guide/` and `characters/fictional/guide/` conflict: both
-define character ID `guide`. Forums, providers, styles, and forum member
+define character ID `guide`. Forums, providers, styles, voices, and forum member
 directories are direct children and are not recursively grouped.
 
 Use lowercase ASCII `snake_case` or simple hyphenated IDs unless an existing ID
@@ -247,8 +250,8 @@ The enforced rules are:
   `you`, and `guest` are reserved case-insensitively.
 - Forum IDs: URL-safe ASCII letters, digits, `-`, `.`, `_`, and `~`; nonempty.
   The same built-in IDs listed for characters are reserved.
-- Provider and style IDs: one filesystem path component. For maintainability,
-  still use the conservative lowercase convention above.
+- Provider, style, and voice IDs: one filesystem path component. For
+  maintainability, still use the conservative lowercase convention above.
 
 `display_name` is the public label. It must be nonempty valid UTF-8, must not
 contain line breaks or control characters, and must not start or end with
@@ -342,6 +345,7 @@ display_name = "Richard Feynman"  # required
 description = "Physicist."        # optional, one line
 provider = "sol"                  # required provider ID
 style = "serif"                   # optional style ID
+voice = "warm-narrator"           # optional voice ID
 reasoning_effort = "high"         # optional: low | medium | high | xhigh
 web_search = "auto"               # optional: off | auto | required
 tags = ["science", "historical"] # optional; unique case-insensitively
@@ -350,11 +354,12 @@ tags = ["science", "historical"] # optional; unique case-insensitively
 register = "plainspoken"
 ```
 
-Unknown fields are rejected. `provider` and `style` are case-sensitive ID
-references. Character `reasoning_effort` and `web_search` override the selected
-provider's defaults. Omitting either inherits the provider value. Tags must be
-nonempty strings after trimming, contain no control characters, and be unique
-case-insensitively.
+Unknown fields are rejected. `provider`, `style`, and `voice` are
+case-sensitive ID references. Character `reasoning_effort` and `web_search`
+override the selected provider's defaults. Omitting either inherits the
+provider value. Omitting `voice` uses the application-level ElevenLabs fallback
+voice during playback. Tags must be nonempty strings after trimming, contain
+no control characters, and be unique case-insensitively.
 
 `CHARACTER.md` is the actual character prompt. A simple prompt may be entirely
 self-contained. A maintainable larger definition often uses a small wrapper:
@@ -380,7 +385,7 @@ complete marker pair, it publishes the entire expanded `CHARACTER.md`.
 ### Add a character
 
 1. Choose a globally unique character ID and participant display name.
-2. Choose an existing provider and, optionally, style.
+2. Choose an existing provider and, optionally, style and voice.
 3. Create the definition directory, `character.toml`, and `CHARACTER.md`.
 4. Add any `.md` fragments referenced by `CHARACTER.md`.
 5. Add the character to one or more forums by creating member directories as
@@ -730,7 +735,7 @@ rg -n 'provider\s*=' /absolute/workspace/characters \
   /absolute/workspace/system/assistant
 ```
 
-## 9. Styles and the built-in Assistant
+## 9. Styles, voices, and the built-in Assistant
 
 ### Styles
 
@@ -752,6 +757,71 @@ omitted; a character reference to that style then makes loading fail.
 To add a style, create its config, assign it in one or more global
 `character.toml` files, and validate. Forum member files cannot override style.
 
+### Voices
+
+Voices live at `system/voices/<voice-id>/config.toml`. There is no voice editor
+in the web interface yet; add or change them by exporting the workspace,
+editing the exported directory, validating it, and importing it again.
+
+A minimal definition is:
+
+```toml
+elevenlabs_voice_id = "JBFqnCBsd6RMkjVDRZzb"
+```
+
+A definition with all supported fields is:
+
+```toml
+display_name = "Warm Narrator"
+elevenlabs_voice_id = "JBFqnCBsd6RMkjVDRZzb"
+stability = 0.5
+similarity_boost = 0.75
+style = 0.0
+use_speaker_boost = true
+speed = 1.0
+```
+
+| Field | Required/default | Meaning and constraints |
+| --- | --- | --- |
+| `display_name` | derived from ID | User-facing name reserved for future settings UI |
+| `elevenlabs_voice_id` | required | Nonempty ElevenLabs voice ID used in the request URL |
+| `stability` | omitted | Number from `0.0` through `1.0` |
+| `similarity_boost` | omitted | Number from `0.0` through `1.0` |
+| `style` | omitted | ElevenLabs style exaggeration from `0.0` through `1.0`; unrelated to CHA visual styles |
+| `use_speaker_boost` | omitted | Boolean speaker-similarity boost |
+| `speed` | omitted | Number from `0.7` through `1.2`; `1.0` is normal speed |
+
+Only `elevenlabs_voice_id` is required. CHA sends `voice_settings` only when at
+least one optional setting is present, and sends only the fields present in the
+file. Absent values are left to the voice's stored or ElevenLabs service
+defaults; CHA does not manufacture defaults for them. API keys, the synthesis
+model, output format, and endpoint are application/device settings and do not
+belong in a voice file.
+
+Assign the stable directory ID in a global character definition:
+
+```toml
+voice = "warm-narrator"
+```
+
+The built-in Assistant accepts the same field. Forum defaults and member
+overrides do not. A missing assignment retains the application fallback voice
+and does not hide the playback button. An unknown voice reference or invalid
+voice definition makes workspace validation fail.
+
+To add or tune a voice without the web UI:
+
+1. Export the vault's workspace configuration.
+2. Create or edit `system/voices/<voice-id>/config.toml`.
+3. Add `voice = "<voice-id>"` to the intended global character definitions or
+   `system/assistant/character.toml`.
+4. Validate the complete exported workspace.
+5. Import the directory back into the vault.
+
+Changing an assignment or definition affects playback of both old and new
+responses because transcripts store the producing character ID, not a voice
+snapshot.
+
 ### Built-in Assistant
 
 `system/assistant/character.toml` configures the built-in character used in the
@@ -763,7 +833,7 @@ provider = "sol"
 ```
 
 It accepts the same definition fields as a global character, including style,
-reasoning, web search, tags, and description. Its prompt is compiled into CHA;
+voice, reasoning, web search, tags, and description. Its prompt is compiled into CHA;
 there is no `system/assistant/CHARACTER.md`. The Assistant ID, name, and
 Entrance membership are built in. Do not create user definitions with the
 reserved `assistant` or `entrance` IDs.
@@ -811,23 +881,23 @@ Example:
 ```toml
 # global character.toml
 [prompt]
-voice = "definition"
+register = "definition"
 ```
 
 ```toml
 # members/character_defaults.toml
 [prompt]
-voice = "forum default"
+register = "forum default"
 relationship = "colleague"
 ```
 
 ```toml
 # members/feynman/character.toml
 [prompt]
-voice = "forum-specific"
+register = "forum-specific"
 ```
 
-The effective values for Feynman are `voice = "forum-specific"` and
+The effective values for Feynman are `register = "forum-specific"` and
 `relationship = "colleague"`.
 
 Forum `character_defaults.toml` and member `character.toml` accept only the
@@ -870,7 +940,7 @@ For each forum member, CHA constructs the system prompt in this order:
 
 This explains where a change belongs:
 
-- identity and voice shared everywhere: global character prompt;
+- identity and writing voice shared everywhere: global character prompt;
 - behavior shared by every character in one forum: `FORUM.md`;
 - information about the human participant: `PERSONA.md`;
 - shared forum variables: `character_defaults.toml`;

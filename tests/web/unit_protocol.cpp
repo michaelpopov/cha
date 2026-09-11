@@ -87,6 +87,31 @@ TEST(WebProtocol, SerializesSpecifiedSuccessListingAndErrorBodies) {
         nlohmann::json({{"display_name", "Guide"}, {"id", "guide"},
             {"appearance", default_appearance()}}));
     EXPECT_EQ(
+        nlohmann::json(CharacterSummary{
+            .id = "guide",
+            .display_name = "Guide",
+            .voice = SpeechVoice{
+                .id = "warm-narrator",
+                .display_name = "Warm Narrator",
+                .elevenlabs_voice_id = "eleven-voice-123",
+                .settings = {
+                    .stability = 0.45,
+                    .use_speaker_boost = true,
+                    .speed = 0.95,
+                },
+            },
+        })["voice"],
+        nlohmann::json({
+            {"id", "warm-narrator"},
+            {"display_name", "Warm Narrator"},
+            {"elevenlabs_voice_id", "eleven-voice-123"},
+            {"settings", {
+                {"stability", 0.45},
+                {"use_speaker_boost", true},
+                {"speed", 0.95},
+            }},
+        }));
+    EXPECT_EQ(
         nlohmann::json(CharacterSummary{"seneca", "Seneca", std::nullopt,
             {CharacterFont::serif, CharacterSlant::italic,
              CharacterWeight::semibold, CharacterScale::large, CharacterTextColor::accent}})["appearance"],

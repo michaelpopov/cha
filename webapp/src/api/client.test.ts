@@ -323,6 +323,34 @@ describe('CHA API client', () => {
     await expect(client.getSessionSnapshot('forum', 'one')).rejects.toThrow(TypeError);
   });
 
+  it('accepts an assigned speech voice and rejects malformed voice settings', async () => {
+    const assigned = {
+      ...snapshotFixture,
+      characters: [{
+        ...snapshotFixture.characters[0],
+        voice: {
+          id: 'warm-narrator',
+          display_name: 'Warm Narrator',
+          elevenlabs_voice_id: 'eleven-voice-123',
+          settings: { stability: 0.45, speed: 0.95 },
+        },
+      }],
+    };
+    const accepted = createChaClient(async () => jsonResponse(assigned));
+    await expect(accepted.getSessionSnapshot('forum', 'one')).resolves.toEqual(assigned);
+
+    const malformed = {
+      ...assigned,
+      characters: [{
+        ...assigned.characters[0],
+        voice: { ...assigned.characters[0].voice, settings: { speed: 1.5 } },
+      }],
+    };
+    const rejected = createChaClient(async () => jsonResponse(malformed));
+    await expect(rejected.getSessionSnapshot('forum', 'one'))
+      .rejects.toBeInstanceOf(ChaProtocolError);
+  });
+
   it('rejects malformed detail and listing responses at the API boundary', async () => {
     const client = createChaClient(async () => jsonResponse({ id: 'incomplete' }));
 

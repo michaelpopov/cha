@@ -35,6 +35,23 @@ struct WorkspaceStyle {
     CharacterAppearance appearance;
 };
 
+struct ElevenLabsVoiceSettings {
+    std::optional<double> stability;
+    std::optional<double> similarity_boost;
+    std::optional<double> style;
+    std::optional<bool> use_speaker_boost;
+    std::optional<double> speed;
+
+    bool operator==(const ElevenLabsVoiceSettings&) const = default;
+};
+
+struct WorkspaceVoice {
+    std::string id;
+    std::string label;
+    std::string elevenlabs_voice_id;
+    ElevenLabsVoiceSettings settings;
+};
+
 using WorkspacePersona = Persona;
 
 // A user-defined or built-in character. Forum-specific overrides and prompt
@@ -45,6 +62,7 @@ struct WorkspaceCharacter {
     // provider is selected in Settings.
     std::optional<std::string> provider_id;
     std::optional<std::string> style_id;
+    std::optional<std::string> voice_id;
     std::optional<std::string> reasoning_effort;
     std::optional<WebSearchMode> web_search;
     WorkspacePromptVariables prompt_variables;
@@ -94,6 +112,9 @@ public:
     [[nodiscard]] std::span<const WorkspaceStyle> styles() const noexcept {
         return styles_;
     }
+    [[nodiscard]] std::span<const WorkspaceVoice> voices() const noexcept {
+        return voices_;
+    }
     [[nodiscard]] std::span<const WorkspacePersona> personas() const noexcept {
         return personas_;
     }
@@ -107,6 +128,8 @@ public:
     [[nodiscard]] const WorkspaceProvider* find_provider(
         std::string_view id) const noexcept;
     [[nodiscard]] const WorkspaceStyle* find_style(
+        std::string_view id) const noexcept;
+    [[nodiscard]] const WorkspaceVoice* find_voice(
         std::string_view id) const noexcept;
     [[nodiscard]] const WorkspacePersona* find_persona(
         std::string_view id) const noexcept;
@@ -203,11 +226,13 @@ private:
     std::filesystem::path root_;
     std::vector<WorkspaceProvider> providers_;
     std::vector<WorkspaceStyle> styles_;
+    std::vector<WorkspaceVoice> voices_;
     std::vector<WorkspacePersona> personas_;
     std::vector<WorkspaceCharacter> characters_;
     std::vector<WorkspaceForum> forums_;
     std::unordered_map<std::string, std::size_t> provider_index_;
     std::unordered_map<std::string, std::size_t> style_index_;
+    std::unordered_map<std::string, std::size_t> voice_index_;
     std::unordered_map<std::string, std::size_t> persona_index_;
     std::unordered_map<std::string, std::size_t> character_index_;
     std::unordered_map<std::string, std::size_t> forum_index_;

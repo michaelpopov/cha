@@ -458,6 +458,54 @@ WorkspaceStyle load_style(const std::filesystem::path& directory) {
     return loaded;
 }
 
+std::optional<double> optional_bounded_number(
+    const toml::table& table,
+    const std::filesystem::path& path,
+    std::string_view key,
+    double minimum,
+    double maximum) {
+    const std::optional<double> value =
+        optional_value<double>(table, path, key, "a number");
+    if (value
+        && (!std::isfinite(*value) || *value < minimum || *value > maximum)) {
+        throw std::runtime_error(
+            "Voice config '" + utf8_path(path) + "' requires "
+            + std::string(key) + " between " + std::to_string(minimum)
+            + " and " + std::to_string(maximum));
+    }
+    return value;
+}
+
+WorkspaceVoice load_voice(const std::filesystem::path& directory) {
+    const std::string id = utf8_path(directory.filename());
+    require_path_component(id, directory.parent_path());
+    const std::filesystem::path path = directory / "config.toml";
+    const toml::table table = read_toml(path, "voice config");
+    static constexpr std::string_view fields[]{
+        "display_name", "elevenlabs_voice_id", "stability",
+        "similarity_boost", "style", "use_speaker_boost", "speed"};
+    reject_unknown_fields(table, path, fields, "Voice config");
+    WorkspaceVoice loaded{
+        .id = id,
+        .label = optional_value<std::string>(
+            table, path, "display_name", "a string").value_or(option_label(id)),
+        .elevenlabs_voice_id = required_string(
+            table, path, "elevenlabs_voice_id"),
+        .settings = {
+            .stability = optional_bounded_number(
+                table, path, "stability", 0.0, 1.0),
+            .similarity_boost = optional_bounded_number(
+                table, path, "similarity_boost", 0.0, 1.0),
+            .style = optional_bounded_number(table, path, "style", 0.0, 1.0),
+            .use_speaker_boost = optional_value<bool>(
+                table, path, "use_speaker_boost", "a boolean"),
+            .speed = optional_bounded_number(table, path, "speed", 0.7, 1.2),
+        },
+    };
+    validate_public_name(loaded.label, "Voice name", path);
+    return loaded;
+}
+
 bool is_persona_id(std::string_view id) {
     if (id.empty()) return false;
     const auto letter = [](unsigned char value) {
@@ -568,6 +616,7 @@ struct CharacterConfig {
     std::optional<std::string> description;
     std::optional<std::string> provider_id;
     std::optional<std::string> style_id;
+    std::optional<std::string> voice_id;
     std::optional<std::string> reasoning_effort;
     std::optional<WebSearchMode> web_search;
     std::vector<std::string> tags;
@@ -591,8 +640,8 @@ CharacterConfig load_character_config(
     bool require_provider = false) {
     const toml::table table = read_toml(path, "character config");
     static constexpr std::string_view definition_fields[]{
-        "display_name", "description", "provider", "style", "reasoning_effort",
-        "web_search", "tags", "prompt"};
+        "display_name", "description", "provider", "style", "voice",
+        "reasoning_effort", "web_search", "tags", "prompt"};
     static constexpr std::string_view override_fields[]{"provider", "prompt"};
     reject_unknown_fields(
         table, path,
@@ -608,6 +657,8 @@ CharacterConfig load_character_config(
             table, path, "provider", "a string"),
         .style_id = optional_value<std::string>(
             table, path, "style", "a string"),
+        .voice_id = optional_value<std::string>(
+            table, path, "voice", "a string"),
         .reasoning_effort = optional_value<std::string>(
             table, path, "reasoning_effort", "a string"),
         .tags = definition ? load_tags(table, path) : std::vector<std::string>{},
@@ -642,6 +693,7 @@ CharacterConfig load_character_config(
         }
         if (result.provider_id) require_path_component(*result.provider_id, path);
         if (result.style_id) require_path_component(*result.style_id, path);
+        if (result.voice_id) require_path_component(*result.voice_id, path);
         if (result.reasoning_effort
             && !valid_character_reasoning_effort(*result.reasoning_effort)) {
             throw std::runtime_error(
@@ -887,6 +939,23 @@ Workspace Workspace::load(std::filesystem::path root) {
         std::span<const WorkspaceStyle>(workspace.styles_),
         workspace.style_index_, "Style");
 
+    const std::filesystem::path voices_directory =
+        workspace.root_ / "system" / "voices";
+    if (std::filesystem::is_directory(voices_directory)) {
+        for (const std::filesystem::path& directory :
+             direct_subdirectories(voices_directory)) {
+            workspace.voices_.push_back(load_voice(directory));
+        }
+    }
+    std::ranges::sort(
+        workspace.voices_, {},
+        [](const WorkspaceVoice& voice) {
+            return fold_ascii(voice.label);
+        });
+    build_index(
+        std::span<const WorkspaceVoice>(workspace.voices_),
+        workspace.voice_index_, "Voice");
+
     const std::filesystem::path personas_directory = workspace.root_ / "personas";
     for (const std::filesystem::path& directory : recursive_definition_directories(
              personas_directory, "persona.toml", "PERSONA.md")) {
@@ -956,6 +1025,11 @@ Workspace Workspace::load(std::filesystem::path root) {
             }
             appearance = style->appearance;
         }
+        if (config.voice_id && workspace.find_voice(*config.voice_id) == nullptr) {
+            throw std::runtime_error(
+                "Character '" + id + "' references unknown voice '"
+                + *config.voice_id + "'");
+        }
         if (!character_directories.emplace(id, directory).second) {
             throw std::runtime_error("Character ID '" + id + "' is not unique");
         }
@@ -987,6 +1061,7 @@ Workspace Workspace::load(std::filesystem::path root) {
             },
             .provider_id = config.provider_id,
             .style_id = config.style_id,
+            .voice_id = config.voice_id,
             .reasoning_effort = config.reasoning_effort,
             .web_search = config.web_search,
             .prompt_variables = config.prompt_variables,
@@ -1027,6 +1102,11 @@ Workspace Workspace::load(std::filesystem::path root) {
         }
         assistant_appearance = style->appearance;
     }
+    if (assistant.voice_id
+        && workspace.find_voice(*assistant.voice_id) == nullptr) {
+        throw std::runtime_error(
+            "Assistant references unknown voice '" + *assistant.voice_id + "'");
+    }
     workspace.characters_.push_back({
         .character = {
             .id = std::string(workspace_assistant_id),
@@ -1037,6 +1117,7 @@ Workspace Workspace::load(std::filesystem::path root) {
         },
         .provider_id = *assistant.provider_id,
         .style_id = assistant.style_id,
+        .voice_id = assistant.voice_id,
         .reasoning_effort = assistant.reasoning_effort,
         .web_search = assistant.web_search,
         .prompt_variables = assistant.prompt_variables,
@@ -1268,6 +1349,10 @@ const WorkspaceProvider* Workspace::find_provider(std::string_view id) const noe
 
 const WorkspaceStyle* Workspace::find_style(std::string_view id) const noexcept {
     return find_indexed<WorkspaceStyle>(styles_, style_index_, id);
+}
+
+const WorkspaceVoice* Workspace::find_voice(std::string_view id) const noexcept {
+    return find_indexed<WorkspaceVoice>(voices_, voice_index_, id);
 }
 
 const WorkspacePersona* Workspace::find_persona(std::string_view id) const noexcept {

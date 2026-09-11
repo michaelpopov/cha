@@ -8,6 +8,11 @@
 #include <string>
 #include <string_view>
 
+namespace cha {
+class Workspace;
+struct WorkspaceCharacter;
+}
+
 namespace cha::web {
 
 // Web-owned presentation data combined with core state only at the protocol
@@ -18,6 +23,12 @@ struct WebPresentationState {
     SessionLifecycle lifecycle{SessionLifecycle::starting};
     std::optional<ShutdownReason> shutdown_reason;
 };
+
+// Converts a character's optional workspace voice into the protocol value used
+// by both lobby discovery and live session snapshots.
+[[nodiscard]] std::optional<SpeechVoice> resolve_speech_voice(
+    const Workspace& workspace,
+    const WorkspaceCharacter& character);
 
 // Copies a borrowed controller view into an owning protocol snapshot, adding
 // web-only identity, lifecycle, and notice fields. Borrowing ends here: the

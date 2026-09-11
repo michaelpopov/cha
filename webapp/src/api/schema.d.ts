@@ -1055,11 +1055,25 @@ export interface components {
             /** @enum {string} */
             text_color: "normal" | "muted" | "accent";
         };
+        SpeechVoiceSettings: {
+            stability?: number;
+            similarity_boost?: number;
+            style?: number;
+            use_speaker_boost?: boolean;
+            speed?: number;
+        };
+        SpeechVoice: {
+            id: components["schemas"]["Identifier"];
+            display_name: string;
+            elevenlabs_voice_id: string;
+            settings: components["schemas"]["SpeechVoiceSettings"];
+        };
         CharacterSummary: {
             id: components["schemas"]["Identifier"];
             display_name: string;
             description?: string;
             appearance: components["schemas"]["CharacterAppearance"];
+            voice?: components["schemas"]["SpeechVoice"];
         };
         ForumSummary: {
             id: components["schemas"]["Identifier"];

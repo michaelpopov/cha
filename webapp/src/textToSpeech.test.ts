@@ -14,8 +14,24 @@ afterEach(() => {
 describe('text to speech', () => {
   it('is available only when the native shell injects a complete configuration', () => {
     expect(getTextToSpeechConfiguration()).toBeNull();
-    window.chaTextToSpeech = { url: 'https://example.com', apiKey: 'key', model: 'model' };
+    window.chaTextToSpeech = {
+      baseUrl: 'https://example.com',
+      voiceId: 'fallback',
+      outputFormat: 'mp3',
+      apiKey: 'key',
+      model: 'model',
+    };
     expect(getTextToSpeechConfiguration()).toEqual(window.chaTextToSpeech);
+  });
+
+  it('rejects the legacy configuration shape', () => {
+    window.chaTextToSpeech = {
+      url: 'https://example.com/speech',
+      apiKey: 'key',
+      model: 'model',
+    } as unknown as typeof window.chaTextToSpeech;
+
+    expect(getTextToSpeechConfiguration()).toBeNull();
   });
 
   it('requests ElevenLabs audio and plays it', async () => {
@@ -31,18 +47,97 @@ describe('text to speech', () => {
       return { addEventListener: vi.fn(), play, pause };
     }));
     const session = new TextToSpeechSession(
-      { url: 'https://example.com/speech', apiKey: 'secret', model: 'multilingual' },
+      {
+        baseUrl: 'https://example.com/speech',
+        voiceId: 'fallback/voice',
+        outputFormat: 'mp3 44',
+        apiKey: 'secret',
+        model: 'multilingual',
+      },
+      undefined,
       'Read this',
       vi.fn(),
     );
 
     await session.play();
 
-    expect(fetchMock).toHaveBeenCalledWith('https://example.com/speech', expect.objectContaining({
-      method: 'POST',
-      headers: expect.objectContaining({ 'xi-api-key': 'secret' }),
-      body: JSON.stringify({ text: 'Read this', model_id: 'multilingual' }),
-    }));
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://example.com/speech/fallback%2Fvoice?output_format=mp3%2044',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({ 'xi-api-key': 'secret' }),
+        body: JSON.stringify({ text: 'Read this', model_id: 'multilingual' }),
+      }),
+    );
     expect(play).toHaveBeenCalledOnce();
+  });
+
+  it('uses an assigned voice and its configured settings', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(new TextEncoder().encode('audio')),
+    );
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:audio');
+    vi.stubGlobal('Audio', vi.fn(function Audio() {
+      return { addEventListener: vi.fn(), play: vi.fn().mockResolvedValue(undefined) };
+    }));
+    const session = new TextToSpeechSession(
+      {
+        baseUrl: 'https://example.com/speech',
+        voiceId: 'fallback',
+        outputFormat: 'mp3',
+        apiKey: 'secret',
+        model: 'multilingual',
+      },
+      {
+        elevenlabs_voice_id: 'warm voice',
+        settings: { stability: 0.45, speed: 0.95 },
+      },
+      'Read this',
+      vi.fn(),
+    );
+
+    await session.play();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://example.com/speech/warm%20voice?output_format=mp3',
+      expect.objectContaining({
+        body: JSON.stringify({
+          text: 'Read this',
+          model_id: 'multilingual',
+          voice_settings: { stability: 0.45, speed: 0.95 },
+        }),
+      }),
+    );
+  });
+
+  it('omits voice settings for an assigned voice with no overrides', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(new TextEncoder().encode('audio')),
+    );
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:audio');
+    vi.stubGlobal('Audio', vi.fn(function Audio() {
+      return { addEventListener: vi.fn(), play: vi.fn().mockResolvedValue(undefined) };
+    }));
+    const session = new TextToSpeechSession(
+      {
+        baseUrl: 'https://example.com/speech',
+        voiceId: 'fallback',
+        outputFormat: 'mp3',
+        apiKey: 'secret',
+        model: 'multilingual',
+      },
+      { elevenlabs_voice_id: 'plain-voice', settings: {} },
+      'Read this',
+      vi.fn(),
+    );
+
+    await session.play();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://example.com/speech/plain-voice?output_format=mp3',
+      expect.objectContaining({
+        body: JSON.stringify({ text: 'Read this', model_id: 'multilingual' }),
+      }),
+    );
   });
 });

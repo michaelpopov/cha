@@ -12,6 +12,7 @@
 #include "web/route_support.h"
 #include "web/session_markdown.h"
 #include "web/session_mirror.h"
+#include "web/session_projection.h"
 #include "web/live_session_manager.h"
 #include "util/text.h"
 #include "util/logging.h"
@@ -105,13 +106,17 @@ void set_command_error(httplib::Response& response, ErrorCode code) {
     }
 }
 
-CharacterSummary character_summary(const WorkspaceCharacter& character) {
-    return {
-        character.character.id,
-        character.character.display_name,
-        character.character.description,
-        character.character.appearance,
+CharacterSummary character_summary(
+    const Workspace& workspace,
+    const WorkspaceCharacter& character) {
+    CharacterSummary summary{
+        .id = character.character.id,
+        .display_name = character.character.display_name,
+        .description = character.character.description,
+        .appearance = character.character.appearance,
+        .voice = resolve_speech_voice(workspace, character),
     };
+    return summary;
 }
 
 std::shared_ptr<const Workspace> published_workspace() {
@@ -124,7 +129,7 @@ CharacterDetail character_detail(
     const Workspace& workspace,
     const WorkspaceCharacter& character) {
     CharacterDetail detail{
-        .summary = character_summary(character),
+        .summary = character_summary(workspace, character),
         .character_markdown = character.markdown,
         .editable_markdown = character.editable_markdown,
     };
@@ -178,7 +183,7 @@ ForumSummary forum_summary(
         if (character == nullptr) {
             throw std::runtime_error("Forum member is absent from the workspace");
         }
-        result.members.push_back(character_summary(*character));
+        result.members.push_back(character_summary(workspace, *character));
     }
     std::ranges::sort(
         result.members, {},
@@ -223,7 +228,7 @@ Bootstrap bootstrap_for(
         bootstrap.personas.push_back({persona.id, persona.display_name, persona.description});
     }
     for (const WorkspaceCharacter& character : workspace.characters()) {
-        bootstrap.characters.push_back(character_summary(character));
+        bootstrap.characters.push_back(character_summary(workspace, character));
     }
     for (const WorkspaceForum& forum : workspace.forums()) {
         bootstrap.forums.push_back(forum_summary(forum, workspace));
