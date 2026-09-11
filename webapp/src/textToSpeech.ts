@@ -42,6 +42,31 @@ export class TextToSpeechError extends Error {
   }
 }
 
+const maximumCachedAudioBytes = 256 * 1024 * 1024;
+const audioCache = new Map<string, Blob>();
+
+function cachedAudio(key: string): Blob | undefined {
+  return audioCache.get(key);
+}
+
+function cacheAudio(key: string, blob: Blob): void {
+  if (blob.size === 0 || blob.size > maximumCachedAudioBytes) return;
+  audioCache.set(key, blob);
+
+  let cachedBytes = 0;
+  for (const cached of audioCache.values()) cachedBytes += cached.size;
+  for (const [oldestKey, oldest] of audioCache) {
+    if (cachedBytes <= maximumCachedAudioBytes) break;
+    audioCache.delete(oldestKey);
+    cachedBytes -= oldest.size;
+  }
+}
+
+// Exported so tests can isolate this app-lifetime module cache.
+export function clearTextToSpeechCache(): void {
+  audioCache.clear();
+}
+
 export class TextToSpeechSession {
   private readonly request = new AbortController();
   private audio: HTMLAudioElement | null = null;
@@ -53,6 +78,7 @@ export class TextToSpeechSession {
     private readonly voice: TextToSpeechVoice | undefined,
     private readonly text: string,
     private readonly onEnded: () => void,
+    private readonly options: { cache?: boolean } = {},
   ) {}
 
   async play(): Promise<void> {
@@ -70,22 +96,32 @@ export class TextToSpeechSession {
     if (this.voice && Object.keys(this.voice.settings).length > 0) {
       body.voice_settings = this.voice.settings;
     }
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        Accept: 'audio/mpeg',
-        'Content-Type': 'application/json',
-        'xi-api-key': this.configuration.apiKey,
-      },
-      body: JSON.stringify(body),
-      signal: this.request.signal,
-    });
-    if (!response.ok) {
-      throw new TextToSpeechError(await elevenLabsErrorMessage(response));
+    const requestBody = JSON.stringify(body);
+    const cacheKey = `${url}\n${requestBody}`;
+    let blob = this.options.cache ? cachedAudio(cacheKey) : undefined;
+    if (!blob) {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          Accept: 'audio/mpeg',
+          'Content-Type': 'application/json',
+          'xi-api-key': this.configuration.apiKey,
+        },
+        body: requestBody,
+        signal: this.request.signal,
+      });
+      if (!response.ok) {
+        throw new TextToSpeechError(await elevenLabsErrorMessage(response));
+      }
+      if (this.stopped) return;
+
+      blob = await response.blob();
+      if (this.stopped) return;
+      if (this.options.cache) cacheAudio(cacheKey, blob);
     }
     if (this.stopped) return;
 
-    this.objectUrl = URL.createObjectURL(await response.blob());
+    this.objectUrl = URL.createObjectURL(blob);
     if (this.stopped) return this.releaseObjectUrl();
     const audio = new Audio(this.objectUrl);
     this.audio = audio;

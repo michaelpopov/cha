@@ -382,6 +382,7 @@ export function ChatScreen({
         textToSpeechSession.current = null;
         setSpokenEntry(null);
       },
+      { cache: true },
     );
     textToSpeechSession.current = session;
     setSpokenEntry({ id: entry.id, state: 'loading' });
