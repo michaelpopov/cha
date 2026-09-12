@@ -265,6 +265,9 @@ if(WIN32)
             NOMINMAX
             WIN32_LEAN_AND_MEAN)
     target_link_libraries(cha_core PUBLIC advapi32 PRIVATE bcrypt)
+elseif(APPLE)
+    find_library(CHA_COREFOUNDATION_FRAMEWORK CoreFoundation REQUIRED)
+    target_link_libraries(cha_core PRIVATE "${CHA_COREFOUNDATION_FRAMEWORK}")
 endif()
 target_link_libraries(
     cha_core

@@ -28,6 +28,12 @@ std::string utf8_from_wide(std::wstring_view value);
 
 void require_path_component(std::string_view name, const std::filesystem::path& source);
 
+// Compares path components using the case rules of the platforms where CHA's
+// application directories are commonly case-insensitive.
+[[nodiscard]] bool path_component_names_equal(
+    std::string_view left,
+    std::string_view right);
+
 // Stable identifiers embedded in web route segments use only RFC 3986
 // unreserved ASCII characters. Display names and labels are not identifiers
 // and intentionally do not use this restriction.

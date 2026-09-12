@@ -20,16 +20,11 @@ public:
 
 struct VaultCreate {
     std::string display_name;
-    std::filesystem::path data;
-    std::optional<std::filesystem::path> mirror;
-    std::optional<std::filesystem::path> modify;
     std::optional<std::string> copy_from;
 };
 
 struct VaultUpdate {
     std::string display_name;
-    std::optional<std::filesystem::path> mirror;
-    std::optional<std::filesystem::path> modify;
 };
 
 struct VaultRegistrySnapshot {

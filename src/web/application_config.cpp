@@ -2,6 +2,7 @@
 
 #include "session/sqlite_storage.h"
 #include "session/workspace_session_database.h"
+#include "util/logging.h"
 #include "util/path_name.h"
 #include "util/private_filesystem.h"
 #include "util/public_name.h"
@@ -185,6 +186,19 @@ void reject_unknown_fields(
     }
 }
 
+void warn_unknown_vault_fields(
+    const toml::table& table,
+    const std::filesystem::path& source,
+    std::vector<std::string>& warnings) {
+    for (const auto& [key, value] : table) {
+        (void)value;
+        if (key.str() == "vault_name" || key.str() == "data") continue;
+        warnings.push_back(
+            "Vault definition '" + utf8_path(source) + "' field '"
+            + std::string(key.str()) + "' is unused and was ignored.");
+    }
+}
+
 const toml::table& required_table(
     const toml::table& parent,
     const std::filesystem::path& source,
@@ -256,20 +270,6 @@ std::filesystem::path resolve_config_path(
     return std::filesystem::weakly_canonical(std::filesystem::absolute(path));
 }
 
-std::filesystem::path resolve_absolute_vault_path(
-    const std::filesystem::path& source,
-    std::string_view field,
-    std::string_view value,
-    std::string_view kind) {
-    const std::filesystem::path path = path_from_utf8(value);
-    if (!path.is_absolute()) {
-        throw std::runtime_error(
-            std::string(kind) + " '" + utf8_path(source)
-            + "' requires an absolute path '" + std::string(field) + "'.");
-    }
-    return std::filesystem::weakly_canonical(path);
-}
-
 toml::table parse_toml_file(
     const std::filesystem::path& source,
     std::string_view kind) {
@@ -333,14 +333,15 @@ std::string vault_collision(
 
 LoadedVault load_vault_definition(
     const std::filesystem::path& directory,
-    const std::filesystem::path& source) {
+    const std::filesystem::path& source,
+    std::vector<std::string>& warnings) {
     constexpr std::string_view kind = "vault definition";
     const toml::table root = parse_toml_file(source, kind);
-    reject_unknown_fields(
-        root, source, {"vault_name", "data", "mirror", "modify"}, "root", kind);
+    warn_unknown_vault_fields(root, source, warnings);
     const std::string name =
         required_string(root, source, "vault_name", kind);
     validate_public_name(name, "vault_name", source);
+    require_path_component(name, source);
     const std::string data = required_string(root, source, "data", kind);
     LoadedVault loaded;
     loaded.source = source;
@@ -348,17 +349,35 @@ LoadedVault load_vault_definition(
     loaded.definition.source = source;
     loaded.definition.data =
         resolve_config_path(directory, source, "data", data, kind);
-    if (root.contains("mirror")) {
-        const std::string value = required_string(root, source, "mirror", kind);
-        loaded.definition.mirror =
-            resolve_absolute_vault_path(source, "mirror", value, kind);
-    }
-    if (root.contains("modify")) {
-        const std::string value = required_string(root, source, "modify", kind);
-        loaded.definition.modify =
-            resolve_absolute_vault_path(source, "modify", value, kind);
-    }
     return loaded;
+}
+
+std::optional<std::filesystem::path> optional_app_path(
+    const toml::table& app,
+    const std::filesystem::path& directory,
+    const std::filesystem::path& source,
+    std::string_view field,
+    std::string_view kind) {
+    if (!app.contains(field)) return std::nullopt;
+    return resolve_config_path(
+        directory,
+        source,
+        field,
+        required_string(app, source, field, kind),
+        kind);
+}
+
+void assign_vault_paths(
+    VaultDefinition& vault,
+    const std::optional<std::filesystem::path>& mirror_base,
+    const std::optional<std::filesystem::path>& modify_base) {
+    const std::filesystem::path name = path_from_utf8(vault.name);
+    if (mirror_base) {
+        vault.mirror = std::filesystem::weakly_canonical(*mirror_base / name);
+    }
+    if (modify_base) {
+        vault.modify = std::filesystem::weakly_canonical(*modify_base / name);
+    }
 }
 
 void validate_vault_registry(
@@ -442,8 +461,12 @@ void bootstrap_configuration_directory(
     const std::filesystem::path app = root / "app.toml";
     const std::filesystem::path vault = root / "default.toml";
     const std::filesystem::path database_path = root / "default.sqlite3";
+    const std::filesystem::path mirror_base = root / "mirror";
+    const std::filesystem::path modify_base = root / "modify";
     bool database_created = false;
     bool vault_created = false;
+    bool mirror_created = false;
+    bool modify_created = false;
     try {
         create_empty_workspace_session_database(database_path);
         database_created = true;
@@ -478,14 +501,19 @@ void bootstrap_configuration_directory(
         toml::table vault_config;
         vault_config.insert("vault_name", "Default");
         vault_config.insert("data", "default.sqlite3");
-        vault_config.insert("modify", utf8_path(root / "modify"));
         std::ostringstream vault_contents;
         vault_contents << vault_config << '\n';
         create_private_file(vault, vault_contents.str());
         vault_created = true;
+        create_private_directory(mirror_base);
+        mirror_created = true;
+        create_private_directory(modify_base);
+        modify_created = true;
         create_private_file(
             app,
             "vault = \"Default\"\n\n"
+            "mirror = \"mirror\"\n"
+            "modify = \"modify\"\n\n"
             "[web]\n"
             "host = \"127.0.0.1\"\n"
             "port = 8086\n\n"
@@ -494,6 +522,8 @@ void bootstrap_configuration_directory(
             "level = \"info\"\n");
     } catch (...) {
         std::error_code ignored;
+        if (modify_created) std::filesystem::remove(modify_base, ignored);
+        if (mirror_created) std::filesystem::remove(mirror_base, ignored);
         if (vault_created) std::filesystem::remove(vault, ignored);
         if (database_created) {
             std::filesystem::remove(database_path, ignored);
@@ -512,11 +542,15 @@ void bootstrap_configuration_directory(
 VaultDefinition load_vault_definition_file(
     const std::filesystem::path& configuration_directory,
     const std::filesystem::path& source) {
-    return load_vault_definition(configuration_directory, source).definition;
+    std::vector<std::string> warnings;
+    VaultDefinition definition = load_vault_definition(
+        configuration_directory, source, warnings).definition;
+    for (const std::string& warning : warnings) log_warn(warning);
+    return definition;
 }
 
 bool same_vault_name(std::string_view left, std::string_view right) {
-    return fold_ascii(left) == fold_ascii(right);
+    return path_component_names_equal(left, right);
 }
 
 const VaultDefinition* find_vault(
@@ -553,11 +587,15 @@ ConfigurationDirectory load_configuration_directory(
     reject_unknown_fields(
         app,
         app_file,
-        {"vault", "web", "logging", "voice_input", "text_to_speech"},
+        {"vault", "mirror", "modify", "web", "logging", "voice_input", "text_to_speech"},
         "root",
         app_kind);
     const std::string configured_vault =
         required_string(app, app_file, "vault", app_kind);
+    const std::optional<std::filesystem::path> mirror_base = optional_app_path(
+        app, root, app_file, "mirror", app_kind);
+    const std::optional<std::filesystem::path> modify_base = optional_app_path(
+        app, root, app_file, "modify", app_kind);
     const toml::table& web = required_table(app, app_file, "web", app_kind);
     reject_unknown_fields(web, app_file, {"host", "port"}, "[web]", app_kind);
     const std::string host = required_string(web, app_file, "host", app_kind);
@@ -629,9 +667,12 @@ ConfigurationDirectory load_configuration_directory(
     std::sort(vault_files.begin(), vault_files.end());
 
     std::vector<LoadedVault> loaded;
+    std::vector<std::string> warnings;
     loaded.reserve(vault_files.size());
     for (const std::filesystem::path& file : vault_files) {
-        loaded.push_back(load_vault_definition(root, file));
+        loaded.push_back(load_vault_definition(root, file, warnings));
+        assign_vault_paths(
+            loaded.back().definition, mirror_base, modify_base);
     }
     validate_vault_registry(root, loaded);
 
@@ -657,12 +698,15 @@ ConfigurationDirectory load_configuration_directory(
     return {
         .directory = root,
         .startup_vault = startup->name,
+        .mirror_base = mirror_base,
+        .modify_base = modify_base,
         .vaults = std::move(vaults),
         .host = host,
         .port = *port,
         .log_file = resolve_config_path(
             root, app_file, "logging.file", log_file, app_kind),
         .log_level = log_level,
+        .warnings = std::move(warnings),
         .voice_input = std::move(voice_input),
         .text_to_speech_model = std::move(text_to_speech_model),
     };
@@ -746,6 +790,8 @@ ApplicationCommand parse_application_command(
               std::filesystem::absolute(executable_directory()).lexically_normal());
     return {
         .config_directory = settings.directory,
+        .mirror_base = settings.mirror_base,
+        .modify_base = settings.modify_base,
         .vaults = settings.vaults,
         .vault = *selected,
         .import_directory = options.import_directory,
@@ -757,6 +803,7 @@ ApplicationCommand parse_application_command(
         .port = settings.port,
         .log_file = settings.log_file,
         .log_level = settings.log_level,
+        .warnings = settings.warnings,
         .test_idle_grace_ms = options.test_idle_grace_ms,
         .voice_input = settings.voice_input,
         .text_to_speech_model = settings.text_to_speech_model,

@@ -3,16 +3,20 @@
 #ifdef _WIN32
 #include <windows.h>
 #elif defined(__APPLE__)
+#include <CoreFoundation/CoreFoundation.h>
 #include <mach-o/dyld.h>
 #else
 #include <cerrno>
 #include <unistd.h>
 #endif
 
+#include <algorithm>
 #include <cstdint>
 #include <stdexcept>
 #include <string>
 #include <vector>
+
+#include "util/text.h"
 
 namespace cha {
 
@@ -121,9 +125,26 @@ std::string utf8_from_wide(std::wstring_view value) {
 
 void require_path_component(std::string_view name, const std::filesystem::path& source) {
     const std::filesystem::path path = path_from_utf8(name);
+    const auto forbidden = [](char character) {
+        const unsigned char value = static_cast<unsigned char>(character);
+        return value < 0x20 || character == '<' || character == '>'
+            || character == ':' || character == '"' || character == '|'
+            || character == '?' || character == '*';
+    };
+    const std::size_t extension = name.find('.');
+    const std::string device = fold_ascii(name.substr(0, extension));
+    const bool reserved_device = device == "con" || device == "prn"
+        || device == "aux" || device == "nul"
+        || (device.size() == 4
+            && (device.starts_with("com") || device.starts_with("lpt"))
+            && device.back() >= '1' && device.back() <= '9');
     if (name.empty()
         || name.find('/') != std::string_view::npos
         || name.find('\\') != std::string_view::npos
+        || std::ranges::any_of(name, forbidden)
+        || name.back() == ' '
+        || name.back() == '.'
+        || reserved_device
         || path.is_absolute()
         || path.has_parent_path()
         || name == "."
@@ -132,6 +153,45 @@ void require_path_component(std::string_view name, const std::filesystem::path& 
             "Invalid name '" + std::string(name) + "' in '"
             + utf8_path(source) + "'");
     }
+}
+
+bool path_component_names_equal(
+    std::string_view left,
+    std::string_view right) {
+    if (fold_ascii(left) == fold_ascii(right)) return true;
+#ifdef _WIN32
+    const std::wstring left_wide = path_from_utf8(left).native();
+    const std::wstring right_wide = path_from_utf8(right).native();
+    return ::CompareStringOrdinal(
+               left_wide.data(), static_cast<int>(left_wide.size()),
+               right_wide.data(), static_cast<int>(right_wide.size()), TRUE)
+        == CSTR_EQUAL;
+#elif defined(__APPLE__)
+    const auto make_string = [](std::string_view value) {
+        return ::CFStringCreateWithBytes(
+            kCFAllocatorDefault,
+            reinterpret_cast<const UInt8*>(value.data()),
+            static_cast<CFIndex>(value.size()),
+            kCFStringEncodingUTF8,
+            false);
+    };
+    const CFStringRef left_string = make_string(left);
+    const CFStringRef right_string = make_string(right);
+    if (!left_string || !right_string) {
+        if (left_string) ::CFRelease(left_string);
+        if (right_string) ::CFRelease(right_string);
+        return false;
+    }
+    const CFComparisonResult comparison = ::CFStringCompare(
+        left_string,
+        right_string,
+        kCFCompareCaseInsensitive | kCFCompareNonliteral);
+    ::CFRelease(left_string);
+    ::CFRelease(right_string);
+    return comparison == kCFCompareEqualTo;
+#else
+    return false;
+#endif
 }
 
 bool is_url_safe_identifier(std::string_view name) noexcept {

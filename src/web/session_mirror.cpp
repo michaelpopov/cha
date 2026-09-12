@@ -46,9 +46,11 @@ std::string numbered_name(
 }
 
 void require_directory_or_create(const std::filesystem::path& path) {
+    if (path.empty()) return;
     const std::filesystem::file_status status =
         std::filesystem::symlink_status(path);
     if (!std::filesystem::exists(status)) {
+        require_directory_or_create(path.parent_path());
         create_private_directory(path);
         return;
     }
@@ -105,7 +107,7 @@ void SessionMirror::rebuild(
     sessions_.clear();
     if (!root) return;
 
-    require_directory(*root);
+    require_directory_or_create(*root);
 
     const std::shared_ptr<const Workspace> workspace = getws();
     if (!workspace) throw std::runtime_error("Workspace is not loaded");

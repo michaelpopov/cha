@@ -30,17 +30,22 @@ struct VoiceInputConfig {
 struct ConfigurationDirectory {
     std::filesystem::path directory;
     std::string startup_vault;
+    std::optional<std::filesystem::path> mirror_base;
+    std::optional<std::filesystem::path> modify_base;
     std::vector<VaultDefinition> vaults;
     std::string host;
     int port{};
     std::filesystem::path log_file;
     std::string log_level;
+    std::vector<std::string> warnings;
     std::optional<VoiceInputConfig> voice_input;
     std::string text_to_speech_model{default_text_to_speech_model};
 };
 
 struct ApplicationCommand {
     std::filesystem::path config_directory;
+    std::optional<std::filesystem::path> mirror_base;
+    std::optional<std::filesystem::path> modify_base;
     std::vector<VaultDefinition> vaults;
     VaultDefinition vault;
     std::optional<std::filesystem::path> import_directory;
@@ -52,6 +57,7 @@ struct ApplicationCommand {
     int port{};
     std::filesystem::path log_file;
     std::string log_level;
+    std::vector<std::string> warnings;
     // Browser automation uses this command-line-only seam to prove a real
     // disconnect/unload/reopen cycle without adding thirty seconds per run.
     std::optional<int> test_idle_grace_ms;

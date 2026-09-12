@@ -168,24 +168,59 @@ std::filesystem::path normalized_vault_path(
         std::filesystem::absolute(resolved));
 }
 
-std::optional<std::filesystem::path> normalized_absolute_vault_path(
-    const std::optional<std::filesystem::path>& value,
-    std::string_view field) {
-    if (!value) return std::nullopt;
-    if (value->empty() || !value->is_absolute()) {
-        throw std::invalid_argument(
-            "The " + std::string(field) + " path must be absolute");
-    }
-    return std::filesystem::weakly_canonical(*value);
-}
-
 toml::table vault_definition_table(const VaultDefinition& vault) {
     toml::table table;
     table.insert("vault_name", vault.name);
     table.insert("data", utf8_path(vault.data));
-    if (vault.mirror) table.insert("mirror", utf8_path(*vault.mirror));
-    if (vault.modify) table.insert("modify", utf8_path(*vault.modify));
     return table;
+}
+
+std::optional<std::filesystem::path> vault_path(
+    const std::optional<std::filesystem::path>& base,
+    std::string_view vault_name) {
+    if (!base) return std::nullopt;
+    return std::filesystem::weakly_canonical(
+        *base / path_from_utf8(vault_name));
+}
+
+void assign_vault_paths(
+    VaultDefinition& vault,
+    const ApplicationCommand& command) {
+    vault.mirror = vault_path(command.mirror_base, vault.name);
+    vault.modify = vault_path(command.modify_base, vault.name);
+}
+
+using VaultDirectoryMove =
+    std::pair<std::filesystem::path, std::filesystem::path>;
+
+void move_vault_directory(
+    const std::optional<std::filesystem::path>& from,
+    const std::optional<std::filesystem::path>& to,
+    std::string_view field,
+    std::vector<VaultDirectoryMove>& moved) {
+    if (!from || !to || *from == *to || !std::filesystem::exists(*from)) return;
+    if (std::filesystem::exists(*to)) {
+        if (std::filesystem::equivalent(*from, *to)) return;
+        throw std::invalid_argument(
+            "The " + std::string(field)
+            + " directory for the renamed vault already exists");
+    }
+    std::filesystem::rename(*from, *to);
+    moved.emplace_back(*from, *to);
+}
+
+void restore_vault_directories(
+    const std::vector<VaultDirectoryMove>& moved) noexcept {
+    for (auto entry = moved.rbegin(); entry != moved.rend(); ++entry) {
+        std::error_code error;
+        std::filesystem::rename(entry->second, entry->first, error);
+        if (error) {
+            log_critical(
+                "Failed to restore vault directory '"
+                + utf8_path(entry->second) + "' to '"
+                + utf8_path(entry->first) + "': " + error.message());
+        }
+    }
 }
 
 std::filesystem::path next_vault_file(
@@ -203,6 +238,7 @@ void validate_candidate_vaults(
     try {
         for (const VaultDefinition& vault : vaults) {
             validate_public_name(vault.name, "vault_name", vault.source);
+            require_path_component(vault.name, vault.source);
         }
         validate_vault_definitions(config_directory, vaults);
     } catch (const std::runtime_error& error) {
@@ -220,7 +256,8 @@ bool is_workspace_directory(const std::filesystem::path& path) {
 }
 
 void validate_vault_paths(const VaultDefinition& vault) {
-    if (vault.mirror && !std::filesystem::is_directory(*vault.mirror)) {
+    if (vault.mirror && std::filesystem::exists(*vault.mirror)
+        && !std::filesystem::is_directory(*vault.mirror)) {
         throw std::invalid_argument(
             "The mirror path must be an existing directory");
     }
@@ -272,22 +309,6 @@ const std::string& required_json_string(
         throw std::invalid_argument("Invalid vault settings");
     }
     return json.at(name).get_ref<const std::string&>();
-}
-
-std::optional<std::filesystem::path> nullable_json_path(
-    const nlohmann::json& json,
-    std::string_view key) {
-    const std::string name(key);
-    if (!json.is_object() || !json.contains(name)) {
-        throw std::invalid_argument("Invalid vault settings");
-    }
-    if (json.at(name).is_null()) return std::nullopt;
-    if (!json.at(name).is_string()) {
-        throw std::invalid_argument("Invalid vault settings");
-    }
-    const std::string value = json.at(name).get<std::string>();
-    if (value.empty()) throw std::invalid_argument("Invalid vault settings");
-    return path_from_utf8(value);
 }
 
 std::optional<std::string> nullable_json_string(
@@ -502,6 +523,7 @@ ApplicationRuntime::~ApplicationRuntime() {
 std::unique_ptr<ApplicationRuntime> ApplicationRuntime::open(
     const ApplicationCommand& command,
     std::string access_token) {
+    for (const std::string& warning : command.warnings) log_warn(warning);
     load_dotenv(command.config_directory / ".env");
     return std::unique_ptr<ApplicationRuntime>(new ApplicationRuntime(
         std::make_unique<Impl>(command, std::move(access_token))));
@@ -544,12 +566,18 @@ VaultDefinition ApplicationRuntime::create_vault(VaultCreate create) {
 
     VaultDefinition candidate{
         .name = std::move(create.display_name),
-        .data = normalized_vault_path(
-            impl_->command.config_directory, create.data),
-        .mirror = normalized_absolute_vault_path(create.mirror, "mirror"),
-        .modify = normalized_absolute_vault_path(create.modify, "modify"),
         .source = next_vault_file(impl_->command.config_directory),
     };
+    try {
+        validate_public_name(candidate.name, "vault_name", candidate.source);
+        require_path_component(candidate.name, candidate.source);
+    } catch (const std::runtime_error& error) {
+        throw std::invalid_argument(error.what());
+    }
+    candidate.data = normalized_vault_path(
+        impl_->command.config_directory,
+        path_from_utf8(candidate.name + ".sqlite3"));
+    assign_vault_paths(candidate, impl_->command);
     require_available_database_path(candidate.data);
     validate_vault_paths(candidate);
 
@@ -597,8 +625,7 @@ VaultDefinition ApplicationRuntime::update_vault(
     const VaultDefinition previous = *found;
     VaultDefinition candidate = previous;
     candidate.name = std::move(update.display_name);
-    candidate.mirror = normalized_absolute_vault_path(update.mirror, "mirror");
-    candidate.modify = normalized_absolute_vault_path(update.modify, "modify");
+    assign_vault_paths(candidate, impl_->command);
     validate_vault_paths(candidate);
 
     std::vector<VaultDefinition> updated = impl_->command.vaults;
@@ -608,8 +635,13 @@ VaultDefinition ApplicationRuntime::update_vault(
 
     const bool active = same_vault_name(
         impl_->current_vault_.get().name, previous.name);
-    write_toml_file(candidate.source, vault_definition_table(candidate));
+    std::vector<VaultDirectoryMove> moved;
     try {
+        move_vault_directory(
+            previous.modify, candidate.modify, "modify", moved);
+        move_vault_directory(
+            previous.mirror, candidate.mirror, "mirror", moved);
+        write_toml_file(candidate.source, vault_definition_table(candidate));
         if (active) {
             rewrite_toml_file(
                 impl_->command.config_directory / "app.toml",
@@ -618,7 +650,14 @@ VaultDefinition ApplicationRuntime::update_vault(
                 });
         }
     } catch (...) {
-        write_toml_file(previous.source, vault_definition_table(previous));
+        try {
+            write_toml_file(previous.source, vault_definition_table(previous));
+        } catch (const std::exception& error) {
+            log_critical(
+                "Failed to restore vault definition after rename: "
+                + std::string(error.what()));
+        }
+        restore_vault_directories(moved);
         throw;
     }
 
@@ -716,6 +755,7 @@ VaultDefinition ApplicationRuntime::download_r2_vault(std::string_view name) {
             candidate.data, candidate.source, database_name, *storage);
         candidate = load_vault_definition_file(
             impl_->command.config_directory, candidate.source);
+        assign_vault_paths(candidate, impl_->command);
         std::vector<VaultDefinition> updated = impl_->command.vaults;
         updated.push_back(candidate);
         validate_candidate_vaults(impl_->command.config_directory, updated);
@@ -919,15 +959,11 @@ int ApplicationRuntime::start(int port_override) {
             if (!parse_route_json_body(
                     request, response, settings.request_body_limit,
                     [&create](const nlohmann::json& json) {
-                        if (!json.is_object() || json.size() != 5) {
+                        if (!json.is_object() || json.size() != 2) {
                             throw std::invalid_argument("Invalid vault settings");
                         }
                         create.display_name =
                             required_json_string(json, "display_name");
-                        create.data = path_from_utf8(
-                            required_json_string(json, "data_path"));
-                        create.mirror = nullable_json_path(json, "mirror_path");
-                        create.modify = nullable_json_path(json, "modify_path");
                         create.copy_from =
                             nullable_json_string(json, "copy_from");
                     })) return;
@@ -958,14 +994,12 @@ int ApplicationRuntime::start(int port_override) {
             if (!parse_route_json_body(
                     request, response, settings.request_body_limit,
                     [&name, &update](const nlohmann::json& json) {
-                        if (!json.is_object() || json.size() != 4) {
+                        if (!json.is_object() || json.size() != 2) {
                             throw std::invalid_argument("Invalid vault settings");
                         }
                         name = required_json_string(json, "vault_name");
                         update.display_name =
                             required_json_string(json, "display_name");
-                        update.mirror = nullable_json_path(json, "mirror_path");
-                        update.modify = nullable_json_path(json, "modify_path");
                     })) return;
             try {
                 const VaultDefinition updated =
@@ -1123,6 +1157,7 @@ R2DatabaseTransfer ApplicationRuntime::download_database() {
             vault.data, vault.source, *storage, R2DatabaseLease::already_held);
         downloaded_vault = load_vault_definition_file(
             impl_->command.config_directory, vault.source);
+        assign_vault_paths(*downloaded_vault, impl_->command);
         const auto configured = std::find_if(
             impl_->command.vaults.begin(), impl_->command.vaults.end(),
             [&](const VaultDefinition& candidate) {

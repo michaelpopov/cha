@@ -180,16 +180,16 @@ describe('Settings screens', () => {
     );
 
     await userEvent.type(await screen.findByLabelText('Display name'), 'Archive');
-    await userEvent.type(screen.getByLabelText('Database path'), '/data/archive.sqlite3');
-    await userEvent.type(screen.getByLabelText(/Mirror path/), '/mirror/archive');
     await userEvent.selectOptions(screen.getByLabelText('Initial database'), 'Projects');
+    expect(screen.queryByLabelText('Database path')).not.toBeInTheDocument();
+    expect(screen.queryByText('Vault details')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Mirror path/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Modify path/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/active vault does not change/i)).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Create vault' }));
 
     expect(createVault).toHaveBeenCalledWith({
       display_name: 'Archive',
-      data_path: '/data/archive.sqlite3',
-      mirror_path: '/mirror/archive',
-      modify_path: null,
       copy_from: 'Projects',
     });
     expect(dispatch).toHaveBeenCalledWith({ type: 'vault-created', vault: created });
@@ -216,15 +216,11 @@ describe('Settings screens', () => {
     );
 
     await userEvent.type(await screen.findByLabelText('Display name'), 'Empty');
-    await userEvent.type(screen.getByLabelText('Database path'), '/data/empty.sqlite3');
     expect(screen.getByLabelText('Initial database')).toHaveValue('');
     await userEvent.click(screen.getByRole('button', { name: 'Create vault' }));
 
     expect(createVault).toHaveBeenCalledWith({
       display_name: 'Empty',
-      data_path: '/data/empty.sqlite3',
-      mirror_path: null,
-      modify_path: null,
       copy_from: null,
     });
     expect(dispatch).toHaveBeenCalledWith({ type: 'vault-created', vault: created });
@@ -251,15 +247,14 @@ describe('Settings screens', () => {
     );
 
     const name = await screen.findByLabelText('Display name');
+    expect(screen.queryByText('Vault details')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Mirror path/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Modify path/)).not.toBeInTheDocument();
     await userEvent.clear(name);
     await userEvent.type(name, 'Archive');
-    await userEvent.clear(screen.getByLabelText(/Modify path/));
-    await userEvent.type(screen.getByLabelText(/Modify path/), '/work/archive');
     await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     expect(updateVault).toHaveBeenCalledWith('Projects', {
       display_name: 'Archive',
-      mirror_path: '/mirror/projects',
-      modify_path: '/work/archive',
     });
 
     await userEvent.click(screen.getByRole('button', { name: 'Delete vault' }));

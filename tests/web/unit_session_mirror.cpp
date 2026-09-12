@@ -26,13 +26,13 @@ TEST(SessionMirror, SanitizesUnsafeDisplayNameCharacters) {
     EXPECT_EQ(mirror_path_name("..."), "session");
 }
 
-TEST(SessionMirror, RequiresAnExistingRoot) {
+TEST(SessionMirror, CreatesAMissingRoot) {
     test::TestWorkspace workspace;
     test::WebGraph graph(workspace.root());
     const std::filesystem::path missing = workspace.root() / "missing-mirror";
 
-    EXPECT_THROW(SessionMirror(missing, *graph.sessions()), std::runtime_error);
-    EXPECT_FALSE(std::filesystem::exists(missing));
+    EXPECT_NO_THROW(SessionMirror(missing, *graph.sessions()));
+    EXPECT_TRUE(std::filesystem::is_directory(missing));
 }
 
 TEST(SessionMirror, WritesActiveSessionsUnderForumDisplayNameAndNumbersDuplicates) {

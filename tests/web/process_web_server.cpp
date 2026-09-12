@@ -899,6 +899,39 @@ TEST(WebServerProcess, ConsoleImportCreatesTheSelectedMissingDatabase) {
     std::filesystem::remove_all(config_directory, removal);
 }
 
+TEST(WebServerProcess, OfflineCommandLogsIgnoredVaultSettings) {
+    test::TestWorkspace workspace;
+    const std::filesystem::path root =
+        workspace.root().parent_path()
+        / (workspace.root().filename().string() + "_offline_warning");
+    const std::filesystem::path database = root / "selected.sqlite3";
+    const std::filesystem::path config_directory = root / "cha-config";
+    write_process_config_directory(
+        config_directory, "Selected", {{"Selected", database}});
+    std::ofstream(config_directory / "app.toml")
+        << "vault = \"Selected\"\n"
+        << "[web]\nhost = \"127.0.0.1\"\nport = 1\n"
+        << "[logging]\nfile = \"cha-test.log\"\nlevel = \"warn\"\n";
+    std::ofstream(
+        config_directory / "Selected.toml", std::ios::app)
+        << "modify = \"obsolete\"\n";
+
+    const OfflineProcessResult result = run_offline_config(
+        config_directory,
+        {"--vault=Selected", "--import", workspace.root().string()});
+    EXPECT_TRUE(WIFEXITED(result.status));
+    EXPECT_EQ(WEXITSTATUS(result.status), 0) << result.errors;
+    const std::string log = log_contents(config_directory / "cha-test.log");
+    EXPECT_NE(log.find("[warning]"), std::string::npos) << log;
+    EXPECT_NE(
+        log.find("field 'modify' is unused and was ignored"),
+        std::string::npos)
+        << log;
+
+    std::error_code removal;
+    std::filesystem::remove_all(root, removal);
+}
+
 TEST(WebServerProcess, InvalidVaultSelectionFailsBeforeDataChanges) {
     test::TestWorkspace workspace;
     const std::filesystem::path selected =

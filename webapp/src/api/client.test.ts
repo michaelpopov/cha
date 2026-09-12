@@ -224,15 +224,10 @@ describe('CHA API client', () => {
     await expect(client.listVaults()).resolves.toEqual([vault]);
     await client.createVault({
       display_name: 'Projects',
-      data_path: '/data/projects.sqlite3',
-      mirror_path: null,
-      modify_path: '/work/projects',
       copy_from: 'Personal',
     });
     await client.updateVault('Projects', {
       display_name: 'Archive',
-      mirror_path: '/mirror/archive',
-      modify_path: null,
     });
     await client.deleteVault('Archive');
 
@@ -243,9 +238,12 @@ describe('CHA API client', () => {
       '/api/v1/vaults',
     ]);
     expect(fetcher.mock.calls[1][1]?.method).toBe('POST');
+    expect(fetcher.mock.calls[1][1]?.body).toBe(
+      '{"display_name":"Projects","copy_from":"Personal"}',
+    );
     expect(fetcher.mock.calls[2][1]?.method).toBe('PATCH');
     expect(fetcher.mock.calls[2][1]?.body).toBe(
-      '{"vault_name":"Projects","display_name":"Archive","mirror_path":"/mirror/archive","modify_path":null}',
+      '{"vault_name":"Projects","display_name":"Archive"}',
     );
     expect(fetcher.mock.calls[3][1]?.method).toBe('DELETE');
     expect(fetcher.mock.calls[3][1]?.body).toBe('{"vault_name":"Archive"}');

@@ -124,6 +124,8 @@ TEST_F(ApplicationConfigTest, LoadsUnifiedExternalConfigWithEqualsSyntax) {
         command.log_file,
         std::filesystem::weakly_canonical(config_ / "logs/cha.log"));
     EXPECT_EQ(command.log_level, "info");
+    EXPECT_FALSE(command.mirror_base);
+    EXPECT_FALSE(command.modify_base);
     EXPECT_FALSE(command.vault.modify);
     EXPECT_FALSE(command.import_directory);
     EXPECT_FALSE(command.export_directory);
@@ -257,7 +259,16 @@ TEST_F(ApplicationConfigTest, BootstrapsAnEmptyConfigurationDirectory) {
         std::filesystem::weakly_canonical(config_ / "default.sqlite3"));
     EXPECT_EQ(
         command.vault.modify,
+        std::filesystem::weakly_canonical(config_ / "modify" / "Default"));
+    EXPECT_EQ(
+        command.vault.mirror,
+        std::filesystem::weakly_canonical(config_ / "mirror" / "Default"));
+    EXPECT_EQ(
+        command.modify_base,
         std::filesystem::weakly_canonical(config_ / "modify"));
+    EXPECT_EQ(
+        command.mirror_base,
+        std::filesystem::weakly_canonical(config_ / "mirror"));
     EXPECT_EQ(command.host, "127.0.0.1");
     EXPECT_EQ(command.port, 8086);
     EXPECT_TRUE(std::filesystem::is_regular_file(config_ / "app.toml"));
@@ -332,15 +343,15 @@ TEST_F(ApplicationConfigTest, AcceptsZeroAsAnEphemeralPort) {
     EXPECT_EQ(command.port, 0);
 }
 
-TEST_F(ApplicationConfigTest, LoadsOptionalAbsoluteMirrorAndModifyPaths) {
+TEST_F(ApplicationConfigTest, DerivesVaultPathsFromAbsoluteAppBasePaths) {
     const std::filesystem::path mirror = root_ / "mirror";
     const std::filesystem::path modify = root_ / "modify";
-    write_vault(
-        "personal.toml",
-        "Personal",
-        "../data/workspace.sqlite3",
+    write_app(
+        "vault = \"Personal\"\n"
         "mirror = " + toml_path(mirror) + "\n"
-        "modify = " + toml_path(modify) + "\n");
+        "modify = " + toml_path(modify) + "\n"
+        "[web]\nhost = \"127.0.0.1\"\nport = 8080\n"
+        "[logging]\nfile = \"logs/cha.log\"\nlevel = \"info\"\n");
 
     const ApplicationCommand command =
         load({"chaweb", "--config", config_.string()});
@@ -348,53 +359,50 @@ TEST_F(ApplicationConfigTest, LoadsOptionalAbsoluteMirrorAndModifyPaths) {
     ASSERT_TRUE(command.vault.modify);
     EXPECT_EQ(
         *command.vault.mirror,
-        std::filesystem::weakly_canonical(mirror));
+        std::filesystem::weakly_canonical(mirror / "Personal"));
     EXPECT_EQ(
         *command.vault.modify,
-        std::filesystem::weakly_canonical(modify));
+        std::filesystem::weakly_canonical(modify / "Personal"));
 }
 
-TEST_F(ApplicationConfigTest, RejectsRelativeMirrorAndModifyPaths) {
-    write_vault(
-        "personal.toml",
-        "Personal",
-        "../data/workspace.sqlite3",
-        "mirror = \"../mirror\"\n");
-    EXPECT_NE(
-        error_text({"chaweb", "--config", config_.string()})
-            .find("absolute path 'mirror'"),
-        std::string::npos);
+TEST_F(ApplicationConfigTest, ResolvesRelativeAppBasePaths) {
+    write_app(
+        "vault = \"Personal\"\n"
+        "mirror = \"../mirror\"\n"
+        "modify = \"modify\"\n"
+        "[web]\nhost = \"127.0.0.1\"\nport = 8080\n"
+        "[logging]\nfile = \"logs/cha.log\"\nlevel = \"info\"\n");
 
-    write_vault(
-        "personal.toml",
-        "Personal",
-        "../data/workspace.sqlite3",
-        "modify = \"../modify\"\n");
-    EXPECT_NE(
-        error_text({"chaweb", "--config", config_.string()})
-            .find("absolute path 'modify'"),
-        std::string::npos);
+    const ApplicationCommand command =
+        load({"chaweb", "--config", config_.string()});
+    EXPECT_EQ(
+        command.vault.mirror,
+        std::filesystem::weakly_canonical(root_ / "mirror" / "Personal"));
+    EXPECT_EQ(
+        command.vault.modify,
+        std::filesystem::weakly_canonical(config_ / "modify" / "Personal"));
 }
 
 TEST_F(ApplicationConfigTest, RejectsModifyContainingConfigOrDatabase) {
-    write_vault(
-        "personal.toml",
-        "Personal",
-        "../data/workspace.sqlite3",
-        "modify = " + toml_path(root_) + "\n");
+    write_app(
+        "vault = \"config\"\n"
+        "modify = " + toml_path(root_) + "\n"
+        "[web]\nhost = \"127.0.0.1\"\nport = 8080\n"
+        "[logging]\nfile = \"logs/cha.log\"\nlevel = \"info\"\n");
+    write_vault("personal.toml", "config", "../data/workspace.sqlite3");
 
     const std::string error =
         error_text({"chaweb", "--config", config_.string()});
     EXPECT_NE(error.find("modify"), std::string::npos) << error;
-    EXPECT_NE(error.find("Personal"), std::string::npos) << error;
+    EXPECT_NE(error.find("config"), std::string::npos) << error;
 }
 
 TEST_F(ApplicationConfigTest, RejectsAnEmptyMirrorPath) {
-    write_vault(
-        "personal.toml",
-        "Personal",
-        "../data/workspace.sqlite3",
-        "mirror = \"\"\n");
+    write_app(
+        "vault = \"Personal\"\n"
+        "mirror = \"\"\n"
+        "[web]\nhost = \"127.0.0.1\"\nport = 8080\n"
+        "[logging]\nfile = \"logs/cha.log\"\nlevel = \"info\"\n");
 
     EXPECT_NE(
         error_text({"chaweb", "--config", config_.string()})
@@ -580,6 +588,9 @@ TEST_F(ApplicationConfigTest, AcceptsUnicodeAndEntranceVaultNames) {
     EXPECT_EQ(loaded.startup_vault, "Café");
     ASSERT_NE(find_vault(loaded.vaults, "Entrance"), nullptr);
     EXPECT_EQ(find_vault(loaded.vaults, "café")->name, "Café");
+#if defined(_WIN32) || defined(__APPLE__)
+    EXPECT_TRUE(same_vault_name("Работа", "работа"));
+#endif
 }
 
 TEST_F(ApplicationConfigTest, RejectsInvalidVaultNames) {
@@ -628,12 +639,6 @@ TEST_F(ApplicationConfigTest, RejectsMissingInvalidAndEmptyVaultRegistry) {
         error_text({"chaweb", "--config", config_.string()});
     EXPECT_NE(empty.find("no vault definitions"), std::string::npos) << empty;
 
-    write_vault("personal.toml", "Personal", "personal.sqlite3", "oops = true\n");
-    EXPECT_NE(
-        error_text({"chaweb", "--config", config_.string()})
-            .find("unknown field 'oops'"),
-        std::string::npos);
-
     write_vault("personal.toml", "Personal", "personal.sqlite3");
     std::ofstream(config_ / "broken.toml") << "vault_name = \"Other\"\n[";
     EXPECT_NE(
@@ -665,24 +670,48 @@ TEST_F(ApplicationConfigTest, RejectsDuplicateNamesPathsAndFilenames) {
         error_text({"chaweb", "--config", config_.string()});
     EXPECT_NE(filenames.find("filenames must be unique"), std::string::npos)
         << filenames;
+
+#if defined(_WIN32) || defined(__APPLE__)
+    write_vault("personal.toml", "Работа", "personal.sqlite3");
+    write_vault("other.toml", "работа", "other.sqlite3");
+    const std::string unicode_names =
+        error_text({"chaweb", "--config", config_.string()});
+    EXPECT_NE(unicode_names.find("duplicates"), std::string::npos)
+        << unicode_names;
+#endif
 }
 
-TEST_F(ApplicationConfigTest, RejectsNestedModifyCollisions) {
+TEST_F(ApplicationConfigTest, IgnoresAndWarnsAboutUnusedVaultFields) {
+    const std::filesystem::path modify_base = root_ / "new-modify";
+    write_app(
+        "vault = \"Personal\"\n"
+        "modify = " + toml_path(modify_base) + "\n"
+        "[web]\nhost = \"127.0.0.1\"\nport = 8080\n"
+        "[logging]\nfile = \"logs/cha.log\"\nlevel = \"info\"\n");
     write_vault(
         "personal.toml",
         "Personal",
         "personal.sqlite3",
-        "modify = " + toml_path(root_ / "edit") + "\n");
-    write_vault(
-        "projects.toml",
-        "Projects",
-        "projects.sqlite3",
-        "modify = " + toml_path(root_ / "edit" / "nested") + "\n");
-    const std::string error =
-        error_text({"chaweb", "--config", config_.string()});
-    EXPECT_NE(error.find("modify"), std::string::npos) << error;
-    EXPECT_NE(error.find("Personal"), std::string::npos) << error;
-    EXPECT_NE(error.find("Projects"), std::string::npos) << error;
+        "modify = " + toml_path(root_ / "old-modify") + "\n"
+        "obsolete = true\n");
+
+    const ApplicationCommand command =
+        load({"chaweb", "--config", config_.string()});
+    EXPECT_EQ(
+        command.vault.modify,
+        std::filesystem::weakly_canonical(modify_base / "Personal"));
+    ASSERT_EQ(command.warnings.size(), 2U);
+    bool warned_modify = false;
+    bool warned_obsolete = false;
+    for (const std::string& warning : command.warnings) {
+        warned_modify = warned_modify
+            || warning.find("field 'modify'") != std::string::npos;
+        warned_obsolete = warned_obsolete
+            || warning.find("field 'obsolete'") != std::string::npos;
+        EXPECT_NE(warning.find("was ignored"), std::string::npos);
+    }
+    EXPECT_TRUE(warned_modify);
+    EXPECT_TRUE(warned_obsolete);
 }
 
 TEST_F(ApplicationConfigTest, RejectsUnknownStartupAndConsoleSelections) {

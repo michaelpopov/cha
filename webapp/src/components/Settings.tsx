@@ -256,9 +256,6 @@ export function DownloadVaultScreen({ client, dispatch, sessionReport }: Setting
 export function NewVaultScreen({ client, dispatch, sessionReport }: SettingsScreenProps) {
   const [vaults, setVaults] = useState<VaultDetail[] | null>(null);
   const [name, setName] = useState('');
-  const [dataPath, setDataPath] = useState('');
-  const [mirrorPath, setMirrorPath] = useState('');
-  const [modifyPath, setModifyPath] = useState('');
   const [copyFrom, setCopyFrom] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -279,15 +276,12 @@ export function NewVaultScreen({ client, dispatch, sessionReport }: SettingsScre
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!name.trim() || !dataPath.trim() || saving) return;
+    if (!name.trim() || saving) return;
     setSaving(true);
     setError(null);
     try {
       const created = await client.createVault({
         display_name: name.trim(),
-        data_path: dataPath.trim(),
-        mirror_path: mirrorPath.trim() || null,
-        modify_path: modifyPath.trim() || null,
         copy_from: copyFrom || null,
       });
       dispatch({ type: 'vault-created', vault: created });
@@ -306,16 +300,11 @@ export function NewVaultScreen({ client, dispatch, sessionReport }: SettingsScre
       {ready && (
         <form className="cha-settings-form" onSubmit={(event) => void save(event)}>
           <fieldset disabled={saving}>
-            <legend>Vault details</legend>
             <TransliteratingInput autoFocus className="cha-form-control" id="cha-new-vault-name" label="Display name" onValueChange={setName} placeholder="e.g. Projects" value={name} />
-            <label>Database path<input className="cha-form-control" onChange={(event) => setDataPath(event.target.value)} placeholder="/path/to/projects.sqlite3" value={dataPath} /></label>
             <label>Initial database<select className="cha-form-control" onChange={(event) => setCopyFrom(event.target.value)} value={copyFrom}><option value="">New empty vault</option>{vaults.map((vault) => <option key={vault.display_name} value={vault.display_name}>Copy {vault.display_name}</option>)}</select></label>
-            <label>Mirror path (absolute, optional)<input className="cha-form-control" onChange={(event) => setMirrorPath(event.target.value)} placeholder="/path/to/mirror" value={mirrorPath} /></label>
-            <label>Modify path (absolute, optional)<input className="cha-form-control" onChange={(event) => setModifyPath(event.target.value)} placeholder="/path/to/editable-workspace" value={modifyPath} /></label>
           </fieldset>
-          <p className="cha-settings-note">{copyFrom ? 'The selected database is copied.' : 'The vault starts with no saved sessions.'} The active vault does not change.</p>
           {error && <p className="cha-error-message" role="alert">{error}</p>}
-          <div className="cha-settings-form-actions"><button className="cha-button cha-button-ghost" disabled={saving} onClick={() => dispatch({ type: 'show-settings-vaults' })} type="button">Cancel</button><button className="cha-button cha-button-primary" disabled={!name.trim() || !dataPath.trim() || saving} type="submit">{saving ? 'Creating…' : 'Create vault'}</button></div>
+          <div className="cha-settings-form-actions"><button className="cha-button cha-button-ghost" disabled={saving} onClick={() => dispatch({ type: 'show-settings-vaults' })} type="button">Cancel</button><button className="cha-button cha-button-primary" disabled={!name.trim() || saving} type="submit">{saving ? 'Creating…' : 'Create vault'}</button></div>
         </form>
       )}
       {error && !ready && <p className="cha-error-message" role="alert">{error}</p>}
@@ -323,15 +312,9 @@ export function NewVaultScreen({ client, dispatch, sessionReport }: SettingsScre
   );
 }
 
-function vaultUpdate(
-  displayName: string,
-  mirrorPath: string,
-  modifyPath: string,
-): VaultUpdate {
+function vaultUpdate(displayName: string): VaultUpdate {
   return {
     display_name: displayName.trim(),
-    mirror_path: mirrorPath.trim() || null,
-    modify_path: modifyPath.trim() || null,
   };
 }
 
@@ -340,8 +323,6 @@ export function VaultScreen({ client, dispatch, sessionReport, state }: Settings
   const [detail, setDetail] = useState<VaultDetail | null>(null);
   const [vaultCount, setVaultCount] = useState(0);
   const [name, setName] = useState('');
-  const [mirrorPath, setMirrorPath] = useState('');
-  const [modifyPath, setModifyPath] = useState('');
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [confirming, setConfirming] = useState(false);
@@ -364,8 +345,6 @@ export function VaultScreen({ client, dispatch, sessionReport, state }: Settings
         }
         setDetail(found);
         setName(found.display_name);
-        setMirrorPath(found.mirror_path ?? '');
-        setModifyPath(found.modify_path ?? '');
       },
       (failure: unknown) => {
         if (current) setError(publicErrorMessage(failure, 'Vault settings could not be loaded.'));
@@ -382,12 +361,10 @@ export function VaultScreen({ client, dispatch, sessionReport, state }: Settings
     try {
       const updated = await client.updateVault(
         selectedName,
-        vaultUpdate(name, mirrorPath, modifyPath),
+        vaultUpdate(name),
       );
       setDetail(updated);
       setName(updated.display_name);
-      setMirrorPath(updated.mirror_path ?? '');
-      setModifyPath(updated.modify_path ?? '');
       dispatch({ type: 'vault-updated', previousName: selectedName, vault: updated });
     } catch (failure: unknown) {
       setError(publicErrorMessage(failure, 'Vault settings could not be saved.'));
@@ -412,15 +389,11 @@ export function VaultScreen({ client, dispatch, sessionReport, state }: Settings
 
   const dirty = detail !== null && (
     name.trim() !== detail.display_name
-    || (mirrorPath.trim() || null) !== detail.mirror_path
-    || (modifyPath.trim() || null) !== detail.modify_path
   );
 
   function reset() {
     if (!detail) return;
     setName(detail.display_name);
-    setMirrorPath(detail.mirror_path ?? '');
-    setModifyPath(detail.modify_path ?? '');
     setError(null);
   }
 
@@ -434,13 +407,10 @@ export function VaultScreen({ client, dispatch, sessionReport, state }: Settings
       {detail && (
         <form className="cha-settings-form" onSubmit={(event) => void save(event)}>
           <fieldset disabled={saving || deleting}>
-            <legend>Vault details</legend>
             <TransliteratingInput className="cha-form-control" id="cha-vault-name" label="Display name" onValueChange={(value) => { setName(value); setError(null); }} value={name} />
             <label>Database path<input className="cha-form-control" readOnly value={detail.data_path} /></label>
-            <label>Mirror path (absolute, optional)<input className="cha-form-control" onChange={(event) => { setMirrorPath(event.target.value); setError(null); }} value={mirrorPath} /></label>
-            <label>Modify path (absolute, optional)<input className="cha-form-control" onChange={(event) => { setModifyPath(event.target.value); setError(null); }} value={modifyPath} /></label>
           </fieldset>
-          {detail.active && <p className="cha-settings-note">This vault is active. Rename and path changes apply without switching vaults.</p>}
+          {detail.active && <p className="cha-settings-note">This vault is active. Renaming applies without switching vaults.</p>}
           {!detail.can_delete && <p className="cha-settings-note">{vaultCount === 1 ? 'The last vault cannot be deleted.' : 'Switch to another vault before deleting this one.'}</p>}
           {error && <p className="cha-error-message" role="alert">{error}</p>}
           <div className="cha-settings-form-actions">

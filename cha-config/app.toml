@@ -1,4 +1,6 @@
 vault = "Dev"
+mirror = "/tmp/mirror"
+modify = "/tmp/modify"
 
 [web]
 host = "127.0.0.1"

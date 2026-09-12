@@ -82,12 +82,6 @@ ApplicationCommand make_command(
         std::ofstream vault(config_directory / "test.toml");
         vault << "vault_name = \"Test\"\n"
               << "data = " << std::quoted(database.string()) << "\n";
-        if (modify) {
-            vault << "modify = " << std::quoted(modify->string()) << "\n";
-        }
-        if (mirror) {
-            vault << "mirror = " << std::quoted(mirror->string()) << "\n";
-        }
     }
     const ConfigurationDirectory loaded =
         load_configuration_directory(config_directory);
@@ -98,10 +92,15 @@ ApplicationCommand make_command(
     std::filesystem::create_directories(application_root / "web");
     std::ofstream(application_root / "web" / "index.html")
         << "<!doctype html><title>CHA</title>";
+    std::vector<VaultDefinition> vaults = loaded.vaults;
+    VaultDefinition selected = *vault;
+    selected.modify = modify;
+    selected.mirror = mirror;
+    vaults.front() = selected;
     return {
         .config_directory = loaded.directory,
-        .vaults = loaded.vaults,
-        .vault = *vault,
+        .vaults = std::move(vaults),
+        .vault = std::move(selected),
         .root = application_root,
         .host = "127.0.0.1",
         .port = 0,
@@ -181,6 +180,29 @@ TEST(ApplicationRuntime, UsesEphemeralPortAndRequiresPrivateCookie) {
     EXPECT_EQ(accepted->status, 200);
 
     runtime->shutdown();
+}
+
+TEST(ApplicationRuntime, LogsIgnoredVaultSettingsAsWarnings) {
+    test::TestWorkspace workspace;
+    const std::filesystem::path database =
+        test::import_test_database(workspace.root());
+    ApplicationCommand command = make_command(workspace, database);
+    command.log_file = workspace.root() / "warnings.log";
+    command.log_level = "warn";
+    command.warnings = {
+        "Vault definition 'test.toml' field 'modify' is unused and was ignored."};
+
+    shutdown_diagnostic_logging();
+    initialize_diagnostic_logging(command.log_file, command.log_level);
+    {
+        auto runtime = ApplicationRuntime::open(command, "private-test-token");
+    }
+    shutdown_diagnostic_logging();
+
+    const std::string log = file_bytes(command.log_file);
+    EXPECT_NE(log.find("[warning]"), std::string::npos) << log;
+    EXPECT_NE(log.find("field 'modify' is unused and was ignored"), std::string::npos)
+        << log;
 }
 
 TEST(ApplicationRuntime, ExposesLegacyNamedCredentialsAsSavedApiKeys) {
@@ -843,18 +865,16 @@ TEST(ApplicationRuntime, DownloadsInProcessAndPublishesTheNewWorkspace) {
         test::import_test_database(remote_workspace.root());
     const ApplicationCommand command = make_command(local_workspace, local);
     const std::filesystem::path remote_mirror =
-        local_workspace.root() / "downloaded-mirror";
+        local_workspace.root() / "downloaded-mirror" / "Test";
     const std::filesystem::path remote_modify =
-        local_workspace.root() / "downloaded-modify";
+        local_workspace.root() / "downloaded-modify" / "Test";
     std::filesystem::create_directories(remote_mirror);
     std::filesystem::create_directories(remote_modify);
     const std::filesystem::path remote_vault =
         local_workspace.root() / "downloaded-vault.toml";
     std::ofstream(remote_vault)
         << "vault_name = \"Test\"\n"
-        << "data = " << std::quoted(local.string()) << "\n"
-        << "mirror = " << std::quoted(remote_mirror.string()) << "\n"
-        << "modify = " << std::quoted(remote_modify.string()) << "\n";
+        << "data = " << std::quoted(local.string()) << "\n";
     MockHttpServer r2({
         http_response("application/toml", file_bytes(remote_vault)),
         http_response("application/vnd.sqlite3", file_bytes(remote)),
@@ -865,7 +885,13 @@ TEST(ApplicationRuntime, DownloadsInProcessAndPublishesTheNewWorkspace) {
     ASSERT_TRUE(set_environment_variable("CHA_R2_ACCESS_KEY_ID", "access"));
     ASSERT_TRUE(set_environment_variable("CHA_R2_SECRET_ACCESS_KEY", "secret"));
 
-    auto runtime = ApplicationRuntime::open(command, "private-test-token");
+    ApplicationCommand configured = command;
+    configured.mirror_base = remote_mirror.parent_path();
+    configured.modify_base = remote_modify.parent_path();
+    configured.vault.mirror = remote_mirror;
+    configured.vault.modify = remote_modify;
+    configured.vaults.front() = configured.vault;
+    auto runtime = ApplicationRuntime::open(configured, "private-test-token");
     const int port = runtime->start();
     r2.start();
     const R2DatabaseTransfer transferred = runtime->download_database();
@@ -1244,7 +1270,10 @@ TEST(ApplicationRuntime, StartsWithADefaultVaultFromAnEmptyConfigDirectory) {
     EXPECT_EQ(runtime->current_vault().name, "Default");
     EXPECT_EQ(
         runtime->current_vault().modify,
-        std::filesystem::weakly_canonical(config / "modify"));
+        std::filesystem::weakly_canonical(config / "modify" / "Default"));
+    EXPECT_EQ(
+        runtime->current_vault().mirror,
+        std::filesystem::weakly_canonical(config / "mirror" / "Default"));
     EXPECT_EQ(bootstrap.at("vault_name"), "Default");
     EXPECT_EQ(bootstrap.at("vaults"), nlohmann::json::array({"Default"}));
     EXPECT_TRUE(std::filesystem::is_regular_file(config / "app.toml"));
@@ -1330,10 +1359,12 @@ struct TwoVaultRuntime {
         database_b = workspace_b.root() / "b.sqlite3";
         (void)test::import_test_database(workspace_a.root(), database_a);
         (void)test::import_test_database(workspace_b.root(), database_b);
-        modify_a = workspace_a.root() / "modify-a";
-        modify_b = workspace_b.root() / "modify-b";
-        mirror_a = workspace_a.root() / "mirror-a";
-        mirror_b = workspace_b.root() / "mirror-b";
+        const std::filesystem::path modify_base = workspace_a.root() / "modify";
+        const std::filesystem::path mirror_base = workspace_a.root() / "mirror";
+        modify_a = modify_base / "A";
+        modify_b = modify_base / "B";
+        mirror_a = mirror_base / "A";
+        mirror_b = mirror_base / "B";
         if (with_modify) {
             std::filesystem::create_directories(modify_a);
             std::filesystem::create_directories(modify_b);
@@ -1348,38 +1379,26 @@ struct TwoVaultRuntime {
         std::filesystem::create_directories(config_directory);
         {
             std::ofstream app(config_directory / "app.toml");
-            app << "vault = \"A\"\n"
-                << "[web]\nhost = \"127.0.0.1\"\nport = 0\n"
+            app << "vault = \"A\"\n";
+            if (with_modify) {
+                app << "modify = " << std::quoted(modify_base.string()) << "\n";
+            }
+            if (with_mirrors) {
+                app << "mirror = " << std::quoted(mirror_base.string()) << "\n";
+            }
+            app << "[web]\nhost = \"127.0.0.1\"\nport = 0\n"
                 << "[logging]\nfile = \"runtime.log\"\nlevel = \"off\"\n";
         }
         auto write_vault = [&](
                                std::string_view file,
                                std::string_view name,
-                               const std::filesystem::path& data,
-                               const std::optional<std::filesystem::path>& modify,
-                               const std::optional<std::filesystem::path>& mirror) {
+                               const std::filesystem::path& data) {
             std::ofstream vault(config_directory / std::string(file));
             vault << "vault_name = \"" << name << "\"\n"
                   << "data = " << std::quoted(data.string()) << "\n";
-            if (modify) {
-                vault << "modify = " << std::quoted(modify->string()) << "\n";
-            }
-            if (mirror) {
-                vault << "mirror = " << std::quoted(mirror->string()) << "\n";
-            }
         };
-        write_vault(
-            "a.toml",
-            "A",
-            database_a,
-            with_modify ? std::optional{modify_a} : std::nullopt,
-            with_mirrors ? std::optional{mirror_a} : std::nullopt);
-        write_vault(
-            "b.toml",
-            "B",
-            database_b,
-            with_modify ? std::optional{modify_b} : std::nullopt,
-            with_mirrors ? std::optional{mirror_b} : std::nullopt);
+        write_vault("a.toml", "A", database_a);
+        write_vault("b.toml", "B", database_b);
 
         const ConfigurationDirectory loaded =
             load_configuration_directory(config_directory);
@@ -1392,6 +1411,8 @@ struct TwoVaultRuntime {
             << "<!doctype html><title>CHA</title>";
         command = {
             .config_directory = loaded.directory,
+            .mirror_base = loaded.mirror_base,
+            .modify_base = loaded.modify_base,
             .vaults = loaded.vaults,
             .vault = *vault,
             .root = application_root,
@@ -1879,30 +1900,23 @@ TEST(ApplicationRuntime, SwitchRouteSwitchesVaultAndMapsUnknownNames) {
 }
 
 TEST(ApplicationRuntime, VaultRoutesCreateUpdateAndDeleteWithoutSwitching) {
-    TwoVaultRuntime pair;
+    TwoVaultRuntime pair(true, true);
     seed_lobby_session(pair.database_a, "Copy me");
     auto runtime = ApplicationRuntime::open(pair.command, "private-test-token");
     const int port = runtime->start();
     httplib::Client client("127.0.0.1", port);
 
     const std::filesystem::path copied_database =
-        pair.workspace_a.root() / "copied.sqlite3";
-    const std::filesystem::path mirror =
-        pair.workspace_a.root() / "copied-mirror";
-    const std::filesystem::path modify =
-        pair.workspace_a.root() / "copied-modify";
-    const auto relative_mirror = client.Post(
+        pair.command.config_directory / "Copied.sqlite3";
+    const auto invalid_name = client.Post(
         "/api/v1/vaults",
         kRuntimeCookie,
         nlohmann::json{
-            {"display_name", "Copied"},
-            {"data_path", copied_database.string()},
-            {"mirror_path", "relative-mirror"},
-            {"modify_path", nullptr},
+            {"display_name", "Copied/unsafe"},
             {"copy_from", "A"},
         }.dump(),
         "application/json");
-    expect_error_envelope(relative_mirror, 400, "bad_request");
+    expect_error_envelope(invalid_name, 400, "bad_request");
     EXPECT_FALSE(std::filesystem::exists(copied_database));
 
     const auto created = client.Post(
@@ -1910,15 +1924,22 @@ TEST(ApplicationRuntime, VaultRoutesCreateUpdateAndDeleteWithoutSwitching) {
         kRuntimeCookie,
         nlohmann::json{
             {"display_name", "Copied"},
-            {"data_path", copied_database.string()},
-            {"mirror_path", nullptr},
-            {"modify_path", nullptr},
             {"copy_from", "A"},
         }.dump(),
         "application/json");
     ASSERT_TRUE(created);
     ASSERT_EQ(created->status, 201) << created->body;
-    EXPECT_FALSE(nlohmann::json::parse(created->body).at("active").get<bool>());
+    const nlohmann::json created_body = nlohmann::json::parse(created->body);
+    EXPECT_FALSE(created_body.at("active").get<bool>());
+    EXPECT_EQ(created_body.at("data_path"), copied_database.string());
+    EXPECT_EQ(
+        created_body.at("mirror_path"),
+        std::filesystem::weakly_canonical(
+            pair.mirror_a.parent_path() / "Copied").string());
+    EXPECT_EQ(
+        created_body.at("modify_path"),
+        std::filesystem::weakly_canonical(
+            pair.modify_a.parent_path() / "Copied").string());
     EXPECT_EQ(
         inspect_workspace_session_database(copied_database),
         WorkspaceDatabaseState::valid_v2);
@@ -1945,56 +1966,12 @@ TEST(ApplicationRuntime, VaultRoutesCreateUpdateAndDeleteWithoutSwitching) {
         bootstrap.at("vaults"),
         nlohmann::json::array({"A", "B", "Copied"}));
 
-    const auto relative_modify = client.Patch(
-        "/api/v1/vaults",
-        kRuntimeCookie,
-        nlohmann::json{
-            {"vault_name", "Copied"},
-            {"display_name", "Archive"},
-            {"mirror_path", nullptr},
-            {"modify_path", "relative-modify"},
-        }.dump(),
-        "application/json");
-    expect_error_envelope(relative_modify, 400, "bad_request");
-
-    const auto invalid_mirror = client.Patch(
-        "/api/v1/vaults",
-        kRuntimeCookie,
-        nlohmann::json{
-            {"vault_name", "Copied"},
-            {"display_name", "Archive"},
-            {"mirror_path", mirror.string()},
-            {"modify_path", modify.string()},
-        }.dump(),
-        "application/json");
-    expect_error_envelope(invalid_mirror, 400, "bad_request");
-    std::filesystem::create_directories(mirror);
-
-    const std::filesystem::path unrelated =
-        pair.workspace_a.root() / "unrelated";
-    std::filesystem::create_directory(unrelated);
-    std::ofstream(unrelated / "keep.txt") << "keep";
-    const auto invalid_modify = client.Patch(
-        "/api/v1/vaults",
-        kRuntimeCookie,
-        nlohmann::json{
-            {"vault_name", "Copied"},
-            {"display_name", "Archive"},
-            {"mirror_path", mirror.string()},
-            {"modify_path", unrelated.string()},
-        }.dump(),
-        "application/json");
-    expect_error_envelope(invalid_modify, 400, "bad_request");
-    EXPECT_TRUE(std::filesystem::is_regular_file(unrelated / "keep.txt"));
-
     const auto updated = client.Patch(
         "/api/v1/vaults",
         kRuntimeCookie,
         nlohmann::json{
             {"vault_name", "Copied"},
             {"display_name", "Archive"},
-            {"mirror_path", mirror.string()},
-            {"modify_path", modify.string()},
         }.dump(),
         "application/json");
     ASSERT_TRUE(updated);
@@ -2003,18 +1980,31 @@ TEST(ApplicationRuntime, VaultRoutesCreateUpdateAndDeleteWithoutSwitching) {
     EXPECT_EQ(updated_body.at("display_name"), "Archive");
     EXPECT_EQ(
         updated_body.at("mirror_path"),
-        std::filesystem::weakly_canonical(mirror).string());
+        std::filesystem::weakly_canonical(
+            pair.mirror_a.parent_path() / "Archive").string());
     EXPECT_EQ(
         updated_body.at("modify_path"),
-        std::filesystem::weakly_canonical(modify).string());
+        std::filesystem::weakly_canonical(
+            pair.modify_a.parent_path() / "Archive").string());
     EXPECT_EQ(get_bootstrap(client).at("vault_name"), "A");
     const ConfigurationDirectory persisted =
         load_configuration_directory(pair.command.config_directory);
     const VaultDefinition* const archived =
         find_vault(persisted.vaults, "Archive");
     ASSERT_NE(archived, nullptr);
-    EXPECT_EQ(archived->mirror, std::filesystem::weakly_canonical(mirror));
-    EXPECT_EQ(archived->modify, std::filesystem::weakly_canonical(modify));
+    EXPECT_EQ(
+        archived->mirror,
+        std::filesystem::weakly_canonical(
+            pair.mirror_a.parent_path() / "Archive"));
+    EXPECT_EQ(
+        archived->modify,
+        std::filesystem::weakly_canonical(
+            pair.modify_a.parent_path() / "Archive"));
+    const toml::table persisted_card = read_toml_file(
+        archived->source, "vault definition");
+    EXPECT_EQ(archived->source.parent_path(), pair.command.config_directory);
+    EXPECT_FALSE(persisted_card.contains("mirror"));
+    EXPECT_FALSE(persisted_card.contains("modify"));
 
     const auto removed = client.Delete(
         "/api/v1/vaults",
@@ -2038,15 +2028,12 @@ TEST(ApplicationRuntime, VaultRoutesCreateAnEmptyUsableVaultWithoutSwitching) {
     httplib::Client client("127.0.0.1", port);
 
     const std::filesystem::path empty_database =
-        pair.workspace_a.root() / "empty.sqlite3";
+        pair.command.config_directory / "Empty.sqlite3";
     const auto created = client.Post(
         "/api/v1/vaults",
         kRuntimeCookie,
         nlohmann::json{
             {"display_name", "Empty"},
-            {"data_path", empty_database.string()},
-            {"mirror_path", nullptr},
-            {"modify_path", nullptr},
             {"copy_from", nullptr},
         }.dump(),
         "application/json");
@@ -2120,9 +2107,11 @@ TEST(ApplicationRuntime, VaultRoutesProtectTheActiveAndLastVault) {
 }
 
 TEST(ApplicationRuntime, VaultRoutesRenameTheActiveVaultWithoutSwitching) {
-    TwoVaultRuntime pair;
+    TwoVaultRuntime pair(true, true);
     auto runtime = ApplicationRuntime::open(pair.command, "private-test-token");
     const int port = runtime->start();
+    (void)runtime->export_configuration();
+    std::ofstream(pair.mirror_a / "keep.txt") << "keep";
     httplib::Client client("127.0.0.1", port);
 
     const auto updated = client.Patch(
@@ -2131,8 +2120,6 @@ TEST(ApplicationRuntime, VaultRoutesRenameTheActiveVaultWithoutSwitching) {
         nlohmann::json{
             {"vault_name", "A"},
             {"display_name", "Personal"},
-            {"mirror_path", nullptr},
-            {"modify_path", nullptr},
         }.dump(),
         "application/json");
     ASSERT_TRUE(updated);
@@ -2150,6 +2137,19 @@ TEST(ApplicationRuntime, VaultRoutesRenameTheActiveVaultWithoutSwitching) {
     EXPECT_EQ(
         runtime->current_vault().data,
         std::filesystem::weakly_canonical(pair.database_a));
+    const std::filesystem::path renamed_modify =
+        std::filesystem::weakly_canonical(
+            pair.modify_a.parent_path() / "Personal");
+    const std::filesystem::path renamed_mirror =
+        std::filesystem::weakly_canonical(
+            pair.mirror_a.parent_path() / "Personal");
+    EXPECT_FALSE(std::filesystem::exists(pair.modify_a));
+    EXPECT_FALSE(std::filesystem::exists(pair.mirror_a));
+    EXPECT_TRUE(std::filesystem::is_regular_file(
+        renamed_modify / "forums" / "lobby" / "config.toml"));
+    EXPECT_TRUE(std::filesystem::is_regular_file(renamed_mirror / "keep.txt"));
+    EXPECT_EQ(runtime->current_vault().modify, renamed_modify);
+    EXPECT_EQ(runtime->current_vault().mirror, renamed_mirror);
 
     runtime->shutdown();
 }

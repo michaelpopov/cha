@@ -181,7 +181,7 @@ paths:
     patch:
       tags: [Settings]
       operationId: updateVault
-      summary: Update a vault's display name and optional paths
+      summary: Update a vault's display name
       requestBody:
         required: true
         content:
@@ -2205,20 +2205,11 @@ components:
     CreateVaultRequest:
       type: object
       additionalProperties: false
-      required: [display_name, data_path, mirror_path, modify_path, copy_from]
+      required: [display_name, copy_from]
       properties:
         display_name:
           type: string
           minLength: 1
-        data_path:
-          type: string
-          minLength: 1
-        mirror_path:
-          type: [string, "null"]
-          description: Absolute mirror directory path.
-        modify_path:
-          type: [string, "null"]
-          description: Absolute editable-workspace directory path.
         copy_from:
           type: [string, "null"]
 
@@ -2234,7 +2225,7 @@ components:
     UpdateVaultRequest:
       type: object
       additionalProperties: false
-      required: [vault_name, display_name, mirror_path, modify_path]
+      required: [vault_name, display_name]
       properties:
         vault_name:
           type: string
@@ -2242,13 +2233,6 @@ components:
         display_name:
           type: string
           minLength: 1
-        mirror_path:
-          type: [string, "null"]
-          description: Absolute mirror directory path.
-        modify_path:
-          type: [string, "null"]
-          description: Absolute editable-workspace directory path.
-
     DeleteVaultRequest:
       type: object
       additionalProperties: false

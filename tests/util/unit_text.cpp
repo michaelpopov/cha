@@ -111,6 +111,11 @@ TEST(PathName, RejectsEmptySpecialAndNestedPaths) {
     EXPECT_THROW(require_path_component("nested/forum", source), std::runtime_error);
     EXPECT_THROW(require_path_component("nested\\forum", source), std::runtime_error);
     EXPECT_THROW(require_path_component("/absolute", source), std::runtime_error);
+    EXPECT_THROW(require_path_component("Q1: Notes", source), std::runtime_error);
+    EXPECT_THROW(require_path_component("Report?", source), std::runtime_error);
+    EXPECT_THROW(require_path_component("trailing.", source), std::runtime_error);
+    EXPECT_THROW(require_path_component("CON", source), std::runtime_error);
+    EXPECT_THROW(require_path_component("nul.txt", source), std::runtime_error);
 }
 
 TEST(PathName, AcceptsOnlyUrlUnreservedAsciiIdentifiers) {

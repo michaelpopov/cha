@@ -143,7 +143,7 @@ export interface paths {
         delete: operations["deleteVault"];
         options?: never;
         head?: never;
-        /** Update a vault's display name and optional paths */
+        /** Update a vault's display name */
         patch: operations["updateVault"];
         trace?: never;
     };
@@ -1186,11 +1186,6 @@ export interface components {
         };
         CreateVaultRequest: {
             display_name: string;
-            data_path: string;
-            /** @description Absolute mirror directory path. */
-            mirror_path: string | null;
-            /** @description Absolute editable-workspace directory path. */
-            modify_path: string | null;
             copy_from: string | null;
         };
         DownloadR2VaultRequest: {
@@ -1199,10 +1194,6 @@ export interface components {
         UpdateVaultRequest: {
             vault_name: string;
             display_name: string;
-            /** @description Absolute mirror directory path. */
-            mirror_path: string | null;
-            /** @description Absolute editable-workspace directory path. */
-            modify_path: string | null;
         };
         DeleteVaultRequest: {
             vault_name: string;
