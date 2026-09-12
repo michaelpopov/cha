@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  cacheTextToSpeech,
   clearTextToSpeechCache,
   getTextToSpeechConfiguration,
   TextToSpeechError,
@@ -108,6 +109,36 @@ describe('text to speech', () => {
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(URL.createObjectURL).toHaveBeenCalledTimes(2);
     expect(play).toHaveBeenCalledTimes(2);
+  });
+
+  it('shares an in-flight cached request with playback', async () => {
+    let resolveResponse!: (response: Response) => void;
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(() => (
+      new Promise<Response>((resolve) => { resolveResponse = resolve; })
+    ));
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:audio');
+    const play = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal('Audio', vi.fn(function Audio() {
+      return { addEventListener: vi.fn(), play, pause: vi.fn() };
+    }));
+    const configuration = {
+      baseUrl: 'https://example.com/speech',
+      voiceId: 'cached-voice',
+      outputFormat: 'mp3',
+      apiKey: 'secret',
+      model: 'multilingual',
+    };
+
+    const warming = cacheTextToSpeech(configuration, undefined, 'Same clip');
+    const session = new TextToSpeechSession(
+      configuration, undefined, 'Same clip', vi.fn(), { cache: true },
+    );
+    const playing = session.play();
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    resolveResponse(new Response(new TextEncoder().encode('audio')));
+    await Promise.all([warming, playing]);
+    expect(play).toHaveBeenCalledOnce();
   });
 
   it('does not cache audio unless requested', async () => {

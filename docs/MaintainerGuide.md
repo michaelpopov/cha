@@ -822,6 +822,37 @@ Changing an assignment or definition affects playback of both old and new
 responses because transcripts store the producing character ID, not a voice
 snapshot.
 
+### Browser voice output cache
+
+Response playback uses the in-memory cache in
+`webapp/src/textToSpeech.ts`. Its key contains the ElevenLabs request URL and
+JSON body, so text, voice ID, model, output format, and voice settings all
+participate. A repeated playback of the same request reuses its `Blob` rather
+than calling ElevenLabs again. The cache retains at most 256 MiB and evicts the
+oldest inserted clips when necessary. It is not persisted and is cleared when
+the web application reloads.
+
+The module also shares identical synthesis requests that are already in
+flight. Cached requests deliberately do not use a playback session's abort
+signal: a request may also belong to automatic preparation or another playback
+caller, so stopping playback leaves synthesis running and keeps the resulting
+clip. Character and voice settings previews do not opt into caching, preserving
+their usefulness for hearing variation between repeated samples.
+
+When native voice output is available, `ChatScreen` shows an automatic-audio
+speaker toggle immediately before the Russian transliteration toggle. Enabling
+it queues every nonempty completed character response in the raw session
+transcript, including covered responses. A small session-local worker pool
+keeps at most three preparation requests active. Responses completed after the
+toggle was enabled are inserted ahead of historical work still waiting, while
+the shared in-flight map prevents a simultaneous playback from duplicating the
+same request.
+
+Disabling the toggle or changing sessions drops preparation work that has not
+started. Up to three active requests finish and remain cached. The automatic
+mode is session-local, but the completed-audio cache has application lifetime.
+Individual request failures are reported without stopping the remaining queue.
+
 ### Built-in Assistant
 
 `system/assistant/character.toml` configures the built-in character used in the

@@ -45,6 +45,15 @@ export class TextToSpeechError extends Error {
 const maximumCachedAudioBytes = 256 * 1024 * 1024;
 const audioCache = new Map<string, Blob>();
 
+interface AudioRequest {
+  url: string;
+  body: string;
+  cacheKey: string;
+  apiKey: string;
+}
+
+const pendingCachedAudio = new Map<string, Promise<Blob>>();
+
 function cachedAudio(key: string): Blob | undefined {
   return audioCache.get(key);
 }
@@ -62,9 +71,80 @@ function cacheAudio(key: string, blob: Blob): void {
   }
 }
 
-// Exported so tests can isolate this app-lifetime module cache.
+// Exported so tests can clear completed audio between cases. In-flight requests
+// remain shared until they settle.
 export function clearTextToSpeechCache(): void {
   audioCache.clear();
+}
+
+function audioRequest(
+  configuration: TextToSpeechConfiguration,
+  voice: TextToSpeechVoice | undefined,
+  text: string,
+): AudioRequest {
+  const voiceId = voice?.elevenlabs_voice_id ?? configuration.voiceId;
+  const url = `${configuration.baseUrl}/${encodeURIComponent(voiceId)}`
+    + `?output_format=${encodeURIComponent(configuration.outputFormat)}`;
+  const body: {
+    text: string;
+    model_id: string;
+    voice_settings?: TextToSpeechVoice['settings'];
+  } = {
+    text,
+    model_id: configuration.model,
+  };
+  if (voice && Object.keys(voice.settings).length > 0) {
+    body.voice_settings = voice.settings;
+  }
+  const requestBody = JSON.stringify(body);
+  return {
+    url,
+    body: requestBody,
+    cacheKey: `${url}\n${requestBody}`,
+    apiKey: configuration.apiKey,
+  };
+}
+
+async function fetchAudio(request: AudioRequest, signal?: AbortSignal): Promise<Blob> {
+  const response = await fetch(request.url, {
+    method: 'POST',
+    headers: {
+      Accept: 'audio/mpeg',
+      'Content-Type': 'application/json',
+      'xi-api-key': request.apiKey,
+    },
+    body: request.body,
+    signal,
+  });
+  if (!response.ok) {
+    throw new TextToSpeechError(await elevenLabsErrorMessage(response));
+  }
+  return response.blob();
+}
+
+function cachedOrPendingAudio(request: AudioRequest): Promise<Blob> {
+  const cached = cachedAudio(request.cacheKey);
+  if (cached) return Promise.resolve(cached);
+
+  const pending = pendingCachedAudio.get(request.cacheKey);
+  if (pending) return pending;
+
+  // Do not attach one caller's abort signal: prefetch and playback can share
+  // this request, and a stopped playback should not discard the generated clip.
+  const promise = fetchAudio(request).then((blob) => {
+    cacheAudio(request.cacheKey, blob);
+    return blob;
+  }).finally(() => pendingCachedAudio.delete(request.cacheKey));
+  pendingCachedAudio.set(request.cacheKey, promise);
+  return promise;
+}
+
+export async function cacheTextToSpeech(
+  configuration: TextToSpeechConfiguration,
+  voice: TextToSpeechVoice | undefined,
+  text: string,
+): Promise<void> {
+  await cachedOrPendingAudio(audioRequest(configuration, voice, text));
 }
 
 export class TextToSpeechSession {
@@ -82,43 +162,10 @@ export class TextToSpeechSession {
   ) {}
 
   async play(): Promise<void> {
-    const voiceId = this.voice?.elevenlabs_voice_id ?? this.configuration.voiceId;
-    const url = `${this.configuration.baseUrl}/${encodeURIComponent(voiceId)}`
-      + `?output_format=${encodeURIComponent(this.configuration.outputFormat)}`;
-    const body: {
-      text: string;
-      model_id: string;
-      voice_settings?: TextToSpeechVoice['settings'];
-    } = {
-      text: this.text,
-      model_id: this.configuration.model,
-    };
-    if (this.voice && Object.keys(this.voice.settings).length > 0) {
-      body.voice_settings = this.voice.settings;
-    }
-    const requestBody = JSON.stringify(body);
-    const cacheKey = `${url}\n${requestBody}`;
-    let blob = this.options.cache ? cachedAudio(cacheKey) : undefined;
-    if (!blob) {
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          Accept: 'audio/mpeg',
-          'Content-Type': 'application/json',
-          'xi-api-key': this.configuration.apiKey,
-        },
-        body: requestBody,
-        signal: this.request.signal,
-      });
-      if (!response.ok) {
-        throw new TextToSpeechError(await elevenLabsErrorMessage(response));
-      }
-      if (this.stopped) return;
-
-      blob = await response.blob();
-      if (this.stopped) return;
-      if (this.options.cache) cacheAudio(cacheKey, blob);
-    }
+    const request = audioRequest(this.configuration, this.voice, this.text);
+    const blob = this.options.cache
+      ? await cachedOrPendingAudio(request)
+      : await fetchAudio(request, this.request.signal);
     if (this.stopped) return;
 
     this.objectUrl = URL.createObjectURL(blob);

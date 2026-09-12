@@ -135,6 +135,7 @@ select:disabled {
 .cha-persona-title-trigger,
 .cha-title-icon-action,
 .cha-composer-action,
+.cha-speech-cache-toggle,
 .cha-transliteration-toggle,
 .cha-back-row,
 .cha-button {
@@ -1237,8 +1238,34 @@ select:disabled {
   text-overflow: ellipsis;
 }
 
-.cha-chat-status > .cha-transliteration-toggle {
-  margin-left: auto;
+.cha-chat-status > span:last-of-type {
+  margin-right: auto;
+}
+
+.cha-speech-cache-toggle {
+  display: grid;
+  width: 1.4rem;
+  height: 1.4rem;
+  flex: none;
+  padding: 0;
+  border-radius: 50%;
+  color: var(--muted-foreground);
+  place-items: center;
+}
+
+.cha-speech-cache-toggle:hover {
+  color: var(--accent-foreground);
+  background: var(--accent);
+}
+
+.cha-speech-cache-toggle[aria-pressed='true'] {
+  color: var(--primary-foreground);
+  background: var(--primary);
+}
+
+.cha-speech-cache-toggle svg {
+  width: 0.9rem;
+  height: 0.9rem;
 }
 
 .cha-transliteration-toggle {

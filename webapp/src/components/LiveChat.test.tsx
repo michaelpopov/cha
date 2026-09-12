@@ -5,14 +5,20 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ChaError, type ChaClient, type SessionSnapshot } from '../api/client';
 import type { SessionEventHandlers } from '../api/events';
 import { bootstrapFixture, fixtureClient, plainVoice, snapshotFixture } from '../test/fixtures';
-import { TextToSpeechError, TextToSpeechSession } from '../textToSpeech';
+import {
+  clearTextToSpeechCache,
+  TextToSpeechError,
+  TextToSpeechSession,
+} from '../textToSpeech';
 import { VoiceInputSession } from '../voiceInput';
 import { App } from './App';
 import { formatEntryTime } from './ChatScreen';
 
 afterEach(() => {
+  clearTextToSpeechCache();
   delete window.chaVoiceInput;
   delete window.chaTextToSpeech;
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 
@@ -203,6 +209,85 @@ describe('live chat', () => {
       name: "Stop reading Assistant's response",
     }));
     expect(stop).toHaveBeenCalledOnce();
+  });
+
+  it('caches existing responses three at a time and caches later completions', async () => {
+    window.chaTextToSpeech = {
+      baseUrl: 'https://api.elevenlabs.io/v1/text-to-speech',
+      voiceId: 'voice',
+      outputFormat: 'mp3_44100_128',
+      apiKey: 'secret',
+      model: 'eleven_multilingual_v2',
+    };
+    const responses: Array<(response: Response) => void> = [];
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(() => (
+      new Promise<Response>((resolve) => responses.push(resolve))
+    ));
+    const transcript: SessionSnapshot['transcript'] = Array.from(
+      { length: 5 },
+      (_, index) => ({
+        id: index + 1,
+        kind: 'character',
+        participant_id: 'assistant',
+        display_name: 'Assistant',
+        addressed_to: 'guest',
+        addressed_to_name: 'Guest',
+        text: `Answer ${index + 1}`,
+        status: 'complete',
+        created_at: 1_700_000_000 + index,
+      }),
+    );
+    const events = drivableEvents();
+    render(<App client={fixtureClient()} connectSessionEvents={events.connect} />);
+    await attachInitial(events, { ...snapshotFixture, transcript });
+
+    const toggle = screen.getByRole('button', { name: 'Cache response audio automatically' });
+    fireEvent.click(toggle);
+
+    expect(toggle).toHaveAttribute('aria-pressed', 'true');
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    const nextResponse = {
+      id: 6,
+      kind: 'character' as const,
+      participant_id: 'assistant',
+      display_name: 'Assistant',
+      addressed_to: 'guest',
+      addressed_to_name: 'Guest',
+      text: 'Answer 6',
+      status: 'streaming' as const,
+      request_id: 6,
+      created_at: null,
+    };
+    act(() => events.handlers[0].onSnapshot({
+      ...snapshotFixture,
+      transcript: [...transcript, nextResponse],
+    }));
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+
+    act(() => events.handlers[0].onSnapshot({
+      ...snapshotFixture,
+      transcript: [...transcript, {
+        ...nextResponse,
+        status: 'complete',
+        created_at: 1_700_000_006,
+      }],
+    }));
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+
+    responses[0](new Response(new TextEncoder().encode('audio')));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4));
+    responses[1](new Response(new TextEncoder().encode('audio')));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(5));
+    responses[2](new Response(new TextEncoder().encode('audio')));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(6));
+    for (const resolve of responses.slice(3)) {
+      resolve(new Response(new TextEncoder().encode('audio')));
+    }
+    await waitFor(() => expect(toggle).toHaveAttribute('aria-busy', 'false'));
+
+    expect(fetchMock.mock.calls.map(([, request]) => (
+      JSON.parse(String(request?.body)).text
+    ))).toEqual(['Answer 1', 'Answer 2', 'Answer 3', 'Answer 6', 'Answer 4', 'Answer 5']);
   });
 
   it('shows an error message returned by ElevenLabs', async () => {

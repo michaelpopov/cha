@@ -20,9 +20,12 @@ import {
 } from '../api/client';
 import type { AppAction, AppState } from '../state/view';
 import {
+  cacheTextToSpeech,
   getTextToSpeechConfiguration,
   TextToSpeechError,
   TextToSpeechSession,
+  type TextToSpeechConfiguration,
+  type TextToSpeechVoice,
 } from '../textToSpeech';
 import {
   appendTranscription,
@@ -76,6 +79,19 @@ function voiceInputMessage(failure: unknown): string {
 // first time it scrolled itself.
 const followSlack = 24;
 const allCharactersTarget = '*';
+const speechCacheConcurrency = 3;
+
+interface SpeechCacheItem {
+  text: string;
+  voice: TextToSpeechVoice | undefined;
+}
+
+interface SpeechCacheRun {
+  configuration: TextToSpeechConfiguration;
+  seenEntryIds: Set<number>;
+  queue: SpeechCacheItem[];
+  active: number;
+}
 
 function multicastSubmission(text: string): string {
   if (text.startsWith('/')) return text;
@@ -280,10 +296,13 @@ export function ChatScreen({
   const voiceInputAttempt = useRef(0);
   const transcriptEnd = useRef<HTMLDivElement | null>(null);
   const textToSpeechSession = useRef<TextToSpeechSession | null>(null);
+  const speechCacheRun = useRef<SpeechCacheRun | null>(null);
   const [spokenEntry, setSpokenEntry] = useState<{
     id: number;
     state: 'loading' | 'playing';
   } | null>(null);
+  const [speechCacheEnabled, setSpeechCacheEnabled] = useState(false);
+  const [speechCacheBusy, setSpeechCacheBusy] = useState(false);
   const [turnToDelete, setTurnToDelete] = useState<{
     id: number;
     displayName: string;
@@ -329,6 +348,15 @@ export function ChatScreen({
     () => new Map((snapshot?.characters ?? []).map(({ id, voice }) => [id, voice])),
     [snapshot?.characters],
   );
+  const completedSpeechEntries = useMemo(
+    () => (snapshot?.transcript ?? []).filter((entry) => (
+      entry.kind === 'character'
+      && entry.status === 'complete'
+      && visibleEntryText(entry.kind, entry.text).trim().length > 0
+    )),
+    [snapshot?.transcript],
+  );
+  const completedSpeechEntryIds = completedSpeechEntries.map(({ id }) => id).join(',');
   const transcriptEntries = snapshot ? visibleTranscriptEntries(snapshot.transcript) : [];
   const coveredUntil = snapshot?.covered_until ?? null;
   const coveredEntries = coveredUntil === null
@@ -362,6 +390,88 @@ export function ChatScreen({
     textToSpeechSession.current = null;
     setSpokenEntry(null);
   }, [conversationKey]);
+
+  useEffect(() => () => {
+    const run = speechCacheRun.current;
+    if (run) {
+      run.queue.length = 0;
+      speechCacheRun.current = null;
+    }
+    setSpeechCacheEnabled(false);
+    setSpeechCacheBusy(false);
+  }, [conversationKey]);
+
+  function pumpSpeechCache(run: SpeechCacheRun) {
+    while (speechCacheRun.current === run
+      && run.active < speechCacheConcurrency
+      && run.queue.length > 0) {
+      const item = run.queue.shift();
+      if (!item) break;
+      run.active += 1;
+      setSpeechCacheBusy(true);
+      void cacheTextToSpeech(
+        run.configuration,
+        item.voice,
+        item.text,
+      ).catch((failure: unknown) => {
+        if (speechCacheRun.current !== run) return;
+        setActionError(failure instanceof TextToSpeechError
+          ? failure.message
+          : 'One response could not be cached. The remaining responses will continue.');
+      }).finally(() => {
+        run.active -= 1;
+        if (speechCacheRun.current !== run) return;
+        pumpSpeechCache(run);
+        if (run.active === 0 && run.queue.length === 0) setSpeechCacheBusy(false);
+      });
+    }
+  }
+
+  function enqueueSpeechCacheEntries(
+    run: SpeechCacheRun,
+    entries: typeof completedSpeechEntries,
+  ) {
+    const added: SpeechCacheItem[] = [];
+    for (const entry of entries) {
+      if (run.seenEntryIds.has(entry.id)) continue;
+      run.seenEntryIds.add(entry.id);
+      added.push({
+        text: visibleEntryText(entry.kind, entry.text),
+        voice: speechVoices.get(entry.participant_id),
+      });
+    }
+    run.queue.unshift(...added);
+    pumpSpeechCache(run);
+  }
+
+  function toggleSpeechCache() {
+    const current = speechCacheRun.current;
+    if (current) {
+      current.queue.length = 0;
+      speechCacheRun.current = null;
+      setSpeechCacheEnabled(false);
+      setSpeechCacheBusy(false);
+      return;
+    }
+    if (!textToSpeechConfiguration || !snapshot || !conversationKey) return;
+
+    const run: SpeechCacheRun = {
+      configuration: textToSpeechConfiguration,
+      seenEntryIds: new Set(),
+      queue: [],
+      active: 0,
+    };
+    speechCacheRun.current = run;
+    setSpeechCacheEnabled(true);
+    setActionError(null);
+    enqueueSpeechCacheEntries(run, completedSpeechEntries);
+  }
+
+  useEffect(() => {
+    const run = speechCacheRun.current;
+    if (!run) return;
+    enqueueSpeechCacheEntries(run, completedSpeechEntries);
+  }, [completedSpeechEntryIds, conversationKey]);
 
   function toggleSpeech(entry: SessionSnapshot['transcript'][number]) {
     if (spokenEntry?.id === entry.id) {
@@ -881,6 +991,26 @@ export function ChatScreen({
             : recordingTarget
               ? 'Self-notes'
               : (character?.display_name ?? 'Unknown character')}</span>
+          {textToSpeechConfiguration && (
+            <button
+              aria-busy={speechCacheBusy}
+              aria-label={speechCacheEnabled
+                ? 'Stop caching response audio automatically'
+                : 'Cache response audio automatically'}
+              aria-pressed={speechCacheEnabled}
+              className="cha-speech-cache-toggle"
+              disabled={!sessionAvailable}
+              onClick={toggleSpeechCache}
+              title={speechCacheBusy
+                ? 'Caching response audio'
+                : speechCacheEnabled
+                  ? 'Automatically cache response audio'
+                  : 'Cache existing and future response audio'}
+              type="button"
+            >
+              <SpeakerIcon />
+            </button>
+          )}
           <TransliterationToggle
             disabled={!sessionAvailable}
             transliteration={transliteration}

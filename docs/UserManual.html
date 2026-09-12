@@ -759,6 +759,24 @@
           is permanent and cannot be undone.
         </p>
         <p>
+          A second speaker button appears below the message box, immediately to the
+          left of the <strong>Rus</strong> switch. Select it to prepare audio for every
+          completed AI response in the current session and to prepare each later
+          response when it finishes. CHA sends at most three of these preparation
+          requests at once; a newly completed response goes ahead of older responses
+          still waiting. The pressed button shows that automatic preparation remains
+          enabled. Select it again to stop scheduling audio. Requests that have
+          already started still finish and are cached.
+        </p>
+        <p>
+          Prepared and previously played response audio is kept in memory, up to
+          256&nbsp;MiB, and replaying the same text with the same voice and settings
+          does not call ElevenLabs again. The cache lasts only until the application
+          or page is reloaded. Switching sessions turns automatic preparation off,
+          but does not discard audio already cached. Voice-preview controls continue
+          to create a fresh sample each time so they can be used for tuning.
+        </p>
+        <p>
           Covered conversation remains visible, but later AI requests do not receive
           it as context. The eye button stays beside the response that established the
           boundary. Select it to restore the entire conversation to model context.
