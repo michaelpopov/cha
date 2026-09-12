@@ -272,6 +272,11 @@ export function fixtureClient(overrides: Partial<ChaClient> = {}): ChaClient {
       id, display_name: 'API key', has_value: true, used_by: [],
     }),
     deleteApiKey: async () => undefined,
+    getR2Storage: async () => null,
+    saveR2Storage: async ({ display_name, url, access_key_id }) => ({
+      id: 'api_key_1', display_name, url, access_key_id, has_secret_key: true,
+    }),
+    deleteR2Storage: async () => undefined,
     switchVault: async () => undefined,
     ...overrides,
   };

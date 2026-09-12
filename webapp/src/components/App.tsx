@@ -68,6 +68,7 @@ import {
   NewVaultScreen,
   ProviderScreen,
   ProvidersScreen,
+  R2StorageScreen,
   StyleScreen,
   StylesScreen,
   VoiceScreen,
@@ -307,6 +308,9 @@ function Screen({
     );
     case 'settings-api-key': return (
       <ApiKeyScreen client={client} dispatch={dispatch} sessionReport={sessionReport} state={state} />
+    );
+    case 'settings-r2-storage': return (
+      <R2StorageScreen client={client} dispatch={dispatch} sessionReport={sessionReport} state={state} />
     );
   }
 }

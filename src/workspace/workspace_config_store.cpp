@@ -42,6 +42,7 @@ constexpr std::array sidecar_suffixes{
 };
 
 constexpr std::array skeleton_directories{
+    std::string_view("system/keys"),
     std::string_view("system/providers"),
     std::string_view("system/styles"),
     std::string_view("system/voices"),
@@ -1424,6 +1425,70 @@ WorkspaceConfigEditResult WorkspaceConfigStore::apply_voice_delete(
     std::string_view voice_id) {
     return impl_->edit([&](const Workspace& workspace) {
         workspace.delete_voice(voice_id);
+        return std::vector<std::string>{};
+    });
+}
+
+void WorkspaceConfigStore::apply_api_key_create(
+    std::string_view id,
+    std::string_view display_name,
+    std::string_view value) {
+    (void)impl_->edit([&](const Workspace& workspace) {
+        workspace.create_api_key(id, display_name, value);
+        return std::vector<std::string>{};
+    });
+}
+
+void WorkspaceConfigStore::apply_api_key_update(
+    std::string_view id,
+    std::string_view display_name,
+    std::string_view value) {
+    (void)impl_->edit([&](const Workspace& workspace) {
+        workspace.write_api_key(id, display_name, value);
+        return std::vector<std::string>{};
+    });
+}
+
+void WorkspaceConfigStore::apply_api_key_delete(std::string_view id) {
+    (void)impl_->edit([&](const Workspace& workspace) {
+        workspace.delete_api_key(id);
+        return std::vector<std::string>{};
+    });
+}
+
+void WorkspaceConfigStore::apply_r2_storage_create(
+    const R2StorageKey& key) {
+    (void)impl_->edit([&](const Workspace& workspace) {
+        workspace.create_r2_storage(key);
+        return std::vector<std::string>{};
+    });
+}
+
+void WorkspaceConfigStore::apply_r2_storage_update(
+    const R2StorageKey& key) {
+    (void)impl_->edit([&](const Workspace& workspace) {
+        workspace.write_r2_storage(key);
+        return std::vector<std::string>{};
+    });
+}
+
+void WorkspaceConfigStore::apply_r2_storage_delete() {
+    (void)impl_->edit([](const Workspace& workspace) {
+        workspace.delete_r2_storage();
+        return std::vector<std::string>{};
+    });
+}
+
+void WorkspaceConfigStore::apply_key_migration(
+    std::span<const SavedApiKey> api_keys,
+    const std::optional<R2StorageKey>& r2_storage,
+    std::uint64_t next_id) {
+    (void)impl_->edit([&](const Workspace& workspace) {
+        for (const SavedApiKey& key : api_keys) {
+            workspace.create_api_key(key.id, key.display_name, key.value);
+        }
+        if (r2_storage) workspace.create_r2_storage(*r2_storage);
+        workspace.write_next_api_key_id(next_id);
         return std::vector<std::string>{};
     });
 }

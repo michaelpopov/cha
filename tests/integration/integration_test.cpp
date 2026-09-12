@@ -7,6 +7,7 @@
 #include "support/mock_http_server.h"
 #include "session/session_database.h"
 #include "workspace/workspace.h"
+#include "workspace/workspace_config_store.h"
 #include "support/test_notifier.h"
 #include "support/test_controller.h"
 #include "support/test_session_database.h"
@@ -21,6 +22,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iterator>
 #include <memory>
 #include <optional>
@@ -70,6 +72,10 @@ public:
           path_(directory_ / "cha-r2-integration-test.sqlite3") {
         std::filesystem::create_directories(directory_);
         (void)test::import_test_database(source_.root(), path_);
+        vault_ = directory_ / "r2-test.toml";
+        std::ofstream(vault_)
+            << "vault_name = \"R2 integration test\"\n"
+            << "data = " << std::quoted(path_.string()) << "\n";
     }
 
     ~TemporaryR2Database() {
@@ -78,12 +84,34 @@ public:
     }
 
     const std::filesystem::path& path() const noexcept { return path_; }
+    const std::filesystem::path& vault() const noexcept { return vault_; }
 
 private:
     test::TestWorkspace source_;
     std::filesystem::path directory_;
     std::filesystem::path path_;
+    std::filesystem::path vault_;
 };
+
+R2StorageKey integration_r2_key() {
+    const char* url = std::getenv("CHA_R2_URL");
+    const char* access_key = std::getenv("CHA_R2_ACCESS_KEY_ID");
+    const char* secret_key = std::getenv("CHA_R2_SECRET_ACCESS_KEY");
+    if (url == nullptr || *url == '\0'
+        || access_key == nullptr || *access_key == '\0'
+        || secret_key == nullptr || *secret_key == '\0') {
+        throw std::runtime_error(
+            "CHA_R2_URL, CHA_R2_ACCESS_KEY_ID, and "
+            "CHA_R2_SECRET_ACCESS_KEY are required for R2 integration tests");
+    }
+    return {
+        .id = "api_key_1",
+        .display_name = "R2 integration test",
+        .url = url,
+        .access_key_id = access_key,
+        .secret_key = secret_key,
+    };
+}
 
 // Captures the response text and streaming chunk count produced by an integration chat run.
 struct ChatResult {
@@ -163,7 +191,11 @@ GenerationEvent wait_for_generation_event(
 ChatResult run_chat(bool stream) {
     CharacterDefinition definition = integration_definition(stream);
     test::TestWorkspace credential_directory;
-    ApiKeyStore api_keys(credential_directory.root() / "api-keys.json");
+    const std::filesystem::path credential_database =
+        test::import_test_database(credential_directory.root());
+    auto credential_config =
+        WorkspaceConfigStore::open(credential_database);
+    ApiKeyStore api_keys(*credential_config);
     definition.provider.config.api_key_id = save_integration_api_key(api_keys);
     const CharacterMetadata target = definition.character;
     Transcript transcript;
@@ -214,7 +246,11 @@ ChatResult run_chat(bool stream) {
 ChatResult run_cancelled_chat() {
     CharacterDefinition definition = integration_definition(true);
     test::TestWorkspace credential_directory;
-    ApiKeyStore api_keys(credential_directory.root() / "api-keys.json");
+    const std::filesystem::path credential_database =
+        test::import_test_database(credential_directory.root());
+    auto credential_config =
+        WorkspaceConfigStore::open(credential_database);
+    ApiKeyStore api_keys(*credential_config);
     definition.provider.config.api_key_id = save_integration_api_key(api_keys);
     const CharacterMetadata target = definition.character;
     Transcript transcript;
@@ -287,11 +323,16 @@ TEST(Integration, StreamingChatCanBeCancelled) {
 // cha-r2-integration-test.sqlite3 in the bucket selected by CHA_R2_URL.
 TEST(R2Integration, UploadsDownloadsAndBacksUpThePreviousDatabase) {
     TemporaryR2Database fixture;
+    const R2StorageKey storage = integration_r2_key();
 
     const web::R2DatabaseTransfer uploaded =
-        web::upload_database_to_r2(fixture.path());
+        web::upload_database_to_r2(
+            fixture.path(), fixture.vault(), storage);
     const std::string expected_download = file_bytes(fixture.path());
-    ASSERT_EQ(uploaded.byte_count, expected_download.size());
+    const std::string expected_vault = file_bytes(fixture.vault());
+    ASSERT_EQ(
+        uploaded.byte_count,
+        expected_download.size() + expected_vault.size());
 
     test::TestWorkspace previous_local;
     previous_local.add_persona("r2test", "R2 test persona");
@@ -300,11 +341,14 @@ TEST(R2Integration, UploadsDownloadsAndBacksUpThePreviousDatabase) {
     ASSERT_NE(expected_backup, expected_download);
 
     const web::R2DatabaseTransfer downloaded =
-        web::download_database_from_r2(fixture.path());
+        web::download_database_from_r2(
+            fixture.path(), fixture.vault(), storage);
     std::filesystem::path backup = fixture.path();
     backup += ".bac";
 
-    EXPECT_EQ(downloaded.byte_count, expected_download.size());
+    EXPECT_EQ(
+        downloaded.byte_count,
+        expected_download.size() + expected_vault.size());
     EXPECT_EQ(file_bytes(fixture.path()), expected_download);
     EXPECT_EQ(file_bytes(backup), expected_backup);
 }

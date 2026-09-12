@@ -38,7 +38,8 @@ export type MainView =
   | 'settings-voice'
   | 'settings-api-keys'
   | 'settings-new-api-key'
-  | 'settings-api-key';
+  | 'settings-api-key'
+  | 'settings-r2-storage';
 
 export type BootstrapStatus = 'loading' | 'ready' | 'failed' | 'incompatible';
 export type StreamStatus =
@@ -184,6 +185,7 @@ export type AppAction =
   | { type: 'inspect-api-key'; apiKeyId: string; apiKeyName: string }
   | { type: 'api-key-detail-loaded'; apiKeyId: string; apiKeyName: string }
   | { type: 'api-key-updated'; apiKeyId: string; apiKeyName: string }
+  | { type: 'show-settings-r2-storage' }
   | { type: 'show-chat' }
   | { type: 'session-operation-started'; message: string }
   | { type: 'session-operation-failed'; message: string; retryable?: boolean }
@@ -725,6 +727,8 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     case 'api-key-updated':
       if (action.apiKeyId !== state.inspectedApiKeyId) return state;
       return { ...state, inspectedApiKeyName: action.apiKeyName };
+    case 'show-settings-r2-storage':
+      return { ...state, mainView: 'settings-r2-storage', ...idleSessionOperation() };
     case 'show-chat':
       return { ...state, mainView: 'chat', ...idleSessionOperation() };
     case 'session-operation-started':
@@ -843,6 +847,7 @@ export function navigationTitle(state: AppState): string | null {
     case 'settings-api-keys': return 'API Keys';
     case 'settings-new-api-key': return 'New API key';
     case 'settings-api-key': return state.inspectedApiKeyName ?? 'API Key';
+    case 'settings-r2-storage': return 'R2 storage';
     case 'chat': return null;
   }
 }

@@ -85,9 +85,9 @@ int main(int argc, const char* argv[]) {
     if (setenv("CHA_R2_URL", "set", 1) != 0
         || setenv("CHA_R2_ACCESS_KEY_ID", "set", 1) != 0
         || setenv("CHA_R2_SECRET_ACCESS_KEY", "set", 1) != 0
-        || !cha_runtime_can_transfer_r2(runtime)) {
+        || cha_runtime_can_transfer_r2(runtime)) {
         fprintf(stderr,
-            "embedded runtime smoke test failed: R2 menu capability missing\n");
+            "embedded runtime smoke test failed: environment enabled R2\n");
         cha_runtime_destroy(runtime);
         return 1;
     }

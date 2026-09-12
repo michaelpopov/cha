@@ -2,18 +2,17 @@
 
 #include "util/path_name.h"
 #include "util/private_filesystem.h"
+#include "workspace/workspace.h"
+#include "workspace/workspace_config_store.h"
 
 #include <nlohmann/json.hpp>
 
-#include <algorithm>
 #include <charconv>
-#include <cctype>
-#include <cstdint>
+#include <cstdlib>
 #include <fstream>
-#include <iterator>
 #include <limits>
-#include <optional>
 #include <stdexcept>
+#include <utility>
 
 namespace cha {
 namespace {
@@ -35,19 +34,65 @@ std::optional<std::uint64_t> id_suffix(std::string_view id) {
     return suffix;
 }
 
-} // namespace
+ApiKeyInfo info(const SavedApiKey& key) {
+    return {
+        .id = key.id,
+        .display_name = key.display_name,
+        .has_value = !key.value.empty(),
+    };
+}
 
-ApiKeyStore::ApiKeyStore(std::filesystem::path path)
-    : path_(std::move(path)) {
-    if (!std::filesystem::exists(path_)) return;
-    tighten_private_file(path_);
-    std::ifstream input(path_, std::ios::binary);
+R2StorageInfo info(const R2StorageKey& key) {
+    return {
+        .id = key.id,
+        .display_name = key.display_name,
+        .url = key.url,
+        .access_key_id = key.access_key_id,
+        .has_secret_key = !key.secret_key.empty(),
+    };
+}
+
+std::shared_ptr<const Workspace> workspace() {
+    std::shared_ptr<const Workspace> result = getws();
+    if (!result) throw std::runtime_error("No active workspace");
+    return result;
+}
+
+ApiKeyInfo published_api_key(std::string_view id) {
+    const std::shared_ptr<const Workspace> current = workspace();
+    const SavedApiKey* const key = current->find_api_key(id);
+    if (key == nullptr) {
+        throw std::runtime_error(
+            "API key '" + std::string(id) + "' was not published");
+    }
+    return info(*key);
+}
+
+R2StorageInfo published_r2_storage() {
+    const std::shared_ptr<const Workspace> current = workspace();
+    const std::optional<R2StorageKey>& key = current->r2_storage();
+    if (!key) {
+        throw std::runtime_error("R2 storage credentials were not published");
+    }
+    return info(*key);
+}
+
+struct LegacyKeys {
+    std::vector<SavedApiKey> keys;
+    std::uint64_t next_id{1};
+};
+
+LegacyKeys read_legacy_keys(
+    const std::filesystem::path& path) {
+    if (path.empty() || !std::filesystem::exists(path)) return {};
+    tighten_private_file(path);
+    std::ifstream input(path, std::ios::binary);
     if (!input) {
         throw std::runtime_error(
-            "Failed to read API key file '" + utf8_path(path_) + "'");
+            "Failed to read API key file '" + utf8_path(path) + "'");
     }
-    Json json;
     try {
+        Json json;
         input >> json;
         if (!json.is_object()
             || !json.contains("keys") || !json["keys"].is_object()) {
@@ -60,6 +105,8 @@ ApiKeyStore::ApiKeyStore(std::filesystem::path path)
         if (!legacy && !current) throw std::runtime_error("invalid shape");
 
         std::uint64_t highest_id{};
+        LegacyKeys result;
+        result.keys.reserve(json["keys"].size());
         for (const auto& [id, entry] : json["keys"].items()) {
             const std::optional<std::uint64_t> suffix = id_suffix(id);
             if (!suffix || !entry.is_object() || entry.size() != 2
@@ -68,111 +115,95 @@ ApiKeyStore::ApiKeyStore(std::filesystem::path path)
                 || !entry.contains("value") || !entry["value"].is_string()) {
                 throw std::runtime_error("invalid entry");
             }
-            Record record{
+            result.keys.push_back({
+                .id = id,
                 .display_name = entry["display_name"].get<std::string>(),
                 .value = entry["value"].get<std::string>(),
-            };
-            validate_display_name(record.display_name);
-            validate_secret(record.value);
-            records_.emplace(id, std::move(record));
+            });
             highest_id = std::max(highest_id, *suffix);
         }
-        if (legacy) {
+        if (current) {
+            const std::uint64_t next_id = json["next_id"].get<std::uint64_t>();
+            if (next_id == 0 || next_id <= highest_id) {
+                throw std::runtime_error("invalid next ID");
+            }
+            result.next_id = next_id;
+        } else {
             if (highest_id == std::numeric_limits<std::uint64_t>::max()) {
                 throw std::runtime_error("API key ID space exhausted");
             }
-            next_id_ = highest_id + 1;
-        } else {
-            next_id_ = json["next_id"].get<std::uint64_t>();
-            if (next_id_ == 0 || next_id_ <= highest_id) {
-                throw std::runtime_error("invalid next ID");
-            }
+            result.next_id = highest_id + 1;
         }
+        return result;
     } catch (const std::exception&) {
         throw std::runtime_error(
-            "API key file '" + utf8_path(path_) + "' is invalid");
+            "API key file '" + utf8_path(path) + "' is invalid");
     }
 }
 
-void ApiKeyStore::validate_display_name(std::string_view value) {
-    const bool only_space = std::ranges::all_of(value, [](unsigned char c) {
-        return std::isspace(c) != 0;
-    });
-    if (value.empty() || value.size() > 100 || only_space
-        || value.find_first_of("\r\n") != std::string_view::npos) {
-        throw std::invalid_argument("Invalid API key name");
-    }
+const char* nonempty_environment(const char* name) {
+    const char* value = std::getenv(name);
+    return value != nullptr && *value != '\0' ? value : nullptr;
 }
 
-void ApiKeyStore::validate_secret(std::string_view value) {
-    if (value.empty() || value.size() > 16 * 1024
-        || value.find_first_of("\r\n") != std::string_view::npos) {
-        throw std::invalid_argument("Invalid API key value");
-    }
-}
+} // namespace
 
-ApiKeyInfo ApiKeyStore::info(std::string_view id, const Record& record) {
-    return {
-        .id = std::string(id),
-        .display_name = record.display_name,
-        .has_value = !record.value.empty(),
-    };
+ApiKeyStore::ApiKeyStore(
+    WorkspaceConfigStore& config,
+    std::filesystem::path legacy_path)
+    : config_(&config), legacy_path_(std::move(legacy_path)) {
+    migrate();
 }
 
 std::vector<ApiKeyInfo> ApiKeyStore::list() const {
-    const std::lock_guard lock(mutex_);
+    const std::shared_ptr<const Workspace> current = workspace();
     std::vector<ApiKeyInfo> result;
-    result.reserve(records_.size());
-    for (const auto& [id, record] : records_) result.push_back(info(id, record));
-    std::ranges::sort(result, {}, [](const ApiKeyInfo& key) {
-        std::string name = key.display_name;
-        std::ranges::transform(name, name.begin(), [](unsigned char value) {
-            return static_cast<char>(std::tolower(value));
-        });
-        return name;
-    });
+    result.reserve(current->api_keys().size());
+    for (const SavedApiKey& key : current->api_keys()) {
+        result.push_back(info(key));
+    }
     return result;
 }
 
 std::optional<ApiKeyInfo> ApiKeyStore::find(std::string_view id) const {
-    const std::lock_guard lock(mutex_);
-    const auto found = records_.find(id);
-    if (found == records_.end()) return std::nullopt;
-    return info(found->first, found->second);
+    const std::shared_ptr<const Workspace> current = workspace();
+    const SavedApiKey* key = current->find_api_key(id);
+    return key == nullptr ? std::nullopt : std::optional<ApiKeyInfo>(info(*key));
 }
 
 std::optional<ApiKeyInfo> ApiKeyStore::find_by_name(
     std::string_view display_name) const {
-    const std::lock_guard lock(mutex_);
-    std::optional<ApiKeyInfo> result;
-    for (const auto& [id, record] : records_) {
-        if (record.display_name != display_name) continue;
-        if (result) return std::nullopt;
-        result = info(id, record);
+    const std::shared_ptr<const Workspace> current = workspace();
+    const SavedApiKey* result = nullptr;
+    for (const SavedApiKey& key : current->api_keys()) {
+        if (key.display_name != display_name) continue;
+        if (result != nullptr) return std::nullopt;
+        result = &key;
     }
-    return result;
+    return result == nullptr
+        ? std::nullopt : std::optional<ApiKeyInfo>(info(*result));
 }
 
 std::string ApiKeyStore::value(std::string_view id) const {
-    const std::lock_guard lock(mutex_);
-    const auto found = records_.find(id);
-    if (found == records_.end()) {
+    const std::shared_ptr<const Workspace> current = workspace();
+    const SavedApiKey* key = current->find_api_key(id);
+    if (key == nullptr) {
         throw std::runtime_error(
             "API key '" + std::string(id) + "' does not exist");
     }
-    return found->second.value;
+    return key->value;
 }
 
 std::string ApiKeyStore::value_by_name(std::string_view display_name) const {
-    const std::lock_guard lock(mutex_);
-    const Record* result = nullptr;
-    for (const auto& [id, record] : records_) {
-        if (record.display_name != display_name) continue;
+    const std::shared_ptr<const Workspace> current = workspace();
+    const SavedApiKey* result = nullptr;
+    for (const SavedApiKey& key : current->api_keys()) {
+        if (key.display_name != display_name) continue;
         if (result != nullptr) {
             throw std::runtime_error(
                 "API key name '" + std::string(display_name) + "' is ambiguous");
         }
-        result = &record;
+        result = &key;
     }
     if (result == nullptr) {
         throw std::runtime_error(
@@ -181,96 +212,147 @@ std::string ApiKeyStore::value_by_name(std::string_view display_name) const {
     return result->value;
 }
 
+std::optional<R2StorageKey> ApiKeyStore::r2() const {
+    const std::shared_ptr<const Workspace> current = workspace();
+    return current->r2_storage();
+}
+
+std::optional<R2StorageInfo> ApiKeyStore::r2_info() const {
+    const std::shared_ptr<const Workspace> current = workspace();
+    const std::optional<R2StorageKey>& key = current->r2_storage();
+    return key ? std::optional<R2StorageInfo>(info(*key)) : std::nullopt;
+}
+
 ApiKeyInfo ApiKeyStore::create(
     std::string_view display_name,
     std::string_view value) {
-    validate_display_name(display_name);
-    validate_secret(value);
     const std::lock_guard lock(mutex_);
-    if (next_id_ == std::numeric_limits<std::uint64_t>::max()) {
+    const std::shared_ptr<const Workspace> current = workspace();
+    const std::uint64_t assigned_id = current->next_api_key_id();
+    if (assigned_id
+        >= static_cast<std::uint64_t>(
+            std::numeric_limits<std::int64_t>::max())) {
         throw std::runtime_error("API key ID space exhausted");
     }
-    const std::uint64_t assigned_id = next_id_;
     const std::string id = "api_key_" + std::to_string(assigned_id);
-    auto [position, inserted] = records_.emplace(
-        id, Record{std::string(display_name), std::string(value)});
-    if (!inserted) throw std::logic_error("API key ID was already assigned");
-    ++next_id_;
-    try {
-        save_unlocked();
-    } catch (...) {
-        records_.erase(position);
-        next_id_ = assigned_id;
-        throw;
-    }
-    return info(position->first, position->second);
+    config_->apply_api_key_create(id, display_name, value);
+    return published_api_key(id);
 }
 
 ApiKeyInfo ApiKeyStore::rename(
     std::string_view id,
     std::string_view display_name) {
-    validate_display_name(display_name);
     const std::lock_guard lock(mutex_);
-    const auto found = records_.find(id);
-    if (found == records_.end()) throw std::out_of_range("Unknown API key");
-    const std::string previous = found->second.display_name;
-    found->second.display_name = display_name;
-    try {
-        save_unlocked();
-    } catch (...) {
-        found->second.display_name = previous;
-        throw;
-    }
-    return info(found->first, found->second);
+    const std::shared_ptr<const Workspace> current = workspace();
+    const SavedApiKey* key = current->find_api_key(id);
+    if (key == nullptr) throw std::out_of_range("Unknown API key");
+    config_->apply_api_key_update(id, display_name, key->value);
+    return published_api_key(id);
 }
 
 ApiKeyInfo ApiKeyStore::replace(
     std::string_view id,
     std::string_view value) {
-    validate_secret(value);
     const std::lock_guard lock(mutex_);
-    const auto found = records_.find(id);
-    if (found == records_.end()) throw std::out_of_range("Unknown API key");
-    const std::string previous = found->second.value;
-    found->second.value = value;
-    try {
-        save_unlocked();
-    } catch (...) {
-        found->second.value = previous;
-        throw;
-    }
-    return info(found->first, found->second);
+    const std::shared_ptr<const Workspace> current = workspace();
+    const SavedApiKey* key = current->find_api_key(id);
+    if (key == nullptr) throw std::out_of_range("Unknown API key");
+    config_->apply_api_key_update(id, key->display_name, value);
+    return published_api_key(id);
 }
 
 void ApiKeyStore::remove(std::string_view id) {
     const std::lock_guard lock(mutex_);
-    const auto found = records_.find(id);
-    if (found == records_.end()) throw std::out_of_range("Unknown API key");
-    const std::string removed_id = found->first;
-    const Record removed = found->second;
-    records_.erase(found);
-    try {
-        save_unlocked();
-    } catch (...) {
-        records_.emplace(removed_id, removed);
-        throw;
+    const std::shared_ptr<const Workspace> current = workspace();
+    if (current->find_api_key(id) == nullptr) {
+        throw std::out_of_range("Unknown API key");
     }
+    config_->apply_api_key_delete(id);
 }
 
-void ApiKeyStore::save_unlocked() const {
-    Json keys = Json::object();
-    for (const auto& [id, record] : records_) {
-        keys[id] = {
-            {"display_name", record.display_name},
-            {"value", record.value},
+R2StorageInfo ApiKeyStore::save_r2(
+    std::string_view display_name,
+    std::string_view url,
+    std::string_view access_key_id,
+    std::optional<std::string_view> secret_key) {
+    const std::lock_guard lock(mutex_);
+    const std::shared_ptr<const Workspace> current = workspace();
+    const std::optional<R2StorageKey>& saved = current->r2_storage();
+    if (!saved && !secret_key) {
+        throw std::invalid_argument("R2 secret key is required");
+    }
+
+    std::string id;
+    if (saved) {
+        id = saved->id;
+    } else {
+        const std::uint64_t assigned_id = current->next_api_key_id();
+        if (assigned_id
+            >= static_cast<std::uint64_t>(
+                std::numeric_limits<std::int64_t>::max())) {
+            throw std::runtime_error("API key ID space exhausted");
+        }
+        id = "api_key_" + std::to_string(assigned_id);
+    }
+
+    R2StorageKey key{
+        .id = std::move(id),
+        .display_name = std::string(display_name),
+        .url = std::string(url),
+        .access_key_id = std::string(access_key_id),
+        .secret_key = secret_key
+            ? std::string(*secret_key) : saved->secret_key,
+    };
+    if (saved) {
+        config_->apply_r2_storage_update(key);
+    } else {
+        config_->apply_r2_storage_create(key);
+    }
+    return published_r2_storage();
+}
+
+void ApiKeyStore::remove_r2() {
+    const std::lock_guard lock(mutex_);
+    const std::shared_ptr<const Workspace> current = workspace();
+    if (!current->r2_storage()) {
+        throw std::out_of_range("R2 storage credentials are not configured");
+    }
+    config_->apply_r2_storage_delete();
+}
+
+void ApiKeyStore::migrate_vault() {
+    const std::lock_guard lock(mutex_);
+    migrate();
+}
+
+void ApiKeyStore::migrate() {
+    const std::shared_ptr<const Workspace> current = workspace();
+    if (!current->api_keys().empty() || current->r2_storage()) return;
+
+    LegacyKeys legacy = read_legacy_keys(legacy_path_);
+
+    std::optional<R2StorageKey> r2_storage;
+    const char* url = nonempty_environment("CHA_R2_URL");
+    const char* access_key = nonempty_environment("CHA_R2_ACCESS_KEY_ID");
+    const char* secret_key = nonempty_environment("CHA_R2_SECRET_ACCESS_KEY");
+    if (url != nullptr && access_key != nullptr && secret_key != nullptr) {
+        if (legacy.next_id
+            >= static_cast<std::uint64_t>(
+                std::numeric_limits<std::int64_t>::max())) {
+            throw std::runtime_error("API key ID space exhausted");
+        }
+        r2_storage = R2StorageKey{
+            .id = "api_key_" + std::to_string(legacy.next_id++),
+            .display_name = "R2",
+            .url = url,
+            .access_key_id = access_key,
+            .secret_key = secret_key,
         };
     }
-    const Json json = {
-        {"version", 2},
-        {"next_id", next_id_},
-        {"keys", std::move(keys)},
-    };
-    create_private_file(path_, json.dump(2) + '\n');
+    if (!legacy.keys.empty() || r2_storage) {
+        config_->apply_key_migration(
+            legacy.keys, r2_storage, legacy.next_id);
+    }
 }
 
 } // namespace cha

@@ -651,6 +651,57 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /api/v1/r2-storage:
+    get:
+      tags: [Settings]
+      operationId: getR2Storage
+      summary: Get R2 storage credentials without the secret key
+      responses:
+        "200":
+          description: Stored R2 metadata, or null when R2 is not configured.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/R2StorageDetail"
+                  - type: "null"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    put:
+      tags: [Settings]
+      operationId: saveR2Storage
+      summary: Create or update R2 storage credentials
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SaveR2StorageRequest"
+      responses:
+        "200":
+          description: Stored R2 metadata. The secret key is never returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/R2StorageDetail"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      tags: [Settings]
+      operationId: deleteR2Storage
+      summary: Remove R2 storage credentials
+      requestBody:
+        $ref: "#/components/requestBodies/EmptyJsonObject"
+      responses:
+        "204":
+          description: R2 storage credentials removed.
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /api/v1/openai/auth:
     get:
       tags: [OpenAI]
@@ -2580,6 +2631,37 @@ components:
       properties:
         value:
           type: string
+
+    R2StorageDetail:
+      type: object
+      additionalProperties: false
+      required: [id, display_name, url, access_key_id, has_secret_key]
+      properties:
+        id:
+          $ref: "#/components/schemas/Identifier"
+        display_name:
+          type: string
+        url:
+          type: string
+        access_key_id:
+          type: string
+        has_secret_key:
+          type: boolean
+
+    SaveR2StorageRequest:
+      type: object
+      additionalProperties: false
+      required: [display_name, url, access_key_id, secret_key]
+      properties:
+        display_name:
+          type: string
+        url:
+          type: string
+        access_key_id:
+          type: string
+        secret_key:
+          description: Null keeps the existing secret key; creating requires a value.
+          type: [string, "null"]
 
     StyleOption:
       type: object

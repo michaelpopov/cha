@@ -60,9 +60,9 @@ CHA configuration can appear in several places. They have different roles.
 | `packaging/linux/import-seed/` | Initial configuration shipped in a Linux package | Only when explicitly requested |
 | The SQLite file named by the active vault's `data` field | Authoritative runtime configuration and sessions | Never by hand |
 | A `cha-runtime-*` directory under the system temporary directory | Private materialization of committed SQLite rows | Never |
-| `<config-directory>/api-keys.json` | API keys saved through Settings | Only through Settings → API Keys |
+| `system/keys/` rows in each vault database | Model and R2 keys saved through Settings | Only through Settings → API Keys |
 | `<config-directory>/openai-auth.json` | OpenAI subscription OAuth credentials | Only through Settings → OpenAI |
-| `.env` in the configuration directory | Optional Cloudflare R2 settings | Carefully, as a secret |
+| `<config-directory>/api-keys.json` and `.env` | Legacy key migration sources | Carefully; each empty vault may import them |
 
 Normal runtime reads configuration from SQLite. It does not continue reading
 the directory that was imported. Therefore editing `~/var/modify/` alone does
@@ -72,10 +72,10 @@ not alter a running application. The normal lifecycle is:
 SQLite database -> export directory -> edit -> validate -> import -> SQLite database
 ```
 
-Provider and style definitions are workspace configuration and therefore live
-inside each vault's SQLite database. API-key values do not: the one
-process-wide `api-keys.json` is shared by every vault and is excluded from
-workspace import/export.
+Provider, style, and key definitions are workspace configuration and therefore
+live inside each vault's SQLite database. Model and R2 secrets are plaintext in
+owner-private `system/keys/api_key_N/config.toml` rows. They are vault-specific
+and round-trip through workspace import/export.
 
 An old export can also be stale. CHA can update a character's provider, style,
 reasoning effort, and web-search setting, and a forum's default character and
@@ -119,7 +119,9 @@ must be outside a directory passed to `--import`. There is no automatic
 migration from a single `cha.toml`; create the directory, split
 selection/web/logging into `app.toml` and data paths into a vault file, adjust
 paths, and move `openai-auth.json` into the directory. A configuration-directory
-`.env`, when used, supplies only the three R2 settings described below.
+Legacy `api-keys.json` and `.env` files may supply credentials to each empty
+vault the first time it is opened. They are left unchanged, so remove or secure
+them manually after migration if future empty vaults should not import them.
 Export revalidates a nonempty modify directory and refuses to replace it unless
 it is a valid CHA workspace.
 
@@ -536,8 +538,8 @@ stable provider ID does not change.
 | `max_tokens` | omitted | Positive output-token limit |
 | `timeout_s` | `600` | Positive overall request timeout |
 | `idle_timeout_s` | `60` | Positive timeout after response bytes stop arriving |
-| `api_key` | `""` | ID of an API key stored in `<config-directory>/api-keys.json` |
-| `api_key_env` | `""` | Legacy field spelling; its value is resolved as an exact display name in `<config-directory>/api-keys.json`, never as an environment variable |
+| `api_key` | `""` | ID of a model key stored under `system/keys/` in this vault |
+| `api_key_env` | `""` | Legacy field spelling; its value is resolved as an exact display name among this vault's model keys, never as an environment variable |
 | `reasoning_effort` | `""` | Provider default forwarded to the backend |
 | `reasoning_format` | `"auto"` | `auto`, `none`, `reasoning_content`, or `reasoning` |
 | `api` | `"responses"` | `responses` or `chat_completions` |
@@ -621,23 +623,28 @@ api_key = "api_key_2"
 
 Create keys under Settings → API Keys before selecting them in a provider.
 The `api_key` value is an opaque local ID, not the secret. Secrets are stored in
-`<config-directory>/api-keys.json`, are never returned to the browser, and are
-excluded from workspace import/export. A missing referenced key does not
-prevent workspace loading, but requests and `Test` fail when they try to use it.
+the vault database as owner-private `system/keys/api_key_N/config.toml` rows and
+are never returned to the browser. They are included as plaintext in workspace
+exports and imports, so treat every export as secret material. A missing
+referenced key does not prevent workspace loading, but requests and `Test` fail
+when they try to use it.
 
 For limited compatibility, a hand-authored provider may still use
 `api_key_env = "Name"` instead of `api_key`. Despite the old field name, CHA
 looks for one API-key record whose display name is exactly `Name` in
-`api-keys.json`; it never consults `.env` or the process environment for model
+the active vault; it never consults `.env` or the process environment for model
 credentials. A missing or ambiguous name does not prevent workspace loading,
 but that provider's requests and `Test` fail. When the name resolves, the
 provider editor shows the matching saved key and writes the normal opaque
 `api_key` ID when saved.
 
 A root `.env` in an import source is ignored and is never stored or exported.
-The configuration-directory `.env` and inherited process environment remain
-available only for `CHA_R2_URL`, `CHA_R2_ACCESS_KEY_ID`, and
-`CHA_R2_SECRET_ACCESS_KEY`.
+For migration only, an empty vault imports a legacy configuration-directory
+`api-keys.json` plus R2 credentials from `CHA_R2_URL`,
+`CHA_R2_ACCESS_KEY_ID`, and `CHA_R2_SECRET_ACCESS_KEY` in the inherited
+environment or configuration-directory `.env`. The sources are left unchanged,
+so the migration repeats for every subsequently opened empty vault unless they
+are removed manually.
 
 ### OpenAI subscription OAuth provider
 
@@ -794,9 +801,9 @@ speed = 1.0
 Only `elevenlabs_voice_id` is required. CHA sends `voice_settings` only when at
 least one optional setting is present, and sends only the fields present in the
 file. Absent values are left to the voice's stored or ElevenLabs service
-defaults; CHA does not manufacture defaults for them. API keys, the synthesis
-model, output format, and endpoint are application/device settings and do not
-belong in a voice file.
+defaults; CHA does not manufacture defaults for them. API keys are vault
+settings; the synthesis model, output format, and endpoint are application
+settings. None belongs in a voice file.
 
 Assign the stable directory ID in a global character definition:
 
@@ -1135,10 +1142,9 @@ Before a production import:
 1. identify and stop the exact CHA process;
 2. identify the exact configuration directory and resolve the target vault's
    `data` path;
-3. make an offline, recoverable backup of the database and relevant secret
-   files, including `<config-directory>/api-keys.json` and
-   `<config-directory>/openai-auth.json` when present, according to the user's
-   backup practice;
+3. make an offline, recoverable backup of the database and relevant external
+   secret files, including `<config-directory>/openai-auth.json` and any legacy
+   `api-keys.json` or `.env`, according to the user's backup practice;
 4. review forum IDs for removals or renames;
 5. run disposable validation;
 6. import;
@@ -1151,8 +1157,8 @@ Do not copy a live SQLite file casually; CHA uses WAL and sidecar files.
 These are not workspace configuration rows and are not exported:
 
 - the configuration directory (`app.toml` and vault files);
-- a source `.env` (ignored) and the configuration-directory `.env` used by R2;
-- `<config-directory>/api-keys.json` saved API keys;
+- a source `.env` (ignored) and legacy configuration-directory `.env`;
+- legacy `<config-directory>/api-keys.json` migration input;
 - `<config-directory>/openai-auth.json` OAuth credentials;
 - SQLite databases, journals, WAL/SHM sidecars, and `.cha-lock` files;
 - session mirror output;
@@ -1219,15 +1225,15 @@ guide:
 - `src/util/public_name.cpp`: public-name and description validation;
 - `src/characters/character_config.cpp` and `.h`: provider endpoint and enum
   semantics;
-- `src/providers/api_key_store.cpp` and `.h`: locally saved API-key lifecycle;
+- `src/providers/api_key_store.cpp` and `.h`: vault-backed model and R2 key lifecycle;
 - `src/providers/openai_oauth.cpp`: OAuth credential lifecycle;
 - `src/web/settings_routes.cpp`: provider, style, and key mutations plus the
   direct provider test probe;
 - `src/web/application_config.cpp`: application and vault configuration
   discovery, validation, and command-line selection;
 - `src/web/application_runtime.cpp`: vault creation/update/deletion and active
-  switching, configuration-directory API keys and OAuth credentials, and
-  runtime maintenance operations;
+  switching, vault-backed keys and external OAuth credentials, and runtime
+  maintenance operations;
 - `packaging/macos/main.swift`: native runtime ownership, database menu
   behavior, and window-title synchronization;
 - `packaging/linux/import-seed/`: minimal package seed;

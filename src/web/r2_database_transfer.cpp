@@ -5,6 +5,7 @@
 #include "util/crypto.h"
 #include "util/path_name.h"
 #include "util/private_filesystem.h"
+#include "web/application_config.h"
 
 #include <curl/curl.h>
 
@@ -13,7 +14,6 @@
 #include <atomic>
 #include <chrono>
 #include <cctype>
-#include <cstdlib>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
@@ -29,10 +29,6 @@
 namespace cha::web {
 namespace {
 
-constexpr std::string_view r2_url_variable = "CHA_R2_URL";
-constexpr std::string_view r2_access_key_variable = "CHA_R2_ACCESS_KEY_ID";
-constexpr std::string_view r2_secret_key_variable =
-    "CHA_R2_SECRET_ACCESS_KEY";
 constexpr std::array sidecar_suffixes{
     std::string_view("-journal"),
     std::string_view("-wal"),
@@ -132,17 +128,7 @@ std::filesystem::path normalize_database_path(
     if (path.empty() || path.filename().empty()) {
         throw std::invalid_argument("Database path must name a file");
     }
-    return std::filesystem::absolute(path).lexically_normal();
-}
-
-std::string required_environment(std::string_view name) {
-    const std::string variable(name);
-    const char* const value = std::getenv(variable.c_str());
-    if (value == nullptr || *value == '\0') {
-        throw std::runtime_error(
-            "Missing required environment variable '" + variable + "'");
-    }
-    return value;
+    return std::filesystem::weakly_canonical(std::filesystem::absolute(path));
 }
 
 bool is_hex(char value) {
@@ -207,12 +193,14 @@ bool is_loopback_host(std::string_view authority) {
     return host == "127.0.0.1" || host == "localhost";
 }
 
-R2Settings load_r2_settings(const std::filesystem::path& database) {
-    const std::string raw_url = required_environment(r2_url_variable);
+R2Settings load_r2_settings(
+    std::string_view object_name,
+    const R2StorageKey& storage) {
+    const std::string& raw_url = storage.url;
     const std::size_t scheme_end = raw_url.find("://");
     if (scheme_end == std::string::npos) {
         throw std::runtime_error(
-            "Environment variable 'CHA_R2_URL' must be an absolute HTTPS URL");
+            "R2 key field 'url' must be an absolute HTTPS URL");
     }
     const std::string_view scheme(raw_url.data(), scheme_end);
     const std::size_t authority_start = scheme_end + 3;
@@ -221,7 +209,7 @@ R2Settings load_r2_settings(const std::filesystem::path& database) {
         || path_start == std::string::npos || path_start == authority_start
         || raw_url.find_first_of("?#", path_start) != std::string::npos) {
         throw std::runtime_error(
-            "Environment variable 'CHA_R2_URL' must be an absolute object URL "
+            "R2 key field 'url' must be an absolute bucket URL "
             "without a query or fragment");
     }
 
@@ -230,11 +218,11 @@ R2Settings load_r2_settings(const std::filesystem::path& database) {
     if (authority.find('@') != std::string::npos
         || authority.find_first_of(" \t\r\n") != std::string::npos) {
         throw std::runtime_error(
-            "Environment variable 'CHA_R2_URL' contains an invalid host");
+            "R2 key field 'url' contains an invalid host");
     }
     if (scheme == "http" && !is_loopback_host(authority)) {
         throw std::runtime_error(
-            "Environment variable 'CHA_R2_URL' must use HTTPS");
+            "R2 key field 'url' must use HTTPS");
     }
 
     std::string_view bucket_path =
@@ -246,17 +234,17 @@ R2Settings load_r2_settings(const std::filesystem::path& database) {
     if (bucket_uri.front() != '/' || bucket_uri.size() == 1
         || bucket_uri.find('/', 1) != std::string::npos) {
         throw std::runtime_error(
-            "Environment variable 'CHA_R2_URL' must end with one bucket name");
+            "R2 key field 'url' must end with one bucket name");
     }
     const std::string canonical_uri = bucket_uri + "/"
-        + encode_path_component(utf8_path(database.filename()));
+        + encode_path_component(object_name);
 
     return {
         .url = std::string(scheme) + "://" + authority + canonical_uri,
         .canonical_uri = canonical_uri,
         .host = authority,
-        .access_key = required_environment(r2_access_key_variable),
-        .secret_key = required_environment(r2_secret_key_variable),
+        .access_key = storage.access_key_id,
+        .secret_key = storage.secret_key,
     };
 }
 
@@ -397,12 +385,18 @@ void configure_request(
         "R2 " + std::string(operation) + " failed: " + detail);
 }
 
-void require_status(CurlHandle& curl, std::string_view operation) {
+void require_status(
+    CurlHandle& curl,
+    std::string_view operation,
+    std::string_view not_found_message = {}) {
     long status{};
     require_curl(
         curl_easy_getinfo(curl.get(), CURLINFO_RESPONSE_CODE, &status),
         "Failed to read R2 response status");
     if (status < 200 || status >= 300) {
+        if (status == 404 && !not_found_message.empty()) {
+            throw std::runtime_error(std::string(not_found_message));
+        }
         throw std::runtime_error(
             "R2 " + std::string(operation) + " failed with HTTP status "
             + std::to_string(status));
@@ -505,86 +499,98 @@ void remove_sidecars(const std::filesystem::path& database) {
     }
 }
 
-void publish_download(
-    TemporaryPath& temporary,
-    const std::filesystem::path& database) {
-    std::filesystem::path backup = database;
-    backup += ".bac";
-    const bool database_exists = regular_file_if_present(database);
-    const bool backup_exists = regular_file_if_present(backup);
-    const std::filesystem::path old_backup = unique_sibling(database, "backup");
-    bool backup_staged = false;
-    bool database_staged = false;
-    bool installed = false;
+void publish_downloads(
+    TemporaryPath& database_temporary,
+    TemporaryPath& vault_temporary,
+    const std::filesystem::path& database,
+    const std::filesystem::path& vault) {
+    std::array targets{database, vault};
+    std::array<TemporaryPath*, 2> temporaries{
+        &database_temporary, &vault_temporary};
+    std::array<std::filesystem::path, 2> backups;
+    std::array<std::filesystem::path, 2> old_backups;
+    std::array<bool, 2> target_exists{};
+    std::array<bool, 2> backup_exists{};
+    std::array<bool, 2> backup_staged{};
+    std::array<bool, 2> target_staged{};
+    std::array<bool, 2> installed{};
+
+    for (std::size_t index{}; index < targets.size(); ++index) {
+        backups[index] = targets[index];
+        backups[index] += ".bac";
+        target_exists[index] = regular_file_if_present(targets[index]);
+        backup_exists[index] = regular_file_if_present(backups[index]);
+        old_backups[index] = unique_sibling(targets[index], "backup");
+    }
 
     try {
-        if (database_exists && backup_exists) {
-            rename_path(backup, old_backup, "Failed to stage previous backup");
-            backup_staged = true;
+        for (std::size_t index{}; index < targets.size(); ++index) {
+            if (target_exists[index] && backup_exists[index]) {
+                rename_path(
+                    backups[index], old_backups[index],
+                    "Failed to stage previous backup");
+                backup_staged[index] = true;
+            }
         }
-        if (database_exists) {
-            rename_path(database, backup, "Failed to back up database");
-            database_staged = true;
+        for (std::size_t index{}; index < targets.size(); ++index) {
+            if (!target_exists[index]) continue;
+            rename_path(
+                targets[index], backups[index], "Failed to back up local file");
+            target_staged[index] = true;
         }
         remove_sidecars(database);
-        rename_path(
-            temporary.get(), database, "Failed to install downloaded database");
-        temporary.release();
-        installed = true;
-    } catch (...) {
-        std::error_code ignored;
-        if (!installed && database_staged) {
-            std::filesystem::rename(backup, database, ignored);
+        for (std::size_t index{}; index < targets.size(); ++index) {
+            rename_path(
+                temporaries[index]->get(), targets[index],
+                "Failed to install downloaded file");
+            temporaries[index]->release();
+            installed[index] = true;
         }
-        if (!installed && backup_staged) {
-            ignored.clear();
-            std::filesystem::rename(old_backup, backup, ignored);
+    } catch (...) {
+        for (std::size_t index = targets.size(); index-- > 0;) {
+            std::error_code ignored;
+            if (installed[index]) {
+                std::filesystem::remove(targets[index], ignored);
+            }
+            if (target_staged[index]) {
+                ignored.clear();
+                std::filesystem::rename(
+                    backups[index], targets[index], ignored);
+            }
+            if (backup_staged[index]) {
+                ignored.clear();
+                std::filesystem::rename(
+                    old_backups[index], backups[index], ignored);
+            }
         }
         throw;
     }
 
-    if (backup_staged) {
+    for (std::size_t index{}; index < targets.size(); ++index) {
+        if (!backup_staged[index]) continue;
         std::error_code ignored;
-        std::filesystem::remove(old_backup, ignored);
+        std::filesystem::remove(old_backups[index], ignored);
     }
     secure_workspace_session_database_files(database);
+    tighten_private_file(vault);
 }
 
-std::string busy_message(const std::filesystem::path& database) {
-    return "Database already in use: '" + utf8_path(database) + "'";
-}
-
-} // namespace
-
-R2DatabaseTransfer upload_database_to_r2(
-    const std::filesystem::path& database_path,
-    R2DatabaseLease lease_mode) {
-    const std::filesystem::path database = normalize_database_path(database_path);
-    std::optional<SessionLease> lease;
-    if (lease_mode == R2DatabaseLease::acquire) {
-        lease.emplace(SessionLease::acquire(database, busy_message(database)));
-    }
-
-    secure_workspace_session_database_files(database);
-    checkpoint_workspace_session_database(database);
-    if (inspect_workspace_session_database(database)
-        != WorkspaceDatabaseState::valid_v2) {
-        throw std::runtime_error(
-            "Cannot upload invalid CHA database '" + utf8_path(database) + "'");
-    }
-
-    const R2Settings settings = load_r2_settings(database);
-    const std::string payload_hash = sha256_file_hex(database);
-    const std::uintmax_t byte_count = std::filesystem::file_size(database);
+std::uintmax_t upload_file(
+    const std::filesystem::path& path,
+    std::string_view object_name,
+    std::string_view content_type,
+    const R2StorageKey& storage) {
+    const R2Settings settings = load_r2_settings(object_name, storage);
+    const std::string payload_hash = sha256_file_hex(path);
+    const std::uintmax_t byte_count = std::filesystem::file_size(path);
     if (byte_count
         > static_cast<std::uintmax_t>(
             std::numeric_limits<curl_off_t>::max())) {
-        throw std::runtime_error("Database is too large to upload to R2");
+        throw std::runtime_error("File is too large to upload to R2");
     }
-    std::ifstream input(database, std::ios::binary);
+    std::ifstream input(path, std::ios::binary);
     if (!input) {
-        throw std::runtime_error(
-            "Failed to read database '" + utf8_path(database) + "'");
+        throw std::runtime_error("Failed to read '" + utf8_path(path) + "'");
     }
 
     (void)curl_global();
@@ -592,7 +598,7 @@ R2DatabaseTransfer upload_database_to_r2(
     CurlHeaders headers;
     std::array<char, CURL_ERROR_SIZE> error{};
     configure_request(curl, headers, settings, "PUT", payload_hash, error);
-    headers.append("Content-Type: application/vnd.sqlite3");
+    headers.append("Content-Type: " + std::string(content_type));
     require_curl(
         curl_easy_setopt(curl.get(), CURLOPT_UPLOAD, 1L),
         "Failed to configure R2 upload");
@@ -614,32 +620,20 @@ R2DatabaseTransfer upload_database_to_r2(
     const CURLcode result = curl_easy_perform(curl.get());
     if (result != CURLE_OK) fail_transfer("upload", result, error);
     require_status(curl, "upload");
-    return {.byte_count = byte_count};
+    return byte_count;
 }
 
-R2DatabaseTransfer download_database_from_r2(
-    const std::filesystem::path& database_path,
-    R2DatabaseLease lease_mode) {
-    const std::filesystem::path database = normalize_database_path(database_path);
-    const std::filesystem::path parent = database.parent_path();
-    if (!std::filesystem::is_directory(parent)) {
-        throw std::runtime_error(
-            "Database parent '" + utf8_path(parent) + "' does not exist");
-    }
-    std::optional<SessionLease> lease;
-    if (lease_mode == R2DatabaseLease::acquire) {
-        lease.emplace(SessionLease::acquire(database, busy_message(database)));
-    }
-
-    const R2Settings settings = load_r2_settings(database);
-    TemporaryPath temporary(unique_sibling(database, "download"));
-    create_private_file(temporary.get(), {});
-    std::ofstream output(
-        temporary.get(), std::ios::binary | std::ios::trunc);
+std::uintmax_t download_file(
+    const std::filesystem::path& destination,
+    std::string_view object_name,
+    const R2StorageKey& storage,
+    std::string_view not_found_message = {}) {
+    const R2Settings settings = load_r2_settings(object_name, storage);
+    create_private_file(destination, {});
+    std::ofstream output(destination, std::ios::binary | std::ios::trunc);
     if (!output) {
         throw std::runtime_error(
-            "Failed to open temporary database '"
-            + utf8_path(temporary.get()) + "'");
+            "Failed to open temporary download '" + utf8_path(destination) + "'");
     }
 
     const std::string payload_hash = sha256_hex({});
@@ -663,22 +657,115 @@ R2DatabaseTransfer download_database_from_r2(
     if (result != CURLE_OK) fail_transfer("download", result, error);
     if (!output) {
         throw std::runtime_error(
-            "Failed to write downloaded database beside '"
-            + utf8_path(database) + "'");
+            "Failed to write temporary download '"
+            + utf8_path(destination) + "'");
     }
-    require_status(curl, "download");
-    tighten_private_file(temporary.get());
-    if (inspect_workspace_session_database(temporary.get())
+    require_status(curl, "download", not_found_message);
+    tighten_private_file(destination);
+    return std::filesystem::file_size(destination);
+}
+
+VaultDefinition require_matching_vault(
+    const std::filesystem::path& database,
+    const std::filesystem::path& vault) {
+    if (!regular_file_if_present(vault)) {
+        throw std::runtime_error(
+            "Vault definition '" + utf8_path(vault) + "' does not exist");
+    }
+    const VaultDefinition definition =
+        load_vault_definition_file(vault.parent_path(), vault);
+    if (definition.data != database) {
+        throw std::runtime_error(
+            "Vault definition '" + utf8_path(vault)
+            + "' does not name database '" + utf8_path(database) + "'");
+    }
+    return definition;
+}
+
+std::string busy_message(const std::filesystem::path& database) {
+    return "Database already in use: '" + utf8_path(database) + "'";
+}
+
+} // namespace
+
+R2DatabaseTransfer upload_database_to_r2(
+    const std::filesystem::path& database_path,
+    const std::filesystem::path& vault_definition_path,
+    const R2StorageKey& storage,
+    R2DatabaseLease lease_mode) {
+    const std::filesystem::path database = normalize_database_path(database_path);
+    const std::filesystem::path vault =
+        std::filesystem::absolute(vault_definition_path).lexically_normal();
+    std::optional<SessionLease> lease;
+    if (lease_mode == R2DatabaseLease::acquire) {
+        lease.emplace(SessionLease::acquire(database, busy_message(database)));
+    }
+
+    secure_workspace_session_database_files(database);
+    checkpoint_workspace_session_database(database);
+    if (inspect_workspace_session_database(database)
+        != WorkspaceDatabaseState::valid_v2) {
+        throw std::runtime_error(
+            "Cannot upload invalid CHA database '" + utf8_path(database) + "'");
+    }
+    (void)require_matching_vault(database, vault);
+
+    const std::string database_name = utf8_path(database.filename());
+    const std::uintmax_t vault_bytes = upload_file(
+        vault, database_name + ".toml", "application/toml", storage);
+    const std::uintmax_t database_bytes = upload_file(
+        database, database_name, "application/vnd.sqlite3", storage);
+    return {.byte_count = vault_bytes + database_bytes};
+}
+
+R2DatabaseTransfer download_database_from_r2(
+    const std::filesystem::path& database_path,
+    const std::filesystem::path& vault_definition_path,
+    const R2StorageKey& storage,
+    R2DatabaseLease lease_mode) {
+    const std::filesystem::path database = normalize_database_path(database_path);
+    const std::filesystem::path vault =
+        std::filesystem::absolute(vault_definition_path).lexically_normal();
+    const std::filesystem::path parent = database.parent_path();
+    if (!std::filesystem::is_directory(parent)) {
+        throw std::runtime_error(
+            "Database parent '" + utf8_path(parent) + "' does not exist");
+    }
+    std::optional<SessionLease> lease;
+    if (lease_mode == R2DatabaseLease::acquire) {
+        lease.emplace(SessionLease::acquire(database, busy_message(database)));
+    }
+
+    const VaultDefinition local = require_matching_vault(database, vault);
+    const std::string database_name = utf8_path(database.filename());
+    TemporaryPath database_temporary(unique_sibling(database, "download"));
+    TemporaryPath vault_temporary(unique_sibling(vault, "download"));
+    const std::string vault_object = database_name + ".toml";
+    const std::uintmax_t vault_bytes = download_file(
+        vault_temporary.get(), vault_object, storage,
+        "R2 vault definition object '" + vault_object
+            + "' was not found. The bucket may contain a legacy "
+              "database-only upload; upload with the current CHA version "
+              "before downloading.");
+    const std::uintmax_t database_bytes = download_file(
+        database_temporary.get(), database_name, storage);
+    if (inspect_workspace_session_database(database_temporary.get())
         != WorkspaceDatabaseState::valid_v2) {
         throw std::runtime_error(
             "R2 download is not a valid CHA database");
     }
+    const VaultDefinition downloaded = load_vault_definition_file(
+        vault.parent_path(), vault_temporary.get());
+    if (!same_vault_name(downloaded.name, local.name)
+        || downloaded.data != database) {
+        throw std::runtime_error(
+            "R2 vault definition does not match the selected local vault");
+    }
 
-    const std::uintmax_t byte_count =
-        std::filesystem::file_size(temporary.get());
-    remove_sidecars(temporary.get());
-    publish_download(temporary, database);
-    return {.byte_count = byte_count};
+    remove_sidecars(database_temporary.get());
+    publish_downloads(
+        database_temporary, vault_temporary, database, vault);
+    return {.byte_count = vault_bytes + database_bytes};
 }
 
 } // namespace cha::web

@@ -199,10 +199,12 @@ stay inside the provider interaction. Only the character's synthesized answer
 text enters the transcript.
 
 Provider secrets are managed on the Settings > API Keys screen and stored in
-`api-keys.json` in the application configuration directory. Provider configs
-contain only the selected key ID; they never read model credentials from the
-process environment or `.env`. OpenAI subscription credentials live in
-`openai-auth.json` in the same directory.
+the active vault database under `system/keys/api_key_N/config.toml`. Provider
+configs contain only the selected key ID; they never read model credentials
+from the process environment or `.env`. Keys are vault-specific and are
+included as plaintext TOML in workspace exports. OpenAI subscription
+credentials live in `openai-auth.json` in the application configuration
+directory.
 
 Normal startup takes the application root for installed `web/` assets from the
 executable directory, or from `--root`. Relative `data` and `logging.file` paths
@@ -249,19 +251,21 @@ database lease. To edit configuration:
 5. Restart CHA normally.
 
 The source or exported directory is never consulted by normal runtime. CHA
-materializes committed rows into one owner-private temporary tree. The only
-online configuration edits are a character's provider/style, a forum's default
-character, and a forum's default persona; each persists through SQLite before
-publication.
+materializes committed rows into one owner-private temporary tree. Supported
+Settings edits, including model and R2 credentials, persist through SQLite
+before publication.
 
 The database, rollback journal, WAL/SHM sidecars, companion lock, private
-runtime tree, `api-keys.json`, configuration-directory `.env`, and
-`openai-auth.json` must remain accessible only to their owner.
+runtime tree, workspace exports, legacy configuration-directory `.env` and
+`api-keys.json`, and `openai-auth.json` must remain accessible only to their owner.
 CHA enforces this for files it manages. Naively copying a live WAL database is
 unsafe; the R2 commands acquire the database lease, and upload checkpoints the
 WAL before transferring the main database file.
 
-R2 transfer configuration comes from three inherited environment variables:
+R2 transfer credentials are configured per vault under Settings > API Keys >
+R2 storage. They are stored with the other vault keys and therefore travel in
+exports and in the uploaded database. For migration, an empty vault can import
+the following inherited or configuration-directory `.env` values once:
 
 ```text
 CHA_R2_URL=https://ACCOUNT_ID.r2.cloudflarestorage.com/BUCKET
@@ -271,14 +275,16 @@ CHA_R2_SECRET_ACCESS_KEY=SECRET_ACCESS_KEY
 
 The bucket URL may optionally end with `/`.
 
-The R2 object key is always the configured database's filename. For example,
-`data = "/var/lib/cha/workspace.sqlite3"` uses `workspace.sqlite3` in the
-configured bucket. `--upload` validates the schema-v2 database and overwrites
-that object. `--download` first writes and validates a private temporary
-schema-v2 database. It then renames the current database to the same path with
-`.bac` appended, overwriting an older `.bac`, and atomically installs the
-download. HTTP failures and invalid downloads leave both the database and
-existing backup untouched. R2 requests use its S3-compatible API over HTTPS.
+R2 uses two object keys derived from the configured database filename. For
+example, `data = "/var/lib/cha/workspace.sqlite3"` uses `workspace.sqlite3`
+and `workspace.sqlite3.toml` in the configured bucket. `--upload` validates the
+schema-v2 database and its vault definition, then overwrites the vault object
+followed by the database object. R2 cannot atomically replace the pair; retry a
+failed upload before downloading. `--download` fetches and validates both files
+before replacing either, and keeps their previous versions with `.bac`
+appended. Buckets written by an older database-only upload require a current
+upload before they can be downloaded. R2 requests use its S3-compatible API
+over HTTPS.
 
 An invalid import does not change an existing database. Failed v1 upgrade
 leaves valid v1; failed v2 replacement leaves the previous complete config. A
@@ -359,12 +365,15 @@ installation:
 2. Adjust relative paths for the new base directory. For a root database this
    commonly changes `data = "cha.sqlite3"` to `data = "../cha.sqlite3"`; the
    database itself does not move.
-3. Move `.env` to the configuration directory if it contains R2 settings.
+3. Move `.env` and `api-keys.json` to the configuration directory when they
+   contain legacy credentials. Each empty vault imports them the first time it
+   is opened; the legacy files are left unchanged.
 4. Move `<database>.openai-auth.json` to
    `<config-directory>/openai-auth.json`, preserving private permissions, or
    sign in again.
 
-R2 object keys still come from database filenames.
+R2 object keys still come from database filenames; the companion vault object
+adds `.toml`.
 
 `CHA.app` performs its own setup. On first launch it creates an empty Default
 vault. Add model credentials from Settings > API Keys and select one in the

@@ -58,6 +58,10 @@ public:
 
     [[nodiscard]] VaultDefinition current_vault() const;
     [[nodiscard]] VaultRegistrySnapshot vault_snapshot() const;
+    [[nodiscard]] std::string api_key_value(std::string_view id) const;
+    [[nodiscard]] std::optional<std::string> api_key_value_by_name(
+        std::string_view display_name) const;
+    [[nodiscard]] bool has_r2_storage() const;
     [[nodiscard]] VaultDefinition create_vault(VaultCreate create);
     [[nodiscard]] VaultDefinition update_vault(
         std::string_view current_name,

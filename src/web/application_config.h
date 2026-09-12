@@ -67,6 +67,9 @@ struct ApplicationCommand {
 
 ConfigurationDirectory load_configuration_directory(
     const std::filesystem::path& directory);
+VaultDefinition load_vault_definition_file(
+    const std::filesystem::path& configuration_directory,
+    const std::filesystem::path& source);
 bool same_vault_name(std::string_view left, std::string_view right);
 const VaultDefinition* find_vault(
     const std::vector<VaultDefinition>& vaults, std::string_view name);

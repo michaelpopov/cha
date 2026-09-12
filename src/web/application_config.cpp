@@ -509,6 +509,12 @@ void bootstrap_configuration_directory(
 
 } // namespace
 
+VaultDefinition load_vault_definition_file(
+    const std::filesystem::path& configuration_directory,
+    const std::filesystem::path& source) {
+    return load_vault_definition(configuration_directory, source).definition;
+}
+
 bool same_vault_name(std::string_view left, std::string_view right) {
     return fold_ascii(left) == fold_ascii(right);
 }

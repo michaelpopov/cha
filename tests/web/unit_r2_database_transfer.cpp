@@ -4,60 +4,17 @@
 #include "session/workspace_session_database.h"
 #include "support/mock_http_server.h"
 #include "support/test_workspace.h"
-#include "util/environment.h"
 
 #include <gtest/gtest.h>
 
-#include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iterator>
-#include <optional>
 #include <string>
-#include <utility>
-#include <vector>
 
 namespace cha::web {
 namespace {
-
-class ScopedEnvironmentVariable {
-public:
-    explicit ScopedEnvironmentVariable(std::string name)
-        : name_(std::move(name)) {
-        if (const char* value = std::getenv(name_.c_str())) previous_ = value;
-    }
-
-    ~ScopedEnvironmentVariable() {
-        if (previous_) {
-            (void)set_environment_variable(name_, *previous_);
-        } else {
-            (void)unset_environment_variable(name_);
-        }
-    }
-
-private:
-    std::string name_;
-    std::optional<std::string> previous_;
-};
-
-class R2Environment {
-public:
-    explicit R2Environment(std::string url)
-        : url_("CHA_R2_URL"),
-          access_("CHA_R2_ACCESS_KEY_ID"),
-          secret_("CHA_R2_SECRET_ACCESS_KEY") {
-        EXPECT_TRUE(set_environment_variable("CHA_R2_URL", url));
-        EXPECT_TRUE(set_environment_variable(
-            "CHA_R2_ACCESS_KEY_ID", "test-access-key"));
-        EXPECT_TRUE(set_environment_variable(
-            "CHA_R2_SECRET_ACCESS_KEY", "test-secret-key"));
-    }
-
-private:
-    ScopedEnvironmentVariable url_;
-    ScopedEnvironmentVariable access_;
-    ScopedEnvironmentVariable secret_;
-};
 
 std::string file_bytes(const std::filesystem::path& path) {
     std::ifstream input(path, std::ios::binary);
@@ -75,36 +32,71 @@ std::string mock_url(int port) {
         + "/cha-backups/";
 }
 
-TEST(R2DatabaseTransfer, UploadsAStableDatabaseWithSignedPut) {
+R2StorageKey storage(std::string url) {
+    return {
+        .id = "api_key_1",
+        .display_name = "R2",
+        .url = std::move(url),
+        .access_key_id = "test-access-key",
+        .secret_key = "test-secret-key",
+    };
+}
+
+std::filesystem::path write_vault(
+    const std::filesystem::path& database,
+    std::string_view name = "Test") {
+    const std::filesystem::path path = database.parent_path() / "test.toml";
+    std::ofstream output(path);
+    output << "vault_name = " << std::quoted(std::string(name)) << "\n"
+           << "data = " << std::quoted(database.string()) << "\n";
+    return path;
+}
+
+TEST(R2DatabaseTransfer, UploadsDatabaseAndVaultDefinitionWithSignedPuts) {
     test::TestWorkspace workspace;
     const std::filesystem::path database =
         test::import_test_database(
             workspace.root(), workspace.root() / "workspace copy.sqlite3");
-    const std::string expected = file_bytes(database);
-    MockHttpServer server({http_response("application/xml", "")});
-    R2Environment environment(mock_url(server.port()));
+    const std::filesystem::path vault = write_vault(database);
+    const std::string expected_database = file_bytes(database);
+    const std::string expected_vault = file_bytes(vault);
+    MockHttpServer server({
+        http_response("application/xml", ""),
+        http_response("application/xml", ""),
+    });
+    const R2StorageKey key = storage(mock_url(server.port()));
     server.start();
 
-    const R2DatabaseTransfer result = upload_database_to_r2(database);
+    const R2DatabaseTransfer result =
+        upload_database_to_r2(database, vault, key);
     server.join();
 
-    EXPECT_EQ(result.byte_count, expected.size());
-    ASSERT_EQ(server.requests().size(), 1U);
-    const std::string& request = server.requests().front();
-    EXPECT_TRUE(request.starts_with(
+    EXPECT_EQ(
+        result.byte_count, expected_database.size() + expected_vault.size());
+    ASSERT_EQ(server.requests().size(), 2U);
+    const std::string& vault_request = server.requests()[0];
+    const std::string& database_request = server.requests()[1];
+    EXPECT_TRUE(vault_request.starts_with(
+        "PUT /cha-backups/workspace%20copy.sqlite3.toml HTTP/1.1"));
+    EXPECT_EQ(request_body(vault_request), expected_vault);
+    EXPECT_TRUE(database_request.starts_with(
         "PUT /cha-backups/workspace%20copy.sqlite3 HTTP/1.1"));
     EXPECT_NE(
-        request.find(
+        database_request.find(
             "Authorization: AWS4-HMAC-SHA256 Credential=test-access-key/"),
         std::string::npos);
-    EXPECT_NE(request.find("SignedHeaders=host;x-amz-content-sha256;x-amz-date"),
-              std::string::npos);
-    EXPECT_NE(request.find("x-amz-content-sha256:"), std::string::npos);
-    EXPECT_NE(request.find("x-amz-date:"), std::string::npos);
-    EXPECT_EQ(request_body(request), expected);
+    EXPECT_NE(
+        database_request.find(
+            "SignedHeaders=host;x-amz-content-sha256;x-amz-date"),
+        std::string::npos);
+    EXPECT_NE(
+        database_request.find("x-amz-content-sha256:"),
+        std::string::npos);
+    EXPECT_NE(database_request.find("x-amz-date:"), std::string::npos);
+    EXPECT_EQ(request_body(database_request), expected_database);
 }
 
-TEST(R2DatabaseTransfer, DownloadsValidDatabaseAndReplacesOlderBackup) {
+TEST(R2DatabaseTransfer, DownloadsBothFilesAndReplacesOlderBackups) {
     test::TestWorkspace local_workspace;
     test::TestWorkspace remote_workspace;
     remote_workspace.add_persona("remote", "Remote Persona");
@@ -112,81 +104,115 @@ TEST(R2DatabaseTransfer, DownloadsValidDatabaseAndReplacesOlderBackup) {
         test::import_test_database(local_workspace.root());
     const std::filesystem::path remote =
         test::import_test_database(remote_workspace.root());
+    const std::filesystem::path vault = write_vault(local);
     const std::string local_bytes = file_bytes(local);
     const std::string remote_bytes = file_bytes(remote);
-    std::filesystem::path backup = local;
-    backup += ".bac";
-    write_bytes(backup, "older backup");
+    const std::string remote_vault = file_bytes(vault);
+    std::filesystem::path database_backup = local;
+    database_backup += ".bac";
+    std::filesystem::path vault_backup = vault;
+    vault_backup += ".bac";
+    write_bytes(database_backup, "older database backup");
+    write_bytes(vault_backup, "older vault backup");
 
-    MockHttpServer server({http_response(
-        "application/vnd.sqlite3", remote_bytes)});
-    R2Environment environment(mock_url(server.port()));
+    MockHttpServer server({
+        http_response("application/toml", remote_vault),
+        http_response("application/vnd.sqlite3", remote_bytes),
+    });
+    const R2StorageKey key = storage(mock_url(server.port()));
     server.start();
 
-    const R2DatabaseTransfer result = download_database_from_r2(local);
+    const R2DatabaseTransfer result =
+        download_database_from_r2(local, vault, key);
     server.join();
 
-    EXPECT_EQ(result.byte_count, remote_bytes.size());
+    EXPECT_EQ(result.byte_count, remote_bytes.size() + remote_vault.size());
     EXPECT_EQ(file_bytes(local), remote_bytes);
-    EXPECT_EQ(file_bytes(backup), local_bytes);
+    EXPECT_EQ(file_bytes(vault), remote_vault);
+    EXPECT_EQ(file_bytes(database_backup), local_bytes);
+    EXPECT_EQ(file_bytes(vault_backup), remote_vault);
     EXPECT_EQ(
         inspect_workspace_session_database(local),
         WorkspaceDatabaseState::valid_v2);
-    ASSERT_EQ(server.requests().size(), 1U);
-    EXPECT_TRUE(server.requests().front().starts_with(
+    ASSERT_EQ(server.requests().size(), 2U);
+    EXPECT_TRUE(server.requests()[0].starts_with(
+        "GET /cha-backups/workspace.sqlite3.toml HTTP/1.1"));
+    EXPECT_TRUE(server.requests()[1].starts_with(
         "GET /cha-backups/workspace.sqlite3 HTTP/1.1"));
-    EXPECT_NE(
-        server.requests().front().find(
-            "Authorization: AWS4-HMAC-SHA256 Credential=test-access-key/"),
-        std::string::npos);
 }
 
-TEST(R2DatabaseTransfer, InvalidDownloadLeavesDatabaseAndBackupUntouched) {
+TEST(R2DatabaseTransfer, InvalidDownloadLeavesBothFilesAndBackupsUntouched) {
     test::TestWorkspace workspace;
     const std::filesystem::path database =
         test::import_test_database(workspace.root());
-    const std::string original = file_bytes(database);
-    std::filesystem::path backup = database;
-    backup += ".bac";
-    write_bytes(backup, "existing backup");
+    const std::filesystem::path vault = write_vault(database);
+    const std::string original_database = file_bytes(database);
+    const std::string original_vault = file_bytes(vault);
+    std::filesystem::path database_backup = database;
+    database_backup += ".bac";
+    std::filesystem::path vault_backup = vault;
+    vault_backup += ".bac";
+    write_bytes(database_backup, "existing database backup");
+    write_bytes(vault_backup, "existing vault backup");
 
-    MockHttpServer server({http_response(
-        "application/octet-stream", "not a sqlite database")});
-    R2Environment environment(mock_url(server.port()));
+    MockHttpServer server({
+        http_response("application/toml", original_vault),
+        http_response("application/octet-stream", "not a sqlite database"),
+    });
+    const R2StorageKey key = storage(mock_url(server.port()));
     server.start();
 
     EXPECT_THROW(
-        (void)download_database_from_r2(database),
+        (void)download_database_from_r2(database, vault, key),
         std::runtime_error);
     server.join();
 
-    EXPECT_EQ(file_bytes(database), original);
-    EXPECT_EQ(file_bytes(backup), "existing backup");
+    EXPECT_EQ(file_bytes(database), original_database);
+    EXPECT_EQ(file_bytes(vault), original_vault);
+    EXPECT_EQ(file_bytes(database_backup), "existing database backup");
+    EXPECT_EQ(file_bytes(vault_backup), "existing vault backup");
 }
 
-TEST(R2DatabaseTransfer, RejectsMissingCredentialsAndAnActiveLease) {
+TEST(R2DatabaseTransfer, ExplainsMissingVaultObjectFromLegacyUploads) {
     test::TestWorkspace workspace;
     const std::filesystem::path database =
         test::import_test_database(workspace.root());
-    ScopedEnvironmentVariable url("CHA_R2_URL");
-    ScopedEnvironmentVariable access("CHA_R2_ACCESS_KEY_ID");
-    ScopedEnvironmentVariable secret("CHA_R2_SECRET_ACCESS_KEY");
-    ASSERT_TRUE(unset_environment_variable("CHA_R2_URL"));
-    ASSERT_TRUE(unset_environment_variable("CHA_R2_ACCESS_KEY_ID"));
-    ASSERT_TRUE(unset_environment_variable("CHA_R2_SECRET_ACCESS_KEY"));
+    const std::filesystem::path vault = write_vault(database);
+    MockHttpServer server({
+        "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n"
+        "Connection: close\r\n\r\n",
+    });
+    const R2StorageKey key = storage(mock_url(server.port()));
+    server.start();
 
     try {
-        (void)upload_database_to_r2(database);
-        FAIL() << "expected missing environment to fail";
+        (void)download_database_from_r2(database, vault, key);
+        FAIL() << "expected a missing vault object to fail";
     } catch (const std::runtime_error& error) {
         EXPECT_NE(
-            std::string(error.what()).find("CHA_R2_URL"),
+            std::string(error.what()).find("legacy database-only upload"),
             std::string::npos);
+    }
+    server.join();
+}
+
+TEST(R2DatabaseTransfer, RejectsInvalidR2KeyAndAnActiveLease) {
+    test::TestWorkspace workspace;
+    const std::filesystem::path database =
+        test::import_test_database(workspace.root());
+    const std::filesystem::path vault = write_vault(database);
+    R2StorageKey invalid = storage("");
+
+    try {
+        (void)upload_database_to_r2(database, vault, invalid);
+        FAIL() << "expected invalid R2 URL to fail";
+    } catch (const std::runtime_error& error) {
+        EXPECT_NE(std::string(error.what()).find("url"), std::string::npos);
     }
 
     SessionLease lease = SessionLease::acquire(database, "held by test");
     EXPECT_THROW(
-        (void)download_database_from_r2(database),
+        (void)download_database_from_r2(database, vault, invalid),
         SessionBusyError);
 }
 

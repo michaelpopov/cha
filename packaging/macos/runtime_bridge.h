@@ -37,7 +37,7 @@ int32_t cha_runtime_voice_input_keyword_count(const ChaRuntime* runtime);
 const char* cha_runtime_voice_input_keyword(
     const ChaRuntime* runtime,
     int32_t index);
-// Returns null unless api-keys.json contains one key named
+// Returns null unless the active vault contains one model key named
 // ELEVENLABS_API_KEY. This credential is consumed only by the macOS shell.
 const char* cha_runtime_text_to_speech_api_key(const ChaRuntime* runtime);
 const char* cha_runtime_text_to_speech_model(const ChaRuntime* runtime);

@@ -14,6 +14,7 @@ import {
   NewVaultScreen,
   NewVoiceScreen,
   ProviderScreen,
+  R2StorageScreen,
   SettingsNavigation,
   StyleScreen,
   VaultScreen,
@@ -237,6 +238,84 @@ describe('Settings screens', () => {
       type: 'inspect-api-key', apiKeyId: 'api_key_1', apiKeyName: 'OpenRouter',
     });
     expect(screen.getByLabelText('API key')).toHaveValue('');
+  });
+
+  it('creates R2 credentials without retaining the secret on screen', async () => {
+    const saveR2Storage = vi.fn(async ({ display_name, url, access_key_id }) => ({
+      id: 'api_key_1', display_name, url, access_key_id, has_secret_key: true,
+    }));
+    render(
+      <R2StorageScreen
+        client={fixtureClient({ getR2Storage: async () => null, saveR2Storage })}
+        dispatch={vi.fn()}
+        sessionReport={null}
+        state={initialAppState}
+      />,
+    );
+
+    const r2Url = await screen.findByLabelText('R2 URL');
+    expect(screen.queryByLabelText('Name')).not.toBeInTheDocument();
+    expect(screen.queryByText('R2 credentials')).not.toBeInTheDocument();
+    expect(screen.queryByText(/These credentials are stored/)).not.toBeInTheDocument();
+    await userEvent.type(r2Url, 'https://account.example/bucket');
+    await userEvent.type(screen.getByLabelText('Access key ID'), 'access-id');
+    await userEvent.type(screen.getByLabelText('Secret key'), 'private-secret');
+    await userEvent.click(screen.getByRole('button', { name: 'Save R2 credentials' }));
+
+    expect(saveR2Storage).toHaveBeenCalledWith({
+      display_name: 'R2',
+      url: 'https://account.example/bucket',
+      access_key_id: 'access-id',
+      secret_key: 'private-secret',
+    });
+    expect(screen.getByLabelText('Secret key')).toHaveValue('');
+  });
+
+  it('updates R2 metadata without replacing its secret and can remove it', async () => {
+    const detail = {
+      id: 'api_key_4',
+      display_name: 'Backups',
+      url: 'https://old.example/bucket',
+      access_key_id: 'access-id',
+      has_secret_key: true,
+    };
+    const saveR2Storage = vi.fn(async (request) => ({
+      ...detail,
+      ...request,
+      has_secret_key: true,
+    }));
+    const deleteR2Storage = vi.fn(async () => undefined);
+    const dispatch = vi.fn();
+    render(
+      <R2StorageScreen
+        client={fixtureClient({
+          getR2Storage: async () => detail,
+          saveR2Storage,
+          deleteR2Storage,
+        })}
+        dispatch={dispatch}
+        sessionReport={null}
+        state={initialAppState}
+      />,
+    );
+
+    const url = await screen.findByLabelText('R2 URL');
+    await userEvent.clear(url);
+    await userEvent.type(url, 'https://new.example/bucket');
+    await userEvent.click(screen.getByRole('button', { name: 'Save R2 credentials' }));
+    expect(saveR2Storage).toHaveBeenCalledWith({
+      display_name: 'Backups',
+      url: 'https://new.example/bucket',
+      access_key_id: 'access-id',
+      secret_key: null,
+    });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Remove R2 credentials' }));
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole(
+      'button', { name: 'Remove R2 credentials' },
+    ));
+    expect(deleteR2Storage).toHaveBeenCalledOnce();
+    expect(dispatch).toHaveBeenCalledWith({ type: 'show-settings-api-keys' });
   });
 
   it('stores a saved-key reference in a provider', async () => {
@@ -973,17 +1052,20 @@ describe('Settings screens', () => {
   });
 
   it('lists locally saved keys with provider usage', async () => {
+    const dispatch = vi.fn();
     render(
       <ApiKeysScreen
         client={fixtureClient({ listApiKeys: async () => [{
           id: 'api_key_1', display_name: 'Google', has_value: true, used_by: ['Gemini'],
         }] })}
-        dispatch={vi.fn()}
+        dispatch={dispatch}
         sessionReport={null}
         state={initialAppState}
       />,
     );
     expect(await screen.findByRole('button', { name: /Google/ })).toHaveTextContent('Used by Gemini');
+    await userEvent.click(screen.getByRole('button', { name: /R2 storage/ }));
+    expect(dispatch).toHaveBeenCalledWith({ type: 'show-settings-r2-storage' });
   });
 
   it('removes a saved API key after an in-page confirmation', async () => {

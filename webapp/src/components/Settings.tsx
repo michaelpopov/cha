@@ -14,6 +14,7 @@ import {
   type ProviderDetail,
   type ProviderSummary,
   type ProviderUpdate,
+  type R2StorageDetail,
   type StyleDetail,
   type StyleUpdate,
   type VoiceDetail,
@@ -115,7 +116,7 @@ export function SettingsNavigation({ dispatch }: { dispatch: Dispatch<AppAction>
           onClick={() => dispatch({ type: 'show-settings-voices' })}
         />
         <SettingsRow
-          description="Secrets saved locally on this device"
+          description="Model and R2 credentials stored in each vault"
           icon={<KeyIcon />}
           label="API Keys"
           onClick={() => dispatch({ type: 'show-settings-api-keys' })}
@@ -1303,7 +1304,118 @@ export function ApiKeysScreen({ client, dispatch, sessionReport }: SettingsScree
       {sessionReport}
       {keys === null && !error && <p className="cha-state-message" role="status">Loading API keys…</p>}
       {error && <LoadFailure message={error} retry={() => setRevision((value) => value + 1)} />}
-      {keys && <div className="cha-list"><SettingsRow description="Save a secret on this device" icon={<PlusIcon />} label="New API key" onClick={() => dispatch({ type: 'show-settings-new-api-key' })} />{keys.length === 0 && <p className="cha-empty-list">No API keys saved</p>}{keys.map((key) => <SettingsRow description={key.used_by.length ? `Used by ${key.used_by.join(', ')}` : 'Saved locally · Not in use'} icon={<KeyIcon />} key={key.id} label={key.display_name} onClick={() => dispatch({ type: 'inspect-api-key', apiKeyId: key.id, apiKeyName: key.display_name })} />)}</div>}
+      {keys && <div className="cha-list"><SettingsRow description="Configure database upload and download" icon={<DatabaseIcon />} label="R2 storage" onClick={() => dispatch({ type: 'show-settings-r2-storage' })} /><SettingsRow description="Save a model-service secret in this vault" icon={<PlusIcon />} label="New API key" onClick={() => dispatch({ type: 'show-settings-new-api-key' })} />{keys.length === 0 && <p className="cha-empty-list">No model API keys saved</p>}{keys.map((key) => <SettingsRow description={key.used_by.length ? `Used by ${key.used_by.join(', ')}` : 'Saved in this vault · Not in use'} icon={<KeyIcon />} key={key.id} label={key.display_name} onClick={() => dispatch({ type: 'inspect-api-key', apiKeyId: key.id, apiKeyName: key.display_name })} />)}</div>}
+    </section>
+  );
+}
+
+interface R2Draft {
+  url: string;
+  access_key_id: string;
+  secret_key: string;
+}
+
+function r2Draft(detail: R2StorageDetail | null): R2Draft {
+  return {
+    url: detail?.url ?? '',
+    access_key_id: detail?.access_key_id ?? '',
+    secret_key: '',
+  };
+}
+
+export function R2StorageScreen({ client, dispatch, sessionReport }: SettingsScreenProps) {
+  const [detail, setDetail] = useState<R2StorageDetail | null | undefined>(undefined);
+  const [draft, setDraft] = useState<R2Draft>(() => r2Draft(null));
+  const [busy, setBusy] = useState<'save' | 'delete' | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [revision, setRevision] = useState(0);
+
+  useEffect(() => {
+    let current = true;
+    setDetail(undefined);
+    setError(null);
+    void client.getR2Storage().then(
+      (loaded) => {
+        if (!current) return;
+        setDetail(loaded);
+        setDraft(r2Draft(loaded));
+      },
+      (failure: unknown) => {
+        if (current) setError(publicErrorMessage(
+          failure, 'R2 storage credentials could not be loaded.',
+        ));
+      },
+    );
+    return () => { current = false; };
+  }, [client, revision]);
+
+  function change(field: keyof R2Draft, value: string) {
+    setDraft((current) => ({ ...current, [field]: value }));
+  }
+
+  const original = r2Draft(detail ?? null);
+  const dirty = draft.url !== original.url
+    || draft.access_key_id !== original.access_key_id
+    || Boolean(draft.secret_key);
+  const valid = Boolean(
+    draft.url.trim()
+    && draft.access_key_id.trim()
+    && (detail || draft.secret_key),
+  );
+
+  async function save(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!valid || !dirty || busy) return;
+    setBusy('save');
+    setError(null);
+    try {
+      const saved = await client.saveR2Storage({
+        display_name: detail?.display_name ?? 'R2',
+        url: draft.url.trim(),
+        access_key_id: draft.access_key_id.trim(),
+        secret_key: draft.secret_key || null,
+      });
+      setDetail(saved);
+      setDraft(r2Draft(saved));
+    } catch (failure: unknown) {
+      setError(publicErrorMessage(failure, 'R2 storage credentials could not be saved.'));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function remove() {
+    setConfirming(false);
+    if (!detail || busy) return;
+    setBusy('delete');
+    setError(null);
+    try {
+      await client.deleteR2Storage();
+      dispatch({ type: 'show-settings-api-keys' });
+    } catch (failure: unknown) {
+      setError(publicErrorMessage(failure, 'R2 storage credentials could not be removed.'));
+      setBusy(null);
+    }
+  }
+
+  return (
+    <section className="cha-screen cha-navigation" aria-label="R2 storage settings">
+      <button className="cha-back-row" onClick={() => dispatch({ type: 'show-settings-api-keys' })} type="button"><ChevronLeftIcon /><span>API Keys</span></button>
+      {sessionReport}
+      {detail === undefined && !error && <p className="cha-state-message" role="status">Loading R2 storage credentials…</p>}
+      {error && detail === undefined && <LoadFailure message={error} retry={() => setRevision((value) => value + 1)} />}
+      {detail !== undefined && <form className="cha-settings-form" onSubmit={(event) => void save(event)}>
+        <fieldset disabled={busy !== null}>
+          <label>R2 URL<input autoComplete="off" autoFocus className="cha-form-control" onChange={(event) => change('url', event.target.value)} placeholder="https://account.r2.cloudflarestorage.com/bucket" type="url" value={draft.url} /></label>
+          <label>Access key ID<input autoComplete="off" className="cha-form-control" onChange={(event) => change('access_key_id', event.target.value)} placeholder="Paste access key ID" value={draft.access_key_id} /></label>
+          <label>Secret key<input autoComplete="off" className="cha-form-control" onChange={(event) => change('secret_key', event.target.value)} placeholder={detail ? 'Leave blank to keep the current secret' : 'Paste secret key'} type="password" value={draft.secret_key} /></label>
+        </fieldset>
+        {error && <p className="cha-error-message" role="alert">{error}</p>}
+        <div className="cha-settings-form-actions"><button className="cha-button cha-button-ghost" disabled={!dirty || busy !== null} onClick={() => setDraft(r2Draft(detail))} type="button">Reset</button><button className="cha-button cha-button-primary" disabled={!dirty || !valid || busy !== null} type="submit">{busy === 'save' ? 'Saving…' : 'Save R2 credentials'}</button></div>
+        {detail && <div className="cha-settings-form-actions"><button className="cha-button cha-button-danger" disabled={busy !== null} onClick={() => setConfirming(true)} type="button">{busy === 'delete' ? 'Removing…' : 'Remove R2 credentials'}</button></div>}
+      </form>}
+      {confirming && <ConfirmDialog confirmLabel="Remove R2 credentials" message="Remove R2 storage credentials from this vault? Database upload and download will stop working." onCancel={() => setConfirming(false)} onConfirm={() => void remove()} title="Remove R2 credentials?" />}
     </section>
   );
 }
@@ -1333,7 +1445,7 @@ export function NewApiKeyScreen({ client, dispatch, sessionReport }: SettingsScr
       {sessionReport}
       <form className="cha-settings-form" onSubmit={(event) => void save(event)}>
         <fieldset disabled={saving}><legend>Key details</legend><TransliteratingInput autoFocus autoComplete="off" className="cha-form-control" id="cha-new-api-key-name" label="Name" onValueChange={setName} placeholder="e.g. OpenRouter" value={name} /><label>API key<input autoComplete="off" className="cha-form-control" onChange={(event) => setValue(event.target.value)} placeholder="Paste key" type="password" value={value} /></label></fieldset>
-        <p className="cha-settings-note">The value is stored only in the local application config and is never returned to the browser.</p>
+        <p className="cha-settings-note">The value is stored in this vault and is never returned to the browser.</p>
         {error && <p className="cha-error-message" role="alert">{error}</p>}
         <div className="cha-settings-form-actions"><button className="cha-button cha-button-ghost" disabled={saving} onClick={() => dispatch({ type: 'show-settings-api-keys' })} type="button">Cancel</button><button className="cha-button cha-button-primary" disabled={!name.trim() || !value || saving} type="submit">{saving ? 'Saving…' : 'Save API key'}</button></div>
       </form>
@@ -1404,7 +1516,7 @@ export function ApiKeyScreen({ client, dispatch, sessionReport, state }: Setting
       {confirming && (
         <ConfirmDialog
           confirmLabel="Remove API key"
-          message={`Remove “${state.inspectedApiKeyName ?? 'this key'}” from this device? Features using it will stop authenticating.`}
+          message={`Remove “${state.inspectedApiKeyName ?? 'this key'}” from this vault? Features using it will stop authenticating.`}
           onCancel={() => setConfirming(false)}
           onConfirm={() => void remove()}
           title="Remove API key?"

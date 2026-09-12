@@ -2,6 +2,7 @@
 
 #include "characters/character_config.h"
 #include "chat/character.h"
+#include "providers/credentials.h"
 #include "session/session_lease.h"
 
 #include <cstddef>
@@ -174,6 +175,22 @@ public:
         std::string_view elevenlabs_voice_id);
     WorkspaceConfigEditResult apply_voice_delete(
         std::string_view voice_id);
+    void apply_api_key_create(
+        std::string_view id,
+        std::string_view display_name,
+        std::string_view value);
+    void apply_api_key_update(
+        std::string_view id,
+        std::string_view display_name,
+        std::string_view value);
+    void apply_api_key_delete(std::string_view id);
+    void apply_r2_storage_create(const R2StorageKey& key);
+    void apply_r2_storage_update(const R2StorageKey& key);
+    void apply_r2_storage_delete();
+    void apply_key_migration(
+        std::span<const SavedApiKey> api_keys,
+        const std::optional<R2StorageKey>& r2_storage,
+        std::uint64_t next_id);
 
 private:
     struct Impl;

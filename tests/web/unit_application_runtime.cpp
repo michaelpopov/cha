@@ -195,8 +195,12 @@ TEST(ApplicationRuntime, ExposesLegacyNamedCredentialsAsSavedApiKeys) {
     const std::filesystem::path database =
         test::import_test_database(workspace.root());
     const ApplicationCommand command = make_command(workspace, database);
-    ApiKeyStore key_store(command.config_directory / "api-keys.json");
-    const ApiKeyInfo key = key_store.create("OPENAI_API_KEY", "saved-secret");
+    ApiKeyInfo key;
+    {
+        auto config = WorkspaceConfigStore::open(database);
+        ApiKeyStore key_store(*config);
+        key = key_store.create("OPENAI_API_KEY", "saved-secret");
+    }
 
     auto runtime = ApplicationRuntime::open(command, "private-test-token");
     const int port = runtime->start();
@@ -225,8 +229,12 @@ TEST(ApplicationRuntime, ReportsVoiceInputApiKeyUsage) {
     const std::filesystem::path database =
         test::import_test_database(workspace.root());
     ApplicationCommand command = make_command(workspace, database);
-    ApiKeyStore key_store(command.config_directory / "api-keys.json");
-    const ApiKeyInfo key = key_store.create("OpenAI", "voice-secret");
+    ApiKeyInfo key;
+    {
+        auto config = WorkspaceConfigStore::open(database);
+        ApiKeyStore key_store(*config);
+        key = key_store.create("OpenAI", "voice-secret");
+    }
     command.voice_input = VoiceInputConfig{
         .api_key_id = key.id,
     };
@@ -303,7 +311,7 @@ TEST(ApplicationRuntime, PreservesOpenRouterTargetsForLegacyProviderUpdates) {
     runtime->shutdown();
 }
 
-TEST(ApplicationRuntime, StoresApiKeysLocallyAndReferencesThemFromProviders) {
+TEST(ApplicationRuntime, StoresApiKeysInTheVaultAndReferencesThemFromProviders) {
     test::TestWorkspace workspace;
     workspace.write_style(
         "serif",
@@ -329,8 +337,9 @@ TEST(ApplicationRuntime, StoresApiKeysLocallyAndReferencesThemFromProviders) {
     const nlohmann::json key = nlohmann::json::parse(created->body);
     EXPECT_EQ(key.at("id"), "api_key_1");
     EXPECT_TRUE(key.at("has_value"));
-    EXPECT_TRUE(std::filesystem::is_regular_file(
+    EXPECT_FALSE(std::filesystem::exists(
         command.config_directory / "api-keys.json"));
+    ASSERT_NE(getws()->find_api_key("api_key_1"), nullptr);
 
     const auto provider_result = client.Get(
         "/api/v1/providers/test", kRuntimeCookie);
@@ -618,6 +627,62 @@ TEST(ApplicationRuntime, StoresApiKeysLocallyAndReferencesThemFromProviders) {
     runtime->shutdown();
 }
 
+TEST(ApplicationRuntime, ManagesR2CredentialsThroughSettingsRoutes) {
+    ScopedEnvironmentVariable url_environment("CHA_R2_URL");
+    ScopedEnvironmentVariable access_environment("CHA_R2_ACCESS_KEY_ID");
+    ScopedEnvironmentVariable secret_environment("CHA_R2_SECRET_ACCESS_KEY");
+    ASSERT_TRUE(unset_environment_variable("CHA_R2_URL"));
+    ASSERT_TRUE(unset_environment_variable("CHA_R2_ACCESS_KEY_ID"));
+    ASSERT_TRUE(unset_environment_variable("CHA_R2_SECRET_ACCESS_KEY"));
+
+    test::TestWorkspace workspace;
+    const std::filesystem::path database =
+        test::import_test_database(workspace.root());
+    const ApplicationCommand command = make_command(workspace, database);
+    auto runtime = ApplicationRuntime::open(command, "private-test-token");
+    const int port = runtime->start();
+    httplib::Client client("127.0.0.1", port);
+
+    const auto absent = client.Get("/api/v1/r2-storage", kRuntimeCookie);
+    ASSERT_TRUE(absent);
+    ASSERT_EQ(absent->status, 200) << absent->body;
+    EXPECT_TRUE(nlohmann::json::parse(absent->body).is_null());
+
+    const auto created = client.Put(
+        "/api/v1/r2-storage",
+        kRuntimeCookie,
+        R"({"display_name":"Backups","url":"https://account.example/bucket","access_key_id":"access-one","secret_key":"private-secret"})",
+        "application/json");
+    ASSERT_TRUE(created);
+    ASSERT_EQ(created->status, 200) << created->body;
+    const nlohmann::json created_json = nlohmann::json::parse(created->body);
+    EXPECT_EQ(created_json.at("id"), "api_key_1");
+    EXPECT_EQ(created_json.at("display_name"), "Backups");
+    EXPECT_TRUE(created_json.at("has_secret_key"));
+    EXPECT_EQ(created->body.find("private-secret"), std::string::npos);
+    ASSERT_TRUE(getws()->r2_storage());
+    EXPECT_EQ(getws()->r2_storage()->secret_key, "private-secret");
+
+    const auto updated = client.Put(
+        "/api/v1/r2-storage",
+        kRuntimeCookie,
+        R"({"display_name":"R2","url":"https://new.example/bucket","access_key_id":"access-two","secret_key":null})",
+        "application/json");
+    ASSERT_TRUE(updated);
+    ASSERT_EQ(updated->status, 200) << updated->body;
+    EXPECT_EQ(getws()->r2_storage()->url, "https://new.example/bucket");
+    EXPECT_EQ(getws()->r2_storage()->access_key_id, "access-two");
+    EXPECT_EQ(getws()->r2_storage()->secret_key, "private-secret");
+
+    const auto removed = client.Delete(
+        "/api/v1/r2-storage", kRuntimeCookie, "{}", "application/json");
+    ASSERT_TRUE(removed);
+    EXPECT_EQ(removed->status, 204) << removed->body;
+    EXPECT_FALSE(runtime->has_r2_storage());
+
+    runtime->shutdown();
+}
+
 TEST(ApplicationRuntime, UploadsInProcessAndResumesAnOpenSession) {
     ScopedEnvironmentVariable url("CHA_R2_URL");
     ScopedEnvironmentVariable access("CHA_R2_ACCESS_KEY_ID");
@@ -625,7 +690,10 @@ TEST(ApplicationRuntime, UploadsInProcessAndResumesAnOpenSession) {
     test::TestWorkspace workspace;
     const std::filesystem::path database =
         test::import_test_database(workspace.root());
-    MockHttpServer r2({http_response("application/xml", "")});
+    MockHttpServer r2({
+        http_response("application/xml", ""),
+        http_response("application/xml", ""),
+    });
     ASSERT_TRUE(set_environment_variable(
         "CHA_R2_URL",
         "http://127.0.0.1:" + std::to_string(r2.port()) + "/backups"));
@@ -658,8 +726,10 @@ TEST(ApplicationRuntime, UploadsInProcessAndResumesAnOpenSession) {
     const R2DatabaseTransfer transferred = runtime->upload_database();
     r2.join();
     EXPECT_GT(transferred.byte_count, 0U);
-    ASSERT_EQ(r2.requests().size(), 1U);
-    EXPECT_TRUE(r2.requests().front().starts_with(
+    ASSERT_EQ(r2.requests().size(), 2U);
+    EXPECT_TRUE(r2.requests()[0].starts_with(
+        "PUT /backups/workspace.sqlite3.toml HTTP/1.1"));
+    EXPECT_TRUE(r2.requests()[1].starts_with(
         "PUT /backups/workspace.sqlite3 HTTP/1.1"));
 
     const auto reopened = client.Post(
@@ -676,20 +746,36 @@ TEST(ApplicationRuntime, DownloadsInProcessAndPublishesTheNewWorkspace) {
     test::TestWorkspace local_workspace;
     test::TestWorkspace remote_workspace;
     remote_workspace.add_persona("remote", "Remote Persona");
+    remote_workspace.add_forum("remote-forum", "Remote Forum", "guide");
     const std::filesystem::path local =
         test::import_test_database(local_workspace.root());
     const std::filesystem::path remote =
         test::import_test_database(remote_workspace.root());
-    MockHttpServer r2({http_response(
-        "application/vnd.sqlite3", file_bytes(remote))});
+    const ApplicationCommand command = make_command(local_workspace, local);
+    const std::filesystem::path remote_mirror =
+        local_workspace.root() / "downloaded-mirror";
+    const std::filesystem::path remote_modify =
+        local_workspace.root() / "downloaded-modify";
+    std::filesystem::create_directories(remote_mirror);
+    std::filesystem::create_directories(remote_modify);
+    const std::filesystem::path remote_vault =
+        local_workspace.root() / "downloaded-vault.toml";
+    std::ofstream(remote_vault)
+        << "vault_name = \"Test\"\n"
+        << "data = " << std::quoted(local.string()) << "\n"
+        << "mirror = " << std::quoted(remote_mirror.string()) << "\n"
+        << "modify = " << std::quoted(remote_modify.string()) << "\n";
+    MockHttpServer r2({
+        http_response("application/toml", file_bytes(remote_vault)),
+        http_response("application/vnd.sqlite3", file_bytes(remote)),
+    });
     ASSERT_TRUE(set_environment_variable(
         "CHA_R2_URL",
         "http://127.0.0.1:" + std::to_string(r2.port()) + "/backups"));
     ASSERT_TRUE(set_environment_variable("CHA_R2_ACCESS_KEY_ID", "access"));
     ASSERT_TRUE(set_environment_variable("CHA_R2_SECRET_ACCESS_KEY", "secret"));
 
-    auto runtime = ApplicationRuntime::open(
-        make_command(local_workspace, local), "private-test-token");
+    auto runtime = ApplicationRuntime::open(command, "private-test-token");
     const int port = runtime->start();
     r2.start();
     const R2DatabaseTransfer transferred = runtime->download_database();
@@ -709,6 +795,18 @@ TEST(ApplicationRuntime, DownloadsInProcessAndPublishesTheNewWorkspace) {
     EXPECT_TRUE(std::ranges::any_of(personas, [](const auto& persona) {
         return persona.at("id") == "remote";
     }));
+    const VaultDefinition current = runtime->current_vault();
+    const std::filesystem::path normalized_mirror =
+        std::filesystem::weakly_canonical(remote_mirror);
+    const std::filesystem::path normalized_modify =
+        std::filesystem::weakly_canonical(remote_modify);
+    EXPECT_EQ(current.mirror, normalized_mirror);
+    EXPECT_EQ(current.modify, normalized_modify);
+    EXPECT_TRUE(std::filesystem::is_directory(remote_mirror / "Remote Forum"));
+    const VaultRegistrySnapshot vaults = runtime->vault_snapshot();
+    ASSERT_EQ(vaults.vaults.size(), 1U);
+    EXPECT_EQ(vaults.vaults.front().mirror, normalized_mirror);
+    EXPECT_EQ(vaults.vaults.front().modify, normalized_modify);
     runtime->shutdown();
 }
 
@@ -785,7 +883,10 @@ TEST(ApplicationRuntime, AFailedReopenIsFatalAndRefusesLaterTransfers) {
     test::TestWorkspace workspace;
     const std::filesystem::path database =
         test::import_test_database(workspace.root());
-    MockHttpServer r2({http_response("application/xml", "")});
+    MockHttpServer r2({
+        http_response("application/xml", ""),
+        http_response("application/xml", ""),
+    });
     ASSERT_TRUE(set_environment_variable(
         "CHA_R2_URL",
         "http://127.0.0.1:" + std::to_string(r2.port()) + "/backups"));
@@ -898,7 +999,10 @@ TEST(ApplicationRuntime, UploadsTheDatabaseWithoutTheAuthFile) {
         test::import_test_database(workspace.root());
     const ApplicationCommand command = make_command(workspace, database);
     write_runtime_auth(command.config_directory);
-    MockHttpServer r2({http_response("application/xml", "")});
+    MockHttpServer r2({
+        http_response("application/xml", ""),
+        http_response("application/xml", ""),
+    });
     ASSERT_TRUE(set_environment_variable(
         "CHA_R2_URL",
         "http://127.0.0.1:" + std::to_string(r2.port()) + "/backups"));
@@ -915,8 +1019,9 @@ TEST(ApplicationRuntime, UploadsTheDatabaseWithoutTheAuthFile) {
     const R2DatabaseTransfer transferred = runtime->upload_database();
     r2.join();
     EXPECT_GT(transferred.byte_count, 0U);
-    ASSERT_EQ(r2.requests().size(), 1U);
-    EXPECT_FALSE(contains_runtime_secret(r2.requests().front()));
+    ASSERT_EQ(r2.requests().size(), 2U);
+    EXPECT_FALSE(contains_runtime_secret(r2.requests()[0]));
+    EXPECT_FALSE(contains_runtime_secret(r2.requests()[1]));
     EXPECT_TRUE(std::filesystem::is_regular_file(
         openai_auth_path(command.config_directory)));
     expect_auth_snapshot(
@@ -937,8 +1042,10 @@ TEST(ApplicationRuntime, DownloadLeavesTheAuthOwnerConnected) {
         test::import_test_database(remote_workspace.root());
     const ApplicationCommand command = make_command(local_workspace, local);
     write_runtime_auth(command.config_directory);
-    MockHttpServer r2({http_response(
-        "application/vnd.sqlite3", file_bytes(remote))});
+    MockHttpServer r2({
+        http_response("application/toml", file_bytes(command.vault.source)),
+        http_response("application/vnd.sqlite3", file_bytes(remote)),
+    });
     ASSERT_TRUE(set_environment_variable(
         "CHA_R2_URL",
         "http://127.0.0.1:" + std::to_string(r2.port()) + "/backups"));
@@ -1079,7 +1186,7 @@ TEST(ApplicationRuntime, StartsWhenTheConfiguredMirrorIsUnavailable) {
     runtime->shutdown();
 }
 
-TEST(ApplicationRuntime, LoadsR2SettingsFromConfigDotenv) {
+TEST(ApplicationRuntime, MigratesR2SettingsFromConfigDotenv) {
     ScopedEnvironmentVariable url("CHA_R2_URL");
     ScopedEnvironmentVariable access("CHA_R2_ACCESS_KEY_ID");
     ScopedEnvironmentVariable secret("CHA_R2_SECRET_ACCESS_KEY");
@@ -1097,6 +1204,11 @@ TEST(ApplicationRuntime, LoadsR2SettingsFromConfigDotenv) {
     std::ofstream(database.parent_path() / ".env")
         << "CHA_R2_URL=https://ignored.example/bucket\n";
     auto runtime = ApplicationRuntime::open(command, "private-test-token");
+    ASSERT_TRUE(runtime->has_r2_storage());
+    ASSERT_TRUE(getws()->r2_storage());
+    EXPECT_EQ(getws()->r2_storage()->url, "https://account.example/bucket");
+    EXPECT_EQ(getws()->r2_storage()->access_key_id, "access");
+    EXPECT_EQ(getws()->r2_storage()->secret_key, "secret");
     EXPECT_STREQ(
         std::getenv("CHA_R2_URL"), "https://account.example/bucket");
     EXPECT_STREQ(std::getenv("CHA_R2_ACCESS_KEY_ID"), "access");
@@ -1304,6 +1416,44 @@ TEST(ApplicationRuntime, SwitchVaultAToBToAKeepsOriginAndStoredSessions) {
     const toml::table table =
         read_toml_file(pair.command.config_directory / "app.toml", "config file");
     EXPECT_EQ(table["vault"].value<std::string>(), "A");
+    runtime->shutdown();
+}
+
+TEST(ApplicationRuntime, FailedLegacyKeyMigrationDoesNotHalfFailVaultSwitch) {
+    TwoVaultRuntime pair;
+    auto runtime = ApplicationRuntime::open(pair.command, "private-test-token");
+    (void)runtime->start();
+    std::ofstream(pair.command.config_directory / "api-keys.json")
+        << "not valid JSON";
+
+    EXPECT_NO_THROW(runtime->switch_vault("B"));
+    EXPECT_EQ(runtime->current_vault().name, "B");
+    EXPECT_EQ(
+        load_configuration_directory(pair.command.config_directory)
+            .startup_vault,
+        "B");
+    runtime->shutdown();
+}
+
+TEST(ApplicationRuntime, SwitchVaultChangesTheDatabaseBackedKeys) {
+    TwoVaultRuntime pair;
+    {
+        auto config = WorkspaceConfigStore::open(pair.database_a);
+        ApiKeyStore keys(*config);
+        EXPECT_EQ(keys.create("A key", "secret-a").id, "api_key_1");
+    }
+    {
+        auto config = WorkspaceConfigStore::open(pair.database_b);
+        ApiKeyStore keys(*config);
+        EXPECT_EQ(keys.create("B key", "secret-b").id, "api_key_1");
+    }
+
+    auto runtime = ApplicationRuntime::open(
+        pair.command, "private-test-token");
+    (void)runtime->start();
+    EXPECT_EQ(runtime->api_key_value("api_key_1"), "secret-a");
+    runtime->switch_vault("B");
+    EXPECT_EQ(runtime->api_key_value("api_key_1"), "secret-b");
     runtime->shutdown();
 }
 

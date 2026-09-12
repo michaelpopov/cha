@@ -320,6 +320,7 @@ struct ApplicationRuntime::Impl {
           current_vault_(selected_command.vault),
           store(WorkspaceConfigStore::open(command.vault.data)),
           api_keys(std::make_unique<ApiKeyStore>(
+              *store,
               command.config_directory / "api-keys.json")),
           openai_auth(std::make_unique<OpenAiOAuth>(
               command.config_directory / "openai-auth.json")),
@@ -498,6 +499,22 @@ VaultDefinition ApplicationRuntime::current_vault() const {
 VaultRegistrySnapshot ApplicationRuntime::vault_snapshot() const {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     return {impl_->command.vaults, impl_->current_vault_.get()};
+}
+
+std::string ApplicationRuntime::api_key_value(std::string_view id) const {
+    return impl_->api_keys->value(id);
+}
+
+std::optional<std::string> ApplicationRuntime::api_key_value_by_name(
+    std::string_view display_name) const {
+    const std::optional<ApiKeyInfo> key =
+        impl_->api_keys->find_by_name(display_name);
+    return key ? std::optional<std::string>(impl_->api_keys->value(key->id))
+               : std::nullopt;
+}
+
+bool ApplicationRuntime::has_r2_storage() const {
+    return impl_->api_keys->r2().has_value();
 }
 
 VaultDefinition ApplicationRuntime::create_vault(VaultCreate create) {
@@ -689,6 +706,13 @@ void ApplicationRuntime::switch_vault(std::string_view name) {
         repository.retarget(selected.data);
         impl_->reopen(database, repository);
         impl_->current_vault_.set(selected);
+    }
+    try {
+        impl_->api_keys->migrate_vault();
+    } catch (const std::exception& error) {
+        log_warn(
+            "Legacy API-key migration failed after switching vault: "
+            + std::string(error.what()));
     }
 
     try {
@@ -961,18 +985,49 @@ void ApplicationRuntime::shutdown() {
 
 R2DatabaseTransfer ApplicationRuntime::upload_database() {
     return impl_->maintain_database([this] {
+        const std::optional<R2StorageKey> storage = impl_->api_keys->r2();
+        if (!storage) throw std::runtime_error("The active vault has no R2 key");
         const VaultDefinition vault = impl_->current_vault_.get();
         return upload_database_to_r2(
-            vault.data, R2DatabaseLease::already_held);
+            vault.data, vault.source, *storage, R2DatabaseLease::already_held);
     });
 }
 
 R2DatabaseTransfer ApplicationRuntime::download_database() {
-    return impl_->maintain_database([this] {
+    std::optional<VaultDefinition> downloaded_vault;
+    const R2DatabaseTransfer result = impl_->maintain_database([this, &downloaded_vault] {
+        const std::optional<R2StorageKey> storage = impl_->api_keys->r2();
+        if (!storage) throw std::runtime_error("The active vault has no R2 key");
         const VaultDefinition vault = impl_->current_vault_.get();
-        return download_database_from_r2(
-            vault.data, R2DatabaseLease::already_held);
+        const R2DatabaseTransfer transferred = download_database_from_r2(
+            vault.data, vault.source, *storage, R2DatabaseLease::already_held);
+        downloaded_vault = load_vault_definition_file(
+            impl_->command.config_directory, vault.source);
+        const auto configured = std::find_if(
+            impl_->command.vaults.begin(), impl_->command.vaults.end(),
+            [&](const VaultDefinition& candidate) {
+                return candidate.source == vault.source;
+            });
+        if (configured == impl_->command.vaults.end()) {
+            throw std::runtime_error(
+                "The downloaded active vault is not in the vault registry");
+        }
+        *configured = *downloaded_vault;
+        impl_->command.vault = *downloaded_vault;
+        impl_->publish_vault(*downloaded_vault);
+        return transferred;
     });
+    if (!downloaded_vault) {
+        throw std::logic_error("Downloaded vault definition was not published");
+    }
+    try {
+        impl_->mirror->rebuild(downloaded_vault->mirror, *impl_->sessions);
+    } catch (const std::exception& error) {
+        log_warn(
+            "Session mirror rebuild failed: " + std::string(error.what()));
+        impl_->mirror->rebuild(std::nullopt, *impl_->sessions);
+    }
+    return result;
 }
 
 WorkspaceConfigTransfer ApplicationRuntime::import_configuration() {

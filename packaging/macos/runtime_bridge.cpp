@@ -1,6 +1,5 @@
 #include "runtime_bridge.h"
 
-#include "providers/api_key_store.h"
 #include "util/logging.h"
 #include "web/application_config.h"
 #include "web/application_runtime.h"
@@ -14,7 +13,6 @@
 #include <optional>
 #include <string>
 
-using cha::ApiKeyStore;
 using cha::WorkspaceConfigTransfer;
 using cha::web::ApplicationCommand;
 using cha::web::ApplicationRuntime;
@@ -54,11 +52,6 @@ void set_current_error(char** error) noexcept {
     } catch (...) {
         set_error(error, "CHA failed with an unknown error");
     }
-}
-
-bool environment_is_set(const char* name) {
-    const char* const value = std::getenv(name);
-    return value != nullptr && *value != '\0';
 }
 
 ApplicationCommand runtime_command(
@@ -153,20 +146,19 @@ ChaRuntime* cha_runtime_create(
         runtime->logging = true;
         runtime->voice_input = command.voice_input;
         runtime->text_to_speech_model = command.text_to_speech_model;
-        ApiKeyStore api_keys(
-            command.config_directory / "api-keys.json");
-        if (runtime->voice_input) {
-            runtime->voice_input_api_key =
-                api_keys.value(runtime->voice_input->api_key_id);
-        }
-#ifdef __APPLE__
-        if (const auto key = api_keys.find_by_name("ELEVENLABS_API_KEY");
-            key && key->has_value) {
-            runtime->text_to_speech_api_key = api_keys.value(key->id);
-        }
-#endif
         runtime->application = ApplicationRuntime::open(
             command, access_token);
+        if (runtime->voice_input) {
+            runtime->voice_input_api_key =
+                runtime->application->api_key_value(
+                    runtime->voice_input->api_key_id);
+        }
+#ifdef __APPLE__
+        if (const auto key = runtime->application->api_key_value_by_name(
+                "ELEVENLABS_API_KEY")) {
+            runtime->text_to_speech_api_key = *key;
+        }
+#endif
         runtime->port = runtime->application->start();
         return runtime.release();
     } catch (...) {
@@ -210,11 +202,8 @@ int32_t cha_runtime_can_modify(const ChaRuntime* runtime) {
 }
 
 int32_t cha_runtime_can_transfer_r2(const ChaRuntime* runtime) {
-    return runtime
-        && environment_is_set("CHA_R2_URL")
-        && environment_is_set("CHA_R2_ACCESS_KEY_ID")
-        && environment_is_set("CHA_R2_SECRET_ACCESS_KEY")
-        ? 1 : 0;
+    return runtime && runtime->application
+        && runtime->application->has_r2_storage() ? 1 : 0;
 }
 
 const char* cha_runtime_voice_input_url(const ChaRuntime* runtime) {

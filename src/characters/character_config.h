@@ -36,7 +36,7 @@ struct ModelBackendConfig {
     int timeout_s{600};
     int idle_timeout_s{60};
     std::string api_key_id;
-    // Compatibility name resolved only through api-keys.json. Despite the
+    // Compatibility name resolved only through saved model keys. Despite the
     // legacy config spelling, the process environment is never consulted.
     std::string api_key_env;
     std::string reasoning_effort;

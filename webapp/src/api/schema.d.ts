@@ -338,6 +338,25 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/r2-storage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get R2 storage credentials without the secret key */
+        get: operations["getR2Storage"];
+        /** Create or update R2 storage credentials */
+        put: operations["saveR2Storage"];
+        post?: never;
+        /** Remove R2 storage credentials */
+        delete: operations["deleteR2Storage"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/openai/auth": {
         parameters: {
             query?: never;
@@ -1327,6 +1346,20 @@ export interface components {
         };
         ReplaceApiKeyValueRequest: {
             value: string;
+        };
+        R2StorageDetail: {
+            id: components["schemas"]["Identifier"];
+            display_name: string;
+            url: string;
+            access_key_id: string;
+            has_secret_key: boolean;
+        };
+        SaveR2StorageRequest: {
+            display_name: string;
+            url: string;
+            access_key_id: string;
+            /** @description Null keeps the existing secret key; creating requires a value. */
+            secret_key: string | null;
         };
         StyleOption: {
             id: components["schemas"]["Identifier"];
@@ -2368,6 +2401,73 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getR2Storage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Stored R2 metadata, or null when R2 is not configured. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["R2StorageDetail"] | null;
+                };
+            };
+            500: components["responses"]["InternalError"];
+        };
+    };
+    saveR2Storage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SaveR2StorageRequest"];
+            };
+        };
+        responses: {
+            /** @description Stored R2 metadata. The secret key is never returned. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["R2StorageDetail"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    deleteR2Storage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: components["requestBodies"]["EmptyJsonObject"];
+        responses: {
+            /** @description R2 storage credentials removed. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             404: components["responses"]["NotFound"];
             500: components["responses"]["InternalError"];
         };

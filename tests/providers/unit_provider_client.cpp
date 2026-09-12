@@ -1,4 +1,6 @@
 #include "providers/provider_client.h"
+#include "support/test_workspace.h"
+#include "workspace/workspace_config_store.h"
 #include "chat/transcript.h"
 #include "providers/api_key_store.h"
 #include "providers/openai_oauth.h"
@@ -1264,7 +1266,11 @@ TEST(ProviderClient, MissingSavedApiKeyFailsWhenTheProviderIsUsed) {
         std::filesystem::path path;
         ~Cleanup() { std::filesystem::remove_all(path); }
     } cleanup{directory};
-    ApiKeyStore keys(directory / "api-keys.json");
+    test::TestWorkspace workspace;
+    const std::filesystem::path database = test::import_test_database(
+        workspace.root(), directory / "workspace.sqlite3");
+    auto config = WorkspaceConfigStore::open(database);
+    ApiKeyStore keys(*config);
     CharacterDefinition definition = network_definition(1, false);
     definition.provider.config.api_key_id = "api_key_99";
     try {
@@ -1287,7 +1293,11 @@ TEST(ProviderClient, UsesASavedApiKeyWithoutReadingTheEnvironment) {
         std::filesystem::path path;
         ~Cleanup() { std::filesystem::remove_all(path); }
     } cleanup{directory};
-    ApiKeyStore keys(directory / "api-keys.json");
+    test::TestWorkspace workspace;
+    const std::filesystem::path database = test::import_test_database(
+        workspace.root(), directory / "workspace.sqlite3");
+    auto config = WorkspaceConfigStore::open(database);
+    ApiKeyStore keys(*config);
     const ApiKeyInfo key = keys.create("Router", "saved-secret");
 
     CharacterDefinition definition = network_definition(443, false);
@@ -1339,7 +1349,11 @@ TEST(ProviderClient, ResolvesALegacyEnvironmentNameOnlyFromSavedApiKeys) {
         std::filesystem::path path;
         ~Cleanup() { std::filesystem::remove_all(path); }
     } cleanup{directory};
-    ApiKeyStore keys(directory / "api-keys.json");
+    test::TestWorkspace workspace;
+    const std::filesystem::path database = test::import_test_database(
+        workspace.root(), directory / "workspace.sqlite3");
+    auto config = WorkspaceConfigStore::open(database);
+    ApiKeyStore keys(*config);
     (void)keys.create("OPEN_ROUTER_API_KEY", "saved-secret");
 
     CharacterDefinition definition = network_definition(443, false);
@@ -1391,7 +1405,11 @@ TEST(ProviderClient, MissingLegacyNamedKeyDoesNotFallBackToTheEnvironment) {
         std::filesystem::path path;
         ~Cleanup() { std::filesystem::remove_all(path); }
     } cleanup{directory};
-    ApiKeyStore keys(directory / "api-keys.json");
+    test::TestWorkspace workspace;
+    const std::filesystem::path database = test::import_test_database(
+        workspace.root(), directory / "workspace.sqlite3");
+    auto config = WorkspaceConfigStore::open(database);
+    ApiKeyStore keys(*config);
     CharacterDefinition definition = network_definition(443, false);
     definition.provider.config.api_key_env = "OPEN_ROUTER_API_KEY";
 

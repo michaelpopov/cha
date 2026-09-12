@@ -2,8 +2,10 @@
 
 #include "characters/character.h"
 #include "chat/persona.h"
+#include "providers/credentials.h"
 
 #include <filesystem>
+#include <cstdint>
 #include <map>
 #include <memory>
 #include <optional>
@@ -116,6 +118,15 @@ public:
     [[nodiscard]] std::span<const WorkspaceVoice> voices() const noexcept {
         return voices_;
     }
+    [[nodiscard]] std::span<const SavedApiKey> api_keys() const noexcept {
+        return api_keys_;
+    }
+    [[nodiscard]] const std::optional<R2StorageKey>& r2_storage() const noexcept {
+        return r2_storage_;
+    }
+    [[nodiscard]] std::uint64_t next_api_key_id() const noexcept {
+        return next_api_key_id_;
+    }
     [[nodiscard]] std::span<const WorkspacePersona> personas() const noexcept {
         return personas_;
     }
@@ -131,6 +142,8 @@ public:
     [[nodiscard]] const WorkspaceStyle* find_style(
         std::string_view id) const noexcept;
     [[nodiscard]] const WorkspaceVoice* find_voice(
+        std::string_view id) const noexcept;
+    [[nodiscard]] const SavedApiKey* find_api_key(
         std::string_view id) const noexcept;
     [[nodiscard]] const WorkspacePersona* find_persona(
         std::string_view id) const noexcept;
@@ -194,6 +207,19 @@ public:
         std::string_view description,
         std::string_view elevenlabs_voice_id) const;
     void delete_voice(std::string_view voice_id) const;
+    void create_api_key(
+        std::string_view id,
+        std::string_view display_name,
+        std::string_view value) const;
+    void write_api_key(
+        std::string_view id,
+        std::string_view display_name,
+        std::string_view value) const;
+    void delete_api_key(std::string_view id) const;
+    void create_r2_storage(const R2StorageKey& key) const;
+    void write_r2_storage(const R2StorageKey& key) const;
+    void delete_r2_storage() const;
+    void write_next_api_key_id(std::uint64_t next_id) const;
 
     void write_character_settings(
         std::string_view character_id,
@@ -243,12 +269,16 @@ private:
     std::vector<WorkspaceProvider> providers_;
     std::vector<WorkspaceStyle> styles_;
     std::vector<WorkspaceVoice> voices_;
+    std::vector<SavedApiKey> api_keys_;
+    std::optional<R2StorageKey> r2_storage_;
+    std::uint64_t next_api_key_id_{1};
     std::vector<WorkspacePersona> personas_;
     std::vector<WorkspaceCharacter> characters_;
     std::vector<WorkspaceForum> forums_;
     std::unordered_map<std::string, std::size_t> provider_index_;
     std::unordered_map<std::string, std::size_t> style_index_;
     std::unordered_map<std::string, std::size_t> voice_index_;
+    std::unordered_map<std::string, std::size_t> api_key_index_;
     std::unordered_map<std::string, std::size_t> persona_index_;
     std::unordered_map<std::string, std::size_t> character_index_;
     std::unordered_map<std::string, std::size_t> forum_index_;

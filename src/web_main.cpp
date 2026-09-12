@@ -1,3 +1,5 @@
+#include "providers/api_key_store.h"
+#include "util/environment.h"
 #include "workspace/workspace_config_store.h"
 #include "web/application_config.h"
 #include "web/application_runtime.h"
@@ -13,6 +15,30 @@ using namespace cha;
 using namespace web;
 
 static int prepare_and_run(int argc, const char* argv[]);
+
+static R2DatabaseTransfer transfer_r2(
+    const ApplicationCommand& command,
+    bool download) {
+    load_dotenv(command.config_directory / ".env");
+    auto store = WorkspaceConfigStore::open(command.vault.data);
+    ApiKeyStore keys(
+        *store, command.config_directory / "api-keys.json");
+    const std::optional<R2StorageKey> storage = keys.r2();
+    if (!storage) throw std::runtime_error("The selected vault has no R2 key");
+    auto maintenance = store->reserve_maintenance();
+    maintenance.close();
+    return download
+        ? download_database_from_r2(
+              command.vault.data,
+              command.vault.source,
+              *storage,
+              R2DatabaseLease::already_held)
+        : upload_database_to_r2(
+              command.vault.data,
+              command.vault.source,
+              *storage,
+              R2DatabaseLease::already_held);
+}
 
 int main(int argc, const char* argv[]) {
     try {
@@ -40,16 +66,14 @@ int prepare_and_run(int argc, const char* argv[]) {
         return 0;
     }
     if (command.upload) {
-        const R2DatabaseTransfer transferred = upload_database_to_r2(
-            command.vault.data);
+        const R2DatabaseTransfer transferred = transfer_r2(command, false);
         std::cout << "Uploaded " << transferred.byte_count
                   << " bytes from '" << utf8_path(command.vault.data)
                   << "' to R2\n";
         return 0;
     }
     if (command.download) {
-        const R2DatabaseTransfer transferred = download_database_from_r2(
-            command.vault.data);
+        const R2DatabaseTransfer transferred = transfer_r2(command, true);
         std::cout << "Downloaded " << transferred.byte_count
                   << " bytes from R2 into '" << utf8_path(command.vault.data)
                   << "'\n";

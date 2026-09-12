@@ -42,6 +42,8 @@ export type CreateVoiceRequest = components['schemas']['CreateVoiceRequest'];
 export type VoiceUpdate = components['schemas']['VoiceUpdate'];
 export type ApiKeyDetail = components['schemas']['ApiKeyDetail'];
 export type CreateApiKeyRequest = components['schemas']['CreateApiKeyRequest'];
+export type R2StorageDetail = components['schemas']['R2StorageDetail'];
+export type SaveR2StorageRequest = components['schemas']['SaveR2StorageRequest'];
 export type ErrorCode = components['schemas']['ErrorResponse']['error']['code'];
 
 // Generated API unions are compile-time only. Keeping the runtime list checked
@@ -179,6 +181,9 @@ export interface ChaClient {
   renameApiKey(apiKeyId: string, displayName: string): Promise<ApiKeyDetail>;
   replaceApiKeyValue(apiKeyId: string, value: string): Promise<ApiKeyDetail>;
   deleteApiKey(apiKeyId: string): Promise<void>;
+  getR2Storage(): Promise<R2StorageDetail | null>;
+  saveR2Storage(request: SaveR2StorageRequest): Promise<R2StorageDetail>;
+  deleteR2Storage(): Promise<void>;
   switchVault(vaultName: string): Promise<void>;
 }
 
@@ -353,6 +358,13 @@ function isApiKeyDetail(value: unknown): value is ApiKeyDetail {
     && typeof value.has_value === 'boolean'
     && Array.isArray(value.used_by)
     && value.used_by.every((name) => typeof name === 'string');
+}
+
+function isR2StorageDetail(value: unknown): value is R2StorageDetail {
+  return isRecord(value) && hasIdentity(value)
+    && typeof value.url === 'string'
+    && typeof value.access_key_id === 'string'
+    && typeof value.has_secret_key === 'boolean';
 }
 
 function isSessionListingArray(value: unknown): value is SessionListing[] {
@@ -855,6 +867,27 @@ export function createChaClient(
     deleteApiKey: (apiKeyId) => requestEmpty(
       fetcher,
       `/api/v1/api-keys/${component(apiKeyId)}`,
+      jsonMutation({}, 'DELETE'),
+    ),
+
+    getR2Storage: () => requestValidated(
+      fetcher,
+      '/api/v1/r2-storage',
+      (value): value is R2StorageDetail | null => (
+        value === null || isR2StorageDetail(value)
+      ),
+    ),
+
+    saveR2Storage: (request) => requestValidated(
+      fetcher,
+      '/api/v1/r2-storage',
+      isR2StorageDetail,
+      jsonMutation(request, 'PUT'),
+    ),
+
+    deleteR2Storage: () => requestEmpty(
+      fetcher,
+      '/api/v1/r2-storage',
       jsonMutation({}, 'DELETE'),
     ),
 

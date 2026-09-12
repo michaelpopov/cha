@@ -515,6 +515,16 @@ Json key_json(
     };
 }
 
+Json r2_storage_json(const R2StorageInfo& key) {
+    return {
+        {"id", key.id},
+        {"display_name", key.display_name},
+        {"url", key.url},
+        {"access_key_id", key.access_key_id},
+        {"has_secret_key", key.has_secret_key},
+    };
+}
+
 void internal_error(httplib::Response& response, const std::exception& error) {
     set_error_response(
         response, 500, {ErrorCode::internal_error, error.what()});
@@ -959,6 +969,70 @@ void SettingsRoutes::install(httplib::Server& server) const {
                     key, *workspace, voice_input_api_key_id));
             }
             set_json_response(response, 200, result);
+        });
+
+    server.Get(
+        "/api/v1/r2-storage",
+        [api_keys](const httplib::Request&, httplib::Response& response) {
+            const std::optional<R2StorageInfo> key = api_keys->r2_info();
+            set_json_response(
+                response, 200, key ? r2_storage_json(*key) : Json(nullptr));
+            response.set_header("Cache-Control", "no-store");
+        });
+
+    server.Put(
+        "/api/v1/r2-storage",
+        [api_keys, settings](
+            const httplib::Request& request,
+            httplib::Response& response) {
+            if (!validate_json_mutation(request, response)) return;
+            std::string display_name;
+            std::string url;
+            std::string access_key_id;
+            std::optional<std::string> secret_key;
+            if (!parse_route_json_body(
+                    request, response, settings.request_body_limit,
+                    [&](const Json& json) {
+                        if (!json.is_object() || json.size() != 4) {
+                            throw std::invalid_argument("Invalid R2 credentials");
+                        }
+                        display_name =
+                            required<std::string>(json, "display_name");
+                        url = required<std::string>(json, "url");
+                        access_key_id =
+                            required<std::string>(json, "access_key_id");
+                        secret_key = nullable_string(json, "secret_key");
+                    })) return;
+            try {
+                const std::optional<std::string_view> secret = secret_key
+                    ? std::optional<std::string_view>(*secret_key)
+                    : std::nullopt;
+                const R2StorageInfo saved = api_keys->save_r2(
+                    display_name, url, access_key_id, secret);
+                set_json_response(response, 200, r2_storage_json(saved));
+                response.set_header("Cache-Control", "no-store");
+            } catch (const std::invalid_argument&) {
+                set_error_response(response, 400,
+                    {ErrorCode::bad_request, "Invalid R2 credentials."});
+            } catch (const std::exception& error) {
+                internal_error(response, error);
+            }
+        });
+
+    server.Delete(
+        "/api/v1/r2-storage",
+        [api_keys](const httplib::Request& request, httplib::Response& response) {
+            if (!validate_json_mutation(request, response)) return;
+            try {
+                api_keys->remove_r2();
+                response.status = 204;
+                response.set_header("Cache-Control", "no-store");
+            } catch (const std::out_of_range&) {
+                set_route_not_found(
+                    response, "R2 storage credentials are not configured.");
+            } catch (const std::exception& error) {
+                internal_error(response, error);
+            }
         });
 
     server.Post("/api/v1/api-keys", [api_keys, settings, voice_input_api_key_id](const httplib::Request& request, httplib::Response& response) {

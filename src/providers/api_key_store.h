@@ -1,8 +1,9 @@
 #pragma once
 
+#include "providers/credentials.h"
+
 #include <cstdint>
 #include <filesystem>
-#include <map>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -11,18 +12,14 @@
 
 namespace cha {
 
-struct ApiKeyInfo {
-    std::string id;
-    std::string display_name;
-    bool has_value{};
-};
+class WorkspaceConfigStore;
 
-// Process-wide owner for inference credentials. The file lives beside the
-// application config, not in the workspace database, and is always written
-// with owner-only permissions.
+// Small facade over the active vault's database-backed system/keys tree.
 class ApiKeyStore {
 public:
-    explicit ApiKeyStore(std::filesystem::path path);
+    ApiKeyStore(
+        WorkspaceConfigStore& config,
+        std::filesystem::path legacy_path = {});
 
     ApiKeyStore(const ApiKeyStore&) = delete;
     ApiKeyStore& operator=(const ApiKeyStore&) = delete;
@@ -34,27 +31,27 @@ public:
     [[nodiscard]] std::string value(std::string_view id) const;
     [[nodiscard]] std::string value_by_name(
         std::string_view display_name) const;
+    [[nodiscard]] std::optional<R2StorageKey> r2() const;
+    [[nodiscard]] std::optional<R2StorageInfo> r2_info() const;
 
     ApiKeyInfo create(std::string_view display_name, std::string_view value);
     ApiKeyInfo rename(std::string_view id, std::string_view display_name);
     ApiKeyInfo replace(std::string_view id, std::string_view value);
     void remove(std::string_view id);
+    R2StorageInfo save_r2(
+        std::string_view display_name,
+        std::string_view url,
+        std::string_view access_key_id,
+        std::optional<std::string_view> secret_key);
+    void remove_r2();
+    void migrate_vault();
 
 private:
-    struct Record {
-        std::string display_name;
-        std::string value;
-    };
+    void migrate();
 
-    static void validate_display_name(std::string_view value);
-    static void validate_secret(std::string_view value);
-    static ApiKeyInfo info(std::string_view id, const Record& record);
-    void save_unlocked() const;
-
-    std::filesystem::path path_;
+    WorkspaceConfigStore* config_{};
+    std::filesystem::path legacy_path_;
     mutable std::mutex mutex_;
-    std::map<std::string, Record, std::less<>> records_;
-    std::uint64_t next_id_{1};
 };
 
 } // namespace cha

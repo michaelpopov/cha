@@ -13,16 +13,19 @@
 #include <toml++/toml.hpp>
 
 #include <algorithm>
+#include <charconv>
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
+#include <limits>
 #include <mutex>
 #include <ranges>
 #include <sstream>
 #include <stdexcept>
 #include <unordered_set>
 #include <utility>
+#include <variant>
 
 namespace cha {
 
@@ -407,6 +410,120 @@ WorkspaceProvider load_provider(const std::filesystem::path& directory) {
         }
     }
     return provider;
+}
+
+void validate_saved_key_text(
+    std::string_view value,
+    std::size_t maximum,
+    std::string_view field,
+    const std::filesystem::path& path,
+    bool reject_only_space = true) {
+    const bool only_space = std::ranges::all_of(value, [](unsigned char c) {
+        return std::isspace(c) != 0;
+    });
+    if (value.empty() || value.size() > maximum
+        || (reject_only_space && only_space)
+        || value.find_first_of("\r\n") != std::string_view::npos) {
+        throw std::runtime_error(
+            "Key config '" + utf8_path(path) + "' has invalid "
+            + std::string(field));
+    }
+}
+
+std::uint64_t saved_key_suffix(
+    std::string_view id,
+    const std::filesystem::path& path) {
+    constexpr std::string_view prefix = "api_key_";
+    if (!id.starts_with(prefix)) {
+        throw std::runtime_error(
+            "Key config '" + utf8_path(path) + "' has invalid ID");
+    }
+    id.remove_prefix(prefix.size());
+    std::uint64_t suffix{};
+    const auto [end, error] = std::from_chars(
+        id.data(), id.data() + id.size(), suffix);
+    if (error != std::errc{} || end != id.data() + id.size() || suffix == 0) {
+        throw std::runtime_error(
+            "Key config '" + utf8_path(path) + "' has invalid ID");
+    }
+    return suffix;
+}
+
+using LoadedKey = std::variant<SavedApiKey, R2StorageKey>;
+
+LoadedKey load_saved_key(const std::filesystem::path& directory) {
+    const std::string id = utf8_path(directory.filename());
+    require_path_component(id, directory.parent_path());
+    const std::filesystem::path path = directory / "config.toml";
+    (void)saved_key_suffix(id, path);
+    const toml::table table = read_toml(path, "key config");
+    const std::string type = required_string(table, path, "type");
+    const std::string display_name =
+        required_string(table, path, "display_name");
+    validate_saved_key_text(display_name, 100, "display_name", path);
+
+    if (type == "models") {
+        static constexpr std::string_view fields[]{
+            "display_name", "type", "value"};
+        reject_unknown_fields(table, path, fields, "Key config");
+        std::string value = required_string(table, path, "value");
+        validate_saved_key_text(value, 16 * 1024, "value", path, false);
+        return SavedApiKey{
+            .id = id,
+            .display_name = display_name,
+            .value = std::move(value),
+        };
+    }
+    if (type == "R2") {
+        static constexpr std::string_view fields[]{
+            "display_name", "type", "url", "access_key_id", "secret_key"};
+        reject_unknown_fields(table, path, fields, "Key config");
+        R2StorageKey key{
+            .id = id,
+            .display_name = display_name,
+            .url = required_string(table, path, "url"),
+            .access_key_id = required_string(table, path, "access_key_id"),
+            .secret_key = required_string(table, path, "secret_key"),
+        };
+        validate_saved_key_text(key.url, 16 * 1024, "url", path);
+        validate_saved_key_text(
+            key.access_key_id, 16 * 1024, "access_key_id", path);
+        validate_saved_key_text(
+            key.secret_key, 16 * 1024, "secret_key", path, false);
+        return key;
+    }
+    throw std::runtime_error(
+        "Key config '" + utf8_path(path) + "' has unknown type '" + type + "'");
+}
+
+toml::table api_key_table(
+    std::string_view display_name,
+    std::string_view value) {
+    toml::table table;
+    table.insert("display_name", std::string(display_name));
+    table.insert("type", "models");
+    table.insert("value", std::string(value));
+    return table;
+}
+
+toml::table r2_storage_table(const R2StorageKey& key) {
+    toml::table table;
+    table.insert("display_name", key.display_name);
+    table.insert("type", "R2");
+    table.insert("url", key.url);
+    table.insert("access_key_id", key.access_key_id);
+    table.insert("secret_key", key.secret_key);
+    return table;
+}
+
+toml::table key_collection_table(std::uint64_t next_id) {
+    if (next_id > static_cast<std::uint64_t>(
+            std::numeric_limits<std::int64_t>::max())) {
+        throw std::runtime_error("API key ID space is exhausted");
+    }
+    toml::table table;
+    table.insert("next_id", static_cast<std::int64_t>(next_id));
+    return table;
 }
 
 WorkspaceStyle load_style(const std::filesystem::path& directory) {
@@ -891,6 +1008,65 @@ Workspace Workspace::load(std::filesystem::path root) {
     Workspace workspace;
     workspace.root_ = std::move(root);
 
+    const std::filesystem::path keys_directory =
+        workspace.root_ / "system" / "keys";
+    if (std::filesystem::is_directory(keys_directory)) {
+        for (const std::filesystem::path& directory :
+             direct_subdirectories(keys_directory)) {
+            LoadedKey loaded = load_saved_key(directory);
+            if (auto* api_key = std::get_if<SavedApiKey>(&loaded)) {
+                workspace.api_keys_.push_back(std::move(*api_key));
+                continue;
+            }
+            if (workspace.r2_storage_) {
+                throw std::runtime_error(
+                    "Workspace contains more than one R2 key");
+            }
+            workspace.r2_storage_ = std::get<R2StorageKey>(std::move(loaded));
+        }
+    }
+    std::ranges::sort(
+        workspace.api_keys_, {}, [](const SavedApiKey& key) {
+            return fold_ascii(key.display_name);
+        });
+    build_index(
+        std::span<const SavedApiKey>(workspace.api_keys_),
+        workspace.api_key_index_, "API key");
+    std::uint64_t highest_key_id{};
+    for (const SavedApiKey& key : workspace.api_keys_) {
+        highest_key_id = std::max(
+            highest_key_id,
+            saved_key_suffix(key.id, keys_directory / key.id / "config.toml"));
+    }
+    if (workspace.r2_storage_) {
+        highest_key_id = std::max(
+            highest_key_id,
+            saved_key_suffix(
+                workspace.r2_storage_->id,
+                keys_directory / workspace.r2_storage_->id / "config.toml"));
+    }
+    if (highest_key_id == std::numeric_limits<std::uint64_t>::max()) {
+        throw std::runtime_error("API key ID space is exhausted");
+    }
+    workspace.next_api_key_id_ = highest_key_id + 1;
+    const std::filesystem::path keys_config = keys_directory / "config.toml";
+    if (std::filesystem::is_regular_file(keys_config)) {
+        const toml::table table = read_toml(keys_config, "key collection config");
+        static constexpr std::string_view fields[]{"next_id"};
+        reject_unknown_fields(table, keys_config, fields, "Key collection config");
+        const std::optional<std::int64_t> configured =
+            optional_value<std::int64_t>(
+                table, keys_config, "next_id", "an integer");
+        if (!configured || *configured < 1
+            || static_cast<std::uint64_t>(*configured) <= highest_key_id) {
+            throw std::runtime_error(
+                "Key collection config '" + utf8_path(keys_config)
+                + "' has invalid next_id");
+        }
+        workspace.next_api_key_id_ =
+            static_cast<std::uint64_t>(*configured);
+    }
+
     const std::filesystem::path providers_directory =
         workspace.root_ / "system" / "providers";
     std::unordered_map<std::string, std::string> provider_errors;
@@ -1361,6 +1537,10 @@ const WorkspaceStyle* Workspace::find_style(std::string_view id) const noexcept 
 
 const WorkspaceVoice* Workspace::find_voice(std::string_view id) const noexcept {
     return find_indexed<WorkspaceVoice>(voices_, voice_index_, id);
+}
+
+const SavedApiKey* Workspace::find_api_key(std::string_view id) const noexcept {
+    return find_indexed<SavedApiKey>(api_keys_, api_key_index_, id);
 }
 
 const WorkspacePersona* Workspace::find_persona(std::string_view id) const noexcept {
@@ -1839,6 +2019,138 @@ void Workspace::delete_voice(std::string_view voice_id) const {
             "Failed to remove voice '" + std::string(voice_id)
             + "': " + error.message());
     }
+}
+
+void Workspace::create_api_key(
+    std::string_view id,
+    std::string_view display_name,
+    std::string_view value) const {
+    const std::filesystem::path directory =
+        root_ / "system" / "keys" / std::string(id);
+    const std::filesystem::path path = directory / "config.toml";
+    try {
+        require_path_component(id, directory.parent_path());
+        (void)saved_key_suffix(id, path);
+        validate_saved_key_text(display_name, 100, "display_name", path);
+        validate_saved_key_text(value, 16 * 1024, "value", path, false);
+    } catch (const std::runtime_error&) {
+        throw std::invalid_argument("Invalid API key");
+    }
+    if (find_api_key(id) != nullptr
+        || (r2_storage_ && r2_storage_->id == id)
+        || std::filesystem::exists(directory)) {
+        throw std::invalid_argument("Duplicate API key");
+    }
+    create_private_directory(directory);
+    write_toml_file(path, api_key_table(display_name, value));
+    tighten_private_file(path);
+    write_next_api_key_id(saved_key_suffix(id, path) + 1);
+    (void)load_saved_key(directory);
+}
+
+void Workspace::write_api_key(
+    std::string_view id,
+    std::string_view display_name,
+    std::string_view value) const {
+    if (find_api_key(id) == nullptr) {
+        throw std::out_of_range("Unknown API key");
+    }
+    const std::filesystem::path directory =
+        root_ / "system" / "keys" / std::string(id);
+    const std::filesystem::path path = directory / "config.toml";
+    try {
+        validate_saved_key_text(display_name, 100, "display_name", path);
+        validate_saved_key_text(value, 16 * 1024, "value", path, false);
+    } catch (const std::runtime_error&) {
+        throw std::invalid_argument("Invalid API key");
+    }
+    write_toml_file(path, api_key_table(display_name, value));
+    tighten_private_file(path);
+    (void)load_saved_key(directory);
+}
+
+void Workspace::delete_api_key(std::string_view id) const {
+    if (find_api_key(id) == nullptr) {
+        throw std::out_of_range("Unknown API key");
+    }
+    const std::filesystem::path directory =
+        root_ / "system" / "keys" / std::string(id);
+    std::error_code error;
+    std::filesystem::remove_all(directory, error);
+    if (error) {
+        throw std::runtime_error(
+            "Failed to remove API key '" + std::string(id)
+            + "': " + error.message());
+    }
+}
+
+void Workspace::create_r2_storage(const R2StorageKey& key) const {
+    const std::filesystem::path directory =
+        root_ / "system" / "keys" / key.id;
+    const std::filesystem::path path = directory / "config.toml";
+    try {
+        require_path_component(key.id, directory.parent_path());
+        (void)saved_key_suffix(key.id, path);
+        validate_saved_key_text(key.display_name, 100, "display_name", path);
+        validate_saved_key_text(key.url, 16 * 1024, "url", path);
+        validate_saved_key_text(
+            key.access_key_id, 16 * 1024, "access_key_id", path);
+        validate_saved_key_text(
+            key.secret_key, 16 * 1024, "secret_key", path, false);
+    } catch (const std::runtime_error&) {
+        throw std::invalid_argument("Invalid R2 key");
+    }
+    if (r2_storage_ || find_api_key(key.id) != nullptr
+        || std::filesystem::exists(directory)) {
+        throw std::invalid_argument("Duplicate R2 key");
+    }
+    create_private_directory(directory);
+    write_toml_file(path, r2_storage_table(key));
+    tighten_private_file(path);
+    write_next_api_key_id(saved_key_suffix(key.id, path) + 1);
+    (void)load_saved_key(directory);
+}
+
+void Workspace::write_r2_storage(const R2StorageKey& key) const {
+    if (!r2_storage_ || r2_storage_->id != key.id) {
+        throw std::out_of_range("Unknown R2 key");
+    }
+    const std::filesystem::path directory =
+        root_ / "system" / "keys" / key.id;
+    const std::filesystem::path path = directory / "config.toml";
+    try {
+        validate_saved_key_text(key.display_name, 100, "display_name", path);
+        validate_saved_key_text(key.url, 16 * 1024, "url", path);
+        validate_saved_key_text(
+            key.access_key_id, 16 * 1024, "access_key_id", path);
+        validate_saved_key_text(
+            key.secret_key, 16 * 1024, "secret_key", path, false);
+    } catch (const std::runtime_error&) {
+        throw std::invalid_argument("Invalid R2 key");
+    }
+    write_toml_file(path, r2_storage_table(key));
+    tighten_private_file(path);
+    (void)load_saved_key(directory);
+}
+
+void Workspace::delete_r2_storage() const {
+    if (!r2_storage_) throw std::out_of_range("Unknown R2 key");
+    const std::filesystem::path directory =
+        root_ / "system" / "keys" / r2_storage_->id;
+    std::error_code error;
+    std::filesystem::remove_all(directory, error);
+    if (error) {
+        throw std::runtime_error(
+            "Failed to remove R2 key '" + r2_storage_->id
+            + "': " + error.message());
+    }
+}
+
+void Workspace::write_next_api_key_id(std::uint64_t next_id) const {
+    const std::filesystem::path path =
+        root_ / "system" / "keys" / "config.toml";
+    write_toml_file(path, key_collection_table(next_id));
+    tighten_private_file(path);
 }
 
 void Workspace::write_character_definition(
