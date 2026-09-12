@@ -36,6 +36,7 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   DatabaseIcon,
+  DownloadIcon,
   KeyIcon,
   PlusIcon,
   SpeakerIcon,
@@ -62,23 +63,27 @@ function BackToSettings({ dispatch }: { dispatch: Dispatch<AppAction> }) {
 
 function SettingsRow({
   description,
+  disabled = false,
   icon,
   label,
   onClick,
+  trailingIcon,
 }: {
-  description: string;
+  description?: string;
+  disabled?: boolean;
   icon: ReactNode;
   label: string;
   onClick(): void;
+  trailingIcon?: ReactNode;
 }) {
   return (
-    <button className="cha-list-action cha-settings-row" onClick={onClick} type="button">
+    <button className="cha-list-action cha-settings-row" disabled={disabled} onClick={onClick} type="button">
       <span className="cha-list-icon">{icon}</span>
       <span className="cha-list-copy">
         <span className="cha-primary-line">{label}</span>
-        <span className="cha-secondary-line">{description}</span>
+        {description && <span className="cha-secondary-line">{description}</span>}
       </span>
-      <ChevronRightIcon className="cha-chevron" />
+      {trailingIcon ?? <ChevronRightIcon className="cha-chevron" />}
     </button>
   );
 }
@@ -158,6 +163,12 @@ export function VaultsScreen({ client, dispatch, sessionReport }: SettingsScreen
             label="New vault"
             onClick={() => dispatch({ type: 'show-settings-new-vault' })}
           />
+          <SettingsRow
+            description="Download a vault from R2"
+            icon={<DownloadIcon />}
+            label="Download vault"
+            onClick={() => dispatch({ type: 'show-settings-download-vault' })}
+          />
           {vaults.map((vault) => (
             <SettingsRow
               description={`${vault.active ? 'Active · ' : ''}${vault.data_path}`}
@@ -172,6 +183,72 @@ export function VaultsScreen({ client, dispatch, sessionReport }: SettingsScreen
           ))}
         </div>
       )}
+    </section>
+  );
+}
+
+export function DownloadVaultScreen({ client, dispatch, sessionReport }: SettingsScreenProps) {
+  const [names, setNames] = useState<string[] | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [downloaded, setDownloaded] = useState<Set<string>>(() => new Set());
+  const [error, setError] = useState<string | null>(null);
+  const [revision, setRevision] = useState(0);
+
+  useEffect(() => {
+    let current = true;
+    setNames(null);
+    setError(null);
+    void client.listR2Vaults().then(
+      (loaded) => { if (current) setNames(loaded); },
+      (failure: unknown) => {
+        if (current) {
+          setError(publicErrorMessage(
+            failure, 'Vaults could not be loaded from R2.',
+          ));
+        }
+      },
+    );
+    return () => { current = false; };
+  }, [client, revision]);
+
+  async function download(name: string) {
+    if (busy !== null) return;
+    setBusy(name);
+    setError(null);
+    try {
+      const vault = await client.downloadR2Vault(name);
+      setDownloaded((current) => new Set(current).add(name));
+      dispatch({ type: 'vault-downloaded', vault });
+    } catch (failure: unknown) {
+      setError(publicErrorMessage(failure, 'The vault could not be downloaded.'));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <section className="cha-screen cha-navigation" aria-label="Download vault settings">
+      <button className="cha-back-row" onClick={() => dispatch({ type: 'show-settings-vaults' })} type="button"><ChevronLeftIcon /><span>Vaults</span></button>
+      {sessionReport}
+      {names === null && !error && <p className="cha-state-message" role="status">Loading vaults from R2…</p>}
+      {names === null && error && <LoadFailure message={error} retry={() => setRevision((value) => value + 1)} />}
+      {names && names.length === 0 && <p className="cha-empty-list">No vaults found in R2</p>}
+      {names && names.length > 0 && (
+        <div className="cha-list">
+          {names.map((name) => (
+            <SettingsRow
+              description={busy === name ? 'Downloading…' : downloaded.has(name) ? 'Downloaded' : undefined}
+              disabled={busy !== null || downloaded.has(name)}
+              icon={<DatabaseIcon />}
+              key={name}
+              label={name}
+              onClick={() => void download(name)}
+              trailingIcon={<DownloadIcon className="cha-chevron" />}
+            />
+          ))}
+        </div>
+      )}
+      {names !== null && error && <p className="cha-error-message" role="alert">{error}</p>}
     </section>
   );
 }

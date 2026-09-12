@@ -8,6 +8,7 @@ import { fixtureClient, voiceDetailFixture } from '../test/fixtures';
 import {
   ApiKeyScreen,
   ApiKeysScreen,
+  DownloadVaultScreen,
   NewApiKeyScreen,
   NewProviderScreen,
   NewStyleScreen,
@@ -18,6 +19,7 @@ import {
   SettingsNavigation,
   StyleScreen,
   VaultScreen,
+  VaultsScreen,
   VoiceScreen,
   VoicesScreen,
 } from './Settings';
@@ -98,6 +100,63 @@ describe('Settings screens', () => {
     expect(screen.getByRole('button', { name: /Voices/ })).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: /API Keys/ }));
     expect(dispatch).toHaveBeenCalledWith({ type: 'show-settings-api-keys' });
+  });
+
+  it('opens the R2 vault download screen from the vault list', async () => {
+    const dispatch = vi.fn();
+    render(
+      <VaultsScreen
+        client={fixtureClient({ listVaults: async () => vaults })}
+        dispatch={dispatch}
+        sessionReport={null}
+        state={initialAppState}
+      />,
+    );
+
+    await userEvent.click(await screen.findByRole('button', { name: /Download vault/ }));
+    expect(dispatch).toHaveBeenCalledWith({ type: 'show-settings-download-vault' });
+  });
+
+  it('downloads an R2 vault from its row without showing the file extension', async () => {
+    const downloaded: VaultDetail = {
+      display_name: 'Archive',
+      data_path: '/data/Archive.sqlite3',
+      mirror_path: null,
+      modify_path: null,
+      active: false,
+      can_delete: true,
+    };
+    const downloadR2Vault = vi.fn(async (name: string) => ({
+      ...downloaded,
+      display_name: name,
+      data_path: `/data/${name}.sqlite3`,
+    }));
+    const dispatch = vi.fn();
+    render(
+      <DownloadVaultScreen
+        client={fixtureClient({
+          listR2Vaults: async () => ['Archive', 'Travel'],
+          downloadR2Vault,
+        })}
+        dispatch={dispatch}
+        sessionReport={null}
+        state={initialAppState}
+      />,
+    );
+
+    expect(await screen.findByRole('button', { name: 'Archive' })).toBeInTheDocument();
+    expect(screen.queryByText(/\.sqlite3/)).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Archive' }));
+
+    expect(downloadR2Vault).toHaveBeenCalledWith('Archive');
+    expect(dispatch).toHaveBeenCalledWith({ type: 'vault-downloaded', vault: downloaded });
+    expect(await screen.findByText('Downloaded')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Travel' }));
+    expect(downloadR2Vault).toHaveBeenCalledWith('Travel');
+    expect(await screen.findAllByText('Downloaded')).toHaveLength(2);
+    expect(screen.getByRole('button', { name: /Archive/ })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /Travel/ })).toBeDisabled();
   });
 
   it('creates a copied vault without activating it', async () => {

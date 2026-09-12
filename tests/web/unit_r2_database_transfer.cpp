@@ -4,6 +4,7 @@
 #include "session/workspace_session_database.h"
 #include "support/mock_http_server.h"
 #include "support/test_workspace.h"
+#include "web/application_config.h"
 
 #include <gtest/gtest.h>
 
@@ -96,6 +97,123 @@ TEST(R2DatabaseTransfer, UploadsDatabaseAndVaultDefinitionWithSignedPuts) {
     EXPECT_EQ(request_body(database_request), expected_database);
 }
 
+TEST(R2DatabaseTransfer, ListsRootSqliteDatabasesAcrossPages) {
+    const std::string first =
+        "<ListBucketResult>"
+        "<IsTruncated>true</IsTruncated>"
+        "<Contents><Key>zeta.sqlite3</Key></Contents>"
+        "<Contents><Key>notes.txt</Key></Contents>"
+        "<NextContinuationToken>next+token=</NextContinuationToken>"
+        "</ListBucketResult>";
+    const std::string second =
+        "<ListBucketResult>"
+        "<IsTruncated>false</IsTruncated>"
+        "<Contents><Key>Alpha%20Vault.sqlite3</Key></Contents>"
+        "<Contents><Key>folder%2Fhidden.sqlite3</Key></Contents>"
+        "<Contents><Key>zeta.sqlite3.toml</Key></Contents>"
+        "</ListBucketResult>";
+    MockHttpServer server({
+        http_response("application/xml", first),
+        http_response("application/xml", second),
+    });
+    const R2StorageKey key = storage(mock_url(server.port()));
+    server.start();
+
+    const std::vector<std::string> names = list_r2_database_names(key);
+    server.join();
+
+    EXPECT_EQ(names, (std::vector<std::string>{"Alpha Vault", "zeta"}));
+    ASSERT_EQ(server.requests().size(), 2U);
+    EXPECT_TRUE(server.requests()[0].starts_with(
+        "GET /cha-backups?encoding-type=url&list-type=2 HTTP/1.1"));
+    EXPECT_TRUE(server.requests()[1].starts_with(
+        "GET /cha-backups?continuation-token=next%2Btoken%3D&"
+        "encoding-type=url&list-type=2 HTTP/1.1"));
+    EXPECT_NE(
+        server.requests()[0].find("Authorization: AWS4-HMAC-SHA256"),
+        std::string::npos);
+}
+
+TEST(R2DatabaseTransfer, DownloadsANewDatabaseWithoutReplacingAnything) {
+    test::TestWorkspace remote_workspace;
+    remote_workspace.add_persona("remote", "Remote Persona");
+    const std::filesystem::path remote =
+        test::import_test_database(remote_workspace.root());
+    const std::string remote_bytes = file_bytes(remote);
+    const std::filesystem::path destination =
+        remote_workspace.root() / "downloaded.sqlite3";
+    const std::filesystem::path vault =
+        remote_workspace.root() / "vault-2.toml";
+    const std::string remote_vault =
+        "vault_name = \"Remote Archive\"\n"
+        "data = \"/another/computer/archive.sqlite3\"\n";
+    std::filesystem::path stale_wal = destination;
+    stale_wal += "-wal";
+    write_bytes(stale_wal, "stale");
+    MockHttpServer server({
+        http_response("application/toml", remote_vault),
+        http_response("application/vnd.sqlite3", remote_bytes),
+    });
+    const R2StorageKey key = storage(mock_url(server.port()));
+    server.start();
+
+    const R2DatabaseTransfer result = download_new_database_from_r2(
+        destination, vault, "archive.sqlite3", key);
+    server.join();
+
+    EXPECT_EQ(result.byte_count, remote_vault.size() + remote_bytes.size());
+    EXPECT_EQ(file_bytes(destination), remote_bytes);
+    const VaultDefinition downloaded = load_vault_definition_file(
+        remote_workspace.root(), vault);
+    EXPECT_EQ(downloaded.name, "Remote Archive");
+    EXPECT_EQ(downloaded.data, std::filesystem::weakly_canonical(destination));
+    EXPECT_EQ(
+        inspect_workspace_session_database(destination),
+        WorkspaceDatabaseState::valid_v2);
+    EXPECT_FALSE(std::filesystem::exists(stale_wal));
+    std::filesystem::path backup = destination;
+    backup += ".bac";
+    EXPECT_FALSE(std::filesystem::exists(backup));
+    ASSERT_EQ(server.requests().size(), 2U);
+    EXPECT_TRUE(server.requests()[0].starts_with(
+        "GET /cha-backups/archive.sqlite3.toml HTTP/1.1"));
+    EXPECT_TRUE(server.requests()[1].starts_with(
+        "GET /cha-backups/archive.sqlite3 HTTP/1.1"));
+}
+
+TEST(R2DatabaseTransfer, CreatesALocalDefinitionWhenR2HasOnlyTheDatabase) {
+    test::TestWorkspace workspace;
+    const std::filesystem::path remote =
+        test::import_test_database(workspace.root());
+    const std::string remote_bytes = file_bytes(remote);
+    const std::filesystem::path destination =
+        workspace.root() / "philosophy.sqlite3";
+    const std::filesystem::path vault = workspace.root() / "vault-2.toml";
+    MockHttpServer server({
+        "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n"
+        "Connection: close\r\n\r\n",
+        http_response("application/vnd.sqlite3", remote_bytes),
+    });
+    const R2StorageKey key = storage(mock_url(server.port()));
+    server.start();
+
+    const R2DatabaseTransfer result = download_new_database_from_r2(
+        destination, vault, "philosophy.sqlite3", key);
+    server.join();
+
+    EXPECT_EQ(result.byte_count, remote_bytes.size());
+    EXPECT_EQ(file_bytes(destination), remote_bytes);
+    const VaultDefinition downloaded = load_vault_definition_file(
+        workspace.root(), vault);
+    EXPECT_EQ(downloaded.name, "philosophy");
+    EXPECT_EQ(downloaded.data, std::filesystem::weakly_canonical(destination));
+    ASSERT_EQ(server.requests().size(), 2U);
+    EXPECT_TRUE(server.requests()[0].starts_with(
+        "GET /cha-backups/philosophy.sqlite3.toml HTTP/1.1"));
+    EXPECT_TRUE(server.requests()[1].starts_with(
+        "GET /cha-backups/philosophy.sqlite3 HTTP/1.1"));
+}
+
 TEST(R2DatabaseTransfer, DownloadsBothFilesAndReplacesOlderBackups) {
     test::TestWorkspace local_workspace;
     test::TestWorkspace remote_workspace;
@@ -106,8 +224,11 @@ TEST(R2DatabaseTransfer, DownloadsBothFilesAndReplacesOlderBackups) {
         test::import_test_database(remote_workspace.root());
     const std::filesystem::path vault = write_vault(local);
     const std::string local_bytes = file_bytes(local);
+    const std::string local_vault = file_bytes(vault);
     const std::string remote_bytes = file_bytes(remote);
-    const std::string remote_vault = file_bytes(vault);
+    const std::string remote_vault =
+        "vault_name = \"Test\"\n"
+        "data = \"/another/computer/workspace.sqlite3\"\n";
     std::filesystem::path database_backup = local;
     database_backup += ".bac";
     std::filesystem::path vault_backup = vault;
@@ -128,9 +249,12 @@ TEST(R2DatabaseTransfer, DownloadsBothFilesAndReplacesOlderBackups) {
 
     EXPECT_EQ(result.byte_count, remote_bytes.size() + remote_vault.size());
     EXPECT_EQ(file_bytes(local), remote_bytes);
-    EXPECT_EQ(file_bytes(vault), remote_vault);
+    const VaultDefinition downloaded = load_vault_definition_file(
+        local_workspace.root(), vault);
+    EXPECT_EQ(downloaded.name, "Test");
+    EXPECT_EQ(downloaded.data, std::filesystem::weakly_canonical(local));
     EXPECT_EQ(file_bytes(database_backup), local_bytes);
-    EXPECT_EQ(file_bytes(vault_backup), remote_vault);
+    EXPECT_EQ(file_bytes(vault_backup), local_vault);
     EXPECT_EQ(
         inspect_workspace_session_database(local),
         WorkspaceDatabaseState::valid_v2);

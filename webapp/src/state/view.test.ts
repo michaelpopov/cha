@@ -288,6 +288,28 @@ describe('application navigation reducer', () => {
     expect(state.bootstrap?.vaults).toEqual(['Home', 'Projects']);
   });
 
+  it('keeps the R2 list open after downloading a vault', () => {
+    let state = readyState();
+    state = appReducer(state, { type: 'show-settings-download-vault' });
+    expect(state.mainView).toBe('settings-download-vault');
+    expect(navigationTitle(state)).toBe('Download vault');
+
+    state = appReducer(state, {
+      type: 'vault-downloaded',
+      vault: {
+        display_name: 'Archive',
+        data_path: '/data/Archive.sqlite3',
+        mirror_path: null,
+        modify_path: null,
+        active: false,
+        can_delete: true,
+      },
+    });
+    expect(state.mainView).toBe('settings-download-vault');
+    expect(state.bootstrap?.vault_name).toBe('Personal');
+    expect(state.bootstrap?.vaults).toEqual(['Archive', 'Personal', 'Projects']);
+  });
+
   it('ignores a character detail that finished loading after the reader left it', () => {
     let state = readyState();
     state = appReducer(state, { type: 'inspect-character', characterId: 'assistant' });

@@ -251,6 +251,36 @@ describe('CHA API client', () => {
     expect(fetcher.mock.calls[3][1]?.body).toBe('{"vault_name":"Archive"}');
   });
 
+  it('lists and downloads R2 vaults', async () => {
+    const vault = {
+      display_name: 'Archive',
+      data_path: '/data/Archive.sqlite3',
+      mirror_path: null,
+      modify_path: null,
+      active: false,
+      can_delete: true,
+    };
+    const fetcher = vi.fn<(
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => Promise<Response>>(async (_input, init) => (
+      init?.method === 'POST'
+        ? jsonResponse(vault, 201)
+        : jsonResponse(['Archive', 'Travel'])
+    ));
+    const client = createChaClient(fetcher);
+
+    await expect(client.listR2Vaults()).resolves.toEqual(['Archive', 'Travel']);
+    await expect(client.downloadR2Vault('Archive')).resolves.toEqual(vault);
+
+    expect(fetcher.mock.calls.map(([url]) => url)).toEqual([
+      '/api/v1/r2-vaults',
+      '/api/v1/r2-vaults',
+    ]);
+    expect(fetcher.mock.calls[1][1]?.method).toBe('POST');
+    expect(fetcher.mock.calls[1][1]?.body).toBe('{"name":"Archive"}');
+  });
+
   it('posts candidate settings when testing a provider', async () => {
     const fetcher = vi.fn<(
       input: RequestInfo | URL,

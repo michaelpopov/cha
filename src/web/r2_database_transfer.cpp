@@ -5,6 +5,8 @@
 #include "util/crypto.h"
 #include "util/path_name.h"
 #include "util/private_filesystem.h"
+#include "util/text.h"
+#include "util/toml_file.h"
 #include "web/application_config.h"
 
 #include <curl/curl.h>
@@ -38,6 +40,7 @@ constexpr std::array sidecar_suffixes{
 struct R2Settings {
     std::string url;
     std::string canonical_uri;
+    std::string canonical_query;
     std::string host;
     std::string access_key;
     std::string secret_key;
@@ -79,6 +82,11 @@ public:
 
 private:
     curl_slist* headers_{};
+};
+
+class R2ObjectNotFoundError : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
 };
 
 class TemporaryPath {
@@ -195,7 +203,8 @@ bool is_loopback_host(std::string_view authority) {
 
 R2Settings load_r2_settings(
     std::string_view object_name,
-    const R2StorageKey& storage) {
+    const R2StorageKey& storage,
+    std::string canonical_query = {}) {
     const std::string& raw_url = storage.url;
     const std::size_t scheme_end = raw_url.find("://");
     if (scheme_end == std::string::npos) {
@@ -236,12 +245,17 @@ R2Settings load_r2_settings(
         throw std::runtime_error(
             "R2 key field 'url' must end with one bucket name");
     }
-    const std::string canonical_uri = bucket_uri + "/"
-        + encode_path_component(object_name);
+    std::string canonical_uri = bucket_uri;
+    if (!object_name.empty()) {
+        canonical_uri += "/" + encode_path_component(object_name);
+    }
+    std::string url = std::string(scheme) + "://" + authority + canonical_uri;
+    if (!canonical_query.empty()) url += "?" + canonical_query;
 
     return {
-        .url = std::string(scheme) + "://" + authority + canonical_uri,
+        .url = std::move(url),
         .canonical_uri = canonical_uri,
+        .canonical_query = std::move(canonical_query),
         .host = authority,
         .access_key = storage.access_key_id,
         .secret_key = storage.secret_key,
@@ -311,7 +325,8 @@ std::string authorization_header(
         + "x-amz-content-sha256:" + std::string(payload_hash) + "\n"
         + "x-amz-date:" + time.timestamp;
     const std::string canonical_request =
-        std::string(method) + "\n" + settings.canonical_uri + "\n\n"
+        std::string(method) + "\n" + settings.canonical_uri + "\n"
+        + settings.canonical_query + "\n"
         + canonical_headers + "\n\n" + std::string(signed_headers) + "\n"
         + std::string(payload_hash);
     const std::string scope = time.date + "/auto/s3/aws4_request";
@@ -368,6 +383,12 @@ void configure_request(
         curl_easy_setopt(curl.get(), CURLOPT_CONNECTTIMEOUT, 10L),
         "Failed to configure R2 connection timeout");
     require_curl(
+        curl_easy_setopt(curl.get(), CURLOPT_LOW_SPEED_LIMIT, 1L),
+        "Failed to configure R2 low-speed limit");
+    require_curl(
+        curl_easy_setopt(curl.get(), CURLOPT_LOW_SPEED_TIME, 30L),
+        "Failed to configure R2 low-speed timeout");
+    require_curl(
         curl_easy_setopt(curl.get(), CURLOPT_NOSIGNAL, 1L),
         "Failed to configure R2 transport");
     require_curl(
@@ -395,7 +416,7 @@ void require_status(
         "Failed to read R2 response status");
     if (status < 200 || status >= 300) {
         if (status == 404 && !not_found_message.empty()) {
-            throw std::runtime_error(std::string(not_found_message));
+            throw R2ObjectNotFoundError(std::string(not_found_message));
         }
         throw std::runtime_error(
             "R2 " + std::string(operation) + " failed with HTTP status "
@@ -433,6 +454,120 @@ std::size_t write_file(
     const std::size_t bytes = size * count;
     output.write(source, static_cast<std::streamsize>(bytes));
     return output ? bytes : 0;
+}
+
+std::size_t write_string(
+    char* source,
+    std::size_t size,
+    std::size_t count,
+    void* context) {
+    auto& output = *static_cast<std::string*>(context);
+    output.append(source, size * count);
+    return size * count;
+}
+
+std::string xml_text(
+    std::string_view xml,
+    std::string_view element,
+    std::size_t offset = 0) {
+    const std::string open = "<" + std::string(element) + ">";
+    const std::string close = "</" + std::string(element) + ">";
+    const std::size_t begin = xml.find(open, offset);
+    if (begin == std::string_view::npos) return {};
+    const std::size_t content = begin + open.size();
+    const std::size_t end = xml.find(close, content);
+    if (end == std::string_view::npos) {
+        throw std::runtime_error("R2 returned an invalid object listing");
+    }
+    return std::string(xml.substr(content, end - content));
+}
+
+std::string decode_xml_text(std::string_view value) {
+    std::string result;
+    result.reserve(value.size());
+    for (std::size_t index{}; index < value.size();) {
+        if (value[index] != '&') {
+            result.push_back(value[index++]);
+            continue;
+        }
+        const std::size_t end = value.find(';', index + 1);
+        if (end == std::string_view::npos) {
+            throw std::runtime_error("R2 returned an invalid object listing");
+        }
+        const std::string_view entity = value.substr(index, end - index + 1);
+        if (entity == "&amp;") result.push_back('&');
+        else if (entity == "&lt;") result.push_back('<');
+        else if (entity == "&gt;") result.push_back('>');
+        else if (entity == "&quot;") result.push_back('"');
+        else if (entity == "&apos;") result.push_back('\'');
+        else throw std::runtime_error("R2 returned an invalid object listing");
+        index = end + 1;
+    }
+    return result;
+}
+
+unsigned char hex_value(char value) {
+    if (value >= '0' && value <= '9') {
+        return static_cast<unsigned char>(value - '0');
+    }
+    if (value >= 'a' && value <= 'f') {
+        return static_cast<unsigned char>(value - 'a' + 10);
+    }
+    if (value >= 'A' && value <= 'F') {
+        return static_cast<unsigned char>(value - 'A' + 10);
+    }
+    throw std::runtime_error("R2 returned an invalid encoded object name");
+}
+
+std::string decode_percent_encoding(std::string_view value) {
+    std::string result;
+    result.reserve(value.size());
+    for (std::size_t index{}; index < value.size(); ++index) {
+        if (value[index] != '%') {
+            result.push_back(value[index]);
+            continue;
+        }
+        if (index + 2 >= value.size()) {
+            throw std::runtime_error("R2 returned an invalid encoded object name");
+        }
+        const unsigned char byte = static_cast<unsigned char>(
+            (hex_value(value[index + 1]) << 4) | hex_value(value[index + 2]));
+        result.push_back(static_cast<char>(byte));
+        index += 2;
+    }
+    return result;
+}
+
+std::string list_objects(
+    const R2StorageKey& storage,
+    std::string_view continuation_token) {
+    std::string query;
+    if (!continuation_token.empty()) {
+        query = "continuation-token="
+            + encode_path_component(continuation_token) + "&";
+    }
+    query += "encoding-type=url&list-type=2";
+    const R2Settings settings = load_r2_settings({}, storage, std::move(query));
+    const std::string payload_hash = sha256_hex({});
+    (void)curl_global();
+    CurlHandle curl;
+    CurlHeaders headers;
+    std::array<char, CURL_ERROR_SIZE> error{};
+    configure_request(curl, headers, settings, "GET", payload_hash, error);
+    require_curl(
+        curl_easy_setopt(curl.get(), CURLOPT_HTTPGET, 1L),
+        "Failed to configure R2 object listing");
+    std::string response;
+    require_curl(
+        curl_easy_setopt(curl.get(), CURLOPT_WRITEFUNCTION, write_string),
+        "Failed to configure R2 object listing writer");
+    require_curl(
+        curl_easy_setopt(curl.get(), CURLOPT_WRITEDATA, &response),
+        "Failed to configure R2 object listing destination");
+    const CURLcode result = curl_easy_perform(curl.get());
+    if (result != CURLE_OK) fail_transfer("list", result, error);
+    require_status(curl, "list");
+    return response;
 }
 
 std::filesystem::path unique_sibling(
@@ -756,12 +891,116 @@ R2DatabaseTransfer download_database_from_r2(
     }
     const VaultDefinition downloaded = load_vault_definition_file(
         vault.parent_path(), vault_temporary.get());
-    if (!same_vault_name(downloaded.name, local.name)
-        || downloaded.data != database) {
+    if (!same_vault_name(downloaded.name, local.name)) {
         throw std::runtime_error(
             "R2 vault definition does not match the selected local vault");
     }
+    rewrite_toml_file(vault_temporary.get(), [&](toml::table& table) {
+        table.insert_or_assign("data", utf8_path(database));
+    });
 
+    remove_sidecars(database_temporary.get());
+    publish_downloads(
+        database_temporary, vault_temporary, database, vault);
+    return {.byte_count = vault_bytes + database_bytes};
+}
+
+std::vector<std::string> list_r2_database_names(
+    const R2StorageKey& storage) {
+    constexpr std::string_view suffix = ".sqlite3";
+    std::vector<std::string> names;
+    std::string continuation_token;
+    while (true) {
+        const std::string response = list_objects(storage, continuation_token);
+        std::size_t offset{};
+        while (true) {
+            const std::size_t key_start = response.find("<Key>", offset);
+            if (key_start == std::string::npos) break;
+            const std::size_t key_end = response.find("</Key>", key_start + 5);
+            if (key_end == std::string::npos) {
+                throw std::runtime_error("R2 returned an invalid object listing");
+            }
+            const std::string key = decode_percent_encoding(
+                decode_xml_text(std::string_view(response).substr(
+                    key_start + 5, key_end - key_start - 5)));
+            if (key.size() > suffix.size() && key.ends_with(suffix)
+                && key.find('/') == std::string::npos
+                && key.find('\\') == std::string::npos) {
+                names.push_back(key.substr(0, key.size() - suffix.size()));
+            }
+            offset = key_end + 6;
+        }
+
+        if (xml_text(response, "IsTruncated") != "true") break;
+        const std::string next = decode_xml_text(
+            xml_text(response, "NextContinuationToken"));
+        if (next.empty() || next == continuation_token) {
+            throw std::runtime_error("R2 returned an invalid object listing");
+        }
+        continuation_token = next;
+    }
+    std::sort(names.begin(), names.end(), [](const auto& left, const auto& right) {
+        return fold_ascii(left) < fold_ascii(right);
+    });
+    return names;
+}
+
+R2DatabaseTransfer download_new_database_from_r2(
+    const std::filesystem::path& database_path,
+    const std::filesystem::path& vault_definition_path,
+    std::string_view database_name,
+    const R2StorageKey& storage) {
+    constexpr std::string_view suffix = ".sqlite3";
+    if (database_name.size() <= suffix.size()
+        || !database_name.ends_with(suffix)
+        || database_name.find('/') != std::string_view::npos
+        || database_name.find('\\') != std::string_view::npos) {
+        throw std::invalid_argument("Invalid R2 database name");
+    }
+    const std::filesystem::path database = normalize_database_path(database_path);
+    const std::filesystem::path vault =
+        std::filesystem::absolute(vault_definition_path).lexically_normal();
+    if (!std::filesystem::is_directory(database.parent_path())
+        || !std::filesystem::is_directory(vault.parent_path())) {
+        throw std::invalid_argument("The database parent directory does not exist");
+    }
+    if (regular_file_if_present(database) || regular_file_if_present(vault)) {
+        throw std::invalid_argument("The local vault already exists");
+    }
+
+    TemporaryPath database_temporary(unique_sibling(database, "download"));
+    TemporaryPath vault_temporary(unique_sibling(vault, "download"));
+    const std::string vault_object = std::string(database_name) + ".toml";
+    std::uintmax_t vault_bytes{};
+    bool downloaded_vault = true;
+    try {
+        vault_bytes = download_file(
+            vault_temporary.get(), vault_object, storage,
+            "R2 vault definition object '" + vault_object + "' was not found");
+    } catch (const R2ObjectNotFoundError&) {
+        downloaded_vault = false;
+    }
+    const std::uintmax_t database_bytes = download_file(
+        database_temporary.get(), database_name, storage);
+    if (inspect_workspace_session_database(database_temporary.get())
+        != WorkspaceDatabaseState::valid_v2) {
+        throw std::runtime_error("R2 download is not a valid CHA database");
+    }
+    if (downloaded_vault) {
+        (void)load_vault_definition_file(
+            vault.parent_path(), vault_temporary.get());
+        rewrite_toml_file(vault_temporary.get(), [&](toml::table& table) {
+            table.insert_or_assign("data", utf8_path(database));
+        });
+    } else {
+        toml::table table;
+        table.insert(
+            "vault_name",
+            std::string(database_name.substr(
+                0, database_name.size() - suffix.size())));
+        table.insert("data", utf8_path(database));
+        write_toml_file(vault_temporary.get(), table);
+    }
     remove_sidecars(database_temporary.get());
     publish_downloads(
         database_temporary, vault_temporary, database, vault);

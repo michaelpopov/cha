@@ -232,6 +232,51 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /api/v1/r2-vaults:
+    get:
+      tags: [Settings]
+      operationId: listR2Vaults
+      summary: List vault databases available in R2
+      responses:
+        "200":
+          description: Root-level SQLite database names without their extensions.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: string
+                  minLength: 1
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    post:
+      tags: [Settings]
+      operationId: downloadR2Vault
+      summary: Download an R2 database as a new local vault
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DownloadR2VaultRequest"
+      responses:
+        "201":
+          description: Downloaded vault settings. The active vault is unchanged.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VaultDetail"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/ForbiddenMutation"
+        "413":
+          $ref: "#/components/responses/BodyTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /api/v1/providers:
     get:
       tags: [Settings]
@@ -2176,6 +2221,15 @@ components:
           description: Absolute editable-workspace directory path.
         copy_from:
           type: [string, "null"]
+
+    DownloadR2VaultRequest:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
 
     UpdateVaultRequest:
       type: object

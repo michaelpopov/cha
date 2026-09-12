@@ -26,6 +26,7 @@ export type MainView =
   | 'settings'
   | 'settings-vaults'
   | 'settings-new-vault'
+  | 'settings-download-vault'
   | 'settings-vault'
   | 'settings-providers'
   | 'settings-new-provider'
@@ -161,8 +162,10 @@ export type AppAction =
   | { type: 'show-settings' }
   | { type: 'show-settings-vaults' }
   | { type: 'show-settings-new-vault' }
+  | { type: 'show-settings-download-vault' }
   | { type: 'inspect-vault'; vaultName: string }
   | { type: 'vault-created'; vault: VaultDetail }
+  | { type: 'vault-downloaded'; vault: VaultDetail }
   | { type: 'vault-updated'; previousName: string; vault: VaultDetail }
   | { type: 'vault-deleted'; vaultName: string }
   | { type: 'show-settings-providers' }
@@ -572,6 +575,8 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       };
     case 'show-settings-new-vault':
       return { ...state, mainView: 'settings-new-vault', ...idleSessionOperation() };
+    case 'show-settings-download-vault':
+      return { ...state, mainView: 'settings-download-vault', ...idleSessionOperation() };
     case 'inspect-vault':
       return {
         ...state,
@@ -584,6 +589,16 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         ...state,
         mainView: 'settings-vault',
         inspectedVaultName: action.vault.display_name,
+        bootstrap: state.bootstrap ? {
+          ...state.bootstrap,
+          vaults: [...state.bootstrap.vaults, action.vault.display_name]
+            .sort((left, right) => left.localeCompare(right)),
+        } : null,
+        ...idleSessionOperation(),
+      };
+    case 'vault-downloaded':
+      return {
+        ...state,
         bootstrap: state.bootstrap ? {
           ...state.bootstrap,
           vaults: [...state.bootstrap.vaults, action.vault.display_name]
@@ -834,6 +849,7 @@ export function navigationTitle(state: AppState): string | null {
     case 'settings': return 'Settings';
     case 'settings-vaults': return 'Vaults';
     case 'settings-new-vault': return 'New vault';
+    case 'settings-download-vault': return 'Download vault';
     case 'settings-vault': return state.inspectedVaultName ?? 'Vault';
     case 'settings-providers': return 'Providers';
     case 'settings-new-provider': return 'New provider';

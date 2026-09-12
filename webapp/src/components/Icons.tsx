@@ -233,6 +233,14 @@ export function FileUpIcon(props: IconProps) {
   );
 }
 
+export function DownloadIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M12 4v12M7.5 11.5 12 16l4.5-4.5M5 20h14" {...stroke} />
+    </Icon>
+  );
+}
+
 export function TextLinesIcon(props: IconProps) {
   return (
     <Icon {...props}>

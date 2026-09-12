@@ -160,6 +160,8 @@ export interface ChaClient {
   disconnectOpenAiAuth(): Promise<OpenAiAuth>;
   listVaults(): Promise<VaultDetail[]>;
   createVault(request: CreateVaultRequest): Promise<VaultDetail>;
+  listR2Vaults(): Promise<string[]>;
+  downloadR2Vault(name: string): Promise<VaultDetail>;
   updateVault(vaultName: string, update: VaultUpdate): Promise<VaultDetail>;
   deleteVault(vaultName: string): Promise<void>;
   listProviders(): Promise<ProviderSummary[]>;
@@ -728,6 +730,20 @@ export function createChaClient(
       '/api/v1/vaults',
       isVaultDetail,
       jsonMutation(request),
+    ),
+
+    listR2Vaults: () => requestValidated(
+      fetcher,
+      '/api/v1/r2-vaults',
+      (value): value is string[] => Array.isArray(value)
+        && value.every((name) => typeof name === 'string'),
+    ),
+
+    downloadR2Vault: (name) => requestValidated(
+      fetcher,
+      '/api/v1/r2-vaults',
+      isVaultDetail,
+      jsonMutation({ name }),
     ),
 
     updateVault: (vaultName, update) => requestValidated(

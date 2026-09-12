@@ -61,6 +61,7 @@ import { TransliterationProvider } from './TransliterationMode';
 import {
   ApiKeyScreen,
   ApiKeysScreen,
+  DownloadVaultScreen,
   NewApiKeyScreen,
   NewProviderScreen,
   NewStyleScreen,
@@ -251,6 +252,9 @@ function Screen({
     );
     case 'settings-new-vault': return (
       <NewVaultScreen client={client} dispatch={dispatch} sessionReport={sessionReport} state={state} />
+    );
+    case 'settings-download-vault': return (
+      <DownloadVaultScreen client={client} dispatch={dispatch} sessionReport={sessionReport} state={state} />
     );
     case 'settings-vault': return (
       <VaultScreen client={client} dispatch={dispatch} sessionReport={sessionReport} state={state} />

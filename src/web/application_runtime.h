@@ -68,6 +68,8 @@ public:
         VaultUpdate update);
     void delete_vault(std::string_view name);
     void switch_vault(std::string_view name);
+    [[nodiscard]] std::vector<std::string> list_r2_vaults() const;
+    [[nodiscard]] VaultDefinition download_r2_vault(std::string_view name);
     [[nodiscard]] R2DatabaseTransfer upload_database();
     [[nodiscard]] R2DatabaseTransfer download_database();
     [[nodiscard]] WorkspaceConfigTransfer import_configuration();

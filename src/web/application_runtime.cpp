@@ -236,6 +236,21 @@ void validate_vault_paths(const VaultDefinition& vault) {
     }
 }
 
+void require_available_database_path(const std::filesystem::path& data) {
+    if (!std::filesystem::is_directory(data.parent_path())) {
+        throw std::invalid_argument("The database parent directory does not exist");
+    }
+    std::error_code status_error;
+    const std::filesystem::file_status data_status =
+        std::filesystem::symlink_status(data, status_error);
+    if (status_error && status_error != std::errc::no_such_file_or_directory) {
+        throw std::runtime_error("The database path could not be inspected");
+    }
+    if (data_status.type() != std::filesystem::file_type::not_found) {
+        throw std::invalid_argument("The database path already exists");
+    }
+}
+
 void clear_existing_export(const std::filesystem::path& destination) {
     if (!std::filesystem::is_directory(destination)
         || std::filesystem::is_empty(destination)) {
@@ -535,18 +550,7 @@ VaultDefinition ApplicationRuntime::create_vault(VaultCreate create) {
         .modify = normalized_absolute_vault_path(create.modify, "modify"),
         .source = next_vault_file(impl_->command.config_directory),
     };
-    if (!std::filesystem::is_directory(candidate.data.parent_path())) {
-        throw std::invalid_argument("The database parent directory does not exist");
-    }
-    std::error_code status_error;
-    const std::filesystem::file_status data_status =
-        std::filesystem::symlink_status(candidate.data, status_error);
-    if (status_error && status_error != std::errc::no_such_file_or_directory) {
-        throw std::runtime_error("The database path could not be inspected");
-    }
-    if (data_status.type() != std::filesystem::file_type::not_found) {
-        throw std::invalid_argument("The database path already exists");
-    }
+    require_available_database_path(candidate.data);
     validate_vault_paths(candidate);
 
     std::vector<VaultDefinition> updated = impl_->command.vaults;
@@ -659,6 +663,78 @@ void ApplicationRuntime::delete_vault(std::string_view name) {
     (void)std::filesystem::remove(found->source);
     impl_->command.vaults.erase(found);
     impl_->publish_vault_names();
+}
+
+std::vector<std::string> ApplicationRuntime::list_r2_vaults() const {
+    R2StorageKey storage;
+    std::vector<std::string> local_database_names;
+    {
+        const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+        const std::optional<R2StorageKey> configured = impl_->api_keys->r2();
+        if (!configured) {
+            throw std::invalid_argument(
+                "R2 storage credentials are not configured for the active vault");
+        }
+        storage = *configured;
+        local_database_names.reserve(impl_->command.vaults.size());
+        for (const VaultDefinition& vault : impl_->command.vaults) {
+            local_database_names.push_back(utf8_path(vault.data.filename()));
+        }
+    }
+
+    std::vector<std::string> names = list_r2_database_names(storage);
+    std::erase_if(names, [&](const std::string& name) {
+        const std::string database_name = name + ".sqlite3";
+        return std::ranges::any_of(
+            local_database_names,
+            [&](const std::string& local) {
+                return fold_ascii(local) == fold_ascii(database_name);
+            });
+    });
+    return names;
+}
+
+VaultDefinition ApplicationRuntime::download_r2_vault(std::string_view name) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    const std::optional<R2StorageKey> storage = impl_->api_keys->r2();
+    if (!storage) {
+        throw std::invalid_argument(
+            "R2 storage credentials are not configured for the active vault");
+    }
+    const std::string database_name = std::string(name) + ".sqlite3";
+    require_path_component(database_name, impl_->command.config_directory);
+
+    VaultDefinition candidate{
+        .data = normalized_vault_path(
+            impl_->command.config_directory, path_from_utf8(database_name)),
+        .source = next_vault_file(impl_->command.config_directory),
+    };
+    require_available_database_path(candidate.data);
+
+    try {
+        (void)download_new_database_from_r2(
+            candidate.data, candidate.source, database_name, *storage);
+        candidate = load_vault_definition_file(
+            impl_->command.config_directory, candidate.source);
+        std::vector<VaultDefinition> updated = impl_->command.vaults;
+        updated.push_back(candidate);
+        validate_candidate_vaults(impl_->command.config_directory, updated);
+        std::sort(
+            updated.begin(), updated.end(),
+            [](const VaultDefinition& left, const VaultDefinition& right) {
+                return fold_ascii(left.name) < fold_ascii(right.name);
+            });
+        impl_->command.vaults = std::move(updated);
+    } catch (...) {
+        std::error_code ignored;
+        std::filesystem::remove(candidate.source, ignored);
+        ignored.clear();
+        std::filesystem::remove(candidate.data, ignored);
+        throw;
+    }
+
+    impl_->publish_vault_names();
+    return candidate;
 }
 
 void ApplicationRuntime::switch_vault(std::string_view name) {
@@ -789,6 +865,50 @@ int ApplicationRuntime::start(int port_override) {
                     vault, snapshot.active.name, snapshot.vaults.size()));
             }
             set_json_response(response, 200, result);
+        });
+    server->Get(
+        "/api/v1/r2-vaults",
+        [runtime](const httplib::Request&, httplib::Response& response) {
+            try {
+                set_json_response(response, 200, runtime->list_r2_vaults());
+            } catch (const std::invalid_argument& error) {
+                set_error_response(
+                    response, 400, {ErrorCode::bad_request, error.what()});
+            } catch (const std::exception& error) {
+                set_error_response(
+                    response, 500, {ErrorCode::internal_error, error.what()});
+            }
+        });
+    server->Post(
+        "/api/v1/r2-vaults",
+        [runtime, settings](
+            const httplib::Request& request, httplib::Response& response) {
+            if (!validate_json_mutation(request, response)) return;
+            std::string name;
+            if (!parse_route_json_body(
+                    request, response, settings.request_body_limit,
+                    [&name](const nlohmann::json& json) {
+                        if (!json.is_object() || json.size() != 1) {
+                            throw std::invalid_argument("Invalid R2 vault");
+                        }
+                        name = required_json_string(json, "name");
+                    })) return;
+            try {
+                const VaultDefinition created =
+                    runtime->download_r2_vault(name);
+                const VaultRegistrySnapshot snapshot =
+                    runtime->vault_snapshot();
+                set_json_response(
+                    response, 201,
+                    vault_json(
+                        created, snapshot.active.name, snapshot.vaults.size()));
+            } catch (const std::invalid_argument& error) {
+                set_error_response(
+                    response, 400, {ErrorCode::bad_request, error.what()});
+            } catch (const std::exception& error) {
+                set_error_response(
+                    response, 500, {ErrorCode::internal_error, error.what()});
+            }
         });
     server->Post(
         "/api/v1/vaults",

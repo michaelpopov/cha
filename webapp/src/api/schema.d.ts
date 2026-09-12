@@ -147,6 +147,24 @@ export interface paths {
         patch: operations["updateVault"];
         trace?: never;
     };
+    "/api/v1/r2-vaults": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List vault databases available in R2 */
+        get: operations["listR2Vaults"];
+        put?: never;
+        /** Download an R2 database as a new local vault */
+        post: operations["downloadR2Vault"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/providers": {
         parameters: {
             query?: never;
@@ -1175,6 +1193,9 @@ export interface components {
             modify_path: string | null;
             copy_from: string | null;
         };
+        DownloadR2VaultRequest: {
+            name: string;
+        };
         UpdateVaultRequest: {
             vault_name: string;
             display_name: string;
@@ -1902,6 +1923,56 @@ export interface operations {
             400: components["responses"]["BadRequest"];
             403: components["responses"]["ForbiddenMutation"];
             404: components["responses"]["NotFound"];
+            413: components["responses"]["BodyTooLarge"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listR2Vaults: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Root-level SQLite database names without their extensions. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": string[];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    downloadR2Vault: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DownloadR2VaultRequest"];
+            };
+        };
+        responses: {
+            /** @description Downloaded vault settings. The active vault is unchanged. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VaultDetail"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["ForbiddenMutation"];
             413: components["responses"]["BodyTooLarge"];
             500: components["responses"]["InternalError"];
         };

@@ -683,6 +683,96 @@ TEST(ApplicationRuntime, ManagesR2CredentialsThroughSettingsRoutes) {
     runtime->shutdown();
 }
 
+TEST(ApplicationRuntime, ListsAndDownloadsR2VaultWithoutChangingTheActiveVault) {
+    ScopedEnvironmentVariable url("CHA_R2_URL");
+    ScopedEnvironmentVariable access("CHA_R2_ACCESS_KEY_ID");
+    ScopedEnvironmentVariable secret("CHA_R2_SECRET_ACCESS_KEY");
+    test::TestWorkspace local_workspace;
+    test::TestWorkspace remote_workspace;
+    remote_workspace.add_persona("remote", "Remote Persona");
+    const std::filesystem::path local =
+        test::import_test_database(local_workspace.root());
+    const std::filesystem::path remote =
+        test::import_test_database(remote_workspace.root());
+    const ApplicationCommand command = make_command(local_workspace, local);
+    const std::string remote_vault =
+        "vault_name = \"Remote Archive\"\n"
+        "data = \"/another/computer/Archive.sqlite3\"\n";
+    const std::string listing =
+        "<ListBucketResult><IsTruncated>false</IsTruncated>"
+        "<Contents><Key>Archive.sqlite3</Key></Contents>"
+        "<Contents><Key>Archive.sqlite3.toml</Key></Contents>"
+        "</ListBucketResult>";
+    MockHttpServer r2({
+        http_response("application/xml", listing),
+        http_response("application/toml", remote_vault),
+        http_response("application/vnd.sqlite3", file_bytes(remote)),
+        http_response("application/xml", listing),
+    });
+    ASSERT_TRUE(set_environment_variable(
+        "CHA_R2_URL",
+        "http://127.0.0.1:" + std::to_string(r2.port()) + "/backups"));
+    ASSERT_TRUE(set_environment_variable("CHA_R2_ACCESS_KEY_ID", "access"));
+    ASSERT_TRUE(set_environment_variable("CHA_R2_SECRET_ACCESS_KEY", "secret"));
+
+    auto runtime = ApplicationRuntime::open(command, "private-test-token");
+    const int port = runtime->start();
+    httplib::Client client("127.0.0.1", port);
+    r2.start();
+
+    const auto listed = client.Get("/api/v1/r2-vaults", kRuntimeCookie);
+    ASSERT_TRUE(listed);
+    ASSERT_EQ(listed->status, 200) << listed->body;
+    EXPECT_EQ(
+        nlohmann::json::parse(listed->body),
+        nlohmann::json::array({"Archive"}));
+
+    const auto downloaded = client.Post(
+        "/api/v1/r2-vaults",
+        kRuntimeCookie,
+        R"({"name":"Archive"})",
+        "application/json");
+    ASSERT_TRUE(downloaded);
+    ASSERT_EQ(downloaded->status, 201) << downloaded->body;
+    const nlohmann::json downloaded_json =
+        nlohmann::json::parse(downloaded->body);
+    EXPECT_EQ(downloaded_json.at("display_name"), "Remote Archive");
+    EXPECT_FALSE(downloaded_json.at("active").get<bool>());
+    EXPECT_EQ(runtime->current_vault().name, "Test");
+
+    const std::filesystem::path local_archive =
+        command.config_directory / "Archive.sqlite3";
+    EXPECT_EQ(file_bytes(local_archive), file_bytes(remote));
+    const auto bootstrap = client.Get("/api/v1/bootstrap", kRuntimeCookie);
+    ASSERT_TRUE(bootstrap);
+    ASSERT_EQ(bootstrap->status, 200) << bootstrap->body;
+    EXPECT_EQ(
+        nlohmann::json::parse(bootstrap->body).at("vaults"),
+        nlohmann::json::array({"Remote Archive", "Test"}));
+    const auto remaining = client.Get("/api/v1/r2-vaults", kRuntimeCookie);
+    ASSERT_TRUE(remaining);
+    ASSERT_EQ(remaining->status, 200) << remaining->body;
+    EXPECT_EQ(nlohmann::json::parse(remaining->body), nlohmann::json::array());
+    const ConfigurationDirectory persisted =
+        load_configuration_directory(command.config_directory);
+    const VaultDefinition* const archive =
+        find_vault(persisted.vaults, "Remote Archive");
+    ASSERT_NE(archive, nullptr);
+    EXPECT_EQ(archive->data, std::filesystem::weakly_canonical(local_archive));
+
+    r2.join();
+    ASSERT_EQ(r2.requests().size(), 4U);
+    EXPECT_TRUE(r2.requests()[0].starts_with(
+        "GET /backups?encoding-type=url&list-type=2 HTTP/1.1"));
+    EXPECT_TRUE(r2.requests()[1].starts_with(
+        "GET /backups/Archive.sqlite3.toml HTTP/1.1"));
+    EXPECT_TRUE(r2.requests()[2].starts_with(
+        "GET /backups/Archive.sqlite3 HTTP/1.1"));
+    EXPECT_TRUE(r2.requests()[3].starts_with(
+        "GET /backups?encoding-type=url&list-type=2 HTTP/1.1"));
+    runtime->shutdown();
+}
+
 TEST(ApplicationRuntime, UploadsInProcessAndResumesAnOpenSession) {
     ScopedEnvironmentVariable url("CHA_R2_URL");
     ScopedEnvironmentVariable access("CHA_R2_ACCESS_KEY_ID");
