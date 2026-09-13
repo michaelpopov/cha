@@ -335,6 +335,92 @@ TEST(ApplicationRuntime, ReportsVoiceInputApiKeyUsage) {
     runtime->shutdown();
 }
 
+TEST(ApplicationRuntime, ServesVaultBackedVoiceOutputSettings) {
+    test::TestWorkspace workspace;
+    workspace.write_voice(
+        "default-reader",
+        "display_name = \"Default Reader\"\n"
+        "elevenlabs_voice_id = \"eleven-default\"\n");
+    const std::filesystem::path database =
+        test::import_test_database(workspace.root());
+    ApplicationCommand command = make_command(workspace, database);
+    ApiKeyInfo key;
+    {
+        auto config = WorkspaceConfigStore::open(database);
+        ApiKeyStore key_store(*config);
+        key = key_store.create("ElevenLabs", "output-secret");
+        config->apply_voice_output_update({
+            .url = "https://api.elevenlabs.io/v1/text-to-speech",
+            .model = "eleven_multilingual_v2",
+            .api_key_id = key.id,
+            .output_format = "mp3_44100_128",
+            .default_voice = "Default Reader",
+        });
+    }
+
+    auto runtime = ApplicationRuntime::open(command, "private-test-token");
+    const int port = runtime->start();
+    httplib::Client client("127.0.0.1", port);
+
+    const auto settings = client.Get("/api/v1/voice-output", kRuntimeCookie);
+    ASSERT_TRUE(settings);
+    ASSERT_EQ(settings->status, 200) << settings->body;
+    EXPECT_EQ(
+        nlohmann::json::parse(settings->body),
+        nlohmann::json({
+            {"url", "https://api.elevenlabs.io/v1/text-to-speech"},
+            {"model", "eleven_multilingual_v2"},
+            {"api_key", key.id},
+            {"output_format", "mp3_44100_128"},
+            {"default_voice", "Default Reader"},
+        }));
+
+    const auto resolved = client.Get(
+        "/api/v1/voice-output/runtime", kRuntimeCookie);
+    ASSERT_TRUE(resolved);
+    ASSERT_EQ(resolved->status, 200) << resolved->body;
+    const nlohmann::json runtime_settings =
+        nlohmann::json::parse(resolved->body);
+    EXPECT_EQ(runtime_settings.at("api_key"), "output-secret");
+    EXPECT_EQ(runtime_settings.at("default_voice_id"), "eleven-default");
+
+    const auto invalid = client.Put(
+        "/api/v1/voice-output",
+        kRuntimeCookie,
+        R"({"url":"https://example.com/speech","model":"next-model","api_key":"api_key_1","output_format":"mp3","default_voice":"Missing"})",
+        "application/json");
+    ASSERT_TRUE(invalid);
+    EXPECT_EQ(invalid->status, 400) << invalid->body;
+
+    const auto updated = client.Put(
+        "/api/v1/voice-output",
+        kRuntimeCookie,
+        R"({"url":"https://example.com/speech","model":"next-model","api_key":"api_key_1","output_format":"mp3_44100_192","default_voice":"Default Reader"})",
+        "application/json");
+    ASSERT_TRUE(updated);
+    ASSERT_EQ(updated->status, 200) << updated->body;
+    ASSERT_TRUE(getws()->voice_output());
+    EXPECT_EQ(getws()->voice_output()->url, "https://example.com/speech");
+    EXPECT_EQ(getws()->voice_output()->model, "next-model");
+    EXPECT_EQ(getws()->voice_output()->output_format, "mp3_44100_192");
+
+    const auto keys = client.Get("/api/v1/api-keys", kRuntimeCookie);
+    ASSERT_TRUE(keys);
+    ASSERT_EQ(keys->status, 200) << keys->body;
+    EXPECT_EQ(
+        nlohmann::json::parse(keys->body).front().at("used_by"),
+        nlohmann::json::array({"Voice output"}));
+
+    const auto shell = client.Get("/", kRuntimeCookie);
+    ASSERT_TRUE(shell);
+    EXPECT_NE(
+        shell->get_header_value("Content-Security-Policy").find(
+            "connect-src 'self' https://example.com;"),
+        std::string::npos);
+
+    runtime->shutdown();
+}
+
 TEST(ApplicationRuntime, PreservesOpenRouterTargetsForLegacyProviderUpdates) {
     test::TestWorkspace workspace;
     workspace.write_provider(

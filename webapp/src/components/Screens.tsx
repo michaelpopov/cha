@@ -17,10 +17,10 @@ import {
   type VoiceDetail,
 } from '../api/client';
 import {
-  getTextToSpeechConfiguration,
   TextToSpeechError,
   TextToSpeechSession,
   type TextToSpeechVoice,
+  useTextToSpeechConfiguration,
 } from '../textToSpeech';
 import { sessionOperationState, type AppAction, type AppState } from '../state/view';
 import { Markdown } from './Markdown';
@@ -516,7 +516,7 @@ export function CharacterSettingsScreen({
   const [saving, setSaving] = useState(false);
   const [requestVersion, setRequestVersion] = useState(0);
   const voiceTest = useRef<TextToSpeechSession | null>(null);
-  const speechConfiguration = getTextToSpeechConfiguration();
+  const speechConfiguration = useTextToSpeechConfiguration(client);
 
   useEffect(() => () => voiceTest.current?.stop(), []);
 

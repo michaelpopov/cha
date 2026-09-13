@@ -21,13 +21,12 @@ import {
   VaultScreen,
   VaultsScreen,
   VoiceScreen,
-  VoiceInputScreen,
+  VoiceSettingsScreen,
   VoicesScreen,
 } from './Settings';
 import { TopBar } from './TopBar';
 
 afterEach(() => {
-  delete window.chaTextToSpeech;
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -893,14 +892,15 @@ describe('Settings screens', () => {
     expect(brian).toHaveTextContent('Deep, resonant, comforting');
     expect(brian).not.toHaveTextContent(voiceDetailFixture.elevenlabs_voice_id);
     expect(brian).not.toHaveTextContent('settings');
-    await userEvent.click(screen.getByRole('button', { name: 'Voice input' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Voice settings' }));
     expect(dispatch).toHaveBeenCalledWith({ type: 'show-settings-voice-input' });
   });
 
-  it('loads and saves vault-backed voice input settings', async () => {
+  it('loads and saves vault-backed voice settings', async () => {
     const saveVoiceInputSettings = vi.fn(async (settings) => settings);
+    const saveVoiceOutputSettings = vi.fn(async (settings) => settings);
     render(
-      <VoiceInputScreen
+      <VoiceSettingsScreen
         client={fixtureClient({
           getVoiceInputSettings: async () => ({
             url: 'https://api.openai.com/v1/realtime/calls',
@@ -914,8 +914,22 @@ describe('Settings screens', () => {
             display_name: 'OpenAI',
             has_value: true,
             used_by: ['Voice input'],
+          }, {
+            id: 'api_key_2',
+            display_name: 'ElevenLabs',
+            has_value: true,
+            used_by: ['Voice output'],
           }],
+          listVoices: async () => [voiceDetailFixture],
+          getVoiceOutputSettings: async () => ({
+            url: 'https://api.elevenlabs.io/v1/text-to-speech',
+            model: 'eleven_multilingual_v2',
+            api_key: 'api_key_2',
+            output_format: 'mp3_44100_128',
+            default_voice: 'Brian',
+          }),
           saveVoiceInputSettings,
+          saveVoiceOutputSettings,
         })}
         dispatch={vi.fn()}
         sessionReport={null}
@@ -923,19 +937,23 @@ describe('Settings screens', () => {
       />,
     );
 
-    expect(await screen.findByLabelText('URL endpoint')).toHaveValue(
+    expect(await screen.findByLabelText('Input URL endpoint')).toHaveValue(
       'https://api.openai.com/v1/realtime/calls',
     );
-    expect(screen.getByLabelText('API key name')).toHaveDisplayValue('OpenAI');
-    expect(screen.getByLabelText('Delay')).toHaveDisplayValue('Medium');
-    expect(screen.getByLabelText('Prompt')).toHaveValue('Software design discussion.');
-    const model = screen.getByLabelText('Model name');
+    expect(screen.getByLabelText('Input API key name')).toHaveDisplayValue('OpenAI');
+    expect(screen.getByLabelText('Input delay')).toHaveDisplayValue('Medium');
+    expect(screen.getByLabelText('Input prompt')).toHaveValue('Software design discussion.');
+    expect(screen.getByLabelText('Output API key name')).toHaveDisplayValue('ElevenLabs');
+    expect(screen.getByLabelText('Default voice')).toHaveDisplayValue('Brian');
+    const model = screen.getByLabelText('Input model name');
     await userEvent.clear(model);
     await userEvent.type(model, 'next-transcribe-model');
-    await userEvent.selectOptions(screen.getByLabelText('Delay'), 'xhigh');
-    await userEvent.clear(screen.getByLabelText('Prompt'));
-    await userEvent.type(screen.getByLabelText('Prompt'), 'Names and technical terms.');
-    await userEvent.click(screen.getByRole('button', { name: 'Save voice input' }));
+    await userEvent.selectOptions(screen.getByLabelText('Input delay'), 'xhigh');
+    await userEvent.clear(screen.getByLabelText('Input prompt'));
+    await userEvent.type(screen.getByLabelText('Input prompt'), 'Names and technical terms.');
+    await userEvent.clear(screen.getByLabelText('Output format'));
+    await userEvent.type(screen.getByLabelText('Output format'), 'mp3_44100_192');
+    await userEvent.click(screen.getByRole('button', { name: 'Save voice settings' }));
 
     expect(saveVoiceInputSettings).toHaveBeenCalledWith({
       url: 'https://api.openai.com/v1/realtime/calls',
@@ -944,7 +962,14 @@ describe('Settings screens', () => {
       delay: 'xhigh',
       prompt: 'Names and technical terms.',
     });
-    expect(await screen.findByText('Voice input settings saved.')).toBeInTheDocument();
+    expect(saveVoiceOutputSettings).toHaveBeenCalledWith({
+      url: 'https://api.elevenlabs.io/v1/text-to-speech',
+      model: 'eleven_multilingual_v2',
+      api_key: 'api_key_2',
+      output_format: 'mp3_44100_192',
+      default_voice: 'Brian',
+    });
+    expect(await screen.findByText('Voice settings saved.')).toBeInTheDocument();
   });
 
   it('registers a voice and opens its editor', async () => {
@@ -1053,13 +1078,6 @@ describe('Settings screens', () => {
   });
 
   it('previews the unsaved voice settings and editable text', async () => {
-    window.chaTextToSpeech = {
-      baseUrl: 'https://example.com/speech',
-      voiceId: 'fallback',
-      outputFormat: 'mp3',
-      apiKey: 'secret',
-      model: 'multilingual',
-    };
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(new TextEncoder().encode('audio')),
     );
@@ -1073,7 +1091,16 @@ describe('Settings screens', () => {
     }));
     render(
       <VoiceScreen
-        client={fixtureClient({ listVoices: async () => [voiceDetailFixture] })}
+        client={fixtureClient({
+          listVoices: async () => [voiceDetailFixture],
+          getVoiceOutputRuntime: async () => ({
+            url: 'https://example.com/speech',
+            model: 'multilingual',
+            api_key: 'secret',
+            output_format: 'mp3',
+            default_voice_id: 'fallback',
+          }),
+        })}
         dispatch={vi.fn()}
         sessionReport={null}
         state={{ ...initialAppState, inspectedVoiceId: 'brian' }}

@@ -597,20 +597,6 @@ ConfigurationDirectory load_configuration_directory(
         required_string(logging, app_file, "file", app_kind);
     const std::string log_level =
         required_string(logging, app_file, "level", app_kind);
-    std::string text_to_speech_model(default_text_to_speech_model);
-    if (app.contains("text_to_speech")) {
-        const toml::table& speech =
-            required_table(app, app_file, "text_to_speech", app_kind);
-        reject_unknown_fields(
-            speech,
-            app_file,
-            {"model"},
-            "[text_to_speech]",
-            app_kind);
-        text_to_speech_model =
-            required_string(speech, app_file, "model", app_kind);
-    }
-
     std::vector<std::filesystem::path> vault_files;
     for (const std::filesystem::directory_entry& entry :
          std::filesystem::directory_iterator(root)) {
@@ -627,6 +613,11 @@ ConfigurationDirectory load_configuration_directory(
         warnings.push_back(
             "Application config '" + utf8_path(app_file)
             + "' [voice_input] settings are unused and were ignored.");
+    }
+    if (app.contains("text_to_speech")) {
+        warnings.push_back(
+            "Application config '" + utf8_path(app_file)
+            + "' [text_to_speech] settings are unused and were ignored.");
     }
     std::vector<LoadedVault> loaded;
     loaded.reserve(vault_files.size());
@@ -668,7 +659,6 @@ ConfigurationDirectory load_configuration_directory(
             root, app_file, "logging.file", log_file, app_kind),
         .log_level = log_level,
         .warnings = std::move(warnings),
-        .text_to_speech_model = std::move(text_to_speech_model),
     };
 }
 
@@ -765,7 +755,6 @@ ApplicationCommand parse_application_command(
         .log_level = settings.log_level,
         .warnings = settings.warnings,
         .test_idle_grace_ms = options.test_idle_grace_ms,
-        .text_to_speech_model = settings.text_to_speech_model,
     };
 }
 

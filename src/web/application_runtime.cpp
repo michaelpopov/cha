@@ -621,14 +621,6 @@ std::string ApplicationRuntime::api_key_value(std::string_view id) const {
     return impl_->api_keys->value(id);
 }
 
-std::optional<std::string> ApplicationRuntime::api_key_value_by_name(
-    std::string_view display_name) const {
-    const std::optional<ApiKeyInfo> key =
-        impl_->api_keys->find_by_name(display_name);
-    return key ? std::optional<std::string>(impl_->api_keys->value(key->id))
-               : std::nullopt;
-}
-
 bool ApplicationRuntime::has_r2_storage() const {
     return impl_->api_keys->r2().has_value();
 }
@@ -1000,14 +992,18 @@ int ApplicationRuntime::start(int port_override) {
     const bool native_runtime = !impl_->access_token.empty();
     const AssetHandler assets(
         impl_->command.root / "web",
-        [native_runtime]() -> std::optional<std::string> {
-            if (!native_runtime) return std::nullopt;
+        [native_runtime]() {
+            std::vector<std::string> result;
+            if (!native_runtime) return result;
             const auto workspace = getws();
-            return workspace->voice_input()
-                ? std::optional<std::string>(workspace->voice_input()->url)
-                : std::nullopt;
-        },
-        impl_->command.native_connect_urls);
+            if (workspace->voice_input()) {
+                result.push_back(workspace->voice_input()->url);
+            }
+            if (workspace->voice_output()) {
+                result.push_back(workspace->voice_output()->url);
+            }
+            return result;
+        });
     assets.install(*server);
     const InitialSelection initial{
         {std::string(entrance_id), std::string(welcome_id)}};

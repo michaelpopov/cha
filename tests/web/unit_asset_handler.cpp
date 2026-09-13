@@ -37,12 +37,8 @@ public:
 
     AssetServer(
         const std::filesystem::path& web_root,
-        AssetHandler::ConnectUrlProvider connect_url,
-        std::vector<std::string> additional_connect_urls = {}) {
-        AssetHandler(
-            web_root,
-            std::move(connect_url),
-            std::move(additional_connect_urls)).install(server_);
+        AssetHandler::ConnectUrlsProvider connect_urls) {
+        AssetHandler(web_root, std::move(connect_urls)).install(server_);
         port_ = server_.bind_to_any_port("127.0.0.1");
         if (port_ <= 0) throw std::runtime_error("Could not bind asset test server");
         configure_http_server(server_, {});
@@ -128,10 +124,10 @@ TEST(AssetHandler, ReadsTheConnectionOriginForEachShellResponse) {
     std::atomic_bool use_second_origin{false};
     AssetServer server(
         fixture.root() / "web",
-        AssetHandler::ConnectUrlProvider([&]() -> std::optional<std::string> {
-            return use_second_origin.load()
+        AssetHandler::ConnectUrlsProvider([&]() {
+            return std::vector<std::string>{use_second_origin.load()
                 ? "https://second.example/realtime"
-                : "https://first.example/realtime";
+                : "https://first.example/realtime"};
         }));
 
     const auto first = server.client().Get("/");

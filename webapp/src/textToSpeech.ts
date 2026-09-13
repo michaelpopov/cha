@@ -17,22 +17,30 @@ export interface TextToSpeechVoice {
   };
 }
 
-declare global {
-  interface Window {
-    chaTextToSpeech?: TextToSpeechConfiguration;
-  }
-}
-
-export function getTextToSpeechConfiguration(): TextToSpeechConfiguration | null {
-  const configuration = window.chaTextToSpeech;
-  return configuration
-      && typeof configuration.baseUrl === 'string' && configuration.baseUrl.length > 0
-      && typeof configuration.voiceId === 'string' && configuration.voiceId.length > 0
-      && typeof configuration.outputFormat === 'string' && configuration.outputFormat.length > 0
-      && typeof configuration.apiKey === 'string' && configuration.apiKey.length > 0
-      && typeof configuration.model === 'string' && configuration.model.length > 0
-    ? configuration
-    : null;
+export function useTextToSpeechConfiguration(
+  client: Pick<ChaClient, 'getVoiceOutputRuntime'>,
+): TextToSpeechConfiguration | null {
+  const [configuration, setConfiguration] =
+    useState<TextToSpeechConfiguration | null>(null);
+  useEffect(() => {
+    let current = true;
+    setConfiguration(null);
+    void client.getVoiceOutputRuntime().then(
+      (loaded) => {
+        if (!current) return;
+        setConfiguration(loaded && {
+          baseUrl: loaded.url,
+          voiceId: loaded.default_voice_id,
+          outputFormat: loaded.output_format,
+          apiKey: loaded.api_key,
+          model: loaded.model,
+        });
+      },
+      () => { if (current) setConfiguration(null); },
+    );
+    return () => { current = false; };
+  }, [client]);
+  return configuration;
 }
 
 export class TextToSpeechError extends Error {
@@ -109,7 +117,6 @@ async function fetchAudio(request: AudioRequest, signal?: AbortSignal): Promise<
   const response = await fetch(request.url, {
     method: 'POST',
     headers: {
-      Accept: 'audio/mpeg',
       'Content-Type': 'application/json',
       'xi-api-key': request.apiKey,
     },
@@ -220,3 +227,6 @@ async function elevenLabsErrorMessage(response: Response): Promise<string> {
     return fallback;
   }
 }
+import { useEffect, useState } from 'react';
+
+import type { ChaClient } from './api/client';

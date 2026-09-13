@@ -1060,6 +1060,44 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, PersistsVoiceInputSettings) {
         std::string::npos);
 }
 
+TEST_F(RuntimeWorkspaceConfigStoreTest, PersistsVoiceOutputSettings) {
+    const auto store = open_store();
+    store->apply_voice_create(
+        "default-reader", "Default Reader", "", "eleven-default");
+    store->apply_voice_output_update({
+        .url = "https://api.elevenlabs.io/v1/text-to-speech",
+        .model = "eleven_multilingual_v2",
+        .api_key_id = "api_key_8",
+        .output_format = "mp3_44100_128",
+        .default_voice = "Default Reader",
+    });
+
+    ASSERT_TRUE(getws()->voice_output());
+    EXPECT_EQ(getws()->voice_output()->model, "eleven_multilingual_v2");
+    EXPECT_EQ(getws()->voice_output()->api_key_id, "api_key_8");
+    EXPECT_EQ(getws()->voice_output()->output_format, "mp3_44100_128");
+    EXPECT_EQ(getws()->voice_output()->default_voice, "Default Reader");
+    const std::string stored = stored_config(
+        database(), "system/voice-output/config.toml");
+    EXPECT_NE(stored.find("api.elevenlabs.io"), std::string::npos);
+    EXPECT_NE(stored.find("eleven_multilingual_v2"), std::string::npos);
+    EXPECT_NE(stored.find("api_key_8"), std::string::npos);
+    EXPECT_NE(stored.find("mp3_44100_128"), std::string::npos);
+    EXPECT_NE(stored.find("Default Reader"), std::string::npos);
+
+    store->apply_voice_update(
+        "default-reader",
+        "Renamed Reader",
+        "",
+        "eleven-default",
+        {});
+    ASSERT_TRUE(getws()->voice_output());
+    EXPECT_EQ(getws()->voice_output()->default_voice, "Renamed Reader");
+    EXPECT_THROW(
+        store->apply_voice_delete("default-reader"),
+        std::invalid_argument);
+}
+
 TEST_F(RuntimeWorkspaceConfigStoreTest, SerializesTwoEditsAndEditReadInteraction) {
     const auto store = open_store();
     const std::filesystem::path workspace_root = store->workspace_path();

@@ -33,7 +33,7 @@ std::string connection_origin(std::string_view url) {
         : url.starts_with("http://") ? 7 : 0;
     if (authority_start == 0) {
         throw std::invalid_argument(
-            "Voice input URL must be an absolute HTTP or HTTPS URL");
+            "Voice endpoint URL must be an absolute HTTP or HTTPS URL");
     }
     const std::size_t authority_end = url.find_first_of("/?#", authority_start);
     const std::string_view authority = url.substr(
@@ -44,19 +44,15 @@ std::string connection_origin(std::string_view url) {
         || authority.find_first_not_of(
             "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-:[]")
             != std::string_view::npos) {
-        throw std::invalid_argument("Voice input URL has an invalid host");
+        throw std::invalid_argument("Voice endpoint URL has an invalid host");
     }
     return std::string(url.substr(0, authority_start)) + std::string(authority);
 }
 
 std::string make_content_security_policy(
-    const std::optional<std::string>& connect_url,
-    const std::vector<std::string>& additional_connect_urls) {
+    const std::vector<std::string>& connect_urls) {
     std::string policy(content_security_policy_before_connect);
-    if (connect_url) {
-        policy += " " + connection_origin(*connect_url);
-    }
-    for (const std::string& url : additional_connect_urls) {
+    for (const std::string& url : connect_urls) {
         policy += " " + connection_origin(url);
     }
     policy += content_security_policy_after_connect;
@@ -130,16 +126,18 @@ AssetHandler::AssetHandler(
     std::vector<std::string> additional_connect_urls)
     : AssetHandler(
           std::move(web_root),
-          [connect_url = std::move(connect_url)] { return connect_url; },
-          std::move(additional_connect_urls)) {}
+          [connect_url = std::move(connect_url),
+           additional = std::move(additional_connect_urls)] {
+              std::vector<std::string> result = additional;
+              if (connect_url) result.insert(result.begin(), *connect_url);
+              return result;
+          }) {}
 
 AssetHandler::AssetHandler(
     std::filesystem::path web_root,
-    ConnectUrlProvider connect_url,
-    std::vector<std::string> additional_connect_urls)
+    ConnectUrlsProvider connect_urls)
     : web_root_(std::filesystem::weakly_canonical(std::move(web_root))),
-      connect_url_(std::move(connect_url)),
-      additional_connect_urls_(std::move(additional_connect_urls)) {
+      connect_urls_(std::move(connect_urls)) {
     const std::filesystem::path index = web_root_ / "index.html";
     if (!std::filesystem::is_regular_file(index)) {
         throw std::runtime_error(
@@ -157,18 +155,14 @@ AssetHandler::AssetHandler(
 
 void AssetHandler::install(httplib::Server& server) const {
     const std::string shell = shell_;
-    const ConnectUrlProvider connect_url = connect_url_;
-    const std::vector<std::string> additional_connect_urls =
-        additional_connect_urls_;
-    server.Get("/", [shell, connect_url, additional_connect_urls](
+    const ConnectUrlsProvider connect_urls = connect_urls_;
+    server.Get("/", [shell, connect_urls](
                         const httplib::Request&,
                         httplib::Response& response) {
         write_shell(
             response,
             shell,
-            make_content_security_policy(
-                connect_url ? connect_url() : std::nullopt,
-                additional_connect_urls));
+            make_content_security_policy(connect_urls ? connect_urls() : std::vector<std::string>{}));
     });
     const std::filesystem::path web_root = web_root_;
     server.Get(
@@ -201,8 +195,7 @@ void AssetHandler::set_shell(httplib::Response& response) const {
 
 std::string AssetHandler::content_security_policy() const {
     return make_content_security_policy(
-        connect_url_ ? connect_url_() : std::nullopt,
-        additional_connect_urls_);
+        connect_urls_ ? connect_urls_() : std::vector<std::string>{});
 }
 
 } // namespace cha::web

@@ -42,6 +42,8 @@ export type CreateVoiceRequest = components['schemas']['CreateVoiceRequest'];
 export type VoiceUpdate = components['schemas']['VoiceUpdate'];
 export type VoiceInputSettings = components['schemas']['VoiceInputSettings'];
 export type VoiceInputRuntime = components['schemas']['VoiceInputRuntime'];
+export type VoiceOutputSettings = components['schemas']['VoiceOutputSettings'];
+export type VoiceOutputRuntime = components['schemas']['VoiceOutputRuntime'];
 export type ApiKeyDetail = components['schemas']['ApiKeyDetail'];
 export type CreateApiKeyRequest = components['schemas']['CreateApiKeyRequest'];
 export type R2StorageDetail = components['schemas']['R2StorageDetail'];
@@ -184,6 +186,9 @@ export interface ChaClient {
   getVoiceInputSettings(): Promise<VoiceInputSettings | null>;
   saveVoiceInputSettings(settings: VoiceInputSettings): Promise<VoiceInputSettings>;
   getVoiceInputRuntime(): Promise<VoiceInputRuntime | null>;
+  getVoiceOutputSettings(): Promise<VoiceOutputSettings | null>;
+  saveVoiceOutputSettings(settings: VoiceOutputSettings): Promise<VoiceOutputSettings>;
+  getVoiceOutputRuntime(): Promise<VoiceOutputRuntime | null>;
   listApiKeys(): Promise<ApiKeyDetail[]>;
   createApiKey(request: CreateApiKeyRequest): Promise<ApiKeyDetail>;
   renameApiKey(apiKeyId: string, displayName: string): Promise<ApiKeyDetail>;
@@ -381,6 +386,25 @@ function isVoiceInputSettings(value: unknown): value is VoiceInputSettings {
 
 function isVoiceInputRuntime(value: unknown): value is VoiceInputRuntime {
   return isVoiceInputSettings(value);
+}
+
+function isVoiceOutputSettings(value: unknown): value is VoiceOutputSettings {
+  return isRecord(value)
+    && typeof value.url === 'string' && value.url.length > 0
+    && typeof value.model === 'string' && value.model.length > 0
+    && typeof value.api_key === 'string' && value.api_key.length > 0
+    && typeof value.output_format === 'string' && value.output_format.length > 0
+    && typeof value.default_voice === 'string' && value.default_voice.length > 0;
+}
+
+function isVoiceOutputRuntime(value: unknown): value is VoiceOutputRuntime {
+  return isRecord(value)
+    && typeof value.url === 'string' && value.url.length > 0
+    && typeof value.model === 'string' && value.model.length > 0
+    && typeof value.api_key === 'string' && value.api_key.length > 0
+    && typeof value.output_format === 'string' && value.output_format.length > 0
+    && typeof value.default_voice_id === 'string'
+    && value.default_voice_id.length > 0;
 }
 
 function isR2StorageDetail(value: unknown): value is R2StorageDetail {
@@ -893,6 +917,29 @@ export function createChaClient(
       '/api/v1/voice-input/runtime',
       (value): value is VoiceInputRuntime | null => (
         value === null || isVoiceInputRuntime(value)
+      ),
+    ),
+
+    getVoiceOutputSettings: () => requestValidated(
+      fetcher,
+      '/api/v1/voice-output',
+      (value): value is VoiceOutputSettings | null => (
+        value === null || isVoiceOutputSettings(value)
+      ),
+    ),
+
+    saveVoiceOutputSettings: (settings) => requestValidated(
+      fetcher,
+      '/api/v1/voice-output',
+      isVoiceOutputSettings,
+      jsonMutation(settings, 'PUT'),
+    ),
+
+    getVoiceOutputRuntime: () => requestValidated(
+      fetcher,
+      '/api/v1/voice-output/runtime',
+      (value): value is VoiceOutputRuntime | null => (
+        value === null || isVoiceOutputRuntime(value)
       ),
     ),
 

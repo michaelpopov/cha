@@ -22,6 +22,7 @@ import {
 import { validateBootstrap } from '../state/bootstrap';
 import { saveMarkdownDownload } from '../download';
 import { parseAppRoute, sessionRoute } from '../state/route';
+import { consumeVoiceSettingsRestore } from '../state/voiceSettingsReload';
 import {
   isSessionLimit,
   movedMessage,
@@ -73,7 +74,7 @@ import {
   StyleScreen,
   StylesScreen,
   VoiceScreen,
-  VoiceInputScreen,
+  VoiceSettingsScreen,
   VoicesScreen,
   VaultScreen,
   VaultsScreen,
@@ -295,7 +296,7 @@ function Screen({
       <VoicesScreen client={client} dispatch={dispatch} sessionReport={sessionReport} state={state} />
     );
     case 'settings-voice-input': return (
-      <VoiceInputScreen client={client} dispatch={dispatch} sessionReport={sessionReport} state={state} />
+      <VoiceSettingsScreen client={client} dispatch={dispatch} sessionReport={sessionReport} state={state} />
     );
     case 'settings-new-voice': return (
       <NewVoiceScreen client={client} dispatch={dispatch} sessionReport={sessionReport} state={state} />
@@ -1047,12 +1048,17 @@ export function App({
   useEffect(() => {
     if (state.bootstrapStatus !== 'ready' || initialRouteHandled.current) return;
     initialRouteHandled.current = true;
+    const restoreVoiceSettings = consumeVoiceSettingsRestore();
     const route = parseAppRoute(window.location.pathname);
     if (route.kind === 'root') {
+      if (restoreVoiceSettings) navigate({ type: 'show-settings-voice-input' });
       setInitialRouteReady(true);
     } else if (route.kind === 'session') {
       void openConversation(route.forumId, route.sessionId, false)
-        .finally(() => setInitialRouteReady(true));
+        .finally(() => {
+          if (restoreVoiceSettings) navigate({ type: 'show-settings-voice-input' });
+          setInitialRouteReady(true);
+        });
     } else {
       dispatch({
         type: 'session-operation-failed',
@@ -1060,7 +1066,7 @@ export function App({
       });
       setInitialRouteReady(true);
     }
-  }, [openConversation, state.bootstrapStatus]);
+  }, [navigate, openConversation, state.bootstrapStatus]);
 
   // Startup and Return to Welcome both adopt the initial IDs without an open
   // request. A matching snapshot without a connection is also attachable: this

@@ -47,6 +47,7 @@ constexpr std::array skeleton_directories{
     std::string_view("system/styles"),
     std::string_view("system/voices"),
     std::string_view("system/voice-input"),
+    std::string_view("system/voice-output"),
     std::string_view("personas"),
     std::string_view("characters"),
     std::string_view("forums"),
@@ -1428,8 +1429,16 @@ WorkspaceConfigEditResult WorkspaceConfigStore::apply_voice_update(
     return impl_->edit([&](const Workspace& workspace) {
         std::vector<std::string> affected =
             forums_using_voice(workspace, voice_id);
+        const WorkspaceVoice* const previous = workspace.find_voice(voice_id);
+        const bool default_voice = previous && workspace.voice_output()
+            && workspace.voice_output()->default_voice == previous->label;
         workspace.write_voice(
             voice_id, display_name, description, elevenlabs_voice_id, settings);
+        if (default_voice) {
+            WorkspaceVoiceOutput output = *workspace.voice_output();
+            output.default_voice = std::string(display_name);
+            workspace.write_voice_output(output);
+        }
         return affected;
     });
 }
@@ -1458,6 +1467,14 @@ void WorkspaceConfigStore::apply_voice_input_update(
     const WorkspaceVoiceInput& settings) {
     (void)impl_->edit([&](const Workspace& workspace) {
         workspace.write_voice_input(settings);
+        return std::vector<std::string>{};
+    });
+}
+
+void WorkspaceConfigStore::apply_voice_output_update(
+    const WorkspaceVoiceOutput& settings) {
+    (void)impl_->edit([&](const Workspace& workspace) {
+        workspace.write_voice_output(settings);
         return std::vector<std::string>{};
     });
 }

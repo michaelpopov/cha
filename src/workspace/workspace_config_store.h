@@ -19,6 +19,7 @@ namespace cha {
 
 struct ElevenLabsVoiceSettings;
 struct WorkspaceVoiceInput;
+struct WorkspaceVoiceOutput;
 
 struct WorkspaceConfigTransfer {
     std::size_t file_count{};
@@ -182,6 +183,7 @@ public:
     WorkspaceConfigEditResult apply_voice_delete(
         std::string_view voice_id);
     void apply_voice_input_update(const WorkspaceVoiceInput& settings);
+    void apply_voice_output_update(const WorkspaceVoiceOutput& settings);
     void apply_api_key_create(
         std::string_view id,
         std::string_view display_name,

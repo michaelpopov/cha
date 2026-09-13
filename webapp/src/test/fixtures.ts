@@ -86,6 +86,14 @@ export const voiceDetailFixture: VoiceDetail = {
   used_by: ['Guide'],
 };
 
+export const voiceOutputRuntimeFixture = {
+  url: 'https://api.elevenlabs.io/v1/text-to-speech',
+  model: 'eleven_multilingual_v2',
+  api_key: 'secret',
+  output_format: 'mp3_44100_128',
+  default_voice_id: 'fallback',
+};
+
 export const characterDetailFixture: CharacterDetail = {
   id: 'guide',
   display_name: 'Guide',
@@ -266,6 +274,9 @@ export function fixtureClient(overrides: Partial<ChaClient> = {}): ChaClient {
     getVoiceInputSettings: async () => null,
     saveVoiceInputSettings: async (settings) => settings,
     getVoiceInputRuntime: async () => null,
+    getVoiceOutputSettings: async () => null,
+    saveVoiceOutputSettings: async (settings) => settings,
+    getVoiceOutputRuntime: async () => null,
     listApiKeys: async () => [],
     createApiKey: async ({ display_name }) => ({
       id: 'api_key_1', display_name, has_value: true, used_by: [],

@@ -138,6 +138,11 @@ std::vector<std::string> characters_using_voice(
             result.push_back(character.character.display_name);
         }
     }
+    const WorkspaceVoice* const voice = workspace.find_voice(voice_id);
+    if (voice && workspace.voice_output()
+        && workspace.voice_output()->default_voice == voice->label) {
+        result.emplace_back("Voice output");
+    }
     return result;
 }
 
@@ -482,10 +487,7 @@ bool style_is_used(const Workspace& workspace, std::string_view style_id) {
 }
 
 bool voice_is_used(const Workspace& workspace, std::string_view voice_id) {
-    for (const WorkspaceCharacter& character : workspace.characters()) {
-        if (character.voice_id == voice_id) return true;
-    }
-    return false;
+    return !characters_using_voice(workspace, voice_id).empty();
 }
 
 std::vector<std::string> providers_using_key(
@@ -509,6 +511,10 @@ Json key_json(
         && key.id == workspace.voice_input()->api_key_id) {
         used_by.emplace_back("Voice input");
     }
+    if (workspace.voice_output()
+        && key.id == workspace.voice_output()->api_key_id) {
+        used_by.emplace_back("Voice output");
+    }
     return {
         {"id", key.id},
         {"display_name", key.display_name},
@@ -524,6 +530,16 @@ Json voice_input_json(const WorkspaceVoiceInput& settings) {
         {"api_key", settings.api_key_id},
         {"delay", settings.delay},
         {"prompt", settings.prompt},
+    };
+}
+
+Json voice_output_json(const WorkspaceVoiceOutput& settings) {
+    return {
+        {"url", settings.url},
+        {"model", settings.model},
+        {"api_key", settings.api_key_id},
+        {"output_format", settings.output_format},
+        {"default_voice", settings.default_voice},
     };
 }
 
@@ -550,13 +566,13 @@ SettingsRoutes::SettingsRoutes(
     WorkspaceConfigStore& config,
     ApiKeyStore& api_keys,
     OpenAiOAuth& openai_auth,
-    bool native_voice_input_enabled)
+    bool native_voice_enabled)
     : live_sessions_(&live_sessions),
       settings_(std::move(settings)),
       config_(&config),
       api_keys_(&api_keys),
       openai_auth_(&openai_auth),
-      native_voice_input_enabled_(native_voice_input_enabled) {}
+      native_voice_enabled_(native_voice_enabled) {}
 
 void SettingsRoutes::install(httplib::Server& server) const {
     LiveSessionManager* const live_sessions = live_sessions_;
@@ -564,7 +580,7 @@ void SettingsRoutes::install(httplib::Server& server) const {
     ApiKeyStore* const api_keys = api_keys_;
     OpenAiOAuth* const openai_auth = openai_auth_;
     const WebSettings settings = settings_;
-    const bool native_voice_input_enabled = native_voice_input_enabled_;
+    const bool native_voice_enabled = native_voice_enabled_;
 
     server.Get("/api/v1/providers", [](const httplib::Request&, httplib::Response& response) {
         const auto workspace = published_workspace();
@@ -955,7 +971,7 @@ void SettingsRoutes::install(httplib::Server& server) const {
         if (voice_is_used(*workspace, id)) {
             return set_error_response(response, 409,
                 {ErrorCode::bad_request,
-                 "This voice is still used by one or more characters."});
+                 "This voice is still in use."});
         }
         try {
             config->apply_voice_delete(id);
@@ -964,7 +980,7 @@ void SettingsRoutes::install(httplib::Server& server) const {
         } catch (const std::invalid_argument&) {
             set_error_response(response, 409,
                 {ErrorCode::bad_request,
-                 "This voice is still used by one or more characters."});
+                 "This voice is still in use."});
         } catch (const WorkspaceRestartRequiredError& error) {
             internal_error(response, error);
         }
@@ -1026,10 +1042,10 @@ void SettingsRoutes::install(httplib::Server& server) const {
 
     server.Get(
         "/api/v1/voice-input/runtime",
-        [api_keys, native_voice_input_enabled](
+        [api_keys, native_voice_enabled](
             const httplib::Request&, httplib::Response& response) {
             const auto workspace = published_workspace();
-            if (!native_voice_input_enabled || !workspace->voice_input()
+            if (!native_voice_enabled || !workspace->voice_input()
                 || !api_keys->find(workspace->voice_input()->api_key_id)) {
                 set_json_response(response, 200, Json(nullptr));
             } else {
@@ -1038,6 +1054,88 @@ void SettingsRoutes::install(httplib::Server& server) const {
                 result["api_key"] = api_keys->value(
                     workspace->voice_input()->api_key_id);
                 set_json_response(response, 200, result);
+            }
+            response.set_header("Cache-Control", "no-store");
+        });
+
+    server.Get(
+        "/api/v1/voice-output",
+        [](const httplib::Request&, httplib::Response& response) {
+            const auto workspace = published_workspace();
+            set_json_response(
+                response,
+                200,
+                workspace->voice_output()
+                    ? voice_output_json(*workspace->voice_output())
+                    : Json(nullptr));
+            response.set_header("Cache-Control", "no-store");
+        });
+
+    server.Put(
+        "/api/v1/voice-output",
+        [api_keys, config, settings](
+            const httplib::Request& request,
+            httplib::Response& response) {
+            if (!validate_json_mutation(request, response)) return;
+            WorkspaceVoiceOutput update;
+            if (!parse_route_json_body(
+                    request, response, settings.request_body_limit,
+                    [&](const Json& json) {
+                        if (!json.is_object() || json.size() != 5) {
+                            throw std::invalid_argument(
+                                "Invalid voice output settings");
+                        }
+                        update.url = required<std::string>(json, "url");
+                        update.model = required<std::string>(json, "model");
+                        update.api_key_id =
+                            required<std::string>(json, "api_key");
+                        update.output_format =
+                            required<std::string>(json, "output_format");
+                        update.default_voice =
+                            required<std::string>(json, "default_voice");
+                    })) return;
+            const auto workspace = published_workspace();
+            if (!api_keys->find(update.api_key_id)
+                || !workspace->find_voice_by_name(update.default_voice)) {
+                return set_error_response(
+                    response,
+                    400,
+                    {ErrorCode::bad_request, "Invalid voice output settings."});
+            }
+            try {
+                config->apply_voice_output_update(update);
+                set_json_response(response, 200, voice_output_json(update));
+                response.set_header("Cache-Control", "no-store");
+            } catch (const std::invalid_argument&) {
+                set_error_response(
+                    response,
+                    400,
+                    {ErrorCode::bad_request, "Invalid voice output settings."});
+            } catch (const WorkspaceRestartRequiredError& error) {
+                internal_error(response, error);
+            }
+        });
+
+    server.Get(
+        "/api/v1/voice-output/runtime",
+        [api_keys, native_voice_enabled](
+            const httplib::Request&, httplib::Response& response) {
+            const auto workspace = published_workspace();
+            const WorkspaceVoiceOutput* const output =
+                workspace->voice_output() ? &*workspace->voice_output() : nullptr;
+            const WorkspaceVoice* const default_voice = output
+                ? workspace->find_voice_by_name(output->default_voice) : nullptr;
+            if (!native_voice_enabled || !output || !default_voice
+                || !api_keys->find(output->api_key_id)) {
+                set_json_response(response, 200, Json(nullptr));
+            } else {
+                set_json_response(response, 200, {
+                    {"url", output->url},
+                    {"model", output->model},
+                    {"api_key", api_keys->value(output->api_key_id)},
+                    {"output_format", output->output_format},
+                    {"default_voice_id", default_voice->elevenlabs_voice_id},
+                });
             }
             response.set_header("Cache-Control", "no-store");
         });

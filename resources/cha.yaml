@@ -638,6 +638,61 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /api/v1/voice-output:
+    get:
+      tags: [Settings]
+      operationId: getVoiceOutputSettings
+      summary: Get voice output settings from the active vault
+      responses:
+        "200":
+          description: Voice output settings, or null when not configured.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/VoiceOutputSettings"
+                  - type: "null"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    put:
+      tags: [Settings]
+      operationId: saveVoiceOutputSettings
+      summary: Save voice output settings in the active vault
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VoiceOutputSettings"
+      responses:
+        "200":
+          description: Saved voice output settings.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VoiceOutputSettings"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/voice-output/runtime:
+    get:
+      tags: [Settings]
+      operationId: getVoiceOutputRuntime
+      summary: Get resolved native voice output settings
+      responses:
+        "200":
+          description: Resolved settings, or null outside the native application.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/VoiceOutputRuntime"
+                  - type: "null"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /api/v1/api-keys:
     get:
       tags: [Settings]
@@ -2733,6 +2788,47 @@ components:
           enum: [low, medium, high, xhigh]
         prompt:
           type: string
+
+    VoiceOutputSettings:
+      type: object
+      additionalProperties: false
+      required: [url, model, api_key, output_format, default_voice]
+      properties:
+        url:
+          type: string
+          minLength: 1
+        model:
+          type: string
+          minLength: 1
+        api_key:
+          $ref: "#/components/schemas/Identifier"
+        output_format:
+          type: string
+          minLength: 1
+        default_voice:
+          type: string
+          minLength: 1
+
+    VoiceOutputRuntime:
+      type: object
+      additionalProperties: false
+      required: [url, model, api_key, output_format, default_voice_id]
+      properties:
+        url:
+          type: string
+          minLength: 1
+        model:
+          type: string
+          minLength: 1
+        api_key:
+          type: string
+          minLength: 1
+        output_format:
+          type: string
+          minLength: 1
+        default_voice_id:
+          type: string
+          minLength: 1
 
     ApiKeyDetail:
       type: object

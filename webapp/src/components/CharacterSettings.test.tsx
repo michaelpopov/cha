@@ -9,11 +9,11 @@ import {
   characterDetailFixture,
   fixtureClient,
   voiceDetailFixture,
+  voiceOutputRuntimeFixture,
 } from '../test/fixtures';
 import { CharacterSettingsScreen } from './Screens';
 
 afterEach(() => {
-  delete window.chaTextToSpeech;
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -96,13 +96,6 @@ describe('character settings screen', () => {
   });
 
   it('tests the selected unsaved voice with editable text', async () => {
-    window.chaTextToSpeech = {
-      baseUrl: 'https://example.com/speech',
-      voiceId: 'fallback',
-      outputFormat: 'mp3',
-      apiKey: 'secret',
-      model: 'multilingual',
-    };
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(new TextEncoder().encode('audio')),
     );
@@ -114,7 +107,15 @@ describe('character settings screen', () => {
         play: vi.fn().mockResolvedValue(undefined),
       };
     }));
-    renderSettings(fixtureClient({ listVoices: async () => [voiceDetailFixture] }));
+    renderSettings(fixtureClient({
+      listVoices: async () => [voiceDetailFixture],
+      getVoiceOutputRuntime: async () => ({
+        ...voiceOutputRuntimeFixture,
+        url: 'https://example.com/speech',
+        model: 'multilingual',
+        output_format: 'mp3',
+      }),
+    }));
 
     await userEvent.selectOptions(await screen.findByLabelText('Voice'), 'brian');
     const preview = screen.getByRole('button', { name: 'Play preview' });

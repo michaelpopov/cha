@@ -29,6 +29,16 @@ beforeEach(() => {
   window.history.replaceState(null, '', '/');
 });
 
+it('restores Voice settings after refreshing its endpoint policy', async () => {
+  window.sessionStorage.setItem('cha.restoreVoiceSettings', 'true');
+
+  render(<App client={fixtureClient()} connectSessionEvents={inertSessionEvents} />);
+
+  expect(await screen.findByRole('region', { name: 'Voice settings' }))
+    .toBeInTheDocument();
+  expect(window.sessionStorage.getItem('cha.restoreVoiceSettings')).toBeNull();
+});
+
 function lobbySnapshot(sessionId = 'planning', sessionLabel = 'Planning') {
   return {
     ...snapshotFixture,

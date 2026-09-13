@@ -866,7 +866,7 @@ export function navigationTitle(state: AppState): string | null {
     case 'settings-new-style': return 'New style';
     case 'settings-style': return state.inspectedStyleName ?? 'Style';
     case 'settings-voices': return 'Voices';
-    case 'settings-voice-input': return 'Voice input';
+    case 'settings-voice-input': return 'Voice settings';
     case 'settings-new-voice': return 'New voice';
     case 'settings-voice': return state.inspectedVoiceName ?? 'Voice';
     case 'settings-api-keys': return 'API Keys';

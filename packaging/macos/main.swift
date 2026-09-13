@@ -332,9 +332,6 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
     private func showApplication() {
         guard webView == nil, let runtimeURL else { return }
         let configuration = WKWebViewConfiguration()
-        if let script = textToSpeechConfigurationScript() {
-            configuration.userContentController.addUserScript(script)
-        }
         configuration.mediaTypesRequiringUserActionForPlayback = []
         let view = WKWebView(frame: .zero, configuration: configuration)
         view.allowsMagnification = true
@@ -364,29 +361,6 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
         view.configuration.websiteDataStore.httpCookieStore.setCookie(cookie) {
             view.load(URLRequest(url: runtimeURL))
         }
-    }
-
-    private func textToSpeechConfigurationScript() -> WKUserScript? {
-        guard let runtime,
-              let apiKey = cha_runtime_text_to_speech_api_key(runtime),
-              let model = cha_runtime_text_to_speech_model(runtime) else {
-            return nil
-        }
-        let configuration: [String: Any] = [
-            "baseUrl": "https://api.elevenlabs.io/v1/text-to-speech",
-            "voiceId": "JBFqnCBsd6RMkjVDRZzb",
-            "outputFormat": "mp3_44100_128",
-            "apiKey": String(cString: apiKey),
-            "model": String(cString: model),
-        ]
-        guard let data = try? JSONSerialization.data(withJSONObject: configuration),
-              let json = String(data: data, encoding: .utf8) else {
-            return nil
-        }
-        return WKUserScript(
-            source: "Object.defineProperty(window, 'chaTextToSpeech', { value: \(json) });",
-            injectionTime: .atDocumentStart,
-            forMainFrameOnly: true)
     }
 
     @objc private func uploadDatabase(_ sender: Any?) {

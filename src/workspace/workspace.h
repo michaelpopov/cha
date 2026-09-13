@@ -63,6 +63,14 @@ struct WorkspaceVoiceInput {
     std::string prompt;
 };
 
+struct WorkspaceVoiceOutput {
+    std::string url;
+    std::string model;
+    std::string api_key_id;
+    std::string output_format;
+    std::string default_voice;
+};
+
 using WorkspacePersona = Persona;
 
 // A user-defined or built-in character. Forum-specific overrides and prompt
@@ -130,6 +138,10 @@ public:
         const noexcept {
         return voice_input_;
     }
+    [[nodiscard]] const std::optional<WorkspaceVoiceOutput>& voice_output()
+        const noexcept {
+        return voice_output_;
+    }
     [[nodiscard]] std::span<const SavedApiKey> api_keys() const noexcept {
         return api_keys_;
     }
@@ -155,6 +167,8 @@ public:
         std::string_view id) const noexcept;
     [[nodiscard]] const WorkspaceVoice* find_voice(
         std::string_view id) const noexcept;
+    [[nodiscard]] const WorkspaceVoice* find_voice_by_name(
+        std::string_view name) const noexcept;
     [[nodiscard]] const SavedApiKey* find_api_key(
         std::string_view id) const noexcept;
     [[nodiscard]] const WorkspacePersona* find_persona(
@@ -220,6 +234,7 @@ public:
         std::string_view elevenlabs_voice_id) const;
     void delete_voice(std::string_view voice_id) const;
     void write_voice_input(const WorkspaceVoiceInput& settings) const;
+    void write_voice_output(const WorkspaceVoiceOutput& settings) const;
     void create_api_key(
         std::string_view id,
         std::string_view display_name,
@@ -283,6 +298,7 @@ private:
     std::vector<WorkspaceStyle> styles_;
     std::vector<WorkspaceVoice> voices_;
     std::optional<WorkspaceVoiceInput> voice_input_;
+    std::optional<WorkspaceVoiceOutput> voice_output_;
     std::vector<SavedApiKey> api_keys_;
     std::optional<R2StorageKey> r2_storage_;
     std::uint64_t next_api_key_id_{1};

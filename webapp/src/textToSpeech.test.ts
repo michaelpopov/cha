@@ -3,41 +3,17 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   cacheTextToSpeech,
   clearTextToSpeechCache,
-  getTextToSpeechConfiguration,
   TextToSpeechError,
   TextToSpeechSession,
 } from './textToSpeech';
 
 afterEach(() => {
   clearTextToSpeechCache();
-  delete window.chaTextToSpeech;
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 
 describe('text to speech', () => {
-  it('is available only when the native shell injects a complete configuration', () => {
-    expect(getTextToSpeechConfiguration()).toBeNull();
-    window.chaTextToSpeech = {
-      baseUrl: 'https://example.com',
-      voiceId: 'fallback',
-      outputFormat: 'mp3',
-      apiKey: 'key',
-      model: 'model',
-    };
-    expect(getTextToSpeechConfiguration()).toEqual(window.chaTextToSpeech);
-  });
-
-  it('rejects the legacy configuration shape', () => {
-    window.chaTextToSpeech = {
-      url: 'https://example.com/speech',
-      apiKey: 'key',
-      model: 'model',
-    } as unknown as typeof window.chaTextToSpeech;
-
-    expect(getTextToSpeechConfiguration()).toBeNull();
-  });
-
   it('requests ElevenLabs audio and plays it', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(new TextEncoder().encode('audio'), {

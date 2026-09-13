@@ -8,9 +8,6 @@
 
 namespace cha::web {
 
-inline constexpr std::string_view default_text_to_speech_model =
-    "eleven_multilingual_v2";
-
 struct VaultDefinition {
     std::string name;
     std::filesystem::path data;
@@ -31,7 +28,6 @@ struct ConfigurationDirectory {
     std::filesystem::path log_file;
     std::string log_level;
     std::vector<std::string> warnings;
-    std::string text_to_speech_model{default_text_to_speech_model};
 };
 
 struct ApplicationCommand {
@@ -56,10 +52,6 @@ struct ApplicationCommand {
     // Test-only bound for vault-switch drain. Production always uses the
     // ordinary shutdown grace.
     std::optional<int> test_shutdown_grace_ms;
-    std::string text_to_speech_model{default_text_to_speech_model};
-    // Extra browser connection targets supplied only by a native shell. They
-    // are not configurable by the served web application.
-    std::vector<std::string> native_connect_urls;
 };
 
 ConfigurationDirectory load_configuration_directory(

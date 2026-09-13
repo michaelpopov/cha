@@ -19,15 +19,17 @@ import {
   type StyleUpdate,
   type VoiceDetail,
   type VoiceInputSettings,
+  type VoiceOutputSettings,
   type VoiceUpdate,
   type VaultDetail,
 } from '../api/client';
 import {
-  getTextToSpeechConfiguration,
   TextToSpeechError,
   TextToSpeechSession,
   type TextToSpeechVoice,
+  useTextToSpeechConfiguration,
 } from '../textToSpeech';
+import { reloadForVoiceSettings } from '../state/voiceSettingsReload';
 import type { AppAction, AppState } from '../state/view';
 import { voiceClasses } from './characterAppearance';
 import { ConfirmDialog } from './ConfirmDialog';
@@ -1118,7 +1120,7 @@ export function VoicesScreen({ client, dispatch, sessionReport }: SettingsScreen
           onClick={() => dispatch({ type: 'show-settings-voice-input' })}
           type="button"
         >
-          <span>Voice input</span>
+          <span>Voice settings</span>
           <ChevronRightIcon />
         </button>
       </div>
@@ -1156,10 +1158,25 @@ const defaultVoiceInput: VoiceInputSettings = {
   prompt: '',
 };
 
-export function VoiceInputScreen({ client, dispatch, sessionReport }: SettingsScreenProps) {
-  const [saved, setSaved] = useState<VoiceInputSettings | null | undefined>(undefined);
-  const [draft, setDraft] = useState<VoiceInputSettings>(defaultVoiceInput);
+function defaultVoiceOutput(voices: VoiceDetail[]): VoiceOutputSettings {
+  return {
+    url: 'https://api.elevenlabs.io/v1/text-to-speech',
+    model: 'eleven_multilingual_v2',
+    api_key: '',
+    output_format: 'mp3_44100_128',
+    default_voice: voices[0]?.display_name ?? '',
+  };
+}
+
+export function VoiceSettingsScreen({ client, dispatch, sessionReport }: SettingsScreenProps) {
+  const [savedInput, setSavedInput] =
+    useState<VoiceInputSettings | null | undefined>(undefined);
+  const [input, setInput] = useState<VoiceInputSettings>(defaultVoiceInput);
+  const [savedOutput, setSavedOutput] =
+    useState<VoiceOutputSettings | null | undefined>(undefined);
+  const [output, setOutput] = useState<VoiceOutputSettings>(defaultVoiceOutput([]));
   const [keys, setKeys] = useState<ApiKeyDetail[] | null>(null);
+  const [voices, setVoices] = useState<VoiceDetail[] | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -1167,77 +1184,112 @@ export function VoiceInputScreen({ client, dispatch, sessionReport }: SettingsSc
 
   useEffect(() => {
     let current = true;
-    setSaved(undefined);
+    setSavedInput(undefined);
+    setSavedOutput(undefined);
     setKeys(null);
+    setVoices(null);
     setError(null);
-    void Promise.all([client.getVoiceInputSettings(), client.listApiKeys()]).then(
-      ([settings, loadedKeys]) => {
+    void Promise.all([
+      client.getVoiceInputSettings(),
+      client.getVoiceOutputSettings(),
+      client.listApiKeys(),
+      client.listVoices(),
+    ]).then(
+      ([inputSettings, outputSettings, loadedKeys, loadedVoices]) => {
         if (!current) return;
-        const initial = settings ?? defaultVoiceInput;
-        setSaved(settings);
-        setDraft(initial);
+        setSavedInput(inputSettings);
+        setInput(inputSettings ?? defaultVoiceInput);
+        setSavedOutput(outputSettings);
+        setOutput(outputSettings ?? defaultVoiceOutput(loadedVoices));
         setKeys(loadedKeys);
+        setVoices(loadedVoices);
       },
       (failure: unknown) => {
         if (current) setError(publicErrorMessage(
-          failure, 'Voice input settings could not be loaded.',
+          failure, 'Voice settings could not be loaded.',
         ));
       },
     );
     return () => { current = false; };
   }, [client, revision]);
 
-  const baseline = saved ?? defaultVoiceInput;
-  const dirty = draft.url !== baseline.url
-    || draft.model !== baseline.model
-    || draft.api_key !== baseline.api_key
-    || draft.delay !== baseline.delay
-    || draft.prompt !== baseline.prompt;
+  const inputBaseline = savedInput ?? defaultVoiceInput;
+  const outputBaseline = savedOutput ?? defaultVoiceOutput(voices ?? []);
+  const dirty = input.url !== inputBaseline.url
+    || input.model !== inputBaseline.model
+    || input.api_key !== inputBaseline.api_key
+    || input.delay !== inputBaseline.delay
+    || input.prompt !== inputBaseline.prompt
+    || output.url !== outputBaseline.url
+    || output.model !== outputBaseline.model
+    || output.api_key !== outputBaseline.api_key
+    || output.output_format !== outputBaseline.output_format
+    || output.default_voice !== outputBaseline.default_voice;
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!draft.url.trim() || !draft.model.trim() || !draft.api_key || saving) return;
+    if (!input.url.trim() || !input.model.trim() || !input.api_key
+      || !output.url.trim() || !output.model.trim() || !output.api_key
+      || !output.output_format.trim() || !output.default_voice || saving) return;
     setSaving(true);
     setError(null);
     setMessage(null);
     try {
-      const updated = await client.saveVoiceInputSettings({
-        url: draft.url.trim(),
-        model: draft.model.trim(),
-        api_key: draft.api_key,
-        delay: draft.delay,
-        prompt: draft.prompt,
-      });
-      const endpointOriginChanged = saved == null
-        || new URL(saved.url).origin !== new URL(updated.url).origin;
-      setSaved(updated);
-      setDraft(updated);
-      setMessage('Voice input settings saved.');
-      if (endpointOriginChanged) window.location.reload();
+      const [updatedInput, updatedOutput] = await Promise.all([
+        client.saveVoiceInputSettings({
+          url: input.url.trim(),
+          model: input.model.trim(),
+          api_key: input.api_key,
+          delay: input.delay,
+          prompt: input.prompt,
+        }),
+        client.saveVoiceOutputSettings({
+          url: output.url.trim(),
+          model: output.model.trim(),
+          api_key: output.api_key,
+          output_format: output.output_format.trim(),
+          default_voice: output.default_voice,
+        }),
+      ]);
+      const endpointOriginChanged = savedInput == null || savedOutput == null
+        || new URL(savedInput.url).origin !== new URL(updatedInput.url).origin
+        || new URL(savedOutput.url).origin !== new URL(updatedOutput.url).origin;
+      setSavedInput(updatedInput);
+      setInput(updatedInput);
+      setSavedOutput(updatedOutput);
+      setOutput(updatedOutput);
+      setMessage('Voice settings saved.');
+      if (endpointOriginChanged) reloadForVoiceSettings();
     } catch (failure: unknown) {
-      setError(publicErrorMessage(failure, 'Voice input settings could not be saved.'));
+      setError(publicErrorMessage(failure, 'Voice settings could not be saved.'));
     } finally {
       setSaving(false);
     }
   }
 
   return (
-    <section className="cha-screen cha-navigation" aria-label="Voice input settings">
+    <section className="cha-screen cha-navigation" aria-label="Voice settings">
       <button className="cha-back-row" onClick={() => dispatch({ type: 'show-settings-voices' })} type="button"><ChevronLeftIcon /><span>Voices</span></button>
       {sessionReport}
-      {saved === undefined && !error && <p className="cha-state-message" role="status">Loading voice input settings…</p>}
-      {error && saved === undefined && <LoadFailure message={error} retry={() => setRevision((value) => value + 1)} />}
-      {saved !== undefined && keys && (
+      {(savedInput === undefined || savedOutput === undefined) && !error && <p className="cha-state-message" role="status">Loading voice settings…</p>}
+      {error && (savedInput === undefined || savedOutput === undefined) && <LoadFailure message={error} retry={() => setRevision((value) => value + 1)} />}
+      {savedInput !== undefined && savedOutput !== undefined && keys && voices && (
         <form className="cha-settings-form" onSubmit={(event) => void save(event)}>
-          <label>URL endpoint<input autoFocus className="cha-form-control" onChange={(event) => setDraft({ ...draft, url: event.target.value })} type="url" value={draft.url} /></label>
-          <label>Model name<input className="cha-form-control" onChange={(event) => setDraft({ ...draft, model: event.target.value })} value={draft.model} /></label>
-          <label>API key name<select className="cha-form-control" onChange={(event) => setDraft({ ...draft, api_key: event.target.value })} value={draft.api_key}><option value="">Select an API key</option>{keys.map((key) => <option key={key.id} value={key.id}>{key.display_name}</option>)}</select></label>
-          <label>Delay<select className="cha-form-control" onChange={(event) => setDraft({ ...draft, delay: event.target.value as VoiceInputSettings['delay'] })} value={draft.delay}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="xhigh">Extra high</option></select></label>
-          <label>Prompt<textarea className="cha-form-control" onChange={(event) => setDraft({ ...draft, prompt: event.target.value })} rows={4} value={draft.prompt} /></label>
-          {keys.length === 0 && <p className="cha-error-message" role="alert">Add an API key before configuring voice input.</p>}
+          <label>Input URL endpoint<input autoFocus className="cha-form-control" onChange={(event) => setInput({ ...input, url: event.target.value })} type="url" value={input.url} /></label>
+          <label>Input model name<input className="cha-form-control" onChange={(event) => setInput({ ...input, model: event.target.value })} value={input.model} /></label>
+          <label>Input API key name<select className="cha-form-control" onChange={(event) => setInput({ ...input, api_key: event.target.value })} value={input.api_key}><option value="">Select an API key</option>{keys.map((key) => <option key={key.id} value={key.id}>{key.display_name}</option>)}</select></label>
+          <label>Input delay<select className="cha-form-control" onChange={(event) => setInput({ ...input, delay: event.target.value as VoiceInputSettings['delay'] })} value={input.delay}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="xhigh">Extra high</option></select></label>
+          <label>Input prompt<textarea className="cha-form-control" onChange={(event) => setInput({ ...input, prompt: event.target.value })} rows={4} value={input.prompt} /></label>
+          <label>Output URL endpoint<input className="cha-form-control" onChange={(event) => setOutput({ ...output, url: event.target.value })} type="url" value={output.url} /></label>
+          <label>Output model name<input className="cha-form-control" onChange={(event) => setOutput({ ...output, model: event.target.value })} value={output.model} /></label>
+          <label>Output API key name<select className="cha-form-control" onChange={(event) => setOutput({ ...output, api_key: event.target.value })} value={output.api_key}><option value="">Select an API key</option>{keys.map((key) => <option key={key.id} value={key.id}>{key.display_name}</option>)}</select></label>
+          <label>Output format<input className="cha-form-control" onChange={(event) => setOutput({ ...output, output_format: event.target.value })} value={output.output_format} /></label>
+          <label>Default voice<select className="cha-form-control" onChange={(event) => setOutput({ ...output, default_voice: event.target.value })} value={output.default_voice}><option value="">Select a voice</option>{voices.map((voice) => <option key={voice.id} value={voice.display_name}>{voice.display_name}</option>)}</select></label>
+          {keys.length === 0 && <p className="cha-error-message" role="alert">Add an API key before configuring voice.</p>}
+          {voices.length === 0 && <p className="cha-error-message" role="alert">Add a voice before configuring voice output.</p>}
           {message && <p className="cha-state-message" role="status">{message}</p>}
           {error && <p className="cha-error-message" role="alert">{error}</p>}
-          <div className="cha-settings-form-actions"><button className="cha-button cha-button-ghost" disabled={!dirty || saving} onClick={() => { setDraft(baseline); setMessage(null); }} type="button">Reset</button><button className="cha-button cha-button-primary" disabled={!dirty || !draft.url.trim() || !draft.model.trim() || !draft.api_key || saving} type="submit">{saving ? 'Saving…' : 'Save voice input'}</button></div>
+          <div className="cha-settings-form-actions"><button className="cha-button cha-button-ghost" disabled={!dirty || saving} onClick={() => { setInput(inputBaseline); setOutput(outputBaseline); setMessage(null); }} type="button">Reset</button><button className="cha-button cha-button-primary" disabled={!dirty || !input.url.trim() || !input.model.trim() || !input.api_key || !output.url.trim() || !output.model.trim() || !output.api_key || !output.output_format.trim() || !output.default_voice || saving} type="submit">{saving ? 'Saving…' : 'Save voice settings'}</button></div>
         </form>
       )}
     </section>
@@ -1334,7 +1386,7 @@ export function VoiceScreen({
   const [confirming, setConfirming] = useState(false);
   const [revision, setRevision] = useState(0);
   const preview = useRef<TextToSpeechSession | null>(null);
-  const speechConfiguration = getTextToSpeechConfiguration();
+  const speechConfiguration = useTextToSpeechConfiguration(client);
 
   useEffect(() => () => preview.current?.stop(), []);
   useEffect(() => {

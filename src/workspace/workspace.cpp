@@ -461,6 +461,26 @@ WorkspaceVoiceInput load_voice_input(const std::filesystem::path& path) {
     return result;
 }
 
+WorkspaceVoiceOutput load_voice_output(const std::filesystem::path& path) {
+    const toml::table table = read_toml(path, "voice output config");
+    static constexpr std::string_view fields[]{
+        "url", "model", "api_key", "output_format", "default_voice"};
+    reject_unknown_fields(table, path, fields, "Voice output config");
+    WorkspaceVoiceOutput result{
+        .url = required_string(table, path, "url"),
+        .model = required_string(table, path, "model"),
+        .api_key_id = required_string(table, path, "api_key"),
+        .output_format = required_string(table, path, "output_format"),
+        .default_voice = required_string(table, path, "default_voice"),
+    };
+    if (!valid_voice_input_url(result.url)) {
+        throw std::runtime_error(
+            "Voice output config '" + utf8_path(path)
+            + "' requires an absolute HTTP or HTTPS URL");
+    }
+    return result;
+}
+
 void validate_saved_key_text(
     std::string_view value,
     std::size_t maximum,
@@ -1201,6 +1221,18 @@ Workspace Workspace::load(std::filesystem::path root) {
         }
     }
 
+    const std::filesystem::path voice_output_path =
+        workspace.root_ / "system" / "voice-output" / "config.toml";
+    if (std::filesystem::is_regular_file(voice_output_path)) {
+        try {
+            workspace.voice_output_ = load_voice_output(voice_output_path);
+        } catch (const std::exception& error) {
+            log_warn(
+                "Voice output configuration is ignored: "
+                + std::string(error.what()));
+        }
+    }
+
     const std::filesystem::path personas_directory = workspace.root_ / "personas";
     for (const std::filesystem::path& directory : recursive_definition_directories(
              personas_directory, "persona.toml", "PERSONA.md")) {
@@ -1598,6 +1630,13 @@ const WorkspaceStyle* Workspace::find_style(std::string_view id) const noexcept 
 
 const WorkspaceVoice* Workspace::find_voice(std::string_view id) const noexcept {
     return find_indexed<WorkspaceVoice>(voices_, voice_index_, id);
+}
+
+const WorkspaceVoice* Workspace::find_voice_by_name(
+    std::string_view name) const noexcept {
+    const auto found = std::ranges::find(
+        voices_, name, &WorkspaceVoice::label);
+    return found == voices_.end() ? nullptr : &*found;
 }
 
 const SavedApiKey* Workspace::find_api_key(std::string_view id) const noexcept {
@@ -2073,6 +2112,11 @@ void Workspace::delete_voice(std::string_view voice_id) const {
             throw std::invalid_argument("Voice is in use");
         }
     }
+    const WorkspaceVoice* const voice = find_voice(voice_id);
+    if (voice_output_ && voice
+        && voice_output_->default_voice == voice->label) {
+        throw std::invalid_argument("Voice is in use");
+    }
     std::error_code error;
     std::filesystem::remove_all(path->second.parent_path(), error);
     if (error) {
@@ -2102,6 +2146,29 @@ void Workspace::write_voice_input(const WorkspaceVoiceInput& settings) const {
     table.insert("api_key", settings.api_key_id);
     table.insert("delay", settings.delay);
     table.insert("prompt", settings.prompt);
+    write_toml_file(path, table);
+}
+
+void Workspace::write_voice_output(const WorkspaceVoiceOutput& settings) const {
+    const std::filesystem::path directory = root_ / "system" / "voice-output";
+    const std::filesystem::path path = directory / "config.toml";
+    if (settings.url.empty() || settings.model.empty()
+        || settings.api_key_id.empty() || settings.output_format.empty()
+        || settings.default_voice.empty()
+        || !valid_voice_input_url(settings.url)) {
+        throw std::invalid_argument("Invalid voice output settings");
+    }
+    if (std::filesystem::exists(directory)) {
+        require_directory(directory);
+    } else {
+        create_private_directory(directory);
+    }
+    toml::table table;
+    table.insert("url", settings.url);
+    table.insert("model", settings.model);
+    table.insert("api_key", settings.api_key_id);
+    table.insert("output_format", settings.output_format);
+    table.insert("default_voice", settings.default_voice);
     write_toml_file(path, table);
 }
 

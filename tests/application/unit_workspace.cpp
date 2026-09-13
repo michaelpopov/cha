@@ -823,6 +823,54 @@ TEST(Workspace, ValidatesVoiceInputBeforeWritingAndIgnoresInvalidSavedConfig) {
     EXPECT_FALSE(reloaded.voice_input());
 }
 
+TEST(Workspace, PersistsAndValidatesVoiceOutputSettings) {
+    test::TestWorkspace fixture;
+    fixture.write_voice(
+        "default-reader",
+        "display_name = \"Default Reader\"\n"
+        "elevenlabs_voice_id = \"eleven-default\"\n");
+    const Workspace workspace = Workspace::load(fixture.root());
+    workspace.write_voice_output({
+        .url = "https://api.elevenlabs.io/v1/text-to-speech",
+        .model = "eleven_multilingual_v2",
+        .api_key_id = "api_key_2",
+        .output_format = "mp3_44100_128",
+        .default_voice = "Default Reader",
+    });
+    const std::filesystem::path path =
+        fixture.root() / "system" / "voice-output" / "config.toml";
+    const std::string before = file_bytes(path);
+
+    const Workspace reloaded = Workspace::load(fixture.root());
+    ASSERT_TRUE(reloaded.voice_output());
+    EXPECT_EQ(reloaded.voice_output()->model, "eleven_multilingual_v2");
+    EXPECT_EQ(reloaded.voice_output()->api_key_id, "api_key_2");
+    EXPECT_EQ(reloaded.voice_output()->output_format, "mp3_44100_128");
+    EXPECT_EQ(reloaded.voice_output()->default_voice, "Default Reader");
+    ASSERT_NE(reloaded.find_voice_by_name("Default Reader"), nullptr);
+    EXPECT_EQ(
+        reloaded.find_voice_by_name("Default Reader")->elevenlabs_voice_id,
+        "eleven-default");
+
+    EXPECT_THROW(
+        workspace.write_voice_output({
+            .url = "not-a-url",
+            .model = "eleven_multilingual_v2",
+            .api_key_id = "api_key_2",
+            .output_format = "mp3_44100_128",
+            .default_voice = "Default Reader",
+        }),
+        std::invalid_argument);
+    EXPECT_EQ(file_bytes(path), before);
+
+    std::ofstream(path) << "url = \"not-a-url\"\n"
+                          "model = \"eleven_multilingual_v2\"\n"
+                          "api_key = \"api_key_2\"\n"
+                          "output_format = \"mp3_44100_128\"\n"
+                          "default_voice = \"Default Reader\"\n";
+    EXPECT_FALSE(Workspace::load(fixture.root()).voice_output());
+}
+
 TEST(Workspace, ResolvesForumCharacterHandles) {
     const Workspace workspace = workspace_with_characters({
         {"ada", "Ada"},

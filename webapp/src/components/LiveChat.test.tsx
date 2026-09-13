@@ -4,7 +4,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ChaError, type ChaClient, type SessionSnapshot } from '../api/client';
 import type { SessionEventHandlers } from '../api/events';
-import { bootstrapFixture, fixtureClient, plainVoice, snapshotFixture } from '../test/fixtures';
+import {
+  bootstrapFixture,
+  fixtureClient,
+  plainVoice,
+  snapshotFixture,
+  voiceOutputRuntimeFixture,
+} from '../test/fixtures';
 import {
   clearTextToSpeechCache,
   TextToSpeechError,
@@ -16,7 +22,6 @@ import { formatEntryTime } from './ChatScreen';
 
 afterEach(() => {
   clearTextToSpeechCache();
-  delete window.chaTextToSpeech;
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -175,15 +180,10 @@ describe('live chat', () => {
   it('offers text to speech only for completed model responses in the macOS shell', async () => {
     const play = vi.spyOn(TextToSpeechSession.prototype, 'play').mockResolvedValue();
     const stop = vi.spyOn(TextToSpeechSession.prototype, 'stop');
-    window.chaTextToSpeech = {
-      baseUrl: 'https://api.elevenlabs.io/v1/text-to-speech',
-      voiceId: 'voice',
-      outputFormat: 'mp3_44100_128',
-      apiKey: 'secret',
-      model: 'eleven_multilingual_v2',
-    };
     const events = drivableEvents();
-    render(<App client={fixtureClient()} connectSessionEvents={events.connect} />);
+    render(<App client={fixtureClient({
+      getVoiceOutputRuntime: async () => voiceOutputRuntimeFixture,
+    })} connectSessionEvents={events.connect} />);
     await attachInitial(events, {
       ...snapshotFixture,
       transcript: [
@@ -211,13 +211,6 @@ describe('live chat', () => {
   });
 
   it('caches existing responses three at a time and caches later completions', async () => {
-    window.chaTextToSpeech = {
-      baseUrl: 'https://api.elevenlabs.io/v1/text-to-speech',
-      voiceId: 'voice',
-      outputFormat: 'mp3_44100_128',
-      apiKey: 'secret',
-      model: 'eleven_multilingual_v2',
-    };
     const responses: Array<(response: Response) => void> = [];
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(() => (
       new Promise<Response>((resolve) => responses.push(resolve))
@@ -237,7 +230,9 @@ describe('live chat', () => {
       }),
     );
     const events = drivableEvents();
-    render(<App client={fixtureClient()} connectSessionEvents={events.connect} />);
+    render(<App client={fixtureClient({
+      getVoiceOutputRuntime: async () => voiceOutputRuntimeFixture,
+    })} connectSessionEvents={events.connect} />);
     await attachInitial(events, { ...snapshotFixture, transcript });
 
     const toggle = screen.getByRole('button', { name: 'Cache response audio automatically' });
@@ -293,15 +288,10 @@ describe('live chat', () => {
     vi.spyOn(TextToSpeechSession.prototype, 'play').mockRejectedValue(
       new TextToSpeechError('ElevenLabs: This voice is unavailable. (HTTP 422)'),
     );
-    window.chaTextToSpeech = {
-      baseUrl: 'https://api.elevenlabs.io/v1/text-to-speech',
-      voiceId: 'voice',
-      outputFormat: 'mp3_44100_128',
-      apiKey: 'secret',
-      model: 'eleven_multilingual_v2',
-    };
     const events = drivableEvents();
-    render(<App client={fixtureClient()} connectSessionEvents={events.connect} />);
+    render(<App client={fixtureClient({
+      getVoiceOutputRuntime: async () => voiceOutputRuntimeFixture,
+    })} connectSessionEvents={events.connect} />);
     await attachInitial(events, {
       ...snapshotFixture,
       transcript: [{

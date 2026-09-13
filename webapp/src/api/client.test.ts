@@ -395,6 +395,38 @@ describe('CHA API client', () => {
     expect(fetcher.mock.calls[1][1]?.body).toBe(JSON.stringify(settings));
   });
 
+  it('gets and saves voice output settings and resolves the default voice', async () => {
+    const settings = {
+      url: 'https://api.elevenlabs.io/v1/text-to-speech',
+      model: 'eleven_multilingual_v2',
+      api_key: 'api_key_2',
+      output_format: 'mp3_44100_128',
+      default_voice: 'Brian',
+    };
+    const runtime = {
+      url: settings.url,
+      model: settings.model,
+      api_key: 'secret',
+      output_format: settings.output_format,
+      default_voice_id: 'eleven-voice-123',
+    };
+    const fetcher = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
+      async (input) => jsonResponse(String(input).endsWith('/runtime') ? runtime : settings),
+    );
+    const client = createChaClient(fetcher);
+
+    await expect(client.getVoiceOutputSettings()).resolves.toEqual(settings);
+    await expect(client.saveVoiceOutputSettings(settings)).resolves.toEqual(settings);
+    await expect(client.getVoiceOutputRuntime()).resolves.toEqual(runtime);
+    expect(fetcher.mock.calls.map(([url]) => url)).toEqual([
+      '/api/v1/voice-output',
+      '/api/v1/voice-output',
+      '/api/v1/voice-output/runtime',
+    ]);
+    expect(fetcher.mock.calls[1][1]?.method).toBe('PUT');
+    expect(fetcher.mock.calls[1][1]?.body).toBe(JSON.stringify(settings));
+  });
+
   it('turns the error envelope into one ChaError shape', async () => {
     const fetcher = vi.fn<(
       input: RequestInfo | URL,

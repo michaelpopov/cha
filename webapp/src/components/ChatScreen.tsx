@@ -22,11 +22,11 @@ import {
 import type { AppAction, AppState } from '../state/view';
 import {
   cacheTextToSpeech,
-  getTextToSpeechConfiguration,
   TextToSpeechError,
   TextToSpeechSession,
   type TextToSpeechConfiguration,
   type TextToSpeechVoice,
+  useTextToSpeechConfiguration,
 } from '../textToSpeech';
 import {
   appendTranscription,
@@ -147,6 +147,7 @@ function TranscriptMessage({
   entry,
   appearance,
   speechState,
+  speechAvailable,
   onToggleSpeech,
   actionDisabled,
   onCover,
@@ -156,6 +157,7 @@ function TranscriptMessage({
   entry: SessionSnapshot['transcript'][number];
   appearance: CharacterAppearance | undefined;
   speechState: 'idle' | 'loading' | 'playing';
+  speechAvailable: boolean;
   onToggleSpeech(entry: SessionSnapshot['transcript'][number]): void;
   actionDisabled: boolean;
   onCover?: (entry: SessionSnapshot['transcript'][number]) => void;
@@ -203,7 +205,7 @@ function TranscriptMessage({
           >
             {formatEntryTime(entry.created_at)}
           </time>
-          {canRead && getTextToSpeechConfiguration() && (
+          {canRead && speechAvailable && (
             <button
               aria-label={speechLabel}
               className={`cha-message-action${speechState !== 'idle' ? ' is-active' : ''}`}
@@ -337,7 +339,7 @@ export function ChatScreen({
   const generationActive = generation?.active === true;
   const sessionAvailable = snapshot !== null && !ended;
   const voiceInputAvailable = voiceConfiguration !== null && VoiceInputSession.supported();
-  const textToSpeechConfiguration = getTextToSpeechConfiguration();
+  const textToSpeechConfiguration = useTextToSpeechConfiguration(client);
   const voiceInputActive = voiceInputState !== 'idle';
   const canSend = connected
     && pendingAction === null
@@ -853,6 +855,7 @@ export function ChatScreen({
                   })}
                   onUncover={entry.id === boundaryEntryId ? () => changeCover() : undefined}
                   speechState={spokenEntry?.id === entry.id ? spokenEntry.state : 'idle'}
+                  speechAvailable={textToSpeechConfiguration !== null}
                 />
               </Fragment>
             ))}
@@ -872,6 +875,7 @@ export function ChatScreen({
                 displayName: response.display_name,
               })}
               speechState={spokenEntry?.id === entry.id ? spokenEntry.state : 'idle'}
+              speechAvailable={textToSpeechConfiguration !== null}
             />
           </Fragment>
         ))}

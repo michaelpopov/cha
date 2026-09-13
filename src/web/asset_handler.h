@@ -17,8 +17,7 @@ namespace cha::web {
 // API. The lobby owns browser-side persona, forum, and session selection.
 class AssetHandler {
 public:
-    using ConnectUrlProvider =
-        std::function<std::optional<std::string>()>;
+    using ConnectUrlsProvider = std::function<std::vector<std::string>()>;
 
     explicit AssetHandler(
         std::filesystem::path web_root,
@@ -26,8 +25,7 @@ public:
         std::vector<std::string> additional_connect_urls = {});
     AssetHandler(
         std::filesystem::path web_root,
-        ConnectUrlProvider connect_url,
-        std::vector<std::string> additional_connect_urls = {});
+        ConnectUrlsProvider connect_urls);
 
     void install(httplib::Server& server) const;
     void set_shell(httplib::Response& response) const;
@@ -37,8 +35,7 @@ private:
 
     std::filesystem::path web_root_;
     std::string shell_;
-    ConnectUrlProvider connect_url_;
-    std::vector<std::string> additional_connect_urls_;
+    ConnectUrlsProvider connect_urls_;
 };
 
 } // namespace cha::web

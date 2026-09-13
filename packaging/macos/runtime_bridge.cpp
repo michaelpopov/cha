@@ -20,8 +20,6 @@ using cha::web::parse_application_command;
 
 struct ChaRuntime {
     std::unique_ptr<ApplicationRuntime> application;
-    std::string text_to_speech_api_key;
-    std::string text_to_speech_model;
     int port{};
     bool logging{};
 };
@@ -63,9 +61,6 @@ ApplicationCommand runtime_command(
     // configuration format requires it.
     command.host = "127.0.0.1";
     command.port = 0;
-#ifdef __APPLE__
-    command.native_connect_urls.push_back("https://api.elevenlabs.io");
-#endif
     return command;
 }
 
@@ -144,15 +139,8 @@ ChaRuntime* cha_runtime_create(
         cha::initialize_diagnostic_logging(
             command.log_file, command.log_level);
         runtime->logging = true;
-        runtime->text_to_speech_model = command.text_to_speech_model;
         runtime->application = ApplicationRuntime::open(
             command, access_token, vault_password);
-#ifdef __APPLE__
-        if (const auto key = runtime->application->api_key_value_by_name(
-                "ELEVENLABS_API_KEY")) {
-            runtime->text_to_speech_api_key = *key;
-        }
-#endif
         runtime->port = runtime->application->start();
         return runtime.release();
     } catch (const cha::web::VaultPasswordError&) {
@@ -225,16 +213,6 @@ int32_t cha_runtime_can_modify(const ChaRuntime* runtime) {
 int32_t cha_runtime_can_transfer_r2(const ChaRuntime* runtime) {
     return runtime && runtime->application
         && runtime->application->has_r2_storage() ? 1 : 0;
-}
-
-const char* cha_runtime_text_to_speech_api_key(const ChaRuntime* runtime) {
-    return runtime && !runtime->text_to_speech_api_key.empty()
-        ? runtime->text_to_speech_api_key.c_str() : nullptr;
-}
-
-const char* cha_runtime_text_to_speech_model(const ChaRuntime* runtime) {
-    return runtime && !runtime->text_to_speech_model.empty()
-        ? runtime->text_to_speech_model.c_str() : nullptr;
 }
 
 int32_t cha_runtime_upload(
