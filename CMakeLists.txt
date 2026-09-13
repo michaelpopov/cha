@@ -8,9 +8,10 @@ include(CTest)
 
 find_package(Threads REQUIRED)
 find_package(CURL QUIET)
-if(NOT WIN32)
-    find_package(OpenSSL REQUIRED)
+if(WIN32)
+    set(OPENSSL_USE_STATIC_LIBS TRUE)
 endif()
+find_package(OpenSSL REQUIRED)
 
 # Keep sanitizer instrumentation opt-in so ordinary release-like builds stay
 # portable, while CI and local hardening runs use named, reproducible presets.
@@ -155,11 +156,52 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(libuv)
 
 FetchContent_Declare(
-    sqlite_amalgamation
-    URL https://www.sqlite.org/2024/sqlite-amalgamation-3460100.zip
-    URL_HASH SHA256=77823cb110929c2bcb0f5d48e4833b5c59a8a6e40cdea3936b99e199dbbe5784
+    sqlcipher_source
+    URL https://github.com/sqlcipher/sqlcipher/archive/refs/tags/v4.19.0.zip
+    URL_HASH SHA256=57290a5e83858bc8435701ec9be8b1d4f36a0ee1b9e85af1ad8fbb995b058ca2
 )
-FetchContent_MakeAvailable(sqlite_amalgamation)
+FetchContent_MakeAvailable(sqlcipher_source)
+
+# SQLCipher releases contain the canonical source tree rather than the generated
+# SQLite amalgamation. Generate it once at configure time, then compile it with
+# the same flags and toolchain as the rest of CHA.
+set(sqlcipher_amalgamation_DIR
+    "${CMAKE_CURRENT_BINARY_DIR}/_deps/sqlcipher-amalgamation")
+file(MAKE_DIRECTORY "${sqlcipher_amalgamation_DIR}")
+if(NOT EXISTS "${sqlcipher_amalgamation_DIR}/sqlite3.c")
+    if(WIN32)
+        find_program(CHA_NMAKE_EXECUTABLE nmake REQUIRED)
+        execute_process(
+            COMMAND
+                "${CHA_NMAKE_EXECUTABLE}"
+                /f "${sqlcipher_source_SOURCE_DIR}/Makefile.msc"
+                TOP="${sqlcipher_source_SOURCE_DIR}"
+                NO_TCL=1
+                sqlite3.c
+            WORKING_DIRECTORY "${sqlcipher_amalgamation_DIR}"
+            RESULT_VARIABLE sqlcipher_generate_result)
+    else()
+        find_program(CHA_MAKE_EXECUTABLE make REQUIRED)
+        execute_process(
+            COMMAND
+                "${sqlcipher_source_SOURCE_DIR}/configure"
+                --disable-shared
+                --disable-tcl
+                --with-tempstore=yes
+            WORKING_DIRECTORY "${sqlcipher_amalgamation_DIR}"
+            RESULT_VARIABLE sqlcipher_configure_result)
+        if(NOT sqlcipher_configure_result EQUAL 0)
+            message(FATAL_ERROR "Failed to configure SQLCipher")
+        endif()
+        execute_process(
+            COMMAND "${CHA_MAKE_EXECUTABLE}" sqlite3.c
+            WORKING_DIRECTORY "${sqlcipher_amalgamation_DIR}"
+            RESULT_VARIABLE sqlcipher_generate_result)
+    endif()
+    if(NOT sqlcipher_generate_result EQUAL 0)
+        message(FATAL_ERROR "Failed to generate the SQLCipher amalgamation")
+    endif()
+endif()
 
 function(cha_enable_warnings target)
     if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
@@ -176,23 +218,29 @@ function(cha_enable_warnings target)
 endfunction()
 
 add_library(cha_sqlite3 STATIC
-    "${sqlite_amalgamation_SOURCE_DIR}/sqlite3.c"
+    "${sqlcipher_amalgamation_DIR}/sqlite3.c"
 )
 set_target_properties(cha_sqlite3 PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(
     cha_sqlite3
     SYSTEM PUBLIC
-        "${sqlite_amalgamation_SOURCE_DIR}"
+        "${sqlcipher_amalgamation_DIR}"
 )
 target_compile_definitions(
     cha_sqlite3
+    PUBLIC
+        SQLITE_HAS_CODEC=1
     PRIVATE
         SQLITE_DQS=0
+        SQLITE_EXTRA_INIT=sqlcipher_extra_init
+        SQLITE_EXTRA_SHUTDOWN=sqlcipher_extra_shutdown
+        SQLITE_TEMP_STORE=2
         SQLITE_OMIT_DEPRECATED
         SQLITE_OMIT_LOAD_EXTENSION
         SQLITE_THREADSAFE=1
         SQLITE_DEFAULT_FILE_PERMISSIONS=0600
 )
+target_link_libraries(cha_sqlite3 PUBLIC OpenSSL::Crypto)
 
 add_library(cha_core STATIC
     ${CMAKE_CURRENT_BINARY_DIR}/generated/application_guide.cpp
@@ -281,9 +329,7 @@ target_link_libraries(
     PRIVATE
         spdlog::spdlog
 )
-if(NOT WIN32)
-    target_link_libraries(cha_core PRIVATE OpenSSL::Crypto)
-endif()
+target_link_libraries(cha_core PRIVATE OpenSSL::Crypto)
 cha_enable_warnings(cha_core)
 
 add_library(cha_web STATIC

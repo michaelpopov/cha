@@ -1763,6 +1763,6 @@ it('reloads after switching vaults', async () => {
   );
 
   await user.selectOptions(await screen.findByLabelText('Vault'), 'Projects');
-  await waitFor(() => expect(switchVault).toHaveBeenCalledWith('Projects'));
+  await waitFor(() => expect(switchVault).toHaveBeenCalledWith('Projects', undefined));
   expect(reload).toHaveBeenCalledOnce();
 });

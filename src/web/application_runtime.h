@@ -18,13 +18,20 @@ public:
     using std::runtime_error::runtime_error;
 };
 
+class VaultPasswordError : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
+};
+
 struct VaultCreate {
     std::string display_name;
     std::optional<std::string> copy_from;
+    std::string password;
 };
 
 struct VaultUpdate {
     std::string display_name;
+    std::string password;
 };
 
 struct VaultRegistrySnapshot {
@@ -39,7 +46,8 @@ class ApplicationRuntime {
 public:
     static std::unique_ptr<ApplicationRuntime> open(
         const ApplicationCommand& command,
-        std::string access_token = {});
+        std::string access_token = {},
+        std::string vault_password = {});
 
     ~ApplicationRuntime();
     ApplicationRuntime(const ApplicationRuntime&) = delete;
@@ -62,7 +70,7 @@ public:
         std::string_view current_name,
         VaultUpdate update);
     void delete_vault(std::string_view name);
-    void switch_vault(std::string_view name);
+    void switch_vault(std::string_view name, std::string password = {});
     [[nodiscard]] std::vector<std::string> list_r2_vaults() const;
     [[nodiscard]] VaultDefinition download_r2_vault(std::string_view name);
     [[nodiscard]] R2DatabaseTransfer upload_database();

@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 
 test.afterEach(async ({ request }) => {
   const response = await request.post('/api/v1/vault/switch', {
-    data: { vault_name: 'E2E' },
+    data: { vault_name: 'E2E', password: null },
     headers: { 'Content-Type': 'application/json' },
   });
   expect(response.status()).toBe(204);

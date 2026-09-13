@@ -29,7 +29,8 @@ void initialize_sqlite_once() {
 
 SqliteDatabase::SqliteDatabase(
     const std::filesystem::path& path,
-    Mode mode)
+    Mode mode,
+    std::string_view password)
     : path_(utf8_path(path)) {
     initialize_sqlite_once();
     int flags = mode == Mode::read_only
@@ -53,6 +54,11 @@ SqliteDatabase::SqliteDatabase(
             + " (SQLite code " + std::to_string(result) + ")");
     }
     try {
+        if (!password.empty()) {
+            const int keyed = sqlite3_key(
+                handle_, password.data(), static_cast<int>(password.size()));
+            if (keyed != SQLITE_OK) fail(keyed, "Failed to apply database password");
+        }
         sqlite3_extended_result_codes(handle_, 1);
         sqlite3_busy_timeout(handle_, 5000);
         execute("PRAGMA foreign_keys = ON");

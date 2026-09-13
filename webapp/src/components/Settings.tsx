@@ -20,7 +20,6 @@ import {
   type VoiceDetail,
   type VoiceUpdate,
   type VaultDetail,
-  type VaultUpdate,
 } from '../api/client';
 import {
   getTextToSpeechConfiguration,
@@ -257,6 +256,8 @@ export function NewVaultScreen({ client, dispatch, sessionReport }: SettingsScre
   const [vaults, setVaults] = useState<VaultDetail[] | null>(null);
   const [name, setName] = useState('');
   const [copyFrom, setCopyFrom] = useState('');
+  const [protectedVault, setProtectedVault] = useState(false);
+  const [password, setPassword] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -276,13 +277,14 @@ export function NewVaultScreen({ client, dispatch, sessionReport }: SettingsScre
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!name.trim() || saving) return;
+    if (!name.trim() || saving || (protectedVault && !password)) return;
     setSaving(true);
     setError(null);
     try {
       const created = await client.createVault({
         display_name: name.trim(),
         copy_from: copyFrom || null,
+        password: protectedVault ? password : null,
       });
       dispatch({ type: 'vault-created', vault: created });
     } catch (failure: unknown) {
@@ -302,9 +304,11 @@ export function NewVaultScreen({ client, dispatch, sessionReport }: SettingsScre
           <fieldset disabled={saving}>
             <TransliteratingInput autoFocus className="cha-form-control" id="cha-new-vault-name" label="Display name" onValueChange={setName} placeholder="e.g. Projects" value={name} />
             <label>Initial database<select className="cha-form-control" onChange={(event) => setCopyFrom(event.target.value)} value={copyFrom}><option value="">New empty vault</option>{vaults.map((vault) => <option key={vault.display_name} value={vault.display_name}>Copy {vault.display_name}</option>)}</select></label>
+            <label className="cha-checkbox-row"><input checked={protectedVault} onChange={(event) => { setProtectedVault(event.target.checked); if (!event.target.checked) setPassword(''); setError(null); }} type="checkbox" />Protected vault</label>
+            {protectedVault && <label>Password<input autoComplete="new-password" className="cha-form-control" onChange={(event) => { setPassword(event.target.value); setError(null); }} type="password" value={password} /></label>}
           </fieldset>
           {error && <p className="cha-error-message" role="alert">{error}</p>}
-          <div className="cha-settings-form-actions"><button className="cha-button cha-button-ghost" disabled={saving} onClick={() => dispatch({ type: 'show-settings-vaults' })} type="button">Cancel</button><button className="cha-button cha-button-primary" disabled={!name.trim() || saving} type="submit">{saving ? 'Creating…' : 'Create vault'}</button></div>
+          <div className="cha-settings-form-actions"><button className="cha-button cha-button-ghost" disabled={saving} onClick={() => dispatch({ type: 'show-settings-vaults' })} type="button">Cancel</button><button className="cha-button cha-button-primary" disabled={!name.trim() || saving || (protectedVault && !password)} type="submit">{saving ? 'Creating…' : 'Create vault'}</button></div>
         </form>
       )}
       {error && !ready && <p className="cha-error-message" role="alert">{error}</p>}
@@ -312,17 +316,12 @@ export function NewVaultScreen({ client, dispatch, sessionReport }: SettingsScre
   );
 }
 
-function vaultUpdate(displayName: string): VaultUpdate {
-  return {
-    display_name: displayName.trim(),
-  };
-}
-
 export function VaultScreen({ client, dispatch, sessionReport, state }: SettingsScreenProps) {
   const selectedName = state.inspectedVaultName;
   const [detail, setDetail] = useState<VaultDetail | null>(null);
   const [vaultCount, setVaultCount] = useState(0);
-  const [name, setName] = useState('');
+  const [enableProtection, setEnableProtection] = useState(false);
+  const [password, setPassword] = useState('');
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [confirming, setConfirming] = useState(false);
@@ -344,7 +343,8 @@ export function VaultScreen({ client, dispatch, sessionReport, state }: Settings
           return;
         }
         setDetail(found);
-        setName(found.display_name);
+        setEnableProtection(false);
+        setPassword('');
       },
       (failure: unknown) => {
         if (current) setError(publicErrorMessage(failure, 'Vault settings could not be loaded.'));
@@ -355,16 +355,18 @@ export function VaultScreen({ client, dispatch, sessionReport, state }: Settings
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!detail || !selectedName || !name.trim() || saving || deleting) return;
+    if (!detail || !selectedName || !enableProtection || !password
+        || saving || deleting) return;
     setSaving(true);
     setError(null);
     try {
       const updated = await client.updateVault(
         selectedName,
-        vaultUpdate(name),
+        { display_name: detail.display_name, password },
       );
       setDetail(updated);
-      setName(updated.display_name);
+      setEnableProtection(false);
+      setPassword('');
       dispatch({ type: 'vault-updated', previousName: selectedName, vault: updated });
     } catch (failure: unknown) {
       setError(publicErrorMessage(failure, 'Vault settings could not be saved.'));
@@ -387,13 +389,9 @@ export function VaultScreen({ client, dispatch, sessionReport, state }: Settings
     }
   }
 
-  const dirty = detail !== null && (
-    name.trim() !== detail.display_name
-  );
-
   function reset() {
-    if (!detail) return;
-    setName(detail.display_name);
+    setEnableProtection(false);
+    setPassword('');
     setError(null);
   }
 
@@ -407,16 +405,13 @@ export function VaultScreen({ client, dispatch, sessionReport, state }: Settings
       {detail && (
         <form className="cha-settings-form" onSubmit={(event) => void save(event)}>
           <fieldset disabled={saving || deleting}>
-            <TransliteratingInput className="cha-form-control" id="cha-vault-name" label="Display name" onValueChange={(value) => { setName(value); setError(null); }} value={name} />
-            <label>Database path<input className="cha-form-control" readOnly value={detail.data_path} /></label>
+            <label className="cha-checkbox-row"><input checked={detail.protected || enableProtection} disabled={detail.protected} onChange={(event) => { setEnableProtection(event.target.checked); if (!event.target.checked) setPassword(''); setError(null); }} type="checkbox" />Protected vault</label>
+            {!detail.protected && enableProtection && <label>Password<input autoFocus autoComplete="new-password" className="cha-form-control" onChange={(event) => { setPassword(event.target.value); setError(null); }} type="password" value={password} /></label>}
           </fieldset>
-          {detail.active && <p className="cha-settings-note">This vault is active. Renaming applies without switching vaults.</p>}
+          {detail.active && <p className="cha-settings-note">This vault is active.</p>}
           {!detail.can_delete && <p className="cha-settings-note">{vaultCount === 1 ? 'The last vault cannot be deleted.' : 'Switch to another vault before deleting this one.'}</p>}
           {error && <p className="cha-error-message" role="alert">{error}</p>}
-          <div className="cha-settings-form-actions">
-            <button className="cha-button cha-button-ghost" disabled={!dirty || saving || deleting} onClick={reset} type="button">Cancel</button>
-            <button className="cha-button cha-button-primary" disabled={!dirty || !name.trim() || saving || deleting} type="submit">{saving ? 'Saving…' : 'Save changes'}</button>
-          </div>
+          {!detail.protected && enableProtection && <div className="cha-settings-form-actions"><button className="cha-button cha-button-ghost" disabled={saving || deleting} onClick={reset} type="button">Cancel</button><button className="cha-button cha-button-primary" disabled={!password || saving || deleting} type="submit">{saving ? 'Protecting…' : 'Protect vault'}</button></div>}
           <div className="cha-settings-form-actions"><button className="cha-button cha-button-danger" disabled={!detail.can_delete || saving || deleting} onClick={() => setConfirming(true)} type="button">{deleting ? 'Deleting…' : 'Delete vault'}</button></div>
         </form>
       )}

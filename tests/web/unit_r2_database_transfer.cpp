@@ -181,6 +181,32 @@ TEST(R2DatabaseTransfer, DownloadsANewDatabaseWithoutReplacingAnything) {
         "GET /cha-backups/archive.sqlite3 HTTP/1.1"));
 }
 
+TEST(R2DatabaseTransfer, RejectsProtectedDownloadsWithoutPublishingThem) {
+    test::TestWorkspace workspace;
+    const std::filesystem::path destination =
+        workspace.root() / "protected.sqlite3";
+    const std::filesystem::path vault = workspace.root() / "vault-2.toml";
+    const std::string remote_vault =
+        "vault_name = \"Protected\"\n"
+        "data = \"/another/computer/protected.sqlite3\"\n"
+        "protected = true\n";
+    MockHttpServer server({
+        http_response("application/toml", remote_vault),
+        http_response("application/vnd.sqlite3", "truncated"),
+    });
+    const R2StorageKey key = storage(mock_url(server.port()));
+    server.start();
+
+    EXPECT_THROW(
+        (void)download_new_database_from_r2(
+            destination, vault, "protected.sqlite3", key),
+        std::runtime_error);
+    server.join();
+
+    EXPECT_FALSE(std::filesystem::exists(destination));
+    EXPECT_FALSE(std::filesystem::exists(vault));
+}
+
 TEST(R2DatabaseTransfer, CreatesALocalDefinitionWhenR2HasOnlyTheDatabase) {
     test::TestWorkspace workspace;
     const std::filesystem::path remote =

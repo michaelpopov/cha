@@ -179,6 +179,7 @@ std::unique_ptr<SessionController> SessionController::from_workspace(
     std::string initial_default_persona_id,
     std::filesystem::path database_path,
     SessionKey session_key,
+    std::string database_password,
     Providers& providers,
     std::shared_ptr<WakeNotifier> notifier,
     SessionRestore restored,
@@ -186,7 +187,7 @@ std::unique_ptr<SessionController> SessionController::from_workspace(
     return std::unique_ptr<SessionController>(new SessionController(
         std::move(initial_default_character_id),
         std::move(initial_default_persona_id), std::move(database_path),
-        session_key, providers,
+        session_key, std::move(database_password), providers,
         std::move(notifier), std::move(restored), {}, std::move(identity)));
 }
 
@@ -205,7 +206,7 @@ std::unique_ptr<SessionController> SessionController::from_workspace_for_testing
     return std::unique_ptr<SessionController>(new SessionController(
         std::move(initial_default_character_id),
         std::move(initial_default_persona_id),
-        std::move(database_path), session_key, provider,
+        std::move(database_path), session_key, {}, provider,
         std::move(notifier),
         std::move(restored), std::move(before_activation), std::move(identity),
         std::move(providers)));
@@ -216,13 +217,14 @@ SessionController::SessionController(
     std::string initial_default_persona_id,
     std::filesystem::path path,
     SessionKey session_key,
+    std::string database_password,
     Providers& providers,
     std::shared_ptr<WakeNotifier> notifier,
     SessionRestore restored,
     ActivationHook before_activation,
     FullSessionId identity,
     std::shared_ptr<Providers> providers_owner)
-    : journal_(std::move(path), session_key),
+    : journal_(std::move(path), session_key, database_password),
       providers_owner_(std::move(providers_owner)),
       providers_(providers),
       notifier_(std::move(notifier)),

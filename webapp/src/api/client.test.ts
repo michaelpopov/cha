@@ -166,7 +166,9 @@ describe('CHA API client', () => {
     expect(fetcher.mock.calls[19][1]?.method).toBe('POST');
     expect(fetcher.mock.calls[19][1]?.body).toBe('{}');
     expect(fetcher.mock.calls[20][1]?.method).toBe('POST');
-    expect(fetcher.mock.calls[20][1]?.body).toBe('{"vault_name":"Projects"}');
+    expect(fetcher.mock.calls[20][1]?.body).toBe(
+      '{"vault_name":"Projects","password":null}',
+    );
     expect(fetcher.mock.calls[21][1]?.method).toBe('POST');
     expect(fetcher.mock.calls[21][1]?.body).toBe('{"display_name":"Project manager"}');
     expect(fetcher.mock.calls[22][1]?.method).toBe('POST');
@@ -205,6 +207,7 @@ describe('CHA API client', () => {
   it('lists, creates, updates, and deletes vaults through the shared route', async () => {
     const vault = {
       display_name: 'Projects',
+      protected: false,
       data_path: '/data/projects.sqlite3',
       mirror_path: null,
       modify_path: '/work/projects',
@@ -225,9 +228,11 @@ describe('CHA API client', () => {
     await client.createVault({
       display_name: 'Projects',
       copy_from: 'Personal',
+      password: null,
     });
     await client.updateVault('Projects', {
       display_name: 'Archive',
+      password: null,
     });
     await client.deleteVault('Archive');
 
@@ -239,11 +244,11 @@ describe('CHA API client', () => {
     ]);
     expect(fetcher.mock.calls[1][1]?.method).toBe('POST');
     expect(fetcher.mock.calls[1][1]?.body).toBe(
-      '{"display_name":"Projects","copy_from":"Personal"}',
+      '{"display_name":"Projects","copy_from":"Personal","password":null}',
     );
     expect(fetcher.mock.calls[2][1]?.method).toBe('PATCH');
     expect(fetcher.mock.calls[2][1]?.body).toBe(
-      '{"vault_name":"Projects","display_name":"Archive"}',
+      '{"vault_name":"Projects","display_name":"Archive","password":null}',
     );
     expect(fetcher.mock.calls[3][1]?.method).toBe('DELETE');
     expect(fetcher.mock.calls[3][1]?.body).toBe('{"vault_name":"Archive"}');
@@ -252,6 +257,7 @@ describe('CHA API client', () => {
   it('lists and downloads R2 vaults', async () => {
     const vault = {
       display_name: 'Archive',
+      protected: false,
       data_path: '/data/Archive.sqlite3',
       mirror_path: null,
       modify_path: null,

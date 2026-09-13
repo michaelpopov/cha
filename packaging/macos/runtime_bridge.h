@@ -19,6 +19,14 @@ ChaRuntime* cha_runtime_create(
     const char* config_path,
     const char* resource_path,
     const char* access_token,
+    const char* vault_password,
+    int32_t* password_error,
+    char** error);
+// Returns 1 when the selected vault is protected, 0 when it is not, and -1
+// when the application configuration could not be loaded.
+int32_t cha_runtime_requires_password(
+    const char* config_path,
+    const char* resource_path,
     char** error);
 void cha_runtime_destroy(ChaRuntime* runtime);
 int32_t cha_runtime_port(const ChaRuntime* runtime);

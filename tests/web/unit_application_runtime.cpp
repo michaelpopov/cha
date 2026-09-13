@@ -334,6 +334,12 @@ TEST(ApplicationRuntime, PreservesOpenRouterTargetsForLegacyProviderUpdates) {
 }
 
 TEST(ApplicationRuntime, StoresApiKeysInTheVaultAndReferencesThemFromProviders) {
+    ScopedEnvironmentVariable url("CHA_R2_URL");
+    ScopedEnvironmentVariable access("CHA_R2_ACCESS_KEY_ID");
+    ScopedEnvironmentVariable secret("CHA_R2_SECRET_ACCESS_KEY");
+    ASSERT_TRUE(unset_environment_variable("CHA_R2_URL"));
+    ASSERT_TRUE(unset_environment_variable("CHA_R2_ACCESS_KEY_ID"));
+    ASSERT_TRUE(unset_environment_variable("CHA_R2_SECRET_ACCESS_KEY"));
     test::TestWorkspace workspace;
     workspace.write_style(
         "serif",
@@ -1547,6 +1553,12 @@ TEST(ApplicationRuntime, FailedLegacyKeyMigrationDoesNotHalfFailVaultSwitch) {
 }
 
 TEST(ApplicationRuntime, SwitchVaultChangesTheDatabaseBackedKeys) {
+    ScopedEnvironmentVariable url("CHA_R2_URL");
+    ScopedEnvironmentVariable access("CHA_R2_ACCESS_KEY_ID");
+    ScopedEnvironmentVariable secret("CHA_R2_SECRET_ACCESS_KEY");
+    ASSERT_TRUE(unset_environment_variable("CHA_R2_URL"));
+    ASSERT_TRUE(unset_environment_variable("CHA_R2_ACCESS_KEY_ID"));
+    ASSERT_TRUE(unset_environment_variable("CHA_R2_SECRET_ACCESS_KEY"));
     TwoVaultRuntime pair;
     {
         auto config = WorkspaceConfigStore::open(pair.database_a);
@@ -1735,7 +1747,7 @@ TEST(ApplicationRuntime, FailedSwitchReopenIsFatalAndRefusesLaterTransfers) {
     const auto failed = client.Post(
         "/api/v1/vault/switch",
         kRuntimeCookie,
-        nlohmann::json{{"vault_name", "B"}}.dump(),
+        nlohmann::json{{"vault_name", "B"}, {"password", nullptr}}.dump(),
         "application/json");
     ASSERT_TRUE(failed);
     EXPECT_EQ(failed->status, 500);
@@ -1859,7 +1871,7 @@ httplib::Result post_switch(
     return client.Post(
         "/api/v1/vault/switch",
         headers,
-        nlohmann::json{{"vault_name", name}}.dump(),
+        nlohmann::json{{"vault_name", name}, {"password", nullptr}}.dump(),
         "application/json");
 }
 
@@ -1899,6 +1911,171 @@ TEST(ApplicationRuntime, SwitchRouteSwitchesVaultAndMapsUnknownNames) {
     runtime->shutdown();
 }
 
+TEST(ApplicationRuntime, ProtectedVaultRequiresItsPasswordWhenSwitching) {
+    TwoVaultRuntime pair;
+    auto runtime = ApplicationRuntime::open(pair.command, "private-test-token");
+    const int port = runtime->start();
+    httplib::Client client("127.0.0.1", port);
+    const std::filesystem::path protected_database =
+        pair.command.config_directory / "Protected.sqlite3";
+
+    const auto created = client.Post(
+        "/api/v1/vaults",
+        kRuntimeCookie,
+        nlohmann::json{
+            {"display_name", "Protected"},
+            {"copy_from", "A"},
+            {"password", "secret"},
+        }.dump(),
+        "application/json");
+    ASSERT_TRUE(created);
+    ASSERT_EQ(created->status, 201) << created->body;
+    EXPECT_TRUE(
+        nlohmann::json::parse(created->body).at("protected").get<bool>());
+    EXPECT_NE(
+        inspect_workspace_session_database(protected_database),
+        WorkspaceDatabaseState::valid_v2);
+    EXPECT_EQ(
+        inspect_workspace_session_database(protected_database, "secret"),
+        WorkspaceDatabaseState::valid_v2);
+
+    expect_error_envelope(
+        post_switch(client, "Protected"),
+        401,
+        "vault_password_required");
+    const auto wrong = client.Post(
+        "/api/v1/vault/switch",
+        kRuntimeCookie,
+        nlohmann::json{
+            {"vault_name", "Protected"}, {"password", "wrong"}}.dump(),
+        "application/json");
+    expect_error_envelope(wrong, 401, "vault_password_required");
+    const auto opened = client.Post(
+        "/api/v1/vault/switch",
+        kRuntimeCookie,
+        nlohmann::json{
+            {"vault_name", "Protected"}, {"password", "secret"}}.dump(),
+        "application/json");
+    ASSERT_TRUE(opened);
+    EXPECT_EQ(opened->status, 204) << opened->body;
+    EXPECT_EQ(get_bootstrap(client).at("vault_name"), "Protected");
+    runtime->shutdown();
+}
+
+TEST(ApplicationRuntime, ProtectsAnExistingVaultAndRequiresPasswordAtStartup) {
+    TwoVaultRuntime pair;
+    auto runtime = ApplicationRuntime::open(pair.command, "private-test-token");
+    const int port = runtime->start();
+    httplib::Client client("127.0.0.1", port);
+
+    const auto updated = client.Patch(
+        "/api/v1/vaults",
+        kRuntimeCookie,
+        nlohmann::json{
+            {"vault_name", "A"},
+            {"display_name", "A"},
+            {"password", "new secret"},
+        }.dump(),
+        "application/json");
+    ASSERT_TRUE(updated);
+    ASSERT_EQ(updated->status, 200) << updated->body;
+    EXPECT_TRUE(
+        nlohmann::json::parse(updated->body).at("protected").get<bool>());
+    EXPECT_EQ(get_bootstrap(client).at("vault_name"), "A");
+    EXPECT_FALSE(create_lobby_session(client, "After protection").empty());
+    runtime->shutdown();
+    runtime.reset();
+
+    ApplicationCommand protected_command = pair.command;
+    protected_command.vault.password_protected = true;
+    protected_command.vaults.front().password_protected = true;
+    EXPECT_THROW(
+        (void)ApplicationRuntime::open(protected_command),
+        VaultPasswordError);
+    EXPECT_THROW(
+        (void)ApplicationRuntime::open(protected_command, {}, "wrong"),
+        VaultPasswordError);
+    auto reopened = ApplicationRuntime::open(
+        protected_command, {}, "new secret");
+    EXPECT_EQ(reopened->current_vault().name, "A");
+}
+
+TEST(ApplicationRuntime, ProtectsTheActiveVaultAfterSwitching) {
+    TwoVaultRuntime pair;
+    auto runtime = ApplicationRuntime::open(pair.command, "private-test-token");
+    const int port = runtime->start();
+    runtime->switch_vault("B");
+    httplib::Client client("127.0.0.1", port);
+
+    const auto updated = client.Patch(
+        "/api/v1/vaults",
+        kRuntimeCookie,
+        nlohmann::json{
+            {"vault_name", "B"},
+            {"display_name", "B"},
+            {"password", "secret B"},
+        }.dump(),
+        "application/json");
+
+    ASSERT_TRUE(updated);
+    ASSERT_EQ(updated->status, 200) << updated->body;
+    EXPECT_EQ(runtime->current_vault().name, "B");
+    EXPECT_TRUE(runtime->current_vault().password_protected);
+    EXPECT_EQ(
+        inspect_workspace_session_database(pair.database_a),
+        WorkspaceDatabaseState::valid_v2);
+    EXPECT_NE(
+        inspect_workspace_session_database(pair.database_b),
+        WorkspaceDatabaseState::valid_v2);
+    EXPECT_EQ(
+        inspect_workspace_session_database(pair.database_b, "secret B"),
+        WorkspaceDatabaseState::valid_v2);
+    runtime->shutdown();
+}
+
+TEST(ApplicationRuntime, ReportsNonPasswordStartupDatabaseFailures) {
+    test::TestWorkspace workspace;
+    const std::filesystem::path missing = workspace.root() / "missing.sqlite3";
+    ApplicationCommand command = make_command(workspace, missing);
+    command.vault.password_protected = true;
+    command.vaults.front().password_protected = true;
+
+    try {
+        (void)ApplicationRuntime::open(command, {}, "secret");
+        FAIL() << "Opening a missing protected database should fail";
+    } catch (const VaultPasswordError&) {
+        FAIL() << "A missing database is not a password error";
+    } catch (const std::runtime_error& error) {
+        EXPECT_NE(std::string(error.what()).find("does not exist"),
+                  std::string::npos);
+    }
+}
+
+TEST(ApplicationRuntime, ReportsProtectedDatabaseCorruptionWithoutRetryingPassword) {
+    test::TestWorkspace workspace;
+    const std::filesystem::path database =
+        workspace.root() / "damaged.sqlite3";
+    create_empty_workspace_session_database(database, "secret");
+    {
+        storage::SqliteDatabase handle(
+            database, storage::SqliteDatabase::Mode::read_write, "secret");
+        handle.execute("DROP TABLE config");
+    }
+    ApplicationCommand command = make_command(workspace, database);
+    command.vault.password_protected = true;
+    command.vaults.front().password_protected = true;
+
+    try {
+        (void)ApplicationRuntime::open(command, {}, "secret");
+        FAIL() << "Opening a damaged protected database should fail";
+    } catch (const VaultPasswordError&) {
+        FAIL() << "Database corruption is not a password error";
+    } catch (const std::runtime_error& error) {
+        EXPECT_NE(std::string(error.what()).find("not a valid CHA database"),
+                  std::string::npos);
+    }
+}
+
 TEST(ApplicationRuntime, VaultRoutesCreateUpdateAndDeleteWithoutSwitching) {
     TwoVaultRuntime pair(true, true);
     seed_lobby_session(pair.database_a, "Copy me");
@@ -1914,6 +2091,7 @@ TEST(ApplicationRuntime, VaultRoutesCreateUpdateAndDeleteWithoutSwitching) {
         nlohmann::json{
             {"display_name", "Copied/unsafe"},
             {"copy_from", "A"},
+            {"password", nullptr},
         }.dump(),
         "application/json");
     expect_error_envelope(invalid_name, 400, "bad_request");
@@ -1925,6 +2103,7 @@ TEST(ApplicationRuntime, VaultRoutesCreateUpdateAndDeleteWithoutSwitching) {
         nlohmann::json{
             {"display_name", "Copied"},
             {"copy_from", "A"},
+            {"password", nullptr},
         }.dump(),
         "application/json");
     ASSERT_TRUE(created);
@@ -1972,6 +2151,7 @@ TEST(ApplicationRuntime, VaultRoutesCreateUpdateAndDeleteWithoutSwitching) {
         nlohmann::json{
             {"vault_name", "Copied"},
             {"display_name", "Archive"},
+            {"password", nullptr},
         }.dump(),
         "application/json");
     ASSERT_TRUE(updated);
@@ -2035,6 +2215,7 @@ TEST(ApplicationRuntime, VaultRoutesCreateAnEmptyUsableVaultWithoutSwitching) {
         nlohmann::json{
             {"display_name", "Empty"},
             {"copy_from", nullptr},
+            {"password", nullptr},
         }.dump(),
         "application/json");
     ASSERT_TRUE(created);
@@ -2120,6 +2301,7 @@ TEST(ApplicationRuntime, VaultRoutesRenameTheActiveVaultWithoutSwitching) {
         nlohmann::json{
             {"vault_name", "A"},
             {"display_name", "Personal"},
+            {"password", nullptr},
         }.dump(),
         "application/json");
     ASSERT_TRUE(updated);

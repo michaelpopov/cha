@@ -27,12 +27,14 @@ R2DatabaseTransfer upload_database_to_r2(
     const std::filesystem::path& database_path,
     const std::filesystem::path& vault_definition_path,
     const R2StorageKey& storage,
-    R2DatabaseLease lease = R2DatabaseLease::acquire);
+    R2DatabaseLease lease = R2DatabaseLease::acquire,
+    std::string_view database_password = {});
 R2DatabaseTransfer download_database_from_r2(
     const std::filesystem::path& database_path,
     const std::filesystem::path& vault_definition_path,
     const R2StorageKey& storage,
-    R2DatabaseLease lease = R2DatabaseLease::acquire);
+    R2DatabaseLease lease = R2DatabaseLease::acquire,
+    std::string_view database_password = {});
 
 // Lists root-level SQLite database objects and downloads one into a new local
 // file. These operations power the vault picker and never replace an existing

@@ -53,20 +53,25 @@ SessionRestore load_session_state(const std::filesystem::path& path);
 
 LoadedSessionDatabase load_session_database(
     const std::filesystem::path& path,
-    const FullSessionId& expected_identity);
+    const FullSessionId& expected_identity,
+    std::string_view password = {});
 
 // Active-epoch durable rows only. Epoch remains part of the v2 on-disk format
 // so databases cleared by older builds continue to expose the right history.
 // New sessions never advance it.
 std::vector<TranscriptEntry> load_session_history(
     const std::filesystem::path& path,
-    const FullSessionId& expected_identity);
+    const FullSessionId& expected_identity,
+    std::string_view password = {});
 
 // One live actor owns one journal connection. Different journals may point at
 // the same workspace database, but every statement is scoped by session_key.
 class SessionJournal {
 public:
-    SessionJournal(std::filesystem::path path, SessionKey session_key);
+    SessionJournal(
+        std::filesystem::path path,
+        SessionKey session_key,
+        std::string_view password = {});
     // Convenience for a database created by create_session_database().
     explicit SessionJournal(std::filesystem::path path);
     ~SessionJournal();

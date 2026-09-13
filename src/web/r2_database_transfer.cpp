@@ -827,7 +827,8 @@ R2DatabaseTransfer upload_database_to_r2(
     const std::filesystem::path& database_path,
     const std::filesystem::path& vault_definition_path,
     const R2StorageKey& storage,
-    R2DatabaseLease lease_mode) {
+    R2DatabaseLease lease_mode,
+    std::string_view database_password) {
     const std::filesystem::path database = normalize_database_path(database_path);
     const std::filesystem::path vault =
         std::filesystem::absolute(vault_definition_path).lexically_normal();
@@ -837,8 +838,8 @@ R2DatabaseTransfer upload_database_to_r2(
     }
 
     secure_workspace_session_database_files(database);
-    checkpoint_workspace_session_database(database);
-    if (inspect_workspace_session_database(database)
+    checkpoint_workspace_session_database(database, database_password);
+    if (inspect_workspace_session_database(database, database_password)
         != WorkspaceDatabaseState::valid_v2) {
         throw std::runtime_error(
             "Cannot upload invalid CHA database '" + utf8_path(database) + "'");
@@ -857,7 +858,8 @@ R2DatabaseTransfer download_database_from_r2(
     const std::filesystem::path& database_path,
     const std::filesystem::path& vault_definition_path,
     const R2StorageKey& storage,
-    R2DatabaseLease lease_mode) {
+    R2DatabaseLease lease_mode,
+    std::string_view database_password) {
     const std::filesystem::path database = normalize_database_path(database_path);
     const std::filesystem::path vault =
         std::filesystem::absolute(vault_definition_path).lexically_normal();
@@ -884,7 +886,8 @@ R2DatabaseTransfer download_database_from_r2(
               "before downloading.");
     const std::uintmax_t database_bytes = download_file(
         database_temporary.get(), database_name, storage);
-    if (inspect_workspace_session_database(database_temporary.get())
+    if (inspect_workspace_session_database(
+            database_temporary.get(), database_password)
         != WorkspaceDatabaseState::valid_v2) {
         throw std::runtime_error(
             "R2 download is not a valid CHA database");
@@ -982,12 +985,9 @@ R2DatabaseTransfer download_new_database_from_r2(
     }
     const std::uintmax_t database_bytes = download_file(
         database_temporary.get(), database_name, storage);
-    if (inspect_workspace_session_database(database_temporary.get())
-        != WorkspaceDatabaseState::valid_v2) {
-        throw std::runtime_error("R2 download is not a valid CHA database");
-    }
+    std::optional<VaultDefinition> downloaded_definition;
     if (downloaded_vault) {
-        (void)load_vault_definition_file(
+        downloaded_definition = load_vault_definition_file(
             vault.parent_path(), vault_temporary.get());
         rewrite_toml_file(vault_temporary.get(), [&](toml::table& table) {
             table.insert_or_assign("data", utf8_path(database));
@@ -1000,6 +1000,15 @@ R2DatabaseTransfer download_new_database_from_r2(
                 0, database_name.size() - suffix.size())));
         table.insert("data", utf8_path(database));
         write_toml_file(vault_temporary.get(), table);
+    }
+    if (downloaded_definition
+        && downloaded_definition->password_protected) {
+        throw std::runtime_error(
+            "Protected vaults cannot be downloaded from R2 without a password");
+    }
+    if (inspect_workspace_session_database(database_temporary.get())
+        != WorkspaceDatabaseState::valid_v2) {
+        throw std::runtime_error("R2 download is not a valid CHA database");
     }
     remove_sidecars(database_temporary.get());
     publish_downloads(

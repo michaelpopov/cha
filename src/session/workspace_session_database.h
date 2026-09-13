@@ -38,7 +38,8 @@ void validate_workspace_session_database_identity(
 void validate_workspace_session_contents(storage::SqliteDatabase& database);
 
 [[nodiscard]] WorkspaceDatabaseState inspect_workspace_session_database(
-    const std::filesystem::path& path);
+    const std::filesystem::path& path,
+    std::string_view password = {});
 
 void validate_stored_config_name(std::string_view name);
 [[nodiscard]] std::vector<ConfigFile> read_workspace_config_files(
@@ -56,19 +57,29 @@ void upgrade_workspace_session_database_from_v1(
 // recreates only an empty, unidentified file left by an interrupted first
 // creation. A valid v1 database is never upgraded or deleted at runtime.
 void create_empty_workspace_session_database(
-    const std::filesystem::path& path);
+    const std::filesystem::path& path,
+    std::string_view password = {});
 // Copies workspace configuration into a new database without copying sessions.
 void create_workspace_session_database_from_configuration(
     const std::filesystem::path& source,
-    const std::filesystem::path& destination);
+    const std::filesystem::path& destination,
+    std::string_view source_password = {},
+    std::string_view destination_password = {});
 void copy_workspace_session_database(
     const std::filesystem::path& source,
-    const std::filesystem::path& destination);
+    const std::filesystem::path& destination,
+    std::string_view source_password = {},
+    std::string_view destination_password = {});
+void protect_workspace_session_database(
+    const std::filesystem::path& path,
+    std::string_view password);
 void secure_workspace_session_database_files(
     const std::filesystem::path& path);
 void initialize_workspace_session_database_runtime(
-    const std::filesystem::path& path);
+    const std::filesystem::path& path,
+    std::string_view password = {});
 void checkpoint_workspace_session_database(
-    const std::filesystem::path& path);
+    const std::filesystem::path& path,
+    std::string_view password = {});
 
 } // namespace cha

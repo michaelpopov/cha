@@ -6,6 +6,7 @@
 #include "providers/providers.h"
 #include "session/session_lease.h"
 #include "session/session_repository.h"
+#include "session/sqlite_storage.h"
 #include "session/workspace_session_database.h"
 #include "util/environment.h"
 #include "util/logging.h"
@@ -73,9 +74,11 @@ void configure_test_idle_grace(
     }
 }
 
-void require_switchable_database(const std::filesystem::path& database) {
+void require_switchable_database(
+    const std::filesystem::path& database,
+    std::string_view password = {}) {
     const WorkspaceDatabaseState state =
-        inspect_workspace_session_database(database);
+        inspect_workspace_session_database(database, password);
     if (state == WorkspaceDatabaseState::valid_v2) return;
     if (state == WorkspaceDatabaseState::missing) {
         throw std::runtime_error(
@@ -96,6 +99,38 @@ void require_switchable_database(const std::filesystem::path& database) {
     throw std::runtime_error(
         "Workspace session database '" + utf8_path(database)
         + "' is not a valid CHA database");
+}
+
+void require_openable_protected_database(
+    const std::filesystem::path& database,
+    std::string_view password) {
+    const WorkspaceDatabaseState state =
+        inspect_workspace_session_database(database, password);
+    if (state == WorkspaceDatabaseState::valid_v2) return;
+    if (state != WorkspaceDatabaseState::corrupt) {
+        require_switchable_database(database, password);
+    }
+
+    const WorkspaceDatabaseState without_password =
+        inspect_workspace_session_database(database);
+    if (without_password == WorkspaceDatabaseState::valid_v2) {
+        throw std::runtime_error(
+            "Vault '" + utf8_path(database)
+            + "' is marked as protected, but its database is not encrypted");
+    }
+    if (without_password != WorkspaceDatabaseState::corrupt) {
+        require_switchable_database(database);
+    }
+    try {
+        storage::SqliteDatabase handle(
+            database, storage::SqliteDatabase::Mode::read_only, password);
+        (void)handle.pragma_integer("application_id");
+        (void)handle.pragma_integer("user_version");
+    } catch (const std::runtime_error&) {
+        throw VaultPasswordError(
+            "The vault password is incorrect, or its database is damaged");
+    }
+    require_switchable_database(database, password);
 }
 
 void log_startup(const WebSettings& settings) {
@@ -172,6 +207,7 @@ toml::table vault_definition_table(const VaultDefinition& vault) {
     toml::table table;
     table.insert("vault_name", vault.name);
     table.insert("data", utf8_path(vault.data));
+    table.insert("protected", vault.password_protected);
     return table;
 }
 
@@ -333,6 +369,7 @@ nlohmann::json vault_json(
     std::size_t vault_count) {
     return {
         {"display_name", vault.name},
+        {"protected", vault.password_protected},
         {"data_path", utf8_path(vault.data)},
         {"mirror_path", vault.mirror
             ? nlohmann::json(utf8_path(*vault.mirror)) : nlohmann::json(nullptr)},
@@ -349,12 +386,15 @@ nlohmann::json vault_json(
 struct ApplicationRuntime::Impl {
     explicit Impl(
         const ApplicationCommand& selected_command,
-        std::string selected_access_token)
+        std::string selected_access_token,
+        std::string selected_vault_password)
         : command(selected_command),
           access_token(std::move(selected_access_token)),
+          active_password(std::move(selected_vault_password)),
           settings(),
           current_vault_(selected_command.vault),
-          store(WorkspaceConfigStore::open(command.vault.data)),
+          store(WorkspaceConfigStore::open(
+              command.vault.data, active_password)),
           api_keys(std::make_unique<ApiKeyStore>(
               *store,
               command.config_directory / "api-keys.json")),
@@ -371,7 +411,8 @@ struct ApplicationRuntime::Impl {
             store->database_path(),
             store->workspace_path(),
             store->welcome_path(),
-            seed);
+            seed,
+            active_password);
         mirror = std::make_shared<SessionMirror>();
         if (command.vault.mirror) {
             try {
@@ -492,8 +533,37 @@ struct ApplicationRuntime::Impl {
         }
     }
 
+    void protect_active_database(std::string password) {
+        GlobalMaintenanceResult reserved =
+            live_sessions->reserve_global_maintenance(settings.shutdown_grace);
+        if (std::holds_alternative<MaintenanceFailure>(reserved)) {
+            throw std::runtime_error(
+                "Could not pause active sessions for database maintenance");
+        }
+        auto global = std::move(
+            std::get<LiveSessionGlobalMaintenance>(reserved));
+        auto database = store->reserve_maintenance();
+        SessionRepository::MaintenanceGuard repository =
+            sessions->reserve_maintenance();
+        const std::filesystem::path database_path = current_vault_.get().data;
+        repository.checkpoint();
+        database.close();
+        try {
+            protect_workspace_session_database(database_path, password);
+        } catch (...) {
+            database.set_password(active_password);
+            reopen_after_failure(database, repository);
+            throw;
+        }
+        active_password = std::move(password);
+        database.set_password(active_password);
+        repository.retarget(database_path, active_password);
+        reopen(database, repository);
+    }
+
     ApplicationCommand command;
     std::string access_token;
+    std::string active_password;
     WebSettings settings;
     CurrentVault current_vault_;
     std::unique_ptr<WorkspaceConfigStore> store;
@@ -522,11 +592,20 @@ ApplicationRuntime::~ApplicationRuntime() {
 
 std::unique_ptr<ApplicationRuntime> ApplicationRuntime::open(
     const ApplicationCommand& command,
-    std::string access_token) {
+    std::string access_token,
+    std::string vault_password) {
     for (const std::string& warning : command.warnings) log_warn(warning);
     load_dotenv(command.config_directory / ".env");
+    if (command.vault.password_protected && vault_password.empty()) {
+        throw VaultPasswordError("Password required to open this vault");
+    }
+    if (command.vault.password_protected) {
+        require_openable_protected_database(
+            command.vault.data, vault_password);
+    }
     return std::unique_ptr<ApplicationRuntime>(new ApplicationRuntime(
-        std::make_unique<Impl>(command, std::move(access_token))));
+        std::make_unique<Impl>(
+            command, std::move(access_token), std::move(vault_password))));
 }
 
 VaultDefinition ApplicationRuntime::current_vault() const {
@@ -566,6 +645,7 @@ VaultDefinition ApplicationRuntime::create_vault(VaultCreate create) {
 
     VaultDefinition candidate{
         .name = std::move(create.display_name),
+        .password_protected = !create.password.empty(),
         .source = next_vault_file(impl_->command.config_directory),
     };
     try {
@@ -588,10 +668,26 @@ VaultDefinition ApplicationRuntime::create_vault(VaultCreate create) {
     write_toml_file(candidate.source, vault_definition_table(candidate));
     try {
         if (copied != nullptr) {
-            copy_workspace_session_database(copied->data, candidate.data);
+            std::string source_password;
+            if (copied->password_protected) {
+                if (!same_vault_name(
+                        copied->name, impl_->current_vault_.get().name)) {
+                    throw std::invalid_argument(
+                        "Switch to a protected source vault before copying it");
+                }
+                source_password = impl_->active_password;
+            }
+            copy_workspace_session_database(
+                copied->data,
+                candidate.data,
+                source_password,
+                create.password);
         } else {
             create_workspace_session_database_from_configuration(
-                impl_->current_vault_.get().data, candidate.data);
+                impl_->current_vault_.get().data,
+                candidate.data,
+                impl_->active_password,
+                create.password);
         }
     } catch (...) {
         std::error_code ignored;
@@ -625,6 +721,11 @@ VaultDefinition ApplicationRuntime::update_vault(
     const VaultDefinition previous = *found;
     VaultDefinition candidate = previous;
     candidate.name = std::move(update.display_name);
+    const bool enable_protection = !update.password.empty();
+    if (enable_protection && previous.password_protected) {
+        throw std::invalid_argument("This vault is already protected");
+    }
+    if (enable_protection) candidate.password_protected = true;
     assign_vault_paths(candidate, impl_->command);
     validate_vault_paths(candidate);
 
@@ -649,15 +750,31 @@ VaultDefinition ApplicationRuntime::update_vault(
                     table.insert_or_assign("vault", candidate.name);
                 });
         }
-    } catch (...) {
-        try {
-            write_toml_file(previous.source, vault_definition_table(previous));
-        } catch (const std::exception& error) {
-            log_critical(
-                "Failed to restore vault definition after rename: "
-                + std::string(error.what()));
+        if (enable_protection) {
+            if (active) {
+                impl_->protect_active_database(update.password);
+            } else {
+                SessionLease lease = SessionLease::acquire(
+                    previous.data,
+                    "Database already in use: '" + utf8_path(previous.data) + "'");
+                checkpoint_workspace_session_database(previous.data);
+                protect_workspace_session_database(previous.data, update.password);
+            }
         }
-        restore_vault_directories(moved);
+    } catch (...) {
+        const bool protection_committed = enable_protection
+            && inspect_workspace_session_database(previous.data, update.password)
+                == WorkspaceDatabaseState::valid_v2;
+        if (!protection_committed) {
+            try {
+                write_toml_file(previous.source, vault_definition_table(previous));
+            } catch (const std::exception& error) {
+                log_critical(
+                    "Failed to restore vault definition after update: "
+                    + std::string(error.what()));
+            }
+            restore_vault_directories(moved);
+        }
         throw;
     }
 
@@ -777,7 +894,9 @@ VaultDefinition ApplicationRuntime::download_r2_vault(std::string_view name) {
     return candidate;
 }
 
-void ApplicationRuntime::switch_vault(std::string_view name) {
+void ApplicationRuntime::switch_vault(
+    std::string_view name,
+    std::string password) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     const VaultDefinition* const target =
         find_vault(impl_->command.vaults, name);
@@ -787,6 +906,9 @@ void ApplicationRuntime::switch_vault(std::string_view name) {
     }
     if (same_vault_name(impl_->current_vault_.get().name, target->name)) {
         return;
+    }
+    if (target->password_protected && password.empty()) {
+        throw VaultPasswordError("Password required to open this vault");
     }
     if (impl_->unusable) {
         throw WorkspaceRestartRequiredError(
@@ -801,7 +923,10 @@ void ApplicationRuntime::switch_vault(std::string_view name) {
     SessionLease target_lease = SessionLease::acquire(
         selected.data,
         "Database already in use: '" + utf8_path(selected.data) + "'");
-    require_switchable_database(selected.data);
+    if (selected.password_protected) {
+        require_openable_protected_database(selected.data, password);
+    }
+    require_switchable_database(selected.data, password);
 
     GlobalMaintenanceResult reserved =
         impl_->live_sessions->reserve_global_maintenance(
@@ -818,8 +943,10 @@ void ApplicationRuntime::switch_vault(std::string_view name) {
             impl_->sessions->reserve_maintenance();
         repository.checkpoint();
         database.close();
-        database.retarget(selected.data, std::move(target_lease));
-        repository.retarget(selected.data);
+        database.retarget(
+            selected.data, std::move(target_lease), password);
+        repository.retarget(selected.data, password);
+        impl_->active_password = std::move(password);
         impl_->reopen(database, repository);
         impl_->current_vault_.set(selected);
     }
@@ -959,13 +1086,15 @@ int ApplicationRuntime::start(int port_override) {
             if (!parse_route_json_body(
                     request, response, settings.request_body_limit,
                     [&create](const nlohmann::json& json) {
-                        if (!json.is_object() || json.size() != 2) {
+                        if (!json.is_object() || json.size() != 3) {
                             throw std::invalid_argument("Invalid vault settings");
                         }
                         create.display_name =
                             required_json_string(json, "display_name");
                         create.copy_from =
                             nullable_json_string(json, "copy_from");
+                        create.password =
+                            nullable_json_string(json, "password").value_or("");
                     })) return;
             try {
                 const VaultDefinition created =
@@ -994,12 +1123,14 @@ int ApplicationRuntime::start(int port_override) {
             if (!parse_route_json_body(
                     request, response, settings.request_body_limit,
                     [&name, &update](const nlohmann::json& json) {
-                        if (!json.is_object() || json.size() != 2) {
+                        if (!json.is_object() || json.size() != 3) {
                             throw std::invalid_argument("Invalid vault settings");
                         }
                         name = required_json_string(json, "vault_name");
                         update.display_name =
                             required_json_string(json, "display_name");
+                        update.password =
+                            nullable_json_string(json, "password").value_or("");
                     })) return;
             try {
                 const VaultDefinition updated =
@@ -1054,20 +1185,30 @@ int ApplicationRuntime::start(int port_override) {
             const httplib::Request& request, httplib::Response& response) {
             if (!validate_json_mutation(request, response)) return;
             std::string vault_name;
+            std::string password;
             if (!parse_route_json_body(
                     request,
                     response,
                     settings.request_body_limit,
-                    [&vault_name](const nlohmann::json& json) {
-                        vault_name = parse_vault_switch_name(json);
+                    [&vault_name, &password](const nlohmann::json& json) {
+                        if (!json.is_object() || json.size() != 2) {
+                            throw std::invalid_argument("Invalid vault selection");
+                        }
+                        vault_name = required_json_string(json, "vault_name");
+                        password = nullable_json_string(json, "password").value_or("");
                     })) {
                 return;
             }
             try {
-                runtime->switch_vault(vault_name);
+                runtime->switch_vault(vault_name, std::move(password));
             } catch (const UnknownVaultError& error) {
                 return set_error_response(
                     response, 400, {ErrorCode::bad_request, error.what()});
+            } catch (const VaultPasswordError& error) {
+                return set_error_response(
+                    response,
+                    401,
+                    {ErrorCode::vault_password_required, error.what()});
             } catch (const std::exception& error) {
                 return set_error_response(
                     response, 500, {ErrorCode::internal_error, error.what()});
@@ -1143,7 +1284,11 @@ R2DatabaseTransfer ApplicationRuntime::upload_database() {
         if (!storage) throw std::runtime_error("The active vault has no R2 key");
         const VaultDefinition vault = impl_->current_vault_.get();
         return upload_database_to_r2(
-            vault.data, vault.source, *storage, R2DatabaseLease::already_held);
+            vault.data,
+            vault.source,
+            *storage,
+            R2DatabaseLease::already_held,
+            impl_->active_password);
     });
 }
 
@@ -1154,7 +1299,11 @@ R2DatabaseTransfer ApplicationRuntime::download_database() {
         if (!storage) throw std::runtime_error("The active vault has no R2 key");
         const VaultDefinition vault = impl_->current_vault_.get();
         const R2DatabaseTransfer transferred = download_database_from_r2(
-            vault.data, vault.source, *storage, R2DatabaseLease::already_held);
+            vault.data,
+            vault.source,
+            *storage,
+            R2DatabaseLease::already_held,
+            impl_->active_password);
         downloaded_vault = load_vault_definition_file(
             impl_->command.config_directory, vault.source);
         assign_vault_paths(*downloaded_vault, impl_->command);
@@ -1195,7 +1344,8 @@ WorkspaceConfigTransfer ApplicationRuntime::import_configuration() {
         return import_workspace_configuration(
             *vault.modify,
             vault.data,
-            WorkspaceConfigLease::already_held);
+            WorkspaceConfigLease::already_held,
+            impl_->active_password);
     });
 }
 
@@ -1210,7 +1360,8 @@ WorkspaceConfigTransfer ApplicationRuntime::export_configuration() {
         return export_workspace_configuration(
             vault.data,
             *vault.modify,
-            WorkspaceConfigLease::already_held);
+            WorkspaceConfigLease::already_held,
+            impl_->active_password);
     });
 }
 

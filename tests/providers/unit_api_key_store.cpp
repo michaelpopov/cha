@@ -1,14 +1,18 @@
 #include "providers/api_key_store.h"
 #include "support/test_workspace.h"
+#include "util/environment.h"
 #include "util/toml_file.h"
 #include "workspace/workspace_config_store.h"
 
 #include <gtest/gtest.h>
 
+#include <array>
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <optional>
 #include <stdexcept>
 #include <string>
 
@@ -22,6 +26,12 @@ namespace {
 class ApiKeyStoreTest : public testing::Test {
 protected:
     void SetUp() override {
+        for (std::size_t index = 0; index != r2_environment.size(); ++index) {
+            if (const char* value = std::getenv(r2_environment[index])) {
+                previous_r2_environment[index] = value;
+            }
+            ASSERT_TRUE(unset_environment_variable(r2_environment[index]));
+        }
         directory = std::filesystem::temp_directory_path()
             / ("cha_api_keys_" + std::to_string(
                 std::chrono::steady_clock::now().time_since_epoch().count()));
@@ -35,6 +45,14 @@ protected:
     void TearDown() override {
         config.reset();
         std::filesystem::remove_all(directory);
+        for (std::size_t index = 0; index != r2_environment.size(); ++index) {
+            if (previous_r2_environment[index]) {
+                (void)set_environment_variable(
+                    r2_environment[index], *previous_r2_environment[index]);
+            } else {
+                (void)unset_environment_variable(r2_environment[index]);
+            }
+        }
     }
 
     void reopen() {
@@ -47,6 +65,12 @@ protected:
     std::filesystem::path path;
     std::filesystem::path database;
     std::unique_ptr<WorkspaceConfigStore> config;
+    const std::array<const char*, 3> r2_environment{
+        "CHA_R2_URL",
+        "CHA_R2_ACCESS_KEY_ID",
+        "CHA_R2_SECRET_ACCESS_KEY",
+    };
+    std::array<std::optional<std::string>, 3> previous_r2_environment;
 };
 
 TEST_F(ApiKeyStoreTest, CreatesUpdatesReloadsAndRemovesASecret) {

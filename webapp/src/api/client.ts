@@ -63,6 +63,7 @@ const knownErrorCodes = {
   session_not_live: true,
   command_timeout: true,
   command_queue_full: true,
+  vault_password_required: true,
 } satisfies Record<ErrorCode, true>;
 
 function isErrorCode(value: unknown): value is ErrorCode {
@@ -186,7 +187,7 @@ export interface ChaClient {
   getR2Storage(): Promise<R2StorageDetail | null>;
   saveR2Storage(request: SaveR2StorageRequest): Promise<R2StorageDetail>;
   deleteR2Storage(): Promise<void>;
-  switchVault(vaultName: string): Promise<void>;
+  switchVault(vaultName: string, password?: string): Promise<void>;
 }
 
 function isOneOf(value: unknown, choices: readonly unknown[]): boolean {
@@ -282,6 +283,7 @@ function isProviderSummary(value: unknown): value is ProviderSummary {
 function isVaultDetail(value: unknown): value is VaultDetail {
   return isRecord(value)
     && typeof value.display_name === 'string'
+    && typeof value.protected === 'boolean'
     && typeof value.data_path === 'string'
     && (value.mirror_path === null || typeof value.mirror_path === 'string')
     && (value.modify_path === null || typeof value.modify_path === 'string')
@@ -907,10 +909,10 @@ export function createChaClient(
       jsonMutation({}, 'DELETE'),
     ),
 
-    switchVault: (vaultName) => requestEmpty(
+    switchVault: (vaultName, password) => requestEmpty(
       fetcher,
       '/api/v1/vault/switch',
-      jsonMutation({ vault_name: vaultName }),
+      jsonMutation({ vault_name: vaultName, password: password || null }),
     ),
   };
 }

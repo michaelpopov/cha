@@ -72,6 +72,7 @@ const style: StyleDetail = {
 const vaults: VaultDetail[] = [
   {
     display_name: 'Personal',
+    protected: false,
     data_path: '/data/personal.sqlite3',
     mirror_path: null,
     modify_path: '/work/personal',
@@ -80,6 +81,7 @@ const vaults: VaultDetail[] = [
   },
   {
     display_name: 'Projects',
+    protected: false,
     data_path: '/data/projects.sqlite3',
     mirror_path: '/mirror/projects',
     modify_path: null,
@@ -120,6 +122,7 @@ describe('Settings screens', () => {
   it('downloads an R2 vault from its row without showing the file extension', async () => {
     const downloaded: VaultDetail = {
       display_name: 'Archive',
+      protected: false,
       data_path: '/data/Archive.sqlite3',
       mirror_path: null,
       modify_path: null,
@@ -162,6 +165,7 @@ describe('Settings screens', () => {
   it('creates a copied vault without activating it', async () => {
     const created: VaultDetail = {
       display_name: 'Archive',
+      protected: false,
       data_path: '/data/archive.sqlite3',
       mirror_path: '/mirror/archive',
       modify_path: null,
@@ -191,6 +195,7 @@ describe('Settings screens', () => {
     expect(createVault).toHaveBeenCalledWith({
       display_name: 'Archive',
       copy_from: 'Projects',
+      password: null,
     });
     expect(dispatch).toHaveBeenCalledWith({ type: 'vault-created', vault: created });
   });
@@ -198,6 +203,7 @@ describe('Settings screens', () => {
   it('creates an empty vault when no database is selected', async () => {
     const created: VaultDetail = {
       display_name: 'Empty',
+      protected: false,
       data_path: '/data/empty.sqlite3',
       mirror_path: null,
       modify_path: null,
@@ -222,22 +228,68 @@ describe('Settings screens', () => {
     expect(createVault).toHaveBeenCalledWith({
       display_name: 'Empty',
       copy_from: null,
+      password: null,
     });
     expect(dispatch).toHaveBeenCalledWith({ type: 'vault-created', vault: created });
   });
 
-  it('edits and removes an inactive vault while preserving its database', async () => {
-    const updateVault = vi.fn(async (_name, update) => ({
-      ...vaults[1],
-      ...update,
-    }));
+  it('creates a password-protected vault', async () => {
+    const created: VaultDetail = {
+      display_name: 'Private',
+      protected: true,
+      data_path: '/data/private.sqlite3',
+      mirror_path: null,
+      modify_path: null,
+      active: false,
+      can_delete: true,
+    };
+    const createVault = vi.fn(async () => created);
+    render(
+      <NewVaultScreen
+        client={fixtureClient({ listVaults: async () => vaults, createVault })}
+        dispatch={vi.fn()}
+        sessionReport={null}
+        state={initialAppState}
+      />,
+    );
+
+    await userEvent.type(await screen.findByLabelText('Display name'), 'Private');
+    await userEvent.click(screen.getByLabelText('Protected vault'));
+    const password = screen.getByLabelText('Password');
+    expect(screen.getByRole('button', { name: 'Create vault' })).toBeDisabled();
+    await userEvent.type(password, 'secret');
+    await userEvent.click(screen.getByRole('button', { name: 'Create vault' }));
+    expect(createVault).toHaveBeenCalledWith({
+      display_name: 'Private', copy_from: null, password: 'secret',
+    });
+  });
+
+  it('adds password protection to an existing vault', async () => {
+    const updateVault = vi.fn(async () => ({ ...vaults[1], protected: true }));
+    render(
+      <VaultScreen
+        client={fixtureClient({ listVaults: async () => vaults, updateVault })}
+        dispatch={vi.fn()}
+        sessionReport={null}
+        state={{ ...initialAppState, inspectedVaultName: 'Projects' }}
+      />,
+    );
+
+    await userEvent.click(await screen.findByLabelText('Protected vault'));
+    await userEvent.type(screen.getByLabelText('Password'), 'secret');
+    await userEvent.click(screen.getByRole('button', { name: 'Protect vault' }));
+    expect(updateVault).toHaveBeenCalledWith('Projects', {
+      display_name: 'Projects', password: 'secret',
+    });
+  });
+
+  it('removes an inactive vault without exposing its name or path fields', async () => {
     const deleteVault = vi.fn(async () => undefined);
     const dispatch = vi.fn();
     render(
       <VaultScreen
         client={fixtureClient({
           listVaults: async () => vaults,
-          updateVault,
           deleteVault,
         })}
         dispatch={dispatch}
@@ -246,16 +298,12 @@ describe('Settings screens', () => {
       />,
     );
 
-    const name = await screen.findByLabelText('Display name');
+    await screen.findByLabelText('Protected vault');
+    expect(screen.queryByLabelText('Display name')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Database path')).not.toBeInTheDocument();
     expect(screen.queryByText('Vault details')).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/Mirror path/)).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/Modify path/)).not.toBeInTheDocument();
-    await userEvent.clear(name);
-    await userEvent.type(name, 'Archive');
-    await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-    expect(updateVault).toHaveBeenCalledWith('Projects', {
-      display_name: 'Archive',
-    });
 
     await userEvent.click(screen.getByRole('button', { name: 'Delete vault' }));
     expect(screen.getByText(/database and folders will be kept/)).toBeInTheDocument();

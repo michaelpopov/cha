@@ -73,7 +73,9 @@ int main(int argc, const char* argv[]) {
 
     static const char* const token = "package-private-token";
     char* error = NULL;
-    ChaRuntime* runtime = cha_runtime_create(argv[1], argv[2], token, &error);
+    int32_t password_error = 0;
+    ChaRuntime* runtime = cha_runtime_create(
+        argv[1], argv[2], token, "", &password_error, &error);
     if (!runtime) return fail(error);
     if (!cha_runtime_can_modify(runtime)
         || cha_runtime_can_transfer_r2(runtime)) {

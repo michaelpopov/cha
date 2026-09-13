@@ -33,7 +33,7 @@ enum class ErrorCode {
     internal_error, session_stopping,
     session_limit_reached, session_open_timeout, server_stopping,
     session_not_live, command_timeout,
-    command_queue_full,
+    command_queue_full, vault_password_required,
 };
 
 // The lobby publishes the workspace-wide persona roster for discovery: the

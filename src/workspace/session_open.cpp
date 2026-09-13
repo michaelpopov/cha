@@ -42,6 +42,7 @@ OpenedSession open_session(
             forum->default_persona_id,
             prepared.database_path,
             prepared.session_key,
+            std::move(prepared.database_password),
             providers,
             std::move(notifier),
             std::move(prepared.restore),

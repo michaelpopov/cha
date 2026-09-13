@@ -542,6 +542,12 @@ select:disabled {
   margin-top: 1rem;
 }
 
+.cha-settings-form .cha-checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
 .cha-screen {
   display: flex;
   min-height: 0;

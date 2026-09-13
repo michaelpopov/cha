@@ -1173,9 +1173,11 @@ export interface components {
         };
         VaultSwitchRequest: {
             vault_name: string;
+            password: string | null;
         };
         VaultDetail: {
             display_name: string;
+            protected: boolean;
             data_path: string;
             /** @description Absolute mirror directory path. */
             mirror_path: string | null;
@@ -1187,6 +1189,7 @@ export interface components {
         CreateVaultRequest: {
             display_name: string;
             copy_from: string | null;
+            password: string | null;
         };
         DownloadR2VaultRequest: {
             name: string;
@@ -1194,6 +1197,7 @@ export interface components {
         UpdateVaultRequest: {
             vault_name: string;
             display_name: string;
+            password: string | null;
         };
         DeleteVaultRequest: {
             vault_name: string;
@@ -1557,7 +1561,7 @@ export interface components {
         ErrorResponse: {
             error: {
                 /** @enum {string} */
-                code: "not_found" | "bad_request" | "body_too_large" | "prompt_too_large" | "forbidden_origin" | "internal_error" | "session_stopping" | "session_limit_reached" | "session_open_timeout" | "server_stopping" | "session_not_live" | "command_timeout" | "command_queue_full";
+                code: "not_found" | "bad_request" | "body_too_large" | "prompt_too_large" | "forbidden_origin" | "internal_error" | "session_stopping" | "session_limit_reached" | "session_open_timeout" | "server_stopping" | "session_not_live" | "command_timeout" | "command_queue_full" | "vault_password_required";
                 message: string;
             };
         };

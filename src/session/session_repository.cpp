@@ -65,8 +65,9 @@ void require_active(
 
 std::vector<StoredSession> list_forum(
     const std::filesystem::path& path,
-    std::string_view forum_id) {
-    Database database(path, Database::Mode::read_only);
+    std::string_view forum_id,
+    std::string_view password = {}) {
+    Database database(path, Database::Mode::read_only, password);
     validate_workspace_session_database_identity(database);
     Statement statement = database.prepare(
         "SELECT s.session_id, s.label, s.updated_at "
@@ -85,8 +86,10 @@ std::vector<StoredSession> list_forum(
     return result;
 }
 
-void delete_archived_sessions(const std::filesystem::path& path) {
-    Database database(path, Database::Mode::read_write);
+void delete_archived_sessions(
+    const std::filesystem::path& path,
+    std::string_view password) {
+    Database database(path, Database::Mode::read_write, password);
     validate_workspace_session_database_identity(database);
     database.execute("DELETE FROM sessions WHERE archived_at IS NOT NULL");
 }
@@ -99,7 +102,8 @@ SessionRepository::MaintenanceGuard::MaintenanceGuard(
 }
 
 void SessionRepository::MaintenanceGuard::checkpoint() const {
-    checkpoint_workspace_session_database(repository_->database_path_);
+    checkpoint_workspace_session_database(
+        repository_->database_path_, repository_->database_password_);
 }
 
 void SessionRepository::MaintenanceGuard::synchronize_forums(
@@ -108,8 +112,10 @@ void SessionRepository::MaintenanceGuard::synchronize_forums(
 }
 
 void SessionRepository::MaintenanceGuard::retarget(
-    std::filesystem::path database_path) {
+    std::filesystem::path database_path,
+    std::string database_password) {
     repository_->database_path_ = std::move(database_path);
+    repository_->database_password_ = std::move(database_password);
 }
 
 SessionRepository::MaintenanceGuard
@@ -126,9 +132,11 @@ SessionRepository::SessionRepository(
     std::filesystem::path database_path,
     std::filesystem::path workspace_root,
     std::filesystem::path welcome_directory,
-    TemporarySessionSeed temporary)
+    TemporarySessionSeed temporary,
+    std::string database_password)
     : workspace_root_(std::move(workspace_root)),
       database_path_(std::move(database_path)),
+      database_password_(std::move(database_password)),
       temporary_identity_(std::move(temporary.identity)),
       temporary_label_(std::move(temporary.label)) {
     if (!std::filesystem::is_regular_file(database_path_)) {
@@ -141,7 +149,7 @@ SessionRepository::SessionRepository(
             "Welcome directory '" + utf8_path(welcome_directory)
             + "' is not a directory");
     }
-    delete_archived_sessions(database_path_);
+    delete_archived_sessions(database_path_, database_password_);
     synchronize_forums();
 
     temporary_database_path_ = welcome_directory / "sessions.sqlite3";
@@ -205,7 +213,8 @@ void SessionRepository::synchronize_forums_unlocked(
         throw std::runtime_error(
             "Cannot synchronize forums from a different workspace");
     }
-    Database database(database_path_, Database::Mode::read_write);
+    Database database(
+        database_path_, Database::Mode::read_write, database_password_);
     validate_workspace_session_database_identity(database);
     Transaction transaction(database);
     for (const WorkspaceForum& forum : workspace.forums()) {
@@ -225,7 +234,7 @@ std::vector<StoredSession> SessionRepository::list(
         return list_forum(temporary_database_path_, forum_id);
     }
     require_persistent_forum(forum_id);
-    return list_forum(database_path_, forum_id);
+    return list_forum(database_path_, forum_id, database_password_);
 }
 
 std::vector<StoredSession> SessionRepository::recent() const {
@@ -240,7 +249,8 @@ std::vector<StoredSession> SessionRepository::recent() const {
         if (forum.id == temporary_identity_.forum_id) continue;
         current_forums.insert(forum.id);
     }
-    Database database(database_path_, Database::Mode::read_only);
+    Database database(
+        database_path_, Database::Mode::read_only, database_password_);
     validate_workspace_session_database_identity(database);
     Statement statement = database.prepare(
         "SELECT f.forum_id, s.session_id, s.label, s.updated_at "
@@ -285,7 +295,8 @@ void SessionRepository::validate(const FullSessionId& identity) const {
         return;
     }
     require_persistent_forum(identity.forum_id);
-    Database database(database_path_, Database::Mode::read_only);
+    Database database(
+        database_path_, Database::Mode::read_only, database_password_);
     validate_workspace_session_database_identity(database);
     require_active(database, identity);
 }
@@ -297,7 +308,8 @@ StoredSession SessionRepository::create(
     require_persistent_forum(forum_id);
     if (!label.empty()) validate_session_label(label);
     const std::string base_id = timestamp_name(std::time(nullptr));
-    Database database(database_path_, Database::Mode::read_write);
+    Database database(
+        database_path_, Database::Mode::read_write, database_password_);
     validate_workspace_session_database_identity(database);
     Transaction transaction(database);
     Statement add_forum = database.prepare(
@@ -363,7 +375,8 @@ StoredSession SessionRepository::rename(
     const std::shared_lock operation(operation_mutex_);
     require_persistent_forum(identity.forum_id);
     validate_session_label(label);
-    Database database(database_path_, Database::Mode::read_write);
+    Database database(
+        database_path_, Database::Mode::read_write, database_password_);
     validate_workspace_session_database_identity(database);
     Transaction transaction(database);
     const std::int64_t updated_at = session_timestamp();
@@ -391,7 +404,8 @@ StoredSession SessionRepository::rename(
 void SessionRepository::delete_session(const FullSessionId& identity) const {
     const std::shared_lock operation(operation_mutex_);
     require_persistent_forum(identity.forum_id);
-    Database database(database_path_, Database::Mode::read_write);
+    Database database(
+        database_path_, Database::Mode::read_write, database_password_);
     validate_workspace_session_database_identity(database);
     Transaction transaction(database);
     Statement remove = database.prepare(
@@ -419,11 +433,13 @@ PreparedSession SessionRepository::prepare(
     const std::filesystem::path& path = temporary
         ? temporary_database_path_ : database_path_;
     LoadedSessionDatabase loaded =
-        load_session_database(path, identity);
+        load_session_database(
+            path, identity, temporary ? std::string_view{} : database_password_);
     return {
         .identity = identity,
         .label = std::move(loaded.metadata.label),
         .database_path = path,
+        .database_password = temporary ? std::string{} : database_password_,
         .session_key = loaded.session_key,
         .restore = std::move(loaded.restore),
     };
@@ -439,7 +455,8 @@ std::vector<TranscriptEntry> SessionRepository::history(
     if (!temporary) require_persistent_forum(identity.forum_id);
     const std::filesystem::path& path = temporary
         ? temporary_database_path_ : database_path_;
-    return load_session_history(path, identity);
+    return load_session_history(
+        path, identity, temporary ? std::string_view{} : database_password_);
 }
 
 } // namespace cha

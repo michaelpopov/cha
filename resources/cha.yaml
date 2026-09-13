@@ -2168,10 +2168,13 @@ components:
     VaultSwitchRequest:
       type: object
       additionalProperties: false
-      required: [vault_name]
+      required: [vault_name, password]
       properties:
         vault_name:
           type: string
+          minLength: 1
+        password:
+          type: [string, "null"]
           minLength: 1
 
     VaultDetail:
@@ -2179,6 +2182,7 @@ components:
       additionalProperties: false
       required:
         - display_name
+        - protected
         - data_path
         - mirror_path
         - modify_path
@@ -2188,6 +2192,8 @@ components:
         display_name:
           type: string
           minLength: 1
+        protected:
+          type: boolean
         data_path:
           type: string
           minLength: 1
@@ -2205,13 +2211,16 @@ components:
     CreateVaultRequest:
       type: object
       additionalProperties: false
-      required: [display_name, copy_from]
+      required: [display_name, copy_from, password]
       properties:
         display_name:
           type: string
           minLength: 1
         copy_from:
           type: [string, "null"]
+        password:
+          type: [string, "null"]
+          minLength: 1
 
     DownloadR2VaultRequest:
       type: object
@@ -2225,13 +2234,16 @@ components:
     UpdateVaultRequest:
       type: object
       additionalProperties: false
-      required: [vault_name, display_name]
+      required: [vault_name, display_name, password]
       properties:
         vault_name:
           type: string
           minLength: 1
         display_name:
           type: string
+          minLength: 1
+        password:
+          type: [string, "null"]
           minLength: 1
     DeleteVaultRequest:
       type: object
@@ -3181,6 +3193,7 @@ components:
                 - session_not_live
                 - command_timeout
                 - command_queue_full
+                - vault_password_required
             message:
               type: string
 

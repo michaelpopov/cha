@@ -18,7 +18,10 @@ class SqliteDatabase final {
 public:
     enum class Mode { read_only, read_write, read_write_create };
 
-    SqliteDatabase(const std::filesystem::path& path, Mode mode);
+    SqliteDatabase(
+        const std::filesystem::path& path,
+        Mode mode,
+        std::string_view password = {});
     ~SqliteDatabase();
 
     SqliteDatabase(const SqliteDatabase&) = delete;

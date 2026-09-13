@@ -192,7 +192,8 @@ void warn_unknown_vault_fields(
     std::vector<std::string>& warnings) {
     for (const auto& [key, value] : table) {
         (void)value;
-        if (key.str() == "vault_name" || key.str() == "data") continue;
+        if (key.str() == "vault_name" || key.str() == "data"
+            || key.str() == "protected") continue;
         warnings.push_back(
             "Vault definition '" + utf8_path(source) + "' field '"
             + std::string(key.str()) + "' is unused and was ignored.");
@@ -349,6 +350,15 @@ LoadedVault load_vault_definition(
     loaded.definition.source = source;
     loaded.definition.data =
         resolve_config_path(directory, source, "data", data, kind);
+    if (root.contains("protected")) {
+        const std::optional<bool> value = root["protected"].value<bool>();
+        if (!value) {
+            throw std::runtime_error(
+                std::string(kind) + " '" + utf8_path(source)
+                + "' requires a boolean 'protected'.");
+        }
+        loaded.definition.password_protected = *value;
+    }
     return loaded;
 }
 
@@ -501,6 +511,7 @@ void bootstrap_configuration_directory(
         toml::table vault_config;
         vault_config.insert("vault_name", "Default");
         vault_config.insert("data", "default.sqlite3");
+        vault_config.insert("protected", false);
         std::ostringstream vault_contents;
         vault_contents << vault_config << '\n';
         create_private_file(vault, vault_contents.str());

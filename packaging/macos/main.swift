@@ -95,7 +95,10 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
 
         do {
             try prepareApplicationData()
-            try startRuntime()
+            guard try startRuntime() else {
+                NSApp.terminate(nil)
+                return
+            }
             showApplication()
         } catch {
             showFatalError(error)
@@ -252,30 +255,78 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
         return RuntimeBridgeError(message: message)
     }
 
-    private func startRuntime() throws {
+    private func requestVaultPassword(error: String? = nil) -> String? {
+        let alert = NSAlert()
+        alert.messageText = "Open protected vault"
+        alert.informativeText = error ?? "Enter the vault password."
+        alert.addButton(withTitle: "Open vault")
+        alert.addButton(withTitle: "Quit")
+        let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
+        field.placeholderString = "Password"
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+        return field.stringValue
+    }
+
+    private func startRuntime() throws -> Bool {
         guard let resources = Bundle.main.resourceURL else {
             throw LauncherError.incompleteApplication
         }
         runtimeToken = UUID().uuidString + UUID().uuidString
-        var bridgeError: UnsafeMutablePointer<CChar>?
-        let created = supportDirectory.path.withCString { configPath in
+        var requirementError: UnsafeMutablePointer<CChar>?
+        let passwordRequired = supportDirectory.path.withCString { configPath in
             resources.path.withCString { resourcePath in
-                runtimeToken.withCString { token in
-                    cha_runtime_create(
-                        configPath, resourcePath, token, &bridgeError)
-                }
+                cha_runtime_requires_password(
+                    configPath, resourcePath, &requirementError)
             }
         }
-        guard let created else { throw takeBridgeError(bridgeError) }
-        let port = cha_runtime_port(created)
-        guard port > 0,
-              let url = URL(string: "http://127.0.0.1:\(port)/") else {
-            cha_runtime_destroy(created)
-            throw LauncherError.cannotStart
+        guard passwordRequired >= 0 else {
+            throw takeBridgeError(requirementError)
         }
-        runtime = created
-        runtimeURL = url
-        updateDatabaseMenuItems()
+
+        var password = ""
+        if passwordRequired != 0 {
+            guard let entered = requestVaultPassword() else { return false }
+            password = entered
+        }
+        while true {
+            var bridgeError: UnsafeMutablePointer<CChar>?
+            var passwordError: Int32 = 0
+            let created = supportDirectory.path.withCString { configPath in
+                resources.path.withCString { resourcePath in
+                    runtimeToken.withCString { token in
+                        password.withCString { passwordValue in
+                            cha_runtime_create(
+                                configPath,
+                                resourcePath,
+                                token,
+                                passwordValue,
+                                &passwordError,
+                                &bridgeError)
+                        }
+                    }
+                }
+            }
+            if let created {
+                let port = cha_runtime_port(created)
+                guard port > 0,
+                      let url = URL(string: "http://127.0.0.1:\(port)/") else {
+                    cha_runtime_destroy(created)
+                    throw LauncherError.cannotStart
+                }
+                runtime = created
+                runtimeURL = url
+                updateDatabaseMenuItems()
+                return true
+            }
+            let error = takeBridgeError(bridgeError)
+            guard passwordError != 0 else { throw error }
+            guard let entered = requestVaultPassword(error: error.message) else {
+                return false
+            }
+            password = entered
+        }
     }
 
     private func showApplication() {

@@ -575,6 +575,26 @@ TEST_F(ApplicationConfigTest, LoadsMultipleVaultsWithCanonicalSpellingAndOrder) 
     EXPECT_EQ(command.vaults.size(), 3U);
 }
 
+TEST_F(ApplicationConfigTest, LoadsAndValidatesProtectedVaultFlag) {
+    write_vault(
+        "personal.toml",
+        "Personal",
+        "../data/workspace.sqlite3",
+        "protected = true\n");
+    ConfigurationDirectory loaded = load_configuration_directory(config_);
+    ASSERT_EQ(loaded.vaults.size(), 1U);
+    EXPECT_TRUE(loaded.vaults.front().password_protected);
+
+    write_vault(
+        "personal.toml",
+        "Personal",
+        "../data/workspace.sqlite3",
+        "protected = \"yes\"\n");
+    EXPECT_THROW(
+        (void)load_configuration_directory(config_),
+        std::runtime_error);
+}
+
 TEST_F(ApplicationConfigTest, AcceptsUnicodeAndEntranceVaultNames) {
     write_app(
         "vault = \"Café\"\n"

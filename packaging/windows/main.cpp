@@ -44,6 +44,12 @@ constexpr UINT kDatabaseUpload = 1103;
 constexpr UINT kDatabaseDownload = 1104;
 constexpr UINT kOperationComplete = WM_APP + 1;
 constexpr UINT kFatalError = WM_APP + 2;
+constexpr wchar_t kPasswordWindowClass[] = L"CHA.PasswordDialog";
+
+class LaunchCancelled final : public std::exception {
+public:
+    const char* what() const noexcept override { return "Vault unlock cancelled"; }
+};
 
 std::wstring wide_from_utf8(std::string_view value) {
     if (value.empty()) return {};
@@ -166,6 +172,137 @@ std::string take_bridge_error(char* value) {
         : std::string(value);
     cha_string_free(value);
     return result;
+}
+
+struct PasswordDialogState {
+    HWND edit{};
+    std::wstring password;
+    bool accepted{};
+};
+
+LRESULT CALLBACK password_dialog_procedure(
+    HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
+    auto* state = reinterpret_cast<PasswordDialogState*>(
+        ::GetWindowLongPtrW(window, GWLP_USERDATA));
+    if (message == WM_NCCREATE) {
+        const auto* create = reinterpret_cast<CREATESTRUCTW*>(lparam);
+        state = static_cast<PasswordDialogState*>(create->lpCreateParams);
+        ::SetWindowLongPtrW(
+            window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(state));
+    }
+    if (state == nullptr) {
+        return ::DefWindowProcW(window, message, wparam, lparam);
+    }
+    switch (message) {
+    case WM_COMMAND:
+        if (LOWORD(wparam) == IDOK) {
+            const int length = ::GetWindowTextLengthW(state->edit);
+            state->password.resize(static_cast<std::size_t>(length) + 1);
+            if (length != 0) {
+                ::GetWindowTextW(state->edit, state->password.data(), length + 1);
+            }
+            state->password.resize(static_cast<std::size_t>(length));
+            state->accepted = true;
+            ::DestroyWindow(window);
+            return 0;
+        }
+        if (LOWORD(wparam) == IDCANCEL) {
+            ::DestroyWindow(window);
+            return 0;
+        }
+        break;
+    case WM_CLOSE:
+        ::DestroyWindow(window);
+        return 0;
+    default:
+        break;
+    }
+    return ::DefWindowProcW(window, message, wparam, lparam);
+}
+
+std::optional<std::string> prompt_for_vault_password(
+    HINSTANCE instance, HWND owner, std::wstring_view error) {
+    static bool registered = false;
+    if (!registered) {
+        WNDCLASSEXW window_class{};
+        window_class.cbSize = sizeof(window_class);
+        window_class.lpfnWndProc = password_dialog_procedure;
+        window_class.hInstance = instance;
+        window_class.hCursor = ::LoadCursorW(nullptr, IDC_ARROW);
+        window_class.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
+        window_class.lpszClassName = kPasswordWindowClass;
+        if (::RegisterClassExW(&window_class) == 0
+            && ::GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
+            throw std::runtime_error("Failed to create the password prompt");
+        }
+        registered = true;
+    }
+
+    PasswordDialogState state;
+    const int width = 420;
+    const int height = 175;
+    RECT owner_bounds{};
+    ::GetWindowRect(owner, &owner_bounds);
+    const int x = owner_bounds.left
+        + ((owner_bounds.right - owner_bounds.left) - width) / 2;
+    const int y = owner_bounds.top
+        + ((owner_bounds.bottom - owner_bounds.top) - height) / 2;
+    HWND dialog = ::CreateWindowExW(
+        WS_EX_DLGMODALFRAME,
+        kPasswordWindowClass,
+        L"Open protected vault",
+        WS_CAPTION | WS_SYSMENU | WS_POPUP,
+        x,
+        y,
+        width,
+        height,
+        owner,
+        nullptr,
+        instance,
+        &state);
+    if (dialog == nullptr) {
+        throw std::runtime_error("Failed to create the password prompt");
+    }
+    const std::wstring message = error.empty()
+        ? L"Enter the vault password."
+        : std::wstring(error);
+    const HFONT font = static_cast<HFONT>(::GetStockObject(DEFAULT_GUI_FONT));
+    HWND label = ::CreateWindowExW(
+        0, L"STATIC", message.c_str(), WS_CHILD | WS_VISIBLE,
+        18, 16, 380, 34, dialog, nullptr, instance, nullptr);
+    state.edit = ::CreateWindowExW(
+        WS_EX_CLIENTEDGE, L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP
+            | ES_PASSWORD | ES_AUTOHSCROLL,
+        18, 54, 380, 24, dialog, nullptr, instance, nullptr);
+    HWND open = ::CreateWindowExW(
+        0, L"BUTTON", L"Open vault", WS_CHILD | WS_VISIBLE | WS_TABSTOP
+            | BS_DEFPUSHBUTTON,
+        220, 96, 86, 26, dialog,
+        reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDOK)), instance, nullptr);
+    HWND cancel = ::CreateWindowExW(
+        0, L"BUTTON", L"Quit", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+        312, 96, 86, 26, dialog,
+        reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDCANCEL)), instance, nullptr);
+    for (HWND control : {label, state.edit, open, cancel}) {
+        ::SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+    }
+
+    ::EnableWindow(owner, FALSE);
+    ::ShowWindow(dialog, SW_SHOW);
+    ::SetFocus(state.edit);
+    MSG message_value{};
+    while (::IsWindow(dialog)) {
+        const BOOL result = ::GetMessageW(&message_value, nullptr, 0, 0);
+        if (result <= 0) break;
+        if (!::IsDialogMessageW(dialog, &message_value)) {
+            ::TranslateMessage(&message_value);
+            ::DispatchMessageW(&message_value);
+        }
+    }
+    ::EnableWindow(owner, TRUE);
+    ::SetForegroundWindow(owner);
+    if (!state.accepted) return std::nullopt;
+    return cha::utf8_from_wide(state.password);
 }
 
 enum class DatabaseOperation {
@@ -424,14 +561,35 @@ private:
         const std::filesystem::path resources = cha::executable_directory();
         const std::string config = cha::utf8_path(config_directory_);
         const std::string resource_path = cha::utf8_path(resources);
-        char* bridge_error = nullptr;
-        runtime_ = cha_runtime_create(
-            config.c_str(),
-            resource_path.c_str(),
-            runtime_token_.c_str(),
-            &bridge_error);
-        if (runtime_ == nullptr) {
-            throw std::runtime_error(take_bridge_error(bridge_error));
+        char* requirement_error = nullptr;
+        const int32_t password_required = cha_runtime_requires_password(
+            config.c_str(), resource_path.c_str(), &requirement_error);
+        if (password_required < 0) {
+            throw std::runtime_error(take_bridge_error(requirement_error));
+        }
+        std::string password;
+        if (password_required != 0) {
+            const auto entered = prompt_for_vault_password(instance_, window_, L"");
+            if (!entered) throw LaunchCancelled();
+            password = *entered;
+        }
+        while (runtime_ == nullptr) {
+            char* bridge_error = nullptr;
+            int32_t password_error = 0;
+            runtime_ = cha_runtime_create(
+                config.c_str(),
+                resource_path.c_str(),
+                runtime_token_.c_str(),
+                password.c_str(),
+                &password_error,
+                &bridge_error);
+            if (runtime_ != nullptr) break;
+            const std::string message = take_bridge_error(bridge_error);
+            if (password_error == 0) throw std::runtime_error(message);
+            const auto entered = prompt_for_vault_password(
+                instance_, window_, wide_from_utf8(message));
+            if (!entered) throw LaunchCancelled();
+            password = *entered;
         }
         const int32_t port = cha_runtime_port(runtime_);
         if (port <= 0) {
@@ -1027,6 +1185,9 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int show_command) {
         application.reset();
         ::CoUninitialize();
         return result;
+    } catch (const LaunchCancelled&) {
+        if (com_initialized) ::CoUninitialize();
+        return 0;
     } catch (const std::exception& error) {
         if (!smoke_test) {
             std::wstring message;

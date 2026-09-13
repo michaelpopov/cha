@@ -814,14 +814,16 @@ void prune_orphan_sessions(Database& database, const std::set<std::string>& vali
 void commit_imported_rows(
     const std::filesystem::path& database,
     const std::vector<ConfigFile>& rows,
-    const std::set<std::string>& valid_forums) {
+    const std::set<std::string>& valid_forums,
+    std::string_view database_password) {
     const WorkspaceDatabaseState state =
-        inspect_workspace_session_database(database);
+        inspect_workspace_session_database(database, database_password);
     switch (state) {
     case WorkspaceDatabaseState::missing: {
-        create_empty_workspace_session_database(database);
+        create_empty_workspace_session_database(database, database_password);
         try {
-            Database handle(database, Database::Mode::read_write);
+            Database handle(
+                database, Database::Mode::read_write, database_password);
             storage::SqliteTransaction transaction(handle);
             replace_workspace_config_files(handle, rows);
             transaction.commit();
@@ -832,7 +834,7 @@ void commit_imported_rows(
         break;
     }
     case WorkspaceDatabaseState::valid_v1: {
-        Database handle(database, Database::Mode::read_write);
+        Database handle(database, Database::Mode::read_write, database_password);
         upgrade_workspace_session_database_from_v1(handle, rows);
         storage::SqliteTransaction transaction(handle);
         prune_orphan_sessions(handle, valid_forums);
@@ -840,7 +842,7 @@ void commit_imported_rows(
         break;
     }
     case WorkspaceDatabaseState::valid_v2: {
-        Database handle(database, Database::Mode::read_write);
+        Database handle(database, Database::Mode::read_write, database_password);
         storage::SqliteTransaction transaction(handle);
         replace_workspace_config_files(handle, rows);
         prune_orphan_sessions(handle, valid_forums);
@@ -858,7 +860,8 @@ void commit_imported_rows(
 WorkspaceConfigTransfer import_workspace_configuration(
     const std::filesystem::path& source_directory,
     const std::filesystem::path& database_path,
-    WorkspaceConfigLease lease_mode) {
+    WorkspaceConfigLease lease_mode,
+    std::string_view database_password) {
     const std::filesystem::path source =
         require_existing_directory(source_directory, "Import source");
     const std::filesystem::path database = normalize_path(database_path);
@@ -879,14 +882,16 @@ WorkspaceConfigTransfer import_workspace_configuration(
     validate_materialized_source(pruned.rows);
 
     secure_workspace_session_database_files(database);
-    commit_imported_rows(database, pruned.rows, pruned.forums);
+    commit_imported_rows(
+        database, pruned.rows, pruned.forums, database_password);
     return {.file_count = pruned.rows.size()};
 }
 
 WorkspaceConfigTransfer export_workspace_configuration(
     const std::filesystem::path& database_path,
     const std::filesystem::path& destination_directory,
-    WorkspaceConfigLease lease_mode) {
+    WorkspaceConfigLease lease_mode,
+    std::string_view database_password) {
     const std::filesystem::path database = normalize_path(database_path);
     (void)require_existing_directory(database.parent_path(), "Database parent");
     const std::filesystem::path destination =
@@ -899,12 +904,12 @@ WorkspaceConfigTransfer export_workspace_configuration(
 
     secure_workspace_session_database_files(database);
     const WorkspaceDatabaseState state =
-        inspect_workspace_session_database(database);
+        inspect_workspace_session_database(database, database_password);
     if (state != WorkspaceDatabaseState::valid_v2) {
         fail_database_state(database, state);
     }
 
-    Database handle(database, Database::Mode::read_only);
+    Database handle(database, Database::Mode::read_only, database_password);
     validate_workspace_session_database_identity(handle);
     validate_workspace_session_contents(handle);
     const std::vector<ConfigFile> rows = read_workspace_config_files(handle);
@@ -959,6 +964,7 @@ void force_next_workspace_config_fault(WorkspaceConfigFault fault) {
 
 struct WorkspaceConfigStore::Impl {
     std::filesystem::path database_path;
+    std::string database_password;
     std::optional<SessionLease> lease;
     std::unique_ptr<Database> database;
     std::optional<RuntimePrivateRoot> tree;
@@ -1100,15 +1106,25 @@ void WorkspaceConfigStore::MaintenanceGuard::close() {
     impl_->closed = true;
 }
 
+void WorkspaceConfigStore::MaintenanceGuard::set_password(
+    std::string database_password) {
+    if (!impl_ || !impl_->closed) {
+        throw std::logic_error("Workspace database is not closed");
+    }
+    impl_->store->database_password = std::move(database_password);
+}
+
 void WorkspaceConfigStore::MaintenanceGuard::retarget(
     std::filesystem::path database_path,
-    SessionLease lease) {
+    SessionLease lease,
+    std::string database_password) {
     if (!impl_ || !impl_->closed) {
         throw std::logic_error("Workspace database is not closed");
     }
     WorkspaceConfigStore::Impl& store = *impl_->store;
     store.lease = std::move(lease);
     store.database_path = std::move(database_path);
+    store.database_password = std::move(database_password);
 }
 
 void WorkspaceConfigStore::MaintenanceGuard::reopen() {
@@ -1119,13 +1135,16 @@ void WorkspaceConfigStore::MaintenanceGuard::reopen() {
     try {
         secure_workspace_session_database_files(store.database_path);
         const WorkspaceDatabaseState state =
-            inspect_workspace_session_database(store.database_path);
+            inspect_workspace_session_database(
+                store.database_path, store.database_password);
         if (state != WorkspaceDatabaseState::valid_v2) {
             fail_runtime_database_state(store.database_path, state);
         }
 
         store.database = std::make_unique<Database>(
-            store.database_path, Database::Mode::read_write);
+            store.database_path,
+            Database::Mode::read_write,
+            store.database_password);
         validate_workspace_session_database_identity(*store.database);
         validate_workspace_session_contents(*store.database);
         store.database->execute("PRAGMA journal_mode = WAL");
@@ -1146,9 +1165,11 @@ void WorkspaceConfigStore::MaintenanceGuard::reopen() {
 }
 
 std::unique_ptr<WorkspaceConfigStore> WorkspaceConfigStore::open(
-    const std::filesystem::path& database_path) {
+    const std::filesystem::path& database_path,
+    std::string database_password) {
     auto impl = std::make_unique<Impl>();
     impl->database_path = normalize_path(database_path);
+    impl->database_password = std::move(database_password);
     (void)require_existing_directory(
         impl->database_path.parent_path(), "Database parent");
 
@@ -1158,13 +1179,16 @@ std::unique_ptr<WorkspaceConfigStore> WorkspaceConfigStore::open(
 
     secure_workspace_session_database_files(impl->database_path);
     const WorkspaceDatabaseState state =
-        inspect_workspace_session_database(impl->database_path);
+        inspect_workspace_session_database(
+            impl->database_path, impl->database_password);
     if (state != WorkspaceDatabaseState::valid_v2) {
         fail_runtime_database_state(impl->database_path, state);
     }
 
     impl->database = std::make_unique<Database>(
-        impl->database_path, Database::Mode::read_write);
+        impl->database_path,
+        Database::Mode::read_write,
+        impl->database_password);
     validate_workspace_session_database_identity(*impl->database);
     validate_workspace_session_contents(*impl->database);
     impl->database->execute("PRAGMA journal_mode = WAL");

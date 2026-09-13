@@ -254,6 +254,7 @@ export function TopBar({
   const voiceName = state.inspectedVoiceName ?? undefined;
   const apiKeyId = state.inspectedApiKeyId;
   const apiKeyName = state.inspectedApiKeyName ?? undefined;
+  const vaultName = state.inspectedVaultName ?? undefined;
 
   useEffect(() => {
     setConfirmingDelete(null);
@@ -265,7 +266,7 @@ export function TopBar({
     setEditorReady(false);
     setEditorSaving(false);
     setEditorError(null);
-  }, [apiKeyId, characterId, forumId, personaId, providerId, state.mainView, styleId, voiceId]);
+  }, [apiKeyId, characterId, forumId, personaId, providerId, state.mainView, styleId, vaultName, voiceId]);
 
   let titleControl = title && <h1>{title}</h1>;
   if (state.mainView === 'persona-detail') {
@@ -398,6 +399,26 @@ export function TopBar({
           });
         }}
         subject="API key"
+      />
+    );
+  } else if (state.mainView === 'settings-vault') {
+    titleControl = (
+      <EditableTitle
+        available
+        id={vaultName ?? null}
+        name={vaultName}
+        onSave={async (displayName) => {
+          const saved = await client.updateVault(vaultName!, {
+            display_name: displayName,
+            password: null,
+          });
+          dispatch({
+            type: 'vault-updated',
+            previousName: vaultName!,
+            vault: saved,
+          });
+        }}
+        subject="Vault"
       />
     );
   }

@@ -24,6 +24,7 @@ struct PreparedSession {
     FullSessionId identity;
     std::string label;
     std::filesystem::path database_path;
+    std::string database_password;
     SessionKey session_key{};
     SessionRestore restore;
 };
@@ -43,7 +44,9 @@ public:
 
         void checkpoint() const;
         void synchronize_forums(const Workspace& workspace) const;
-        void retarget(std::filesystem::path database_path);
+        void retarget(
+            std::filesystem::path database_path,
+            std::string database_password = {});
 
     private:
         friend class SessionRepository;
@@ -57,7 +60,8 @@ public:
         std::filesystem::path database_path,
         std::filesystem::path workspace_root,
         std::filesystem::path welcome_directory,
-        TemporarySessionSeed temporary);
+        TemporarySessionSeed temporary,
+        std::string database_password = {});
     ~SessionRepository();
 
     SessionRepository(const SessionRepository&) = delete;
@@ -94,6 +98,7 @@ private:
     mutable std::shared_mutex operation_mutex_;
     std::filesystem::path workspace_root_;
     std::filesystem::path database_path_;
+    std::string database_password_;
     FullSessionId temporary_identity_;
     std::string temporary_label_;
     std::filesystem::path temporary_database_path_;

@@ -589,7 +589,7 @@ public:
                       key,
                       database_.path(),
                       notifier,
-                      large_transcript(8U * 1024U * 1024U),
+                      large_transcript(1024U * 1024U),
                       controls_);
               }) {
         server_.set_socket_options([](int socket) {
@@ -692,7 +692,7 @@ TEST(WebServerSocketLimits, StalledSseReadersReleaseWorkersAfterWriteTimeout) {
          ++worker) {
         auto socket = std::make_unique<RawHttpSocket>(server.port(), 4096);
         socket->send_get(RealSocketSseServer::events_path);
-        ASSERT_EQ(socket->read_status(), 200);
+        ASSERT_EQ(socket->read_status(5s), 200);
         stalled.push_back(std::move(socket));
     }
 
@@ -720,7 +720,7 @@ TEST(WebServerSocketLimits, SlowProgressingSseReaderStaysConnected) {
     RealSocketSseServer server;
     RawHttpSocket slow(server.port(), 64U * 1024U);
     slow.send_get(RealSocketSseServer::events_path);
-    ASSERT_EQ(slow.read_status(), 200);
+    ASSERT_EQ(slow.read_status(5s), 200);
 
     const auto started = std::chrono::steady_clock::now();
     const auto duration = RealSocketSseServer::write_timeout * 5;

@@ -119,6 +119,32 @@ void remove_database_files_noexcept(
     }
 }
 
+void remove_database_sidecars(const std::filesystem::path& path) {
+    for (const std::string_view suffix : sidecar_suffixes) {
+        std::filesystem::path sidecar = path;
+        sidecar += suffix;
+        std::error_code error;
+        std::filesystem::remove(sidecar, error);
+        if (error) {
+            throw std::system_error(
+                error,
+                "Failed to remove database sidecar '" + utf8_path(sidecar)
+                    + "'");
+        }
+    }
+}
+
+void remove_database_files(const std::filesystem::path& path) {
+    remove_database_sidecars(path);
+    std::error_code error;
+    std::filesystem::remove(path, error);
+    if (error) {
+        throw std::system_error(
+            error,
+            "Failed to remove database '" + utf8_path(path) + "'");
+    }
+}
+
 void require_regular_database_source(const std::filesystem::path& source) {
     std::error_code error;
     const std::filesystem::file_status status =
@@ -430,7 +456,8 @@ void validate_workspace_session_contents(Database& database) {
 }
 
 WorkspaceDatabaseState inspect_workspace_session_database(
-    const std::filesystem::path& path) {
+    const std::filesystem::path& path,
+    std::string_view password) {
     std::error_code error;
     const std::filesystem::file_status status =
         std::filesystem::symlink_status(path, error);
@@ -448,7 +475,7 @@ WorkspaceDatabaseState inspect_workspace_session_database(
     }
 
     try {
-        Database database(path, Database::Mode::read_only);
+        Database database(path, Database::Mode::read_only, password);
         const std::int64_t application_id =
             database.pragma_integer("application_id");
         const std::int64_t version = database.pragma_integer("user_version");
@@ -574,14 +601,15 @@ void secure_workspace_session_database_files(
 }
 
 void create_empty_workspace_session_database(
-    const std::filesystem::path& path) {
+    const std::filesystem::path& path,
+    std::string_view password) {
     if (std::filesystem::exists(path)) {
         throw std::runtime_error(
             "Workspace session database already exists at '"
             + utf8_path(path) + "'");
     }
     try {
-        Database database(path, Database::Mode::read_write_create);
+        Database database(path, Database::Mode::read_write_create, password);
         database.execute("PRAGMA journal_mode = DELETE");
         storage::SqliteTransaction transaction(database);
         create_workspace_session_schema(database);
@@ -595,18 +623,21 @@ void create_empty_workspace_session_database(
 
 void create_workspace_session_database_from_configuration(
     const std::filesystem::path& source,
-    const std::filesystem::path& destination) {
+    const std::filesystem::path& destination,
+    std::string_view source_password,
+    std::string_view destination_password) {
     require_regular_database_source(source);
     require_missing_database_destination(destination);
     try {
-        Database input(source, Database::Mode::read_only);
+        Database input(source, Database::Mode::read_only, source_password);
         validate_workspace_session_database_identity(input);
         validate_workspace_session_contents(input);
         const std::vector<ConfigFile> configuration =
             read_workspace_config_files(input);
 
-        create_empty_workspace_session_database(destination);
-        Database output(destination, Database::Mode::read_write);
+        create_empty_workspace_session_database(destination, destination_password);
+        Database output(
+            destination, Database::Mode::read_write, destination_password);
         storage::SqliteTransaction transaction(output);
         replace_workspace_config_files(output, configuration);
         transaction.commit();
@@ -626,22 +657,40 @@ void create_workspace_session_database_from_configuration(
 
 void copy_workspace_session_database(
     const std::filesystem::path& source,
-    const std::filesystem::path& destination) {
+    const std::filesystem::path& destination,
+    std::string_view source_password,
+    std::string_view destination_password) {
     require_regular_database_source(source);
     require_missing_database_destination(destination);
     try {
-        Database input(source, Database::Mode::read_only);
-        validate_workspace_session_database_identity(input);
-        validate_workspace_session_contents(input);
-
-        Database output(destination, Database::Mode::read_write_create);
-        sqlite3_backup* const backup = sqlite3_backup_init(
-            output.handle(), "main", input.handle(), "main");
-        if (backup == nullptr) output.fail(sqlite3_errcode(output.handle()));
-        const int copied = sqlite3_backup_step(backup, -1);
-        const int finished = sqlite3_backup_finish(backup);
-        if (copied != SQLITE_DONE) output.fail(copied);
-        if (finished != SQLITE_OK) output.fail(finished);
+        {
+            Database input(
+                source, Database::Mode::read_write_create, source_password);
+            validate_workspace_session_database_identity(input);
+            validate_workspace_session_contents(input);
+            storage::SqliteStatement attach = input.prepare(
+                "ATTACH DATABASE ?1 AS copied KEY ?2",
+                utf8_path(destination),
+                destination_password);
+            attach.run();
+            try {
+                input.execute("SELECT sqlcipher_export('copied')");
+                input.execute(
+                    "PRAGMA copied.application_id = "
+                    + std::to_string(workspace_session_application_id));
+                input.execute(
+                    "PRAGMA copied.user_version = "
+                    + std::to_string(workspace_session_database_version));
+                input.execute("DETACH DATABASE copied");
+            } catch (...) {
+                try {
+                    input.execute("DETACH DATABASE copied");
+                } catch (...) {
+                }
+                throw;
+            }
+        }
+        Database output(destination, Database::Mode::read_only, destination_password);
         validate_workspace_session_database_identity(output);
         validate_workspace_session_contents(output);
     } catch (...) {
@@ -656,18 +705,56 @@ void copy_workspace_session_database(
     }
 }
 
+void protect_workspace_session_database(
+    const std::filesystem::path& path,
+    std::string_view password) {
+    if (password.empty()) {
+        throw std::invalid_argument("A protected vault requires a password");
+    }
+    std::filesystem::path temporary = path;
+    temporary += ".protecting";
+    std::filesystem::path backup = path;
+    backup += ".unprotected";
+    require_missing_database_destination(temporary);
+    require_missing_database_destination(backup);
+    copy_workspace_session_database(path, temporary, {}, password);
+    try {
+        checkpoint_workspace_session_database(path);
+        remove_database_sidecars(path);
+        std::filesystem::rename(path, backup);
+        try {
+            std::filesystem::rename(temporary, path);
+        } catch (...) {
+            std::filesystem::rename(backup, path);
+            throw;
+        }
+        try {
+            remove_database_files(backup);
+        } catch (...) {
+            std::filesystem::rename(path, temporary);
+            std::filesystem::rename(backup, path);
+            remove_database_files_noexcept(temporary);
+            throw;
+        }
+    } catch (...) {
+        remove_database_files_noexcept(temporary);
+        throw;
+    }
+}
+
 void initialize_workspace_session_database_runtime(
-    const std::filesystem::path& path) {
+    const std::filesystem::path& path,
+    std::string_view password) {
     secure_workspace_database_files(path);
     // Tests and helpers may still create a missing disposable database at v2.
     // Normal runtime never calls this on a missing path; a valid v1 database
     // is never upgraded or deleted here.
     if (!std::filesystem::exists(path)) {
-        create_empty_workspace_session_database(path);
+        create_empty_workspace_session_database(path, password);
     }
 
     {
-        Database database(path, Database::Mode::read_write);
+        Database database(path, Database::Mode::read_write, password);
         if (!is_abandoned_empty_creation(database)) {
             validate_workspace_session_database_identity(database);
             validate_workspace_session_contents(database);
@@ -677,16 +764,17 @@ void initialize_workspace_session_database_runtime(
     }
 
     remove_database_files_noexcept(path);
-    create_empty_workspace_session_database(path);
-    Database database(path, Database::Mode::read_write);
+    create_empty_workspace_session_database(path, password);
+    Database database(path, Database::Mode::read_write, password);
     validate_workspace_session_database_identity(database);
     validate_workspace_session_contents(database);
     enable_wal_and_secure(database, path);
 }
 
 void checkpoint_workspace_session_database(
-    const std::filesystem::path& path) {
-    Database database(path, Database::Mode::read_write);
+    const std::filesystem::path& path,
+    std::string_view password) {
+    Database database(path, Database::Mode::read_write, password);
     validate_workspace_session_database_identity(database);
     Statement checkpoint = database.prepare("PRAGMA wal_checkpoint(TRUNCATE)");
     if (!checkpoint.step()) {

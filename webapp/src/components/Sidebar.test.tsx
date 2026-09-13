@@ -38,6 +38,34 @@ describe('Sidebar session actions', () => {
     expect(screen.getByLabelText('Vault')).toBeEnabled();
   });
 
+  it('asks for a password when a protected vault is selected', async () => {
+    const user = userEvent.setup();
+    const onSwitchVault = vi.fn(async (_name: string, password?: string) => {
+      if (!password) {
+        throw new ChaError(
+          401, 'vault_password_required', 'Password required to open this vault',
+        );
+      }
+    });
+    render(
+      <Sidebar
+        dispatch={vi.fn()}
+        onDeleteSession={vi.fn(async () => undefined)}
+        onDownloadSession={vi.fn(async () => undefined)}
+        onOpenSession={vi.fn(async () => true)}
+        onRenameSession={vi.fn(async () => undefined)}
+        onSwitchVault={onSwitchVault}
+        state={readyState()}
+      />,
+    );
+
+    await user.selectOptions(screen.getByLabelText('Vault'), 'Projects');
+    expect(await screen.findByRole('heading', { name: 'Open Projects' })).toBeInTheDocument();
+    await user.type(screen.getByLabelText('Password'), 'secret');
+    await user.click(screen.getByRole('button', { name: 'Open vault' }));
+    expect(onSwitchVault).toHaveBeenLastCalledWith('Projects', 'secret');
+  });
+
   it('offers Download, Rename, and Delete in order by right-click and ellipsis but not for Welcome', async () => {
     const user = userEvent.setup();
     render(

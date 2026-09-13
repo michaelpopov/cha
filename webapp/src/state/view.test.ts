@@ -258,6 +258,7 @@ describe('application navigation reducer', () => {
       type: 'vault-created',
       vault: {
         display_name: 'Archive',
+        protected: false,
         data_path: '/data/archive.sqlite3',
         mirror_path: null,
         modify_path: null,
@@ -274,6 +275,7 @@ describe('application navigation reducer', () => {
       previousName: 'Personal',
       vault: {
         display_name: 'Home',
+        protected: false,
         data_path: '/data/personal.sqlite3',
         mirror_path: null,
         modify_path: null,
@@ -298,6 +300,7 @@ describe('application navigation reducer', () => {
       type: 'vault-downloaded',
       vault: {
         display_name: 'Archive',
+        protected: false,
         data_path: '/data/Archive.sqlite3',
         mirror_path: null,
         modify_path: null,

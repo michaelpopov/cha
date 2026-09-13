@@ -128,9 +128,12 @@ ChaRuntime* cha_runtime_create(
     const char* config_path,
     const char* resource_path,
     const char* access_token,
+    const char* vault_password,
+    int32_t* password_error,
     char** error) {
     clear_error(error);
-    if (!config_path || !resource_path || !access_token
+    if (password_error) *password_error = 0;
+    if (!config_path || !resource_path || !access_token || !vault_password
         || *access_token == '\0') {
         set_error(error, "CHA runtime configuration is incomplete");
         return nullptr;
@@ -147,7 +150,7 @@ ChaRuntime* cha_runtime_create(
         runtime->voice_input = command.voice_input;
         runtime->text_to_speech_model = command.text_to_speech_model;
         runtime->application = ApplicationRuntime::open(
-            command, access_token);
+            command, access_token, vault_password);
         if (runtime->voice_input) {
             runtime->voice_input_api_key =
                 runtime->application->api_key_value(
@@ -161,12 +164,39 @@ ChaRuntime* cha_runtime_create(
 #endif
         runtime->port = runtime->application->start();
         return runtime.release();
+    } catch (const cha::web::VaultPasswordError&) {
+        if (password_error) *password_error = 1;
+        if (runtime && runtime->logging) {
+            cha::shutdown_diagnostic_logging();
+        }
+        set_current_error(error);
+        return nullptr;
     } catch (...) {
         if (runtime && runtime->logging) {
             cha::shutdown_diagnostic_logging();
         }
         set_current_error(error);
         return nullptr;
+    }
+}
+
+int32_t cha_runtime_requires_password(
+    const char* config_path,
+    const char* resource_path,
+    char** error) {
+    clear_error(error);
+    if (!config_path || !resource_path) {
+        set_error(error, "CHA runtime configuration is incomplete");
+        return -1;
+    }
+    try {
+        return runtime_command(config_path, resource_path)
+                .vault.password_protected
+            ? 1
+            : 0;
+    } catch (...) {
+        set_current_error(error);
+        return -1;
     }
 }
 

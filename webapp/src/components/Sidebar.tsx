@@ -9,10 +9,11 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 
-import { publicErrorMessage } from '../api/client';
+import { ChaError, publicErrorMessage } from '../api/client';
 import type { AppAction, AppState, MainView } from '../state/view';
 import { CharacterIcon, ForumsIcon, MoreIcon, PersonasIcon, SettingsIcon } from './Icons';
 import { TransliteratingInput } from './TransliterationMode';
+import { PasswordDialog } from './PasswordDialog';
 
 interface SidebarProps {
   state: AppState;
@@ -21,7 +22,7 @@ interface SidebarProps {
   onDownloadSession(forumId: string, sessionId: string, label: string): Promise<void>;
   onRenameSession(forumId: string, sessionId: string, label: string): Promise<void>;
   onDeleteSession(forumId: string, sessionId: string): Promise<void>;
-  onSwitchVault(vaultName: string): Promise<void>;
+  onSwitchVault(vaultName: string, password?: string): Promise<void>;
 }
 
 interface SelectedSession {
@@ -163,6 +164,7 @@ export function Sidebar({
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const [vaultPending, setVaultPending] = useState(false);
   const [vaultError, setVaultError] = useState<string | null>(null);
+  const [vaultPrompt, setVaultPrompt] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
   function closeMenu(restore = true) {
@@ -212,13 +214,21 @@ export function Sidebar({
     items[next]?.focus();
   }
 
-  async function switchVault(name: string) {
+  async function switchVault(name: string, password?: string) {
     if (name === state.bootstrap?.vault_name || vaultPending) return;
     setVaultPending(true);
     setVaultError(null);
     try {
-      await onSwitchVault(name);
+      await onSwitchVault(name, password);
+      setVaultPrompt(null);
     } catch (failure: unknown) {
+      if (failure instanceof ChaError
+          && failure.code === 'vault_password_required') {
+        setVaultPrompt(name);
+        setVaultError(password ? failure.message : null);
+        setVaultPending(false);
+        return;
+      }
       setVaultError(publicErrorMessage(failure, 'The vault could not be switched.'));
       setVaultPending(false);
     }
@@ -289,7 +299,18 @@ export function Sidebar({
         })}
       </div>
       {downloadError && <p className="cha-error-message" role="alert">{downloadError}</p>}
-      {vaultError && <p className="cha-error-message" role="alert">{vaultError}</p>}
+      {vaultError && !vaultPrompt && <p className="cha-error-message" role="alert">{vaultError}</p>}
+      {vaultPrompt && (
+        <PasswordDialog
+          error={vaultError}
+          name={vaultPrompt}
+          onCancel={() => {
+            setVaultPrompt(null);
+            setVaultError(null);
+          }}
+          onSubmit={(password) => void switchVault(vaultPrompt, password)}
+        />
+      )}
       <div className="cha-sidebar-footer">
         <select
           aria-label="Vault"

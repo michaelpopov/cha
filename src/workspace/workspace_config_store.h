@@ -35,12 +35,14 @@ enum class WorkspaceConfigLease {
 WorkspaceConfigTransfer import_workspace_configuration(
     const std::filesystem::path& source_directory,
     const std::filesystem::path& database_path,
-    WorkspaceConfigLease lease = WorkspaceConfigLease::acquire);
+    WorkspaceConfigLease lease = WorkspaceConfigLease::acquire,
+    std::string_view database_password = {});
 
 WorkspaceConfigTransfer export_workspace_configuration(
     const std::filesystem::path& database_path,
     const std::filesystem::path& destination_directory,
-    WorkspaceConfigLease lease = WorkspaceConfigLease::acquire);
+    WorkspaceConfigLease lease = WorkspaceConfigLease::acquire,
+    std::string_view database_password = {});
 
 // Reported when a runtime edit committed to SQLite but in-memory publication
 // failed, or when pre-commit restoration of the materialized tree failed.
@@ -73,11 +75,13 @@ public:
         // and the process unable to serve.
         void close();
         void reopen();
+        void set_password(std::string database_password);
         // Points the closed store at a database whose lease was acquired before
         // maintenance began. reopen() validates and publishes it.
         void retarget(
             std::filesystem::path database_path,
-            SessionLease lease);
+            SessionLease lease,
+            std::string database_password = {});
 
     private:
         struct Impl;
@@ -87,7 +91,8 @@ public:
     };
 
     static std::unique_ptr<WorkspaceConfigStore> open(
-        const std::filesystem::path& database_path);
+        const std::filesystem::path& database_path,
+        std::string database_password = {});
 
     ~WorkspaceConfigStore();
     WorkspaceConfigStore(const WorkspaceConfigStore&) = delete;

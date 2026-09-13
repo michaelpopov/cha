@@ -885,8 +885,8 @@ export function App({
     if (target) void openConversation(target.forumId, target.sessionId, target.updateHistory);
   }, [openConversation]);
 
-  const switchVault = useCallback(async (vaultName: string) => {
-    await client.switchVault(vaultName);
+  const switchVault = useCallback(async (vaultName: string, password?: string) => {
+    await client.switchVault(vaultName, password);
     reload();
   }, [client, reload]);
 

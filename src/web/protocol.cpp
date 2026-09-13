@@ -178,6 +178,7 @@ std::string_view to_string(ErrorCode value) {
             {ErrorCode::session_not_live, "session_not_live"},
             {ErrorCode::command_timeout, "command_timeout"},
             {ErrorCode::command_queue_full, "command_queue_full"},
+            {ErrorCode::vault_password_required, "vault_password_required"},
         });
 }
 

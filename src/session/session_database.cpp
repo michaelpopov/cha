@@ -526,8 +526,9 @@ SessionRestore load_session_state(const std::filesystem::path& path) {
 
 LoadedSessionDatabase load_session_database(
     const std::filesystem::path& path,
-    const FullSessionId& expected_identity) {
-    Database database(path, Database::Mode::read_only);
+    const FullSessionId& expected_identity,
+    std::string_view password) {
+    Database database(path, Database::Mode::read_only, password);
     validate_workspace_session_database_identity(database);
     ReadSnapshot snapshot(database);
     const SessionKey session_key = resolve_session_key(database, expected_identity);
@@ -543,8 +544,9 @@ LoadedSessionDatabase load_session_database(
 
 std::vector<TranscriptEntry> load_session_history(
     const std::filesystem::path& path,
-    const FullSessionId& expected_identity) {
-    Database database(path, Database::Mode::read_only);
+    const FullSessionId& expected_identity,
+    std::string_view password) {
+    Database database(path, Database::Mode::read_only, password);
     validate_workspace_session_database_identity(database);
     ReadSnapshot snapshot(database);
     const SessionKey session_key =
@@ -555,9 +557,12 @@ std::vector<TranscriptEntry> load_session_history(
 
 class SessionJournal::Impl {
 public:
-    Impl(const std::filesystem::path& path, SessionKey selected_session_key)
+    Impl(
+        const std::filesystem::path& path,
+        SessionKey selected_session_key,
+        std::string_view password)
         : session_key(selected_session_key),
-          database(path, Database::Mode::read_write) {
+          database(path, Database::Mode::read_write, password) {
         require_session_key(session_key);
         validate_workspace_session_database_identity(database);
         ReadSnapshot snapshot(database);
@@ -570,14 +575,15 @@ public:
 
 SessionJournal::SessionJournal(
     std::filesystem::path path,
-    SessionKey session_key)
-    : impl_(std::make_unique<Impl>(path, session_key)) {
+    SessionKey session_key,
+    std::string_view password)
+    : impl_(std::make_unique<Impl>(path, session_key, password)) {
 }
 
 SessionJournal::SessionJournal(std::filesystem::path path) {
     Database database(path, Database::Mode::read_only);
     const SessionKey session_key = only_session_key(database);
-    impl_ = std::make_unique<Impl>(path, session_key);
+    impl_ = std::make_unique<Impl>(path, session_key, std::string_view{});
 }
 
 SessionJournal::~SessionJournal() = default;

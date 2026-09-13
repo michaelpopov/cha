@@ -150,6 +150,70 @@ TEST(WorkspaceSessionDatabase, CreatesValidEmptyDatabaseAndEnablesWal) {
     EXPECT_NO_THROW(checkpoint_workspace_session_database(path));
 }
 
+TEST(WorkspaceSessionDatabase, CreatesAndOpensSqlCipherDatabaseWithPassword) {
+    test::TestWorkspace workspace;
+    const std::filesystem::path path =
+        workspace.root() / "protected.sqlite3";
+    constexpr std::string_view password = "correct horse battery staple";
+
+    create_empty_workspace_session_database(path, password);
+
+    EXPECT_EQ(
+        inspect_workspace_session_database(path, password),
+        WorkspaceDatabaseState::valid_v2);
+    EXPECT_NE(
+        inspect_workspace_session_database(path),
+        WorkspaceDatabaseState::valid_v2);
+    EXPECT_NE(
+        inspect_workspace_session_database(path, "wrong password"),
+        WorkspaceDatabaseState::valid_v2);
+    const std::string bytes = [&] {
+        std::ifstream input(path, std::ios::binary);
+        return std::string(
+            std::istreambuf_iterator<char>(input),
+            std::istreambuf_iterator<char>());
+    }();
+    EXPECT_FALSE(bytes.starts_with("SQLite format 3"));
+
+    Database database(path, Database::Mode::read_only, password);
+    EXPECT_NO_THROW(validate_workspace_session_database_identity(database));
+    EXPECT_NO_THROW(validate_workspace_session_contents(database));
+}
+
+TEST(WorkspaceSessionDatabase, ProtectsExistingDatabaseAndPreservesRows) {
+    test::TestWorkspace workspace;
+    const std::filesystem::path path =
+        workspace.root() / "existing.sqlite3";
+    create_empty_workspace_session_database(path);
+    {
+        Database database(path, Database::Mode::read_write);
+        database.execute(
+            "INSERT INTO config (name, content) VALUES "
+            "('personas/test/persona.toml', 'name = \"preserved\"')");
+    }
+    for (const std::string_view suffix : {"-journal", "-wal", "-shm"}) {
+        std::ofstream sidecar(path.string() + std::string(suffix));
+    }
+
+    protect_workspace_session_database(path, "secret");
+
+    EXPECT_NE(
+        inspect_workspace_session_database(path),
+        WorkspaceDatabaseState::valid_v2);
+    ASSERT_EQ(
+        inspect_workspace_session_database(path, "secret"),
+        WorkspaceDatabaseState::valid_v2);
+    Database database(path, Database::Mode::read_only, "secret");
+    const std::vector<ConfigFile> rows = read_workspace_config_files(database);
+    ASSERT_EQ(rows.size(), 1U);
+    EXPECT_EQ(rows.front().name, "personas/test/persona.toml");
+    EXPECT_EQ(rows.front().content, "name = \"preserved\"");
+    EXPECT_FALSE(std::filesystem::exists(path.string() + ".unprotected"));
+    EXPECT_FALSE(std::filesystem::exists(path.string() + "-journal"));
+    EXPECT_FALSE(std::filesystem::exists(path.string() + "-wal"));
+    EXPECT_FALSE(std::filesystem::exists(path.string() + "-shm"));
+}
+
 TEST(WorkspaceSessionDatabase, CreatesSessionEmptyDatabaseFromConfiguration) {
     test::TestWorkspace workspace;
     const std::filesystem::path source = workspace.root() / "source.sqlite3";
