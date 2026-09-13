@@ -10,7 +10,6 @@
 #include <exception>
 #include <memory>
 #include <new>
-#include <optional>
 #include <string>
 
 using cha::WorkspaceConfigTransfer;
@@ -21,8 +20,6 @@ using cha::web::parse_application_command;
 
 struct ChaRuntime {
     std::unique_ptr<ApplicationRuntime> application;
-    std::optional<cha::web::VoiceInputConfig> voice_input;
-    std::string voice_input_api_key;
     std::string text_to_speech_api_key;
     std::string text_to_speech_model;
     int port{};
@@ -147,15 +144,9 @@ ChaRuntime* cha_runtime_create(
         cha::initialize_diagnostic_logging(
             command.log_file, command.log_level);
         runtime->logging = true;
-        runtime->voice_input = command.voice_input;
         runtime->text_to_speech_model = command.text_to_speech_model;
         runtime->application = ApplicationRuntime::open(
             command, access_token, vault_password);
-        if (runtime->voice_input) {
-            runtime->voice_input_api_key =
-                runtime->application->api_key_value(
-                    runtime->voice_input->api_key_id);
-        }
 #ifdef __APPLE__
         if (const auto key = runtime->application->api_key_value_by_name(
                 "ELEVENLABS_API_KEY")) {
@@ -234,55 +225,6 @@ int32_t cha_runtime_can_modify(const ChaRuntime* runtime) {
 int32_t cha_runtime_can_transfer_r2(const ChaRuntime* runtime) {
     return runtime && runtime->application
         && runtime->application->has_r2_storage() ? 1 : 0;
-}
-
-const char* cha_runtime_voice_input_url(const ChaRuntime* runtime) {
-    return runtime && runtime->voice_input
-        ? runtime->voice_input->url.c_str() : nullptr;
-}
-
-const char* cha_runtime_voice_input_api_key(const ChaRuntime* runtime) {
-    return runtime && runtime->voice_input
-        ? runtime->voice_input_api_key.c_str() : nullptr;
-}
-
-const char* cha_runtime_voice_input_model(const ChaRuntime* runtime) {
-    return runtime && runtime->voice_input
-        ? runtime->voice_input->model.c_str() : nullptr;
-}
-
-int32_t cha_runtime_voice_input_language_count(const ChaRuntime* runtime) {
-    return runtime && runtime->voice_input
-        ? static_cast<int32_t>(runtime->voice_input->languages.size()) : 0;
-}
-
-const char* cha_runtime_voice_input_language(
-    const ChaRuntime* runtime,
-    int32_t index) {
-    if (!runtime || !runtime->voice_input || index < 0
-        || static_cast<std::size_t>(index)
-            >= runtime->voice_input->languages.size()) {
-        return nullptr;
-    }
-    return runtime->voice_input->languages[static_cast<std::size_t>(index)]
-        .c_str();
-}
-
-int32_t cha_runtime_voice_input_keyword_count(const ChaRuntime* runtime) {
-    return runtime && runtime->voice_input
-        ? static_cast<int32_t>(runtime->voice_input->keywords.size()) : 0;
-}
-
-const char* cha_runtime_voice_input_keyword(
-    const ChaRuntime* runtime,
-    int32_t index) {
-    if (!runtime || !runtime->voice_input || index < 0
-        || static_cast<std::size_t>(index)
-            >= runtime->voice_input->keywords.size()) {
-        return nullptr;
-    }
-    return runtime->voice_input->keywords[static_cast<std::size_t>(index)]
-        .c_str();
 }
 
 const char* cha_runtime_text_to_speech_api_key(const ChaRuntime* runtime) {

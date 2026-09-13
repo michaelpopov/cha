@@ -263,6 +263,9 @@ export function fixtureClient(overrides: Partial<ChaClient> = {}): ChaClient {
     createVoice: async () => { throw new Error('No voice fixture'); },
     updateVoice: async () => { throw new Error('No voice fixture'); },
     deleteVoice: async () => undefined,
+    getVoiceInputSettings: async () => null,
+    saveVoiceInputSettings: async (settings) => settings,
+    getVoiceInputRuntime: async () => null,
     listApiKeys: async () => [],
     createApiKey: async ({ display_name }) => ({
       id: 'api_key_1', display_name, has_value: true, used_by: [],

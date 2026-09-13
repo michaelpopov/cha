@@ -14,6 +14,7 @@ import {
 
 import {
   publicErrorMessage,
+  type ChaClient,
   type CharacterAppearance,
   type CommandResult,
   type SessionSnapshot,
@@ -29,8 +30,8 @@ import {
 } from '../textToSpeech';
 import {
   appendTranscription,
-  getVoiceInputConfiguration,
   VoiceInputSession,
+  type VoiceInputConfiguration,
 } from '../voiceInput';
 import { ConfirmDialog } from './ConfirmDialog';
 import {
@@ -60,6 +61,7 @@ export interface ChatActions {
 }
 
 interface ChatScreenProps extends ChatActions {
+  client: ChaClient;
   state: AppState;
   dispatch: Dispatch<AppAction>;
 }
@@ -264,6 +266,7 @@ function endedMessage(snapshot: SessionSnapshot): string {
 }
 
 export function ChatScreen({
+  client,
   state,
   dispatch,
   onRetryStream,
@@ -292,6 +295,8 @@ export function ChatScreen({
   const [voiceInputState, setVoiceInputState] = useState<
     'idle' | 'starting' | 'recording' | 'finishing'
   >('idle');
+  const [voiceConfiguration, setVoiceConfiguration] =
+    useState<VoiceInputConfiguration | null>(null);
   const voiceInputSession = useRef<VoiceInputSession | null>(null);
   const voiceInputAttempt = useRef(0);
   const transcriptEnd = useRef<HTMLDivElement | null>(null);
@@ -331,7 +336,6 @@ export function ChatScreen({
   const connected = state.streamStatus === 'connected' && snapshot !== null && !ended;
   const generationActive = generation?.active === true;
   const sessionAvailable = snapshot !== null && !ended;
-  const voiceConfiguration = getVoiceInputConfiguration();
   const voiceInputAvailable = voiceConfiguration !== null && VoiceInputSession.supported();
   const textToSpeechConfiguration = getTextToSpeechConfiguration();
   const voiceInputActive = voiceInputState !== 'idle';
@@ -368,6 +372,24 @@ export function ChatScreen({
   const boundaryEntryId = coveredEntries.length > 0
     ? coveredEntries[coveredEntries.length - 1].entry.id
     : null;
+
+  useEffect(() => {
+    let current = true;
+    void client.getVoiceInputRuntime().then(
+      (configuration) => {
+        if (!current) return;
+        setVoiceConfiguration(configuration && {
+          url: configuration.url,
+          model: configuration.model,
+          apiKey: configuration.api_key,
+          delay: configuration.delay,
+          prompt: configuration.prompt,
+        });
+      },
+      () => { if (current) setVoiceConfiguration(null); },
+    );
+    return () => { current = false; };
+  }, [client]);
 
   // A different conversation starts at its own end rather than inheriting where
   // the reader had left the previous one.

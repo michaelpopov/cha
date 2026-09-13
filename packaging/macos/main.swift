@@ -332,9 +332,6 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
     private func showApplication() {
         guard webView == nil, let runtimeURL else { return }
         let configuration = WKWebViewConfiguration()
-        if let script = voiceInputConfigurationScript() {
-            configuration.userContentController.addUserScript(script)
-        }
         if let script = textToSpeechConfigurationScript() {
             configuration.userContentController.addUserScript(script)
         }
@@ -367,43 +364,6 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
         view.configuration.websiteDataStore.httpCookieStore.setCookie(cookie) {
             view.load(URLRequest(url: runtimeURL))
         }
-    }
-
-    private func voiceInputConfigurationScript() -> WKUserScript? {
-        guard let runtime,
-              let url = cha_runtime_voice_input_url(runtime),
-              let apiKey = cha_runtime_voice_input_api_key(runtime),
-              let model = cha_runtime_voice_input_model(runtime) else {
-            return nil
-        }
-        var languages: [String] = []
-        for index in 0..<Int(cha_runtime_voice_input_language_count(runtime)) {
-            if let language = cha_runtime_voice_input_language(runtime, Int32(index)) {
-                languages.append(String(cString: language))
-            }
-        }
-        var keywords: [String] = []
-        for index in 0..<Int(cha_runtime_voice_input_keyword_count(runtime)) {
-            if let keyword = cha_runtime_voice_input_keyword(runtime, Int32(index)) {
-                keywords.append(String(cString: keyword))
-            }
-        }
-        let configuration: [String: Any] = [
-            "url": String(cString: url),
-            "apiKey": String(cString: apiKey),
-            "model": String(cString: model),
-            "languages": languages,
-            "keywords": keywords,
-        ]
-        guard JSONSerialization.isValidJSONObject(configuration),
-              let data = try? JSONSerialization.data(withJSONObject: configuration),
-              let json = String(data: data, encoding: .utf8) else {
-            return nil
-        }
-        return WKUserScript(
-            source: "Object.defineProperty(window, 'chaVoiceInput', { value: \(json) });",
-            injectionTime: .atDocumentStart,
-            forMainFrameOnly: true)
     }
 
     private func textToSpeechConfigurationScript() -> WKUserScript? {

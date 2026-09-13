@@ -57,6 +57,7 @@ const settingsViews: MainView[] = [
   'settings-new-style',
   'settings-style',
   'settings-voices',
+  'settings-voice-input',
   'settings-new-voice',
   'settings-voice',
   'settings-api-keys',

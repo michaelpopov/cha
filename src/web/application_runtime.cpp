@@ -997,11 +997,16 @@ int ApplicationRuntime::start(int port_override) {
             });
     }
 
+    const bool native_runtime = !impl_->access_token.empty();
     const AssetHandler assets(
         impl_->command.root / "web",
-        !impl_->access_token.empty() && impl_->command.voice_input
-            ? std::optional<std::string>(impl_->command.voice_input->url)
-            : std::nullopt,
+        [native_runtime]() -> std::optional<std::string> {
+            if (!native_runtime) return std::nullopt;
+            const auto workspace = getws();
+            return workspace->voice_input()
+                ? std::optional<std::string>(workspace->voice_input()->url)
+                : std::nullopt;
+        },
         impl_->command.native_connect_urls);
     assets.install(*server);
     const InitialSelection initial{
@@ -1223,9 +1228,7 @@ int ApplicationRuntime::start(int port_override) {
         *impl_->store,
         *impl_->api_keys,
         *impl_->openai_auth,
-        impl_->command.voice_input
-            ? impl_->command.voice_input->api_key_id
-            : std::string{}).install(*server);
+        !impl_->access_token.empty()).install(*server);
     SessionRoutes(
         *impl_->live_sessions, impl_->settings, assets).install(*server);
     log_startup(impl_->settings);

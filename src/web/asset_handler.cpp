@@ -53,7 +53,9 @@ std::string make_content_security_policy(
     const std::optional<std::string>& connect_url,
     const std::vector<std::string>& additional_connect_urls) {
     std::string policy(content_security_policy_before_connect);
-    if (connect_url) policy += " " + connection_origin(*connect_url);
+    if (connect_url) {
+        policy += " " + connection_origin(*connect_url);
+    }
     for (const std::string& url : additional_connect_urls) {
         policy += " " + connection_origin(url);
     }
@@ -126,9 +128,18 @@ AssetHandler::AssetHandler(
     std::filesystem::path web_root,
     std::optional<std::string> connect_url,
     std::vector<std::string> additional_connect_urls)
+    : AssetHandler(
+          std::move(web_root),
+          [connect_url = std::move(connect_url)] { return connect_url; },
+          std::move(additional_connect_urls)) {}
+
+AssetHandler::AssetHandler(
+    std::filesystem::path web_root,
+    ConnectUrlProvider connect_url,
+    std::vector<std::string> additional_connect_urls)
     : web_root_(std::filesystem::weakly_canonical(std::move(web_root))),
-      content_security_policy_(make_content_security_policy(
-          connect_url, additional_connect_urls)) {
+      connect_url_(std::move(connect_url)),
+      additional_connect_urls_(std::move(additional_connect_urls)) {
     const std::filesystem::path index = web_root_ / "index.html";
     if (!std::filesystem::is_regular_file(index)) {
         throw std::runtime_error(
@@ -141,15 +152,23 @@ AssetHandler::AssetHandler(
             "Failed to read browser application shell '" + utf8_path(index) + "'.");
     }
     shell_ = *shell;
+    (void)content_security_policy();
 }
 
 void AssetHandler::install(httplib::Server& server) const {
     const std::string shell = shell_;
-    const std::string content_security_policy = content_security_policy_;
-    server.Get("/", [shell, content_security_policy](
+    const ConnectUrlProvider connect_url = connect_url_;
+    const std::vector<std::string> additional_connect_urls =
+        additional_connect_urls_;
+    server.Get("/", [shell, connect_url, additional_connect_urls](
                         const httplib::Request&,
                         httplib::Response& response) {
-        write_shell(response, shell, content_security_policy);
+        write_shell(
+            response,
+            shell,
+            make_content_security_policy(
+                connect_url ? connect_url() : std::nullopt,
+                additional_connect_urls));
     });
     const std::filesystem::path web_root = web_root_;
     server.Get(
@@ -177,7 +196,13 @@ void AssetHandler::install(httplib::Server& server) const {
 }
 
 void AssetHandler::set_shell(httplib::Response& response) const {
-    write_shell(response, shell_, content_security_policy_);
+    write_shell(response, shell_, content_security_policy());
+}
+
+std::string AssetHandler::content_security_policy() const {
+    return make_content_security_policy(
+        connect_url_ ? connect_url_() : std::nullopt,
+        additional_connect_urls_);
 }
 
 } // namespace cha::web

@@ -32,19 +32,6 @@ void cha_runtime_destroy(ChaRuntime* runtime);
 int32_t cha_runtime_port(const ChaRuntime* runtime);
 int32_t cha_runtime_can_modify(const ChaRuntime* runtime);
 int32_t cha_runtime_can_transfer_r2(const ChaRuntime* runtime);
-// These pointers remain valid until cha_runtime_destroy(). They return null
-// when voice input is not configured.
-const char* cha_runtime_voice_input_url(const ChaRuntime* runtime);
-const char* cha_runtime_voice_input_api_key(const ChaRuntime* runtime);
-const char* cha_runtime_voice_input_model(const ChaRuntime* runtime);
-int32_t cha_runtime_voice_input_language_count(const ChaRuntime* runtime);
-const char* cha_runtime_voice_input_language(
-    const ChaRuntime* runtime,
-    int32_t index);
-int32_t cha_runtime_voice_input_keyword_count(const ChaRuntime* runtime);
-const char* cha_runtime_voice_input_keyword(
-    const ChaRuntime* runtime,
-    int32_t index);
 // Returns null unless the active vault contains one model key named
 // ELEVENLABS_API_KEY. This credential is consumed only by the macOS shell.
 const char* cha_runtime_text_to_speech_api_key(const ChaRuntime* runtime);

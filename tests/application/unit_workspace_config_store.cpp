@@ -1031,6 +1031,35 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, PersistsTheVoiceLifecycle) {
     EXPECT_EQ(getws()->find_voice("voice_1"), nullptr);
 }
 
+TEST_F(RuntimeWorkspaceConfigStoreTest, PersistsVoiceInputSettings) {
+    const auto store = open_store();
+    store->apply_voice_input_update({
+        .url = "https://example.com/realtime",
+        .model = "transcribe-model",
+        .api_key_id = "api_key_7",
+        .delay = "xhigh",
+        .prompt = "Technical names and architecture terms.",
+    });
+
+    ASSERT_TRUE(getws()->voice_input());
+    EXPECT_EQ(getws()->voice_input()->url, "https://example.com/realtime");
+    EXPECT_EQ(getws()->voice_input()->model, "transcribe-model");
+    EXPECT_EQ(getws()->voice_input()->api_key_id, "api_key_7");
+    EXPECT_EQ(getws()->voice_input()->delay, "xhigh");
+    EXPECT_EQ(
+        getws()->voice_input()->prompt,
+        "Technical names and architecture terms.");
+    const std::string stored = stored_config(
+        database(), "system/voice-input/config.toml");
+    EXPECT_NE(stored.find("https://example.com/realtime"), std::string::npos);
+    EXPECT_NE(stored.find("transcribe-model"), std::string::npos);
+    EXPECT_NE(stored.find("api_key_7"), std::string::npos);
+    EXPECT_NE(stored.find("xhigh"), std::string::npos);
+    EXPECT_NE(
+        stored.find("Technical names and architecture terms."),
+        std::string::npos);
+}
+
 TEST_F(RuntimeWorkspaceConfigStoreTest, SerializesTwoEditsAndEditReadInteraction) {
     const auto store = open_store();
     const std::filesystem::path workspace_root = store->workspace_path();

@@ -2,12 +2,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   appendTranscription,
-  getVoiceInputConfiguration,
   VoiceInputSession,
 } from './voiceInput';
 
 afterEach(() => {
-  delete window.chaVoiceInput;
   Reflect.deleteProperty(navigator, 'mediaDevices');
   vi.useRealTimers();
   vi.unstubAllGlobals();
@@ -15,22 +13,6 @@ afterEach(() => {
 });
 
 describe('voice input', () => {
-  it('reads only a complete native configuration', () => {
-    expect(getVoiceInputConfiguration()).toBeNull();
-    window.chaVoiceInput = {
-      url: 'https://api.openai.com/v1/realtime/calls',
-      apiKey: 'secret',
-      model: 'gpt-live-transcribe',
-      languages: ['ru', 'en'],
-      keywords: ['запятая', 'comma'],
-    };
-    expect(getVoiceInputConfiguration()).toEqual(window.chaVoiceInput);
-    window.chaVoiceInput = {
-      url: '', apiKey: 'secret', model: 'gpt-live-transcribe',
-    };
-    expect(getVoiceInputConfiguration()).toBeNull();
-  });
-
   it('joins blocks without damaging punctuation or existing whitespace', () => {
     expect(appendTranscription('', '  Hello  ')).toBe('Hello');
     expect(appendTranscription('Hello', 'world.')).toBe('Hello world.');
@@ -105,8 +87,9 @@ describe('voice input', () => {
         url: 'https://api.openai.com/v1/realtime/calls',
         apiKey: 'secret',
         model: 'gpt-live-transcribe',
+        delay: 'xhigh',
+        prompt: 'A discussion about software architecture.',
         languages: ['ru', 'en'],
-        keywords: ['восклицательный знак', 'exclamation sign'],
       },
       (text) => received.push(text),
       () => {},
@@ -124,9 +107,9 @@ describe('voice input', () => {
         input: {
           transcription: {
             model: 'gpt-live-transcribe',
+            prompt: 'A discussion about software architecture.',
             languages: ['ru', 'en'],
-            keywords: ['восклицательный знак', 'exclamation sign'],
-            delay: 'low',
+            delay: 'xhigh',
           },
           turn_detection: null,
         },

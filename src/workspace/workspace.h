@@ -55,6 +55,14 @@ struct WorkspaceVoice {
     ElevenLabsVoiceSettings settings;
 };
 
+struct WorkspaceVoiceInput {
+    std::string url;
+    std::string model;
+    std::string api_key_id;
+    std::string delay{"low"};
+    std::string prompt;
+};
+
 using WorkspacePersona = Persona;
 
 // A user-defined or built-in character. Forum-specific overrides and prompt
@@ -117,6 +125,10 @@ public:
     }
     [[nodiscard]] std::span<const WorkspaceVoice> voices() const noexcept {
         return voices_;
+    }
+    [[nodiscard]] const std::optional<WorkspaceVoiceInput>& voice_input()
+        const noexcept {
+        return voice_input_;
     }
     [[nodiscard]] std::span<const SavedApiKey> api_keys() const noexcept {
         return api_keys_;
@@ -207,6 +219,7 @@ public:
         std::string_view description,
         std::string_view elevenlabs_voice_id) const;
     void delete_voice(std::string_view voice_id) const;
+    void write_voice_input(const WorkspaceVoiceInput& settings) const;
     void create_api_key(
         std::string_view id,
         std::string_view display_name,
@@ -269,6 +282,7 @@ private:
     std::vector<WorkspaceProvider> providers_;
     std::vector<WorkspaceStyle> styles_;
     std::vector<WorkspaceVoice> voices_;
+    std::optional<WorkspaceVoiceInput> voice_input_;
     std::vector<SavedApiKey> api_keys_;
     std::optional<R2StorageKey> r2_storage_;
     std::uint64_t next_api_key_id_{1};

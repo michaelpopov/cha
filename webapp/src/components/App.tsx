@@ -73,6 +73,7 @@ import {
   StyleScreen,
   StylesScreen,
   VoiceScreen,
+  VoiceInputScreen,
   VoicesScreen,
   VaultScreen,
   VaultsScreen,
@@ -133,6 +134,7 @@ function Screen({
   switch (state.mainView) {
     case 'chat': return (
       <ChatScreen
+        client={client}
         dispatch={dispatch}
         onCoverConversation={onCoverConversation}
         onDeleteTurn={onDeleteTurn}
@@ -291,6 +293,9 @@ function Screen({
     );
     case 'settings-voices': return (
       <VoicesScreen client={client} dispatch={dispatch} sessionReport={sessionReport} state={state} />
+    );
+    case 'settings-voice-input': return (
+      <VoiceInputScreen client={client} dispatch={dispatch} sessionReport={sessionReport} state={state} />
     );
     case 'settings-new-voice': return (
       <NewVoiceScreen client={client} dispatch={dispatch} sessionReport={sessionReport} state={state} />

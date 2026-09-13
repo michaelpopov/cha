@@ -16,7 +16,6 @@ import { formatEntryTime } from './ChatScreen';
 
 afterEach(() => {
   clearTextToSpeechCache();
-  delete window.chaVoiceInput;
   delete window.chaTextToSpeech;
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -693,11 +692,6 @@ describe('live chat', () => {
   });
 
   it('appends realtime voice deltas and waits for the final transcript before sending', async () => {
-    window.chaVoiceInput = {
-      url: 'https://api.openai.com/v1/realtime/calls',
-      apiKey: 'secret',
-      model: 'gpt-live-transcribe',
-    };
     vi.spyOn(VoiceInputSession, 'supported').mockReturnValue(true);
     let appendVoice = (_text: string) => {};
     let finishRecording = () => {};
@@ -716,7 +710,16 @@ describe('live chat', () => {
     const submitInput = vi.fn(async () => ({ clear_input: true }));
     render(
       <App
-        client={fixtureClient({ submitInput })}
+        client={fixtureClient({
+          submitInput,
+          getVoiceInputRuntime: async () => ({
+            url: 'https://api.openai.com/v1/realtime/calls',
+            api_key: 'secret',
+            model: 'gpt-live-transcribe',
+            delay: 'high',
+            prompt: 'Software design discussion.',
+          }),
+        })}
         connectSessionEvents={events.connect}
       />,
     );
@@ -726,6 +729,10 @@ describe('live chat', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Start voice input' }));
     await screen.findByRole('button', { name: 'Stop voice input' });
     expect(startVoiceInput.mock.calls[0]?.[0].languages).toEqual(['en']);
+    expect(startVoiceInput.mock.calls[0]?.[0]).toMatchObject({
+      delay: 'high',
+      prompt: 'Software design discussion.',
+    });
     fireEvent.change(input, { target: { value: 'Typed' } });
     act(() => {
       appendVoice('spoken');
@@ -745,11 +752,6 @@ describe('live chat', () => {
   });
 
   it('uses Russian voice input when composer transliteration is enabled', async () => {
-    window.chaVoiceInput = {
-      url: 'https://api.openai.com/v1/realtime/calls',
-      apiKey: 'secret',
-      model: 'gpt-live-transcribe',
-    };
     vi.spyOn(VoiceInputSession, 'supported').mockReturnValue(true);
     const voiceSession = {
       stop: vi.fn(async () => {}),
@@ -758,7 +760,15 @@ describe('live chat', () => {
     const startVoiceInput = vi.spyOn(VoiceInputSession, 'start')
       .mockResolvedValue(voiceSession);
     const events = drivableEvents();
-    render(<App client={fixtureClient()} connectSessionEvents={events.connect} />);
+    render(<App client={fixtureClient({
+      getVoiceInputRuntime: async () => ({
+        url: 'https://api.openai.com/v1/realtime/calls',
+        api_key: 'secret',
+        model: 'gpt-live-transcribe',
+        delay: 'xhigh',
+        prompt: 'Russian technical discussion.',
+      }),
+    })} connectSessionEvents={events.connect} />);
     await attachInitial(events);
 
     const toggle = screen.getByRole('button', { name: 'Latin to Russian transliteration' });

@@ -363,6 +363,38 @@ describe('CHA API client', () => {
     expect(fetcher.mock.calls[3][1]?.method).toBe('DELETE');
   });
 
+  it('gets and saves voice input settings and resolves native runtime settings', async () => {
+    const settings = {
+      url: 'https://api.openai.com/v1/realtime/calls',
+      model: 'gpt-live-transcribe',
+      api_key: 'api_key_1',
+      delay: 'high' as const,
+      prompt: 'Technical discussion.',
+    };
+    const fetcher = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
+      async (input, init) => jsonResponse(
+        String(input).endsWith('/runtime')
+          ? { ...settings, api_key: 'secret' }
+          : settings,
+      ),
+    );
+    const client = createChaClient(fetcher);
+
+    await expect(client.getVoiceInputSettings()).resolves.toEqual(settings);
+    await expect(client.saveVoiceInputSettings(settings)).resolves.toEqual(settings);
+    await expect(client.getVoiceInputRuntime()).resolves.toEqual({
+      ...settings,
+      api_key: 'secret',
+    });
+    expect(fetcher.mock.calls.map(([url]) => url)).toEqual([
+      '/api/v1/voice-input',
+      '/api/v1/voice-input',
+      '/api/v1/voice-input/runtime',
+    ]);
+    expect(fetcher.mock.calls[1][1]?.method).toBe('PUT');
+    expect(fetcher.mock.calls[1][1]?.body).toBe(JSON.stringify(settings));
+  });
+
   it('turns the error envelope into one ChaError shape', async () => {
     const fetcher = vi.fn<(
       input: RequestInfo | URL,

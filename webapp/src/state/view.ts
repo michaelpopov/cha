@@ -35,6 +35,7 @@ export type MainView =
   | 'settings-new-style'
   | 'settings-style'
   | 'settings-voices'
+  | 'settings-voice-input'
   | 'settings-new-voice'
   | 'settings-voice'
   | 'settings-api-keys'
@@ -179,6 +180,7 @@ export type AppAction =
   | { type: 'style-detail-loaded'; styleId: string; styleName: string; writable: boolean }
   | { type: 'style-updated'; styleId: string; styleName: string; writable: boolean }
   | { type: 'show-settings-voices' }
+  | { type: 'show-settings-voice-input' }
   | { type: 'show-settings-new-voice' }
   | { type: 'inspect-voice'; voiceId: string; voiceName: string }
   | { type: 'voice-detail-loaded'; voiceId: string; voiceName: string; writable: boolean }
@@ -705,6 +707,12 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         voiceEditingAvailable: false,
         ...idleSessionOperation(),
       };
+    case 'show-settings-voice-input':
+      return {
+        ...state,
+        mainView: 'settings-voice-input',
+        ...idleSessionOperation(),
+      };
     case 'show-settings-new-voice':
       return { ...state, mainView: 'settings-new-voice', ...idleSessionOperation() };
     case 'inspect-voice':
@@ -858,6 +866,7 @@ export function navigationTitle(state: AppState): string | null {
     case 'settings-new-style': return 'New style';
     case 'settings-style': return state.inspectedStyleName ?? 'Style';
     case 'settings-voices': return 'Voices';
+    case 'settings-voice-input': return 'Voice input';
     case 'settings-new-voice': return 'New voice';
     case 'settings-voice': return state.inspectedVoiceName ?? 'Voice';
     case 'settings-api-keys': return 'API Keys';

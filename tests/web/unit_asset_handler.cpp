@@ -7,6 +7,7 @@
 #include <httplib.h>
 #include <nlohmann/json.hpp>
 
+#include <atomic>
 #include <filesystem>
 #include <fstream>
 #include <stdexcept>
@@ -22,6 +23,21 @@ public:
     explicit AssetServer(
         const std::filesystem::path& web_root,
         std::optional<std::string> connect_url = std::nullopt,
+        std::vector<std::string> additional_connect_urls = {}) {
+        AssetHandler(
+            web_root,
+            std::move(connect_url),
+            std::move(additional_connect_urls)).install(server_);
+        port_ = server_.bind_to_any_port("127.0.0.1");
+        if (port_ <= 0) throw std::runtime_error("Could not bind asset test server");
+        configure_http_server(server_, {});
+        listener_ = std::thread([this] { server_.listen_after_bind(); });
+        server_.wait_until_ready();
+    }
+
+    AssetServer(
+        const std::filesystem::path& web_root,
+        AssetHandler::ConnectUrlProvider connect_url,
         std::vector<std::string> additional_connect_urls = {}) {
         AssetHandler(
             web_root,
@@ -105,6 +121,37 @@ TEST(AssetHandler, AllowsTheConfiguredConnectionOrigin) {
         "img-src 'self' data:; font-src 'self'; media-src blob:; "
         "connect-src 'self' https://api.openai.com; "
         "base-uri 'none'; form-action 'none'; frame-ancestors 'none'");
+}
+
+TEST(AssetHandler, ReadsTheConnectionOriginForEachShellResponse) {
+    test::TestWorkspace fixture;
+    std::atomic_bool use_second_origin{false};
+    AssetServer server(
+        fixture.root() / "web",
+        AssetHandler::ConnectUrlProvider([&]() -> std::optional<std::string> {
+            return use_second_origin.load()
+                ? "https://second.example/realtime"
+                : "https://first.example/realtime";
+        }));
+
+    const auto first = server.client().Get("/");
+    ASSERT_TRUE(first);
+    EXPECT_NE(
+        first->get_header_value("Content-Security-Policy").find(
+            "connect-src 'self' https://first.example;"),
+        std::string::npos);
+
+    use_second_origin.store(true);
+    const auto second = server.client().Get("/");
+    ASSERT_TRUE(second);
+    EXPECT_NE(
+        second->get_header_value("Content-Security-Policy").find(
+            "connect-src 'self' https://second.example;"),
+        std::string::npos);
+    EXPECT_EQ(
+        second->get_header_value("Content-Security-Policy").find(
+            "https://first.example"),
+        std::string::npos);
 }
 
 TEST(AssetHandler, AllowsNativeShellConnectionOrigins) {

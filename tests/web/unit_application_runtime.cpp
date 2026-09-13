@@ -256,10 +256,14 @@ TEST(ApplicationRuntime, ReportsVoiceInputApiKeyUsage) {
         auto config = WorkspaceConfigStore::open(database);
         ApiKeyStore key_store(*config);
         key = key_store.create("OpenAI", "voice-secret");
+        config->apply_voice_input_update({
+            .url = "https://api.openai.com/v1/realtime/calls",
+            .model = "gpt-live-transcribe",
+            .api_key_id = key.id,
+            .delay = "medium",
+            .prompt = "Technical discussion.",
+        });
     }
-    command.voice_input = VoiceInputConfig{
-        .api_key_id = key.id,
-    };
 
     auto runtime = ApplicationRuntime::open(command, "private-test-token");
     const int port = runtime->start();
@@ -274,12 +278,58 @@ TEST(ApplicationRuntime, ReportsVoiceInputApiKeyUsage) {
         keys.front().at("used_by"),
         nlohmann::json::array({"Voice input"}));
 
+    const auto settings = client.Get("/api/v1/voice-input", kRuntimeCookie);
+    ASSERT_TRUE(settings);
+    ASSERT_EQ(settings->status, 200) << settings->body;
+    EXPECT_EQ(
+        nlohmann::json::parse(settings->body),
+        nlohmann::json({
+            {"url", "https://api.openai.com/v1/realtime/calls"},
+            {"model", "gpt-live-transcribe"},
+            {"api_key", key.id},
+            {"delay", "medium"},
+            {"prompt", "Technical discussion."},
+        }));
+
+    const auto resolved = client.Get(
+        "/api/v1/voice-input/runtime", kRuntimeCookie);
+    ASSERT_TRUE(resolved);
+    ASSERT_EQ(resolved->status, 200) << resolved->body;
+    EXPECT_EQ(
+        nlohmann::json::parse(resolved->body).at("api_key"),
+        "voice-secret");
+
+    const auto invalid = client.Put(
+        "/api/v1/voice-input",
+        kRuntimeCookie,
+        R"({"url":"not-a-url","model":"next-model","api_key":"api_key_1","delay":"high","prompt":"Test"})",
+        "application/json");
+    ASSERT_TRUE(invalid);
+    EXPECT_EQ(invalid->status, 400) << invalid->body;
+    ASSERT_TRUE(getws()->voice_input());
+    EXPECT_EQ(
+        getws()->voice_input()->url,
+        "https://api.openai.com/v1/realtime/calls");
+
+    const auto updated = client.Put(
+        "/api/v1/voice-input",
+        kRuntimeCookie,
+        R"({"url":"https://example.com/realtime","model":"next-model","api_key":"api_key_1","delay":"xhigh","prompt":"Names and terms."})",
+        "application/json");
+    ASSERT_TRUE(updated);
+    ASSERT_EQ(updated->status, 200) << updated->body;
+    ASSERT_TRUE(getws()->voice_input());
+    EXPECT_EQ(getws()->voice_input()->url, "https://example.com/realtime");
+    EXPECT_EQ(getws()->voice_input()->model, "next-model");
+    EXPECT_EQ(getws()->voice_input()->delay, "xhigh");
+    EXPECT_EQ(getws()->voice_input()->prompt, "Names and terms.");
+
     const auto shell = client.Get("/", kRuntimeCookie);
     ASSERT_TRUE(shell);
     ASSERT_EQ(shell->status, 200);
     EXPECT_NE(
         shell->get_header_value("Content-Security-Policy").find(
-            "connect-src 'self' https://api.openai.com;"),
+            "connect-src 'self' https://example.com;"),
         std::string::npos);
 
     runtime->shutdown();

@@ -40,6 +40,8 @@ export type StyleUpdate = components['schemas']['StyleUpdate'];
 export type VoiceDetail = components['schemas']['VoiceDetail'];
 export type CreateVoiceRequest = components['schemas']['CreateVoiceRequest'];
 export type VoiceUpdate = components['schemas']['VoiceUpdate'];
+export type VoiceInputSettings = components['schemas']['VoiceInputSettings'];
+export type VoiceInputRuntime = components['schemas']['VoiceInputRuntime'];
 export type ApiKeyDetail = components['schemas']['ApiKeyDetail'];
 export type CreateApiKeyRequest = components['schemas']['CreateApiKeyRequest'];
 export type R2StorageDetail = components['schemas']['R2StorageDetail'];
@@ -179,6 +181,9 @@ export interface ChaClient {
   createVoice(request: CreateVoiceRequest): Promise<VoiceDetail>;
   updateVoice(voiceId: string, update: VoiceUpdate): Promise<VoiceDetail>;
   deleteVoice(voiceId: string): Promise<void>;
+  getVoiceInputSettings(): Promise<VoiceInputSettings | null>;
+  saveVoiceInputSettings(settings: VoiceInputSettings): Promise<VoiceInputSettings>;
+  getVoiceInputRuntime(): Promise<VoiceInputRuntime | null>;
   listApiKeys(): Promise<ApiKeyDetail[]>;
   createApiKey(request: CreateApiKeyRequest): Promise<ApiKeyDetail>;
   renameApiKey(apiKeyId: string, displayName: string): Promise<ApiKeyDetail>;
@@ -362,6 +367,20 @@ function isApiKeyDetail(value: unknown): value is ApiKeyDetail {
     && typeof value.has_value === 'boolean'
     && Array.isArray(value.used_by)
     && value.used_by.every((name) => typeof name === 'string');
+}
+
+function isVoiceInputSettings(value: unknown): value is VoiceInputSettings {
+  return isRecord(value)
+    && typeof value.url === 'string' && value.url.length > 0
+    && typeof value.model === 'string' && value.model.length > 0
+    && typeof value.api_key === 'string' && value.api_key.length > 0
+    && (value.delay === 'low' || value.delay === 'medium'
+      || value.delay === 'high' || value.delay === 'xhigh')
+    && typeof value.prompt === 'string';
+}
+
+function isVoiceInputRuntime(value: unknown): value is VoiceInputRuntime {
+  return isVoiceInputSettings(value);
 }
 
 function isR2StorageDetail(value: unknown): value is R2StorageDetail {
@@ -852,6 +871,29 @@ export function createChaClient(
       fetcher,
       `/api/v1/voices/${component(voiceId)}`,
       jsonMutation({}, 'DELETE'),
+    ),
+
+    getVoiceInputSettings: () => requestValidated(
+      fetcher,
+      '/api/v1/voice-input',
+      (value): value is VoiceInputSettings | null => (
+        value === null || isVoiceInputSettings(value)
+      ),
+    ),
+
+    saveVoiceInputSettings: (settings) => requestValidated(
+      fetcher,
+      '/api/v1/voice-input',
+      isVoiceInputSettings,
+      jsonMutation(settings, 'PUT'),
+    ),
+
+    getVoiceInputRuntime: () => requestValidated(
+      fetcher,
+      '/api/v1/voice-input/runtime',
+      (value): value is VoiceInputRuntime | null => (
+        value === null || isVoiceInputRuntime(value)
+      ),
     ),
 
     listApiKeys: () => requestValidated(

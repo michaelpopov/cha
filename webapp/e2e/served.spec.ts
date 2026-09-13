@@ -47,13 +47,16 @@ test('serves hashed assets as immutable', async ({ page }) => {
 });
 
 test('keeps the native composer controls below its full-width text area', async ({ page }) => {
-  await page.addInitScript(() => {
-    Object.defineProperty(window, 'chaVoiceInput', {
-      value: {
+  await page.route('**/api/v1/voice-input/runtime', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
         url: 'https://api.openai.com/v1/realtime/calls',
-        apiKey: 'test-key',
+        api_key: 'test-key',
         model: 'gpt-live-transcribe',
-      },
+        delay: 'low',
+        prompt: '',
+      }),
     });
   });
   await page.goto('/');

@@ -583,6 +583,61 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /api/v1/voice-input:
+    get:
+      tags: [Settings]
+      operationId: getVoiceInputSettings
+      summary: Get voice input settings from the active vault
+      responses:
+        "200":
+          description: Voice input settings, or null when not configured.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/VoiceInputSettings"
+                  - type: "null"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    put:
+      tags: [Settings]
+      operationId: saveVoiceInputSettings
+      summary: Save voice input settings in the active vault
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VoiceInputSettings"
+      responses:
+        "200":
+          description: Saved voice input settings.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VoiceInputSettings"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/voice-input/runtime:
+    get:
+      tags: [Settings]
+      operationId: getVoiceInputRuntime
+      summary: Get resolved native voice input settings
+      responses:
+        "200":
+          description: Resolved settings, or null outside the native application.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/VoiceInputRuntime"
+                  - type: "null"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /api/v1/api-keys:
     get:
       tags: [Settings]
@@ -2639,6 +2694,45 @@ components:
           type: array
           items:
             type: string
+
+    VoiceInputSettings:
+      type: object
+      additionalProperties: false
+      required: [url, model, api_key, delay, prompt]
+      properties:
+        url:
+          type: string
+          minLength: 1
+        model:
+          type: string
+          minLength: 1
+        api_key:
+          $ref: "#/components/schemas/Identifier"
+        delay:
+          type: string
+          enum: [low, medium, high, xhigh]
+        prompt:
+          type: string
+
+    VoiceInputRuntime:
+      type: object
+      additionalProperties: false
+      required: [url, model, api_key, delay, prompt]
+      properties:
+        url:
+          type: string
+          minLength: 1
+        model:
+          type: string
+          minLength: 1
+        api_key:
+          type: string
+          minLength: 1
+        delay:
+          type: string
+          enum: [low, medium, high, xhigh]
+        prompt:
+          type: string
 
     ApiKeyDetail:
       type: object

@@ -775,6 +775,54 @@ TEST(Workspace, LoadwsPublishesOnlyACompleteWorkspace) {
     EXPECT_EQ(getws(), published);
 }
 
+TEST(Workspace, ValidatesVoiceInputBeforeWritingAndIgnoresInvalidSavedConfig) {
+    test::TestWorkspace fixture;
+    const Workspace workspace = Workspace::load(fixture.root());
+    workspace.write_voice_input({
+        .url = "https://api.openai.com/v1/realtime/calls",
+        .model = "gpt-live-transcribe",
+        .api_key_id = "api_key_1",
+        .delay = "high",
+        .prompt = "Technical discussion.",
+    });
+    const std::filesystem::path path =
+        fixture.root() / "system" / "voice-input" / "config.toml";
+    const std::string before = file_bytes(path);
+
+    EXPECT_THROW(
+        workspace.write_voice_input({
+            .url = "not-a-url",
+            .model = "gpt-live-transcribe",
+            .api_key_id = "api_key_1",
+        }),
+        std::invalid_argument);
+    EXPECT_EQ(file_bytes(path), before);
+
+    EXPECT_THROW(
+        workspace.write_voice_input({
+            .url = "https://api.openai.com/v1/realtime/calls",
+            .model = "gpt-live-transcribe",
+            .api_key_id = "api_key_1",
+            .delay = "maximum",
+        }),
+        std::invalid_argument);
+    EXPECT_EQ(file_bytes(path), before);
+
+    std::ofstream(path) << "url = \"https://api.openai.com/v1/realtime/calls\"\n"
+                          "model = \"gpt-live-transcribe\"\n"
+                          "api_key = \"api_key_1\"\n";
+    const Workspace legacy = Workspace::load(fixture.root());
+    ASSERT_TRUE(legacy.voice_input());
+    EXPECT_EQ(legacy.voice_input()->delay, "low");
+    EXPECT_TRUE(legacy.voice_input()->prompt.empty());
+
+    std::ofstream(path) << "url = \"not-a-url\"\n"
+                          "model = \"gpt-live-transcribe\"\n"
+                          "api_key = \"api_key_1\"\n";
+    const Workspace reloaded = Workspace::load(fixture.root());
+    EXPECT_FALSE(reloaded.voice_input());
+}
+
 TEST(Workspace, ResolvesForumCharacterHandles) {
     const Workspace workspace = workspace_with_characters({
         {"ada", "Ada"},

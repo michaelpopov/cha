@@ -26,7 +26,7 @@ public:
         WorkspaceConfigStore& config,
         ApiKeyStore& api_keys,
         OpenAiOAuth& openai_auth,
-        std::string voice_input_api_key_id);
+        bool native_voice_input_enabled);
 
     void install(httplib::Server& server) const;
 
@@ -36,7 +36,7 @@ private:
     WorkspaceConfigStore* config_;
     ApiKeyStore* api_keys_;
     OpenAiOAuth* openai_auth_;
-    std::string voice_input_api_key_id_;
+    bool native_voice_input_enabled_{};
 };
 
 } // namespace cha::web

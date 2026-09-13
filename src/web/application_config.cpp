@@ -228,33 +228,6 @@ std::string required_string(
     return *value;
 }
 
-std::vector<std::string> optional_string_array(
-    const toml::table& table,
-    const std::filesystem::path& source,
-    std::string_view name,
-    std::string_view kind) {
-    if (!table.contains(name)) return {};
-    const toml::array* const values = table[name].as_array();
-    if (values == nullptr) {
-        throw std::runtime_error(
-            std::string(kind) + " '" + utf8_path(source)
-            + "' requires an array '" + std::string(name) + "'.");
-    }
-    std::vector<std::string> result;
-    result.reserve(values->size());
-    for (const toml::node& node : *values) {
-        const std::optional<std::string> value = node.value<std::string>();
-        if (!value || value->empty()) {
-            throw std::runtime_error(
-                std::string(kind) + " '" + utf8_path(source)
-                + "' requires non-empty string values in '"
-                + std::string(name) + "'.");
-        }
-        result.push_back(*value);
-    }
-    return result;
-}
-
 std::filesystem::path resolve_config_path(
     const std::filesystem::path& directory,
     const std::filesystem::path& source,
@@ -624,34 +597,6 @@ ConfigurationDirectory load_configuration_directory(
         required_string(logging, app_file, "file", app_kind);
     const std::string log_level =
         required_string(logging, app_file, "level", app_kind);
-    std::optional<VoiceInputConfig> voice_input;
-    if (app.contains("voice_input")) {
-        const toml::table& voice =
-            required_table(app, app_file, "voice_input", app_kind);
-        reject_unknown_fields(
-            voice,
-            app_file,
-            {"url", "api_key", "model", "languages", "keywords"},
-            "[voice_input]",
-            app_kind);
-        VoiceInputConfig configuration{
-            .api_key_id =
-                required_string(voice, app_file, "api_key", app_kind),
-        };
-        if (voice.contains("url")) {
-            configuration.url =
-                required_string(voice, app_file, "url", app_kind);
-        }
-        if (voice.contains("model")) {
-            configuration.model =
-                required_string(voice, app_file, "model", app_kind);
-        }
-        configuration.languages = optional_string_array(
-            voice, app_file, "languages", app_kind);
-        configuration.keywords = optional_string_array(
-            voice, app_file, "keywords", app_kind);
-        voice_input = std::move(configuration);
-    }
     std::string text_to_speech_model(default_text_to_speech_model);
     if (app.contains("text_to_speech")) {
         const toml::table& speech =
@@ -677,8 +622,13 @@ ConfigurationDirectory load_configuration_directory(
     }
     std::sort(vault_files.begin(), vault_files.end());
 
-    std::vector<LoadedVault> loaded;
     std::vector<std::string> warnings;
+    if (app.contains("voice_input")) {
+        warnings.push_back(
+            "Application config '" + utf8_path(app_file)
+            + "' [voice_input] settings are unused and were ignored.");
+    }
+    std::vector<LoadedVault> loaded;
     loaded.reserve(vault_files.size());
     for (const std::filesystem::path& file : vault_files) {
         loaded.push_back(load_vault_definition(root, file, warnings));
@@ -718,7 +668,6 @@ ConfigurationDirectory load_configuration_directory(
             root, app_file, "logging.file", log_file, app_kind),
         .log_level = log_level,
         .warnings = std::move(warnings),
-        .voice_input = std::move(voice_input),
         .text_to_speech_model = std::move(text_to_speech_model),
     };
 }
@@ -816,7 +765,6 @@ ApplicationCommand parse_application_command(
         .log_level = settings.log_level,
         .warnings = settings.warnings,
         .test_idle_grace_ms = options.test_idle_grace_ms,
-        .voice_input = settings.voice_input,
         .text_to_speech_model = settings.text_to_speech_model,
     };
 }

@@ -21,6 +21,7 @@ import {
   VaultScreen,
   VaultsScreen,
   VoiceScreen,
+  VoiceInputScreen,
   VoicesScreen,
 } from './Settings';
 import { TopBar } from './TopBar';
@@ -878,10 +879,11 @@ describe('Settings screens', () => {
   });
 
   it('lists each voice by its name and description only', async () => {
+    const dispatch = vi.fn();
     render(
       <VoicesScreen
         client={fixtureClient({ listVoices: async () => [voiceDetailFixture] })}
-        dispatch={vi.fn()}
+        dispatch={dispatch}
         sessionReport={null}
         state={initialAppState}
       />,
@@ -891,6 +893,58 @@ describe('Settings screens', () => {
     expect(brian).toHaveTextContent('Deep, resonant, comforting');
     expect(brian).not.toHaveTextContent(voiceDetailFixture.elevenlabs_voice_id);
     expect(brian).not.toHaveTextContent('settings');
+    await userEvent.click(screen.getByRole('button', { name: 'Voice input' }));
+    expect(dispatch).toHaveBeenCalledWith({ type: 'show-settings-voice-input' });
+  });
+
+  it('loads and saves vault-backed voice input settings', async () => {
+    const saveVoiceInputSettings = vi.fn(async (settings) => settings);
+    render(
+      <VoiceInputScreen
+        client={fixtureClient({
+          getVoiceInputSettings: async () => ({
+            url: 'https://api.openai.com/v1/realtime/calls',
+            model: 'gpt-live-transcribe',
+            api_key: 'api_key_1',
+            delay: 'medium',
+            prompt: 'Software design discussion.',
+          }),
+          listApiKeys: async () => [{
+            id: 'api_key_1',
+            display_name: 'OpenAI',
+            has_value: true,
+            used_by: ['Voice input'],
+          }],
+          saveVoiceInputSettings,
+        })}
+        dispatch={vi.fn()}
+        sessionReport={null}
+        state={initialAppState}
+      />,
+    );
+
+    expect(await screen.findByLabelText('URL endpoint')).toHaveValue(
+      'https://api.openai.com/v1/realtime/calls',
+    );
+    expect(screen.getByLabelText('API key name')).toHaveDisplayValue('OpenAI');
+    expect(screen.getByLabelText('Delay')).toHaveDisplayValue('Medium');
+    expect(screen.getByLabelText('Prompt')).toHaveValue('Software design discussion.');
+    const model = screen.getByLabelText('Model name');
+    await userEvent.clear(model);
+    await userEvent.type(model, 'next-transcribe-model');
+    await userEvent.selectOptions(screen.getByLabelText('Delay'), 'xhigh');
+    await userEvent.clear(screen.getByLabelText('Prompt'));
+    await userEvent.type(screen.getByLabelText('Prompt'), 'Names and technical terms.');
+    await userEvent.click(screen.getByRole('button', { name: 'Save voice input' }));
+
+    expect(saveVoiceInputSettings).toHaveBeenCalledWith({
+      url: 'https://api.openai.com/v1/realtime/calls',
+      model: 'next-transcribe-model',
+      api_key: 'api_key_1',
+      delay: 'xhigh',
+      prompt: 'Names and technical terms.',
+    });
+    expect(await screen.findByText('Voice input settings saved.')).toBeInTheDocument();
   });
 
   it('registers a voice and opens its editor', async () => {

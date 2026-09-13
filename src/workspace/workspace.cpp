@@ -412,6 +412,55 @@ WorkspaceProvider load_provider(const std::filesystem::path& directory) {
     return provider;
 }
 
+bool valid_voice_input_url(std::string_view url) {
+    const std::size_t authority_start = url.starts_with("https://") ? 8
+        : url.starts_with("http://") ? 7 : 0;
+    if (authority_start == 0) return false;
+    const std::size_t authority_end = url.find_first_of("/?#", authority_start);
+    const std::string_view authority = url.substr(
+        authority_start,
+        authority_end == std::string_view::npos
+            ? std::string_view::npos : authority_end - authority_start);
+    return !authority.empty()
+        && authority.find_first_not_of(
+            "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-:[]")
+            == std::string_view::npos;
+}
+
+bool valid_voice_input_delay(std::string_view delay) {
+    return delay == "low" || delay == "medium" || delay == "high"
+        || delay == "xhigh";
+}
+
+WorkspaceVoiceInput load_voice_input(const std::filesystem::path& path) {
+    const toml::table table = read_toml(path, "voice input config");
+    static constexpr std::string_view fields[]{
+        "url", "model", "api_key", "delay", "prompt"};
+    reject_unknown_fields(table, path, fields, "Voice input config");
+    WorkspaceVoiceInput result{
+        .url = required_string(table, path, "url"),
+        .model = required_string(table, path, "model"),
+        .api_key_id = required_string(table, path, "api_key"),
+        .delay = optional_value<std::string>(
+                     table, path, "delay", "a string")
+                     .value_or("low"),
+        .prompt = optional_value<std::string>(
+                      table, path, "prompt", "a string")
+                      .value_or(""),
+    };
+    if (!valid_voice_input_url(result.url)) {
+        throw std::runtime_error(
+            "Voice input config '" + utf8_path(path)
+            + "' requires an absolute HTTP or HTTPS URL");
+    }
+    if (!valid_voice_input_delay(result.delay)) {
+        throw std::runtime_error(
+            "Voice input config '" + utf8_path(path)
+            + "' has invalid delay");
+    }
+    return result;
+}
+
 void validate_saved_key_text(
     std::string_view value,
     std::size_t maximum,
@@ -1139,6 +1188,18 @@ Workspace Workspace::load(std::filesystem::path root) {
     build_index(
         std::span<const WorkspaceVoice>(workspace.voices_),
         workspace.voice_index_, "Voice");
+
+    const std::filesystem::path voice_input_path =
+        workspace.root_ / "system" / "voice-input" / "config.toml";
+    if (std::filesystem::is_regular_file(voice_input_path)) {
+        try {
+            workspace.voice_input_ = load_voice_input(voice_input_path);
+        } catch (const std::exception& error) {
+            log_warn(
+                "Voice input configuration is ignored: "
+                + std::string(error.what()));
+        }
+    }
 
     const std::filesystem::path personas_directory = workspace.root_ / "personas";
     for (const std::filesystem::path& directory : recursive_definition_directories(
@@ -2019,6 +2080,29 @@ void Workspace::delete_voice(std::string_view voice_id) const {
             "Failed to remove voice '" + std::string(voice_id)
             + "': " + error.message());
     }
+}
+
+void Workspace::write_voice_input(const WorkspaceVoiceInput& settings) const {
+    const std::filesystem::path directory = root_ / "system" / "voice-input";
+    const std::filesystem::path path = directory / "config.toml";
+    if (settings.url.empty() || settings.model.empty()
+        || settings.api_key_id.empty()
+        || !valid_voice_input_url(settings.url)
+        || !valid_voice_input_delay(settings.delay)) {
+        throw std::invalid_argument("Invalid voice input settings");
+    }
+    if (std::filesystem::exists(directory)) {
+        require_directory(directory);
+    } else {
+        create_private_directory(directory);
+    }
+    toml::table table;
+    table.insert("url", settings.url);
+    table.insert("model", settings.model);
+    table.insert("api_key", settings.api_key_id);
+    table.insert("delay", settings.delay);
+    table.insert("prompt", settings.prompt);
+    write_toml_file(path, table);
 }
 
 void Workspace::create_api_key(

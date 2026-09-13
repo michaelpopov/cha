@@ -18,6 +18,7 @@ import {
   type StyleDetail,
   type StyleUpdate,
   type VoiceDetail,
+  type VoiceInputSettings,
   type VoiceUpdate,
   type VaultDetail,
 } from '../api/client';
@@ -1110,7 +1111,17 @@ export function VoicesScreen({ client, dispatch, sessionReport }: SettingsScreen
   }, [client, revision]);
   return (
     <section className="cha-screen cha-navigation" aria-label="Voices settings">
-      <BackToSettings dispatch={dispatch} />
+      <div className="cha-detail-toolbar">
+        <BackToSettings dispatch={dispatch} />
+        <button
+          className="cha-detail-link"
+          onClick={() => dispatch({ type: 'show-settings-voice-input' })}
+          type="button"
+        >
+          <span>Voice input</span>
+          <ChevronRightIcon />
+        </button>
+      </div>
       {sessionReport}
       {voices === null && !error && <p className="cha-state-message" role="status">Loading voices…</p>}
       {error && <LoadFailure message={error} retry={() => setRevision((value) => value + 1)} />}
@@ -1132,6 +1143,102 @@ export function VoicesScreen({ client, dispatch, sessionReport }: SettingsScreen
             />
           ))}
         </div>
+      )}
+    </section>
+  );
+}
+
+const defaultVoiceInput: VoiceInputSettings = {
+  url: 'https://api.openai.com/v1/realtime/calls',
+  model: 'gpt-live-transcribe',
+  api_key: '',
+  delay: 'low',
+  prompt: '',
+};
+
+export function VoiceInputScreen({ client, dispatch, sessionReport }: SettingsScreenProps) {
+  const [saved, setSaved] = useState<VoiceInputSettings | null | undefined>(undefined);
+  const [draft, setDraft] = useState<VoiceInputSettings>(defaultVoiceInput);
+  const [keys, setKeys] = useState<ApiKeyDetail[] | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [revision, setRevision] = useState(0);
+
+  useEffect(() => {
+    let current = true;
+    setSaved(undefined);
+    setKeys(null);
+    setError(null);
+    void Promise.all([client.getVoiceInputSettings(), client.listApiKeys()]).then(
+      ([settings, loadedKeys]) => {
+        if (!current) return;
+        const initial = settings ?? defaultVoiceInput;
+        setSaved(settings);
+        setDraft(initial);
+        setKeys(loadedKeys);
+      },
+      (failure: unknown) => {
+        if (current) setError(publicErrorMessage(
+          failure, 'Voice input settings could not be loaded.',
+        ));
+      },
+    );
+    return () => { current = false; };
+  }, [client, revision]);
+
+  const baseline = saved ?? defaultVoiceInput;
+  const dirty = draft.url !== baseline.url
+    || draft.model !== baseline.model
+    || draft.api_key !== baseline.api_key
+    || draft.delay !== baseline.delay
+    || draft.prompt !== baseline.prompt;
+
+  async function save(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!draft.url.trim() || !draft.model.trim() || !draft.api_key || saving) return;
+    setSaving(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const updated = await client.saveVoiceInputSettings({
+        url: draft.url.trim(),
+        model: draft.model.trim(),
+        api_key: draft.api_key,
+        delay: draft.delay,
+        prompt: draft.prompt,
+      });
+      const endpointOriginChanged = saved == null
+        || new URL(saved.url).origin !== new URL(updated.url).origin;
+      setSaved(updated);
+      setDraft(updated);
+      setMessage('Voice input settings saved.');
+      if (endpointOriginChanged) window.location.reload();
+    } catch (failure: unknown) {
+      setError(publicErrorMessage(failure, 'Voice input settings could not be saved.'));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="cha-screen cha-navigation" aria-label="Voice input settings">
+      <button className="cha-back-row" onClick={() => dispatch({ type: 'show-settings-voices' })} type="button"><ChevronLeftIcon /><span>Voices</span></button>
+      {sessionReport}
+      {saved === undefined && !error && <p className="cha-state-message" role="status">Loading voice input settings…</p>}
+      {error && saved === undefined && <LoadFailure message={error} retry={() => setRevision((value) => value + 1)} />}
+      {saved !== undefined && keys && (
+        <form className="cha-settings-form" onSubmit={(event) => void save(event)}>
+          <label>URL endpoint<input autoFocus className="cha-form-control" onChange={(event) => setDraft({ ...draft, url: event.target.value })} type="url" value={draft.url} /></label>
+          <label>Model name<input className="cha-form-control" onChange={(event) => setDraft({ ...draft, model: event.target.value })} value={draft.model} /></label>
+          <label>API key name<select className="cha-form-control" onChange={(event) => setDraft({ ...draft, api_key: event.target.value })} value={draft.api_key}><option value="">Select an API key</option>{keys.map((key) => <option key={key.id} value={key.id}>{key.display_name}</option>)}</select></label>
+          <label>Delay<select className="cha-form-control" onChange={(event) => setDraft({ ...draft, delay: event.target.value as VoiceInputSettings['delay'] })} value={draft.delay}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="xhigh">Extra high</option></select></label>
+          <label>Prompt<textarea className="cha-form-control" onChange={(event) => setDraft({ ...draft, prompt: event.target.value })} rows={4} value={draft.prompt} /></label>
+          {keys.length === 0 && <p className="cha-error-message" role="alert">Add an API key before configuring voice input.</p>}
+          {message && <p className="cha-state-message" role="status">{message}</p>}
+          {error && <p className="cha-error-message" role="alert">{error}</p>}
+          <div className="cha-settings-form-actions"><button className="cha-button cha-button-ghost" disabled={!dirty || saving} onClick={() => { setDraft(baseline); setMessage(null); }} type="button">Reset</button><button className="cha-button cha-button-primary" disabled={!dirty || !draft.url.trim() || !draft.model.trim() || !draft.api_key || saving} type="submit">{saving ? 'Saving…' : 'Save voice input'}</button></div>
+        </form>
       )}
     </section>
   );

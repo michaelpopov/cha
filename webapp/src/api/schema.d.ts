@@ -299,6 +299,41 @@ export interface paths {
         patch: operations["updateVoice"];
         trace?: never;
     };
+    "/api/v1/voice-input": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get voice input settings from the active vault */
+        get: operations["getVoiceInputSettings"];
+        /** Save voice input settings in the active vault */
+        put: operations["saveVoiceInputSettings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/voice-input/runtime": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get resolved native voice input settings */
+        get: operations["getVoiceInputRuntime"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/api-keys": {
         parameters: {
             query?: never;
@@ -1347,6 +1382,22 @@ export interface components {
             writable: boolean;
             used_by: string[];
         };
+        VoiceInputSettings: {
+            url: string;
+            model: string;
+            api_key: components["schemas"]["Identifier"];
+            /** @enum {string} */
+            delay: "low" | "medium" | "high" | "xhigh";
+            prompt: string;
+        };
+        VoiceInputRuntime: {
+            url: string;
+            model: string;
+            api_key: string;
+            /** @enum {string} */
+            delay: "low" | "medium" | "high" | "xhigh";
+            prompt: string;
+        };
         ApiKeyDetail: {
             id: components["schemas"]["Identifier"];
             display_name: string;
@@ -2341,6 +2392,74 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getVoiceInputSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Voice input settings, or null when not configured. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VoiceInputSettings"] | null;
+                };
+            };
+            500: components["responses"]["InternalError"];
+        };
+    };
+    saveVoiceInputSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VoiceInputSettings"];
+            };
+        };
+        responses: {
+            /** @description Saved voice input settings. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VoiceInputSettings"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getVoiceInputRuntime: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Resolved settings, or null outside the native application. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VoiceInputRuntime"] | null;
+                };
+            };
             500: components["responses"]["InternalError"];
         };
     };

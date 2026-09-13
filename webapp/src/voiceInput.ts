@@ -2,32 +2,9 @@ export interface VoiceInputConfiguration {
   url: string;
   apiKey: string;
   model: string;
+  delay: 'low' | 'medium' | 'high' | 'xhigh';
+  prompt: string;
   languages?: string[];
-  keywords?: string[];
-}
-
-declare global {
-  interface Window {
-    chaVoiceInput?: VoiceInputConfiguration;
-  }
-}
-
-export function getVoiceInputConfiguration(): VoiceInputConfiguration | null {
-  const configuration = window.chaVoiceInput;
-  return configuration
-      && typeof configuration.url === 'string' && configuration.url.length > 0
-      && typeof configuration.apiKey === 'string' && configuration.apiKey.length > 0
-      && typeof configuration.model === 'string' && configuration.model.length > 0
-      && isStringArray(configuration.languages)
-      && isStringArray(configuration.keywords)
-    ? configuration
-    : null;
-}
-
-function isStringArray(value: unknown): value is string[] | undefined {
-  return value === undefined
-    || (Array.isArray(value)
-      && value.every((item) => typeof item === 'string' && item.length > 0));
 }
 
 export function appendTranscription(current: string, transcription: string): string {
@@ -91,9 +68,9 @@ async function connect(
       input: {
         transcription: {
           model: configuration.model,
+          prompt: configuration.prompt,
           languages: configuration.languages,
-          keywords: configuration.keywords,
-          delay: 'low',
+          delay: configuration.delay,
         },
         turn_detection: null,
       },

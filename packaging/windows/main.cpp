@@ -13,8 +13,6 @@
 
 #include <WebView2.h>
 
-#include <nlohmann/json.hpp>
-
 #include <array>
 #include <cstdint>
 #include <filesystem>
@@ -666,7 +664,7 @@ private:
                 result, L"CHA could not secure its private browser session"));
             return S_OK;
         }
-        install_voice_input_and_navigate();
+        navigate_home();
         return S_OK;
     }
 
@@ -777,63 +775,6 @@ private:
         }
         if (FAILED(result = cookie->put_Expires(-1.0))) return result;
         return manager->AddOrUpdateCookie(cookie.Get());
-    }
-
-    std::wstring voice_input_script() const {
-        const char* const url = cha_runtime_voice_input_url(runtime_);
-        const char* const api_key = cha_runtime_voice_input_api_key(runtime_);
-        const char* const model = cha_runtime_voice_input_model(runtime_);
-        if (url == nullptr || api_key == nullptr || model == nullptr) return {};
-
-        nlohmann::json configuration{
-            {"url", url},
-            {"apiKey", api_key},
-            {"model", model},
-            {"languages", nlohmann::json::array()},
-            {"keywords", nlohmann::json::array()},
-        };
-        for (int32_t index = 0;
-             index < cha_runtime_voice_input_language_count(runtime_);
-             ++index) {
-            if (const char* value = cha_runtime_voice_input_language(runtime_, index)) {
-                configuration["languages"].push_back(value);
-            }
-        }
-        for (int32_t index = 0;
-             index < cha_runtime_voice_input_keyword_count(runtime_);
-             ++index) {
-            if (const char* value = cha_runtime_voice_input_keyword(runtime_, index)) {
-                configuration["keywords"].push_back(value);
-            }
-        }
-        return wide_from_utf8(
-            "Object.defineProperty(window, 'chaVoiceInput', { value: "
-            + configuration.dump() + " });");
-    }
-
-    void install_voice_input_and_navigate() {
-        const std::wstring script = voice_input_script();
-        if (script.empty()) {
-            navigate_home();
-            return;
-        }
-        const std::shared_ptr<WindowsApplication> self = shared_from_this();
-        const HRESULT result = webview_->AddScriptToExecuteOnDocumentCreated(
-            script.c_str(),
-            Callback<ICoreWebView2AddScriptToExecuteOnDocumentCreatedCompletedHandler>(
-                [self](HRESULT status, LPCWSTR) {
-                    if (FAILED(status)) {
-                        self->post_fatal_error(hresult_message(
-                            status, L"CHA could not configure voice input"));
-                    } else {
-                        self->navigate_home();
-                    }
-                    return S_OK;
-                }).Get());
-        if (FAILED(result)) {
-            post_fatal_error(hresult_message(
-                result, L"CHA could not configure voice input"));
-        }
     }
 
     void navigate_home() {
