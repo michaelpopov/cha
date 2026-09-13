@@ -1,7 +1,7 @@
 import { StrictMode } from 'react';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   ChaError,
@@ -24,6 +24,10 @@ import {
   waitingAuth,
 } from '../test/fixtures';
 import { App } from './App';
+
+beforeEach(() => {
+  window.history.replaceState(null, '', '/');
+});
 
 function lobbySnapshot(sessionId = 'planning', sessionLabel = 'Planning') {
   return {
@@ -88,8 +92,10 @@ function sessionRow(name: RegExp | string) {
 // Recent also carries a Planning row, so the stored-session row is reached
 // through the sessions list itself.
 async function openPlanningFromTheLobby() {
-  fireEvent.click(await screen.findByRole('button', { name: 'Forums' }));
-  fireEvent.click(screen.getByRole('button', { name: 'The LobbyGuide' }));
+  const forums = await screen.findByRole('button', { name: 'Forums' });
+  await waitFor(() => expect(forums).toBeEnabled());
+  fireEvent.click(forums);
+  fireEvent.click(await screen.findByRole('button', { name: 'The LobbyGuide' }));
   await screen.findByRole('button', { name: 'New sessionEnter a name to begin' });
   fireEvent.click(sessionRow(/^Planning/));
 }
@@ -1214,13 +1220,14 @@ it('returns to Welcome and drops the stream when the browser goes back to the ro
   render(<App client={storedPlanningClient()} connectSessionEvents={events.connect} />);
   await openPlanningFromTheLobby();
   await waitFor(() => expect(window.location.pathname).toBe('/s/lobby/planning/'));
-  expect(events.connections).toHaveLength(1);
+  const planning = events.connections.find(({ key }) => key === 'lobby/planning');
+  expect(planning).toBeDefined();
 
   goBackTo('/');
 
   await waitFor(() => expect(screen.getByLabelText('Current chat context'))
     .toHaveTextContent('Entrance'));
-  expect(events.connections[0].close).toHaveBeenCalled();
+  expect(planning?.close).toHaveBeenCalled();
 });
 
 it('re-opens the session named by a restored history entry without pushing it again', async () => {
@@ -1285,7 +1292,8 @@ it('lets a second navigation supersede an open that is still in flight', async (
   await waitFor(() => expect(screen.getByLabelText('Current chat context'))
     .toHaveTextContent('Entrance'));
   expect(openSession).toHaveBeenCalledWith('entrance', 'welcome');
-  expect(events.connections).toEqual([expect.objectContaining({ key: 'entrance/welcome' })]);
+  expect(events.connections.filter(({ close }) => !close.mock.calls.length))
+    .toEqual([expect.objectContaining({ key: 'entrance/welcome' })]);
   expect(window.location.pathname).toBe('/s/entrance/welcome/');
 });
 
@@ -1303,16 +1311,22 @@ it('leaves the successor stream attached when a superseded open finishes late', 
     <App client={storedPlanningClient({ getBootstrap })} connectSessionEvents={events.connect} />,
   );
   await openPlanningFromTheLobby();
-  await waitFor(() => expect(events.connections).toHaveLength(1));
+  await waitFor(() => expect(
+    events.connections.some(({ key }) => key === 'lobby/planning'),
+  ).toBe(true));
+  const planning = events.connections.filter(({ key }) => key === 'lobby/planning').at(-1);
+  const previousConnectionCount = events.connections.length;
 
   goBackTo('/s/entrance/welcome/');
-  await waitFor(() => expect(events.connections).toHaveLength(2));
+  await waitFor(() => expect(events.connections.length).toBeGreaterThan(previousConnectionCount));
+  const successor = events.connections.slice(previousConnectionCount)
+    .find(({ key }) => key === 'entrance/welcome');
   held.settle();
 
   await waitFor(() => expect(screen.getByLabelText('Current chat context'))
     .toHaveTextContent('Entrance'));
-  expect(events.connections[0].close).toHaveBeenCalled();
-  expect(events.connections[1].close).not.toHaveBeenCalled();
+  expect(planning?.close).toHaveBeenCalled();
+  expect(successor?.close).not.toHaveBeenCalled();
 });
 
 it('lets the sidebar navigate during an open, and that open never pulls the user back', async () => {

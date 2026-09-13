@@ -1335,6 +1335,46 @@ select:disabled {
   background: var(--secondary);
 }
 
+.cha-password-input {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.cha-password-field {
+  position: relative;
+}
+
+.cha-password-field .cha-form-control {
+  padding-right: 2.8rem;
+}
+
+.cha-password-visibility {
+  position: absolute;
+  top: 50%;
+  right: 0.45rem;
+  display: grid;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border: 0;
+  border-radius: 0.55rem;
+  color: var(--muted-foreground);
+  background: transparent;
+  cursor: pointer;
+  translate: 0 -50%;
+  place-items: center;
+}
+
+.cha-password-visibility:hover {
+  color: var(--accent-foreground);
+  background: var(--accent);
+}
+
+.cha-password-visibility svg {
+  width: 1.1rem;
+  height: 1.1rem;
+}
+
 .cha-new-session-actions,
 .cha-new-persona-actions,
 .cha-new-character-actions,

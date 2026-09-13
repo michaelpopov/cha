@@ -77,14 +77,13 @@ live inside each vault's SQLite database. Model and R2 secrets are plaintext in
 owner-private `system/keys/api_key_N/config.toml` rows. They are vault-specific
 and round-trip through workspace import/export.
 
-An old export can also be stale. CHA can update a character's provider, style,
-reasoning effort, and web-search setting, and a forum's default character and
-persona, while it is running. Those narrow edits are committed to SQLite. If a
-request concerns the current live configuration, begin from a fresh export or
-explicitly reconcile the existing bundle with one; otherwise a later import
-can overwrite changes made through the UI. Do not replace a user's existing
-edit directory merely to refresh it without first preserving or reviewing its
-contents.
+An old export can also be stale. CHA can update characters, personas, forums,
+providers, styles, voices, and model/R2 credentials while it is running. Those
+edits are committed to SQLite. If a request concerns the current live
+configuration, begin from a fresh export or explicitly reconcile the existing
+bundle with one; otherwise a later import can overwrite changes made through
+the UI. Do not replace a user's existing edit directory merely to refresh it
+without first preserving or reviewing its contents.
 
 The external application configuration is a directory, not part of a workspace
 import. `app.toml` selects the startup vault and holds web and logging
@@ -93,6 +92,8 @@ settings. Each other `.toml` file is one vault:
 ```toml
 # app.toml
 vault = "Personal"
+mirror = "mirror"
+modify = "modify"
 
 [web]
 host = "127.0.0.1"
@@ -107,42 +108,69 @@ level = "info"
 # personal.toml
 vault_name = "Personal"
 data = "/absolute/path/workspace.sqlite3"
-mirror = "/optional/session/mirror"
-modify = "/optional/editable/export/directory"
+protected = false
 ```
 
-`mirror` and `modify` are optional and must be absolute when present. The
-`mirror` path saved through Settings must already be a directory. An existing
-`modify` path must be an empty directory or a valid CHA workspace. `data` and
-`logging.file` may be relative to the configuration directory. That directory
-must be outside a directory passed to `--import`. There is no automatic
-migration from a single `cha.toml`; create the directory, split
-selection/web/logging into `app.toml` and data paths into a vault file, adjust
-paths, and move `openai-auth.json` into the directory. A configuration-directory
-Legacy `api-keys.json` and `.env` files may supply credentials to each empty
-vault the first time it is opened. They are left unchanged, so remove or secure
-them manually after migration if future empty vaults should not import them.
+The optional `mirror` and `modify` values belong to `app.toml` and name base
+directories. They may be relative to the configuration directory. A vault
+named `Personal` uses `mirror/Personal` and `modify/Personal`; renaming it moves
+existing derived directories to the new name. An existing derived `modify`
+directory must be empty or a valid CHA workspace. `data` and `logging.file` may
+also be relative to the configuration directory. Vault names must be valid
+single path components because they become directory and default database
+names. Obsolete extra fields in vault TOML, including old per-vault `mirror`
+and `modify` values, are ignored with warnings instead of blocking startup.
+
+The configuration directory must be outside a directory passed to `--import`.
+There is no automatic migration from a single `cha.toml`; create the directory,
+split selection, mirror/modify bases, web, and logging into `app.toml`, put the
+data path and display name in a vault file, adjust paths, and move
+`openai-auth.json` into the directory. Legacy `api-keys.json` and `.env` files
+may supply credentials to each empty vault the first time it is opened. They
+are left unchanged, so remove or secure them manually after migration if future
+empty vaults should not import them.
 Export revalidates a nonempty modify directory and refuses to replace it unless
 it is a valid CHA workspace.
 
 ### Vault management and switching
 
 Vault files are discovered when CHA starts. Direct filesystem edits still
-require a restart, but Settings → Vaults can create, rename, update, and remove
-vault definitions in the running application. Creating a vault without a copy
-source carries the active vault's workspace configuration into a new database
-without its sessions. Choosing an existing vault as the source copies its full
-database, including sessions. Neither choice makes the new vault active.
+require a restart, but Settings → Vaults can create, rename, protect, download,
+and remove vault definitions in the running application. Creation derives the
+database filename from the display name. With no copy source, CHA carries the
+active vault's workspace configuration into the new database without its
+sessions. Choosing an existing vault as the source copies its full database,
+including sessions. A protected source can be copied only while it is active.
+Neither choice makes the new vault active.
 
-The Settings screen can change a vault's display name, `mirror`, and `modify`;
-the database path is fixed after creation. Only an inactive vault can be
-removed, and the last vault cannot be removed. Removal deletes the vault's TOML
-definition but deliberately keeps its database, mirror, and modify directories.
+The editable page title renames a vault; the database path stays fixed, while
+existing derived mirror and modify directories move with the name. Settings can
+encrypt a new or existing vault with a password, but cannot remove protection
+or change that password. Only an inactive vault can be removed, and the last
+vault cannot be removed. Removal deletes the vault's TOML definition but
+deliberately keeps its database and derived directories.
+
+Settings → Vaults → Download vault lists root-level `.sqlite3` objects in the
+active vault's configured R2 bucket, excluding database filenames already
+registered locally. Selecting one downloads and validates it, creates a local
+vault definition, and leaves the active vault unchanged. A legacy object with
+no companion `.toml` is named from its database filename. A protected R2 vault
+cannot currently be added through this screen because the download flow has no
+password entry.
 
 Selecting a vault in the browser changes the vault for the whole running
 process, including Import, Export, Upload, and Download. A successful switch
 closes live sessions, opens the selected database, and reloads the initiating
 page at Welcome. Other open tabs may need to be reloaded manually.
+
+Protected vault databases use SQLCipher. The password is never stored: the
+vault TOML contains only `protected = true`, and opening the vault requires the
+password. The macOS and Windows applications prompt at launch; `chaweb` prompts
+on standard input before server or offline work; and browser switching opens a
+password dialog. An incorrect password is indistinguishable from a damaged
+encrypted database at the storage boundary. There is no recovery path for a
+lost password. Workspace exports contain plaintext configuration, while R2
+upload copies the encrypted database bytes.
 
 Failures have deliberately small, explicit outcomes:
 
@@ -157,11 +185,29 @@ Failures have deliberately small, explicit outcomes:
 The macOS application stores this directory at
 `~/Library/Application Support/CHA`. In normal server mode, an empty
 configuration directory is bootstrapped with `app.toml`, `default.toml`,
-`default.sqlite3`, and an absolute `modify` path. The resulting vault is named
-`Default`; it has no saved sessions and contains the built-in Assistant with a
-ChatGPT OAuth provider. Bootstrap does not run for offline commands or for a
-nonempty directory. When the workspace loads, the macOS main window title is
+`default.sqlite3`, and relative `mirror` and `modify` bases, with both base
+directories created privately. The resulting vault is named `Default`; it has
+no saved sessions and contains the built-in Assistant with a ChatGPT OAuth
+provider. Bootstrap does not run for offline commands or for a nonempty
+directory. When the workspace loads, the macOS main window title is
 `CHA: <Vault name>`.
+
+### R2 database transfer
+
+The active vault's R2 record under `system/keys/` enables native and console
+Upload/Download. Upload validates the vault definition and schema-v2 database,
+then writes `<database-filename>.toml` followed by `<database-filename>` at the
+bucket root. Because R2 cannot replace the pair atomically, retry any failed
+upload before relying on Download.
+
+Download stages and validates both objects before changing local state. It
+keeps the previous definition and database beside them with `.bac` suffixes;
+an HTTP, password, schema, or definition mismatch leaves the local pair
+untouched. Database-only objects uploaded by an older CHA version must be
+uploaded again with the current version before they can replace the active
+vault. The Settings → Vaults → Download vault flow is deliberately different:
+it may install a legacy database-only object as a new inactive vault, but it
+cannot install a protected remote vault because it has no password input.
 
 ## 3. Workspace directory map
 
@@ -1205,6 +1251,9 @@ asks for connectivity verification.
 | unsupported web search | API/auth/host combination cannot use requested search mode |
 | invalid `openai_subscription` settings | OAuth provider differs from one of the mandatory invariants |
 | `Sign in to ChatGPT before using this provider.` | OAuth provider is configured but Settings has no connected account |
+| `Password required to open this vault` | The selected vault has `protected = true`; enter its SQLCipher password in the launcher, console, or browser switch dialog |
+| `The vault password is incorrect, or its database is damaged` | The supplied password cannot open the protected database; retry carefully, then restore a known-good backup if the password is correct |
+| `Protected vaults cannot be downloaded from R2 without a password` | Settings → Vaults → Download vault cannot add encrypted remote vaults; register the vault locally and use the password-aware Database Download path instead |
 | import/export reports database busy | A CHA runtime or another maintenance operation holds the database lease |
 | editing exported files changes nothing | Runtime reads committed SQLite configuration; the edited bundle has not been imported |
 | vault switch reports that restart is required, or the page becomes unavailable during a switch | Reopening the selected database failed and the server stopped; quit and restart CHA |

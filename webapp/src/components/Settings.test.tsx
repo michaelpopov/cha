@@ -119,6 +119,23 @@ describe('Settings screens', () => {
     expect(dispatch).toHaveBeenCalledWith({ type: 'show-settings-download-vault' });
   });
 
+  it('shows vault status without exposing database paths', async () => {
+    render(
+      <VaultsScreen
+        client={fixtureClient({ listVaults: async () => vaults })}
+        dispatch={vi.fn()}
+        sessionReport={null}
+        state={initialAppState}
+      />,
+    );
+
+    const activeVault = await screen.findByRole('button', { name: /Personal/ });
+    expect(within(activeVault).getByText('Active')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Projects' })).toBeInTheDocument();
+    expect(screen.queryByText('/data/personal.sqlite3')).not.toBeInTheDocument();
+    expect(screen.queryByText('/data/projects.sqlite3')).not.toBeInTheDocument();
+  });
+
   it('downloads an R2 vault from its row without showing the file extension', async () => {
     const downloaded: VaultDetail = {
       display_name: 'Archive',
@@ -256,6 +273,11 @@ describe('Settings screens', () => {
     await userEvent.type(await screen.findByLabelText('Display name'), 'Private');
     await userEvent.click(screen.getByLabelText('Protected vault'));
     const password = screen.getByLabelText('Password');
+    expect(password).toHaveAttribute('type', 'password');
+    await userEvent.click(screen.getByRole('button', { name: 'Show password' }));
+    expect(password).toHaveAttribute('type', 'text');
+    await userEvent.click(screen.getByRole('button', { name: 'Hide password' }));
+    expect(password).toHaveAttribute('type', 'password');
     expect(screen.getByRole('button', { name: 'Create vault' })).toBeDisabled();
     await userEvent.type(password, 'secret');
     await userEvent.click(screen.getByRole('button', { name: 'Create vault' }));

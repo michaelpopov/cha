@@ -556,13 +556,18 @@
             <kbd>Command</kbd>+<kbd>Q</kbd>, or close CHA's only window.
           </li>
         </ul>
+        <p>
+          If the selected vault is protected, CHA asks for its password before
+          the window opens. A wrong password returns to the prompt. Choosing
+          <strong>Quit</strong> leaves the vault closed.
+        </p>
 
         <h3>Change model credentials</h3>
         <p>
           Open Settings → <strong>API Keys</strong> to add, rename, replace, or
           remove an API key. Open Settings → <strong>OpenAI</strong> to connect or
           disconnect ChatGPT. Saved API-key changes are available to providers
-          immediately.
+          immediately and apply only to the active vault.
         </p>
 
         <h3>Install an updated version</h3>
@@ -876,7 +881,8 @@
           A vault is one CHA database with its own workspace configuration and
           conversations. The selector beside Settings shows the active vault.
           Selecting another vault closes live sessions, opens that database,
-          reloads the window at Welcome, and updates the window title.
+          reloads the window at Welcome, and updates the window title. If the
+          target is protected, enter its password in the dialog that appears.
         </p>
 
         <h3>Create a vault</h3>
@@ -884,35 +890,47 @@
           <li>Open Settings and select <strong>Vaults</strong>.</li>
           <li>Select <strong>New vault</strong> and enter a display name.</li>
           <li>
-            Enter an unused database path whose parent directory already
-            exists.
-          </li>
-          <li>
             Under <strong>Initial database</strong>, choose <strong>New empty
             vault</strong> or copy an existing vault.
           </li>
-          <li>Add optional mirror and modify paths, then select <strong>Create vault</strong>.</li>
+          <li>
+            To encrypt the database, select <strong>Protected vault</strong>,
+            enter a password, and optionally use the eye button to check it.
+          </li>
+          <li>Select <strong>Create vault</strong>.</li>
         </ol>
         <p>
           A new empty vault receives the active vault's characters, personas,
-          forums, providers, and styles, but no saved sessions. Copying an
-          existing vault copies its complete database, including saved sessions.
-          Creating either kind adds it to the vault list but does not make it
-          active.
+          forums, providers, styles, and saved model/R2 keys, but no saved
+          sessions. Copying an existing vault copies its complete database,
+          including saved sessions.
+          A protected source can be copied only while it is active. Creating
+          either kind adds it to the vault list but does not make it active.
+          CHA chooses the database and working-folder paths from the display name.
         </p>
 
-        <h3>Edit or remove a vault</h3>
+        <h3>Rename, protect, or remove a vault</h3>
         <p>
-          Select a vault under Settings → Vaults to rename it or change its
-          optional mirror and modify paths. Both paths must be absolute. A
-          mirror must already be a directory. A modify path may not exist yet;
-          if it exists and is nonempty, it must already contain a valid CHA
-          workspace. The database path cannot be changed after creation.
+          Select a vault under Settings → Vaults. Use the pencil beside the page
+          title to rename it. To encrypt an unprotected vault, select
+          <strong>Protected vault</strong>, enter a password, and select
+          <strong>Protect vault</strong>. Protection cannot be removed and the
+          password cannot be changed in CHA. Keep it somewhere safe: CHA cannot
+          recover a forgotten vault password.
         </p>
         <p>
           Only an inactive vault can be removed, and CHA always keeps at least
           one vault. Removing a vault deletes its entry from CHA but keeps its
           database and folders on disk.
+        </p>
+
+        <h3>Download another vault from R2</h3>
+        <p>
+          When the active vault has R2 storage configured, select
+          <strong>Download vault</strong> to see remote databases that are not
+          already registered on this Mac. Select a name to download, validate,
+          and add it as an inactive vault. This screen cannot add a protected
+          remote vault because it does not ask for that vault's password.
         </p>
       </section>
 
@@ -970,11 +988,12 @@
         </ol>
         <p>
           Only keys explicitly saved under API Keys appear in the Credentials
-          list. Their secret values stay in the local application configuration
-          file <code>api-keys.json</code>, are shared by all vaults, and are not
-          returned to the browser. CHA never reads model API keys from
-          <code>.env</code> or process environment variables. If a provider refers
-          to a key that no longer exists, that provider fails when tested or used.
+          list. Their secret values stay in the active vault database and are not
+          returned to the browser. They are vault-specific and are included as
+          plaintext when you export workspace configuration, so protect every
+          export. CHA never reads model API keys from <code>.env</code> or process
+          environment variables during normal use. If a provider refers to a key
+          that no longer exists, that provider fails when tested or used.
         </p>
 
         <h3>Use OpenAI OAuth</h3>
@@ -1021,15 +1040,17 @@
         <p>
           The distribution archive contains only <code>CHA.app</code>. The
           application creates and uses <code>~/Library/Application Support/CHA</code>.
-          A fresh installation begins with these files; credential files appear
-          after they are used:
+          A fresh installation begins with the first five files and folders;
+          the remaining credential files below appear only when used or migrated:
         </p>
         <pre><code>~/Library/Application Support/CHA/app.toml
 ~/Library/Application Support/CHA/default.toml
 ~/Library/Application Support/CHA/default.sqlite3
-~/Library/Application Support/CHA/api-keys.json
-~/Library/Application Support/CHA/openai-auth.json
-~/Library/Application Support/CHA/.env  (optional, R2 only)</code></pre>
+~/Library/Application Support/CHA/mirror/
+~/Library/Application Support/CHA/modify/
+~/Library/Application Support/CHA/openai-auth.json   (after connecting OpenAI)
+~/Library/Application Support/CHA/api-keys.json  (legacy migration only)
+~/Library/Application Support/CHA/.env           (legacy migration only)</code></pre>
         <p>
           In Finder, choose <strong>Go &gt; Go to Folder…</strong>, enter
           <code>~/Library/Application Support/CHA</code>, and select
@@ -1041,11 +1062,13 @@
 
         <h3>Export, edit, and import workspace configuration</h3>
         <p>
-          The optional <code>modify</code> setting in the active vault's
-          configuration names the directory used by both operations. Set it
-          under Settings → Vaults. It must be an absolute path:
+          The optional <code>modify</code> setting in <code>app.toml</code> names
+          the base directory used by both operations. CHA appends the active
+          vault name. It may be relative to the application data directory:
         </p>
-        <pre><code>modify = "/Users/your-name/Documents/CHA/modify"</code></pre>
+        <pre><code>modify = "modify"
+
+# The Personal vault uses the modify/Personal folder.</code></pre>
         <p>
           When this setting is absent, <strong>Import</strong> and
           <strong>Export</strong> are disabled. To edit workspace configuration:
@@ -1068,32 +1091,42 @@
             <code>modify</code> path. It refuses to replace an unrelated nonempty
             directory. Copy out any edits you still need before exporting again.
             Import replaces the complete workspace configuration and can remove
-            sessions belonging to forums that are no longer configured.
+            sessions belonging to forums that are no longer configured. Exports
+            are plaintext and include saved model and R2 keys, even when the vault
+            database is password-protected.
           </p>
         </div>
 
         <h3>Upload or download the complete database</h3>
         <p>
           Upload and Download use Cloudflare R2 through its S3-compatible API.
-          They are enabled only when all three of these entries have nonempty
-          values in the configuration-directory <code>.env</code> file or the
-          environment that launched CHA. This file is for R2 only; model API
-          keys belong in <code>api-keys.json</code>:
+          Open Settings → <strong>API Keys</strong> → <strong>R2 storage</strong>
+          and save the bucket URL, access-key ID, and secret key for the active
+          vault. Upload and Download are enabled while that vault has all three
+          values.
         </p>
-        <pre><code>CHA_R2_URL=https://example.r2.cloudflarestorage.com/bucket
-CHA_R2_ACCESS_KEY_ID=your-access-key-id
-CHA_R2_SECRET_ACCESS_KEY=your-secret-access-key</code></pre>
         <ul>
           <li>
             <strong>Database &gt; Upload</strong> validates and uploads the current
-            database, replacing the object with the same database filename.
+            vault definition and database. The bucket receives two objects:
+            the database filename and that filename followed by
+            <code>.toml</code>.
           </li>
           <li>
             <strong>Database &gt; Download…</strong> asks for confirmation, saves
-            the current database beside itself with a <code>.bac</code> suffix,
-            downloads and validates the R2 copy, and refreshes CHA.
+            the current database and vault definition beside themselves with
+            <code>.bac</code> suffixes, downloads and validates both R2 objects,
+            and refreshes CHA. Neither local file changes if validation fails.
           </li>
         </ul>
+        <div class="warning">
+          <p>
+            R2 cannot replace the two remote objects atomically. Retry a failed
+            upload before downloading. A database-only upload made by an older
+            CHA version must be uploaded again by the current version before it
+            can replace the active vault.
+          </p>
+        </div>
         <div class="note">
           <p>
             All four Database menu items are temporarily disabled while one
@@ -1147,18 +1180,22 @@ Then choose one small act and do it completely.</code></pre>
           </li>
           <li>
             If you use Database Upload, the complete database is copied to the
-            configured R2 bucket and protected by that account's access controls.
+            configured R2 bucket. An ordinary vault depends on that account's
+            access controls; a protected vault remains encrypted in R2.
           </li>
           <li>
-            API keys and OpenAI OAuth credentials are stored on the Mac and should
-            be treated like passwords.
+            API and R2 keys are stored inside their vault database. OpenAI OAuth
+            credentials are stored separately on the Mac. Treat all of them like
+            passwords.
           </li>
         </ul>
         <div class="warning">
           <p>
-            Anyone with access to your Mac account or downloaded conversation files
-            may be able to read your conversations. Lock your Mac and do not share
-            your API key.
+            Anyone with access to your Mac account, unprotected database, workspace
+            export, or downloaded conversation files may be able to read private
+            data. Lock your Mac and do not share passwords or API keys. Vault
+            protection encrypts the database, but not mirrors, exports, or
+            downloaded conversations.
           </p>
         </div>
       </section>
@@ -1209,11 +1246,19 @@ Then choose one small act and do it completely.</code></pre>
               </tr>
               <tr>
                 <td>Import and Export are disabled.</td>
-                <td>Open Settings → Vaults, select the active vault, and add an absolute <code>modify</code> path.</td>
+                <td>Add a <code>modify</code> base path to <code>app.toml</code>, then quit and reopen CHA. A first-run installation already has <code>modify = "modify"</code>.</td>
               </tr>
               <tr>
                 <td>Upload and Download are disabled.</td>
-                <td>Set all three <code>CHA_R2_URL</code>, <code>CHA_R2_ACCESS_KEY_ID</code>, and <code>CHA_R2_SECRET_ACCESS_KEY</code> values, then quit and reopen CHA.</td>
+                <td>Open Settings → API Keys → R2 storage and save a complete URL, access-key ID, and secret for the active vault.</td>
+              </tr>
+              <tr>
+                <td>CHA asks for a vault password.</td>
+                <td>Enter the password chosen when the vault was created or protected. CHA does not store or recover it. A correct password still failing can mean the encrypted database is damaged; restore a known-good backup.</td>
+              </tr>
+              <tr>
+                <td>A protected vault cannot be downloaded from the Vaults screen.</td>
+                <td>That screen cannot ask for a remote vault's password. Register or create the vault locally, then use the password-aware Database → Download operation for that active vault.</td>
               </tr>
             </tbody>
           </table>
@@ -1238,7 +1283,7 @@ Then choose one small act and do it completely.</code></pre>
               <tr><td>Persona</td><td>The identity used for the human side of a conversation.</td></tr>
               <tr><td>Provider</td><td>The AI company and model that generate a character's answers.</td></tr>
               <tr><td>Session</td><td>One conversation saved inside a forum.</td></tr>
-              <tr><td>Vault</td><td>One CHA database containing its own workspace configuration and conversations.</td></tr>
+              <tr><td>Vault</td><td>One CHA database containing its own workspace configuration, conversations, and saved keys; it may be password-protected.</td></tr>
             </tbody>
           </table>
         </div>

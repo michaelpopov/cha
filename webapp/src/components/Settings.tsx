@@ -36,6 +36,8 @@ import {
   ChevronRightIcon,
   DatabaseIcon,
   DownloadIcon,
+  EyeIcon,
+  EyeOffIcon,
   KeyIcon,
   PlusIcon,
   SpeakerIcon,
@@ -84,6 +86,45 @@ function SettingsRow({
       </span>
       {trailingIcon ?? <ChevronRightIcon className="cha-chevron" />}
     </button>
+  );
+}
+
+function VaultPasswordInput({
+  autoFocus = false,
+  id,
+  onChange,
+  value,
+}: {
+  autoFocus?: boolean;
+  id: string;
+  onChange(value: string): void;
+  value: string;
+}) {
+  const [visible, setVisible] = useState(false);
+
+  return (
+    <div className="cha-password-input">
+      <label htmlFor={id}>Password</label>
+      <div className="cha-password-field">
+        <input
+          autoComplete="new-password"
+          autoFocus={autoFocus}
+          className="cha-form-control"
+          id={id}
+          onChange={(event) => onChange(event.target.value)}
+          type={visible ? 'text' : 'password'}
+          value={value}
+        />
+        <button
+          aria-label={visible ? 'Hide password' : 'Show password'}
+          className="cha-password-visibility"
+          onClick={() => setVisible((current) => !current)}
+          type="button"
+        >
+          {visible ? <EyeOffIcon /> : <EyeIcon />}
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -170,7 +211,7 @@ export function VaultsScreen({ client, dispatch, sessionReport }: SettingsScreen
           />
           {vaults.map((vault) => (
             <SettingsRow
-              description={`${vault.active ? 'Active · ' : ''}${vault.data_path}`}
+              description={vault.active ? 'Active' : undefined}
               icon={<DatabaseIcon />}
               key={vault.display_name}
               label={vault.display_name}
@@ -305,7 +346,7 @@ export function NewVaultScreen({ client, dispatch, sessionReport }: SettingsScre
             <TransliteratingInput autoFocus className="cha-form-control" id="cha-new-vault-name" label="Display name" onValueChange={setName} placeholder="e.g. Projects" value={name} />
             <label>Initial database<select className="cha-form-control" onChange={(event) => setCopyFrom(event.target.value)} value={copyFrom}><option value="">New empty vault</option>{vaults.map((vault) => <option key={vault.display_name} value={vault.display_name}>Copy {vault.display_name}</option>)}</select></label>
             <label className="cha-checkbox-row"><input checked={protectedVault} onChange={(event) => { setProtectedVault(event.target.checked); if (!event.target.checked) setPassword(''); setError(null); }} type="checkbox" />Protected vault</label>
-            {protectedVault && <label>Password<input autoComplete="new-password" className="cha-form-control" onChange={(event) => { setPassword(event.target.value); setError(null); }} type="password" value={password} /></label>}
+            {protectedVault && <VaultPasswordInput id="cha-new-vault-password" onChange={(value) => { setPassword(value); setError(null); }} value={password} />}
           </fieldset>
           {error && <p className="cha-error-message" role="alert">{error}</p>}
           <div className="cha-settings-form-actions"><button className="cha-button cha-button-ghost" disabled={saving} onClick={() => dispatch({ type: 'show-settings-vaults' })} type="button">Cancel</button><button className="cha-button cha-button-primary" disabled={!name.trim() || saving || (protectedVault && !password)} type="submit">{saving ? 'Creating…' : 'Create vault'}</button></div>
@@ -406,7 +447,7 @@ export function VaultScreen({ client, dispatch, sessionReport, state }: Settings
         <form className="cha-settings-form" onSubmit={(event) => void save(event)}>
           <fieldset disabled={saving || deleting}>
             <label className="cha-checkbox-row"><input checked={detail.protected || enableProtection} disabled={detail.protected} onChange={(event) => { setEnableProtection(event.target.checked); if (!event.target.checked) setPassword(''); setError(null); }} type="checkbox" />Protected vault</label>
-            {!detail.protected && enableProtection && <label>Password<input autoFocus autoComplete="new-password" className="cha-form-control" onChange={(event) => { setPassword(event.target.value); setError(null); }} type="password" value={password} /></label>}
+            {!detail.protected && enableProtection && <VaultPasswordInput autoFocus id="cha-vault-password" onChange={(value) => { setPassword(value); setError(null); }} value={password} />}
           </fieldset>
           {detail.active && <p className="cha-settings-note">This vault is active.</p>}
           {!detail.can_delete && <p className="cha-settings-note">{vaultCount === 1 ? 'The last vault cannot be deleted.' : 'Switch to another vault before deleting this one.'}</p>}

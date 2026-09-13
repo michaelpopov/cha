@@ -51,14 +51,15 @@ The most useful high-level model is:
 - The process-owned `WorkspaceConfigStore` holds the selected database lease,
   secures the database and sidecars, materializes committed configuration into
   one private root, and atomically publishes the immutable `Workspace`.
-- `ApplicationRuntime` owns that store and the small `CurrentVault` value. Its
-  lifecycle mutex serializes vault switches with Import, Export, Upload, and
-  Download.
+- `ApplicationRuntime` owns that store, the small `CurrentVault` value, and the
+  active database password when needed. Its lifecycle mutex serializes vault
+  switches with Import, Export, Upload, and Download.
 - The independent process-owned `SessionRepository` receives explicit database,
   materialized-workspace, and Welcome paths. It owns none of those outer
   resources and lists, creates, validates, archives, and restores sessions.
-- When the external config sets `mirror`, the process-owned `SessionMirror`
-  projects persistent sessions into continuously refreshed Markdown files.
+- When `app.toml` sets a `mirror` base, the process-owned `SessionMirror`
+  projects persistent sessions into the active vault's derived directory as
+  continuously refreshed Markdown files.
 - `LiveSessionManager` owns the process's live-session registry.
 - One `LiveSession` is an actor with one permanent owner thread for one open
   session.
@@ -121,11 +122,10 @@ flowchart LR
 There are four kinds of long-lived information:
 
 - Process configuration lives in one external directory. `app.toml` contains
-  the startup-vault selection, web listener, and diagnostic log settings; every
-  other `.toml` file defines a vault's database path and optional Markdown
-  mirror and modification directory. `chaweb` reads the directory before
-  opening the database. These files are never materialized into the workspace
-  or stored in SQLite.
+  the startup-vault selection, mirror/modify bases, web listener, and diagnostic
+  log settings; every other `.toml` file defines a vault's database path and
+  protection flag. `chaweb` reads the directory before opening the database.
+  These files are never materialized into the workspace or stored in SQLite.
 
 - Discovery — the roster, descriptions, and Markdown the browser lists — is
   materialized from committed database rows, read once per `Workspace`,
@@ -208,8 +208,9 @@ npm run check
 npm run build
 ```
 
-The current native build requires OpenSSL on every platform because prompt-cache
-keys use its SHA-256 implementation, independently of curl's TLS backend.
+The current native build generates the SQLCipher 4.19 amalgamation during CMake
+configuration and links it with OpenSSL on every platform. OpenSSL also supplies
+the prompt-cache SHA-256 implementation independently of curl's TLS backend.
 
 ## 4. Repository map
 
@@ -380,8 +381,9 @@ remain the source of work.
 The other utilities support important boundaries:
 
 - `environment.*` parses the application-level `.env` without overriding
-  inherited values. Production uses it only for optional R2 storage settings;
-  model credentials come from `api-keys.json` or OpenAI OAuth.
+  inherited values. Production uses it only as a legacy migration source for
+  R2 credentials; model and R2 keys normally come from the active vault, while
+  OpenAI OAuth remains process-wide.
 - `path_name.*` and `utf8_path.*` keep filesystem and URL identifiers explicit.
 - `public_name.*` centralizes visible-name validation.
 - `text_template.*` expands `$$(relative/file)` includes and `$${variable}`
@@ -406,10 +408,9 @@ chaweb --config=CONFIG_DIR --vault=NAME --download
 Every mode requires the configuration directory. The parser accepts both
 `--config=CONFIG_DIR` and `--config CONFIG_DIR`; `--root` is a runtime-only
 application-asset root. `--vault` is required for the four offline modes, which
-are mutually exclusive. Upload and download use the R2 bucket URL and S3
-credentials from `CHA_R2_URL`, `CHA_R2_ACCESS_KEY_ID`, and
-`CHA_R2_SECRET_ACCESS_KEY`; the configured database filename becomes the object
-key.
+are mutually exclusive. Upload and download use the R2 key stored in the
+selected vault. The configured database filename becomes the database object
+key, with a companion `<filename>.toml` vault-definition object.
 
 The Linux package includes `start-cha.sh`, which supplies `--root`, starts
 `chaweb` in the background, and uses `../cha-config` by default. A nonempty
@@ -427,6 +428,8 @@ other `.toml` file is one vault:
 ```toml
 # app.toml
 vault = "Personal"
+mirror = "/home/user/cha-mirror"
+modify = "/home/user/cha-modify"
 
 [web]
 host = "0.0.0.0"
@@ -441,21 +444,21 @@ level = "info"
 # personal.toml
 vault_name = "Personal"
 data = "/var/lib/cha/workspace.sqlite3"
-mirror = "/home/user/cha-mirror"
-modify = "/home/user/cha-modify"
+protected = false
 ```
 
-`mirror` is optional; omitting it disables filesystem mirroring. `modify` is
-also optional and names the directory used by CHA.app's Import and Export menu
-items. Both paths must be absolute. A mirror saved through Settings must already
-exist as a directory. An existing modify path must be empty or contain a valid
-CHA workspace. `data` and `logging.file` may be relative to the configuration
-directory. A `modify` directory may not contain the configuration directory or
-database, because the macOS Export operation replaces it. Console Import
-additionally requires the configuration directory to be outside the source
-workspace, preventing process config files from becoming imported metadata
-rows. Console Import and Export acquire the same non-blocking database lease as
-runtime, so they remain deliberately offline.
+`mirror` and `modify` are optional base directories in `app.toml`. They may be
+relative to the configuration directory. CHA appends each vault's display name,
+so the example vault uses `/home/user/cha-mirror/Personal` and
+`/home/user/cha-modify/Personal`. An existing modify directory must be empty or
+contain a valid CHA workspace. `data` and `logging.file` may also be relative to
+the configuration directory. A derived `modify` directory may not contain the
+configuration directory or database, because Export replaces it. Console
+Import additionally requires the configuration directory to be outside the
+source workspace, preventing process config files from becoming imported
+metadata rows. Console Import and Export acquire the same non-blocking database
+lease as runtime, so they remain deliberately offline. Old per-vault fields are
+ignored with warnings; they do not block otherwise valid configuration.
 
 The vault registry is discovered at startup. Direct edits to its TOML files
 require a restart, while Settings → Vaults mutates the in-memory registry and
@@ -466,26 +469,36 @@ The macOS `.tar.gz` archive contains only `CHA.app`; it does not include the
 Linux import seed or a configuration example. CHA.app keeps its active config
 at `~/Library/Application Support/CHA/`. In server mode, an empty configuration
 directory is bootstrapped by the C++ application with `app.toml`, `default.toml`,
-`default.sqlite3`, and an absolute `modify` path. The `Default` vault has no
-saved sessions and starts with the built-in Assistant configured for ChatGPT
-OAuth. Bootstrap does not run for a nonempty directory or for offline commands.
+`default.sqlite3`, and private `mirror/` and `modify/` base directories. The
+`Default` vault has no saved sessions and starts with the built-in Assistant
+configured for ChatGPT OAuth. Bootstrap does not run for a nonempty directory
+or for offline commands.
 
 A new database is created only after a source has been collected and validated
 successfully. Normal runtime and export require schema v2. Schema v1 is the
 unified sessions-only database; only import can add the `config` table and
 advance it to v2 while preserving session rows.
 
-Provider and style TOML are durable rows in each vault's SQLite database.
-Inference secrets are deliberately outside that database: API keys live in the
-process-wide `<config-directory>/api-keys.json`, and ChatGPT OAuth credentials
-live in `openai-auth.json`. Workspace import ignores `.env`, and `.env` is
-never stored or exported. The application-level `.env` and inherited process
-environment remain available only for the three R2 settings.
+Provider, style, model-key, and R2-key TOML are durable rows in each vault's
+SQLite database. Those keys are vault-specific and round-trip through workspace
+export as plaintext. ChatGPT OAuth credentials remain process-wide in
+`openai-auth.json`. Workspace import ignores a source `.env`; legacy
+configuration-directory `api-keys.json` and `.env` credentials are imported
+into each empty vault when it is first opened, but the legacy files are left in
+place.
 
-The database, journal/WAL/SHM sidecars, lock, private root, and credential JSON
-files use owner-only access (POSIX `0600` files and `0700` private directories,
-with private Windows DACLs). There is no database backup command here, and
-copying a live WAL database naively is unsafe.
+A vault definition may contain `protected = true`. Its database is encrypted
+by SQLCipher and every database owner receives the active password explicitly.
+The password itself is never persisted: native launchers and the console collect
+it before opening the startup vault, while the browser supplies it only for a
+vault switch. Protecting an existing vault copies it into a newly encrypted
+database and atomically replaces the original; the UI deliberately offers no
+password change or removal path.
+
+The database, journal/WAL/SHM sidecars, lock, private root, workspace exports,
+and credential files use owner-only access (POSIX `0600` files and `0700`
+private directories, with private Windows DACLs). Copying a live WAL database
+naively is unsafe.
 
 Mirroring deliberately creates a second, plaintext representation of session
 content outside SQLite. Mirrored Markdown files are written atomically with
@@ -502,17 +515,18 @@ Startup proceeds in this order:
 
 1. `parse_application_command()` requires `--config`. In server mode it first
    bootstraps an empty configuration directory. It then reads `app.toml`,
-   discovers and validates the vault files, resolves `data` and logging paths
-   from the configuration directory, requires absolute `mirror` and `modify`
-   paths, selects the startup or command-line vault, and separates runtime from
-   the four offline modes.
+   discovers and validates the vault files, resolves `data`, logging, and
+   mirror/modify base paths from the configuration directory, derives each
+   vault's working directories, selects the startup or command-line vault, and
+   separates runtime from the four offline modes.
 2. `WorkspaceConfigStore::open()` acquires the database companion-file lease,
    rejects anything except valid schema v2, secures the database/sidecars, and
    enables WAL.
 3. The store creates one private root with `workspace/` and `welcome/`,
    materializes every `config` row under `workspace/`, and validates/publishes
    a complete `Workspace`. `ApplicationRuntime` separately opens the
-   process-wide API-key and OAuth stores and loads optional R2 settings.
+   vault-backed API-key store and the process-wide OAuth store. A protected
+   database is opened with the password collected by the launcher or console.
 4. File logging is initialized from the already parsed external settings, and
    the HTTP server later binds the configured `[web]` host and port. Neither
    setting belongs to `Workspace` or to a database row.
@@ -630,13 +644,15 @@ stable provider ID. The user can review and test the result before assigning it
 to a character.
 
 Credentials is an explicit choice. A normal provider refers to a secret in the
-process-owned `ApiKeyStore`; the secret never enters workspace configuration or
-a browser response. `OpenAI OAuth` selects `openai_subscription` authentication
+active vault's `ApiKeyStore`; the value never enters a browser response but is
+included as plaintext in workspace exports. `OpenAI OAuth` selects
+`openai_subscription` authentication
 and therefore requires the Responses API and the exact
 `https://chatgpt.com/backend-api/codex` base URL. `No credentials` clears both
 forms of authentication. The legacy field spelling `api_key_env = "Name"` is
-accepted only as a lookup by exact display name in `api-keys.json`; the process
-environment is never consulted for model access. A missing or ambiguous name
+accepted only as a lookup by exact display name among the active vault's saved
+model keys; the process environment is never consulted for model access. A
+missing or ambiguous name
 fails when that provider is used. A resolvable legacy name appears as the
 matching saved key in the editor and is written as the normal opaque `api_key`
 ID when the provider is saved.
@@ -717,6 +733,7 @@ session can still be opened.
 
 - validated identity and label;
 - the selected database path;
+- the database password (empty for Welcome or an unprotected vault);
 - the resolved `session_key`;
 - restored transcript/counter state.
 
@@ -787,7 +804,10 @@ thread. No handle is ever shared between threads.
 
 Every connection enables `foreign_keys` and a five-second `busy_timeout`, and
 write-capable connections set `synchronous = FULL`. The workspace database runs
-in WAL, so history readers proceed while a journal connection writes.
+in WAL, so history readers proceed while a journal connection writes. The
+`SqliteDatabase` wrapper applies `sqlite3_key()` immediately after opening when
+its password argument is nonempty, before any schema inspection or pragma that
+needs to read the database.
 
 Every write-capable transaction begins with `BEGIN IMMEDIATE` — that is all
 `SqliteTransaction` does. Reading first under a deferred `BEGIN` and upgrading
@@ -1258,12 +1278,18 @@ GET    /api/v1/vaults
 POST   /api/v1/vaults
 PATCH  /api/v1/vaults
 DELETE /api/v1/vaults
+POST   /api/v1/vault/switch
+GET    /api/v1/r2-vaults
+POST   /api/v1/r2-vaults
 
 GET    /api/v1/api-keys
 POST   /api/v1/api-keys
 PATCH  /api/v1/api-keys/{api_key_id}
 PUT    /api/v1/api-keys/{api_key_id}/value
 DELETE /api/v1/api-keys/{api_key_id}
+GET    /api/v1/r2-storage
+PUT    /api/v1/r2-storage
+DELETE /api/v1/r2-storage
 ```
 
 `default-agent` remains a compatibility alias for `default-character`; new
@@ -1281,8 +1307,8 @@ After the main actor path makes sense, scan the smaller adapters:
 
 | Files | Responsibility |
 | --- | --- |
-| `application_config.*` | Bootstrap an empty server configuration, parse `app.toml` and the vault registry, resolve the selected database, require absolute optional `mirror`/`modify` paths, and select the process mode and runtime asset root |
-| `application_runtime.*`, `current_vault.h` | Compose one running application, hold and edit the vault registry, and serialize vault switching with in-process database maintenance |
+| `application_config.*` | Bootstrap an empty server configuration, parse `app.toml` and the vault registry, derive per-vault mirror/modify paths, mark protected vaults, and select the process mode and runtime asset root |
+| `application_runtime.*`, `current_vault.h` | Compose one running application, hold and edit the vault registry, retain the active database password in memory, and serialize vault switching with in-process database maintenance |
 | `asset_handler.*` | Serve the browser shell and staged static assets without owning session behavior |
 | `http_server.*` | Apply server-wide request, Host/Origin, timeout, and size policy |
 | `http_response.*`, `json.*`, `route_support.*` | Consistent JSON parsing, response bodies, route components, and mutation validation |
@@ -1291,7 +1317,7 @@ After the main actor path makes sense, scan the smaller adapters:
 | `owner_wake_signal.*` | Coalesce cross-thread wakeups for the actor loop |
 | `sse_stream.*` | Serialize mailbox payloads and heartbeats into `httplib::DataSink` |
 | `server_shutdown.*` | Bridge process signals to coordinated, bounded manager shutdown |
-| `r2_database_transfer.*` | Upload and download the workspace database over the S3 API |
+| `r2_database_transfer.*` | List, upload, and download vault databases and companion definitions over the S3 API |
 
 These modules keep `LiveSession` and the route files from accumulating generic
 HTTP, filesystem, and signal-handling details.
@@ -1310,23 +1336,27 @@ Import, Export, Upload, or Download:
    checkpoints the WAL back into the database file.
 
 With the existing lease still held, Import replaces configuration rows from
-`modify`, Export first removes an existing `modify` directory and recreates it,
-and Upload/Download transfer the database through R2. Each reservation restores
-what it took when it is destroyed, in reverse order, after the operation has
-finished and the database has been reopened. Import and Download publish the
-reloaded workspace to the browser. If the reopen fails, the store cannot serve
-again. The runtime marks itself unusable, stops the HTTP server, and reports
-`WorkspaceRestartRequiredError` rather than continuing without a handle.
+the derived `modify` directory, Export replaces that directory, and
+Upload/Download transfer the database plus its companion vault definition
+through R2. Upload writes the definition first and database second; R2 cannot
+replace the pair atomically. Download validates both temporary files before
+keeping the old local pair with `.bac` suffixes and publishing replacements.
+Each reservation restores what it took when destroyed, in reverse order, after
+the operation finishes and the database has reopened. Import and Download
+publish the reloaded workspace to the browser. If reopen fails, the store
+cannot serve again. The runtime marks itself unusable, stops the HTTP server,
+and reports `WorkspaceRestartRequiredError` rather than continuing without a
+handle.
 
 Vault switching reuses the live-session, store, and repository reservations;
 it does not construct a second runtime or introduce another transaction layer.
 The complete cutover is traced in section 13.7.
 
 The Swift Database menu asks the C bridge which operations are available.
-Import and Export are enabled only when `modify` was present in the parsed
-TOML. Upload and Download are enabled only when `CHA_R2_URL`,
-`CHA_R2_ACCESS_KEY_ID`, and `CHA_R2_SECRET_ACCESS_KEY` are all nonempty. All
-four items are disabled while any database operation is in progress.
+Import and Export are enabled only when a `modify` base was present in
+`app.toml`. Upload and Download are enabled only when the active vault contains
+an R2 storage key. All four items are disabled while any database operation is
+in progress.
 
 ### 12.8 Markdown download and continuous mirroring
 
@@ -1428,7 +1458,7 @@ Use these traces as navigation exercises. Open each function in sequence.
 6. The manager inserts a starting actor before starting its owner thread.
 7. `LiveSession::owner_main()` calls the supplied opener.
 8. `open_session()` reads the current forum defaults and obtains a
-   `PreparedSession` carrying the database path and `session_key`.
+   `PreparedSession` carrying the database path, password, and `session_key`.
 9. `SessionController` opens its journal connection, restores transcript state,
    and repairs any interrupted started turn.
 10. The actor records its initial revision/label baseline, commits `running`,
@@ -1524,13 +1554,16 @@ would force the main view back to Chat.
 The switch changes which local database the existing runtime uses. It does not
 move or copy data:
 
-1. `Sidebar` calls `ApiClient::switchVault()`, which posts the selected name to
-   `/api/v1/vault/switch`.
+1. `Sidebar` calls `ApiClient::switchVault()`, which posts the selected name and
+   a nullable password to `/api/v1/vault/switch`. A protected target first
+   returns `vault_password_required`; the sidebar opens `PasswordDialog` and
+   retries with the entered password.
 2. The route calls `ApplicationRuntime::switch_vault()` under the runtime
    lifecycle mutex. An unknown name fails, and selecting the current vault is a
    no-op.
-3. The runtime acquires the target database's `SessionLease` and validates its
-   schema before disturbing the current vault. A busy or invalid target leaves
+3. The runtime acquires the target database's `SessionLease`, applies its
+   SQLCipher password when required, and validates its schema before disturbing
+   the current vault. A busy target, bad password, or invalid database leaves
    the old vault running.
 4. `LiveSessionManager::reserve_global_maintenance()` stops admission, closes
    live sessions, and waits for their journal connections to drain. A timeout
@@ -1569,23 +1602,34 @@ marks itself unusable and stops the HTTP server. The application must restart.
 
 Settings → Vaults calls the collection route without switching databases:
 
-1. Create validates a new display name, unused database path, absolute optional
-   mirror/modify paths, and all cross-vault path constraints. With no copy
-   source, it creates a database containing the active workspace configuration
-   but no sessions. With a source, SQLite's backup path copies the complete
-   source database, including sessions. It then adds a generated `vault-N.toml`
-   definition to the runtime registry. The active vault is unchanged.
-2. Update can rename a vault and change its mirror or modify path; the database
-   path is intentionally read-only. Renaming the active vault also rewrites the
-   selection in `app.toml`. An active mirror is rebuilt immediately, and a
-   rebuild error disables mirroring without taking down the application.
+1. Create validates a new display name that is also a safe path component,
+   derives `<display-name>.sqlite3` in the configuration directory, and derives
+   mirror/modify paths from the optional `app.toml` bases. With no copy source,
+   it creates a database containing the active workspace configuration but no
+   sessions. With a source, SQLCipher's backup path copies the complete source
+   database, including sessions, and can encrypt or decrypt the destination.
+   A protected source can be copied only while active, because only that
+   password is held. It then adds a generated `vault-N.toml` definition to the
+   runtime registry. The active vault is unchanged.
+2. Update can rename a vault and can enable password protection once. The
+   database path is intentionally read-only. Rename is exposed through the
+   editable top-bar title, moves existing derived mirror/modify directories,
+   and updates `app.toml` when the vault is active. Protecting checkpoints and
+   replaces the database with a SQLCipher-encrypted copy; there is no UI to
+   decrypt it or change the password.
 3. Delete removes only an inactive vault's definition. It rejects the active
    vault and the last remaining vault, and keeps the database and related
    directories so removing a registry entry does not destroy user data.
 
-The UI requires a saved mirror to be an existing directory. A saved modify path
-may be absent, missing, empty, or an already valid CHA workspace; this prevents
-Export from replacing an unrelated nonempty directory.
+4. Download vault lists root-level `.sqlite3` objects from the R2 key stored in
+   the active vault, excludes local database filenames, and installs a selected
+   object as a new inactive local vault. A companion definition is used when
+   present; legacy database-only objects derive their display name from the
+   filename. Protected objects are rejected because this flow does not collect
+   their password.
+
+A derived modify path may be absent, missing, empty, or an already valid CHA
+workspace; this prevents Export from replacing an unrelated nonempty directory.
 
 ## 14. State machines to keep in your head
 
@@ -1637,9 +1681,9 @@ Treat snapshots as truth and appends as a verified compression of truth.
 | Object | Lifetime/owner | Thread rule |
 | --- | --- | --- |
 | `Workspace` | Atomically published immutable snapshot; replaced snapshots live until their readers release them | Concurrent reads; callers hold one `getws()` shared pointer per operation |
-| `WorkspaceConfigStore` | Process; owns database lease/handle, private root, materialized workspace, Welcome path, and cleanup | Configuration mutex serializes runtime workspace edits; publish follows commit |
-| `ApplicationRuntime` / `CurrentVault` | Process; owns the runtime objects and active vault definition | Lifecycle mutex serializes switching and database maintenance; `CurrentVault` has a small mutex for readers |
-| `SessionRepository` | Process, independent session-storage owner; receives explicit outer paths and owns none of them | Concurrent const operations use short-lived connections; its maintenance guard fences operations during a vault switch |
+| `WorkspaceConfigStore` | Process; owns database lease/handle, password, private root, materialized workspace, Welcome path, and cleanup | Configuration mutex serializes runtime workspace edits; publish follows commit |
+| `ApplicationRuntime` / `CurrentVault` | Process; owns the runtime objects, active vault definition, and active password | Lifecycle mutex serializes switching and database maintenance; `CurrentVault` has a small mutex for readers |
+| `SessionRepository` | Process, independent session-storage owner; receives explicit outer paths and password and owns none of them | Concurrent const operations use short-lived connections; its maintenance guard fences operations during a vault switch |
 | `LiveSessionManager` | Process web runtime | Internal mutex protects registry/lifecycle coordination |
 | `LiveSession` | Manager entry plus transient route handles | Owner thread mutates session; lifecycle methods synchronize |
 | `SessionController` | One `LiveSession` | Owner thread only |
@@ -2021,21 +2065,23 @@ runtime holds it through `WorkspaceConfigStore`; console maintenance modes
 acquire the same lease, while CHA.app retains its runtime lease during
 in-process maintenance and acquires a switch target before cutover.
 
-**Vault:** A named external definition of one database and its optional mirror
-and modification directories. One process has one active vault at a time; a
-switch reuses the existing runtime objects with the selected paths.
+**Vault:** A named database plus a small external definition containing its
+path and protection flag. Its mirror and modification directories are derived
+from application-wide bases. One process has one active vault at a time; a
+switch reuses the existing runtime objects with the selected path and password.
 
 **Model history:** An owning immutable transcript snapshot shared with workers for context
 projection.
 
 **Session mirror:** The optional, non-authoritative display-named Markdown
-projection of persistent sessions under the external config's `mirror` root.
+projection of persistent sessions under the active vault's directory derived
+from the `app.toml` mirror base.
 
 **Notice:** Presentation state associated with command/session feedback. It is not model
 history or durable transcript state.
 
-**Prepared session:** A session validated and restored into a database path plus `session_key`,
-ready to transfer into a controller.
+**Prepared session:** A session validated and restored into a database path,
+database password, and `session_key`, ready to transfer into a controller.
 
 **Session key:** The internal SQLite integer identifying one session's rows. It never appears in a
 URL or protocol value; every restore and journal statement is scoped by it.
