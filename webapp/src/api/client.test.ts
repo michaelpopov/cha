@@ -47,7 +47,11 @@ describe('CHA API client', () => {
     await client.getBootstrap();
     await client.getCharacter('a b');
     await client.getPersona('read er');
-    await client.updatePersona('read er', { display_name: 'Reader' });
+    await client.updatePersona('read er', {
+      display_name: 'Reader',
+      style: 'serif-italic',
+      voice_id: 'brian',
+    });
     await client.listSessions('f/one');
     await client.createSession('forum', 'Review');
     await client.renameSession('forum', 'session', 'Renamed');
@@ -129,7 +133,9 @@ describe('CHA API client', () => {
     expect(fetcher.mock.calls[0][1]?.method).toBeUndefined();
     expect(new Headers(fetcher.mock.calls[0][1]?.headers).get('Accept')).toBe('application/json');
     expect(fetcher.mock.calls[3][1]?.method).toBe('PATCH');
-    expect(fetcher.mock.calls[3][1]?.body).toBe('{"display_name":"Reader"}');
+    expect(fetcher.mock.calls[3][1]?.body).toBe(
+      '{"display_name":"Reader","style":"serif-italic","voice_id":"brian"}',
+    );
     expect(fetcher.mock.calls[5][1]?.method).toBe('POST');
     expect(new Headers(fetcher.mock.calls[5][1]?.headers).get('Content-Type'))
       .toBe('application/json');

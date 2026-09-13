@@ -134,7 +134,9 @@ CharacterDetail character_detail(
         .editable_markdown = character.editable_markdown,
     };
     detail.writable = workspace.character_is_writable(character.character.id);
-    if (detail.writable) {
+    detail.settings_writable =
+        workspace.character_settings_are_writable(character.character.id);
+    if (detail.settings_writable) {
         detail.provider = character.provider_id;
         detail.style = character.style_id;
         detail.voice = character.voice_id;
@@ -154,14 +156,36 @@ CharacterDetail character_detail(
     return detail;
 }
 
-PersonaDetail persona_detail(
+PersonaSummary persona_summary(
     const Workspace& workspace,
     const WorkspacePersona& persona) {
     return {
-        .summary = {persona.id, persona.display_name, persona.description},
+        .id = persona.id,
+        .display_name = persona.display_name,
+        .description = persona.description,
+        .appearance = persona.appearance,
+        .voice = resolve_speech_voice(workspace, persona),
+    };
+}
+
+PersonaDetail persona_detail(
+    const Workspace& workspace,
+    const WorkspacePersona& persona) {
+    PersonaDetail detail{
+        .summary = persona_summary(workspace, persona),
         .persona_markdown = persona.prompt,
+        .style = persona.style_id,
+        .voice = persona.voice_id,
         .writable = workspace.persona_is_writable(persona.id),
     };
+    for (const WorkspaceStyle& style : workspace.styles()) {
+        detail.available_styles.push_back(
+            {style.id, style.label, style.appearance});
+    }
+    for (const WorkspaceVoice& voice : workspace.voices()) {
+        detail.available_voices.push_back({voice.id, voice.label});
+    }
+    return detail;
 }
 
 ForumSummary forum_summary(
@@ -229,7 +253,7 @@ Bootstrap bootstrap_for(
     Bootstrap bootstrap{.initial_forum_id = initial.session.forum_id,
                         .initial_session_id = initial.session.session_id};
     for (const WorkspacePersona& persona : workspace.personas()) {
-        bootstrap.personas.push_back({persona.id, persona.display_name, persona.description});
+        bootstrap.personas.push_back(persona_summary(workspace, persona));
     }
     for (const WorkspaceCharacter& character : workspace.characters()) {
         bootstrap.characters.push_back(character_summary(workspace, character));
@@ -474,7 +498,7 @@ void LobbyRoutes::install(httplib::Server& server) const {
         if (character == nullptr) {
             return set_route_not_found(response, "That character was not found.");
         }
-        if (!workspace->character_is_writable(id)) {
+        if (!workspace->character_settings_are_writable(id)) {
             return set_route_not_found(response, "That character was not found.");
         }
         if (!validate_json_mutation(request, response)) return;
@@ -636,12 +660,21 @@ void LobbyRoutes::install(httplib::Server& server) const {
             ? *update.display_name : persona->display_name;
         const std::string& markdown = update.persona_markdown
             ? *update.persona_markdown : persona->prompt;
+        const std::optional<std::string> style = update.style
+            ? *update.style : persona->style_id;
+        const std::optional<std::string> voice = update.voice
+            ? *update.voice : persona->voice_id;
         const bool changed = display_name != persona->display_name
-            || markdown != persona->prompt;
+            || markdown != persona->prompt
+            || style != persona->style_id
+            || voice != persona->voice_id;
         try {
             if (changed) {
                 const WorkspaceConfigEditResult edited =
-                    config->apply_persona_update(id, display_name, markdown);
+                    config->apply_persona_update(
+                        id, display_name, markdown,
+                        style ? std::optional<std::string_view>(*style) : std::nullopt,
+                        voice ? std::optional<std::string_view>(*voice) : std::nullopt);
                 request_reload(*live_sessions, edited.affected_forum_ids);
             }
         } catch (const std::invalid_argument&) {

@@ -36,18 +36,6 @@ enum class ErrorCode {
     command_queue_full, vault_password_required,
 };
 
-// The lobby publishes the workspace-wide persona roster for discovery: the
-// browser lists these and reads one persona's Markdown from
-// /api/v1/personas/{id}. A session starts from its forum configuration and can
-// use that attribution for its lifetime; a session snapshot deliberately does
-// not carry the full roster.
-struct PersonaSummary {
-    std::string id;
-    std::string display_name;
-    std::optional<std::string> description;
-    bool operator==(const PersonaSummary&) const = default;
-};
-
 struct SessionListing {
     SessionId id;
     std::string label;
@@ -72,6 +60,19 @@ struct SpeechVoice {
     SpeechVoiceSettings settings;
 
     bool operator==(const SpeechVoice&) const = default;
+};
+
+// The lobby publishes the workspace-wide persona roster for discovery: the
+// browser lists these and reads one persona's Markdown from
+// /api/v1/personas/{id}. Transcript entries carry persona ids so the browser
+// can preserve each stored prompt's attribution.
+struct PersonaSummary {
+    std::string id;
+    std::string display_name;
+    std::optional<std::string> description;
+    CharacterAppearance appearance;
+    std::optional<SpeechVoice> voice;
+    bool operator==(const PersonaSummary&) const = default;
 };
 
 struct CharacterSummary {
@@ -264,6 +265,7 @@ struct CharacterDetail {
     std::vector<ProviderOption> available_providers;
     std::vector<StyleOption> available_styles;
     std::vector<VoiceOption> available_voices;
+    bool settings_writable{};
     bool writable{};
 };
 
@@ -271,12 +273,18 @@ struct PersonaDetail {
     PersonaSummary summary;
     // PERSONA.md verbatim, and empty for a persona that configures none.
     std::string persona_markdown;
+    std::optional<std::string> style;
+    std::optional<std::string> voice;
+    std::vector<StyleOption> available_styles;
+    std::vector<VoiceOption> available_voices;
     bool writable{};
 };
 
 struct PersonaUpdate {
     std::optional<std::string> display_name;
     std::optional<std::string> persona_markdown;
+    std::optional<std::optional<std::string>> style;
+    std::optional<std::optional<std::string>> voice;
 };
 
 struct ForumUpdate {

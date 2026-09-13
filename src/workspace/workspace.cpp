@@ -725,7 +725,8 @@ WorkspacePersona load_persona(const std::filesystem::path& directory) {
     }
     const std::filesystem::path config_path = directory / "persona.toml";
     const toml::table table = read_toml(config_path, "persona config");
-    static constexpr std::string_view fields[]{"display_name", "description"};
+    static constexpr std::string_view fields[]{
+        "display_name", "description", "style", "voice"};
     reject_unknown_fields(table, config_path, fields, "Persona config");
     const std::string display_name = required_string(table, config_path, "display_name");
     validate_public_name(display_name, "Persona name", config_path, true);
@@ -736,6 +737,12 @@ WorkspacePersona load_persona(const std::filesystem::path& directory) {
     const std::optional<std::string> description = optional_value<std::string>(
         table, config_path, "description", "a string");
     if (description) validate_description(*description, "Persona", config_path);
+    const std::optional<std::string> style_id = optional_value<std::string>(
+        table, config_path, "style", "a string");
+    const std::optional<std::string> voice_id = optional_value<std::string>(
+        table, config_path, "voice", "a string");
+    if (style_id) require_path_component(*style_id, config_path);
+    if (voice_id) require_path_component(*voice_id, config_path);
     const std::filesystem::path prompt_path = directory / "PERSONA.md";
     std::string prompt;
     if (std::filesystem::exists(prompt_path)) {
@@ -751,6 +758,8 @@ WorkspacePersona load_persona(const std::filesystem::path& directory) {
         .display_name = display_name,
         .prompt = std::move(prompt),
         .description = description,
+        .style_id = style_id,
+        .voice_id = voice_id,
     };
 }
 
@@ -1237,6 +1246,21 @@ Workspace Workspace::load(std::filesystem::path root) {
     for (const std::filesystem::path& directory : recursive_definition_directories(
              personas_directory, "persona.toml", "PERSONA.md")) {
         WorkspacePersona persona = load_persona(directory);
+        if (persona.style_id) {
+            const WorkspaceStyle* style = workspace.find_style(*persona.style_id);
+            if (style == nullptr) {
+                throw std::runtime_error(
+                    "Persona '" + persona.id + "' references unknown style '"
+                    + *persona.style_id + "'");
+            }
+            persona.appearance = style->appearance;
+        }
+        if (persona.voice_id
+            && workspace.find_voice(*persona.voice_id) == nullptr) {
+            throw std::runtime_error(
+                "Persona '" + persona.id + "' references unknown voice '"
+                + *persona.voice_id + "'");
+        }
         workspace.persona_directories_.emplace(persona.id, directory);
         workspace.personas_.push_back(std::move(persona));
     }
@@ -1801,6 +1825,10 @@ bool Workspace::character_is_writable(std::string_view id) const noexcept {
     return character_config_paths_.contains(std::string(id));
 }
 
+bool Workspace::character_settings_are_writable(std::string_view id) const noexcept {
+    return id == workspace_assistant_id || character_is_writable(id);
+}
+
 bool Workspace::persona_is_writable(std::string_view id) const noexcept {
     return persona_directories_.contains(std::string(id));
 }
@@ -2018,6 +2046,11 @@ void Workspace::delete_style(std::string_view style_id) const {
             throw std::invalid_argument("Style is in use");
         }
     }
+    for (const WorkspacePersona& persona : personas_) {
+        if (persona.style_id && *persona.style_id == style_id) {
+            throw std::invalid_argument("Style is in use");
+        }
+    }
     std::error_code error;
     std::filesystem::remove_all(path->second.parent_path(), error);
     if (error) {
@@ -2109,6 +2142,11 @@ void Workspace::delete_voice(std::string_view voice_id) const {
     }
     for (const WorkspaceCharacter& character : characters_) {
         if (character.voice_id && *character.voice_id == voice_id) {
+            throw std::invalid_argument("Voice is in use");
+        }
+    }
+    for (const WorkspacePersona& persona : personas_) {
+        if (persona.voice_id && *persona.voice_id == voice_id) {
             throw std::invalid_argument("Voice is in use");
         }
     }
@@ -2372,7 +2410,9 @@ void Workspace::delete_character(std::string_view character_id) const {
 void Workspace::write_persona(
     std::string_view persona_id,
     std::string_view display_name,
-    std::string_view markdown) const {
+    std::string_view markdown,
+    std::optional<std::string_view> style_id,
+    std::optional<std::string_view> voice_id) const {
     const auto directory = persona_directories_.find(std::string(persona_id));
     if (directory == persona_directories_.end()) {
         throw std::runtime_error(
@@ -2399,8 +2439,20 @@ void Workspace::write_persona(
             throw std::invalid_argument("Persona name conflicts with a character");
         }
     }
+    if (style_id && find_style(*style_id) == nullptr) {
+        throw std::invalid_argument(
+            "Style '" + std::string(*style_id) + "' does not exist");
+    }
+    if (voice_id && find_voice(*voice_id) == nullptr) {
+        throw std::invalid_argument(
+            "Voice '" + std::string(*voice_id) + "' does not exist");
+    }
     rewrite_toml_file(config_path, [&](toml::table& table) {
         table.insert_or_assign("display_name", std::string(display_name));
+        if (style_id) table.insert_or_assign("style", std::string(*style_id));
+        else table.erase("style");
+        if (voice_id) table.insert_or_assign("voice", std::string(*voice_id));
+        else table.erase("voice");
     });
     create_private_file(directory->second / "PERSONA.md", markdown);
 }
@@ -2573,12 +2625,16 @@ void Workspace::write_character_settings(
     std::optional<std::string_view> voice_id,
     std::optional<std::string_view> reasoning_effort,
     std::optional<WebSearchMode> web_search) const {
-    const auto config = character_config_paths_.find(std::string(character_id));
-    if (config == character_config_paths_.end()) {
+    const auto configured = character_config_paths_.find(std::string(character_id));
+    if (configured == character_config_paths_.end()
+        && character_id != workspace_assistant_id) {
         throw std::runtime_error(
             "Character '" + std::string(character_id)
             + "' has no writable configuration");
     }
+    const std::filesystem::path config = character_id == workspace_assistant_id
+        ? root_ / "system" / "assistant" / "character.toml"
+        : configured->second;
     const WorkspaceProvider* const provider = find_provider(provider_id);
     if (provider == nullptr) {
         throw std::invalid_argument(
@@ -2602,7 +2658,7 @@ void Workspace::write_character_settings(
         throw std::invalid_argument(
             "The selected provider does not support web search");
     }
-    rewrite_toml_file(config->second, [&](toml::table& table) {
+    rewrite_toml_file(config, [&](toml::table& table) {
         table.insert_or_assign("provider", std::string(provider_id));
         if (style_id) table.insert_or_assign("style", std::string(*style_id));
         else table.erase("style");

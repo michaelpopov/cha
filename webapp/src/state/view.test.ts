@@ -176,7 +176,7 @@ describe('application navigation reducer', () => {
     expect(navigationTitle(state)).toBe('Guide');
 
     state = appReducer(state, {
-      type: 'character-detail-loaded', characterId: 'guide', writable: true,
+      type: 'character-detail-loaded', characterId: 'guide', settingsWritable: true, writable: true,
     });
     expect(state.characterSettingsAvailable).toBe(true);
 
@@ -194,9 +194,10 @@ describe('application navigation reducer', () => {
     expect(state.inspectedCharacterId).toBe('assistant');
 
     state = appReducer(state, {
-      type: 'character-detail-loaded', characterId: 'assistant', writable: false,
+      type: 'character-detail-loaded', characterId: 'assistant', settingsWritable: true, writable: false,
     });
-    expect(state.characterSettingsAvailable).toBe(false);
+    expect(state.characterSettingsAvailable).toBe(true);
+    expect(state.characterEditingAvailable).toBe(false);
   });
 
   it('adds a created draft character and opens its detail', () => {
@@ -212,6 +213,7 @@ describe('application navigation reducer', () => {
       available_providers: [],
       available_styles: [],
       available_voices: [],
+      settings_writable: true,
       writable: true,
       id: 'character_1',
       display_name: 'Mentor',
@@ -233,7 +235,7 @@ describe('application navigation reducer', () => {
     let state = readyState();
     state = appReducer(state, { type: 'inspect-character', characterId: 'guide' });
     state = appReducer(state, {
-      type: 'character-detail-loaded', characterId: 'guide', writable: true,
+      type: 'character-detail-loaded', characterId: 'guide', settingsWritable: true, writable: true,
     });
     state = appReducer(state, { type: 'show-character-settings' });
     const conversation = state.activeConversation;
@@ -319,7 +321,7 @@ describe('application navigation reducer', () => {
 
     // Guide's slower request lands while the Assistant is the one on screen.
     state = appReducer(state, {
-      type: 'character-detail-loaded', characterId: 'guide', writable: true,
+      type: 'character-detail-loaded', characterId: 'guide', settingsWritable: true, writable: true,
     });
     expect(state.characterSettingsAvailable).toBe(false);
   });

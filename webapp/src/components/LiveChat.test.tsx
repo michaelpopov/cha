@@ -7,7 +7,9 @@ import type { SessionEventHandlers } from '../api/events';
 import {
   bootstrapFixture,
   fixtureClient,
+  monoLargeVoice,
   plainVoice,
+  serifItalicVoice,
   snapshotFixture,
   voiceOutputRuntimeFixture,
 } from '../test/fixtures';
@@ -177,7 +179,7 @@ describe('live chat', () => {
     expect(articles[1].querySelector('.cha-message-time')).toBeNull();
   });
 
-  it('offers text to speech only for completed model responses in the macOS shell', async () => {
+  it('offers text to speech for stored prompts and completed model responses', async () => {
     const play = vi.spyOn(TextToSpeechSession.prototype, 'play').mockResolvedValue();
     const stop = vi.spyOn(TextToSpeechSession.prototype, 'stop');
     const events = drivableEvents();
@@ -200,17 +202,86 @@ describe('live chat', () => {
       ],
     });
 
-    expect(screen.queryByRole('button', { name: "Read Guest's response aloud" }))
-      .not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: "Read Assistant's response aloud" }));
+    fireEvent.click(screen.getByRole('button', { name: 'Read your prompt aloud' }));
     expect(play).toHaveBeenCalledOnce();
+    fireEvent.click(await screen.findByRole('button', { name: 'Stop reading your prompt' }));
+    expect(stop).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByRole('button', { name: "Read Assistant's response aloud" }));
+    expect(play).toHaveBeenCalledTimes(2);
     fireEvent.click(await screen.findByRole('button', {
       name: "Stop reading Assistant's response",
     }));
-    expect(stop).toHaveBeenCalledOnce();
+    expect(stop).toHaveBeenCalledTimes(2);
   });
 
-  it('caches existing responses three at a time and caches later completions', async () => {
+  it('uses each stored prompt author\'s style and voice after the forum persona changes', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(new TextEncoder().encode('audio')),
+    );
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:audio');
+    vi.stubGlobal('Audio', vi.fn(function Audio() {
+      return {
+        addEventListener: vi.fn(),
+        pause: vi.fn(),
+        play: vi.fn().mockResolvedValue(undefined),
+      };
+    }));
+    const events = drivableEvents();
+    const personaVoice = {
+      id: 'reader-voice',
+      display_name: 'Reader voice',
+      elevenlabs_voice_id: 'reader-elevenlabs',
+      settings: {},
+    };
+    const bootstrap = {
+      ...bootstrapFixture,
+      personas: bootstrapFixture.personas.map((persona) => persona.id === 'reader'
+        ? { ...persona, appearance: serifItalicVoice, voice: personaVoice }
+        : persona),
+    };
+    render(<App client={fixtureClient({
+      getBootstrap: async () => bootstrap,
+      getVoiceOutputRuntime: async () => voiceOutputRuntimeFixture,
+    })} connectSessionEvents={events.connect} />);
+    await attachInitial(events, {
+      ...snapshotFixture,
+      transcript: [{
+        id: 1, kind: 'human', participant_id: 'reader', display_name: 'Reader',
+        addressed_to: 'assistant', addressed_to_name: 'Assistant',
+        text: 'Styled question', status: 'complete', created_at: 1_700_000_000,
+      }],
+    });
+
+    expect(screen.getByText('Styled question')).toHaveClass(
+      'cha-font-serif', 'cha-slant-italic',
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Read your prompt aloud' }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/reader-elevenlabs?'),
+      expect.anything(),
+    ));
+  });
+
+  it('keeps error entries in neutral typography', async () => {
+    const events = drivableEvents();
+    render(<App client={fixtureClient()} connectSessionEvents={events.connect} />);
+    await attachInitial(events, {
+      ...snapshotFixture,
+      characters: [{ ...snapshotFixture.characters[0], appearance: monoLargeVoice }],
+      transcript: [{
+        id: 1, kind: 'error', participant_id: 'assistant', display_name: 'Assistant',
+        addressed_to: '', addressed_to_name: '', text: 'The response failed.',
+        status: 'failed', created_at: 1_700_000_000,
+      }],
+    });
+
+    expect(screen.getByText('The response failed.')).toHaveClass('cha-message-text');
+    expect(screen.getByText('The response failed.')).not.toHaveClass(
+      'cha-font-mono', 'cha-scale-large',
+    );
+  });
+
+  it('caches existing conversation audio three at a time and caches later entries', async () => {
     const responses: Array<(response: Response) => void> = [];
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(() => (
       new Promise<Response>((resolve) => responses.push(resolve))
@@ -219,52 +290,54 @@ describe('live chat', () => {
       { length: 5 },
       (_, index) => ({
         id: index + 1,
-        kind: 'character',
-        participant_id: 'assistant',
-        display_name: 'Assistant',
+        kind: index === 0 ? 'human' : 'character',
+        participant_id: index === 0 ? 'guest' : 'assistant',
+        display_name: index === 0 ? 'Guest' : 'Assistant',
         addressed_to: 'guest',
         addressed_to_name: 'Guest',
-        text: `Answer ${index + 1}`,
+        text: index === 0 ? 'Question 1' : `Answer ${index + 1}`,
         status: 'complete',
         created_at: 1_700_000_000 + index,
       }),
     );
     const events = drivableEvents();
+    const speechSnapshot: SessionSnapshot = {
+      ...snapshotFixture,
+      characters: [{
+        ...snapshotFixture.characters[0],
+        voice: {
+          id: 'assistant-voice',
+          display_name: 'Assistant voice',
+          elevenlabs_voice_id: 'assistant-voice',
+          settings: {},
+        },
+      }],
+    };
     render(<App client={fixtureClient({
       getVoiceOutputRuntime: async () => voiceOutputRuntimeFixture,
     })} connectSessionEvents={events.connect} />);
-    await attachInitial(events, { ...snapshotFixture, transcript });
+    await attachInitial(events, { ...speechSnapshot, transcript });
 
-    const toggle = screen.getByRole('button', { name: 'Cache response audio automatically' });
+    const toggle = screen.getByRole('button', { name: 'Cache conversation audio automatically' });
     fireEvent.click(toggle);
 
     expect(toggle).toHaveAttribute('aria-pressed', 'true');
     expect(fetchMock).toHaveBeenCalledTimes(3);
-    const nextResponse = {
+    const nextPrompt = {
       id: 6,
-      kind: 'character' as const,
-      participant_id: 'assistant',
-      display_name: 'Assistant',
-      addressed_to: 'guest',
-      addressed_to_name: 'Guest',
-      text: 'Answer 6',
-      status: 'streaming' as const,
+      kind: 'human' as const,
+      participant_id: 'guest',
+      display_name: 'Guest',
+      addressed_to: 'assistant',
+      addressed_to_name: 'Assistant',
+      text: 'Question 6',
+      status: 'complete' as const,
       request_id: 6,
-      created_at: null,
+      created_at: 1_700_000_006,
     };
     act(() => events.handlers[0].onSnapshot({
-      ...snapshotFixture,
-      transcript: [...transcript, nextResponse],
-    }));
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-
-    act(() => events.handlers[0].onSnapshot({
-      ...snapshotFixture,
-      transcript: [...transcript, {
-        ...nextResponse,
-        status: 'complete',
-        created_at: 1_700_000_006,
-      }],
+      ...speechSnapshot,
+      transcript: [...transcript, nextPrompt],
     }));
     expect(fetchMock).toHaveBeenCalledTimes(3);
 
@@ -281,7 +354,15 @@ describe('live chat', () => {
 
     expect(fetchMock.mock.calls.map(([, request]) => (
       JSON.parse(String(request?.body)).text
-    ))).toEqual(['Answer 1', 'Answer 2', 'Answer 3', 'Answer 6', 'Answer 4', 'Answer 5']);
+    ))).toEqual(['Question 1', 'Answer 2', 'Answer 3', 'Question 6', 'Answer 4', 'Answer 5']);
+    expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual([
+      expect.stringContaining('/fallback?'),
+      expect.stringContaining('/assistant-voice?'),
+      expect.stringContaining('/assistant-voice?'),
+      expect.stringContaining('/fallback?'),
+      expect.stringContaining('/assistant-voice?'),
+      expect.stringContaining('/assistant-voice?'),
+    ]);
   });
 
   it('shows an error message returned by ElevenLabs', async () => {
@@ -518,8 +599,14 @@ describe('live chat', () => {
   });
 
   it('shows a multicast prompt once while keeping every character response', async () => {
+    const responses: Array<(response: Response) => void> = [];
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(() => (
+      new Promise<Response>((resolve) => responses.push(resolve))
+    ));
     const events = drivableEvents();
-    render(<App client={fixtureClient()} connectSessionEvents={events.connect} />);
+    render(<App client={fixtureClient({
+      getVoiceOutputRuntime: async () => voiceOutputRuntimeFixture,
+    })} connectSessionEvents={events.connect} />);
     await attachInitial(events, {
       ...snapshotFixture,
       transcript: [
@@ -551,6 +638,16 @@ describe('live chat', () => {
     expect(screen.getByText('Two answer')).toBeInTheDocument();
     expect(document.querySelectorAll('.cha-message')).toHaveLength(3);
     expect(document.querySelectorAll('.cha-repeated-prompt-divider')).toHaveLength(1);
+
+    const cacheToggle = screen.getByRole('button', {
+      name: 'Cache conversation audio automatically',
+    });
+    fireEvent.click(cacheToggle);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    for (const resolve of responses) {
+      resolve(new Response(new TextEncoder().encode('audio')));
+    }
+    await waitFor(() => expect(cacheToggle).toHaveAttribute('aria-busy', 'false'));
   });
 
   it('hides an indented echoed UTC metadata line from a character response', async () => {

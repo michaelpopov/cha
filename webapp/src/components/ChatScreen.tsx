@@ -164,18 +164,21 @@ function TranscriptMessage({
   onUncover?: () => void;
   onDelete?: (entry: SessionSnapshot['transcript'][number]) => void;
 }) {
-  const canRead = entry.kind === 'character'
+  const canRead = (entry.kind === 'human' || entry.kind === 'character')
     && entry.status === 'complete'
     && entry.created_at !== null;
   const canCover = entry.kind === 'character'
     && (entry.status === 'complete' || entry.status === 'cancelled')
     && entry.created_at !== null;
   const canDelete = canCover && entry.request_id !== undefined;
+  const spokenItem = entry.kind === 'human'
+    ? 'your prompt'
+    : `${entry.display_name}'s response`;
   const speechLabel = speechState === 'loading'
-    ? `Generating audio for ${entry.display_name}'s response`
+    ? `Generating audio for ${spokenItem}`
     : speechState === 'playing'
-      ? `Stop reading ${entry.display_name}'s response`
-      : `Read ${entry.display_name}'s response aloud`;
+      ? `Stop reading ${spokenItem}`
+      : `Read ${spokenItem} aloud`;
   const coverLabel = onUncover
     ? 'Uncover transcript'
     : `Cover transcript through ${entry.display_name}'s response`;
@@ -188,9 +191,9 @@ function TranscriptMessage({
         <div className="cha-speaker">{entry.display_name}</div>
       )}
       <div
-        className={`cha-message-text${entry.kind === 'character'
-          ? voiceClasses(appearance)
-          : ''}`}
+        className={`cha-message-text${voiceClasses(
+          entry.kind === 'human' || entry.kind === 'character' ? appearance : undefined,
+        )}`}
       >
         {visibleEntryText(entry.kind, entry.text)}
       </div>
@@ -354,16 +357,23 @@ export function ChatScreen({
     () => new Map((snapshot?.characters ?? []).map(({ id, voice }) => [id, voice])),
     [snapshot?.characters],
   );
+  const personas = useMemo(
+    () => new Map((state.bootstrap?.personas ?? []).map((persona) => [persona.id, persona])),
+    [state.bootstrap?.personas],
+  );
+  const transcriptEntries = useMemo(
+    () => snapshot ? visibleTranscriptEntries(snapshot.transcript) : [],
+    [snapshot?.transcript],
+  );
   const completedSpeechEntries = useMemo(
-    () => (snapshot?.transcript ?? []).filter((entry) => (
-      entry.kind === 'character'
+    () => transcriptEntries.map(({ entry }) => entry).filter((entry) => (
+      (entry.kind === 'human' || entry.kind === 'character')
       && entry.status === 'complete'
       && visibleEntryText(entry.kind, entry.text).trim().length > 0
     )),
-    [snapshot?.transcript],
+    [transcriptEntries],
   );
   const completedSpeechEntryIds = completedSpeechEntries.map(({ id }) => id).join(',');
-  const transcriptEntries = snapshot ? visibleTranscriptEntries(snapshot.transcript) : [];
   const coveredUntil = snapshot?.covered_until ?? null;
   const coveredEntries = coveredUntil === null
     ? []
@@ -441,7 +451,7 @@ export function ChatScreen({
         if (speechCacheRun.current !== run) return;
         setActionError(failure instanceof TextToSpeechError
           ? failure.message
-          : 'One response could not be cached. The remaining responses will continue.');
+          : 'One message could not be cached. The remaining messages will continue.');
       }).finally(() => {
         run.active -= 1;
         if (speechCacheRun.current !== run) return;
@@ -461,7 +471,9 @@ export function ChatScreen({
       run.seenEntryIds.add(entry.id);
       added.push({
         text: visibleEntryText(entry.kind, entry.text),
-        voice: speechVoices.get(entry.participant_id),
+        voice: entry.kind === 'character'
+          ? speechVoices.get(entry.participant_id)
+          : personas.get(entry.participant_id)?.voice,
       });
     }
     run.queue.unshift(...added);
@@ -509,7 +521,9 @@ export function ChatScreen({
     textToSpeechSession.current?.stop();
     const session = new TextToSpeechSession(
       textToSpeechConfiguration,
-      speechVoices.get(entry.participant_id),
+      entry.kind === 'character'
+        ? speechVoices.get(entry.participant_id)
+        : personas.get(entry.participant_id)?.voice,
       visibleEntryText(entry.kind, entry.text),
       () => {
         if (textToSpeechSession.current !== session) return;
@@ -533,7 +547,7 @@ export function ChatScreen({
       if (!(failure instanceof DOMException && failure.name === 'AbortError')) {
         setActionError(failure instanceof TextToSpeechError
           ? failure.message
-          : 'This response could not be read aloud. Try again.');
+          : 'This message could not be read aloud. Try again.');
       }
     });
   }
@@ -842,7 +856,11 @@ export function ChatScreen({
               <Fragment key={entry.id}>
                 {dividerBefore && <hr className="cha-repeated-prompt-divider" />}
                 <TranscriptMessage
-                  appearance={appearances.get(entry.participant_id)}
+                  appearance={entry.kind === 'human'
+                    ? personas.get(entry.participant_id)?.appearance
+                    : entry.kind === 'character'
+                      ? appearances.get(entry.participant_id)
+                      : undefined}
                   actionDisabled={!connected || generationActive || pendingAction !== null}
                   entry={entry}
                   onCover={entry.id === boundaryEntryId
@@ -865,7 +883,11 @@ export function ChatScreen({
           <Fragment key={entry.id}>
             {dividerBefore && <hr className="cha-repeated-prompt-divider" />}
             <TranscriptMessage
-              appearance={appearances.get(entry.participant_id)}
+              appearance={entry.kind === 'human'
+                ? personas.get(entry.participant_id)?.appearance
+                : entry.kind === 'character'
+                  ? appearances.get(entry.participant_id)
+                  : undefined}
               actionDisabled={!connected || generationActive || pendingAction !== null}
               entry={entry}
               onCover={(coveredEntry) => changeCover(coveredEntry.id)}
@@ -1021,17 +1043,17 @@ export function ChatScreen({
             <button
               aria-busy={speechCacheBusy}
               aria-label={speechCacheEnabled
-                ? 'Stop caching response audio automatically'
-                : 'Cache response audio automatically'}
+                ? 'Stop caching conversation audio automatically'
+                : 'Cache conversation audio automatically'}
               aria-pressed={speechCacheEnabled}
               className="cha-speech-cache-toggle"
               disabled={!sessionAvailable}
               onClick={toggleSpeechCache}
               title={speechCacheBusy
-                ? 'Caching response audio'
+                ? 'Caching conversation audio'
                 : speechCacheEnabled
-                  ? 'Automatically cache response audio'
-                  : 'Cache existing and future response audio'}
+                  ? 'Automatically cache conversation audio'
+                  : 'Cache existing and future conversation audio'}
               type="button"
             >
               <SpeakerIcon />

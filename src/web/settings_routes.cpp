@@ -126,6 +126,9 @@ std::vector<std::string> characters_using_style(
             result.push_back(character.character.display_name);
         }
     }
+    for (const WorkspacePersona& persona : workspace.personas()) {
+        if (persona.style_id == style_id) result.push_back(persona.display_name);
+    }
     return result;
 }
 
@@ -137,6 +140,9 @@ std::vector<std::string> characters_using_voice(
         if (character.voice_id == voice_id) {
             result.push_back(character.character.display_name);
         }
+    }
+    for (const WorkspacePersona& persona : workspace.personas()) {
+        if (persona.voice_id == voice_id) result.push_back(persona.display_name);
     }
     const WorkspaceVoice* const voice = workspace.find_voice(voice_id);
     if (voice && workspace.voice_output()
@@ -480,10 +486,7 @@ bool provider_is_used(const Workspace& workspace, std::string_view provider_id) 
 }
 
 bool style_is_used(const Workspace& workspace, std::string_view style_id) {
-    for (const WorkspaceCharacter& character : workspace.characters()) {
-        if (character.style_id == style_id) return true;
-    }
-    return false;
+    return !characters_using_style(workspace, style_id).empty();
 }
 
 bool voice_is_used(const Workspace& workspace, std::string_view voice_id) {

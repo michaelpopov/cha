@@ -193,6 +193,8 @@ public:
         std::string_view character_id) const;
     [[nodiscard]] bool character_is_writable(
         std::string_view id) const noexcept;
+    [[nodiscard]] bool character_settings_are_writable(
+        std::string_view id) const noexcept;
     [[nodiscard]] bool persona_is_writable(
         std::string_view id) const noexcept;
     [[nodiscard]] bool forum_is_writable(
@@ -264,7 +266,9 @@ public:
     void write_persona(
         std::string_view persona_id,
         std::string_view display_name,
-        std::string_view markdown) const;
+        std::string_view markdown,
+        std::optional<std::string_view> style_id,
+        std::optional<std::string_view> voice_id) const;
     void delete_persona(std::string_view persona_id) const;
     void create_persona(
         std::string_view persona_id,

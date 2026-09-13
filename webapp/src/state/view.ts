@@ -13,6 +13,7 @@ export type MainView =
   | 'personas'
   | 'new-persona'
   | 'persona-detail'
+  | 'persona-settings'
   | 'characters'
   | 'new-character'
   | 'character-detail'
@@ -68,6 +69,7 @@ export interface AppState {
   activeConversation: ActiveConversation | null;
   inspectedCharacterId: string | null;
   characterSettingsAvailable: boolean;
+  characterEditingAvailable: boolean;
   inspectedPersonaId: string | null;
   personaEditingAvailable: boolean;
   forumEditingAvailable: boolean;
@@ -103,6 +105,7 @@ export const initialAppState: AppState = {
   activeConversation: null,
   inspectedCharacterId: null,
   characterSettingsAvailable: false,
+  characterEditingAvailable: false,
   inspectedPersonaId: null,
   personaEditingAvailable: false,
   forumEditingAvailable: false,
@@ -141,10 +144,11 @@ export type AppAction =
   | { type: 'persona-created'; persona: PersonaDetail }
   | { type: 'persona-updated'; persona: PersonaDetail }
   | { type: 'persona-deleted'; personaId: string }
+  | { type: 'show-persona-settings' }
   | { type: 'show-characters' }
   | { type: 'show-new-character' }
   | { type: 'inspect-character'; characterId: string }
-  | { type: 'character-detail-loaded'; characterId: string; writable: boolean }
+  | { type: 'character-detail-loaded'; characterId: string; settingsWritable: boolean; writable: boolean }
   | { type: 'character-created'; character: CharacterDetail }
   | { type: 'character-updated'; character: CharacterDetail }
   | { type: 'character-deleted'; characterId: string }
@@ -307,6 +311,10 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     case 'persona-detail-loaded':
       if (state.inspectedPersonaId !== action.personaId) return state;
       return { ...state, personaEditingAvailable: action.writable };
+    case 'show-persona-settings':
+      return state.inspectedPersonaId
+        ? { ...state, mainView: 'persona-settings', ...idleSessionOperation() }
+        : state;
     case 'persona-created': {
       if (!state.bootstrap) return state;
       const persona = action.persona;
@@ -315,6 +323,8 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         {
           id: persona.id,
           display_name: persona.display_name,
+          appearance: persona.appearance,
+          ...(persona.voice === undefined ? {} : { voice: persona.voice }),
           ...(persona.description === undefined
             ? {} : { description: persona.description }),
         },
@@ -338,6 +348,8 @@ export function appReducer(state: AppState, action: AppAction): AppState {
             ? {
               id: persona.id,
               display_name: persona.display_name,
+              appearance: persona.appearance,
+              ...(persona.voice === undefined ? {} : { voice: persona.voice }),
               ...(persona.description === undefined
                 ? {} : { description: persona.description }),
             }
@@ -379,6 +391,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         mainView: 'characters',
         inspectedCharacterId: null,
         characterSettingsAvailable: false,
+        characterEditingAvailable: false,
         ...idleSessionOperation(),
       };
     case 'show-new-character':
@@ -391,13 +404,20 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         characterSettingsAvailable: action.characterId === state.inspectedCharacterId
           ? state.characterSettingsAvailable
           : false,
+        characterEditingAvailable: action.characterId === state.inspectedCharacterId
+          ? state.characterEditingAvailable
+          : false,
         ...idleSessionOperation(),
       };
     case 'character-detail-loaded':
       // A reply for a character the reader has already left must not decide
       // whether the one now on screen offers its settings.
       if (action.characterId !== state.inspectedCharacterId) return state;
-      return { ...state, characterSettingsAvailable: action.writable };
+      return {
+        ...state,
+        characterSettingsAvailable: action.settingsWritable,
+        characterEditingAvailable: action.writable,
+      };
     case 'character-created': {
       if (!state.bootstrap) return state;
       const character = action.character;
@@ -417,7 +437,8 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         mainView: 'character-detail',
         bootstrap: { ...state.bootstrap, characters },
         inspectedCharacterId: character.id,
-        characterSettingsAvailable: character.writable,
+        characterSettingsAvailable: character.settings_writable,
+        characterEditingAvailable: character.writable,
         ...idleSessionOperation(),
       };
     }
@@ -473,6 +494,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         } : null,
         inspectedCharacterId: null,
         characterSettingsAvailable: false,
+        characterEditingAvailable: false,
         ...idleSessionOperation(),
       };
     case 'show-character-settings':
@@ -838,6 +860,7 @@ export function navigationTitle(state: AppState): string | null {
       return state.bootstrap?.personas.find(
         ({ id }) => id === state.inspectedPersonaId,
       )?.display_name ?? 'Persona';
+    case 'persona-settings': return 'Settings';
     case 'characters': return 'Characters';
     case 'new-character': return 'New character';
     case 'character-detail':

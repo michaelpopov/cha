@@ -270,6 +270,7 @@ TEST(LobbyRoutes, ServesBootstrapDiscoveryAndHealthWithoutSessionDataInHealth) {
     EXPECT_EQ(workspace_character_body["available_voices"], nlohmann::json::array({{
         {"id", "warm-narrator"}, {"label", "Warm Narrator"},
     }}));
+    EXPECT_EQ(workspace_character_body["settings_writable"], true);
     EXPECT_EQ(workspace_character_body["writable"], true);
 
     const auto assistant_character = server.client().Get("/api/v1/characters/builtin-assistant");
@@ -277,8 +278,9 @@ TEST(LobbyRoutes, ServesBootstrapDiscoveryAndHealthWithoutSessionDataInHealth) {
     ASSERT_EQ(assistant_character->status, 200);
     const nlohmann::json assistant_body = body(assistant_character);
     EXPECT_FALSE(assistant_body["character_markdown"].get<std::string>().empty());
+    EXPECT_EQ(assistant_body["settings_writable"], true);
     EXPECT_EQ(assistant_body["writable"], false);
-    EXPECT_TRUE(assistant_body["provider"].is_null());
+    EXPECT_EQ(assistant_body["provider"], "test");
     EXPECT_TRUE(assistant_body["style"].is_null());
     EXPECT_TRUE(assistant_body["voice_id"].is_null());
 
@@ -888,6 +890,11 @@ TEST(LobbyRoutes, DeletesAForumAndAllOfItsSessions) {
 
 TEST(LobbyRoutes, PatchesPersonaNameAndMarkdownInTheDatabase) {
     test::TestWorkspace fixture;
+    fixture.write_style("serif-italic", "font = \"serif\"\nstyle = \"italic\"\n");
+    fixture.write_voice(
+        "warm-narrator",
+        "display_name = \"Warm Narrator\"\n"
+        "elevenlabs_voice_id = \"warm-voice\"\n");
     std::ofstream(fixture.root() / "forums" / "lobby" / "config.toml")
         << "display_name = \"The Lobby\"\n"
            "default_persona = \"reader\"\n";
@@ -900,12 +907,18 @@ TEST(LobbyRoutes, PatchesPersonaNameAndMarkdownInTheDatabase) {
     const auto saved = patch_persona(server, "reader", {
         {"display_name", "Editor"},
         {"persona_markdown", "# Updated persona\n"},
+        {"style", "serif-italic"},
+        {"voice_id", "warm-narrator"},
     });
     ASSERT_TRUE(saved);
     ASSERT_EQ(saved->status, 200);
     const nlohmann::json saved_body = body(saved);
     EXPECT_EQ(saved_body["display_name"], "Editor");
     EXPECT_EQ(saved_body["persona_markdown"], "# Updated persona\n");
+    EXPECT_EQ(saved_body["style"], "serif-italic");
+    EXPECT_EQ(saved_body["voice_id"], "warm-narrator");
+    EXPECT_EQ(saved_body["appearance"]["font"], "serif");
+    EXPECT_EQ(saved_body["voice"]["elevenlabs_voice_id"], "warm-voice");
     EXPECT_EQ(saved_body["writable"], true);
     EXPECT_EQ(read_bytes(config_path), source_before);
     EXPECT_NE(
@@ -915,6 +928,19 @@ TEST(LobbyRoutes, PatchesPersonaNameAndMarkdownInTheDatabase) {
     EXPECT_EQ(
         config_row(graph.store->database_path(), "personas/reader/PERSONA.md"),
         "# Updated persona\n");
+    EXPECT_NE(
+        config_row(graph.store->database_path(), "personas/reader/persona.toml")
+            .find("serif-italic"),
+        std::string::npos);
+
+    const auto cleared = patch_persona(server, "reader", {
+        {"style", nullptr},
+        {"voice_id", nullptr},
+    });
+    ASSERT_TRUE(cleared);
+    ASSERT_EQ(cleared->status, 200);
+    EXPECT_TRUE(body(cleared)["style"].is_null());
+    EXPECT_TRUE(body(cleared)["voice_id"].is_null());
 
     const auto bootstrap = server.client().Get("/api/v1/bootstrap");
     ASSERT_TRUE(bootstrap);
@@ -1256,10 +1282,23 @@ TEST(LobbyRoutes, PatchesCharacterSettingsAndLeavesTheFileAloneOnABadName) {
         400, "bad_request", "Invalid character settings.");
     EXPECT_EQ(read_bytes(path), before);
 
-    expect_error(
-        patch_character(
-            server, "builtin-assistant", {{"provider", "test"}, {"style", nullptr}}),
-        404, "not_found", "That character was not found.");
+    const auto assistant = patch_character(
+        server, "builtin-assistant", {
+            {"provider", "test"},
+            {"style", "serif-italic"},
+            {"reasoning_effort", "high"},
+            {"web_search", nullptr},
+        });
+    ASSERT_TRUE(assistant);
+    ASSERT_EQ(assistant->status, 200);
+    EXPECT_EQ(body(assistant)["settings_writable"], true);
+    EXPECT_EQ(body(assistant)["writable"], false);
+    EXPECT_EQ(body(assistant)["style"], "serif-italic");
+    EXPECT_NE(
+        config_row(
+            graph.store->database_path(),
+            "system/assistant/character.toml").find("serif-italic"),
+        std::string::npos);
     expect_error(
         patch_character(server, "missing", {{"provider", "test"}, {"style", nullptr}}),
         404, "not_found", "That character was not found.");

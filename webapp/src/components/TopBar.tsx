@@ -285,7 +285,7 @@ export function TopBar({
   } else if (state.mainView === 'character-detail') {
     titleControl = (
       <EditableTitle
-        available={state.characterSettingsAvailable}
+        available={state.characterEditingAvailable}
         id={characterId}
         name={characterName}
         onSave={async (displayName) => {
@@ -443,7 +443,7 @@ export function TopBar({
       />
     );
   } else if (state.mainView === 'character-detail'
-      && state.characterSettingsAvailable && characterId && characterName) {
+      && state.characterEditingAvailable && characterId && characterName) {
     deleteSubject = { id: characterId, kind: 'character', name: characterName };
     uploadAction = (
       <DefinitionUpload

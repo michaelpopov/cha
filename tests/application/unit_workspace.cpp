@@ -67,6 +67,10 @@ TEST(Workspace, EagerlyLoadsOwnedResolvedData) {
         "tags = [\"help\"]\n"
         "[prompt]\n"
         "greeting = \"Hello\"\n");
+    std::ofstream(fixture.root() / "personas" / "reader" / "persona.toml")
+        << "display_name = \"Reader\"\n"
+           "style = \"serif\"\n"
+           "voice = \"warm-narrator\"\n";
     std::ofstream(
         fixture.root() / "forums" / "lobby" / "members"
             / "character_defaults.toml")
@@ -98,7 +102,12 @@ TEST(Workspace, EagerlyLoadsOwnedResolvedData) {
     EXPECT_EQ(voice->settings.style, 0.2);
     EXPECT_EQ(voice->settings.use_speaker_boost, true);
     EXPECT_EQ(voice->settings.speed, 0.95);
-    ASSERT_NE(workspace.find_persona("reader"), nullptr);
+    const WorkspacePersona* const persona = workspace.find_persona("reader");
+    ASSERT_NE(persona, nullptr);
+    EXPECT_EQ(persona->style_id, "serif");
+    EXPECT_EQ(persona->voice_id, "warm-narrator");
+    EXPECT_EQ(persona->appearance.font, CharacterFont::serif);
+    EXPECT_EQ(persona->appearance.weight, CharacterWeight::bold);
     ASSERT_NE(workspace.find_character("guide"), nullptr);
     EXPECT_EQ(workspace.find_character("guide")->provider_id, "test");
     EXPECT_EQ(workspace.find_character("guide")->voice_id, "warm-narrator");
@@ -750,16 +759,36 @@ TEST(Workspace, RejectsInvalidWritesWithoutChangingTheConfigFile) {
         std::invalid_argument);
     EXPECT_THROW(
         workspace.write_character_settings(
-            workspace_assistant_id, "test", std::nullopt),
-        std::runtime_error);
-    EXPECT_THROW(
-        workspace.write_character_settings(
             "guide", "test", std::nullopt, std::nullopt,
             std::string_view{"extreme"}),
         std::invalid_argument);
     EXPECT_EQ(file_bytes(character), before);
     EXPECT_TRUE(workspace.character_is_writable("guide"));
     EXPECT_FALSE(workspace.character_is_writable(workspace_assistant_id));
+    EXPECT_TRUE(workspace.character_settings_are_writable("guide"));
+    EXPECT_TRUE(workspace.character_settings_are_writable(workspace_assistant_id));
+    EXPECT_FALSE(workspace.character_settings_are_writable("missing"));
+}
+
+TEST(Workspace, WritesAssistantSettingsWithoutMakingItsDefinitionWritable) {
+    test::TestWorkspace fixture;
+    fixture.write_style("mono", "font = \"mono\"\n");
+    const Workspace workspace = Workspace::load(fixture.root());
+
+    workspace.write_character_settings(
+        workspace_assistant_id, "test", std::string_view{"mono"},
+        std::nullopt, std::string_view{"high"}, WebSearchMode::off);
+
+    const Workspace reloaded = Workspace::load(fixture.root());
+    const WorkspaceCharacter* const assistant =
+        reloaded.find_character(workspace_assistant_id);
+    ASSERT_NE(assistant, nullptr);
+    EXPECT_EQ(assistant->provider_id, "test");
+    EXPECT_EQ(assistant->style_id, "mono");
+    EXPECT_EQ(assistant->reasoning_effort, "high");
+    EXPECT_EQ(assistant->web_search, WebSearchMode::off);
+    EXPECT_TRUE(reloaded.character_settings_are_writable(workspace_assistant_id));
+    EXPECT_FALSE(reloaded.character_is_writable(workspace_assistant_id));
 }
 
 TEST(Workspace, LoadwsPublishesOnlyACompleteWorkspace) {

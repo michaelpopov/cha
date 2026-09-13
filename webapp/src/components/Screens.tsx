@@ -11,8 +11,10 @@ import {
 import {
   publicErrorMessage,
   type ChaClient,
+  type CharacterAppearance,
   type CharacterDetail,
   type ForumSummary,
+  type PersonaDetail,
   type SessionListing,
   type VoiceDetail,
 } from '../api/client';
@@ -304,6 +306,16 @@ export function PersonaDetailScreen({
       reloadVersion={reloadVersion}
       sessionReport={sessionReport}
       subjectId={state.inspectedPersonaId}
+      toolbarAction={state.personaEditingAvailable ? (
+        <button
+          className="cha-detail-link"
+          onClick={() => dispatch({ type: 'show-persona-settings' })}
+          type="button"
+        >
+          <span>Settings</span>
+          <ChevronRightIcon />
+        </button>
+      ) : undefined}
     />
   );
 }
@@ -434,7 +446,12 @@ export function CharacterDetailScreen({
 }: RosterDetailProps) {
   const load = useCallback(
     (characterId: string) => client.getCharacter(characterId).then((detail) => {
-      dispatch({ type: 'character-detail-loaded', characterId, writable: detail.writable });
+      dispatch({
+        type: 'character-detail-loaded',
+        characterId,
+        settingsWritable: detail.settings_writable,
+        writable: detail.writable,
+      });
       return detail.character_markdown;
     }),
     [client, dispatch],
@@ -492,6 +509,256 @@ function voiceForTest(voice: VoiceDetail): TextToSpeechVoice {
   return { elevenlabs_voice_id: voice.elevenlabs_voice_id, settings };
 }
 
+function VoicePreview({ client, voiceId, appearance }: {
+  client: ChaClient;
+  voiceId: string | null;
+  appearance: CharacterAppearance | undefined;
+}) {
+  const [text, setText] = useState(
+    'The chief task in life is simply this: to identify and separate matters so that I can say clearly to myself which are externals not under my control.',
+  );
+  const [playing, setPlaying] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const sessionRef = useRef<TextToSpeechSession | null>(null);
+  const speechConfiguration = useTextToSpeechConfiguration(client);
+
+  useEffect(() => {
+    sessionRef.current?.stop();
+    sessionRef.current = null;
+    setPlaying(false);
+    return () => sessionRef.current?.stop();
+  }, [voiceId]);
+
+  function stop() {
+    sessionRef.current?.stop();
+    sessionRef.current = null;
+    setPlaying(false);
+  }
+
+  async function toggle() {
+    if (playing) return stop();
+    if (!speechConfiguration || !text.trim()) return;
+    setError(null);
+    let selectedVoice: TextToSpeechVoice | undefined;
+    if (voiceId !== null) {
+      try {
+        const registered = (await client.listVoices()).find(({ id }) => id === voiceId);
+        if (!registered) {
+          setError('That voice is not available for testing.');
+          return;
+        }
+        selectedVoice = voiceForTest(registered);
+      } catch (failure: unknown) {
+        setError(publicErrorMessage(
+          failure,
+          'Voice settings could not be loaded for testing.',
+        ));
+        return;
+      }
+    }
+    const session = new TextToSpeechSession(
+      speechConfiguration,
+      selectedVoice,
+      text.trim(),
+      () => {
+        if (sessionRef.current === session) sessionRef.current = null;
+        setPlaying(false);
+      },
+    );
+    sessionRef.current = session;
+    setPlaying(true);
+    try {
+      await session.play();
+    } catch (failure: unknown) {
+      if (sessionRef.current !== session) return;
+      session.stop();
+      sessionRef.current = null;
+      setPlaying(false);
+      setError(failure instanceof TextToSpeechError
+        ? failure.message : 'Voice test could not be played.');
+    }
+  }
+
+  return (
+    <>
+      <textarea
+        aria-label="Voice preview text"
+        className={`cha-form-control cha-voice-preview-text cha-message-text${voiceClasses(appearance)}`}
+        onChange={(event) => setText(event.target.value)}
+        value={text}
+      />
+      {error && <p className="cha-error-message" role="alert">{error}</p>}
+      {speechConfiguration && <div className="cha-new-session-actions">
+        <button
+          className="cha-button cha-voice-preview-action"
+          disabled={!playing && !text.trim()}
+          onClick={() => void toggle()}
+          type="button"
+        >
+          {playing ? <><StopIcon /> Stop preview</> : <><SpeakerIcon /> Play preview</>}
+        </button>
+      </div>}
+    </>
+  );
+}
+
+export function PersonaSettingsScreen({
+  state,
+  dispatch,
+  client,
+  sessionReport,
+}: RosterDetailProps) {
+  const personaId = state.inspectedPersonaId;
+  const persona = state.bootstrap?.personas.find(({ id }) => id === personaId);
+  const [detail, setDetail] = useState<PersonaDetail | null>(null);
+  const [style, setStyle] = useState<string | null>(null);
+  const [voice, setVoice] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [requestVersion, setRequestVersion] = useState(0);
+
+  useEffect(() => {
+    if (!personaId) return;
+    let current = true;
+    setDetail(null);
+    setError(null);
+    void client.getPersona(personaId).then(
+      (loaded) => {
+        if (!current) return;
+        setDetail(loaded);
+        setStyle(loaded.style);
+        setVoice(loaded.voice_id);
+      },
+      (failure: unknown) => {
+        if (current) {
+          setError(publicErrorMessage(failure, 'Persona settings could not be loaded.'));
+        }
+      },
+    );
+    return () => {
+      current = false;
+    };
+  }, [client, personaId, requestVersion]);
+
+  function closeSettings() {
+    if (personaId) dispatch({ type: 'inspect-persona', personaId });
+    else dispatch({ type: 'show-personas' });
+  }
+
+  async function save(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!personaId || !detail || saving) return;
+    if (style === detail.style && voice === detail.voice_id) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const saved = await client.updatePersona(personaId, {
+        style,
+        voice_id: voice,
+      });
+      dispatch({ type: 'persona-updated', persona: saved });
+      setDetail(saved);
+      setStyle(saved.style);
+      setVoice(saved.voice_id);
+    } catch (failure: unknown) {
+      setError(publicErrorMessage(failure, 'Persona settings could not be saved.'));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const selectedStyle = detail?.available_styles.find(({ id }) => id === style);
+  const unresolvedStyle = detail && unresolvedOption(detail.available_styles, detail.style);
+  const unresolvedVoice = detail && unresolvedOption(detail.available_voices, detail.voice_id);
+  const dirty = detail !== null
+    && (style !== detail.style || voice !== detail.voice_id);
+
+  return (
+    <section className="cha-screen cha-navigation" aria-label="Persona settings">
+      <button className="cha-back-row" onClick={closeSettings} type="button">
+        <ChevronLeftIcon />
+        <span>{persona?.display_name ?? 'Persona'}</span>
+      </button>
+      {sessionReport}
+      {!personaId && <p className="cha-state-message">No persona is selected.</p>}
+      {personaId && detail === null && !error && (
+        <p className="cha-state-message" role="status">Loading persona settings…</p>
+      )}
+      {error && (
+        <div className="cha-state-message cha-error-message" role="alert">
+          <p>{error}</p>
+          {detail === null && (
+            <button
+              className="cha-button cha-button-ghost"
+              onClick={() => setRequestVersion((version) => version + 1)}
+              type="button"
+            >
+              Try again
+            </button>
+          )}
+        </div>
+      )}
+      {detail && (
+        <form className="cha-new-session" onSubmit={(event) => void save(event)}>
+          <label htmlFor="cha-persona-style">Style</label>
+          <select
+            className="cha-form-control"
+            disabled={saving}
+            id="cha-persona-style"
+            onChange={(event) => setStyle(event.target.value === '' ? null : event.target.value)}
+            value={style ?? ''}
+          >
+            <option value="">No style</option>
+            {detail.available_styles.map((option) => (
+              <option key={option.id} value={option.id}>{option.label}</option>
+            ))}
+            {unresolvedStyle && (
+              <option value={unresolvedStyle.id}>{unresolvedStyle.label}</option>
+            )}
+          </select>
+          <label htmlFor="cha-persona-voice">Voice</label>
+          <select
+            className="cha-form-control"
+            disabled={saving}
+            id="cha-persona-voice"
+            onChange={(event) => setVoice(event.target.value === '' ? null : event.target.value)}
+            value={voice ?? ''}
+          >
+            <option value="">Application default</option>
+            {detail.available_voices.map((option) => (
+              <option key={option.id} value={option.id}>{option.label}</option>
+            ))}
+            {unresolvedVoice && (
+              <option value={unresolvedVoice.id}>{unresolvedVoice.label}</option>
+            )}
+          </select>
+          <VoicePreview
+            appearance={selectedStyle?.appearance}
+            client={client}
+            voiceId={voice}
+          />
+          <div className="cha-new-session-actions">
+            <button
+              className="cha-button cha-button-ghost"
+              onClick={closeSettings}
+              type="button"
+            >
+              Cancel
+            </button>
+            <button
+              className="cha-button cha-button-primary"
+              disabled={!dirty || saving}
+              type="submit"
+            >
+              Save
+            </button>
+          </div>
+        </form>
+      )}
+    </section>
+  );
+}
+
 export function CharacterSettingsScreen({
   state,
   dispatch,
@@ -507,18 +774,9 @@ export function CharacterSettingsScreen({
   const [reasoningEffort, setReasoningEffort] =
     useState<CharacterDetail['reasoning_effort']>(null);
   const [webSearch, setWebSearch] = useState<CharacterDetail['web_search']>(null);
-  const [voiceTestText, setVoiceTestText] = useState(
-    'The chief task in life is simply this: to identify and separate matters so that I can say clearly to myself which are externals not under my control.',
-  );
-  const [testingVoice, setTestingVoice] = useState(false);
-  const [voiceTestError, setVoiceTestError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [requestVersion, setRequestVersion] = useState(0);
-  const voiceTest = useRef<TextToSpeechSession | null>(null);
-  const speechConfiguration = useTextToSpeechConfiguration(client);
-
-  useEffect(() => () => voiceTest.current?.stop(), []);
 
   useEffect(() => {
     if (!characterId) return;
@@ -547,59 +805,8 @@ export function CharacterSettingsScreen({
   }, [characterId, client, requestVersion]);
 
   function closeSettings() {
-    stopVoiceTest();
     if (characterId) dispatch({ type: 'inspect-character', characterId });
     else dispatch({ type: 'show-characters' });
-  }
-
-  function stopVoiceTest() {
-    voiceTest.current?.stop();
-    voiceTest.current = null;
-    setTestingVoice(false);
-  }
-
-  async function toggleVoiceTest() {
-    if (testingVoice) return stopVoiceTest();
-    if (!speechConfiguration || !voiceTestText.trim()) return;
-    setVoiceTestError(null);
-    let selectedVoice: TextToSpeechVoice | undefined;
-    if (voice !== null) {
-      try {
-        const registered = (await client.listVoices()).find(({ id }) => id === voice);
-        if (!registered) {
-          setVoiceTestError('That voice is not available for testing.');
-          return;
-        }
-        selectedVoice = voiceForTest(registered);
-      } catch (failure: unknown) {
-        setVoiceTestError(publicErrorMessage(
-          failure,
-          'Voice settings could not be loaded for testing.',
-        ));
-        return;
-      }
-    }
-    const session = new TextToSpeechSession(
-      speechConfiguration,
-      selectedVoice,
-      voiceTestText.trim(),
-      () => {
-        if (voiceTest.current === session) voiceTest.current = null;
-        setTestingVoice(false);
-      },
-    );
-    voiceTest.current = session;
-    setTestingVoice(true);
-    try {
-      await session.play();
-    } catch (failure: unknown) {
-      if (voiceTest.current !== session) return;
-      session.stop();
-      voiceTest.current = null;
-      setTestingVoice(false);
-      setVoiceTestError(failure instanceof TextToSpeechError
-        ? failure.message : 'Voice test could not be played.');
-    }
   }
 
   async function save(event: FormEvent<HTMLFormElement>) {
@@ -749,10 +956,7 @@ export function CharacterSettingsScreen({
             className="cha-form-control"
             disabled={saving}
             id="cha-character-voice"
-            onChange={(event) => {
-              stopVoiceTest();
-              setVoice(event.target.value === '' ? null : event.target.value);
-            }}
+            onChange={(event) => setVoice(event.target.value === '' ? null : event.target.value)}
             value={voice ?? ''}
           >
             <option value="">Application default</option>
@@ -763,24 +967,11 @@ export function CharacterSettingsScreen({
               <option value={unresolvedVoice.id}>{unresolvedVoice.label}</option>
             )}
           </select>
-          <textarea
-            aria-label="Voice preview text"
-            className={`cha-form-control cha-voice-preview-text cha-message-text${voiceClasses(selectedStyle?.appearance)}`}
-            id="cha-character-voice-test"
-            onChange={(event) => setVoiceTestText(event.target.value)}
-            value={voiceTestText}
+          <VoicePreview
+            appearance={selectedStyle?.appearance}
+            client={client}
+            voiceId={voice}
           />
-          {voiceTestError && <p className="cha-error-message" role="alert">{voiceTestError}</p>}
-          {speechConfiguration && <div className="cha-new-session-actions">
-            <button
-              className="cha-button cha-voice-preview-action"
-              disabled={!testingVoice && !voiceTestText.trim()}
-              onClick={() => void toggleVoiceTest()}
-              type="button"
-            >
-              {testingVoice ? <><StopIcon /> Stop preview</> : <><SpeakerIcon /> Play preview</>}
-            </button>
-          </div>}
           <div className="cha-new-session-actions">
             <button
               className="cha-button cha-button-ghost"

@@ -1269,6 +1269,10 @@ select:disabled {
   background: var(--primary);
 }
 
+.cha-speech-cache-toggle[aria-busy='true'] {
+  cursor: wait;
+}
+
 .cha-speech-cache-toggle svg {
   width: 0.9rem;
   height: 0.9rem;

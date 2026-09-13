@@ -78,7 +78,8 @@ TEST(WebProtocol, SerializesSpecifiedSuccessListingAndErrorBodies) {
             {"forum_markdown", "# House rules"}, {"writable", true}}));
     EXPECT_EQ(
         nlohmann::json(PersonaSummary{"reader", "Reader"}),
-        nlohmann::json({{"display_name", "Reader"}, {"id", "reader"}}));
+        nlohmann::json({{"display_name", "Reader"}, {"id", "reader"},
+            {"appearance", default_appearance()}}));
     EXPECT_EQ(
         nlohmann::json(SessionListing{"s1", "Notes", true, 12}),
         nlohmann::json({{"id", "s1"}, {"label", "Notes"}, {"live", true}, {"updated_at", 12}}));
@@ -145,6 +146,7 @@ TEST(WebProtocol, SerializesSpecifiedSuccessListingAndErrorBodies) {
                  {CharacterFont::serif, CharacterSlant::italic,
                   CharacterWeight::normal, CharacterScale::normal}}},
             .available_voices = {{"brian", "Brian"}},
+            .settings_writable = true,
             .writable = true,
         }),
         nlohmann::json({
@@ -166,6 +168,7 @@ TEST(WebProtocol, SerializesSpecifiedSuccessListingAndErrorBodies) {
                     {"weight", "normal"}, {"size", "normal"}, {"text_color", "normal"}}},
             }}},
             {"available_voices", {{{"id", "brian"}, {"label", "Brian"}}}},
+            {"settings_writable", true},
             {"writable", true},
         }));
     EXPECT_EQ(
@@ -450,9 +453,15 @@ TEST(WebProtocol, ParsesRouteSpecificCommandPayloads) {
     const PersonaUpdate persona = parse_persona_update({
         {"display_name", "Editor"},
         {"persona_markdown", "# Notes"},
+        {"style", "serif"},
+        {"voice_id", nullptr},
     });
     EXPECT_EQ(persona.display_name, "Editor");
     EXPECT_EQ(persona.persona_markdown, "# Notes");
+    ASSERT_TRUE(persona.style);
+    EXPECT_EQ(*persona.style, "serif");
+    ASSERT_TRUE(persona.voice);
+    EXPECT_FALSE(*persona.voice);
     EXPECT_FALSE(parse_persona_update({{"display_name", "Editor"}})
                      .persona_markdown);
     EXPECT_THROW((void)parse_persona_update({}), std::invalid_argument);

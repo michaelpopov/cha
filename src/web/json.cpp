@@ -214,18 +214,31 @@ CharacterDefinitionUpdate parse_character_definition_update(
 }
 
 PersonaUpdate parse_persona_update(const nlohmann::json& json) {
-    if (!json.is_object() || json.empty() || json.size() > 2) {
+    if (!json.is_object() || json.empty() || json.size() > 4) {
         throw std::invalid_argument("Invalid web command");
     }
     PersonaUpdate update;
     for (const auto& [key, value] : json.items()) {
-        if (!value.is_string()) {
-            throw std::invalid_argument("Invalid web command");
-        }
         if (key == "display_name") {
+            if (!value.is_string()) throw std::invalid_argument("Invalid web command");
             update.display_name = value.get<std::string>();
         } else if (key == "persona_markdown") {
+            if (!value.is_string()) throw std::invalid_argument("Invalid web command");
             update.persona_markdown = value.get<std::string>();
+        } else if (key == "style") {
+            if (!value.is_null() && !value.is_string()) {
+                throw std::invalid_argument("Invalid web command");
+            }
+            update.style = value.is_null()
+                ? std::optional<std::string>{}
+                : std::optional<std::string>{value.get<std::string>()};
+        } else if (key == "voice_id") {
+            if (!value.is_null() && !value.is_string()) {
+                throw std::invalid_argument("Invalid web command");
+            }
+            update.voice = value.is_null()
+                ? std::optional<std::string>{}
+                : std::optional<std::string>{value.get<std::string>()};
         } else {
             throw std::invalid_argument("Invalid web command");
         }

@@ -11,6 +11,7 @@
 namespace cha {
 class Workspace;
 struct WorkspaceCharacter;
+struct Persona;
 }
 
 namespace cha::web {
@@ -29,6 +30,9 @@ struct WebPresentationState {
 [[nodiscard]] std::optional<SpeechVoice> resolve_speech_voice(
     const Workspace& workspace,
     const WorkspaceCharacter& character);
+[[nodiscard]] std::optional<SpeechVoice> resolve_speech_voice(
+    const Workspace& workspace,
+    const Persona& persona);
 
 // Copies a borrowed controller view into an owning protocol snapshot, adding
 // web-only identity, lifecycle, and notice fields. Borrowing ends here: the

@@ -577,7 +577,8 @@ export interface paths {
          * Get character details
          * @description Returns the character summary, its template-expanded Markdown
          *     definition, and the settings the editor needs. The built-in Assistant
-         *     returns the embedded application guide and is not writable.
+         *     returns the embedded application guide; its settings are writable but
+         *     its name and definition are not.
          */
         get: operations["getCharacter"];
         put?: never;
@@ -592,12 +593,12 @@ export interface paths {
         head?: never;
         /**
          * Update character settings
-         * @description Rewrites `provider`, `style`, `reasoning_effort`, and `web_search` in the
-         *     character's `character.toml`. Provider is required; `null` erases the
+         * @description Rewrites `provider`, `style`, `voice`, `reasoning_effort`, and
+         *     `web_search` in the character's `character.toml`. Provider is required;
+         *     `null` erases the
          *     corresponding optional key so the provider default applies. A setting
-         *     whose config does not load is `400` and leaves the file untouched. The
-         *     built-in Assistant, a missing character, and a character whose file
-         *     cannot be read are `404`.
+         *     whose config does not load is `400` and leaves the file untouched. A
+         *     missing character and a character whose file cannot be read are `404`.
          *
          *     After a write that actually changes a value, the server asks live
          *     sessions in every forum containing the character to shut down with
@@ -671,8 +672,9 @@ export interface paths {
         };
         /**
          * Get persona details
-         * @description Returns the persona summary and its `PERSONA.md` description verbatim.
-         *     `persona_markdown` is empty for a persona that configures none.
+         * @description Returns the persona summary, its `PERSONA.md` description verbatim,
+         *     its display style and speech voice, and the available style and voice
+         *     choices. `persona_markdown` is empty for a persona that configures none.
          */
         get: operations["getPersona"];
         put?: never;
@@ -687,9 +689,10 @@ export interface paths {
         head?: never;
         /**
          * Update a persona
-         * @description Updates the persona's display name, its `PERSONA.md`, or both. Omitted
-         *     fields are left unchanged. The built-in Guest and missing personas are
-         *     not writable.
+         * @description Updates the persona's display name, its `PERSONA.md`, display style, or
+         *     speech voice. Omitted fields are left unchanged; `null` removes a style
+         *     or voice assignment. The built-in Guest and missing personas are not
+         *     writable.
          *
          *     After a write that actually changes a value, the server asks live
          *     sessions in every forum using the persona to shut down with `reloading`.
@@ -1180,6 +1183,8 @@ export interface components {
             id: components["schemas"]["Identifier"];
             display_name: string;
             description?: string;
+            appearance: components["schemas"]["CharacterAppearance"];
+            voice?: components["schemas"]["SpeechVoice"];
         };
         /**
          * @description How the browser sets this character's words, so a reader can tell one
@@ -1506,6 +1511,9 @@ export interface components {
             available_providers: components["schemas"]["ProviderOption"][];
             available_styles: components["schemas"]["StyleOption"][];
             available_voices: components["schemas"]["VoiceOption"][];
+            /** @description Whether model, style, and voice settings can be changed. */
+            settings_writable: boolean;
+            /** @description Whether the name and definition can be changed and the character deleted. */
             writable: boolean;
         };
         CreateCharacterRequest: {
@@ -1529,12 +1537,20 @@ export interface components {
             id: components["schemas"]["Identifier"];
             display_name: string;
             description?: string;
+            appearance: components["schemas"]["CharacterAppearance"];
+            voice?: components["schemas"]["SpeechVoice"];
             persona_markdown: string;
+            style: string | null;
+            voice_id: string | null;
+            available_styles: components["schemas"]["StyleOption"][];
+            available_voices: components["schemas"]["VoiceOption"][];
             writable: boolean;
         };
         UpdatePersonaRequest: {
             display_name?: string;
             persona_markdown?: string;
+            style?: string | null;
+            voice_id?: string | null;
         };
         CreatePersonaRequest: {
             display_name: string;

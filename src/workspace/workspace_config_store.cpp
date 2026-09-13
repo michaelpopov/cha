@@ -532,7 +532,11 @@ std::vector<std::string> forums_using_style(
                 return character != nullptr && character->style_id
                     && *character->style_id == style_id;
             });
-        if (used) result.push_back(forum.id);
+        const WorkspacePersona* persona =
+            workspace.find_persona(forum.default_persona_id);
+        if (used || (persona && persona->style_id == style_id)) {
+            result.push_back(forum.id);
+        }
     }
     return result;
 }
@@ -550,7 +554,11 @@ std::vector<std::string> forums_using_voice(
                 return character != nullptr && character->voice_id
                     && *character->voice_id == voice_id;
             });
-        if (used) result.push_back(forum.id);
+        const WorkspacePersona* persona =
+            workspace.find_persona(forum.default_persona_id);
+        if (used || (persona && persona->voice_id == voice_id)) {
+            result.push_back(forum.id);
+        }
     }
     return result;
 }
@@ -1274,11 +1282,14 @@ WorkspaceConfigEditResult WorkspaceConfigStore::apply_character_delete(
 WorkspaceConfigEditResult WorkspaceConfigStore::apply_persona_update(
     std::string_view persona_id,
     std::string_view display_name,
-    std::string_view markdown) {
+    std::string_view markdown,
+    std::optional<std::string_view> style_id,
+    std::optional<std::string_view> voice_id) {
     return impl_->edit([&](const Workspace& workspace) {
         std::vector<std::string> affected =
             forums_using_persona(workspace, persona_id);
-        workspace.write_persona(persona_id, display_name, markdown);
+        workspace.write_persona(
+            persona_id, display_name, markdown, style_id, voice_id);
         return affected;
     });
 }

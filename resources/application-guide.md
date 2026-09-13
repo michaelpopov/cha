@@ -19,8 +19,8 @@ above the description.
 The provider picker requires a selection; No style clears only the visual style.
 Saving restarts conversations that use the character and loses any answer being
 generated. Forum and member configuration cannot override the character's
-provider. Assistant has no Settings screen; its provider is configured in
-`system/assistant/character.toml`.
+provider. Assistant's model provider, style, and voice can be changed from its
+Settings screen too, but its built-in name and guide cannot be edited.
 
 ## Commands
 

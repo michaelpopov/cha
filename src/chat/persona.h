@@ -1,5 +1,7 @@
 #pragma once
 
+#include "chat/character.h"
+
 #include <memory>
 #include <optional>
 #include <string>
@@ -12,6 +14,9 @@ struct Persona {
     std::string display_name;
     std::string prompt;
     std::optional<std::string> description;
+    std::optional<std::string> style_id;
+    std::optional<std::string> voice_id;
+    CharacterAppearance appearance;
 };
 
 using PersonaRoster = std::vector<Persona>;

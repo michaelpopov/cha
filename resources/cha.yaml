@@ -990,7 +990,8 @@ paths:
       description: |
         Returns the character summary, its template-expanded Markdown
         definition, and the settings the editor needs. The built-in Assistant
-        returns the embedded application guide and is not writable.
+        returns the embedded application guide; its settings are writable but
+        its name and definition are not.
       responses:
         "200":
           description: Character details.
@@ -1007,12 +1008,12 @@ paths:
       operationId: updateCharacter
       summary: Update character settings
       description: |
-        Rewrites `provider`, `style`, `reasoning_effort`, and `web_search` in the
-        character's `character.toml`. Provider is required; `null` erases the
+        Rewrites `provider`, `style`, `voice`, `reasoning_effort`, and
+        `web_search` in the character's `character.toml`. Provider is required;
+        `null` erases the
         corresponding optional key so the provider default applies. A setting
-        whose config does not load is `400` and leaves the file untouched. The
-        built-in Assistant, a missing character, and a character whose file
-        cannot be read are `404`.
+        whose config does not load is `400` and leaves the file untouched. A
+        missing character and a character whose file cannot be read are `404`.
 
         After a write that actually changes a value, the server asks live
         sessions in every forum containing the character to shut down with
@@ -1150,8 +1151,9 @@ paths:
       operationId: getPersona
       summary: Get persona details
       description: |
-        Returns the persona summary and its `PERSONA.md` description verbatim.
-        `persona_markdown` is empty for a persona that configures none.
+        Returns the persona summary, its `PERSONA.md` description verbatim,
+        its display style and speech voice, and the available style and voice
+        choices. `persona_markdown` is empty for a persona that configures none.
       responses:
         "200":
           description: Persona details.
@@ -1168,9 +1170,10 @@ paths:
       operationId: updatePersona
       summary: Update a persona
       description: |
-        Updates the persona's display name, its `PERSONA.md`, or both. Omitted
-        fields are left unchanged. The built-in Guest and missing personas are
-        not writable.
+        Updates the persona's display name, its `PERSONA.md`, display style, or
+        speech voice. Omitted fields are left unchanged; `null` removes a style
+        or voice assignment. The built-in Guest and missing personas are not
+        writable.
 
         After a write that actually changes a value, the server asks live
         sessions in every forum using the persona to shut down with `reloading`.
@@ -2136,7 +2139,7 @@ components:
     PersonaSummary:
       type: object
       additionalProperties: false
-      required: [id, display_name]
+      required: [id, display_name, appearance]
       properties:
         id:
           $ref: "#/components/schemas/Identifier"
@@ -2144,6 +2147,10 @@ components:
           type: string
         description:
           type: string
+        appearance:
+          $ref: "#/components/schemas/CharacterAppearance"
+        voice:
+          $ref: "#/components/schemas/SpeechVoice"
 
     CharacterAppearance:
       type: object
@@ -2942,6 +2949,7 @@ components:
         - available_providers
         - available_styles
         - available_voices
+        - settings_writable
         - writable
       properties:
         id:
@@ -2984,8 +2992,12 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/VoiceOption"
+        settings_writable:
+          type: boolean
+          description: Whether model, style, and voice settings can be changed.
         writable:
           type: boolean
+          description: Whether the name and definition can be changed and the character deleted.
 
     CreateCharacterRequest:
       type: object
@@ -3028,7 +3040,16 @@ components:
     PersonaDetail:
       type: object
       additionalProperties: false
-      required: [id, display_name, persona_markdown, writable]
+      required:
+        - id
+        - display_name
+        - appearance
+        - persona_markdown
+        - style
+        - voice_id
+        - available_styles
+        - available_voices
+        - writable
       properties:
         id:
           $ref: "#/components/schemas/Identifier"
@@ -3036,8 +3057,24 @@ components:
           type: string
         description:
           type: string
+        appearance:
+          $ref: "#/components/schemas/CharacterAppearance"
+        voice:
+          $ref: "#/components/schemas/SpeechVoice"
         persona_markdown:
           type: string
+        style:
+          type: [string, "null"]
+        voice_id:
+          type: [string, "null"]
+        available_styles:
+          type: array
+          items:
+            $ref: "#/components/schemas/StyleOption"
+        available_voices:
+          type: array
+          items:
+            $ref: "#/components/schemas/VoiceOption"
         writable:
           type: boolean
 
@@ -3050,6 +3087,10 @@ components:
           type: string
         persona_markdown:
           type: string
+        style:
+          type: [string, "null"]
+        voice_id:
+          type: [string, "null"]
 
     CreatePersonaRequest:
       type: object

@@ -242,6 +242,13 @@ function isCharacterSummary(value: unknown): boolean {
     && (value.voice === undefined || isSpeechVoice(value.voice));
 }
 
+function isPersonaSummary(value: unknown): boolean {
+  return isRecord(value)
+    && hasIdentity(value)
+    && isCharacterAppearance(value.appearance)
+    && (value.voice === undefined || isSpeechVoice(value.voice));
+}
+
 function isCharacterDetail(value: unknown): value is CharacterDetail {
   return isCharacterSummary(value)
     && isRecord(value)
@@ -263,13 +270,24 @@ function isCharacterDetail(value: unknown): value is CharacterDetail {
     && Array.isArray(value.available_voices)
     && value.available_voices.every((option) => isRecord(option)
       && typeof option.id === 'string' && typeof option.label === 'string')
+    && typeof value.settings_writable === 'boolean'
     && typeof value.writable === 'boolean';
 }
 
 function isPersonaDetail(value: unknown): value is PersonaDetail {
-  return isRecord(value)
-    && hasIdentity(value)
+  return isPersonaSummary(value)
+    && isRecord(value)
     && typeof value.persona_markdown === 'string'
+    && (value.style === null || typeof value.style === 'string')
+    && (value.voice_id === null || typeof value.voice_id === 'string')
+    && Array.isArray(value.available_styles)
+    && value.available_styles.every((option) => isRecord(option)
+      && typeof option.id === 'string'
+      && typeof option.label === 'string'
+      && isCharacterAppearance(option.appearance))
+    && Array.isArray(value.available_voices)
+    && value.available_voices.every((option) => isRecord(option)
+      && typeof option.id === 'string' && typeof option.label === 'string')
     && typeof value.writable === 'boolean';
 }
 

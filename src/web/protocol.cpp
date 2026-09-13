@@ -216,8 +216,10 @@ void to_json(nlohmann::json& json, const PersonaSummary& value) {
     json = {
         {"id", value.id},
         {"display_name", value.display_name},
+        {"appearance", appearance_json(value.appearance)},
     };
     put_optional(json, "description", value.description);
+    if (value.voice) json["voice"] = speech_voice_json(*value.voice);
 }
 
 void to_json(nlohmann::json& json, const SessionListing& value) {
@@ -326,12 +328,19 @@ void to_json(nlohmann::json& json, const CharacterDetail& value) {
     json["available_providers"] = value.available_providers;
     json["available_styles"] = value.available_styles;
     json["available_voices"] = value.available_voices;
+    json["settings_writable"] = value.settings_writable;
     json["writable"] = value.writable;
 }
 
 void to_json(nlohmann::json& json, const PersonaDetail& value) {
     json = nlohmann::json(value.summary);
     json["persona_markdown"] = value.persona_markdown;
+    json["style"] = value.style
+        ? nlohmann::json(*value.style) : nlohmann::json(nullptr);
+    json["voice_id"] = value.voice
+        ? nlohmann::json(*value.voice) : nlohmann::json(nullptr);
+    json["available_styles"] = value.available_styles;
+    json["available_voices"] = value.available_voices;
     json["writable"] = value.writable;
 }
 

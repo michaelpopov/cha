@@ -1074,7 +1074,7 @@ export function StyleScreen({
             </div>
           </fieldset>
           <p className={`cha-style-sample cha-message-text${appearance ? voiceClasses(appearance) : ''}`}>The chief task in life is this…</p>
-          <UsedBy empty="No characters use this style." items={detail.used_by} />
+          <UsedBy empty="Nothing uses this style." items={detail.used_by} />
           {error && <p className="cha-error-message" role="alert">{error}</p>}
           <div className="cha-settings-form-actions"><button className="cha-button cha-button-ghost" disabled={!dirty || saving || deleting} onClick={() => setDraft(styleUpdate(detail))} type="button">Reset</button><button className="cha-button cha-button-primary" disabled={!dirty || saving || deleting || !detail.writable} type="submit">{saving ? 'Saving…' : 'Save style'}</button></div>
           <div className="cha-settings-form-actions">
@@ -1513,7 +1513,7 @@ export function VoiceScreen({
           <label htmlFor="cha-voice-preview-text">Text to speak<textarea className="cha-form-control cha-voice-preview-text" id="cha-voice-preview-text" onChange={(event) => setPreviewText(event.target.value)} value={previewText} /></label>
           {previewError && <p className="cha-error-message" role="alert">{previewError}</p>}
           {speechConfiguration && <div className="cha-settings-form-actions"><button className="cha-button cha-voice-preview-action" disabled={!previewing && (!previewText.trim() || !draft.elevenlabs_voice_id.trim())} onClick={() => void togglePreview()} type="button">{previewing ? <><StopIcon /> Stop preview</> : <><SpeakerIcon /> Play preview</>}</button></div>}
-          <UsedBy empty="No characters use this voice." items={detail.used_by} />
+          <UsedBy empty="Nothing uses this voice." items={detail.used_by} />
           {error && <p className="cha-error-message" role="alert">{error}</p>}
           <div className="cha-settings-form-actions"><button className="cha-button cha-button-ghost" disabled={!dirty || saving || deleting} onClick={() => setDraft(voiceUpdate(detail))} type="button">Reset</button><button className="cha-button cha-button-primary" disabled={!dirty || disabled || !draft.elevenlabs_voice_id.trim()} type="submit">{saving ? 'Saving…' : 'Save voice'}</button></div>
           <div className="cha-settings-form-actions"><button className="cha-button cha-button-danger" disabled={saving || deleting || !detail.writable} onClick={() => setConfirming(true)} type="button">{deleting ? 'Deleting…' : 'Delete voice'}</button></div>

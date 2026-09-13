@@ -123,7 +123,9 @@ public:
     WorkspaceConfigEditResult apply_persona_update(
         std::string_view persona_id,
         std::string_view display_name,
-        std::string_view markdown);
+        std::string_view markdown,
+        std::optional<std::string_view> style_id,
+        std::optional<std::string_view> voice_id);
     WorkspaceConfigEditResult apply_persona_create(
         std::string_view persona_id,
         std::string_view display_name);

@@ -53,6 +53,7 @@ import {
   NewForumScreen,
   NewSessionScreen,
   PersonaDetailScreen,
+  PersonaSettingsScreen,
   PersonasScreen,
   SessionOperationReport,
   SessionsScreen,
@@ -164,6 +165,14 @@ function Screen({
         client={client}
         dispatch={dispatch}
         reloadVersion={personaRevision}
+        sessionReport={sessionReport}
+        state={state}
+      />
+    );
+    case 'persona-settings': return (
+      <PersonaSettingsScreen
+        client={client}
+        dispatch={dispatch}
         sessionReport={sessionReport}
         state={state}
       />

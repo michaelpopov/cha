@@ -8,13 +8,15 @@
 
 namespace cha::web {
 
-std::optional<SpeechVoice> resolve_speech_voice(
+namespace {
+
+std::optional<SpeechVoice> resolve_speech_voice_id(
     const Workspace& workspace,
-    const WorkspaceCharacter& character) {
-    if (!character.voice_id) return std::nullopt;
-    const WorkspaceVoice* const voice = workspace.find_voice(*character.voice_id);
+    const std::optional<std::string>& voice_id) {
+    if (!voice_id) return std::nullopt;
+    const WorkspaceVoice* const voice = workspace.find_voice(*voice_id);
     if (voice == nullptr) {
-        throw std::logic_error("Character voice is absent from the workspace");
+        throw std::logic_error("Speech voice is absent from the workspace");
     }
     return SpeechVoice{
         .id = voice->id,
@@ -28,6 +30,20 @@ std::optional<SpeechVoice> resolve_speech_voice(
             .speed = voice->settings.speed,
         },
     };
+}
+
+} // namespace
+
+std::optional<SpeechVoice> resolve_speech_voice(
+    const Workspace& workspace,
+    const WorkspaceCharacter& character) {
+    return resolve_speech_voice_id(workspace, character.voice_id);
+}
+
+std::optional<SpeechVoice> resolve_speech_voice(
+    const Workspace& workspace,
+    const Persona& persona) {
+    return resolve_speech_voice_id(workspace, persona.voice_id);
 }
 
 SessionSnapshot to_snapshot(

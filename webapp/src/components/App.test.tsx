@@ -202,6 +202,13 @@ it('lists every persona and renders its Markdown', async () => {
   expect(screen.getByRole('button', { name: 'Rename Reader' })).toBeInTheDocument();
 
   fireEvent.click(within(screen.getByLabelText('Persona detail navigation'))
+    .getByRole('button', { name: 'Settings' }));
+  expect(screen.getByRole('heading', { name: 'Settings' })).toBeInTheDocument();
+  expect(await screen.findByLabelText('Style')).toHaveValue('serif-italic');
+  fireEvent.click(screen.getByRole('button', { name: 'Reader' }));
+  expect(await screen.findByRole('heading', { name: 'Reader notes' })).toBeInTheDocument();
+
+  fireEvent.click(within(screen.getByLabelText('Persona detail navigation'))
     .getByRole('button', { name: 'Personas' }));
   expect(screen.getByRole('heading', { name: 'Personas' })).toBeInTheDocument();
 });
@@ -209,10 +216,10 @@ it('lists every persona and renders its Markdown', async () => {
 it('creates a named persona and adds it to the roster immediately', async () => {
   const user = userEvent.setup();
   const created = {
+    ...personaDetailFixture,
     id: 'persona_1',
     display_name: 'Project manager',
     persona_markdown: '',
-    writable: true,
   };
   const createPersona = vi.fn(async () => created);
   const getPersona = vi.fn(async (personaId: string) => (
@@ -1584,7 +1591,9 @@ it('shows the settings row only after a writable character detail loads', async 
 
 it('omits the settings row for a character that is not writable', async () => {
   render(<App client={fixtureClient({
-    getCharacter: async () => ({ ...characterDetailFixture, writable: false }),
+    getCharacter: async () => ({
+      ...characterDetailFixture, settings_writable: false, writable: false,
+    }),
   })} />);
   fireEvent.click(await screen.findByRole('button', { name: 'Characters' }));
   fireEvent.click(screen.getByRole('button', { name: /Guide/ }));
@@ -1601,9 +1610,13 @@ it('keeps a late character detail from lending its settings row to the next char
     if (characterId === 'guide') {
       return new Promise<CharacterDetail>((resolve) => { finishGuide = resolve; });
     }
-    // The built-in Assistant is the character this feature must never offer.
+    // Assistant settings are available, but its built-in definition stays read-only.
     return Promise.resolve({
-      ...characterDetailFixture, id: 'assistant', display_name: 'Assistant', writable: false,
+      ...characterDetailFixture,
+      id: 'assistant',
+      display_name: 'Assistant',
+      settings_writable: true,
+      writable: false,
     });
   });
   render(<App client={fixtureClient({ getCharacter })} />);
@@ -1618,7 +1631,8 @@ it('keeps a late character detail from lending its settings row to the next char
 
   expect(screen.getByRole('heading', { name: 'Assistant' })).toBeInTheDocument();
   expect(within(screen.getByLabelText('Character detail navigation'))
-    .queryByRole('button', { name: 'Settings' })).not.toBeInTheDocument();
+    .getByRole('button', { name: 'Settings' })).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Rename Assistant' })).not.toBeInTheDocument();
 });
 
 function planningVoiceSnapshot(appearance: CharacterAppearance): SessionSnapshot {

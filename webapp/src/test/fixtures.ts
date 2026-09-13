@@ -21,8 +21,8 @@ export const bootstrapFixture: Bootstrap = {
   initial_forum_id: 'entrance',
   initial_session_id: 'welcome',
   personas: [
-    { id: 'guest', display_name: 'Guest', description: 'The built-in visitor persona' },
-    { id: 'reader', display_name: 'Reader', description: 'Thoughtful, curious, and concise' },
+    { id: 'guest', display_name: 'Guest', description: 'The built-in visitor persona', appearance: plainVoice },
+    { id: 'reader', display_name: 'Reader', description: 'Thoughtful, curious, and concise', appearance: plainVoice },
   ],
   characters: [
     { id: 'assistant', display_name: 'Assistant', description: 'CHA application guide', appearance: plainVoice },
@@ -115,6 +115,7 @@ export const characterDetailFixture: CharacterDetail = {
     { id: 'serif-italic', label: 'Serif italic', appearance: serifItalicVoice },
   ],
   available_voices: [{ id: 'brian', label: 'Brian' }],
+  settings_writable: true,
   writable: true,
 };
 
@@ -126,6 +127,14 @@ export const personaDetailFixture: PersonaDetail = {
   display_name: 'Reader',
   description: 'Thoughtful, curious, and concise',
   persona_markdown: '# Reader notes\n\nA **thoughtful** reader.',
+  appearance: serifItalicVoice,
+  style: 'serif-italic',
+  voice_id: null,
+  available_styles: [
+    { id: 'mono-large', label: 'Mono large', appearance: monoLargeVoice },
+    { id: 'serif-italic', label: 'Serif italic', appearance: serifItalicVoice },
+  ],
+  available_voices: [{ id: 'brian', label: 'Brian' }],
   writable: true,
 };
 
@@ -196,10 +205,10 @@ export function fixtureClient(overrides: Partial<ChaClient> = {}): ChaClient {
     deleteCharacter: async () => undefined,
     getPersona: async () => personaDetailFixture,
     createPersona: async ({ display_name }) => ({
+      ...personaDetailFixture,
       id: 'persona_1',
       display_name,
       persona_markdown: '',
-      writable: true,
     }),
     updatePersona: async (_personaId, update) => ({
       ...personaDetailFixture,

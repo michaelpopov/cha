@@ -35,9 +35,10 @@ reading, not selection: neither endpoint takes part in attribution, and
 Character detail also carries the character's current provider and style names,
 plus its optional reasoning-effort and web-search overrides. A null override
 means to inherit the provider default. It also carries the lists of options that
-resolve and `writable`, which is false for the built-in Assistant. A provider
-option is only an id and a label — never host, model, or credential — so the
-response stays discovery-safe.
+resolve, `settings_writable`, and `writable`. The built-in Assistant allows
+settings writes but not definition changes or deletion. A provider option is
+only an id and a label — never host, model, or credential — so the response
+stays discovery-safe.
 
 `PATCH /api/v1/characters/{id}` requires a provider name and takes a nullable
 style, reasoning effort, and web search mode. Null erases that optional key and
