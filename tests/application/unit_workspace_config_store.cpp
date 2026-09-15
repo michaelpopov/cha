@@ -17,8 +17,10 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -725,6 +727,55 @@ std::string stored_config(
     return statement.text(0);
 }
 
+std::map<std::string, std::int64_t> config_rowids(
+    const std::filesystem::path& database) {
+    Database handle(database, Database::Mode::read_only);
+    Statement statement = handle.prepare(
+        "SELECT name, rowid FROM config ORDER BY name");
+    std::map<std::string, std::int64_t> result;
+    while (statement.step()) {
+        result.emplace(statement.text(0), statement.integer(1));
+    }
+    return result;
+}
+
+std::map<std::string, std::string> config_contents(
+    const std::filesystem::path& database) {
+    Database handle(database, Database::Mode::read_only);
+    Statement statement = handle.prepare(
+        "SELECT name, content FROM config ORDER BY name");
+    std::map<std::string, std::string> result;
+    while (statement.step()) {
+        result.emplace(statement.text(0), statement.text(1));
+    }
+    return result;
+}
+
+std::set<std::string> changed_config_names(
+    const std::map<std::string, std::string>& before,
+    const std::map<std::string, std::string>& after) {
+    std::set<std::string> changed;
+    for (const auto& [name, content] : before) {
+        const auto found = after.find(name);
+        if (found == after.end() || found->second != content) changed.insert(name);
+    }
+    for (const auto& [name, content] : after) {
+        const auto found = before.find(name);
+        if (found == before.end() || found->second != content) changed.insert(name);
+    }
+    return changed;
+}
+
+std::int64_t table_row_count(
+    const std::filesystem::path& database,
+    std::string_view table) {
+    Database handle(database, Database::Mode::read_only);
+    Statement statement = handle.prepare(
+        "SELECT COUNT(*) FROM " + std::string(table));
+    EXPECT_TRUE(statement.step());
+    return statement.integer(0);
+}
+
 #ifndef _WIN32
 void expect_same_directory(
     const std::filesystem::path& path,
@@ -1001,6 +1052,394 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, SuccessfulEditUpdatesFilesDatabaseAndWor
         dotenv_before);
 }
 
+TEST_F(RuntimeWorkspaceConfigStoreTest, EditPreservesEveryExistingConfigRowid) {
+    constexpr std::string_view sentinel =
+        "system/providers/second/config.toml";
+    {
+        Database handle(database(), Database::Mode::read_write);
+        Statement move_row = handle.prepare(
+            "UPDATE config SET rowid = 1000000 WHERE name = ?1", sentinel);
+        move_row.run();
+        ASSERT_EQ(handle.changes(), 1);
+    }
+
+    const auto store = open_store();
+    const auto before = config_rowids(database());
+    ASSERT_EQ(before.at(std::string(sentinel)), 1000000);
+
+    store->apply_character_settings("guide", "second", std::nullopt);
+
+    const auto after = config_rowids(database());
+    EXPECT_EQ(after, before);
+    EXPECT_NE(
+        stored_config(database(), "characters/guide/character.toml")
+            .find("second"),
+        std::string::npos);
+}
+
+TEST_F(
+    RuntimeWorkspaceConfigStoreTest,
+    CharacterDefinitionUpdatesExactlyItsConfigAndMarkdownRows) {
+    {
+        Database handle(database(), Database::Mode::read_write);
+        handle.execute(
+            "INSERT INTO config (name, content) VALUES "
+            "('system/keys/config.toml', 'next_id = 3\n'), "
+            "('system/keys/api_key_1/config.toml', "
+            "'display_name = ''Models''\ntype = ''models''\nvalue = ''secret''\n'), "
+            "('system/keys/api_key_2/config.toml', "
+            "'display_name = ''Storage''\ntype = ''R2''\n"
+            "url = ''https://r2.example''\naccess_key_id = ''access''\n"
+            "secret_key = ''storage-secret''\n')");
+        handle.execute(
+            "CREATE TRIGGER reject_unrelated_config_update "
+            "BEFORE UPDATE ON config "
+            "WHEN OLD.name NOT IN ("
+            "'characters/guide/character.toml', "
+            "'characters/guide/CHARACTER.md') "
+            "BEGIN SELECT RAISE(ABORT, 'unrelated config update'); END");
+    }
+
+    const auto store = open_store();
+    const auto before = config_contents(database());
+
+    store->apply_character_definition(
+        "guide", "Updated Guide", std::string_view{"Updated profile"});
+
+    const auto after = config_contents(database());
+    EXPECT_EQ(
+        changed_config_names(before, after),
+        (std::set<std::string>{
+            "characters/guide/CHARACTER.md",
+            "characters/guide/character.toml",
+        }));
+    EXPECT_EQ(
+        after.at("system/keys/api_key_1/config.toml"),
+        before.at("system/keys/api_key_1/config.toml"));
+    EXPECT_EQ(
+        after.at("system/keys/api_key_2/config.toml"),
+        before.at("system/keys/api_key_2/config.toml"));
+}
+
+TEST_F(
+    RuntimeWorkspaceConfigStoreTest,
+    CreatesAndDeletesOnlyRowsOwnedByEachItemType) {
+    const auto store = open_store();
+    const auto expect_changes = [&]<typename Change>(
+        std::initializer_list<std::string_view> expected,
+        Change change) {
+        const auto before = config_contents(database());
+        change();
+        std::set<std::string> expected_names;
+        for (const std::string_view name : expected) {
+            expected_names.emplace(name);
+        }
+        EXPECT_EQ(
+            changed_config_names(before, config_contents(database())),
+            expected_names);
+    };
+
+    expect_changes(
+        {"system/providers/fresh/config.toml"},
+        [&] { store->apply_provider_create("fresh", "Fresh"); });
+    expect_changes(
+        {"system/providers/fresh/config.toml"},
+        [&] { store->apply_provider_delete("fresh"); });
+
+    expect_changes(
+        {"system/styles/fresh/config.toml"},
+        [&] { store->apply_style_create("fresh", "Fresh"); });
+    expect_changes(
+        {"system/styles/fresh/config.toml"},
+        [&] { store->apply_style_delete("fresh"); });
+
+    expect_changes(
+        {"system/voices/fresh/config.toml"},
+        [&] {
+            store->apply_voice_create(
+                "fresh", "Fresh", "Fresh voice", "eleven-fresh");
+        });
+    expect_changes(
+        {"system/voices/fresh/config.toml"},
+        [&] { store->apply_voice_delete("fresh"); });
+
+    expect_changes(
+        {"personas/fresh/PERSONA.md", "personas/fresh/persona.toml"},
+        [&] { store->apply_persona_create("fresh", "Fresh"); });
+    expect_changes(
+        {"personas/fresh/PERSONA.md", "personas/fresh/persona.toml"},
+        [&] { store->apply_persona_delete("fresh"); });
+
+    expect_changes(
+        {
+            "characters/character-voice.md",
+            "characters/fresh/CHARACTER.md",
+            "characters/fresh/PROFILE.md",
+            "characters/fresh/character.toml",
+        },
+        [&] {
+            store->apply_character_create(
+                "fresh", "Fresh", "A fresh character");
+        });
+    expect_changes(
+        {
+            "characters/fresh/CHARACTER.md",
+            "characters/fresh/PROFILE.md",
+            "characters/fresh/character.toml",
+        },
+        [&] { store->apply_character_delete("fresh"); });
+
+    expect_changes(
+        {
+            "forums/fresh/FORUM.md",
+            "forums/fresh/config.toml",
+            "forums/fresh/members/builtin-assistant/character.toml",
+        },
+        [&] { store->apply_forum_create("fresh", "Fresh", "reader"); });
+    expect_changes(
+        {
+            "forums/fresh/FORUM.md",
+            "forums/fresh/config.toml",
+            "forums/fresh/members/builtin-assistant/character.toml",
+        },
+        [&] { store->apply_forum_delete("fresh"); });
+
+    expect_changes(
+        {
+            "system/keys/api_key_1/config.toml",
+            "system/keys/config.toml",
+        },
+        [&] { store->apply_api_key_create("api_key_1", "Models", "secret"); });
+    expect_changes(
+        {"system/keys/api_key_1/config.toml"},
+        [&] { store->apply_api_key_delete("api_key_1"); });
+
+    const R2StorageKey storage{
+        .id = "api_key_2",
+        .display_name = "Storage",
+        .url = "https://r2.example",
+        .access_key_id = "access",
+        .secret_key = "storage-secret",
+    };
+    expect_changes(
+        {
+            "system/keys/api_key_2/config.toml",
+            "system/keys/config.toml",
+        },
+        [&] { store->apply_r2_storage_create(storage); });
+    expect_changes(
+        {"system/keys/api_key_2/config.toml"},
+        [&] { store->apply_r2_storage_delete(); });
+}
+
+TEST_F(
+    RuntimeWorkspaceConfigStoreTest,
+    ApiKeyCreateRollsBackKeyWhenCounterInsertFails) {
+    {
+        Database handle(database(), Database::Mode::read_write);
+        handle.execute(
+            "CREATE TRIGGER fail_key_counter_insert "
+            "BEFORE INSERT ON config "
+            "WHEN NEW.name = 'system/keys/config.toml' "
+            "BEGIN SELECT RAISE(ABORT, 'forced counter insert failure'); END");
+    }
+    const auto before = config_contents(database());
+    const auto store = open_store();
+
+    EXPECT_THROW(
+        store->apply_api_key_create("api_key_1", "Models", "secret"),
+        std::runtime_error);
+
+    EXPECT_EQ(config_contents(database()), before);
+    EXPECT_EQ(getws()->find_api_key("api_key_1"), nullptr);
+    EXPECT_FALSE(std::filesystem::exists(
+        store->workspace_path() / "system" / "keys" / "api_key_1"));
+}
+
+TEST_F(
+    RuntimeWorkspaceConfigStoreTest,
+    MultiFileDeleteRollsBackEarlierDeletes) {
+    {
+        Database handle(database(), Database::Mode::read_write);
+        handle.execute(
+            "INSERT INTO config (name, content) VALUES "
+            "('characters/unused/CHARACTER.md', 'Unused instructions\n'), "
+            "('characters/unused/character.toml', "
+            "'display_name = ''Unused''\nprovider = ''test''\n')");
+        handle.execute(
+            "CREATE TRIGGER fail_character_config_delete "
+            "BEFORE DELETE ON config "
+            "WHEN OLD.name = 'characters/unused/character.toml' "
+            "BEGIN SELECT RAISE(ABORT, 'forced config delete failure'); END");
+    }
+    const auto before = config_contents(database());
+    const auto store = open_store();
+
+    EXPECT_THROW(
+        (void)store->apply_character_delete("unused"),
+        std::runtime_error);
+
+    EXPECT_EQ(config_contents(database()), before);
+    EXPECT_NE(getws()->find_character("unused"), nullptr);
+    EXPECT_EQ(
+        file_bytes(
+            store->workspace_path() / "characters" / "unused"
+            / "CHARACTER.md"),
+        "Unused instructions\n");
+}
+
+TEST_F(
+    RuntimeWorkspaceConfigStoreTest,
+    EmptyEditPublishesAndDoesNotConsumeSqliteFaults) {
+    const auto store = open_store();
+    store->apply_character_settings(
+        "guide", "second", std::string_view{"mono"},
+        std::nullopt, std::string_view{"high"}, WebSearchMode::automatic);
+    const auto rowids_before = config_rowids(database());
+    for (const WorkspaceConfigFault fault : {
+             WorkspaceConfigFault::sqlite_begin,
+             WorkspaceConfigFault::sqlite_write,
+         }) {
+        const std::shared_ptr<const Workspace> before = getws();
+        force_next_workspace_config_fault(fault);
+        const WorkspaceConfigEditResult unchanged =
+            store->apply_character_settings(
+                "guide", "second", std::string_view{"mono"},
+                std::nullopt, std::string_view{"high"},
+                WebSearchMode::automatic);
+
+        EXPECT_NE(getws().get(), before.get());
+        EXPECT_NE(
+            std::find(
+                unchanged.affected_forum_ids.begin(),
+                unchanged.affected_forum_ids.end(),
+                "lobby"),
+            unchanged.affected_forum_ids.end());
+        EXPECT_EQ(config_rowids(database()), rowids_before);
+
+        EXPECT_THROW(
+            (void)store->apply_character_settings(
+                "guide", "test", std::nullopt),
+            std::runtime_error);
+        EXPECT_EQ(getws()->find_character("guide")->provider_id, "second");
+    }
+}
+
+TEST_F(
+    RuntimeWorkspaceConfigStoreTest,
+    EmptyEditPublicationFailureRestoresWithoutRequiringRestart) {
+    const auto store = open_store();
+    store->apply_character_settings(
+        "guide", "second", std::string_view{"mono"},
+        std::nullopt, std::string_view{"high"}, WebSearchMode::automatic);
+    const std::shared_ptr<const Workspace> published = getws();
+    const auto committed_rows = config_contents(database());
+    const std::filesystem::path character =
+        store->workspace_path() / "characters" / "guide" / "character.toml";
+    const std::string materialized = file_bytes(character);
+
+    force_next_workspace_config_fault(WorkspaceConfigFault::publication);
+    try {
+        (void)store->apply_character_settings(
+            "guide", "second", std::string_view{"mono"},
+            std::nullopt, std::string_view{"high"},
+            WebSearchMode::automatic);
+        FAIL() << "expected publication failure";
+    } catch (const WorkspaceRestartRequiredError& error) {
+        FAIL() << "no-op publication failure required restart: " << error.what();
+    } catch (const std::runtime_error& error) {
+        EXPECT_NE(
+            std::string_view(error.what()).find("Forced workspace publication"),
+            std::string_view::npos);
+    }
+
+    EXPECT_EQ(config_contents(database()), committed_rows);
+    EXPECT_EQ(file_bytes(character), materialized);
+    EXPECT_EQ(getws().get(), published.get());
+
+    store->apply_character_settings("guide", "test", std::nullopt);
+    EXPECT_EQ(getws()->find_character("guide")->provider_id, "test");
+}
+
+TEST_F(
+    RuntimeWorkspaceConfigStoreTest,
+    ForumDeleteRemovesOnlyItsConfigAndSessions) {
+    {
+        Database handle(database(), Database::Mode::read_write);
+        seed_session_rows(handle);
+    }
+    const auto store = open_store();
+    const auto before = config_contents(database());
+    std::set<std::string> forum_rows;
+    for (const auto& [name, content] : before) {
+        (void)content;
+        if (name.starts_with("forums/lobby/")) forum_rows.insert(name);
+    }
+    ASSERT_FALSE(forum_rows.empty());
+
+    store->apply_forum_delete("lobby");
+
+    EXPECT_EQ(
+        changed_config_names(before, config_contents(database())),
+        forum_rows);
+    EXPECT_EQ(table_row_count(database(), "forums"), 0);
+    EXPECT_EQ(table_row_count(database(), "sessions"), 0);
+    EXPECT_EQ(table_row_count(database(), "turns"), 0);
+    EXPECT_EQ(table_row_count(database(), "entries"), 0);
+    EXPECT_EQ(getws()->find_forum("lobby"), nullptr);
+}
+
+TEST_F(
+    RuntimeWorkspaceConfigStoreTest,
+    ForumDeleteRollsBackConfigAndSessionsWhenForumDeleteFails) {
+    {
+        Database handle(database(), Database::Mode::read_write);
+        seed_session_rows(handle);
+        handle.execute(
+            "CREATE TRIGGER fail_forum_delete "
+            "BEFORE DELETE ON forums "
+            "WHEN OLD.forum_id = 'lobby' "
+            "BEGIN SELECT RAISE(ABORT, 'forced forum delete failure'); END");
+    }
+    const auto before = config_contents(database());
+    const auto store = open_store();
+
+    EXPECT_THROW(
+        (void)store->apply_forum_delete("lobby"),
+        std::runtime_error);
+
+    EXPECT_EQ(config_contents(database()), before);
+    EXPECT_EQ(table_row_count(database(), "forums"), 1);
+    EXPECT_EQ(table_row_count(database(), "sessions"), 2);
+    EXPECT_EQ(table_row_count(database(), "turns"), 1);
+    EXPECT_EQ(table_row_count(database(), "entries"), 2);
+    EXPECT_NE(getws()->find_forum("lobby"), nullptr);
+    EXPECT_TRUE(std::filesystem::exists(
+        store->workspace_path() / "forums" / "lobby" / "config.toml"));
+}
+
+TEST_F(
+    RuntimeWorkspaceConfigStoreTest,
+    MaterializedWorkspaceCollectsBackToIdenticalRowsWithPlaceholder) {
+    std::filesystem::remove(
+        source() / "forums" / "lobby" / "members" / "writer"
+            / "character.toml");
+    (void)import_workspace_configuration(source(), database());
+    const auto expected = config_contents(database());
+    ASSERT_EQ(
+        expected.at("forums/lobby/members/writer/character.toml"),
+        "# Required placeholder\n");
+
+    const auto store = open_store();
+    std::filesystem::create_directories(export_);
+    const std::filesystem::path collected_database =
+        export_ / "collected.sqlite3";
+    (void)import_workspace_configuration(
+        store->workspace_path(), collected_database);
+
+    EXPECT_EQ(config_contents(collected_database), expected);
+}
+
 TEST_F(RuntimeWorkspaceConfigStoreTest, PersistsTheVoiceLifecycle) {
     const auto store = open_store();
     EXPECT_TRUE(store->apply_voice_create(
@@ -1215,6 +1654,47 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, ForcedPreCommitFailuresRestoreOldContent
 #endif
         expect_restored_old_configuration(database(), *store, published);
     }
+}
+
+TEST_F(
+    RuntimeWorkspaceConfigStoreTest,
+    MidChangeSqliteFailureRollsBackEarlierRowUpdates) {
+    const std::string original_config = stored_config(
+        database(), "characters/guide/character.toml");
+    const std::string original_markdown = stored_config(
+        database(), "characters/guide/CHARACTER.md");
+    {
+        Database handle(database(), Database::Mode::read_write);
+        handle.execute(
+            "CREATE TRIGGER fail_character_config_update "
+            "BEFORE UPDATE ON config "
+            "WHEN OLD.name = 'characters/guide/character.toml' "
+            "BEGIN SELECT RAISE(ABORT, 'forced config update failure'); END");
+    }
+
+    const auto store = open_store();
+    EXPECT_THROW(
+        (void)store->apply_character_definition(
+            "guide", "Updated Guide", std::string_view{"Updated profile"}),
+        std::runtime_error);
+
+    EXPECT_EQ(
+        stored_config(database(), "characters/guide/character.toml"),
+        original_config);
+    EXPECT_EQ(
+        stored_config(database(), "characters/guide/CHARACTER.md"),
+        original_markdown);
+    EXPECT_EQ(
+        file_bytes(
+            store->workspace_path() / "characters" / "guide"
+            / "character.toml"),
+        original_config);
+    EXPECT_EQ(
+        file_bytes(
+            store->workspace_path() / "characters" / "guide"
+            / "CHARACTER.md"),
+        original_markdown);
+    EXPECT_EQ(getws()->find_character("guide")->character.display_name, "Guide");
 }
 
 TEST_F(

@@ -36,15 +36,15 @@ independent and process-owned but receives explicit paths from that store; it
 owns neither the lease nor either private directory and uses short-lived
 connections for storage operations.
 
-The only online configuration writes use
-`Workspace::write_character_settings()`,
-`write_forum_default_character()`, and `write_forum_default_persona()`. Each
-store operation edits the materialized file, loads a complete candidate,
-collects the complete small file set, replaces all `config` rows in one SQLite
-transaction, and publishes the candidate only after commit. A pre-commit
-failure rematerializes the old rows; a post-commit publication failure requires
-restart and then loads the committed rows. All other edits use offline
-export/edit/import.
+Online configuration mutations go through `WorkspaceConfigStore` and the
+corresponding `Workspace` write, create, or delete operation. Each store
+operation edits the materialized files, loads a complete candidate, collects
+the complete small file set, compares it with the committed rows, and inserts,
+updates, or deletes only changed `config` rows in one SQLite transaction. It
+publishes the candidate only after commit. A pre-commit failure rematerializes
+the old rows; a post-commit publication failure requires restart and then loads
+the committed rows. Offline import and export use the separate transfer
+operations.
 
 Character settings can override their provider's `reasoning_effort` and
 `web_search`. The overrides remain optional in `WorkspaceCharacter`; generation

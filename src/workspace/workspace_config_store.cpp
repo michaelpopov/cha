@@ -267,6 +267,65 @@ std::vector<ConfigFile> collect_config_rows(const std::filesystem::path& source)
     return rows;
 }
 
+void require_one_config_change(
+    const Database& database,
+    std::string_view operation,
+    std::string_view name) {
+    if (database.changes() == 1) return;
+    throw std::runtime_error(
+        "Failed to " + std::string(operation) + " configuration row '"
+        + std::string(name) + "'");
+}
+
+void apply_config_changes(
+    Database& database,
+    const std::vector<ConfigFile>& committed,
+    const std::vector<ConfigFile>& candidate) {
+    // Both inputs use bytewise name order: SQLite ORDER BY name (BINARY) for
+    // committed rows and std::map iteration in collect_config_rows().
+    std::size_t old_index = 0;
+    std::size_t new_index = 0;
+    while (old_index < committed.size() || new_index < candidate.size()) {
+        if (new_index == candidate.size()
+            || (old_index < committed.size()
+                && committed[old_index].name < candidate[new_index].name)) {
+            const std::string_view name = committed[old_index].name;
+            storage::SqliteStatement remove = database.prepare(
+                "DELETE FROM config WHERE name = ?1", name);
+            remove.run();
+            require_one_config_change(database, "delete", name);
+            ++old_index;
+            continue;
+        }
+
+        if (old_index == committed.size()
+            || candidate[new_index].name < committed[old_index].name) {
+            const ConfigFile& row = candidate[new_index];
+            storage::SqliteStatement insert = database.prepare(
+                "INSERT INTO config (name, content) VALUES (?1, ?2)",
+                std::string_view(row.name),
+                std::string_view(row.content));
+            insert.run();
+            require_one_config_change(database, "insert", row.name);
+            ++new_index;
+            continue;
+        }
+
+        const ConfigFile& old_row = committed[old_index];
+        const ConfigFile& new_row = candidate[new_index];
+        if (old_row.content != new_row.content) {
+            storage::SqliteStatement update = database.prepare(
+                "UPDATE config SET content = ?2 WHERE name = ?1",
+                std::string_view(new_row.name),
+                std::string_view(new_row.content));
+            update.run();
+            require_one_config_change(database, "update", new_row.name);
+        }
+        ++old_index;
+        ++new_index;
+    }
+}
+
 void ensure_private_directory(const std::filesystem::path& path) {
     const std::filesystem::file_status status = inspected_status(path);
     if (!std::filesystem::exists(status)) {
@@ -1020,7 +1079,7 @@ struct WorkspaceConfigStore::Impl {
         }
 
         std::exception_ptr failure;
-        bool committed = false;
+        bool database_committed = false;
         std::vector<std::string> affected_forum_ids;
         try {
             affected_forum_ids = writer(*published);
@@ -1030,30 +1089,38 @@ struct WorkspaceConfigStore::Impl {
             }
             std::vector<ConfigFile> rows =
                 collect_config_rows(tree->workspace());
-            if (consume_runtime_fault(WorkspaceConfigFault::sqlite_begin)) {
-                fail_path("Forced SQLite begin failure");
+            validate_config_rows(rows);
+            const std::vector<ConfigFile> committed_rows =
+                read_workspace_config_files(*database);
+            const bool config_changed = committed_rows != rows;
+            if (config_changed || !deleted_forum_id.empty()) {
+                if (consume_runtime_fault(WorkspaceConfigFault::sqlite_begin)) {
+                    fail_path("Forced SQLite begin failure");
+                }
+                storage::SqliteTransaction transaction(*database);
+                if (consume_runtime_fault(WorkspaceConfigFault::sqlite_write)) {
+                    fail_path("Forced SQLite write failure");
+                }
+                if (config_changed) {
+                    apply_config_changes(*database, committed_rows, rows);
+                }
+                if (!deleted_forum_id.empty()) {
+                    storage::SqliteStatement delete_sessions = database->prepare(
+                        "DELETE FROM sessions WHERE forum_key IN ("
+                        "SELECT forum_key FROM forums WHERE forum_id = ?1)",
+                        deleted_forum_id);
+                    delete_sessions.run();
+                    storage::SqliteStatement delete_forum = database->prepare(
+                        "DELETE FROM forums WHERE forum_id = ?1",
+                        deleted_forum_id);
+                    delete_forum.run();
+                }
+                if (consume_runtime_fault(WorkspaceConfigFault::sqlite_commit)) {
+                    fail_path("Forced SQLite commit failure");
+                }
+                transaction.commit();
+                database_committed = true;
             }
-            storage::SqliteTransaction transaction(*database);
-            if (consume_runtime_fault(WorkspaceConfigFault::sqlite_write)) {
-                fail_path("Forced SQLite write failure");
-            }
-            replace_workspace_config_files(*database, rows);
-            if (!deleted_forum_id.empty()) {
-                storage::SqliteStatement delete_sessions = database->prepare(
-                    "DELETE FROM sessions WHERE forum_key IN ("
-                    "SELECT forum_key FROM forums WHERE forum_id = ?1)",
-                    deleted_forum_id);
-                delete_sessions.run();
-                storage::SqliteStatement delete_forum = database->prepare(
-                    "DELETE FROM forums WHERE forum_id = ?1",
-                    deleted_forum_id);
-                delete_forum.run();
-            }
-            if (consume_runtime_fault(WorkspaceConfigFault::sqlite_commit)) {
-                fail_path("Forced SQLite commit failure");
-            }
-            transaction.commit();
-            committed = true;
             if (consume_runtime_fault(WorkspaceConfigFault::publication)) {
                 fail_path("Forced workspace publication failure");
             }
@@ -1062,7 +1129,7 @@ struct WorkspaceConfigStore::Impl {
             failure = std::current_exception();
         }
 
-        if (!committed) {
+        if (failure && !database_committed) {
             restore_after_pre_commit_failure(std::move(failure));
         }
         if (failure) {

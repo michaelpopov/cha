@@ -18,6 +18,8 @@ inline constexpr std::int64_t workspace_session_database_version_v1 = 1;
 struct ConfigFile {
     std::string name;
     std::string content;
+
+    friend bool operator==(const ConfigFile&, const ConfigFile&) = default;
 };
 
 enum class WorkspaceDatabaseState {

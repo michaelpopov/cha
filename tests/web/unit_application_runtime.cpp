@@ -299,10 +299,17 @@ TEST(ApplicationRuntime, ReportsVoiceInputApiKeyUsage) {
         nlohmann::json::parse(resolved->body).at("api_key"),
         "voice-secret");
 
+    const nlohmann::json invalid_update{
+        {"url", "not-a-url"},
+        {"model", "next-model"},
+        {"api_key", key.id},
+        {"delay", "high"},
+        {"prompt", "Test"},
+    };
     const auto invalid = client.Put(
         "/api/v1/voice-input",
         kRuntimeCookie,
-        R"({"url":"not-a-url","model":"next-model","api_key":"api_key_1","delay":"high","prompt":"Test"})",
+        invalid_update.dump(),
         "application/json");
     ASSERT_TRUE(invalid);
     EXPECT_EQ(invalid->status, 400) << invalid->body;
@@ -311,10 +318,17 @@ TEST(ApplicationRuntime, ReportsVoiceInputApiKeyUsage) {
         getws()->voice_input()->url,
         "https://api.openai.com/v1/realtime/calls");
 
+    const nlohmann::json voice_input_update{
+        {"url", "https://example.com/realtime"},
+        {"model", "next-model"},
+        {"api_key", key.id},
+        {"delay", "xhigh"},
+        {"prompt", "Names and terms."},
+    };
     const auto updated = client.Put(
         "/api/v1/voice-input",
         kRuntimeCookie,
-        R"({"url":"https://example.com/realtime","model":"next-model","api_key":"api_key_1","delay":"xhigh","prompt":"Names and terms."})",
+        voice_input_update.dump(),
         "application/json");
     ASSERT_TRUE(updated);
     ASSERT_EQ(updated->status, 200) << updated->body;
@@ -384,18 +398,32 @@ TEST(ApplicationRuntime, ServesVaultBackedVoiceOutputSettings) {
     EXPECT_EQ(runtime_settings.at("api_key"), "output-secret");
     EXPECT_EQ(runtime_settings.at("default_voice_id"), "eleven-default");
 
+    const nlohmann::json invalid_update{
+        {"url", "https://example.com/speech"},
+        {"model", "next-model"},
+        {"api_key", key.id},
+        {"output_format", "mp3"},
+        {"default_voice", "Missing"},
+    };
     const auto invalid = client.Put(
         "/api/v1/voice-output",
         kRuntimeCookie,
-        R"({"url":"https://example.com/speech","model":"next-model","api_key":"api_key_1","output_format":"mp3","default_voice":"Missing"})",
+        invalid_update.dump(),
         "application/json");
     ASSERT_TRUE(invalid);
     EXPECT_EQ(invalid->status, 400) << invalid->body;
 
+    const nlohmann::json voice_output_update{
+        {"url", "https://example.com/speech"},
+        {"model", "next-model"},
+        {"api_key", key.id},
+        {"output_format", "mp3_44100_192"},
+        {"default_voice", "Default Reader"},
+    };
     const auto updated = client.Put(
         "/api/v1/voice-output",
         kRuntimeCookie,
-        R"({"url":"https://example.com/speech","model":"next-model","api_key":"api_key_1","output_format":"mp3_44100_192","default_voice":"Default Reader"})",
+        voice_output_update.dump(),
         "application/json");
     ASSERT_TRUE(updated);
     ASSERT_EQ(updated->status, 200) << updated->body;
