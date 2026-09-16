@@ -1,14 +1,32 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  cacheTextToSpeech,
-  clearTextToSpeechCache,
   TextToSpeechError,
   TextToSpeechSession,
 } from './textToSpeech';
 
+const configuration = {
+  baseUrl: 'https://api.fish.audio/v1/tts', voiceId: 'voice',
+  outputFormat: 'mp3', model: 's2.1-pro',
+};
+
+function playText(
+  config: typeof configuration,
+  voice: ConstructorParameters<typeof TextToSpeechSession>[1],
+  text: string,
+) {
+  return new TextToSpeechSession(config, voice, text, vi.fn()).play();
+}
+
+beforeEach(() => {
+  vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:audio');
+  vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+  vi.stubGlobal('Audio', vi.fn(function Audio() {
+    return { addEventListener: vi.fn(), play: vi.fn().mockResolvedValue(undefined), pause: vi.fn() };
+  }));
+});
+
 afterEach(() => {
-  clearTextToSpeechCache();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   vi.useRealTimers();
@@ -42,56 +60,6 @@ describe('FishAudio connection budget', () => {
     };
   }
 
-  it('shares two prefetch slots across cache runs and promotes a queued clip for playback', async () => {
-    const requests = holdRequests();
-    const caching = ['Old 1', 'Old 2', 'New 1', 'New 2'].map((text) =>
-      cacheTextToSpeech(configuration, undefined, text),
-    );
-    const session = new TextToSpeechSession(configuration, undefined, 'New 2', vi.fn(), { cache: true });
-    const preview = new TextToSpeechSession(configuration, undefined, 'Preview', vi.fn());
-    let playing: Promise<void> | undefined;
-    try {
-      expect(requests.fetchMock).toHaveBeenCalledTimes(2);
-      playing = session.play();
-      expect([...requests.responses.keys()]).toEqual(['Old 1', 'Old 2', 'New 2']);
-      const previewing = preview.play();
-      expect(requests.fetchMock).toHaveBeenCalledTimes(3);
-      preview.stop();
-      await expect(previewing).rejects.toMatchObject({ name: 'AbortError' });
-      expect(requests.responses.has('Preview')).toBe(false);
-    } finally {
-      requests.finish();
-      await Promise.allSettled([...caching, ...(playing ? [playing] : [])]);
-      session.stop();
-      preview.stop();
-    }
-  });
-
-  it('starts queued playback before background caching and releases capacity after errors', async () => {
-    const requests = holdRequests();
-    const caching = ['Cache 1', 'Cache 2', 'Cache 3'].map((text) =>
-      cacheTextToSpeech(configuration, undefined, text),
-    );
-    const first = new TextToSpeechSession(configuration, undefined, 'First preview', vi.fn());
-    const second = new TextToSpeechSession(configuration, undefined, 'Second preview', vi.fn());
-    const failing = first.play();
-    const failed = expect(failing).rejects.toThrow('FishAudio: No credits (HTTP 402)');
-    const playing = second.play();
-    try {
-      expect(requests.fetchMock).toHaveBeenCalledTimes(3);
-      requests.responses.get('First preview')!(new Response(JSON.stringify({ message: 'No credits' }), { status: 402 }));
-      await failed;
-      await vi.waitFor(() => expect(requests.responses.has('Second preview')).toBe(true));
-      expect(requests.responses.has('Cache 3')).toBe(false);
-      expect(requests.fetchMock).toHaveBeenCalledTimes(4);
-    } finally {
-      requests.finish();
-      await Promise.allSettled([...caching, failing, playing]);
-      first.stop();
-      second.stop();
-    }
-  });
-
   it('keeps the connection slot until the audio body finishes, rather than only the headers', async () => {
     const controllers: ReadableStreamDefaultController<Uint8Array>[] = [];
     const requests = holdRequests();
@@ -115,68 +83,7 @@ describe('FishAudio connection budget', () => {
     }
   });
 
-  it('discards abandoned queued prefetch, leaves active requests running, and allows a fresh attempt', async () => {
-    const requests = holdRequests();
-    const controller = new AbortController();
-    const caching = ['Active 1', 'Active 2', 'Queued'].map((text) =>
-      cacheTextToSpeech(configuration, undefined, text, controller.signal),
-    );
-    const discarded = expect(caching[2]).rejects.toMatchObject({ name: 'AbortError' });
-    let fresh: Promise<void> | undefined;
-    try {
-      controller.abort();
-      fresh = cacheTextToSpeech(configuration, undefined, 'Queued');
-      await discarded;
-      expect(requests.fetchMock).toHaveBeenCalledTimes(2);
-      requests.responses.get('Active 1')!(new Response('audio'));
-      await vi.waitFor(() => expect(requests.responses.has('Queued')).toBe(true));
-      expect(requests.fetchMock).toHaveBeenCalledTimes(3);
-    } finally {
-      requests.finish();
-      await Promise.allSettled([...caching, ...(fresh ? [fresh] : [])]);
-    }
-  });
 
-  it('keeps queued prefetch shared with another cache run after its first owner leaves', async () => {
-    const requests = holdRequests();
-    const first = new AbortController();
-    const second = new AbortController();
-    const caching = ['Active 1', 'Active 2', 'Shared'].map((text) =>
-      cacheTextToSpeech(configuration, undefined, text, first.signal),
-    );
-    caching.push(cacheTextToSpeech(configuration, undefined, 'Shared', second.signal));
-    try {
-      first.abort();
-      requests.responses.get('Active 1')!(new Response('audio'));
-      await vi.waitFor(() => expect(requests.responses.has('Shared')).toBe(true));
-      expect(requests.fetchMock).toHaveBeenCalledTimes(3);
-    } finally {
-      requests.finish();
-      await Promise.allSettled(caching);
-    }
-  });
-
-  it('keeps queued playback when its cache run stops', async () => {
-    const requests = holdRequests();
-    const previews = ['One', 'Two', 'Three'].map((text) =>
-      new TextToSpeechSession(configuration, undefined, text, vi.fn()),
-    );
-    const playing = previews.map((session) => session.play());
-    const controller = new AbortController();
-    const caching = cacheTextToSpeech(configuration, undefined, 'Shared', controller.signal);
-    const playback = new TextToSpeechSession(configuration, undefined, 'Shared', vi.fn(), { cache: true });
-    playing.push(playback.play());
-    try {
-      controller.abort();
-      requests.responses.get('One')!(new Response('audio'));
-      await vi.waitFor(() => expect(requests.responses.has('Shared')).toBe(true));
-      expect(requests.fetchMock).toHaveBeenCalledTimes(4);
-    } finally {
-      requests.finish();
-      await Promise.allSettled([...playing, caching]);
-      for (const session of [...previews, playback]) session.stop();
-    }
-  });
 });
 
 describe('FishAudio busy retries', () => {
@@ -188,23 +95,23 @@ describe('FishAudio busy retries', () => {
     error: { code: 'speech_busy', message: 'Speech generation is busy. Try again shortly.' },
   }), { status: 503 });
 
-  it('retries local capacity rejections and caches the successful result', async () => {
+  it('retries local capacity rejections and requests audio again on later playback', async () => {
     vi.useFakeTimers();
     const fetchMock = vi.spyOn(globalThis, 'fetch')
       .mockImplementationOnce(async () => busy())
       .mockImplementationOnce(async () => busy())
       .mockImplementation(async () => new Response('audio'));
-    const caching = cacheTextToSpeech(configuration, undefined, 'Hello');
+    const caching = playText(configuration, undefined, 'Hello');
     await vi.advanceTimersByTimeAsync(2000);
     await caching;
-    await cacheTextToSpeech(configuration, undefined, 'Hello');
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    await playText(configuration, undefined, 'Hello');
+    expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 
   it('reports a persistent busy error after three retries', async () => {
     vi.useFakeTimers();
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => busy());
-    const caching = cacheTextToSpeech(configuration, undefined, 'Hello');
+    const caching = playText(configuration, undefined, 'Hello');
     const failed = expect(caching).rejects.toMatchObject({ name: 'TextToSpeechError', code: 'speech_busy' });
     await vi.advanceTimersByTimeAsync(3000);
     await failed;
@@ -216,7 +123,7 @@ describe('FishAudio busy retries', () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(
       JSON.stringify({ error: { code: 'internal_error', message: 'Provider rejected the request' } }), { status },
     ));
-    await expect(cacheTextToSpeech(configuration, undefined, 'Hello')).rejects.toThrow('Provider rejected the request');
+    await expect(playText(configuration, undefined, 'Hello')).rejects.toThrow('Provider rejected the request');
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
@@ -235,7 +142,99 @@ describe('FishAudio busy retries', () => {
   });
 });
 
+describe('playback position', () => {
+  const audios: Array<EventTarget & {
+    currentTime: number; duration: number; readyState: number;
+    play: ReturnType<typeof vi.fn>; pause: ReturnType<typeof vi.fn>;
+  }> = [];
+
+  beforeEach(() => {
+    audios.length = 0;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response('audio'));
+    vi.stubGlobal('Audio', vi.fn(function Audio() {
+      const audio = Object.assign(new EventTarget(), {
+        currentTime: 0, duration: 60, readyState: 0,
+        play: vi.fn().mockResolvedValue(undefined), pause: vi.fn(),
+      });
+      audios.push(audio);
+      return audio;
+    }));
+  });
+
+  it('saves the stop position, resumes after metadata loads, and resets after ending', async () => {
+    let position = 0;
+    const ended = vi.fn();
+    const createSession = () => new TextToSpeechSession(
+      configuration, undefined, 'Hello', ended, undefined, undefined,
+      { position, onPositionChange: (next) => { position = next; } },
+    );
+    const first = createSession();
+    await first.play();
+    audios[0].readyState = 1;
+    audios[0].currentTime = 12.5;
+    first.stop();
+    expect(position).toBe(12.5);
+
+    const resumed = createSession();
+    await resumed.play();
+    expect(audios[1].currentTime).toBe(0);
+    audios[1].readyState = 1;
+    audios[1].dispatchEvent(new Event('loadedmetadata'));
+    expect(audios[1].currentTime).toBe(12.5);
+    audios[1].currentTime = 60;
+    audios[1].dispatchEvent(new Event('ended'));
+    expect(position).toBe(0);
+    expect(ended).toHaveBeenCalledOnce();
+
+    const restarted = createSession();
+    await restarted.play();
+    expect(audios[2].currentTime).toBe(0);
+    restarted.stop();
+  });
+
+  it('preserves the saved position when stopped before metadata arrives', async () => {
+    const onPositionChange = vi.fn();
+    const session = new TextToSpeechSession(
+      configuration, undefined, 'Hello', vi.fn(), undefined, undefined,
+      { position: 12.5, onPositionChange },
+    );
+    await session.play();
+    session.stop();
+    audios[0].readyState = 1;
+    audios[0].dispatchEvent(new Event('loadedmetadata'));
+    expect(onPositionChange).not.toHaveBeenCalled();
+    expect(audios[0].currentTime).toBe(0);
+  });
+
+  it('starts at zero when a remembered position is beyond the audio duration', async () => {
+    const session = new TextToSpeechSession(
+      configuration, undefined, 'Hello', vi.fn(), undefined, undefined,
+      { position: 70, onPositionChange: vi.fn() },
+    );
+    await session.play();
+    audios[0].readyState = 1;
+    audios[0].dispatchEvent(new Event('loadedmetadata'));
+    expect(audios[0].currentTime).toBe(0);
+    session.stop();
+  });
+});
+
 describe('text to speech', () => {
+  it('sends transcript identity on every playback and releases temporary audio', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response('audio'));
+    const entry = { forum_id: 'lobby', session_id: 'chat', entry_id: 2 };
+    for (let i = 0; i < 2; i += 1) {
+      const session = new TextToSpeechSession(configuration, undefined, 'Hello', vi.fn(), entry);
+      await session.play();
+      session.stop();
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    for (const [, init] of fetchMock.mock.calls) {
+      expect(JSON.parse(init!.body as string).entry).toEqual(entry);
+    }
+    expect(URL.revokeObjectURL).toHaveBeenCalledTimes(2);
+  });
+
   it('aborts a pending FishAudio preview when stopped', async () => {
     let signal: AbortSignal | undefined;
     vi.spyOn(globalThis, 'fetch').mockImplementation((_url, init) => {
@@ -276,28 +275,12 @@ describe('text to speech', () => {
     expect(play).toHaveBeenCalledOnce();
   });
 
-  it('invalidates FishAudio cached clips when model or format changes', async () => {
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
-      new Response(new TextEncoder().encode('audio')),
-    );
-    const configuration = {
-      baseUrl: 'https://api.fish.audio/v1/tts', voiceId: 'fish-default',
-      outputFormat: 'mp3', model: 's2.1-pro',
-    };
-    await cacheTextToSpeech(configuration, undefined, 'Hello');
-    await cacheTextToSpeech(configuration, undefined, 'Hello');
-    await cacheTextToSpeech({ ...configuration, model: 's2-pro' }, undefined, 'Hello');
-    await cacheTextToSpeech({ ...configuration, outputFormat: 'wav' }, undefined, 'Hello');
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-    expect(JSON.parse(fetchMock.mock.calls[0][1]!.body as string).reference_id).toBe('fish-default');
-  });
-
   it.each([
     { status: 402, message: 'Insufficient credits', reason: 'balance' },
     { error: { message: 'Insufficient credits' } },
   ])('exposes FishAudio and CHA error messages (%j)', async (error) => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(error), { status: 402 }));
-    await expect(cacheTextToSpeech({
+    await expect(playText({
       baseUrl: 'https://api.fish.audio/v1/tts', voiceId: 'fish-default',
       outputFormat: 'mp3', model: 's2.1-pro',
     }, undefined, 'Hello')).rejects.toThrow('FishAudio: Insufficient credits (HTTP 402)');
@@ -307,7 +290,7 @@ describe('text to speech', () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
       error: { message: 'Authentication failed. Check the FishAudio API key.' },
     }), { status: 401 }));
-    await expect(cacheTextToSpeech({
+    await expect(playText({
       baseUrl: 'https://api.fish.audio/v1/tts', voiceId: 'fish-default',
       outputFormat: 'mp3', model: 's2.1-pro',
     }, undefined, 'Hello')).rejects.toThrow(
@@ -317,7 +300,7 @@ describe('text to speech', () => {
 
   it('uses a useful fallback when speech output does not return JSON', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('Bad gateway', { status: 502 }));
-    await expect(cacheTextToSpeech({
+    await expect(playText({
       baseUrl: 'https://api.fish.audio/v1/tts', voiceId: 'fish-default',
       outputFormat: 'mp3', model: 's2.1-pro',
     }, undefined, 'Hello')).rejects.toThrow('FishAudio request failed (HTTP 502).');
@@ -360,70 +343,7 @@ describe('text to speech', () => {
     expect(play).toHaveBeenCalledOnce();
   });
 
-  it('reuses cached audio for the same synthesis request', async () => {
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
-      new Response(new TextEncoder().encode('audio')),
-    );
-    vi.spyOn(URL, 'createObjectURL')
-      .mockReturnValueOnce('blob:first')
-      .mockReturnValueOnce('blob:second');
-    const play = vi.fn().mockResolvedValue(undefined);
-    const pause = vi.fn();
-    vi.stubGlobal('Audio', vi.fn(function Audio() {
-      return { addEventListener: vi.fn(), play, pause };
-    }));
-    const configuration = {
-      baseUrl: 'https://api.fish.audio/v1/tts',
-      voiceId: 'cached-voice',
-      outputFormat: 'mp3',
-      model: 's2.1-pro',
-    };
-
-    const first = new TextToSpeechSession(
-      configuration, undefined, 'Read this again', vi.fn(), { cache: true },
-    );
-    await first.play();
-    first.stop();
-    const second = new TextToSpeechSession(
-      configuration, undefined, 'Read this again', vi.fn(), { cache: true },
-    );
-    await second.play();
-
-    expect(fetchMock).toHaveBeenCalledOnce();
-    expect(URL.createObjectURL).toHaveBeenCalledTimes(2);
-    expect(play).toHaveBeenCalledTimes(2);
-  });
-
-  it('shares an in-flight cached request with playback', async () => {
-    let resolveResponse!: (response: Response) => void;
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(() => (
-      new Promise<Response>((resolve) => { resolveResponse = resolve; })
-    ));
-    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:audio');
-    const play = vi.fn().mockResolvedValue(undefined);
-    vi.stubGlobal('Audio', vi.fn(function Audio() {
-      return { addEventListener: vi.fn(), play, pause: vi.fn() };
-    }));
-    const configuration = {
-      baseUrl: 'https://api.fish.audio/v1/tts',
-      voiceId: 'cached-voice',
-      outputFormat: 'mp3',
-      model: 's2.1-pro',
-    };
-
-    const warming = cacheTextToSpeech(configuration, undefined, 'Same clip');
-    const session = new TextToSpeechSession(
-      configuration, undefined, 'Same clip', vi.fn(), { cache: true },
-    );
-    const playing = session.play();
-
-    expect(fetchMock).toHaveBeenCalledOnce();
-    resolveResponse(new Response(new TextEncoder().encode('audio')));
-    await Promise.all([warming, playing]);
-    expect(play).toHaveBeenCalledOnce();
-  });
-
-  it('does not cache audio unless requested', async () => {
+  it('always requests fresh previews without transcript identity', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
       new Response(new TextEncoder().encode('audio')),
     );
@@ -449,85 +369,9 @@ describe('text to speech', () => {
     ).play();
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
-  });
-
-  it('generates new audio when synthesis settings change', async () => {
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
-      new Response(new TextEncoder().encode('audio')),
-    );
-    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:audio');
-    vi.stubGlobal('Audio', vi.fn(function Audio() {
-      return {
-        addEventListener: vi.fn(),
-        play: vi.fn().mockResolvedValue(undefined),
-        pause: vi.fn(),
-      };
-    }));
-    const configuration = {
-      baseUrl: 'https://api.fish.audio/v1/tts',
-      voiceId: 'fallback',
-      outputFormat: 'mp3',
-      model: 's2.1-pro',
-    };
-
-    await new TextToSpeechSession(
-      configuration,
-      { elevenlabs_voice_id: 'warm-voice', settings: { speed: 0.9 } },
-      'Read this',
-      vi.fn(),
-      { cache: true },
-    ).play();
-    await new TextToSpeechSession(
-      configuration,
-      { elevenlabs_voice_id: 'warm-voice', settings: { speed: 1.1 } },
-      'Read this',
-      vi.fn(),
-      { cache: true },
-    ).play();
-
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-  });
-
-  it('evicts the oldest audio when the cache exceeds 256 MiB', async () => {
-    const largeBlob = { size: 128 * 1024 * 1024 } as Blob;
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => ({
-      ok: true,
-      blob: async () => largeBlob,
-    }) as Response);
-    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:audio');
-    vi.stubGlobal('Audio', vi.fn(function Audio() {
-      return {
-        addEventListener: vi.fn(),
-        play: vi.fn().mockResolvedValue(undefined),
-        pause: vi.fn(),
-      };
-    }));
-    const configuration = {
-      baseUrl: 'https://api.fish.audio/v1/tts',
-      voiceId: 'cached-voice',
-      outputFormat: 'mp3',
-      model: 's2.1-pro',
-    };
-
-    for (let index = 0; index < 3; index += 1) {
-      const session = new TextToSpeechSession(
-        configuration, undefined, `Clip ${index}`, vi.fn(), { cache: true },
-      );
-      await session.play();
-      session.stop();
+    for (const [, init] of fetchMock.mock.calls) {
+      expect(JSON.parse(init!.body as string)).not.toHaveProperty('entry');
     }
-    const retained = new TextToSpeechSession(
-      configuration, undefined, 'Clip 1', vi.fn(), { cache: true },
-    );
-    await retained.play();
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-
-    const replay = new TextToSpeechSession(
-      configuration, undefined, 'Clip 0', vi.fn(), { cache: true },
-    );
-    await replay.play();
-
-    expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 
   it('uses an assigned voice and its configured settings', async () => {

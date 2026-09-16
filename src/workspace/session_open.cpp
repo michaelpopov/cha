@@ -51,6 +51,9 @@ OpenedSession open_session(
                                          std::string_view character_id) {
             (void)config.apply_forum_default_character(forum_id, character_id);
         },
+        .cached_audio_entries = [&sessions, identity] {
+            return sessions.cached_audio_entries(identity);
+        },
     };
 }
 

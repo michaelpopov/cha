@@ -30,7 +30,7 @@ void clear_error(char** error) {
     if (error) *error = nullptr;
 }
 
-void set_error(char** destination, const char* message) noexcept {
+void set_string(char** destination, const char* message) noexcept {
     if (!destination) return;
     const std::size_t size = std::strlen(message) + 1;
     char* const copy = static_cast<char*>(std::malloc(size));
@@ -43,9 +43,9 @@ void set_current_error(char** error) noexcept {
     try {
         throw;
     } catch (const std::exception& exception) {
-        set_error(error, exception.what());
+        set_string(error, exception.what());
     } catch (...) {
-        set_error(error, "CHA failed with an unknown error");
+        set_string(error, "CHA failed with an unknown error");
     }
 }
 
@@ -71,7 +71,7 @@ int32_t transfer(
     bool download) {
     clear_error(error);
     if (!runtime || !runtime->application || !byte_count) {
-        set_error(error, "CHA runtime is not available");
+        set_string(error, "CHA runtime is not available");
         return 0;
     }
     try {
@@ -81,7 +81,7 @@ int32_t transfer(
         *byte_count = result.byte_count;
         return 1;
     } catch (const cha::WorkspaceRestartRequiredError& fatal) {
-        set_error(error, fatal.what());
+        set_string(error, fatal.what());
         return -1;
     } catch (...) {
         set_current_error(error);
@@ -96,7 +96,7 @@ int32_t transfer_configuration(
     bool importing) {
     clear_error(error);
     if (!runtime || !runtime->application || !file_count) {
-        set_error(error, "CHA runtime is not available");
+        set_string(error, "CHA runtime is not available");
         return 0;
     }
     try {
@@ -106,7 +106,7 @@ int32_t transfer_configuration(
         *file_count = result.file_count;
         return 1;
     } catch (const cha::WorkspaceRestartRequiredError& fatal) {
-        set_error(error, fatal.what());
+        set_string(error, fatal.what());
         return -1;
     } catch (...) {
         set_current_error(error);
@@ -127,7 +127,7 @@ ChaRuntime* cha_runtime_create(
     if (password_error) *password_error = 0;
     if (!config_path || !resource_path || !access_token || !vault_password
         || *access_token == '\0') {
-        set_error(error, "CHA runtime configuration is incomplete");
+        set_string(error, "CHA runtime configuration is incomplete");
         return nullptr;
     }
 
@@ -162,17 +162,19 @@ ChaRuntime* cha_runtime_create(
 int32_t cha_runtime_requires_password(
     const char* config_path,
     const char* resource_path,
+    char** vault_name,
     char** error) {
     clear_error(error);
+    if (vault_name) *vault_name = nullptr;
     if (!config_path || !resource_path) {
-        set_error(error, "CHA runtime configuration is incomplete");
+        set_string(error, "CHA runtime configuration is incomplete");
         return -1;
     }
     try {
-        return runtime_command(config_path, resource_path)
-                .vault.password_protected
-            ? 1
-            : 0;
+        const ApplicationCommand command = runtime_command(config_path, resource_path);
+        set_string(vault_name, command.vault.name.c_str());
+        if (vault_name && !*vault_name) throw std::bad_alloc();
+        return command.vault.password_protected ? 1 : 0;
     } catch (...) {
         set_current_error(error);
         return -1;

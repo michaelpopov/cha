@@ -6,6 +6,8 @@
 
 #include <filesystem>
 #include <mutex>
+#include <optional>
+#include <set>
 #include <shared_mutex>
 #include <string>
 #include <string_view>
@@ -14,6 +16,22 @@
 namespace cha {
 
 class Workspace;
+
+struct EntryAudio {
+    std::string audio;
+    std::string content_type;
+};
+
+// Identifies the original database and entry for a later, short cache write.
+struct EntryAudioLookup {
+    SessionKey session_key{};
+    EntryId entry_id{};
+    std::filesystem::path database_path;
+    FullSessionId identity;
+    std::string entry_text;
+    EntryKind entry_kind{};
+    std::optional<EntryAudio> cached;
+};
 
 struct TemporarySessionSeed {
     FullSessionId identity;
@@ -83,6 +101,12 @@ public:
     [[nodiscard]] std::vector<TranscriptEntry> history(
         const FullSessionId& identity) const;
 
+    [[nodiscard]] std::optional<EntryAudioLookup> lookup_entry_audio(
+        const FullSessionId& identity, EntryId entry_id) const;
+    void save_entry_audio(const EntryAudioLookup& entry, const EntryAudio& audio) const;
+    void clear_session_audio(const FullSessionId& identity) const;
+    [[nodiscard]] std::set<EntryId> cached_audio_entries(const FullSessionId& identity) const;
+
     // Fences new repository operations and waits for existing ones. Live
     // actors write through SessionJournal and must be stopped separately.
     [[nodiscard]] MaintenanceGuard reserve_maintenance();
@@ -92,6 +116,8 @@ public:
     [[nodiscard]] std::filesystem::path database_path() const;
 
 private:
+    [[nodiscard]] const std::filesystem::path& session_database_path(
+        const FullSessionId& identity) const;
     void require_persistent_forum(std::string_view forum_id) const;
     void synchronize_forums_unlocked(const Workspace& workspace) const;
 

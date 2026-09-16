@@ -135,6 +135,149 @@ protected:
     std::filesystem::path welcome_;
 };
 
+TEST_F(SessionRepositoryTest, EntryAudioPersistsAndIsScopedToItsSession) {
+    {
+        storage::SqliteDatabase database(database_path(), storage::SqliteDatabase::Mode::read_write);
+        database.execute("DROP TABLE entry_audio"); // Existing schema-2 vault without audio storage.
+    }
+    FullSessionId first_id;
+    FullSessionId second_id;
+    const EntryAudio audio{std::string("mp3\0\xff", 5), "audio/mpeg"};
+    {
+        const SessionRepository repository = make_repository();
+        first_id = repository.create("lobby", "First").identity;
+        second_id = repository.create("lobby", "Second").identity;
+        for (const auto& identity : {first_id, second_id}) {
+            const auto prepared = repository.prepare(identity);
+            SessionJournal journal(prepared.database_path, prepared.session_key);
+            journal.record_entry(test::human_entry(1, {"human", "You"}, {"guide", "Guide"}, "Hello"));
+        }
+        const auto first = repository.lookup_entry_audio(first_id, 1);
+        const auto second = repository.lookup_entry_audio(second_id, 1);
+        ASSERT_TRUE(first && second);
+        EXPECT_EQ(first->entry_text, "Hello");
+        EXPECT_EQ(first->entry_kind, EntryKind::human);
+        EXPECT_FALSE(first->cached);
+        repository.save_entry_audio(*first, audio);
+        repository.save_entry_audio(*second, {"second-audio", "audio/wav"});
+        repository.save_entry_audio(*first, {"replacement", "audio/ogg"});
+    }
+    const auto restarted_welcome = fixture_.root() / "restarted-welcome";
+    create_private_directory(restarted_welcome);
+    const SessionRepository reopened(database_path(), fixture_.root(), restarted_welcome,
+        {temporary_identity(), "Welcome"});
+    const auto first = reopened.lookup_entry_audio(first_id, 1);
+    const auto second = reopened.lookup_entry_audio(second_id, 1);
+    ASSERT_TRUE(first && first->cached && second && second->cached);
+    EXPECT_EQ(first->cached->audio, audio.audio);
+    EXPECT_EQ(first->cached->content_type, audio.content_type);
+    EXPECT_EQ(second->cached->audio, "second-audio");
+    EXPECT_EQ(second->cached->content_type, "audio/wav");
+    EXPECT_FALSE(reopened.lookup_entry_audio(first_id, 999));
+}
+
+TEST_F(SessionRepositoryTest, DeletingEntriesAndSessionsAlsoDeletesTheirAudio) {
+    const SessionRepository repository = make_repository();
+    const auto prepared = repository.prepare(repository.create("lobby", "Stored").identity);
+    SessionJournal journal(prepared.database_path, prepared.session_key);
+    journal.start_turn(1, test::human_entry(1, {"human", "You"}, {"guide", "Guide"}, "Prompt", 1));
+    journal.complete_turn(1, {.id = 2, .kind = EntryKind::character, .participant_id = "guide",
+        .display_name = "Guide", .text = "Response", .request_id = 1});
+    const auto prompt = repository.lookup_entry_audio(prepared.identity, 1);
+    const auto response = repository.lookup_entry_audio(prepared.identity, 2);
+    ASSERT_TRUE(prompt && response);
+    repository.save_entry_audio(*prompt, {"prompt", "audio/mpeg"});
+    repository.save_entry_audio(*response, {"response", "audio/mpeg"});
+    journal.delete_turn(2);
+    repository.save_entry_audio(*response, {"late", "audio/mpeg"});
+    EXPECT_EQ(scalar(database_path(), "SELECT COUNT(*) FROM entry_audio"), 0);
+    EXPECT_FALSE(repository.lookup_entry_audio(prepared.identity, 2));
+    journal.record_entry(test::human_entry(3, {"human", "You"}, {"guide", "Guide"}, "Another"));
+    const auto another = repository.lookup_entry_audio(prepared.identity, 3);
+    ASSERT_TRUE(another);
+    repository.save_entry_audio(*another, {"another", "audio/mpeg"});
+    repository.delete_session(prepared.identity);
+    repository.save_entry_audio(*another, {"late", "audio/mpeg"});
+    EXPECT_EQ(scalar(database_path(), "SELECT COUNT(*) FROM entry_audio"), 0);
+}
+
+TEST_F(SessionRepositoryTest, EntryAudioDoesNotCrossVaultsOrAttachToReplacedText) {
+    SessionRepository repository = make_repository();
+    const auto prepared = repository.prepare(repository.create("lobby", "Stored").identity);
+    {
+        SessionJournal journal(prepared.database_path, prepared.session_key);
+        journal.record_entry(test::human_entry(1, {"human", "You"}, {"guide", "Guide"}, "Original"));
+    }
+    const auto original = repository.lookup_entry_audio(prepared.identity, 1);
+    ASSERT_TRUE(original);
+    const auto target = fixture_.root() / "other.sqlite3";
+    copy_workspace_session_database(database_path(), target);
+    {
+        auto maintenance = repository.reserve_maintenance();
+        maintenance.retarget(target);
+        maintenance.synchronize_forums(*getws());
+    }
+    repository.save_entry_audio(*original, {"wrong-vault", "audio/mpeg"});
+    const auto switched = repository.lookup_entry_audio(prepared.identity, 1);
+    ASSERT_TRUE(switched);
+    EXPECT_FALSE(switched->cached);
+    {
+        auto maintenance = repository.reserve_maintenance();
+        // Simulate a restore with the same IDs but a different entry at the same path.
+        storage::SqliteDatabase database(target, storage::SqliteDatabase::Mode::read_write);
+        database.execute("UPDATE entries SET text = 'Restored text'");
+        database.execute("DROP TABLE entry_audio");
+        maintenance.synchronize_forums(*getws());
+    }
+    repository.save_entry_audio(*switched, {"stale-text", "audio/mpeg"});
+    const auto restored = repository.lookup_entry_audio(prepared.identity, 1);
+    ASSERT_TRUE(restored);
+    EXPECT_EQ(restored->entry_text, "Restored text");
+    EXPECT_FALSE(restored->cached);
+}
+
+TEST_F(SessionRepositoryTest, EntryAudioUsesCurrentPasswordAfterVaultProtection) {
+    SessionRepository repository = make_repository();
+    const auto prepared = repository.prepare(repository.create("lobby", "Stored").identity);
+    {
+        SessionJournal journal(prepared.database_path, prepared.session_key);
+        journal.record_entry(test::human_entry(1, {"human", "You"}, {"guide", "Guide"}, "Hello"));
+    }
+    const auto entry = repository.lookup_entry_audio(prepared.identity, 1);
+    ASSERT_TRUE(entry);
+    {
+        auto maintenance = repository.reserve_maintenance();
+        maintenance.checkpoint();
+        protect_workspace_session_database(database_path(), "password");
+        maintenance.retarget(database_path(), "password");
+    }
+    repository.save_entry_audio(*entry, {"protected-audio", "audio/mpeg"});
+    const auto cached = repository.lookup_entry_audio(prepared.identity, 1);
+    ASSERT_TRUE(cached && cached->cached);
+    EXPECT_EQ(cached->cached->audio, "protected-audio");
+}
+
+TEST_F(SessionRepositoryTest, TemporaryEntryAudioUsesTheRepositorySessionIdentity) {
+    const SessionRepository repository = make_repository();
+    // The fixture's temporary IDs intentionally differ from the built-in Welcome IDs.
+    const auto temporary = repository.prepare(temporary_identity());
+    SessionJournal journal(temporary.database_path, temporary.session_key);
+    journal.record_entry(test::human_entry(1, {"human", "You"}, {"guide", "Guide"}, "Welcome"));
+    const auto entry = repository.lookup_entry_audio(temporary.identity, 1);
+    ASSERT_TRUE(entry);
+    EXPECT_EQ(entry->database_path, temporary.database_path);
+    repository.save_entry_audio(*entry, {"welcome-audio", "audio/mpeg"});
+    const auto cached = repository.lookup_entry_audio(temporary.identity, 1);
+    ASSERT_TRUE(cached && cached->cached);
+    EXPECT_EQ(cached->cached->audio, "welcome-audio");
+    EXPECT_EQ(scalar(database_path(), "SELECT COUNT(*) FROM entry_audio"), 0);
+    repository.clear_session_audio(temporary.identity);
+    EXPECT_FALSE(repository.lookup_entry_audio(temporary.identity, 1)->cached);
+    EXPECT_EQ(repository.history(temporary.identity).size(), 1);
+    EXPECT_THROW((void)repository.lookup_entry_audio({std::string(temporary_forum), "unknown"}, 1),
+        SessionNotFoundError);
+}
+
 TEST_F(SessionRepositoryTest, CreatesOneWorkspaceDatabaseAndPreparesByKey) {
     const SessionRepository repository = make_repository();
     const StoredSession created = repository.create("lobby", "Stored");
@@ -453,6 +596,15 @@ TEST_F(SessionRepositoryTest, MaintenanceFencesRepositoryReadsAndWrites) {
         repository.create("lobby", "Rename target");
     const StoredSession delete_target =
         repository.create("lobby", "Delete target");
+    const auto prepared = repository.prepare(rename_target.identity);
+    {
+        SessionJournal journal(prepared.database_path, prepared.session_key);
+        journal.record_entry(test::human_entry(1, {"human", "You"}, {"guide", "Guide"}, "Hello"));
+    }
+    const auto audio_entry = repository.lookup_entry_audio(rename_target.identity, 1);
+    ASSERT_TRUE(audio_entry);
+    std::future<std::optional<EntryAudioLookup>> audio_lookup;
+    std::future<void> audio_save;
     std::future<StoredSession> create;
     std::future<StoredSession> rename;
     std::future<void> deletion;
@@ -473,10 +625,19 @@ TEST_F(SessionRepositoryTest, MaintenanceFencesRepositoryReadsAndWrites) {
             return repository.list("lobby");
         });
 
+        audio_lookup = std::async(std::launch::async, [&] {
+            return repository.lookup_entry_audio(rename_target.identity, 1);
+        });
+        audio_save = std::async(std::launch::async, [&] {
+            repository.save_entry_audio(*audio_entry, {"audio", "audio/mpeg"});
+        });
+
         EXPECT_EQ(create.wait_for(100ms), std::future_status::timeout);
         EXPECT_EQ(rename.wait_for(0ms), std::future_status::timeout);
         EXPECT_EQ(deletion.wait_for(0ms), std::future_status::timeout);
         EXPECT_EQ(list.wait_for(0ms), std::future_status::timeout);
+        EXPECT_EQ(audio_lookup.wait_for(0ms), std::future_status::timeout);
+        EXPECT_EQ(audio_save.wait_for(0ms), std::future_status::timeout);
         EXPECT_NO_THROW(maintenance.checkpoint());
     }
 
@@ -484,6 +645,10 @@ TEST_F(SessionRepositoryTest, MaintenanceFencesRepositoryReadsAndWrites) {
     EXPECT_EQ(rename.wait_for(2s), std::future_status::ready);
     EXPECT_EQ(deletion.wait_for(2s), std::future_status::ready);
     EXPECT_EQ(list.wait_for(2s), std::future_status::ready);
+    EXPECT_EQ(audio_lookup.wait_for(2s), std::future_status::ready);
+    EXPECT_EQ(audio_save.wait_for(2s), std::future_status::ready);
+    EXPECT_TRUE(audio_lookup.get());
+    EXPECT_NO_THROW(audio_save.get());
     EXPECT_NO_THROW((void)create.get());
     EXPECT_NO_THROW((void)rename.get());
     EXPECT_NO_THROW(deletion.get());

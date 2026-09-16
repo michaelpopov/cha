@@ -243,7 +243,9 @@ void to_json(nlohmann::json& json, const CharacterSummary& value) {
 void to_json(nlohmann::json& json, const SessionSnapshot& value) {
     nlohmann::json transcript = nlohmann::json::array();
     for (const cha::TranscriptEntry& entry : value.transcript) {
-        transcript.push_back(transcript_entry_json(entry));
+        auto json_entry = transcript_entry_json(entry);
+        json_entry["has_cached_audio"] = value.cached_audio_entries.contains(entry.id);
+        transcript.push_back(std::move(json_entry));
     }
     json = {
         {"forum", value.forum},

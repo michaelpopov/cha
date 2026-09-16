@@ -3,6 +3,7 @@
 #include "web/http_server.h"
 #include "web/lobby_routes.h"
 #include "web/live_session_manager.h"
+#include "web/session_routes.h"
 #include "support/test_live_session.h"
 #include "support/test_web_graph.h"
 #include "support/test_workspace.h"
@@ -1538,6 +1539,78 @@ TEST(LobbyRoutes, RenamesAndDeletesStoredSessions) {
     EXPECT_THROW(
         (void)graph.sessions()->prepare({"lobby", id}),
         SessionNotFoundError);
+}
+
+TEST(LobbyRoutes, ClearsOnlyTheSelectedSessionsAudioWithoutChangingItsTranscriptOrRuntime) {
+    test::TestWorkspace fixture;
+    const LobbyGraph graph(fixture.root());
+    LiveSessionManager manager(lobby_settings(2), counting_opener(graph));
+    TestServer server(graph, manager, lobby_settings(), [&](httplib::Server& routes) {
+        SessionRoutes(manager, lobby_settings(), AssetHandler(graph.root() / "web")).install(routes);
+    });
+    const FullSessionId selected{"lobby", create_session(server, "Selected")};
+    const FullSessionId other{"lobby", create_session(server, "Other")};
+    for (const auto& identity : {selected, other}) {
+        const auto prepared = graph.sessions()->prepare(identity);
+        SessionJournal journal(prepared.database_path, prepared.session_key);
+        journal.start_turn(1, make_human_entry({
+            .id = 1, .author = {"reader", "Reader"}, .addressed_to = {"guide", "Guide"},
+            .text = "Prompt", .request_id = 1,
+        }));
+        journal.complete_turn(1, make_character_entry(
+            2, "guide", "Guide", "Response", EntryStatus::complete, 1));
+        for (EntryId id : {1, 2}) {
+            const auto entry = graph.sessions()->lookup_entry_audio(identity, id);
+            ASSERT_TRUE(entry);
+            graph.sessions()->save_entry_audio(*entry, {"saved-audio", "audio/mpeg"});
+        }
+    }
+    const std::string route = "/api/v1/forums/lobby/sessions/" + selected.session_id;
+    const std::string cache_route = route + "/audio-cache";
+    const auto clear = server.client().Delete(cache_route, "{}", "application/json");
+    ASSERT_TRUE(clear);
+    EXPECT_EQ(clear->status, 204);
+    EXPECT_TRUE(clear->body.empty());
+    EXPECT_EQ(clear->get_header_value("Cache-Control"), "no-store");
+    for (EntryId id : {1, 2}) {
+        const auto entry = graph.sessions()->lookup_entry_audio(selected, id);
+        const auto untouched = graph.sessions()->lookup_entry_audio(other, id);
+        ASSERT_TRUE(entry && untouched);
+        EXPECT_FALSE(entry->cached);
+        EXPECT_TRUE(untouched->cached);
+    }
+    EXPECT_EQ(graph.sessions()->history(selected).size(), 2);
+    EXPECT_EQ(graph.sessions()->prepare(selected).label, "Selected");
+    EXPECT_TRUE(graph.sessions()->cached_audio_entries(selected).empty());
+    EXPECT_EQ(graph.sessions()->cached_audio_entries(other), (std::set<EntryId>{1, 2}));
+
+    ASSERT_EQ(server.client().Post(route + "/open", "{}", "application/json")->status, 200);
+    const auto entry = graph.sessions()->lookup_entry_audio(selected, 1);
+    ASSERT_TRUE(entry);
+    graph.sessions()->save_entry_audio(*entry, {"new-audio", "audio/mpeg"});
+    const std::string snapshot_route = "/s/lobby/" + selected.session_id + "/api/v1/session";
+    const auto cached_snapshot = server.client().Get(snapshot_route);
+    ASSERT_TRUE(cached_snapshot);
+    ASSERT_EQ(cached_snapshot->status, 200);
+    EXPECT_EQ(body(cached_snapshot)["transcript"][0]["has_cached_audio"], true);
+    EXPECT_EQ(body(cached_snapshot)["transcript"][1]["has_cached_audio"], false);
+    expect_error(server.client().Delete(cache_route, "null", "application/json"), 400, "bad_request");
+    EXPECT_TRUE(graph.sessions()->lookup_entry_audio(selected, 1)->cached);
+    ASSERT_EQ(server.client().Delete(cache_route, "{}", "application/json")->status, 204);
+    EXPECT_FALSE(graph.sessions()->lookup_entry_audio(selected, 1)->cached);
+    const auto cleared_snapshot = server.client().Get(snapshot_route);
+    ASSERT_TRUE(cleared_snapshot);
+    ASSERT_EQ(cleared_snapshot->status, 200);
+    EXPECT_EQ(body(cleared_snapshot)["transcript"][0]["has_cached_audio"], false);
+    EXPECT_TRUE(session_is_live(manager, selected));
+    EXPECT_EQ(graph.sessions()->history(selected).size(), 2);
+    ASSERT_EQ(server.client().Delete(cache_route, "{}", "application/json")->status, 204);
+    expect_error(server.client().Delete(
+        "/api/v1/forums/lobby/sessions/missing/audio-cache", "{}", "application/json"),
+        404, "not_found");
+    expect_error(server.client().Delete(
+        "/api/v1/forums/missing/sessions/missing/audio-cache", "{}", "application/json"),
+        404, "not_found");
 }
 
 TEST(LobbyRoutes, DownloadsStoredAndLiveSessionsAsMarkdown) {

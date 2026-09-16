@@ -5,6 +5,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <set>
 #include <span>
 #include <string>
 #include <string_view>
@@ -27,6 +28,7 @@ struct OpenedSession {
     // Optional initial presentation notice. Production currently leaves this
     // empty; test openers use it to exercise startup-notice behavior.
     std::optional<std::string> notice;
+    std::function<std::set<EntryId>()> cached_audio_entries;
 };
 
 } // namespace cha

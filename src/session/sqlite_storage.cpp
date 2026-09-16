@@ -169,6 +169,11 @@ void SqliteStatement::bind(int index, std::string_view value) {
         SQLITE_UTF8));
 }
 
+void SqliteStatement::bind_blob(int index, std::string_view value) {
+    require(sqlite3_bind_blob64(statement_, index, value.data(),
+        static_cast<sqlite3_uint64>(value.size()), SQLITE_TRANSIENT));
+}
+
 void SqliteStatement::bind_null(int index) {
     require(sqlite3_bind_null(statement_, index));
 }
@@ -210,6 +215,16 @@ std::string SqliteStatement::text(int column) const {
         reinterpret_cast<const char*>(value),
         static_cast<std::size_t>(size),
     };
+}
+
+std::string SqliteStatement::blob(int column) const {
+    const void* value = sqlite3_column_blob(statement_, column);
+    const int size = sqlite3_column_bytes(statement_, column);
+    if (!value) {
+        if (is_null(column)) throw std::runtime_error("Unexpected NULL audio blob");
+        return {};
+    }
+    return {static_cast<const char*>(value), static_cast<std::size_t>(size)};
 }
 
 bool SqliteStatement::is_null(int column) const {

@@ -385,6 +385,71 @@ TEST(ApplicationRuntime, ValidatesConfiguredFishAudioRequests) {
     EXPECT_EQ(forbidden->status, 403);
 }
 
+TEST(ApplicationRuntime, ReturnsEntryAudioWithoutUsingCurrentSynthesisSettingsOrCachingPreviews) {
+    test::TestWorkspace workspace;
+    const auto database = test::import_test_database(workspace.root());
+    {
+        storage::SqliteDatabase db(database, storage::SqliteDatabase::Mode::read_write);
+        db.execute("INSERT INTO forums (forum_id) VALUES ('lobby')");
+        db.execute("INSERT INTO sessions (forum_key, session_id, label, updated_at, "
+            "history_epoch, next_entry_id, next_request_id) VALUES (1, 'audio', 'Audio', 1, 1, 2, 1)");
+        db.execute("INSERT INTO entries (session_key, entry_id, epoch, kind, participant_id, "
+            "display_name, addressed_to, addressed_to_name, text, status) "
+            "VALUES (1, 1, 1, 0, 'human', 'You', '-', '-', 'Hello', 0)");
+    }
+    const std::string bytes("mp3\0\xff", 5);
+    {
+        const auto store = WorkspaceConfigStore::open(database);
+        const SessionRepository sessions(database, store->workspace_path(), store->welcome_path(),
+            {{"temporary-forum", "temporary-session"}, "Welcome"});
+        const auto entry = sessions.lookup_entry_audio({"lobby", "audio"}, 1);
+        ASSERT_TRUE(entry);
+        sessions.save_entry_audio(*entry, {bytes, "audio/mpeg"});
+    }
+    auto runtime = ApplicationRuntime::open(make_command(workspace, database), "private-test-token");
+    httplib::Client client("127.0.0.1", runtime->start());
+    // No output provider or API key is configured. Saved audio needs neither.
+    nlohmann::json body = {
+        {"text", "Hello"}, {"reference_id", "changed-voice"}, {"settings", {{"speed", 1.5}}},
+        {"entry", {{"forum_id", "lobby"}, {"session_id", "audio"}, {"entry_id", 1}}},
+    };
+    const auto cached = client.Post("/api/v1/voice-output/audio", kRuntimeCookie, body.dump(), "application/json");
+    ASSERT_TRUE(cached);
+    EXPECT_EQ(cached->status, 200);
+    EXPECT_EQ(cached->body, bytes);
+    EXPECT_EQ(cached->get_header_value("X-CHA-Audio-Cached"), "true");
+    EXPECT_EQ(cached->get_header_value("Content-Type"), "audio/mpeg");
+    EXPECT_EQ(cached->get_header_value("Cache-Control"), "no-store");
+    body.erase("entry");
+    const auto preview = client.Post("/api/v1/voice-output/audio", kRuntimeCookie, body.dump(), "application/json");
+    ASSERT_TRUE(preview);
+    EXPECT_EQ(preview->status, 404); // Preview goes to synthesis, never the entry cache.
+    body["entry"] = {{"forum_id", "lobby"}, {"session_id", "audio"}, {"entry_id", 999}};
+    const auto missing = client.Post("/api/v1/voice-output/audio", kRuntimeCookie, body.dump(), "application/json");
+    ASSERT_TRUE(missing);
+    EXPECT_EQ(missing->status, 404);
+    for (const nlohmann::json& id : {nlohmann::json(-1), nlohmann::json(0), nlohmann::json(1.5), nlohmann::json("1")}) {
+        body["entry"]["entry_id"] = id;
+        const auto invalid = client.Post("/api/v1/voice-output/audio", kRuntimeCookie, body.dump(), "application/json");
+        ASSERT_TRUE(invalid);
+        EXPECT_EQ(invalid->status, 400);
+    }
+    for (const std::string entry : {
+             "null", "[]", "1", R"("entry")", "{}",
+             R"({"session_id":"audio","entry_id":1})",
+             R"({"forum_id":1,"session_id":"audio","entry_id":1})",
+             R"({"forum_id":"lobby","entry_id":1})",
+             R"({"forum_id":"lobby","session_id":null,"entry_id":1})",
+             R"({"forum_id":"lobby","session_id":"audio"})"}) {
+        SCOPED_TRACE(entry);
+        body["entry"] = nlohmann::json::parse(entry);
+        const auto invalid = client.Post("/api/v1/voice-output/audio", kRuntimeCookie, body.dump(), "application/json");
+        ASSERT_TRUE(invalid);
+        EXPECT_EQ(invalid->status, 400);
+        EXPECT_EQ(nlohmann::json::parse(invalid->body).at("error").at("code"), "bad_request");
+    }
+}
+
 TEST(ApplicationRuntime, NormalizesFishAudioSettingsAndRejectsHttpBeforeSaving) {
     test::TestWorkspace workspace;
     workspace.write_voice("reader", "display_name = \"Reader\"\nelevenlabs_voice_id = \"fish-voice\"\n");

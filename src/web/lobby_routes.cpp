@@ -895,6 +895,28 @@ void LobbyRoutes::install(httplib::Server& server) const {
         }
     });
 
+    server.Delete(R"(/api/v1/forums/([^/]+)/sessions/([^/]+)/audio-cache)",
+        [sessions, settings](const httplib::Request& request, httplib::Response& response) {
+        const FullSessionId key{request.matches[1], request.matches[2]};
+        if (!is_valid_route_component(key.forum_id)
+            || !is_valid_route_component(key.session_id)) {
+            return set_route_not_found(response);
+        }
+        if (!validate_json_mutation(request, response)) return;
+        if (!parse_route_json_body(
+                request, response, settings.request_body_limit,
+                [](const nlohmann::json& json) { parse_empty_object(json); })) return;
+        try {
+            sessions->clear_session_audio(key);
+            response.status = 204;
+            response.set_header("Cache-Control", "no-store");
+        } catch (const ForumNotFoundError&) {
+            set_route_not_found(response);
+        } catch (const SessionNotFoundError&) {
+            set_route_not_found(response);
+        }
+    });
+
     server.Patch(R"(/api/v1/forums/([^/]+)/sessions/([^/]+))",
         [sessions, initial, live_sessions, mirror, settings](const httplib::Request& request,
                                                      httplib::Response& response) {

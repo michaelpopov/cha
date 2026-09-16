@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <variant>
@@ -110,6 +111,7 @@ struct SessionSnapshot {
     std::optional<std::string> notice;
     SessionLifecycle lifecycle{SessionLifecycle::starting};
     std::optional<ShutdownReason> shutdown_reason;
+    std::set<EntryId> cached_audio_entries;
     bool operator==(const SessionSnapshot&) const = default;
 };
 

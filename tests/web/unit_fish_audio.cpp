@@ -2,8 +2,13 @@
 #include "web/http_server.h"
 #include "web/web_settings.h"
 #include "providers/voice_output_config.h"
+#include "providers/api_key_store.h"
+#include "session/sqlite_storage.h"
+#include "session/session_repository.h"
 #include "workspace/workspace.h"
+#include "workspace/workspace_config_store.h"
 #include "support/mock_http_server.h"
+#include "support/test_workspace.h"
 
 #include <gtest/gtest.h>
 #include <httplib.h>
@@ -346,6 +351,81 @@ TEST(FishAudio, IncludesCurlCodeAndDiagnosticsForTransportFailures) {
         EXPECT_EQ(message.find("fish-secret"), std::string::npos);
     }
     server.join();
+}
+
+TEST(FishAudio, TranscriptSynthesisUsesStoredTextAndPreviewsUseSubmittedText) {
+    test::TestWorkspace workspace;
+    const auto path = test::import_test_database(workspace.root());
+    {
+        storage::SqliteDatabase database(path, storage::SqliteDatabase::Mode::read_write);
+        database.execute("INSERT INTO forums (forum_id) VALUES ('lobby')");
+        database.execute("INSERT INTO sessions (forum_key, session_id, label, updated_at, "
+            "history_epoch, next_entry_id, next_request_id) VALUES (1, 'audio', 'Audio', 1, 1, 4, 1)");
+        database.execute("INSERT INTO entries (session_key, entry_id, epoch, kind, participant_id, "
+            "display_name, addressed_to, addressed_to_name, text, status) VALUES "
+            "(1, 1, 1, 0, 'human', 'You', '-', '-', '', 0), "
+            "(1, 2, 1, 0, 'human', 'You', '-', '-', 'Stored transcript', 0), "
+            "(1, 3, 1, 1, 'guide', 'Guide', '', '', "
+            "'  [2026-09-16T12:00:00.123Z] ([source](https://example.com))', 0)");
+    }
+    const auto config = WorkspaceConfigStore::open(path);
+    ApiKeyStore keys(*config);
+    const auto key = keys.create("FishAudio", "secret");
+    config->apply_voice_create("reader", "Reader", "", "voice");
+    config->apply_voice_output_update({
+        .url = "https://api.fish.audio/v1/tts", .model = "s2.1-pro",
+        .api_key_id = key.id, .output_format = "mp3", .default_voice = "Reader",
+    });
+    const SessionRepository sessions(path, config->workspace_path(), config->welcome_path(),
+        {{"temporary-forum", "temporary-session"}, "Welcome"});
+    // Valid synthesis reaches the cancelled proxy without making an external request.
+    FishAudioProxy proxy;
+    proxy.stop();
+    httplib::Server server;
+    install_fish_audio_route(server, keys, sessions, WebSettings{}, true, proxy);
+    const int port = server.bind_to_any_port("127.0.0.1");
+    ASSERT_GT(port, 0);
+    std::jthread listener([&] { server.listen_after_bind(); });
+    struct StopServer {
+        httplib::Server& server;
+        ~StopServer() { server.stop(); }
+    } stop{server};
+    server.wait_until_ready();
+    httplib::Client client("127.0.0.1", port);
+    Json body{
+        {"text", "Unrelated browser text"}, {"reference_id", "voice"},
+        {"entry", {{"forum_id", "lobby"}, {"session_id", "audio"}, {"entry_id", 1}}},
+    };
+    const auto empty = client.Post("/api/v1/voice-output/audio", body.dump(), "application/json");
+    ASSERT_TRUE(empty);
+    EXPECT_EQ(empty->status, 400); // Stored text is empty; browser text cannot replace it.
+    body["entry"]["entry_id"] = 3;
+    const auto metadata = client.Post("/api/v1/voice-output/audio", body.dump(), "application/json");
+    ASSERT_TRUE(metadata);
+    EXPECT_EQ(metadata->status, 400); // Hidden timestamp and source references are not spoken.
+    body["entry"]["entry_id"] = 2;
+    for (const Json& text : {Json(""), Json(nullptr), Json(42)}) {
+        SCOPED_TRACE(text.dump());
+        body["text"] = text;
+        const auto stored = client.Post("/api/v1/voice-output/audio", body.dump(), "application/json");
+        ASSERT_TRUE(stored);
+        EXPECT_EQ(stored->status, 503); // Stored text reaches synthesis despite invalid browser text.
+    }
+    body.erase("text");
+    const auto omitted = client.Post("/api/v1/voice-output/audio", body.dump(), "application/json");
+    ASSERT_TRUE(omitted);
+    EXPECT_EQ(omitted->status, 503);
+    body.erase("entry");
+    const auto preview = client.Post("/api/v1/voice-output/audio", body.dump(), "application/json");
+    ASSERT_TRUE(preview);
+    EXPECT_EQ(preview->status, 400); // Previews still require submitted text.
+    body["text"] = "Preview text";
+    const auto valid_preview = client.Post("/api/v1/voice-output/audio", body.dump(), "application/json");
+    ASSERT_TRUE(valid_preview);
+    EXPECT_EQ(valid_preview->status, 503);
+    const auto entry = sessions.lookup_entry_audio({"lobby", "audio"}, 2);
+    ASSERT_TRUE(entry);
+    EXPECT_FALSE(entry->cached); // Cancelled synthesis must not save a clip.
 }
 }
 }

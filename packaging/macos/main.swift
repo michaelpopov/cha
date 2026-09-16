@@ -255,9 +255,9 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
         return RuntimeBridgeError(message: message)
     }
 
-    private func requestVaultPassword(error: String? = nil) -> String? {
+    private func requestVaultPassword(name: String, error: String? = nil) -> String? {
         let alert = NSAlert()
-        alert.messageText = "Open protected vault"
+        alert.messageText = "Open vault “\(name)”"
         alert.informativeText = error ?? "Enter the vault password."
         alert.addButton(withTitle: "Open vault")
         alert.addButton(withTitle: "Quit")
@@ -275,19 +275,22 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
         }
         runtimeToken = UUID().uuidString + UUID().uuidString
         var requirementError: UnsafeMutablePointer<CChar>?
+        var vaultName: UnsafeMutablePointer<CChar>?
         let passwordRequired = supportDirectory.path.withCString { configPath in
             resources.path.withCString { resourcePath in
                 cha_runtime_requires_password(
-                    configPath, resourcePath, &requirementError)
+                    configPath, resourcePath, &vaultName, &requirementError)
             }
         }
         guard passwordRequired >= 0 else {
             throw takeBridgeError(requirementError)
         }
+        let selectedVaultName = vaultName.map { String(cString: $0) } ?? ""
+        cha_string_free(vaultName)
 
         var password = ""
         if passwordRequired != 0 {
-            guard let entered = requestVaultPassword() else { return false }
+            guard let entered = requestVaultPassword(name: selectedVaultName) else { return false }
             password = entered
         }
         while true {
@@ -322,7 +325,7 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
             }
             let error = takeBridgeError(bridgeError)
             guard passwordError != 0 else { throw error }
-            guard let entered = requestVaultPassword(error: error.message) else {
+            guard let entered = requestVaultPassword(name: selectedVaultName, error: error.message) else {
                 return false
             }
             password = entered

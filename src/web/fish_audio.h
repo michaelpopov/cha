@@ -10,6 +10,7 @@
 namespace httplib { class Server; struct Response; }
 namespace cha {
 class ApiKeyStore;
+class SessionRepository;
 struct WorkspaceVoiceOutput;
 }
 namespace cha::web {
@@ -44,6 +45,6 @@ private:
 };
 
 void install_fish_audio_route(
-    httplib::Server& server, ApiKeyStore& api_keys,
+    httplib::Server& server, ApiKeyStore& api_keys, const SessionRepository& sessions,
     const WebSettings& settings, bool native_voice_enabled, FishAudioProxy& proxy);
 }

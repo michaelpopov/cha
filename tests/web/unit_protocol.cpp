@@ -275,6 +275,7 @@ TEST(WebProtocol, SerializesSnapshotMailboxPayloadAndTargetAwareAppend) {
              {"addressed_to", ""},
              {"addressed_to_name", ""},
              {"created_at", 1700000000},
+             {"has_cached_audio", false},
              {"display_name", "Guide"},
              {"id", 7},
              {"kind", "character"},
@@ -348,7 +349,7 @@ TEST(WebProtocol, EscapesAndOwnsPresentationText) {
     EXPECT_EQ(
         value.dump(),
         "{\"addressed_to\":\"\",\"addressed_to_name\":\"\","
-        "\"created_at\":null,\"display_name\":\"System\",\"id\":1,"
+        "\"created_at\":null,\"display_name\":\"System\",\"has_cached_audio\":false,\"id\":1,"
         "\"kind\":\"notice\",\"participant_id\":\"system\",\"status\":\"complete\","
         "\"text\":\"quote \\\\\\\" newline\\\\n\"}");
 

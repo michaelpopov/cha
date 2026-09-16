@@ -9,17 +9,28 @@
 #include "web/route_support.h"
 #include "web/web_settings.h"
 #include "workspace/workspace.h"
+#include "session/session_repository.h"
+#include "session/not_found_error.h"
 
 #include <curl/curl.h>
 #include <httplib.h>
 #include <cmath>
 #include <memory>
+#include <regex>
 #include <stdexcept>
 #include <utility>
 
 namespace cha::web {
 namespace {
 using Json = nlohmann::json;
+
+std::string entry_speech_text(const EntryAudioLookup& entry) {
+    if (entry.entry_kind != EntryKind::character) return entry.entry_text;
+    // Match the text shown in chat, including legacy echoed timestamps.
+    static const std::regex timestamp_prefix(
+        R"(^\s*\[[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?Z\]\s*)");
+    return std::regex_replace(remove_source_references(entry.entry_text), timestamp_prefix, "");
+}
 
 std::size_t receive_audio(char* data, std::size_t size, std::size_t count, void* user) {
     const std::size_t bytes = size * count;
@@ -163,25 +174,83 @@ FishAudioRequest make_fish_audio_request(
 }
 
 void install_fish_audio_route(
-    httplib::Server& server, ApiKeyStore& api_keys,
+    httplib::Server& server, ApiKeyStore& api_keys, const SessionRepository& sessions,
     const WebSettings& settings, bool native_voice_enabled, FishAudioProxy& proxy) {
     server.Post("/api/v1/voice-output/audio",
-        [&api_keys, settings, native_voice_enabled, &proxy](const httplib::Request& request, httplib::Response& response) {
+        [&api_keys, &sessions, settings, native_voice_enabled, &proxy](const httplib::Request& request, httplib::Response& response) {
             if (!validate_json_mutation(request, response)) return;
-            const auto workspace = getws();
-            const auto* output = workspace && workspace->voice_output()
-                ? &*workspace->voice_output() : nullptr;
-            if (!native_voice_enabled || !output
-                || !api_keys.find(output->api_key_id)) {
-                set_route_not_found(response, "FishAudio output is not configured.");
-                return;
-            }
-            FishAudioRequest synthesis;
+            Json input;
+            std::optional<FullSessionId> identity;
+            EntryId entry_id{};
             if (!parse_route_json_body(request, response, settings.request_body_limit,
-                    [&](const Json& input) { synthesis = make_fish_audio_request(*output, input); })) return;
+                    [&](const Json& parsed) {
+                        input = parsed;
+                        try {
+                            if (input.contains("entry")) {
+                                const auto& entry = input.at("entry");
+                                identity = FullSessionId{entry.at("forum_id").get<std::string>(),
+                                    entry.at("session_id").get<std::string>()};
+                                const auto& id = entry.at("entry_id");
+                                if (!id.is_number_integer() || id.get<std::int64_t>() <= 0)
+                                    throw std::invalid_argument("Invalid transcript entry ID");
+                                entry_id = id.get<EntryId>();
+                            }
+                        } catch (const Json::exception&) {
+                            throw std::invalid_argument("Invalid transcript entry identity");
+                        }
+                    })) return;
             try {
+                std::optional<EntryAudioLookup> entry;
+                if (identity) {
+                    entry = sessions.lookup_entry_audio(*identity, entry_id);
+                    if (!entry) {
+                        set_route_not_found(response, "Transcript entry not found.");
+                        return;
+                    }
+                }
+                if (!native_voice_enabled) {
+                    set_route_not_found(response, "FishAudio output is not configured.");
+                    return;
+                }
+                if (entry && entry->cached) {
+                    response.set_content(entry->cached->audio, entry->cached->content_type);
+                    response.set_header("Cache-Control", "no-store");
+                    response.set_header("X-CHA-Audio-Cached", "true");
+                    return;
+                }
+                const auto workspace = getws();
+                const auto* output = workspace && workspace->voice_output()
+                    ? &*workspace->voice_output() : nullptr;
+                if (!output || !api_keys.find(output->api_key_id)) {
+                    set_route_not_found(response, "FishAudio output is not configured.");
+                    return;
+                }
+                FishAudioRequest synthesis;
+                try {
+                    if (entry) input["text"] = entry_speech_text(*entry);
+                    synthesis = make_fish_audio_request(*output, input);
+                } catch (const std::invalid_argument& error) {
+                    set_error_response(response, 400, {ErrorCode::bad_request, error.what()});
+                    return;
+                }
                 proxy.forward(*output, api_keys.value(output->api_key_id), synthesis, response,
                     request.is_connection_closed);
+                if (entry && response.status == 200 && !response.body.empty()
+                    && response.get_header_value("Content-Type").starts_with("audio/")) {
+                    try {
+                        sessions.save_entry_audio(*entry,
+                            {response.body, response.get_header_value("Content-Type")});
+                        if (sessions.cached_audio_entries(entry->identity).contains(entry->entry_id)) {
+                            response.set_header("X-CHA-Audio-Cached", "true");
+                        }
+                    } catch (const std::exception& error) {
+                        log_warn("Could not save cached audio: " + std::string(error.what()));
+                    }
+                }
+            } catch (const ForumNotFoundError&) {
+                set_route_not_found(response, "Transcript entry not found.");
+            } catch (const SessionNotFoundError&) {
+                set_route_not_found(response, "Transcript entry not found.");
             } catch (const std::exception& error) {
                 log_warn(error.what());
                 set_error_response(response, 502, {ErrorCode::internal_error, "FishAudio request failed."});

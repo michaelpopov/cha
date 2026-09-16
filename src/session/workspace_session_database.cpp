@@ -352,6 +352,20 @@ void enable_wal_and_secure(Database& database, const std::filesystem::path& path
 
 } // namespace
 
+void create_entry_audio_table(Database& database) {
+    database.execute(R"sql(
+        CREATE TABLE IF NOT EXISTS entry_audio (
+            session_key INTEGER NOT NULL,
+            entry_id INTEGER NOT NULL,
+            audio BLOB NOT NULL,
+            content_type TEXT NOT NULL,
+            PRIMARY KEY (session_key, entry_id),
+            FOREIGN KEY (session_key, entry_id)
+                REFERENCES entries(session_key, entry_id) ON DELETE CASCADE
+        ) STRICT;
+    )sql");
+}
+
 void create_workspace_session_schema(Database& database) {
     database.execute(R"sql(
         CREATE TABLE forums (
@@ -423,6 +437,7 @@ void create_workspace_session_schema(Database& database) {
             WHERE kind = 0 AND request_id IS NOT NULL;
     )sql");
     create_config_table(database);
+    create_entry_audio_table(database);
 }
 
 void set_workspace_session_database_identity(Database& database) {

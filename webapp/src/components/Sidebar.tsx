@@ -22,6 +22,7 @@ interface SidebarProps {
   onDownloadSession(forumId: string, sessionId: string, label: string): Promise<void>;
   onRenameSession(forumId: string, sessionId: string, label: string): Promise<void>;
   onDeleteSession(forumId: string, sessionId: string): Promise<void>;
+  onClearSessionAudioCache(forumId: string, sessionId: string): Promise<void>;
   onSwitchVault(vaultName: string, password?: string): Promise<void>;
 }
 
@@ -162,13 +163,14 @@ export function Sidebar({
   onOpenSession,
   onRenameSession,
   onDeleteSession,
+  onClearSessionAudioCache,
   onSwitchVault,
 }: SidebarProps) {
   const forums = new Map(state.bootstrap?.forums.map((forum) => [forum.id, forum]));
   const recents = state.bootstrap?.recent_sessions;
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [dialog, setDialog] = useState<DialogState | null>(null);
-  const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [vaultPending, setVaultPending] = useState(false);
   const [vaultError, setVaultError] = useState<string | null>(null);
   const [vaultPrompt, setVaultPrompt] = useState<string | null>(null);
@@ -181,7 +183,7 @@ export function Sidebar({
 
   function openMenu(event: MouseEvent, session: SelectedSession, anchor: HTMLElement) {
     event.preventDefault();
-    setDownloadError(null);
+    setActionError(null);
     const rect = anchor.getBoundingClientRect();
     const x = event.type === 'contextmenu' ? event.clientX : rect.right;
     const y = event.type === 'contextmenu' ? event.clientY : rect.bottom;
@@ -305,7 +307,7 @@ export function Sidebar({
           );
         })}
       </div>
-      {downloadError && <p className="cha-error-message" role="alert">{downloadError}</p>}
+      {actionError && <p className="cha-error-message" role="alert">{actionError}</p>}
       {vaultError && !vaultPrompt && <p className="cha-error-message" role="alert">{vaultError}</p>}
       {vaultPrompt && (
         <PasswordDialog
@@ -350,7 +352,7 @@ export function Sidebar({
           role="menu"
           style={{
             left: Math.max(8, Math.min(menu.x, window.innerWidth - 168)),
-            top: Math.max(8, Math.min(menu.y, window.innerHeight - 140)),
+            top: Math.max(8, Math.min(menu.y, window.innerHeight - 180)),
           }}
         >
           <button
@@ -360,7 +362,7 @@ export function Sidebar({
               void onDownloadSession(
                 selected.forumId, selected.sessionId, selected.label,
               ).catch((failure: unknown) => {
-                setDownloadError(publicErrorMessage(
+                setActionError(publicErrorMessage(
                   failure,
                   'The session could not be downloaded.',
                 ));
@@ -371,6 +373,20 @@ export function Sidebar({
             role="menuitem"
             type="button"
           >Download</button>
+          <button
+            onClick={() => {
+              const selected = menu;
+              closeMenu(false);
+              void onClearSessionAudioCache(selected.forumId, selected.sessionId)
+                .catch((failure: unknown) => {
+                  setActionError(publicErrorMessage(failure, 'The audio cache could not be cleared.'));
+                }).finally(() => {
+                  if (selected.restoreFocus?.isConnected) selected.restoreFocus.focus();
+                });
+            }}
+            role="menuitem"
+            type="button"
+          >Clear audio cache</button>
           <button onClick={() => { setDialog({ kind: 'rename', ...menu }); closeMenu(false); }} role="menuitem" type="button">Rename…</button>
           <button onClick={() => { setDialog({ kind: 'delete', ...menu }); closeMenu(false); }} role="menuitem" type="button">Delete…</button>
         </div>,

@@ -961,6 +961,10 @@ select:disabled {
   height: 0.92rem;
 }
 
+.cha-message-action.has-cached-audio svg {
+  color: var(--accent-foreground);
+}
+
 .cha-message-action:hover:not(:disabled),
 .cha-message-action.is-active {
   color: var(--foreground);

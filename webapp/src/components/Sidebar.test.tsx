@@ -23,6 +23,7 @@ describe('Sidebar session actions', () => {
     render(
       <Sidebar
         dispatch={vi.fn()}
+        onClearSessionAudioCache={vi.fn(async () => undefined)}
         onDeleteSession={vi.fn(async () => undefined)}
         onDownloadSession={vi.fn(async () => undefined)}
         onOpenSession={vi.fn(async () => true)}
@@ -50,6 +51,7 @@ describe('Sidebar session actions', () => {
     render(
       <Sidebar
         dispatch={vi.fn()}
+        onClearSessionAudioCache={vi.fn(async () => undefined)}
         onDeleteSession={vi.fn(async () => undefined)}
         onDownloadSession={vi.fn(async () => undefined)}
         onOpenSession={vi.fn(async () => true)}
@@ -66,11 +68,12 @@ describe('Sidebar session actions', () => {
     expect(onSwitchVault).toHaveBeenLastCalledWith('Projects', 'secret');
   });
 
-  it('offers Download, Rename, and Delete in order by right-click and ellipsis but not for Welcome', async () => {
+  it('offers Download, Clear audio cache, Rename, and Delete in order by right-click and ellipsis but not for Welcome', async () => {
     const user = userEvent.setup();
     render(
       <Sidebar
         dispatch={vi.fn()}
+        onClearSessionAudioCache={vi.fn(async () => undefined)}
         onDeleteSession={vi.fn(async () => undefined)}
         onDownloadSession={vi.fn(async () => undefined)}
         onOpenSession={vi.fn(async () => true)}
@@ -83,7 +86,7 @@ describe('Sidebar session actions', () => {
     expect(screen.queryByLabelText('Actions for Welcome')).not.toBeInTheDocument();
     await user.pointer({ keys: '[MouseRight]', target: screen.getByText('Planning') });
     expect(screen.getAllByRole('menuitem').map(({ textContent }) => textContent)).toEqual([
-      'Download', 'Rename…', 'Delete…',
+      'Download', 'Clear audio cache', 'Rename…', 'Delete…',
     ]);
     await user.keyboard('{Escape}');
 
@@ -100,6 +103,7 @@ describe('Sidebar session actions', () => {
     render(
       <Sidebar
         dispatch={vi.fn()}
+        onClearSessionAudioCache={vi.fn(async () => undefined)}
         onDeleteSession={vi.fn(async () => undefined)}
         onDownloadSession={onDownload}
         onOpenSession={onOpen}
@@ -123,6 +127,7 @@ describe('Sidebar session actions', () => {
     render(
       <Sidebar
         dispatch={vi.fn()}
+        onClearSessionAudioCache={vi.fn(async () => undefined)}
         onDeleteSession={vi.fn(async () => undefined)}
         onDownloadSession={onDownload}
         onOpenSession={vi.fn(async () => true)}
@@ -138,12 +143,37 @@ describe('Sidebar session actions', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Could not download session.');
   });
 
+  it('reports an audio cache clearing failure in the sidebar', async () => {
+    const user = userEvent.setup();
+    const onClear = vi.fn(async () => {
+      throw new ChaError(500, 'internal_error', 'Could not clear audio cache.');
+    });
+    render(
+      <Sidebar
+        dispatch={vi.fn()}
+        onClearSessionAudioCache={onClear}
+        onDeleteSession={vi.fn(async () => undefined)}
+        onDownloadSession={vi.fn(async () => undefined)}
+        onOpenSession={vi.fn(async () => true)}
+        onRenameSession={vi.fn(async () => undefined)}
+        onSwitchVault={vi.fn(async () => undefined)}
+        state={readyState()}
+      />,
+    );
+
+    await user.click(screen.getByLabelText('Actions for Planning'));
+    await user.click(screen.getByRole('menuitem', { name: 'Clear audio cache' }));
+    expect(onClear).toHaveBeenCalledWith('lobby', 'planning');
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not clear audio cache.');
+  });
+
   it('confirms deletion before invoking it', async () => {
     const user = userEvent.setup();
     const onDelete = vi.fn(async () => undefined);
     render(
       <Sidebar
         dispatch={vi.fn()}
+        onClearSessionAudioCache={vi.fn(async () => undefined)}
         onDeleteSession={onDelete}
         onDownloadSession={vi.fn(async () => undefined)}
         onOpenSession={vi.fn(async () => true)}
@@ -166,6 +196,7 @@ describe('Sidebar session actions', () => {
     render(
       <Sidebar
         dispatch={vi.fn()}
+        onClearSessionAudioCache={vi.fn(async () => undefined)}
         onDeleteSession={vi.fn(async () => undefined)}
         onDownloadSession={vi.fn(async () => undefined)}
         onOpenSession={vi.fn(async () => true)}
@@ -180,11 +211,11 @@ describe('Sidebar session actions', () => {
     await user.click(actions);
     expect(actions).toHaveAttribute('aria-expanded', 'true');
     const download = screen.getByRole('menuitem', { name: 'Download' });
-    const rename = screen.getByRole('menuitem', { name: 'Rename…' });
+    const clearAudio = screen.getByRole('menuitem', { name: 'Clear audio cache' });
     const remove = screen.getByRole('menuitem', { name: 'Delete…' });
     expect(download).toHaveFocus();
     await user.keyboard('{ArrowDown}');
-    expect(rename).toHaveFocus();
+    expect(clearAudio).toHaveFocus();
     await user.keyboard('{Home}');
     expect(download).toHaveFocus();
     await user.keyboard('{End}');
@@ -204,6 +235,7 @@ describe('Sidebar session actions', () => {
     render(
       <Sidebar
         dispatch={vi.fn()}
+        onClearSessionAudioCache={vi.fn(async () => undefined)}
         onDeleteSession={vi.fn(async () => undefined)}
         onDownloadSession={vi.fn(async () => undefined)}
         onOpenSession={vi.fn(async () => true)}
@@ -224,6 +256,7 @@ describe('Sidebar session actions', () => {
     render(
       <Sidebar
         dispatch={vi.fn()}
+        onClearSessionAudioCache={vi.fn(async () => undefined)}
         onDeleteSession={vi.fn(async () => undefined)}
         onDownloadSession={vi.fn(async () => undefined)}
         onOpenSession={vi.fn(async () => true)}
@@ -250,6 +283,7 @@ describe('Sidebar session actions', () => {
     render(
       <Sidebar
         dispatch={vi.fn()}
+        onClearSessionAudioCache={vi.fn(async () => undefined)}
         onDeleteSession={vi.fn(async () => undefined)}
         onDownloadSession={vi.fn(async () => undefined)}
         onOpenSession={vi.fn(async () => true)}
@@ -279,6 +313,7 @@ describe('Sidebar session actions', () => {
     render(
       <Sidebar
         dispatch={vi.fn()}
+        onClearSessionAudioCache={vi.fn(async () => undefined)}
         onDeleteSession={() => pending}
         onDownloadSession={vi.fn(async () => undefined)}
         onOpenSession={vi.fn(async () => true)}

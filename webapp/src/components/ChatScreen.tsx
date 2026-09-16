@@ -21,11 +21,8 @@ import {
 } from '../api/client';
 import type { AppAction, AppState } from '../state/view';
 import {
-  cacheTextToSpeech,
   TextToSpeechError,
   TextToSpeechSession,
-  type TextToSpeechConfiguration,
-  type TextToSpeechVoice,
   useTextToSpeechConfiguration,
 } from '../textToSpeech';
 import {
@@ -61,6 +58,7 @@ export interface ChatActions {
 }
 
 interface ChatScreenProps extends ChatActions {
+  playbackPositions: Map<string, Map<number, number>>;
   client: ChaClient;
   state: AppState;
   dispatch: Dispatch<AppAction>;
@@ -81,21 +79,6 @@ function voiceInputMessage(failure: unknown): string {
 // first time it scrolled itself.
 const followSlack = 24;
 const allCharactersTarget = '*';
-const speechCacheConcurrency = 2;
-
-interface SpeechCacheItem {
-  text: string;
-  voice: TextToSpeechVoice | undefined;
-}
-
-interface SpeechCacheRun {
-  configuration: TextToSpeechConfiguration;
-  seenEntryIds: Set<number>;
-  queue: SpeechCacheItem[];
-  active: number;
-  controller: AbortController;
-}
-
 function multicastSubmission(text: string): string {
   if (text.startsWith('/')) return text;
   const firstText = text.search(/\S/);
@@ -176,10 +159,13 @@ function TranscriptMessage({
     ? 'your prompt'
     : `${entry.display_name}'s response`;
   const speechLabel = speechState === 'loading'
-    ? `Generating audio for ${spokenItem}`
+    ? `${entry.has_cached_audio ? 'Loading' : 'Generating'} audio for ${spokenItem}`
     : speechState === 'playing'
       ? `Stop reading ${spokenItem}`
-      : `Read ${spokenItem} aloud`;
+      : `${entry.has_cached_audio ? 'Play cached audio' : 'Generate audio'} for ${spokenItem}`;
+  const speechTitle = speechState === 'idle'
+    ? entry.has_cached_audio ? 'Play cached audio' : 'Generate audio'
+    : speechLabel;
   const coverLabel = onUncover
     ? 'Uncover transcript'
     : `Cover transcript through ${entry.display_name}'s response`;
@@ -212,10 +198,10 @@ function TranscriptMessage({
           {canRead && speechAvailable && (
             <button
               aria-label={speechLabel}
-              className={`cha-message-action${speechState !== 'idle' ? ' is-active' : ''}`}
+              className={`cha-message-action${speechState !== 'idle' ? ' is-active' : ''}${entry.has_cached_audio && speechState !== 'playing' ? ' has-cached-audio' : ''}`}
               disabled={speechState === 'loading'}
               onClick={() => onToggleSpeech(entry)}
-              title={speechLabel}
+              title={speechTitle}
               type="button"
             >
               {speechState === 'playing' ? <StopIcon /> : <SpeakerIcon />}
@@ -272,6 +258,7 @@ function endedMessage(snapshot: SessionSnapshot): string {
 }
 
 export function ChatScreen({
+  playbackPositions,
   client,
   state,
   dispatch,
@@ -307,13 +294,10 @@ export function ChatScreen({
   const voiceInputAttempt = useRef(0);
   const transcriptEnd = useRef<HTMLDivElement | null>(null);
   const textToSpeechSession = useRef<TextToSpeechSession | null>(null);
-  const speechCacheRun = useRef<SpeechCacheRun | null>(null);
   const [spokenEntry, setSpokenEntry] = useState<{
     id: number;
     state: 'loading' | 'playing';
   } | null>(null);
-  const [speechCacheEnabled, setSpeechCacheEnabled] = useState(false);
-  const [speechCacheBusy, setSpeechCacheBusy] = useState(false);
   const [turnToDelete, setTurnToDelete] = useState<{
     id: number;
     displayName: string;
@@ -366,15 +350,6 @@ export function ChatScreen({
     () => snapshot ? visibleTranscriptEntries(snapshot.transcript) : [],
     [snapshot?.transcript],
   );
-  const completedSpeechEntries = useMemo(
-    () => transcriptEntries.map(({ entry }) => entry).filter((entry) => (
-      (entry.kind === 'human' || entry.kind === 'character')
-      && entry.status === 'complete'
-      && visibleEntryText(entry.kind, entry.text).trim().length > 0
-    )),
-    [transcriptEntries],
-  );
-  const completedSpeechEntryIds = completedSpeechEntries.map(({ id }) => id).join(',');
   const coveredUntil = snapshot?.covered_until ?? null;
   const coveredEntries = coveredUntil === null
     ? []
@@ -426,94 +401,6 @@ export function ChatScreen({
     setSpokenEntry(null);
   }, [conversationKey]);
 
-  useEffect(() => () => {
-    const run = speechCacheRun.current;
-    if (run) {
-      run.queue.length = 0;
-      speechCacheRun.current = null;
-      run.controller.abort();
-    }
-    setSpeechCacheEnabled(false);
-    setSpeechCacheBusy(false);
-  }, [conversationKey]);
-
-  function pumpSpeechCache(run: SpeechCacheRun) {
-    while (speechCacheRun.current === run
-      && run.active < speechCacheConcurrency
-      && run.queue.length > 0) {
-      const item = run.queue.shift();
-      if (!item) break;
-      run.active += 1;
-      setSpeechCacheBusy(true);
-      void cacheTextToSpeech(
-        run.configuration,
-        item.voice,
-        item.text,
-        run.controller.signal,
-      ).catch((failure: unknown) => {
-        if (speechCacheRun.current !== run) return;
-        setActionError(failure instanceof TextToSpeechError
-          ? failure.message
-          : 'One message could not be cached. The remaining messages will continue.');
-      }).finally(() => {
-        run.active -= 1;
-        if (speechCacheRun.current !== run) return;
-        pumpSpeechCache(run);
-        if (run.active === 0 && run.queue.length === 0) setSpeechCacheBusy(false);
-      });
-    }
-  }
-
-  function enqueueSpeechCacheEntries(
-    run: SpeechCacheRun,
-    entries: typeof completedSpeechEntries,
-  ) {
-    const added: SpeechCacheItem[] = [];
-    for (const entry of entries) {
-      if (run.seenEntryIds.has(entry.id)) continue;
-      run.seenEntryIds.add(entry.id);
-      added.push({
-        text: visibleEntryText(entry.kind, entry.text),
-        voice: entry.kind === 'character'
-          ? speechVoices.get(entry.participant_id)
-          : personas.get(entry.participant_id)?.voice,
-      });
-    }
-    run.queue.unshift(...added);
-    pumpSpeechCache(run);
-  }
-
-  function toggleSpeechCache() {
-    const current = speechCacheRun.current;
-    if (current) {
-      current.queue.length = 0;
-      speechCacheRun.current = null;
-      current.controller.abort();
-      setSpeechCacheEnabled(false);
-      setSpeechCacheBusy(false);
-      return;
-    }
-    if (!textToSpeechConfiguration || !snapshot || !conversationKey) return;
-
-    const run: SpeechCacheRun = {
-      configuration: textToSpeechConfiguration,
-      seenEntryIds: new Set(),
-      queue: [],
-      active: 0,
-      controller: new AbortController(),
-    };
-    speechCacheRun.current = run;
-    setSpeechCacheEnabled(true);
-    setActionError(null);
-    enqueueSpeechCacheEntries(run, completedSpeechEntries);
-  }
-
-  useEffect(() => {
-    const run = speechCacheRun.current;
-    if (!run) return;
-    enqueueSpeechCacheEntries(run, completedSpeechEntries);
-  }, [completedSpeechEntryIds, conversationKey]);
-
   function toggleSpeech(entry: SessionSnapshot['transcript'][number]) {
     if (spokenEntry?.id === entry.id) {
       textToSpeechSession.current?.stop();
@@ -521,9 +408,16 @@ export function ChatScreen({
       setSpokenEntry(null);
       return;
     }
-    if (!textToSpeechConfiguration) return;
+    if (!textToSpeechConfiguration || !snapshot) return;
 
     textToSpeechSession.current?.stop();
+    const playbackKey = JSON.stringify([state.bootstrap?.vault_name, snapshot.forum.id, snapshot.session_id]);
+    let positions = playbackPositions.get(playbackKey);
+    if (!positions) {
+      positions = new Map<number, number>();
+      playbackPositions.set(playbackKey, positions);
+    }
+    const entryPositions = positions;
     const session = new TextToSpeechSession(
       textToSpeechConfiguration,
       entry.kind === 'character'
@@ -535,7 +429,18 @@ export function ChatScreen({
         textToSpeechSession.current = null;
         setSpokenEntry(null);
       },
-      { cache: true },
+      { forum_id: snapshot.forum.id, session_id: snapshot.session_id, entry_id: entry.id },
+      (cached) => dispatch({
+        type: 'session-audio-cache', forumId: snapshot.forum.id,
+        sessionId: snapshot.session_id, entryId: entry.id, cached,
+      }),
+      {
+        position: entryPositions.get(entry.id) ?? 0,
+        onPositionChange: (position) => {
+          if (position > 0) entryPositions.set(entry.id, position);
+          else entryPositions.delete(entry.id);
+        },
+      },
     );
     textToSpeechSession.current = session;
     setSpokenEntry({ id: entry.id, state: 'loading' });
@@ -1046,19 +951,11 @@ export function ChatScreen({
               : (character?.display_name ?? 'Unknown character')}</span>
           {textToSpeechConfiguration && (
             <button
-              aria-busy={speechCacheBusy}
-              aria-label={speechCacheEnabled
-                ? 'Stop caching conversation audio automatically'
-                : 'Cache conversation audio automatically'}
-              aria-pressed={speechCacheEnabled}
+              aria-label="Cache conversation audio automatically"
+              aria-pressed={false}
               className="cha-speech-cache-toggle"
-              disabled={!sessionAvailable}
-              onClick={toggleSpeechCache}
-              title={speechCacheBusy
-                ? 'Caching conversation audio'
-                : speechCacheEnabled
-                  ? 'Automatically cache conversation audio'
-                  : 'Cache existing and future conversation audio'}
+              disabled
+              title="Cache conversation audio automatically"
               type="button"
             >
               <SpeakerIcon />

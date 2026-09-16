@@ -141,6 +141,7 @@ export interface ChaClient {
   createSession(forumId: string, label: string): Promise<CreateSessionResult>;
   renameSession(forumId: string, sessionId: string, label: string): Promise<SessionLabelResult>;
   deleteSession(forumId: string, sessionId: string): Promise<void>;
+  clearSessionAudioCache(forumId: string, sessionId: string): Promise<void>;
   downloadSession(forumId: string, sessionId: string): Promise<string>;
   openSession(forumId: string, sessionId: string): Promise<OpenSessionResult>;
   getSessionSnapshot(forumId: string, sessionId: string): Promise<SessionSnapshot>;
@@ -450,6 +451,8 @@ export function isSessionSnapshot(value: unknown): value is SessionSnapshot {
     && value.characters.every(isCharacterSummary)
     && typeof value.default_character_id === 'string'
     && Array.isArray(value.transcript)
+    && value.transcript.every((entry) => isRecord(entry)
+      && (entry.has_cached_audio === undefined || typeof entry.has_cached_audio === 'boolean'))
     && (value.covered_until === undefined
       || (typeof value.covered_until === 'number'
         && Number.isSafeInteger(value.covered_until)
@@ -693,6 +696,12 @@ export function createChaClient(
     deleteSession: (forumId, sessionId) => requestEmpty(
       fetcher,
       `/api/v1/forums/${component(forumId)}/sessions/${component(sessionId)}`,
+      jsonMutation({}, 'DELETE'),
+    ),
+
+    clearSessionAudioCache: (forumId, sessionId) => requestEmpty(
+      fetcher,
+      `/api/v1/forums/${component(forumId)}/sessions/${component(sessionId)}/audio-cache`,
       jsonMutation({}, 'DELETE'),
     ),
 

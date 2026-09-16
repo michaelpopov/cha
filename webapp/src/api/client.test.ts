@@ -24,6 +24,16 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 describe('CHA API client', () => {
+  it('clears a session audio cache with an encoded URL and DELETE request', async () => {
+    const fetcher = vi.fn(async () => new Response(null, { status: 204 }));
+    const client = createChaClient(fetcher);
+    await client.clearSessionAudioCache('f/one', 's two');
+    expect(fetcher).toHaveBeenCalledWith(
+      '/api/v1/forums/f%2Fone/sessions/s%20two/audio-cache',
+      expect.objectContaining({ method: 'DELETE', body: '{}' }),
+    );
+  });
+
   it('constructs every operation with its documented URL, headers, and body', async () => {
     const fetcher = vi.fn<(
       input: RequestInfo | URL,

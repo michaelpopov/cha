@@ -8,7 +8,7 @@ extern "C" {
 
 typedef struct ChaRuntime ChaRuntime;
 
-// Returned error strings belong to the caller and must be released with
+// Returned strings belong to the caller and must be released with
 // cha_string_free().
 //
 // The runtime always listens on 127.0.0.1 on an operating-system-chosen port,
@@ -24,9 +24,11 @@ ChaRuntime* cha_runtime_create(
     char** error);
 // Returns 1 when the selected vault is protected, 0 when it is not, and -1
 // when the application configuration could not be loaded.
+// Also returns the selected vault's name through vault_name when provided.
 int32_t cha_runtime_requires_password(
     const char* config_path,
     const char* resource_path,
+    char** vault_name,
     char** error);
 void cha_runtime_destroy(ChaRuntime* runtime);
 int32_t cha_runtime_port(const ChaRuntime* runtime);

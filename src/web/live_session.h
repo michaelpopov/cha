@@ -178,6 +178,7 @@ private:
     // Owner thread only. Snapshot construction and controller access must stay
     // on that thread; none of this needs the lifecycle mutex.
     std::unique_ptr<SessionController> controller_;
+    std::function<std::set<EntryId>()> cached_audio_entries_;
     std::string label_;
     std::function<void(std::string_view)> persist_default_character_;
     std::function<void(

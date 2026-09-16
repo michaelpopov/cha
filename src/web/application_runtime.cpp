@@ -1357,6 +1357,7 @@ int ApplicationRuntime::start(int port_override) {
         *impl_->live_sessions,
         impl_->settings,
         *impl_->store,
+        *impl_->sessions,
         *impl_->api_keys,
         *impl_->openai_auth,
         !impl_->access_token.empty(), impl_->fish_audio).install(*server);

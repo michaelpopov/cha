@@ -549,6 +549,7 @@ SettingsRoutes::SettingsRoutes(
     LiveSessionManager& live_sessions,
     WebSettings settings,
     WorkspaceConfigStore& config,
+    SessionRepository& sessions,
     ApiKeyStore& api_keys,
     OpenAiOAuth& openai_auth,
     bool native_voice_enabled,
@@ -556,13 +557,14 @@ SettingsRoutes::SettingsRoutes(
     : live_sessions_(&live_sessions),
       settings_(std::move(settings)),
       config_(&config),
+      sessions_(&sessions),
       api_keys_(&api_keys),
       openai_auth_(&openai_auth),
       native_voice_enabled_(native_voice_enabled),
       fish_audio_(&fish_audio) {}
 
 void SettingsRoutes::install(httplib::Server& server) const {
-    install_fish_audio_route(server, *api_keys_, settings_, native_voice_enabled_, *fish_audio_);
+    install_fish_audio_route(server, *api_keys_, *sessions_, settings_, native_voice_enabled_, *fish_audio_);
     LiveSessionManager* const live_sessions = live_sessions_;
     WorkspaceConfigStore* const config = config_;
     ApiKeyStore* const api_keys = api_keys_;

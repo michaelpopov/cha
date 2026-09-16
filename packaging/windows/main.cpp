@@ -219,7 +219,7 @@ LRESULT CALLBACK password_dialog_procedure(
 }
 
 std::optional<std::string> prompt_for_vault_password(
-    HINSTANCE instance, HWND owner, std::wstring_view error) {
+    HINSTANCE instance, HWND owner, std::wstring_view vault_name, std::wstring_view error) {
     static bool registered = false;
     if (!registered) {
         WNDCLASSEXW window_class{};
@@ -245,10 +245,11 @@ std::optional<std::string> prompt_for_vault_password(
         + ((owner_bounds.right - owner_bounds.left) - width) / 2;
     const int y = owner_bounds.top
         + ((owner_bounds.bottom - owner_bounds.top) - height) / 2;
+    const std::wstring title = L"Open vault \u201c" + std::wstring(vault_name) + L"\u201d";
     HWND dialog = ::CreateWindowExW(
         WS_EX_DLGMODALFRAME,
         kPasswordWindowClass,
-        L"Open protected vault",
+        title.c_str(),
         WS_CAPTION | WS_SYSMENU | WS_POPUP,
         x,
         y,
@@ -560,14 +561,17 @@ private:
         const std::string config = cha::utf8_path(config_directory_);
         const std::string resource_path = cha::utf8_path(resources);
         char* requirement_error = nullptr;
+        char* vault_name = nullptr;
         const int32_t password_required = cha_runtime_requires_password(
-            config.c_str(), resource_path.c_str(), &requirement_error);
+            config.c_str(), resource_path.c_str(), &vault_name, &requirement_error);
         if (password_required < 0) {
             throw std::runtime_error(take_bridge_error(requirement_error));
         }
+        const std::wstring selected_vault_name = wide_from_utf8(vault_name);
+        cha_string_free(vault_name);
         std::string password;
         if (password_required != 0) {
-            const auto entered = prompt_for_vault_password(instance_, window_, L"");
+            const auto entered = prompt_for_vault_password(instance_, window_, selected_vault_name, L"");
             if (!entered) throw LaunchCancelled();
             password = *entered;
         }
@@ -585,7 +589,7 @@ private:
             const std::string message = take_bridge_error(bridge_error);
             if (password_error == 0) throw std::runtime_error(message);
             const auto entered = prompt_for_vault_password(
-                instance_, window_, wide_from_utf8(message));
+                instance_, window_, selected_vault_name, wide_from_utf8(message));
             if (!entered) throw LaunchCancelled();
             password = *entered;
         }

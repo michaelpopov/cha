@@ -1079,6 +1079,27 @@ it('opens a save dialog and downloads the selected recent session', async () => 
   Reflect.deleteProperty(window, 'showSaveFilePicker');
 });
 
+it('clears the selected session audio cache from its menu without opening it', async () => {
+  const user = userEvent.setup();
+  const clearSessionAudioCache = vi.fn(async () => undefined);
+  const openSession = vi.fn(async (forumId: string, sessionId: string) => ({
+    forum_id: forumId, session_id: sessionId,
+  }));
+  render(<App
+    client={storedPlanningClient({ clearSessionAudioCache, openSession })}
+    connectSessionEvents={drivableSessionEvents().connect}
+  />);
+
+  await user.click(await screen.findByLabelText('Actions for Planning'));
+  await user.click(screen.getByRole('menuitem', { name: 'Clear audio cache' }));
+
+  await waitFor(() => expect(clearSessionAudioCache).toHaveBeenCalledWith('lobby', 'planning'));
+  expect(openSession.mock.calls.some(([forumId]) => forumId === 'lobby')).toBe(false);
+  expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(screen.getByLabelText('Actions for Planning')).toHaveFocus();
+});
+
 it('deleting the active session replaces its URL and returns to Welcome', async () => {
   const user = userEvent.setup();
   const events = drivableSessionEvents();

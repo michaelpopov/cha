@@ -404,7 +404,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Generate FishAudio speech using the configured endpoint and key */
+        /** Return saved transcript audio or generate FishAudio speech */
         post: operations["generateFishAudio"];
         delete?: never;
         options?: never;
@@ -924,6 +924,28 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/forums/{forum_id}/sessions/{session_id}/audio-cache": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Stable URL-safe forum identifier. */
+                forum_id: components["parameters"]["ForumId"];
+                /** @description Stable URL-safe session identifier. */
+                session_id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Clear all cached audio for a session */
+        delete: operations["clearSessionAudioCache"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1665,6 +1687,8 @@ export interface components {
             request_id?: components["schemas"]["UnsignedInteger"];
             /** @description Unix seconds when the entry was created; null when unknown (rows stored before schema version 3). */
             created_at: number | null;
+            /** @description Whether saved audio is available for this entry. */
+            has_cached_audio?: boolean;
         };
         GenerationState: {
             active: boolean;
@@ -2684,6 +2708,12 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    /** @description Transcript identity to read and save audio. Omit for uncached previews. */
+                    entry?: {
+                        forum_id: string;
+                        session_id: string;
+                        entry_id: number;
+                    };
                     text: string;
                     reference_id: string;
                     settings?: {
@@ -2693,9 +2723,11 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Generated audio. */
+            /** @description Saved or generated audio. */
             200: {
                 headers: {
+                    /** @description Present and true when the returned audio is saved in the entry cache. */
+                    "X-CHA-Audio-Cached"?: boolean;
                     [name: string]: unknown;
                 };
                 content: {
@@ -3545,6 +3577,34 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+        };
+    };
+    clearSessionAudioCache: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Stable URL-safe forum identifier. */
+                forum_id: components["parameters"]["ForumId"];
+                /** @description Stable URL-safe session identifier. */
+                session_id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody: components["requestBodies"]["EmptyJsonObject"];
+        responses: {
+            /** @description Cached audio deleted; the session transcript is unchanged. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["ForbiddenMutation"];
+            404: components["responses"]["NotFound"];
+            413: components["responses"]["BodyTooLarge"];
+            500: components["responses"]["InternalError"];
         };
     };
     deleteSession: {

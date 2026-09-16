@@ -85,6 +85,7 @@ import {
 export const liveRetryDelays = [250, 500, 1_000, 2_000, 4_000] as const;
 
 interface ScreenProps extends ChatActions {
+  playbackPositions: Map<string, Map<number, number>>;
   state: AppState;
   dispatch: Dispatch<AppAction>;
   client: ChaClient;
@@ -101,6 +102,7 @@ interface ScreenProps extends ChatActions {
 }
 
 function Screen({
+  playbackPositions,
   state,
   dispatch,
   client,
@@ -137,6 +139,7 @@ function Screen({
   switch (state.mainView) {
     case 'chat': return (
       <ChatScreen
+        playbackPositions={playbackPositions}
         client={client}
         dispatch={dispatch}
         onCoverConversation={onCoverConversation}
@@ -484,6 +487,7 @@ export function App({
   const [renderedEpoch, setRenderedEpoch] = useState(0);
   const request = useRef<{ client: ChaClient; promise: Promise<Bootstrap> } | null>(null);
   const pendingTarget = useRef<string | null>(null);
+  const playbackPositions = useRef(new Map<string, Map<number, number>>());
   const retryTarget = useRef<SessionTarget | null>(null);
   const pendingMutations = useRef(new Set<string>());
   const connection = useRef<AttachedStream | null>(null);
@@ -1021,6 +1025,12 @@ export function App({
     );
   }, [client]);
 
+  const clearSessionAudioCache = useCallback(async (forumId: string, sessionId: string) => {
+    await client.clearSessionAudioCache(forumId, sessionId);
+    playbackPositions.current.delete(JSON.stringify([state.bootstrap?.vault_name, forumId, sessionId]));
+    dispatch({ type: 'session-audio-cache', forumId, sessionId, cached: false });
+  }, [client, state.bootstrap?.vault_name]);
+
   const deleteSession = useCallback(async (forumId: string, sessionId: string) => {
     await runMutation({ forumId, sessionId }, 'catalog', () => (
       client.deleteSession(forumId, sessionId)
@@ -1150,6 +1160,7 @@ export function App({
           data-sidebar={state.sidebarOpen ? 'open' : 'closed'}
         >
           <Sidebar
+            onClearSessionAudioCache={clearSessionAudioCache}
             dispatch={navigate}
             onDeleteSession={deleteSession}
             onDownloadSession={downloadSession}
@@ -1186,6 +1197,7 @@ export function App({
             )}
             {ready && !wholeApplication && (
               <Screen
+                playbackPositions={playbackPositions.current}
                 catalogRevision={catalogRevision}
                 characterRevision={characterRevision}
                 forumRevision={forumRevision}

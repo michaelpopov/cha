@@ -75,6 +75,7 @@ public:
 
     void bind(int index, std::int64_t value);
     void bind(int index, std::string_view value);
+    void bind_blob(int index, std::string_view value);
     void bind_null(int index);
     void bind(int index, const std::optional<std::int64_t>& value);
 
@@ -82,6 +83,7 @@ public:
     void run();
     [[nodiscard]] std::int64_t integer(int column) const;
     [[nodiscard]] std::string text(int column) const;
+    [[nodiscard]] std::string blob(int column) const;
     [[nodiscard]] bool is_null(int column) const;
 
 private:

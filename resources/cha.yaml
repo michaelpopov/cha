@@ -730,7 +730,7 @@ paths:
     post:
       tags: [Settings]
       operationId: generateFishAudio
-      summary: Generate FishAudio speech using the configured endpoint and key
+      summary: Return saved transcript audio or generate FishAudio speech
       requestBody:
         required: true
         content:
@@ -739,6 +739,20 @@ paths:
               type: object
               required: [text, reference_id]
               properties:
+                entry:
+                  description: Transcript identity to read and save audio. Omit for uncached previews.
+                  type: object
+                  required: [forum_id, session_id, entry_id]
+                  properties:
+                    forum_id:
+                      type: string
+                      minLength: 1
+                    session_id:
+                      type: string
+                      minLength: 1
+                    entry_id:
+                      type: integer
+                      minimum: 1
                 text:
                   type: string
                   minLength: 1
@@ -754,7 +768,12 @@ paths:
                       maximum: 2
       responses:
         "200":
-          description: Generated audio.
+          description: Saved or generated audio.
+          headers:
+            X-CHA-Audio-Cached:
+              description: Present and true when the returned audio is saved in the entry cache.
+              schema:
+                type: boolean
           content:
             audio/mpeg:
               schema:
@@ -1621,6 +1640,30 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/forums/{forum_id}/sessions/{session_id}/audio-cache:
+    parameters:
+      - $ref: "#/components/parameters/ForumId"
+      - $ref: "#/components/parameters/SessionId"
+    delete:
+      tags: [Stored sessions]
+      operationId: clearSessionAudioCache
+      summary: Clear all cached audio for a session
+      requestBody:
+        $ref: "#/components/requestBodies/EmptyJsonObject"
+      responses:
+        "204":
+          description: Cached audio deleted; the session transcript is unchanged.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/ForbiddenMutation"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/BodyTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
 
   /api/v1/forums/{forum_id}/sessions/{session_id}:
     parameters:
@@ -3361,6 +3404,9 @@ components:
         created_at:
           description: Unix seconds when the entry was created; null when unknown (rows stored before schema version 3).
           type: [integer, "null"]
+        has_cached_audio:
+          description: Whether saved audio is available for this entry.
+          type: boolean
 
     GenerationState:
       type: object

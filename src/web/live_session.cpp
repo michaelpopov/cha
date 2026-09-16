@@ -282,6 +282,7 @@ bool LiveSession::open_controller() {
         controller_ = std::move(opened.controller);
         persist_default_character_ = std::move(opened.persist_default_character);
         mirror_ = std::move(opened.mirror);
+        cached_audio_entries_ = std::move(opened.cached_audio_entries);
         if (mirror_) {
             mirrored_revision_ = controller_->view().transcript.revision;
             mirrored_label_ = label_;
@@ -512,9 +513,17 @@ void LiveSession::apply_notification(OwnerNotification notification) {
 SessionSnapshot LiveSession::make_snapshot() {
     // The borrowed view lives only for this expression; to_snapshot() copies
     // everything it needs into the returned owning value.
-    return to_snapshot(
+    SessionSnapshot snapshot = to_snapshot(
         identity_, label_, controller_->view(),
         presentation(SessionLifecycle::running));
+    if (cached_audio_entries_) {
+        try {
+            snapshot.cached_audio_entries = cached_audio_entries_();
+        } catch (const std::exception& error) {
+            log_warn("Could not read audio cache status: " + std::string(error.what()));
+        }
+    }
+    return snapshot;
 }
 
 WebPresentationState LiveSession::presentation(
@@ -609,9 +618,9 @@ void LiveSession::log_generation_transitions(const SessionSnapshot& current) {
 }
 
 void LiveSession::publish_final(ShutdownReason reason) {
-    SessionSnapshot snapshot = to_snapshot(
-        identity_, label_, controller_->view(),
-        presentation(SessionLifecycle::stopping, reason));
+    SessionSnapshot snapshot = make_snapshot();
+    snapshot.lifecycle = SessionLifecycle::stopping;
+    snapshot.shutdown_reason = reason;
     mailbox_->publish(SnapshotEvent{std::move(snapshot)});
 }
 

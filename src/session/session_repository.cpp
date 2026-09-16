@@ -15,6 +15,7 @@
 #include <filesystem>
 #include <iomanip>
 #include <mutex>
+#include <limits>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -182,6 +183,16 @@ SessionRepository::~SessionRepository() {
     }
 }
 
+const std::filesystem::path& SessionRepository::session_database_path(
+    const FullSessionId& identity) const {
+    if (identity.forum_id == temporary_identity_.forum_id) {
+        if (identity != temporary_identity_) throw missing_session_error(identity.session_id);
+        return temporary_database_path_;
+    }
+    require_persistent_forum(identity.forum_id);
+    return database_path_;
+}
+
 void SessionRepository::require_persistent_forum(
     std::string_view forum_id) const {
     if (forum_id == temporary_identity_.forum_id) {
@@ -226,6 +237,11 @@ void SessionRepository::synchronize_forums_unlocked(
     Database database(
         database_path_, Database::Mode::read_write, database_password_);
     validate_workspace_session_database_identity(database);
+    try {
+        create_entry_audio_table(database);
+    } catch (const std::exception& error) {
+        log_warn("Could not initialize audio cache: " + std::string(error.what()));
+    }
     std::set<std::string> stored_forums;
     {
         Statement select = database.prepare("SELECT forum_id FROM forums");
@@ -307,19 +323,9 @@ std::vector<StoredSession> SessionRepository::recent() const {
 
 void SessionRepository::validate(const FullSessionId& identity) const {
     const std::shared_lock operation(operation_mutex_);
-    if (identity.forum_id == temporary_identity_.forum_id) {
-        if (identity != temporary_identity_) {
-            throw missing_session_error(identity.session_id);
-        }
-        Database database(
-            temporary_database_path_, Database::Mode::read_only);
-        validate_workspace_session_database_identity(database);
-        require_active(database, identity);
-        return;
-    }
-    require_persistent_forum(identity.forum_id);
-    Database database(
-        database_path_, Database::Mode::read_only, database_password_);
+    const auto& path = session_database_path(identity);
+    Database database(path, Database::Mode::read_only,
+        identity == temporary_identity_ ? std::string_view{} : database_password_);
     validate_workspace_session_database_identity(database);
     require_active(database, identity);
 }
@@ -448,13 +454,8 @@ void SessionRepository::delete_session(const FullSessionId& identity) const {
 PreparedSession SessionRepository::prepare(
     const FullSessionId& identity) const {
     const std::shared_lock operation(operation_mutex_);
-    const bool temporary = identity.forum_id == temporary_identity_.forum_id;
-    if (temporary && identity != temporary_identity_) {
-        throw missing_session_error(identity.session_id);
-    }
-    if (!temporary) require_persistent_forum(identity.forum_id);
-    const std::filesystem::path& path = temporary
-        ? temporary_database_path_ : database_path_;
+    const auto& path = session_database_path(identity);
+    const bool temporary = identity == temporary_identity_;
     LoadedSessionDatabase loaded =
         load_session_database(
             path, identity, temporary ? std::string_view{} : database_password_);
@@ -471,15 +472,107 @@ PreparedSession SessionRepository::prepare(
 std::vector<TranscriptEntry> SessionRepository::history(
     const FullSessionId& identity) const {
     const std::shared_lock operation(operation_mutex_);
-    const bool temporary = identity.forum_id == temporary_identity_.forum_id;
-    if (temporary && identity != temporary_identity_) {
-        throw missing_session_error(identity.session_id);
-    }
-    if (!temporary) require_persistent_forum(identity.forum_id);
-    const std::filesystem::path& path = temporary
-        ? temporary_database_path_ : database_path_;
+    const auto& path = session_database_path(identity);
+    const bool temporary = identity == temporary_identity_;
     return load_session_history(
         path, identity, temporary ? std::string_view{} : database_password_);
+}
+
+std::optional<EntryAudioLookup> SessionRepository::lookup_entry_audio(
+    const FullSessionId& identity, EntryId entry_id) const {
+    const std::shared_lock operation(operation_mutex_);
+    if (entry_id == 0
+        || entry_id > static_cast<EntryId>(std::numeric_limits<std::int64_t>::max())) return std::nullopt;
+    const auto& path = session_database_path(identity);
+    Database database(path, Database::Mode::read_only,
+        identity == temporary_identity_ ? std::string_view{} : database_password_);
+    validate_workspace_session_database_identity(database);
+    auto entry = database.prepare(
+        "SELECT e.session_key, e.text, e.kind FROM entries e "
+        "JOIN sessions s ON s.session_key = e.session_key "
+        "JOIN forums f ON f.forum_key = s.forum_key "
+        "WHERE f.forum_id = ?1 AND s.session_id = ?2 "
+        "AND s.archived_at IS NULL AND e.epoch = s.history_epoch "
+        "AND e.entry_id = ?3 AND e.status = 0 AND e.kind IN (0, 1, 2)",
+        identity.forum_id, identity.session_id, static_cast<std::int64_t>(entry_id));
+    if (!entry.step()) return std::nullopt;
+    EntryAudioLookup result{
+        .session_key = entry.integer(0),
+        .entry_id = entry_id,
+        .database_path = path,
+        .identity = identity,
+        .entry_text = entry.text(1),
+        .entry_kind = static_cast<EntryKind>(entry.integer(2)),
+        .cached = std::nullopt,
+    };
+    try {
+        auto cached = database.prepare(
+            "SELECT audio, content_type FROM entry_audio WHERE session_key = ?1 AND entry_id = ?2",
+            result.session_key, static_cast<std::int64_t>(entry_id));
+        if (cached.step()) result.cached = EntryAudio{cached.blob(0), cached.text(1)};
+    } catch (const std::exception& error) {
+        log_warn("Could not read cached audio: " + std::string(error.what()));
+    }
+    return result;
+}
+
+void SessionRepository::save_entry_audio(const EntryAudioLookup& entry, const EntryAudio& audio) const {
+    const std::shared_lock operation(operation_mutex_);
+    const auto& path = session_database_path(entry.identity);
+    if (entry.database_path != path || audio.audio.empty()) return;
+    Database database(path, Database::Mode::read_write,
+        entry.identity == temporary_identity_ ? std::string_view{} : database_password_);
+    validate_workspace_session_database_identity(database);
+    // An entry may have been deleted while synthesis was running. Never recreate it.
+    auto insert = database.prepare(
+        "INSERT INTO entry_audio (session_key, entry_id, audio, content_type) "
+        "SELECT e.session_key, e.entry_id, ?1, ?2 FROM entries e "
+        "JOIN sessions s ON s.session_key = e.session_key "
+        "JOIN forums f ON f.forum_key = s.forum_key "
+        "WHERE e.session_key = ?3 AND e.entry_id = ?4 AND e.text = ?5 "
+        "AND f.forum_id = ?6 AND s.session_id = ?7 AND s.archived_at IS NULL "
+        "AND e.epoch = s.history_epoch ON CONFLICT DO NOTHING");
+    insert.bind_blob(1, audio.audio);
+    insert.bind(2, audio.content_type);
+    insert.bind(3, entry.session_key);
+    insert.bind(4, static_cast<std::int64_t>(entry.entry_id));
+    insert.bind(5, entry.entry_text);
+    insert.bind(6, entry.identity.forum_id);
+    insert.bind(7, entry.identity.session_id);
+    insert.run();
+}
+
+std::set<EntryId> SessionRepository::cached_audio_entries(const FullSessionId& identity) const {
+    const std::shared_lock operation(operation_mutex_);
+    const auto& path = session_database_path(identity);
+    Database database(path, Database::Mode::read_only,
+        identity == temporary_identity_ ? std::string_view{} : database_password_);
+    validate_workspace_session_database_identity(database);
+    auto select = database.prepare(
+        "SELECT a.entry_id FROM entry_audio a "
+        "JOIN entries e USING (session_key, entry_id) "
+        "JOIN sessions s USING (session_key) JOIN forums f USING (forum_key) "
+        "WHERE f.forum_id = ?1 AND s.session_id = ?2 AND s.archived_at IS NULL "
+        "AND e.epoch = s.history_epoch", identity.forum_id, identity.session_id);
+    std::set<EntryId> result;
+    while (select.step()) result.insert(static_cast<EntryId>(select.integer(0)));
+    return result;
+}
+
+void SessionRepository::clear_session_audio(const FullSessionId& identity) const {
+    const std::shared_lock operation(operation_mutex_);
+    const auto& path = session_database_path(identity);
+    Database database(path, Database::Mode::read_write,
+        identity == temporary_identity_ ? std::string_view{} : database_password_);
+    validate_workspace_session_database_identity(database);
+    Transaction transaction(database);
+    require_active(database, identity);
+    database.prepare(
+        "DELETE FROM entry_audio WHERE session_key IN ("
+        "SELECT s.session_key FROM sessions s JOIN forums f USING (forum_key) "
+        "WHERE f.forum_id = ?1 AND s.session_id = ?2)",
+        identity.forum_id, identity.session_id).run();
+    transaction.commit();
 }
 
 } // namespace cha

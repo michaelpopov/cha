@@ -202,6 +202,7 @@ export type AppAction =
   | { type: 'session-operation-failed'; message: string; retryable?: boolean }
   | { type: 'conversation-opened'; snapshot: SessionSnapshot }
   | { type: 'session-snapshot'; snapshot: SessionSnapshot }
+  | { type: 'session-audio-cache'; forumId: string; sessionId: string; entryId?: number; cached: boolean }
   | { type: 'session-append'; forumId: string; sessionId: string; event: AppendEvent }
   | { type: 'show-initial-conversation' }
   | { type: 'stream-state'; status: StreamStatus; message?: string };
@@ -820,6 +821,21 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         activeConversationLabel: action.snapshot.session_label,
         currentDefaultCharacterId: action.snapshot.default_character_id,
         sessionSnapshot: action.snapshot,
+      };
+    case 'session-audio-cache':
+      if (!state.sessionSnapshot
+          || state.sessionSnapshot.forum.id !== action.forumId
+          || state.sessionSnapshot.session_id !== action.sessionId) return state;
+      return {
+        ...state,
+        sessionSnapshot: {
+          ...state.sessionSnapshot,
+          transcript: state.sessionSnapshot.transcript.map((entry) => (
+            action.entryId === undefined || entry.id === action.entryId
+              ? { ...entry, has_cached_audio: action.cached }
+              : entry
+          )),
+        },
       };
     case 'session-append':
       if (!state.sessionSnapshot
