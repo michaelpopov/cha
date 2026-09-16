@@ -225,19 +225,12 @@ Json voice_json(
     const WorkspaceVoice& voice,
     bool writable,
     std::vector<std::string> used_by) {
-    const ElevenLabsVoiceSettings& settings = voice.settings;
+    const VoiceSettings& settings = voice.settings;
     return {
         {"id", voice.id},
         {"display_name", voice.label},
         {"description", voice.description},
         {"elevenlabs_voice_id", voice.elevenlabs_voice_id},
-        {"stability", settings.stability
-            ? Json(*settings.stability) : Json(nullptr)},
-        {"similarity_boost", settings.similarity_boost
-            ? Json(*settings.similarity_boost) : Json(nullptr)},
-        {"style", settings.style ? Json(*settings.style) : Json(nullptr)},
-        {"use_speaker_boost", settings.use_speaker_boost
-            ? Json(*settings.use_speaker_boost) : Json(nullptr)},
         {"speed", settings.speed ? Json(*settings.speed) : Json(nullptr)},
         {"writable", writable},
         {"used_by", std::move(used_by)},
@@ -275,14 +268,6 @@ std::optional<double> nullable_double(
     const double result = found->get<double>();
     if (!std::isfinite(result)) throw std::invalid_argument("Invalid field");
     return result;
-}
-
-std::optional<bool> nullable_bool(const Json& json, std::string_view name) {
-    const auto found = json.find(std::string(name));
-    if (found == json.end()) throw std::invalid_argument("Missing field");
-    if (found->is_null()) return std::nullopt;
-    if (!found->is_boolean()) throw std::invalid_argument("Invalid field");
-    return found->get<bool>();
 }
 
 std::optional<int> nullable_int(const Json& json, std::string_view name) {
@@ -417,11 +402,11 @@ struct VoiceUpdate {
     std::string display_name;
     std::string description;
     std::string elevenlabs_voice_id;
-    ElevenLabsVoiceSettings settings;
+    VoiceSettings settings;
 };
 
 VoiceUpdate parse_voice_update(const Json& json) {
-    if (!json.is_object() || json.size() != 8) {
+    if (!json.is_object() || json.size() != 4) {
         throw std::invalid_argument("Invalid voice");
     }
     return {
@@ -430,10 +415,6 @@ VoiceUpdate parse_voice_update(const Json& json) {
         .elevenlabs_voice_id =
             required<std::string>(json, "elevenlabs_voice_id"),
         .settings = {
-            .stability = nullable_double(json, "stability"),
-            .similarity_boost = nullable_double(json, "similarity_boost"),
-            .style = nullable_double(json, "style"),
-            .use_speaker_boost = nullable_bool(json, "use_speaker_boost"),
             .speed = nullable_double(json, "speed"),
         },
     };
@@ -1142,9 +1123,6 @@ void SettingsRoutes::install(httplib::Server& server) const {
                     {"output_format", output->output_format},
                     {"default_voice_id", default_voice->elevenlabs_voice_id},
                 };
-                if (!output->fish_audio) {
-                    result["api_key"] = api_keys->value(output->api_key_id);
-                }
                 set_json_response(response, 200, result);
             }
             response.set_header("Cache-Control", "no-store");

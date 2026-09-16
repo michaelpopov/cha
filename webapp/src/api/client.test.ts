@@ -375,10 +375,6 @@ describe('CHA API client', () => {
       display_name: 'Brian',
       description: 'Deep, resonant, comforting',
       elevenlabs_voice_id: 'brian-id',
-      stability: 0.4,
-      similarity_boost: null,
-      style: null,
-      use_speaker_boost: false,
       speed: 0.9,
     };
 
@@ -437,16 +433,15 @@ describe('CHA API client', () => {
 
   it('gets and saves voice output settings and resolves the default voice', async () => {
     const settings = {
-      url: 'https://api.elevenlabs.io/v1/text-to-speech',
-      model: 'eleven_multilingual_v2',
+      url: 'https://api.fish.audio/v1/tts',
+      model: 's2.1-pro',
       api_key: 'api_key_2',
-      output_format: 'mp3_44100_128',
+      output_format: 'mp3',
       default_voice: 'Brian',
     };
     const runtime = {
       url: settings.url,
       model: settings.model,
-      api_key: 'secret',
       output_format: settings.output_format,
       default_voice_id: 'eleven-voice-123',
     };
@@ -523,7 +518,7 @@ describe('CHA API client', () => {
           id: 'warm-narrator',
           display_name: 'Warm Narrator',
           elevenlabs_voice_id: 'eleven-voice-123',
-          settings: { stability: 0.45, speed: 0.95 },
+          settings: { speed: 0.95 },
         },
       }],
     };

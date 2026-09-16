@@ -434,7 +434,7 @@ register = "plainspoken"
 Unknown fields are rejected. `provider`, `style`, and `voice` are
 case-sensitive ID references. Character `reasoning_effort` and `web_search`
 override the selected provider's defaults. Omitting either inherits the
-provider value. Omitting `voice` uses the application-level ElevenLabs fallback
+provider value. Omitting `voice` uses the configured FishAudio default
 voice during playback. Tags must be nonempty strings after trimming, contain
 no control characters, and be unique case-insensitively.
 
@@ -841,44 +841,40 @@ To add a style, create its config, assign it in one or more global
 
 ### Voices
 
-Voices live at `system/voices/<voice-id>/config.toml`. There is no voice editor
-in the web interface yet; add or change them by exporting the workspace,
-editing the exported directory, validating it, and importing it again.
+Voices live at `system/voices/<voice-id>/config.toml`. Add or edit them in the
+web interface's voice settings, or export, edit, validate, and reimport the workspace.
 
 A minimal definition is:
 
 ```toml
-elevenlabs_voice_id = "JBFqnCBsd6RMkjVDRZzb"
+elevenlabs_voice_id = "fish-reference-id"
 ```
 
 A definition with all supported fields is:
 
 ```toml
 display_name = "Warm Narrator"
-elevenlabs_voice_id = "JBFqnCBsd6RMkjVDRZzb"
-stability = 0.5
-similarity_boost = 0.75
-style = 0.0
-use_speaker_boost = true
+description = "A warm, relaxed voice."
+elevenlabs_voice_id = "fish-reference-id"
 speed = 1.0
 ```
 
 | Field | Required/default | Meaning and constraints |
 | --- | --- | --- |
-| `display_name` | derived from ID | User-facing name reserved for future settings UI |
-| `elevenlabs_voice_id` | required | Nonempty ElevenLabs voice ID used in the request URL |
-| `stability` | omitted | Number from `0.0` through `1.0` |
-| `similarity_boost` | omitted | Number from `0.0` through `1.0` |
-| `style` | omitted | ElevenLabs style exaggeration from `0.0` through `1.0`; unrelated to CHA visual styles |
-| `use_speaker_boost` | omitted | Boolean speaker-similarity boost |
+| `display_name` | derived from ID | User-facing name |
+| `description` | omitted | Optional voice description |
+| `elevenlabs_voice_id` | required | Nonempty FishAudio reference ID; the field name is retained for compatibility |
 | `speed` | omitted | Number from `0.7` through `1.2`; `1.0` is normal speed |
 
-Only `elevenlabs_voice_id` is required. CHA sends `voice_settings` only when at
-least one optional setting is present, and sends only the fields present in the
-file. Absent values are left to the voice's stored or ElevenLabs service
-defaults; CHA does not manufacture defaults for them. API keys are vault
-settings; the synthesis model, output format, and endpoint are application
-settings. None belongs in a voice file.
+Only `elevenlabs_voice_id` is required. CHA sends an optional `speed` as FishAudio's
+`prosody.speed`; when omitted, FishAudio uses its default. Obsolete `stability`,
+`similarity_boost`, `style`, and `use_speaker_boost` fields are ignored with a
+warning once per process and removed when the voice is saved. API keys and voice
+output settings are vault settings. The endpoint must use HTTPS on `api.fish.audio`;
+the playable output formats are `mp3`, `wav`, and `opus`. Legacy format strings
+such as `mp3_44100_128` and `opus_48000_64` normalize to their container names on
+load and save; their encoded sample rate and bitrate are no longer used. Unsupported
+saved formats fall back to `mp3` with a warning, and new saves reject them.
 
 Assign the stable directory ID in a global character definition:
 
@@ -907,10 +903,11 @@ snapshot.
 ### Browser voice output cache
 
 Response playback uses the in-memory cache in
-`webapp/src/textToSpeech.ts`. Its key contains the ElevenLabs request URL and
-JSON body, so text, voice ID, model, output format, and voice settings all
+`webapp/src/textToSpeech.ts`. Its key contains the configured FishAudio endpoint,
+model, output format, and JSON body, so text, voice ID, and voice settings all
 participate. A repeated playback of the same request reuses its `Blob` rather
-than calling ElevenLabs again. The cache retains at most 256 MiB and evicts the
+than calling FishAudio again. Requests go through CHA's voice output proxy, which
+keeps the API key on the server. The cache retains at most 256 MiB and evicts the
 oldest inserted clips when necessary. It is not persisted and is cleared when
 the web application reloads.
 
@@ -925,13 +922,14 @@ When native voice output is available, `ChatScreen` shows an automatic-audio
 speaker toggle immediately before the Russian transliteration toggle. Enabling
 it queues every nonempty completed character response in the raw session
 transcript, including covered responses. A small session-local worker pool
-keeps at most three preparation requests active. Responses completed after the
+keeps at most two preparation requests active, leaving one synthesis slot for
+playback. Responses completed after the
 toggle was enabled are inserted ahead of historical work still waiting, while
 the shared in-flight map prevents a simultaneous playback from duplicating the
 same request.
 
 Disabling the toggle or changing sessions drops preparation work that has not
-started. Up to three active requests finish and remain cached. The automatic
+started. Up to two active preparation requests finish and remain cached. The automatic
 mode is session-local, but the completed-audio cache has application lifetime.
 Individual request failures are reported without stopping the remaining queue.
 

@@ -28,7 +28,6 @@ import {
   type TextToSpeechVoice,
   useTextToSpeechConfiguration,
 } from '../textToSpeech';
-import { isFishAudioUrl } from '../textToSpeechRequest';
 import {
   appendTranscription,
   VoiceInputSession,
@@ -82,7 +81,7 @@ function voiceInputMessage(failure: unknown): string {
 // first time it scrolled itself.
 const followSlack = 24;
 const allCharactersTarget = '*';
-const speechCacheConcurrency = 3;
+const speechCacheConcurrency = 2;
 
 interface SpeechCacheItem {
   text: string;
@@ -439,9 +438,8 @@ export function ChatScreen({
   }, [conversationKey]);
 
   function pumpSpeechCache(run: SpeechCacheRun) {
-    const concurrency = isFishAudioUrl(run.configuration.baseUrl) ? 2 : speechCacheConcurrency;
     while (speechCacheRun.current === run
-      && run.active < concurrency
+      && run.active < speechCacheConcurrency
       && run.queue.length > 0) {
       const item = run.queue.shift();
       if (!item) break;

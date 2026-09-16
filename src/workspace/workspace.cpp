@@ -474,14 +474,13 @@ WorkspaceVoiceOutput load_voice_output(const std::filesystem::path& path) {
         .output_format = required_string(table, path, "output_format"),
         .default_voice = required_string(table, path, "default_voice"),
     };
-    const auto endpoint = parse_voice_output_endpoint(result.url);
-    result.url = endpoint.url;
-    result.fish_audio = endpoint.fish_audio;
+    result.url = parse_voice_output_endpoint(result.url);
     result.model = normalize_voice_output_model(result.model);
-    if (!valid_voice_input_url(result.url)) {
-        throw std::runtime_error(
-            "Voice output config '" + utf8_path(path)
-            + "' requires an absolute HTTP or HTTPS URL");
+    try {
+        result.output_format = normalize_voice_output_format(result.output_format);
+    } catch (const std::invalid_argument&) {
+        log_warn("Ignoring unsupported voice output format in " + utf8_path(path) + "; using mp3");
+        result.output_format = "mp3";
     }
     return result;
 }
@@ -676,6 +675,17 @@ WorkspaceVoice load_voice(const std::filesystem::path& directory) {
         "display_name", "description", "elevenlabs_voice_id", "stability",
         "similarity_boost", "style", "use_speaker_boost", "speed"};
     reject_unknown_fields(table, path, fields, "Voice config");
+    for (const std::string_view obsolete : {
+             "stability", "similarity_boost", "style", "use_speaker_boost"}) {
+        if (table.contains(obsolete)) {
+            static std::once_flag warning;
+            std::call_once(warning, [] {
+                log_warn("Ignoring obsolete voice settings: stability, similarity_boost, "
+                    "style, use_speaker_boost. Saving a voice removes these settings.");
+            });
+            break;
+        }
+    }
     WorkspaceVoice loaded{
         .id = id,
         .label = optional_value<std::string>(
@@ -685,13 +695,6 @@ WorkspaceVoice load_voice(const std::filesystem::path& directory) {
         .elevenlabs_voice_id = required_string(
             table, path, "elevenlabs_voice_id"),
         .settings = {
-            .stability = optional_bounded_number(
-                table, path, "stability", 0.0, 1.0),
-            .similarity_boost = optional_bounded_number(
-                table, path, "similarity_boost", 0.0, 1.0),
-            .style = optional_bounded_number(table, path, "style", 0.0, 1.0),
-            .use_speaker_boost = optional_value<bool>(
-                table, path, "use_speaker_boost", "a boolean"),
             .speed = optional_bounded_number(table, path, "speed", 0.7, 1.2),
         },
     };
@@ -2070,7 +2073,7 @@ void Workspace::write_voice(
     std::string_view display_name,
     std::string_view description,
     std::string_view elevenlabs_voice_id,
-    const ElevenLabsVoiceSettings& settings) const {
+    const VoiceSettings& settings) const {
     const auto path = voice_config_paths_.find(std::string(voice_id));
     if (path == voice_config_paths_.end()) {
         throw std::runtime_error(
@@ -2091,14 +2094,6 @@ void Workspace::write_voice(
         table.insert("description", std::string(description));
     }
     table.insert("elevenlabs_voice_id", std::string(elevenlabs_voice_id));
-    if (settings.stability) table.insert("stability", *settings.stability);
-    if (settings.similarity_boost) {
-        table.insert("similarity_boost", *settings.similarity_boost);
-    }
-    if (settings.style) table.insert("style", *settings.style);
-    if (settings.use_speaker_boost) {
-        table.insert("use_speaker_boost", *settings.use_speaker_boost);
-    }
     if (settings.speed) table.insert("speed", *settings.speed);
     write_toml_file(path->second, table);
     try {
@@ -2193,14 +2188,12 @@ void Workspace::write_voice_input(const WorkspaceVoiceInput& settings) const {
 }
 
 void Workspace::write_voice_output(const WorkspaceVoiceOutput& settings) const {
-    const std::string url = parse_voice_output_endpoint(settings.url).url;
+    const std::string url = parse_voice_output_endpoint(settings.url);
     const std::string model = normalize_voice_output_model(settings.model);
+    const std::string format = normalize_voice_output_format(settings.output_format);
     const std::filesystem::path directory = root_ / "system" / "voice-output";
     const std::filesystem::path path = directory / "config.toml";
-    if (settings.url.empty() || settings.model.empty()
-        || settings.api_key_id.empty() || settings.output_format.empty()
-        || settings.default_voice.empty()
-        || !valid_voice_input_url(url)) {
+    if (settings.api_key_id.empty() || settings.default_voice.empty()) {
         throw std::invalid_argument("Invalid voice output settings");
     }
     if (std::filesystem::exists(directory)) {
@@ -2212,7 +2205,7 @@ void Workspace::write_voice_output(const WorkspaceVoiceOutput& settings) const {
     table.insert("url", url);
     table.insert("model", model);
     table.insert("api_key", settings.api_key_id);
-    table.insert("output_format", settings.output_format);
+    table.insert("output_format", format);
     table.insert("default_voice", settings.default_voice);
     write_toml_file(path, table);
 }

@@ -1515,7 +1515,7 @@ WorkspaceConfigEditResult WorkspaceConfigStore::apply_voice_update(
     std::string_view display_name,
     std::string_view description,
     std::string_view elevenlabs_voice_id,
-    const ElevenLabsVoiceSettings& settings) {
+    const VoiceSettings& settings) {
     return impl_->edit([&](const Workspace& workspace) {
         std::vector<std::string> affected =
             forums_using_voice(workspace, voice_id);

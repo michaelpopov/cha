@@ -1092,9 +1092,6 @@ int ApplicationRuntime::start(int port_override) {
             if (workspace->voice_input()) {
                 result.push_back(workspace->voice_input()->url);
             }
-            if (workspace->voice_output()) {
-                result.push_back(workspace->voice_output()->url);
-            }
             return result;
         });
     assets.install(*server);

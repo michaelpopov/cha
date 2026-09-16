@@ -96,8 +96,6 @@ TEST(WebProtocol, SerializesSpecifiedSuccessListingAndErrorBodies) {
                 .display_name = "Warm Narrator",
                 .elevenlabs_voice_id = "eleven-voice-123",
                 .settings = {
-                    .stability = 0.45,
-                    .use_speaker_boost = true,
                     .speed = 0.95,
                 },
             },
@@ -107,8 +105,6 @@ TEST(WebProtocol, SerializesSpecifiedSuccessListingAndErrorBodies) {
             {"display_name", "Warm Narrator"},
             {"elevenlabs_voice_id", "eleven-voice-123"},
             {"settings", {
-                {"stability", 0.45},
-                {"use_speaker_boost", true},
                 {"speed", 0.95},
             }},
         }));

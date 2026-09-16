@@ -1249,15 +1249,12 @@ export interface components {
             text_color: "normal" | "muted" | "accent";
         };
         SpeechVoiceSettings: {
-            stability?: number;
-            similarity_boost?: number;
-            style?: number;
-            use_speaker_boost?: boolean;
             speed?: number;
         };
         SpeechVoice: {
             id: components["schemas"]["Identifier"];
             display_name: string;
+            /** @description FishAudio reference ID; field name retained for compatibility. */
             elevenlabs_voice_id: string;
             settings: components["schemas"]["SpeechVoiceSettings"];
         };
@@ -1444,27 +1441,22 @@ export interface components {
         VoiceUpdate: {
             display_name: string;
             description: string;
+            /** @description FishAudio reference ID; field name retained for compatibility. */
             elevenlabs_voice_id: string;
-            stability: number | null;
-            similarity_boost: number | null;
-            style: number | null;
-            use_speaker_boost: boolean | null;
             speed: number | null;
         };
         CreateVoiceRequest: {
             display_name: string;
             description: string;
+            /** @description FishAudio reference ID; field name retained for compatibility. */
             elevenlabs_voice_id: string;
         };
         VoiceDetail: {
             id: components["schemas"]["Identifier"];
             display_name: string;
             description: string;
+            /** @description FishAudio reference ID; field name retained for compatibility. */
             elevenlabs_voice_id: string;
-            stability: number | null;
-            similarity_boost: number | null;
-            style: number | null;
-            use_speaker_boost: boolean | null;
             speed: number | null;
             writable: boolean;
             used_by: string[];
@@ -1495,7 +1487,6 @@ export interface components {
         VoiceOutputRuntime: {
             url: string;
             model: string;
-            api_key?: string;
             output_format: string;
             default_voice_id: string;
         };

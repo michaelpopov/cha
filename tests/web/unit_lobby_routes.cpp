@@ -225,7 +225,7 @@ TEST(LobbyRoutes, ServesBootstrapDiscoveryAndHealthWithoutSessionDataInHealth) {
         {"id", "warm-narrator"},
         {"display_name", "Warm Narrator"},
         {"elevenlabs_voice_id", "eleven-voice-123"},
-        {"settings", {{"stability", 0.45}, {"speed", 0.95}}},
+        {"settings", {{"speed", 0.95}}},
     }));
     EXPECT_EQ(bootstrap_body["personas"][0]["id"], "builtin-guest");
     EXPECT_EQ(bootstrap_body["personas"][1]["id"], "reader");

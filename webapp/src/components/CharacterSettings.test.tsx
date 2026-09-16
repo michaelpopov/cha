@@ -111,8 +111,8 @@ describe('character settings screen', () => {
       listVoices: async () => [voiceDetailFixture],
       getVoiceOutputRuntime: async () => ({
         ...voiceOutputRuntimeFixture,
-        url: 'https://example.com/speech',
-        model: 'multilingual',
+        url: 'https://api.fish.audio/v1/tts',
+        model: 's2.1-pro',
         output_format: 'mp3',
       }),
     }));
@@ -127,15 +127,12 @@ describe('character settings screen', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Play preview' }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      `https://example.com/speech/${voiceDetailFixture.elevenlabs_voice_id}?output_format=mp3`,
+      '/api/v1/voice-output/audio',
       expect.objectContaining({
         body: JSON.stringify({
           text: 'Read this draft.',
-          model_id: 'multilingual',
-          voice_settings: {
-            stability: 0.45,
-            style: 0.2,
-            use_speaker_boost: true,
+          reference_id: voiceDetailFixture.elevenlabs_voice_id,
+          settings: {
             speed: 0.95,
           },
         }),

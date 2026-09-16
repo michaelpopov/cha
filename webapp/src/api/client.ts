@@ -231,11 +231,6 @@ function isSpeechVoice(value: unknown): value is SpeechVoice {
     && typeof value.elevenlabs_voice_id === 'string'
     && value.elevenlabs_voice_id.length > 0
     && isRecord(value.settings)
-    && isOptionalBoundedNumber(value.settings.stability, 0, 1)
-    && isOptionalBoundedNumber(value.settings.similarity_boost, 0, 1)
-    && isOptionalBoundedNumber(value.settings.style, 0, 1)
-    && (value.settings.use_speaker_boost === undefined
-      || typeof value.settings.use_speaker_boost === 'boolean')
     && isOptionalBoundedNumber(value.settings.speed, 0.7, 1.2);
 }
 
@@ -378,11 +373,6 @@ function isVoiceDetail(value: unknown): value is VoiceDetail {
     && typeof value.description === 'string'
     && typeof value.elevenlabs_voice_id === 'string'
     && value.elevenlabs_voice_id.length > 0
-    && isNullableBoundedNumber(value.stability, 0, 1)
-    && isNullableBoundedNumber(value.similarity_boost, 0, 1)
-    && isNullableBoundedNumber(value.style, 0, 1)
-    && (value.use_speaker_boost === null
-      || typeof value.use_speaker_boost === 'boolean')
     && isNullableBoundedNumber(value.speed, 0.7, 1.2)
     && typeof value.writable === 'boolean'
     && Array.isArray(value.used_by)
@@ -423,7 +413,6 @@ function isVoiceOutputRuntime(value: unknown): value is VoiceOutputRuntime {
   return isRecord(value)
     && typeof value.url === 'string' && value.url.length > 0
     && typeof value.model === 'string' && value.model.length > 0
-    && (value.api_key === undefined || (typeof value.api_key === 'string' && value.api_key.length > 0))
     && typeof value.output_format === 'string' && value.output_format.length > 0
     && typeof value.default_voice_id === 'string'
     && value.default_voice_id.length > 0;

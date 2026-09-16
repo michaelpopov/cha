@@ -191,7 +191,6 @@ TEST(SessionProjection, IncludesTheCharactersResolvedSpeechVoice) {
         .display_name = "Warm Narrator",
         .elevenlabs_voice_id = "eleven-voice-123",
         .settings = {
-            .stability = 0.45,
             .speed = 0.95,
         },
     }));

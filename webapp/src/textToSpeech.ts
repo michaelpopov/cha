@@ -1,25 +1,27 @@
 import { useEffect, useState } from 'react';
 
-import type { ChaClient } from './api/client';
+import type { ChaClient, VoiceUpdate } from './api/client';
 import { audioRequest, type AudioRequest } from './textToSpeechRequest';
 
 export interface TextToSpeechConfiguration {
   baseUrl: string;
   voiceId: string;
   outputFormat: string;
-  apiKey: string;
   model: string;
 }
 
 export interface TextToSpeechVoice {
-  // Legacy field name; the ID belongs to the configured speech provider.
+  // Legacy field name; contains a FishAudio reference ID.
   elevenlabs_voice_id: string;
   settings: {
-    stability?: number;
-    similarity_boost?: number;
-    style?: number;
-    use_speaker_boost?: boolean;
     speed?: number;
+  };
+}
+
+export function speechVoice(voice: Pick<VoiceUpdate, 'elevenlabs_voice_id' | 'speed'>): TextToSpeechVoice {
+  return {
+    elevenlabs_voice_id: voice.elevenlabs_voice_id,
+    settings: voice.speed === null ? {} : { speed: voice.speed },
   };
 }
 
@@ -38,7 +40,6 @@ export function useTextToSpeechConfiguration(
           baseUrl: loaded.url,
           voiceId: loaded.default_voice_id,
           outputFormat: loaded.output_format,
-          apiKey: loaded.api_key ?? '',
           model: loaded.model,
         });
       },
@@ -61,8 +62,8 @@ const audioCache = new Map<string, Blob>();
 
 interface PendingAudio {
   promise: Promise<Blob>;
-  prioritize?: () => void;
-  retainPrefetch?: (signal?: AbortSignal) => void;
+  prioritize: () => void;
+  retainPrefetch: (signal?: AbortSignal) => void;
 }
 
 interface FishAudioJob {
@@ -90,8 +91,6 @@ function pumpFishAudio() {
 }
 
 function requestAudio(request: AudioRequest, signal?: AbortSignal, prefetch = false): PendingAudio {
-  if (request.provider !== 'FishAudio') return { promise: fetchAudio(request, signal) };
-
   let job!: FishAudioJob;
   let transfer!: PendingAudio;
   const prefetchOwners = new Set<AbortSignal | undefined>();
@@ -181,8 +180,8 @@ async function fetchAudio(request: AudioRequest, signal?: AbortSignal): Promise<
       method: 'POST', headers: request.headers, body: request.body, signal,
     });
     if (response.ok) return response.blob();
-    const error = await speechError(response, request.provider);
-    if (request.provider !== 'FishAudio' || response.status !== 503
+    const error = await speechError(response);
+    if (response.status !== 503
       || error.code !== 'speech_busy' || attempt >= 3) throw error;
     await waitForSpeechRetry(signal);
   }
@@ -210,8 +209,8 @@ function cachedOrPendingAudio(request: AudioRequest, prefetch = false, signal?: 
 
   const pending = pendingCachedAudio.get(request.cacheKey);
   if (pending) {
-    if (!prefetch) pending.prioritize?.();
-    else pending.retainPrefetch?.(signal);
+    if (!prefetch) pending.prioritize();
+    else pending.retainPrefetch(signal);
     return pending.promise;
   }
 
@@ -226,7 +225,7 @@ function cachedOrPendingAudio(request: AudioRequest, prefetch = false, signal?: 
     if (pendingCachedAudio.get(request.cacheKey) === transfer) pendingCachedAudio.delete(request.cacheKey);
   });
   pendingCachedAudio.set(request.cacheKey, transfer);
-  if (prefetch) transfer.retainPrefetch?.(signal);
+  if (prefetch) transfer.retainPrefetch(signal);
   return transfer.promise;
 }
 
@@ -291,24 +290,18 @@ export class TextToSpeechSession {
   }
 }
 
-async function speechError(response: Response, provider: string): Promise<TextToSpeechError> {
-  const fallback = `${provider} request failed (HTTP ${response.status}).`;
+async function speechError(response: Response): Promise<TextToSpeechError> {
+  const fallback = `FishAudio request failed (HTTP ${response.status}).`;
   try {
     const parsed: unknown = await response.json();
     if (!parsed || typeof parsed !== 'object') return new TextToSpeechError(fallback);
     const root = parsed as Record<string, unknown>;
-    const detailValue = root.detail;
-    if (typeof detailValue === 'string') {
-      return new TextToSpeechError(detailValue.trim()
-        ? `${provider}: ${detailValue.trim()} (HTTP ${response.status})`
-        : fallback);
-    }
-    const nested = detailValue ?? root.error;
+    const nested = root.error;
     const detail = nested && typeof nested === 'object'
       ? nested as Record<string, unknown> : root;
     const message = typeof detail.message === 'string' ? detail.message.trim() : '';
     return new TextToSpeechError(
-      message ? `${provider}: ${message} (HTTP ${response.status})` : fallback,
+      message ? `FishAudio: ${message} (HTTP ${response.status})` : fallback,
       typeof detail.code === 'string' ? detail.code : undefined,
     );
   } catch {

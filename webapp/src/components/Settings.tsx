@@ -27,10 +27,9 @@ import {
 import {
   TextToSpeechError,
   TextToSpeechSession,
-  type TextToSpeechVoice,
+  speechVoice,
   useTextToSpeechConfiguration,
 } from '../textToSpeech';
-import { isFishAudioUrl, speechModelForEndpoint } from '../textToSpeechRequest';
 import { validateBootstrap } from '../state/bootstrap';
 import { reloadForVoiceSettings } from '../state/voiceSettingsReload';
 import type { AppAction, AppState } from '../state/view';
@@ -305,16 +304,11 @@ export function DownloadVaultScreen({ client, dispatch, sessionReport }: Setting
   );
 }
 
-// The page may only connect to the voice endpoint origins configured when it
-// loaded, so a merge that changes them needs a reload before voice works.
-async function voiceEndpointOrigins(client: ChaClient): Promise<string> {
-  const [input, output] = await Promise.all([
-    client.getVoiceInputSettings(),
-    client.getVoiceOutputSettings(),
-  ]);
-  return [input?.url, output?.url]
-    .map((url) => (url ? new URL(url).origin : ''))
-    .join(' ');
+// Transcription connects directly from the browser, so changing its origin
+// requires reloading the page with the updated content security policy.
+async function voiceInputOrigin(client: ChaClient): Promise<string> {
+  const input = await client.getVoiceInputSettings();
+  return input ? new URL(input.url).origin : '';
 }
 
 export function MergeVaultScreen({ client, dispatch, sessionReport }: SettingsScreenProps) {
@@ -355,7 +349,7 @@ export function MergeVaultScreen({ client, dispatch, sessionReport }: SettingsSc
     setComplete(false);
     if (password) setPasswordError(null);
     try {
-      const voiceBefore = await voiceEndpointOrigins(client).catch(() => null);
+      const voiceBefore = await voiceInputOrigin(client).catch(() => null);
       await client.mergeVault(source, password);
       setPasswordPrompt(false);
       setPasswordError(null);
@@ -367,8 +361,8 @@ export function MergeVaultScreen({ client, dispatch, sessionReport }: SettingsSc
       } catch {
         // Discovery refresh is non-critical; merge already succeeded.
       }
-      // When either set of origins is unknown, offering a reload is harmless.
-      const voiceChanged = await voiceEndpointOrigins(client).then(
+      // When the transcription origin is unknown, offering a reload is harmless.
+      const voiceChanged = await voiceInputOrigin(client).then(
         (voiceAfter) => voiceBefore === null || voiceAfter !== voiceBefore,
         () => true,
       );
@@ -1314,10 +1308,10 @@ const defaultVoiceInput: VoiceInputSettings = {
 
 function defaultVoiceOutput(voices: VoiceDetail[]): VoiceOutputSettings {
   return {
-    url: 'https://api.elevenlabs.io/v1/text-to-speech',
-    model: 'eleven_multilingual_v2',
+    url: 'https://api.fish.audio/v1/tts',
+    model: 's2.1-pro',
     api_key: '',
-    output_format: 'mp3_44100_128',
+    output_format: 'mp3',
     default_voice: voices[0]?.display_name ?? '',
   };
 }
@@ -1329,8 +1323,6 @@ export function VoiceSettingsScreen({ client, dispatch, sessionReport }: Setting
   const [savedOutput, setSavedOutput] =
     useState<VoiceOutputSettings | null | undefined>(undefined);
   const [output, setOutput] = useState<VoiceOutputSettings>(defaultVoiceOutput([]));
-  const outputEndpoint = useRef(output.url);
-  const outputModelEdited = useRef(false);
   const [keys, setKeys] = useState<ApiKeyDetail[] | null>(null);
   const [voices, setVoices] = useState<VoiceDetail[] | null>(null);
   const [saving, setSaving] = useState(false);
@@ -1357,8 +1349,6 @@ export function VoiceSettingsScreen({ client, dispatch, sessionReport }: Setting
         setInput(inputSettings ?? defaultVoiceInput);
         setSavedOutput(outputSettings);
         setOutput(outputSettings ?? defaultVoiceOutput(loadedVoices));
-        outputEndpoint.current = outputSettings?.url ?? defaultVoiceOutput(loadedVoices).url;
-        outputModelEdited.current = false;
         setKeys(loadedKeys);
         setVoices(loadedVoices);
       },
@@ -1383,13 +1373,6 @@ export function VoiceSettingsScreen({ client, dispatch, sessionReport }: Setting
     || output.api_key !== outputBaseline.api_key
     || output.output_format !== outputBaseline.output_format
     || output.default_voice !== outputBaseline.default_voice;
-
-  function finishOutputEndpoint() {
-    if (!outputModelEdited.current) {
-      setOutput({ ...output, model: speechModelForEndpoint(outputEndpoint.current, output.url, output.model) });
-    }
-    outputEndpoint.current = output.url;
-  }
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -1416,15 +1399,12 @@ export function VoiceSettingsScreen({ client, dispatch, sessionReport }: Setting
           default_voice: output.default_voice,
         }),
       ]);
-      const endpointOriginChanged = savedInput == null || savedOutput == null
-        || new URL(savedInput.url).origin !== new URL(updatedInput.url).origin
-        || new URL(savedOutput.url).origin !== new URL(updatedOutput.url).origin;
+      const endpointOriginChanged = savedInput == null
+        || new URL(savedInput.url).origin !== new URL(updatedInput.url).origin;
       setSavedInput(updatedInput);
       setInput(updatedInput);
       setSavedOutput(updatedOutput);
       setOutput(updatedOutput);
-      outputEndpoint.current = updatedOutput.url;
-      outputModelEdited.current = false;
       setMessage('Voice settings saved.');
       if (endpointOriginChanged) reloadForVoiceSettings();
     } catch (failure: unknown) {
@@ -1447,8 +1427,8 @@ export function VoiceSettingsScreen({ client, dispatch, sessionReport }: Setting
           <label>Input API key name<select className="cha-form-control" onChange={(event) => setInput({ ...input, api_key: event.target.value })} value={input.api_key}><option value="">Select an API key</option>{keys.map((key) => <option key={key.id} value={key.id}>{key.display_name}</option>)}</select></label>
           <label>Input delay<select className="cha-form-control" onChange={(event) => setInput({ ...input, delay: event.target.value as VoiceInputSettings['delay'] })} value={input.delay}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="xhigh">Extra high</option></select></label>
           <label>Input prompt<textarea className="cha-form-control" onChange={(event) => setInput({ ...input, prompt: event.target.value })} rows={4} value={input.prompt} /></label>
-          <label>Output URL endpoint<input className="cha-form-control" onBlur={finishOutputEndpoint} onChange={(event) => setOutput({ ...output, url: event.target.value })} type="url" value={output.url} /></label>
-          <label>Output model name<input className="cha-form-control" onChange={(event) => { outputModelEdited.current = true; setOutput({ ...output, model: event.target.value }); }} value={output.model} /></label>
+          <label>Output URL endpoint<input className="cha-form-control" onChange={(event) => setOutput({ ...output, url: event.target.value })} type="url" value={output.url} /></label>
+          <label>Output model name<input className="cha-form-control" onChange={(event) => setOutput({ ...output, model: event.target.value })} value={output.model} /></label>
           <label>Output API key name<select className="cha-form-control" onChange={(event) => setOutput({ ...output, api_key: event.target.value })} value={output.api_key}><option value="">Select an API key</option>{keys.map((key) => <option key={key.id} value={key.id}>{key.display_name}</option>)}</select></label>
           <label>Output format<input className="cha-form-control" onChange={(event) => setOutput({ ...output, output_format: event.target.value })} value={output.output_format} /></label>
           <label>Default voice<select className="cha-form-control" onChange={(event) => setOutput({ ...output, default_voice: event.target.value })} value={output.default_voice}><option value="">Select a voice</option>{voices.map((voice) => <option key={voice.id} value={voice.display_name}>{voice.display_name}</option>)}</select></label>
@@ -1456,7 +1436,7 @@ export function VoiceSettingsScreen({ client, dispatch, sessionReport }: Setting
           {voices.length === 0 && <p className="cha-error-message" role="alert">Add a voice before configuring voice output.</p>}
           {message && <p className="cha-state-message" role="status">{message}</p>}
           {error && <p className="cha-error-message" role="alert">{error}</p>}
-          <div className="cha-settings-form-actions"><button className="cha-button cha-button-ghost" disabled={!dirty || saving} onClick={() => { setInput(inputBaseline); setOutput(outputBaseline); outputEndpoint.current = outputBaseline.url; outputModelEdited.current = false; setMessage(null); }} type="button">Reset</button><button className="cha-button cha-button-primary" disabled={!dirty || !input.url.trim() || !input.model.trim() || !input.api_key || !output.url.trim() || !output.model.trim() || !output.api_key || !output.output_format.trim() || !output.default_voice || saving} type="submit">{saving ? 'Saving…' : 'Save voice settings'}</button></div>
+          <div className="cha-settings-form-actions"><button className="cha-button cha-button-ghost" disabled={!dirty || saving} onClick={() => { setInput(inputBaseline); setOutput(outputBaseline); setMessage(null); }} type="button">Reset</button><button className="cha-button cha-button-primary" disabled={!dirty || !input.url.trim() || !input.model.trim() || !input.api_key || !output.url.trim() || !output.model.trim() || !output.api_key || !output.output_format.trim() || !output.default_voice || saving} type="submit">{saving ? 'Saving…' : 'Save voice settings'}</button></div>
         </form>
       )}
     </section>
@@ -1466,20 +1446,20 @@ export function VoiceSettingsScreen({ client, dispatch, sessionReport }: Setting
 export function NewVoiceScreen({ client, dispatch, sessionReport }: SettingsScreenProps) {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  const [elevenLabsVoiceId, setElevenLabsVoiceId] = useState('');
+  const [voiceReferenceId, setVoiceReferenceId] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!name.trim() || !description.trim() || !elevenLabsVoiceId.trim() || saving) return;
+    if (!name.trim() || !description.trim() || !voiceReferenceId.trim() || saving) return;
     setSaving(true);
     setError(null);
     try {
       const created = await client.createVoice({
         display_name: name.trim(),
         description: description.trim(),
-        elevenlabs_voice_id: elevenLabsVoiceId.trim(),
+        elevenlabs_voice_id: voiceReferenceId.trim(),
       });
       dispatch({
         type: 'inspect-voice',
@@ -1499,9 +1479,9 @@ export function NewVoiceScreen({ client, dispatch, sessionReport }: SettingsScre
       <form className="cha-settings-form" onSubmit={(event) => void save(event)}>
         <TransliteratingInput autoFocus className="cha-form-control" disabled={saving} id="cha-new-voice-name" label="Name" onValueChange={setName} placeholder="e.g. Brian" value={name} />
         <label htmlFor="cha-new-voice-description">Description<textarea className="cha-form-control cha-voice-description" disabled={saving} id="cha-new-voice-description" onChange={(event) => setDescription(event.target.value)} placeholder="Describe how this voice sounds" value={description} /></label>
-        <label htmlFor="cha-new-elevenlabs-voice-id">Voice ID<input className="cha-form-control" disabled={saving} id="cha-new-elevenlabs-voice-id" onChange={(event) => setElevenLabsVoiceId(event.target.value)} value={elevenLabsVoiceId} /></label>
+        <label htmlFor="cha-new-voice-reference-id">Voice ID<input className="cha-form-control" disabled={saving} id="cha-new-voice-reference-id" onChange={(event) => setVoiceReferenceId(event.target.value)} value={voiceReferenceId} /></label>
         {error && <p className="cha-error-message" role="alert">{error}</p>}
-        <div className="cha-settings-form-actions"><button className="cha-button cha-button-ghost" disabled={saving} onClick={() => dispatch({ type: 'show-settings-voices' })} type="button">Cancel</button><button className="cha-button cha-button-primary" disabled={!name.trim() || !description.trim() || !elevenLabsVoiceId.trim() || saving} type="submit">{saving ? 'Registering…' : 'Register voice'}</button></div>
+        <div className="cha-settings-form-actions"><button className="cha-button cha-button-ghost" disabled={saving} onClick={() => dispatch({ type: 'show-settings-voices' })} type="button">Cancel</button><button className="cha-button cha-button-primary" disabled={!name.trim() || !description.trim() || !voiceReferenceId.trim() || saving} type="submit">{saving ? 'Registering…' : 'Register voice'}</button></div>
       </form>
     </section>
   );
@@ -1510,18 +1490,6 @@ export function NewVoiceScreen({ client, dispatch, sessionReport }: SettingsScre
 function voiceUpdate(detail: VoiceDetail): VoiceUpdate {
   const { id: _id, used_by: _usedBy, writable: _writable, ...update } = detail;
   return update;
-}
-
-function previewVoice(update: VoiceUpdate): TextToSpeechVoice {
-  const settings: TextToSpeechVoice['settings'] = {};
-  if (update.stability !== null) settings.stability = update.stability;
-  if (update.similarity_boost !== null) settings.similarity_boost = update.similarity_boost;
-  if (update.style !== null) settings.style = update.style;
-  if (update.use_speaker_boost !== null) {
-    settings.use_speaker_boost = update.use_speaker_boost;
-  }
-  if (update.speed !== null) settings.speed = update.speed;
-  return { elevenlabs_voice_id: update.elevenlabs_voice_id, settings };
 }
 
 function optionalNumber(value: string): number | null {
@@ -1554,7 +1522,6 @@ export function VoiceScreen({
   const [revision, setRevision] = useState(0);
   const preview = useRef<TextToSpeechSession | null>(null);
   const speechConfiguration = useTextToSpeechConfiguration(client);
-  const elevenLabs = speechConfiguration !== null && !isFishAudioUrl(speechConfiguration.baseUrl);
 
   useEffect(() => () => preview.current?.stop(), []);
   useEffect(() => {
@@ -1604,7 +1571,7 @@ export function VoiceScreen({
     setPreviewError(null);
     const session = new TextToSpeechSession(
       speechConfiguration,
-      previewVoice(draft),
+      speechVoice(draft),
       previewText.trim(),
       () => {
         if (preview.current === session) preview.current = null;
@@ -1668,17 +1635,11 @@ export function VoiceScreen({
       {detail && draft && (
         <form className="cha-settings-form cha-voice-settings-form" onSubmit={(event) => void save(event)}>
           <label htmlFor="cha-voice-description">Description<textarea className="cha-form-control cha-voice-description" disabled={disabled} id="cha-voice-description" onChange={(event) => change('description', event.target.value)} value={draft.description} /></label>
-          <label htmlFor="cha-elevenlabs-voice-id">Voice ID<input className="cha-form-control" disabled={disabled} id="cha-elevenlabs-voice-id" onChange={(event) => change('elevenlabs_voice_id', event.target.value)} value={draft.elevenlabs_voice_id} /></label>
+          <label htmlFor="cha-voice-reference-id">Voice ID<input className="cha-form-control" disabled={disabled} id="cha-voice-reference-id" onChange={(event) => change('elevenlabs_voice_id', event.target.value)} value={draft.elevenlabs_voice_id} /></label>
           <h2 className="cha-settings-section-title">Delivery</h2>
           <div className="cha-settings-form-grid">
-            {elevenLabs && <>
-              <label>Stability <span>0–1</span><input className="cha-form-control" disabled={disabled} max="1" min="0" onChange={(event) => change('stability', optionalNumber(event.target.value))} step="0.01" type="number" value={draft.stability ?? ''} /></label>
-              <label>Similarity boost <span>0–1</span><input className="cha-form-control" disabled={disabled} max="1" min="0" onChange={(event) => change('similarity_boost', optionalNumber(event.target.value))} placeholder="ElevenLabs default" step="0.01" type="number" value={draft.similarity_boost ?? ''} /></label>
-              <label>Style exaggeration <span>0–1</span><input className="cha-form-control" disabled={disabled} max="1" min="0" onChange={(event) => change('style', optionalNumber(event.target.value))} step="0.01" type="number" value={draft.style ?? ''} /></label>
-            </>}
             <label>Speed <span>0.7–1.2</span><input className="cha-form-control" disabled={disabled} max="1.2" min="0.7" onChange={(event) => change('speed', optionalNumber(event.target.value))} step="0.01" type="number" value={draft.speed ?? ''} /></label>
           </div>
-          {elevenLabs && <label>Speaker boost<select className="cha-form-control" disabled={disabled} onChange={(event) => change('use_speaker_boost', event.target.value === '' ? null : event.target.value === 'true')} value={draft.use_speaker_boost === null ? '' : String(draft.use_speaker_boost)}><option value="">ElevenLabs default</option><option value="true">On</option><option value="false">Off</option></select></label>}
           <h2 className="cha-settings-section-title">Preview</h2>
           <label htmlFor="cha-voice-preview-text">Text to speak<textarea className="cha-form-control cha-voice-preview-text" id="cha-voice-preview-text" onChange={(event) => setPreviewText(event.target.value)} value={previewText} /></label>
           {previewError && <p className="cha-error-message" role="alert">{previewError}</p>}

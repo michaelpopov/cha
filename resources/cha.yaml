@@ -2282,20 +2282,6 @@ components:
       type: object
       additionalProperties: false
       properties:
-        stability:
-          type: number
-          minimum: 0
-          maximum: 1
-        similarity_boost:
-          type: number
-          minimum: 0
-          maximum: 1
-        style:
-          type: number
-          minimum: 0
-          maximum: 1
-        use_speaker_boost:
-          type: boolean
         speed:
           type: number
           minimum: 0.7
@@ -2311,6 +2297,7 @@ components:
         display_name:
           type: string
         elevenlabs_voice_id:
+          description: FishAudio reference ID; field name retained for compatibility.
           type: string
         settings:
           $ref: "#/components/schemas/SpeechVoiceSettings"
@@ -2790,28 +2777,15 @@ components:
     VoiceUpdate:
       type: object
       additionalProperties: false
-      required: [display_name, description, elevenlabs_voice_id, stability, similarity_boost, style, use_speaker_boost, speed]
+      required: [display_name, description, elevenlabs_voice_id, speed]
       properties:
         display_name:
           type: string
         description:
           type: string
         elevenlabs_voice_id:
+          description: FishAudio reference ID; field name retained for compatibility.
           type: string
-        stability:
-          type: [number, "null"]
-          minimum: 0
-          maximum: 1
-        similarity_boost:
-          type: [number, "null"]
-          minimum: 0
-          maximum: 1
-        style:
-          type: [number, "null"]
-          minimum: 0
-          maximum: 1
-        use_speaker_boost:
-          type: [boolean, "null"]
         speed:
           type: [number, "null"]
           minimum: 0.7
@@ -2827,12 +2801,13 @@ components:
         description:
           type: string
         elevenlabs_voice_id:
+          description: FishAudio reference ID; field name retained for compatibility.
           type: string
 
     VoiceDetail:
       type: object
       additionalProperties: false
-      required: [id, display_name, description, elevenlabs_voice_id, stability, similarity_boost, style, use_speaker_boost, speed, writable, used_by]
+      required: [id, display_name, description, elevenlabs_voice_id, speed, writable, used_by]
       properties:
         id:
           $ref: "#/components/schemas/Identifier"
@@ -2841,21 +2816,8 @@ components:
         description:
           type: string
         elevenlabs_voice_id:
+          description: FishAudio reference ID; field name retained for compatibility.
           type: string
-        stability:
-          type: [number, "null"]
-          minimum: 0
-          maximum: 1
-        similarity_boost:
-          type: [number, "null"]
-          minimum: 0
-          maximum: 1
-        style:
-          type: [number, "null"]
-          minimum: 0
-          maximum: 1
-        use_speaker_boost:
-          type: [boolean, "null"]
         speed:
           type: [number, "null"]
           minimum: 0.7
@@ -2935,9 +2897,6 @@ components:
           type: string
           minLength: 1
         model:
-          type: string
-          minLength: 1
-        api_key:
           type: string
           minLength: 1
         output_format:

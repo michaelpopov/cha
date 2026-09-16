@@ -17,7 +17,7 @@
 
 namespace cha {
 
-struct ElevenLabsVoiceSettings;
+struct VoiceSettings;
 struct WorkspaceVoiceInput;
 struct WorkspaceVoiceOutput;
 
@@ -176,7 +176,7 @@ public:
         std::string_view display_name,
         std::string_view description,
         std::string_view elevenlabs_voice_id,
-        const ElevenLabsVoiceSettings& settings);
+        const VoiceSettings& settings);
     WorkspaceConfigEditResult apply_voice_create(
         std::string_view voice_id,
         std::string_view display_name,

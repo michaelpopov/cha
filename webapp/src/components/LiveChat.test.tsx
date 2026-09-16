@@ -258,8 +258,8 @@ describe('live chat', () => {
     );
     fireEvent.click(screen.getByRole('button', { name: 'Read your prompt aloud' }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      expect.stringContaining('/reader-elevenlabs?'),
-      expect.anything(),
+      '/api/v1/voice-output/audio',
+      expect.objectContaining({ body: expect.stringContaining('reader-elevenlabs') }),
     ));
   });
 
@@ -282,7 +282,7 @@ describe('live chat', () => {
     );
   });
 
-  it('caches existing conversation audio three at a time and caches later entries', async () => {
+  it('caches existing conversation audio two at a time and caches later entries', async () => {
     const responses: Array<(response: Response) => void> = [];
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(() => (
       new Promise<Response>((resolve) => responses.push(resolve))
@@ -323,7 +323,7 @@ describe('live chat', () => {
     fireEvent.click(toggle);
 
     expect(toggle).toHaveAttribute('aria-pressed', 'true');
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     const nextPrompt = {
       id: 6,
       kind: 'human' as const,
@@ -340,30 +340,27 @@ describe('live chat', () => {
       ...speechSnapshot,
       transcript: [...transcript, nextPrompt],
     }));
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
 
     responses[0](new Response(new TextEncoder().encode('audio')));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
     responses[1](new Response(new TextEncoder().encode('audio')));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(5));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4));
     responses[2](new Response(new TextEncoder().encode('audio')));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(5));
+    responses[3](new Response(new TextEncoder().encode('audio')));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(6));
-    for (const resolve of responses.slice(3)) {
+    for (const resolve of responses.slice(4)) {
       resolve(new Response(new TextEncoder().encode('audio')));
     }
     await waitFor(() => expect(toggle).toHaveAttribute('aria-busy', 'false'));
 
     expect(fetchMock.mock.calls.map(([, request]) => (
       JSON.parse(String(request?.body)).text
-    ))).toEqual(['Question 1', 'Answer 2', 'Answer 3', 'Question 6', 'Answer 4', 'Answer 5']);
-    expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual([
-      expect.stringContaining('/fallback?'),
-      expect.stringContaining('/assistant-voice?'),
-      expect.stringContaining('/assistant-voice?'),
-      expect.stringContaining('/fallback?'),
-      expect.stringContaining('/assistant-voice?'),
-      expect.stringContaining('/assistant-voice?'),
-    ]);
+    ))).toEqual(['Question 1', 'Answer 2', 'Question 6', 'Answer 3', 'Answer 4', 'Answer 5']);
+    expect(fetchMock.mock.calls.every(([url]) => url === '/api/v1/voice-output/audio')).toBe(true);
+    expect(fetchMock.mock.calls.map(([, request]) => JSON.parse(String(request?.body)).reference_id))
+      .toEqual(['fallback', 'assistant-voice', 'fallback', 'assistant-voice', 'assistant-voice', 'assistant-voice']);
   });
 
   it.each(['stop caching', 'leave the conversation'])('discards queued FishAudio prefetch when users %s', async (action) => {
@@ -375,7 +372,7 @@ describe('live chat', () => {
     );
     const configuration = {
       baseUrl: 'https://api.fish.audio/v1/tts', voiceId: 'voice',
-      model: 's2.1-pro', outputFormat: 'mp3', apiKey: '',
+      model: 's2.1-pro', outputFormat: 'mp3',
     };
     const blockers = ['Previous 1', 'Previous 2'].map((text) => cacheTextToSpeech(configuration, undefined, text));
     const events = drivableEvents();
@@ -412,9 +409,9 @@ describe('live chat', () => {
     }
   });
 
-  it('shows an error message returned by ElevenLabs', async () => {
+  it('shows an error message returned by FishAudio', async () => {
     vi.spyOn(TextToSpeechSession.prototype, 'play').mockRejectedValue(
-      new TextToSpeechError('ElevenLabs: This voice is unavailable. (HTTP 422)'),
+      new TextToSpeechError('FishAudio: This voice is unavailable. (HTTP 422)'),
     );
     const events = drivableEvents();
     render(<App client={fixtureClient({
@@ -438,7 +435,7 @@ describe('live chat', () => {
     fireEvent.click(screen.getByRole('button', { name: "Read Assistant's response aloud" }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent(
-      'ElevenLabs: This voice is unavailable. (HTTP 422)',
+      'FishAudio: This voice is unavailable. (HTTP 422)',
     );
   });
 
@@ -690,8 +687,10 @@ describe('live chat', () => {
       name: 'Cache conversation audio automatically',
     });
     fireEvent.click(cacheToggle);
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-    for (const resolve of responses) {
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    responses[0](new Response(new TextEncoder().encode('audio')));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    for (const resolve of responses.slice(1)) {
       resolve(new Response(new TextEncoder().encode('audio')));
     }
     await waitFor(() => expect(cacheToggle).toHaveAttribute('aria-busy', 'false'));

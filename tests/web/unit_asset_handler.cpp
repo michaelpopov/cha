@@ -155,13 +155,13 @@ TEST(AssetHandler, AllowsNativeShellConnectionOrigins) {
     AssetServer server(
         fixture.root() / "web",
         std::nullopt,
-        {"https://api.elevenlabs.io/v1/text-to-speech/voice"});
+        {"https://api.openai.com/v1/realtime/calls"});
 
     const auto shell = server.client().Get("/");
     ASSERT_TRUE(shell);
     EXPECT_NE(
         shell->get_header_value("Content-Security-Policy").find(
-            "connect-src 'self' https://api.elevenlabs.io;"),
+            "connect-src 'self' https://api.openai.com;"),
         std::string::npos);
 }
 

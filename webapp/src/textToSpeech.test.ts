@@ -17,7 +17,7 @@ afterEach(() => {
 describe('FishAudio connection budget', () => {
   const configuration = {
     baseUrl: 'https://api.fish.audio/v1/tts', voiceId: 'fish-voice',
-    outputFormat: 'mp3', apiKey: '', model: 's2.1-pro',
+    outputFormat: 'mp3', model: 's2.1-pro',
   };
 
   function holdRequests() {
@@ -182,7 +182,7 @@ describe('FishAudio connection budget', () => {
 describe('FishAudio busy retries', () => {
   const configuration = {
     baseUrl: 'https://api.fish.audio/v1/tts', voiceId: 'fish-voice',
-    outputFormat: 'mp3', apiKey: '', model: 's2.1-pro',
+    outputFormat: 'mp3', model: 's2.1-pro',
   };
   const busy = () => new Response(JSON.stringify({
     error: { code: 'speech_busy', message: 'Speech generation is busy. Try again shortly.' },
@@ -246,7 +246,7 @@ describe('text to speech', () => {
     });
     const session = new TextToSpeechSession({
       baseUrl: 'https://api.fish.audio/v1/tts', voiceId: 'voice',
-      outputFormat: 'mp3', apiKey: 'secret', model: 's2.1-pro',
+      outputFormat: 'mp3', model: 's2.1-pro',
     }, undefined, 'Hello', vi.fn());
     const playing = session.play();
     session.stop();
@@ -264,10 +264,9 @@ describe('text to speech', () => {
     }));
     await new TextToSpeechSession({
       baseUrl: 'https://api.fish.audio/v1/tts',
-      voiceId: 'fallback', outputFormat: 'mp3_44100_128',
-      apiKey: 'secret', model: 'eleven_multilingual_v2',
+      voiceId: 'fallback', outputFormat: 'mp3', model: 's2.1-pro',
     }, { elevenlabs_voice_id: 'fish-voice', settings: {
-      speed: 0.9, stability: 0.5, similarity_boost: 0.7, style: 0.8, use_speaker_boost: true,
+      speed: 0.9,
     } }, 'Hello', vi.fn()).play();
     expect(fetchMock).toHaveBeenCalledWith('/api/v1/voice-output/audio', expect.objectContaining({
       method: 'POST',
@@ -283,7 +282,7 @@ describe('text to speech', () => {
     );
     const configuration = {
       baseUrl: 'https://api.fish.audio/v1/tts', voiceId: 'fish-default',
-      outputFormat: 'mp3', apiKey: 'secret', model: 's2.1-pro',
+      outputFormat: 'mp3', model: 's2.1-pro',
     };
     await cacheTextToSpeech(configuration, undefined, 'Hello');
     await cacheTextToSpeech(configuration, undefined, 'Hello');
@@ -293,22 +292,6 @@ describe('text to speech', () => {
     expect(JSON.parse(fetchMock.mock.calls[0][1]!.body as string).reference_id).toBe('fish-default');
   });
 
-  it('ignores ElevenLabs-only settings in FishAudio requests and cache keys', async () => {
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response('audio'));
-    const configuration = {
-      baseUrl: 'https://api.fish.audio/v1/tts', voiceId: 'fallback',
-      outputFormat: 'mp3', apiKey: '', model: 's2.1-pro',
-    };
-    await cacheTextToSpeech(configuration, {
-      elevenlabs_voice_id: 'voice', settings: { stability: 0.5, use_speaker_boost: true },
-    }, 'Hello');
-    await cacheTextToSpeech(configuration, {
-      elevenlabs_voice_id: 'voice', settings: { stability: 0.8, use_speaker_boost: false },
-    }, 'Hello');
-    expect(fetchMock).toHaveBeenCalledOnce();
-    expect(JSON.parse(fetchMock.mock.calls[0][1]!.body as string).settings).toEqual({});
-  });
-
   it.each([
     { status: 402, message: 'Insufficient credits', reason: 'balance' },
     { error: { message: 'Insufficient credits' } },
@@ -316,7 +299,7 @@ describe('text to speech', () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(error), { status: 402 }));
     await expect(cacheTextToSpeech({
       baseUrl: 'https://api.fish.audio/v1/tts', voiceId: 'fish-default',
-      outputFormat: 'mp3', apiKey: 'secret', model: 's2.1-pro',
+      outputFormat: 'mp3', model: 's2.1-pro',
     }, undefined, 'Hello')).rejects.toThrow('FishAudio: Insufficient credits (HTTP 402)');
   });
 
@@ -326,13 +309,21 @@ describe('text to speech', () => {
     }), { status: 401 }));
     await expect(cacheTextToSpeech({
       baseUrl: 'https://api.fish.audio/v1/tts', voiceId: 'fish-default',
-      outputFormat: 'mp3', apiKey: '', model: 's2.1-pro',
+      outputFormat: 'mp3', model: 's2.1-pro',
     }, undefined, 'Hello')).rejects.toThrow(
       'FishAudio: Authentication failed. Check the FishAudio API key. (HTTP 401)',
     );
   });
 
-  it('requests ElevenLabs audio and plays it', async () => {
+  it('uses a useful fallback when speech output does not return JSON', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('Bad gateway', { status: 502 }));
+    await expect(cacheTextToSpeech({
+      baseUrl: 'https://api.fish.audio/v1/tts', voiceId: 'fish-default',
+      outputFormat: 'mp3', model: 's2.1-pro',
+    }, undefined, 'Hello')).rejects.toThrow('FishAudio request failed (HTTP 502).');
+  });
+
+  it('requests FishAudio audio and plays it', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(new TextEncoder().encode('audio'), {
         headers: { 'Content-Type': 'audio/mpeg' },
@@ -346,11 +337,10 @@ describe('text to speech', () => {
     }));
     const session = new TextToSpeechSession(
       {
-        baseUrl: 'https://example.com/speech',
+        baseUrl: 'https://api.fish.audio/v1/tts',
         voiceId: 'fallback/voice',
         outputFormat: 'mp3 44',
-        apiKey: 'secret',
-        model: 'multilingual',
+        model: 's2.1-pro',
       },
       undefined,
       'Read this',
@@ -360,11 +350,11 @@ describe('text to speech', () => {
     await session.play();
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'https://example.com/speech/fallback%2Fvoice?output_format=mp3%2044',
+      '/api/v1/voice-output/audio',
       expect.objectContaining({
         method: 'POST',
-        headers: expect.objectContaining({ 'xi-api-key': 'secret' }),
-        body: JSON.stringify({ text: 'Read this', model_id: 'multilingual' }),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: 'Read this', reference_id: 'fallback/voice', settings: {} }),
       }),
     );
     expect(play).toHaveBeenCalledOnce();
@@ -383,11 +373,10 @@ describe('text to speech', () => {
       return { addEventListener: vi.fn(), play, pause };
     }));
     const configuration = {
-      baseUrl: 'https://example.com/speech',
+      baseUrl: 'https://api.fish.audio/v1/tts',
       voiceId: 'cached-voice',
       outputFormat: 'mp3',
-      apiKey: 'secret',
-      model: 'multilingual',
+      model: 's2.1-pro',
     };
 
     const first = new TextToSpeechSession(
@@ -416,11 +405,10 @@ describe('text to speech', () => {
       return { addEventListener: vi.fn(), play, pause: vi.fn() };
     }));
     const configuration = {
-      baseUrl: 'https://example.com/speech',
+      baseUrl: 'https://api.fish.audio/v1/tts',
       voiceId: 'cached-voice',
       outputFormat: 'mp3',
-      apiKey: 'secret',
-      model: 'multilingual',
+      model: 's2.1-pro',
     };
 
     const warming = cacheTextToSpeech(configuration, undefined, 'Same clip');
@@ -447,11 +435,10 @@ describe('text to speech', () => {
       };
     }));
     const configuration = {
-      baseUrl: 'https://example.com/speech',
+      baseUrl: 'https://api.fish.audio/v1/tts',
       voiceId: 'preview-voice',
       outputFormat: 'mp3',
-      apiKey: 'secret',
-      model: 'multilingual',
+      model: 's2.1-pro',
     };
 
     await new TextToSpeechSession(
@@ -477,11 +464,10 @@ describe('text to speech', () => {
       };
     }));
     const configuration = {
-      baseUrl: 'https://example.com/speech',
+      baseUrl: 'https://api.fish.audio/v1/tts',
       voiceId: 'fallback',
       outputFormat: 'mp3',
-      apiKey: 'secret',
-      model: 'multilingual',
+      model: 's2.1-pro',
     };
 
     await new TextToSpeechSession(
@@ -517,11 +503,10 @@ describe('text to speech', () => {
       };
     }));
     const configuration = {
-      baseUrl: 'https://example.com/speech',
+      baseUrl: 'https://api.fish.audio/v1/tts',
       voiceId: 'cached-voice',
       outputFormat: 'mp3',
-      apiKey: 'secret',
-      model: 'multilingual',
+      model: 's2.1-pro',
     };
 
     for (let index = 0; index < 3; index += 1) {
@@ -555,15 +540,14 @@ describe('text to speech', () => {
     }));
     const session = new TextToSpeechSession(
       {
-        baseUrl: 'https://example.com/speech',
+        baseUrl: 'https://api.fish.audio/v1/tts',
         voiceId: 'fallback',
         outputFormat: 'mp3',
-        apiKey: 'secret',
-        model: 'multilingual',
+        model: 's2.1-pro',
       },
       {
         elevenlabs_voice_id: 'warm voice',
-        settings: { stability: 0.45, speed: 0.95 },
+        settings: { speed: 0.95 },
       },
       'Read this',
       vi.fn(),
@@ -572,12 +556,12 @@ describe('text to speech', () => {
     await session.play();
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'https://example.com/speech/warm%20voice?output_format=mp3',
+      '/api/v1/voice-output/audio',
       expect.objectContaining({
         body: JSON.stringify({
           text: 'Read this',
-          model_id: 'multilingual',
-          voice_settings: { stability: 0.45, speed: 0.95 },
+          reference_id: 'warm voice',
+          settings: { speed: 0.95 },
         }),
       }),
     );
@@ -593,11 +577,10 @@ describe('text to speech', () => {
     }));
     const session = new TextToSpeechSession(
       {
-        baseUrl: 'https://example.com/speech',
+        baseUrl: 'https://api.fish.audio/v1/tts',
         voiceId: 'fallback',
         outputFormat: 'mp3',
-        apiKey: 'secret',
-        model: 'multilingual',
+        model: 's2.1-pro',
       },
       { elevenlabs_voice_id: 'plain-voice', settings: {} },
       'Read this',
@@ -607,60 +590,11 @@ describe('text to speech', () => {
     await session.play();
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'https://example.com/speech/plain-voice?output_format=mp3',
+      '/api/v1/voice-output/audio',
       expect.objectContaining({
-        body: JSON.stringify({ text: 'Read this', model_id: 'multilingual' }),
+        body: JSON.stringify({ text: 'Read this', reference_id: 'plain-voice', settings: {} }),
       }),
     );
   });
 
-  it('exposes the ElevenLabs error message and HTTP status', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
-      detail: {
-        message: 'The selected voice cannot process this request.',
-      },
-    }), {
-      status: 422,
-      headers: { 'Content-Type': 'application/json' },
-    }));
-    const session = new TextToSpeechSession(
-      {
-        baseUrl: 'https://example.com/speech',
-        voiceId: 'fallback',
-        outputFormat: 'mp3',
-        apiKey: 'secret',
-        model: 'multilingual',
-      },
-      { elevenlabs_voice_id: 'assigned-voice', settings: {} },
-      'Read this',
-      vi.fn(),
-    );
-
-    await expect(session.play()).rejects.toEqual(new TextToSpeechError(
-      'ElevenLabs: The selected voice cannot process this request. (HTTP 422)',
-    ));
-  });
-
-  it('uses a useful fallback when ElevenLabs does not return JSON', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('Bad gateway', {
-      status: 502,
-      headers: { 'Content-Type': 'text/plain' },
-    }));
-    const session = new TextToSpeechSession(
-      {
-        baseUrl: 'https://example.com/speech',
-        voiceId: 'fallback',
-        outputFormat: 'mp3',
-        apiKey: 'secret',
-        model: 'multilingual',
-      },
-      undefined,
-      'Read this',
-      vi.fn(),
-    );
-
-    await expect(session.play()).rejects.toThrow(
-      'ElevenLabs request failed (HTTP 502).',
-    );
-  });
 });

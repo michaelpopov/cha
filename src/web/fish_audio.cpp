@@ -14,7 +14,6 @@
 #include <httplib.h>
 #include <cmath>
 #include <memory>
-#include <regex>
 #include <stdexcept>
 #include <utility>
 
@@ -145,7 +144,7 @@ FishAudioRequest make_fish_audio_request(
     if (text.empty() || voice.empty()) throw std::invalid_argument("Missing text or voice ID");
     FishAudioRequest request{
         .model = output.model,
-        .body = {{"text", text}, {"reference_id", voice}, {"format", "mp3"}},
+        .body = {{"text", text}, {"reference_id", voice}, {"format", output.output_format}},
     };
     const Json settings = input.value("settings", Json::object());
     if (!settings.is_object()) throw std::invalid_argument("Invalid voice settings");
@@ -155,33 +154,8 @@ FishAudioRequest make_fish_audio_request(
             if (!std::isfinite(speed) || speed < 0.5 || speed > 2.0) throw std::invalid_argument("Invalid speed");
             request.body["prosody"] = {{"speed", speed}};
         } else {
-            log_warn("Ignoring ElevenLabs voice setting for FishAudio: " + name);
+            log_warn("Ignoring unsupported FishAudio voice setting: " + name);
         }
-    }
-    // Preserve compatible ElevenLabs MP3 and Opus format settings.
-    std::smatch match;
-    static const std::regex encoded_format("(mp3|opus)_([0-9]+)_([0-9]+)");
-    if (std::regex_match(output.output_format, match, encoded_format)) {
-        const std::string format = match[1];
-        const std::string rate = match[2];
-        const std::string bitrate = match[3];
-        request.body["format"] = format;
-        // Unsupported ElevenLabs rates/bitrates use FishAudio's defaults.
-        if (format == "mp3") {
-            if (rate == "32000" || rate == "44100") request.body["sample_rate"] = std::stoi(rate);
-            if (bitrate == "64" || bitrate == "128" || bitrate == "192") request.body["mp3_bitrate"] = std::stoi(bitrate);
-        } else {
-            if (rate == "48000") request.body["sample_rate"] = 48000;
-            if (bitrate == "24" || bitrate == "32" || bitrate == "48" || bitrate == "64") {
-                request.body["opus_bitrate"] = std::stoi(bitrate) * 1000;
-            }
-        }
-    } else if (output.output_format == "mp3" || output.output_format == "wav"
-               || output.output_format == "opus") {
-        request.body["format"] = output.output_format;
-    } else {
-        // Raw PCM cannot be played by HTMLAudioElement.
-        log_warn("Ignoring unsupported FishAudio output format; using mp3");
     }
     return request;
 } catch (const Json::exception&) {
@@ -198,7 +172,6 @@ void install_fish_audio_route(
             const auto* output = workspace && workspace->voice_output()
                 ? &*workspace->voice_output() : nullptr;
             if (!native_voice_enabled || !output
-                || !output->fish_audio
                 || !api_keys.find(output->api_key_id)) {
                 set_route_not_found(response, "FishAudio output is not configured.");
                 return;

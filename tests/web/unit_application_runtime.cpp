@@ -359,7 +359,7 @@ TEST(ApplicationRuntime, ValidatesConfiguredFishAudioRequests) {
         const auto key = keys.create("FishAudio", "fish-secret");
         config->apply_voice_output_update({
             .url = "https://api.fish.audio/v1/tts", .model = "s2.1-pro",
-            .api_key_id = key.id, .output_format = "mp3_44100_128", .default_voice = "Reader",
+            .api_key_id = key.id, .output_format = "mp3", .default_voice = "Reader",
         });
     }
     auto runtime = ApplicationRuntime::open(make_command(workspace, database), "private-test-token");
@@ -439,12 +439,12 @@ TEST(ApplicationRuntime, ServesVaultBackedVoiceOutputSettings) {
     {
         auto config = WorkspaceConfigStore::open(database);
         ApiKeyStore key_store(*config);
-        key = key_store.create("ElevenLabs", "output-secret");
+        key = key_store.create("FishAudio", "output-secret");
         config->apply_voice_output_update({
-            .url = "https://api.elevenlabs.io/v1/text-to-speech",
-            .model = "eleven_multilingual_v2",
+            .url = "https://api.fish.audio/v1/tts",
+            .model = "s2.1-pro",
             .api_key_id = key.id,
-            .output_format = "mp3_44100_128",
+            .output_format = "mp3",
             .default_voice = "Default Reader",
         });
     }
@@ -459,10 +459,10 @@ TEST(ApplicationRuntime, ServesVaultBackedVoiceOutputSettings) {
     EXPECT_EQ(
         nlohmann::json::parse(settings->body),
         nlohmann::json({
-            {"url", "https://api.elevenlabs.io/v1/text-to-speech"},
-            {"model", "eleven_multilingual_v2"},
+            {"url", "https://api.fish.audio/v1/tts"},
+            {"model", "s2.1-pro"},
             {"api_key", key.id},
-            {"output_format", "mp3_44100_128"},
+            {"output_format", "mp3"},
             {"default_voice", "Default Reader"},
         }));
 
@@ -472,16 +472,31 @@ TEST(ApplicationRuntime, ServesVaultBackedVoiceOutputSettings) {
     ASSERT_EQ(resolved->status, 200) << resolved->body;
     const nlohmann::json runtime_settings =
         nlohmann::json::parse(resolved->body);
-    EXPECT_EQ(runtime_settings.at("api_key"), "output-secret");
+    EXPECT_FALSE(runtime_settings.contains("api_key"));
     EXPECT_EQ(runtime_settings.at("default_voice_id"), "eleven-default");
 
-    const auto audio = client.Post("/api/v1/voice-output/audio", kRuntimeCookie,
-        R"({"text":"Hello","reference_id":"voice"})", "application/json");
-    ASSERT_TRUE(audio);
-    EXPECT_EQ(audio->status, 404); // This route only forwards configured FishAudio output.
+    const auto rejected_provider = client.Put("/api/v1/voice-output", kRuntimeCookie,
+        nlohmann::json({
+            {"url", "https://api.elevenlabs.io/v1/text-to-speech"},
+            {"model", "eleven_multilingual_v2"}, {"api_key", key.id},
+            {"output_format", "mp3"}, {"default_voice", "Default Reader"},
+        }).dump(), "application/json");
+    ASSERT_TRUE(rejected_provider);
+    EXPECT_EQ(rejected_provider->status, 400);
+    EXPECT_EQ(getws()->voice_output()->url, "https://api.fish.audio/v1/tts");
+
+    const auto rejected_format = client.Put("/api/v1/voice-output", kRuntimeCookie,
+        nlohmann::json({
+            {"url", "https://api.fish.audio/v1/tts"}, {"model", "s2.1-pro"},
+            {"api_key", key.id}, {"output_format", "pcm_44100"},
+            {"default_voice", "Default Reader"},
+        }).dump(), "application/json");
+    ASSERT_TRUE(rejected_format);
+    EXPECT_EQ(rejected_format->status, 400);
+    EXPECT_EQ(getws()->voice_output()->output_format, "mp3");
 
     const nlohmann::json invalid_update{
-        {"url", "https://example.com/speech"},
+        {"url", "https://api.fish.audio/v1/tts"},
         {"model", "next-model"},
         {"api_key", key.id},
         {"output_format", "mp3"},
@@ -496,10 +511,10 @@ TEST(ApplicationRuntime, ServesVaultBackedVoiceOutputSettings) {
     EXPECT_EQ(invalid->status, 400) << invalid->body;
 
     const nlohmann::json voice_output_update{
-        {"url", "https://example.com/speech"},
+        {"url", "https://api.fish.audio/v1/tts"},
         {"model", "next-model"},
         {"api_key", key.id},
-        {"output_format", "mp3_44100_192"},
+        {"output_format", "opus_48000_64"},
         {"default_voice", "Default Reader"},
     };
     const auto updated = client.Put(
@@ -509,10 +524,11 @@ TEST(ApplicationRuntime, ServesVaultBackedVoiceOutputSettings) {
         "application/json");
     ASSERT_TRUE(updated);
     ASSERT_EQ(updated->status, 200) << updated->body;
+    EXPECT_EQ(nlohmann::json::parse(updated->body).at("output_format"), "opus");
     ASSERT_TRUE(getws()->voice_output());
-    EXPECT_EQ(getws()->voice_output()->url, "https://example.com/speech");
+    EXPECT_EQ(getws()->voice_output()->url, "https://api.fish.audio/v1/tts");
     EXPECT_EQ(getws()->voice_output()->model, "next-model");
-    EXPECT_EQ(getws()->voice_output()->output_format, "mp3_44100_192");
+    EXPECT_EQ(getws()->voice_output()->output_format, "opus");
 
     const auto keys = client.Get("/api/v1/api-keys", kRuntimeCookie);
     ASSERT_TRUE(keys);
@@ -525,7 +541,10 @@ TEST(ApplicationRuntime, ServesVaultBackedVoiceOutputSettings) {
     ASSERT_TRUE(shell);
     EXPECT_NE(
         shell->get_header_value("Content-Security-Policy").find(
-            "connect-src 'self' https://example.com;"),
+            "connect-src 'self';"),
+        std::string::npos);
+
+    EXPECT_EQ(shell->get_header_value("Content-Security-Policy").find("api.fish.audio"),
         std::string::npos);
 
     runtime->shutdown();
@@ -761,7 +780,8 @@ TEST(ApplicationRuntime, StoresApiKeysInTheVaultAndReferencesThemFromProviders) 
     nlohmann::json voice = nlohmann::json::parse(created_voice->body);
     EXPECT_EQ(voice.at("id"), "voice_1");
     EXPECT_EQ(voice.at("description"), "Deep, resonant, comforting");
-    EXPECT_TRUE(voice.at("stability").is_null());
+    EXPECT_TRUE(voice.at("speed").is_null());
+    EXPECT_FALSE(voice.contains("stability"));
     ASSERT_NE(getws()->find_voice("voice_1"), nullptr);
 
     voice.erase("id");
@@ -769,8 +789,7 @@ TEST(ApplicationRuntime, StoresApiKeysInTheVaultAndReferencesThemFromProviders) 
     voice.erase("writable");
     voice["display_name"] = "George";
     voice["description"] = "Warm, captivating storyteller";
-    voice["stability"] = 0.4;
-    voice["use_speaker_boost"] = false;
+    voice["speed"] = 0.9;
     const auto updated_voice = client.Patch(
         "/api/v1/voices/voice_1",
         kRuntimeCookie,
@@ -782,8 +801,8 @@ TEST(ApplicationRuntime, StoresApiKeysInTheVaultAndReferencesThemFromProviders) 
         nlohmann::json::parse(updated_voice->body).at("display_name"),
         "George");
     EXPECT_EQ(
-        getws()->find_voice("voice_1")->settings.use_speaker_boost,
-        false);
+        getws()->find_voice("voice_1")->settings.speed,
+        0.9);
 
     const auto assigned_voice = client.Patch(
         "/api/v1/characters/guide",

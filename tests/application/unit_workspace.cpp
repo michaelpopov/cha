@@ -3,6 +3,7 @@
 #include "characters/model_context.h"
 #include "support/test_workspace.h"
 #include "util/environment.h"
+#include "util/logging.h"
 
 #include <gtest/gtest.h>
 
@@ -97,10 +98,6 @@ TEST(Workspace, EagerlyLoadsOwnedResolvedData) {
     EXPECT_EQ(voice->label, "Warm Narrator");
     EXPECT_EQ(voice->description, "Deep, resonant, comforting");
     EXPECT_EQ(voice->elevenlabs_voice_id, "eleven-voice-123");
-    EXPECT_EQ(voice->settings.stability, 0.45);
-    EXPECT_EQ(voice->settings.similarity_boost, 0.8);
-    EXPECT_EQ(voice->settings.style, 0.2);
-    EXPECT_EQ(voice->settings.use_speaker_boost, true);
     EXPECT_EQ(voice->settings.speed, 0.95);
     const WorkspacePersona* const persona = workspace.find_persona("reader");
     ASSERT_NE(persona, nullptr);
@@ -167,17 +164,17 @@ TEST(Workspace, LoadsAMinimalVoice) {
     EXPECT_EQ(voice->label, "Plain reader");
     EXPECT_TRUE(voice->description.empty());
     EXPECT_EQ(voice->elevenlabs_voice_id, "plain-voice-id");
-    EXPECT_EQ(voice->settings, ElevenLabsVoiceSettings{});
+    EXPECT_EQ(voice->settings, VoiceSettings{});
 
     workspace.write_voice(
         "plain-reader", "Plain reader", "", "plain-voice-id",
-        ElevenLabsVoiceSettings{.stability = 0.4});
+        VoiceSettings{.speed = 0.9});
     workspace.create_voice(
         "another-reader", "Another reader", "", "another-voice-id");
     const Workspace reloaded = Workspace::load(fixture.root());
     ASSERT_NE(reloaded.find_voice("plain-reader"), nullptr);
     EXPECT_TRUE(reloaded.find_voice("plain-reader")->description.empty());
-    EXPECT_EQ(reloaded.find_voice("plain-reader")->settings.stability, 0.4);
+    EXPECT_EQ(reloaded.find_voice("plain-reader")->settings.speed, 0.9);
     ASSERT_NE(reloaded.find_voice("another-reader"), nullptr);
     EXPECT_TRUE(reloaded.find_voice("another-reader")->description.empty());
 }
@@ -192,19 +189,66 @@ TEST(Workspace, RejectsInvalidVoiceConfigurationAndReferences) {
     }
     {
         test::TestWorkspace fixture;
-        fixture.write_voice(
-            "wrong-type",
-            "elevenlabs_voice_id = \"voice-id\"\nstability = \"steady\"\n");
-        EXPECT_THROW((void)Workspace::load(fixture.root()), std::runtime_error);
-    }
-    {
-        test::TestWorkspace fixture;
         fixture.write_character_config(
             "display_name = \"Guide\"\n"
             "provider = \"test\"\n"
             "voice = \"missing\"\n");
         EXPECT_THROW((void)Workspace::load(fixture.root()), std::runtime_error);
     }
+}
+
+TEST(Workspace, IgnoresObsoleteVoiceSettingsAndDropsThemOnSave) {
+    test::TestWorkspace fixture;
+    fixture.write_voice(
+        "reader",
+        "elevenlabs_voice_id = \"fish-reference\"\n"
+        "stability = \"steady\"\n"
+        "similarity_boost = 9\n"
+        "style = false\n"
+        "use_speaker_boost = \"obsolete\"\n"
+        "speed = 0.95\n");
+    const auto log_file = fixture.root() / "voice-warnings.log";
+    initialize_diagnostic_logging(log_file, "warn");
+    const Workspace workspace = Workspace::load(fixture.root());
+    const auto first_warnings = file_bytes(log_file);
+    for (int i = 0; i < 3; ++i) {
+        (void)Workspace::load(fixture.root());
+    }
+    shutdown_diagnostic_logging();
+    EXPECT_EQ(file_bytes(log_file), first_warnings);
+    const WorkspaceVoice* const voice = workspace.find_voice("reader");
+    ASSERT_NE(voice, nullptr);
+    EXPECT_EQ(voice->elevenlabs_voice_id, "fish-reference");
+    EXPECT_EQ(voice->settings.speed, 0.95);
+    workspace.write_voice("reader", voice->label, voice->description,
+        voice->elevenlabs_voice_id, voice->settings);
+    const auto saved = file_bytes(fixture.root() / "system" / "voices" / "reader" / "config.toml");
+    for (const auto obsolete : {"stability", "similarity_boost", "style", "use_speaker_boost"}) {
+        EXPECT_EQ(saved.find(obsolete), std::string::npos);
+    }
+    EXPECT_EQ(Workspace::load(fixture.root()).find_voice("reader")->settings.speed, 0.95);
+}
+
+TEST(Workspace, IgnoresElevenLabsOutputConfigurationAndRejectsSavingIt) {
+    test::TestWorkspace fixture;
+    const auto directory = fixture.root() / "system" / "voice-output";
+    std::filesystem::create_directories(directory);
+    const auto path = directory / "config.toml";
+    std::ofstream(path)
+        << "url = \"https://api.elevenlabs.io/v1/text-to-speech\"\n"
+           "model = \"eleven_multilingual_v2\"\n"
+           "api_key = \"api_key_2\"\n"
+           "output_format = \"mp3_44100_128\"\n"
+           "default_voice = \"Reader\"\n";
+    const auto before = file_bytes(path);
+    const Workspace workspace = Workspace::load(fixture.root());
+    EXPECT_FALSE(workspace.voice_output());
+    EXPECT_THROW(workspace.write_voice_output({
+        .url = "https://api.elevenlabs.io/v1/text-to-speech",
+        .model = "eleven_multilingual_v2", .api_key_id = "api_key_2",
+        .output_format = "mp3_44100_128", .default_voice = "Reader",
+    }), std::invalid_argument);
+    EXPECT_EQ(file_bytes(path), before);
 }
 
 TEST(Workspace, CreatesUpdatesAssignsAndDeletesVoices) {
@@ -225,11 +269,7 @@ TEST(Workspace, CreatesUpdatesAssignsAndDeletesVoices) {
 
     created.write_voice(
         "voice_1", "George", "Warm, captivating storyteller", "george-id",
-        ElevenLabsVoiceSettings{
-            .stability = 0.4,
-            .similarity_boost = 0.7,
-            .style = 0.2,
-            .use_speaker_boost = false,
+        VoiceSettings{
             .speed = 0.9,
         });
     const Workspace updated = Workspace::load(fixture.root());
@@ -237,7 +277,6 @@ TEST(Workspace, CreatesUpdatesAssignsAndDeletesVoices) {
     ASSERT_NE(voice, nullptr);
     EXPECT_EQ(voice->label, "George");
     EXPECT_EQ(voice->elevenlabs_voice_id, "george-id");
-    EXPECT_EQ(voice->settings.use_speaker_boost, false);
     EXPECT_EQ(voice->settings.speed, 0.9);
 
     updated.write_character_settings(
@@ -862,17 +901,15 @@ TEST(Workspace, NormalizesFishAudioConfigurationOnWriteAndLoad) {
     auto reloaded = Workspace::load(fixture.root());
     ASSERT_TRUE(reloaded.voice_output());
     EXPECT_EQ(reloaded.voice_output()->url, "https://api.fish.audio/v1/tts");
-    EXPECT_TRUE(reloaded.voice_output()->fish_audio);
     EXPECT_EQ(reloaded.voice_output()->model, "custom/model");
     const auto path = fixture.root() / "system" / "voice-output" / "config.toml";
     std::ofstream(path) << "url = \"HTTPS://API.FISH.AUDIO:443\"\n"
-                          "model = \" eleven_multilingual_v2 \"\n"
+                          "model = \" s2.1-pro \"\n"
                           "api_key = \"api_key_2\"\noutput_format = \"mp3\"\ndefault_voice = \"Reader\"\n";
     reloaded = Workspace::load(fixture.root());
     ASSERT_TRUE(reloaded.voice_output());
     EXPECT_EQ(reloaded.voice_output()->url, "https://api.fish.audio/v1/tts");
-    EXPECT_TRUE(reloaded.voice_output()->fish_audio);
-    EXPECT_EQ(reloaded.voice_output()->model, "eleven_multilingual_v2");
+    EXPECT_EQ(reloaded.voice_output()->model, "s2.1-pro");
     const std::string before = file_bytes(path);
     EXPECT_THROW(workspace.write_voice_output({
         .url = "http://api.fish.audio/v1/tts", .model = "s2.1-pro",
@@ -889,8 +926,8 @@ TEST(Workspace, PersistsAndValidatesVoiceOutputSettings) {
         "elevenlabs_voice_id = \"eleven-default\"\n");
     const Workspace workspace = Workspace::load(fixture.root());
     workspace.write_voice_output({
-        .url = "https://api.elevenlabs.io/v1/text-to-speech",
-        .model = "eleven_multilingual_v2",
+        .url = "https://api.fish.audio/v1/tts",
+        .model = "s2.1-pro",
         .api_key_id = "api_key_2",
         .output_format = "mp3_44100_128",
         .default_voice = "Default Reader",
@@ -901,9 +938,9 @@ TEST(Workspace, PersistsAndValidatesVoiceOutputSettings) {
 
     const Workspace reloaded = Workspace::load(fixture.root());
     ASSERT_TRUE(reloaded.voice_output());
-    EXPECT_EQ(reloaded.voice_output()->model, "eleven_multilingual_v2");
+    EXPECT_EQ(reloaded.voice_output()->model, "s2.1-pro");
     EXPECT_EQ(reloaded.voice_output()->api_key_id, "api_key_2");
-    EXPECT_EQ(reloaded.voice_output()->output_format, "mp3_44100_128");
+    EXPECT_EQ(reloaded.voice_output()->output_format, "mp3");
     EXPECT_EQ(reloaded.voice_output()->default_voice, "Default Reader");
     ASSERT_NE(reloaded.find_voice_by_name("Default Reader"), nullptr);
     EXPECT_EQ(
@@ -913,7 +950,7 @@ TEST(Workspace, PersistsAndValidatesVoiceOutputSettings) {
     EXPECT_THROW(
         workspace.write_voice_output({
             .url = "not-a-url",
-            .model = "eleven_multilingual_v2",
+            .model = "s2.1-pro",
             .api_key_id = "api_key_2",
             .output_format = "mp3_44100_128",
             .default_voice = "Default Reader",
@@ -922,11 +959,46 @@ TEST(Workspace, PersistsAndValidatesVoiceOutputSettings) {
     EXPECT_EQ(file_bytes(path), before);
 
     std::ofstream(path) << "url = \"not-a-url\"\n"
-                          "model = \"eleven_multilingual_v2\"\n"
+                          "model = \"s2.1-pro\"\n"
                           "api_key = \"api_key_2\"\n"
                           "output_format = \"mp3_44100_128\"\n"
                           "default_voice = \"Default Reader\"\n";
     EXPECT_FALSE(Workspace::load(fixture.root()).voice_output());
+}
+
+TEST(Workspace, NormalizesLegacyVoiceOutputFormatsAndRejectsUnsupportedSaves) {
+    test::TestWorkspace fixture;
+    const Workspace workspace = Workspace::load(fixture.root());
+    const auto path = fixture.root() / "system" / "voice-output" / "config.toml";
+    for (const auto& [legacy, format] : {
+             std::pair{"mp3_44100_128", "mp3"},
+             std::pair{"opus_48000_64", "opus"},
+             std::pair{" wav ", "wav"}}) {
+        std::filesystem::create_directories(path.parent_path());
+        std::ofstream(path) << "url = \"https://api.fish.audio/v1/tts\"\n"
+                              "model = \"s2.1-pro\"\napi_key = \"api_key_2\"\n"
+                              "default_voice = \"Reader\"\noutput_format = \"" << legacy << "\"\n";
+        const Workspace loaded = Workspace::load(fixture.root());
+        ASSERT_TRUE(loaded.voice_output());
+        EXPECT_EQ(loaded.voice_output()->output_format, format);
+        auto settings = *loaded.voice_output();
+        settings.output_format = legacy;
+        workspace.write_voice_output(settings);
+        EXPECT_NE(file_bytes(path).find(std::string("output_format = '") + format + "'"), std::string::npos);
+    }
+    const auto before = file_bytes(path);
+    auto settings = *Workspace::load(fixture.root()).voice_output();
+    for (const auto invalid : {"pcm_44100", "flac", "", "mp3_bad", "opus_48000_"}) {
+        settings.output_format = invalid;
+        EXPECT_THROW(workspace.write_voice_output(settings), std::invalid_argument);
+        EXPECT_EQ(file_bytes(path), before);
+    }
+    std::ofstream(path) << "url = \"https://api.fish.audio/v1/tts\"\n"
+                          "model = \"s2.1-pro\"\napi_key = \"api_key_2\"\n"
+                          "default_voice = \"Reader\"\noutput_format = \"pcm_44100\"\n";
+    const Workspace loaded = Workspace::load(fixture.root());
+    ASSERT_TRUE(loaded.voice_output());
+    EXPECT_EQ(loaded.voice_output()->output_format, "mp3");
 }
 
 TEST(Workspace, ResolvesForumCharacterHandles) {

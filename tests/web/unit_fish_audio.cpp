@@ -180,32 +180,18 @@ TEST(FishAudio, FullSynthesisCapacityPreservesCommandWorkerAndRejectsOverflow) {
     EXPECT_EQ(events.wait_for(10s), std::future_status::ready);
 }
 
-TEST(FishAudio, TranslatesMp3FormatWithoutChangingConfiguredModel) {
+TEST(FishAudio, IgnoresObsoleteVoiceSettingsWithoutChangingConfiguredModel) {
     const WorkspaceVoiceOutput output{
-        .model = "eleven_multilingual_v2", .output_format = "mp3_44100_128",
+        .model = "s2.1-pro", .output_format = "mp3",
     };
     const auto request = make_fish_audio_request(output, {
         {"text", "Hello"}, {"reference_id", "fish-voice"},
         {"settings", {{"speed", 0.9}, {"stability", 0.5}, {"use_speaker_boost", true}}},
     });
-    EXPECT_EQ(request.model, "eleven_multilingual_v2");
+    EXPECT_EQ(request.model, "s2.1-pro");
     EXPECT_EQ(request.body, Json({
         {"text", "Hello"}, {"reference_id", "fish-voice"},
         {"prosody", {{"speed", 0.9}}}, {"format", "mp3"},
-        {"sample_rate", 44100}, {"mp3_bitrate", 128},
-    }));
-}
-
-TEST(FishAudio, UsesFishDefaultsForLegacyMp3AndPreservesLegacyOpus) {
-    WorkspaceVoiceOutput output{.model = "s1", .output_format = "mp3_22050_32"};
-    const Json input{{"text", "Hello"}, {"reference_id", "fish-voice"}};
-    EXPECT_EQ(make_fish_audio_request(output, input).body, Json({
-        {"text", "Hello"}, {"reference_id", "fish-voice"}, {"format", "mp3"},
-    }));
-    output.output_format = "opus_48000_64";
-    EXPECT_EQ(make_fish_audio_request(output, input).body, Json({
-        {"text", "Hello"}, {"reference_id", "fish-voice"}, {"format", "opus"},
-        {"sample_rate", 48000}, {"opus_bitrate", 64000},
     }));
 }
 
@@ -224,17 +210,8 @@ TEST(FishAudio, PreservesExplicitFishAudioModelAndFormat) {
     }
 }
 
-TEST(FishAudio, FallsBackToPlayableMp3ForUnsupportedFormats) {
-    const WorkspaceVoiceOutput output{
-        .model = "s2.1-pro", .output_format = "pcm_44100",
-    };
-    EXPECT_EQ(make_fish_audio_request(output, {
-        {"text", "Hello"}, {"reference_id", "fish-voice"},
-    }).body.at("format"), "mp3");
-}
-
 TEST(FishAudio, TrimsModelsAndPreservesExplicitValues) {
-    for (const std::string model : {"eleven_multilingual_v2", "custom/model", "obsolete model"}) {
+    for (const std::string model : {"s2.1-pro", "custom/model", "obsolete model"}) {
         const WorkspaceVoiceOutput output{
             .model = normalize_voice_output_model(" \t" + model + " \n"), .output_format = "mp3",
         };
@@ -252,13 +229,12 @@ TEST(FishAudio, NormalizesEndpointSpellingsAndDefaultPorts) {
              "HTTPS://API.FISH.AUDIO:443", " https://API.FISH.AUDIO:443/v1/tts ",
          }) {
         const auto endpoint = parse_voice_output_endpoint(url);
-        EXPECT_TRUE(endpoint.fish_audio);
-        EXPECT_EQ(endpoint.url, "https://api.fish.audio/v1/tts");
+        EXPECT_EQ(endpoint, "https://api.fish.audio/v1/tts");
     }
     const auto custom_port = parse_voice_output_endpoint("https://API.FISH.AUDIO:8443/v1/tts");
-    EXPECT_TRUE(custom_port.fish_audio);
-    EXPECT_EQ(custom_port.url, "https://api.fish.audio:8443/v1/tts");
-    EXPECT_FALSE(parse_voice_output_endpoint("https://api.fish.audio.example/v1/tts").fish_audio);
+    EXPECT_EQ(custom_port, "https://api.fish.audio:8443/v1/tts");
+    EXPECT_THROW(parse_voice_output_endpoint("https://api.fish.audio.example/v1/tts"), std::invalid_argument);
+    EXPECT_THROW(parse_voice_output_endpoint("https://api.elevenlabs.io/v1/text-to-speech"), std::invalid_argument);
     EXPECT_THROW(parse_voice_output_endpoint("http://API.FISH.AUDIO/v1/tts"), std::invalid_argument);
 }
 

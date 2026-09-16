@@ -77,20 +77,15 @@ export const voiceDetailFixture: VoiceDetail = {
   display_name: 'Brian',
   description: 'Deep, resonant, comforting',
   elevenlabs_voice_id: 'nPczCjzI2devNBz1zQrb',
-  stability: 0.45,
-  similarity_boost: null,
-  style: 0.2,
-  use_speaker_boost: true,
   speed: 0.95,
   writable: true,
   used_by: ['Guide'],
 };
 
 export const voiceOutputRuntimeFixture = {
-  url: 'https://api.elevenlabs.io/v1/text-to-speech',
-  model: 'eleven_multilingual_v2',
-  api_key: 'secret',
-  output_format: 'mp3_44100_128',
+  url: 'https://api.fish.audio/v1/tts',
+  model: 's2.1-pro',
+  output_format: 'mp3',
   default_voice_id: 'fallback',
 };
 

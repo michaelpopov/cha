@@ -45,10 +45,6 @@ struct SessionListing {
 };
 
 struct SpeechVoiceSettings {
-    std::optional<double> stability;
-    std::optional<double> similarity_boost;
-    std::optional<double> style;
-    std::optional<bool> use_speaker_boost;
     std::optional<double> speed;
 
     bool operator==(const SpeechVoiceSettings&) const = default;

@@ -23,10 +23,6 @@ std::optional<SpeechVoice> resolve_speech_voice_id(
         .display_name = voice->label,
         .elevenlabs_voice_id = voice->elevenlabs_voice_id,
         .settings = {
-            .stability = voice->settings.stability,
-            .similarity_boost = voice->settings.similarity_boost,
-            .style = voice->settings.style,
-            .use_speaker_boost = voice->settings.use_speaker_boost,
             .speed = voice->settings.speed,
         },
     };

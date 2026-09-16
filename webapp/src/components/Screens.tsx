@@ -16,11 +16,11 @@ import {
   type ForumSummary,
   type PersonaDetail,
   type SessionListing,
-  type VoiceDetail,
 } from '../api/client';
 import {
   TextToSpeechError,
   TextToSpeechSession,
+  speechVoice,
   type TextToSpeechVoice,
   useTextToSpeechConfiguration,
 } from '../textToSpeech';
@@ -497,18 +497,6 @@ function unresolvedOption(
   return { id: saved, label: `${saved} (not available)` };
 }
 
-function voiceForTest(voice: VoiceDetail): TextToSpeechVoice {
-  const settings: TextToSpeechVoice['settings'] = {};
-  if (voice.stability !== null) settings.stability = voice.stability;
-  if (voice.similarity_boost !== null) settings.similarity_boost = voice.similarity_boost;
-  if (voice.style !== null) settings.style = voice.style;
-  if (voice.use_speaker_boost !== null) {
-    settings.use_speaker_boost = voice.use_speaker_boost;
-  }
-  if (voice.speed !== null) settings.speed = voice.speed;
-  return { elevenlabs_voice_id: voice.elevenlabs_voice_id, settings };
-}
-
 function VoicePreview({ client, voiceId, appearance }: {
   client: ChaClient;
   voiceId: string | null;
@@ -547,7 +535,7 @@ function VoicePreview({ client, voiceId, appearance }: {
           setError('That voice is not available for testing.');
           return;
         }
-        selectedVoice = voiceForTest(registered);
+        selectedVoice = speechVoice(registered);
       } catch (failure: unknown) {
         setError(publicErrorMessage(
           failure,

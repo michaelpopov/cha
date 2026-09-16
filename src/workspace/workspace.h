@@ -37,22 +37,19 @@ struct WorkspaceStyle {
     CharacterAppearance appearance;
 };
 
-struct ElevenLabsVoiceSettings {
-    std::optional<double> stability;
-    std::optional<double> similarity_boost;
-    std::optional<double> style;
-    std::optional<bool> use_speaker_boost;
+struct VoiceSettings {
     std::optional<double> speed;
 
-    bool operator==(const ElevenLabsVoiceSettings&) const = default;
+    bool operator==(const VoiceSettings&) const = default;
 };
 
 struct WorkspaceVoice {
     std::string id;
     std::string label;
     std::string description;
+    // Legacy configuration field name; contains a FishAudio reference ID.
     std::string elevenlabs_voice_id;
-    ElevenLabsVoiceSettings settings;
+    VoiceSettings settings;
 };
 
 struct WorkspaceVoiceInput {
@@ -69,8 +66,6 @@ struct WorkspaceVoiceOutput {
     std::string api_key_id;
     std::string output_format;
     std::string default_voice;
-    // Derived when loading validated settings; never persisted.
-    bool fish_audio{false};
 };
 
 using WorkspacePersona = Persona;
@@ -230,7 +225,7 @@ public:
         std::string_view display_name,
         std::string_view description,
         std::string_view elevenlabs_voice_id,
-        const ElevenLabsVoiceSettings& settings) const;
+        const VoiceSettings& settings) const;
     void create_voice(
         std::string_view voice_id,
         std::string_view display_name,

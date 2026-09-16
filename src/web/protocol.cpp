@@ -74,10 +74,6 @@ nlohmann::json appearance_json(const CharacterAppearance& value) {
 
 nlohmann::json speech_voice_json(const SpeechVoice& value) {
     nlohmann::json settings = nlohmann::json::object();
-    put_optional(settings, "stability", value.settings.stability);
-    put_optional(settings, "similarity_boost", value.settings.similarity_boost);
-    put_optional(settings, "style", value.settings.style);
-    put_optional(settings, "use_speaker_boost", value.settings.use_speaker_boost);
     put_optional(settings, "speed", value.settings.speed);
     return {
         {"id", value.id},

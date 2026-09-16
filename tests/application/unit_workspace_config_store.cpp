@@ -1503,12 +1503,12 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, PersistsTheVoiceLifecycle) {
         "guide", "test", std::nullopt, std::string_view{"voice_1"});
     const WorkspaceConfigEditResult updated = store->apply_voice_update(
         "voice_1", "George", "Warm, captivating storyteller", "george-id",
-        ElevenLabsVoiceSettings{.stability = 0.4, .speed = 0.9});
+        VoiceSettings{.speed = 0.9});
     EXPECT_EQ(updated.affected_forum_ids, std::vector<std::string>{"lobby"});
     voice = getws()->find_voice("voice_1");
     ASSERT_NE(voice, nullptr);
     EXPECT_EQ(voice->label, "George");
-    EXPECT_EQ(voice->settings.stability, 0.4);
+    EXPECT_EQ(voice->settings.speed, 0.9);
 
     store->apply_character_settings(
         "guide", "test", std::nullopt, std::nullopt);
@@ -1550,24 +1550,24 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, PersistsVoiceOutputSettings) {
     store->apply_voice_create(
         "default-reader", "Default Reader", "", "eleven-default");
     store->apply_voice_output_update({
-        .url = "https://api.elevenlabs.io/v1/text-to-speech",
-        .model = "eleven_multilingual_v2",
+        .url = "https://api.fish.audio/v1/tts",
+        .model = "s2.1-pro",
         .api_key_id = "api_key_8",
-        .output_format = "mp3_44100_128",
+        .output_format = "mp3",
         .default_voice = "Default Reader",
     });
 
     ASSERT_TRUE(getws()->voice_output());
-    EXPECT_EQ(getws()->voice_output()->model, "eleven_multilingual_v2");
+    EXPECT_EQ(getws()->voice_output()->model, "s2.1-pro");
     EXPECT_EQ(getws()->voice_output()->api_key_id, "api_key_8");
-    EXPECT_EQ(getws()->voice_output()->output_format, "mp3_44100_128");
+    EXPECT_EQ(getws()->voice_output()->output_format, "mp3");
     EXPECT_EQ(getws()->voice_output()->default_voice, "Default Reader");
     const std::string stored = stored_config(
         database(), "system/voice-output/config.toml");
-    EXPECT_NE(stored.find("api.elevenlabs.io"), std::string::npos);
-    EXPECT_NE(stored.find("eleven_multilingual_v2"), std::string::npos);
+    EXPECT_NE(stored.find("api.fish.audio"), std::string::npos);
+    EXPECT_NE(stored.find("s2.1-pro"), std::string::npos);
     EXPECT_NE(stored.find("api_key_8"), std::string::npos);
-    EXPECT_NE(stored.find("mp3_44100_128"), std::string::npos);
+    EXPECT_NE(stored.find("mp3"), std::string::npos);
     EXPECT_NE(stored.find("Default Reader"), std::string::npos);
 
     store->apply_voice_update(
