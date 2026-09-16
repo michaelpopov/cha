@@ -248,6 +248,7 @@ add_library(cha_core STATIC
     ${CMAKE_CURRENT_BINARY_DIR}/generated/new_character_template.cpp
     src/util/environment.cpp
     src/util/crypto.cpp
+    src/util/curl.cpp
     src/util/private_filesystem.cpp
     src/util/logging.cpp
     src/util/path_name.cpp
@@ -260,6 +261,7 @@ add_library(cha_core STATIC
     src/characters/character.cpp
     src/characters/model_context.cpp
     src/providers/api_key_store.cpp
+    src/providers/voice_output_config.cpp
     src/providers/providers.cpp
     src/providers/provider_client.cpp
     src/providers/openai_oauth.cpp
@@ -350,6 +352,7 @@ add_library(cha_web STATIC
     src/web/server_shutdown.cpp
     src/web/session_routes.cpp
     src/web/settings_routes.cpp
+    src/web/fish_audio.cpp
     src/web/live_session.cpp
     src/web/live_session_manager.cpp
     src/web/sse_mailbox.cpp
@@ -455,6 +458,7 @@ if(BUILD_TESTING)
     add_executable(
         cha_web_tests
         tests/web/unit_application_runtime.cpp
+        tests/web/unit_fish_audio.cpp
         tests/web/unit_application_config.cpp
         tests/web/unit_asset_handler.cpp
         tests/web/unit_r2_database_transfer.cpp

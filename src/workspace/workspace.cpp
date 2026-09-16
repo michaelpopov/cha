@@ -1,6 +1,7 @@
 #include "workspace/workspace.h"
 
 #include "characters/model_context.h"
+#include "providers/voice_output_config.h"
 #include "util/path_name.h"
 #include "util/logging.h"
 #include "util/private_filesystem.h"
@@ -473,6 +474,10 @@ WorkspaceVoiceOutput load_voice_output(const std::filesystem::path& path) {
         .output_format = required_string(table, path, "output_format"),
         .default_voice = required_string(table, path, "default_voice"),
     };
+    const auto endpoint = parse_voice_output_endpoint(result.url);
+    result.url = endpoint.url;
+    result.fish_audio = endpoint.fish_audio;
+    result.model = normalize_voice_output_model(result.model);
     if (!valid_voice_input_url(result.url)) {
         throw std::runtime_error(
             "Voice output config '" + utf8_path(path)
@@ -2188,12 +2193,14 @@ void Workspace::write_voice_input(const WorkspaceVoiceInput& settings) const {
 }
 
 void Workspace::write_voice_output(const WorkspaceVoiceOutput& settings) const {
+    const std::string url = parse_voice_output_endpoint(settings.url).url;
+    const std::string model = normalize_voice_output_model(settings.model);
     const std::filesystem::path directory = root_ / "system" / "voice-output";
     const std::filesystem::path path = directory / "config.toml";
     if (settings.url.empty() || settings.model.empty()
         || settings.api_key_id.empty() || settings.output_format.empty()
         || settings.default_voice.empty()
-        || !valid_voice_input_url(settings.url)) {
+        || !valid_voice_input_url(url)) {
         throw std::invalid_argument("Invalid voice output settings");
     }
     if (std::filesystem::exists(directory)) {
@@ -2202,8 +2209,8 @@ void Workspace::write_voice_output(const WorkspaceVoiceOutput& settings) const {
         create_private_directory(directory);
     }
     toml::table table;
-    table.insert("url", settings.url);
-    table.insert("model", settings.model);
+    table.insert("url", url);
+    table.insert("model", model);
     table.insert("api_key", settings.api_key_id);
     table.insert("output_format", settings.output_format);
     table.insert("default_voice", settings.default_voice);

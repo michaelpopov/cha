@@ -69,6 +69,8 @@ struct WorkspaceVoiceOutput {
     std::string api_key_id;
     std::string output_format;
     std::string default_voice;
+    // Derived when loading validated settings; never persisted.
+    bool fish_audio{false};
 };
 
 using WorkspacePersona = Persona;

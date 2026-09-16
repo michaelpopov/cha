@@ -726,6 +726,63 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /api/v1/voice-output/audio:
+    post:
+      tags: [Settings]
+      operationId: generateFishAudio
+      summary: Generate FishAudio speech using the configured endpoint and key
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text, reference_id]
+              properties:
+                text:
+                  type: string
+                  minLength: 1
+                reference_id:
+                  type: string
+                  minLength: 1
+                settings:
+                  type: object
+                  properties:
+                    speed:
+                      type: number
+                      minimum: 0.5
+                      maximum: 2
+      responses:
+        "200":
+          description: Generated audio.
+          content:
+            audio/mpeg:
+              schema:
+                type: string
+                format: binary
+            audio/wav:
+              schema:
+                type: string
+                format: binary
+            audio/ogg:
+              schema:
+                type: string
+                format: binary
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/ForbiddenMutation"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/BodyTooLarge"
+        default:
+          description: FishAudio or transport error.
+          content:
+            application/json:
+              schema:
+                type: object
+
   /api/v1/api-keys:
     get:
       tags: [Settings]
@@ -2872,7 +2929,7 @@ components:
     VoiceOutputRuntime:
       type: object
       additionalProperties: false
-      required: [url, model, api_key, output_format, default_voice_id]
+      required: [url, model, output_format, default_voice_id]
       properties:
         url:
           type: string
@@ -3470,6 +3527,7 @@ components:
                 - prompt_too_large
                 - forbidden_origin
                 - internal_error
+                - speech_busy
                 - session_stopping
                 - session_limit_reached
                 - session_open_timeout

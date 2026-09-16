@@ -1,4 +1,5 @@
 #include "web/http_server.h"
+#include "web/fish_audio.h"
 
 #include "web/http_response.h"
 #include "web/protocol.h"
@@ -64,9 +65,10 @@ void set_exception_error(
 
 } // namespace
 
-void configure_http_server(
+WebSettings configure_http_server(
     httplib::Server& server,
-    WebSettings settings) {
+    WebSettings settings,
+    bool native_voice_enabled) {
     const std::size_t minimum_workers =
         settings.session_limit + settings.http_request_headroom;
     if (settings.http_thread_pool_size < minimum_workers) {
@@ -76,6 +78,12 @@ void configure_http_server(
     if (settings.http_pending_request_limit < settings.http_thread_pool_size) {
         throw std::invalid_argument(
             "Web pending-request limit must cover the HTTP request pool");
+    }
+    // FishAudio has a matching nonblocking admission limit. These additional
+    // workers keep synthesis from consuming the existing command/SSE capacity.
+    if (native_voice_enabled) {
+        settings.http_thread_pool_size += fish_audio_concurrency;
+        settings.http_pending_request_limit += fish_audio_concurrency;
     }
     server.new_task_queue = [settings] {
         return new httplib::ThreadPool(
@@ -98,6 +106,7 @@ void configure_http_server(
            std::exception_ptr exception) {
             set_exception_error(response, exception);
         });
+    return settings;
 }
 
 } // namespace cha::web

@@ -3,6 +3,7 @@
 #include "session/session_lease.h"
 #include "session/workspace_session_database.h"
 #include "util/crypto.h"
+#include "util/curl.h"
 #include "util/path_name.h"
 #include "util/private_filesystem.h"
 #include "util/text.h"
@@ -20,7 +21,6 @@
 #include <filesystem>
 #include <fstream>
 #include <limits>
-#include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -51,39 +51,6 @@ struct SigningTime {
     std::string date;
 };
 
-class CurlHandle {
-public:
-    CurlHandle()
-        : handle_(curl_easy_init(), &curl_easy_cleanup) {
-        if (!handle_) {
-            throw std::runtime_error("Failed to create R2 HTTP handle");
-        }
-    }
-
-    CURL* get() const noexcept { return handle_.get(); }
-
-private:
-    std::unique_ptr<CURL, decltype(&curl_easy_cleanup)> handle_;
-};
-
-class CurlHeaders {
-public:
-    ~CurlHeaders() { curl_slist_free_all(headers_); }
-
-    void append(const std::string& header) {
-        curl_slist* const appended = curl_slist_append(headers_, header.c_str());
-        if (appended == nullptr) {
-            throw std::runtime_error("Failed to allocate R2 HTTP headers");
-        }
-        headers_ = appended;
-    }
-
-    curl_slist* get() const noexcept { return headers_; }
-
-private:
-    curl_slist* headers_{};
-};
-
 class R2ObjectNotFoundError : public std::runtime_error {
 public:
     using std::runtime_error::runtime_error;
@@ -112,24 +79,6 @@ private:
     std::filesystem::path path_;
     bool owned_{true};
 };
-
-class CurlGlobal {
-public:
-    CurlGlobal() {
-        const CURLcode result = curl_global_init(CURL_GLOBAL_DEFAULT);
-        if (result != CURLE_OK) {
-            throw std::runtime_error(
-                "Failed to initialize R2 HTTP transport: "
-                + std::string(curl_easy_strerror(result)));
-        }
-    }
-    ~CurlGlobal() { curl_global_cleanup(); }
-};
-
-CurlGlobal& curl_global() {
-    static CurlGlobal instance;
-    return instance;
-}
 
 std::filesystem::path normalize_database_path(
     const std::filesystem::path& path) {
@@ -549,7 +498,6 @@ std::string list_objects(
     query += "encoding-type=url&list-type=2";
     const R2Settings settings = load_r2_settings({}, storage, std::move(query));
     const std::string payload_hash = sha256_hex({});
-    (void)curl_global();
     CurlHandle curl;
     CurlHeaders headers;
     std::array<char, CURL_ERROR_SIZE> error{};
@@ -728,7 +676,6 @@ std::uintmax_t upload_file(
         throw std::runtime_error("Failed to read '" + utf8_path(path) + "'");
     }
 
-    (void)curl_global();
     CurlHandle curl;
     CurlHeaders headers;
     std::array<char, CURL_ERROR_SIZE> error{};
@@ -772,7 +719,6 @@ std::uintmax_t download_file(
     }
 
     const std::string payload_hash = sha256_hex({});
-    (void)curl_global();
     CurlHandle curl;
     CurlHeaders headers;
     std::array<char, CURL_ERROR_SIZE> error{};

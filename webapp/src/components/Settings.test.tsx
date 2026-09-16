@@ -1,8 +1,8 @@
-import { render, screen, within } from '@testing-library/react';
+import { act, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { ChaError, type ChaClient, type ProviderDetail, type StyleDetail, type VaultDetail } from '../api/client';
+import { ChaError, type ChaClient, type ProviderDetail, type StyleDetail, type VaultDetail, type VoiceOutputRuntime } from '../api/client';
 import { appReducer, initialAppState, type AppAction, type AppState } from '../state/view';
 import { bootstrapFixture, fixtureClient, voiceDetailFixture } from '../test/fixtures';
 import {
@@ -1233,6 +1233,148 @@ describe('Settings screens', () => {
     expect(await screen.findByText('Voice settings saved.')).toBeInTheDocument();
   });
 
+  it('resets the visible model when switching providers in either direction', async () => {
+    render(<VoiceSettingsScreen
+      client={fixtureClient({ listVoices: async () => [voiceDetailFixture] })}
+      dispatch={vi.fn()} sessionReport={null} state={initialAppState}
+    />);
+    const endpoint = await screen.findByLabelText('Output URL endpoint');
+    await userEvent.clear(endpoint);
+    await userEvent.type(endpoint, 'https://api.fish.audio/v1/tts');
+    await userEvent.tab();
+    expect(screen.getByLabelText('Output model name')).toHaveValue('s2.1-pro');
+    expect(screen.getByLabelText('Output format')).toHaveValue('mp3_44100_128');
+    const model = screen.getByLabelText('Output model name');
+    await userEvent.clear(endpoint);
+    await userEvent.type(endpoint, 'https://api.elevenlabs.io/v1/text-to-speech');
+    await userEvent.tab();
+    expect(model).toHaveValue('eleven_multilingual_v2');
+  });
+
+  it('preserves a typed model while correcting a FishAudio URL', async () => {
+    render(<VoiceSettingsScreen
+      client={fixtureClient({ listVoices: async () => [voiceDetailFixture] })}
+      dispatch={vi.fn()} sessionReport={null} state={initialAppState}
+    />);
+    const endpoint = await screen.findByLabelText('Output URL endpoint');
+    await userEvent.clear(endpoint);
+    await userEvent.type(endpoint, 'http://api.fish.audio');
+    const model = screen.getByLabelText('Output model name');
+    await userEvent.clear(model);
+    await userEvent.type(model, 's1');
+    await userEvent.clear(endpoint);
+    await userEvent.type(endpoint, 'https://api.fish.audio');
+    await userEvent.tab();
+    expect(model).toHaveValue('s1');
+    await userEvent.type(endpoint, '/v1/tts');
+    await userEvent.tab();
+    expect(model).toHaveValue('s1');
+  });
+
+  it('uses the server-normalized settings and server URL errors', async () => {
+    const saveVoiceInputSettings = vi.fn(async (settings) => settings);
+    const saveVoiceOutputSettings = vi.fn(async (settings) => {
+      if (settings.url.startsWith('http:')) {
+        throw new ChaError(400, 'bad_request', 'FishAudio requires an HTTPS URL.');
+      }
+      return { ...settings, url: 'https://api.fish.audio/v1/tts', model: settings.model.trim() };
+    });
+    render(<VoiceSettingsScreen
+      client={fixtureClient({
+        listVoices: async () => [voiceDetailFixture],
+        listApiKeys: async () => [{ id: 'key', display_name: 'Key', has_value: true, used_by: [] }],
+        getVoiceInputSettings: async () => ({
+          url: 'https://api.openai.com/v1/realtime/calls', model: 'gpt-live-transcribe',
+          api_key: 'key', delay: 'low', prompt: '',
+        }),
+        getVoiceOutputSettings: async () => ({
+          url: 'https://api.fish.audio/v1/tts', model: 's2.1-pro-free',
+          api_key: 'key', output_format: 'mp3', default_voice: voiceDetailFixture.display_name,
+        }),
+        saveVoiceInputSettings, saveVoiceOutputSettings,
+      })}
+      dispatch={vi.fn()} sessionReport={null} state={initialAppState}
+    />);
+    const endpoint = await screen.findByLabelText('Output URL endpoint');
+    await userEvent.clear(endpoint);
+    await userEvent.type(endpoint, 'HTTPS://API.FISH.AUDIO:443');
+    await userEvent.tab();
+    const model = screen.getByLabelText('Output model name');
+    expect(model).toHaveValue('s2.1-pro-free');
+    await userEvent.clear(model);
+    await userEvent.type(model, ' custom/model ');
+    await userEvent.click(screen.getByRole('button', { name: 'Save voice settings' }));
+    expect(await screen.findByText('Voice settings saved.')).toBeInTheDocument();
+    expect(saveVoiceOutputSettings).toHaveBeenCalledWith(expect.objectContaining({
+      url: 'HTTPS://API.FISH.AUDIO:443', model: ' custom/model ',
+    }));
+    expect(endpoint).toHaveValue('https://api.fish.audio/v1/tts');
+
+    await userEvent.clear(endpoint);
+    await userEvent.type(endpoint, 'http://api.fish.audio');
+    await userEvent.click(screen.getByRole('button', { name: 'Save voice settings' }));
+    expect(await screen.findByText('FishAudio requires an HTTPS URL.')).toBeInTheDocument();
+    expect(saveVoiceInputSettings).toHaveBeenCalledTimes(2);
+    expect(saveVoiceOutputSettings).toHaveBeenCalledTimes(2);
+  });
+
+  it('shows only supported delivery controls for FishAudio', async () => {
+    render(<VoiceScreen
+      client={fixtureClient({
+        listVoices: async () => [voiceDetailFixture],
+        getVoiceOutputRuntime: async () => ({
+          url: 'https://api.fish.audio/v1/tts', model: 's2.1-pro',
+          output_format: 'mp3', default_voice_id: 'fish-voice',
+        }),
+      })}
+      dispatch={vi.fn()} sessionReport={null}
+      state={{ ...initialAppState, inspectedVoiceId: 'brian' }}
+    />);
+    expect(await screen.findByLabelText('Voice ID')).toHaveValue(voiceDetailFixture.elevenlabs_voice_id);
+    expect(screen.getByRole('spinbutton', { name: /Speed/ })).toBeInTheDocument();
+    expect(screen.queryByRole('spinbutton', { name: /Stability/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('spinbutton', { name: /Similarity/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('spinbutton', { name: /Style exaggeration/ })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Speaker boost')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Play preview' })).toBeEnabled();
+  });
+
+  it('waits for the provider before showing ElevenLabs controls', async () => {
+    let resolveRuntime!: (value: VoiceOutputRuntime) => void;
+    const runtime = new Promise<VoiceOutputRuntime>((resolve) => { resolveRuntime = resolve; });
+    render(<VoiceScreen
+      client={fixtureClient({
+        listVoices: async () => [voiceDetailFixture],
+        getVoiceOutputRuntime: () => runtime,
+      })}
+      dispatch={vi.fn()} sessionReport={null}
+      state={{ ...initialAppState, inspectedVoiceId: 'brian' }}
+    />);
+    await screen.findByLabelText('Voice ID');
+    expect(screen.queryByRole('spinbutton', { name: /Stability/ })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Speaker boost')).not.toBeInTheDocument();
+    await act(async () => resolveRuntime({
+      url: 'https://api.elevenlabs.io/v1/text-to-speech', model: 'eleven_multilingual_v2',
+      api_key: 'secret', output_format: 'mp3', default_voice_id: 'voice',
+    }));
+    expect(screen.getByRole('spinbutton', { name: /Stability/ })).toBeInTheDocument();
+    expect(screen.getByLabelText('Speaker boost')).toBeInTheDocument();
+  });
+
+  it('hides provider-specific controls when voice runtime settings are unavailable', async () => {
+    render(<VoiceScreen
+      client={fixtureClient({ listVoices: async () => [voiceDetailFixture] })}
+      dispatch={vi.fn()} sessionReport={null}
+      state={{ ...initialAppState, inspectedVoiceId: 'brian' }}
+    />);
+    await screen.findByLabelText('Voice ID');
+    expect(screen.getByRole('spinbutton', { name: /Speed/ })).toBeInTheDocument();
+    expect(screen.queryByRole('spinbutton', { name: /Stability/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('spinbutton', { name: /Similarity/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('spinbutton', { name: /Style exaggeration/ })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Speaker boost')).not.toBeInTheDocument();
+  });
+
   it('registers a voice and opens its editor', async () => {
     const createVoice = vi.fn(async () => voiceDetailFixture);
     const dispatch = vi.fn();
@@ -1248,7 +1390,7 @@ describe('Settings screens', () => {
     await userEvent.type(screen.getByLabelText('Name'), 'Brian');
     await userEvent.type(screen.getByLabelText('Description'), 'Deep, resonant, comforting');
     await userEvent.type(
-      screen.getByLabelText('ElevenLabs voice ID'),
+      screen.getByLabelText('Voice ID'),
       voiceDetailFixture.elevenlabs_voice_id,
     );
     await userEvent.click(screen.getByRole('button', { name: 'Register voice' }));
@@ -1317,6 +1459,10 @@ describe('Settings screens', () => {
       <VoiceScreen
         client={fixtureClient({
           listVoices: async () => [legacyVoice],
+          getVoiceOutputRuntime: async () => ({
+            url: 'https://api.elevenlabs.io/v1/text-to-speech', model: 'eleven_multilingual_v2',
+            api_key: 'secret', output_format: 'mp3', default_voice_id: 'voice',
+          }),
           updateVoice,
         })}
         dispatch={vi.fn()}
@@ -1368,7 +1514,7 @@ describe('Settings screens', () => {
       />,
     );
 
-    const voiceId = await screen.findByLabelText('ElevenLabs voice ID');
+    const voiceId = await screen.findByLabelText('Voice ID');
     await userEvent.clear(voiceId);
     expect(screen.getByRole('button', { name: 'Play preview' })).toBeDisabled();
     await userEvent.type(voiceId, 'unsaved-id');

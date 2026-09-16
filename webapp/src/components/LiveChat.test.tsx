@@ -14,6 +14,7 @@ import {
   voiceOutputRuntimeFixture,
 } from '../test/fixtures';
 import {
+  cacheTextToSpeech,
   clearTextToSpeechCache,
   TextToSpeechError,
   TextToSpeechSession,
@@ -363,6 +364,52 @@ describe('live chat', () => {
       expect.stringContaining('/assistant-voice?'),
       expect.stringContaining('/assistant-voice?'),
     ]);
+  });
+
+  it.each(['stop caching', 'leave the conversation'])('discards queued FishAudio prefetch when users %s', async (action) => {
+    const responses: Array<(response: Response) => void> = [];
+    let holding = true;
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(() => holding
+      ? new Promise<Response>((resolve) => responses.push(resolve))
+      : Promise.resolve(new Response('audio')),
+    );
+    const configuration = {
+      baseUrl: 'https://api.fish.audio/v1/tts', voiceId: 'voice',
+      model: 's2.1-pro', outputFormat: 'mp3', apiKey: '',
+    };
+    const blockers = ['Previous 1', 'Previous 2'].map((text) => cacheTextToSpeech(configuration, undefined, text));
+    const events = drivableEvents();
+    const view = render(<App client={fixtureClient({
+      getVoiceOutputRuntime: async () => ({
+        url: configuration.baseUrl, model: configuration.model,
+        output_format: 'mp3', default_voice_id: 'voice',
+      }),
+    })} connectSessionEvents={events.connect} />);
+    try {
+      await attachInitial(events, {
+        ...snapshotFixture,
+        transcript: Array.from({ length: 3 }, (_, i) => ({
+          id: i + 1, kind: 'character', participant_id: 'assistant', display_name: 'Assistant',
+          addressed_to: '', addressed_to_name: '', text: `New answer ${i}`,
+          status: 'complete', created_at: 1_700_000_000 + i,
+        })),
+      });
+      const toggle = screen.getByRole('button', { name: 'Cache conversation audio automatically' });
+      fireEvent.click(toggle);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(toggle).toHaveAttribute('aria-busy', 'true');
+      if (action === 'stop caching') fireEvent.click(toggle);
+      else view.unmount();
+      holding = false;
+      for (const resolve of responses) resolve(new Response('audio'));
+      await act(async () => { await Promise.all(blockers); });
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    } finally {
+      holding = false;
+      for (const resolve of responses) resolve(new Response('audio'));
+      await Promise.allSettled(blockers);
+      view.unmount();
+    }
   });
 
   it('shows an error message returned by ElevenLabs', async () => {

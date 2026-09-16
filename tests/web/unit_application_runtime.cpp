@@ -349,6 +349,83 @@ TEST(ApplicationRuntime, ReportsVoiceInputApiKeyUsage) {
     runtime->shutdown();
 }
 
+TEST(ApplicationRuntime, ValidatesConfiguredFishAudioRequests) {
+    test::TestWorkspace workspace;
+    workspace.write_voice("reader", "display_name = \"Reader\"\nelevenlabs_voice_id = \"fish-voice\"\n");
+    const auto database = test::import_test_database(workspace.root());
+    {
+        auto config = WorkspaceConfigStore::open(database);
+        ApiKeyStore keys(*config);
+        const auto key = keys.create("FishAudio", "fish-secret");
+        config->apply_voice_output_update({
+            .url = "https://api.fish.audio/v1/tts", .model = "s2.1-pro",
+            .api_key_id = key.id, .output_format = "mp3_44100_128", .default_voice = "Reader",
+        });
+    }
+    auto runtime = ApplicationRuntime::open(make_command(workspace, database), "private-test-token");
+    httplib::Client client("127.0.0.1", runtime->start());
+    const auto resolved = client.Get("/api/v1/voice-output/runtime", kRuntimeCookie);
+    ASSERT_TRUE(resolved);
+    ASSERT_EQ(resolved->status, 200);
+    const auto runtime_settings = nlohmann::json::parse(resolved->body);
+    EXPECT_EQ(runtime_settings.at("url"), "https://api.fish.audio/v1/tts");
+    EXPECT_EQ(runtime_settings.at("default_voice_id"), "fish-voice");
+    EXPECT_FALSE(runtime_settings.contains("api_key"));
+    EXPECT_EQ(resolved->body.find("fish-secret"), std::string::npos);
+    for (const std::string body : {"{}", "{\"text\":1,\"reference_id\":\"voice\"}", "invalid json"}) {
+        const auto response = client.Post("/api/v1/voice-output/audio", kRuntimeCookie, body, "application/json");
+        ASSERT_TRUE(response);
+        EXPECT_EQ(response->status, 400);
+    }
+    auto foreign_origin = kRuntimeCookie;
+    foreign_origin.emplace("Origin", "https://other.example");
+    const auto forbidden = client.Post("/api/v1/voice-output/audio", foreign_origin,
+        R"({"text":"Hello","reference_id":"voice"})", "application/json");
+    ASSERT_TRUE(forbidden);
+    EXPECT_EQ(forbidden->status, 403);
+}
+
+TEST(ApplicationRuntime, NormalizesFishAudioSettingsAndRejectsHttpBeforeSaving) {
+    test::TestWorkspace workspace;
+    workspace.write_voice("reader", "display_name = \"Reader\"\nelevenlabs_voice_id = \"fish-voice\"\n");
+    const auto database = test::import_test_database(workspace.root());
+    std::string key_id;
+    {
+        auto config = WorkspaceConfigStore::open(database);
+        ApiKeyStore keys(*config);
+        key_id = keys.create("FishAudio", "secret").id;
+    }
+    auto runtime = ApplicationRuntime::open(make_command(workspace, database), "private-test-token");
+    httplib::Client client("127.0.0.1", runtime->start());
+    nlohmann::json update{
+        {"url", "HTTPS://API.FISH.AUDIO:443"}, {"model", " custom/model "},
+        {"api_key", key_id}, {"output_format", "mp3"}, {"default_voice", "Reader"},
+    };
+    const auto saved = client.Put("/api/v1/voice-output", kRuntimeCookie, update.dump(), "application/json");
+    ASSERT_TRUE(saved);
+    ASSERT_EQ(saved->status, 200) << saved->body;
+    EXPECT_EQ(nlohmann::json::parse(saved->body).at("url"), "https://api.fish.audio/v1/tts");
+    EXPECT_EQ(nlohmann::json::parse(saved->body).at("model"), "custom/model");
+    ASSERT_TRUE(getws()->voice_output());
+    EXPECT_EQ(getws()->voice_output()->url, "https://api.fish.audio/v1/tts");
+    EXPECT_EQ(getws()->voice_output()->model, "custom/model");
+
+    update["url"] = "https://API.FISH.AUDIO:8443/v1/tts";
+    const auto custom_port = client.Put("/api/v1/voice-output", kRuntimeCookie, update.dump(), "application/json");
+    ASSERT_TRUE(custom_port);
+    EXPECT_EQ(custom_port->status, 200);
+    const auto malformed = client.Post("/api/v1/voice-output/audio", kRuntimeCookie, "{}", "application/json");
+    ASSERT_TRUE(malformed);
+    EXPECT_EQ(malformed->status, 400); // Parsed as FishAudio, rather than rejected as an unknown provider.
+
+    update["url"] = "http://api.fish.audio/v1/tts";
+    const auto rejected = client.Put("/api/v1/voice-output", kRuntimeCookie, update.dump(), "application/json");
+    ASSERT_TRUE(rejected);
+    EXPECT_EQ(rejected->status, 400);
+    EXPECT_EQ(nlohmann::json::parse(rejected->body).at("error").at("message"), "FishAudio requires an HTTPS URL.");
+    EXPECT_EQ(getws()->voice_output()->url, "https://api.fish.audio:8443/v1/tts");
+}
+
 TEST(ApplicationRuntime, ServesVaultBackedVoiceOutputSettings) {
     test::TestWorkspace workspace;
     workspace.write_voice(
@@ -397,6 +474,11 @@ TEST(ApplicationRuntime, ServesVaultBackedVoiceOutputSettings) {
         nlohmann::json::parse(resolved->body);
     EXPECT_EQ(runtime_settings.at("api_key"), "output-secret");
     EXPECT_EQ(runtime_settings.at("default_voice_id"), "eleven-default");
+
+    const auto audio = client.Post("/api/v1/voice-output/audio", kRuntimeCookie,
+        R"({"text":"Hello","reference_id":"voice"})", "application/json");
+    ASSERT_TRUE(audio);
+    EXPECT_EQ(audio->status, 404); // This route only forwards configured FishAudio output.
 
     const nlohmann::json invalid_update{
         {"url", "https://example.com/speech"},

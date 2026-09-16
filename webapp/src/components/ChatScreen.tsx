@@ -28,6 +28,7 @@ import {
   type TextToSpeechVoice,
   useTextToSpeechConfiguration,
 } from '../textToSpeech';
+import { isFishAudioUrl } from '../textToSpeechRequest';
 import {
   appendTranscription,
   VoiceInputSession,
@@ -93,6 +94,7 @@ interface SpeechCacheRun {
   seenEntryIds: Set<number>;
   queue: SpeechCacheItem[];
   active: number;
+  controller: AbortController;
 }
 
 function multicastSubmission(text: string): string {
@@ -430,14 +432,16 @@ export function ChatScreen({
     if (run) {
       run.queue.length = 0;
       speechCacheRun.current = null;
+      run.controller.abort();
     }
     setSpeechCacheEnabled(false);
     setSpeechCacheBusy(false);
   }, [conversationKey]);
 
   function pumpSpeechCache(run: SpeechCacheRun) {
+    const concurrency = isFishAudioUrl(run.configuration.baseUrl) ? 2 : speechCacheConcurrency;
     while (speechCacheRun.current === run
-      && run.active < speechCacheConcurrency
+      && run.active < concurrency
       && run.queue.length > 0) {
       const item = run.queue.shift();
       if (!item) break;
@@ -447,6 +451,7 @@ export function ChatScreen({
         run.configuration,
         item.voice,
         item.text,
+        run.controller.signal,
       ).catch((failure: unknown) => {
         if (speechCacheRun.current !== run) return;
         setActionError(failure instanceof TextToSpeechError
@@ -485,6 +490,7 @@ export function ChatScreen({
     if (current) {
       current.queue.length = 0;
       speechCacheRun.current = null;
+      current.controller.abort();
       setSpeechCacheEnabled(false);
       setSpeechCacheBusy(false);
       return;
@@ -496,6 +502,7 @@ export function ChatScreen({
       seenEntryIds: new Set(),
       queue: [],
       active: 0,
+      controller: new AbortController(),
     };
     speechCacheRun.current = run;
     setSpeechCacheEnabled(true);

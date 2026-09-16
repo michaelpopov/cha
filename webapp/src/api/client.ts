@@ -61,6 +61,7 @@ const knownErrorCodes = {
   prompt_too_large: true,
   forbidden_origin: true,
   internal_error: true,
+  speech_busy: true,
   session_stopping: true,
   session_limit_reached: true,
   session_open_timeout: true,
@@ -422,7 +423,7 @@ function isVoiceOutputRuntime(value: unknown): value is VoiceOutputRuntime {
   return isRecord(value)
     && typeof value.url === 'string' && value.url.length > 0
     && typeof value.model === 'string' && value.model.length > 0
-    && typeof value.api_key === 'string' && value.api_key.length > 0
+    && (value.api_key === undefined || (typeof value.api_key === 'string' && value.api_key.length > 0))
     && typeof value.output_format === 'string' && value.output_format.length > 0
     && typeof value.default_voice_id === 'string'
     && value.default_voice_id.length > 0;

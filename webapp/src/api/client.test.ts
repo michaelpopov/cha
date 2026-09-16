@@ -467,6 +467,15 @@ describe('CHA API client', () => {
     expect(fetcher.mock.calls[1][1]?.body).toBe(JSON.stringify(settings));
   });
 
+  it('accepts FishAudio runtime settings without exposing an API key', async () => {
+    const runtime = {
+      url: 'https://api.fish.audio/v1/tts', model: 's2.1-pro',
+      output_format: 'mp3', default_voice_id: 'fish-voice',
+    };
+    const client = createChaClient(async () => jsonResponse(runtime));
+    await expect(client.getVoiceOutputRuntime()).resolves.toEqual(runtime);
+  });
+
   it('turns the error envelope into one ChaError shape', async () => {
     const fetcher = vi.fn<(
       input: RequestInfo | URL,

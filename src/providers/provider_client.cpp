@@ -7,6 +7,7 @@
 #include "providers/chat_completions_api.h"
 #include "providers/openai_oauth.h"
 #include "providers/responses_api.h"
+#include "util/curl.h"
 #include "util/logging.h"
 #include "util/text.h"
 
@@ -33,12 +34,7 @@ namespace cha {
 // Owns one request-local easy handle and keeps libcurl's variadic API behind typed calls.
 class ProviderClient::CurlEasyHandle {
 public:
-    CurlEasyHandle()
-        : handle_(curl_easy_init(), &curl_easy_cleanup) {
-        if (!handle_) {
-            throw std::runtime_error("Failed to create libcurl handle");
-        }
-    }
+    CurlEasyHandle() = default;
 
     void set(CURLoption option, long value, std::string_view operation) {
         require(curl_easy_setopt(handle_.get(), option, value), operation);
@@ -92,38 +88,12 @@ private:
         }
     }
 
-    std::unique_ptr<CURL, decltype(&curl_easy_cleanup)> handle_;
+    CurlHandle handle_;
 };
 
 namespace {
 
 using Json = nlohmann::json;
-
-// Initializes libcurl once per process while any provider client may use it.
-class CurlGlobal {
-public:
-    CurlGlobal() {
-        const CURLcode result = curl_global_init(CURL_GLOBAL_DEFAULT);
-        if (result != CURLE_OK) {
-            throw std::runtime_error(
-                "Failed to initialize libcurl: "
-                + std::string(curl_easy_strerror(result)));
-        }
-    }
-
-    ~CurlGlobal() {
-        curl_global_cleanup();
-    }
-};
-
-// Releases curl header lists when their owning smart pointer leaves scope.
-struct CurlHeadersDeleter {
-    void operator()(curl_slist* headers) const {
-        curl_slist_free_all(headers);
-    }
-};
-
-using CurlHeaders = std::unique_ptr<curl_slist, CurlHeadersDeleter>;
 
 constexpr std::size_t max_provider_error_body_size = 4 * 1024;
 constexpr std::size_t max_public_provider_error_size = 512;
@@ -246,11 +216,6 @@ int transfer_progress(void* persona_data, curl_off_t, curl_off_t, curl_off_t, cu
         return 1;
     }
     return 0;
-}
-
-CurlGlobal& curl_global() {
-    static CurlGlobal global;
-    return global;
 }
 
 std::size_t receive_response(
@@ -515,7 +480,6 @@ ProviderClient::ProviderClient(
     }
 
     if (config.mode == Mode::net && !transport_) {
-        (void)curl_global();
         curl_ = std::make_unique<CurlEasyHandle>();
     }
 }
@@ -727,14 +691,10 @@ GenerationResult ProviderClient::perform(
         curl_->set(CURLOPT_XFERINFOFUNCTION, transfer_progress, "Failed to configure cancellation callback");
         curl_->set(CURLOPT_XFERINFODATA, &progress, "Failed to configure transfer progress state");
 
-        curl_slist* raw_headers = nullptr;
+        CurlHeaders headers;
         for (const std::string& line : header_lines) {
-            raw_headers = curl_slist_append(raw_headers, line.c_str());
+            headers.append(line);
         }
-        if (!raw_headers) {
-            throw std::runtime_error("Failed to create HTTP headers");
-        }
-        CurlHeaders headers(raw_headers);
         curl_->set(CURLOPT_HTTPHEADER, headers.get(), "Failed to configure HTTP headers");
 
         const CURLcode perform_result = curl_->perform();

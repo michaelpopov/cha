@@ -852,6 +852,35 @@ TEST(Workspace, ValidatesVoiceInputBeforeWritingAndIgnoresInvalidSavedConfig) {
     EXPECT_FALSE(reloaded.voice_input());
 }
 
+TEST(Workspace, NormalizesFishAudioConfigurationOnWriteAndLoad) {
+    test::TestWorkspace fixture;
+    const Workspace workspace = Workspace::load(fixture.root());
+    workspace.write_voice_output({
+        .url = "HTTPS://API.FISH.AUDIO:443", .model = " custom/model ",
+        .api_key_id = "api_key_2", .output_format = "mp3", .default_voice = "Reader",
+    });
+    auto reloaded = Workspace::load(fixture.root());
+    ASSERT_TRUE(reloaded.voice_output());
+    EXPECT_EQ(reloaded.voice_output()->url, "https://api.fish.audio/v1/tts");
+    EXPECT_TRUE(reloaded.voice_output()->fish_audio);
+    EXPECT_EQ(reloaded.voice_output()->model, "custom/model");
+    const auto path = fixture.root() / "system" / "voice-output" / "config.toml";
+    std::ofstream(path) << "url = \"HTTPS://API.FISH.AUDIO:443\"\n"
+                          "model = \" eleven_multilingual_v2 \"\n"
+                          "api_key = \"api_key_2\"\noutput_format = \"mp3\"\ndefault_voice = \"Reader\"\n";
+    reloaded = Workspace::load(fixture.root());
+    ASSERT_TRUE(reloaded.voice_output());
+    EXPECT_EQ(reloaded.voice_output()->url, "https://api.fish.audio/v1/tts");
+    EXPECT_TRUE(reloaded.voice_output()->fish_audio);
+    EXPECT_EQ(reloaded.voice_output()->model, "eleven_multilingual_v2");
+    const std::string before = file_bytes(path);
+    EXPECT_THROW(workspace.write_voice_output({
+        .url = "http://api.fish.audio/v1/tts", .model = "s2.1-pro",
+        .api_key_id = "api_key_2", .output_format = "mp3", .default_voice = "Reader",
+    }), std::invalid_argument);
+    EXPECT_EQ(file_bytes(path), before);
+}
+
 TEST(Workspace, PersistsAndValidatesVoiceOutputSettings) {
     test::TestWorkspace fixture;
     fixture.write_voice(

@@ -17,6 +17,7 @@ class WorkspaceConfigStore;
 namespace cha::web {
 
 class LiveSessionManager;
+class FishAudioProxy;
 
 class SettingsRoutes {
 public:
@@ -26,7 +27,8 @@ public:
         WorkspaceConfigStore& config,
         ApiKeyStore& api_keys,
         OpenAiOAuth& openai_auth,
-        bool native_voice_enabled);
+        bool native_voice_enabled,
+        FishAudioProxy& fish_audio);
 
     void install(httplib::Server& server) const;
 
@@ -37,6 +39,7 @@ private:
     ApiKeyStore* api_keys_;
     OpenAiOAuth* openai_auth_;
     bool native_voice_enabled_{};
+    FishAudioProxy* fish_audio_;
 };
 
 } // namespace cha::web

@@ -22,6 +22,7 @@
 #include "web/asset_handler.h"
 #include "web/http_response.h"
 #include "web/http_server.h"
+#include "web/fish_audio.h"
 #include "web/json.h"
 #include "web/live_session_manager.h"
 #include "web/lobby_routes.h"
@@ -587,6 +588,7 @@ struct ApplicationRuntime::Impl {
     std::unique_ptr<OpenAiOAuth> openai_auth;
     Providers providers;
     std::unique_ptr<LiveSessionManager> live_sessions;
+    FishAudioProxy fish_audio;
     std::unique_ptr<httplib::Server> server;
     std::thread listener;
     mutable std::mutex lifecycle_mutex;
@@ -600,6 +602,7 @@ struct ApplicationRuntime::Impl {
     void stop_http() {
         if (!server || server_stop_requested) return;
         server_stop_requested = true;
+        fish_audio.stop();
         server->stop();
     }
 };
@@ -1063,7 +1066,8 @@ int ApplicationRuntime::start(int port_override) {
     if (impl_->started) throw std::logic_error("CHA runtime is already started");
 
     auto server = std::make_unique<httplib::Server>();
-    configure_http_server(*server, impl_->settings);
+    const auto http_settings = configure_http_server(
+        *server, impl_->settings, !impl_->access_token.empty());
     if (!impl_->access_token.empty()) {
         const std::string token = impl_->access_token;
         server->set_pre_routing_handler(
@@ -1358,10 +1362,10 @@ int ApplicationRuntime::start(int port_override) {
         *impl_->store,
         *impl_->api_keys,
         *impl_->openai_auth,
-        !impl_->access_token.empty()).install(*server);
+        !impl_->access_token.empty(), impl_->fish_audio).install(*server);
     SessionRoutes(
         *impl_->live_sessions, impl_->settings, assets).install(*server);
-    log_startup(impl_->settings);
+    log_startup(http_settings);
 
     const int requested_port = port_override < 0
         ? impl_->command.port : port_override;

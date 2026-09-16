@@ -171,6 +171,7 @@ std::string_view to_string(ErrorCode value) {
             {ErrorCode::prompt_too_large, "prompt_too_large"},
             {ErrorCode::forbidden_origin, "forbidden_origin"},
             {ErrorCode::internal_error, "internal_error"},
+            {ErrorCode::speech_busy, "speech_busy"},
             {ErrorCode::session_stopping, "session_stopping"},
             {ErrorCode::session_limit_reached, "session_limit_reached"},
             {ErrorCode::session_open_timeout, "session_open_timeout"},

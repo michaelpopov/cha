@@ -1,5 +1,6 @@
 #include "providers/openai_oauth.h"
 
+#include "util/curl.h"
 #include "util/json_serialization.h"
 #include "util/logging.h"
 #include "util/path_name.h"
@@ -17,7 +18,6 @@
 #include <fstream>
 #include <iterator>
 #include <limits>
-#include <memory>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -61,52 +61,6 @@ constexpr const char* save_failed = "OpenAI credentials could not be saved.";
 constexpr const char* remove_failed = "OpenAI credentials could not be removed.";
 constexpr const char* invalid_file = "OpenAI credential file is invalid.";
 
-// Initializes libcurl once for process lifetime. Intentionally never calls
-// curl_global_cleanup(): provider_client.cpp owns its own init/cleanup pair,
-// and a second cleanup here could run while the other owner still needs
-// libcurl. A leaked init is safe; a premature cleanup is not.
-void ensure_curl_initialized() {
-    static std::once_flag flag;
-    std::call_once(flag, [] {
-        if (curl_global_init(CURL_GLOBAL_DEFAULT) != CURLE_OK) {
-            throw std::runtime_error("Failed to initialize libcurl");
-        }
-    });
-}
-
-class CurlHandle {
-public:
-    CurlHandle()
-        : handle_(curl_easy_init(), &curl_easy_cleanup) {
-        if (!handle_) {
-            throw std::runtime_error("Failed to create libcurl handle");
-        }
-    }
-
-    CURL* get() const noexcept { return handle_.get(); }
-
-private:
-    std::unique_ptr<CURL, decltype(&curl_easy_cleanup)> handle_;
-};
-
-class CurlHeaders {
-public:
-    ~CurlHeaders() { curl_slist_free_all(headers_); }
-
-    void append(const std::string& header) {
-        curl_slist* const appended = curl_slist_append(headers_, header.c_str());
-        if (appended == nullptr) {
-            throw std::runtime_error("Failed to create HTTP headers");
-        }
-        headers_ = appended;
-    }
-
-    curl_slist* get() const noexcept { return headers_; }
-
-private:
-    curl_slist* headers_{};
-};
-
 void require_curl(CURLcode result) {
     if (result != CURLE_OK) {
         throw std::runtime_error("OpenAI request failed.");
@@ -131,7 +85,6 @@ std::size_t receive_body(
 }
 
 OpenAiOAuthHttpResponse production_post(const OpenAiOAuthHttpRequest& request) {
-    ensure_curl_initialized();
     if (request.timeout <= std::chrono::milliseconds{0}) {
         throw std::runtime_error(login_timed_out);
     }
