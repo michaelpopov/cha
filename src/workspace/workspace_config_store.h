@@ -202,6 +202,10 @@ public:
         std::span<const SavedApiKey> api_keys,
         const std::optional<R2StorageKey>& r2_storage,
         std::uint64_t next_id);
+    void merge(
+        const std::filesystem::path& source_database_path,
+        const SessionLease& source_lease,
+        std::string_view source_password = {});
 
 private:
     struct Impl;
