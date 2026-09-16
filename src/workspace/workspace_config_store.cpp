@@ -13,16 +13,20 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <charconv>
 #include <chrono>
+#include <cstdint>
 #include <exception>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <set>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -880,6 +884,79 @@ void prune_orphan_sessions(Database& database, const std::set<std::string>& vali
     }
 }
 
+std::string_view stored_directory_id(
+    std::string_view name,
+    std::string_view prefix) {
+    if (!name.starts_with(prefix)) return {};
+    name.remove_prefix(prefix.size());
+    const auto slash = name.find('/');
+    if (slash == std::string_view::npos || slash == 0) return {};
+    return name.substr(0, slash);
+}
+
+std::uint64_t merge_saved_key_suffix(std::string_view id) {
+    constexpr std::string_view prefix = "api_key_";
+    if (!id.starts_with(prefix)) {
+        fail_path("Key config '" + std::string(id) + "' has invalid ID");
+    }
+    id.remove_prefix(prefix.size());
+    std::uint64_t suffix{};
+    const auto [end, error] =
+        std::from_chars(id.data(), id.data() + id.size(), suffix);
+    if (error != std::errc{} || end != id.data() + id.size() || suffix == 0) {
+        fail_path("Key config '" + std::string(id) + "' has invalid ID");
+    }
+    return suffix;
+}
+
+template<typename Item>
+void require_source_directories_loaded(
+    const std::vector<ConfigFile>& rows,
+    std::string_view prefix,
+    std::span<const Item> loaded) {
+    std::set<std::string> ids;
+    for (const ConfigFile& row : rows) {
+        const std::string_view id = stored_directory_id(row.name, prefix);
+        if (!id.empty()) ids.emplace(id);
+    }
+    for (const std::string& id : ids) {
+        bool found = false;
+        for (const Item& item : loaded) {
+            if (item.id == id) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            fail_path("Source directory '" + std::string(prefix) + id + "' is invalid");
+        }
+    }
+}
+
+std::uint64_t normalized_merge_next_id(
+    std::uint64_t source_next,
+    std::uint64_t destination_next,
+    const std::map<std::string, std::string>& candidate) {
+    std::uint64_t highest = 0;
+    std::set<std::string> seen;
+    for (const auto& [name, content] : candidate) {
+        (void)content;
+        const std::string_view id = stored_directory_id(name, "system/keys/");
+        if (id.empty() || !seen.insert(std::string(id)).second) continue;
+        highest = std::max(highest, merge_saved_key_suffix(id));
+    }
+    if (highest == std::numeric_limits<std::uint64_t>::max()) {
+        fail_path("API key ID space is exhausted");
+    }
+    const std::uint64_t next_id =
+        std::max(std::max(source_next, destination_next), highest + 1);
+    if (next_id > static_cast<std::uint64_t>(
+            std::numeric_limits<std::int64_t>::max())) {
+        fail_path("API key ID space is exhausted");
+    }
+    return next_id;
+}
+
 void commit_imported_rows(
     const std::filesystem::path& database,
     const std::vector<ConfigFile>& rows,
@@ -1617,6 +1694,87 @@ void WorkspaceConfigStore::apply_key_migration(
         }
         if (r2_storage) workspace.create_r2_storage(*r2_storage);
         workspace.write_next_api_key_id(next_id);
+        return std::vector<std::string>{};
+    });
+}
+
+void WorkspaceConfigStore::merge(
+    const std::filesystem::path& source_database_path,
+    const SessionLease& source_lease,
+    std::string_view source_password) {
+    const std::filesystem::path source = normalize_path(source_database_path);
+    if (source == database_path()) {
+        fail_path(
+            "Source database '" + utf8_path(source)
+            + "' is the active destination database");
+    }
+    if (!source_lease.active()) {
+        fail_path("Source database lease is not active");
+    }
+
+    const WorkspaceDatabaseState state =
+        inspect_workspace_session_database(source, source_password);
+    if (state != WorkspaceDatabaseState::valid_v2) {
+        fail_database_state(source, state);
+    }
+
+    std::vector<ConfigFile> source_rows;
+    {
+        Database handle(source, Database::Mode::read_write, source_password);
+        validate_workspace_session_database_identity(handle);
+        validate_workspace_session_contents(handle);
+        source_rows = read_workspace_config_files(handle);
+        validate_config_rows(source_rows);
+    }
+
+    Workspace source_workspace = [&] {
+        TemporaryPrivateRoot root;
+        materialize_config_files(root.workspace(), source_rows);
+        return Workspace::load(root.workspace());
+    }();
+    require_source_directories_loaded(
+        source_rows, "system/providers/", source_workspace.providers());
+    require_source_directories_loaded(
+        source_rows, "system/styles/", source_workspace.styles());
+
+    (void)impl_->edit([&](const Workspace& published) {
+        std::map<std::string, std::string> candidate;
+        for (const ConfigFile& row :
+             read_workspace_config_files(*impl_->database)) {
+            candidate.emplace(row.name, row.content);
+        }
+
+        // S's R2 singleton replaces D's even when the saved-key IDs differ.
+        if (source_workspace.r2_storage() && published.r2_storage()) {
+            const std::string prefix =
+                "system/keys/" + published.r2_storage()->id + "/";
+            for (auto it = candidate.begin(); it != candidate.end();) {
+                if (it->first.starts_with(prefix)) {
+                    it = candidate.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+        }
+
+        for (const ConfigFile& row : source_rows) {
+            candidate[row.name] = row.content;
+        }
+
+        const std::uint64_t next_id = normalized_merge_next_id(
+            source_workspace.next_api_key_id(),
+            published.next_api_key_id(),
+            candidate);
+        candidate["system/keys/config.toml"] =
+            "next_id = " + std::to_string(next_id) + "\n";
+
+        std::vector<ConfigFile> rows;
+        rows.reserve(candidate.size());
+        for (auto& [name, content] : candidate) {
+            rows.push_back({std::move(name), std::move(content)});
+        }
+        remove_directory_contents(impl_->tree->workspace());
+        materialize_config_files(impl_->tree->workspace(), rows);
         return std::vector<std::string>{};
     });
 }
