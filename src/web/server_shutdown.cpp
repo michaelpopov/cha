@@ -6,6 +6,7 @@
 
 #include <cstdlib>
 #include <thread>
+#include <utility>
 
 namespace cha::web {
 namespace {
@@ -36,8 +37,13 @@ bool ProcessShutdownSignal::requested() const noexcept {
 
 ServerShutdownCoordinator::ServerShutdownCoordinator(
     LiveSessionManager& live_sessions,
-    httplib::Server& server)
-    : live_sessions_(live_sessions), server_(server) {}
+    httplib::Server& server,
+    std::function<void()> stop_accepting)
+    : live_sessions_(live_sessions),
+      server_(server),
+      stop_accepting_(std::move(stop_accepting)) {
+    if (!stop_accepting_) stop_accepting_ = [&server] { server.stop(); };
+}
 
 void ServerShutdownCoordinator::wait_and_shutdown(
     const ProcessShutdownSignal& signals,
@@ -52,7 +58,7 @@ void ServerShutdownCoordinator::wait_and_shutdown(
 void ServerShutdownCoordinator::shutdown_now(
     std::thread& listener,
     std::chrono::milliseconds grace) {
-    live_sessions_.begin_shutdown([this] { server_.stop(); });
+    live_sessions_.begin_shutdown(stop_accepting_);
     if (!live_sessions_.join_shutdown(grace)) {
         for (const FullSessionId& key : live_sessions_.unfinished_owners()) {
             log_critical(

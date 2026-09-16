@@ -304,6 +304,18 @@ export function DownloadVaultScreen({ client, dispatch, sessionReport }: Setting
   );
 }
 
+// The page may only connect to the voice endpoint origins configured when it
+// loaded, so a merge that changes them needs a reload before voice works.
+async function voiceEndpointOrigins(client: ChaClient): Promise<string> {
+  const [input, output] = await Promise.all([
+    client.getVoiceInputSettings(),
+    client.getVoiceOutputSettings(),
+  ]);
+  return [input?.url, output?.url]
+    .map((url) => (url ? new URL(url).origin : ''))
+    .join(' ');
+}
+
 export function MergeVaultScreen({ client, dispatch, sessionReport }: SettingsScreenProps) {
   const [vaults, setVaults] = useState<VaultDetail[] | null>(null);
   const [source, setSource] = useState('');
@@ -312,6 +324,7 @@ export function MergeVaultScreen({ client, dispatch, sessionReport }: SettingsSc
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const [complete, setComplete] = useState(false);
+  const [reloadNeeded, setReloadNeeded] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
@@ -341,6 +354,7 @@ export function MergeVaultScreen({ client, dispatch, sessionReport }: SettingsSc
     setComplete(false);
     if (password) setPasswordError(null);
     try {
+      const voiceBefore = await voiceEndpointOrigins(client);
       await client.mergeVault(source, password);
       setPasswordPrompt(false);
       setPasswordError(null);
@@ -352,6 +366,12 @@ export function MergeVaultScreen({ client, dispatch, sessionReport }: SettingsSc
       } catch {
         // Discovery refresh is non-critical; merge already succeeded.
       }
+      // When the new voice settings cannot be read, offering a reload is harmless.
+      const voiceChanged = await voiceEndpointOrigins(client).then(
+        (voiceAfter) => voiceAfter !== voiceBefore,
+        () => true,
+      );
+      setReloadNeeded((needed) => needed || voiceChanged);
       setComplete(true);
     } catch (failure: unknown) {
       if (failure instanceof ChaError && failure.code === 'source_vault_password_required') {
@@ -392,6 +412,12 @@ export function MergeVaultScreen({ client, dispatch, sessionReport }: SettingsSc
             <label>Source vault<select className="cha-form-control" onChange={(event) => setSource(event.target.value)} value={source}><option value="">Select a vault</option>{sources.map((vault) => <option key={vault.display_name} value={vault.display_name}>{vault.display_name}</option>)}</select></label>
           </fieldset>
           {complete && <p className="cha-state-message" role="status">Merge complete</p>}
+          {complete && reloadNeeded && (
+            <div className="cha-state-message">
+              <p>Reload CHA to use the merged voice settings.</p>
+              <button className="cha-button cha-button-ghost" onClick={() => window.location.reload()} type="button">Reload</button>
+            </div>
+          )}
           {error && <p className="cha-error-message" role="alert">{error}</p>}
           <div className="cha-settings-form-actions"><button className="cha-button cha-button-primary" disabled={!source || !destination || pending} type="submit">{pending ? 'Merging…' : 'Merge'}</button></div>
         </form>

@@ -249,6 +249,41 @@ describe('Settings screens', () => {
     expect(state.mainView).toBe('settings-merge-vault');
   });
 
+  it('offers a reload only when a merge changes a voice endpoint origin', async () => {
+    let outputUrl = 'https://api.elevenlabs.io/v1/text-to-speech';
+    const mergeVault = vi.fn(async () => undefined);
+    render(
+      <MergeVaultScreen
+        client={fixtureClient({
+          listVaults: async () => vaults,
+          mergeVault,
+          getVoiceOutputSettings: async () => ({
+            url: outputUrl,
+            model: 'eleven_multilingual_v2',
+            api_key: 'api_key_1',
+            output_format: 'mp3_44100_128',
+            default_voice: 'rachel',
+          }),
+        })}
+        dispatch={vi.fn()}
+        sessionReport={null}
+        state={initialAppState}
+      />,
+    );
+
+    await userEvent.selectOptions(await screen.findByLabelText('Source vault'), 'Projects');
+    await confirmMerge();
+    expect(await screen.findByText('Merge complete')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Reload' })).not.toBeInTheDocument();
+
+    mergeVault.mockImplementationOnce(async () => {
+      outputUrl = 'https://voice.example/v1/text-to-speech';
+    });
+    await confirmMerge();
+    expect(await screen.findByRole('button', { name: 'Reload' })).toBeInTheDocument();
+    expect(screen.getByText('Reload CHA to use the merged voice settings.')).toBeInTheDocument();
+  });
+
   it('shows an empty merge state when there is no other vault', async () => {
     render(
       <MergeVaultScreen

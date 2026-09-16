@@ -4,6 +4,7 @@
 
 #include <chrono>
 #include <csignal>
+#include <functional>
 #include <thread>
 
 namespace httplib {
@@ -32,9 +33,12 @@ private:
 // Owns the bounded process-wide shutdown protocol, leaving web_main as wiring.
 class ServerShutdownCoordinator {
 public:
+    // stop_accepting replaces server.stop() for a caller that may already
+    // have stopped the server; cpp-httplib must not be stopped twice.
     ServerShutdownCoordinator(
         LiveSessionManager& live_sessions,
-        httplib::Server& server);
+        httplib::Server& server,
+        std::function<void()> stop_accepting = {});
 
     // Waits through the signal-safe bridge, then owns the complete bounded
     // shutdown policy. shutdown_now() is the directly testable half: it
@@ -52,6 +56,7 @@ public:
 private:
     LiveSessionManager& live_sessions_;
     httplib::Server& server_;
+    std::function<void()> stop_accepting_;
 };
 
 } // namespace cha::web

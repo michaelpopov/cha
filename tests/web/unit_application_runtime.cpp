@@ -2597,7 +2597,7 @@ TEST(ApplicationRuntime, MergeOverlaysSourceAndKeepsTheActiveVault) {
     EXPECT_EQ(session_count(pair.database_b), 1);
     EXPECT_NE(getws()->find_persona("beta"), nullptr);
 
-    const auto repeated = post_merge(client, "b", "");
+    const auto repeated = post_merge(client, "b");
     ASSERT_TRUE(repeated);
     EXPECT_EQ(repeated->status, 204) << repeated->body;
     EXPECT_EQ(get_bootstrap(client).at("vault_name").get<std::string>(), "A");

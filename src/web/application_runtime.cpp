@@ -40,7 +40,6 @@
 
 #include <algorithm>
 #include <chrono>
-#include <cstdlib>
 #include <filesystem>
 #include <memory>
 #include <mutex>
@@ -362,17 +361,6 @@ std::optional<std::string> nullable_json_string(
     const std::string value = json.at(name).get<std::string>();
     if (value.empty()) throw std::invalid_argument("Invalid vault settings");
     return value;
-}
-
-std::string merge_password_json(const nlohmann::json& json) {
-    if (!json.is_object() || !json.contains("password")) {
-        throw std::invalid_argument("Invalid vault merge");
-    }
-    if (json.at("password").is_null()) return {};
-    if (!json.at("password").is_string()) {
-        throw std::invalid_argument("Invalid vault merge");
-    }
-    return json.at("password").get<std::string>();
 }
 
 nlohmann::json vault_json(
@@ -1324,7 +1312,8 @@ int ApplicationRuntime::start(int port_override) {
                         if (source_vault.empty()) {
                             throw std::invalid_argument("Invalid vault merge");
                         }
-                        password = merge_password_json(json);
+                        password = nullable_json_string(json, "password")
+                                       .value_or("");
                     })) {
                 return;
             }
@@ -1401,17 +1390,11 @@ void ApplicationRuntime::wait_for_shutdown_signal() {
 void ApplicationRuntime::shutdown() {
     const std::lock_guard operation(impl_->lifecycle_mutex);
     if (!impl_->started || impl_->stopped) return;
-    impl_->live_sessions->begin_shutdown([this] { impl_->stop_http(); });
-    if (!impl_->live_sessions->join_shutdown(impl_->settings.shutdown_grace)) {
-        for (const FullSessionId& key : impl_->live_sessions->unfinished_owners()) {
-            log_critical(
-                "Web shutdown grace expired: forum_id=" + key.forum_id
-                + " session_id=" + key.session_id);
-        }
-        std::_Exit(1);
-    }
-    if (impl_->listener.joinable()) impl_->listener.join();
-    log_info("web server event=shutdown");
+    ServerShutdownCoordinator coordinator(
+        *impl_->live_sessions,
+        *impl_->server,
+        [this] { impl_->stop_http(); });
+    coordinator.shutdown_now(impl_->listener, impl_->settings.shutdown_grace);
     impl_->providers.shutdown();
     impl_->stopped = true;
 }

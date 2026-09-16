@@ -13,7 +13,6 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
-#include <charconv>
 #include <chrono>
 #include <cstdint>
 #include <exception>
@@ -893,43 +892,6 @@ std::string_view stored_directory_id(
     return name.substr(0, slash);
 }
 
-std::uint64_t merge_saved_key_suffix(std::string_view id) {
-    constexpr std::string_view prefix = "api_key_";
-    if (!id.starts_with(prefix)) {
-        fail_path("Key config '" + std::string(id) + "' has invalid ID");
-    }
-    id.remove_prefix(prefix.size());
-    std::uint64_t suffix{};
-    const auto [end, error] =
-        std::from_chars(id.data(), id.data() + id.size(), suffix);
-    if (error != std::errc{} || end != id.data() + id.size() || suffix == 0) {
-        fail_path("Key config '" + std::string(id) + "' has invalid ID");
-    }
-    return suffix;
-}
-
-std::uint64_t normalized_merge_next_id(
-    std::uint64_t source_next,
-    std::uint64_t destination_next,
-    const std::map<std::string, std::string>& candidate) {
-    std::uint64_t highest = 0;
-    for (const auto& row : candidate) {
-        const std::string_view id = stored_directory_id(row.first, "system/keys/");
-        if (id.empty()) continue;
-        highest = std::max(highest, merge_saved_key_suffix(id));
-    }
-    if (highest == std::numeric_limits<std::uint64_t>::max()) {
-        fail_path("API key ID space is exhausted");
-    }
-    const std::uint64_t next_id =
-        std::max(std::max(source_next, destination_next), highest + 1);
-    if (next_id > static_cast<std::uint64_t>(
-            std::numeric_limits<std::int64_t>::max())) {
-        fail_path("API key ID space is exhausted");
-    }
-    return next_id;
-}
-
 void commit_imported_rows(
     const std::filesystem::path& database,
     const std::vector<ConfigFile>& rows,
@@ -1742,10 +1704,14 @@ void WorkspaceConfigStore::merge(
             candidate[row.name] = row.content;
         }
 
-        const std::uint64_t next_id = normalized_merge_next_id(
-            source_workspace.next_api_key_id(),
-            published.next_api_key_id(),
-            candidate);
+        // Every merged key comes from S or D, and each loaded counter already
+        // exceeds its own highest key ID, so the larger counter is safe.
+        const std::uint64_t next_id = std::max(
+            source_workspace.next_api_key_id(), published.next_api_key_id());
+        if (next_id > static_cast<std::uint64_t>(
+                std::numeric_limits<std::int64_t>::max())) {
+            fail_path("API key ID space is exhausted");
+        }
         candidate["system/keys/config.toml"] =
             "next_id = " + std::to_string(next_id) + "\n";
 
