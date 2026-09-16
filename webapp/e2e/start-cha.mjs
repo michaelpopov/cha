@@ -92,6 +92,21 @@ await cp(resolve(project, 'e2e/fixtures/workspace'), workspaceB, {
   force: false,
   errorOnExist: true,
 });
+await mkdir(resolve(workspaceB, 'characters/merge-source'), { recursive: true });
+await writeFile(
+  resolve(workspaceB, 'characters/merge-source/character.toml'),
+  `display_name = "Merge Source"
+description = "A source-only merge character"
+provider = "test"
+`,
+);
+await writeFile(
+  resolve(workspaceB, 'characters/merge-source/CHARACTER.md'),
+  `# Merge Source
+
+Answer deterministically in browser tests.
+`,
+);
 
 // A local OpenAI-shaped stream is slow enough for the browser to observe and
 // stop an active generation, while remaining deterministic and offline.

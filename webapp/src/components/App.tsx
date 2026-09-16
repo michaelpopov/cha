@@ -64,6 +64,7 @@ import {
   ApiKeyScreen,
   ApiKeysScreen,
   DownloadVaultScreen,
+  MergeVaultScreen,
   NewApiKeyScreen,
   NewProviderScreen,
   NewStyleScreen,
@@ -268,6 +269,9 @@ function Screen({
     case 'settings-download-vault': return (
       <DownloadVaultScreen client={client} dispatch={dispatch} sessionReport={sessionReport} state={state} />
     );
+    case 'settings-merge-vault': return (
+      <MergeVaultScreen client={client} dispatch={dispatch} sessionReport={sessionReport} state={state} />
+    );
     case 'settings-vault': return (
       <VaultScreen client={client} dispatch={dispatch} sessionReport={sessionReport} state={state} />
     );
@@ -396,6 +400,7 @@ function SessionOperationState({
 // actions change no view and must therefore supersede nothing.
 const inPlaceActions = new Set<AppAction['type']>([
   'toggle-sidebar',
+  'bootstrap-refreshed',
   'character-detail-loaded',
   'character-updated',
   'persona-detail-loaded',

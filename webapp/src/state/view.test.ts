@@ -292,6 +292,22 @@ describe('application navigation reducer', () => {
     expect(state.bootstrap?.vaults).toEqual(['Home', 'Projects']);
   });
 
+  it('opens Merge from Vaults and returns to the vault list', () => {
+    let state = readyState();
+    state = appReducer(state, { type: 'show-settings-vaults' });
+    expect(state.mainView).toBe('settings-vaults');
+    expect(navigationTitle(state)).toBe('Vaults');
+
+    state = appReducer(state, { type: 'show-settings-merge-vault' });
+    expect(state.mainView).toBe('settings-merge-vault');
+    expect(navigationTitle(state)).toBe('Merge vault');
+    expect(state.bootstrap?.vault_name).toBe('Personal');
+
+    state = appReducer(state, { type: 'show-settings-vaults' });
+    expect(state.mainView).toBe('settings-vaults');
+    expect(navigationTitle(state)).toBe('Vaults');
+  });
+
   it('keeps the R2 list open after downloading a vault', () => {
     let state = readyState();
     state = appReducer(state, { type: 'show-settings-download-vault' });

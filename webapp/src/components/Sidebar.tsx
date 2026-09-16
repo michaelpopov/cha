@@ -50,6 +50,11 @@ const navigation = [
 
 const settingsViews: MainView[] = [
   'settings',
+  'settings-vaults',
+  'settings-new-vault',
+  'settings-download-vault',
+  'settings-merge-vault',
+  'settings-vault',
   'settings-providers',
   'settings-new-provider',
   'settings-provider',
@@ -63,6 +68,7 @@ const settingsViews: MainView[] = [
   'settings-api-keys',
   'settings-new-api-key',
   'settings-api-key',
+  'settings-r2-storage',
 ];
 
 function SessionDialog({

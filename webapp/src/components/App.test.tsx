@@ -1289,6 +1289,71 @@ it('abandons an open that finishes after the browser has already gone back', asy
   expect(events.connections).toHaveLength(0);
 });
 
+it('does not abandon an in-flight session open when merge refreshes bootstrap', async () => {
+  const user = userEvent.setup();
+  const refresh = deferred();
+  const opened = deferred();
+  let bootstraps = 0;
+  const getBootstrap = vi.fn(async () => {
+    bootstraps += 1;
+    if (bootstraps > 1) await refresh.promise;
+    return bootstrapFixture;
+  });
+  const openSession = vi.fn(async (forumId: string, sessionId: string) => {
+    if (sessionId === 'planning') await opened.promise;
+    return { forum_id: forumId, session_id: sessionId };
+  });
+  const events = recordingSessionEvents();
+  render(
+    <App
+      client={storedPlanningClient({
+        getBootstrap,
+        openSession,
+        listVaults: async () => [
+          {
+            display_name: 'Personal',
+            protected: false,
+            data_path: '/data/personal.sqlite3',
+            mirror_path: null,
+            modify_path: '/work/personal',
+            active: true,
+            can_delete: false,
+          },
+          {
+            display_name: 'Projects',
+            protected: false,
+            data_path: '/data/projects.sqlite3',
+            mirror_path: null,
+            modify_path: null,
+            active: false,
+            can_delete: true,
+          },
+        ],
+      })}
+      connectSessionEvents={events.connect}
+    />,
+  );
+
+  await user.click(await screen.findByLabelText('Settings'));
+  await user.click(await screen.findByRole('button', { name: /Vaults/ }));
+  await user.click(await screen.findByRole('button', { name: /Merge into active vault/ }));
+  await user.selectOptions(await screen.findByLabelText('Source vault'), 'Projects');
+  await user.click(screen.getByRole('button', { name: 'Merge' }));
+  await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Merge' }));
+  await waitFor(() => expect(getBootstrap).toHaveBeenCalledTimes(2));
+
+  await user.click(screen.getByRole('button', { name: /^Planning/ }));
+  await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Opening session'));
+
+  refresh.settle();
+  opened.settle();
+
+  await waitFor(() => expect(screen.getByLabelText('Current chat context'))
+    .toHaveTextContent('The Lobby'));
+  expect(events.connections.filter(({ key }) => key === 'lobby/planning'))
+    .toEqual([expect.objectContaining({ key: 'lobby/planning' })]);
+});
+
 it('lets a second navigation supersede an open that is still in flight', async () => {
   const held = deferred();
   const events = recordingSessionEvents();

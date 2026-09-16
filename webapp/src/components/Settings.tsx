@@ -8,6 +8,7 @@ import {
 } from 'react';
 
 import {
+  ChaError,
   publicErrorMessage,
   type ApiKeyDetail,
   type ChaClient,
@@ -29,10 +30,12 @@ import {
   type TextToSpeechVoice,
   useTextToSpeechConfiguration,
 } from '../textToSpeech';
+import { validateBootstrap } from '../state/bootstrap';
 import { reloadForVoiceSettings } from '../state/voiceSettingsReload';
 import type { AppAction, AppState } from '../state/view';
 import { voiceClasses } from './characterAppearance';
 import { ConfirmDialog } from './ConfirmDialog';
+import { PasswordDialog } from './PasswordDialog';
 import {
   CharacterIcon,
   ChevronLeftIcon,
@@ -212,6 +215,11 @@ export function VaultsScreen({ client, dispatch, sessionReport }: SettingsScreen
             label="Download vault"
             onClick={() => dispatch({ type: 'show-settings-download-vault' })}
           />
+          <SettingsRow
+            icon={<DatabaseIcon />}
+            label="Merge into active vault"
+            onClick={() => dispatch({ type: 'show-settings-merge-vault' })}
+          />
           {vaults.map((vault) => (
             <SettingsRow
               description={vault.active ? 'Active' : undefined}
@@ -292,6 +300,125 @@ export function DownloadVaultScreen({ client, dispatch, sessionReport }: Setting
         </div>
       )}
       {names !== null && error && <p className="cha-error-message" role="alert">{error}</p>}
+    </section>
+  );
+}
+
+export function MergeVaultScreen({ client, dispatch, sessionReport }: SettingsScreenProps) {
+  const [vaults, setVaults] = useState<VaultDetail[] | null>(null);
+  const [source, setSource] = useState('');
+  const [confirming, setConfirming] = useState(false);
+  const [passwordPrompt, setPasswordPrompt] = useState(false);
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+  const [complete, setComplete] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [revision, setRevision] = useState(0);
+  const pendingRef = useRef(false);
+
+  useEffect(() => {
+    let current = true;
+    setVaults(null);
+    setLoadError(null);
+    void client.listVaults().then(
+      (loaded) => { if (current) setVaults(loaded); },
+      (failure: unknown) => {
+        if (current) setLoadError(publicErrorMessage(failure, 'Vaults could not be loaded.'));
+      },
+    );
+    return () => { current = false; };
+  }, [client, revision]);
+
+  const destination = vaults?.find((vault) => vault.active)?.display_name ?? '';
+  const sources = vaults?.filter((vault) => !vault.active) ?? [];
+
+  async function merge(password?: string) {
+    if (!source || !destination || pendingRef.current) return;
+    pendingRef.current = true;
+    setPending(true);
+    setError(null);
+    setComplete(false);
+    if (password) setPasswordError(null);
+    try {
+      await client.mergeVault(source, password);
+      setPasswordPrompt(false);
+      setPasswordError(null);
+      try {
+        dispatch({
+          type: 'bootstrap-refreshed',
+          bootstrap: validateBootstrap(await client.getBootstrap()),
+        });
+      } catch {
+        // Discovery refresh is non-critical; merge already succeeded.
+      }
+      setComplete(true);
+    } catch (failure: unknown) {
+      if (failure instanceof ChaError && failure.code === 'source_vault_password_required') {
+        setPasswordPrompt(true);
+        setPasswordError(password
+          ? publicErrorMessage(failure, 'The vault could not be merged.')
+          : null);
+      } else {
+        setPasswordPrompt(false);
+        setPasswordError(null);
+        setError(publicErrorMessage(failure, 'The vault could not be merged.'));
+      }
+    } finally {
+      pendingRef.current = false;
+      setPending(false);
+    }
+  }
+
+  const ready = vaults !== null;
+
+  return (
+    <section className="cha-screen cha-navigation" aria-label="Merge vault settings">
+      <button className="cha-back-row" onClick={() => dispatch({ type: 'show-settings-vaults' })} type="button"><ChevronLeftIcon /><span>Vaults</span></button>
+      {sessionReport}
+      {!ready && !loadError && <p className="cha-state-message" role="status">Loading vaults…</p>}
+      {loadError && !ready && <LoadFailure message={loadError} retry={() => setRevision((value) => value + 1)} />}
+      {ready && sources.length === 0 && <p className="cha-empty-list">No other vaults</p>}
+      {ready && sources.length > 0 && (
+        <form
+          className="cha-settings-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!source || !destination || pending) return;
+            setConfirming(true);
+          }}
+        >
+          <fieldset disabled={pending}>
+            <label>Source vault<select className="cha-form-control" onChange={(event) => setSource(event.target.value)} value={source}><option value="">Select a vault</option>{sources.map((vault) => <option key={vault.display_name} value={vault.display_name}>{vault.display_name}</option>)}</select></label>
+          </fieldset>
+          {complete && <p className="cha-state-message" role="status">Merge complete</p>}
+          {error && <p className="cha-error-message" role="alert">{error}</p>}
+          <div className="cha-settings-form-actions"><button className="cha-button cha-button-primary" disabled={!source || !destination || pending} type="submit">{pending ? 'Merging…' : 'Merge'}</button></div>
+        </form>
+      )}
+      {confirming && (
+        <ConfirmDialog
+          confirmLabel="Merge"
+          message={`Merge “${source}” into “${destination}”? Source files overwrite destination files at matching paths. This cannot be undone.`}
+          onCancel={() => setConfirming(false)}
+          onConfirm={() => {
+            setConfirming(false);
+            void merge();
+          }}
+          title="Merge vault?"
+        />
+      )}
+      {passwordPrompt && (
+        <PasswordDialog
+          error={passwordError}
+          name={source}
+          onCancel={() => {
+            setPasswordPrompt(false);
+            setPasswordError(null);
+          }}
+          onSubmit={(password) => void merge(password)}
+        />
+      )}
     </section>
   );
 }

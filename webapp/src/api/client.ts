@@ -29,6 +29,7 @@ export type DeleteTurnRequest = components['schemas']['DeleteTurnRequest'];
 export type OpenAiAuth = components['schemas']['OpenAiAuth'];
 export type VaultDetail = components['schemas']['VaultDetail'];
 export type CreateVaultRequest = components['schemas']['CreateVaultRequest'];
+export type MergeVaultRequest = components['schemas']['MergeVaultRequest'];
 export type VaultUpdate = Omit<components['schemas']['UpdateVaultRequest'], 'vault_name'>;
 export type ProviderSummary = components['schemas']['ProviderSummary'];
 export type ProviderDetail = components['schemas']['ProviderDetail'];
@@ -199,6 +200,7 @@ export interface ChaClient {
   saveR2Storage(request: SaveR2StorageRequest): Promise<R2StorageDetail>;
   deleteR2Storage(): Promise<void>;
   switchVault(vaultName: string, password?: string): Promise<void>;
+  mergeVault(sourceVault: string, password?: string): Promise<void>;
 }
 
 function isOneOf(value: unknown, choices: readonly unknown[]): boolean {
@@ -1021,6 +1023,12 @@ export function createChaClient(
       fetcher,
       '/api/v1/vault/switch',
       jsonMutation({ vault_name: vaultName, password: password || null }),
+    ),
+
+    mergeVault: (sourceVault, password) => requestEmpty(
+      fetcher,
+      '/api/v1/vault/merge',
+      jsonMutation({ source_vault: sourceVault, password: password || null }),
     ),
   };
 }

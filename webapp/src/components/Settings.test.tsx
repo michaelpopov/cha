@@ -2,13 +2,14 @@ import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { ProviderDetail, StyleDetail, VaultDetail } from '../api/client';
-import { initialAppState } from '../state/view';
-import { fixtureClient, voiceDetailFixture } from '../test/fixtures';
+import { ChaError, type ProviderDetail, type StyleDetail, type VaultDetail } from '../api/client';
+import { appReducer, initialAppState, type AppAction, type AppState } from '../state/view';
+import { bootstrapFixture, fixtureClient, voiceDetailFixture } from '../test/fixtures';
 import {
   ApiKeyScreen,
   ApiKeysScreen,
   DownloadVaultScreen,
+  MergeVaultScreen,
   NewApiKeyScreen,
   NewProviderScreen,
   NewStyleScreen,
@@ -119,6 +120,28 @@ describe('Settings screens', () => {
     expect(dispatch).toHaveBeenCalledWith({ type: 'show-settings-download-vault' });
   });
 
+  it('opens Merge from the fifth vault operation', async () => {
+    const dispatch = vi.fn();
+    render(
+      <VaultsScreen
+        client={fixtureClient({ listVaults: async () => vaults })}
+        dispatch={dispatch}
+        sessionReport={null}
+        state={initialAppState}
+      />,
+    );
+
+    const merge = await screen.findByRole('button', { name: /Merge into active vault/ });
+    const operations = screen.getAllByRole('button');
+    expect(operations.map((button) => button.textContent)).toEqual(expect.arrayContaining([
+      expect.stringMatching(/New vault/),
+      expect.stringMatching(/Download vault/),
+      expect.stringMatching(/Merge into active vault/),
+    ]));
+    await userEvent.click(merge);
+    expect(dispatch).toHaveBeenCalledWith({ type: 'show-settings-merge-vault' });
+  });
+
   it('shows vault status without exposing database paths', async () => {
     render(
       <VaultsScreen
@@ -177,6 +200,177 @@ describe('Settings screens', () => {
     expect(await screen.findAllByText('Downloaded')).toHaveLength(2);
     expect(screen.getByRole('button', { name: /Archive/ })).toBeDisabled();
     expect(screen.getByRole('button', { name: /Travel/ })).toBeDisabled();
+  });
+
+  async function confirmMerge() {
+    await userEvent.click(await screen.findByRole('button', { name: 'Merge' }));
+    const dialog = within(await screen.findByRole('dialog'));
+    expect(dialog.getByRole('heading', { name: 'Merge vault?' })).toBeInTheDocument();
+    expect(dialog.getByText(/Merge “Projects” into “Personal”/)).toBeInTheDocument();
+    expect(dialog.getByText(/overwrite destination files at matching paths/i)).toBeInTheDocument();
+    expect(dialog.getByText(/cannot be undone/i)).toBeInTheDocument();
+    await userEvent.click(dialog.getByRole('button', { name: 'Merge' }));
+  }
+
+  function mergeState(): AppState {
+    return appReducer(
+      appReducer(initialAppState, { type: 'bootstrap-loaded', bootstrap: bootstrapFixture }),
+      { type: 'show-settings-merge-vault' },
+    );
+  }
+
+  it('excludes the active vault from merge sources and keeps it active after success', async () => {
+    const mergeVault = vi.fn(async () => undefined);
+    let state = mergeState();
+    const dispatch = (action: AppAction) => {
+      state = appReducer(state, action);
+    };
+    render(
+      <MergeVaultScreen
+        client={fixtureClient({ listVaults: async () => vaults, mergeVault })}
+        dispatch={dispatch}
+        sessionReport={null}
+        state={state}
+      />,
+    );
+
+    const source = await screen.findByLabelText('Source vault');
+    expect(source).toHaveValue('');
+    expect(screen.getByRole('button', { name: 'Merge' })).toBeDisabled();
+    expect(screen.queryByRole('option', { name: 'Personal' })).not.toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Projects' })).toBeInTheDocument();
+
+    await userEvent.selectOptions(source, 'Projects');
+    await confirmMerge();
+
+    expect(mergeVault).toHaveBeenCalledWith('Projects', undefined);
+    expect(await screen.findByText('Merge complete')).toBeInTheDocument();
+    expect(state.bootstrap?.vault_name).toBe('Personal');
+    expect(state.mainView).toBe('settings-merge-vault');
+  });
+
+  it('shows an empty merge state when there is no other vault', async () => {
+    render(
+      <MergeVaultScreen
+        client={fixtureClient({ listVaults: async () => [vaults[0]] })}
+        dispatch={vi.fn()}
+        sessionReport={null}
+        state={initialAppState}
+      />,
+    );
+
+    expect(await screen.findByText('No other vaults')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Source vault')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Merge' })).not.toBeInTheDocument();
+  });
+
+  it('prevents a second merge request while one is pending', async () => {
+    let finish: (() => void) | undefined;
+    const mergeVault = vi.fn(() => new Promise<void>((resolve) => {
+      finish = resolve;
+    }));
+    render(
+      <MergeVaultScreen
+        client={fixtureClient({ listVaults: async () => vaults, mergeVault })}
+        dispatch={vi.fn()}
+        sessionReport={null}
+        state={initialAppState}
+      />,
+    );
+
+    await userEvent.selectOptions(await screen.findByLabelText('Source vault'), 'Projects');
+    await confirmMerge();
+    expect(await screen.findByRole('button', { name: 'Merging…' })).toBeDisabled();
+    expect(mergeVault).toHaveBeenCalledTimes(1);
+    finish?.();
+    expect(await screen.findByText('Merge complete')).toBeInTheDocument();
+  });
+
+  it('asks for the source password and retries until the merge succeeds', async () => {
+    const mergeVault = vi.fn(async (_source: string, password?: string) => {
+      if (password !== 'secret') {
+        throw new ChaError(
+          401,
+          'source_vault_password_required',
+          'Password required to merge this vault',
+        );
+      }
+    });
+    render(
+      <MergeVaultScreen
+        client={fixtureClient({ listVaults: async () => vaults, mergeVault })}
+        dispatch={vi.fn()}
+        sessionReport={null}
+        state={initialAppState}
+      />,
+    );
+
+    await userEvent.selectOptions(await screen.findByLabelText('Source vault'), 'Projects');
+    await confirmMerge();
+    expect(await screen.findByRole('heading', { name: 'Open Projects' })).toBeInTheDocument();
+    expect(mergeVault).toHaveBeenLastCalledWith('Projects', undefined);
+
+    await userEvent.type(screen.getByLabelText('Password'), 'wrong');
+    await userEvent.click(screen.getByRole('button', { name: 'Open vault' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Password required to merge this vault');
+    expect(mergeVault).toHaveBeenLastCalledWith('Projects', 'wrong');
+    expect(screen.getByLabelText('Source vault')).toHaveValue('Projects');
+
+    const password = screen.getByLabelText('Password');
+    await userEvent.clear(password);
+    await userEvent.type(password, 'secret');
+    await userEvent.click(screen.getByRole('button', { name: 'Open vault' }));
+    expect(await screen.findByText('Merge complete')).toBeInTheDocument();
+    expect(mergeVault).toHaveBeenLastCalledWith('Projects', 'secret');
+    expect(screen.queryByRole('heading', { name: 'Open Projects' })).not.toBeInTheDocument();
+  });
+
+  it('sends no retry when the source password dialog is cancelled', async () => {
+    const mergeVault = vi.fn(async () => {
+      throw new ChaError(
+        401,
+        'source_vault_password_required',
+        'Password required to merge this vault',
+      );
+    });
+    render(
+      <MergeVaultScreen
+        client={fixtureClient({ listVaults: async () => vaults, mergeVault })}
+        dispatch={vi.fn()}
+        sessionReport={null}
+        state={initialAppState}
+      />,
+    );
+
+    await userEvent.selectOptions(await screen.findByLabelText('Source vault'), 'Projects');
+    await confirmMerge();
+    expect(await screen.findByRole('heading', { name: 'Open Projects' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('heading', { name: 'Open Projects' })).not.toBeInTheDocument();
+    expect(mergeVault).toHaveBeenCalledTimes(1);
+    expect(mergeVault).toHaveBeenCalledWith('Projects', undefined);
+  });
+
+  it('keeps a validation failure visible so merge can be retried', async () => {
+    const mergeVault = vi.fn(async () => {
+      throw new ChaError(400, 'bad_request', 'Duplicate character id “guide”.');
+    });
+    render(
+      <MergeVaultScreen
+        client={fixtureClient({ listVaults: async () => vaults, mergeVault })}
+        dispatch={vi.fn()}
+        sessionReport={null}
+        state={initialAppState}
+      />,
+    );
+
+    await userEvent.selectOptions(await screen.findByLabelText('Source vault'), 'Projects');
+    await confirmMerge();
+    expect(await screen.findByRole('alert')).toHaveTextContent('Duplicate character id “guide”.');
+    expect(screen.getByRole('button', { name: 'Merge' })).toBeEnabled();
+    await confirmMerge();
+    expect(mergeVault).toHaveBeenCalledTimes(2);
+    expect(await screen.findByRole('alert')).toHaveTextContent('Duplicate character id “guide”.');
   });
 
   it('creates a copied vault without activating it', async () => {

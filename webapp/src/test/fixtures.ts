@@ -303,6 +303,7 @@ export function fixtureClient(overrides: Partial<ChaClient> = {}): ChaClient {
     }),
     deleteR2Storage: async () => undefined,
     switchVault: async () => undefined,
+    mergeVault: async () => undefined,
     ...overrides,
   };
 }

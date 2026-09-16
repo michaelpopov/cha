@@ -210,6 +210,40 @@ describe('CHA API client', () => {
     }));
   });
 
+  it('posts mergeVault with a null password and preserves a source-password challenge', async () => {
+    const fetcher = vi.fn<(
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => Promise<Response>>(async () => new Response(null, { status: 204 }));
+    const ok = createChaClient(fetcher);
+    await expect(ok.mergeVault('Projects')).resolves.toBeUndefined();
+    expect(fetcher.mock.calls[0][0]).toBe('/api/v1/vault/merge');
+    expect(fetcher.mock.calls[0][1]?.method).toBe('POST');
+    expect(new Headers(fetcher.mock.calls[0][1]?.headers).get('Content-Type'))
+      .toBe('application/json');
+    expect(fetcher.mock.calls[0][1]?.body).toBe(
+      '{"source_vault":"Projects","password":null}',
+    );
+
+    await expect(ok.mergeVault('Projects', 'secret')).resolves.toBeUndefined();
+    expect(fetcher.mock.calls[1][1]?.body).toBe(
+      '{"source_vault":"Projects","password":"secret"}',
+    );
+
+    const failed = createChaClient(async () => jsonResponse({
+      error: {
+        code: 'source_vault_password_required',
+        message: 'Password required to merge this vault',
+      },
+    }, 401));
+    await expect(failed.mergeVault('Projects')).rejects.toEqual(expect.objectContaining({
+      name: 'ChaError',
+      status: 401,
+      code: 'source_vault_password_required',
+      message: 'Password required to merge this vault',
+    }));
+  });
+
   it('lists, creates, updates, and deletes vaults through the shared route', async () => {
     const vault = {
       display_name: 'Projects',
