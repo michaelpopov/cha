@@ -2076,7 +2076,8 @@ TEST(ApplicationRuntime, SwitchRouteSwitchesVaultAndMapsUnknownNames) {
 }
 
 TEST(ApplicationRuntime, ProtectedVaultRequiresItsPasswordWhenSwitching) {
-    TwoVaultRuntime pair;
+    TwoVaultRuntime pair(true);
+    seed_lobby_session(pair.database_a, "Copied session");
     auto runtime = ApplicationRuntime::open(pair.command, "private-test-token");
     const int port = runtime->start();
     httplib::Client client("127.0.0.1", port);
@@ -2123,11 +2124,22 @@ TEST(ApplicationRuntime, ProtectedVaultRequiresItsPasswordWhenSwitching) {
     ASSERT_TRUE(opened);
     EXPECT_EQ(opened->status, 204) << opened->body;
     EXPECT_EQ(get_bootstrap(client).at("vault_name"), "Protected");
+    EXPECT_FALSE(create_lobby_session(client, "Private session").empty());
+    EXPECT_FALSE(std::filesystem::exists(
+        pair.mirror_a.parent_path() / "Protected"));
+    EXPECT_FALSE(std::filesystem::exists(
+        pair.mirror_a / "The Lobby" / "Private session.md"));
+
+    runtime->switch_vault("A");
+    EXPECT_FALSE(create_lobby_session(client, "Public session").empty());
+    EXPECT_TRUE(std::filesystem::exists(
+        pair.mirror_a / "The Lobby" / "Public session.md"));
     runtime->shutdown();
 }
 
 TEST(ApplicationRuntime, ProtectsAnExistingVaultAndRequiresPasswordAtStartup) {
-    TwoVaultRuntime pair;
+    TwoVaultRuntime pair(true);
+    seed_lobby_session(pair.database_a, "Before protection");
     auto runtime = ApplicationRuntime::open(pair.command, "private-test-token");
     const int port = runtime->start();
     httplib::Client client("127.0.0.1", port);
@@ -2147,8 +2159,11 @@ TEST(ApplicationRuntime, ProtectsAnExistingVaultAndRequiresPasswordAtStartup) {
         nlohmann::json::parse(updated->body).at("protected").get<bool>());
     EXPECT_EQ(get_bootstrap(client).at("vault_name"), "A");
     EXPECT_FALSE(create_lobby_session(client, "After protection").empty());
+    EXPECT_FALSE(std::filesystem::exists(
+        pair.mirror_a / "The Lobby" / "After protection.md"));
     runtime->shutdown();
     runtime.reset();
+    std::filesystem::remove_all(pair.mirror_a);
 
     ApplicationCommand protected_command = pair.command;
     protected_command.vault.password_protected = true;
@@ -2160,8 +2175,17 @@ TEST(ApplicationRuntime, ProtectsAnExistingVaultAndRequiresPasswordAtStartup) {
         (void)ApplicationRuntime::open(protected_command, {}, "wrong"),
         VaultPasswordError);
     auto reopened = ApplicationRuntime::open(
-        protected_command, {}, "new secret");
+        protected_command, "private-test-token", "new secret");
     EXPECT_EQ(reopened->current_vault().name, "A");
+    EXPECT_FALSE(std::filesystem::exists(pair.mirror_a));
+    const int reopened_port = reopened->start();
+    httplib::Client after("127.0.0.1", reopened_port);
+    EXPECT_FALSE(create_lobby_session(after, "After restart").empty());
+    EXPECT_FALSE(std::filesystem::exists(pair.mirror_a));
+
+    reopened->merge_vault("B");
+    EXPECT_FALSE(std::filesystem::exists(pair.mirror_a));
+    reopened->shutdown();
 }
 
 TEST(ApplicationRuntime, ProtectsTheActiveVaultAfterSwitching) {

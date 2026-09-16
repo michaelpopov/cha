@@ -226,6 +226,18 @@ void assign_vault_paths(
     vault.modify = vault_path(command.modify_base, vault.name);
 }
 
+std::optional<std::filesystem::path> session_mirror_root(
+    const VaultDefinition& vault) {
+    if (vault.password_protected) {
+        if (vault.mirror) {
+            log_warn("Ignoring session mirror for password-protected vault '"
+                + vault.name + "'");
+        }
+        return std::nullopt;
+    }
+    return vault.mirror;
+}
+
 using VaultDirectoryMove =
     std::pair<std::filesystem::path, std::filesystem::path>;
 
@@ -292,7 +304,8 @@ bool is_workspace_directory(const std::filesystem::path& path) {
 }
 
 void validate_vault_paths(const VaultDefinition& vault) {
-    if (vault.mirror && std::filesystem::exists(*vault.mirror)
+    if (!vault.password_protected && vault.mirror
+        && std::filesystem::exists(*vault.mirror)
         && !std::filesystem::is_directory(*vault.mirror)) {
         throw std::invalid_argument(
             "The mirror path must be an existing directory");
@@ -414,9 +427,9 @@ struct ApplicationRuntime::Impl {
             seed,
             active_password);
         mirror = std::make_shared<SessionMirror>();
-        if (command.vault.mirror) {
+        if (const auto root = session_mirror_root(command.vault)) {
             try {
-                mirror->rebuild(*command.vault.mirror, *sessions);
+                mirror->rebuild(root, *sessions);
             } catch (const std::exception& error) {
                 log_warn(
                     "Session mirror rebuild failed: "
@@ -555,6 +568,7 @@ struct ApplicationRuntime::Impl {
             reopen_after_failure(database, repository);
             throw;
         }
+        mirror->rebuild(std::nullopt, *sessions);
         active_password = std::move(password);
         database.set_password(active_password);
         repository.retarget(database_path, active_password);
@@ -787,7 +801,7 @@ VaultDefinition ApplicationRuntime::update_vault(
         impl_->command.vault = candidate;
         impl_->publish_vault(candidate);
         try {
-            impl_->mirror->rebuild(candidate.mirror, *impl_->sessions);
+            impl_->mirror->rebuild(session_mirror_root(candidate), *impl_->sessions);
         } catch (const std::exception& error) {
             log_warn(
                 "Session mirror rebuild failed: " + std::string(error.what()));
@@ -958,7 +972,7 @@ void ApplicationRuntime::switch_vault(
     }
 
     try {
-        impl_->mirror->rebuild(selected.mirror, *impl_->sessions);
+        impl_->mirror->rebuild(session_mirror_root(selected), *impl_->sessions);
     } catch (const std::exception& error) {
         log_warn(
             "Session mirror rebuild failed: " + std::string(error.what()));
@@ -1036,7 +1050,7 @@ void ApplicationRuntime::merge_vault(
 
     try {
         impl_->mirror->rebuild(
-            impl_->current_vault_.get().mirror, *impl_->sessions);
+            session_mirror_root(impl_->current_vault_.get()), *impl_->sessions);
     } catch (const std::exception& error) {
         log_warn(
             "Session mirror rebuild failed: " + std::string(error.what()));
@@ -1446,7 +1460,8 @@ R2DatabaseTransfer ApplicationRuntime::download_database() {
         throw std::logic_error("Downloaded vault definition was not published");
     }
     try {
-        impl_->mirror->rebuild(downloaded_vault->mirror, *impl_->sessions);
+        impl_->mirror->rebuild(
+            session_mirror_root(*downloaded_vault), *impl_->sessions);
     } catch (const std::exception& error) {
         log_warn(
             "Session mirror rebuild failed: " + std::string(error.what()));

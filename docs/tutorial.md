@@ -59,7 +59,7 @@ The most useful high-level model is:
   resources and lists, creates, validates, archives, and restores sessions.
 - When `app.toml` sets a `mirror` base, the process-owned `SessionMirror`
   projects persistent sessions into the active vault's derived directory as
-  continuously refreshed Markdown files.
+  continuously refreshed Markdown files, unless the vault is password-protected.
 - `LiveSessionManager` owns the process's live-session registry.
 - One `LiveSession` is an actor with one permanent owner thread for one open
   session.
@@ -501,7 +501,11 @@ private directories, with private Windows DACLs). Copying a live WAL database
 naively is unsafe.
 
 Mirroring deliberately creates a second, plaintext representation of session
-content outside SQLite. Mirrored Markdown files are written atomically with
+content outside SQLite. Password-protected vaults are never mirrored, even
+when a mirror base is configured. Enabling protection stops future mirror
+writes but does not delete existing Markdown copies; remove those separately
+if they contain private content. Explicit conversation downloads and workspace
+exports remain plaintext. Mirrored Markdown files are written atomically with
 owner-only access (`0600` on POSIX), and newly created forum directories are
 private (`0700`), but CHA does not tighten the configured root or an existing
 forum directory. The operator therefore chooses and secures that location.
@@ -533,7 +537,8 @@ Startup proceeds in this order:
 5. `SessionRepository` receives the store's explicit database, materialized,
    and Welcome paths, synchronizes configured forum IDs, and creates the
    process-local Welcome database. It does not own the lease or private root.
-6. If `mirror` is configured, `SessionMirror` validates the existing root,
+6. If `mirror` is configured and the vault is unprotected, `SessionMirror`
+   creates or validates the root,
    creates any missing display-named forum directories, and writes every
    active persistent session through the existing Markdown formatter. A
    failure is logged and leaves mirroring disabled; Entrance/Welcome is
@@ -1372,6 +1377,14 @@ suppresses repeated multicast prompts. The HTTP route obtains an owner-thread
 snapshot for a live session or restores stored history for a closed one;
 `SessionMirror` writes the same bytes directly to disk.
 
+`session_mirror_root()` in `application_runtime.cpp` returns no root for a
+protected vault and logs a warning when its configured mirror is ignored. This policy
+applies at startup and after vault updates, switches, merges, and downloads.
+Rebuilding with no root clears the mirror's in-memory path allocations and
+makes subsequent route and actor callbacks no-ops. Protecting the active vault
+disables its mirror while database maintenance still fences session operations,
+before actors resume. Previously written files remain on disk.
+
 At startup `SessionMirror` reads the published forum display names and active
 sessions from `SessionRepository`. It creates one directory per persistent
 forum and one `.md` file per active session. Entrance/Welcome has no entry in
@@ -1393,8 +1406,8 @@ final response causes another write if transcript content subsequently changes.
 Unrelated snapshot state, such as a default-character selection, does not
 rewrite the file.
 
-Initial synchronization is strict because a configured but unusable mirror is
-a startup configuration failure. After startup, `SessionMirror::update()`
+Initial synchronization can throw, but the runtime logs the failure and keeps
+the vault running with mirroring disabled. `SessionMirror::update()`
 catches filesystem errors and logs a warning: a failed secondary projection
 must not turn an already committed session transition into a failed chat
 operation. Writes use `create_private_file()`, which rejects symlink or
@@ -1575,7 +1588,9 @@ move or copy data:
    repository synchronizes its forums from the newly published `Workspace`.
 6. `CurrentVault` records the target. `SessionMirror::rebuild()` clears the old
    path allocation and projects sessions from the target into its configured
-   mirror. A rebuild failure is logged and leaves mirroring inactive without
+   mirror only when the target is unprotected. A protected target disables
+   mirroring; switching back to an unprotected vault enables its configured
+   mirror again. A rebuild failure is logged and leaves mirroring inactive without
    undoing the database switch.
 7. `rewrite_toml_file()` atomically updates the `vault` value in `app.toml`. A
    save failure is logged without undoing the switch; the running process uses
@@ -1615,8 +1630,9 @@ Settings → Vaults calls the collection route without switching databases:
    database path is intentionally read-only. Rename is exposed through the
    editable top-bar title, moves existing derived mirror/modify directories,
    and updates `app.toml` when the vault is active. Protecting checkpoints and
-   replaces the database with a SQLCipher-encrypted copy; there is no UI to
-   decrypt it or change the password.
+   replaces the database with a SQLCipher-encrypted copy and disables mirroring;
+   existing Markdown copies remain. There is no UI to decrypt it or change the
+   password. Unused mirror paths do not block updates to protected vaults.
 3. Delete removes only an inactive vault's definition. It rejects the active
    vault and the last remaining vault, and keeps the database and related
    directories so removing a registry entry does not destroy user data.
@@ -1630,6 +1646,39 @@ Settings → Vaults calls the collection route without switching databases:
 
 A derived modify path may be absent, missing, empty, or an already valid CHA
 workspace; this prevents Export from replacing an unrelated nonempty directory.
+
+### 13.8 Merging configuration into the active vault
+
+1. Settings → Vaults → Merge into active vault selects an inactive source and
+   confirms the overwrite. `POST /api/v1/vault/merge` takes exactly
+   `{"source_vault":"B","password":null}` and returns `204` on success.
+   A protected source requires its password; `source_vault_password_required`
+   opens the password dialog for a retry. The source password is not retained.
+2. The runtime lifecycle mutex serializes the merge with switching and database
+   maintenance. Unknown sources, self-merges, busy source leases, and invalid
+   databases fail before changing the destination.
+3. `WorkspaceConfigStore::merge()` overlays source configuration files by their
+   stored paths. Matching paths take the source contents; destination-only
+   paths remain. This includes personas, characters, forums, providers, styles,
+   and saved keys. A source R2 record replaces the destination R2 record even
+   when their key IDs differ. The saved-key counter becomes the larger counter
+   from the two validated workspaces. Source sessions are not copied, and the
+   source database and active vault selection stay unchanged.
+4. The store validates the combined workspace before committing it and publishes
+   it after commit. Identical configuration requires no destination write.
+   Repository synchronization reads existing forum IDs and writes only missing
+   persistent forums, so it also avoids a write when none are missing.
+5. After success, live sessions receive a reload shutdown request, and the
+   mirror is rebuilt only for an unprotected destination. The browser refreshes
+   bootstrap discovery without automatically reloading the page. If voice
+   endpoint origins change, or cannot be read, it offers Reload so the page's
+   connection policy can pick up the merged settings. Voice-settings or
+   discovery refresh failures do not turn a successful merge into a failure.
+
+A validation failure restores the previous workspace and leaves live sessions
+running. Failure to restore, publish after commit, or synchronize repository
+forums requires a restart and stops the HTTP server. Mirror rebuild failures
+are warnings and do not undo a successful merge.
 
 ## 14. State machines to keep in your head
 
@@ -1782,10 +1831,11 @@ Errors are handled at the narrowest layer that can give them meaning:
 - Mirror rebuild and `app.toml` persistence happen after a successful vault
   cutover. Their failures are logged without rolling back the open target;
   persistence failure means the next launch uses the previously saved vault.
-- A configured mirror whose root is missing or unusable, or whose initial
-  synchronization fails, is logged and leaves mirroring disabled. Settings
-  rejects such a mirror before saving it. Later mirror-update failures are also
-  warnings because SQLite has already committed the authoritative change.
+- A missing mirror root is created. An unusable root or failed initial
+  synchronization is logged and leaves mirroring disabled. Settings rejects
+  non-directory mirror paths for unprotected vaults; protected vaults ignore
+  their unused mirror paths with a warning. Later mirror-update failures are
+  also warnings because SQLite has already committed the authoritative change.
 - A runtime configuration failure before commit rematerializes the old rows and
   leaves durable and published state old. The rare failure after commit reports
   restart-required; the next startup publishes the newly committed rows.
@@ -1813,6 +1863,8 @@ can be worse than allowing the actor to terminate.
 
 Shutdown is part of the design, not cleanup after the design.
 
+`ApplicationRuntime::shutdown()` delegates to `ServerShutdownCoordinator`,
+passing its HTTP-stop callback to keep listener handling in one place.
 At process level, the shutdown coordinator stops HTTP acceptance, asks the
 manager to stop all actors, and gives the entire process one grace deadline.
 The deadline is shared, not reset for every session. If owners cannot finish in
@@ -1869,7 +1921,7 @@ and before reading all of its implementation.
 | Registry races/lifecycle | [tests/web/unit_live_session_manager.cpp](../tests/web/unit_live_session_manager.cpp) |
 | Snapshot/append collapse | [tests/web/unit_sse_mailbox.cpp](../tests/web/unit_sse_mailbox.cpp) |
 | Route protocol | [tests/web/unit_lobby_routes.cpp](../tests/web/unit_lobby_routes.cpp), [unit_session_routes.cpp](../tests/web/unit_session_routes.cpp) |
-| Composition root, private cookie, in-process transfers, and vault lifecycle | [tests/web/unit_application_runtime.cpp](../tests/web/unit_application_runtime.cpp) |
+| Composition root, private cookie, in-process transfers, vault merging, and protected-vault mirror policy | [tests/web/unit_application_runtime.cpp](../tests/web/unit_application_runtime.cpp) |
 | Whole-process behavior | [tests/web/process_web_server.cpp](../tests/web/process_web_server.cpp) |
 | Browser transcript, composer, vault selector, and settings | [webapp/src/components/LiveChat.test.tsx](../webapp/src/components/LiveChat.test.tsx), [App.test.tsx](../webapp/src/components/App.test.tsx), [Settings.test.tsx](../webapp/src/components/Settings.test.tsx) |
 
@@ -2075,7 +2127,8 @@ projection.
 
 **Session mirror:** The optional, non-authoritative display-named Markdown
 projection of persistent sessions under the active vault's directory derived
-from the `app.toml` mirror base.
+from the `app.toml` mirror base. Password-protected vaults are excluded; enabling
+protection leaves existing files on disk but stops future writes.
 
 **Notice:** Presentation state associated with command/session feedback. It is not model
 history or durable transcript state.

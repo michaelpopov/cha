@@ -158,6 +158,26 @@ no companion `.toml` is named from its database filename. A protected R2 vault
 cannot currently be added through this screen because the download flow has no
 password entry.
 
+Settings → Vaults → Merge into active vault overlays configuration from an
+inactive source into the active vault after confirmation. Source files replace
+destination files at matching stored paths; destination-only files remain.
+Personas, characters, forums, providers, styles, and saved model/R2 keys are
+included, but source conversations are not copied. A source R2 key replaces
+the destination R2 key even when their IDs differ. The next saved-key ID uses
+the larger counter from the two validated workspaces. The source database and
+active vault selection stay unchanged. A protected source prompts for its
+password, which is not retained.
+
+The combined workspace is validated before commit. Validation failure keeps
+the old configuration and live sessions; success closes live sessions and
+refreshes browser discovery. If voice endpoint origins change or cannot be
+read, select Reload when offered to apply the merged voice settings. A failed
+voice-settings or discovery refresh does not undo the merge. Identical
+configuration and already synchronized forums require no destination write.
+Failure to restore or publish the workspace, or synchronize forums after
+commit, stops the server and requires a restart. Mirror rebuild failures are
+logged without undoing the merge.
+
 Selecting a vault in the browser changes the vault for the whole running
 process, including Import, Export, Upload, and Download. A successful switch
 closes live sessions, opens the selected database, and reloads the initiating
@@ -171,6 +191,15 @@ password dialog. An incorrect password is indistinguishable from a damaged
 encrypted database at the storage boundary. There is no recovery path for a
 lost password. Workspace exports contain plaintext configuration, while R2
 upload copies the encrypted database bytes.
+
+Password-protected vaults are never mirrored to local Markdown files. A
+configured mirror is ignored with a warning at startup and after updates,
+switches, merges, and downloads; an unused mirror path does not block updates
+to a protected vault. Enabling protection disables the active mirror before
+sessions resume. Existing Markdown copies are not deleted or encrypted, so
+remove them separately when necessary. Explicit conversation downloads and
+workspace exports remain plaintext. Switching to an unprotected vault resumes
+its configured mirroring.
 
 Failures have deliberately small, explicit outcomes:
 
