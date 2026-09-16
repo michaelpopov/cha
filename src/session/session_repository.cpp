@@ -10,6 +10,7 @@
 #include "workspace/workspace.h"
 
 #include <algorithm>
+#include <atomic>
 #include <ctime>
 #include <filesystem>
 #include <iomanip>
@@ -94,7 +95,13 @@ void delete_archived_sessions(
     database.execute("DELETE FROM sessions WHERE archived_at IS NOT NULL");
 }
 
+std::atomic<bool> forced_forum_sync_failure{false};
+
 } // namespace
+
+void force_next_forum_sync_failure() {
+    forced_forum_sync_failure.store(true);
+}
 
 SessionRepository::MaintenanceGuard::MaintenanceGuard(
     SessionRepository& repository)
@@ -209,6 +216,9 @@ void SessionRepository::synchronize_forums(const Workspace& workspace) const {
 
 void SessionRepository::synchronize_forums_unlocked(
     const Workspace& workspace) const {
+    if (forced_forum_sync_failure.exchange(false)) {
+        throw std::runtime_error("Forced forum synchronization failure");
+    }
     if (workspace.root() != workspace_root_) {
         throw std::runtime_error(
             "Cannot synchronize forums from a different workspace");

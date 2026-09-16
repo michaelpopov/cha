@@ -68,6 +68,7 @@ const knownErrorCodes = {
   command_timeout: true,
   command_queue_full: true,
   vault_password_required: true,
+  source_vault_password_required: true,
 } satisfies Record<ErrorCode, true>;
 
 function isErrorCode(value: unknown): value is ErrorCode {

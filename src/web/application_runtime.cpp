@@ -40,6 +40,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <memory>
 #include <mutex>
@@ -363,6 +364,17 @@ std::optional<std::string> nullable_json_string(
     return value;
 }
 
+std::string merge_password_json(const nlohmann::json& json) {
+    if (!json.is_object() || !json.contains("password")) {
+        throw std::invalid_argument("Invalid vault merge");
+    }
+    if (json.at("password").is_null()) return {};
+    if (!json.at("password").is_string()) {
+        throw std::invalid_argument("Invalid vault merge");
+    }
+    return json.at("password").get<std::string>();
+}
+
 nlohmann::json vault_json(
     const VaultDefinition& vault,
     std::string_view active_name,
@@ -512,7 +524,7 @@ struct ApplicationRuntime::Impl {
             repository.synchronize_forums(*current_workspace());
         } catch (...) {
             unusable = true;
-            if (server) server->stop();
+            stop_http();
             throw;
         }
     }
@@ -581,6 +593,13 @@ struct ApplicationRuntime::Impl {
     // Set when the workspace database could not be reopened. The HTTP server is
     // stopped at the same time because the runtime can no longer serve safely.
     bool unusable{};
+    bool server_stop_requested{};
+
+    void stop_http() {
+        if (!server || server_stop_requested) return;
+        server_stop_requested = true;
+        server->stop();
+    }
 };
 
 ApplicationRuntime::ApplicationRuntime(std::unique_ptr<Impl> impl)
@@ -969,6 +988,74 @@ void ApplicationRuntime::switch_vault(
     }
 }
 
+void ApplicationRuntime::merge_vault(
+    std::string_view source_name,
+    std::string password) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    const VaultDefinition* const source =
+        find_vault(impl_->command.vaults, source_name);
+    if (source == nullptr) {
+        throw UnknownVaultError(
+            "Unknown vault '" + std::string(source_name) + "'");
+    }
+    if (same_vault_name(impl_->current_vault_.get().name, source->name)) {
+        throw std::invalid_argument("Cannot merge a vault into itself");
+    }
+    if (impl_->unusable) {
+        throw WorkspaceRestartRequiredError(
+            "The workspace database could not be reopened after an earlier "
+            "maintenance operation. Restart is required");
+    }
+    if (!impl_->started || impl_->stopped) {
+        throw std::runtime_error("CHA runtime is not running");
+    }
+    if (source->password_protected && password.empty()) {
+        throw VaultPasswordError("Password required to open this vault");
+    }
+
+    const VaultDefinition selected = *source;
+    SessionLease source_lease = SessionLease::acquire(
+        selected.data,
+        "Database already in use: '" + utf8_path(selected.data) + "'");
+    if (selected.password_protected) {
+        require_openable_protected_database(selected.data, password);
+    }
+
+    try {
+        impl_->store->merge(selected.data, source_lease, password);
+    } catch (const WorkspaceRestartRequiredError&) {
+        impl_->unusable = true;
+        impl_->stop_http();
+        throw;
+    }
+
+    try {
+        impl_->sessions->synchronize_forums();
+    } catch (const std::exception& error) {
+        impl_->unusable = true;
+        impl_->stop_http();
+        throw WorkspaceRestartRequiredError(
+            std::string(
+                "Configuration was committed but forums could not be "
+                "synchronized: ")
+            + error.what() + ". Restart is required");
+    }
+
+    for (const LiveSessionHandle& live :
+         impl_->live_sessions->active_sessions()) {
+        live->request_shutdown(ShutdownReason::reloading);
+    }
+
+    try {
+        impl_->mirror->rebuild(
+            impl_->current_vault_.get().mirror, *impl_->sessions);
+    } catch (const std::exception& error) {
+        log_warn(
+            "Session mirror rebuild failed: " + std::string(error.what()));
+        impl_->mirror->rebuild(std::nullopt, *impl_->sessions);
+    }
+}
+
 int ApplicationRuntime::start(int port_override) {
     const std::lock_guard operation(impl_->lifecycle_mutex);
     if (impl_->started) throw std::logic_error("CHA runtime is already started");
@@ -1217,6 +1304,50 @@ int ApplicationRuntime::start(int port_override) {
             response.status = 204;
             response.set_header("Cache-Control", "no-store");
         });
+    server->Post(
+        "/api/v1/vault/merge",
+        [runtime, settings](
+            const httplib::Request& request, httplib::Response& response) {
+            if (!validate_json_mutation(request, response)) return;
+            std::string source_vault;
+            std::string password;
+            if (!parse_route_json_body(
+                    request,
+                    response,
+                    settings.request_body_limit,
+                    [&source_vault, &password](const nlohmann::json& json) {
+                        if (!json.is_object() || json.size() != 2) {
+                            throw std::invalid_argument("Invalid vault merge");
+                        }
+                        source_vault =
+                            required_json_string(json, "source_vault");
+                        if (source_vault.empty()) {
+                            throw std::invalid_argument("Invalid vault merge");
+                        }
+                        password = merge_password_json(json);
+                    })) {
+                return;
+            }
+            try {
+                runtime->merge_vault(source_vault, std::move(password));
+            } catch (const UnknownVaultError& error) {
+                return set_error_response(
+                    response, 400, {ErrorCode::bad_request, error.what()});
+            } catch (const std::invalid_argument& error) {
+                return set_error_response(
+                    response, 400, {ErrorCode::bad_request, error.what()});
+            } catch (const VaultPasswordError& error) {
+                return set_error_response(
+                    response,
+                    401,
+                    {ErrorCode::source_vault_password_required, error.what()});
+            } catch (const std::exception& error) {
+                return set_error_response(
+                    response, 500, {ErrorCode::internal_error, error.what()});
+            }
+            response.status = 204;
+            response.set_header("Cache-Control", "no-store");
+        });
     OpenAiAuthRoutes(*impl_->openai_auth, impl_->settings).install(*server);
     SettingsRoutes(
         *impl_->live_sessions,
@@ -1270,9 +1401,17 @@ void ApplicationRuntime::wait_for_shutdown_signal() {
 void ApplicationRuntime::shutdown() {
     const std::lock_guard operation(impl_->lifecycle_mutex);
     if (!impl_->started || impl_->stopped) return;
-    ServerShutdownCoordinator coordinator(
-        *impl_->live_sessions, *impl_->server);
-    coordinator.shutdown_now(impl_->listener, impl_->settings.shutdown_grace);
+    impl_->live_sessions->begin_shutdown([this] { impl_->stop_http(); });
+    if (!impl_->live_sessions->join_shutdown(impl_->settings.shutdown_grace)) {
+        for (const FullSessionId& key : impl_->live_sessions->unfinished_owners()) {
+            log_critical(
+                "Web shutdown grace expired: forum_id=" + key.forum_id
+                + " session_id=" + key.session_id);
+        }
+        std::_Exit(1);
+    }
+    if (impl_->listener.joinable()) impl_->listener.join();
+    log_info("web server event=shutdown");
     impl_->providers.shutdown();
     impl_->stopped = true;
 }

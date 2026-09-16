@@ -124,6 +124,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/vault/merge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Merge a source vault into the active vault
+         * @description Overlays stored workspace configuration from the named source vault
+         *     onto the active destination vault by exact path. The active vault,
+         *     vault registry, and both protection settings are unchanged. Source
+         *     sessions are not copied.
+         *
+         *     Success is `204` with no body. `Cache-Control` is `no-store`,
+         *     including error responses.
+         */
+        post: operations["mergeVault"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/vaults": {
         parameters: {
             query?: never;
@@ -1250,6 +1276,10 @@ export interface components {
             vault_name: string;
             password: string | null;
         };
+        MergeVaultRequest: {
+            source_vault: string;
+            password: string | null;
+        };
         VaultDetail: {
             display_name: string;
             protected: boolean;
@@ -1677,7 +1707,7 @@ export interface components {
         ErrorResponse: {
             error: {
                 /** @enum {string} */
-                code: "not_found" | "bad_request" | "body_too_large" | "prompt_too_large" | "forbidden_origin" | "internal_error" | "session_stopping" | "session_limit_reached" | "session_open_timeout" | "server_stopping" | "session_not_live" | "command_timeout" | "command_queue_full" | "vault_password_required";
+                code: "not_found" | "bad_request" | "body_too_large" | "prompt_too_large" | "forbidden_origin" | "internal_error" | "session_stopping" | "session_limit_reached" | "session_open_timeout" | "server_stopping" | "session_not_live" | "command_timeout" | "command_queue_full" | "vault_password_required" | "source_vault_password_required";
                 message: string;
             };
         };
@@ -1751,6 +1781,19 @@ export interface components {
          *     `error.code` is `internal_error`.
          */
         InternalError: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ErrorResponse"];
+            };
+        };
+        /**
+         * @description The source vault is password-protected and the supplied password is
+         *     missing or incorrect. `error.code` is
+         *     `source_vault_password_required`.
+         */
+        SourceVaultPasswordRequired: {
             headers: {
                 [name: string]: unknown;
             };
@@ -1921,6 +1964,33 @@ export interface operations {
                 content?: never;
             };
             400: components["responses"]["BadRequest"];
+            403: components["responses"]["ForbiddenMutation"];
+            413: components["responses"]["BodyTooLarge"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    mergeVault: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MergeVaultRequest"];
+            };
+        };
+        responses: {
+            /** @description The source configuration was merged into the active vault. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["SourceVaultPasswordRequired"];
             403: components["responses"]["ForbiddenMutation"];
             413: components["responses"]["BodyTooLarge"];
             500: components["responses"]["InternalError"];

@@ -34,6 +34,7 @@ enum class ErrorCode {
     session_limit_reached, session_open_timeout, server_stopping,
     session_not_live, command_timeout,
     command_queue_full, vault_password_required,
+    source_vault_password_required,
 };
 
 struct SessionListing {

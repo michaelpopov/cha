@@ -189,6 +189,20 @@ TEST(WebProtocol, SerializesSpecifiedSuccessListingAndErrorBodies) {
                  {"message", "Too large"},
              }},
         }));
+    EXPECT_EQ(
+        to_string(ErrorCode::source_vault_password_required),
+        "source_vault_password_required");
+    EXPECT_EQ(
+        nlohmann::json(Error{
+            ErrorCode::source_vault_password_required,
+            "Password required to merge this vault"}),
+        nlohmann::json({
+            {"error",
+             {
+                 {"code", "source_vault_password_required"},
+                 {"message", "Password required to merge this vault"},
+             }},
+        }));
     Bootstrap bootstrap;
     bootstrap.initial_forum_id = "entrance";
     bootstrap.initial_session_id = "welcome";

@@ -2500,5 +2500,446 @@ TEST(ApplicationRuntime, VaultRoutesRenameTheActiveVaultWithoutSwitching) {
     runtime->shutdown();
 }
 
+httplib::Result post_merge(
+    httplib::Client& client,
+    std::string_view source,
+    const nlohmann::json& password = nullptr,
+    const httplib::Headers& headers = kRuntimeCookie) {
+    return client.Post(
+        "/api/v1/vault/merge",
+        headers,
+        nlohmann::json{
+            {"source_vault", source}, {"password", password}}.dump(),
+        "application/json");
+}
+
+bool session_is_live(
+    httplib::Client& client,
+    const std::string& session_id) {
+    const auto listing = client.Get(
+        "/api/v1/forums/lobby/sessions", kRuntimeCookie);
+    if (!listing || listing->status != 200) return false;
+    for (const auto& session : nlohmann::json::parse(listing->body)) {
+        if (session.at("id").get<std::string>() == session_id) {
+            return session.at("live").get<bool>();
+        }
+    }
+    return false;
+}
+
+bool wait_until_not_live(
+    httplib::Client& client,
+    const std::string& session_id) {
+    const auto deadline = std::chrono::steady_clock::now()
+        + std::chrono::seconds(2);
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (!session_is_live(client, session_id)) return true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    return !session_is_live(client, session_id);
+}
+
+bool database_has_forum(
+    const std::filesystem::path& database,
+    std::string_view forum_id,
+    std::string_view password = {}) {
+    storage::SqliteDatabase handle(
+        database, storage::SqliteDatabase::Mode::read_only, password);
+    storage::SqliteStatement statement = handle.prepare(
+        "SELECT 1 FROM forums WHERE forum_id = ?1", forum_id);
+    return statement.step();
+}
+
+int session_count(
+    const std::filesystem::path& database,
+    std::string_view password = {}) {
+    storage::SqliteDatabase handle(
+        database, storage::SqliteDatabase::Mode::read_only, password);
+    storage::SqliteStatement statement =
+        handle.prepare("SELECT COUNT(*) FROM sessions");
+    if (!statement.step()) return -1;
+    return static_cast<int>(statement.integer(0));
+}
+
+bool bootstrap_has_forum(const nlohmann::json& body, std::string_view id) {
+    for (const auto& forum : body.at("forums")) {
+        if (forum.at("id").get<std::string>() == id) return true;
+    }
+    return false;
+}
+
+TEST(ApplicationRuntime, MergeOverlaysSourceAndKeepsTheActiveVault) {
+    TwoVaultRuntime pair;
+    pair.workspace_b.add_forum("projects", "Projects", "guide");
+    std::filesystem::remove(pair.database_b);
+    (void)test::import_test_database(pair.workspace_b.root(), pair.database_b);
+    seed_lobby_session(pair.database_a, "Keep me");
+    seed_lobby_session(pair.database_b, "Source only");
+    const std::string original =
+        file_bytes(pair.command.config_directory / "app.toml");
+    auto runtime = ApplicationRuntime::open(pair.command, "private-test-token");
+    const int port = runtime->start();
+    httplib::Client client("127.0.0.1", port);
+
+    const auto merged = post_merge(client, "B");
+    ASSERT_TRUE(merged);
+    EXPECT_EQ(merged->status, 204) << merged->body;
+    EXPECT_TRUE(merged->body.empty());
+    EXPECT_EQ(runtime->current_vault().name, "A");
+    EXPECT_EQ(file_bytes(pair.command.config_directory / "app.toml"), original);
+    const auto bootstrap = get_bootstrap(client);
+    EXPECT_EQ(bootstrap.at("vault_name").get<std::string>(), "A");
+    EXPECT_TRUE(bootstrap_has_persona(bootstrap, "alpha"));
+    EXPECT_TRUE(bootstrap_has_persona(bootstrap, "beta"));
+    EXPECT_TRUE(bootstrap_has_forum(bootstrap, "projects"));
+    EXPECT_TRUE(database_has_forum(pair.database_a, "projects"));
+    EXPECT_EQ(session_count(pair.database_a), 1);
+    EXPECT_EQ(session_count(pair.database_b), 1);
+    EXPECT_NE(getws()->find_persona("beta"), nullptr);
+
+    const auto repeated = post_merge(client, "b", "");
+    ASSERT_TRUE(repeated);
+    EXPECT_EQ(repeated->status, 204) << repeated->body;
+    EXPECT_EQ(get_bootstrap(client).at("vault_name").get<std::string>(), "A");
+    runtime->shutdown();
+}
+
+TEST(ApplicationRuntime, MergeRejectsUnknownSourceAndSelfMerge) {
+    TwoVaultRuntime pair;
+    auto runtime = ApplicationRuntime::open(pair.command, "private-test-token");
+    const int port = runtime->start();
+    httplib::Client client("127.0.0.1", port);
+    const std::string live = create_lobby_session(client, "Still live");
+    ASSERT_FALSE(live.empty());
+    ASSERT_TRUE(open_lobby_session(client, live));
+
+    expect_error_envelope(post_merge(client, "missing"), 400, "bad_request");
+    expect_error_envelope(post_merge(client, "A"), 400, "bad_request");
+    expect_error_envelope(post_merge(client, "a"), 400, "bad_request");
+    EXPECT_EQ(runtime->current_vault().name, "A");
+    EXPECT_FALSE(bootstrap_has_persona(get_bootstrap(client), "beta"));
+    EXPECT_TRUE(session_is_live(client, live));
+    runtime->shutdown();
+}
+
+TEST(ApplicationRuntime, MergeRequiresProtectedSourcePasswordWithoutMutation) {
+    TwoVaultRuntime pair;
+    auto runtime = ApplicationRuntime::open(pair.command, "private-test-token");
+    const int port = runtime->start();
+    httplib::Client client("127.0.0.1", port);
+    const auto created = client.Post(
+        "/api/v1/vaults",
+        kRuntimeCookie,
+        nlohmann::json{
+            {"display_name", "Protected"},
+            {"copy_from", "B"},
+            {"password", "secret"},
+        }.dump(),
+        "application/json");
+    ASSERT_TRUE(created);
+    ASSERT_EQ(created->status, 201) << created->body;
+
+    expect_error_envelope(
+        post_merge(client, "Protected"),
+        401,
+        "source_vault_password_required");
+    const auto wrong = post_merge(client, "Protected", "wrong");
+    expect_error_envelope(wrong, 401, "source_vault_password_required");
+    EXPECT_EQ(runtime->current_vault().name, "A");
+    EXPECT_FALSE(bootstrap_has_persona(get_bootstrap(client), "beta"));
+    runtime->shutdown();
+}
+
+TEST(ApplicationRuntime, MergeFromInactiveProtectedSourceDoesNotRetainPassword) {
+    TwoVaultRuntime pair;
+    auto runtime = ApplicationRuntime::open(pair.command, "private-test-token");
+    const int port = runtime->start();
+    httplib::Client client("127.0.0.1", port);
+    const auto created = client.Post(
+        "/api/v1/vaults",
+        kRuntimeCookie,
+        nlohmann::json{
+            {"display_name", "Protected"},
+            {"copy_from", "B"},
+            {"password", "secret"},
+        }.dump(),
+        "application/json");
+    ASSERT_TRUE(created);
+    ASSERT_EQ(created->status, 201) << created->body;
+
+    const auto copied = client.Post(
+        "/api/v1/vaults",
+        kRuntimeCookie,
+        nlohmann::json{
+            {"display_name", "FromProtected"},
+            {"copy_from", "Protected"},
+            {"password", nullptr},
+        }.dump(),
+        "application/json");
+    expect_error_envelope(copied, 400, "bad_request");
+    EXPECT_NE(
+        copied->body.find("Switch to a protected source vault before copying it"),
+        std::string::npos);
+
+    const auto merged = post_merge(client, "Protected", "secret");
+    ASSERT_TRUE(merged);
+    EXPECT_EQ(merged->status, 204) << merged->body;
+    EXPECT_EQ(runtime->current_vault().name, "A");
+    EXPECT_FALSE(runtime->current_vault().password_protected);
+    EXPECT_TRUE(bootstrap_has_persona(get_bootstrap(client), "beta"));
+
+    const auto copied_active = client.Post(
+        "/api/v1/vaults",
+        kRuntimeCookie,
+        nlohmann::json{
+            {"display_name", "FromActive"},
+            {"copy_from", "A"},
+            {"password", nullptr},
+        }.dump(),
+        "application/json");
+    ASSERT_TRUE(copied_active);
+    EXPECT_EQ(copied_active->status, 201) << copied_active->body;
+    expect_error_envelope(
+        post_switch(client, "Protected"),
+        401,
+        "vault_password_required");
+    runtime->shutdown();
+}
+
+#ifndef _WIN32
+TEST(ApplicationRuntime, BusySourceLeaseLeavesDestinationUnchanged) {
+    TwoVaultRuntime pair;
+    auto runtime = ApplicationRuntime::open(pair.command, "private-test-token");
+    const int port = runtime->start();
+    httplib::Client client("127.0.0.1", port);
+    const std::string live = create_lobby_session(client, "Still live");
+    ASSERT_FALSE(live.empty());
+    ASSERT_TRUE(open_lobby_session(client, live));
+
+    test::LeaseHolderProcess holder(pair.database_b);
+    expect_error_envelope(post_merge(client, "B"), 500, "internal_error");
+    EXPECT_EQ(runtime->current_vault().name, "A");
+    EXPECT_FALSE(bootstrap_has_persona(get_bootstrap(client), "beta"));
+    EXPECT_TRUE(session_is_live(client, live));
+    runtime->shutdown();
+}
+#endif
+
+TEST(ApplicationRuntime, MergeValidationFailureDoesNotPublishOrReload) {
+    TwoVaultRuntime pair;
+    std::filesystem::remove_all(pair.workspace_b.root() / "characters" / "guide");
+    const auto nested =
+        pair.workspace_b.root() / "characters" / "other" / "guide";
+    std::filesystem::create_directories(nested);
+    std::ofstream(nested / "character.toml")
+        << "display_name = \"Other Guide\"\nprovider = \"test\"\n";
+    std::ofstream(nested / "CHARACTER.md") << "Other guide\n";
+    std::filesystem::remove(pair.database_b);
+    (void)test::import_test_database(pair.workspace_b.root(), pair.database_b);
+
+    auto runtime = ApplicationRuntime::open(pair.command, "private-test-token");
+    const int port = runtime->start();
+    httplib::Client client("127.0.0.1", port);
+    const std::string live = create_lobby_session(client, "Still live");
+    ASSERT_FALSE(live.empty());
+    ASSERT_TRUE(open_lobby_session(client, live));
+    const std::shared_ptr<const Workspace> published = getws();
+
+    const auto failed = post_merge(client, "B");
+    expect_error_envelope(failed, 500, "internal_error");
+    EXPECT_EQ(runtime->current_vault().name, "A");
+    EXPECT_EQ(getws().get(), published.get());
+    EXPECT_EQ(getws()->find_persona("beta"), nullptr);
+    EXPECT_FALSE(bootstrap_has_persona(get_bootstrap(client), "beta"));
+    EXPECT_TRUE(session_is_live(client, live));
+    runtime->shutdown();
+}
+
+TEST(ApplicationRuntime, MergeReloadsLiveSessionsOnlyAfterSuccess) {
+    TwoVaultRuntime pair;
+    auto runtime = ApplicationRuntime::open(pair.command, "private-test-token");
+    const int port = runtime->start();
+    httplib::Client client("127.0.0.1", port);
+    const std::string first = create_lobby_session(client, "First");
+    const std::string second = create_lobby_session(client, "Second");
+    ASSERT_FALSE(first.empty());
+    ASSERT_FALSE(second.empty());
+    ASSERT_TRUE(open_lobby_session(client, first));
+    ASSERT_TRUE(open_lobby_session(client, second));
+
+    expect_error_envelope(post_merge(client, "A"), 400, "bad_request");
+    EXPECT_TRUE(session_is_live(client, first));
+    EXPECT_TRUE(session_is_live(client, second));
+
+    const auto merged = post_merge(client, "B");
+    ASSERT_TRUE(merged);
+    EXPECT_EQ(merged->status, 204) << merged->body;
+    EXPECT_TRUE(wait_until_not_live(client, first));
+    EXPECT_TRUE(wait_until_not_live(client, second));
+    runtime->shutdown();
+}
+
+TEST(ApplicationRuntime, MergeRebuildsTheMirrorAndSurvivesRebuildFailure) {
+    TwoVaultRuntime pair(true);
+    seed_lobby_session(pair.database_a, "Mirrored A");
+    pair.command.log_file = pair.workspace_a.root() / "merge.log";
+    pair.command.log_level = "warn";
+    shutdown_diagnostic_logging();
+    initialize_diagnostic_logging(pair.command.log_file, pair.command.log_level);
+    auto runtime = ApplicationRuntime::open(pair.command, "private-test-token");
+    const int port = runtime->start();
+    httplib::Client client("127.0.0.1", port);
+    EXPECT_TRUE(std::filesystem::exists(
+        pair.mirror_a / "The Lobby" / "Mirrored A.md"));
+
+    const auto merged = post_merge(client, "B");
+    ASSERT_TRUE(merged);
+    EXPECT_EQ(merged->status, 204) << merged->body;
+    EXPECT_TRUE(std::filesystem::exists(
+        pair.mirror_a / "The Lobby" / "Mirrored A.md"));
+
+    std::filesystem::remove_all(pair.mirror_a);
+    std::ofstream(pair.mirror_a) << "not a directory";
+    const auto again = post_merge(client, "B");
+    ASSERT_TRUE(again);
+    EXPECT_EQ(again->status, 204) << again->body;
+    shutdown_diagnostic_logging();
+    const std::string log = file_bytes(pair.command.log_file);
+    EXPECT_NE(log.find("Session mirror rebuild failed"), std::string::npos)
+        << log;
+    EXPECT_TRUE(std::filesystem::is_regular_file(pair.mirror_a));
+    runtime->shutdown();
+}
+
+TEST(ApplicationRuntime, MergeRestorationFailureMakesRuntimeUnusable) {
+    TwoVaultRuntime pair;
+    std::filesystem::remove_all(pair.workspace_b.root() / "characters" / "guide");
+    const auto nested =
+        pair.workspace_b.root() / "characters" / "other" / "guide";
+    std::filesystem::create_directories(nested);
+    std::ofstream(nested / "character.toml")
+        << "display_name = \"Other Guide\"\nprovider = \"test\"\n";
+    std::ofstream(nested / "CHARACTER.md") << "Other guide\n";
+    std::filesystem::remove(pair.database_b);
+    (void)test::import_test_database(pair.workspace_b.root(), pair.database_b);
+
+    auto runtime = ApplicationRuntime::open(pair.command, "private-test-token");
+    const int port = runtime->start();
+    httplib::Client client("127.0.0.1", port);
+    force_next_workspace_config_fault(WorkspaceConfigFault::restore);
+    const auto failed = post_merge(client, "B");
+    ASSERT_TRUE(failed);
+    EXPECT_EQ(failed->status, 500);
+    EXPECT_NE(failed->body.find("Restart is required"), std::string::npos);
+    EXPECT_EQ(runtime->current_vault().name, "A");
+    EXPECT_EQ(getws()->find_persona("beta"), nullptr);
+    EXPECT_THROW(
+        (void)runtime->export_configuration(), WorkspaceRestartRequiredError);
+    httplib::Client after("127.0.0.1", port);
+    EXPECT_FALSE(after.Get("/api/v1/bootstrap", kRuntimeCookie));
+    runtime->shutdown();
+}
+
+TEST(ApplicationRuntime, MergePublicationFailureAfterCommitRequiresRestart) {
+    TwoVaultRuntime pair;
+    auto runtime = ApplicationRuntime::open(pair.command, "private-test-token");
+    const int port = runtime->start();
+    httplib::Client client("127.0.0.1", port);
+    const std::shared_ptr<const Workspace> published = getws();
+    force_next_workspace_config_fault(WorkspaceConfigFault::publication);
+    const auto failed = post_merge(client, "B");
+    ASSERT_TRUE(failed);
+    EXPECT_EQ(failed->status, 500);
+    EXPECT_NE(failed->body.find("Restart is required"), std::string::npos);
+    EXPECT_EQ(getws().get(), published.get());
+    EXPECT_EQ(published->find_persona("beta"), nullptr);
+    {
+        storage::SqliteDatabase handle(
+            pair.database_a, storage::SqliteDatabase::Mode::read_only);
+        const std::vector<ConfigFile> files =
+            read_workspace_config_files(handle);
+        EXPECT_NE(
+            std::find_if(
+                files.begin(), files.end(),
+                [](const ConfigFile& file) {
+                    return file.name == "personas/beta/persona.toml";
+                }),
+            files.end());
+    }
+    EXPECT_THROW(
+        (void)runtime->export_configuration(), WorkspaceRestartRequiredError);
+    httplib::Client after("127.0.0.1", port);
+    EXPECT_FALSE(after.Get("/api/v1/bootstrap", kRuntimeCookie));
+    runtime->shutdown();
+}
+
+TEST(ApplicationRuntime, MergeForumSyncFailureAfterCommitRequiresRestart) {
+    TwoVaultRuntime pair;
+    pair.workspace_b.add_forum("projects", "Projects", "guide");
+    std::filesystem::remove(pair.database_b);
+    (void)test::import_test_database(pair.workspace_b.root(), pair.database_b);
+    auto runtime = ApplicationRuntime::open(pair.command, "private-test-token");
+    const int port = runtime->start();
+    httplib::Client client("127.0.0.1", port);
+    force_next_forum_sync_failure();
+    const auto failed = post_merge(client, "B");
+    ASSERT_TRUE(failed);
+    EXPECT_EQ(failed->status, 500);
+    EXPECT_NE(failed->body.find("Restart is required"), std::string::npos);
+    EXPECT_NE(getws()->find_persona("beta"), nullptr);
+    EXPECT_NE(getws()->find_forum("projects"), nullptr);
+    EXPECT_THROW(
+        (void)runtime->export_configuration(), WorkspaceRestartRequiredError);
+    httplib::Client after("127.0.0.1", port);
+    EXPECT_FALSE(after.Get("/api/v1/bootstrap", kRuntimeCookie));
+    runtime->shutdown();
+}
+
+TEST(ApplicationRuntime, MergeRouteRejectsMalformedBodiesAndForbiddenOrigins) {
+    TwoVaultRuntime pair;
+    auto runtime = ApplicationRuntime::open(pair.command, "private-test-token");
+    const int port = runtime->start();
+    httplib::Client client("127.0.0.1", port);
+
+    const auto not_json = client.Post(
+        "/api/v1/vault/merge",
+        kRuntimeCookie,
+        R"({"source_vault":"B","password":null})",
+        "text/plain");
+    expect_error_envelope(not_json, 400, "bad_request");
+
+    const auto extra = client.Post(
+        "/api/v1/vault/merge",
+        kRuntimeCookie,
+        nlohmann::json{
+            {"source_vault", "B"},
+            {"password", nullptr},
+            {"extra", true},
+        }.dump(),
+        "application/json");
+    expect_error_envelope(extra, 400, "bad_request");
+
+    const auto missing = client.Post(
+        "/api/v1/vault/merge",
+        kRuntimeCookie,
+        nlohmann::json{{"source_vault", "B"}}.dump(),
+        "application/json");
+    expect_error_envelope(missing, 400, "bad_request");
+
+    httplib::Headers foreign = kRuntimeCookie;
+    foreign.emplace("Origin", "http://other.example");
+    expect_error_envelope(
+        client.Post(
+            "/api/v1/vault/merge",
+            foreign,
+            nlohmann::json{
+                {"source_vault", "B"}, {"password", nullptr}}.dump(),
+            "application/json"),
+        403,
+        "forbidden_origin");
+    EXPECT_FALSE(bootstrap_has_persona(get_bootstrap(client), "beta"));
+    runtime->shutdown();
+}
+
 } // namespace
 } // namespace cha::web

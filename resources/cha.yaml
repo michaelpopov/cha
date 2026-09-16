@@ -137,6 +137,39 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /api/v1/vault/merge:
+    post:
+      tags: [Settings]
+      operationId: mergeVault
+      summary: Merge a source vault into the active vault
+      description: |
+        Overlays stored workspace configuration from the named source vault
+        onto the active destination vault by exact path. The active vault,
+        vault registry, and both protection settings are unchanged. Source
+        sessions are not copied.
+
+        Success is `204` with no body. `Cache-Control` is `no-store`,
+        including error responses.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MergeVaultRequest"
+      responses:
+        "204":
+          description: The source configuration was merged into the active vault.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/SourceVaultPasswordRequired"
+        "403":
+          $ref: "#/components/responses/ForbiddenMutation"
+        "413":
+          $ref: "#/components/responses/BodyTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /api/v1/vaults:
     get:
       tags: [Settings]
@@ -2017,6 +2050,15 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
+    SourceVaultPasswordRequired:
+      description: |
+        The source vault is password-protected and the supplied password is
+        missing or incorrect. `error.code` is
+        `source_vault_password_required`.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
     Shell:
       description: The client-routed application document, served as UTF-8 HTML.
       content:
@@ -2293,6 +2335,17 @@ components:
         password:
           type: [string, "null"]
           minLength: 1
+
+    MergeVaultRequest:
+      type: object
+      additionalProperties: false
+      required: [source_vault, password]
+      properties:
+        source_vault:
+          type: string
+          minLength: 1
+        password:
+          type: [string, "null"]
 
     VaultDetail:
       type: object
@@ -3425,6 +3478,7 @@ components:
                 - command_timeout
                 - command_queue_full
                 - vault_password_required
+                - source_vault_password_required
             message:
               type: string
 

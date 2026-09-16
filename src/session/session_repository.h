@@ -104,4 +104,7 @@ private:
     std::filesystem::path temporary_database_path_;
 };
 
+// Test-only seam for a simulated forum-table synchronization failure.
+void force_next_forum_sync_failure();
+
 } // namespace cha
