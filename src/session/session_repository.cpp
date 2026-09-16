@@ -226,12 +226,25 @@ void SessionRepository::synchronize_forums_unlocked(
     Database database(
         database_path_, Database::Mode::read_write, database_password_);
     validate_workspace_session_database_identity(database);
-    Transaction transaction(database);
+    std::set<std::string> stored_forums;
+    {
+        Statement select = database.prepare("SELECT forum_id FROM forums");
+        while (select.step()) stored_forums.insert(select.text(0));
+    }
+    std::vector<std::string> missing_forums;
     for (const WorkspaceForum& forum : workspace.forums()) {
-        if (forum.id == temporary_identity_.forum_id) continue;
+        if (forum.id != temporary_identity_.forum_id
+            && !stored_forums.contains(forum.id)) {
+            missing_forums.push_back(forum.id);
+        }
+    }
+    if (missing_forums.empty()) return;
+
+    Transaction transaction(database);
+    for (const std::string& forum_id : missing_forums) {
         Statement insert = database.prepare(
             "INSERT OR IGNORE INTO forums (forum_id) VALUES (?1)",
-            std::string_view(forum.id));
+            std::string_view(forum_id));
         insert.run();
     }
     transaction.commit();

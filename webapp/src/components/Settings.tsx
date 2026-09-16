@@ -354,7 +354,7 @@ export function MergeVaultScreen({ client, dispatch, sessionReport }: SettingsSc
     setComplete(false);
     if (password) setPasswordError(null);
     try {
-      const voiceBefore = await voiceEndpointOrigins(client);
+      const voiceBefore = await voiceEndpointOrigins(client).catch(() => null);
       await client.mergeVault(source, password);
       setPasswordPrompt(false);
       setPasswordError(null);
@@ -366,9 +366,9 @@ export function MergeVaultScreen({ client, dispatch, sessionReport }: SettingsSc
       } catch {
         // Discovery refresh is non-critical; merge already succeeded.
       }
-      // When the new voice settings cannot be read, offering a reload is harmless.
+      // When either set of origins is unknown, offering a reload is harmless.
       const voiceChanged = await voiceEndpointOrigins(client).then(
-        (voiceAfter) => voiceAfter !== voiceBefore,
+        (voiceAfter) => voiceBefore === null || voiceAfter !== voiceBefore,
         () => true,
       );
       setReloadNeeded((needed) => needed || voiceChanged);

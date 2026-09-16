@@ -2,7 +2,7 @@ import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { ChaError, type ProviderDetail, type StyleDetail, type VaultDetail } from '../api/client';
+import { ChaError, type ChaClient, type ProviderDetail, type StyleDetail, type VaultDetail } from '../api/client';
 import { appReducer, initialAppState, type AppAction, type AppState } from '../state/view';
 import { bootstrapFixture, fixtureClient, voiceDetailFixture } from '../test/fixtures';
 import {
@@ -282,6 +282,38 @@ describe('Settings screens', () => {
     await confirmMerge();
     expect(await screen.findByRole('button', { name: 'Reload' })).toBeInTheDocument();
     expect(screen.getByText('Reload CHA to use the merged voice settings.')).toBeInTheDocument();
+  });
+
+  it.each(['failed read', 'invalid URL'])('merges and offers a reload when inspecting original voice settings encounters %s', async (failure) => {
+    const mergeVault = vi.fn(async () => undefined);
+    const getVoiceOutputSettings = vi.fn<ChaClient['getVoiceOutputSettings']>(async () => null);
+    if (failure === 'failed read') {
+      getVoiceOutputSettings.mockRejectedValueOnce(new Error('Voice settings could not be loaded.'));
+    } else {
+      getVoiceOutputSettings.mockImplementationOnce(async () => ({
+        url: 'https://voice.example:bad',
+        model: 'eleven_multilingual_v2',
+        api_key: 'api_key_1',
+        output_format: 'mp3_44100_128',
+        default_voice: 'rachel',
+      }));
+    }
+    render(
+      <MergeVaultScreen
+        client={fixtureClient({ listVaults: async () => vaults, mergeVault, getVoiceOutputSettings })}
+        dispatch={vi.fn()}
+        sessionReport={null}
+        state={initialAppState}
+      />,
+    );
+
+    await userEvent.selectOptions(await screen.findByLabelText('Source vault'), 'Projects');
+    await confirmMerge();
+
+    expect(await screen.findByText('Merge complete')).toBeInTheDocument();
+    expect(mergeVault).toHaveBeenCalledWith('Projects', undefined);
+    expect(screen.getByRole('button', { name: 'Reload' })).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
   it('shows an empty merge state when there is no other vault', async () => {

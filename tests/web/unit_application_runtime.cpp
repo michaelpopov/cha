@@ -2604,6 +2604,29 @@ TEST(ApplicationRuntime, MergeOverlaysSourceAndKeepsTheActiveVault) {
     runtime->shutdown();
 }
 
+TEST(ApplicationRuntime, MergeIdenticalConfigurationNeedsNoDestinationWrite) {
+    TwoVaultRuntime pair;
+    pair.workspace_b.add_forum("projects", "Projects", "guide");
+    std::filesystem::remove(pair.database_b);
+    (void)test::import_test_database(pair.workspace_b.root(), pair.database_b);
+    auto runtime = ApplicationRuntime::open(pair.command, "private-test-token");
+    httplib::Client client("127.0.0.1", runtime->start());
+    const auto merged = post_merge(client, "B");
+    ASSERT_TRUE(merged);
+    ASSERT_EQ(merged->status, 204) << merged->body;
+
+    storage::SqliteDatabase blocker(
+        pair.database_a, storage::SqliteDatabase::Mode::read_write);
+    storage::SqliteTransaction lock(blocker);
+    const auto repeated = post_merge(client, "B");
+    ASSERT_TRUE(repeated);
+    EXPECT_EQ(repeated->status, 204) << repeated->body;
+    lock.commit();
+
+    EXPECT_TRUE(bootstrap_has_forum(get_bootstrap(client), "projects"));
+    runtime->shutdown();
+}
+
 TEST(ApplicationRuntime, MergeRejectsUnknownSourceAndSelfMerge) {
     TwoVaultRuntime pair;
     auto runtime = ApplicationRuntime::open(pair.command, "private-test-token");
