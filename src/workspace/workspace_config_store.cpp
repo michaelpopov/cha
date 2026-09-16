@@ -26,7 +26,6 @@
 #include <mutex>
 #include <optional>
 #include <set>
-#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -909,40 +908,14 @@ std::uint64_t merge_saved_key_suffix(std::string_view id) {
     return suffix;
 }
 
-template<typename Item>
-void require_source_directories_loaded(
-    const std::vector<ConfigFile>& rows,
-    std::string_view prefix,
-    std::span<const Item> loaded) {
-    std::set<std::string> ids;
-    for (const ConfigFile& row : rows) {
-        const std::string_view id = stored_directory_id(row.name, prefix);
-        if (!id.empty()) ids.emplace(id);
-    }
-    for (const std::string& id : ids) {
-        bool found = false;
-        for (const Item& item : loaded) {
-            if (item.id == id) {
-                found = true;
-                break;
-            }
-        }
-        if (!found) {
-            fail_path("Source directory '" + std::string(prefix) + id + "' is invalid");
-        }
-    }
-}
-
 std::uint64_t normalized_merge_next_id(
     std::uint64_t source_next,
     std::uint64_t destination_next,
     const std::map<std::string, std::string>& candidate) {
     std::uint64_t highest = 0;
-    std::set<std::string> seen;
-    for (const auto& [name, content] : candidate) {
-        (void)content;
-        const std::string_view id = stored_directory_id(name, "system/keys/");
-        if (id.empty() || !seen.insert(std::string(id)).second) continue;
+    for (const auto& row : candidate) {
+        const std::string_view id = stored_directory_id(row.first, "system/keys/");
+        if (id.empty()) continue;
         highest = std::max(highest, merge_saved_key_suffix(id));
     }
     if (highest == std::numeric_limits<std::uint64_t>::max()) {
@@ -1732,10 +1705,22 @@ void WorkspaceConfigStore::merge(
         materialize_config_files(root.workspace(), source_rows);
         return Workspace::load(root.workspace());
     }();
-    require_source_directories_loaded(
-        source_rows, "system/providers/", source_workspace.providers());
-    require_source_directories_loaded(
-        source_rows, "system/styles/", source_workspace.styles());
+    for (const ConfigFile& row : source_rows) {
+        if (const std::string_view id =
+                stored_directory_id(row.name, "system/providers/");
+            !id.empty() && source_workspace.find_provider(id) == nullptr) {
+            fail_path(
+                "Source directory 'system/providers/" + std::string(id)
+                + "' is invalid");
+        }
+        if (const std::string_view id =
+                stored_directory_id(row.name, "system/styles/");
+            !id.empty() && source_workspace.find_style(id) == nullptr) {
+            fail_path(
+                "Source directory 'system/styles/" + std::string(id)
+                + "' is invalid");
+        }
+    }
 
     (void)impl_->edit([&](const Workspace& published) {
         std::map<std::string, std::string> candidate;
@@ -1748,13 +1733,9 @@ void WorkspaceConfigStore::merge(
         if (source_workspace.r2_storage() && published.r2_storage()) {
             const std::string prefix =
                 "system/keys/" + published.r2_storage()->id + "/";
-            for (auto it = candidate.begin(); it != candidate.end();) {
-                if (it->first.starts_with(prefix)) {
-                    it = candidate.erase(it);
-                } else {
-                    ++it;
-                }
-            }
+            std::erase_if(candidate, [&](const auto& row) {
+                return row.first.starts_with(prefix);
+            });
         }
 
         for (const ConfigFile& row : source_rows) {
