@@ -499,33 +499,13 @@ void internal_error(httplib::Response& response, const std::exception& error) {
         response, 500, {ErrorCode::internal_error, error.what()});
 }
 
-} // namespace
-
-SettingsRoutes::SettingsRoutes(
-    LiveSessionManager& live_sessions,
-    WebSettings settings,
-    WorkspaceConfigStore& config,
-    ApiKeyStore& api_keys,
-    OpenAiOAuth& openai_auth,
-    bool native_voice_enabled,
-    FishAudioProxy& fish_audio)
-    : live_sessions_(&live_sessions),
-      settings_(std::move(settings)),
-      config_(&config),
-      api_keys_(&api_keys),
-      openai_auth_(&openai_auth),
-      native_voice_enabled_(native_voice_enabled),
-      fish_audio_(&fish_audio) {}
-
-void SettingsRoutes::install(httplib::Server& server) const {
-    install_fish_audio_route(server, *api_keys_, settings_, native_voice_enabled_, *fish_audio_);
-    LiveSessionManager* const live_sessions = live_sessions_;
-    WorkspaceConfigStore* const config = config_;
-    ApiKeyStore* const api_keys = api_keys_;
-    OpenAiOAuth* const openai_auth = openai_auth_;
-    const WebSettings settings = settings_;
-    const bool native_voice_enabled = native_voice_enabled_;
-
+void install_provider_routes(
+    httplib::Server& server,
+    LiveSessionManager* live_sessions,
+    WorkspaceConfigStore* config,
+    ApiKeyStore* api_keys,
+    OpenAiOAuth* openai_auth,
+    WebSettings settings) {
     server.Get("/api/v1/providers", [](const httplib::Request&, httplib::Response& response) {
         const auto workspace = published_workspace();
         Json result = Json::array();
@@ -685,7 +665,15 @@ void SettingsRoutes::install(httplib::Server& server) const {
             internal_error(response, error);
         }
     });
+}
 
+void install_appearance_voice_routes(
+    httplib::Server& server,
+    LiveSessionManager* live_sessions,
+    WorkspaceConfigStore* config,
+    ApiKeyStore* api_keys,
+    WebSettings settings,
+    bool native_voice_enabled) {
     server.Get("/api/v1/styles", [](const httplib::Request&, httplib::Response& response) {
         const auto workspace = published_workspace();
         Json result = Json::array();
@@ -1050,7 +1038,12 @@ void SettingsRoutes::install(httplib::Server& server) const {
             }
             response.set_header("Cache-Control", "no-store");
         });
+}
 
+void install_credential_routes(
+    httplib::Server& server,
+    ApiKeyStore* api_keys,
+    WebSettings settings) {
     server.Get(
         "/api/v1/api-keys",
         [api_keys](
@@ -1217,6 +1210,33 @@ void SettingsRoutes::install(httplib::Server& server) const {
             internal_error(response, error);
         }
     });
+}
+
+} // namespace
+
+SettingsRoutes::SettingsRoutes(
+    LiveSessionManager& live_sessions,
+    WebSettings settings,
+    WorkspaceConfigStore& config,
+    ApiKeyStore& api_keys,
+    OpenAiOAuth& openai_auth,
+    bool native_voice_enabled,
+    FishAudioProxy& fish_audio)
+    : live_sessions_(&live_sessions),
+      settings_(std::move(settings)),
+      config_(&config),
+      api_keys_(&api_keys),
+      openai_auth_(&openai_auth),
+      native_voice_enabled_(native_voice_enabled),
+      fish_audio_(&fish_audio) {}
+
+void SettingsRoutes::install(httplib::Server& server) const {
+    install_fish_audio_route(server, *api_keys_, settings_, native_voice_enabled_, *fish_audio_);
+    install_provider_routes(
+        server, live_sessions_, config_, api_keys_, openai_auth_, settings_);
+    install_appearance_voice_routes(
+        server, live_sessions_, config_, api_keys_, settings_, native_voice_enabled_);
+    install_credential_routes(server, api_keys_, settings_);
 }
 
 } // namespace cha::web

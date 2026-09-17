@@ -352,6 +352,7 @@ add_library(cha_web STATIC
     src/web/server_shutdown.cpp
     src/web/session_routes.cpp
     src/web/settings_routes.cpp
+    src/web/vault_routes.cpp
     src/web/fish_audio.cpp
     src/web/audio_download.cpp
     src/web/live_session.cpp
