@@ -16,7 +16,6 @@
 #include <atomic>
 #include <cmath>
 #include <cstddef>
-#include <filesystem>
 #include <initializer_list>
 #include <memory>
 #include <optional>
@@ -545,21 +544,10 @@ void SettingsRoutes::install(httplib::Server& server) const {
             return;
         }
 
-        const auto workspace = published_workspace();
         std::string id;
-        for (std::size_t suffix = 1;; ++suffix) {
-            const std::string candidate = "provider_" + std::to_string(suffix);
-            const std::filesystem::path directory =
-                workspace->root() / "system" / "providers" / candidate;
-            if (workspace->find_provider(candidate) == nullptr
-                && !std::filesystem::exists(directory)) {
-                id = candidate;
-                break;
-            }
-        }
         try {
-            config->apply_provider_create(
-                id, create.display_name, create.copy_from);
+            id = config->create_provider(
+                create.display_name, create.copy_from);
         } catch (const std::invalid_argument&) {
             return set_error_response(response, 400,
                 {ErrorCode::bad_request, "Invalid provider."});
@@ -719,20 +707,9 @@ void SettingsRoutes::install(httplib::Server& server) const {
             return;
         }
 
-        const auto workspace = published_workspace();
         std::string id;
-        for (std::size_t suffix = 1;; ++suffix) {
-            const std::string candidate = "style_" + std::to_string(suffix);
-            const std::filesystem::path directory =
-                workspace->root() / "system" / "styles" / candidate;
-            if (workspace->find_style(candidate) == nullptr
-                && !std::filesystem::exists(directory)) {
-                id = candidate;
-                break;
-            }
-        }
         try {
-            config->apply_style_create(id, display_name);
+            id = config->create_style(display_name);
         } catch (const std::invalid_argument&) {
             return set_error_response(response, 400,
                 {ErrorCode::bad_request, "Invalid style."});
@@ -834,21 +811,10 @@ void SettingsRoutes::install(httplib::Server& server) const {
             return;
         }
 
-        const auto workspace = published_workspace();
         std::string id;
-        for (std::size_t suffix = 1;; ++suffix) {
-            const std::string candidate = "voice_" + std::to_string(suffix);
-            const std::filesystem::path directory =
-                workspace->root() / "system" / "voices" / candidate;
-            if (workspace->find_voice(candidate) == nullptr
-                && !std::filesystem::exists(directory)) {
-                id = candidate;
-                break;
-            }
-        }
         try {
-            config->apply_voice_create(
-                id, create.display_name, create.description,
+            id = config->create_voice(
+                create.display_name, create.description,
                 create.elevenlabs_voice_id);
         } catch (const std::invalid_argument&) {
             return set_error_response(response, 400,

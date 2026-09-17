@@ -336,17 +336,9 @@ void LobbyRoutes::install(httplib::Server& server) const {
                     display_name = parse_create_persona_name(json);
                 })) return;
 
-        const auto workspace = published_workspace();
         std::string id;
-        for (std::size_t suffix = 1;; ++suffix) {
-            const std::string candidate = "persona_" + std::to_string(suffix);
-            if (workspace->find_persona(candidate) == nullptr) {
-                id = candidate;
-                break;
-            }
-        }
         try {
-            config->apply_persona_create(id, display_name);
+            id = config->create_persona(display_name);
         } catch (const std::invalid_argument&) {
             return set_error_response(response, 400,
                 {ErrorCode::bad_request, "Invalid persona."});
@@ -376,19 +368,10 @@ void LobbyRoutes::install(httplib::Server& server) const {
                     create = parse_create_character_request(json);
                 })) return;
 
-        const auto workspace = published_workspace();
         std::string id;
-        for (std::size_t suffix = 1;; ++suffix) {
-            const std::string candidate = "character_" + std::to_string(suffix);
-            if (workspace->find_character(candidate) == nullptr
-                && workspace->find_persona(candidate) == nullptr) {
-                id = candidate;
-                break;
-            }
-        }
         try {
-            config->apply_character_create(
-                id, create.display_name, create.description);
+            id = config->create_character(
+                create.display_name, create.description);
         } catch (const std::invalid_argument&) {
             return set_error_response(response, 400,
                 {ErrorCode::bad_request, "Invalid character."});
@@ -418,18 +401,10 @@ void LobbyRoutes::install(httplib::Server& server) const {
                     create = parse_create_forum_request(json);
                 })) return;
 
-        const auto workspace = published_workspace();
         std::string id;
-        for (std::size_t suffix = 1;; ++suffix) {
-            const std::string candidate = "forum_" + std::to_string(suffix);
-            if (workspace->find_forum(candidate) == nullptr) {
-                id = candidate;
-                break;
-            }
-        }
         try {
-            config->apply_forum_create(
-                id, create.display_name, create.persona_id);
+            id = config->create_forum(
+                create.display_name, create.persona_id);
         } catch (const std::invalid_argument&) {
             return set_error_response(response, 400,
                 {ErrorCode::bad_request, "Invalid forum."});

@@ -15,6 +15,7 @@
 #include <atomic>
 #include <cstdint>
 #include <cstdlib>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -1109,70 +1110,82 @@ TEST_F(
             expected_names);
     };
 
+    std::string provider_id;
     expect_changes(
-        {"system/providers/fresh/config.toml"},
-        [&] { store->apply_provider_create("fresh", "Fresh"); });
+        {"system/providers/provider_1/config.toml"},
+        [&] { provider_id = store->create_provider("Fresh"); });
+    EXPECT_EQ(provider_id, "provider_1");
     expect_changes(
-        {"system/providers/fresh/config.toml"},
-        [&] { store->apply_provider_delete("fresh"); });
+        {"system/providers/provider_1/config.toml"},
+        [&] { store->apply_provider_delete(provider_id); });
 
+    std::string style_id;
     expect_changes(
-        {"system/styles/fresh/config.toml"},
-        [&] { store->apply_style_create("fresh", "Fresh"); });
+        {"system/styles/style_1/config.toml"},
+        [&] { style_id = store->create_style("Fresh"); });
+    EXPECT_EQ(style_id, "style_1");
     expect_changes(
-        {"system/styles/fresh/config.toml"},
-        [&] { store->apply_style_delete("fresh"); });
+        {"system/styles/style_1/config.toml"},
+        [&] { store->apply_style_delete(style_id); });
 
+    std::string voice_id;
     expect_changes(
-        {"system/voices/fresh/config.toml"},
+        {"system/voices/voice_1/config.toml"},
         [&] {
-            store->apply_voice_create(
-                "fresh", "Fresh", "Fresh voice", "eleven-fresh");
+            voice_id = store->create_voice(
+                "Fresh", "Fresh voice", "eleven-fresh");
         });
+    EXPECT_EQ(voice_id, "voice_1");
     expect_changes(
-        {"system/voices/fresh/config.toml"},
-        [&] { store->apply_voice_delete("fresh"); });
+        {"system/voices/voice_1/config.toml"},
+        [&] { store->apply_voice_delete(voice_id); });
 
+    std::string persona_id;
     expect_changes(
-        {"personas/fresh/PERSONA.md", "personas/fresh/persona.toml"},
-        [&] { store->apply_persona_create("fresh", "Fresh"); });
+        {"personas/persona_1/PERSONA.md", "personas/persona_1/persona.toml"},
+        [&] { persona_id = store->create_persona("Fresh"); });
+    EXPECT_EQ(persona_id, "persona_1");
     expect_changes(
-        {"personas/fresh/PERSONA.md", "personas/fresh/persona.toml"},
-        [&] { store->apply_persona_delete("fresh"); });
+        {"personas/persona_1/PERSONA.md", "personas/persona_1/persona.toml"},
+        [&] { store->apply_persona_delete(persona_id); });
 
+    std::string character_id;
     expect_changes(
         {
             "characters/character-voice.md",
-            "characters/fresh/CHARACTER.md",
-            "characters/fresh/PROFILE.md",
-            "characters/fresh/character.toml",
+            "characters/character_1/CHARACTER.md",
+            "characters/character_1/PROFILE.md",
+            "characters/character_1/character.toml",
         },
         [&] {
-            store->apply_character_create(
-                "fresh", "Fresh", "A fresh character");
+            character_id = store->create_character(
+                "Fresh", "A fresh character");
         });
+    EXPECT_EQ(character_id, "character_1");
     expect_changes(
         {
-            "characters/fresh/CHARACTER.md",
-            "characters/fresh/PROFILE.md",
-            "characters/fresh/character.toml",
+            "characters/character_1/CHARACTER.md",
+            "characters/character_1/PROFILE.md",
+            "characters/character_1/character.toml",
         },
-        [&] { store->apply_character_delete("fresh"); });
+        [&] { store->apply_character_delete(character_id); });
 
+    std::string forum_id;
     expect_changes(
         {
-            "forums/fresh/FORUM.md",
-            "forums/fresh/config.toml",
-            "forums/fresh/members/builtin-assistant/character.toml",
+            "forums/forum_1/FORUM.md",
+            "forums/forum_1/config.toml",
+            "forums/forum_1/members/builtin-assistant/character.toml",
         },
-        [&] { store->apply_forum_create("fresh", "Fresh", "reader"); });
+        [&] { forum_id = store->create_forum("Fresh", "reader"); });
+    EXPECT_EQ(forum_id, "forum_1");
     expect_changes(
         {
-            "forums/fresh/FORUM.md",
-            "forums/fresh/config.toml",
-            "forums/fresh/members/builtin-assistant/character.toml",
+            "forums/forum_1/FORUM.md",
+            "forums/forum_1/config.toml",
+            "forums/forum_1/members/builtin-assistant/character.toml",
         },
-        [&] { store->apply_forum_delete("fresh"); });
+        [&] { store->apply_forum_delete(forum_id); });
 
     expect_changes(
         {
@@ -1375,10 +1388,10 @@ TEST_F(
 
 TEST_F(RuntimeWorkspaceConfigStoreTest, PersistsTheVoiceLifecycle) {
     const auto store = open_store();
-    EXPECT_TRUE(store->apply_voice_create(
-        "voice_1", "Brian", "Deep, resonant, comforting", "brian-id")
-        .affected_forum_ids.empty());
-    const WorkspaceVoice* voice = getws()->find_voice("voice_1");
+    const std::string voice_id = store->create_voice(
+        "Brian", "Deep, resonant, comforting", "brian-id");
+    EXPECT_EQ(voice_id, "voice_1");
+    const WorkspaceVoice* voice = getws()->find_voice(voice_id);
     ASSERT_NE(voice, nullptr);
     EXPECT_EQ(voice->description, "Deep, resonant, comforting");
     EXPECT_NE(
@@ -1387,26 +1400,26 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, PersistsTheVoiceLifecycle) {
         std::string::npos);
 
     store->apply_character_settings(
-        "guide", "test", std::nullopt, std::string_view{"voice_1"});
+        "guide", "test", std::nullopt, std::string_view{voice_id});
     const WorkspaceConfigEditResult updated = store->apply_voice_update(
-        "voice_1", "George", "Warm, captivating storyteller", "george-id",
+        voice_id, "George", "Warm, captivating storyteller", "george-id",
         VoiceSettings{.speed = 0.9});
     EXPECT_EQ(updated.affected_forum_ids, std::vector<std::string>{"lobby"});
-    voice = getws()->find_voice("voice_1");
+    voice = getws()->find_voice(voice_id);
     ASSERT_NE(voice, nullptr);
     EXPECT_EQ(voice->label, "George");
     EXPECT_EQ(voice->settings.speed, 0.9);
 
     store->apply_character_settings(
         "guide", "test", std::nullopt, std::nullopt);
-    store->apply_voice_delete("voice_1");
-    EXPECT_EQ(getws()->find_voice("voice_1"), nullptr);
+    store->apply_voice_delete(voice_id);
+    EXPECT_EQ(getws()->find_voice(voice_id), nullptr);
 }
 
 TEST_F(RuntimeWorkspaceConfigStoreTest, PersistsVoiceOutputSettings) {
     const auto store = open_store();
-    store->apply_voice_create(
-        "default-reader", "Default Reader", "", "eleven-default");
+    const std::string voice_id = store->create_voice(
+        "Default Reader", "", "eleven-default");
     store->apply_voice_output_update({
         .url = "https://api.fish.audio/v1/tts",
         .model = "s2.1-pro",
@@ -1429,7 +1442,7 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, PersistsVoiceOutputSettings) {
     EXPECT_NE(stored.find("Default Reader"), std::string::npos);
 
     store->apply_voice_update(
-        "default-reader",
+        voice_id,
         "Renamed Reader",
         "",
         "eleven-default",
@@ -1437,7 +1450,7 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, PersistsVoiceOutputSettings) {
     ASSERT_TRUE(getws()->voice_output());
     EXPECT_EQ(getws()->voice_output()->default_voice, "Renamed Reader");
     EXPECT_THROW(
-        store->apply_voice_delete("default-reader"),
+        store->apply_voice_delete(voice_id),
         std::invalid_argument);
 }
 
@@ -1464,6 +1477,84 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, RejectsInvalidUnusedProviderUpdates) {
         ASSERT_NE(getws()->find_provider("second"), nullptr);
         EXPECT_EQ(getws()->find_provider("second")->config.model, original.model);
     }
+}
+
+TEST_F(RuntimeWorkspaceConfigStoreTest, ConcurrentCreatesAllocateDistinctIds) {
+    const auto store = open_store();
+    std::string first_id;
+    std::string second_id;
+    std::exception_ptr first_error;
+    std::exception_ptr second_error;
+    std::thread first([&] {
+        try {
+            first_id = store->create_persona("First Reader");
+        } catch (...) {
+            first_error = std::current_exception();
+        }
+    });
+    std::thread second([&] {
+        try {
+            second_id = store->create_persona("Second Reader");
+        } catch (...) {
+            second_error = std::current_exception();
+        }
+    });
+    first.join();
+    second.join();
+
+    ASSERT_FALSE(first_error);
+    ASSERT_FALSE(second_error);
+    EXPECT_NE(first_id, second_id);
+    EXPECT_EQ(
+        (std::set<std::string>{first_id, second_id}),
+        (std::set<std::string>{"persona_1", "persona_2"}));
+    const auto published = getws();
+    const WorkspacePersona* first_persona = published->find_persona(first_id);
+    const WorkspacePersona* second_persona = published->find_persona(second_id);
+    ASSERT_NE(first_persona, nullptr);
+    ASSERT_NE(second_persona, nullptr);
+    EXPECT_EQ(first_persona->display_name, "First Reader");
+    EXPECT_EQ(second_persona->display_name, "Second Reader");
+    EXPECT_NE(
+        stored_config(database(), "personas/" + first_id + "/persona.toml")
+            .find("First Reader"),
+        std::string::npos);
+    EXPECT_NE(
+        stored_config(database(), "personas/" + second_id + "/persona.toml")
+            .find("Second Reader"),
+        std::string::npos);
+}
+
+TEST_F(RuntimeWorkspaceConfigStoreTest, CreationSkipsOccupiedPersonaContainer) {
+    workspace_.add_persona("persona_1/nested", "Nested Reader", "Nested prompt");
+    (void)import_workspace_configuration(source(), database());
+    const auto before = config_contents(database());
+    const auto store = open_store();
+    ASSERT_EQ(getws()->find_persona("persona_1"), nullptr);
+    ASSERT_TRUE(std::filesystem::exists(
+        store->workspace_path() / "personas" / "persona_1"));
+
+    const std::string id = store->create_persona("New Reader");
+
+    EXPECT_EQ(id, "persona_2");
+    const auto published = getws();
+    const WorkspacePersona* created = published->find_persona(id);
+    const WorkspacePersona* nested = published->find_persona("nested");
+    ASSERT_NE(created, nullptr);
+    ASSERT_NE(nested, nullptr);
+    EXPECT_EQ(created->display_name, "New Reader");
+    EXPECT_EQ(nested->display_name, "Nested Reader");
+    EXPECT_EQ(nested->prompt, "Nested prompt");
+    const auto after = config_contents(database());
+    EXPECT_EQ(
+        after.at("personas/persona_1/nested/persona.toml"),
+        before.at("personas/persona_1/nested/persona.toml"));
+    EXPECT_EQ(
+        after.at("personas/persona_1/nested/PERSONA.md"),
+        before.at("personas/persona_1/nested/PERSONA.md"));
+    EXPECT_NE(
+        after.at("personas/" + id + "/persona.toml").find("New Reader"),
+        std::string::npos);
 }
 
 TEST_F(RuntimeWorkspaceConfigStoreTest, SerializesTwoEditsAndEditReadInteraction) {

@@ -126,17 +126,14 @@ public:
         std::string_view markdown,
         std::optional<std::string_view> style_id,
         std::optional<std::string_view> voice_id);
-    WorkspaceConfigEditResult apply_persona_create(
-        std::string_view persona_id,
+    std::string create_persona(
         std::string_view display_name);
     WorkspaceConfigEditResult apply_persona_delete(
         std::string_view persona_id);
-    WorkspaceConfigEditResult apply_character_create(
-        std::string_view character_id,
+    std::string create_character(
         std::string_view display_name,
         std::string_view description);
-    WorkspaceConfigEditResult apply_forum_create(
-        std::string_view forum_id,
+    std::string create_forum(
         std::string_view display_name,
         std::string_view persona_id);
     WorkspaceConfigEditResult apply_forum_update(
@@ -156,8 +153,7 @@ public:
         std::string_view provider_id,
         std::string_view display_name,
         const ModelBackendConfig& config);
-    WorkspaceConfigEditResult apply_provider_create(
-        std::string_view provider_id,
+    std::string create_provider(
         std::string_view display_name,
         std::string_view copy_from = {});
     WorkspaceConfigEditResult apply_provider_delete(
@@ -166,8 +162,7 @@ public:
         std::string_view style_id,
         std::string_view display_name,
         const CharacterAppearance& appearance);
-    WorkspaceConfigEditResult apply_style_create(
-        std::string_view style_id,
+    std::string create_style(
         std::string_view display_name);
     WorkspaceConfigEditResult apply_style_delete(
         std::string_view style_id);
@@ -177,8 +172,7 @@ public:
         std::string_view description,
         std::string_view elevenlabs_voice_id,
         const VoiceSettings& settings);
-    WorkspaceConfigEditResult apply_voice_create(
-        std::string_view voice_id,
+    std::string create_voice(
         std::string_view display_name,
         std::string_view description,
         std::string_view elevenlabs_voice_id);

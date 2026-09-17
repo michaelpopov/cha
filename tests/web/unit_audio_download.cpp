@@ -33,7 +33,7 @@ protected:
         config = WorkspaceConfigStore::open(path);
         keys = std::make_unique<ApiKeyStore>(*config);
         const auto api = keys->create("FishAudio", "secret");
-        config->apply_voice_create("reader", "Reader", "", "voice");
+        config->create_voice("Reader", "", "voice");
         config->apply_voice_output_update({.url = "https://api.fish.audio/v1/tts", .model = "s2.1-pro",
             .api_key_id = api.id, .output_format = "mp3", .default_voice = "Reader"});
         sessions = std::make_unique<SessionRepository>(path, config->workspace_path(), config->welcome_path(),

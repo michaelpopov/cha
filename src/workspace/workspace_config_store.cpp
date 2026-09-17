@@ -1373,13 +1373,24 @@ WorkspaceConfigEditResult WorkspaceConfigStore::apply_persona_update(
     });
 }
 
-WorkspaceConfigEditResult WorkspaceConfigStore::apply_persona_create(
-    std::string_view persona_id,
+std::string WorkspaceConfigStore::create_persona(
     std::string_view display_name) {
-    return impl_->edit([&](const Workspace& workspace) {
+    std::string persona_id;
+    (void)impl_->edit([&](const Workspace& workspace) {
+        for (std::size_t suffix = 1;; ++suffix) {
+            const std::string candidate = "persona_" + std::to_string(suffix);
+            const std::filesystem::path directory =
+                workspace.root() / "personas" / candidate;
+            if (workspace.find_persona(candidate) == nullptr
+                && !std::filesystem::exists(directory)) {
+                persona_id = candidate;
+                break;
+            }
+        }
         workspace.create_persona(persona_id, display_name);
         return std::vector<std::string>{};
     });
+    return persona_id;
 }
 
 WorkspaceConfigEditResult WorkspaceConfigStore::apply_persona_delete(
@@ -1390,24 +1401,47 @@ WorkspaceConfigEditResult WorkspaceConfigStore::apply_persona_delete(
     });
 }
 
-WorkspaceConfigEditResult WorkspaceConfigStore::apply_character_create(
-    std::string_view character_id,
+std::string WorkspaceConfigStore::create_character(
     std::string_view display_name,
     std::string_view description) {
-    return impl_->edit([&](const Workspace& workspace) {
+    std::string character_id;
+    (void)impl_->edit([&](const Workspace& workspace) {
+        for (std::size_t suffix = 1;; ++suffix) {
+            const std::string candidate = "character_" + std::to_string(suffix);
+            const std::filesystem::path directory =
+                workspace.root() / "characters" / candidate;
+            if (workspace.find_character(candidate) == nullptr
+                && workspace.find_persona(candidate) == nullptr
+                && !std::filesystem::exists(directory)) {
+                character_id = candidate;
+                break;
+            }
+        }
         workspace.create_character(character_id, display_name, description);
         return std::vector<std::string>{};
     });
+    return character_id;
 }
 
-WorkspaceConfigEditResult WorkspaceConfigStore::apply_forum_create(
-    std::string_view forum_id,
+std::string WorkspaceConfigStore::create_forum(
     std::string_view display_name,
     std::string_view persona_id) {
-    return impl_->edit([&](const Workspace& workspace) {
+    std::string forum_id;
+    (void)impl_->edit([&](const Workspace& workspace) {
+        for (std::size_t suffix = 1;; ++suffix) {
+            const std::string candidate = "forum_" + std::to_string(suffix);
+            const std::filesystem::path directory =
+                workspace.root() / "forums" / candidate;
+            if (workspace.find_forum(candidate) == nullptr
+                && !std::filesystem::exists(directory)) {
+                forum_id = candidate;
+                break;
+            }
+        }
         workspace.create_forum(forum_id, display_name, persona_id);
         return std::vector<std::string>{};
     });
+    return forum_id;
 }
 
 WorkspaceConfigEditResult WorkspaceConfigStore::apply_forum_update(
@@ -1463,14 +1497,25 @@ WorkspaceConfigEditResult WorkspaceConfigStore::apply_provider_update(
     });
 }
 
-WorkspaceConfigEditResult WorkspaceConfigStore::apply_provider_create(
-    std::string_view provider_id,
+std::string WorkspaceConfigStore::create_provider(
     std::string_view display_name,
     std::string_view copy_from) {
-    return impl_->edit([&](const Workspace& workspace) {
+    std::string provider_id;
+    (void)impl_->edit([&](const Workspace& workspace) {
+        for (std::size_t suffix = 1;; ++suffix) {
+            const std::string candidate = "provider_" + std::to_string(suffix);
+            const std::filesystem::path directory =
+                workspace.root() / "system" / "providers" / candidate;
+            if (workspace.find_provider(candidate) == nullptr
+                && !std::filesystem::exists(directory)) {
+                provider_id = candidate;
+                break;
+            }
+        }
         workspace.create_provider(provider_id, display_name, copy_from);
         return std::vector<std::string>{};
     });
+    return provider_id;
 }
 
 WorkspaceConfigEditResult WorkspaceConfigStore::apply_provider_delete(
@@ -1493,13 +1538,24 @@ WorkspaceConfigEditResult WorkspaceConfigStore::apply_style_update(
     });
 }
 
-WorkspaceConfigEditResult WorkspaceConfigStore::apply_style_create(
-    std::string_view style_id,
+std::string WorkspaceConfigStore::create_style(
     std::string_view display_name) {
-    return impl_->edit([&](const Workspace& workspace) {
+    std::string style_id;
+    (void)impl_->edit([&](const Workspace& workspace) {
+        for (std::size_t suffix = 1;; ++suffix) {
+            const std::string candidate = "style_" + std::to_string(suffix);
+            const std::filesystem::path directory =
+                workspace.root() / "system" / "styles" / candidate;
+            if (workspace.find_style(candidate) == nullptr
+                && !std::filesystem::exists(directory)) {
+                style_id = candidate;
+                break;
+            }
+        }
         workspace.create_style(style_id, display_name);
         return std::vector<std::string>{};
     });
+    return style_id;
 }
 
 WorkspaceConfigEditResult WorkspaceConfigStore::apply_style_delete(
@@ -1533,16 +1589,27 @@ WorkspaceConfigEditResult WorkspaceConfigStore::apply_voice_update(
     });
 }
 
-WorkspaceConfigEditResult WorkspaceConfigStore::apply_voice_create(
-    std::string_view voice_id,
+std::string WorkspaceConfigStore::create_voice(
     std::string_view display_name,
     std::string_view description,
     std::string_view elevenlabs_voice_id) {
-    return impl_->edit([&](const Workspace& workspace) {
+    std::string voice_id;
+    (void)impl_->edit([&](const Workspace& workspace) {
+        for (std::size_t suffix = 1;; ++suffix) {
+            const std::string candidate = "voice_" + std::to_string(suffix);
+            const std::filesystem::path directory =
+                workspace.root() / "system" / "voices" / candidate;
+            if (workspace.find_voice(candidate) == nullptr
+                && !std::filesystem::exists(directory)) {
+                voice_id = candidate;
+                break;
+            }
+        }
         workspace.create_voice(
             voice_id, display_name, description, elevenlabs_voice_id);
         return std::vector<std::string>{};
     });
+    return voice_id;
 }
 
 WorkspaceConfigEditResult WorkspaceConfigStore::apply_voice_delete(
