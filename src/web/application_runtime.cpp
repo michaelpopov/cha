@@ -69,10 +69,6 @@ void configure_test_idle_grace(
         settings.sse_heartbeat_interval = std::min(
             settings.sse_heartbeat_interval, max_interval);
     }
-    if (command.test_shutdown_grace_ms) {
-        settings.shutdown_grace =
-            std::chrono::milliseconds(*command.test_shutdown_grace_ms);
-    }
 }
 
 void require_switchable_database(
@@ -912,9 +908,12 @@ void ApplicationRuntime::switch_vault(
     }
     require_switchable_database(selected.data, password);
 
+    const std::chrono::milliseconds drain_grace =
+        impl_->command.test_shutdown_grace_ms
+        ? std::chrono::milliseconds(*impl_->command.test_shutdown_grace_ms)
+        : impl_->settings.shutdown_grace;
     GlobalMaintenanceResult reserved =
-        impl_->live_sessions->reserve_global_maintenance(
-            impl_->settings.shutdown_grace);
+        impl_->live_sessions->reserve_global_maintenance(drain_grace);
     if (std::holds_alternative<MaintenanceFailure>(reserved)) {
         throw std::runtime_error(
             "Could not pause active sessions for database maintenance");
