@@ -5,7 +5,6 @@
 #include <spdlog/sinks/rotating_file_sink.h>
 #include <spdlog/spdlog.h>
 
-#include <atomic>
 #include <filesystem>
 #include <memory>
 #include <mutex>
@@ -19,8 +18,8 @@ namespace {
 constexpr std::size_t log_file_size_limit = 10U * 1024U * 1024U;
 constexpr std::size_t log_file_count = 3;
 
-std::atomic<std::shared_ptr<spdlog::logger>> diagnostic_logger;
-std::mutex diagnostic_logger_initialization;
+std::shared_ptr<spdlog::logger> diagnostic_logger;
+std::mutex diagnostic_logger_mutex;
 
 spdlog::level::level_enum parse_log_level(std::string_view value) {
     if (value == "trace") {
@@ -51,8 +50,12 @@ spdlog::level::level_enum parse_log_level(std::string_view value) {
 
 void write_log(spdlog::level::level_enum level, std::string_view message) noexcept {
     try {
-        if (const auto logger = diagnostic_logger.load(
-                std::memory_order_acquire)) {
+        std::shared_ptr<spdlog::logger> logger;
+        {
+            std::lock_guard lock(diagnostic_logger_mutex);
+            logger = diagnostic_logger;
+        }
+        if (logger) {
             logger->log(level, "{}", message);
         }
     } catch (...) {
@@ -70,8 +73,8 @@ void initialize_diagnostic_logging(
         return;
     }
 
-    std::lock_guard lock(diagnostic_logger_initialization);
-    if (diagnostic_logger.load(std::memory_order_relaxed)) {
+    std::lock_guard lock(diagnostic_logger_mutex);
+    if (diagnostic_logger) {
         return;
     }
 
@@ -99,16 +102,14 @@ void initialize_diagnostic_logging(
         // A diagnostic sink must not write to the server's standard streams.
     });
     logger->flush_on(spdlog::level::trace);
-    diagnostic_logger.store(logger, std::memory_order_release);
+    diagnostic_logger = logger;
     logger->info("diagnostic logging enabled");
 }
 
 void shutdown_diagnostic_logging() noexcept {
     try {
-        std::lock_guard lock(diagnostic_logger_initialization);
-        diagnostic_logger.store(
-            std::shared_ptr<spdlog::logger>{},
-            std::memory_order_release);
+        std::lock_guard lock(diagnostic_logger_mutex);
+        diagnostic_logger.reset();
         spdlog::drop("cha");
     } catch (...) {
         // Teardown must not affect application exit or test cleanup.
