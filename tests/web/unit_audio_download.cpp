@@ -210,6 +210,12 @@ TEST_F(AudioDownloads, DeletedKeyReportsNotConfiguredButCachedAudioStillWorks) {
     EXPECT_EQ(downloads->audio(session, 1, "Test")->audio, "cached");
     EXPECT_EQ(transfers, 0);
 }
+TEST_F(AudioDownloads, DisabledDownloadsReportEmptyStatusButRejectWork) {
+    AudioDownloadManager downloads(*sessions, *vault, false);
+    EXPECT_EQ(downloads.status(session, "Test"),
+        Json({{"cached_entry_ids", Json::array()}, {"downloads", Json::array()}}));
+    EXPECT_THROW(downloads.submit(session, 1, input()), AudioDownloadError);
+}
 TEST_F(AudioDownloads, DeletedQueuedEntryIsDroppedBeforeTransfer) {
     std::mutex mutex;
     std::set<std::string> started;

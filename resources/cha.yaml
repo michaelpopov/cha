@@ -1686,7 +1686,7 @@ paths:
       summary: Read cached audio IDs and background job states without opening the session
       responses:
         "200":
-          description: Current audio availability and jobs.
+          description: Current audio availability and jobs. Both lists are empty when this runtime has no audio downloads.
           content:
             application/json:
               schema: {$ref: "#/components/schemas/AudioDownloadStatus"}

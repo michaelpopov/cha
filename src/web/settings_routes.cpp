@@ -73,39 +73,6 @@ GenerationResult test_provider(
         cancellation);
 }
 
-std::string_view mode_name(Mode value) {
-    return value == Mode::net ? "net" : "test";
-}
-
-std::string_view api_name(ProviderApi value) {
-    return value == ProviderApi::chat_completions
-        ? "chat_completions" : "responses";
-}
-
-std::string_view auth_name(ProviderAuth value) {
-    return value == ProviderAuth::openai_subscription
-        ? "openai_subscription" : "none";
-}
-
-std::string_view reasoning_format_name(ReasoningFormat value) {
-    switch (value) {
-    case ReasoningFormat::automatic: return "auto";
-    case ReasoningFormat::none: return "none";
-    case ReasoningFormat::reasoning_content: return "reasoning_content";
-    case ReasoningFormat::reasoning: return "reasoning";
-    }
-    throw std::logic_error("Invalid reasoning format");
-}
-
-std::string_view cache_retention_name(CacheRetention value) {
-    switch (value) {
-    case CacheRetention::off: return "off";
-    case CacheRetention::short_: return "short";
-    case CacheRetention::long_: return "long";
-    }
-    throw std::logic_error("Invalid cache retention");
-}
-
 std::vector<std::string> characters_using_provider(
     const Workspace& workspace,
     std::string_view provider_id) {
@@ -288,6 +255,14 @@ Enum choice(
     throw std::invalid_argument("Invalid choice");
 }
 
+template<typename Enum>
+Enum choice(
+    std::string_view value,
+    std::optional<Enum> (*parse)(std::string_view)) {
+    if (const auto result = parse(value)) return *result;
+    throw std::invalid_argument("Invalid choice");
+}
+
 struct ProviderUpdate {
     std::string display_name;
     ModelBackendConfig config;
@@ -308,9 +283,7 @@ ProviderUpdate parse_provider_update(
     result.config.host = required<std::string>(json, "host");
     result.config.port = required<int>(json, "port");
     result.config.base_path = required<std::string>(json, "base_path");
-    result.config.mode = choice<Mode>(
-        required<std::string>(json, "mode"),
-        {{"net", Mode::net}, {"test", Mode::test}});
+    result.config.mode = choice(required<std::string>(json, "mode"), parse_mode);
     result.config.model = required<std::string>(json, "model");
     result.config.stream = required<bool>(json, "stream");
     result.config.temperature = nullable_double(json, "temperature");
@@ -319,31 +292,15 @@ ProviderUpdate parse_provider_update(
     result.config.idle_timeout_s = required<int>(json, "idle_timeout_s");
     result.config.api_key_id = nullable_string(json, "api_key").value_or("");
     result.config.reasoning_effort = required<std::string>(json, "reasoning_effort");
-    result.config.reasoning_format = choice<ReasoningFormat>(
-        required<std::string>(json, "reasoning_format"),
-        {{"auto", ReasoningFormat::automatic},
-         {"none", ReasoningFormat::none},
-         {"reasoning_content", ReasoningFormat::reasoning_content},
-         {"reasoning", ReasoningFormat::reasoning}});
+    result.config.reasoning_format = choice(
+        required<std::string>(json, "reasoning_format"), parse_reasoning_format);
     result.config.https = required<bool>(json, "https");
-    result.config.api = choice<ProviderApi>(
-        required<std::string>(json, "api"),
-        {{"chat_completions", ProviderApi::chat_completions},
-         {"responses", ProviderApi::responses}});
-    result.config.auth = choice<ProviderAuth>(
-        required<std::string>(json, "auth"),
-        {{"none", ProviderAuth::none},
-         {"openai_subscription", ProviderAuth::openai_subscription}});
-    result.config.web_search = choice<WebSearchMode>(
-        required<std::string>(json, "web_search"),
-        {{"off", WebSearchMode::off},
-         {"auto", WebSearchMode::automatic},
-         {"required", WebSearchMode::required}});
-    result.config.cache_retention = choice<CacheRetention>(
-        required<std::string>(json, "cache_retention"),
-        {{"off", CacheRetention::off},
-         {"short", CacheRetention::short_},
-         {"long", CacheRetention::long_}});
+    result.config.api = choice(required<std::string>(json, "api"), parse_provider_api);
+    result.config.auth = choice(required<std::string>(json, "auth"), parse_provider_auth);
+    result.config.web_search = choice(
+        required<std::string>(json, "web_search"), parse_web_search_mode);
+    result.config.cache_retention = choice(
+        required<std::string>(json, "cache_retention"), parse_cache_retention);
     if (includes_openrouter_targets) {
         result.config.openrouter_targets =
             required<std::vector<std::string>>(json, "openrouter_targets");

@@ -203,6 +203,7 @@ public:
     [[nodiscard]] bool voice_is_writable(
         std::string_view id) const noexcept;
 
+    // These methods edit the materialized files without changing this loaded snapshot.
     void write_provider(
         std::string_view provider_id,
         std::string_view display_name,

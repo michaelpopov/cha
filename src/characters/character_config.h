@@ -20,7 +20,19 @@ inline constexpr WebSearchMode default_web_search_mode =
 
 bool is_direct_openai_host(std::string_view host);
 bool is_openrouter_host(std::string_view host);
+std::string_view mode_name(Mode value);
+std::string_view api_name(ProviderApi value);
+std::string_view auth_name(ProviderAuth value);
+std::string_view reasoning_format_name(ReasoningFormat value);
+std::string_view cache_retention_name(CacheRetention value);
 std::string_view to_string(WebSearchMode value);
+
+std::optional<Mode> parse_mode(std::string_view value);
+std::optional<ProviderApi> parse_provider_api(std::string_view value);
+std::optional<ProviderAuth> parse_provider_auth(std::string_view value);
+std::optional<ReasoningFormat> parse_reasoning_format(std::string_view value);
+std::optional<WebSearchMode> parse_web_search_mode(std::string_view value);
+std::optional<CacheRetention> parse_cache_retention(std::string_view value);
 
 // One request's resolved provider configuration. It is built from the current
 // Workspace when generation starts and then owned by that request.
@@ -52,6 +64,10 @@ struct ModelBackendConfig {
 };
 
 bool valid_openrouter_targets(const ModelBackendConfig& config);
+bool provider_supports_web_search(const ModelBackendConfig& config);
+// Value rules only; callers supply file/request context and validate references.
+std::optional<std::string_view> provider_config_error(
+    const ModelBackendConfig& config);
 std::string provider_endpoint(const ModelBackendConfig& config);
 
 struct ProviderSelection {

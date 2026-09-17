@@ -174,9 +174,7 @@ std::optional<WebSearchMode> nullable_web_search(
     const nlohmann::json& json) {
     const std::optional<std::string> value = nullable_string(json, "web_search");
     if (!value) return std::nullopt;
-    if (*value == "off") return WebSearchMode::off;
-    if (*value == "auto") return WebSearchMode::automatic;
-    if (*value == "required") return WebSearchMode::required;
+    if (const auto mode = parse_web_search_mode(*value)) return mode;
     throw std::invalid_argument("Invalid web command");
 }
 

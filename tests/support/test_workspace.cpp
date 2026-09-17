@@ -22,50 +22,6 @@ std::string quoted(std::string_view value) {
     return nlohmann::json(value).dump();
 }
 
-std::string_view mode_name(Mode value) {
-    return value == Mode::net ? "net" : "test";
-}
-
-std::string_view reasoning_format_name(ReasoningFormat value) {
-    switch (value) {
-    case ReasoningFormat::automatic: return "auto";
-    case ReasoningFormat::none: return "none";
-    case ReasoningFormat::reasoning_content: return "reasoning_content";
-    case ReasoningFormat::reasoning: return "reasoning";
-    }
-    return "auto";
-}
-
-std::string_view api_name(ProviderApi value) {
-    return value == ProviderApi::responses ? "responses" : "chat_completions";
-}
-
-std::string_view auth_name(ProviderAuth value) {
-    switch (value) {
-    case ProviderAuth::none: return "";
-    case ProviderAuth::openai_subscription: return "openai_subscription";
-    }
-    return "";
-}
-
-std::string_view web_search_name(WebSearchMode value) {
-    switch (value) {
-    case WebSearchMode::off: return "off";
-    case WebSearchMode::automatic: return "auto";
-    case WebSearchMode::required: return "required";
-    }
-    return "off";
-}
-
-std::string_view retention_name(CacheRetention value) {
-    switch (value) {
-    case CacheRetention::off: return "off";
-    case CacheRetention::short_: return "short";
-    case CacheRetention::long_: return "long";
-    }
-    return "short";
-}
-
 void write_provider_config(
     const std::filesystem::path& path,
     const ModelBackendConfig& config) {
@@ -93,8 +49,8 @@ void write_provider_config(
     if (config.auth != ProviderAuth::none) {
         file << "auth = " << quoted(auth_name(config.auth)) << '\n';
     }
-    file << "web_search = " << quoted(web_search_name(config.web_search)) << '\n'
-         << "cache_retention = " << quoted(retention_name(config.cache_retention)) << '\n';
+    file << "web_search = " << quoted(to_string(config.web_search)) << '\n'
+         << "cache_retention = " << quoted(cache_retention_name(config.cache_retention)) << '\n';
     if (!config.openrouter_targets.empty()) {
         file << "openrouter_targets = [";
         for (std::size_t index = 0;

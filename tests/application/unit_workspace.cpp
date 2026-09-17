@@ -301,6 +301,87 @@ TEST(Workspace, OmitsAnInvalidUnusedProvider) {
     EXPECT_EQ(workspace.find_provider("unused"), nullptr);
 }
 
+TEST(Workspace, CharacterAndAssistantReferenceErrorsKeepTheirSubjectsAndOrder) {
+    struct ReferenceCase {
+        std::string settings;
+        std::string error;
+    };
+    const ReferenceCase cases[]{
+        {"provider = \"missing\"\nstyle = \"missing\"\nvoice = \"missing\"\n",
+         " references unknown provider 'missing'"},
+        {"provider = \"broken\"\nstyle = \"missing\"\nvoice = \"missing\"\n",
+         " references invalid provider 'broken': "},
+        {"provider = \"chat\"\nweb_search = \"auto\"\nstyle = \"missing\"\n",
+         " enables web search for an unsupported provider"},
+        {"provider = \"test\"\nstyle = \"missing\"\nvoice = \"missing\"\n",
+         " references unknown style 'missing'"},
+        {"provider = \"test\"\nvoice = \"missing\"\n",
+         " references unknown voice 'missing'"},
+    };
+    for (const bool assistant : {false, true}) {
+        for (const auto& [settings, error] : cases) {
+            SCOPED_TRACE(settings);
+            SCOPED_TRACE(assistant);
+            test::TestWorkspace fixture;
+            fixture.write_provider(
+                "broken", "host = \"localhost\"\nport = 0\nmodel = \"fake\"\n");
+            fixture.write_provider(
+                "chat", "host = \"localhost\"\nport = 80\nmodel = \"fake\"\n"
+                        "api = \"chat_completions\"\n");
+            const std::string subject = assistant ? "Assistant" : "Character 'guide'";
+            const auto path = assistant
+                ? fixture.root() / "system" / "assistant" / "character.toml"
+                : fixture.root() / "characters" / "guide" / "character.toml";
+            std::ofstream(path)
+                << "display_name = \"" << (assistant ? "Assistant" : "Guide")
+                << "\"\n" << settings;
+            std::string expected = subject + error;
+            if (settings.starts_with("provider = \"broken\"")) {
+                expected += "Provider config '"
+                    + (fixture.root() / "system" / "providers" / "broken"
+                       / "config.toml").string()
+                    + "' requires port between 1 and 65535";
+            }
+            try {
+                (void)Workspace::load(fixture.root());
+                FAIL() << "Expected a broken reference";
+            } catch (const std::runtime_error& failure) {
+                EXPECT_EQ(failure.what(), expected);
+            }
+        }
+    }
+}
+
+TEST(Workspace, ProviderlessDraftRejectsExplicitWebSearchOff) {
+    test::TestWorkspace fixture;
+    fixture.add_character("draft", "Draft");
+    std::ofstream(fixture.root() / "characters" / "draft" / "character.toml")
+        << "display_name = \"Draft\"\nweb_search = \"off\"\nstyle = \"missing\"\n";
+    try {
+        (void)Workspace::load(fixture.root());
+        FAIL() << "Expected web search to require a provider";
+    } catch (const std::runtime_error& failure) {
+        EXPECT_STREQ(
+            failure.what(), "Character 'draft' enables web search without a provider");
+    }
+}
+
+TEST(Workspace, ExplicitWebSearchOffDoesNotRequireProviderCapability) {
+    test::TestWorkspace fixture;
+    fixture.write_provider(
+        "chat", "host = \"localhost\"\nport = 80\nmodel = \"fake\"\n"
+                "api = \"chat_completions\"\n");
+    fixture.write_character_config(
+        "display_name = \"Guide\"\nprovider = \"chat\"\nweb_search = \"off\"\n");
+    std::ofstream(fixture.root() / "system" / "assistant" / "character.toml")
+        << "display_name = \"Assistant\"\nprovider = \"chat\"\nweb_search = \"off\"\n";
+
+    const Workspace workspace = Workspace::load(fixture.root());
+    EXPECT_EQ(workspace.find_character("guide")->web_search, WebSearchMode::off);
+    EXPECT_EQ(
+        workspace.find_character(workspace_assistant_id)->web_search, WebSearchMode::off);
+}
+
 TEST(Workspace, ResolvesCompleteProviderAndStyleValues) {
     test::TestWorkspace fixture;
     fixture.write_provider(
@@ -523,6 +604,27 @@ TEST(Workspace, LoadsNestedDefinitionsAndKeepsCatalogsOrdered) {
     ASSERT_GE(workspace.personas().size(), 3U);
     EXPECT_EQ(workspace.personas().front().display_name, "An Author");
     EXPECT_EQ(workspace.forums().front().display_name, "Entrance");
+}
+
+TEST(Workspace, EntranceInventoriesOrdinaryForumsBeforeFinalSortingAndIndexing) {
+    test::TestWorkspace fixture;
+    fixture.add_character("alpha", "Alpha");
+    fixture.add_forum("early", "A Forum", "alpha");
+    const Workspace workspace = Workspace::load(fixture.root());
+
+    ASSERT_EQ(workspace.forums().size(), 3U);
+    EXPECT_EQ(workspace.forums()[0].id, "early");
+    EXPECT_EQ(workspace.forums()[1].id, workspace_entrance_id);
+    EXPECT_EQ(workspace.forums()[2].id, "lobby");
+    EXPECT_EQ(workspace.find_forum("early"), &workspace.forums()[0]);
+    EXPECT_EQ(workspace.find_forum(workspace_entrance_id), &workspace.forums()[1]);
+    EXPECT_EQ(workspace.find_forum("lobby"), &workspace.forums()[2]);
+    const auto& prompt = workspace.forums()[1].members.front().system_prompt;
+    EXPECT_NE(prompt.find("\"name\":\"A Forum\""), std::string::npos);
+    EXPECT_NE(prompt.find("\"name\":\"The Lobby\""), std::string::npos);
+    EXPECT_NE(prompt.find("\"default_character\":\"Alpha\""), std::string::npos);
+    EXPECT_NE(prompt.find("\"default_persona\":\"Guest\""), std::string::npos);
+    EXPECT_EQ(prompt.find("\"name\":\"Entrance\""), std::string::npos);
 }
 
 TEST(Workspace, AllowsProviderlessDraftOutsideForumsOnly) {
@@ -786,6 +888,26 @@ TEST(Workspace, RejectsInvalidWritesWithoutChangingTheConfigFile) {
             std::string_view{"extreme"}),
         std::invalid_argument);
     EXPECT_EQ(file_bytes(character), before);
+
+    const std::filesystem::path provider =
+        fixture.root() / "system" / "providers" / "test" / "config.toml";
+    const std::string provider_before = file_bytes(provider);
+    const ModelBackendConfig original = workspace.find_provider("test")->config;
+    ModelBackendConfig config = original;
+    config.port = 0;
+    EXPECT_THROW(
+        workspace.write_provider("test", "Test", config), std::invalid_argument);
+    config = original;
+    config.api_key_id = "api_key_1";
+    config.api_key_env = "Legacy Key";
+    EXPECT_THROW(
+        workspace.write_provider("test", "Test", config), std::invalid_argument);
+    config = original;
+    config.host.clear();
+    EXPECT_THROW(
+        workspace.write_provider("test", "Test", config), std::invalid_argument);
+    EXPECT_EQ(file_bytes(provider), provider_before);
+
     EXPECT_TRUE(workspace.character_is_writable("guide"));
     EXPECT_FALSE(workspace.character_is_writable(workspace_assistant_id));
     EXPECT_TRUE(workspace.character_settings_are_writable("guide"));

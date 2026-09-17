@@ -3766,7 +3766,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Current audio availability and jobs. */
+            /** @description Current audio availability and jobs. Both lists are empty when this runtime has no audio downloads. */
             200: {
                 headers: {
                     [name: string]: unknown;

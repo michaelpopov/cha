@@ -149,6 +149,8 @@ Json AudioDownloadManager::submit_batch(const FullSessionId& s, const Json& inpu
 }
 
 Json AudioDownloadManager::status(const FullSessionId& s, const std::string& vault) {
+    // Clients poll status on every session, so a runtime without downloads reports nothing.
+    if (!enabled_) return {{"cached_entry_ids", Json::array()}, {"downloads", Json::array()}};
     std::size_t generation;
     Json downloads = Json::array();
     {
