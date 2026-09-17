@@ -247,7 +247,7 @@ TEST(ApplicationRuntime, ExposesLegacyNamedCredentialsAsSavedApiKeys) {
     runtime->shutdown();
 }
 
-TEST(ApplicationRuntime, ReportsVoiceInputApiKeyUsage) {
+TEST(ApplicationRuntime, EnablesVoiceInputForServedBrowserRuntime) {
     test::TestWorkspace workspace;
     const std::filesystem::path database =
         test::import_test_database(workspace.root());
@@ -266,11 +266,11 @@ TEST(ApplicationRuntime, ReportsVoiceInputApiKeyUsage) {
         });
     }
 
-    auto runtime = ApplicationRuntime::open(command, "private-test-token");
+    auto runtime = ApplicationRuntime::open(command);
     const int port = runtime->start();
     httplib::Client client("127.0.0.1", port);
 
-    const auto response = client.Get("/api/v1/api-keys", kRuntimeCookie);
+    const auto response = client.Get("/api/v1/api-keys");
     ASSERT_TRUE(response);
     ASSERT_EQ(response->status, 200) << response->body;
     const nlohmann::json keys = nlohmann::json::parse(response->body);
@@ -279,7 +279,7 @@ TEST(ApplicationRuntime, ReportsVoiceInputApiKeyUsage) {
         keys.front().at("used_by"),
         nlohmann::json::array({"Voice input"}));
 
-    const auto settings = client.Get("/api/v1/voice-input", kRuntimeCookie);
+    const auto settings = client.Get("/api/v1/voice-input");
     ASSERT_TRUE(settings);
     ASSERT_EQ(settings->status, 200) << settings->body;
     EXPECT_EQ(
@@ -292,8 +292,7 @@ TEST(ApplicationRuntime, ReportsVoiceInputApiKeyUsage) {
             {"prompt", "Technical discussion."},
         }));
 
-    const auto resolved = client.Get(
-        "/api/v1/voice-input/runtime", kRuntimeCookie);
+    const auto resolved = client.Get("/api/v1/voice-input/runtime");
     ASSERT_TRUE(resolved);
     ASSERT_EQ(resolved->status, 200) << resolved->body;
     EXPECT_EQ(
@@ -309,7 +308,6 @@ TEST(ApplicationRuntime, ReportsVoiceInputApiKeyUsage) {
     };
     const auto invalid = client.Put(
         "/api/v1/voice-input",
-        kRuntimeCookie,
         invalid_update.dump(),
         "application/json");
     ASSERT_TRUE(invalid);
@@ -328,7 +326,6 @@ TEST(ApplicationRuntime, ReportsVoiceInputApiKeyUsage) {
     };
     const auto updated = client.Put(
         "/api/v1/voice-input",
-        kRuntimeCookie,
         voice_input_update.dump(),
         "application/json");
     ASSERT_TRUE(updated);
@@ -339,7 +336,7 @@ TEST(ApplicationRuntime, ReportsVoiceInputApiKeyUsage) {
     EXPECT_EQ(getws()->voice_input()->delay, "xhigh");
     EXPECT_EQ(getws()->voice_input()->prompt, "Names and terms.");
 
-    const auto shell = client.Get("/", kRuntimeCookie);
+    const auto shell = client.Get("/");
     ASSERT_TRUE(shell);
     ASSERT_EQ(shell->status, 200);
     EXPECT_NE(
@@ -350,7 +347,7 @@ TEST(ApplicationRuntime, ReportsVoiceInputApiKeyUsage) {
     runtime->shutdown();
 }
 
-TEST(ApplicationRuntime, ValidatesConfiguredFishAudioRequests) {
+TEST(ApplicationRuntime, EnablesVoiceOutputForServedBrowserRuntime) {
     test::TestWorkspace workspace;
     workspace.write_voice("reader", "display_name = \"Reader\"\nelevenlabs_voice_id = \"fish-voice\"\n");
     const auto database = test::import_test_database(workspace.root());
@@ -363,9 +360,9 @@ TEST(ApplicationRuntime, ValidatesConfiguredFishAudioRequests) {
             .api_key_id = key.id, .output_format = "mp3", .default_voice = "Reader",
         });
     }
-    auto runtime = ApplicationRuntime::open(make_command(workspace, database), "private-test-token");
+    auto runtime = ApplicationRuntime::open(make_command(workspace, database));
     httplib::Client client("127.0.0.1", runtime->start());
-    const auto resolved = client.Get("/api/v1/voice-output/runtime", kRuntimeCookie);
+    const auto resolved = client.Get("/api/v1/voice-output/runtime");
     ASSERT_TRUE(resolved);
     ASSERT_EQ(resolved->status, 200);
     const auto runtime_settings = nlohmann::json::parse(resolved->body);
@@ -374,12 +371,32 @@ TEST(ApplicationRuntime, ValidatesConfiguredFishAudioRequests) {
     EXPECT_FALSE(runtime_settings.contains("api_key"));
     EXPECT_EQ(resolved->body.find("fish-secret"), std::string::npos);
     for (const std::string body : {"{}", "{\"text\":1,\"reference_id\":\"voice\"}", "invalid json"}) {
-        const auto response = client.Post("/api/v1/voice-output/audio", kRuntimeCookie, body, "application/json");
+        const auto response = client.Post(
+            "/api/v1/voice-output/audio", body, "application/json");
         ASSERT_TRUE(response);
         EXPECT_EQ(response->status, 400);
     }
-    auto foreign_origin = kRuntimeCookie;
-    foreign_origin.emplace("Origin", "https://other.example");
+    const auto created = client.Post(
+        "/api/v1/forums/lobby/sessions",
+        R"({"label":"Audio"})",
+        "application/json");
+    ASSERT_TRUE(created);
+    ASSERT_EQ(created->status, 201) << created->body;
+    const std::string session_id =
+        nlohmann::json::parse(created->body).at("id");
+    const auto missing_entry = client.Post(
+        "/api/v1/forums/lobby/sessions/" + session_id
+            + "/entries/999/audio-download",
+        R"({"vault_name":"Test","reference_id":"fish-voice"})",
+        "application/json");
+    ASSERT_TRUE(missing_entry);
+    EXPECT_EQ(missing_entry->status, 404);
+    EXPECT_EQ(
+        nlohmann::json::parse(missing_entry->body).at("error").at("message"),
+        "Transcript entry not found.");
+
+    const httplib::Headers foreign_origin{
+        {"Origin", "https://other.example"}};
     const auto forbidden = client.Post("/api/v1/voice-output/audio", foreign_origin,
         R"({"text":"Hello","reference_id":"voice"})", "application/json");
     ASSERT_TRUE(forbidden);

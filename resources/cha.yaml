@@ -658,10 +658,10 @@ paths:
     get:
       tags: [Settings]
       operationId: getVoiceInputRuntime
-      summary: Get resolved native voice input settings
+      summary: Get resolved voice input settings
       responses:
         "200":
-          description: Resolved settings, or null outside the native application.
+          description: Resolved settings, or null when voice input is not configured.
           content:
             application/json:
               schema:
@@ -713,10 +713,10 @@ paths:
     get:
       tags: [Settings]
       operationId: getVoiceOutputRuntime
-      summary: Get resolved native voice output settings
+      summary: Get resolved voice output settings
       responses:
         "200":
-          description: Resolved settings, or null outside the native application.
+          description: Resolved settings, or null when voice output is not configured.
           content:
             application/json:
               schema:

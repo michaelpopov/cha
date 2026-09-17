@@ -350,7 +350,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get resolved native voice input settings */
+        /** Get resolved voice input settings */
         get: operations["getVoiceInputRuntime"];
         put?: never;
         post?: never;
@@ -385,7 +385,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get resolved native voice output settings */
+        /** Get resolved voice output settings */
         get: operations["getVoiceOutputRuntime"];
         put?: never;
         post?: never;
@@ -2730,7 +2730,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Resolved settings, or null outside the native application. */
+            /** @description Resolved settings, or null when voice input is not configured. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -2798,7 +2798,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Resolved settings, or null outside the native application. */
+            /** @description Resolved settings, or null when voice output is not configured. */
             200: {
                 headers: {
                     [name: string]: unknown;

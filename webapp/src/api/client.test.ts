@@ -445,7 +445,7 @@ describe('CHA API client', () => {
     expect(fetcher.mock.calls[3][1]?.method).toBe('DELETE');
   });
 
-  it('gets and saves voice input settings and resolves native runtime settings', async () => {
+  it('gets and saves voice input settings and resolves runtime settings', async () => {
     const settings = {
       url: 'https://api.openai.com/v1/realtime/calls',
       model: 'gpt-live-transcribe',

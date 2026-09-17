@@ -27,7 +27,7 @@ public:
         WorkspaceConfigStore& config,
         ApiKeyStore& api_keys,
         OpenAiOAuth& openai_auth,
-        bool native_voice_enabled,
+        bool voice_enabled,
         FishAudioProxy& fish_audio);
 
     void install(httplib::Server& server) const;
@@ -38,7 +38,7 @@ private:
     WorkspaceConfigStore* config_;
     ApiKeyStore* api_keys_;
     OpenAiOAuth* openai_auth_;
-    bool native_voice_enabled_{};
+    bool voice_enabled_{};
     FishAudioProxy* fish_audio_;
 };
 

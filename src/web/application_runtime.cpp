@@ -379,7 +379,8 @@ struct ApplicationRuntime::Impl {
             store->welcome_path(),
             seed,
             active_password);
-        audio_downloads = std::make_unique<AudioDownloadManager>(*sessions, current_vault_, !access_token.empty());
+        audio_downloads = std::make_unique<AudioDownloadManager>(
+            *sessions, current_vault_, true);
         mirror = std::make_shared<SessionMirror>();
         if (const auto root = session_mirror_root(command.vault)) {
             try {
@@ -1035,7 +1036,7 @@ int ApplicationRuntime::start(int port_override) {
 
     auto server = std::make_unique<httplib::Server>();
     const auto http_settings = configure_http_server(
-        *server, impl_->settings, !impl_->access_token.empty());
+        *server, impl_->settings, true);
     if (!impl_->access_token.empty()) {
         const std::string token = impl_->access_token;
         server->set_pre_routing_handler(
@@ -1050,12 +1051,10 @@ int ApplicationRuntime::start(int port_override) {
             });
     }
 
-    const bool native_runtime = !impl_->access_token.empty();
     const AssetHandler assets(
         impl_->command.root / "web",
-        [native_runtime]() {
+        []() {
             std::vector<std::string> result;
-            if (!native_runtime) return result;
             const auto workspace = getws();
             if (workspace->voice_input()) {
                 result.push_back(workspace->voice_input()->url);
@@ -1095,7 +1094,7 @@ int ApplicationRuntime::start(int port_override) {
         *impl_->store,
         *impl_->api_keys,
         *impl_->openai_auth,
-        !impl_->access_token.empty(), impl_->fish_audio).install(*server);
+        true, impl_->fish_audio).install(*server);
     install_audio_download_routes(*server, *impl_->audio_downloads, impl_->settings);
     SessionRoutes(
         *impl_->live_sessions, impl_->settings, assets).install(*server);

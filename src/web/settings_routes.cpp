@@ -668,7 +668,7 @@ void install_appearance_voice_routes(
     WorkspaceConfigStore* config,
     ApiKeyStore* api_keys,
     WebSettings settings,
-    bool native_voice_enabled) {
+    bool voice_enabled) {
     server.Get("/api/v1/styles", [](const httplib::Request&, httplib::Response& response) {
         const auto workspace = published_workspace();
         Json result = Json::array();
@@ -936,10 +936,10 @@ void install_appearance_voice_routes(
 
     server.Get(
         "/api/v1/voice-input/runtime",
-        [api_keys, native_voice_enabled](
+        [api_keys, voice_enabled](
             const httplib::Request&, httplib::Response& response) {
             const auto workspace = published_workspace();
-            if (!native_voice_enabled || !workspace->voice_input()
+            if (!voice_enabled || !workspace->voice_input()
                 || !api_keys->find(workspace->voice_input()->api_key_id)) {
                 set_json_response(response, 200, Json(nullptr));
             } else {
@@ -1012,14 +1012,14 @@ void install_appearance_voice_routes(
 
     server.Get(
         "/api/v1/voice-output/runtime",
-        [api_keys, native_voice_enabled](
+        [api_keys, voice_enabled](
             const httplib::Request&, httplib::Response& response) {
             const auto workspace = published_workspace();
             const WorkspaceVoiceOutput* const output =
                 workspace->voice_output() ? &*workspace->voice_output() : nullptr;
             const WorkspaceVoice* const default_voice = output
                 ? workspace->find_voice_by_name(output->default_voice) : nullptr;
-            if (!native_voice_enabled || !output || !default_voice
+            if (!voice_enabled || !output || !default_voice
                 || !api_keys->find(output->api_key_id)) {
                 set_json_response(response, 200, Json(nullptr));
             } else {
@@ -1215,22 +1215,22 @@ SettingsRoutes::SettingsRoutes(
     WorkspaceConfigStore& config,
     ApiKeyStore& api_keys,
     OpenAiOAuth& openai_auth,
-    bool native_voice_enabled,
+    bool voice_enabled,
     FishAudioProxy& fish_audio)
     : live_sessions_(&live_sessions),
       settings_(std::move(settings)),
       config_(&config),
       api_keys_(&api_keys),
       openai_auth_(&openai_auth),
-      native_voice_enabled_(native_voice_enabled),
+      voice_enabled_(voice_enabled),
       fish_audio_(&fish_audio) {}
 
 void SettingsRoutes::install(httplib::Server& server) const {
-    install_fish_audio_route(server, *api_keys_, settings_, native_voice_enabled_, *fish_audio_);
+    install_fish_audio_route(server, *api_keys_, settings_, voice_enabled_, *fish_audio_);
     install_provider_routes(
         server, live_sessions_, config_, api_keys_, openai_auth_, settings_);
     install_appearance_voice_routes(
-        server, live_sessions_, config_, api_keys_, settings_, native_voice_enabled_);
+        server, live_sessions_, config_, api_keys_, settings_, voice_enabled_);
     install_credential_routes(server, api_keys_, settings_);
 }
 

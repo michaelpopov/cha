@@ -236,9 +236,9 @@ FishAudioRequest make_fish_audio_request(
 
 void install_fish_audio_route(
     httplib::Server& server, ApiKeyStore& api_keys,
-    const WebSettings& settings, bool native_voice_enabled, FishAudioProxy& proxy) {
+    const WebSettings& settings, bool voice_enabled, FishAudioProxy& proxy) {
     server.Post("/api/v1/voice-output/audio",
-        [&api_keys, settings, native_voice_enabled, &proxy](const httplib::Request& request, httplib::Response& response) {
+        [&api_keys, settings, voice_enabled, &proxy](const httplib::Request& request, httplib::Response& response) {
             if (!validate_json_mutation(request, response)) return;
             Json input;
             if (!parse_route_json_body(request, response, settings.request_body_limit, [&](const Json& parsed) {
@@ -248,7 +248,7 @@ void install_fish_audio_route(
             try {
                 const auto workspace = getws();
                 const auto* output = workspace && workspace->voice_output() ? &*workspace->voice_output() : nullptr;
-                if (!native_voice_enabled || !output || !api_keys.find(output->api_key_id)) {
+                if (!voice_enabled || !output || !api_keys.find(output->api_key_id)) {
                     set_route_not_found(response, "FishAudio output is not configured.");
                     return;
                 }

@@ -66,5 +66,5 @@ private:
 
 void install_fish_audio_route(
     httplib::Server& server, ApiKeyStore& api_keys,
-    const WebSettings& settings, bool native_voice_enabled, FishAudioProxy& proxy);
+    const WebSettings& settings, bool voice_enabled, FishAudioProxy& proxy);
 }
