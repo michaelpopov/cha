@@ -1,4 +1,5 @@
 #include "web/lobby_routes.h"
+#include "web/audio_download.h"
 
 #include "workspace/workspace.h"
 #include "workspace/workspace_config_store.h"
@@ -284,19 +285,21 @@ LobbyRoutes::LobbyRoutes(
     WorkspaceConfigStore& config,
     CurrentVault& current_vault,
     std::vector<std::string> vault_names,
-    std::shared_ptr<SessionMirror> mirror)
+    std::shared_ptr<SessionMirror> mirror,
+    std::function<void(const FullSessionId&)> clear_audio)
     : sessions_(std::move(sessions)),
       initial_(std::move(initial)), live_sessions_(live_sessions),
       settings_(std::move(settings)),
       config_(&config),
       current_vault_(&current_vault),
       vault_names_(std::move(vault_names)),
-      mirror_(std::move(mirror)) {
+      mirror_(std::move(mirror)), clear_audio_(std::move(clear_audio)) {
     if (!sessions_) throw std::invalid_argument("Lobby routes need a session repository");
 }
 
 void LobbyRoutes::install(httplib::Server& server) const {
     const auto sessions = sessions_;
+    const auto clear_audio = clear_audio_;
     const InitialSelection initial = initial_;
     LiveSessionManager* const live_sessions = &live_sessions_;
     const WebSettings settings = settings_;
@@ -896,7 +899,7 @@ void LobbyRoutes::install(httplib::Server& server) const {
     });
 
     server.Delete(R"(/api/v1/forums/([^/]+)/sessions/([^/]+)/audio-cache)",
-        [sessions, settings](const httplib::Request& request, httplib::Response& response) {
+        [sessions, settings, clear_audio](const httplib::Request& request, httplib::Response& response) {
         const FullSessionId key{request.matches[1], request.matches[2]};
         if (!is_valid_route_component(key.forum_id)
             || !is_valid_route_component(key.session_id)) {
@@ -907,9 +910,12 @@ void LobbyRoutes::install(httplib::Server& server) const {
                 request, response, settings.request_body_limit,
                 [](const nlohmann::json& json) { parse_empty_object(json); })) return;
         try {
-            sessions->clear_session_audio(key);
+            if (clear_audio) clear_audio(key);
+            else sessions->clear_session_audio(key);
             response.status = 204;
             response.set_header("Cache-Control", "no-store");
+        } catch (const AudioDownloadError& error) {
+            set_error_response(response, error.status, {ErrorCode::speech_busy, error.what()});
         } catch (const ForumNotFoundError&) {
             set_route_not_found(response);
         } catch (const SessionNotFoundError&) {

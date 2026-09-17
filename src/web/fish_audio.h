@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include "session/session_repository.h"
 #include <cstddef>
 #include <functional>
 #include <semaphore>
@@ -10,7 +11,6 @@
 namespace httplib { class Server; struct Response; }
 namespace cha {
 class ApiKeyStore;
-class SessionRepository;
 struct WorkspaceVoiceOutput;
 }
 namespace cha::web {
@@ -22,6 +22,12 @@ struct FishAudioRequest {
     std::string model;
     nlohmann::json body;
 };
+
+std::optional<EntryAudio> download_fish_audio(
+    const WorkspaceVoiceOutput& output, const std::string& key,
+    const FishAudioRequest& request, const std::function<bool()>& cancelled);
+std::string entry_speech_text(const EntryAudioLookup& entry);
+bool valid_entry_audio(const EntryAudio& audio);
 
 FishAudioRequest make_fish_audio_request(
     const WorkspaceVoiceOutput& output, const nlohmann::json& input);
@@ -45,6 +51,6 @@ private:
 };
 
 void install_fish_audio_route(
-    httplib::Server& server, ApiKeyStore& api_keys, const SessionRepository& sessions,
+    httplib::Server& server, ApiKeyStore& api_keys,
     const WebSettings& settings, bool native_voice_enabled, FishAudioProxy& proxy);
 }

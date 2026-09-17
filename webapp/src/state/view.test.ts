@@ -14,6 +14,15 @@ function readyState(): AppState {
 }
 
 describe('application navigation reducer', () => {
+  it('notifies an already-uncached active conversation when its session cache is cleared', () => {
+    const state = { ...readyState(), sessionSnapshot: snapshotFixture };
+    const clear: AppAction = { type: 'session-audio-cache', forumId: 'entrance', sessionId: 'welcome', cached: false };
+    const cleared = appReducer(state, clear);
+    expect(cleared.audioCacheClearCount).toBe(state.audioCacheClearCount + 1);
+    expect(appReducer(cleared, clear).audioCacheClearCount).toBe(state.audioCacheClearCount + 2);
+    expect(appReducer(cleared, { ...clear, sessionId: 'other' }).audioCacheClearCount).toBe(cleared.audioCacheClearCount);
+    expect(appReducer(cleared, { ...clear, entryId: 2 }).audioCacheClearCount).toBe(cleared.audioCacheClearCount);
+  });
   it('selects the server-provided startup conversation without hard-coding it', () => {
     const state = readyState();
     expect(state.currentForumId).toBe('entrance');

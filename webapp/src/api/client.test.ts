@@ -5,6 +5,7 @@ import {
   ChaProtocolError,
   ChaUnavailableError,
   createChaClient,
+  cachedAudioUrl,
   sessionEventsUrl,
   type ProviderUpdate,
 } from './client';
@@ -24,6 +25,26 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 describe('CHA API client', () => {
+  it('submits background audio and reads status using encoded session and vault names', async () => {
+    const acceptance = { entry_id: 7, cached: false, state: 'queued' };
+    const status = { cached_entry_ids: [1], downloads: [{ entry_id: 7, state: 'running' }] };
+    const fetcher = vi.fn().mockResolvedValueOnce(jsonResponse(acceptance, 202)).mockResolvedValueOnce(jsonResponse(status));
+    const client = createChaClient(fetcher);
+    const request = { vault_name: 'My vault', reference_id: 'reader', settings: { speed: 1.2 } };
+    expect(await client.startAudioDownload('f/one', 's two', 7, request)).toEqual(acceptance);
+    expect(fetcher).toHaveBeenNthCalledWith(1, '/api/v1/forums/f%2Fone/sessions/s%20two/entries/7/audio-download',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify(request) }));
+    expect(await client.getAudioDownloads('f/one', 's two', 'My vault')).toEqual(status);
+    expect(fetcher).toHaveBeenNthCalledWith(2, '/api/v1/forums/f%2Fone/sessions/s%20two/audio-downloads?vault_name=My%20vault',
+      expect.objectContaining({ headers: { Accept: 'application/json' } }));
+    expect(cachedAudioUrl('f/one', 's two', 7, 'My vault'))
+      .toBe('/api/v1/forums/f%2Fone/sessions/s%20two/entries/7/audio?vault_name=My%20vault');
+  });
+
+  it('rejects invalid audio job states in a status response', async () => {
+    const client = createChaClient(async () => jsonResponse({ cached_entry_ids: [], downloads: [{ entry_id: 1, state: 'ready' }] }));
+    await expect(client.getAudioDownloads('forum', 'session', 'vault')).rejects.toBeInstanceOf(ChaProtocolError);
+  });
   it('clears a session audio cache with an encoded URL and DELETE request', async () => {
     const fetcher = vi.fn(async () => new Response(null, { status: 204 }));
     const client = createChaClient(fetcher);

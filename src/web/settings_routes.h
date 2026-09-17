@@ -12,7 +12,6 @@ namespace cha {
 class ApiKeyStore;
 class OpenAiOAuth;
 class WorkspaceConfigStore;
-class SessionRepository;
 }
 
 namespace cha::web {
@@ -26,7 +25,6 @@ public:
         LiveSessionManager& live_sessions,
         WebSettings settings,
         WorkspaceConfigStore& config,
-        SessionRepository& sessions,
         ApiKeyStore& api_keys,
         OpenAiOAuth& openai_auth,
         bool native_voice_enabled,
@@ -38,7 +36,6 @@ private:
     LiveSessionManager* live_sessions_;
     WebSettings settings_;
     WorkspaceConfigStore* config_;
-    SessionRepository* sessions_;
     ApiKeyStore* api_keys_;
     OpenAiOAuth* openai_auth_;
     bool native_voice_enabled_{};

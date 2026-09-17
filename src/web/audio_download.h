@@ -1,0 +1,79 @@
+#pragma once
+
+#include "session/session_repository.h"
+#include "web/fish_audio.h"
+#include "workspace/workspace.h"
+#include <atomic>
+#include <condition_variable>
+#include <deque>
+#include <map>
+#include <mutex>
+#include <set>
+#include <thread>
+#include <array>
+
+namespace cha::web {
+class CurrentVault;
+struct WebSettings;
+
+class AudioDownloadError : public std::runtime_error {
+public:
+    AudioDownloadError(int status, std::string code, std::string message)
+        : std::runtime_error(std::move(message)), status(status), code(std::move(code)) {}
+    int status;
+    std::string code;
+};
+
+// Only in-memory state is protected by mutex_. Repository and transport work
+// always happen outside it. Jobs keep their identity after removal from jobs_.
+class AudioDownloadManager {
+public:
+    using Transport = std::function<std::optional<EntryAudio>(const WorkspaceVoiceOutput&,
+        const std::string&, const FishAudioRequest&, const std::function<bool()>&)>;
+    AudioDownloadManager(const SessionRepository& sessions,
+        CurrentVault& vault, bool enabled, Transport transport = download_fish_audio);
+    ~AudioDownloadManager();
+    nlohmann::json submit(const FullSessionId& session, EntryId id, const nlohmann::json& input);
+    nlohmann::json status(const FullSessionId& session, const std::string& vault);
+    std::optional<EntryAudio> audio(const FullSessionId& session, EntryId id, const std::string& vault);
+    void clear(const FullSessionId& session);
+    void pause(bool cancel = true);
+    void resume();
+    void request_stop();
+    bool join_until(std::chrono::steady_clock::time_point deadline);
+
+private:
+    using Key = std::tuple<std::string, std::string, EntryId>;
+    struct Job {
+        EntryAudioLookup entry;
+        WorkspaceVoiceOutput output;
+        std::string key;
+        FishAudioRequest request;
+        std::string state{"queued"};
+        std::atomic_bool cancelled{false};
+    };
+    static Key key(const FullSessionId& session, EntryId id);
+    void check(const FullSessionId& session, const std::string& vault) const;
+    void check_generation(const FullSessionId& session, const std::string& vault, std::size_t generation) const;
+    void worker();
+    void run(const std::shared_ptr<Job>& job);
+    void cancel_all();
+    const SessionRepository& sessions_;
+    CurrentVault& vault_;
+    bool enabled_;
+    Transport transport_;
+    std::mutex mutex_;
+    std::condition_variable changed_;
+    std::map<Key, std::shared_ptr<Job>> jobs_;
+    std::deque<std::shared_ptr<Job>> queue_;
+    std::set<std::pair<std::string, std::string>> clearing_;
+    std::array<std::thread, 3> workers_;
+    std::size_t generation_{};
+    std::size_t exited_{};
+    bool paused_{};
+    bool stopped_{};
+};
+
+void install_audio_download_routes(httplib::Server& server, AudioDownloadManager& downloads,
+    const WebSettings& settings);
+}

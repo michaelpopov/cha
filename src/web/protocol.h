@@ -31,7 +31,7 @@ enum class ShutdownReason {
 };
 enum class ErrorCode {
     not_found, bad_request, body_too_large, prompt_too_large, forbidden_origin,
-    internal_error, speech_busy, session_stopping,
+    internal_error, speech_busy, vault_changed, session_stopping,
     session_limit_reached, session_open_timeout, server_stopping,
     session_not_live, command_timeout,
     command_queue_full, vault_password_required,

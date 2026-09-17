@@ -177,6 +177,7 @@ export const snapshotFixture: SessionSnapshot = {
 };
 
 export function fixtureClient(overrides: Partial<ChaClient> = {}): ChaClient {
+  const audioCache = new Map<string, Set<number>>();
   return {
     getBootstrap: async () => bootstrapFixture,
     getCharacter: async () => characterDetailFixture,
@@ -242,7 +243,7 @@ export function fixtureClient(overrides: Partial<ChaClient> = {}): ChaClient {
     createSession: async (_forumId, label) => ({ id: 'created', label }),
     renameSession: async (_forumId, sessionId, label) => ({ id: sessionId, label }),
     deleteSession: async () => undefined,
-    clearSessionAudioCache: async () => undefined,
+    clearSessionAudioCache: async (forum, session) => { audioCache.delete(`${forum}/${session}`); },
     downloadSession: async () => '# Session\n',
     openSession: async (forumId, sessionId) => ({ forum_id: forumId, session_id: sessionId }),
     getSessionSnapshot: async () => snapshotFixture,
@@ -298,6 +299,15 @@ export function fixtureClient(overrides: Partial<ChaClient> = {}): ChaClient {
       id: 'api_key_1', display_name, url, access_key_id, has_secret_key: true,
     }),
     deleteR2Storage: async () => undefined,
+    startAudioDownload: async (forum, session, entry_id) => {
+      const key = `${forum}/${session}`;
+      const ids = audioCache.get(key) ?? new Set<number>();
+      ids.add(entry_id); audioCache.set(key, ids);
+      return { entry_id, cached: true };
+    },
+    getAudioDownloads: async (forum, session) => ({
+      cached_entry_ids: [...(audioCache.get(`${forum}/${session}`) ?? [])], downloads: [],
+    }),
     switchVault: async () => undefined,
     mergeVault: async () => undefined,
     ...overrides,

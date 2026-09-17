@@ -99,6 +99,12 @@ public:
         if (server_thread_.joinable()) server_thread_.join();
     }
 
+    std::optional<EntryAudio> download(const std::function<bool()>& cancelled) {
+        return download_fish_audio(output_, "secret", make_fish_audio_request(output_, {
+            {"text", "Hello"}, {"reference_id", "voice"},
+        }), cancelled);
+    }
+
     std::atomic_int started{0};
     std::atomic_int finished{0};
     std::atomic_int disconnected{0};
@@ -128,6 +134,18 @@ TEST(FishAudio, ShutdownCancelsStalledUpstreamTransfer) {
     server.shutdown();
     EXPECT_TRUE(wait_until([&] { return server.disconnected == 1; }));
     EXPECT_EQ(pending.wait_for(10s), std::future_status::ready);
+}
+
+TEST(FishAudio, BackgroundCancellationStopsStalledTransferWithoutIncomingHttpRequest) {
+    SlowFishAudioServer server;
+    std::atomic_bool cancelled{};
+    auto transfer = std::async(std::launch::async, [&] { return server.download([&] { return cancelled.load(); }); });
+    struct Cancel { std::atomic_bool& flag; ~Cancel() { flag = true; } } cleanup{cancelled};
+    ASSERT_TRUE(wait_until([&] { return server.started == 1; }));
+    cancelled = true;
+    ASSERT_EQ(transfer.wait_for(2s), std::future_status::ready);
+    EXPECT_FALSE(transfer.get());
+    EXPECT_TRUE(wait_until([&] { return server.disconnected == 1; }));
 }
 
 TEST(FishAudio, BrowserDisconnectCancelsStalledUpstreamTransfer) {
@@ -285,6 +303,27 @@ TEST(FishAudio, ForwardsAuthenticationAndReturnsAudioBytes) {
     EXPECT_EQ(response.get_header_value("Content-Type"), "audio/mpeg");
 }
 
+TEST(FishAudio, BackgroundDownloadAcceptsAudioSubtypesAndParameters) {
+    for (const std::string type : {"audio/opus", "audio/mpeg; charset=binary", "Audio/Ogg; codecs=opus", "audio/x-wav"}) {
+        SCOPED_TRACE(type);
+        MockHttpServer server({"HTTP/1.1 200 OK\r\nContent-Type: " + type
+            + "\r\nContent-Length: 5\r\nConnection: close\r\n\r\naudio"});
+        server.start();
+        const WorkspaceVoiceOutput output{.url = "http://127.0.0.1:" + std::to_string(server.port()) + "/v1/tts",
+            .model = "s2.1-pro", .output_format = "opus"};
+        const auto result = download_fish_audio(output, "secret", make_fish_audio_request(output,
+            {{"text", "Hello"}, {"reference_id", "voice"}}), [] { return false; });
+        server.join();
+        ASSERT_TRUE(result);
+        EXPECT_EQ(result->audio, "audio");
+        EXPECT_EQ(result->content_type, type);
+    }
+    EXPECT_FALSE(valid_entry_audio({"", "audio/opus"}));
+    EXPECT_FALSE(valid_entry_audio({"error", "application/json"}));
+    EXPECT_FALSE(valid_entry_audio({"audio", "audio/; codecs=opus"}));
+    EXPECT_FALSE(valid_entry_audio({"audio", ""}));
+}
+
 TEST(FishAudio, PreservesUpstreamErrors) {
     const std::string error = Json({{"message", "Insufficient credits"}}).dump();
     MockHttpServer server({
@@ -353,7 +392,7 @@ TEST(FishAudio, IncludesCurlCodeAndDiagnosticsForTransportFailures) {
     server.join();
 }
 
-TEST(FishAudio, TranscriptSynthesisUsesStoredTextAndPreviewsUseSubmittedText) {
+TEST(FishAudio, LegacyTranscriptRequestsAreRejectedAndPreviewsRequireText) {
     test::TestWorkspace workspace;
     const auto path = test::import_test_database(workspace.root());
     {
@@ -376,13 +415,13 @@ TEST(FishAudio, TranscriptSynthesisUsesStoredTextAndPreviewsUseSubmittedText) {
         .url = "https://api.fish.audio/v1/tts", .model = "s2.1-pro",
         .api_key_id = key.id, .output_format = "mp3", .default_voice = "Reader",
     });
+    // Valid synthesis reaches the cancelled proxy without making an external request.
     const SessionRepository sessions(path, config->workspace_path(), config->welcome_path(),
         {{"temporary-forum", "temporary-session"}, "Welcome"});
-    // Valid synthesis reaches the cancelled proxy without making an external request.
     FishAudioProxy proxy;
     proxy.stop();
     httplib::Server server;
-    install_fish_audio_route(server, keys, sessions, WebSettings{}, true, proxy);
+    install_fish_audio_route(server, keys, WebSettings{}, true, proxy);
     const int port = server.bind_to_any_port("127.0.0.1");
     ASSERT_GT(port, 0);
     std::jthread listener([&] { server.listen_after_bind(); });
@@ -409,12 +448,12 @@ TEST(FishAudio, TranscriptSynthesisUsesStoredTextAndPreviewsUseSubmittedText) {
         body["text"] = text;
         const auto stored = client.Post("/api/v1/voice-output/audio", body.dump(), "application/json");
         ASSERT_TRUE(stored);
-        EXPECT_EQ(stored->status, 503); // Stored text reaches synthesis despite invalid browser text.
+        EXPECT_EQ(stored->status, 400); // Legacy entry requests cannot bypass the queue.
     }
     body.erase("text");
     const auto omitted = client.Post("/api/v1/voice-output/audio", body.dump(), "application/json");
     ASSERT_TRUE(omitted);
-    EXPECT_EQ(omitted->status, 503);
+    EXPECT_EQ(omitted->status, 400);
     body.erase("entry");
     const auto preview = client.Post("/api/v1/voice-output/audio", body.dump(), "application/json");
     ASSERT_TRUE(preview);

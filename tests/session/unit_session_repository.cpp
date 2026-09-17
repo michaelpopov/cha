@@ -173,6 +173,10 @@ TEST_F(SessionRepositoryTest, EntryAudioPersistsAndIsScopedToItsSession) {
     EXPECT_EQ(first->cached->content_type, audio.content_type);
     EXPECT_EQ(second->cached->audio, "second-audio");
     EXPECT_EQ(second->cached->content_type, "audio/wav");
+    const auto metadata = reopened.lookup_entry_audio(first_id, 1, false);
+    ASSERT_TRUE(metadata);
+    EXPECT_TRUE(metadata->has_cached_audio);
+    EXPECT_FALSE(metadata->cached);
     EXPECT_FALSE(reopened.lookup_entry_audio(first_id, 999));
 }
 
@@ -234,6 +238,61 @@ TEST_F(SessionRepositoryTest, EntryAudioDoesNotCrossVaultsOrAttachToReplacedText
     ASSERT_TRUE(restored);
     EXPECT_EQ(restored->entry_text, "Restored text");
     EXPECT_FALSE(restored->cached);
+}
+
+TEST_F(SessionRepositoryTest, AudioSaveRechecksCancellationAfterWaitingForWriterLock) {
+    const auto repository = make_repository();
+    const auto prepared = repository.prepare(repository.create("lobby", "Stored").identity);
+    SessionJournal journal(prepared.database_path, prepared.session_key);
+    journal.record_entry(test::human_entry(1, {"human", "You"}, {"guide", "Guide"}, "Hello"));
+    const auto entry = repository.lookup_entry_audio(prepared.identity, 1, false);
+    ASSERT_TRUE(entry);
+    std::atomic_bool cancelled{};
+    std::promise<void> checked;
+    std::atomic_int checks{};
+    std::future<void> save;
+    {
+        storage::SqliteDatabase writer(database_path(), storage::SqliteDatabase::Mode::read_write);
+        storage::SqliteTransaction transaction(writer);
+        save = std::async(std::launch::async, [&] {
+            return repository.save_entry_audio(*entry, {"late", "audio/mpeg"}, [&] {
+                if (++checks == 1) checked.set_value();
+                return cancelled.load();
+            });
+        });
+        checked.get_future().wait();
+        EXPECT_EQ(save.wait_for(std::chrono::milliseconds(50)), std::future_status::timeout);
+        cancelled = true;
+        transaction.commit();
+    }
+    EXPECT_NO_THROW(save.get());
+    EXPECT_EQ(checks, 2);
+    EXPECT_TRUE(repository.cached_audio_entries(prepared.identity).empty());
+}
+
+TEST_F(SessionRepositoryTest, ClearDeletesAudioWhenSaveAlreadyHasWriterLock) {
+    const auto repository = make_repository();
+    const auto prepared = repository.prepare(repository.create("lobby", "Stored").identity);
+    SessionJournal journal(prepared.database_path, prepared.session_key);
+    journal.record_entry(test::human_entry(1, {"human", "You"}, {"guide", "Guide"}, "Hello"));
+    const auto entry = repository.lookup_entry_audio(prepared.identity, 1, false);
+    ASSERT_TRUE(entry);
+    std::promise<void> writer_locked, release;
+    auto released = release.get_future().share();
+    int checks = 0;
+    auto save = std::async(std::launch::async, [&] {
+        return repository.save_entry_audio(*entry, {"saved", "audio/mpeg"}, [&] {
+            if (++checks == 2) { writer_locked.set_value(); released.wait(); }
+            return false; // Save passed its final cancellation check before clear.
+        });
+    });
+    writer_locked.get_future().wait();
+    auto clear = std::async(std::launch::async, [&] { repository.clear_session_audio(prepared.identity); });
+    EXPECT_EQ(clear.wait_for(std::chrono::milliseconds(50)), std::future_status::timeout);
+    release.set_value();
+    EXPECT_NO_THROW(save.get());
+    clear.get();
+    EXPECT_TRUE(repository.cached_audio_entries(prepared.identity).empty());
 }
 
 TEST_F(SessionRepositoryTest, EntryAudioUsesCurrentPasswordAfterVaultProtection) {

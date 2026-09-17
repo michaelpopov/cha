@@ -14,11 +14,13 @@ import {
 
 import {
   publicErrorMessage,
+  cachedAudioUrl,
   type ChaClient,
   type CharacterAppearance,
   type CommandResult,
   type SessionSnapshot,
 } from '../api/client';
+import { useAudioDownloads } from '../audioDownloads';
 import type { AppAction, AppState } from '../state/view';
 import {
   TextToSpeechError,
@@ -132,6 +134,7 @@ function TranscriptMessage({
   appearance,
   speechState,
   speechAvailable,
+  speechError,
   onToggleSpeech,
   actionDisabled,
   onCover,
@@ -140,7 +143,8 @@ function TranscriptMessage({
 }: {
   entry: SessionSnapshot['transcript'][number];
   appearance: CharacterAppearance | undefined;
-  speechState: 'idle' | 'loading' | 'playing';
+  speechState: 'idle' | 'queued' | 'running' | 'failed' | 'loading' | 'playing';
+  speechError?: string;
   speechAvailable: boolean;
   onToggleSpeech(entry: SessionSnapshot['transcript'][number]): void;
   actionDisabled: boolean;
@@ -158,7 +162,11 @@ function TranscriptMessage({
   const spokenItem = entry.kind === 'human'
     ? 'your prompt'
     : `${entry.display_name}'s response`;
-  const speechLabel = speechState === 'loading'
+  const speechLabel = speechState === 'queued'
+    ? `Queued audio for ${spokenItem}`
+    : speechState === 'running' ? `Generating audio for ${spokenItem}`
+    : speechState === 'failed' ? `Retry audio for ${spokenItem}`
+    : speechState === 'loading'
     ? `${entry.has_cached_audio ? 'Loading' : 'Generating'} audio for ${spokenItem}`
     : speechState === 'playing'
       ? `Stop reading ${spokenItem}`
@@ -199,7 +207,7 @@ function TranscriptMessage({
             <button
               aria-label={speechLabel}
               className={`cha-message-action${speechState !== 'idle' ? ' is-active' : ''}${entry.has_cached_audio && speechState !== 'playing' ? ' has-cached-audio' : ''}`}
-              disabled={speechState === 'loading'}
+              disabled={speechState === 'loading' || speechState === 'queued' || speechState === 'running'}
               onClick={() => onToggleSpeech(entry)}
               title={speechTitle}
               type="button"
@@ -207,6 +215,7 @@ function TranscriptMessage({
               {speechState === 'playing' ? <StopIcon /> : <SpeakerIcon />}
             </button>
           )}
+          {speechError && <span role="alert">{speechError}</span>}
           {canCover && (onCover || onUncover) && (
             <button
               aria-label={coverLabel}
@@ -328,6 +337,9 @@ export function ChatScreen({
   const sessionAvailable = snapshot !== null && !ended;
   const voiceInputAvailable = voiceConfiguration !== null && VoiceInputSession.supported();
   const textToSpeechConfiguration = useTextToSpeechConfiguration(client);
+  const downloads = useAudioDownloads(client, snapshot?.forum.id, snapshot?.session_id,
+    state.bootstrap?.vault_name, state.audioCacheClearCount);
+  const speechSelection = useRef<number | null>(null);
   const voiceInputActive = voiceInputState !== 'idle';
   const canSend = connected
     && pendingAction === null
@@ -347,8 +359,10 @@ export function ChatScreen({
     [state.bootstrap?.personas],
   );
   const transcriptEntries = useMemo(
-    () => snapshot ? visibleTranscriptEntries(snapshot.transcript) : [],
-    [snapshot?.transcript],
+    () => snapshot ? visibleTranscriptEntries(snapshot.transcript.map((entry) => downloads.status
+      ? { ...entry, has_cached_audio: downloads.status.cached_entry_ids.includes(entry.id) }
+      : entry)) : [],
+    [snapshot?.transcript, downloads.status],
   );
   const coveredUntil = snapshot?.covered_until ?? null;
   const coveredEntries = coveredUntil === null
@@ -399,18 +413,40 @@ export function ChatScreen({
     textToSpeechSession.current?.stop();
     textToSpeechSession.current = null;
     setSpokenEntry(null);
-  }, [conversationKey]);
+    speechSelection.current = null;
+  }, [conversationKey, state.audioCacheClearCount]);
 
   function toggleSpeech(entry: SessionSnapshot['transcript'][number]) {
-    if (spokenEntry?.id === entry.id) {
+    if (!snapshot || (!entry.has_cached_audio && !textToSpeechConfiguration)) return;
+    if (speechSelection.current === entry.id && textToSpeechSession.current) {
       textToSpeechSession.current?.stop();
       textToSpeechSession.current = null;
+      speechSelection.current = null;
       setSpokenEntry(null);
       return;
     }
-    if (!textToSpeechConfiguration || !snapshot) return;
-
     textToSpeechSession.current?.stop();
+    textToSpeechSession.current = null;
+    speechSelection.current = entry.id;
+    setSpokenEntry(null);
+    setActionError(null);
+    if (entry.has_cached_audio) { playCached(entry); return; }
+    if (!textToSpeechConfiguration) return;
+    const voice = entry.kind === 'character'
+      ? speechVoices.get(entry.participant_id) : personas.get(entry.participant_id)?.voice;
+    void downloads.submit(entry.id, { vault_name: state.bootstrap!.vault_name,
+      reference_id: voice?.elevenlabs_voice_id ?? textToSpeechConfiguration.voiceId,
+      settings: voice?.settings ?? {},
+    })?.catch((failure: unknown) => {
+      if (speechSelection.current === entry.id) {
+        speechSelection.current = null;
+      }
+      setActionError(actionMessage(failure));
+    });
+  }
+
+  function playCached(entry: SessionSnapshot['transcript'][number]) {
+    if (!snapshot) return;
     const playbackKey = JSON.stringify([state.bootstrap?.vault_name, snapshot.forum.id, snapshot.session_id]);
     let positions = playbackPositions.get(playbackKey);
     if (!positions) {
@@ -428,12 +464,8 @@ export function ChatScreen({
         if (textToSpeechSession.current !== session) return;
         textToSpeechSession.current = null;
         setSpokenEntry(null);
+        speechSelection.current = null;
       },
-      { forum_id: snapshot.forum.id, session_id: snapshot.session_id, entry_id: entry.id },
-      (cached) => dispatch({
-        type: 'session-audio-cache', forumId: snapshot.forum.id,
-        sessionId: snapshot.session_id, entryId: entry.id, cached,
-      }),
       {
         position: entryPositions.get(entry.id) ?? 0,
         onPositionChange: (position) => {
@@ -441,6 +473,11 @@ export function ChatScreen({
           else entryPositions.delete(entry.id);
         },
       },
+      cachedAudioUrl(snapshot.forum.id, snapshot.session_id, entry.id, state.bootstrap!.vault_name),
+      () => dispatch({
+        type: 'session-audio-cache', forumId: snapshot.forum.id,
+        sessionId: snapshot.session_id, entryId: entry.id, cached: true,
+      }),
     );
     textToSpeechSession.current = session;
     setSpokenEntry({ id: entry.id, state: 'loading' });
@@ -454,6 +491,13 @@ export function ChatScreen({
       session.stop();
       textToSpeechSession.current = null;
       setSpokenEntry(null);
+      speechSelection.current = null;
+      if (failure instanceof TextToSpeechError && failure.status === 404) {
+        dispatch({ type: 'session-audio-cache', forumId: snapshot.forum.id,
+          sessionId: snapshot.session_id, entryId: entry.id, cached: false });
+        downloads.refresh(entry.id);
+        return;
+      }
       if (!(failure instanceof DOMException && failure.name === 'AbortError')) {
         setActionError(failure instanceof TextToSpeechError
           ? failure.message
@@ -461,6 +505,18 @@ export function ChatScreen({
       }
     });
   }
+
+  useEffect(() => {
+    const id = speechSelection.current;
+    if (id === null || textToSpeechSession.current || !downloads.status) return;
+    const entry = snapshot?.transcript.find((entry) => entry.id === id);
+    if (!entry) { speechSelection.current = null; return; }
+    if (downloads.status.cached_entry_ids.includes(id)) playCached(entry);
+    else {
+      const job = downloads.status.downloads.find((job) => job.entry_id === id);
+      if (!job || job.state === 'failed') speechSelection.current = null;
+    }
+  }, [downloads.status]);
 
   async function changeCover(throughEntryId?: number) {
     if (!connected || generationActive || pendingAction) return;
@@ -782,8 +838,10 @@ export function ChatScreen({
                     displayName: response.display_name,
                   })}
                   onUncover={entry.id === boundaryEntryId ? () => changeCover() : undefined}
-                  speechState={spokenEntry?.id === entry.id ? spokenEntry.state : 'idle'}
-                  speechAvailable={textToSpeechConfiguration !== null}
+                  speechState={spokenEntry?.id === entry.id ? spokenEntry.state
+                    : downloads.status?.downloads.find((job) => job.entry_id === entry.id)?.state ?? 'idle'}
+                  speechError={downloads.status?.downloads.find((job) => job.entry_id === entry.id)?.error}
+                  speechAvailable={textToSpeechConfiguration !== null || (entry.has_cached_audio === true && downloads.status !== null)}
                 />
               </Fragment>
             ))}
@@ -806,8 +864,10 @@ export function ChatScreen({
                 id: response.id,
                 displayName: response.display_name,
               })}
-              speechState={spokenEntry?.id === entry.id ? spokenEntry.state : 'idle'}
-              speechAvailable={textToSpeechConfiguration !== null}
+              speechState={spokenEntry?.id === entry.id ? spokenEntry.state
+                : downloads.status?.downloads.find((job) => job.entry_id === entry.id)?.state ?? 'idle'}
+              speechError={downloads.status?.downloads.find((job) => job.entry_id === entry.id)?.error}
+              speechAvailable={textToSpeechConfiguration !== null || (entry.has_cached_audio === true && downloads.status !== null)}
             />
           </Fragment>
         ))}

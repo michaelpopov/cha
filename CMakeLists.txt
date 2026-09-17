@@ -353,6 +353,7 @@ add_library(cha_web STATIC
     src/web/session_routes.cpp
     src/web/settings_routes.cpp
     src/web/fish_audio.cpp
+    src/web/audio_download.cpp
     src/web/live_session.cpp
     src/web/live_session_manager.cpp
     src/web/sse_mailbox.cpp
@@ -459,6 +460,7 @@ if(BUILD_TESTING)
         cha_web_tests
         tests/web/unit_application_runtime.cpp
         tests/web/unit_fish_audio.cpp
+        tests/web/unit_audio_download.cpp
         tests/web/unit_application_config.cpp
         tests/web/unit_asset_handler.cpp
         tests/web/unit_r2_database_transfer.cpp

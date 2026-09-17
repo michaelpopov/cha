@@ -23,6 +23,7 @@
 #include "web/http_response.h"
 #include "web/http_server.h"
 #include "web/fish_audio.h"
+#include "web/audio_download.h"
 #include "web/json.h"
 #include "web/live_session_manager.h"
 #include "web/lobby_routes.h"
@@ -40,6 +41,7 @@
 #include <toml++/toml.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <filesystem>
 #include <memory>
@@ -427,6 +429,7 @@ struct ApplicationRuntime::Impl {
             store->welcome_path(),
             seed,
             active_password);
+        audio_downloads = std::make_unique<AudioDownloadManager>(*sessions, current_vault_, !access_token.empty());
         mirror = std::make_shared<SessionMirror>();
         if (const auto root = session_mirror_root(command.vault)) {
             try {
@@ -477,8 +480,14 @@ struct ApplicationRuntime::Impl {
     // there, such as a start() that failed after the providers were built.
     ~Impl() { providers.shutdown(); }
 
+    struct AudioMaintenance {
+        Impl& runtime;
+        explicit AudioMaintenance(Impl& runtime, bool cancel = true) : runtime(runtime) { runtime.audio_downloads->pause(cancel); }
+        ~AudioMaintenance() { if (!runtime.unusable) runtime.audio_downloads->resume(); }
+    };
+
     template<typename Operation>
-    auto maintain_database(Operation operation) {
+    auto maintain_database(Operation operation, bool cancel_audio = true) {
         const std::lock_guard lifecycle(lifecycle_mutex);
         if (unusable) {
             throw WorkspaceRestartRequiredError(
@@ -497,6 +506,7 @@ struct ApplicationRuntime::Impl {
         }
         auto global = std::move(
             std::get<LiveSessionGlobalMaintenance>(reserved));
+        AudioMaintenance audio(*this, cancel_audio);
         // The store guard comes first because it holds the configuration
         // mutex: without it a configuration edit can still be inside its own
         // SQLite transaction, and the checkpoint below would report busy.
@@ -556,6 +566,7 @@ struct ApplicationRuntime::Impl {
         }
         auto global = std::move(
             std::get<LiveSessionGlobalMaintenance>(reserved));
+        AudioMaintenance audio(*this);
         auto database = store->reserve_maintenance();
         SessionRepository::MaintenanceGuard repository =
             sessions->reserve_maintenance();
@@ -589,9 +600,11 @@ struct ApplicationRuntime::Impl {
     Providers providers;
     std::unique_ptr<LiveSessionManager> live_sessions;
     FishAudioProxy fish_audio;
+    std::unique_ptr<AudioDownloadManager> audio_downloads;
     std::unique_ptr<httplib::Server> server;
     std::thread listener;
-    mutable std::mutex lifecycle_mutex;
+    mutable std::timed_mutex lifecycle_mutex;
+    std::atomic_bool stopping{};
     bool started{};
     bool stopped{};
     // Set when the workspace database could not be reopened. The HTTP server is
@@ -600,6 +613,7 @@ struct ApplicationRuntime::Impl {
     bool server_stop_requested{};
 
     void stop_http() {
+        if (audio_downloads) audio_downloads->request_stop();
         if (!server || server_stop_requested) return;
         server_stop_requested = true;
         fish_audio.stop();
@@ -953,6 +967,7 @@ void ApplicationRuntime::switch_vault(
     }
     auto global = std::move(
         std::get<LiveSessionGlobalMaintenance>(reserved));
+    Impl::AudioMaintenance audio(*impl_);
     {
         auto database = impl_->store->reserve_maintenance();
         SessionRepository::MaintenanceGuard repository =
@@ -1110,7 +1125,15 @@ int ApplicationRuntime::start(int port_override) {
         *impl_->store,
         impl_->current_vault_,
         std::move(vault_names),
-        impl_->mirror).install(*server);
+        impl_->mirror, [this](const FullSessionId& session) {
+            // Wait through normal runtime operations, but stop waiting when
+            // shutdown starts: it holds this lock while joining HTTP threads.
+            std::unique_lock lifecycle(impl_->lifecycle_mutex, std::defer_lock);
+            while (!impl_->stopping && !lifecycle.try_lock_for(std::chrono::milliseconds(10))) {}
+            if (impl_->stopping || impl_->stopped || impl_->unusable)
+                throw AudioDownloadError(503, "speech_busy", "Audio downloads are temporarily unavailable.");
+            impl_->audio_downloads->clear(session);
+        }).install(*server);
     ApplicationRuntime* const runtime = this;
     const WebSettings settings = impl_->settings;
     server->Get(
@@ -1357,10 +1380,10 @@ int ApplicationRuntime::start(int port_override) {
         *impl_->live_sessions,
         impl_->settings,
         *impl_->store,
-        *impl_->sessions,
         *impl_->api_keys,
         *impl_->openai_auth,
         !impl_->access_token.empty(), impl_->fish_audio).install(*server);
+    install_audio_download_routes(*server, *impl_->audio_downloads, impl_->settings);
     SessionRoutes(
         *impl_->live_sessions, impl_->settings, assets).install(*server);
     log_startup(http_settings);
@@ -1404,12 +1427,14 @@ void ApplicationRuntime::wait_for_shutdown_signal() {
 }
 
 void ApplicationRuntime::shutdown() {
+    impl_->stopping = true;
     const std::lock_guard operation(impl_->lifecycle_mutex);
     if (!impl_->started || impl_->stopped) return;
     ServerShutdownCoordinator coordinator(
         *impl_->live_sessions,
         *impl_->server,
-        [this] { impl_->stop_http(); });
+        [this] { impl_->stop_http(); },
+        [this](auto deadline) { return impl_->audio_downloads->join_until(deadline); });
     coordinator.shutdown_now(impl_->listener, impl_->settings.shutdown_grace);
     impl_->providers.shutdown();
     impl_->stopped = true;
@@ -1426,7 +1451,7 @@ R2DatabaseTransfer ApplicationRuntime::upload_database() {
             *storage,
             R2DatabaseLease::already_held,
             impl_->active_password);
-    });
+    }, false);
 }
 
 R2DatabaseTransfer ApplicationRuntime::download_database() {
@@ -1500,7 +1525,7 @@ WorkspaceConfigTransfer ApplicationRuntime::export_configuration() {
             *vault.modify,
             WorkspaceConfigLease::already_held,
             impl_->active_password);
-    });
+    }, false);
 }
 
 } // namespace cha::web

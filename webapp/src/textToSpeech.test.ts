@@ -165,7 +165,7 @@ describe('playback position', () => {
     let position = 0;
     const ended = vi.fn();
     const createSession = () => new TextToSpeechSession(
-      configuration, undefined, 'Hello', ended, undefined, undefined,
+      configuration, undefined, 'Hello', ended,
       { position, onPositionChange: (next) => { position = next; } },
     );
     const first = createSession();
@@ -195,7 +195,7 @@ describe('playback position', () => {
   it('preserves the saved position when stopped before metadata arrives', async () => {
     const onPositionChange = vi.fn();
     const session = new TextToSpeechSession(
-      configuration, undefined, 'Hello', vi.fn(), undefined, undefined,
+      configuration, undefined, 'Hello', vi.fn(),
       { position: 12.5, onPositionChange },
     );
     await session.play();
@@ -208,7 +208,7 @@ describe('playback position', () => {
 
   it('starts at zero when a remembered position is beyond the audio duration', async () => {
     const session = new TextToSpeechSession(
-      configuration, undefined, 'Hello', vi.fn(), undefined, undefined,
+      configuration, undefined, 'Hello', vi.fn(),
       { position: 70, onPositionChange: vi.fn() },
     );
     await session.play();
@@ -220,19 +220,39 @@ describe('playback position', () => {
 });
 
 describe('text to speech', () => {
-  it('sends transcript identity on every playback and releases temporary audio', async () => {
+  it('fetches committed audio on every playback without a preview request and releases temporary audio', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response('audio'));
-    const entry = { forum_id: 'lobby', session_id: 'chat', entry_id: 2 };
+    const url = '/api/v1/forums/lobby/sessions/chat/entries/2/audio?vault_name=Personal';
+    const onCached = vi.fn();
     for (let i = 0; i < 2; i += 1) {
-      const session = new TextToSpeechSession(configuration, undefined, 'Hello', vi.fn(), entry);
+      const session = new TextToSpeechSession(null, undefined, '', vi.fn(), undefined, url, onCached);
       await session.play();
       session.stop();
     }
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    for (const [, init] of fetchMock.mock.calls) {
-      expect(JSON.parse(init!.body as string).entry).toEqual(entry);
+    for (const [input, init] of fetchMock.mock.calls) {
+      expect(input).toBe(url);
+      expect(init?.method).toBeUndefined();
+      expect(init?.body).toBeUndefined();
     }
+    expect(onCached).toHaveBeenCalledTimes(2);
     expect(URL.revokeObjectURL).toHaveBeenCalledTimes(2);
+  });
+
+  it('labels cached-playback errors without referring to FishAudio', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      error: { code: 'vault_changed', message: 'The active vault changed.' },
+    }), { status: 409 }));
+    const session = new TextToSpeechSession(null, undefined, '', vi.fn(), undefined, '/cached-audio');
+    await expect(session.play()).rejects.toMatchObject({
+      message: 'Cached audio: The active vault changed. (HTTP 409)', status: 409, code: 'vault_changed',
+    });
+  });
+
+  it('uses a cached-playback fallback message for a non-JSON error', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('Not found', { status: 404 }));
+    const session = new TextToSpeechSession(null, undefined, '', vi.fn(), undefined, '/cached-audio');
+    await expect(session.play()).rejects.toMatchObject({ message: 'Cached audio request failed (HTTP 404).', status: 404 });
   });
 
   it('aborts a pending FishAudio preview when stopped', async () => {

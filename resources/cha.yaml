@@ -730,7 +730,7 @@ paths:
     post:
       tags: [Settings]
       operationId: generateFishAudio
-      summary: Return saved transcript audio or generate FishAudio speech
+      summary: Generate uncached FishAudio preview speech
       requestBody:
         required: true
         content:
@@ -739,20 +739,6 @@ paths:
               type: object
               required: [text, reference_id]
               properties:
-                entry:
-                  description: Transcript identity to read and save audio. Omit for uncached previews.
-                  type: object
-                  required: [forum_id, session_id, entry_id]
-                  properties:
-                    forum_id:
-                      type: string
-                      minLength: 1
-                    session_id:
-                      type: string
-                      minLength: 1
-                    entry_id:
-                      type: integer
-                      minimum: 1
                 text:
                   type: string
                   minLength: 1
@@ -768,12 +754,7 @@ paths:
                       maximum: 2
       responses:
         "200":
-          description: Saved or generated audio.
-          headers:
-            X-CHA-Audio-Cached:
-              description: Present and true when the returned audio is saved in the entry cache.
-              schema:
-                type: boolean
+          description: Generated preview audio.
           content:
             audio/mpeg:
               schema:
@@ -784,6 +765,10 @@ paths:
                 type: string
                 format: binary
             audio/ogg:
+              schema:
+                type: string
+                format: binary
+            audio/opus:
               schema:
                 type: string
                 format: binary
@@ -1641,6 +1626,109 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /api/v1/forums/{forum_id}/sessions/{session_id}/entries/{entry_id}/audio-download:
+    parameters:
+      - $ref: "#/components/parameters/ForumId"
+      - $ref: "#/components/parameters/SessionId"
+      - name: entry_id
+        in: path
+        required: true
+        schema: {type: integer, minimum: 1}
+    post:
+      tags: [Stored sessions]
+      operationId: startAudioDownload
+      summary: Queue transcript audio for background generation and storage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AudioDownloadRequest"
+      responses:
+        "200":
+          description: Audio is already cached.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AudioDownloadAcceptance"}
+        "202":
+          description: New or existing background job.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AudioDownloadAcceptance"}
+        "409":
+          description: Active vault changed.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ErrorResponse"}
+        "503":
+          description: Downloads are temporarily unavailable during maintenance or cache clearing.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ErrorResponse"}
+        default:
+          description: Invalid request or unavailable entry/configuration.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ErrorResponse"}
+
+  /api/v1/forums/{forum_id}/sessions/{session_id}/audio-downloads:
+    parameters:
+      - $ref: "#/components/parameters/ForumId"
+      - $ref: "#/components/parameters/SessionId"
+      - name: vault_name
+        in: query
+        required: true
+        schema: {type: string, minLength: 1}
+    get:
+      tags: [Stored sessions]
+      operationId: getAudioDownloads
+      summary: Read cached audio IDs and background job states without opening the session
+      responses:
+        "200":
+          description: Current audio availability and jobs.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AudioDownloadStatus"}
+        default:
+          description: Unavailable session, changed vault, or temporary maintenance.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ErrorResponse"}
+
+  /api/v1/forums/{forum_id}/sessions/{session_id}/entries/{entry_id}/audio:
+    parameters:
+      - $ref: "#/components/parameters/ForumId"
+      - $ref: "#/components/parameters/SessionId"
+      - name: entry_id
+        in: path
+        required: true
+        schema: {type: integer, minimum: 1}
+      - name: vault_name
+        in: query
+        required: true
+        schema: {type: string, minLength: 1}
+    get:
+      tags: [Stored sessions]
+      operationId: getCachedAudio
+      summary: Fetch committed audio without starting generation
+      responses:
+        "200":
+          description: Cached audio.
+          content:
+            audio/mpeg:
+              schema: {type: string, format: binary}
+            audio/wav:
+              schema: {type: string, format: binary}
+            audio/ogg:
+              schema: {type: string, format: binary}
+            audio/opus:
+              schema: {type: string, format: binary}
+        default:
+          description: Cache missing, changed vault, or temporary maintenance.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ErrorResponse"}
+
   /api/v1/forums/{forum_id}/sessions/{session_id}/audio-cache:
     parameters:
       - $ref: "#/components/parameters/ForumId"
@@ -1660,6 +1748,11 @@ paths:
           $ref: "#/components/responses/ForbiddenMutation"
         "404":
           $ref: "#/components/responses/NotFound"
+        "503":
+          description: Audio cache clearing is temporarily unavailable; error code speech_busy.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ErrorResponse"}
         "413":
           $ref: "#/components/responses/BodyTooLarge"
         "500":
@@ -3513,6 +3606,45 @@ components:
         seq:
           $ref: "#/components/schemas/UnsignedInteger"
 
+    AudioDownloadRequest:
+      type: object
+      additionalProperties: false
+      required: [vault_name, reference_id]
+      properties:
+        vault_name: {type: string, minLength: 1}
+        reference_id: {type: string, minLength: 1}
+        settings:
+          type: object
+          properties:
+            speed: {type: number, minimum: 0.5, maximum: 2}
+    AudioDownloadAcceptance:
+      type: object
+      additionalProperties: false
+      required: [entry_id, cached]
+      properties:
+        entry_id: {type: integer, minimum: 1}
+        cached: {type: boolean}
+        state: {type: string, enum: [queued, running]}
+    AudioDownloadJob:
+      type: object
+      additionalProperties: false
+      required: [entry_id, state]
+      properties:
+        entry_id: {type: integer, minimum: 1}
+        state: {type: string, enum: [queued, running, failed]}
+        error: {type: string}
+    AudioDownloadStatus:
+      type: object
+      additionalProperties: false
+      required: [cached_entry_ids, downloads]
+      properties:
+        cached_entry_ids:
+          type: array
+          items: {type: integer, minimum: 1}
+        downloads:
+          type: array
+          items: {$ref: "#/components/schemas/AudioDownloadJob"}
+
     ErrorResponse:
       type: object
       additionalProperties: false
@@ -3533,6 +3665,7 @@ components:
                 - forbidden_origin
                 - internal_error
                 - speech_busy
+                - vault_changed
                 - session_stopping
                 - session_limit_reached
                 - session_open_timeout

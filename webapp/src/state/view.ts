@@ -92,6 +92,7 @@ export interface AppState {
   sessionOperationRetryable: boolean;
   activeConversationLabel: string | null;
   sessionSnapshot: SessionSnapshot | null;
+  audioCacheClearCount: number;
   streamStatus: StreamStatus;
   streamMessage: string | null;
 }
@@ -128,6 +129,7 @@ export const initialAppState: AppState = {
   sessionOperationRetryable: false,
   activeConversationLabel: null,
   sessionSnapshot: null,
+  audioCacheClearCount: 0,
   streamStatus: 'idle',
   streamMessage: null,
 };
@@ -828,6 +830,8 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           || state.sessionSnapshot.session_id !== action.sessionId) return state;
       return {
         ...state,
+        audioCacheClearCount: !action.cached && action.entryId === undefined
+          ? state.audioCacheClearCount + 1 : state.audioCacheClearCount,
         sessionSnapshot: {
           ...state.sessionSnapshot,
           transcript: state.sessionSnapshot.transcript.map((entry) => (

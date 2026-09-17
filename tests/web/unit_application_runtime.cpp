@@ -26,6 +26,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <iomanip>
 #include <iterator>
 #include <latch>
@@ -413,11 +414,13 @@ TEST(ApplicationRuntime, ReturnsEntryAudioWithoutUsingCurrentSynthesisSettingsOr
         {"text", "Hello"}, {"reference_id", "changed-voice"}, {"settings", {{"speed", 1.5}}},
         {"entry", {{"forum_id", "lobby"}, {"session_id", "audio"}, {"entry_id", 1}}},
     };
-    const auto cached = client.Post("/api/v1/voice-output/audio", kRuntimeCookie, body.dump(), "application/json");
+    const auto cached = client.Get("/api/v1/forums/lobby/sessions/audio/entries/1/audio?vault_name=Test", kRuntimeCookie);
     ASSERT_TRUE(cached);
     EXPECT_EQ(cached->status, 200);
     EXPECT_EQ(cached->body, bytes);
-    EXPECT_EQ(cached->get_header_value("X-CHA-Audio-Cached"), "true");
+    const auto accepted = client.Post("/api/v1/forums/lobby/sessions/audio/entries/1/audio-download", kRuntimeCookie,
+        R"({"vault_name":"Test","reference_id":"changed-voice"})", "application/json");
+    ASSERT_TRUE(accepted); EXPECT_EQ(accepted->status, 200);
     EXPECT_EQ(cached->get_header_value("Content-Type"), "audio/mpeg");
     EXPECT_EQ(cached->get_header_value("Cache-Control"), "no-store");
     body.erase("entry");
@@ -425,7 +428,7 @@ TEST(ApplicationRuntime, ReturnsEntryAudioWithoutUsingCurrentSynthesisSettingsOr
     ASSERT_TRUE(preview);
     EXPECT_EQ(preview->status, 404); // Preview goes to synthesis, never the entry cache.
     body["entry"] = {{"forum_id", "lobby"}, {"session_id", "audio"}, {"entry_id", 999}};
-    const auto missing = client.Post("/api/v1/voice-output/audio", kRuntimeCookie, body.dump(), "application/json");
+    const auto missing = client.Get("/api/v1/forums/lobby/sessions/audio/entries/999/audio?vault_name=Test", kRuntimeCookie);
     ASSERT_TRUE(missing);
     EXPECT_EQ(missing->status, 404);
     for (const nlohmann::json& id : {nlohmann::json(-1), nlohmann::json(0), nlohmann::json(1.5), nlohmann::json("1")}) {
@@ -447,6 +450,59 @@ TEST(ApplicationRuntime, ReturnsEntryAudioWithoutUsingCurrentSynthesisSettingsOr
         ASSERT_TRUE(invalid);
         EXPECT_EQ(invalid->status, 400);
         EXPECT_EQ(nlohmann::json::parse(invalid->body).at("error").at("code"), "bad_request");
+    }
+}
+
+TEST(ApplicationRuntime, ClearAudioWaitsForBusyRuntimeAndAbortsWaitingOnShutdown) {
+    for (const bool shutdown : {false, true}) {
+        SCOPED_TRACE(shutdown);
+        test::TestWorkspace workspace;
+        const auto database = test::import_test_database(workspace.root());
+        auto runtime = ApplicationRuntime::open(make_command(workspace, database, workspace.root() / "modify"), "private-test-token");
+        httplib::Client client("127.0.0.1", runtime->start());
+        const auto created = client.Post("/api/v1/forums/lobby/sessions", kRuntimeCookie, R"({"label":"Audio"})", "application/json");
+        ASSERT_TRUE(created);
+        ASSERT_EQ(created->status, 201);
+        const auto id = nlohmann::json::parse(created->body).at("id").get<std::string>();
+        const auto base = "/api/v1/forums/lobby/sessions/" + id;
+        std::future<void> maintenance;
+        std::future<void> stopping;
+        std::future<httplib::Result> clearing;
+        {
+            storage::SqliteDatabase writer(database, storage::SqliteDatabase::Mode::read_write);
+            storage::SqliteTransaction transaction(writer);
+            writer.execute("UPDATE sessions SET label = 'Held writer'");
+            maintenance = std::async(std::launch::async, [&] { (void)runtime->export_configuration(); });
+            client.set_read_timeout(std::chrono::milliseconds(250));
+            // Checkpoint waits for the writer while maintenance holds the same
+            // runtime lock used by shutdown when joining HTTP request threads.
+            bool paused = false;
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+            while (!paused && std::chrono::steady_clock::now() < deadline) {
+                const auto status = client.Get(base + "/audio-downloads?vault_name=Test", kRuntimeCookie);
+                paused = status && status->status == 503;
+                if (!paused) std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            }
+            EXPECT_TRUE(paused);
+            client.set_read_timeout(std::chrono::seconds(5));
+            clearing = std::async(std::launch::async, [&] {
+                return client.Delete(base + "/audio-cache", kRuntimeCookie, "{}", "application/json");
+            });
+            // A busy runtime must not reject a normal clear request.
+            EXPECT_EQ(clearing.wait_for(std::chrono::milliseconds(50)), std::future_status::timeout);
+            if (shutdown) {
+                stopping = std::async(std::launch::async, [&] { runtime->shutdown(); });
+                // Stop waiting before shutdown can join this HTTP request thread.
+                EXPECT_EQ(clearing.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+            }
+            transaction.commit();
+        }
+        EXPECT_NO_THROW(maintenance.get());
+        const auto clear = clearing.get();
+        ASSERT_TRUE(clear);
+        EXPECT_EQ(clear->status, shutdown ? 503 : 204) << clear->body;
+        if (shutdown) EXPECT_NO_THROW(stopping.get());
+        else runtime->shutdown();
     }
 }
 

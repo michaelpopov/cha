@@ -5,6 +5,7 @@
 #include "session/stored_session.h"
 
 #include <filesystem>
+#include <functional>
 #include <mutex>
 #include <optional>
 #include <set>
@@ -31,6 +32,7 @@ struct EntryAudioLookup {
     std::string entry_text;
     EntryKind entry_kind{};
     std::optional<EntryAudio> cached;
+    bool has_cached_audio{};
 };
 
 struct TemporarySessionSeed {
@@ -102,8 +104,9 @@ public:
         const FullSessionId& identity) const;
 
     [[nodiscard]] std::optional<EntryAudioLookup> lookup_entry_audio(
-        const FullSessionId& identity, EntryId entry_id) const;
-    void save_entry_audio(const EntryAudioLookup& entry, const EntryAudio& audio) const;
+        const FullSessionId& identity, EntryId entry_id, bool load_audio = true) const;
+    void save_entry_audio(const EntryAudioLookup& entry, const EntryAudio& audio,
+        const std::function<bool()>& cancelled = [] { return false; }) const;
     void clear_session_audio(const FullSessionId& identity) const;
     [[nodiscard]] std::set<EntryId> cached_audio_entries(const FullSessionId& identity) const;
 

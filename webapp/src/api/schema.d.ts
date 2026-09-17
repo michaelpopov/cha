@@ -404,7 +404,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Return saved transcript audio or generate FishAudio speech */
+        /** Generate uncached FishAudio preview speech */
         post: operations["generateFishAudio"];
         delete?: never;
         options?: never;
@@ -921,6 +921,78 @@ export interface paths {
          *     in-memory content without changing which session the browser has open.
          */
         get: operations["downloadSession"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/forums/{forum_id}/sessions/{session_id}/entries/{entry_id}/audio-download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Stable URL-safe forum identifier. */
+                forum_id: components["parameters"]["ForumId"];
+                /** @description Stable URL-safe session identifier. */
+                session_id: components["parameters"]["SessionId"];
+                entry_id: number;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Queue transcript audio for background generation and storage */
+        post: operations["startAudioDownload"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/forums/{forum_id}/sessions/{session_id}/audio-downloads": {
+        parameters: {
+            query: {
+                vault_name: string;
+            };
+            header?: never;
+            path: {
+                /** @description Stable URL-safe forum identifier. */
+                forum_id: components["parameters"]["ForumId"];
+                /** @description Stable URL-safe session identifier. */
+                session_id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        /** Read cached audio IDs and background job states without opening the session */
+        get: operations["getAudioDownloads"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/forums/{forum_id}/sessions/{session_id}/entries/{entry_id}/audio": {
+        parameters: {
+            query: {
+                vault_name: string;
+            };
+            header?: never;
+            path: {
+                /** @description Stable URL-safe forum identifier. */
+                forum_id: components["parameters"]["ForumId"];
+                /** @description Stable URL-safe session identifier. */
+                session_id: components["parameters"]["SessionId"];
+                entry_id: number;
+            };
+            cookie?: never;
+        };
+        /** Fetch committed audio without starting generation */
+        get: operations["getCachedAudio"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1736,10 +1808,33 @@ export interface components {
             text: string;
             seq: components["schemas"]["UnsignedInteger"];
         };
+        AudioDownloadRequest: {
+            vault_name: string;
+            reference_id: string;
+            settings?: {
+                speed?: number;
+            };
+        };
+        AudioDownloadAcceptance: {
+            entry_id: number;
+            cached: boolean;
+            /** @enum {string} */
+            state?: "queued" | "running";
+        };
+        AudioDownloadJob: {
+            entry_id: number;
+            /** @enum {string} */
+            state: "queued" | "running" | "failed";
+            error?: string;
+        };
+        AudioDownloadStatus: {
+            cached_entry_ids: number[];
+            downloads: components["schemas"]["AudioDownloadJob"][];
+        };
         ErrorResponse: {
             error: {
                 /** @enum {string} */
-                code: "not_found" | "bad_request" | "body_too_large" | "prompt_too_large" | "forbidden_origin" | "internal_error" | "speech_busy" | "session_stopping" | "session_limit_reached" | "session_open_timeout" | "server_stopping" | "session_not_live" | "command_timeout" | "command_queue_full" | "vault_password_required" | "source_vault_password_required";
+                code: "not_found" | "bad_request" | "body_too_large" | "prompt_too_large" | "forbidden_origin" | "internal_error" | "speech_busy" | "vault_changed" | "session_stopping" | "session_limit_reached" | "session_open_timeout" | "server_stopping" | "session_not_live" | "command_timeout" | "command_queue_full" | "vault_password_required" | "source_vault_password_required";
                 message: string;
             };
         };
@@ -2708,12 +2803,6 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    /** @description Transcript identity to read and save audio. Omit for uncached previews. */
-                    entry?: {
-                        forum_id: string;
-                        session_id: string;
-                        entry_id: number;
-                    };
                     text: string;
                     reference_id: string;
                     settings?: {
@@ -2723,17 +2812,16 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Saved or generated audio. */
+            /** @description Generated preview audio. */
             200: {
                 headers: {
-                    /** @description Present and true when the returned audio is saved in the entry cache. */
-                    "X-CHA-Audio-Cached"?: boolean;
                     [name: string]: unknown;
                 };
                 content: {
                     "audio/mpeg": string;
                     "audio/wav": string;
                     "audio/ogg": string;
+                    "audio/opus": string;
                 };
             };
             400: components["responses"]["BadRequest"];
@@ -3579,6 +3667,148 @@ export interface operations {
             };
         };
     };
+    startAudioDownload: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Stable URL-safe forum identifier. */
+                forum_id: components["parameters"]["ForumId"];
+                /** @description Stable URL-safe session identifier. */
+                session_id: components["parameters"]["SessionId"];
+                entry_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AudioDownloadRequest"];
+            };
+        };
+        responses: {
+            /** @description Audio is already cached. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AudioDownloadAcceptance"];
+                };
+            };
+            /** @description New or existing background job. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AudioDownloadAcceptance"];
+                };
+            };
+            /** @description Active vault changed. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Downloads are temporarily unavailable during maintenance or cache clearing. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Invalid request or unavailable entry/configuration. */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getAudioDownloads: {
+        parameters: {
+            query: {
+                vault_name: string;
+            };
+            header?: never;
+            path: {
+                /** @description Stable URL-safe forum identifier. */
+                forum_id: components["parameters"]["ForumId"];
+                /** @description Stable URL-safe session identifier. */
+                session_id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current audio availability and jobs. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AudioDownloadStatus"];
+                };
+            };
+            /** @description Unavailable session, changed vault, or temporary maintenance. */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getCachedAudio: {
+        parameters: {
+            query: {
+                vault_name: string;
+            };
+            header?: never;
+            path: {
+                /** @description Stable URL-safe forum identifier. */
+                forum_id: components["parameters"]["ForumId"];
+                /** @description Stable URL-safe session identifier. */
+                session_id: components["parameters"]["SessionId"];
+                entry_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Cached audio. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "audio/mpeg": string;
+                    "audio/wav": string;
+                    "audio/ogg": string;
+                    "audio/opus": string;
+                };
+            };
+            /** @description Cache missing, changed vault, or temporary maintenance. */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     clearSessionAudioCache: {
         parameters: {
             query?: never;
@@ -3605,6 +3835,15 @@ export interface operations {
             404: components["responses"]["NotFound"];
             413: components["responses"]["BodyTooLarge"];
             500: components["responses"]["InternalError"];
+            /** @description Audio cache clearing is temporarily unavailable; error code speech_busy. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     deleteSession: {

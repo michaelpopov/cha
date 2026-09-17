@@ -479,7 +479,7 @@ std::vector<TranscriptEntry> SessionRepository::history(
 }
 
 std::optional<EntryAudioLookup> SessionRepository::lookup_entry_audio(
-    const FullSessionId& identity, EntryId entry_id) const {
+    const FullSessionId& identity, EntryId entry_id, bool load_audio) const {
     const std::shared_lock operation(operation_mutex_);
     if (entry_id == 0
         || entry_id > static_cast<EntryId>(std::numeric_limits<std::int64_t>::max())) return std::nullopt;
@@ -507,22 +507,30 @@ std::optional<EntryAudioLookup> SessionRepository::lookup_entry_audio(
     };
     try {
         auto cached = database.prepare(
-            "SELECT audio, content_type FROM entry_audio WHERE session_key = ?1 AND entry_id = ?2",
+            load_audio ? "SELECT audio, content_type FROM entry_audio WHERE session_key = ?1 AND entry_id = ?2"
+                : "SELECT 1 FROM entry_audio WHERE session_key = ?1 AND entry_id = ?2",
             result.session_key, static_cast<std::int64_t>(entry_id));
-        if (cached.step()) result.cached = EntryAudio{cached.blob(0), cached.text(1)};
+        if (cached.step()) {
+            result.has_cached_audio = true;
+            if (load_audio) result.cached = EntryAudio{cached.blob(0), cached.text(1)};
+        }
     } catch (const std::exception& error) {
         log_warn("Could not read cached audio: " + std::string(error.what()));
     }
     return result;
 }
 
-void SessionRepository::save_entry_audio(const EntryAudioLookup& entry, const EntryAudio& audio) const {
+void SessionRepository::save_entry_audio(const EntryAudioLookup& entry, const EntryAudio& audio,
+    const std::function<bool()>& cancelled) const {
     const std::shared_lock operation(operation_mutex_);
+    if (cancelled()) return;
     const auto& path = session_database_path(entry.identity);
     if (entry.database_path != path || audio.audio.empty()) return;
     Database database(path, Database::Mode::read_write,
         entry.identity == temporary_identity_ ? std::string_view{} : database_password_);
     validate_workspace_session_database_identity(database);
+    Transaction transaction(database);
+    if (cancelled()) return;
     // An entry may have been deleted while synthesis was running. Never recreate it.
     auto insert = database.prepare(
         "INSERT INTO entry_audio (session_key, entry_id, audio, content_type) "
@@ -531,7 +539,7 @@ void SessionRepository::save_entry_audio(const EntryAudioLookup& entry, const En
         "JOIN forums f ON f.forum_key = s.forum_key "
         "WHERE e.session_key = ?3 AND e.entry_id = ?4 AND e.text = ?5 "
         "AND f.forum_id = ?6 AND s.session_id = ?7 AND s.archived_at IS NULL "
-        "AND e.epoch = s.history_epoch ON CONFLICT DO NOTHING");
+        "AND e.epoch = s.history_epoch AND e.status = 0 AND e.kind IN (0, 1, 2) ON CONFLICT DO NOTHING");
     insert.bind_blob(1, audio.audio);
     insert.bind(2, audio.content_type);
     insert.bind(3, entry.session_key);
@@ -540,6 +548,7 @@ void SessionRepository::save_entry_audio(const EntryAudioLookup& entry, const En
     insert.bind(6, entry.identity.forum_id);
     insert.bind(7, entry.identity.session_id);
     insert.run();
+    transaction.commit();
 }
 
 std::set<EntryId> SessionRepository::cached_audio_entries(const FullSessionId& identity) const {

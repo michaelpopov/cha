@@ -4,6 +4,7 @@
 
 #include <httplib.h>
 
+#include <algorithm>
 #include <cstdlib>
 #include <thread>
 #include <utility>
@@ -38,10 +39,11 @@ bool ProcessShutdownSignal::requested() const noexcept {
 ServerShutdownCoordinator::ServerShutdownCoordinator(
     LiveSessionManager& live_sessions,
     httplib::Server& server,
-    std::function<void()> stop_accepting)
+    std::function<void()> stop_accepting,
+    std::function<bool(std::chrono::steady_clock::time_point)> join_background)
     : live_sessions_(live_sessions),
       server_(server),
-      stop_accepting_(std::move(stop_accepting)) {
+      stop_accepting_(std::move(stop_accepting)), join_background_(std::move(join_background)) {
     if (!stop_accepting_) stop_accepting_ = [&server] { server.stop(); };
 }
 
@@ -58,8 +60,11 @@ void ServerShutdownCoordinator::wait_and_shutdown(
 void ServerShutdownCoordinator::shutdown_now(
     std::thread& listener,
     std::chrono::milliseconds grace) {
+    const auto deadline = std::chrono::steady_clock::now() + grace;
     live_sessions_.begin_shutdown(stop_accepting_);
-    if (!live_sessions_.join_shutdown(grace)) {
+    const auto remaining = std::max(std::chrono::milliseconds::zero(),
+        std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now()));
+    if (!live_sessions_.join_shutdown(remaining)) {
         for (const FullSessionId& key : live_sessions_.unfinished_owners()) {
             log_critical(
                 "Web shutdown grace expired: forum_id=" + key.forum_id
@@ -68,6 +73,10 @@ void ServerShutdownCoordinator::shutdown_now(
         // A stuck owner cannot be safely joined. The operating system releases
         // leases, and skipping static destructors prevents an unbounded
         // teardown after the documented grace period.
+        std::_Exit(1);
+    }
+    if (join_background_ && !join_background_(deadline)) {
+        log_critical("Web shutdown grace expired: audio downloads");
         std::_Exit(1);
     }
     // cpp-httplib joins request workers before listen_after_bind returns. It

@@ -4,6 +4,7 @@
 #include "web/web_settings.h"
 
 #include <memory>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -38,7 +39,8 @@ public:
         WorkspaceConfigStore& config,
         CurrentVault& current_vault,
         std::vector<std::string> vault_names,
-        std::shared_ptr<SessionMirror> mirror = {});
+        std::shared_ptr<SessionMirror> mirror = {},
+        std::function<void(const FullSessionId&)> clear_audio = {});
 
     void install(httplib::Server& server) const;
 
@@ -51,6 +53,7 @@ private:
     CurrentVault* current_vault_;
     std::vector<std::string> vault_names_;
     std::shared_ptr<SessionMirror> mirror_;
+    std::function<void(const FullSessionId&)> clear_audio_;
 };
 
 } // namespace cha::web

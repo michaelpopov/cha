@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 
 import type { ChaClient, VoiceUpdate } from './api/client';
-import { audioRequest, type AudioRequest, type AudioEntry } from './textToSpeechRequest';
+import { audioRequest, type AudioRequest } from './textToSpeechRequest';
 
 export interface TextToSpeechConfiguration {
   baseUrl: string;
@@ -51,7 +51,7 @@ export function useTextToSpeechConfiguration(
 }
 
 export class TextToSpeechError extends Error {
-  constructor(message: string, readonly code?: string) {
+  constructor(message: string, readonly code?: string, readonly status?: number) {
     super(message);
     this.name = 'TextToSpeechError';
   }
@@ -71,13 +71,8 @@ function pumpFishAudio() {
   }
 }
 
-interface AudioResult {
-  blob: Blob;
-  cached: boolean;
-}
-
-function requestAudio(request: AudioRequest, signal: AbortSignal): Promise<AudioResult> {
-  return new Promise<AudioResult>((resolve, reject) => {
+function requestAudio(request: AudioRequest, signal: AbortSignal): Promise<Blob> {
+  return new Promise<Blob>((resolve, reject) => {
     const cancel = () => {
       const index = fishAudioQueue.indexOf(job);
       if (index >= 0) fishAudioQueue.splice(index, 1);
@@ -101,15 +96,12 @@ function requestAudio(request: AudioRequest, signal: AbortSignal): Promise<Audio
   });
 }
 
-async function fetchAudio(request: AudioRequest, signal?: AbortSignal): Promise<AudioResult> {
+async function fetchAudio(request: AudioRequest, signal?: AbortSignal): Promise<Blob> {
   for (let attempt = 0; ; attempt += 1) {
     const response = await fetch(request.url, {
       method: 'POST', headers: request.headers, body: request.body, signal,
     });
-    if (response.ok) return {
-      blob: await response.blob(),
-      cached: response.headers.get('X-CHA-Audio-Cached') === 'true',
-    };
+    if (response.ok) return response.blob();
     const error = await speechError(response);
     if (response.status !== 503
       || error.code !== 'speech_busy' || attempt >= 3) throw error;
@@ -139,23 +131,30 @@ export class TextToSpeechSession {
   private stopped = false;
 
   constructor(
-    private readonly configuration: TextToSpeechConfiguration,
+    private readonly configuration: TextToSpeechConfiguration | null,
     private readonly voice: TextToSpeechVoice | undefined,
     private readonly text: string,
     private readonly onEnded: () => void,
-    private readonly entry?: AudioEntry,
-    private readonly onCacheStatus?: (cached: boolean) => void,
     private readonly playback?: {
       position: number;
       onPositionChange(position: number): void;
     },
+    private readonly cachedUrl?: string,
+    private readonly onCached?: () => void,
   ) {}
 
   async play(): Promise<void> {
-    const request = audioRequest(this.configuration, this.voice, this.text, this.entry);
-    const { blob, cached } = await requestAudio(request, this.request.signal);
+    let blob: Blob;
+    if (this.cachedUrl) {
+      const response = await fetch(this.cachedUrl, { signal: this.request.signal });
+      if (!response.ok) throw await speechError(response, 'Cached audio');
+      blob = await response.blob();
+    } else {
+      if (!this.configuration) throw new TextToSpeechError('Voice output is not configured.');
+      blob = await requestAudio(audioRequest(this.configuration, this.voice, this.text), this.request.signal);
+    }
     if (this.stopped) return;
-    if (this.entry) this.onCacheStatus?.(cached);
+    if (this.cachedUrl) this.onCached?.();
 
     this.objectUrl = URL.createObjectURL(blob);
     if (this.stopped) return this.releaseObjectUrl();
@@ -203,21 +202,22 @@ export class TextToSpeechSession {
   }
 }
 
-async function speechError(response: Response): Promise<TextToSpeechError> {
-  const fallback = `FishAudio request failed (HTTP ${response.status}).`;
+async function speechError(response: Response, source = 'FishAudio'): Promise<TextToSpeechError> {
+  const fallback = `${source} request failed (HTTP ${response.status}).`;
   try {
     const parsed: unknown = await response.json();
-    if (!parsed || typeof parsed !== 'object') return new TextToSpeechError(fallback);
+    if (!parsed || typeof parsed !== 'object') return new TextToSpeechError(fallback, undefined, response.status);
     const root = parsed as Record<string, unknown>;
     const nested = root.error;
     const detail = nested && typeof nested === 'object'
       ? nested as Record<string, unknown> : root;
     const message = typeof detail.message === 'string' ? detail.message.trim() : '';
     return new TextToSpeechError(
-      message ? `FishAudio: ${message} (HTTP ${response.status})` : fallback,
+      message ? `${source}: ${message} (HTTP ${response.status})` : fallback,
       typeof detail.code === 'string' ? detail.code : undefined,
+      response.status,
     );
   } catch {
-    return new TextToSpeechError(fallback);
+    return new TextToSpeechError(fallback, undefined, response.status);
   }
 }

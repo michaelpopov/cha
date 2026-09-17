@@ -1,6 +1,10 @@
 import type { components } from './schema';
 import { hasIdentity, isRecord } from './guards';
 
+export type AudioDownloadRequest = components['schemas']['AudioDownloadRequest'];
+export type AudioDownloadAcceptance = components['schemas']['AudioDownloadAcceptance'];
+export type AudioDownloadStatus = components['schemas']['AudioDownloadStatus'];
+
 export type Bootstrap = components['schemas']['Bootstrap'];
 export type CharacterDetail = components['schemas']['CharacterDetail'];
 export type CreateCharacterRequest = components['schemas']['CreateCharacterRequest'];
@@ -62,6 +66,7 @@ const knownErrorCodes = {
   forbidden_origin: true,
   internal_error: true,
   speech_busy: true,
+  vault_changed: true,
   session_stopping: true,
   session_limit_reached: true,
   session_open_timeout: true,
@@ -201,8 +206,27 @@ export interface ChaClient {
   getR2Storage(): Promise<R2StorageDetail | null>;
   saveR2Storage(request: SaveR2StorageRequest): Promise<R2StorageDetail>;
   deleteR2Storage(): Promise<void>;
+  startAudioDownload(forumId: string, sessionId: string, entryId: number, request: AudioDownloadRequest): Promise<AudioDownloadAcceptance>;
+  getAudioDownloads(forumId: string, sessionId: string, vaultName: string): Promise<AudioDownloadStatus>;
   switchVault(vaultName: string, password?: string): Promise<void>;
   mergeVault(sourceVault: string, password?: string): Promise<void>;
+}
+
+function isAudioAcceptance(value: unknown): value is AudioDownloadAcceptance {
+  return isRecord(value) && Number.isSafeInteger(value.entry_id) && (value.entry_id as number) > 0
+    && typeof value.cached === 'boolean' && (value.cached
+      ? value.state === undefined : value.state === 'queued' || value.state === 'running');
+}
+function isAudioStatus(value: unknown): value is AudioDownloadStatus {
+  return isRecord(value) && Array.isArray(value.cached_entry_ids)
+    && value.cached_entry_ids.every((id) => Number.isSafeInteger(id) && id > 0)
+    && Array.isArray(value.downloads) && value.downloads.every((job) => isRecord(job)
+      && Number.isSafeInteger(job.entry_id) && (job.entry_id as number) > 0
+      && ['queued', 'running', 'failed'].includes(job.state as string)
+      && (job.error === undefined || typeof job.error === 'string'));
+}
+export function cachedAudioUrl(forumId: string, sessionId: string, entryId: number, vault: string): string {
+  return `/api/v1/forums/${component(forumId)}/sessions/${component(sessionId)}/entries/${entryId}/audio?vault_name=${encodeURIComponent(vault)}`;
 }
 
 function isOneOf(value: unknown, choices: readonly unknown[]): boolean {
@@ -1018,6 +1042,12 @@ export function createChaClient(
       jsonMutation({}, 'DELETE'),
     ),
 
+    startAudioDownload: (forumId, sessionId, entryId, request) => requestValidated(
+      fetcher, `/api/v1/forums/${component(forumId)}/sessions/${component(sessionId)}/entries/${entryId}/audio-download`,
+      isAudioAcceptance, jsonMutation(request)),
+    getAudioDownloads: (forumId, sessionId, vaultName) => requestValidated(
+      fetcher, `/api/v1/forums/${component(forumId)}/sessions/${component(sessionId)}/audio-downloads?vault_name=${encodeURIComponent(vaultName)}`,
+      isAudioStatus),
     switchVault: (vaultName, password) => requestEmpty(
       fetcher,
       '/api/v1/vault/switch',

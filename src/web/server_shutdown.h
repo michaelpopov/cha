@@ -38,7 +38,8 @@ public:
     ServerShutdownCoordinator(
         LiveSessionManager& live_sessions,
         httplib::Server& server,
-        std::function<void()> stop_accepting = {});
+        std::function<void()> stop_accepting = {},
+        std::function<bool(std::chrono::steady_clock::time_point)> join_background = {});
 
     // Waits through the signal-safe bridge, then owns the complete bounded
     // shutdown policy. shutdown_now() is the directly testable half: it
@@ -57,6 +58,7 @@ private:
     LiveSessionManager& live_sessions_;
     httplib::Server& server_;
     std::function<void()> stop_accepting_;
+    std::function<bool(std::chrono::steady_clock::time_point)> join_background_;
 };
 
 } // namespace cha::web
