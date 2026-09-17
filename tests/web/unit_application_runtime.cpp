@@ -807,7 +807,14 @@ TEST(ApplicationRuntime, StoresApiKeysInTheVaultAndReferencesThemFromProviders) 
     provider["https"] = false;
     provider["api"] = "responses";
     provider["reasoning_effort"] = "";
-    provider["web_search"] = "off";
+    provider["web_search"] = "required";
+    provider["timeout_s"] = 0;
+    provider["idle_timeout_s"] = 0;
+    const auto rejected_save = client.Patch(
+        "/api/v1/providers/test", kRuntimeCookie,
+        provider.dump(), "application/json");
+    ASSERT_TRUE(rejected_save);
+    EXPECT_EQ(rejected_save->status, 400) << rejected_save->body;
     const auto provider_test = client.Post(
         "/api/v1/providers/test/test",
         kRuntimeCookie,

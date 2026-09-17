@@ -1441,6 +1441,31 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, PersistsVoiceOutputSettings) {
         std::invalid_argument);
 }
 
+TEST_F(RuntimeWorkspaceConfigStoreTest, RejectsInvalidUnusedProviderUpdates) {
+    const auto store = open_store();
+    const auto published = getws();
+    const auto before = config_contents(database());
+    const auto path = store->workspace_path()
+        / "system" / "providers" / "second" / "config.toml";
+    const std::string file_before = file_bytes(path);
+    const ModelBackendConfig original = published->find_provider("second")->config;
+    for (const std::string_view invalid : {"host", "model", "timeout"}) {
+        SCOPED_TRACE(invalid);
+        ModelBackendConfig config = original;
+        if (invalid == "host") config.host.clear();
+        if (invalid == "model") config.model.clear();
+        if (invalid == "timeout") config.timeout_s = 0;
+        EXPECT_THROW(
+            store->apply_provider_update("second", "Second", config),
+            std::invalid_argument);
+        EXPECT_EQ(config_contents(database()), before);
+        EXPECT_EQ(file_bytes(path), file_before);
+        EXPECT_EQ(getws(), published);
+        ASSERT_NE(getws()->find_provider("second"), nullptr);
+        EXPECT_EQ(getws()->find_provider("second")->config.model, original.model);
+    }
+}
+
 TEST_F(RuntimeWorkspaceConfigStoreTest, SerializesTwoEditsAndEditReadInteraction) {
     const auto store = open_store();
     const std::filesystem::path workspace_root = store->workspace_path();

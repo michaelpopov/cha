@@ -38,37 +38,47 @@ bool valid_openrouter_targets(const ModelBackendConfig& config) {
     return true;
 }
 
-std::string_view mode_name(Mode value) {
-    return value == Mode::net ? "net" : "test";
+std::string_view to_string(Mode value) {
+    switch (value) {
+    case Mode::net: return "net";
+    case Mode::test: return "test";
+    }
+    throw std::logic_error("Unknown provider mode");
 }
 
-std::string_view api_name(ProviderApi value) {
-    return value == ProviderApi::chat_completions
-        ? "chat_completions" : "responses";
+std::string_view to_string(ProviderApi value) {
+    switch (value) {
+    case ProviderApi::chat_completions: return "chat_completions";
+    case ProviderApi::responses: return "responses";
+    }
+    throw std::logic_error("Unknown provider API");
 }
 
-std::string_view auth_name(ProviderAuth value) {
-    return value == ProviderAuth::openai_subscription
-        ? "openai_subscription" : "none";
+std::string_view to_string(ProviderAuth value) {
+    switch (value) {
+    case ProviderAuth::none: return "none";
+    case ProviderAuth::openai_subscription: return "openai_subscription";
+    }
+    throw std::logic_error("Unknown provider auth");
 }
 
-std::string_view reasoning_format_name(ReasoningFormat value) {
+std::string_view to_string(ReasoningFormat value) {
     switch (value) {
     case ReasoningFormat::automatic: return "auto";
     case ReasoningFormat::none: return "none";
     case ReasoningFormat::reasoning_content: return "reasoning_content";
     case ReasoningFormat::reasoning: return "reasoning";
     }
-    throw std::invalid_argument("Invalid reasoning format");
+    throw std::logic_error("Unknown reasoning format");
 }
 
-std::string_view cache_retention_name(CacheRetention value) {
+std::string_view to_string(CacheRetention value) {
     switch (value) {
     case CacheRetention::off: return "off";
     case CacheRetention::short_: return "short";
     case CacheRetention::long_: return "long";
     }
-    throw std::invalid_argument("Invalid cache retention");
+    throw std::logic_error("Unknown cache retention");
 }
 
 std::optional<Mode> parse_mode(std::string_view value) {
@@ -118,6 +128,12 @@ bool provider_supports_web_search(const ModelBackendConfig& config) {
 
 std::optional<std::string_view> provider_config_error(
     const ModelBackendConfig& config) {
+    if (config.host.empty()) {
+        return "requires non-empty string 'host'";
+    }
+    if (config.model.empty()) {
+        return "requires non-empty string 'model'";
+    }
     if (!config.api_key_id.empty() && !config.api_key_env.empty()) {
         return "cannot set both api_key and api_key_env";
     }

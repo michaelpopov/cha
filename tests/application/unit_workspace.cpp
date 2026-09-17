@@ -301,6 +301,34 @@ TEST(Workspace, OmitsAnInvalidUnusedProvider) {
     EXPECT_EQ(workspace.find_provider("unused"), nullptr);
 }
 
+TEST(Workspace, MissingAndEmptyProviderStringsHaveTheSameDiagnostics) {
+    for (const std::string field : {"host", "model"}) {
+        for (const bool missing : {false, true}) {
+            SCOPED_TRACE(field);
+            SCOPED_TRACE(missing);
+            test::TestWorkspace fixture;
+            const std::string other = field == "host"
+                ? "model = \"fake\"\n" : "host = \"localhost\"\n";
+            fixture.write_provider(
+                "broken", "port = 80\n" + other
+                    + (missing ? "" : field + " = \"\"\n"));
+            fixture.write_character_config(
+                "display_name = \"Guide\"\nprovider = \"broken\"\n");
+            const std::string expected =
+                "Character 'guide' references invalid provider 'broken': Provider config '"
+                + (fixture.root() / "system" / "providers" / "broken"
+                    / "config.toml").string()
+                + "' requires non-empty string '" + field + "'";
+            try {
+                (void)Workspace::load(fixture.root());
+                FAIL() << "Expected an invalid provider reference";
+            } catch (const std::runtime_error& error) {
+                EXPECT_EQ(error.what(), expected);
+            }
+        }
+    }
+}
+
 TEST(Workspace, CharacterAndAssistantReferenceErrorsKeepTheirSubjectsAndOrder) {
     struct ReferenceCase {
         std::string settings;
@@ -904,6 +932,11 @@ TEST(Workspace, RejectsInvalidWritesWithoutChangingTheConfigFile) {
         workspace.write_provider("test", "Test", config), std::invalid_argument);
     config = original;
     config.host.clear();
+    EXPECT_THROW(
+        workspace.write_provider("test", "Test", config), std::invalid_argument);
+    EXPECT_EQ(file_bytes(provider), provider_before);
+    config = original;
+    config.model.clear();
     EXPECT_THROW(
         workspace.write_provider("test", "Test", config), std::invalid_argument);
     EXPECT_EQ(file_bytes(provider), provider_before);

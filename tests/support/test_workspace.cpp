@@ -29,7 +29,7 @@ void write_provider_config(
     file << "host = " << quoted(config.host) << '\n'
          << "port = " << config.port << '\n'
          << "base_path = " << quoted(config.base_path) << '\n'
-         << "mode = " << quoted(mode_name(config.mode)) << '\n'
+         << "mode = " << quoted(to_string(config.mode)) << '\n'
          << "model = " << quoted(config.model) << '\n'
          << "stream = " << (config.stream ? "true" : "false") << '\n';
     if (config.temperature) file << "temperature = " << *config.temperature << '\n';
@@ -43,14 +43,14 @@ void write_provider_config(
         file << "api_key_env = " << quoted(config.api_key_env) << '\n';
     }
     file << "reasoning_effort = " << quoted(config.reasoning_effort) << '\n'
-         << "reasoning_format = " << quoted(reasoning_format_name(config.reasoning_format)) << '\n'
+         << "reasoning_format = " << quoted(to_string(config.reasoning_format)) << '\n'
          << "https = " << (config.https ? "true" : "false") << '\n'
-         << "api = " << quoted(api_name(config.api)) << '\n';
+         << "api = " << quoted(to_string(config.api)) << '\n';
     if (config.auth != ProviderAuth::none) {
-        file << "auth = " << quoted(auth_name(config.auth)) << '\n';
+        file << "auth = " << quoted(to_string(config.auth)) << '\n';
     }
     file << "web_search = " << quoted(to_string(config.web_search)) << '\n'
-         << "cache_retention = " << quoted(cache_retention_name(config.cache_retention)) << '\n';
+         << "cache_retention = " << quoted(to_string(config.cache_retention)) << '\n';
     if (!config.openrouter_targets.empty()) {
         file << "openrouter_targets = [";
         for (std::size_t index = 0;

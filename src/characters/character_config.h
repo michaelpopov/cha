@@ -20,11 +20,11 @@ inline constexpr WebSearchMode default_web_search_mode =
 
 bool is_direct_openai_host(std::string_view host);
 bool is_openrouter_host(std::string_view host);
-std::string_view mode_name(Mode value);
-std::string_view api_name(ProviderApi value);
-std::string_view auth_name(ProviderAuth value);
-std::string_view reasoning_format_name(ReasoningFormat value);
-std::string_view cache_retention_name(CacheRetention value);
+std::string_view to_string(Mode value);
+std::string_view to_string(ProviderApi value);
+std::string_view to_string(ProviderAuth value);
+std::string_view to_string(ReasoningFormat value);
+std::string_view to_string(CacheRetention value);
 std::string_view to_string(WebSearchMode value);
 
 std::optional<Mode> parse_mode(std::string_view value);

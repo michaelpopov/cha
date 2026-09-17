@@ -265,12 +265,14 @@ WorkspaceProvider load_provider(const std::filesystem::path& directory) {
         .label = optional_value<std::string>(
             table, path, "display_name", "a string").value_or(option_label(id)),
         .config = {
-            .host = required_string(table, path, "host"),
+            .host = optional_value<std::string>(
+                table, path, "host", "a string").value_or(""),
             .port = optional_value<int>(table, path, "port", "an integer").value_or(0),
             .base_path = optional_value<std::string>(
                 table, path, "base_path", "a string").value_or(""),
             .mode = choice(table, path, "mode", parse_mode, Mode::test),
-            .model = required_string(table, path, "model"),
+            .model = optional_value<std::string>(
+                table, path, "model", "a string").value_or(""),
             .stream = optional_value<bool>(table, path, "stream", "a boolean")
                           .value_or(true),
             .temperature = optional_value<double>(
@@ -1871,13 +1873,7 @@ void Workspace::write_provider(
     } catch (const std::runtime_error&) {
         throw std::invalid_argument("Invalid provider name");
     }
-    if (!provider.api_key_id.empty() && !provider.api_key_env.empty()) {
-        throw std::invalid_argument(
-            "A provider cannot use both a saved API key ID and a legacy key name");
-    }
-    // Empty host and model are rejected by the TOML parser on load.
-    if (provider_config_error(provider) || provider.host.empty()
-        || provider.model.empty()) {
+    if (provider_config_error(provider)) {
         throw std::invalid_argument("Invalid provider settings");
     }
     toml::table table;
@@ -1885,7 +1881,7 @@ void Workspace::write_provider(
     table.insert("host", provider.host);
     table.insert("port", provider.port);
     if (!provider.base_path.empty()) table.insert("base_path", provider.base_path);
-    table.insert("mode", mode_name(provider.mode));
+    table.insert("mode", to_string(provider.mode));
     table.insert("model", provider.model);
     table.insert("stream", provider.stream);
     if (provider.temperature) table.insert("temperature", *provider.temperature);
@@ -1899,12 +1895,12 @@ void Workspace::write_provider(
     if (!provider.reasoning_effort.empty()) {
         table.insert("reasoning_effort", provider.reasoning_effort);
     }
-    table.insert("reasoning_format", reasoning_format_name(provider.reasoning_format));
+    table.insert("reasoning_format", to_string(provider.reasoning_format));
     table.insert("https", provider.https);
-    table.insert("api", api_name(provider.api));
-    table.insert("auth", auth_name(provider.auth));
+    table.insert("api", to_string(provider.api));
+    table.insert("auth", to_string(provider.auth));
     table.insert("web_search", to_string(provider.web_search));
-    table.insert("cache_retention", cache_retention_name(provider.cache_retention));
+    table.insert("cache_retention", to_string(provider.cache_retention));
     if (!provider.openrouter_targets.empty()) {
         toml::array targets;
         for (const std::string& target : provider.openrouter_targets) {
@@ -1913,7 +1909,7 @@ void Workspace::write_provider(
         table.insert("openrouter_targets", std::move(targets));
     }
     write_toml_file(path->second, table);
-    // Keep the readback for TOML serialization/encoding checks.
+    // Validate the saved file directly; workspace loading can omit invalid providers.
     try {
         (void)load_provider(path->second.parent_path());
     } catch (const std::runtime_error&) {
