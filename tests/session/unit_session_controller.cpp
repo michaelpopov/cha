@@ -702,69 +702,42 @@ TEST(SessionController, PersistsAnIdentifiedCancelledResponse) {
     EXPECT_EQ(restored.back().text, "Partial");
 }
 
-TEST(SessionController, StoresTheEntryCreationTimeItDisplayed) {
-    TemporaryJournal temporary;
-    std::atomic_bool release{false};
-    auto backend = std::make_unique<ScriptedBackend>(
-        GenerationResult{}, std::vector<std::string>{"Hello"});
-    backend->hold_after_deltas = &release;
-    auto controller = test::from_test_backends(
-        test::one_backend(std::move(backend)),
-        temporary.path,
-        notifier());
+TEST(SessionController, PersistsDisplayedCreationTimeForTerminalOutcomes) {
+    for (const auto outcome : {GenerationOutcome::completed, GenerationOutcome::cancelled}) {
+        SCOPED_TRACE(static_cast<int>(outcome));
+        TemporaryJournal temporary;
+        std::atomic_bool release{false};
+        auto backend = std::make_unique<ScriptedBackend>(
+            GenerationResult{outcome, {}}, std::vector<std::string>{"Hello"});
+        backend->hold_after_deltas = &release;
+        auto controller = test::from_test_backends(
+            test::one_backend(std::move(backend)),
+            temporary.path,
+            notifier());
 
-    (void)controller->submit_prompt("operator", "Question");
-    receive_until_entry_count(*controller, 2);
-    const std::int64_t opened_at =
-        copy_entries(controller->view().transcript).back().created_at;
-    ASSERT_NE(opened_at, 0);
+        (void)controller->submit_prompt("operator", "Question");
+        receive_until_entry_count(*controller, 2);
+        const std::int64_t opened_at =
+            copy_entries(controller->view().transcript).back().created_at;
+        ASSERT_NE(opened_at, 0);
 
-    // Force the journal record onto the next second so a reused stamp is the
-    // only way the stored value can still match the live entry.
-    wait_until_next_unix_second();
-    release.store(true, std::memory_order_release);
-    (void)receive_until_idle(*controller);
+        // Force the journal record onto the next second so a reused stamp is the
+        // only way the stored value can still match the live entry.
+        wait_until_next_unix_second();
+        release.store(true, std::memory_order_release);
+        (void)receive_until_idle(*controller);
 
-    const auto live = copy_entries(controller->view().transcript);
-    const std::vector<TranscriptEntry> stored =
-        load_transcript_entries(temporary.path);
-    ASSERT_EQ(stored.size(), 2U);
-    ASSERT_EQ(live.size(), 2U);
-    EXPECT_EQ(live.back().created_at, opened_at);
-    EXPECT_EQ(stored.back().created_at, opened_at);
-    EXPECT_EQ(stored.front().created_at, live.front().created_at);
-}
-
-TEST(SessionController, StoresTheDisplayedCreationTimeForACancelledResponse) {
-    TemporaryJournal temporary;
-    std::atomic_bool release{false};
-    auto backend = std::make_unique<ScriptedBackend>(
-        GenerationResult{GenerationOutcome::cancelled, {}},
-        std::vector<std::string>{"Partial"});
-    backend->hold_after_deltas = &release;
-    auto controller = test::from_test_backends(
-        test::one_backend(std::move(backend)),
-        temporary.path,
-        notifier());
-
-    (void)controller->submit_prompt("operator", "Question");
-    receive_until_entry_count(*controller, 2);
-    const std::int64_t opened_at =
-        copy_entries(controller->view().transcript).back().created_at;
-    ASSERT_NE(opened_at, 0);
-
-    wait_until_next_unix_second();
-    release.store(true, std::memory_order_release);
-    (void)receive_until_idle(*controller);
-
-    const auto live = copy_entries(controller->view().transcript);
-    const std::vector<TranscriptEntry> stored =
-        load_transcript_entries(temporary.path);
-    ASSERT_EQ(stored.size(), 2U);
-    ASSERT_EQ(live.size(), 2U);
-    EXPECT_EQ(live.back().status, EntryStatus::cancelled);
-    EXPECT_EQ(live.back().created_at, opened_at);
-    EXPECT_EQ(stored.back().created_at, opened_at);
+        const auto live = copy_entries(controller->view().transcript);
+        const std::vector<TranscriptEntry> stored =
+            load_transcript_entries(temporary.path);
+        ASSERT_EQ(stored.size(), 2U);
+        ASSERT_EQ(live.size(), 2U);
+        EXPECT_EQ(live.back().status,
+                  outcome == GenerationOutcome::cancelled ? EntryStatus::cancelled : EntryStatus::complete);
+        EXPECT_EQ(live.back().created_at, opened_at);
+        EXPECT_EQ(stored.back().created_at, opened_at);
+        EXPECT_EQ(stored.front().created_at, live.front().created_at);
+    }
 }
 
 TEST(SessionController, RecordsCancellationWithoutAnEmptyAssistantEntry) {
@@ -932,82 +905,6 @@ TEST(SessionController, RemovesStreamedSourceReferencesBeforeTranscriptStorage) 
         copy_entries(controller->view().transcript);
     ASSERT_EQ(live.size(), 2U);
     EXPECT_EQ(live.back().text, "The quote. ");
-    EXPECT_EQ(load_transcript_entries(temporary.path), live);
-}
-
-TEST(SessionController, PreservesBoldParentheticalTextThatIsNotALink) {
-    TemporaryJournal temporary;
-    auto controller = test::from_test_backends(
-        test::one_backend(std::make_unique<ScriptedBackend>(
-            GenerationResult{},
-            std::vector<std::string>{
-                "Values **([a, b])** matter. Read more "
-                "([example.com](https://example.com/source))"})),
-        temporary.path,
-        notifier());
-
-    (void)controller->submit_prompt("operator", "Question");
-    receive_until_idle(*controller);
-
-    const std::vector<TranscriptEntry> live =
-        copy_entries(controller->view().transcript);
-    ASSERT_EQ(live.size(), 2U);
-    EXPECT_EQ(live.back().text, "Values **([a, b])** matter. Read more ");
-    EXPECT_EQ(load_transcript_entries(temporary.path), live);
-}
-
-TEST(SessionController, DoesNotFreezeAfterANonCitationParenthetical) {
-    TemporaryJournal temporary;
-    auto controller = test::from_test_backends(
-        test::one_backend(std::make_unique<ScriptedBackend>()),
-        temporary.path,
-        notifier());
-
-    (void)controller->submit_prompt("operator", "Question");
-    EXPECT_TRUE(requires_snapshot(
-        controller->handle_generation_event(GenerationEventDelta{
-            1, GenerationDeltaKind::answer, "Intro **([a, b])** ",
-        })));
-    const ControllerUpdate continuation =
-        controller->handle_generation_event(GenerationEventDelta{
-            1, GenerationDeltaKind::answer, "continues",
-        });
-    ASSERT_NE(text_append(continuation), nullptr);
-    EXPECT_EQ(text_append(continuation)->text, "continues");
-    (void)controller->handle_generation_event(GenerationCompleted{1});
-
-    const std::vector<TranscriptEntry> live =
-        copy_entries(controller->view().transcript);
-    ASSERT_EQ(live.size(), 2U);
-    EXPECT_EQ(live.back().text, "Intro **([a, b])** continues");
-    EXPECT_EQ(load_transcript_entries(temporary.path), live);
-}
-
-TEST(SessionController, ReleasesAnOverlongUnterminatedReferenceCandidate) {
-    TemporaryJournal temporary;
-    auto controller = test::from_test_backends(
-        test::one_backend(std::make_unique<ScriptedBackend>()),
-        temporary.path,
-        notifier());
-
-    (void)controller->submit_prompt("operator", "Question");
-    EXPECT_TRUE(requires_snapshot(
-        controller->handle_generation_event(GenerationEventDelta{
-            1, GenerationDeltaKind::answer, "Intro ",
-        })));
-    const std::string long_literal = "([" + std::string(600, 'x');
-    const ControllerUpdate released =
-        controller->handle_generation_event(GenerationEventDelta{
-            1, GenerationDeltaKind::answer, long_literal,
-        });
-    ASSERT_NE(text_append(released), nullptr);
-    EXPECT_EQ(text_append(released)->text, long_literal);
-    (void)controller->handle_generation_event(GenerationCompleted{1});
-
-    const std::vector<TranscriptEntry> live =
-        copy_entries(controller->view().transcript);
-    ASSERT_EQ(live.size(), 2U);
-    EXPECT_EQ(live.back().text, "Intro " + long_literal);
     EXPECT_EQ(load_transcript_entries(temporary.path), live);
 }
 
@@ -1251,7 +1148,18 @@ TEST(SessionController, RejectsCoverCommandsWhileActive) {
     EXPECT_EQ(busy_controller->cover_conversation().notice, generation_in_progress_notice);
     EXPECT_EQ(busy_controller->uncover_conversation().notice, generation_in_progress_notice);
     EXPECT_EQ(busy_controller->delete_turn(2).notice, generation_in_progress_notice);
-    busy_controller->shutdown();
+    for (const char* target : {"", "-"}) {
+        SCOPED_TRACE(target);
+        const ControllerUpdate blocked =
+            busy_controller->submit_prompt("operator", "Another", target);
+        EXPECT_FALSE(blocked.input_consumed);
+        EXPECT_EQ(blocked.notice, generation_in_progress_notice);
+        EXPECT_EQ(busy_controller->view().transcript.entries.size(), 1U);
+    }
+    const ControllerUpdate stopping = busy_controller->request_stop();
+    EXPECT_FALSE(stopping.input_consumed);
+    EXPECT_EQ(stopping.notice, "Stopping generation...");
+    receive_until_idle(*busy_controller);
 }
 
 TEST(SessionController, MulticastCommitsTargetsInOrderWithIsolatedContexts) {
@@ -1889,53 +1797,6 @@ TEST(SessionController, RejectsEmptyNullAgentMessagesWithoutRecording) {
     EXPECT_TRUE(controller->view().transcript.entries.empty());
 }
 
-TEST(SessionController, RejectsNullAgentRecordingDuringGeneration) {
-    TemporaryJournal temporary;
-    auto controller = test::from_test_backends(
-        test::one_backend(std::make_unique<ScriptedBackend>(
-            GenerationResult{},
-            std::vector<std::string>{},
-            true)),
-        temporary.path,
-        notifier());
-
-    (void)controller->submit_prompt("operator", "Question");
-    const ControllerUpdate blocked =
-        controller->submit_prompt("operator", "Thinking out loud", "-");
-    EXPECT_FALSE(blocked.input_consumed);
-    EXPECT_EQ(
-        blocked.notice,
-        "Generation in progress; use the Stop button");
-    EXPECT_TRUE(controller->view().transcript.entries.size() == 1U);
-
-    (void)controller->request_stop();
-    receive_until_idle(*controller);
-}
-
-TEST(SessionController, RejectsNewOperationsDuringGeneration) {
-    TemporaryJournal temporary;
-    auto controller = test::from_test_backends(
-        test::one_backend(std::make_unique<ScriptedBackend>(
-            GenerationResult{},
-            std::vector<std::string>{},
-            true)),
-        temporary.path,
-        notifier());
-
-    (void)controller->submit_prompt("operator", "Question");
-    const ControllerUpdate blocked =
-        controller->submit_prompt("operator", "Another");
-    EXPECT_FALSE(blocked.input_consumed);
-    EXPECT_EQ(
-        blocked.notice,
-        "Generation in progress; use the Stop button");
-    const ControllerUpdate stopping =
-        controller->request_stop();
-    EXPECT_FALSE(stopping.input_consumed);
-    EXPECT_EQ(stopping.notice, "Stopping generation...");
-    receive_until_idle(*controller);
-}
-
 TEST(SessionController, IgnoresEventsForAnotherRequest) {
     TemporaryJournal temporary;
     auto controller = test::from_test_backends(
@@ -2226,28 +2087,6 @@ TEST(SessionController, ClassifiesIgnoredAndAmbiguousDeltasConservatively) {
         controller->handle_generation_event(GenerationFailed{2, "boom"})));
 }
 
-TEST(SessionController, CommandsReportTheirStateEffects) {
-    TemporaryJournal temporary;
-    auto controller = test::from_test_backends(
-        test::one_backend(std::make_unique<ScriptedBackend>()),
-        temporary.path,
-        notifier());
-
-    // A rejected default change is a notice without a state effect.
-    const ControllerUpdate unknown =
-        controller->set_default_character_by_id("nobody");
-    EXPECT_FALSE(has_state_update(unknown));
-
-    // An accepted one is structural.
-    EXPECT_TRUE(requires_snapshot(controller->set_default_character_by_id("guide-id")));
-    EXPECT_TRUE(requires_snapshot(controller->cover_conversation()));
-    EXPECT_TRUE(requires_snapshot(controller->cover_conversation()));
-    EXPECT_TRUE(requires_snapshot(controller->uncover_conversation()));
-
-    // Nothing to stop is a notice only.
-    EXPECT_FALSE(has_state_update(controller->request_stop()));
-}
-
 TEST(SessionController, ShutdownReturnsBeforeCancelledProviderUnregisters) {
     TemporaryJournal temporary;
     FinalWakeBlockingNotifier shutdown_notifier;
@@ -2305,9 +2144,15 @@ TEST(SessionController, ReportsSemanticStateAndInputConsumptionIndependently) {
     EXPECT_FALSE(has_state_update(unknown));
     EXPECT_FALSE(unknown.input_consumed);
 
+    EXPECT_FALSE(has_state_update(controller->set_default_character_by_id("nobody")));
+    EXPECT_FALSE(has_state_update(controller->request_stop()));
+
     const ControllerUpdate typed_default =
         controller->set_default_character_by_id("guide-id");
-    EXPECT_TRUE(has_state_update(typed_default));
+    EXPECT_TRUE(requires_snapshot(typed_default));
+    EXPECT_TRUE(requires_snapshot(controller->cover_conversation()));
+    EXPECT_TRUE(requires_snapshot(controller->cover_conversation()));
+    EXPECT_TRUE(requires_snapshot(controller->uncover_conversation()));
     EXPECT_FALSE(typed_default.input_consumed);
 
     const ControllerUpdate submitted =

@@ -854,8 +854,10 @@
             <li>Use the target menu beside the message box to switch the forum’s default character.</li>
             <li>Start a message with <code>@Name</code> to address one character for that message without changing the default.</li>
             <li>If a microphone button appears, you can dictate into the draft before sending.</li>
+            <li>Speaker buttons read completed messages aloud. Missing audio downloads in the background and is saved in the vault; select the Stop button to pause and replay to resume.</li>
+            <li>The speaker toggle beside <strong>Rus</strong> caches completed messages and future replies without playing them. Accepted downloads continue when you leave the session.</li>
             <li>The message editor grows as you type; drag its top edge to resize it manually.</li>
-            <li>Recent sessions appear in the sidebar. Their <strong>…</strong> menu can download, rename, or delete them.</li>
+            <li>Recent sessions appear in the sidebar. Their <strong>…</strong> menu can download, rename, or delete them, or <strong>Clear audio cache</strong> without changing the transcript.</li>
           </ul>
 
           <div class="warning">
@@ -1147,6 +1149,13 @@ the choice, the reason, the main risk, and the next check.</code></pre>
             <div>
               <p>Settings → Vaults → Merge into active vault copies another vault's configuration into the active vault after confirmation. Source files overwrite matching paths, including saved model/R2 keys; destination-only files remain. Source conversations are not copied, and the source vault stays unchanged. Enter the source password if asked. Live sessions close after success; select Reload if offered for the merged voice settings.</p>
               <p>Creating a vault can start empty or copy an existing vault; creating it does not automatically switch to it. A vault can also be password-protected, which encrypts its database. CHA cannot recover a forgotten password. Password-protected vaults are never automatically mirrored to Markdown. Enabling protection stops future mirror writes but leaves existing copies on disk; existing copies, exports, and downloaded conversations remain plaintext.</p>
+            </div>
+          </details>
+          <details>
+            <summary>A little more about speech</summary>
+            <div>
+              <p>The native application uses FishAudio for speech output. Save its key under <strong>Settings → API Keys</strong>, add voices with FishAudio reference IDs under <strong>Settings → Voices</strong>, and choose the output endpoint, model, key, format, and default voice under <strong>Voice settings</strong>. Characters and personas can select their own voice in Settings. ElevenLabs output is no longer supported.</p>
+              <p>Saved-session audio survives application restarts and replays without another FishAudio request. Voice changes apply when new audio is generated; clear the session's audio cache to replace existing clips. Welcome audio and pending downloads do not survive an application restart. Turning automatic caching off stops future submissions; switching vaults cancels pending downloads.</p>
             </div>
           </details>
           <details>

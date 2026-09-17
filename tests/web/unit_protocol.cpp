@@ -637,36 +637,28 @@ TEST(WebProtocol, ParsesBodiesAndBuildsJsonResponses) {
 TEST(WebSettings, DefaultsRespectCoupledResourceAndLifetimeLimits) {
     const WebSettings settings;
     EXPECT_GT(settings.http_thread_pool_size, settings.session_limit);
+    EXPECT_GE(
+        settings.http_thread_pool_size,
+        settings.session_limit + settings.http_request_headroom);
+    EXPECT_GE(settings.http_pending_request_limit, settings.http_thread_pool_size);
     EXPECT_GT(settings.command_batch_size, 0U);
     EXPECT_GT(settings.event_batch_size, 0U);
     EXPECT_GE(settings.orphan_limit, settings.idle_grace);
     EXPECT_GT(settings.delete_deadline, settings.sse_drain_deadline);
 }
 
-TEST(WebSettings, RequestHeadroomCoversNonStreamingWork) {
-    const WebSettings settings;
-    EXPECT_GE(
-        settings.http_thread_pool_size,
-        settings.session_limit + settings.http_request_headroom);
-    EXPECT_GE(settings.http_pending_request_limit, settings.http_thread_pool_size);
-}
-
-TEST(WebSettings, HttpServerRejectsPoolWithoutSessionHeadroom) {
-    httplib::Server server;
-    WebSettings settings;
-    settings.session_limit = 20;
-    EXPECT_THROW(
-        configure_http_server(server, settings),
-        std::invalid_argument);
-}
-
-TEST(WebSettings, HttpServerRejectsPendingLimitBelowPoolSize) {
-    httplib::Server server;
-    WebSettings settings;
-    settings.http_pending_request_limit = settings.http_thread_pool_size - 1;
-    EXPECT_THROW(
-        configure_http_server(server, settings),
-        std::invalid_argument);
+TEST(WebSettings, HttpServerRejectsInvalidRequestLimits) {
+    for (const bool insufficient_headroom : {true, false}) {
+        SCOPED_TRACE(insufficient_headroom ? "session headroom" : "pending limit");
+        httplib::Server server;
+        WebSettings settings;
+        if (insufficient_headroom) {
+            settings.session_limit = 20;
+        } else {
+            settings.http_pending_request_limit = settings.http_thread_pool_size - 1;
+        }
+        EXPECT_THROW(configure_http_server(server, settings), std::invalid_argument);
+    }
 }
 
 TEST(WebSettings, RequestHeadroomIsInjectable) {

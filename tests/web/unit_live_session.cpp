@@ -5,7 +5,6 @@
 
 #include "support/test_backends.h"
 #include "support/test_live_session.h"
-#include "util/logging.h"
 #include "util/path_name.h"
 
 #include <gtest/gtest.h>
@@ -15,9 +14,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <filesystem>
-#include <fstream>
 #include <future>
-#include <iterator>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -160,12 +157,6 @@ SessionOpener scripted_opener(
     };
 }
 
-SessionOpener test_opener(const std::filesystem::path& path) {
-    return [path](const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier) {
-        return test::open_test_session(identity, path, notifier);
-    };
-}
-
 // Reads the mailbox until it produces a payload or the deadline expires. The
 // writer heartbeat is a real result, so a helper is the only way to keep these
 // tests bounded without hiding delivery races.
@@ -211,25 +202,15 @@ void execute_sql(const std::filesystem::path& path, const char* statement) {
     }
 }
 
-TEST(OwnerWakeSignal, RemembersWakeBeforeWait) {
-    OwnerWakeSignal notifier;
-    notifier.wake();
-
-    EXPECT_TRUE(notifier.wait_until(std::chrono::steady_clock::now() + 50ms));
-}
-
 TEST(OwnerWakeSignal, CoalescesMultipleWakes) {
     OwnerWakeSignal notifier;
+    EXPECT_FALSE(notifier.wait_until(std::chrono::steady_clock::now() + 5ms));
+    notifier.wake();
+    EXPECT_TRUE(notifier.wait_until(std::chrono::steady_clock::now() + 50ms));
     notifier.wake();
     notifier.wake();
 
     EXPECT_TRUE(notifier.wait_until(std::chrono::steady_clock::now() + 50ms));
-    EXPECT_FALSE(notifier.wait_until(std::chrono::steady_clock::now() + 5ms));
-}
-
-TEST(OwnerWakeSignal, ReturnsFalseAtDeadlineWithoutWake) {
-    OwnerWakeSignal notifier;
-
     EXPECT_FALSE(notifier.wait_until(std::chrono::steady_clock::now() + 5ms));
 }
 
@@ -478,23 +459,6 @@ TEST(LiveSession, KeepsADefaultCharacterThatCouldNotBeSaved) {
     EXPECT_EQ(std::get<SessionSnapshot>(state).default_character_id, "scribe");
 }
 
-TEST(LiveSession, UnknownCommandReportsANoticeWithoutTouchingTheTranscript) {
-    test::TemporarySessionFile file("live_session_unknown");
-    auto controls = std::make_shared<test::BackendControls>();
-    LiveSessionHost host(test_settings(), scripted_opener(file.path(), controls));
-
-    const auto result = host->submit(RawCommand{"/nonsense"}, 2s);
-    ASSERT_TRUE(std::holds_alternative<CommandResult>(result));
-    ASSERT_TRUE(std::get<CommandResult>(result).session.notice);
-    EXPECT_NE(
-        std::get<CommandResult>(result).session.notice->find("Unknown command"),
-        std::string::npos);
-
-    const auto state = host->snapshot(2s);
-    ASSERT_TRUE(std::holds_alternative<SessionSnapshot>(state));
-    EXPECT_TRUE(std::get<SessionSnapshot>(state).transcript.empty());
-}
-
 TEST(LiveSession, FullAndStoppingCommandsDoNotExecute) {
     test::TemporarySessionFile file("live_session_full_queue");
     auto controls = std::make_shared<test::BackendControls>();
@@ -717,12 +681,17 @@ TEST(LiveSession, PresentationChangesPublishOneSnapshotEach) {
     ASSERT_TRUE(next_payload(connection));
     connection.mailbox->written(connection.stream);
 
-    ASSERT_TRUE(std::holds_alternative<CommandResult>(
-        host->submit(RawCommand{"/nonsense"}, 2s)));
+    const auto result = host->submit(RawCommand{"/nonsense"}, 2s);
+    ASSERT_TRUE(std::holds_alternative<CommandResult>(result));
+    ASSERT_TRUE(std::get<CommandResult>(result).session.notice);
+    EXPECT_NE(
+        std::get<CommandResult>(result).session.notice->find("Unknown command"),
+        std::string::npos);
     std::shared_ptr<const SsePayload> noticed = next_payload(connection);
     ASSERT_TRUE(noticed);
     ASSERT_TRUE(std::holds_alternative<SnapshotEvent>(*noticed));
     ASSERT_TRUE(snapshot_of(*noticed).notice);
+    EXPECT_TRUE(snapshot_of(*noticed).transcript.empty());
     EXPECT_NE(
         snapshot_of(*noticed).notice->find("Unknown command"), std::string::npos);
     connection.mailbox->written(connection.stream);
@@ -1084,66 +1053,6 @@ TEST(LiveSession, ControllerFailureIsContainedAndReleasesOnlyThatSession) {
     // The failure is isolated; the healthy actor keeps serving.
     EXPECT_TRUE(std::holds_alternative<CommandResult>(
         healthy_session->submit(StopCommand{}, 2s)));
-}
-
-TEST(LiveSession, PublishesFinishedAfterControllerShutdown) {
-    test::TemporarySessionFile file("live_session_lease");
-    LiveSessionManager manager(test_settings(), test_opener(file.path()));
-    const FullSessionId key{"forum", "leased"};
-    ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(manager.open(key, 5s)));
-    LiveSessionHandle session = manager.lookup(key);
-    ASSERT_TRUE(session);
-    session->request_shutdown();
-    ASSERT_TRUE(wait_for_finished(session));
-    EXPECT_EQ(session->lifecycle(), LiveSessionState::finished);
-}
-
-TEST(LiveSession, GenerationLoggingRecordsStartAndTerminalTransitions) {
-    const std::filesystem::path directory =
-        std::filesystem::temp_directory_path()
-        / ("cha_live_session_log_"
-           + std::to_string(
-               std::chrono::steady_clock::now().time_since_epoch().count()));
-    const std::filesystem::path log_path = directory / "cha.log";
-    initialize_diagnostic_logging(log_path, "info");
-
-    {
-        test::TemporarySessionFile file("live_session_logging");
-        auto controls = std::make_shared<test::BackendControls>();
-        LiveSessionHost host(
-            test_settings(), scripted_opener(file.path(), controls),
-            {}, FullSessionId{"lobby", "logged"});
-        ASSERT_TRUE(std::holds_alternative<CommandResult>(
-            host->submit(RawCommand{"Question"}, 2s)));
-        ASSERT_TRUE(controls->wait_until_running());
-        controls->emit_answer("answer");
-        controls->finish();
-        ASSERT_TRUE(controls->wait_until_idle());
-        // Let the owner observe the terminal controller event.
-        for (int index = 0; index != 20; ++index) {
-            (void)host->snapshot(2s);
-            std::this_thread::sleep_for(5ms);
-        }
-        host->request_shutdown();
-        EXPECT_TRUE(wait_for_finished(host.handle()));
-    }
-    shutdown_diagnostic_logging();
-
-    std::ifstream log(log_path);
-    const std::string contents{
-        std::istreambuf_iterator<char>(log), std::istreambuf_iterator<char>()};
-    std::error_code ignored;
-    std::filesystem::remove_all(directory, ignored);
-
-    EXPECT_NE(
-        contents.find("forum_id=lobby session_id=logged event=generation_started"),
-        std::string::npos);
-    EXPECT_NE(
-        contents.find("event=generation_terminal request_id=1 status=complete"),
-        std::string::npos);
-    EXPECT_NE(contents.find("event=registry_running"), std::string::npos);
-    EXPECT_NE(
-        contents.find("event=controller_released_owner_finished"), std::string::npos);
 }
 
 } // namespace

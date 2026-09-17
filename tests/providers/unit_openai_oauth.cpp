@@ -252,6 +252,16 @@ TEST_F(OpenAiOAuthTest, MissingFileIsSignedOut) {
     EXPECT_FALSE(snapshot.next_poll_delay_ms);
     EXPECT_FALSE(snapshot.error);
     EXPECT_FALSE(std::filesystem::exists(path_));
+    EXPECT_THROW(
+        {
+            try {
+                (void)oauth.credentials();
+            } catch (const std::runtime_error& error) {
+                EXPECT_FALSE(contains_secret(error.what()));
+                throw;
+            }
+        },
+        std::runtime_error);
 }
 
 TEST_F(OpenAiOAuthTest, InvalidFileIsSignedOutWithSanitizedError) {
@@ -274,35 +284,32 @@ TEST_F(OpenAiOAuthTest, ExpiredBundleLoadsConnectedWithoutRefresh) {
 }
 
 TEST_F(OpenAiOAuthTest, StartUsesIntervalStringAndWaitsBeforeFirstPoll) {
-    OpenAiOAuth oauth = make_owner();
-    push(start_ok("5"));
-    const OpenAiOAuthSnapshot started = oauth.start();
-    EXPECT_EQ(started.state, OpenAiOAuthState::waiting);
-    EXPECT_EQ(started.user_code, "TEST-ONLY");
-    EXPECT_EQ(started.verification_url, kVerifyUrl);
-    EXPECT_EQ(started.attempt_expires_at, unix_now() + 15 * 60);
-    EXPECT_EQ(started.next_poll_delay_ms, 5000);
-    ASSERT_EQ(requests().size(), 1U);
-    EXPECT_EQ(requests()[0].url, kStartUrl);
-    EXPECT_EQ(requests()[0].content_type, "application/json");
-    EXPECT_EQ(requests()[0].timeout, 15s);
-    const Json body = Json::parse(requests()[0].body);
-    EXPECT_EQ(body.at("client_id").get<std::string>(), kClientId);
+    for (const Json& interval : {Json("5"), Json(0)}) {
+        SCOPED_TRACE(interval.dump());
+        state_ = std::make_shared<State>();
+        OpenAiOAuth oauth = make_owner();
+        push(start_ok(interval));
+        const OpenAiOAuthSnapshot started = oauth.start();
+        EXPECT_EQ(started.state, OpenAiOAuthState::waiting);
+        EXPECT_EQ(started.user_code, "TEST-ONLY");
+        EXPECT_EQ(started.verification_url, kVerifyUrl);
+        EXPECT_EQ(started.attempt_expires_at, unix_now() + 15 * 60);
+        EXPECT_EQ(started.next_poll_delay_ms, interval.is_string() ? 5000 : 1000);
+        ASSERT_EQ(requests().size(), 1U);
+        EXPECT_EQ(requests()[0].url, kStartUrl);
+        EXPECT_EQ(requests()[0].content_type, "application/json");
+        EXPECT_EQ(requests()[0].timeout, 15s);
+        const Json body = Json::parse(requests()[0].body);
+        EXPECT_EQ(body.at("client_id").get<std::string>(), kClientId);
 
-    const OpenAiOAuthSnapshot early = oauth.poll();
-    EXPECT_EQ(early.state, OpenAiOAuthState::waiting);
-    EXPECT_EQ(requests().size(), 1U);
+        const OpenAiOAuthSnapshot early = oauth.poll();
+        EXPECT_EQ(early.state, OpenAiOAuthState::waiting);
+        EXPECT_EQ(requests().size(), 1U);
 
-    const OpenAiOAuthSnapshot again = oauth.start();
-    EXPECT_EQ(again.user_code, "TEST-ONLY");
-    EXPECT_EQ(requests().size(), 1U);
-}
-
-TEST_F(OpenAiOAuthTest, StartClampsTinyIntervalToOneSecond) {
-    OpenAiOAuth oauth = make_owner();
-    push(start_ok(0));
-    const OpenAiOAuthSnapshot started = oauth.start();
-    EXPECT_EQ(started.next_poll_delay_ms, 1000);
+        const OpenAiOAuthSnapshot again = oauth.start();
+        EXPECT_EQ(again.user_code, "TEST-ONLY");
+        EXPECT_EQ(requests().size(), 1U);
+    }
 }
 
 TEST_F(OpenAiOAuthTest, StartWhileConnectedRequiresDisconnect) {
@@ -646,20 +653,6 @@ TEST_F(OpenAiOAuthTest, SaveFailureClearsMemoryAndAttemptsRemoval) {
     EXPECT_EQ(snapshot.state, OpenAiOAuthState::signed_out);
     expect_sanitized(snapshot.error);
     EXPECT_FALSE(std::filesystem::exists(path_));
-}
-
-TEST_F(OpenAiOAuthTest, CredentialsThrowWhenSignedOut) {
-    OpenAiOAuth oauth = make_owner();
-    EXPECT_THROW(
-        {
-            try {
-                (void)oauth.credentials();
-            } catch (const std::runtime_error& error) {
-                EXPECT_FALSE(contains_secret(error.what()));
-                throw;
-            }
-        },
-        std::runtime_error);
 }
 
 TEST_F(OpenAiOAuthTest, RestartDoesNotKeepPendingLogin) {

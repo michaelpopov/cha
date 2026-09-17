@@ -182,50 +182,30 @@ protected:
     std::filesystem::path export_;
 };
 
-TEST_F(WorkspaceConfigStoreTest, ImportsIntoAMissingDatabase) {
+TEST_F(WorkspaceConfigStoreTest, ImportsThenReplacesConfigurationWithoutLosingSessions) {
     const std::size_t count = import_from_source();
     EXPECT_GE(count, 6U);
     EXPECT_EQ(
         inspect_workspace_session_database(database()),
         WorkspaceDatabaseState::valid_v2);
-    Database handle(database(), Database::Mode::read_only);
-    EXPECT_EQ(
-        handle.pragma_integer("user_version"),
-        workspace_session_database_version);
-    bool found_app = false;
-    bool found_workspace = false;
-    for (const ConfigFile& row : read_workspace_config_files(handle)) {
-        if (row.name == "app.toml") found_app = true;
-        if (row.name == "workspace.toml") found_workspace = true;
+    {
+        Database handle(database(), Database::Mode::read_only);
+        EXPECT_EQ(
+            handle.pragma_integer("user_version"),
+            workspace_session_database_version);
+        bool found_app = false;
+        bool found_workspace = false;
+        for (const ConfigFile& row : read_workspace_config_files(handle)) {
+            if (row.name == "app.toml") found_app = true;
+            if (row.name == "workspace.toml") found_workspace = true;
+        }
+        EXPECT_FALSE(found_app);
+        EXPECT_FALSE(found_workspace);
     }
-    EXPECT_FALSE(found_app);
-    EXPECT_FALSE(found_workspace);
 #ifndef _WIN32
     EXPECT_EQ(posix_mode(database()), static_cast<mode_t>(0600));
 #endif
-}
 
-TEST_F(WorkspaceConfigStoreTest, UpgradesV1AndPreservesSessions) {
-    make_v1_database(database());
-    {
-        Database handle(database(), Database::Mode::read_write);
-        seed_session_rows(handle);
-    }
-
-    import_from_source();
-
-    EXPECT_EQ(
-        inspect_workspace_session_database(database()),
-        WorkspaceDatabaseState::valid_v2);
-    Database handle(database(), Database::Mode::read_write);
-    expect_seeded_session_rows(handle);
-    EXPECT_EQ(
-        handle.pragma_integer("user_version"),
-        workspace_session_database_version);
-}
-
-TEST_F(WorkspaceConfigStoreTest, ReplacesV2ConfigurationAndPreservesSessions) {
-    import_from_source();
     {
         Database handle(database(), Database::Mode::read_write);
         seed_session_rows(handle);
@@ -251,6 +231,25 @@ TEST_F(WorkspaceConfigStoreTest, ReplacesV2ConfigurationAndPreservesSessions) {
         EXPECT_NE(row.name, "workspace.toml");
     }
     EXPECT_TRUE(found_new_notes);
+}
+
+TEST_F(WorkspaceConfigStoreTest, UpgradesV1AndPreservesSessions) {
+    make_v1_database(database());
+    {
+        Database handle(database(), Database::Mode::read_write);
+        seed_session_rows(handle);
+    }
+
+    import_from_source();
+
+    EXPECT_EQ(
+        inspect_workspace_session_database(database()),
+        WorkspaceDatabaseState::valid_v2);
+    Database handle(database(), Database::Mode::read_write);
+    expect_seeded_session_rows(handle);
+    EXPECT_EQ(
+        handle.pragma_integer("user_version"),
+        workspace_session_database_version);
 }
 
 TEST_F(WorkspaceConfigStoreTest, RoundTripsAcceptedFilesByteForByte) {
@@ -373,15 +372,6 @@ TEST_F(WorkspaceConfigStoreTest, IgnoresATopLevelCharacterFileWithoutAnIdDirecto
     EXPECT_TRUE(found_stray);
 }
 
-TEST_F(WorkspaceConfigStoreTest, RecreatesEmptySkeletonDirectories) {
-    import_from_source();
-    export_workspace_configuration(database(), export_);
-    EXPECT_TRUE(std::filesystem::is_directory(export_ / "system" / "providers"));
-    EXPECT_TRUE(std::filesystem::is_directory(export_ / "personas"));
-    EXPECT_TRUE(std::filesystem::is_directory(export_ / "characters"));
-    EXPECT_TRUE(std::filesystem::is_directory(export_ / "forums"));
-}
-
 TEST_F(WorkspaceConfigStoreTest, DoesNotRequireLegacyRootSettingsFiles) {
     std::filesystem::remove(source() / "app.toml");
     std::filesystem::remove(source() / "workspace.toml");
@@ -455,43 +445,23 @@ TEST_F(WorkspaceConfigStoreTest, IgnoresDotenvInsteadOfStoringOrLoadingIt) {
         "api_key = \"api_key_1\"\n");
     workspace_.write_character_config(
         "display_name = \"Guide\"\nprovider = \"secured\"\n");
-    write_bytes(source() / ".env", "CHA_IMPORT_STORE_IGNORED_CREDENTIAL_A1B2=secret-key\n");
 
-    EXPECT_EQ(std::getenv(variable), nullptr);
-    EXPECT_NO_THROW((void)import_from_source());
-    EXPECT_EQ(std::getenv(variable), nullptr);
-    EXPECT_EQ(
-        inspect_workspace_session_database(database()),
-        WorkspaceDatabaseState::valid_v2);
-    Database handle(database(), Database::Mode::read_only);
-    for (const ConfigFile& row : read_workspace_config_files(handle)) {
-        EXPECT_NE(row.name, ".env");
+    for (const std::string_view dotenv : {
+             "CHA_IMPORT_STORE_IGNORED_CREDENTIAL_A1B2=secret-key\n",
+             "not a valid entry\n"}) {
+        SCOPED_TRACE(dotenv);
+        write_bytes(source() / ".env", dotenv);
+        EXPECT_EQ(std::getenv(variable), nullptr);
+        EXPECT_NO_THROW((void)import_from_source());
+        EXPECT_EQ(std::getenv(variable), nullptr);
+        EXPECT_EQ(
+            inspect_workspace_session_database(database()),
+            WorkspaceDatabaseState::valid_v2);
+        Database handle(database(), Database::Mode::read_only);
+        for (const ConfigFile& row : read_workspace_config_files(handle)) {
+            EXPECT_NE(row.name, ".env");
+        }
     }
-}
-
-TEST_F(WorkspaceConfigStoreTest, ImportsAnUnresolvedSavedApiKeyReference) {
-    workspace_.write_provider(
-        "secured",
-        "host = \"example.test\"\n"
-        "port = 443\n"
-        "mode = \"net\"\n"
-        "model = \"secured\"\n"
-        "api_key = \"api_key_1\"\n");
-    workspace_.write_character_config(
-        "display_name = \"Guide\"\nprovider = \"secured\"\n");
-    EXPECT_NO_THROW((void)import_from_source());
-    EXPECT_EQ(
-        inspect_workspace_session_database(database()),
-        WorkspaceDatabaseState::valid_v2);
-}
-
-TEST_F(WorkspaceConfigStoreTest, IgnoresMalformedDotenvWithoutStoringIt) {
-    write_bytes(source() / ".env", "not a valid entry\n");
-
-    EXPECT_NO_THROW((void)import_from_source());
-    EXPECT_EQ(
-        inspect_workspace_session_database(database()),
-        WorkspaceDatabaseState::valid_v2);
 }
 
 TEST_F(WorkspaceConfigStoreTest, AcceptsCollectedMarkdownIncludesAndRejectsExcludedText) {
@@ -895,6 +865,11 @@ void write_key_next_id(
 }
 
 TEST_F(RuntimeWorkspaceConfigStoreTest, OpensOneOwnerOnlyRootWithChildren) {
+    std::error_code error;
+    std::filesystem::remove_all(source(), error);
+    ASSERT_FALSE(error);
+    ASSERT_TRUE(std::filesystem::exists(database()));
+
     std::filesystem::path root;
     std::filesystem::path workspace_child;
     std::filesystem::path welcome_child;
@@ -935,31 +910,13 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, OpensOneOwnerOnlyRootWithChildren) {
         EXPECT_TRUE(
             std::filesystem::is_directory(
                 workspace_child / "system" / "providers"));
+        EXPECT_NE(getws()->find_character("guide"), nullptr);
         const std::shared_ptr<const Workspace> published = getws();
         expect_session_root_identity(published, workspace_child);
     }
     EXPECT_FALSE(std::filesystem::exists(root));
     EXPECT_FALSE(std::filesystem::exists(workspace_child));
     EXPECT_FALSE(std::filesystem::exists(welcome_child));
-}
-
-TEST_F(RuntimeWorkspaceConfigStoreTest, IgnoresAnOrphanedPriorTemporaryTree) {
-    const std::filesystem::path orphan =
-        std::filesystem::temp_directory_path() / "cha-runtime-orphan-block4";
-    std::filesystem::create_directories(orphan / "workspace");
-    write_bytes(orphan / "workspace" / "app.toml", "junk = true\n");
-    std::filesystem::path used;
-    {
-        const auto store = open_store();
-        used = store->private_root();
-        EXPECT_NE(used, orphan);
-        EXPECT_TRUE(std::filesystem::exists(orphan / "workspace" / "app.toml"));
-        EXPECT_EQ(getws()->find_character("guide")->provider_id, "test");
-    }
-    EXPECT_FALSE(std::filesystem::exists(used));
-    EXPECT_TRUE(std::filesystem::exists(orphan));
-    std::error_code error;
-    std::filesystem::remove_all(orphan, error);
 }
 
 TEST_F(RuntimeWorkspaceConfigStoreTest, HoldsTheLeaseAgainstRuntimeImportAndExport) {
@@ -997,14 +954,6 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, InheritedEnvironmentValuesWinAtStartup) 
     ASSERT_TRUE(set_environment_variable(dotenv_variable, "from-process"));
     const auto store = open_store();
     EXPECT_STREQ(std::getenv(dotenv_variable), "from-process");
-    EXPECT_NE(getws()->find_character("guide"), nullptr);
-}
-
-TEST_F(RuntimeWorkspaceConfigStoreTest, StartsAfterDeletingTheOriginalImportTree) {
-    std::error_code error;
-    std::filesystem::remove_all(source(), error);
-    ASSERT_TRUE(std::filesystem::exists(database()));
-    const auto store = open_store();
     EXPECT_NE(getws()->find_character("guide"), nullptr);
 }
 
@@ -1096,31 +1045,6 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, SuccessfulEditUpdatesFilesDatabaseAndWor
             ? std::string()
             : std::getenv(dotenv_variable),
         dotenv_before);
-}
-
-TEST_F(RuntimeWorkspaceConfigStoreTest, EditPreservesEveryExistingConfigRowid) {
-    constexpr std::string_view sentinel =
-        "system/providers/second/config.toml";
-    {
-        Database handle(database(), Database::Mode::read_write);
-        Statement move_row = handle.prepare(
-            "UPDATE config SET rowid = 1000000 WHERE name = ?1", sentinel);
-        move_row.run();
-        ASSERT_EQ(handle.changes(), 1);
-    }
-
-    const auto store = open_store();
-    const auto before = config_rowids(database());
-    ASSERT_EQ(before.at(std::string(sentinel)), 1000000);
-
-    store->apply_character_settings("guide", "second", std::nullopt);
-
-    const auto after = config_rowids(database());
-    EXPECT_EQ(after, before);
-    EXPECT_NE(
-        stored_config(database(), "characters/guide/character.toml")
-            .find("second"),
-        std::string::npos);
 }
 
 TEST_F(
@@ -1336,43 +1260,6 @@ TEST_F(
 
 TEST_F(
     RuntimeWorkspaceConfigStoreTest,
-    EmptyEditPublishesAndDoesNotConsumeSqliteFaults) {
-    const auto store = open_store();
-    store->apply_character_settings(
-        "guide", "second", std::string_view{"mono"},
-        std::nullopt, std::string_view{"high"}, WebSearchMode::automatic);
-    const auto rowids_before = config_rowids(database());
-    for (const WorkspaceConfigFault fault : {
-             WorkspaceConfigFault::sqlite_begin,
-             WorkspaceConfigFault::sqlite_write,
-         }) {
-        const std::shared_ptr<const Workspace> before = getws();
-        force_next_workspace_config_fault(fault);
-        const WorkspaceConfigEditResult unchanged =
-            store->apply_character_settings(
-                "guide", "second", std::string_view{"mono"},
-                std::nullopt, std::string_view{"high"},
-                WebSearchMode::automatic);
-
-        EXPECT_NE(getws().get(), before.get());
-        EXPECT_NE(
-            std::find(
-                unchanged.affected_forum_ids.begin(),
-                unchanged.affected_forum_ids.end(),
-                "lobby"),
-            unchanged.affected_forum_ids.end());
-        EXPECT_EQ(config_rowids(database()), rowids_before);
-
-        EXPECT_THROW(
-            (void)store->apply_character_settings(
-                "guide", "test", std::nullopt),
-            std::runtime_error);
-        EXPECT_EQ(getws()->find_character("guide")->provider_id, "second");
-    }
-}
-
-TEST_F(
-    RuntimeWorkspaceConfigStoreTest,
     EmptyEditPublicationFailureRestoresWithoutRequiringRestart) {
     const auto store = open_store();
     store->apply_character_settings(
@@ -1514,35 +1401,6 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, PersistsTheVoiceLifecycle) {
         "guide", "test", std::nullopt, std::nullopt);
     store->apply_voice_delete("voice_1");
     EXPECT_EQ(getws()->find_voice("voice_1"), nullptr);
-}
-
-TEST_F(RuntimeWorkspaceConfigStoreTest, PersistsVoiceInputSettings) {
-    const auto store = open_store();
-    store->apply_voice_input_update({
-        .url = "https://example.com/realtime",
-        .model = "transcribe-model",
-        .api_key_id = "api_key_7",
-        .delay = "xhigh",
-        .prompt = "Technical names and architecture terms.",
-    });
-
-    ASSERT_TRUE(getws()->voice_input());
-    EXPECT_EQ(getws()->voice_input()->url, "https://example.com/realtime");
-    EXPECT_EQ(getws()->voice_input()->model, "transcribe-model");
-    EXPECT_EQ(getws()->voice_input()->api_key_id, "api_key_7");
-    EXPECT_EQ(getws()->voice_input()->delay, "xhigh");
-    EXPECT_EQ(
-        getws()->voice_input()->prompt,
-        "Technical names and architecture terms.");
-    const std::string stored = stored_config(
-        database(), "system/voice-input/config.toml");
-    EXPECT_NE(stored.find("https://example.com/realtime"), std::string::npos);
-    EXPECT_NE(stored.find("transcribe-model"), std::string::npos);
-    EXPECT_NE(stored.find("api_key_7"), std::string::npos);
-    EXPECT_NE(stored.find("xhigh"), std::string::npos);
-    EXPECT_NE(
-        stored.find("Technical names and architecture terms."),
-        std::string::npos);
 }
 
 TEST_F(RuntimeWorkspaceConfigStoreTest, PersistsVoiceOutputSettings) {

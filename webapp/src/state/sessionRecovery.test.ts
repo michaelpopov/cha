@@ -66,54 +66,30 @@ describe('session probe', () => {
     return new ChaError(409, 'session_not_live', 'Session is not live.');
   }
 
-  it('reports a session that answers as live and hands back its snapshot', async () => {
-    const { probe, snapshots } = probeWith();
+  it('classifies probe outcomes, re-opening only unloaded sessions', async () => {
+    const cases = [
+      { name: 'live', snapshotError: null, openError: null, outcome: 'live', opens: 0 },
+      { name: 'unloaded', snapshotError: notLive(), openError: null, outcome: 'recovered', opens: 1 },
+      { name: 'capacity', snapshotError: notLive(), openError: new ChaError(503, 'session_limit_reached', 'Session limit reached.'), outcome: 'waiting-for-capacity', opens: 1 },
+      { name: 'unreachable', snapshotError: new Error('Server unavailable'), openError: null, outcome: 'unavailable', opens: 0 },
+      { name: 'failed re-open', snapshotError: notLive(), openError: new Error('Server unavailable'), outcome: 'unavailable', opens: 1 },
+    ] as const;
+    for (const item of cases) {
+      const openSession = vi.fn(async () => {
+        if (item.openError) throw item.openError;
+        return { forum_id: 'lobby', session_id: 'planning' };
+      });
+      const getSessionSnapshot = vi.fn().mockResolvedValue(snapshotFixture);
+      if (item.snapshotError) getSessionSnapshot.mockRejectedValueOnce(item.snapshotError);
+      const { probe, snapshots } = probeWith({ openSession, getSessionSnapshot });
 
-    expect(await probe()).toBe('live');
-    expect(snapshots).toEqual([snapshotFixture]);
-  });
-
-  it('re-opens an unloaded session and reports it recovered', async () => {
-    const openSession = vi.fn(async () => ({ forum_id: 'lobby', session_id: 'planning' }));
-    const getSessionSnapshot = vi.fn()
-      .mockRejectedValueOnce(notLive())
-      .mockResolvedValueOnce(snapshotFixture);
-    const { probe, snapshots } = probeWith({ openSession, getSessionSnapshot });
-
-    expect(await probe()).toBe('recovered');
-    expect(openSession).toHaveBeenCalledWith('lobby', 'planning');
-    expect(snapshots).toEqual([snapshotFixture]);
-  });
-
-  it('reports a session it cannot re-open for want of capacity', async () => {
-    const { probe } = probeWith({
-      getSessionSnapshot: async () => { throw notLive(); },
-      openSession: async () => {
-        throw new ChaError(503, 'session_limit_reached', 'Session limit reached.');
-      },
-    });
-
-    expect(await probe()).toBe('waiting-for-capacity');
-  });
-
-  it('reports an unreachable server rather than re-opening blindly', async () => {
-    const openSession = vi.fn();
-    const { probe } = probeWith({
-      openSession,
-      getSessionSnapshot: async () => { throw new Error('Server unavailable'); },
-    });
-
-    expect(await probe()).toBe('unavailable');
-    expect(openSession).not.toHaveBeenCalled();
-  });
-
-  it('reports an unloaded session it could not re-open at all', async () => {
-    const { probe } = probeWith({
-      getSessionSnapshot: async () => { throw notLive(); },
-      openSession: async () => { throw new Error('Server unavailable'); },
-    });
-
-    expect(await probe()).toBe('unavailable');
+      expect(await probe(), item.name).toBe(item.outcome);
+      expect(openSession, item.name).toHaveBeenCalledTimes(item.opens);
+      if (item.opens) expect(openSession).toHaveBeenCalledWith('lobby', 'planning');
+      expect(snapshots, item.name).toEqual(
+        item.outcome === 'live' || item.outcome === 'recovered' ? [snapshotFixture] : [],
+      );
+    }
   });
 
   // A snapshot that lands after the user has left must not be pushed into a
@@ -127,67 +103,41 @@ describe('session probe', () => {
 });
 
 describe('session stream recovery ladder', () => {
-  it('probes, reports, waits, and attaches in that order on one rung', async () => {
-    const driver = drivableSteps(['live'], [true]);
-
-    expect(await recoverSessionStream([250], driver.steps)).toBe('connected');
-    expect(driver.order).toEqual(['probe', 'report', 'wait', 'attach']);
-    expect(driver.reports).toEqual([reconnectingMessage]);
-    expect(driver.waits).toEqual([250]);
-  });
-
-  it('keeps climbing when a rung attaches a stream that fails first', async () => {
-    const driver = drivableSteps(['live', 'live'], [false, true]);
-
-    expect(await recoverSessionStream([250, 500], driver.steps)).toBe('connected');
-    expect(driver.waits).toEqual([250, 500]);
-    expect(driver.attachCount()).toBe(2);
-  });
-
-  it('attaches after a session the server had unloaded is opened again', async () => {
-    const driver = drivableSteps(['recovered'], [true]);
-
-    expect(await recoverSessionStream([250], driver.steps)).toBe('connected');
-    expect(driver.attachCount()).toBe(1);
-  });
-
-  it('does not attach to a session it could not reach', async () => {
-    const driver = drivableSteps(['unavailable', 'live'], [true]);
-
-    expect(await recoverSessionStream([250, 500], driver.steps)).toBe('connected');
-    expect(driver.order).toEqual([
-      'probe', 'report', 'wait',
-      'probe', 'report', 'wait', 'attach',
-    ]);
-  });
-
-  it('names a session waiting for capacity while it keeps retrying', async () => {
-    const driver = drivableSteps(['waiting-for-capacity', 'live'], [true]);
-
-    expect(await recoverSessionStream([250, 500], driver.steps)).toBe('connected');
-    expect(driver.reports).toEqual([waitingForCapacityMessage, reconnectingMessage]);
+  it('recovers live, reopened, temporarily unreachable, and capacity-limited sessions in order', async () => {
+    const rung = ['probe', 'report', 'wait', 'attach'];
+    const cases: Array<{
+      name: string; probes: ProbeOutcome[]; attachments: boolean[]; delays: number[];
+      order: string[]; reports: string[]; attaches: number;
+    }> = [
+      { name: 'live', probes: ['live'], attachments: [true], delays: [250], order: rung, reports: [reconnectingMessage], attaches: 1 },
+      { name: 'failed attachment', probes: ['live', 'live'], attachments: [false, true], delays: [250, 500], order: [...rung, ...rung], reports: [reconnectingMessage, reconnectingMessage], attaches: 2 },
+      { name: 'reopened', probes: ['recovered'], attachments: [true], delays: [250], order: rung, reports: [reconnectingMessage], attaches: 1 },
+      { name: 'unreachable', probes: ['unavailable', 'live'], attachments: [true], delays: [250, 500], order: ['probe', 'report', 'wait', ...rung], reports: [reconnectingMessage, reconnectingMessage], attaches: 1 },
+      { name: 'capacity', probes: ['waiting-for-capacity', 'live'], attachments: [true], delays: [250, 500], order: ['probe', 'report', 'wait', ...rung], reports: [waitingForCapacityMessage, reconnectingMessage], attaches: 1 },
+    ];
+    for (const item of cases) {
+      const driver = drivableSteps(item.probes, item.attachments);
+      expect(await recoverSessionStream(item.delays, driver.steps), item.name).toBe('connected');
+      expect(driver.order, item.name).toEqual(item.order);
+      expect(driver.reports, item.name).toEqual(item.reports);
+      expect(driver.waits, item.name).toEqual(item.delays);
+      expect(driver.attachCount(), item.name).toBe(item.attaches);
+    }
   });
 
   // A live session whose stream will not attach is a broken connection like
   // any other now: a session taken over on another device says so on the
   // stream itself and never reaches this ladder.
-  it('reports a plain retry when the ladder runs out', async () => {
-    const driver = drivableSteps(
-      ['live', 'live', 'live'],
-      [false, false, false],
-    );
-
-    expect(await recoverSessionStream([250, 500, 1_000], driver.steps)).toBe('retry');
-    expect(driver.attachCount()).toBe(3);
-  });
-
-  it('reports a plain retry when a probe failed before the ladder ran out', async () => {
-    const driver = drivableSteps(
-      ['live', 'unavailable', 'live'],
-      [false, false],
-    );
-
-    expect(await recoverSessionStream([250, 500, 1_000], driver.steps)).toBe('retry');
+  it('reports a plain retry when the ladder is exhausted, with or without a failed probe', async () => {
+    const cases: Array<{ probes: ProbeOutcome[]; attachments: boolean[]; attaches: number }> = [
+      { probes: ['live', 'live', 'live'], attachments: [false, false, false], attaches: 3 },
+      { probes: ['live', 'unavailable', 'live'], attachments: [false, false], attaches: 2 },
+    ];
+    for (const item of cases) {
+      const driver = drivableSteps(item.probes, item.attachments);
+      expect(await recoverSessionStream([250, 500, 1_000], driver.steps), item.probes.join(',')).toBe('retry');
+      expect(driver.attachCount()).toBe(item.attaches);
+    }
   });
 
   it('stops without reporting when a cancelled wait ends the ladder', async () => {

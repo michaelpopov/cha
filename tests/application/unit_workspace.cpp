@@ -310,6 +310,7 @@ TEST(Workspace, ResolvesCompleteProviderAndStyleValues) {
         "base_path = \"/api\"\n"
         "mode = \"net\"\n"
         "model = \"model-one\"\n"
+        "api_key = \"api_key_1\"\n"
         "stream = false\n"
         "temperature = 0.25\n"
         "max_tokens = 512\n"
@@ -342,6 +343,8 @@ TEST(Workspace, ResolvesCompleteProviderAndStyleValues) {
     EXPECT_EQ(provider->config.base_path, "/api");
     EXPECT_EQ(provider->config.mode, Mode::net);
     EXPECT_EQ(provider->config.model, "model-one");
+    EXPECT_EQ(provider->config.api_key_id, "api_key_1");
+    EXPECT_EQ(provider->config.auth, ProviderAuth::none);
     EXPECT_FALSE(provider->config.stream);
     EXPECT_EQ(provider->config.temperature, 0.25);
     EXPECT_EQ(provider->config.max_tokens, 512);
@@ -670,25 +673,6 @@ TEST(Workspace, OverlayCleansUpWhenProviderValidationThrows) {
     } catch (const std::runtime_error&) {
     }
     EXPECT_EQ(std::getenv(inserted), nullptr);
-}
-
-TEST(Workspace, LoadsASelectedProviderWithASavedApiKeyReference) {
-    test::TestWorkspace fixture;
-    fixture.write_provider(
-        "secured",
-        "host = \"example.test\"\n"
-        "port = 443\n"
-        "mode = \"net\"\n"
-        "model = \"secured\"\n"
-        "api_key = \"api_key_1\"\n");
-    fixture.write_character_config(
-        "display_name = \"Guide\"\nprovider = \"secured\"\n");
-
-    const Workspace workspace = Workspace::load(fixture.root());
-    const WorkspaceProvider* const provider = workspace.find_provider("secured");
-    ASSERT_NE(provider, nullptr);
-    EXPECT_EQ(provider->config.api_key_id, "api_key_1");
-    EXPECT_EQ(provider->config.auth, ProviderAuth::none);
 }
 
 TEST(Workspace, CreatesAProviderByCopyingExistingSettings) {

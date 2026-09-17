@@ -392,7 +392,7 @@
         <li><a href="#commands">Chat command</a></li>
         <li><a href="#character-settings">Character settings</a></li>
         <li><a href="#vault-settings">Vault settings</a></li>
-        <li><a href="#provider-settings">Provider settings</a></li>
+        <li><a href="#provider-settings">Provider and voice settings</a></li>
         <li><a href="#database-maintenance">Backing up and editing CHA data</a></li>
         <li><a href="#exporting">Downloading conversations</a></li>
         <li><a href="#privacy">Privacy and data</a></li>
@@ -663,7 +663,7 @@
         </p>
         <p>
           Select the Settings gear at the bottom of the sidebar to manage
-          vaults, the OpenAI connection, providers, character styles, and saved
+          vaults, the OpenAI connection, providers, character styles, voices, and saved
           API keys. The vault selector beside Settings changes the active vault
           for the whole application.
         </p>
@@ -694,6 +694,7 @@
         <ul>
           <li><strong>Rename</strong> to change the displayed title.</li>
           <li><strong>Download</strong> to save a Markdown copy.</li>
+          <li><strong>Clear audio cache</strong> to remove stored speech and cancel that session's pending audio downloads without changing its messages.</li>
           <li><strong>Delete</strong> to remove the session from CHA.</li>
         </ul>
         <div class="warning">
@@ -754,32 +755,42 @@
           <strong>Stop</strong>. Select it to stop generation.
         </p>
 
-        <h3>Use response controls</h3>
+        <h3>Use message controls</h3>
         <p>
           Small controls appear beside the timestamp below each AI response. When
-          voice output is configured, the speaker button reads a completed response
-          aloud. Select the crossed-out eye button to cover the conversation through
+          voice output is configured, speaker buttons read completed human messages
+          and AI responses aloud. A message without audio is downloaded in the
+          background, saved, and then played. The button shows whether audio is
+          queued, being generated, or ready; select a failed button to retry.
+          During playback it becomes a Stop button. Stopping preserves your place
+          so the next playback resumes there; finishing resets it to the beginning.
+        </p>
+        <p>
+          Select the crossed-out eye button to cover the conversation through
           that response. Select the red trash button to remove that response and the
           prompt that generated it. CHA asks for confirmation because this deletion
           is permanent and cannot be undone.
         </p>
         <p>
           A second speaker button appears below the message box, immediately to the
-          left of the <strong>Rus</strong> switch. Select it to prepare audio for every
-          completed AI response in the current session and to prepare each later
-          response when it finishes. CHA sends at most two of these preparation
-          requests at once; a newly completed response goes ahead of older responses
-          still waiting. The pressed button shows that automatic preparation remains
-          enabled. Select it again to stop scheduling audio. Requests that have
-          already started still finish and are cached.
+          left of the <strong>Rus</strong> switch. Select it to cache audio for all
+          completed human messages and AI responses shown in the current session,
+          including covered messages, and for later messages as they complete.
+          Repeated multicast prompts are skipped. CHA downloads up to three clips
+          at once in the background. The pressed button shows that automatic
+          caching remains enabled. Select it again to stop submitting new work.
+          Switching sessions also turns it off. Accepted downloads continue even
+          when you leave the session, and do not play automatically.
         </p>
         <p>
-          Prepared and previously played response audio is kept in memory, up to
-          256&nbsp;MiB, and replaying the same text with the same voice and settings
-          does not call FishAudio again. The cache lasts only until the application
-          or page is reloaded. Switching sessions turns automatic preparation off,
-          but does not discard audio already cached. Voice-preview controls continue
-          to create a fresh sample each time so they can be used for tuning.
+          Audio for saved sessions is kept in the vault database and survives page
+          reloads and application restarts. Replaying a cached message does not
+          call FishAudio again, even if you later change its voice or output
+          settings. To regenerate it with new settings, choose <strong>Clear audio
+          cache</strong> from that session's Recent menu. Welcome audio lasts only
+          for the current application run. Pending downloads do not resume after
+          an application restart; switching vaults or importing configuration also
+          cancels them. Voice previews create a fresh sample each time for tuning.
         </p>
         <p>
           Covered conversation remains visible, but later AI requests do not receive
@@ -791,7 +802,7 @@
         <p>
           Delete is offered only for a saved AI response that has its matching prompt;
           it does not apply to Self-notes, failed turns, or prompts stopped before an
-          answer was recorded. Response controls are unavailable while CHA is
+          answer was recorded. Cover and delete controls are unavailable while CHA is
           generating a reply. A cover boundary is cleared when the session is reopened,
           or when deleting a turn leaves no covered conversation beneath it.
         </p>
@@ -863,6 +874,10 @@
               <tr>
                 <td>Style</td>
                 <td>The font treatment used to display this character's messages.</td>
+              </tr>
+              <tr>
+                <td>Voice</td>
+                <td>The FishAudio voice used for new speech. Unassigned characters use the output default; already cached audio keeps its original voice.</td>
               </tr>
             </tbody>
           </table>
@@ -961,7 +976,25 @@
       </section>
 
       <section id="provider-settings">
-        <h2>10. Provider settings</h2>
+        <h2>10. Provider and voice settings</h2>
+        <h3>Configure speech output</h3>
+        <p>
+          In the native application, open <strong>Settings → Voices</strong>, add
+          a voice with its FishAudio reference ID, then open <strong>Voice
+          settings</strong>. Use output endpoint
+          <code>https://api.fish.audio/v1/tts</code>, the FishAudio model name
+          (the initial value is <code>s2.1-pro</code>), a saved FishAudio API key,
+          output format <code>mp3</code>, <code>wav</code>, or <code>opus</code>,
+          and a default voice. Save the key under <strong>Settings → API Keys</strong>
+          first. Assign voices in character and persona Settings to customize
+          their speech; otherwise they use the default voice.
+        </p>
+        <p>
+          ElevenLabs output is no longer supported. Replace old output settings
+          and voice IDs with FishAudio values. Voice output is unavailable in
+          ordinary browser-only server mode.
+        </p>
+        <h3>Configure a model connection</h3>
         <p>
           A provider tells CHA which model endpoint to use and how to authenticate
           there. Select the Settings gear, then <strong>Providers</strong>. Choose an

@@ -621,37 +621,19 @@ TEST(LiveSessionManager, ShutdownAtCommitNeverPublishesAndTearsDownTheNewControl
     // The controller that opening produced was still shut down.
 }
 
-TEST(LiveSessionManager, ShutdownJoinUsesOneBoundedGracePeriod) {
-    SessionFiles files;
-    WedgedOwners wedged(files);
-    LiveSessionManager manager(manager_settings(1), wedged.opener());
-    const FullSessionId key{"f", "blocked"};
-    ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(manager.open(key, 5s)));
-    LiveSessionHandle session = manager.lookup(key);
-    ASSERT_TRUE(session);
-    ASSERT_TRUE(wedged.wedge(*session));
-
-    manager.begin_shutdown();
-    EXPECT_FALSE(manager.join_shutdown(50ms));
-    const std::vector<FullSessionId> expected_unfinished{key};
-    EXPECT_EQ(manager.unfinished_owners(), expected_unfinished);
-
-    wedged.release();
-    EXPECT_TRUE(manager.join_shutdown(10s));
-    EXPECT_TRUE(manager.unfinished_owners().empty());
-}
-
 TEST(LiveSessionManager, ShutdownGraceIsNotMultipliedByOwnerCount) {
     SessionFiles files;
     WedgedOwners wedged(files);
     LiveSessionManager manager(manager_settings(4), wedged.opener());
     std::vector<LiveSessionHandle> sessions;
+    std::vector<FullSessionId> expected_unfinished;
     for (int index = 0; index != 4; ++index) {
         const FullSessionId key{"f", "blocked-" + std::to_string(index)};
         ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(manager.open(key, 5s)));
         LiveSessionHandle session = manager.lookup(key);
         ASSERT_TRUE(session);
         sessions.push_back(session);
+        expected_unfinished.push_back(key);
     }
     // All four share one wedged backend control, so all four owners block.
     for (const LiveSessionHandle& session : sessions) {
@@ -664,10 +646,15 @@ TEST(LiveSessionManager, ShutdownGraceIsNotMultipliedByOwnerCount) {
     const auto elapsed = std::chrono::steady_clock::now() - started;
     EXPECT_GE(elapsed, 200ms);
     EXPECT_LT(elapsed, 800ms);
-    EXPECT_EQ(manager.unfinished_owners().size(), sessions.size());
+    const auto unfinished = manager.unfinished_owners();
+    ASSERT_EQ(unfinished.size(), expected_unfinished.size());
+    for (const FullSessionId& key : expected_unfinished) {
+        EXPECT_NE(std::find(unfinished.begin(), unfinished.end(), key), unfinished.end());
+    }
 
     wedged.release();
     EXPECT_TRUE(manager.join_shutdown(10s));
+    EXPECT_TRUE(manager.unfinished_owners().empty());
 }
 
 TEST(LiveSessionManager, ReopensSameKeyAfterTheOldOwnerHasBeenJoined) {

@@ -12,25 +12,18 @@ function secondsAgo(elapsed: number): number {
 }
 
 describe('compact session time', () => {
-  it('counts minutes, hours, and days up to a week', () => {
-    expect(formatSessionTime(secondsAgo(0), now)).toBe('Now');
-    expect(formatSessionTime(secondsAgo(59), now)).toBe('Now');
-    expect(formatSessionTime(secondsAgo(minute), now)).toBe('1m');
-    expect(formatSessionTime(secondsAgo(59 * minute), now)).toBe('59m');
-    expect(formatSessionTime(secondsAgo(hour), now)).toBe('1h');
-    expect(formatSessionTime(secondsAgo(23 * hour), now)).toBe('23h');
-    expect(formatSessionTime(secondsAgo(day), now)).toBe('1d');
-    expect(formatSessionTime(secondsAgo(6 * day), now)).toBe('6d');
-  });
-
-  it('switches to a date beyond a week, carrying the year only outside this one', () => {
+  it('formats relative ages, older dates, and future timestamps', () => {
+    const cases: Array<[number, string]> = [
+      [0, 'Now'], [59, 'Now'], [minute, '1m'], [59 * minute, '59m'],
+      [hour, '1h'], [23 * hour, '23h'], [day, '1d'], [6 * day, '6d'], [-minute, 'Now'],
+    ];
+    for (const [elapsed, expected] of cases) {
+      expect(formatSessionTime(secondsAgo(elapsed), now), `elapsed: ${elapsed}`).toBe(expected);
+    }
     const thisYear = formatSessionTime(secondsAgo(8 * day), now);
     expect(thisYear).not.toMatch(/^(Now|\d+[mhd])$/);
     expect(thisYear).not.toContain('2026');
     expect(formatSessionTime(secondsAgo(400 * day), now)).toContain('2025');
   });
 
-  it('reports a timestamp from the future as Now rather than a negative age', () => {
-    expect(formatSessionTime(secondsAgo(-minute), now)).toBe('Now');
-  });
 });

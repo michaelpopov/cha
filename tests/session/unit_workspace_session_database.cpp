@@ -586,9 +586,13 @@ TEST(WorkspaceSessionDatabase, ReadsSortedConfigRowsAndReplacesAtomically) {
         workspace.root() / "workspace.sqlite3";
     create_empty_workspace_session_database(path);
     Database database(path, Database::Mode::read_write);
+    std::string binary{"a"};
+    binary.push_back('\0');
+    binary.push_back(static_cast<char>(0xFF));
+    binary.push_back('\n');
     const std::vector<ConfigFile> initial{
         {"z.toml", "z"},
-        {"a.toml", "a"},
+        {"a.toml", binary},
         {"m.toml", "m"},
     };
     {
@@ -598,7 +602,14 @@ TEST(WorkspaceSessionDatabase, ReadsSortedConfigRowsAndReplacesAtomically) {
     }
     expect_config_rows(
         read_workspace_config_files(database),
-        {{"a.toml", "a"}, {"m.toml", "m"}, {"z.toml", "z"}});
+        {{"a.toml", binary}, {"m.toml", "m"}, {"z.toml", "z"}});
+    const std::vector<ConfigFile> restored = read_workspace_config_files(database);
+    ASSERT_EQ(restored.size(), 3U);
+    EXPECT_EQ(restored[0].content.size(), 4U);
+    EXPECT_EQ(restored[0].content[1], '\0');
+    EXPECT_EQ(
+        static_cast<unsigned char>(restored[0].content[2]),
+        static_cast<unsigned char>(0xFF));
     EXPECT_EQ(
         database.pragma_integer("user_version"),
         workspace_session_database_version);
@@ -610,7 +621,7 @@ TEST(WorkspaceSessionDatabase, ReadsSortedConfigRowsAndReplacesAtomically) {
     }
     expect_config_rows(
         read_workspace_config_files(database),
-        {{"a.toml", "a"}, {"m.toml", "m"}, {"z.toml", "z"}});
+        {{"a.toml", binary}, {"m.toml", "m"}, {"z.toml", "z"}});
 
     {
         storage::SqliteTransaction transaction(database);
@@ -621,34 +632,6 @@ TEST(WorkspaceSessionDatabase, ReadsSortedConfigRowsAndReplacesAtomically) {
     EXPECT_EQ(
         database.pragma_integer("user_version"),
         workspace_session_database_version);
-}
-
-TEST(WorkspaceSessionDatabase, RoundTripsExactConfigBytes) {
-    test::TestWorkspace workspace;
-    const std::filesystem::path path =
-        workspace.root() / "workspace.sqlite3";
-    create_empty_workspace_session_database(path);
-    Database database(path, Database::Mode::read_write);
-
-    std::string binary{"a"};
-    binary.push_back('\0');
-    binary.push_back(static_cast<char>(0xFF));
-    binary.push_back('\n');
-    const std::vector<ConfigFile> rows{{"notes.md", binary}};
-    {
-        storage::SqliteTransaction transaction(database);
-        replace_workspace_config_files(database, rows);
-        transaction.commit();
-    }
-
-    const std::vector<ConfigFile> restored = read_workspace_config_files(database);
-    expect_config_rows(restored, rows);
-    ASSERT_EQ(restored.size(), 1U);
-    EXPECT_EQ(restored[0].content.size(), 4U);
-    EXPECT_EQ(restored[0].content[1], '\0');
-    EXPECT_EQ(
-        static_cast<unsigned char>(restored[0].content[2]),
-        static_cast<unsigned char>(0xFF));
 }
 
 TEST(WorkspaceSessionDatabase, RejectsAndCanReplaceLegacyStoredDotenv) {
@@ -877,6 +860,7 @@ TEST(WorkspaceSessionDatabase, RejectsSymlinkSidecarPath) {
 
 TEST(SessionStorageLayout, DetectsOnlyDirectLegacyDatabaseFiles) {
     test::TestWorkspace workspace;
+    EXPECT_FALSE(has_legacy_session_databases(workspace.root()));
     const std::filesystem::path sessions =
         workspace.root() / "forums" / "lobby" / "sessions";
     const std::filesystem::path deleted = sessions / "deleted";
@@ -896,11 +880,6 @@ TEST(SessionStorageLayout, DetectsOnlyDirectLegacyDatabaseFiles) {
     const std::filesystem::path archived = deleted / "archived.sqlite3";
     std::ofstream(archived) << "legacy";
     EXPECT_TRUE(has_legacy_session_databases(workspace.root()));
-}
-
-TEST(SessionStorageLayout, AcceptsAWorkspaceWithoutLegacyDirectories) {
-    test::TestWorkspace workspace;
-    EXPECT_FALSE(has_legacy_session_databases(workspace.root()));
 }
 
 } // namespace

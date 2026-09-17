@@ -4,12 +4,14 @@ import { expect, it } from 'vitest';
 import { Markdown, renderRestrictedMarkdown } from './Markdown';
 
 it('renders the supported Markdown subset', () => {
-  render(<Markdown source={'# Dossier\n\nA **bold** and *careful* note.\n\n- one\n- `two`\n\n```txt\nthree\n```'} />);
+  const { container } = render(<Markdown source={'# Dossier\n\nA **bold** and *careful* note.\n\n- one\n- `two`\n\n```txt\nthree\n```\n\n```\n<script>alert(1)</script>\n```'} />);
   expect(screen.getByRole('heading', { name: 'Dossier' })).toBeInTheDocument();
   expect(screen.getByText('bold').tagName).toBe('STRONG');
   expect(screen.getByText('careful').tagName).toBe('EM');
   expect(screen.getByText('two').tagName).toBe('CODE');
   expect(screen.getByText('three').tagName).toBe('CODE');
+  expect(screen.getByText('<script>alert(1)</script>').tagName).toBe('CODE');
+  expect(container.querySelector('script')).not.toBeInTheDocument();
 });
 
 it('strips scripts, image fetches, raw HTML, and link interactivity', () => {

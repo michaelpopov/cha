@@ -1266,7 +1266,7 @@ POST /s/{forum}/{session}/api/v1/actions/delete-turn
 POST /s/{forum}/{session}/api/v1/actions/default-character
 ```
 
-`SettingsRoutes` owns provider, style, and saved-key configuration separately
+`SettingsRoutes` owns provider, style, voice, and saved-key configuration separately
 from live session routes. Vault routes are installed by `ApplicationRuntime`
 because they mutate its process-wide registry. The provider probe receives a
 complete candidate in the request body but does not commit it:
@@ -1278,6 +1278,18 @@ GET    /api/v1/providers/{provider_id}
 PATCH  /api/v1/providers/{provider_id}
 DELETE /api/v1/providers/{provider_id}
 POST   /api/v1/providers/{provider_id}/test
+
+GET    /api/v1/voices
+POST   /api/v1/voices
+PATCH  /api/v1/voices/{voice_id}
+DELETE /api/v1/voices/{voice_id}
+GET    /api/v1/voice-input
+PUT    /api/v1/voice-input
+GET    /api/v1/voice-input/runtime
+GET    /api/v1/voice-output
+PUT    /api/v1/voice-output
+GET    /api/v1/voice-output/runtime
+POST   /api/v1/voice-output/audio
 
 GET    /api/v1/vaults
 POST   /api/v1/vaults
@@ -1296,6 +1308,31 @@ GET    /api/v1/r2-storage
 PUT    /api/v1/r2-storage
 DELETE /api/v1/r2-storage
 ```
+
+Entry audio routes work for stored sessions without opening a live actor:
+
+```text
+POST   /api/v1/forums/{forum}/sessions/{session}/entries/{entry_id}/audio-download
+POST   /api/v1/forums/{forum}/sessions/{session}/audio-downloads
+GET    /api/v1/forums/{forum}/sessions/{session}/audio-downloads
+GET    /api/v1/forums/{forum}/sessions/{session}/entries/{entry_id}/audio
+DELETE /api/v1/forums/{forum}/sessions/{session}/audio-cache
+```
+
+Download submissions carry `vault_name`, `reference_id`, and optional `settings`
+containing `speed`; the batch shape is `{vault_name, entries}`, with an
+`entry_id` on each entry. Text comes from the stored transcript, not the caller.
+A single submission returns 200 if already cached or 202 with `queued`/`running`
+state; a batch returns 202 with per-entry acceptance results. Status and audio
+reads require the `vault_name` query parameter and reject a stale vault with
+409 `vault_changed`. Status reports `cached_entry_ids` and queued, running, or
+failed downloads. Clearing accepts an empty JSON object and returns 204.
+
+The uncached `/api/v1/voice-output/audio` proxy is for previews, accepts `text`,
+`reference_id`, and optional `settings`, and rejects the old `entry` shape.
+Output runtime discovery supplies endpoint, model, format, and default reference
+ID without exposing the saved API key. Synthesis and entry-audio access require
+native mode; stored voice settings can be edited in browser-only mode.
 
 `default-agent` remains a compatibility alias for `default-character`; new
 code uses character vocabulary.
@@ -1323,9 +1360,17 @@ After the main actor path makes sense, scan the smaller adapters:
 | `sse_stream.*` | Serialize mailbox payloads and heartbeats into `httplib::DataSink` |
 | `server_shutdown.*` | Bridge process signals to coordinated, bounded manager shutdown |
 | `r2_database_transfer.*` | List, upload, and download vault databases and companion definitions over the S3 API |
+| `fish_audio.*` | Build FishAudio requests, forward uncached previews, validate downloaded audio, and derive speech text from stored entries |
+| `audio_download.*` | Own background audio jobs, batch admission, retries, status, cached reads, and per-session cancellation |
 
 These modules keep `LiveSession` and the route files from accumulating generic
 HTTP, filesystem, and signal-handling details.
+
+Audio downloads are also fenced during maintenance. `AudioMaintenance` pauses
+admission before the configuration and repository reservations. Import,
+Download, and vault switching cancel jobs; Export and Upload preserve them.
+Repository operations wait behind its maintenance mutex, and admission resumes
+after a successful reopen.
 
 Database maintenance while the server is running needs every writer to let go
 of it at once, so `ApplicationRuntime` takes three reservations in order before
@@ -1447,11 +1492,55 @@ automatic and manual growth stop at 80% of the chat area's height. The handle
 also accepts Up/Down keys, while Home or a double-click returns to automatic
 sizing.
 
-The composer follows ordinary multiline textarea behavior: Enter adds a new
-line and Ctrl+Enter submits the prompt. The send button uses the same form
-submission path. There is no application-level Latin-to-Russian
-transliteration mode or toggle; text comes directly from the user's configured
-keyboard or input method.
+The composer sends on Enter and inserts a new line on Ctrl+Enter, leaving Enter
+alone during IME composition. The send button uses the same form
+submission path. The `Rus` toggle enables Latin-to-Russian transliteration in
+the draft through the shared transliteration helper.
+
+### 12.10 Voice output and persistent audio
+
+FishAudio is the only speech-output provider. Vault settings in
+`system/voice-output/config.toml` select an HTTPS endpoint on `api.fish.audio`,
+model, saved API-key ID, output format (`mp3`, `wav`, or `opus`), and default
+voice display name. Individual voices still use the compatibility field
+`elevenlabs_voice_id` for their FishAudio reference ID; only `speed` is sent as
+`prosody.speed`. Unsupported legacy voice settings are ignored with a warning.
+Invalid saved output configuration is ignored rather than preventing startup.
+
+`AudioDownloadManager` owns three workers and an in-memory queue independent of
+HTTP request and browser lifetimes. Admission captures output settings, key,
+reference ID, and entry identity. Duplicate submissions share an existing job,
+and a batch is validated completely before any new work is admitted. Workers
+retry transport failures up to four attempts, validate a nonempty `audio/*`
+result, and store it through `SessionRepository::save_entry_audio()`. Before
+synthesis and commit, repository checks prevent a deleted or changed entry or
+replaced database from acquiring stale audio. Storage failures are terminal.
+
+`entry_audio` stores an audio BLOB and content type under
+`(session_key, entry_id)`, with cascading deletion from `entries`. Cache identity
+does not include text, model, voice, or synthesis settings. Existing clips stay
+unchanged when voice settings change. Saved-session audio survives application
+restarts and is included in full database transfers; Welcome audio uses the
+temporary database. Jobs and failed-job state do not survive a process restart.
+The session menu's Clear audio cache cancels jobs and deletes that session's
+clips without altering transcript text.
+
+`webapp/src/audioDownloads.ts` submits jobs and polls while work is pending.
+The transcript exposes `has_cached_audio`, and status reads refresh it without
+waiting for an SSE update. Completed human messages and character responses
+have speaker controls; human messages use their persona's voice, responses use
+their character's voice, and missing assignments use the output default.
+Selecting uncached audio submits a job and plays the cached result when ready.
+`TextToSpeechSession` retrieves saved audio and retains stopped playback
+positions in browser memory until completion or reload.
+
+The speaker toggle before `Rus` batches all uncached, nonempty completed entries
+in the displayed transcript, including covered entries and excluding repeated
+multicast prompts. It submits later completed entries while enabled. Turning it
+off or leaving the session stops future submissions but leaves accepted jobs
+running. Character and voice previews instead call the uncached proxy and create
+a fresh sample each time; that proxy admits at most four simultaneous requests
+and returns 503 `speech_busy` instead of blocking request workers.
 
 ## 13. End-to-end workflow traces
 

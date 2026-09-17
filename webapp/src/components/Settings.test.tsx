@@ -105,48 +105,12 @@ describe('Settings screens', () => {
     expect(dispatch).toHaveBeenCalledWith({ type: 'show-settings-api-keys' });
   });
 
-  it('opens the R2 vault download screen from the vault list', async () => {
+  it('shows vault status privately and opens download and merge', async () => {
     const dispatch = vi.fn();
     render(
       <VaultsScreen
         client={fixtureClient({ listVaults: async () => vaults })}
         dispatch={dispatch}
-        sessionReport={null}
-        state={initialAppState}
-      />,
-    );
-
-    await userEvent.click(await screen.findByRole('button', { name: /Download vault/ }));
-    expect(dispatch).toHaveBeenCalledWith({ type: 'show-settings-download-vault' });
-  });
-
-  it('opens Merge from the fifth vault operation', async () => {
-    const dispatch = vi.fn();
-    render(
-      <VaultsScreen
-        client={fixtureClient({ listVaults: async () => vaults })}
-        dispatch={dispatch}
-        sessionReport={null}
-        state={initialAppState}
-      />,
-    );
-
-    const merge = await screen.findByRole('button', { name: /Merge into active vault/ });
-    const operations = screen.getAllByRole('button');
-    expect(operations.map((button) => button.textContent)).toEqual(expect.arrayContaining([
-      expect.stringMatching(/New vault/),
-      expect.stringMatching(/Download vault/),
-      expect.stringMatching(/Merge into active vault/),
-    ]));
-    await userEvent.click(merge);
-    expect(dispatch).toHaveBeenCalledWith({ type: 'show-settings-merge-vault' });
-  });
-
-  it('shows vault status without exposing database paths', async () => {
-    render(
-      <VaultsScreen
-        client={fixtureClient({ listVaults: async () => vaults })}
-        dispatch={vi.fn()}
         sessionReport={null}
         state={initialAppState}
       />,
@@ -157,6 +121,18 @@ describe('Settings screens', () => {
     expect(screen.getByRole('button', { name: 'Projects' })).toBeInTheDocument();
     expect(screen.queryByText('/data/personal.sqlite3')).not.toBeInTheDocument();
     expect(screen.queryByText('/data/projects.sqlite3')).not.toBeInTheDocument();
+
+    const merge = screen.getByRole('button', { name: /Merge into active vault/ });
+    const operations = screen.getAllByRole('button');
+    expect(operations.map((button) => button.textContent)).toEqual(expect.arrayContaining([
+      expect.stringMatching(/New vault/),
+      expect.stringMatching(/Download vault/),
+      expect.stringMatching(/Merge into active vault/),
+    ]));
+    await userEvent.click(merge);
+    expect(dispatch).toHaveBeenCalledWith({ type: 'show-settings-merge-vault' });
+    await userEvent.click(screen.getByRole('button', { name: /Download vault/ }));
+    expect(dispatch).toHaveBeenCalledWith({ type: 'show-settings-download-vault' });
   });
 
   it('downloads an R2 vault from its row without showing the file extension', async () => {
@@ -782,40 +758,6 @@ describe('Settings screens', () => {
     });
   });
 
-  it('shows only the essential provider settings', async () => {
-    render(
-      <ProviderScreen
-        client={fixtureClient({
-          getProvider: async () => provider,
-          listApiKeys: async () => [{
-            id: 'api_key_1', display_name: 'OpenRouter', has_value: true, used_by: [],
-          }],
-        })}
-        dispatch={vi.fn()}
-        sessionReport={null}
-        state={{ ...initialAppState, inspectedProviderId: provider.id }}
-      />,
-    );
-
-    expect(await screen.findByLabelText('Model')).toHaveValue('openai/gpt-5');
-    expect(screen.getByLabelText('Base URL')).toHaveValue('https://openrouter.ai/api');
-    expect(screen.getByLabelText('API format')).toHaveValue('chat_completions');
-    expect(screen.getByLabelText('Credentials')).toBeInTheDocument();
-    const targets = screen.getByLabelText('Inference targets');
-    expect(targets).toHaveValue('');
-    expect(screen.queryByLabelText('Name')).not.toBeInTheDocument();
-    expect(screen.queryByLabelText('Host')).not.toBeInTheDocument();
-    expect(screen.queryByLabelText('Port')).not.toBeInTheDocument();
-    expect(screen.queryByLabelText('Environment variable')).not.toBeInTheDocument();
-    expect(screen.queryByLabelText('Reasoning effort')).not.toBeInTheDocument();
-    expect(screen.getByLabelText('API format').parentElement?.parentElement)
-      .toBe(screen.getByLabelText('Credentials').parentElement?.parentElement);
-    expect(screen.getByLabelText('API format').parentElement?.parentElement?.nextElementSibling)
-      .toBe(targets.parentElement);
-    expect(screen.getByText('Used by')).toBeInTheDocument();
-    expect(screen.getByText('Guide')).toBeInTheDocument();
-  });
-
   it('saves ordered OpenRouter inference targets', async () => {
     const configured = {
       ...provider,
@@ -865,7 +807,21 @@ describe('Settings screens', () => {
       />,
     );
 
-    await userEvent.type(await screen.findByLabelText('Model'), '-candidate');
+    expect(await screen.findByLabelText('Model')).toHaveValue('openai/gpt-5');
+    expect(screen.getByLabelText('Base URL')).toHaveValue('https://openrouter.ai/api');
+    expect(screen.getByLabelText('API format')).toHaveValue('chat_completions');
+    expect(screen.getByLabelText('Credentials')).toBeInTheDocument();
+    const targets = screen.getByLabelText('Inference targets');
+    expect(targets).toHaveValue('');
+    expect(screen.queryByLabelText('Name')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Host')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Port')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Environment variable')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Reasoning effort')).not.toBeInTheDocument();
+    expect(screen.getByText('Used by')).toBeInTheDocument();
+    expect(screen.getByText('Guide')).toBeInTheDocument();
+
+    await userEvent.type(screen.getByLabelText('Model'), '-candidate');
     await userEvent.click(await screen.findByRole('button', { name: 'Test' }));
 
     expect(testProvider).toHaveBeenCalledWith(provider.id, expect.objectContaining({
@@ -1278,38 +1234,6 @@ describe('Settings screens', () => {
     expect(saveVoiceOutputSettings).toHaveBeenCalledTimes(2);
   });
 
-  it('shows only supported delivery controls for FishAudio', async () => {
-    render(<VoiceScreen
-      client={fixtureClient({
-        listVoices: async () => [voiceDetailFixture],
-        getVoiceOutputRuntime: async () => ({
-          url: 'https://api.fish.audio/v1/tts', model: 's2.1-pro',
-          output_format: 'mp3', default_voice_id: 'fish-voice',
-        }),
-      })}
-      dispatch={vi.fn()} sessionReport={null}
-      state={{ ...initialAppState, inspectedVoiceId: 'brian' }}
-    />);
-    expect(await screen.findByLabelText('Voice ID')).toHaveValue(voiceDetailFixture.elevenlabs_voice_id);
-    expect(screen.getByRole('spinbutton', { name: /Speed/ })).toBeInTheDocument();
-    expect(screen.queryByRole('spinbutton', { name: /Stability/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole('spinbutton', { name: /Similarity/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole('spinbutton', { name: /Style exaggeration/ })).not.toBeInTheDocument();
-    expect(screen.queryByLabelText('Speaker boost')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Play preview' })).toBeEnabled();
-  });
-
-  it('allows editing speed without preview when voice runtime settings are unavailable', async () => {
-    render(<VoiceScreen
-      client={fixtureClient({ listVoices: async () => [voiceDetailFixture] })}
-      dispatch={vi.fn()} sessionReport={null}
-      state={{ ...initialAppState, inspectedVoiceId: 'brian' }}
-    />);
-    await screen.findByLabelText('Voice ID');
-    expect(screen.getByRole('spinbutton', { name: /Speed/ })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Play preview' })).not.toBeInTheDocument();
-  });
-
   it('registers a voice and opens its editor', async () => {
     const createVoice = vi.fn(async () => voiceDetailFixture);
     const dispatch = vi.fn();
@@ -1358,6 +1282,7 @@ describe('Settings screens', () => {
     );
 
     const description = await screen.findByLabelText('Description');
+    expect(screen.getByRole('spinbutton', { name: /Speed/ })).toBeInTheDocument();
     expect(screen.queryByLabelText('Name')).not.toBeInTheDocument();
     expect(screen.queryByText('Voice details')).not.toBeInTheDocument();
     expect(screen.queryByText('Voice source')).not.toBeInTheDocument();
@@ -1443,7 +1368,15 @@ describe('Settings screens', () => {
       />,
     );
 
-    const voiceId = await screen.findByLabelText('Voice ID');
+    expect(await screen.findByLabelText('Voice ID')).toHaveValue(voiceDetailFixture.elevenlabs_voice_id);
+    expect(screen.getByRole('spinbutton', { name: /Speed/ })).toBeInTheDocument();
+    expect(screen.queryByRole('spinbutton', { name: /Stability/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('spinbutton', { name: /Similarity/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('spinbutton', { name: /Style exaggeration/ })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Speaker boost')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Play preview' })).toBeEnabled();
+
+    const voiceId = screen.getByLabelText('Voice ID');
     await userEvent.clear(voiceId);
     expect(screen.getByRole('button', { name: 'Play preview' })).toBeDisabled();
     await userEvent.type(voiceId, 'unsaved-id');

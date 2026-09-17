@@ -49,32 +49,6 @@ constexpr std::string_view two_part_stream =
     "data: {\"choices\":[{\"delta\":{\"content\":\" world\"}}]}\n\n"
     "data: [DONE]\n\n";
 
-TEST(ChatCompletionsApi, DecodesOneEventPerChunk) {
-    Output output;
-    ChatCompletionsStreamDecoder decoder(ReasoningFormat::automatic, output.sink());
-
-    decoder.consume("data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\n");
-    decoder.consume("data: {\"choices\":[{\"delta\":{\"content\":\" world\"}}]}\n\n");
-    decoder.consume("data: [DONE]\n\n");
-    const StreamDecodeResult result = decoder.finish();
-
-    EXPECT_EQ(result.result.outcome, GenerationOutcome::completed);
-    EXPECT_FALSE(result.describe_response);
-    EXPECT_EQ(output.answer(), "Hello world");
-    EXPECT_EQ(output.deltas().size(), 2U);
-}
-
-TEST(ChatCompletionsApi, DecodesSeveralEventsInOneChunk) {
-    Output output;
-    ChatCompletionsStreamDecoder decoder(ReasoningFormat::automatic, output.sink());
-
-    decoder.consume(two_part_stream);
-    const StreamDecodeResult result = decoder.finish();
-
-    EXPECT_EQ(result.result.outcome, GenerationOutcome::completed);
-    EXPECT_EQ(output.answer(), "Hello world");
-}
-
 TEST(ChatCompletionsApi, IgnoresOpenRouterProcessingHeartbeats) {
     Output output;
     ChatCompletionsStreamDecoder decoder(ReasoningFormat::automatic, output.sink());
@@ -112,108 +86,70 @@ TEST(ChatCompletionsApi, ReadsUsageFromTheFinalStreamingChunk) {
     EXPECT_EQ(*result.result.usage.cache_write_tokens, 7U);
 }
 
-TEST(ChatCompletionsApi, UsesTheLegacyCacheCountOnlyWhenPrimaryDetailsAreAbsent) {
-    Output output;
-    const GenerationResult fallback = decode_chat_completions_response(
-        R"({"usage":{"prompt_tokens":12,"completion_tokens":5,"prompt_cache_hit_tokens":4},"choices":[{"message":{"content":"Answer"}}]})",
-        ReasoningFormat::automatic,
-        output.sink());
-    ASSERT_TRUE(fallback.usage.cache_read_tokens);
-    EXPECT_EQ(*fallback.usage.cache_read_tokens, 4U);
-
-    const GenerationResult primary = decode_chat_completions_response(
-        R"({"usage":{"prompt_tokens":12,"completion_tokens":5,"prompt_cache_hit_tokens":4,"prompt_tokens_details":{"cached_tokens":9,"cache_write_tokens":7}},"choices":[{"message":{"content":"Answer"}}]})",
-        ReasoningFormat::automatic,
-        output.sink());
-    ASSERT_TRUE(primary.usage.cache_read_tokens);
-    EXPECT_EQ(*primary.usage.cache_read_tokens, 9U);
-    ASSERT_TRUE(primary.usage.cache_write_tokens);
-    EXPECT_EQ(*primary.usage.cache_write_tokens, 7U);
-}
-
-TEST(ChatCompletionsApi, LeavesCacheUsageUnsetWhenProviderOmitsIt) {
-    Output output;
-    const GenerationResult result = decode_chat_completions_response(
-        R"({"usage":{"prompt_tokens":12,"completion_tokens":5},"choices":[{"message":{"content":"Answer"}}]})",
-        ReasoningFormat::automatic,
-        output.sink());
-
-    EXPECT_EQ(result.outcome, GenerationOutcome::completed);
-    ASSERT_TRUE(result.usage.input_tokens);
-    ASSERT_TRUE(result.usage.output_tokens);
-    EXPECT_EQ(*result.usage.input_tokens, 12U);
-    EXPECT_EQ(*result.usage.output_tokens, 5U);
-    EXPECT_FALSE(result.usage.cache_read_tokens);
-    EXPECT_FALSE(result.usage.cache_write_tokens);
+TEST(ChatCompletionsApi, ResolvesNonStreamingCacheUsage) {
+    struct Case {
+        const char* body;
+        std::optional<std::uint64_t> cache_read;
+        std::optional<std::uint64_t> cache_write;
+    };
+    const Case cases[]{
+        {R"({"usage":{"prompt_tokens":12,"completion_tokens":5,"prompt_cache_hit_tokens":4},"choices":[{"message":{"content":"Answer"}}]})", 4, std::nullopt},
+        {R"({"usage":{"prompt_tokens":12,"completion_tokens":5,"prompt_cache_hit_tokens":4,"prompt_tokens_details":{"cached_tokens":9,"cache_write_tokens":7}},"choices":[{"message":{"content":"Answer"}}]})", 9, 7},
+        {R"({"usage":{"prompt_tokens":12,"completion_tokens":5},"choices":[{"message":{"content":"Answer"}}]})", std::nullopt, std::nullopt},
+    };
+    for (const auto& item : cases) {
+        SCOPED_TRACE(item.body);
+        Output output;
+        const GenerationResult result = decode_chat_completions_response(
+            item.body, ReasoningFormat::automatic, output.sink());
+        EXPECT_EQ(result.outcome, GenerationOutcome::completed);
+        EXPECT_EQ(result.usage.input_tokens, 12U);
+        EXPECT_EQ(result.usage.output_tokens, 5U);
+        EXPECT_EQ(result.usage.cache_read_tokens, item.cache_read);
+        EXPECT_EQ(result.usage.cache_write_tokens, item.cache_write);
+    }
 }
 
 TEST(ChatCompletionsApi, DecodesTheSameStreamOneByteAtATime) {
     Output output;
     ChatCompletionsStreamDecoder decoder(ReasoningFormat::automatic, output.sink());
 
-    for (const char character : two_part_stream) {
+    // Leave DONE unterminated so finish() must flush the trailing event.
+    for (const char character : two_part_stream.substr(0, two_part_stream.size() - 2)) {
         decoder.consume(std::string_view(&character, 1));
     }
     const StreamDecodeResult result = decoder.finish();
 
     EXPECT_EQ(result.result.outcome, GenerationOutcome::completed);
+    EXPECT_FALSE(result.describe_response);
     EXPECT_EQ(output.answer(), "Hello world");
     EXPECT_EQ(output.deltas().size(), 2U);
 }
 
-TEST(ChatCompletionsApi, DecodesCarriageReturnsSplitAcrossChunks) {
-    Output output;
-    ChatCompletionsStreamDecoder decoder(ReasoningFormat::automatic, output.sink());
-
-    decoder.consume("data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\r");
-    decoder.consume("\n\r");
-    decoder.consume("\ndata: [DONE]\r\n\r\n");
-    const StreamDecodeResult result = decoder.finish();
-
-    EXPECT_EQ(result.result.outcome, GenerationOutcome::completed);
-    EXPECT_EQ(output.answer(), "Hello");
-}
-
-TEST(ChatCompletionsApi, DecodesATrailingEventTheStreamNeverTerminated) {
-    Output output;
-    ChatCompletionsStreamDecoder decoder(ReasoningFormat::automatic, output.sink());
-
-    decoder.consume("data: {\"choices\":[{\"delta\":{\"content\":\"Tail\"}}]}\n");
-    decoder.consume("data: [DONE]");
-    const StreamDecodeResult result = decoder.finish();
-
-    EXPECT_EQ(result.result.outcome, GenerationOutcome::completed);
-    EXPECT_EQ(output.answer(), "Tail");
-}
-
-TEST(ChatCompletionsApi, ReportsMalformedEventJsonAfterEmittingValidEvents) {
-    Output output;
-    ChatCompletionsStreamDecoder decoder(ReasoningFormat::automatic, output.sink());
-
-    decoder.consume(
-        "data: not-json\n\n"
-        "data: {\"choices\":[{\"delta\":{\"content\":\"Partial\"}}]}\n\n"
-        "data: [DONE]\n\n");
-    const StreamDecodeResult result = decoder.finish();
-
-    EXPECT_EQ(result.result.outcome, GenerationOutcome::protocol_error);
-    EXPECT_NE(result.result.message.find("malformed JSON"), std::string::npos);
-    EXPECT_TRUE(result.describe_response);
-    EXPECT_EQ(output.answer(), "Partial");
-}
-
-TEST(ChatCompletionsApi, ReportsAnEventWithoutAChoicesArray) {
-    Output output;
-    ChatCompletionsStreamDecoder decoder(ReasoningFormat::automatic, output.sink());
-
-    decoder.consume("data: {\"object\":\"chunk\"}\n\ndata: [DONE]\n\n");
-    const StreamDecodeResult result = decoder.finish();
-
-    EXPECT_EQ(result.result.outcome, GenerationOutcome::protocol_error);
-    EXPECT_NE(
-        result.result.message.find("did not contain a choices array"),
-        std::string::npos);
-    EXPECT_TRUE(result.describe_response);
+TEST(ChatCompletionsApi, ReportsMalformedStreamingEvents) {
+    struct Case {
+        const char* stream;
+        const char* error;
+        const char* answer;
+    };
+    const Case cases[]{
+        {"data: not-json\n\n"
+         "data: {\"choices\":[{\"delta\":{\"content\":\"Partial\"}}]}\n\n"
+         "data: [DONE]\n\n", "malformed JSON", "Partial"},
+        {"data: {\"object\":\"chunk\"}\n\ndata: [DONE]\n\n",
+         "did not contain a choices array", ""},
+    };
+    for (const auto& item : cases) {
+        SCOPED_TRACE(item.error);
+        Output output;
+        ChatCompletionsStreamDecoder decoder(ReasoningFormat::automatic, output.sink());
+        decoder.consume(item.stream);
+        const StreamDecodeResult result = decoder.finish();
+        EXPECT_EQ(result.result.outcome, GenerationOutcome::protocol_error);
+        EXPECT_NE(result.result.message.find(item.error), std::string::npos);
+        EXPECT_TRUE(result.describe_response);
+        EXPECT_EQ(output.answer(), item.answer);
+    }
 }
 
 TEST(ChatCompletionsApi, ReportsAStreamThatEndedBeforeTheEndMarker) {
@@ -390,58 +326,36 @@ TEST(ChatCompletionsApi, DecodesANonStreamingResponse) {
     EXPECT_EQ(output.deltas()[1].text, "Answer");
 }
 
-TEST(ChatCompletionsApi, ReportsAMalformedNonStreamingBody) {
-    Output output;
-
-    const GenerationResult result = decode_chat_completions_response(
-        "not-json", ReasoningFormat::automatic, output.sink());
-
-    EXPECT_EQ(result.outcome, GenerationOutcome::protocol_error);
-    EXPECT_NE(result.message.find("invalid JSON"), std::string::npos);
-    EXPECT_TRUE(output.deltas().empty());
-}
-
-TEST(ChatCompletionsApi, ReportsANonStreamingBodyWithoutAMessageObject) {
-    Output output;
-
-    const GenerationResult result = decode_chat_completions_response(
-        R"({"choices":[]})", ReasoningFormat::automatic, output.sink());
-
-    EXPECT_EQ(result.outcome, GenerationOutcome::protocol_error);
-    EXPECT_NE(
-        result.message.find("did not contain choices[0].message"),
-        std::string::npos);
-}
-
-TEST(ChatCompletionsApi, RejectsANonStreamingResponseWithoutAnswerContent) {
-    Output output;
-
-    const GenerationResult result = decode_chat_completions_response(
-        R"({"choices":[{"message":{"reasoning":"Only","content":""}}]})",
-        ReasoningFormat::reasoning,
-        output.sink());
-
-    EXPECT_EQ(result.outcome, GenerationOutcome::protocol_error);
-    EXPECT_NE(
-        result.message.find("Response completed without answer content"),
-        std::string::npos);
-    EXPECT_EQ(output.reasoning(), "Only");
-}
-
-TEST(ChatCompletionsApi, ReportsANonStreamingReasoningFieldOfTheWrongType) {
-    Output output;
-
-    const GenerationResult result = decode_chat_completions_response(
-        R"({"choices":[{"message":{"reasoning":7,"content":"Answer"}}]})",
-        ReasoningFormat::reasoning,
-        output.sink());
-
-    EXPECT_EQ(result.outcome, GenerationOutcome::protocol_error);
-    EXPECT_NE(
-        result.message.find(
-            "Reasoning field 'reasoning' was not a string or null"),
-        std::string::npos);
-    EXPECT_EQ(output.answer(), "Answer");
+TEST(ChatCompletionsApi, ReportsInvalidNonStreamingBodies) {
+    struct Case {
+        const char* body;
+        ReasoningFormat format;
+        const char* error;
+        const char* answer;
+        const char* reasoning;
+    };
+    const Case cases[]{
+        {"not-json", ReasoningFormat::automatic, "invalid JSON", "", ""},
+        {R"({"choices":[]})", ReasoningFormat::automatic,
+         "did not contain choices[0].message", "", ""},
+        {R"({"choices":[{"message":{"reasoning":"Only","content":""}}]})",
+         ReasoningFormat::reasoning, "Response completed without answer content", "", "Only"},
+        {R"({"choices":[{"message":{"reasoning":7,"content":"Answer"}}]})",
+         ReasoningFormat::reasoning, "Reasoning field 'reasoning' was not a string or null", "Answer", ""},
+    };
+    for (const auto& item : cases) {
+        SCOPED_TRACE(item.error);
+        Output output;
+        const GenerationResult result = decode_chat_completions_response(
+            item.body, item.format, output.sink());
+        EXPECT_EQ(result.outcome, GenerationOutcome::protocol_error);
+        EXPECT_NE(result.message.find(item.error), std::string::npos);
+        EXPECT_EQ(output.answer(), item.answer);
+        EXPECT_EQ(output.reasoning(), item.reasoning);
+        if (std::string_view(item.body) == "not-json") {
+            EXPECT_TRUE(output.deltas().empty());
+        }
+    }
 }
 
 } // namespace

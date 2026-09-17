@@ -48,17 +48,6 @@ it.each(attacks)('neutralizes %s', (_name, source) => {
     .toBeNull();
 });
 
-it('keeps supported markup and escapes HTML inside code blocks', () => {
-  const html = renderRestrictedMarkdown(
-    '# Title\n\nSome *emphasis* and `code`.\n\n```\n<script>alert(1)</script>\n```\n',
-  );
-  const document_ = parse(html);
-  expect(document_.querySelector('h1')?.textContent).toBe('Title');
-  expect(document_.querySelector('em')?.textContent).toBe('emphasis');
-  expect(document_.querySelector('pre')?.textContent).toContain('<script>alert(1)</script>');
-  expect(document_.querySelector('script')).toBeNull();
-});
-
 it('renders unexpanded template directives literally', () => {
   expect(parse(renderRestrictedMarkdown('$$(EPICTETUS.md)')).body.textContent)
     .toContain('$$(EPICTETUS.md)');

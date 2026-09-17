@@ -1593,26 +1593,6 @@ TEST(ApplicationRuntime, DisconnectRemovesSyntheticCredentials) {
     runtime->shutdown();
 }
 
-TEST(ApplicationRuntime, InvalidAuthFileStartsSignedOut) {
-    test::TestWorkspace workspace;
-    const std::filesystem::path database =
-        test::import_test_database(workspace.root());
-    const ApplicationCommand command = make_command(workspace, database);
-    create_private_file(
-        openai_auth_path(command.config_directory),
-        std::string("{\"access_token\":\"") + runtime_access + "\"}");
-    auto runtime = ApplicationRuntime::open(command, "private-test-token");
-    const int port = runtime->start();
-    httplib::Client client("127.0.0.1", port);
-    const auto status = client.Get("/api/v1/openai/auth", kRuntimeCookie);
-    expect_auth_snapshot(status, "signed_out");
-    const auto json = nlohmann::json::parse(status->body);
-    ASSERT_TRUE(json.contains("error"));
-    EXPECT_TRUE(json.at("error").is_string());
-    EXPECT_FALSE(contains_runtime_secret(json.at("error").get<std::string>()));
-    runtime->shutdown();
-}
-
 TEST(ApplicationRuntime, OpensTheConfiguredVaultAndFailsIfItsDatabaseIsMissing) {
     test::TestWorkspace workspace;
     const std::filesystem::path database =

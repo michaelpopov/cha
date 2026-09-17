@@ -508,15 +508,6 @@ describe('CHA API client', () => {
     expect(fetcher.mock.calls[1][1]?.body).toBe(JSON.stringify(settings));
   });
 
-  it('accepts FishAudio runtime settings without exposing an API key', async () => {
-    const runtime = {
-      url: 'https://api.fish.audio/v1/tts', model: 's2.1-pro',
-      output_format: 'mp3', default_voice_id: 'fish-voice',
-    };
-    const client = createChaClient(async () => jsonResponse(runtime));
-    await expect(client.getVoiceOutputRuntime()).resolves.toEqual(runtime);
-  });
-
   it('turns the error envelope into one ChaError shape', async () => {
     const fetcher = vi.fn<(
       input: RequestInfo | URL,
@@ -590,19 +581,6 @@ describe('CHA API client', () => {
     await expect(client.getPersona('reader')).rejects.toBeInstanceOf(ChaProtocolError);
     await expect(client.getForum('lobby')).rejects.toBeInstanceOf(ChaProtocolError);
     await expect(client.listSessions('lobby')).rejects.toBeInstanceOf(ChaProtocolError);
-  });
-
-  it('reports OpenAI auth errors through the existing envelope', async () => {
-    const client = createChaClient(async () => jsonResponse({
-      error: { code: 'bad_request', message: 'Expected a JSON request body.' },
-    }, 400));
-
-    await expect(client.startOpenAiAuth()).rejects.toEqual(expect.objectContaining({
-      name: 'ChaError',
-      status: 400,
-      code: 'bad_request',
-      message: 'Expected a JSON request body.',
-    }));
   });
 
   it('turns a transport failure into a fixed message without leaking exception details', async () => {

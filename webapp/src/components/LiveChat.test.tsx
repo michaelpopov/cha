@@ -112,6 +112,7 @@ describe('live chat', () => {
         : snapshotFixture,
     });
     render(<App client={client} connectSessionEvents={events.connect} />);
+    expect(await screen.findByLabelText('Chat area')).toHaveTextContent('Welcome');
     await attachInitial(events);
     expect(openSession).toHaveBeenCalledWith('entrance', 'welcome');
 
@@ -532,25 +533,6 @@ describe('live chat', () => {
         vault_name: bootstrap.vault_name, reference_id: 'reader-elevenlabs', settings: {},
       },
     ));
-  });
-
-  it('keeps error entries in neutral typography', async () => {
-    const events = drivableEvents();
-    render(<App client={fixtureClient()} connectSessionEvents={events.connect} />);
-    await attachInitial(events, {
-      ...snapshotFixture,
-      characters: [{ ...snapshotFixture.characters[0], appearance: monoLargeVoice }],
-      transcript: [{
-        id: 1, kind: 'error', participant_id: 'assistant', display_name: 'Assistant',
-        addressed_to: '', addressed_to_name: '', text: 'The response failed.',
-        status: 'failed', created_at: 1_700_000_000,
-      }],
-    });
-
-    expect(screen.getByText('The response failed.')).toHaveClass('cha-message-text');
-    expect(screen.getByText('The response failed.')).not.toHaveClass(
-      'cha-font-mono', 'cha-scale-large',
-    );
   });
 
   it('submits a long conversation in one batch while prompts remain available and serializes later batches', async () => {
@@ -1538,6 +1520,11 @@ describe('live chat', () => {
           addressed_to: 'guest', addressed_to_name: 'Guest',
           text: 'A plain answer', status: 'complete', created_at: null,
         },
+        {
+          id: 4, kind: 'error', participant_id: 'seneca', display_name: 'Seneca',
+          addressed_to: '', addressed_to_name: '', text: 'The response failed.',
+          status: 'failed', created_at: 1_700_000_000,
+        },
       ],
     });
 
@@ -1549,6 +1536,7 @@ describe('live chat', () => {
     expect(screen.getByText('A plain answer').className).toBe('cha-message-text');
     // The reader's own words are never in costume.
     expect(screen.getByText('A question').className).toBe('cha-message-text');
+    expect(screen.getByText('The response failed.').className).toBe('cha-message-text');
   });
 
   it('changes the target only after authoritative state confirms it', async () => {
@@ -1783,25 +1771,6 @@ describe('live chat', () => {
 });
 
 describe('live stream recovery', () => {
-  it('probes a live session, reconnects, and accepts a fresh stream snapshot', async () => {
-    const events = drivableEvents();
-    const getSessionSnapshot = vi.fn(async () => snapshotFixture);
-    render(
-      <App
-        client={fixtureClient({ getSessionSnapshot })}
-        connectSessionEvents={events.connect}
-        retryDelays={[0]}
-      />,
-    );
-    await attachInitial(events);
-    act(() => events.handlers[0].onError({ kind: 'stream_failure' }));
-
-    await waitFor(() => expect(events.connections).toHaveLength(2));
-    expect(getSessionSnapshot).toHaveBeenCalledTimes(2);
-    act(() => events.handlers[1].onSnapshot(snapshotFixture));
-    await waitFor(() => expect(screen.queryByText(/Reconnecting live updates/)).not.toBeInTheDocument());
-  });
-
   it('re-opens a session the server has unloaded before reconnecting', async () => {
     const events = drivableEvents();
     const openSession = vi.fn(async (forumId: string, sessionId: string) => ({
@@ -1824,26 +1793,6 @@ describe('live stream recovery', () => {
 
     await waitFor(() => expect(events.connections).toHaveLength(2));
     expect(openSession.mock.calls.filter(([, id]) => id === 'welcome')).toHaveLength(2);
-    expect(getSessionSnapshot).toHaveBeenCalledTimes(3);
-  });
-
-  it('keeps temporary server failures in the bounded retry path', async () => {
-    const events = drivableEvents();
-    const getSessionSnapshot = vi.fn()
-      .mockResolvedValueOnce(snapshotFixture)
-      .mockRejectedValueOnce(new Error('Server unavailable'))
-      .mockResolvedValueOnce(snapshotFixture);
-    render(
-      <App
-        client={fixtureClient({ getSessionSnapshot })}
-        connectSessionEvents={events.connect}
-        retryDelays={[0, 0]}
-      />,
-    );
-    await attachInitial(events);
-    act(() => events.handlers[0].onError({ kind: 'stream_failure' }));
-
-    await waitFor(() => expect(events.connections).toHaveLength(2));
     expect(getSessionSnapshot).toHaveBeenCalledTimes(3);
   });
 

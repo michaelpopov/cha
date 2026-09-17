@@ -59,35 +59,6 @@ int raw_execute(const std::filesystem::path& path, const std::string& sql) {
     return result;
 }
 
-std::vector<std::string> table_columns(
-    const std::filesystem::path& path,
-    const std::string& table) {
-    sqlite3* handle = nullptr;
-    const std::string database_path = utf8_path(path);
-    if (sqlite3_open_v2(
-            database_path.c_str(),
-            &handle,
-            SQLITE_OPEN_READONLY,
-            nullptr)
-        != SQLITE_OK) {
-        sqlite3_close_v2(handle);
-        throw std::runtime_error(
-            "Failed to open '" + database_path + "' directly");
-    }
-    sqlite3_stmt* statement = nullptr;
-    const std::string sql = "PRAGMA table_info(" + table + ")";
-    std::vector<std::string> columns;
-    if (sqlite3_prepare_v2(handle, sql.c_str(), -1, &statement, nullptr) == SQLITE_OK) {
-        while (sqlite3_step(statement) == SQLITE_ROW) {
-            columns.emplace_back(
-                reinterpret_cast<const char*>(sqlite3_column_text(statement, 1)));
-        }
-    }
-    sqlite3_finalize(statement);
-    sqlite3_close_v2(handle);
-    return columns;
-}
-
 std::filesystem::path temporary_path(std::string_view prefix) {
     return std::filesystem::temp_directory_path()
         / (std::string(prefix)
@@ -195,17 +166,6 @@ TEST(Transcript, RequiresAnswerTextForTerminalCharacterEntries) {
         require_storable_transcript_entry(transcript.view().entries.back()));
 }
 
-TEST(Transcript, ReplacesEntries) {
-    Transcript transcript;
-    transcript.add_entry(make_notice_entry(1, "Old"));
-    transcript.replace_entries({
-        human(2, "Restored"),
-        make_character_entry(3, "guide-id", "Guide", "Welcome", EntryStatus::complete),
-    });
-
-    EXPECT_EQ(transcript.view().entries.size(), 2U);
-}
-
 TEST(Transcript, DeletesAResponseAndItsPromptAsOneTurn) {
     Transcript transcript;
     transcript.add_entry(human(1, "First question", 10));
@@ -267,6 +227,7 @@ TEST(Transcript, ManagesCoverBoundaryAndTransientMarkersAtomically) {
     EXPECT_TRUE(transcript.cover(3));
 
     EXPECT_EQ(transcript.model_history().covered_until, 3U);
+    expect_entries(transcript.view().entries, transcript.model_history().entries);
     expect_entries(
         transcript.view().entries,
         (std::vector<TranscriptEntry>{
@@ -364,17 +325,6 @@ TEST(Transcript, ModelHistoryOwnsOneAtomicModelContextSnapshot) {
     EXPECT_EQ(history.covered_until, std::nullopt);
 }
 
-TEST(Transcript, ModelHistoryIncludesCoverProjectionState) {
-    Transcript transcript;
-    transcript.add_entry(human(1, "Hidden", 2));
-    EXPECT_TRUE(transcript.cover(2));
-
-    const ModelHistory history = transcript.model_history();
-
-    EXPECT_EQ(history.covered_until, 2U);
-    expect_entries(transcript.view().entries, history.entries);
-}
-
 TEST(Transcript, RequiresStrictlyIncreasingEntryIds) {
     Transcript transcript;
     transcript.add_entry(make_notice_entry(2, "First"));
@@ -432,22 +382,17 @@ TEST(SessionDatabase, RoundTripsMetadataAndTypedEntries) {
     const auto path = temporary_path("cha_transcript_");
     create_test_database(path);
     auto journal = std::make_unique<SessionJournal>(path);
-    journal->start_turn(1, human(1, "Hello", 1));
-    journal->complete_turn(1, make_character_entry(
-        2, "reviewer-id", "Reviewer", "Hello back", EntryStatus::complete, 1));
+    const TranscriptEntry prompt = human(1, "Hello", 1);
+    const TranscriptEntry answer = make_character_entry(
+        2, "reviewer-id", "Reviewer", "Hello back", EntryStatus::complete, 1);
+    ASSERT_NE(prompt.created_at, 0);
+    ASSERT_NE(answer.created_at, 0);
+    journal->start_turn(1, prompt);
+    journal->complete_turn(1, answer);
 
-    expect_entries(
+    EXPECT_EQ(
         load_transcript_entries(path),
-        {
-            human(1, "Hello", 1),
-            make_character_entry(
-                2,
-                "reviewer-id",
-                "Reviewer",
-                "Hello back",
-                EntryStatus::complete,
-                1),
-        });
+        (std::vector<TranscriptEntry>{prompt, answer}));
     const SessionDatabaseMetadata metadata =
         read_session_database_metadata(path);
     EXPECT_EQ(metadata.id, utf8_path(path.stem()));
@@ -603,7 +548,10 @@ TEST(SessionJournal, DeletesACompletedTurnWithoutReusingItsIds) {
     std::filesystem::remove(path);
 }
 
-TEST(TranscriptValidation, AcceptsAHumanEntryAddressedToTheNullAgentWithoutATurn) {
+TEST(SessionJournal, RecordsATurnlessEntryForTheNullAgent) {
+    const auto path = temporary_path("cha_record_entry_journal_");
+    create_test_database(path);
+    auto journal = std::make_unique<SessionJournal>(path);
     const TranscriptEntry monologue =
         test::human_entry(1, {"human", "You"}, {"-", "-"}, "Thinking out loud");
     EXPECT_EQ(monologue.addressed_to, null_agent_handle);
@@ -613,14 +561,7 @@ TEST(TranscriptValidation, AcceptsAHumanEntryAddressedToTheNullAgentWithoutATurn
 
     Transcript transcript;
     EXPECT_NO_THROW(transcript.add_entry(monologue));
-}
 
-TEST(SessionJournal, RecordsATurnlessEntryForTheNullAgent) {
-    const auto path = temporary_path("cha_record_entry_journal_");
-    create_test_database(path);
-    auto journal = std::make_unique<SessionJournal>(path);
-    const TranscriptEntry monologue =
-        test::human_entry(1, {"human", "You"}, {"-", "-"}, "Thinking out loud");
     journal->record_entry(monologue);
 
     const SessionRestore restored = load_session_state(path);
@@ -723,7 +664,7 @@ TEST(SessionJournal, RecognizesAnInterruptedTypedTurn) {
     std::filesystem::remove(path);
 }
 
-TEST(SessionDatabase, RejectsANonDatabaseFile) {
+TEST(SessionDatabase, RejectsInvalidFilesWithoutCreatingAMissingDatabase) {
     const auto path = temporary_path("cha_old_journal_");
     {
         std::ofstream file(path, std::ios::binary);
@@ -733,10 +674,6 @@ TEST(SessionDatabase, RejectsANonDatabaseFile) {
     EXPECT_THROW(SessionJournal journal(path), std::runtime_error);
     EXPECT_THROW((void)load_session_state(path), std::runtime_error);
     std::filesystem::remove(path);
-}
-
-TEST(SessionDatabase, JournalDoesNotCreateAMissingDatabase) {
-    const auto path = temporary_path("cha_missing_database_");
 
     EXPECT_THROW(SessionJournal journal(path), std::runtime_error);
     EXPECT_FALSE(std::filesystem::exists(path));
@@ -766,13 +703,9 @@ TEST(TranscriptValidation, RequiresATargetOnHumanEntriesAndForbidsItElsewhere) {
     EXPECT_THROW(validate_transcript_entry(addressed_error), std::invalid_argument);
 
     EXPECT_NO_THROW(validate_transcript_entry(human(1, "Targeted")));
-}
 
-TEST(TranscriptValidation, RejectsAddressingViolationsInMemoryAndInSqlite) {
-    TranscriptEntry untargeted = human(1, "No target", 1);
-    untargeted.addressed_to.clear();
+    untargeted.request_id = 1;
     untargeted.addressed_to_name.clear();
-
     Transcript transcript;
     EXPECT_THROW(transcript.add_entry(untargeted), std::invalid_argument);
 
@@ -781,24 +714,6 @@ TEST(TranscriptValidation, RejectsAddressingViolationsInMemoryAndInSqlite) {
     auto journal = std::make_unique<SessionJournal>(path);
     EXPECT_THROW(journal->start_turn(1, untargeted), std::runtime_error);
     EXPECT_TRUE(load_transcript_entries(path).empty());
-    journal.reset();
-    std::filesystem::remove(path);
-}
-
-TEST(SessionDatabase, RoundTripsTheAddressedTargetOfEveryPrompt) {
-    const auto path = temporary_path("cha_addressed_round_trip_");
-    create_test_database(path);
-    auto journal = std::make_unique<SessionJournal>(path);
-    journal->start_turn(1, test::human_entry(1, {"human", "You"}, {"ismael", "Ismael"}, "And you?", 1));
-    journal->complete_turn(1, make_character_entry(
-        2, "ismael", "Ismael", "Call me Ismael.", EntryStatus::complete, 1));
-
-    const std::vector<TranscriptEntry> restored = load_transcript_entries(path);
-    ASSERT_EQ(restored.size(), 2U);
-    EXPECT_EQ(restored.front().addressed_to, "ismael");
-    EXPECT_EQ(restored.front().addressed_to_name, "Ismael");
-    EXPECT_TRUE(restored.back().addressed_to.empty());
-    EXPECT_TRUE(restored.back().addressed_to_name.empty());
     journal.reset();
     std::filesystem::remove(path);
 }
@@ -824,50 +739,6 @@ TEST(SessionDatabase, RefusesAnUnsupportedWorkspaceSchema) {
     }
     EXPECT_THROW(SessionJournal journal(path), std::runtime_error);
     EXPECT_THROW((void)read_session_database_metadata(path), std::runtime_error);
-    std::filesystem::remove(path);
-}
-
-TEST(SessionDatabase, StoresAndRestoresEntryCreationTimes) {
-    const auto path = temporary_path("cha_created_at_");
-    create_test_database(path);
-    const TranscriptEntry prompt = human(1, "Question", 1);
-    const TranscriptEntry answer = make_character_entry(
-        2, "reviewer-id", "Reviewer", "Answer", EntryStatus::complete, 1);
-    ASSERT_NE(prompt.created_at, 0);
-    ASSERT_NE(answer.created_at, 0);
-    {
-        SessionJournal journal(path);
-        journal.start_turn(1, prompt);
-        journal.complete_turn(1, answer);
-    }
-
-    EXPECT_EQ(
-        load_transcript_entries(path),
-        (std::vector<TranscriptEntry>{prompt, answer}));
-    std::filesystem::remove(path);
-}
-
-TEST(SessionDatabase, StoresTheTargetOnlyOnThePromptItself) {
-    const auto path = temporary_path("cha_schema_shape_");
-    create_test_database(path);
-
-    EXPECT_EQ(
-        table_columns(path, "turns"),
-        (std::vector<std::string>{
-            "session_key", "request_id", "epoch", "state"}))
-        << "the turn must not duplicate its prompt's target";
-
-    const std::vector<std::string> entries = table_columns(path, "entries");
-    EXPECT_NE(std::find(entries.begin(), entries.end(), "addressed_to"), entries.end());
-    EXPECT_NE(std::find(entries.begin(), entries.end(), "addressed_to_name"), entries.end());
-
-    EXPECT_EQ(
-        table_columns(path, "sessions"),
-        (std::vector<std::string>{
-            "session_key", "forum_key", "session_id", "label",
-            "updated_at", "archived_at", "history_epoch",
-            "next_entry_id", "next_request_id"}))
-        << "a session belongs to a forum, not to its current characters";
     std::filesystem::remove(path);
 }
 

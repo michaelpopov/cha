@@ -5,36 +5,36 @@
 namespace cha::web {
 namespace {
 
-TEST(Command, TreatsOrdinaryInputAsText) {
-    EXPECT_EQ(parse_command("").kind, CommandKind::text);
-    EXPECT_EQ(parse_command("hello").kind, CommandKind::text);
-    EXPECT_EQ(parse_command("@Ismael /clear").kind, CommandKind::text);
-    EXPECT_EQ(parse_command(" /clear").kind, CommandKind::text)
-        << "commands are not trimmed before recognition";
-}
-
-TEST(Command, RecognizesOnlyConversationContextCommands) {
-    EXPECT_EQ(parse_command("/mcast").kind, CommandKind::mcast);
-    EXPECT_EQ(parse_command("/cover").kind, CommandKind::unknown);
-    EXPECT_EQ(parse_command("/uncover").kind, CommandKind::unknown);
-    EXPECT_EQ(parse_command("/clear").kind, CommandKind::unknown);
-    EXPECT_EQ(parse_command("/info").kind, CommandKind::unknown);
-    EXPECT_EQ(parse_command("/characters").kind, CommandKind::unknown);
-    EXPECT_EQ(parse_command("/agents").kind, CommandKind::unknown);
-    EXPECT_EQ(parse_command("/@Guide").kind, CommandKind::unknown);
-    EXPECT_EQ(parse_command("/style").kind, CommandKind::unknown);
-    EXPECT_EQ(parse_command("/stop").kind, CommandKind::unknown);
-    EXPECT_EQ(parse_command("/exit").kind, CommandKind::unknown);
-    EXPECT_EQ(parse_command("/nonsense").kind, CommandKind::unknown);
-}
-
-TEST(Command, CapturesMulticastText) {
+TEST(Command, ParsesOnlySupportedCommands) {
+    struct Case {
+        const char* input;
+        CommandKind kind;
+    };
+    const Case cases[]{
+        {"", CommandKind::text},
+        {"hello", CommandKind::text},
+        {"@Ismael /clear", CommandKind::text},
+        {" /clear", CommandKind::text},
+        {"/mcast", CommandKind::mcast},
+        {"/cover", CommandKind::unknown},
+        {"/uncover", CommandKind::unknown},
+        {"/clear", CommandKind::unknown},
+        {"/info", CommandKind::unknown},
+        {"/characters", CommandKind::unknown},
+        {"/agents", CommandKind::unknown},
+        {"/@Guide", CommandKind::unknown},
+        {"/style", CommandKind::unknown},
+        {"/stop", CommandKind::unknown},
+        {"/exit", CommandKind::unknown},
+        {"/nonsense", CommandKind::unknown},
+    };
+    for (const auto& item : cases) {
+        SCOPED_TRACE(item.input);
+        EXPECT_EQ(parse_command(item.input).kind, item.kind);
+    }
     const Command multicast = parse_command("/mcast @One, @Two. Question");
     EXPECT_EQ(multicast.kind, CommandKind::mcast);
     EXPECT_EQ(multicast.argument, "@One, @Two. Question");
-}
-
-TEST(Command, ListsOnlyCommandsAcceptedByTheWebRawInputPath) {
     EXPECT_EQ(command_names(), "/mcast");
 }
 

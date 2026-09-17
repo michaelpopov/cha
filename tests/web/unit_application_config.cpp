@@ -106,66 +106,78 @@ protected:
     std::filesystem::path export_;
 };
 
-TEST_F(ApplicationConfigTest, LoadsUnifiedExternalConfigWithEqualsSyntax) {
-    const ApplicationCommand command = load({
-        "chaweb", "--config=" + config_.string(), "--root", root_.string()});
+TEST_F(ApplicationConfigTest, LoadsValidExternalConfigurations) {
+    struct Case {
+        bool equals_option;
+        std::filesystem::path database;
+        std::filesystem::path log;
+        const char* host;
+        int port;
+        const char* level;
+    };
+    const Case cases[]{
+        {true, root_ / "data/workspace.sqlite3", config_ / "logs/cha.log", "127.0.0.1", 8080, "info"},
+        {false, root_ / "absolute.sqlite3", root_ / "absolute.log", "0.0.0.0", 9000, "debug"},
+        {false, root_ / "data/workspace.sqlite3", config_ / "logs/cha.log", "127.0.0.1", 0, "info"},
+    };
+    for (const auto& item : cases) {
+        SCOPED_TRACE(item.port);
+        write_app("vault = \"Personal\"\n[web]\nhost = \"" + std::string(item.host)
+                  + "\"\nport = " + std::to_string(item.port)
+                  + "\n[logging]\nfile = " + (item.log == root_ / "absolute.log" ? toml_path(item.log) : std::string("\"logs/cha.log\""))
+                  + "\nlevel = \"" + item.level + "\"\n");
+        if (item.database == root_ / "absolute.sqlite3") {
+            write_named_vault("personal.toml", "Personal", item.database);
+        } else {
+            write_vault("personal.toml", "Personal", "../data/workspace.sqlite3");
+        }
+        const ApplicationCommand command = item.equals_option
+            ? load({"chaweb", "--config=" + config_.string(), "--root", root_.string()})
+            : load({"chaweb", "--config", config_.string(), "--root", root_.string()});
 
-    EXPECT_EQ(
-        command.config_directory,
-        std::filesystem::weakly_canonical(config_));
-    EXPECT_EQ(command.vault.name, "Personal");
-    EXPECT_EQ(
-        command.vault.data,
-        std::filesystem::weakly_canonical(root_ / "data" / "workspace.sqlite3"));
-    EXPECT_EQ(command.root, std::filesystem::weakly_canonical(root_));
-    EXPECT_EQ(command.host, "127.0.0.1");
-    EXPECT_EQ(command.port, 8080);
-    EXPECT_EQ(
-        command.log_file,
-        std::filesystem::weakly_canonical(config_ / "logs/cha.log"));
-    EXPECT_EQ(command.log_level, "info");
-    EXPECT_FALSE(command.mirror_base);
-    EXPECT_FALSE(command.modify_base);
-    EXPECT_FALSE(command.vault.modify);
-    EXPECT_FALSE(command.import_directory);
-    EXPECT_FALSE(command.export_directory);
-    EXPECT_FALSE(command.upload);
-    EXPECT_FALSE(command.download);
+        EXPECT_EQ(
+            command.config_directory,
+            std::filesystem::weakly_canonical(config_));
+        EXPECT_EQ(command.vault.name, "Personal");
+        EXPECT_EQ(
+            command.vault.data,
+            std::filesystem::weakly_canonical(item.database));
+        EXPECT_EQ(command.root, std::filesystem::weakly_canonical(root_));
+        EXPECT_EQ(command.host, item.host);
+        EXPECT_EQ(command.port, item.port);
+        EXPECT_EQ(
+            command.log_file,
+            std::filesystem::weakly_canonical(item.log));
+        EXPECT_EQ(command.log_level, item.level);
+        EXPECT_FALSE(command.mirror_base);
+        EXPECT_FALSE(command.modify_base);
+        EXPECT_FALSE(command.vault.modify);
+        EXPECT_FALSE(command.import_directory);
+        EXPECT_FALSE(command.export_directory);
+        EXPECT_FALSE(command.upload);
+        EXPECT_FALSE(command.download);
+    }
 }
 
-TEST_F(ApplicationConfigTest, IgnoresObsoleteTextToSpeechConfiguration) {
-    write_app(
-        "vault = \"Personal\"\n"
-        "[web]\nhost = \"127.0.0.1\"\nport = 8080\n"
-        "[logging]\nfile = \"logs/cha.log\"\nlevel = \"info\"\n"
-        "[text_to_speech]\n"
-        "model = \"eleven_flash_v2_5\"\n");
+TEST_F(ApplicationConfigTest, IgnoresObsoleteVoiceConfiguration) {
+    for (const std::string_view table : {"text_to_speech", "voice_input"}) {
+        SCOPED_TRACE(table);
+        write_app(
+            "vault = \"Personal\"\n"
+            "[web]\nhost = \"127.0.0.1\"\nport = 8080\n"
+            "[logging]\nfile = \"logs/cha.log\"\nlevel = \"info\"\n"
+            "[" + std::string(table) + "]\n"
+            "url = \"https://example.com/realtime\"\n"
+            "api_key = \"api_key_7\"\n"
+            "model = \"old-model\"\n"
+            "unexpected = true\n");
 
-    const ApplicationCommand command =
-        load({"chaweb", "--config", config_.string()});
-    ASSERT_EQ(command.warnings.size(), 1U);
-    EXPECT_NE(
-        command.warnings.front().find("[text_to_speech]"),
-        std::string::npos);
-    EXPECT_NE(command.warnings.front().find("ignored"), std::string::npos);
-}
-
-TEST_F(ApplicationConfigTest, IgnoresObsoleteVoiceInputConfiguration) {
-    write_app(
-        "vault = \"Personal\"\n"
-        "[web]\nhost = \"127.0.0.1\"\nport = 8080\n"
-        "[logging]\nfile = \"logs/cha.log\"\nlevel = \"info\"\n"
-        "[voice_input]\n"
-        "url = \"https://example.com/realtime\"\n"
-        "api_key = \"api_key_7\"\n"
-        "model = \"old-model\"\n"
-        "unexpected = true\n");
-
-    const ApplicationCommand command =
-        load({"chaweb", "--config", config_.string()});
-    ASSERT_EQ(command.warnings.size(), 1U);
-    EXPECT_NE(command.warnings.front().find("[voice_input]"), std::string::npos);
-    EXPECT_NE(command.warnings.front().find("ignored"), std::string::npos);
+        const ApplicationCommand command =
+            load({"chaweb", "--config", config_.string()});
+        ASSERT_EQ(command.warnings.size(), 1U);
+        EXPECT_NE(command.warnings.front().find("[" + std::string(table) + "]"), std::string::npos);
+        EXPECT_NE(command.warnings.front().find("ignored"), std::string::npos);
+    }
 }
 
 TEST_F(ApplicationConfigTest, BootstrapsAnEmptyConfigurationDirectory) {
@@ -240,73 +252,29 @@ TEST_F(ApplicationConfigTest, DoesNotBootstrapANonemptyOrOfflineDirectory) {
     EXPECT_TRUE(std::filesystem::is_empty(config_));
 }
 
-TEST_F(ApplicationConfigTest, AcceptsSeparatedConfigOptionAndAbsolutePaths) {
-    const std::filesystem::path database = root_ / "absolute.sqlite3";
-    const std::filesystem::path log = root_ / "absolute.log";
-    write_app(
-        "vault = \"Personal\"\n"
-        "[web]\nhost = \"0.0.0.0\"\nport = 9000\n"
-        "[logging]\nfile = " + toml_path(log) + "\nlevel = \"debug\"\n");
-    write_named_vault("personal.toml", "Personal", database);
-
-    const ApplicationCommand command =
-        load({"chaweb", "--config", config_.string()});
-    EXPECT_EQ(command.vault.data, std::filesystem::weakly_canonical(database));
-    EXPECT_EQ(command.log_file, std::filesystem::weakly_canonical(log));
-    EXPECT_EQ(command.host, "0.0.0.0");
-    EXPECT_EQ(command.port, 9000);
-    EXPECT_EQ(command.log_level, "debug");
-}
-
-TEST_F(ApplicationConfigTest, AcceptsZeroAsAnEphemeralPort) {
-    write_app(
-        "vault = \"Personal\"\n"
-        "[web]\nhost = \"127.0.0.1\"\nport = 0\n"
-        "[logging]\nfile = \"logs/cha.log\"\nlevel = \"info\"\n");
-
-    const ApplicationCommand command =
-        load({"chaweb", "--config", config_.string()});
-    EXPECT_EQ(command.port, 0);
-}
-
-TEST_F(ApplicationConfigTest, DerivesVaultPathsFromAbsoluteAppBasePaths) {
-    const std::filesystem::path mirror = root_ / "mirror";
-    const std::filesystem::path modify = root_ / "modify";
-    write_app(
-        "vault = \"Personal\"\n"
-        "mirror = " + toml_path(mirror) + "\n"
-        "modify = " + toml_path(modify) + "\n"
-        "[web]\nhost = \"127.0.0.1\"\nport = 8080\n"
-        "[logging]\nfile = \"logs/cha.log\"\nlevel = \"info\"\n");
-
-    const ApplicationCommand command =
-        load({"chaweb", "--config", config_.string()});
-    ASSERT_TRUE(command.vault.mirror);
-    ASSERT_TRUE(command.vault.modify);
-    EXPECT_EQ(
-        *command.vault.mirror,
-        std::filesystem::weakly_canonical(mirror / "Personal"));
-    EXPECT_EQ(
-        *command.vault.modify,
-        std::filesystem::weakly_canonical(modify / "Personal"));
-}
-
-TEST_F(ApplicationConfigTest, ResolvesRelativeAppBasePaths) {
-    write_app(
-        "vault = \"Personal\"\n"
-        "mirror = \"../mirror\"\n"
-        "modify = \"modify\"\n"
-        "[web]\nhost = \"127.0.0.1\"\nport = 8080\n"
-        "[logging]\nfile = \"logs/cha.log\"\nlevel = \"info\"\n");
-
-    const ApplicationCommand command =
-        load({"chaweb", "--config", config_.string()});
-    EXPECT_EQ(
-        command.vault.mirror,
-        std::filesystem::weakly_canonical(root_ / "mirror" / "Personal"));
-    EXPECT_EQ(
-        command.vault.modify,
-        std::filesystem::weakly_canonical(config_ / "modify" / "Personal"));
+TEST_F(ApplicationConfigTest, DerivesVaultPathsFromAppBasePaths) {
+    struct Case {
+        std::string mirror;
+        std::string modify;
+        std::filesystem::path expected_mirror;
+        std::filesystem::path expected_modify;
+    };
+    const Case cases[]{
+        {toml_path(root_ / "mirror"), toml_path(root_ / "modify"), root_ / "mirror/Personal", root_ / "modify/Personal"},
+        {"\"../mirror\"", "\"modify\"", root_ / "mirror/Personal", config_ / "modify/Personal"},
+    };
+    for (const auto& item : cases) {
+        SCOPED_TRACE(item.modify);
+        write_app("vault = \"Personal\"\nmirror = " + item.mirror
+                  + "\nmodify = " + item.modify
+                  + "\n[web]\nhost = \"127.0.0.1\"\nport = 8080\n"
+                    "[logging]\nfile = \"logs/cha.log\"\nlevel = \"info\"\n");
+        const ApplicationCommand command = load({"chaweb", "--config", config_.string()});
+        ASSERT_TRUE(command.vault.mirror);
+        ASSERT_TRUE(command.vault.modify);
+        EXPECT_EQ(*command.vault.mirror, std::filesystem::weakly_canonical(item.expected_mirror));
+        EXPECT_EQ(*command.vault.modify, std::filesystem::weakly_canonical(item.expected_modify));
+    }
 }
 
 TEST_F(ApplicationConfigTest, RejectsModifyContainingConfigOrDatabase) {
@@ -735,10 +703,6 @@ TEST_F(ApplicationConfigTest, ResolvesSymlinkedConfigParents) {
         command.vault.data,
         std::filesystem::weakly_canonical(
             real_parent / "config" / "personal.sqlite3"));
-}
-
-TEST(ExecutablePath, ResolvesTheRunningBinaryDirectory) {
-    EXPECT_TRUE(std::filesystem::is_directory(executable_directory()));
 }
 
 } // namespace

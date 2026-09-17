@@ -274,13 +274,15 @@ workspace/
     │   └── chatgpt/config.toml               # OAuth subscription provider
     ├── styles/
     │   └── serif-bold/config.toml
+    ├── voice-output/
+    │   └── config.toml                       # optional FishAudio output settings
     └── voices/
         └── warm-narrator/config.toml
 ```
 
 The loader requires `personas/`, `characters/`, `forums/`, and
 `system/providers/` directories. `system/styles/` and `system/voices/` are
-optional, but every style or voice referenced by a character must exist.
+optional, but every style or voice referenced by a character or persona must exist.
 `system/assistant/character.toml` and at least one usable provider are
 effectively required because the built-in Assistant must select a provider.
 
@@ -363,12 +365,18 @@ persona definition directory. Do not leave a stray `PERSONA.md` without its
 ```toml
 display_name = "Michael"                         # required
 description = "A programmer living in Redmond." # optional, one line
+style = "serif"                                # optional style ID
+voice = "warm-narrator"                         # optional voice ID
 ```
 
 Unknown fields are rejected. `PERSONA.md`, when present, describes the user to
 the forum's characters. It can contain substantial first-person context and
 communication preferences. If it is absent, the persona still exists but has
 no prompt body.
+
+`style` controls the appearance of human messages; `voice` selects their
+FishAudio voice. Both reference existing definitions under `system/`. Without
+an assigned voice, speech uses the configured output default.
 
 Every forum chooses its active starting persona with `default_persona` in the
 forum's `config.toml`. If omitted, CHA uses the built-in `guest` persona. A user
@@ -870,11 +878,30 @@ Only `elevenlabs_voice_id` is required. CHA sends an optional `speed` as FishAud
 `prosody.speed`; when omitted, FishAudio uses its default. Obsolete `stability`,
 `similarity_boost`, `style`, and `use_speaker_boost` fields are ignored with a
 warning once per process and removed when the voice is saved. API keys and voice
-output settings are vault settings. The endpoint must use HTTPS on `api.fish.audio`;
+output settings are vault settings. ElevenLabs output is no longer supported.
+The endpoint must use HTTPS on `api.fish.audio`;
 the playable output formats are `mp3`, `wav`, and `opus`. Legacy format strings
 such as `mp3_44100_128` and `opus_48000_64` normalize to their container names on
 load and save; their encoded sample rate and bitrate are no longer used. Unsupported
 saved formats fall back to `mp3` with a warning, and new saves reject them.
+
+Configure output under Settings → Voices → Voice settings. Save the FishAudio key
+under Settings → API Keys first, then select that key and a default voice.
+The equivalent exported `system/voice-output/config.toml` is:
+
+```toml
+url = "https://api.fish.audio/v1/tts"
+model = "s2.1-pro"
+api_key = "fish-audio"             # saved API-key ID, not the secret
+output_format = "mp3"             # mp3 | wav | opus
+default_voice = "Warm Narrator"   # voice display name, not directory ID
+```
+
+An invalid saved output configuration, including an old ElevenLabs endpoint,
+is ignored with a warning instead of preventing the workspace from loading.
+Replace its endpoint, model, key, and reference IDs with FishAudio settings to
+restore synthesis. Voice output is available in the packaged native application;
+ordinary browser-only server mode does not expose it.
 
 Assign the stable directory ID in a global character definition:
 
@@ -896,42 +923,49 @@ To add or tune a voice without the web UI:
 4. Validate the complete exported workspace.
 5. Import the directory back into the vault.
 
-Changing an assignment or definition affects playback of both old and new
-responses because transcripts store the producing character ID, not a voice
-snapshot.
+Personas can also select `voice` in `persona.toml` or their Settings screen for
+human-message playback. An unassigned character or persona uses the configured
+default voice. Changing a voice affects future synthesis; an already cached
+clip keeps its original voice until the session's audio cache is cleared.
 
-### Browser voice output cache
+### Stored audio and background downloads
 
-Response playback uses the in-memory cache in
-`webapp/src/textToSpeech.ts`. Its key contains the configured FishAudio endpoint,
-model, output format, and JSON body, so text, voice ID, and voice settings all
-participate. A repeated playback of the same request reuses its `Blob` rather
-than calling FishAudio again. Requests go through CHA's voice output proxy, which
-keeps the API key on the server. The cache retains at most 256 MiB and evicts the
-oldest inserted clips when necessary. It is not persisted and is cleared when
-the web application reloads.
+Audio is stored in SQLite's `entry_audio` table as one audio BLOB and MIME type
+per `(session_key, entry_id)`. Saved-session clips survive page reloads and
+application restarts and travel with complete database copies and R2 backups.
+Welcome uses its temporary session database, so its audio is not durable across
+application restarts. There is no browser-wide 256 MiB cache or request-body
+cache key. Cached clips can be played without a working synthesis configuration.
 
-The module also shares identical synthesis requests that are already in
-flight. Cached requests deliberately do not use a playback session's abort
-signal: a request may also belong to automatic preparation or another playback
-caller, so stopping playback leaves synthesis running and keeps the resulting
-clip. Character and voice settings previews do not opt into caching, preserving
-their usefulness for hearing variation between repeated samples.
+Selecting a completed human message or character response's speaker control
+submits a short download request if audio is missing. `AudioDownloadManager`
+owns the queue and three worker threads; repeated requests for the same entry
+share the existing job. It captures output settings, the key, and voice at
+acceptance, derives text from the stored entry, and retries transport failures
+up to four attempts. Storage failures are terminal. The browser polls status
+while jobs are pending and plays the selected clip when it becomes available.
+Failed entries expose a retry control. Stopping playback preserves its position
+in browser memory; replay resumes there until the clip finishes or the page reloads.
 
-When native voice output is available, `ChatScreen` shows an automatic-audio
-speaker toggle immediately before the Russian transliteration toggle. Enabling
-it queues every nonempty completed character response in the raw session
-transcript, including covered responses. A small session-local worker pool
-keeps at most two preparation requests active, leaving one synthesis slot for
-playback. Responses completed after the
-toggle was enabled are inserted ahead of historical work still waiting, while
-the shared in-flight map prevents a simultaneous playback from duplicating the
-same request.
+The speaker toggle before `Rus` enables automatic conversation caching. It
+submits one batch for uncached, nonempty completed human messages and character
+responses in the displayed transcript, including covered entries but excluding
+duplicate multicast prompts. Later completed entries are submitted while the
+toggle remains enabled. A batch is fully validated before new jobs are admitted.
 
-Disabling the toggle or changing sessions drops preparation work that has not
-started. Up to two active preparation requests finish and remain cached. The automatic
-mode is session-local, but the completed-audio cache has application lifetime.
-Individual request failures are reported without stopping the remaining queue.
+Disabling the toggle stops future submissions. Changing sessions also turns it
+off, but accepted jobs continue independently of the screen or browser connection.
+Jobs and failure state are in memory and do not resume after an application
+restart. Vault switching, configuration import, and database replacement cancel
+jobs so stale results cannot enter another vault. Other maintenance pauses
+admission while repository access is fenced.
+
+Recent → session menu → Clear audio cache cancels that session's queued and
+running jobs and removes its stored clips without changing the transcript.
+Deleting transcript entries removes their audio through the table's cascading
+foreign key. Character and voice previews use the separate uncached FishAudio
+proxy, which keeps the key on the server and admits at most four requests at
+once. They generate a fresh sample each time.
 
 ### Built-in Assistant
 

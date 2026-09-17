@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -96,75 +96,35 @@ describe('Sidebar session actions', () => {
     expect(screen.getByLabelText('Session name')).toHaveValue('Planning');
   });
 
-  it('downloads the selected session without opening it', async () => {
-    const user = userEvent.setup();
-    const onDownload = vi.fn(async () => undefined);
-    const onOpen = vi.fn(async () => true);
-    render(
-      <Sidebar
-        dispatch={vi.fn()}
-        onClearSessionAudioCache={vi.fn(async () => undefined)}
-        onDeleteSession={vi.fn(async () => undefined)}
-        onDownloadSession={onDownload}
-        onOpenSession={onOpen}
-        onRenameSession={vi.fn(async () => undefined)}
-        onSwitchVault={vi.fn(async () => undefined)}
-        state={readyState()}
-      />,
-    );
+  it('reports public download and audio-cache failures in the sidebar', async () => {
+    for (const item of [
+      { action: 'Download', message: 'Could not download session.' },
+      { action: 'Clear audio cache', message: 'Could not clear audio cache.' },
+    ]) {
+      const user = userEvent.setup();
+      const failingAction = vi.fn(async () => {
+        throw new ChaError(500, 'internal_error', item.message);
+      });
+      render(
+        <Sidebar
+          dispatch={vi.fn()}
+          onClearSessionAudioCache={item.action === 'Clear audio cache' ? failingAction : vi.fn(async () => undefined)}
+          onDeleteSession={vi.fn(async () => undefined)}
+          onDownloadSession={item.action === 'Download' ? failingAction : vi.fn(async () => undefined)}
+          onOpenSession={vi.fn(async () => true)}
+          onRenameSession={vi.fn(async () => undefined)}
+          onSwitchVault={vi.fn(async () => undefined)}
+          state={readyState()}
+        />,
+      );
 
-    await user.click(screen.getByLabelText('Actions for Planning'));
-    await user.click(screen.getByRole('menuitem', { name: 'Download' }));
-    expect(onDownload).toHaveBeenCalledWith('lobby', 'planning', 'Planning');
-    expect(onOpen).not.toHaveBeenCalled();
-  });
+      await user.click(screen.getByLabelText('Actions for Planning'));
+      await user.click(screen.getByRole('menuitem', { name: item.action }));
 
-  it('reports a download failure in the sidebar', async () => {
-    const user = userEvent.setup();
-    const onDownload = vi.fn(async () => {
-      throw new ChaError(500, 'internal_error', 'Could not download session.');
-    });
-    render(
-      <Sidebar
-        dispatch={vi.fn()}
-        onClearSessionAudioCache={vi.fn(async () => undefined)}
-        onDeleteSession={vi.fn(async () => undefined)}
-        onDownloadSession={onDownload}
-        onOpenSession={vi.fn(async () => true)}
-        onRenameSession={vi.fn(async () => undefined)}
-        onSwitchVault={vi.fn(async () => undefined)}
-        state={readyState()}
-      />,
-    );
-
-    await user.click(screen.getByLabelText('Actions for Planning'));
-    await user.click(screen.getByRole('menuitem', { name: 'Download' }));
-
-    expect(await screen.findByRole('alert')).toHaveTextContent('Could not download session.');
-  });
-
-  it('reports an audio cache clearing failure in the sidebar', async () => {
-    const user = userEvent.setup();
-    const onClear = vi.fn(async () => {
-      throw new ChaError(500, 'internal_error', 'Could not clear audio cache.');
-    });
-    render(
-      <Sidebar
-        dispatch={vi.fn()}
-        onClearSessionAudioCache={onClear}
-        onDeleteSession={vi.fn(async () => undefined)}
-        onDownloadSession={vi.fn(async () => undefined)}
-        onOpenSession={vi.fn(async () => true)}
-        onRenameSession={vi.fn(async () => undefined)}
-        onSwitchVault={vi.fn(async () => undefined)}
-        state={readyState()}
-      />,
-    );
-
-    await user.click(screen.getByLabelText('Actions for Planning'));
-    await user.click(screen.getByRole('menuitem', { name: 'Clear audio cache' }));
-    expect(onClear).toHaveBeenCalledWith('lobby', 'planning');
-    expect(await screen.findByRole('alert')).toHaveTextContent('Could not clear audio cache.');
+      expect(failingAction).toHaveBeenCalledWith('lobby', 'planning', ...(item.action === 'Download' ? ['Planning'] : []));
+      expect(await screen.findByRole('alert')).toHaveTextContent(item.message);
+      cleanup();
+    }
   });
 
   it('confirms deletion before invoking it', async () => {

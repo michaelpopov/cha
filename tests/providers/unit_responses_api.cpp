@@ -88,31 +88,46 @@ TEST(ResponsesApi, BuildsRequestFieldsAndMapsRoles) {
                 2, "assistant", "Assistant", "Earlier answer",
                 EntryStatus::complete, 6),
         });
-    ModelBackendConfig config = responses_config(WebSearchMode::automatic);
-    config.reasoning_effort = "none";
-    config.max_tokens = 8;
+    struct Case {
+        WebSearchMode search;
+        const char* host;
+        const char* tool;
+        const char* choice;
+    };
+    const Case cases[]{
+        {WebSearchMode::automatic, "example.test", "web_search", "auto"},
+        {WebSearchMode::required, "example.test", "web_search", "required"},
+        {WebSearchMode::automatic, "OPENROUTER.AI.", "openrouter:web_search", "auto"},
+    };
+    for (const auto& item : cases) {
+        SCOPED_TRACE(item.host);
+        SCOPED_TRACE(item.choice);
+        ModelBackendConfig config = responses_config(item.search);
+        config.host = item.host;
+        config.reasoning_effort = "none";
+        config.max_tokens = 8;
+        const Json body = Json::parse(build_responses_request_body(
+            request, config, "System prompt"));
 
-    const Json body = Json::parse(build_responses_request_body(
-        request, config, "System prompt"));
-
-    EXPECT_EQ(body["model"], "test-model");
-    EXPECT_TRUE(body["stream"]);
-    EXPECT_FALSE(body["store"]);
-    EXPECT_DOUBLE_EQ(body["temperature"].get<double>(), 0.5);
-    EXPECT_EQ(body["max_output_tokens"], 16);
-    EXPECT_EQ(body["instructions"], "System prompt");
-    EXPECT_EQ(body["reasoning"]["effort"], "none");
-    EXPECT_FALSE(body.contains("reasoning_effort"));
-    EXPECT_EQ(body["tools"], Json::array({Json{{"type", "web_search"}}}));
-    EXPECT_EQ(body["tool_choice"], "auto");
-    EXPECT_FALSE(body.contains("include"));
-    EXPECT_FALSE(body.contains("previous_response_id"));
-    EXPECT_FALSE(body.contains("conversation"));
-    EXPECT_EQ(body["input"], Json::array({
-        {{"role", "user"}, {"content", "from You:\nEarlier question"}},
-        {{"role", "assistant"}, {"content", "Earlier answer"}},
-        {{"role", "user"}, {"content", "from You:\nCurrent question"}},
-    }));
+        EXPECT_EQ(body["model"], "test-model");
+        EXPECT_TRUE(body["stream"]);
+        EXPECT_FALSE(body["store"]);
+        EXPECT_DOUBLE_EQ(body["temperature"].get<double>(), 0.5);
+        EXPECT_EQ(body["max_output_tokens"], 16);
+        EXPECT_EQ(body["instructions"], "System prompt");
+        EXPECT_EQ(body["reasoning"]["effort"], "none");
+        EXPECT_FALSE(body.contains("reasoning_effort"));
+        EXPECT_EQ(body["tools"], Json::array({Json{{"type", item.tool}}}));
+        EXPECT_EQ(body["tool_choice"], item.choice);
+        EXPECT_FALSE(body.contains("include"));
+        EXPECT_FALSE(body.contains("previous_response_id"));
+        EXPECT_FALSE(body.contains("conversation"));
+        EXPECT_EQ(body["input"], Json::array({
+            {{"role", "user"}, {"content", "from You:\nEarlier question"}},
+            {{"role", "assistant"}, {"content", "Earlier answer"}},
+            {{"role", "user"}, {"content", "from You:\nCurrent question"}},
+        }));
+    }
 }
 
 TEST(ResponsesApi, SubscriptionBodyUsesFallbackInstructionsAndOmitsExtras) {
@@ -173,31 +188,6 @@ TEST(ResponsesApi, OmitsEmptyInstructionsAndReasoningAndSearchFields) {
     EXPECT_EQ(body["input"][0]["content"], "from You:\nHi");
 }
 
-TEST(ResponsesApi, EmitsRequiredWebSearchChoice) {
-    Transcript transcript;
-    const GenerationRequest request = make_request(transcript, "Research this");
-    const Json body = Json::parse(build_responses_request_body(
-        request, responses_config(WebSearchMode::required), "Prompt"));
-
-    EXPECT_EQ(body["tools"], Json::array({Json{{"type", "web_search"}}}));
-    EXPECT_EQ(body["tool_choice"], "required");
-}
-
-TEST(ResponsesApi, EmitsOpenRouterServerWebSearchTool) {
-    Transcript transcript;
-    const GenerationRequest request = make_request(transcript, "Research this");
-    ModelBackendConfig config = responses_config(WebSearchMode::automatic);
-    config.host = "OPENROUTER.AI.";
-
-    const Json body = Json::parse(build_responses_request_body(
-        request, config, "Prompt"));
-
-    EXPECT_EQ(
-        body["tools"],
-        Json::array({Json{{"type", "openrouter:web_search"}}}));
-    EXPECT_EQ(body["tool_choice"], "auto");
-}
-
 TEST(ResponsesApi, RejectsInvalidUtf8InRequestBody) {
     Transcript transcript;
     const GenerationRequest request = make_request(
@@ -222,23 +212,12 @@ TEST(ResponsesApi, DecodesTwoTextDeltasThenCompletion) {
     decoder.consume(
         "data: {\"type\":\"response.output_text.delta\",\"delta\":\" world\"}\n\n");
     decoder.consume(
-        "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n");
+        "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":12,\"output_tokens\":5,\"input_tokens_details\":{\"cached_tokens\":9,\"cache_write_tokens\":7}}}}\n\n");
     const StreamDecodeResult result = decoder.finish();
     EXPECT_EQ(result.result.outcome, GenerationOutcome::completed);
     EXPECT_FALSE(result.describe_response);
     EXPECT_EQ(output.answer(), "Hello world");
     EXPECT_EQ(output.deltas().size(), 2U);
-}
-
-TEST(ResponsesApi, ReadsUsageFromTheCompletionEvent) {
-    Output output;
-    ResponsesStreamDecoder decoder(output.sink());
-    decoder.consume(
-        "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Answer\"}\n\n"
-        "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":12,\"output_tokens\":5,\"input_tokens_details\":{\"cached_tokens\":9,\"cache_write_tokens\":7}}}}\n\n");
-    const StreamDecodeResult result = decoder.finish();
-
-    EXPECT_EQ(result.result.outcome, GenerationOutcome::completed);
     ASSERT_TRUE(result.result.usage.input_tokens);
     ASSERT_TRUE(result.result.usage.output_tokens);
     EXPECT_EQ(*result.result.usage.input_tokens, 12U);
@@ -280,90 +259,67 @@ TEST(ResponsesApi, EmitsRefusalDeltaAsAnswer) {
     EXPECT_EQ(output.answer(), "I cannot help");
 }
 
-TEST(ResponsesApi, ReportsMalformedEventJson) {
-    Output output;
-    ResponsesStreamDecoder decoder(output.sink());
-    decoder.consume(
-        "data: not-json\n\n"
+TEST(ResponsesApi, ReportsInvalidAndFailedEvents) {
+    struct Case {
+        const char* stream;
+        const char* error;
+        bool describe_response;
+        const char* answer;
+    };
+    const Case cases[]{
+        {"data: not-json\n\n"
         "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Partial\"}\n\n"
-        "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n");
-    const StreamDecodeResult result = decoder.finish();
-    EXPECT_EQ(result.result.outcome, GenerationOutcome::protocol_error);
-    EXPECT_NE(result.result.message.find("malformed JSON"), std::string::npos);
-    EXPECT_TRUE(result.describe_response);
-    EXPECT_EQ(output.answer(), "Partial");
-}
-
-TEST(ResponsesApi, ReportsMissingStringDelta) {
-    Output output;
-    ResponsesStreamDecoder decoder(output.sink());
-    decoder.consume(
-        "data: {\"type\":\"response.output_text.delta\",\"delta\":1}\n\n"
-        "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n");
-    const StreamDecodeResult result = decoder.finish();
-    EXPECT_EQ(result.result.outcome, GenerationOutcome::protocol_error);
-    EXPECT_NE(result.result.message.find("string delta"), std::string::npos);
-}
-
-TEST(ResponsesApi, ReportsProviderErrorEvent) {
-    Output output;
-    ResponsesStreamDecoder decoder(output.sink());
-    decoder.consume(
-        "data: {\"type\":\"error\",\"message\":\"quota exceeded\"}\n\n");
-    const StreamDecodeResult result = decoder.finish();
-    EXPECT_EQ(result.result.outcome, GenerationOutcome::protocol_error);
-    EXPECT_NE(result.result.message.find("quota exceeded"), std::string::npos);
-    EXPECT_FALSE(result.describe_response);
-}
-
-TEST(ResponsesApi, ReportsFailedAndIncompleteEvents) {
-    {
+        "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n",
+         "malformed JSON", true, "Partial"},
+        {"data: {\"type\":\"response.output_text.delta\",\"delta\":1}\n\n"
+        "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n",
+         "string delta", true, ""},
+        {"data: {\"type\":\"error\",\"message\":\"quota exceeded\"}\n\n",
+         "quota exceeded", false, ""},
+        {"data: {\"type\":\"response.failed\",\"response\":"
+            "{\"error\":{\"message\":\"backend down\"}}}\n\n",
+         "backend down", false, ""},
+        {"data: {\"type\":\"response.incomplete\",\"response\":"
+            "{\"incomplete_details\":{\"reason\":\"max_output_tokens\"}}}\n\n",
+         "max_output_tokens", false, ""},
+    };
+    for (const auto& item : cases) {
+        SCOPED_TRACE(item.error);
         Output output;
         ResponsesStreamDecoder decoder(output.sink());
-        decoder.consume(
-            "data: {\"type\":\"response.failed\",\"response\":"
-            "{\"error\":{\"message\":\"backend down\"}}}\n\n");
+        decoder.consume(item.stream);
         const StreamDecodeResult result = decoder.finish();
         EXPECT_EQ(result.result.outcome, GenerationOutcome::protocol_error);
-        EXPECT_NE(result.result.message.find("backend down"), std::string::npos);
-    }
-    {
-        Output output;
-        ResponsesStreamDecoder decoder(output.sink());
-        decoder.consume(
-            "data: {\"type\":\"response.incomplete\",\"response\":"
-            "{\"incomplete_details\":{\"reason\":\"max_output_tokens\"}}}\n\n");
-        const StreamDecodeResult result = decoder.finish();
-        EXPECT_EQ(result.result.outcome, GenerationOutcome::protocol_error);
-        EXPECT_NE(
-            result.result.message.find("max_output_tokens"),
-            std::string::npos);
+        EXPECT_NE(result.result.message.find(item.error), std::string::npos);
+        EXPECT_EQ(result.describe_response, item.describe_response);
+        EXPECT_EQ(output.answer(), item.answer);
     }
 }
 
-TEST(ResponsesApi, ReportsEofBeforeTerminalEvent) {
-    Output output;
-    ResponsesStreamDecoder decoder(output.sink());
-    decoder.consume(
-        "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Partial\"}\n\n");
-    const StreamDecodeResult result = decoder.finish();
-    EXPECT_EQ(result.result.outcome, GenerationOutcome::protocol_error);
-    EXPECT_NE(result.result.message.find("response.completed"), std::string::npos);
-    EXPECT_TRUE(result.describe_response);
-    EXPECT_EQ(output.answer(), "Partial");
-}
-
-TEST(ResponsesApi, ReportsCompletionWithoutAnswerText) {
-    Output output;
-    ResponsesStreamDecoder decoder(output.sink());
-    decoder.consume(
-        "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n");
-    const StreamDecodeResult result = decoder.finish();
-    EXPECT_EQ(result.result.outcome, GenerationOutcome::protocol_error);
-    EXPECT_NE(
-        result.result.message.find("without answer content"),
-        std::string::npos);
-    EXPECT_FALSE(result.describe_response);
+TEST(ResponsesApi, RequiresCompletionAndAnswerText) {
+    struct Case {
+        const char* stream;
+        const char* error;
+        bool describe_response;
+        const char* answer;
+    };
+    const Case cases[]{
+        {"data: {\"type\":\"response.output_text.delta\",\"delta\":\"Partial\"}\n\n",
+         "response.completed", true, "Partial"},
+        {"data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n",
+         "without answer content", false, ""},
+    };
+    for (const auto& item : cases) {
+        SCOPED_TRACE(item.error);
+        Output output;
+        ResponsesStreamDecoder decoder(output.sink());
+        decoder.consume(item.stream);
+        const StreamDecodeResult result = decoder.finish();
+        EXPECT_EQ(result.result.outcome, GenerationOutcome::protocol_error);
+        EXPECT_NE(result.result.message.find(item.error), std::string::npos);
+        EXPECT_EQ(result.describe_response, item.describe_response);
+        EXPECT_EQ(output.answer(), item.answer);
+    }
 }
 
 TEST(ResponsesApi, IgnoresNonStreamingSearchAndAnnotationMetadata) {

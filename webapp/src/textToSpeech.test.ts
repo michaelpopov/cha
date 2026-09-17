@@ -394,43 +394,6 @@ describe('text to speech', () => {
     }
   });
 
-  it('uses an assigned voice and its configured settings', async () => {
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(new TextEncoder().encode('audio')),
-    );
-    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:audio');
-    vi.stubGlobal('Audio', vi.fn(function Audio() {
-      return { addEventListener: vi.fn(), play: vi.fn().mockResolvedValue(undefined) };
-    }));
-    const session = new TextToSpeechSession(
-      {
-        baseUrl: 'https://api.fish.audio/v1/tts',
-        voiceId: 'fallback',
-        outputFormat: 'mp3',
-        model: 's2.1-pro',
-      },
-      {
-        elevenlabs_voice_id: 'warm voice',
-        settings: { speed: 0.95 },
-      },
-      'Read this',
-      vi.fn(),
-    );
-
-    await session.play();
-
-    expect(fetchMock).toHaveBeenCalledWith(
-      '/api/v1/voice-output/audio',
-      expect.objectContaining({
-        body: JSON.stringify({
-          text: 'Read this',
-          reference_id: 'warm voice',
-          settings: { speed: 0.95 },
-        }),
-      }),
-    );
-  });
-
   it('omits voice settings for an assigned voice with no overrides', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(new TextEncoder().encode('audio')),

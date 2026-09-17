@@ -5,35 +5,24 @@
 namespace cha::web {
 namespace {
 
-TEST(MulticastInput, ParsesAllCharacterPromptAndLiteralAtEscape) {
-    EXPECT_EQ(
-        parse_multicast_input("What time is it?"),
-        (MulticastParseResult{MulticastInput{{}, "What time is it?"}}));
-    EXPECT_EQ(
-        parse_multicast_input("@@everyone please answer"),
-        (MulticastParseResult{MulticastInput{{}, "@everyone please answer"}}));
-}
-
-TEST(MulticastInput, ParsesCommaAndWhitespaceSeparatedRecipients) {
-    EXPECT_EQ(
-        parse_multicast_input("@one, @two, @five. What time is it?"),
-        (MulticastParseResult{MulticastInput{
-            {"one", "two", "five"}, "What time is it?"}}));
-    EXPECT_EQ(
-        parse_multicast_input("@one @two @five What's time?"),
-        (MulticastParseResult{MulticastInput{
-            {"one", "two", "five"}, "What's time?"}}));
-    EXPECT_EQ(
-        parse_multicast_input("@one. @two What time?"),
-        (MulticastParseResult{MulticastInput{{"one"}, "@two What time?"}}));
-    EXPECT_EQ(
-        parse_multicast_input("@one @two @@everyone"),
-        (MulticastParseResult{MulticastInput{
-            {"one", "two"}, "@everyone"}}));
-    EXPECT_EQ(
-        parse_multicast_input("@one , @two What time is it?"),
-        (MulticastParseResult{MulticastInput{
-            {"one", "two"}, "What time is it?"}}));
+TEST(MulticastInput, ParsesRecipientsAndLiteralText) {
+    struct Case {
+        const char* input;
+        MulticastInput expected;
+    };
+    const Case cases[]{
+        {"What time is it?", {{}, "What time is it?"}},
+        {"@@everyone please answer", {{}, "@everyone please answer"}},
+        {"@one, @two, @five. What time is it?", {{"one", "two", "five"}, "What time is it?"}},
+        {"@one @two @five What's time?", {{"one", "two", "five"}, "What's time?"}},
+        {"@one. @two What time?", {{"one"}, "@two What time?"}},
+        {"@one @two @@everyone", {{"one", "two"}, "@everyone"}},
+        {"@one , @two What time is it?", {{"one", "two"}, "What time is it?"}},
+    };
+    for (const auto& item : cases) {
+        SCOPED_TRACE(item.input);
+        EXPECT_EQ(parse_multicast_input(item.input), MulticastParseResult{item.expected});
+    }
 }
 
 TEST(MulticastInput, RejectsMalformedRecipientLists) {

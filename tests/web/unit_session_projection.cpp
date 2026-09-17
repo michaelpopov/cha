@@ -91,17 +91,13 @@ const FullSessionId test_identity{"forum", "session"};
 
 TEST(SessionProjection, CopiesABorrowedControllerViewIntoTheProtocolDto) {
     publish_projection_workspace();
-    const BackingState state = populated_state();
     const WebPresentationState presentation{
         .notice = "Current notice",
         .lifecycle = SessionLifecycle::stopping,
         .shutdown_reason = ShutdownReason::server_stopping,
     };
 
-    const SessionSnapshot snapshot =
-        to_snapshot(test_identity, "Label", state.view(), presentation);
-
-    EXPECT_EQ(snapshot, (SessionSnapshot{
+    const SessionSnapshot expected{
         // Session snapshots do not carry the forum description. Discovery is
         // where it is read.
         .forum = {"forum", "Test forum", std::nullopt, "guide", "reviewer_persona", "Reviewer persona", {
@@ -121,47 +117,26 @@ TEST(SessionProjection, CopiesABorrowedControllerViewIntoTheProtocolDto) {
             {3, EntryKind::notice, {}, "System", {}, {}, "Notice", EntryStatus::cancelled, std::nullopt},
             {4, EntryKind::error, "reviewer", "Error", {}, {}, "Failure", EntryStatus::failed, 8},
         },
+        .covered_until = 2,
         .generation = {true, 7, "guide", "Guide", ResponsePhase::reasoning, "Thinking"},
         .notice = "Current notice",
         .lifecycle = SessionLifecycle::stopping,
         .shutdown_reason = ShutdownReason::server_stopping,
-    }));
-}
-
-TEST(SessionProjection, RetainsNoBorrowIntoTheControllerBackingState) {
-    publish_projection_workspace();
+    };
     SessionSnapshot snapshot;
     {
         BackingState state = populated_state();
-        snapshot = to_snapshot(test_identity, "Label", state.view(), {});
+        state.covered_until = 2;
+        snapshot = to_snapshot(test_identity, "Label", state.view(), presentation);
+        EXPECT_EQ(snapshot, expected);
 
-        // Mutating the backing values before they are destroyed catches a
-        // retained string view.
         state.default_character_id = "gone";
         state.transcript.clear();
         state.character_display_name = "gone";
         state.reasoning_text = "gone";
+        state.covered_until.reset();
     }
-
-    ASSERT_EQ(snapshot.characters.size(), 2U);
-    EXPECT_EQ(snapshot.characters.front().id, "guide");
-    EXPECT_EQ(snapshot.forum.members.size(), 2U);
-    EXPECT_EQ(snapshot.default_character_id, "reviewer");
-    ASSERT_EQ(snapshot.transcript.size(), 4U);
-    EXPECT_EQ(snapshot.transcript.back().text, "Failure");
-    EXPECT_EQ(snapshot.generation.character_display_name, "Guide");
-    EXPECT_EQ(snapshot.generation.reasoning_text, "Thinking");
-}
-
-TEST(SessionProjection, CopiesTheActiveCoverBoundary) {
-    publish_projection_workspace();
-    BackingState state = populated_state();
-    state.covered_until = 2;
-
-    const SessionSnapshot snapshot =
-        to_snapshot(test_identity, "Label", state.view(), {});
-
-    EXPECT_EQ(snapshot.covered_until, 2U);
+    EXPECT_EQ(snapshot, expected);
 }
 
 TEST(SessionProjection, IncludesTheCharactersResolvedSpeechVoice) {

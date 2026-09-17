@@ -1869,7 +1869,7 @@ POST /s/{forum}/{session}/api/v1/actions/cover
 POST /s/{forum}/{session}/api/v1/actions/uncover
 POST /s/{forum}/{session}/api/v1/actions/delete-turn
 POST /s/{forum}/{session}/api/v1/actions/default-character</code></pre>
-<p><code>SettingsRoutes</code> owns provider, style, and saved-key
+<p><code>SettingsRoutes</code> owns provider, style, voice, and saved-key
 configuration separately from live session routes. Vault routes are
 installed by <code>ApplicationRuntime</code> because they mutate its
 process-wide registry. The provider probe receives a complete candidate
@@ -1880,6 +1880,18 @@ GET    /api/v1/providers/{provider_id}
 PATCH  /api/v1/providers/{provider_id}
 DELETE /api/v1/providers/{provider_id}
 POST   /api/v1/providers/{provider_id}/test
+
+GET    /api/v1/voices
+POST   /api/v1/voices
+PATCH  /api/v1/voices/{voice_id}
+DELETE /api/v1/voices/{voice_id}
+GET    /api/v1/voice-input
+PUT    /api/v1/voice-input
+GET    /api/v1/voice-input/runtime
+GET    /api/v1/voice-output
+PUT    /api/v1/voice-output
+GET    /api/v1/voice-output/runtime
+POST   /api/v1/voice-output/audio
 
 GET    /api/v1/vaults
 POST   /api/v1/vaults
@@ -1897,6 +1909,25 @@ DELETE /api/v1/api-keys/{api_key_id}
 GET    /api/v1/r2-storage
 PUT    /api/v1/r2-storage
 DELETE /api/v1/r2-storage</code></pre>
+<p>Entry audio routes work for stored sessions without opening a live actor:</p>
+<pre class="text"><code>POST   /api/v1/forums/{forum}/sessions/{session}/entries/{entry_id}/audio-download
+POST   /api/v1/forums/{forum}/sessions/{session}/audio-downloads
+GET    /api/v1/forums/{forum}/sessions/{session}/audio-downloads
+GET    /api/v1/forums/{forum}/sessions/{session}/entries/{entry_id}/audio
+DELETE /api/v1/forums/{forum}/sessions/{session}/audio-cache</code></pre>
+<p>Download submissions carry <code>vault_name</code>, <code>reference_id</code>, and optional <code>settings</code>
+containing <code>speed</code>; the batch shape is <code>{vault_name, entries}</code>, with an
+<code>entry_id</code> on each entry. Text comes from the stored transcript, not the caller.
+A single submission returns 200 if already cached or 202 with <code>queued</code>/<code>running</code>
+state; a batch returns 202 with per-entry acceptance results. Status and audio
+reads require the <code>vault_name</code> query parameter and reject a stale vault with
+409 <code>vault_changed</code>. Status reports <code>cached_entry_ids</code> and queued, running, or
+failed downloads. Clearing accepts an empty JSON object and returns 204.</p>
+<p>The uncached <code>/api/v1/voice-output/audio</code> proxy is for previews, accepts <code>text</code>,
+<code>reference_id</code>, and optional <code>settings</code>, and rejects the old <code>entry</code> shape.
+Output runtime discovery supplies endpoint, model, format, and default reference
+ID without exposing the saved API key. Synthesis and entry-audio access require
+native mode; stored voice settings can be edited in browser-only mode.</p>
 <p><code>default-agent</code> remains a compatibility alias for
 <code>default-character</code>; new code uses character vocabulary.</p>
 <p>The route files should mostly validate HTTP input, map
@@ -1972,10 +2003,23 @@ projection</td>
 <td>List, upload, and download vault databases and companion definitions
 over the S3 API</td>
 </tr>
+<tr>
+<td><code>fish_audio.*</code></td>
+<td>Build FishAudio requests, forward uncached previews, validate downloaded audio, and derive speech text from stored entries</td>
+</tr>
+<tr>
+<td><code>audio_download.*</code></td>
+<td>Own background audio jobs, batch admission, retries, status, cached reads, and per-session cancellation</td>
+</tr>
 </tbody>
 </table>
 <p>These modules keep <code>LiveSession</code> and the route files from
 accumulating generic HTTP, filesystem, and signal-handling details.</p>
+<p>Audio downloads are also fenced during maintenance. <code>AudioMaintenance</code> pauses
+admission before the configuration and repository reservations. Import,
+Download, and vault switching cancel jobs; Export and Upload preserve them.
+Repository operations wait behind its maintenance mutex, and admission resumes
+after a successful reopen.</p>
 <p>Database maintenance while the server is running needs every writer
 to let go of it at once, so <code>ApplicationRuntime</code> takes three
 reservations in order before Import, Export, Upload, or Download:</p>
@@ -2098,11 +2142,49 @@ transcript consumes the remaining flexible space. Automatic growth
 remains the minimum, and both automatic and manual growth stop at 80% of
 the chat area&#39;s height. The handle also accepts Up/Down keys, while Home
 or a double-click returns to automatic sizing.</p>
-<p>The composer follows ordinary multiline textarea behavior: Enter adds
-a new line and Ctrl+Enter submits the prompt. The send button uses the
-same form submission path. There is no application-level
-Latin-to-Russian transliteration mode or toggle; text comes directly
-from the user&#39;s configured keyboard or input method.</p>
+<p>The composer sends on Enter and inserts a new line on Ctrl+Enter, leaving Enter
+alone during IME composition. The send button uses the
+same form submission path. The <code>Rus</code> toggle enables Latin-to-Russian
+transliteration in the draft through the shared transliteration helper.</p>
+<h3 id="1210-voice-output-and-persistent-audio">12.10 Voice output and persistent audio</h3>
+<p>FishAudio is the only speech-output provider. Vault settings in
+<code>system/voice-output/config.toml</code> select an HTTPS endpoint on <code>api.fish.audio</code>,
+model, saved API-key ID, output format (<code>mp3</code>, <code>wav</code>, or <code>opus</code>), and default
+voice display name. Individual voices still use the compatibility field
+<code>elevenlabs_voice_id</code> for their FishAudio reference ID; only <code>speed</code> is sent as
+<code>prosody.speed</code>. Unsupported legacy voice settings are ignored with a warning.
+Invalid saved output configuration is ignored rather than preventing startup.</p>
+<p><code>AudioDownloadManager</code> owns three workers and an in-memory queue independent of
+HTTP request and browser lifetimes. Admission captures output settings, key,
+reference ID, and entry identity. Duplicate submissions share an existing job,
+and a batch is validated completely before any new work is admitted. Workers
+retry transport failures up to four attempts, validate a nonempty <code>audio/*</code>
+result, and store it through <code>SessionRepository::save_entry_audio()</code>. Before
+synthesis and commit, repository checks prevent a deleted or changed entry or
+replaced database from acquiring stale audio. Storage failures are terminal.</p>
+<p><code>entry_audio</code> stores an audio BLOB and content type under
+<code>(session_key, entry_id)</code>, with cascading deletion from <code>entries</code>. Cache identity
+does not include text, model, voice, or synthesis settings. Existing clips stay
+unchanged when voice settings change. Saved-session audio survives application
+restarts and is included in full database transfers; Welcome audio uses the
+temporary database. Jobs and failed-job state do not survive a process restart.
+The session menu&#x27;s Clear audio cache cancels jobs and deletes that session&#x27;s
+clips without altering transcript text.</p>
+<p><code>webapp/src/audioDownloads.ts</code> submits jobs and polls while work is pending.
+The transcript exposes <code>has_cached_audio</code>, and status reads refresh it without
+waiting for an SSE update. Completed human messages and character responses
+have speaker controls; human messages use their persona&#x27;s voice, responses use
+their character&#x27;s voice, and missing assignments use the output default.
+Selecting uncached audio submits a job and plays the cached result when ready.
+<code>TextToSpeechSession</code> retrieves saved audio and retains stopped playback
+positions in browser memory until completion or reload.</p>
+<p>The speaker toggle before <code>Rus</code> batches all uncached, nonempty completed entries
+in the displayed transcript, including covered entries and excluding repeated
+multicast prompts. It submits later completed entries while enabled. Turning it
+off or leaving the session stops future submissions but leaves accepted jobs
+running. Character and voice previews instead call the uncached proxy and create
+a fresh sample each time; that proxy admits at most four simultaneous requests
+and returns 503 <code>speech_busy</code> instead of blocking request workers.</p>
 <h2 id="13-end-to-end-workflow-traces">13. End-to-end workflow
 traces</h2>
 <p>Use these traces as navigation exercises. Open each function in

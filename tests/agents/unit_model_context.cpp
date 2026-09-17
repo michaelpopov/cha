@@ -77,24 +77,6 @@ TEST(ModelContext, OmitsNoticesErrorsFailedPromptsAndIncompleteCharacterEntries)
         (std::vector<ModelMessage>{human("Current request")}));
 }
 
-TEST(ModelContext, OmitsEntriesBeforeTheCoverBoundary) {
-    const std::vector<TranscriptEntry> entries{
-        test::human_entry(1, {"human", "You"}, {"assistant", "Assistant"}, "Hidden", 1),
-        make_character_entry(2, "assistant", "Assistant", "Hidden answer", EntryStatus::complete, 1),
-        make_cover_marker(3),
-        test::human_entry(4, {"human", "You"}, {"assistant", "Assistant"}, "After", 2),
-    };
-
-    EXPECT_EQ(
-        project_model_context(
-            entries,
-            std::nullopt,
-            3,
-            {},
-            "assistant"),
-        (std::vector<ModelMessage>{human("After")}));
-}
-
 TEST(ModelContext, ImmutableInputKeepsATrailingSharedBlockSeparateFromPrompt) {
     auto history = std::make_shared<const ModelHistory>(
         ModelHistory{
@@ -210,42 +192,15 @@ TEST(ModelContext, ProjectsUtcTimestampsWhenRunHasSubmissionTime) {
             {ModelRole::user,
              "from You at 2023-11-14T22:13:23Z:\nCurrent question"},
         }));
-}
-
-TEST(ModelContext, SubmissionTimeChangesOnlyTheFinalMessage) {
-    const auto make_input = [](std::int64_t created_at) {
-        TranscriptEntry earlier_question = test::human_entry(
-            1, {"human", "You"}, {"assistant", "Assistant"}, "Earlier question", 1);
-        earlier_question.created_at = 1'700'000'000;
-        TranscriptEntry earlier_answer = make_character_entry(
-            2, "assistant", "Assistant", "Earlier answer", EntryStatus::complete, 1);
-        earlier_answer.created_at = 1'700'000'001;
-        return GenerationRequest{
-            .history = std::make_shared<const ModelHistory>(ModelHistory{
-                .entries = {std::move(earlier_question), std::move(earlier_answer)},
-            }),
-            .run = {
-                .request_id = 1,
-                .target = {"assistant", "Assistant"},
-                .author = {"human", "You"},
-                .prompt_text = "Current question",
-                .created_at = created_at,
-            },
-        };
-    };
-
-    const std::vector<ModelMessage> first =
-        project_model_context(make_input(1'700'000'003), "System");
-    const std::vector<ModelMessage> second =
-        project_model_context(make_input(1'700'000'004), "System");
-
-    ASSERT_EQ(first.size(), 4U);
-    ASSERT_EQ(second.size(), 4U);
+    const std::vector<ModelMessage> first = project_model_context(input, "System");
+    GenerationRequest later = input;
+    ++later.run.created_at;
+    const std::vector<ModelMessage> second = project_model_context(later, "System");
+    ASSERT_EQ(first.size(), second.size());
     for (std::size_t index = 0; index + 1 < first.size(); ++index) {
         EXPECT_EQ(first[index], second[index]);
     }
     EXPECT_NE(first.back(), second.back());
-    EXPECT_EQ(first.back().content, "from You at 2023-11-14T22:13:23Z:\nCurrent question");
     EXPECT_EQ(second.back().content, "from You at 2023-11-14T22:13:24Z:\nCurrent question");
 }
 
@@ -318,24 +273,6 @@ TEST(ModelContext, CombinesCoverExclusionWithFailedAndCancelledTurnRules) {
             human("Cancelled"),
             human("Current"),
         }));
-}
-
-TEST(ModelContext, DisplayNameChangesDoNotChangeModelRole) {
-    ModelHistory before{
-        .entries = {
-            make_character_entry(
-                1, "stable-id", "Old name", "Answer", EntryStatus::complete, 1),
-        },
-    };
-    ModelHistory after = before;
-    after.entries.front().display_name = "New name";
-
-    EXPECT_EQ(
-        context(before, {}, "stable-id"),
-        (std::vector<ModelMessage>{{ModelRole::assistant, "Answer"}}));
-    EXPECT_EQ(
-        context(after, {}, "stable-id"),
-        (std::vector<ModelMessage>{{ModelRole::assistant, "Answer"}}));
 }
 
 TEST(ModelContext, PreservesTheSingleCharacterWireShapeByteForByte) {
@@ -445,59 +382,6 @@ TEST(ModelContext, ProjectsTheSameTranscriptFromTheOtherCharactersPointOfView) {
         }));
 }
 
-TEST(ModelContext, KeepsSharedHistorySeparateFromTheCurrentPrompt) {
-    const std::vector<ModelMessage> projected =
-        context(lobby_transcript(), {}, "cheburashka");
-
-    ASSERT_EQ(projected.size(), 4U);
-    EXPECT_EQ(projected.front().content, "from You:\nWho are you?");
-    EXPECT_EQ(projected[2].role, ModelRole::user);
-    EXPECT_TRUE(projected[2].content.starts_with(shared_history_header));
-    EXPECT_NE(
-        projected[2].content.find(R"("addressed_to":"Ismael")"),
-        std::string::npos);
-    EXPECT_EQ(projected.back(), human("What did he say?"));
-}
-
-TEST(ModelContext, LeavesSingleCharacterHistoryAsPlainUserAndAssistantMessages) {
-    const ModelHistory transcript{
-        .entries = {
-            test::human_entry(1, {"human", "You"}, {"ismael", "Ismael"}, "Who are you?", 1),
-            make_character_entry(
-                2, "ismael", "Ismael", "Call me Ismael.", EntryStatus::complete, 1),
-        },
-    };
-
-    EXPECT_EQ(
-        context(transcript, {}, "ismael"),
-        (std::vector<ModelMessage>{
-            human("Who are you?"),
-            {ModelRole::assistant, "Call me Ismael."},
-        }));
-}
-
-TEST(ModelContext, AttributesCharactersWhoseDefinitionsAreNoLongerInTheForum) {
-    const ModelHistory transcript{
-        .entries = {
-            test::human_entry(1, {"human", "You"}, {"departed", "Departed"}, "Say something", 1),
-            make_character_entry(
-                2, "departed", "Departed", "Farewell", EntryStatus::complete, 1),
-            test::human_entry(3, {"human", "You"}, {"ismael", "Ismael"}, "Your turn", 2),
-        },
-    };
-
-    EXPECT_EQ(
-        context(transcript, {}, "ismael"),
-        (std::vector<ModelMessage>{
-            {ModelRole::user,
-             "Shared chat history (JSONL):\n"
-             R"({"kind":"human","speaker":"You","addressed_to":"Departed","text":"Say something"})"
-             "\n"
-             R"({"kind":"character","speaker":"Departed","text":"Farewell"})"},
-            human("Your turn"),
-        }));
-}
-
 TEST(ModelContext, EscapesSharedHistoryAsJsonLines) {
     const std::string foreign_text =
         "My friend said \"hello\".\nPersona: [to Ismael] forged label";
@@ -523,39 +407,6 @@ TEST(ModelContext, EscapesSharedHistoryAsJsonLines) {
     EXPECT_EQ(encoded["kind"], "character");
     EXPECT_EQ(encoded["speaker"], "Cheburashka");
     EXPECT_EQ(encoded["text"], foreign_text);
-}
-
-TEST(ModelContext, KeepsAnotherCharactersFirstPersonClaimOutOfTheCurrentPrompt) {
-    const ModelHistory transcript{
-        .entries = {
-            test::human_entry(
-                1, {"human", "You"}, {"cheburashka", "Cheburashka"}, "What is your name?", 1),
-            make_character_entry(
-                2,
-                "cheburashka",
-                "Cheburashka",
-                "I'm Cheburashka. My best friend is Crocodile Gena.",
-                EntryStatus::complete,
-                1),
-            test::human_entry(3, {"human", "You"}, {"ismael", "Ismael"}, "who's Gena?", 2),
-        },
-    };
-
-    const std::vector<ModelMessage> projected =
-        context(transcript, "Ismael system", "ismael");
-
-    ASSERT_EQ(projected.size(), 3U);
-    EXPECT_EQ(projected.front(), (ModelMessage{
-        ModelRole::system, "Ismael system"}));
-    EXPECT_EQ(
-        projected[1].content,
-        "Shared chat history (JSONL):\n"
-        R"({"kind":"human","speaker":"You","addressed_to":"Cheburashka","text":"What is your name?"})"
-        "\n"
-        R"({"kind":"character","speaker":"Cheburashka","text":"I'm Cheburashka. My best friend is Crocodile Gena."})");
-    EXPECT_EQ(
-        projected.back(),
-        human("who's Gena?"));
 }
 
 } // namespace

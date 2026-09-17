@@ -23,13 +23,6 @@ describe('application navigation reducer', () => {
     expect(appReducer(cleared, { ...clear, sessionId: 'other' }).audioCacheClearCount).toBe(cleared.audioCacheClearCount);
     expect(appReducer(cleared, { ...clear, entryId: 2 }).audioCacheClearCount).toBe(cleared.audioCacheClearCount);
   });
-  it('selects the server-provided startup conversation without hard-coding it', () => {
-    const state = readyState();
-    expect(state.currentForumId).toBe('entrance');
-    expect(state.activeConversation).toEqual({ forumId: 'entrance', sessionId: 'welcome' });
-    expect(state.currentDefaultCharacterId).toBe('assistant');
-  });
-
   it('preserves the active conversation while navigating between forum views', () => {
     let state = readyState();
     state = appReducer(state, { type: 'toggle-sidebar' });
@@ -58,6 +51,9 @@ describe('application navigation reducer', () => {
 
   it('changes active conversation and default character only from authoritative snapshots', () => {
     let state = readyState();
+    expect(state.currentForumId).toBe('entrance');
+    expect(state.activeConversation).toEqual({ forumId: 'entrance', sessionId: 'welcome' });
+    expect(state.currentDefaultCharacterId).toBe('assistant');
     const lobbySnapshot = {
       ...snapshotFixture,
       forum: bootstrapFixture.forums[1],
@@ -203,6 +199,11 @@ describe('application navigation reducer', () => {
     expect(state.inspectedCharacterId).toBe('assistant');
 
     state = appReducer(state, {
+      type: 'character-detail-loaded', characterId: 'guide', settingsWritable: true, writable: true,
+    });
+    expect(state.characterSettingsAvailable).toBe(false);
+
+    state = appReducer(state, {
       type: 'character-detail-loaded', characterId: 'assistant', settingsWritable: true, writable: false,
     });
     expect(state.characterSettingsAvailable).toBe(true);
@@ -338,16 +339,5 @@ describe('application navigation reducer', () => {
     expect(state.mainView).toBe('settings-download-vault');
     expect(state.bootstrap?.vault_name).toBe('Personal');
     expect(state.bootstrap?.vaults).toEqual(['Archive', 'Personal', 'Projects']);
-  });
-
-  it('ignores a character detail that finished loading after the reader left it', () => {
-    let state = readyState();
-    state = appReducer(state, { type: 'inspect-character', characterId: 'assistant' });
-
-    // Guide's slower request lands while the Assistant is the one on screen.
-    state = appReducer(state, {
-      type: 'character-detail-loaded', characterId: 'guide', settingsWritable: true, writable: true,
-    });
-    expect(state.characterSettingsAvailable).toBe(false);
   });
 });

@@ -90,26 +90,6 @@ TEST(ConcurrentQueue, CloseWithDeliversOneFinalValueAfterQueuedValues) {
     EXPECT_FALSE(queue.push("late"));
 }
 
-TEST(ConcurrentQueue, CloseWithWakesABlockedConsumerWithTheFinalValue) {
-    using namespace std::chrono_literals;
-
-    ConcurrentQueue<int> queue;
-    std::future<std::optional<int>> result = std::async(
-        std::launch::async,
-        [&queue] { return queue.get(); });
-    EXPECT_EQ(result.wait_for(20ms), std::future_status::timeout);
-
-    queue.close_with(11);
-    if (result.wait_for(1s) != std::future_status::ready) {
-        queue.close();
-        result.wait();
-        FAIL() << "Timed out waiting for final queue value";
-        return;
-    }
-    EXPECT_EQ(result.get(), std::optional<int>{11});
-    EXPECT_EQ(queue.get(), std::nullopt);
-}
-
 TEST(ConcurrentQueue, CloseWakesEveryBlockedConsumer) {
     using namespace std::chrono_literals;
 

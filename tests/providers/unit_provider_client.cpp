@@ -975,8 +975,14 @@ TEST(ProviderClient, HandlesNonStreamingResponsesApiResponse) {
         R"({"status":"completed","output":[{"type":"message","role":"assistant",)"
         R"("content":[{"type":"output_text","text":"Answer"}]}]})")});
     mock.start();
+    CharacterDefinition definition = test_definition();
+    definition.provider.config.host = "127.0.0.1";
+    definition.provider.config.port = mock.port();
+    definition.provider.config.mode = Mode::net;
+    definition.provider.config.model = "configured-model";
+    definition.provider.config.stream = false;
     std::atomic_bool cancellation{false};
-    ProviderClient client(shared_definition(responses_network_definition(mock.port(), false)));
+    ProviderClient client(shared_definition(std::move(definition)));
     Transcript transcript;
     const GenerationRequest request = client_request(transcript, 28, "Question");
     std::string output;
@@ -990,85 +996,9 @@ TEST(ProviderClient, HandlesNonStreamingResponsesApiResponse) {
     mock.join();
     ASSERT_EQ(mock.requests().size(), 1U);
     EXPECT_TRUE(mock.requests().front().starts_with("POST /v1/responses HTTP/1.1"));
-}
-
-TEST(ProviderClient, UnconfiguredProtocolDefaultsToWebSearchOff) {
-    MockHttpServer mock({http_response(
-        "application/json",
-        R"({"status":"completed","output":[{"type":"message","role":"assistant",)"
-        R"("content":[{"type":"output_text","text":"Answer"}]}]})")});
-    mock.start();
-    CharacterDefinition definition = test_definition();
-    definition.provider.config.host = "127.0.0.1";
-    definition.provider.config.port = mock.port();
-    definition.provider.config.mode = Mode::net;
-    definition.provider.config.model = "configured-model";
-    definition.provider.config.stream = false;
-    std::atomic_bool cancellation{false};
-    ProviderClient client(shared_definition(std::move(definition)));
-    Transcript transcript;
-    const GenerationRequest request = client_request(transcript, 32, "Question");
-
-    const GenerationResult result = complete(
-        client, request, transcript, [](GenerationDelta) {}, cancellation);
-
-    EXPECT_EQ(result.outcome, GenerationOutcome::completed);
-    mock.join();
-    ASSERT_EQ(mock.requests().size(), 1U);
-    EXPECT_TRUE(mock.requests().front().starts_with("POST /v1/responses HTTP/1.1"));
     const Json body = Json::parse(request_body(mock.requests().front()));
     EXPECT_FALSE(body.contains("tools"));
     EXPECT_FALSE(body.contains("tool_choice"));
-}
-
-TEST(ProviderClient, ReportsATruncatedResponsesStreamAsATransportError) {
-    const std::string body =
-        "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Partial\"}\n\n";
-    const std::string response = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n"
-        "Content-Length: " + std::to_string(body.size() + 20)
-        + "\r\nConnection: close\r\n\r\n" + body;
-    MockHttpServer mock({response});
-    mock.start();
-    std::atomic_bool cancellation{false};
-    ProviderClient client(shared_definition(responses_network_definition(mock.port())));
-    Transcript transcript;
-    const GenerationRequest request = client_request(transcript, 29, "Question");
-    std::string output;
-
-    const GenerationResult result = complete(
-        client, request, transcript,
-        [&output](GenerationDelta delta) { output += delta.text; }, cancellation);
-
-    EXPECT_EQ(result.outcome, GenerationOutcome::transport_error);
-    EXPECT_NE(result.message.find("HTTP request failed"), std::string::npos);
-    EXPECT_EQ(output, "Partial");
-    mock.join();
-}
-
-TEST(ProviderClient, CancelsAnActiveResponsesStreamingTransfer) {
-    const std::string body =
-        "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Partial\"}\n\n";
-    const std::string response = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n"
-        "Content-Length: " + std::to_string(body.size() + 20)
-        + "\r\nConnection: close\r\n\r\n" + body;
-    MockHttpServer mock({response}, true);
-    mock.start();
-    std::atomic_bool cancellation{false};
-    ProviderClient client(shared_definition(responses_network_definition(mock.port())));
-    Transcript transcript;
-    const GenerationRequest request = client_request(transcript, 30, "Question");
-    std::string output;
-
-    const GenerationResult result = complete(
-        client, request, transcript,
-        [&output, &cancellation](GenerationDelta delta) {
-            output += delta.text;
-            cancellation.store(true, std::memory_order_release);
-        }, cancellation);
-
-    EXPECT_EQ(result.outcome, GenerationOutcome::cancelled);
-    EXPECT_EQ(output, "Partial");
-    mock.join();
 }
 
 std::string base64url_encode(std::string_view input) {

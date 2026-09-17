@@ -74,6 +74,10 @@ TEST(ControllerUpdate, DifferentTargetAppendsRequireASnapshot) {
 }
 
 TEST(ControllerUpdate, LifecycleFlagsCombineWithLogicalOr) {
+    ControllerUpdate generation;
+    merge(generation, {.state = SnapshotRequired{}});
+    EXPECT_FALSE(generation.input_consumed);
+
     ControllerUpdate all{.input_consumed = true};
     merge(all, {.session_ended = true});
 
@@ -83,13 +87,6 @@ TEST(ControllerUpdate, LifecycleFlagsCombineWithLogicalOr) {
     ControllerUpdate ended{.session_ended = true};
     merge(ended, {});
     EXPECT_TRUE(ended.session_ended);
-}
-
-TEST(ControllerUpdate, GenerationEventsDoNotManufactureInputConsumption) {
-    ControllerUpdate all;
-    merge(all, {.state = SnapshotRequired{}});
-
-    EXPECT_FALSE(all.input_consumed);
 }
 
 TEST(ControllerUpdate, TheLastSuppliedNoticeWinsIncludingAClearingOne) {

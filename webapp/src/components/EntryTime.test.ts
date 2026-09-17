@@ -17,16 +17,14 @@ function timeLabel(date: Date): string {
 }
 
 describe('entry time', () => {
-  it('shows the date and the time, omitting the year within the current one', () => {
-    const label = formatEntryTime(seconds(sameMorning), now);
-    expect(label.endsWith(timeLabel(sameMorning))).toBe(true);
-    expect(label).not.toBe(timeLabel(sameMorning));
-    expect(label).not.toContain('2026');
+  it('formats entry dates and times, including the year only for older years', () => {
+    for (const date of [sameMorning, lastYear]) {
+      const label = formatEntryTime(seconds(date), now);
+      expect(label.endsWith(timeLabel(date)), date.toISOString()).toBe(true);
+      expect(label).not.toBe(timeLabel(date));
+      expect(label).not.toContain('2026');
+      if (date === lastYear) expect(label).toContain('2025');
+    }
   });
 
-  it('carries the year for entries from another year', () => {
-    const label = formatEntryTime(seconds(lastYear), now);
-    expect(label.endsWith(timeLabel(lastYear))).toBe(true);
-    expect(label).toContain('2025');
-  });
 });

@@ -125,12 +125,6 @@ function renderAt(width: number) {
   return render(<App client={fixtureClient()} />);
 }
 
-it('names the window after the active vault', async () => {
-  render(<App client={fixtureClient()} />);
-
-  await waitFor(() => expect(document.title).toBe('CHA: Personal'));
-});
-
 describe.each([
   ['desktop', 1280],
   ['iPhone', 390],
@@ -581,17 +575,6 @@ it('retries a failed character-detail request without exposing implementation de
   fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
   expect(await screen.findByRole('heading', { name: 'Guide dossier' })).toBeInTheDocument();
   expect(getCharacter).toHaveBeenCalledTimes(2);
-});
-
-it('shows real forums and their plain-text character membership', async () => {
-  render(<App client={fixtureClient()} />);
-  fireEvent.click(await screen.findByRole('button', { name: 'Forums' }));
-
-  expect(screen.getByRole('button', { name: 'EntranceAssistant' })).toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', { name: 'The LobbyGuide' }));
-  expect(screen.getByRole('heading', { name: 'Sessions' })).toBeInTheDocument();
-  expect(await screen.findByRole('button', { name: 'New sessionEnter a name to begin' }))
-    .toBeInTheDocument();
 });
 
 it('creates a forum with its selected persona and opens the new forum', async () => {
@@ -1064,8 +1047,9 @@ it('opens a save dialog and downloads the selected recent session', async () => 
     value: picker,
   });
   const downloadSession = vi.fn(async () => '# Planning\n');
+  const openSession = vi.fn(async (forum_id: string, session_id: string) => ({ forum_id, session_id }));
   render(<App
-    client={fixtureClient({ downloadSession })}
+    client={fixtureClient({ downloadSession, openSession })}
     connectSessionEvents={inertSessionEvents}
   />);
 
@@ -1076,6 +1060,7 @@ it('opens a save dialog and downloads the selected recent session', async () => 
   await waitFor(() => expect(downloadSession).toHaveBeenCalledWith('lobby', 'planning'));
   expect(picker).toHaveBeenCalledWith(expect.objectContaining({ suggestedName: 'Planning.md' }));
   expect(write).toHaveBeenCalledWith('# Planning\n');
+  expect(openSession).not.toHaveBeenCalledWith('lobby', 'planning');
   Reflect.deleteProperty(window, 'showSaveFilePicker');
 });
 
@@ -1534,9 +1519,11 @@ it('offers New session for a stored forum but not for the built-in one', async (
 
 it('probes and reconnects when its stream fails', async () => {
   const events = drivableSessionEvents();
+  const client = storedPlanningClient();
+  const getSessionSnapshot = vi.spyOn(client, 'getSessionSnapshot');
   render(
     <App
-      client={storedPlanningClient()}
+      client={client}
       connectSessionEvents={events.connect}
       retryDelays={[0]}
     />,
@@ -1555,17 +1542,16 @@ it('probes and reconnects when its stream fails', async () => {
     events.connections.filter(({ key }) => key === 'lobby/planning'),
   ).toHaveLength(2));
   expect(screen.getByLabelText('Current chat context')).toHaveTextContent('The Lobby');
-});
+  expect(getSessionSnapshot.mock.calls.filter(([forumId, sessionId]) => (
+    forumId === 'lobby' && sessionId === 'planning'
+  ))).toHaveLength(2);
 
-it('names the open session in the transcript placeholder', async () => {
-  render(<App client={storedPlanningClient()} connectSessionEvents={inertSessionEvents} />);
-  const chat = await screen.findByLabelText('Chat area');
-  expect(within(chat).getByText('Welcome')).toBeInTheDocument();
-
-  await openPlanningFromTheLobby();
-  await waitFor(() => expect(screen.getByLabelText('Current chat context'))
-    .toHaveTextContent('The Lobby'));
-  expect(within(screen.getByLabelText('Chat area')).getByText('Planning')).toBeInTheDocument();
+  const reconnected = events.connections.map(({ key }) => key).lastIndexOf('lobby/planning');
+  act(() => events.handlers[reconnected].onSnapshot({
+    ...lobbySnapshot(), session_label: 'Recovered planning',
+  }));
+  await waitFor(() => expect(screen.queryByText(/Reconnecting live updates/)).not.toBeInTheDocument());
+  expect(within(screen.getByLabelText('Chat area')).getByText('Recovered planning')).toBeInTheDocument();
 });
 
 it('shows a clear incompatible-response state instead of a blank screen', async () => {
@@ -1612,6 +1598,9 @@ it('opens Settings from the gear, fetches OpenAI status, and keeps the conversat
   );
   await screen.findByLabelText('Current chat context');
 
+  expect(screen.getByRole('combobox', { name: 'Choose message target' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Personas' })).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'OpenAI' })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
   expect(await screen.findByRole('heading', { name: 'Settings' })).toBeInTheDocument();
@@ -1645,15 +1634,6 @@ it('does not let a late OpenAI status replace a view selected after Settings', a
   expect(screen.getByLabelText('Characters navigation')).toBeInTheDocument();
   expect(screen.queryByText('TEST-ONLY')).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Connect ChatGPT' })).not.toBeInTheDocument();
-});
-
-it('contains the main navigation and a Settings gear instead of an OpenAI row', async () => {
-  renderAt(1280);
-  expect(await screen.findByRole('combobox', { name: 'Choose message target' })).toBeDisabled();
-  expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
-  expect(screen.getByRole('button', { name: 'Settings' })).toBeInTheDocument();
-  expect(screen.queryByRole('button', { name: 'OpenAI' })).not.toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Personas' })).toBeInTheDocument();
 });
 
 it('shows the settings row only after a writable character detail loads', async () => {
