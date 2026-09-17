@@ -494,11 +494,6 @@ Json r2_storage_json(const R2StorageInfo& key) {
     };
 }
 
-void internal_error(httplib::Response& response, const std::exception& error) {
-    set_error_response(
-        response, 500, {ErrorCode::internal_error, error.what()});
-}
-
 void install_provider_routes(
     httplib::Server& server,
     LiveSessionManager* live_sessions,

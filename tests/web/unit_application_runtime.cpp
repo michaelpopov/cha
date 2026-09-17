@@ -3182,6 +3182,20 @@ TEST(ApplicationRuntime, MergeRouteRejectsMalformedBodiesAndForbiddenOrigins) {
         "application/json");
     expect_error_envelope(missing, 400, "bad_request");
 
+    const auto wrong_type = client.Post(
+        "/api/v1/vault/merge",
+        kRuntimeCookie,
+        nlohmann::json{{"source_vault", 42}, {"password", nullptr}}.dump(),
+        "application/json");
+    ASSERT_TRUE(wrong_type);
+    EXPECT_EQ(wrong_type->status, 400);
+    EXPECT_EQ(
+        nlohmann::json::parse(wrong_type->body),
+        (nlohmann::json{{"error", {
+            {"code", "bad_request"},
+            {"message", "Invalid JSON request body."},
+        }}}));
+
     httplib::Headers foreign = kRuntimeCookie;
     foreign.emplace("Origin", "http://other.example");
     expect_error_envelope(

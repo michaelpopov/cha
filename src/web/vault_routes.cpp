@@ -4,6 +4,7 @@
 #include "web/application_config.h"
 #include "web/application_runtime.h"
 #include "web/http_response.h"
+#include "web/json.h"
 #include "web/protocol.h"
 #include "web/route_support.h"
 
@@ -18,16 +19,6 @@
 
 namespace cha::web {
 namespace {
-
-const std::string& required_json_string(
-    const nlohmann::json& json,
-    std::string_view key) {
-    const std::string name(key);
-    if (!json.is_object() || !json.contains(name) || !json.at(name).is_string()) {
-        throw std::invalid_argument("Invalid vault settings");
-    }
-    return json.at(name).get_ref<const std::string&>();
-}
 
 std::optional<std::string> nullable_json_string(
     const nlohmann::json& json,
@@ -105,7 +96,7 @@ void install_vault_routes(
                         if (!json.is_object() || json.size() != 1) {
                             throw std::invalid_argument("Invalid R2 vault");
                         }
-                        name = required_json_string(json, "name");
+                        name = required_string(json, "name");
                     })) return;
             try {
                 const VaultDefinition created =
@@ -137,7 +128,7 @@ void install_vault_routes(
                             throw std::invalid_argument("Invalid vault settings");
                         }
                         create.display_name =
-                            required_json_string(json, "display_name");
+                            required_string(json, "display_name");
                         create.copy_from =
                             nullable_json_string(json, "copy_from");
                         create.password =
@@ -173,9 +164,9 @@ void install_vault_routes(
                         if (!json.is_object() || json.size() != 3) {
                             throw std::invalid_argument("Invalid vault settings");
                         }
-                        name = required_json_string(json, "vault_name");
+                        name = required_string(json, "vault_name");
                         update.display_name =
-                            required_json_string(json, "display_name");
+                            required_string(json, "display_name");
                         update.password =
                             nullable_json_string(json, "password").value_or("");
                     })) return;
@@ -210,7 +201,7 @@ void install_vault_routes(
                         if (!json.is_object() || json.size() != 1) {
                             throw std::invalid_argument("Invalid vault settings");
                         }
-                        name = required_json_string(json, "vault_name");
+                        name = required_string(json, "vault_name");
                     })) return;
             try {
                 runtime->delete_vault(name);
@@ -241,7 +232,7 @@ void install_vault_routes(
                         if (!json.is_object() || json.size() != 2) {
                             throw std::invalid_argument("Invalid vault selection");
                         }
-                        vault_name = required_json_string(json, "vault_name");
+                        vault_name = required_string(json, "vault_name");
                         password = nullable_json_string(json, "password").value_or("");
                     })) {
                 return;
@@ -279,7 +270,7 @@ void install_vault_routes(
                             throw std::invalid_argument("Invalid vault merge");
                         }
                         source_vault =
-                            required_json_string(json, "source_vault");
+                            required_string(json, "source_vault");
                         if (source_vault.empty()) {
                             throw std::invalid_argument("Invalid vault merge");
                         }

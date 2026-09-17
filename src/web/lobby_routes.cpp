@@ -343,8 +343,7 @@ void LobbyRoutes::install(httplib::Server& server) const {
             return set_error_response(response, 400,
                 {ErrorCode::bad_request, "Invalid persona."});
         } catch (const WorkspaceRestartRequiredError& error) {
-            return set_error_response(response, 500,
-                {ErrorCode::internal_error, error.what()});
+            return internal_error(response, error);
         }
         const auto current = published_workspace();
         const WorkspacePersona* created = current->find_persona(id);
@@ -376,8 +375,7 @@ void LobbyRoutes::install(httplib::Server& server) const {
             return set_error_response(response, 400,
                 {ErrorCode::bad_request, "Invalid character."});
         } catch (const WorkspaceRestartRequiredError& error) {
-            return set_error_response(response, 500,
-                {ErrorCode::internal_error, error.what()});
+            return internal_error(response, error);
         }
         const auto current = published_workspace();
         const WorkspaceCharacter* created = current->find_character(id);
@@ -409,8 +407,7 @@ void LobbyRoutes::install(httplib::Server& server) const {
             return set_error_response(response, 400,
                 {ErrorCode::bad_request, "Invalid forum."});
         } catch (const WorkspaceRestartRequiredError& error) {
-            return set_error_response(response, 500,
-                {ErrorCode::internal_error, error.what()});
+            return internal_error(response, error);
         }
         const auto current = published_workspace();
         const WorkspaceForum* created = current->find_forum(id);
@@ -457,8 +454,7 @@ void LobbyRoutes::install(httplib::Server& server) const {
                 {ErrorCode::bad_request,
                  "This character is still used by one or more forums."});
         } catch (const WorkspaceRestartRequiredError& error) {
-            return set_error_response(response, 500,
-                {ErrorCode::internal_error, error.what()});
+            return internal_error(response, error);
         }
         response.status = 204;
         response.set_header("Cache-Control", "no-store");
@@ -511,8 +507,7 @@ void LobbyRoutes::install(httplib::Server& server) const {
             return set_error_response(response, 400,
                 {ErrorCode::bad_request, "Invalid character settings."});
         } catch (const WorkspaceRestartRequiredError& error) {
-            return set_error_response(response, 500,
-                {ErrorCode::internal_error, error.what()});
+            return internal_error(response, error);
         }
         const auto current = published_workspace();
         const WorkspaceCharacter* updated = current->find_character(id);
@@ -561,8 +556,7 @@ void LobbyRoutes::install(httplib::Server& server) const {
             return set_error_response(response, 400,
                 {ErrorCode::bad_request, "Invalid character."});
         } catch (const WorkspaceRestartRequiredError& error) {
-            return set_error_response(response, 500,
-                {ErrorCode::internal_error, error.what()});
+            return internal_error(response, error);
         }
         const auto current = published_workspace();
         const WorkspaceCharacter* updated = current->find_character(id);
@@ -608,8 +602,7 @@ void LobbyRoutes::install(httplib::Server& server) const {
                 {ErrorCode::bad_request,
                  "This persona is still used by one or more forums."});
         } catch (const WorkspaceRestartRequiredError& error) {
-            return set_error_response(response, 500,
-                {ErrorCode::internal_error, error.what()});
+            return internal_error(response, error);
         }
         response.status = 204;
         response.set_header("Cache-Control", "no-store");
@@ -659,8 +652,7 @@ void LobbyRoutes::install(httplib::Server& server) const {
             return set_error_response(response, 400,
                 {ErrorCode::bad_request, "Invalid persona."});
         } catch (const WorkspaceRestartRequiredError& error) {
-            return set_error_response(response, 500,
-                {ErrorCode::internal_error, error.what()});
+            return internal_error(response, error);
         }
         const auto current = published_workspace();
         const WorkspacePersona* updated = current->find_persona(id);
@@ -703,8 +695,7 @@ void LobbyRoutes::install(httplib::Server& server) const {
                 config->apply_forum_delete(id);
             request_reload(*live_sessions, edited.affected_forum_ids);
         } catch (const WorkspaceRestartRequiredError& error) {
-            return set_error_response(response, 500,
-                {ErrorCode::internal_error, error.what()});
+            return internal_error(response, error);
         }
         response.status = 204;
         response.set_header("Cache-Control", "no-store");
@@ -745,8 +736,7 @@ void LobbyRoutes::install(httplib::Server& server) const {
             return set_error_response(response, 400,
                 {ErrorCode::bad_request, "Invalid forum."});
         } catch (const WorkspaceRestartRequiredError& error) {
-            return set_error_response(response, 500,
-                {ErrorCode::internal_error, error.what()});
+            return internal_error(response, error);
         }
         const auto current = published_workspace();
         const WorkspaceForum* updated = current->find_forum(id);
@@ -787,8 +777,7 @@ void LobbyRoutes::install(httplib::Server& server) const {
                  "Select a configured persona and at least one configured "
                  "character."});
         } catch (const WorkspaceRestartRequiredError& error) {
-            return set_error_response(response, 500,
-                {ErrorCode::internal_error, error.what()});
+            return internal_error(response, error);
         }
         const auto current = published_workspace();
         const WorkspaceForum* updated = current->find_forum(id);

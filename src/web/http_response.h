@@ -2,6 +2,7 @@
 
 #include "web/protocol.h"
 
+#include <exception>
 #include <string>
 
 #include <nlohmann/json_fwd.hpp>
@@ -21,5 +22,6 @@ void set_error_response(
     httplib::Response& response,
     int status,
     const Error& error);
+void internal_error(httplib::Response& response, const std::exception& error);
 
 } // namespace cha::web

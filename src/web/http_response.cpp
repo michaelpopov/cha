@@ -21,4 +21,9 @@ void set_error_response(
     set_json_response(response, status, nlohmann::json(error));
 }
 
+void internal_error(httplib::Response& response, const std::exception& error) {
+    set_error_response(
+        response, 500, {ErrorCode::internal_error, error.what()});
+}
+
 } // namespace cha::web

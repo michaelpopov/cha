@@ -36,16 +36,6 @@ std::string_view trim_ascii_whitespace(std::string_view value) {
     return value;
 }
 
-const std::string& required_string(
-    const nlohmann::json& json,
-    std::string_view key) {
-    const std::string name(key);
-    if (!json.is_object() || !json.contains(name) || !json.at(name).is_string()) {
-        throw std::invalid_argument("Invalid web command");
-    }
-    return json.at(name).get_ref<const std::string&>();
-}
-
 void exact_keys(
     const nlohmann::json& json,
     std::initializer_list<std::string_view> keys) {
@@ -60,6 +50,16 @@ void exact_keys(
 }
 
 } // namespace
+
+const std::string& required_string(
+    const nlohmann::json& json,
+    std::string_view key) {
+    const std::string name(key);
+    if (!json.is_object() || !json.contains(name) || !json.at(name).is_string()) {
+        throw std::invalid_argument("Invalid web command");
+    }
+    return json.at(name).get_ref<const std::string&>();
+}
 
 bool is_json_content_type(std::string_view content_type) {
     const auto semicolon = content_type.find(';');
@@ -145,6 +145,8 @@ std::string parse_vault_switch_name(const nlohmann::json& json) {
     return required_string(json, "vault_name");
 }
 
+namespace {
+
 std::optional<std::string> nullable_string(
     const nlohmann::json& json,
     std::string_view key) {
@@ -177,6 +179,8 @@ std::optional<WebSearchMode> nullable_web_search(
     if (const auto mode = parse_web_search_mode(*value)) return mode;
     throw std::invalid_argument("Invalid web command");
 }
+
+} // namespace
 
 CharacterSettingsUpdate parse_character_settings_update(const nlohmann::json& json) {
     exact_keys(json, {
