@@ -23,6 +23,7 @@
 #include "web/http_server.h"
 #include "web/fish_audio.h"
 #include "web/audio_download.h"
+#include "web/audio_download_routes.h"
 #include "web/json.h"
 #include "web/live_session_manager.h"
 #include "web/lobby_routes.h"

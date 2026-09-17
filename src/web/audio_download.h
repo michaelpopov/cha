@@ -3,6 +3,7 @@
 #include "session/session_repository.h"
 #include "web/fish_audio.h"
 #include "workspace/workspace.h"
+#include <array>
 #include <atomic>
 #include <condition_variable>
 #include <deque>
@@ -10,11 +11,37 @@
 #include <mutex>
 #include <set>
 #include <thread>
-#include <array>
+#include <vector>
 
 namespace cha::web {
 class CurrentVault;
-struct WebSettings;
+enum class AudioJobState { queued, running, failed };
+enum class AudioAcceptanceKind { cached, queued, running };
+
+struct AudioAcceptance {
+    EntryId entry_id;
+    AudioAcceptanceKind kind;
+};
+struct AudioDownloadJob {
+    EntryId entry_id;
+    AudioJobState state;
+};
+struct AudioDownloadStatus {
+    std::set<EntryId> cached_entry_ids;
+    std::vector<AudioDownloadJob> downloads;
+};
+struct AudioDownloadRequest {
+    std::string vault_name;
+    FishAudioSynthesis synthesis;
+};
+struct AudioDownloadBatchEntry {
+    EntryId entry_id;
+    FishAudioSynthesis synthesis;
+};
+struct AudioDownloadBatchRequest {
+    std::string vault_name;
+    std::vector<AudioDownloadBatchEntry> entries;
+};
 
 class AudioDownloadError : public std::runtime_error {
 public:
@@ -33,9 +60,9 @@ public:
     AudioDownloadManager(const SessionRepository& sessions,
         CurrentVault& vault, bool enabled, Transport transport = download_fish_audio);
     ~AudioDownloadManager();
-    nlohmann::json submit(const FullSessionId& session, EntryId id, const nlohmann::json& input);
-    nlohmann::json submit_batch(const FullSessionId& session, const nlohmann::json& input);
-    nlohmann::json status(const FullSessionId& session, const std::string& vault);
+    AudioAcceptance submit(const FullSessionId& session, EntryId id, const AudioDownloadRequest& input);
+    std::vector<AudioAcceptance> submit_batch(const FullSessionId& session, const AudioDownloadBatchRequest& input);
+    AudioDownloadStatus status(const FullSessionId& session, const std::string& vault);
     std::optional<EntryAudio> audio(const FullSessionId& session, EntryId id, const std::string& vault);
     void clear(const FullSessionId& session);
     void pause(bool cancel = true);
@@ -50,7 +77,7 @@ private:
         WorkspaceVoiceOutput output;
         std::string key;
         FishAudioRequest request;
-        std::string state{"queued"};
+        AudioJobState state{AudioJobState::queued};
         std::atomic_bool cancelled{false};
     };
     static Key key(const FullSessionId& session, EntryId id);
@@ -59,7 +86,7 @@ private:
     void worker();
     void run(const std::shared_ptr<Job>& job);
     void cancel_all();
-    std::shared_ptr<Job> prepare_job(const EntryAudioLookup& entry, const nlohmann::json& input);
+    std::shared_ptr<Job> prepare_job(const EntryAudioLookup& entry, const FishAudioSynthesis& synthesis);
     const SessionRepository& sessions_;
     CurrentVault& vault_;
     bool enabled_;
@@ -76,6 +103,4 @@ private:
     bool stopped_{};
 };
 
-void install_audio_download_routes(httplib::Server& server, AudioDownloadManager& downloads,
-    const WebSettings& settings);
 }

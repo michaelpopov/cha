@@ -355,6 +355,7 @@ add_library(cha_web STATIC
     src/web/vault_routes.cpp
     src/web/fish_audio.cpp
     src/web/audio_download.cpp
+    src/web/audio_download_routes.cpp
     src/web/live_session.cpp
     src/web/live_session_manager.cpp
     src/web/sse_mailbox.cpp

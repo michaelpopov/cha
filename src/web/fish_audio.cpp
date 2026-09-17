@@ -183,27 +183,53 @@ void FishAudioProxy::forward(
         [&] { return stopped_ || cancelled(); });
 }
 
+FishAudioSynthesis decode_fish_audio_synthesis(const Json& input) {
+    FishAudioSynthesis synthesis;
+    try {
+        if (input.contains("reference_id")) {
+            synthesis.reference_id = input.at("reference_id").get<std::string>();
+        }
+        const Json settings = input.value("settings", Json::object());
+        if (!settings.is_object()) throw std::invalid_argument("Invalid voice settings");
+        for (const auto& [name, value] : settings.items()) {
+            if (name == "speed") {
+                synthesis.settings.speed = value.get<double>();
+            } else {
+                synthesis.ignored_settings.push_back(name);
+            }
+        }
+    } catch (const Json::exception&) {
+        synthesis.decoding_failure = std::make_exception_ptr(std::invalid_argument("Invalid FishAudio request"));
+    } catch (...) {
+        synthesis.decoding_failure = std::current_exception();
+    }
+    return synthesis;
+}
+
 FishAudioRequest make_fish_audio_request(
-    const WorkspaceVoiceOutput& output, const Json& input) try {
-    const std::string text = input.at("text").get<std::string>();
-    const std::string voice = input.at("reference_id").get<std::string>();
-    if (text.empty() || voice.empty()) throw std::invalid_argument("Missing text or voice ID");
+    const WorkspaceVoiceOutput& output, std::string_view text, const FishAudioSynthesis& synthesis) {
+    if (!synthesis.reference_id) throw std::invalid_argument("Invalid FishAudio request");
+    if (text.empty() || synthesis.reference_id->empty()) throw std::invalid_argument("Missing text or voice ID");
+    if (synthesis.decoding_failure) std::rethrow_exception(synthesis.decoding_failure);
+    for (const auto& name : synthesis.ignored_settings) {
+        log_warn("Ignoring unsupported FishAudio voice setting: " + name);
+    }
     FishAudioRequest request{
         .model = output.model,
-        .body = {{"text", text}, {"reference_id", voice}, {"format", output.output_format}},
+        .body = {{"text", text}, {"reference_id", *synthesis.reference_id}, {"format", output.output_format}},
     };
-    const Json settings = input.value("settings", Json::object());
-    if (!settings.is_object()) throw std::invalid_argument("Invalid voice settings");
-    for (const auto& [name, value] : settings.items()) {
-        if (name == "speed") {
-            const double speed = value.get<double>();
-            if (!std::isfinite(speed) || speed < 0.5 || speed > 2.0) throw std::invalid_argument("Invalid speed");
-            request.body["prosody"] = {{"speed", speed}};
-        } else {
-            log_warn("Ignoring unsupported FishAudio voice setting: " + name);
-        }
+    if (synthesis.settings.speed) {
+        const double speed = *synthesis.settings.speed;
+        if (!std::isfinite(speed) || speed < 0.5 || speed > 2.0) throw std::invalid_argument("Invalid speed");
+        request.body["prosody"] = {{"speed", speed}};
     }
     return request;
+}
+
+FishAudioRequest make_fish_audio_request(
+    const WorkspaceVoiceOutput& output, const Json& input) try {
+    const auto text = input.at("text").get<std::string>();
+    return make_fish_audio_request(output, text, decode_fish_audio_synthesis(input));
 } catch (const Json::exception&) {
     throw std::invalid_argument("Invalid FishAudio request");
 }

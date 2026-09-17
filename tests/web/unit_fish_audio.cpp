@@ -1,4 +1,5 @@
 #include "web/fish_audio.h"
+#include "util/logging.h"
 #include "web/http_server.h"
 #include "web/web_settings.h"
 #include "providers/voice_output_config.h"
@@ -10,6 +11,8 @@
 #include "support/mock_http_server.h"
 #include "support/test_workspace.h"
 
+#include <fstream>
+#include <limits>
 #include <gtest/gtest.h>
 #include <httplib.h>
 #include <atomic>
@@ -211,6 +214,10 @@ TEST(FishAudio, IgnoresObsoleteVoiceSettingsWithoutChangingConfiguredModel) {
         {"text", "Hello"}, {"reference_id", "fish-voice"},
         {"settings", {{"speed", 0.9}, {"stability", 0.5}, {"use_speaker_boost", true}}},
     });
+    const auto typed = make_fish_audio_request(output, "Hello",
+        FishAudioSynthesis{.reference_id = "fish-voice", .settings = {.speed = 0.9}});
+    EXPECT_EQ(typed.model, request.model);
+    EXPECT_EQ(typed.body, request.body);
     EXPECT_EQ(request.model, "s2.1-pro");
     EXPECT_EQ(request.body, Json({
         {"text", "Hello"}, {"reference_id", "fish-voice"},
@@ -274,6 +281,56 @@ TEST(FishAudio, RejectsMalformedSynthesisInput) {
              Json{{"text", "Hello"}, {"reference_id", "voice"}, {"settings", {{"speed", "fast"}}}},
          }) {
         EXPECT_THROW(make_fish_audio_request(output, input), std::invalid_argument);
+    }
+}
+
+TEST(FishAudio, TypedBuilderChecksIdentityAndSpeedLimits) {
+    const WorkspaceVoiceOutput output{.model = "s2.1-pro", .output_format = "mp3"};
+    const std::optional<std::string> reference{"voice"};
+    for (const double speed : {0.5, 2.0}) {
+        const auto typed = make_fish_audio_request(output, "Hello",
+            FishAudioSynthesis{.reference_id = reference, .settings = {.speed = speed}});
+        const auto adapted = make_fish_audio_request(output,
+            {{"text", "Hello"}, {"reference_id", "voice"}, {"settings", {{"speed", speed}}}});
+        EXPECT_EQ(typed.body, adapted.body);
+        EXPECT_EQ(typed.body.at("prosody").at("speed"), speed);
+    }
+    for (const double speed : {0.49, 2.01, std::numeric_limits<double>::infinity(),
+             std::numeric_limits<double>::quiet_NaN()}) {
+        EXPECT_THROW(make_fish_audio_request(output, "Hello",
+            FishAudioSynthesis{.reference_id = reference, .settings = {.speed = speed}}),
+            std::invalid_argument);
+    }
+    EXPECT_THROW(make_fish_audio_request(output, "Hello", FishAudioSynthesis{}), std::invalid_argument);
+    EXPECT_THROW(make_fish_audio_request(output, "Hello", FishAudioSynthesis{.reference_id = ""}),
+        std::invalid_argument);
+    EXPECT_THROW(make_fish_audio_request(output, "", FishAudioSynthesis{.reference_id = reference}), std::invalid_argument);
+}
+
+TEST(FishAudio, DecoderRetainsFailuresAndWarnsAboutIgnoredSettingsOnlyWhenConsumed) {
+    test::TestWorkspace workspace;
+    const auto log_file = workspace.root() / "fish-audio.log";
+    initialize_diagnostic_logging(log_file, "warn");
+    struct StopLogging { ~StopLogging() { shutdown_diagnostic_logging(); } } stop;
+    const auto contents = [&] {
+        std::ifstream input(log_file);
+        return std::string(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
+    };
+    const WorkspaceVoiceOutput output{.model = "s2.1-pro", .output_format = "mp3"};
+    const auto synthesis = decode_fish_audio_synthesis({{"reference_id", "voice"},
+        {"settings", {{"speed", 0.9}, {"stability", 0.5}, {"use_speaker_boost", true}}}});
+    EXPECT_EQ(synthesis.settings.speed, 0.9);
+    EXPECT_EQ(synthesis.ignored_settings, (std::vector<std::string>{"stability", "use_speaker_boost"}));
+    EXPECT_EQ(contents().find("Ignoring unsupported"), std::string::npos);
+    const auto request = make_fish_audio_request(output, "Hello", synthesis);
+    EXPECT_FALSE(request.body.contains("stability"));
+    EXPECT_FALSE(request.body.contains("use_speaker_boost"));
+    EXPECT_NE(contents().find("Ignoring unsupported FishAudio voice setting: stability"), std::string::npos);
+    EXPECT_NE(contents().find("Ignoring unsupported FishAudio voice setting: use_speaker_boost"), std::string::npos);
+    for (const Json& settings : {Json(nullptr), Json{{"speed", "fast"}}}) {
+        const auto malformed = decode_fish_audio_synthesis({{"reference_id", "voice"}, {"settings", settings}});
+        ASSERT_TRUE(malformed.decoding_failure);
+        EXPECT_THROW(make_fish_audio_request(output, "Hello", malformed), std::invalid_argument);
     }
 }
 
