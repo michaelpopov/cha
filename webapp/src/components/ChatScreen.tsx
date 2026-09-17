@@ -1,5 +1,6 @@
 import {
   Fragment,
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -15,6 +16,7 @@ import {
 import {
   publicErrorMessage,
   cachedAudioUrl,
+  type AudioDownloadBatchEntry,
   type ChaClient,
   type CharacterAppearance,
   type CommandResult,
@@ -129,6 +131,11 @@ function visibleTranscriptEntries(entries: SessionSnapshot['transcript']) {
   return visible;
 }
 
+function canReadEntry(entry: SessionSnapshot['transcript'][number]): boolean {
+  return (entry.kind === 'human' || entry.kind === 'character')
+    && entry.status === 'complete' && entry.created_at !== null;
+}
+
 function TranscriptMessage({
   entry,
   appearance,
@@ -152,9 +159,7 @@ function TranscriptMessage({
   onUncover?: () => void;
   onDelete?: (entry: SessionSnapshot['transcript'][number]) => void;
 }) {
-  const canRead = (entry.kind === 'human' || entry.kind === 'character')
-    && entry.status === 'complete'
-    && entry.created_at !== null;
+  const canRead = canReadEntry(entry);
   const canCover = entry.kind === 'character'
     && (entry.status === 'complete' || entry.status === 'cancelled')
     && entry.created_at !== null;
@@ -207,6 +212,7 @@ function TranscriptMessage({
             <button
               aria-label={speechLabel}
               className={`cha-message-action${speechState !== 'idle' ? ' is-active' : ''}${entry.has_cached_audio && speechState !== 'playing' ? ' has-cached-audio' : ''}`}
+              data-speech-state={speechState}
               disabled={speechState === 'loading' || speechState === 'queued' || speechState === 'running'}
               onClick={() => onToggleSpeech(entry)}
               title={speechTitle}
@@ -303,6 +309,12 @@ export function ChatScreen({
   const voiceInputAttempt = useRef(0);
   const transcriptEnd = useRef<HTMLDivElement | null>(null);
   const textToSpeechSession = useRef<TextToSpeechSession | null>(null);
+  const [speechCacheEnabled, setSpeechCacheEnabled] = useState(false);
+  const [speechCacheSubmitting, setSpeechCacheSubmitting] = useState(false);
+  const handledAudioEntries = useRef(new Set<number>());
+  const audioCacheContext = useRef<{ key: string | null; clearCount: number }>({
+    key: null, clearCount: state.audioCacheClearCount,
+  });
   const [spokenEntry, setSpokenEntry] = useState<{
     id: number;
     state: 'loading' | 'playing';
@@ -323,6 +335,9 @@ export function ChatScreen({
   const snapshot = state.sessionSnapshot;
   const generation = snapshot?.generation;
   const conversationKey = snapshot && `${snapshot.forum.id}/${snapshot.session_id}`;
+  const audioConversationKey = snapshot && JSON.stringify([
+    state.bootstrap?.vault_name, snapshot.forum.id, snapshot.session_id,
+  ]);
   const forum = snapshot?.forum ?? state.bootstrap?.forums.find(
     ({ id }) => id === state.activeConversation?.forumId,
   );
@@ -358,11 +373,13 @@ export function ChatScreen({
     () => new Map((state.bootstrap?.personas ?? []).map((persona) => [persona.id, persona])),
     [state.bootstrap?.personas],
   );
+  const cachedAudioIds = useMemo(() => downloads.status && new Set(downloads.status.cached_entry_ids), [downloads.status]);
+  const audioJobs = useMemo(() => new Map(downloads.status?.downloads.map((job) => [job.entry_id, job]) ?? []), [downloads.status]);
   const transcriptEntries = useMemo(
-    () => snapshot ? visibleTranscriptEntries(snapshot.transcript.map((entry) => downloads.status
-      ? { ...entry, has_cached_audio: downloads.status.cached_entry_ids.includes(entry.id) }
+    () => snapshot ? visibleTranscriptEntries(snapshot.transcript.map((entry) => cachedAudioIds
+      ? { ...entry, has_cached_audio: cachedAudioIds.has(entry.id) }
       : entry)) : [],
-    [snapshot?.transcript, downloads.status],
+    [snapshot?.transcript, cachedAudioIds],
   );
   const coveredUntil = snapshot?.covered_until ?? null;
   const coveredEntries = coveredUntil === null
@@ -416,6 +433,53 @@ export function ChatScreen({
     speechSelection.current = null;
   }, [conversationKey, state.audioCacheClearCount]);
 
+  const speechRequest = useCallback((entry: SessionSnapshot['transcript'][number]): AudioDownloadBatchEntry => {
+    const voice = entry.kind === 'character'
+      ? speechVoices.get(entry.participant_id) : personas.get(entry.participant_id)?.voice;
+    return { entry_id: entry.id,
+      reference_id: voice?.elevenlabs_voice_id ?? textToSpeechConfiguration!.voiceId,
+      settings: voice?.settings ?? {},
+    };
+  }, [speechVoices, personas, textToSpeechConfiguration]);
+
+  useEffect(() => {
+    // Reset once when this observer changes sessions/vaults or clears audio.
+    const context = audioCacheContext.current;
+    if (context.key !== audioConversationKey || context.clearCount !== state.audioCacheClearCount) {
+      audioCacheContext.current = { key: audioConversationKey, clearCount: state.audioCacheClearCount };
+      handledAudioEntries.current.clear();
+      setSpeechCacheEnabled(false);
+      return;
+    }
+    if (downloads.unavailable) { setSpeechCacheEnabled(false); return; }
+    if (!speechCacheEnabled || speechCacheSubmitting || !textToSpeechConfiguration || !downloads.status) return;
+    const entries: AudioDownloadBatchEntry[] = [];
+    for (const { entry } of transcriptEntries) {
+      if (handledAudioEntries.current.has(entry.id) || !canReadEntry(entry)) continue;
+      handledAudioEntries.current.add(entry.id);
+      if (cachedAudioIds?.has(entry.id) || audioJobs.has(entry.id) || !visibleEntryText(entry.kind, entry.text).trim()) continue;
+      entries.push(speechRequest(entry));
+    }
+    if (entries.length === 0) return;
+    // One short acceptance request for the batch. The core owns the queue,
+    // three concurrent downloads and retries; no browser transfer is awaited.
+    setSpeechCacheSubmitting(true);
+    void downloads.submitBatch({ vault_name: state.bootstrap!.vault_name, entries })
+      ?.catch((failure: unknown) => {
+        setSpeechCacheEnabled(false);
+        setActionError(actionMessage(failure));
+      })
+      .finally(() => setSpeechCacheSubmitting(false));
+  }, [audioConversationKey, state.audioCacheClearCount, speechCacheEnabled, speechCacheSubmitting,
+    textToSpeechConfiguration, transcriptEntries, cachedAudioIds, audioJobs, downloads.status,
+    downloads.unavailable, downloads.submitBatch, speechRequest, state.bootstrap?.vault_name]);
+
+  function toggleSpeechCache() {
+    setActionError(null);
+    if (!speechCacheEnabled) handledAudioEntries.current.clear();
+    setSpeechCacheEnabled(!speechCacheEnabled);
+  }
+
   function toggleSpeech(entry: SessionSnapshot['transcript'][number]) {
     if (!snapshot || (!entry.has_cached_audio && !textToSpeechConfiguration)) return;
     if (speechSelection.current === entry.id && textToSpeechSession.current) {
@@ -432,12 +496,8 @@ export function ChatScreen({
     setActionError(null);
     if (entry.has_cached_audio) { playCached(entry); return; }
     if (!textToSpeechConfiguration) return;
-    const voice = entry.kind === 'character'
-      ? speechVoices.get(entry.participant_id) : personas.get(entry.participant_id)?.voice;
-    void downloads.submit(entry.id, { vault_name: state.bootstrap!.vault_name,
-      reference_id: voice?.elevenlabs_voice_id ?? textToSpeechConfiguration.voiceId,
-      settings: voice?.settings ?? {},
-    })?.catch((failure: unknown) => {
+    const { entry_id, ...request } = speechRequest(entry);
+    void downloads.submit(entry_id, { vault_name: state.bootstrap!.vault_name, ...request })?.catch((failure: unknown) => {
       if (speechSelection.current === entry.id) {
         speechSelection.current = null;
       }
@@ -511,9 +571,9 @@ export function ChatScreen({
     if (id === null || textToSpeechSession.current || !downloads.status) return;
     const entry = snapshot?.transcript.find((entry) => entry.id === id);
     if (!entry) { speechSelection.current = null; return; }
-    if (downloads.status.cached_entry_ids.includes(id)) playCached(entry);
+    if (cachedAudioIds?.has(id)) playCached(entry);
     else {
-      const job = downloads.status.downloads.find((job) => job.entry_id === id);
+      const job = audioJobs.get(id);
       if (!job || job.state === 'failed') speechSelection.current = null;
     }
   }, [downloads.status]);
@@ -839,8 +899,8 @@ export function ChatScreen({
                   })}
                   onUncover={entry.id === boundaryEntryId ? () => changeCover() : undefined}
                   speechState={spokenEntry?.id === entry.id ? spokenEntry.state
-                    : downloads.status?.downloads.find((job) => job.entry_id === entry.id)?.state ?? 'idle'}
-                  speechError={downloads.status?.downloads.find((job) => job.entry_id === entry.id)?.error}
+                    : audioJobs.get(entry.id)?.state ?? 'idle'}
+                  speechError={audioJobs.get(entry.id)?.error}
                   speechAvailable={textToSpeechConfiguration !== null || (entry.has_cached_audio === true && downloads.status !== null)}
                 />
               </Fragment>
@@ -865,8 +925,8 @@ export function ChatScreen({
                 displayName: response.display_name,
               })}
               speechState={spokenEntry?.id === entry.id ? spokenEntry.state
-                : downloads.status?.downloads.find((job) => job.entry_id === entry.id)?.state ?? 'idle'}
-              speechError={downloads.status?.downloads.find((job) => job.entry_id === entry.id)?.error}
+                : audioJobs.get(entry.id)?.state ?? 'idle'}
+              speechError={audioJobs.get(entry.id)?.error}
               speechAvailable={textToSpeechConfiguration !== null || (entry.has_cached_audio === true && downloads.status !== null)}
             />
           </Fragment>
@@ -1012,10 +1072,11 @@ export function ChatScreen({
           {textToSpeechConfiguration && (
             <button
               aria-label="Cache conversation audio automatically"
-              aria-pressed={false}
+              aria-pressed={speechCacheEnabled}
               className="cha-speech-cache-toggle"
-              disabled
-              title="Cache conversation audio automatically"
+              disabled={!snapshot || !downloads.status || downloads.unavailable !== null}
+              onClick={toggleSpeechCache}
+              title={downloads.unavailable ?? "Cache conversation audio automatically"}
               type="button"
             >
               <SpeakerIcon />

@@ -1675,11 +1675,12 @@ paths:
     parameters:
       - $ref: "#/components/parameters/ForumId"
       - $ref: "#/components/parameters/SessionId"
-      - name: vault_name
-        in: query
-        required: true
-        schema: {type: string, minLength: 1}
     get:
+      parameters:
+        - name: vault_name
+          in: query
+          required: true
+          schema: {type: string, minLength: 1}
       tags: [Stored sessions]
       operationId: getAudioDownloads
       summary: Read cached audio IDs and background job states without opening the session
@@ -1691,6 +1692,38 @@ paths:
               schema: {$ref: "#/components/schemas/AudioDownloadStatus"}
         default:
           description: Unavailable session, changed vault, or temporary maintenance.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ErrorResponse"}
+
+    post:
+      tags: [Stored sessions]
+      operationId: startAudioDownloadBatch
+      summary: Accept a batch of transcript entries into the background audio queue
+      description: Prepares all entries before admitting new jobs. Acceptance does not wait for generation or storage. A lost response can be reconciled by reading status; resubmission deduplicates existing jobs.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/AudioDownloadBatchRequest"}
+      responses:
+        "202":
+          description: Each entry is cached or has a new or existing background job.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AudioDownloadBatchAcceptance"}
+        "409":
+          description: Active vault changed.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ErrorResponse"}
+        "503":
+          description: Downloads are temporarily unavailable during maintenance or cache clearing.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ErrorResponse"}
+        default:
+          description: Invalid request or unavailable entry/configuration; no new jobs from this batch were admitted.
           content:
             application/json:
               schema: {$ref: "#/components/schemas/ErrorResponse"}
@@ -3617,6 +3650,36 @@ components:
           type: object
           properties:
             speed: {type: number, minimum: 0.5, maximum: 2}
+    AudioDownloadBatchEntry:
+      type: object
+      additionalProperties: false
+      required: [entry_id, reference_id]
+      properties:
+        entry_id: {type: integer, minimum: 1}
+        reference_id: {type: string, minLength: 1}
+        settings:
+          type: object
+          properties:
+            speed: {type: number, minimum: 0.5, maximum: 2}
+    AudioDownloadBatchRequest:
+      type: object
+      additionalProperties: false
+      required: [vault_name, entries]
+      properties:
+        vault_name: {type: string, minLength: 1}
+        entries:
+          type: array
+          minItems: 1
+          description: Entry IDs must be unique within the batch.
+          items: {$ref: "#/components/schemas/AudioDownloadBatchEntry"}
+    AudioDownloadBatchAcceptance:
+      type: object
+      additionalProperties: false
+      required: [entries]
+      properties:
+        entries:
+          type: array
+          items: {$ref: "#/components/schemas/AudioDownloadAcceptance"}
     AudioDownloadAcceptance:
       type: object
       additionalProperties: false

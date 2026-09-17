@@ -34,6 +34,7 @@ public:
         CurrentVault& vault, bool enabled, Transport transport = download_fish_audio);
     ~AudioDownloadManager();
     nlohmann::json submit(const FullSessionId& session, EntryId id, const nlohmann::json& input);
+    nlohmann::json submit_batch(const FullSessionId& session, const nlohmann::json& input);
     nlohmann::json status(const FullSessionId& session, const std::string& vault);
     std::optional<EntryAudio> audio(const FullSessionId& session, EntryId id, const std::string& vault);
     void clear(const FullSessionId& session);
@@ -58,6 +59,7 @@ private:
     void worker();
     void run(const std::shared_ptr<Job>& job);
     void cancel_all();
+    std::shared_ptr<Job> prepare_job(const EntryAudioLookup& entry, const nlohmann::json& input);
     const SessionRepository& sessions_;
     CurrentVault& vault_;
     bool enabled_;

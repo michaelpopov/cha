@@ -58,6 +58,45 @@ protected:
     FullSessionId session;
 };
 
+TEST_F(AudioDownloads, BatchAcceptanceQueuesThreeWorkersAndDeduplicatesExistingJobs) {
+    std::atomic_int started{}, attempts{};
+    std::atomic_bool release{};
+    auto downloads = make([&](const auto&, const auto&, const auto&, const auto& cancel) -> std::optional<EntryAudio> {
+        ++attempts; ++started;
+        while (!release && !cancel()) std::this_thread::sleep_for(2ms);
+        return cancel() ? std::nullopt : std::optional<EntryAudio>{{"audio", "audio/mpeg"}};
+    });
+    ReleaseOnExit cleanup{release};
+    Json entries = Json::array();
+    for (EntryId id = 1; id <= 4; ++id) entries.push_back({{"entry_id", id}, {"reference_id", "voice"}});
+    const Json batch{{"vault_name", "Test"}, {"entries", entries}};
+    const auto accepted = downloads->submit_batch(session, batch);
+    EXPECT_EQ(accepted.at("entries").size(), 4);
+    ASSERT_TRUE(eventually([&] { return started == 3; }));
+    EXPECT_EQ(downloads->status(session, "Test").at("downloads").back().at("state"), "queued");
+    EXPECT_EQ(downloads->submit_batch(session, batch).at("entries").size(), 4);
+    EXPECT_EQ(downloads->status(session, "Test").at("downloads").size(), 4);
+    release = true;
+    ASSERT_TRUE(eventually([&] { return sessions->cached_audio_entries(session).size() == 4; }));
+    EXPECT_EQ(attempts, 4);
+    const auto cached = downloads->submit_batch(session, batch);
+    for (const auto& item : cached.at("entries")) EXPECT_EQ(item.at("cached"), true);
+}
+
+TEST_F(AudioDownloads, InvalidBatchAdmitsNoNewJobs) {
+    std::atomic_int attempts{};
+    auto downloads = make([&](const auto&, const auto&, const auto&, const auto&) -> std::optional<EntryAudio> {
+        ++attempts; return EntryAudio{"audio", "audio/mpeg"};
+    });
+    const Json batch{{"vault_name", "Test"}, {"entries", Json::array({
+        {{"entry_id", 1}, {"reference_id", "voice"}}, {{"entry_id", 99}, {"reference_id", "voice"}}
+    })}};
+    EXPECT_THROW(downloads->submit_batch(session, batch), AudioDownloadError);
+    EXPECT_TRUE(downloads->status(session, "Test").at("downloads").empty());
+    EXPECT_EQ(attempts, 0);
+    EXPECT_TRUE(sessions->cached_audio_entries(session).empty());
+}
+
 TEST_F(AudioDownloads, ThreeWorkersQueueFourthAndDeduplicate) {
     std::mutex mutex;
     std::condition_variable cv;
@@ -311,12 +350,24 @@ TEST_F(AudioDownloads, AcceptedHttpRequestFinishesWithoutClientOrLiveSession) {
         httplib::Client client("127.0.0.1", port);
         auto accepted = client.Post(base + "/entries/1/audio-download", input().dump(), "application/json");
         ASSERT_TRUE(accepted); EXPECT_EQ(accepted->status, 202);
+        Json batch{{"vault_name", "Test"}, {"entries", Json::array({
+            {{"entry_id", 1}, {"reference_id", "voice"}}, {{"entry_id", 2}, {"reference_id", "voice"}}
+        })}};
+        auto accepted_batch = client.Post(base + "/audio-downloads", batch.dump(), "application/json");
+        ASSERT_TRUE(accepted_batch); EXPECT_EQ(accepted_batch->status, 202);
+        EXPECT_EQ(Json::parse(accepted_batch->body).at("entries").size(), 2);
+        batch["entries"].push_back(batch["entries"].front());
+        auto duplicate_ids = client.Post(base + "/audio-downloads", batch.dump(), "application/json");
+        ASSERT_TRUE(duplicate_ids); EXPECT_EQ(duplicate_ids->status, 400);
+        batch["entries"] = Json::array();
+        auto empty = client.Post(base + "/audio-downloads", batch.dump(), "application/json");
+        ASSERT_TRUE(empty); EXPECT_EQ(empty->status, 400);
         auto snapshot = client.Get(base + "/audio-downloads?vault_name=Test");
         ASSERT_TRUE(snapshot); EXPECT_EQ(snapshot->status, 200);
     }
     ASSERT_TRUE(eventually([&] { return started.load(); }));
     release = true;
-    ASSERT_TRUE(eventually([&] { return sessions->cached_audio_entries(session).contains(1); }));
+    ASSERT_TRUE(eventually([&] { return sessions->cached_audio_entries(session).contains(1) && sessions->cached_audio_entries(session).contains(2); }));
     httplib::Client client("127.0.0.1", port);
     auto audio = client.Get(base + "/entries/1/audio?vault_name=Test");
     ASSERT_TRUE(audio); EXPECT_EQ(audio->body, "audio");

@@ -62,17 +62,7 @@ Json AudioDownloadManager::submit(const FullSessionId& s, EntryId id, const Json
         entry = sessions_.lookup_entry_audio(s, id, false);
         if (!entry) throw AudioDownloadError(404, "not_found", "Transcript entry not found.");
         if (!entry->has_cached_audio) {
-            const auto workspace = getws();
-            if (!workspace || !workspace->voice_output())
-                throw AudioDownloadError(404, "not_found", "Voice output is not configured.");
-            job->entry = *entry;
-            job->output = *workspace->voice_output();
-            const auto* key = workspace->find_api_key(job->output.api_key_id);
-            if (!key) throw AudioDownloadError(404, "not_found", "Voice output is not configured.");
-            job->key = key->value;
-            Json synthesis = input;
-            synthesis["text"] = entry_speech_text(*entry);
-            job->request = make_fish_audio_request(job->output, synthesis);
+            job = prepare_job(*entry, input);
         }
     } catch (...) { failure = std::current_exception(); }
     std::lock_guard lock(mutex_);
@@ -86,6 +76,76 @@ Json AudioDownloadManager::submit(const FullSessionId& s, EntryId id, const Json
     // Retry waits share this condition variable with idle workers.
     changed_.notify_all();
     return {{"entry_id", id}, {"cached", false}, {"state", "queued"}};
+}
+
+std::shared_ptr<AudioDownloadManager::Job> AudioDownloadManager::prepare_job(
+    const EntryAudioLookup& entry, const Json& input) {
+    auto job = std::make_shared<Job>();
+    const auto workspace = getws();
+    if (!workspace || !workspace->voice_output())
+        throw AudioDownloadError(404, "not_found", "Voice output is not configured.");
+    job->entry = entry;
+    job->output = *workspace->voice_output();
+    const auto* key = workspace->find_api_key(job->output.api_key_id);
+    if (!key) throw AudioDownloadError(404, "not_found", "Voice output is not configured.");
+    job->key = key->value;
+    Json synthesis = input;
+    synthesis["text"] = entry_speech_text(entry);
+    job->request = make_fish_audio_request(job->output, synthesis);
+    return job;
+}
+
+Json AudioDownloadManager::submit_batch(const FullSessionId& s, const Json& input) {
+    const auto vault = input.at("vault_name").get<std::string>();
+    std::size_t generation;
+    {
+        std::lock_guard lock(mutex_);
+        check(s, vault);
+        generation = generation_;
+    }
+    struct Prepared {
+        EntryId id;
+        Json acceptance;
+        std::shared_ptr<Job> job;
+    };
+    std::vector<Prepared> prepared;
+    // Validate and prepare the entire batch before admitting new work.
+    for (const auto& request : input.at("entries")) {
+        const auto id = request.at("entry_id").get<EntryId>();
+        {
+            std::lock_guard lock(mutex_);
+            check_generation(s, vault, generation);
+            const auto it = jobs_.find(key(s, id));
+            if (it != jobs_.end() && it->second->state != "failed") {
+                prepared.push_back({id, {{"entry_id", id}, {"cached", false}, {"state", it->second->state}}, {}});
+                continue;
+            }
+        }
+        const auto entry = sessions_.lookup_entry_audio(s, id, false);
+        if (!entry) throw AudioDownloadError(404, "not_found", "Transcript entry not found.");
+        if (entry->has_cached_audio) prepared.push_back({id, {{"entry_id", id}, {"cached", true}}, {}});
+        else prepared.push_back({id, {{"entry_id", id}, {"cached", false}, {"state", "queued"}}, prepare_job(*entry, request)});
+    }
+    Json accepted = Json::array();
+    {
+        std::lock_guard lock(mutex_);
+        check_generation(s, vault, generation);
+        for (auto& item : prepared) {
+            const auto identity = key(s, item.id);
+            const auto it = jobs_.find(identity);
+            if (it != jobs_.end() && it->second->state != "failed") {
+                accepted.push_back({{"entry_id", item.id}, {"cached", false}, {"state", it->second->state}});
+            } else {
+                if (item.job) {
+                    jobs_[identity] = item.job;
+                    queue_.push_back(item.job);
+                }
+                accepted.push_back(std::move(item.acceptance));
+            }
+        }
+        changed_.notify_all();
+    }
+    return {{"entries", std::move(accepted)}};
 }
 
 Json AudioDownloadManager::status(const FullSessionId& s, const std::string& vault) {
@@ -256,6 +316,28 @@ void install_audio_download_routes(httplib::Server& server, AudioDownloadManager
             auto value = downloads.submit({request.matches[1], request.matches[2]}, std::stoull(request.matches[3]), input);
             set_json_response(response, value.at("cached").template get<bool>() ? 200 : 202, value);
         });
+    });
+    server.Post(base + "/audio-downloads", [&downloads, settings, handle](const auto& request, auto& response) {
+        if (!validate_json_mutation(request, response)) return;
+        Json input;
+        if (!parse_route_json_body(request, response, settings.request_body_limit, [&](const Json& parsed) {
+            if (!parsed.is_object() || parsed.size() != 2 || !parsed.contains("vault_name")
+                || !parsed.at("vault_name").is_string() || parsed.at("vault_name").get<std::string>().empty()
+                || !parsed.contains("entries") || !parsed.at("entries").is_array() || parsed.at("entries").empty())
+                throw std::invalid_argument("Invalid audio batch request.");
+            std::set<EntryId> ids;
+            for (const auto& entry : parsed.at("entries")) {
+                if (!entry.is_object() || !entry.contains("entry_id") || !entry.at("entry_id").is_number_unsigned()
+                    || entry.at("entry_id").get<EntryId>() == 0 || !ids.insert(entry.at("entry_id").get<EntryId>()).second
+                    || !entry.contains("reference_id") || !entry.at("reference_id").is_string()
+                    || entry.at("reference_id").get<std::string>().empty())
+                    throw std::invalid_argument("Invalid audio batch entry.");
+                for (const auto& [name, value] : entry.items())
+                    if (name != "entry_id" && name != "reference_id" && name != "settings") throw std::invalid_argument("Invalid audio batch entry.");
+            }
+            input = parsed;
+        })) return;
+        handle(response, [&] { set_json_response(response, 202, downloads.submit_batch({request.matches[1], request.matches[2]}, input)); });
     });
     server.Get(base + "/audio-downloads", [&downloads, handle](const auto& request, auto& response) {
         handle(response, [&] { set_json_response(response, 200, downloads.status({request.matches[1], request.matches[2]}, request.get_param_value("vault_name"))); });

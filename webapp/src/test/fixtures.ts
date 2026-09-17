@@ -178,7 +178,7 @@ export const snapshotFixture: SessionSnapshot = {
 
 export function fixtureClient(overrides: Partial<ChaClient> = {}): ChaClient {
   const audioCache = new Map<string, Set<number>>();
-  return {
+  const client: ChaClient = {
     getBootstrap: async () => bootstrapFixture,
     getCharacter: async () => characterDetailFixture,
     createCharacter: async ({ display_name, description }) => ({
@@ -305,6 +305,12 @@ export function fixtureClient(overrides: Partial<ChaClient> = {}): ChaClient {
       ids.add(entry_id); audioCache.set(key, ids);
       return { entry_id, cached: true };
     },
+    startAudioDownloadBatch: async (forum, session, request) => {
+      const entries = [];
+      for (const entry of request.entries) entries.push(await client.startAudioDownload(forum, session, entry.entry_id,
+        { vault_name: request.vault_name, reference_id: entry.reference_id, settings: entry.settings }));
+      return { entries };
+    },
     getAudioDownloads: async (forum, session) => ({
       cached_entry_ids: [...(audioCache.get(`${forum}/${session}`) ?? [])], downloads: [],
     }),
@@ -312,4 +318,5 @@ export function fixtureClient(overrides: Partial<ChaClient> = {}): ChaClient {
     mergeVault: async () => undefined,
     ...overrides,
   };
+  return client;
 }

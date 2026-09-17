@@ -41,6 +41,21 @@ describe('CHA API client', () => {
       .toBe('/api/v1/forums/f%2Fone/sessions/s%20two/entries/7/audio?vault_name=My%20vault');
   });
 
+  it('submits a batch in one encoded POST and validates its acceptance', async () => {
+    const accepted = { entries: [{ entry_id: 1, cached: false, state: 'queued' }, { entry_id: 2, cached: true }] };
+    const fetcher = vi.fn(async () => jsonResponse(accepted, 202));
+    const client = createChaClient(fetcher);
+    const batch = { vault_name: 'My vault', entries: [
+      { entry_id: 1, reference_id: 'one' }, { entry_id: 2, reference_id: 'two', settings: { speed: 1.2 } },
+    ] };
+    expect(await client.startAudioDownloadBatch('f/one', 's two', batch)).toEqual(accepted);
+    expect(fetcher).toHaveBeenCalledOnce();
+    expect(fetcher).toHaveBeenCalledWith('/api/v1/forums/f%2Fone/sessions/s%20two/audio-downloads',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify(batch) }));
+    const invalid = createChaClient(async () => jsonResponse({ entries: [{ entry_id: 1, cached: false, state: 'ready' }] }, 202));
+    await expect(invalid.startAudioDownloadBatch('forum', 'session', batch)).rejects.toBeInstanceOf(ChaProtocolError);
+  });
+
   it('rejects invalid audio job states in a status response', async () => {
     const client = createChaClient(async () => jsonResponse({ cached_entry_ids: [], downloads: [{ entry_id: 1, state: 'ready' }] }));
     await expect(client.getAudioDownloads('forum', 'session', 'vault')).rejects.toBeInstanceOf(ChaProtocolError);

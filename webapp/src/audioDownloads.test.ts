@@ -2,7 +2,7 @@ import { act, render, renderHook } from '@testing-library/react';
 import { createElement } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { useAudioDownloads } from './audioDownloads';
-import { ChaError, ChaUnavailableError, type AudioDownloadAcceptance, type AudioDownloadStatus } from './api/client';
+import { ChaError, ChaUnavailableError, type AudioDownloadAcceptance, type AudioDownloadBatchAcceptance, type AudioDownloadStatus } from './api/client';
 import { fixtureClient } from './test/fixtures';
 
 const idle: AudioDownloadStatus = { cached_entry_ids: [], downloads: [] };
@@ -35,10 +35,15 @@ describe('background audio observer', () => {
     vi.useFakeTimers();
     const getAudioDownloads = vi.fn().mockRejectedValue(new ChaError(409, 'vault_changed', 'The active vault changed.'));
     const client = fixtureClient({ getAudioDownloads });
-    renderHook(() => useAudioDownloads(client, 'forum', 'session', 'Personal', 0));
+    const { result } = renderHook(() => useAudioDownloads(client, 'forum', 'session', 'Personal', 0));
     await settle();
     await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
     expect(getAudioDownloads).toHaveBeenCalledOnce();
+    expect(result.current.unavailable).toBe('The active vault changed.');
+    getAudioDownloads.mockResolvedValue(idle);
+    act(() => { result.current.refresh(); });
+    await settle();
+    expect(result.current.unavailable).toBeNull();
   });
 
   it('does not render transcript children for unchanged polls but renders changed job state', async () => {
@@ -62,6 +67,31 @@ describe('background audio observer', () => {
     getAudioDownloads.mockResolvedValue({ cached_entry_ids: [2], downloads: [{ entry_id: 1, state: 'failed', error: 'Download failed.' }] });
     await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
     expect(rendered).toHaveBeenCalledTimes(renders + 1);
+  });
+
+  it('publishes batch admission as a few renders instead of one per entry', async () => {
+    const accepted = deferred<AudioDownloadBatchAcceptance>();
+    const getAudioDownloads = vi.fn().mockResolvedValueOnce(idle).mockResolvedValue(pending);
+    const client = fixtureClient({ getAudioDownloads, startAudioDownloadBatch: () => accepted.promise });
+    const rendered = vi.fn();
+    let submit!: ReturnType<typeof useAudioDownloads>['submitBatch'];
+    function Transcript() { rendered(); return null; }
+    function Screen() {
+      const downloads = useAudioDownloads(client, 'forum', 'session', 'Personal', 0);
+      submit = downloads.submitBatch;
+      return createElement(Transcript);
+    }
+    render(createElement(Screen));
+    await settle();
+    const renders = rendered.mock.calls.length;
+    const entries = Array.from({ length: 300 }, (_, index) => ({ entry_id: index + 1, reference_id: 'reader' }));
+    let submission: Promise<void> | undefined;
+    act(() => { submission = submit({ vault_name: 'Personal', entries }); });
+    await act(async () => {
+      accepted.resolve({ entries: entries.map(({ entry_id }) => ({ entry_id, cached: false, state: 'queued' })) });
+      await submission;
+    });
+    expect(rendered.mock.calls.length - renders).toBeLessThanOrEqual(4);
   });
 
   it('reads once on opening and polls only while entries are pending, preserving them on failure', async () => {

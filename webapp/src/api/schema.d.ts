@@ -954,9 +954,7 @@ export interface paths {
     };
     "/api/v1/forums/{forum_id}/sessions/{session_id}/audio-downloads": {
         parameters: {
-            query: {
-                vault_name: string;
-            };
+            query?: never;
             header?: never;
             path: {
                 /** @description Stable URL-safe forum identifier. */
@@ -969,7 +967,11 @@ export interface paths {
         /** Read cached audio IDs and background job states without opening the session */
         get: operations["getAudioDownloads"];
         put?: never;
-        post?: never;
+        /**
+         * Accept a batch of transcript entries into the background audio queue
+         * @description Prepares all entries before admitting new jobs. Acceptance does not wait for generation or storage. A lost response can be reconciled by reading status; resubmission deduplicates existing jobs.
+         */
+        post: operations["startAudioDownloadBatch"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1814,6 +1816,21 @@ export interface components {
             settings?: {
                 speed?: number;
             };
+        };
+        AudioDownloadBatchEntry: {
+            entry_id: number;
+            reference_id: string;
+            settings?: {
+                speed?: number;
+            };
+        };
+        AudioDownloadBatchRequest: {
+            vault_name: string;
+            /** @description Entry IDs must be unique within the batch. */
+            entries: components["schemas"]["AudioDownloadBatchEntry"][];
+        };
+        AudioDownloadBatchAcceptance: {
+            entries: components["schemas"]["AudioDownloadAcceptance"][];
         };
         AudioDownloadAcceptance: {
             entry_id: number;
@@ -3759,6 +3776,62 @@ export interface operations {
                 };
             };
             /** @description Unavailable session, changed vault, or temporary maintenance. */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    startAudioDownloadBatch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Stable URL-safe forum identifier. */
+                forum_id: components["parameters"]["ForumId"];
+                /** @description Stable URL-safe session identifier. */
+                session_id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AudioDownloadBatchRequest"];
+            };
+        };
+        responses: {
+            /** @description Each entry is cached or has a new or existing background job. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AudioDownloadBatchAcceptance"];
+                };
+            };
+            /** @description Active vault changed. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Downloads are temporarily unavailable during maintenance or cache clearing. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Invalid request or unavailable entry/configuration; no new jobs from this batch were admitted. */
             default: {
                 headers: {
                     [name: string]: unknown;

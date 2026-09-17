@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { ChaError, type AudioDownloadAcceptance, type ChaClient, type SessionSnapshot } from '../api/client';
+import { ChaError, type AudioDownloadAcceptance, type AudioDownloadBatchAcceptance, type AudioDownloadBatchRequest, type ChaClient, type SessionSnapshot } from '../api/client';
 import type { SessionEventHandlers } from '../api/events';
 import {
   bootstrapFixture,
@@ -553,25 +553,262 @@ describe('live chat', () => {
     );
   });
 
-  it('disables conversation prefetch and makes no audio requests for existing or future entries', async () => {
-    const fetchMock = vi.spyOn(globalThis, 'fetch');
+  it('submits a long conversation in one batch while prompts remain available and serializes later batches', async () => {
+    let complete!: (accepted: AudioDownloadBatchAcceptance) => void;
+    const jobs: Array<{ entry_id: number; state: 'queued' }> = [];
+    const startAudioDownload = vi.fn();
+    const startAudioDownloadBatch = vi.fn((_forum: string, _session: string, request: AudioDownloadBatchRequest) => {
+      if (request.entries.length === 300) return new Promise<AudioDownloadBatchAcceptance>((resolve) => { complete = resolve; });
+      const entries = request.entries.map(({ entry_id }) => ({ entry_id, cached: false, state: 'queued' as const }));
+      jobs.push(...entries);
+      return Promise.resolve({ entries });
+    });
+    const submitInput = vi.fn(async () => ({ clear_input: true }));
     const events = drivableEvents();
     render(<App client={fixtureClient({
       getVoiceOutputRuntime: async () => voiceOutputRuntimeFixture,
+      getAudioDownloads: async () => ({ cached_entry_ids: [], downloads: [...jobs] }),
+      startAudioDownload, startAudioDownloadBatch, submitInput,
     })} connectSessionEvents={events.connect} />);
-    await attachInitial(events, snapshotFixture);
-    const toggle = screen.getByRole('button', { name: 'Cache conversation audio automatically' });
+    const entry = { id: 1, kind: 'character' as const, participant_id: 'assistant', display_name: 'Assistant',
+      addressed_to: '', addressed_to_name: '', text: 'Answer', status: 'complete' as const, created_at: 1 };
+    const snapshot = { ...snapshotFixture, transcript: Array.from({ length: 300 }, (_, index) =>
+      ({ ...entry, id: index + 1, text: `Answer ${index + 1}` })) };
+    await attachInitial(events, snapshot);
+    const toggle = await screen.findByRole('button', { name: 'Cache conversation audio automatically' });
+    await waitFor(() => expect(toggle).toBeEnabled());
+    fireEvent.click(toggle);
+    await waitFor(() => expect(startAudioDownloadBatch).toHaveBeenCalledOnce());
+    expect(startAudioDownloadBatch.mock.calls[0][2].entries).toHaveLength(300);
+    expect(startAudioDownload).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Message' }), { target: { value: 'Another prompt' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    await waitFor(() => expect(submitInput).toHaveBeenCalledWith('entrance', 'welcome', { text: 'Another prompt' }));
+    const updated = { ...snapshot, transcript: [...snapshot.transcript, { ...entry, id: 301, text: 'New answer' }] };
+    act(() => events.handlers[0].onSnapshot(updated));
+    expect(startAudioDownloadBatch).toHaveBeenCalledOnce();
+    await act(async () => {
+      jobs.push(...snapshot.transcript.map(({ id }) => ({ entry_id: id, state: 'queued' as const })));
+      complete({ entries: jobs.map((job) => ({ ...job, cached: false })) });
+    });
+    await waitFor(() => expect(startAudioDownloadBatch).toHaveBeenCalledTimes(2));
+    expect(startAudioDownloadBatch.mock.lastCall?.[2].entries.map((item) => item.entry_id)).toEqual([301]);
+    act(() => events.handlers[0].onSnapshot({ ...updated, transcript: [...updated.transcript] }));
+    expect(startAudioDownloadBatch).toHaveBeenCalledTimes(2);
+  });
+
+  it('disables automatic caching after a permanent initial status failure without submitting entries', async () => {
+    const startAudioDownloadBatch = vi.fn();
+    const events = drivableEvents();
+    render(<App client={fixtureClient({
+      getVoiceOutputRuntime: async () => voiceOutputRuntimeFixture,
+      getAudioDownloads: async () => { throw new ChaError(409, 'vault_changed', 'The active vault changed.'); },
+      startAudioDownloadBatch,
+    })} connectSessionEvents={events.connect} />);
+    await attachInitial(events, { ...snapshotFixture, transcript: [
+      { id: 1, kind: 'character', participant_id: 'assistant', display_name: 'Assistant',
+        addressed_to: '', addressed_to_name: '', text: 'Answer', status: 'complete', created_at: 1 },
+    ] });
+    const toggle = await screen.findByRole('button', { name: 'Cache conversation audio automatically' });
+    await waitFor(() => expect(toggle).toHaveAttribute('title', 'The active vault changed.'));
     expect(toggle).toBeDisabled();
     fireEvent.click(toggle);
-    act(() => events.handlers[0].onSnapshot({
-      ...snapshotFixture,
-      transcript: [{
-        id: 2, kind: 'character', participant_id: 'assistant', display_name: 'Assistant',
-        addressed_to: '', addressed_to_name: '', text: 'New answer',
-        status: 'complete', created_at: 1_700_000_000,
-      }],
-    }));
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(startAudioDownloadBatch).not.toHaveBeenCalled();
+  });
+
+  it('clearing the session audio cache turns automatic caching off until explicitly re-enabled', async () => {
+    let cached = [1];
+    const events = drivableEvents();
+    const startAudioDownloadBatch = vi.fn(async (_forum: string, _session: string, request: AudioDownloadBatchRequest) => {
+      cached = request.entries.map((entry) => entry.entry_id);
+      return { entries: cached.map((entry_id) => ({ entry_id, cached: true })) };
+    });
+    const saved: SessionSnapshot = { ...snapshotFixture, forum: bootstrapFixture.forums[1],
+      session_id: 'planning', session_label: 'Planning', transcript: [
+        { id: 1, kind: 'character', participant_id: 'assistant', display_name: 'Assistant',
+          addressed_to: '', addressed_to_name: '', text: 'Saved answer', status: 'complete', created_at: 1 },
+      ] };
+    render(<App client={fixtureClient({
+      getVoiceOutputRuntime: async () => voiceOutputRuntimeFixture,
+      getSessionSnapshot: async () => saved,
+      getAudioDownloads: async (forum) => ({ cached_entry_ids: forum === 'lobby' ? cached : [], downloads: [] }),
+      clearSessionAudioCache: async () => { cached = []; },
+      startAudioDownloadBatch,
+    })} connectSessionEvents={events.connect} />);
+    await attachInitial(events);
+    fireEvent.click(screen.getByRole('button', { name: /^Planning/ }));
+    await waitFor(() => expect(events.connections[1]?.key).toBe('lobby/planning'));
+    act(() => events.handlers[1].onSnapshot(saved));
+    const toggle = await screen.findByRole('button', { name: 'Cache conversation audio automatically' });
+    await waitFor(() => expect(toggle).toBeEnabled());
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute('aria-pressed', 'true');
+    fireEvent.click(screen.getByLabelText('Actions for Planning'));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Clear audio cache' }));
+    await waitFor(() => expect(toggle).toHaveAttribute('aria-pressed', 'false'));
+    await waitFor(() => expect(toggle).toBeEnabled());
+    expect(startAudioDownloadBatch).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: "Generate audio for Assistant's response" })).toBeEnabled();
+    fireEvent.click(toggle);
+    await waitFor(() => expect(startAudioDownloadBatch).toHaveBeenCalledOnce());
+    expect(startAudioDownloadBatch.mock.calls[0][2].entries.map((entry) => entry.entry_id)).toEqual([1]);
+  });
+
+  it('automatically queues completed conversation audio once, using the entry voices and core jobs', async () => {
+    const play = vi.spyOn(TextToSpeechSession.prototype, 'play');
+    const jobs: Array<{ entry_id: number; state: 'queued' | 'running' | 'failed'; error?: string }> = [
+      { entry_id: 8, state: 'running' }, { entry_id: 9, state: 'failed', error: 'Audio download failed. Try again.' },
+    ];
+    const startAudioDownload = vi.fn(async (_forum: string, _session: string, entry_id: number) => {
+      jobs.push({ entry_id, state: 'queued' });
+      return { entry_id, cached: false, state: 'queued' as const };
+    });
+    const bootstrap = { ...bootstrapFixture, personas: bootstrapFixture.personas.map((persona) =>
+      persona.id === 'guest' ? { ...persona, voice: { id: 'reader', display_name: 'Reader',
+        elevenlabs_voice_id: 'persona-voice', settings: { speed: 1.2 } } } : persona) };
+    const events = drivableEvents();
+    render(<App client={fixtureClient({
+      getBootstrap: async () => bootstrap,
+      getVoiceOutputRuntime: async () => voiceOutputRuntimeFixture,
+      getAudioDownloads: async () => ({ cached_entry_ids: [1], downloads: [...jobs] }),
+      startAudioDownload,
+    })} connectSessionEvents={events.connect} />);
+    const entry = { id: 1, kind: 'character' as const, participant_id: 'assistant', display_name: 'Assistant',
+      addressed_to: '', addressed_to_name: '', text: 'Saved answer', status: 'complete' as const, created_at: 1 };
+    const snapshot: SessionSnapshot = { ...snapshotFixture,
+      characters: [{ ...snapshotFixture.characters[0], voice: { id: 'speaker', display_name: 'Speaker',
+        elevenlabs_voice_id: 'character-voice', settings: { speed: 0.8 } } }],
+      transcript: [entry,
+        { ...entry, id: 2, kind: 'human', participant_id: 'guest', display_name: 'Guest', text: 'Question' },
+        { ...entry, id: 3, text: 'Existing answer' },
+        { ...entry, id: 4, text: 'Streaming answer', status: 'streaming', created_at: null },
+        { ...entry, id: 5, status: 'failed', text: 'Failed answer' },
+        { ...entry, id: 6, kind: 'notice', text: 'Notice' },
+        { ...entry, id: 7, text: '   ' },
+        { ...entry, id: 8, text: 'Already downloading' },
+        { ...entry, id: 9, text: 'Failed download' },
+      ] };
+    await attachInitial(events, snapshot);
+    const toggle = await screen.findByRole('button', { name: 'Cache conversation audio automatically' });
+    await waitFor(() => expect(toggle).toBeEnabled());
+    expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    expect(startAudioDownload).not.toHaveBeenCalled();
+    fireEvent.click(toggle);
+    await waitFor(() => expect(startAudioDownload).toHaveBeenCalledTimes(2));
+    expect(startAudioDownload).toHaveBeenCalledWith('entrance', 'welcome', 2,
+      { vault_name: 'Personal', reference_id: 'persona-voice', settings: { speed: 1.2 } });
+    expect(startAudioDownload).toHaveBeenCalledWith('entrance', 'welcome', 3,
+      { vault_name: 'Personal', reference_id: 'character-voice', settings: { speed: 0.8 } });
+    expect(toggle).toHaveAttribute('aria-pressed', 'true');
+    const completed = { ...snapshot, transcript: snapshot.transcript.map((item) => item.id === 4
+      ? { ...item, status: 'complete' as const, created_at: 2 } : item) };
+    act(() => events.handlers[0].onSnapshot(completed));
+    await waitFor(() => expect(startAudioDownload).toHaveBeenCalledTimes(3));
+    act(() => events.handlers[0].onSnapshot({ ...completed, transcript: [...completed.transcript] }));
+    expect(startAudioDownload).toHaveBeenCalledTimes(3);
+    expect(play).not.toHaveBeenCalled();
+  });
+
+  it('turning automatic audio off preserves cached audio and allows accepted downloads to finish', async () => {
+    const clearSessionAudioCache = vi.fn(async () => {});
+    const play = vi.spyOn(TextToSpeechSession.prototype, 'play');
+    const cached = [1];
+    let finish!: (value: AudioDownloadAcceptance) => void;
+    const startAudioDownload = vi.fn((_forum: string, _session: string, entry_id: number) =>
+      new Promise<AudioDownloadAcceptance>((resolve) => { finish = resolve; }));
+    const events = drivableEvents();
+    render(<App client={fixtureClient({
+      getVoiceOutputRuntime: async () => voiceOutputRuntimeFixture,
+      getAudioDownloads: async () => ({ cached_entry_ids: [...cached], downloads: [] }),
+      startAudioDownload, clearSessionAudioCache,
+    })} connectSessionEvents={events.connect} />);
+    const entry = { id: 1, kind: 'character' as const, participant_id: 'assistant', display_name: 'Assistant',
+      addressed_to: '', addressed_to_name: '', text: 'Saved answer', status: 'complete' as const, created_at: 1 };
+    const snapshot = { ...snapshotFixture, transcript: [entry, { ...entry, id: 2, text: 'Existing answer' }] };
+    await attachInitial(events, snapshot);
+    const toggle = await screen.findByRole('button', { name: 'Cache conversation audio automatically' });
+    await waitFor(() => expect(toggle).toBeEnabled());
+    fireEvent.click(toggle);
+    await waitFor(() => expect(startAudioDownload).toHaveBeenCalledOnce());
+    expect(screen.getByRole('button', { name: "Queued audio for Assistant's response" })).toBeDisabled();
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    act(() => events.handlers[0].onSnapshot({ ...snapshot,
+      transcript: [...snapshot.transcript, { ...entry, id: 3, text: 'New answer' }] }));
+    await act(async () => { cached.push(2); finish({ entry_id: 2, cached: true }); });
+    expect(screen.getAllByRole('button', { name: "Play cached audio for Assistant's response" })).toHaveLength(2);
+    expect(screen.getByRole('button', { name: "Generate audio for Assistant's response" })).toBeEnabled();
+    expect(startAudioDownload).toHaveBeenCalledOnce();
+    expect(clearSessionAudioCache).not.toHaveBeenCalled();
+    expect(play).not.toHaveBeenCalled();
+    // Re-enabling queues only the answer that appeared while disabled.
+    fireEvent.click(toggle);
+    await waitFor(() => expect(startAudioDownload).toHaveBeenCalledTimes(2));
+    expect(startAudioDownload.mock.lastCall?.[2]).toBe(3);
+    await act(async () => { cached.push(3); finish({ entry_id: 3, cached: true }); });
+  });
+
+  it('turns automatic caching off after a rejected batch and retries eligible entries only when re-enabled', async () => {
+    const jobs: Array<{ entry_id: number; state: 'queued' }> = [];
+    const startAudioDownloadBatch = vi.fn(async (_forum: string, _session: string, request: AudioDownloadBatchRequest) => {
+      const entries = request.entries.map(({ entry_id }) => ({ entry_id, cached: false, state: 'queued' as const }));
+      jobs.push(...entries);
+      return { entries };
+    }).mockRejectedValueOnce(new ChaError(503, 'speech_busy', 'Audio downloads are temporarily unavailable.'));
+    const events = drivableEvents();
+    render(<App client={fixtureClient({
+      getVoiceOutputRuntime: async () => voiceOutputRuntimeFixture,
+      getAudioDownloads: async () => ({ cached_entry_ids: [], downloads: [...jobs] }),
+      startAudioDownloadBatch,
+    })} connectSessionEvents={events.connect} />);
+    const entry = { id: 1, kind: 'character' as const, participant_id: 'assistant', display_name: 'Assistant',
+      addressed_to: '', addressed_to_name: '', text: 'Answer', status: 'complete' as const, created_at: 1 };
+    const snapshot = { ...snapshotFixture, transcript: [entry, { ...entry, id: 2, text: 'Another answer' }] };
+    await attachInitial(events, snapshot);
+    const toggle = await screen.findByRole('button', { name: 'Cache conversation audio automatically' });
+    await waitFor(() => expect(toggle).toBeEnabled());
+    fireEvent.click(toggle);
+    expect(await screen.findByRole('alert')).toHaveTextContent('Audio downloads are temporarily unavailable.');
+    expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    expect(startAudioDownloadBatch.mock.calls[0][2].entries.map((item) => item.entry_id)).toEqual([1, 2]);
+    const updated = { ...snapshot, transcript: [...snapshot.transcript, { ...entry, id: 3, text: 'New answer' }] };
+    act(() => events.handlers[0].onSnapshot(updated));
+    expect(startAudioDownloadBatch).toHaveBeenCalledOnce();
+    expect(screen.getAllByRole('alert')).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: "Generate audio for Assistant's response" })).toHaveLength(3);
+    fireEvent.click(toggle);
+    await waitFor(() => expect(startAudioDownloadBatch).toHaveBeenCalledTimes(2));
+    expect(startAudioDownloadBatch.mock.lastCall?.[2].entries.map((item) => item.entry_id)).toEqual([1, 2, 3]);
+    expect(toggle).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('resets automatic audio on session navigation and ignores late admission errors', async () => {
+    let reject!: (failure: unknown) => void;
+    const startAudioDownload = vi.fn(() => new Promise<AudioDownloadAcceptance>((_resolve, failed) => { reject = failed; }));
+    const entry = { id: 1, kind: 'character' as const, participant_id: 'assistant', display_name: 'Assistant',
+      addressed_to: '', addressed_to_name: '', text: 'Answer', status: 'complete' as const, created_at: 1 };
+    const planning: SessionSnapshot = { ...snapshotFixture, forum: bootstrapFixture.forums[1],
+      session_id: 'planning', session_label: 'Planning', transcript: [{ ...entry, text: 'Planning answer' }] };
+    const events = drivableEvents();
+    render(<App client={fixtureClient({
+      getVoiceOutputRuntime: async () => voiceOutputRuntimeFixture,
+      getSessionSnapshot: async (forum) => forum === 'lobby' ? planning : snapshotFixture,
+      startAudioDownload,
+    })} connectSessionEvents={events.connect} />);
+    await attachInitial(events, { ...snapshotFixture, transcript: [entry] });
+    const toggle = await screen.findByRole('button', { name: 'Cache conversation audio automatically' });
+    await waitFor(() => expect(toggle).toBeEnabled());
+    fireEvent.click(toggle);
+    await waitFor(() => expect(startAudioDownload).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole('button', { name: /^Planning/ }));
+    await waitFor(() => expect(events.connections[1]?.key).toBe('lobby/planning'));
+    act(() => events.handlers[1].onSnapshot(planning));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Cache conversation audio automatically' })).toBeEnabled());
+    expect(screen.getByRole('button', { name: 'Cache conversation audio automatically' })).toHaveAttribute('aria-pressed', 'false');
+    await act(async () => { reject(new ChaError(503, 'speech_busy', 'Old audio request rejected.')); });
+    expect(startAudioDownload).toHaveBeenCalledOnce();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
   it('shows an error message returned by FishAudio', async () => {
@@ -828,14 +1065,11 @@ describe('live chat', () => {
   });
 
   it('shows a multicast prompt once while keeping every character response', async () => {
-    const responses: Array<(response: Response) => void> = [];
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(() => (
-      new Promise<Response>((resolve) => responses.push(resolve))
-    ));
+    const fetchMock = vi.spyOn(globalThis, 'fetch');
     const events = drivableEvents();
-    render(<App client={fixtureClient({
-      getVoiceOutputRuntime: async () => voiceOutputRuntimeFixture,
-    })} connectSessionEvents={events.connect} />);
+    const client = fixtureClient({ getVoiceOutputRuntime: async () => voiceOutputRuntimeFixture });
+    const startAudioDownload = vi.spyOn(client, 'startAudioDownload');
+    render(<App client={client} connectSessionEvents={events.connect} />);
     await attachInitial(events, {
       ...snapshotFixture,
       transcript: [
@@ -868,9 +1102,11 @@ describe('live chat', () => {
     expect(document.querySelectorAll('.cha-message')).toHaveLength(3);
     expect(document.querySelectorAll('.cha-repeated-prompt-divider')).toHaveLength(1);
 
-    expect(screen.getByRole('button', {
-      name: 'Cache conversation audio automatically',
-    })).toBeDisabled();
+    const toggle = screen.getByRole('button', { name: 'Cache conversation audio automatically' });
+    await waitFor(() => expect(toggle).toBeEnabled());
+    fireEvent.click(toggle);
+    await waitFor(() => expect(startAudioDownload).toHaveBeenCalledTimes(3));
+    expect(startAudioDownload.mock.calls.map((call) => call[2])).toEqual([1, 2, 4]);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

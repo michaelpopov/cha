@@ -1,6 +1,9 @@
 import type { components } from './schema';
 import { hasIdentity, isRecord } from './guards';
 
+export type AudioDownloadBatchEntry = components['schemas']['AudioDownloadBatchEntry'];
+export type AudioDownloadBatchRequest = components['schemas']['AudioDownloadBatchRequest'];
+export type AudioDownloadBatchAcceptance = components['schemas']['AudioDownloadBatchAcceptance'];
 export type AudioDownloadRequest = components['schemas']['AudioDownloadRequest'];
 export type AudioDownloadAcceptance = components['schemas']['AudioDownloadAcceptance'];
 export type AudioDownloadStatus = components['schemas']['AudioDownloadStatus'];
@@ -206,6 +209,7 @@ export interface ChaClient {
   getR2Storage(): Promise<R2StorageDetail | null>;
   saveR2Storage(request: SaveR2StorageRequest): Promise<R2StorageDetail>;
   deleteR2Storage(): Promise<void>;
+  startAudioDownloadBatch(forumId: string, sessionId: string, request: AudioDownloadBatchRequest): Promise<AudioDownloadBatchAcceptance>;
   startAudioDownload(forumId: string, sessionId: string, entryId: number, request: AudioDownloadRequest): Promise<AudioDownloadAcceptance>;
   getAudioDownloads(forumId: string, sessionId: string, vaultName: string): Promise<AudioDownloadStatus>;
   switchVault(vaultName: string, password?: string): Promise<void>;
@@ -1042,6 +1046,10 @@ export function createChaClient(
       jsonMutation({}, 'DELETE'),
     ),
 
+    startAudioDownloadBatch: (forumId, sessionId, request) => requestValidated(
+      fetcher, `/api/v1/forums/${component(forumId)}/sessions/${component(sessionId)}/audio-downloads`,
+      (value): value is AudioDownloadBatchAcceptance => isRecord(value) && Array.isArray(value.entries) && value.entries.every(isAudioAcceptance),
+      jsonMutation(request)),
     startAudioDownload: (forumId, sessionId, entryId, request) => requestValidated(
       fetcher, `/api/v1/forums/${component(forumId)}/sessions/${component(sessionId)}/entries/${entryId}/audio-download`,
       isAudioAcceptance, jsonMutation(request)),

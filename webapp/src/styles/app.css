@@ -975,6 +975,12 @@ select:disabled {
   opacity: 0.65;
 }
 
+.cha-message-action[data-speech-state='queued'],
+.cha-message-action[data-speech-state='running'] {
+  color: light-dark(rgb(150 105 0), rgb(219 174 55));
+  opacity: 1;
+}
+
 .cha-repeated-prompt-divider {
   width: 100%;
   margin: 0.15rem 0;
