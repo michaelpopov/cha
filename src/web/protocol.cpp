@@ -319,6 +319,7 @@ void to_json(nlohmann::json& json, const CharacterDetail& value) {
     json = nlohmann::json(value.summary);
     json["character_markdown"] = value.character_markdown;
     json["editable_markdown"] = value.editable_markdown;
+    json["markdown_files"] = value.markdown_files;
     json["provider"] = value.provider ? nlohmann::json(*value.provider) : nlohmann::json(nullptr);
     json["style"] = value.style ? nlohmann::json(*value.style) : nlohmann::json(nullptr);
     json["voice_id"] = value.voice

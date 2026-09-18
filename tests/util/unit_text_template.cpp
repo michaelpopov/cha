@@ -158,6 +158,100 @@ TEST(TextTemplate, AllowsSameFileTwiceAndNestedIncludes) {
     EXPECT_EQ(expand_in(root.path(), root.path() / "a.md"), "BC+BC");
 }
 
+TEST(TextTemplate, CharacterVoiceExpandsWithTheCurrentScopeAndKeepsRelativeIncludes) {
+    const TempDir root("character_voice");
+    const auto characters = root.path() / "characters";
+    const auto forum = root.path() / "forums" / "lobby";
+    write_file(characters / "character-voice.md", "$$(instructions.md)");
+    write_file(characters / "instructions.md", "Portray $${character.display_name}.");
+    write_file(forum / "profile.md", "Profile");
+    write_file(forum / "main.md", "$${ CHARACTER_VOICE } $$(profile.md)");
+    TemplateOptions options = options_for(forum);
+    options.character_voice_directory = characters;
+    options.reserved = {{"character.display_name", "Guide"}};
+    options.initial_scope = {{"CHARACTER_VOICE", "Must not override the shared file"}};
+    EXPECT_EQ(
+        expand_template_file(forum / "main.md", options),
+        "Portray Guide. Profile");
+
+    // The shared include must not relax containment for subsequent includes.
+    write_file(forum / "main.md", "$${CHARACTER_VOICE}$$(../../characters/instructions.md)");
+    EXPECT_THROW((void)expand_template_file(forum / "main.md", options), std::runtime_error);
+}
+
+TEST(TextTemplate, CharacterVoiceIsOnlyReadWhenUsedAndRetainsIncludeChecks) {
+    const TempDir root("character_voice_checks");
+    const auto file = root.path() / "nested" / "main.md";
+    TemplateOptions options = options_for(root.path());
+    options.character_voice_directory = root.path();
+    write_file(file, "Old character without the shared file");
+    EXPECT_EQ(expand_template_file(file, options), "Old character without the shared file");
+    write_file(file, "$${CHARACTER_VOICE}");
+    EXPECT_THROW((void)expand_template_file(file, options), std::runtime_error);
+
+    write_file(root.path() / "character-voice.md", "$${CHARACTER_VOICE}");
+    EXPECT_THROW((void)expand_template_file(file, options), std::runtime_error);
+    write_file(root.path() / "character-voice.md", "VOICE");
+    options.limits.max_includes = 0;
+    EXPECT_THROW((void)expand_template_file(file, options), std::runtime_error);
+    options.limits.max_includes = 256;
+    options.limits.max_output_bytes = 4;
+    EXPECT_THROW((void)expand_template_file(file, options), std::runtime_error);
+}
+
+TEST(TextTemplate, CharacterVoiceWithoutItsDirectoryReportsALocatedError) {
+    const TempDir root("character_voice_unset");
+    write_file(root.path() / "main.md", "$${CHARACTER_VOICE}");
+    try {
+        (void)expand_in(root.path(), root.path() / "main.md");
+        FAIL();
+    } catch (const std::runtime_error& error) {
+        const std::string message = error.what();
+        EXPECT_NE(message.find("CHARACTER_VOICE requires the shared characters directory"), std::string::npos);
+        EXPECT_NE(message.find("main.md:1:1"), std::string::npos);
+    }
+}
+
+TEST(TextTemplate, CharacterVoiceKeepsForumIncludeDiagnosticsRelative) {
+    const TempDir root("character_voice_diagnostics");
+    const auto characters = root.path() / "characters";
+    const auto forum = root.path() / "forums" / "lobby";
+    write_file(forum / "main.md", "Start\n$${CHARACTER_VOICE}");
+    TemplateOptions options = options_for(forum);
+    options.character_voice_directory = characters;
+    for (const auto contents : {"$${unknown}", "$${CHARACTER_VOICE}"}) {
+        write_file(characters / "character-voice.md", contents);
+        try {
+            (void)expand_template_file(forum / "main.md", options);
+            FAIL();
+        } catch (const std::runtime_error& error) {
+            const std::string message = error.what();
+            EXPECT_NE(message.find("character-voice.md"), std::string::npos);
+            EXPECT_NE(message.find("main.md"), std::string::npos);
+            EXPECT_EQ(message.find(utf8_path(root.path())), std::string::npos) << message;
+        }
+    }
+}
+
+TEST(TextTemplate, CharacterVoiceDirectoryResolutionErrorsAreLocated) {
+    const TempDir root("character_voice_directory_error");
+    write_file(root.path() / "main.md", "$${CHARACTER_VOICE}");
+    std::error_code error;
+    std::filesystem::create_directory_symlink("loop", root.path() / "loop", error);
+    if (error) GTEST_SKIP() << "Cannot create a directory symlink: " << error.message();
+    TemplateOptions options = options_for(root.path());
+    options.character_voice_directory = root.path() / "loop";
+    try {
+        (void)expand_template_file(root.path() / "main.md", options);
+        FAIL();
+    } catch (const std::runtime_error& failure) {
+        const std::string message = failure.what();
+        EXPECT_NE(message.find("cannot resolve CHARACTER_VOICE directory"), std::string::npos);
+        EXPECT_NE(message.find("main.md:1:1"), std::string::npos);
+        EXPECT_EQ(message.find(utf8_path(root.path())), std::string::npos) << message;
+    }
+}
+
 TEST(TextTemplate, RejectsMissingAbsoluteEscapingAndDirectoryTargets) {
     const TempDir root("reject");
     std::filesystem::create_directories(root.path() / "sub");

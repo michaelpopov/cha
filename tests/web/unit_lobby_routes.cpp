@@ -1218,6 +1218,111 @@ TEST(LobbyRoutes, PatchesCharacterNameAndMarkdownInTheDatabase) {
         400, "bad_request");
 }
 
+TEST(LobbyRoutes, ListsAndEditsIndividualCharacterMarkdownFiles) {
+    test::TestWorkspace fixture;
+    const auto directory = fixture.root() / "characters" / "guide";
+    std::ofstream(directory / "PROFILE.md") << "# Profile\n";
+    std::ofstream(directory / "NOTES.md") << "# Notes\n";
+    std::filesystem::create_directory(directory / "extra");
+    std::ofstream(directory / "extra" / "PRIVATE.md") << "Nested file\n";
+    const LobbyGraph graph(fixture.root());
+    LiveSessionManager manager(lobby_settings(2), counting_opener(graph));
+    TestServer server(graph, manager);
+    const auto database = graph.store->database_path();
+    const auto before = getws();
+    const std::string original_template = config_row(database, "characters/guide/CHARACTER.md");
+    const std::string original_config = config_row(database, "characters/guide/character.toml");
+
+    const auto detail = server.client().Get("/api/v1/characters/guide");
+    ASSERT_TRUE(detail);
+    EXPECT_EQ(body(detail)["markdown_files"],
+        nlohmann::json::array({"CHARACTER.md", "NOTES.md", "PROFILE.md"}));
+    const auto profile = server.client().Get("/api/v1/characters/guide/files/PROFILE.md");
+    ASSERT_TRUE(profile);
+    EXPECT_EQ(body(profile), (nlohmann::json{
+        {"filename", "PROFILE.md"}, {"content", "# Profile\n"}, {"writable", true}}));
+
+    const auto saved = server.client().Put("/api/v1/characters/guide/files/PROFILE.md",
+        nlohmann::json{{"content", "# Updated profile\n"}}.dump(), "application/json");
+    ASSERT_TRUE(saved);
+    ASSERT_EQ(saved->status, 200);
+    EXPECT_EQ(config_row(database, "characters/guide/PROFILE.md"), "# Updated profile\n");
+    EXPECT_EQ(config_row(database, "characters/guide/CHARACTER.md"), original_template);
+    EXPECT_EQ(config_row(database, "characters/guide/character.toml"), original_config);
+    EXPECT_EQ(before->find_character("guide")->markdown_files.at("PROFILE.md"), "# Profile\n");
+    EXPECT_EQ(getws()->find_character("guide")->markdown_files.at("PROFILE.md"), "# Updated profile\n");
+
+    const auto created = server.client().Post("/api/v1/characters/guide/files",
+        nlohmann::json{{"filename", "New notes.md"}, {"content", "# New notes\n"}}.dump(),
+        "application/json");
+    ASSERT_TRUE(created);
+    ASSERT_EQ(created->status, 201);
+    EXPECT_EQ(config_row(database, "characters/guide/New notes.md"), "# New notes\n");
+    EXPECT_EQ(body(server.client().Get("/api/v1/characters/guide/files/New%20notes.md"))["content"], "# New notes\n");
+    const auto removed = server.client().Delete("/api/v1/characters/guide/files/NOTES.md", "{}", "application/json");
+    ASSERT_TRUE(removed);
+    EXPECT_EQ(removed->status, 204);
+    EXPECT_FALSE(getws()->find_character("guide")->markdown_files.contains("NOTES.md"));
+    EXPECT_TRUE(std::filesystem::exists(directory / "NOTES.md"));
+
+    expect_error(server.client().Post("/api/v1/characters/guide/files",
+        nlohmann::json{{"filename", "PROFILE.md"}, {"content", "overwrite"}}.dump(), "application/json"),
+        400, "bad_request");
+    expect_error(server.client().Post("/api/v1/characters/guide/files",
+        nlohmann::json{{"filename", "../outside.md"}, {"content", "escape"}}.dump(), "application/json"),
+        400, "bad_request");
+    expect_error(server.client().Post("/api/v1/characters/guide/files",
+        nlohmann::json{{"filename", "character.toml"}, {"content", "config"}}.dump(), "application/json"),
+        400, "bad_request");
+    expect_error(server.client().Post("/api/v1/characters/guide/files",
+        nlohmann::json{{"filename", "PROFILE.md:other.md"}, {"content", "stream"}}.dump(), "application/json"),
+        400, "bad_request");
+    expect_error(server.client().Put("/api/v1/characters/guide/files/missing.md",
+        nlohmann::json{{"content", "missing"}}.dump(), "application/json"), 404, "not_found");
+    expect_error(server.client().Put("/api/v1/characters/guide/files/profile.md",
+        nlohmann::json{{"content", "wrong case"}}.dump(), "application/json"), 404, "not_found");
+    expect_error(server.client().Delete("/api/v1/characters/guide/files/character.md", "{}", "application/json"),
+        404, "not_found");
+    EXPECT_EQ(config_row(database, "characters/guide/PROFILE.md"), "# Updated profile\n");
+    EXPECT_EQ(config_row(database, "characters/guide/CHARACTER.md"), original_template);
+    expect_error(server.client().Get("/api/v1/characters/guide/files/character.toml"), 404, "not_found");
+    const auto builtin = server.client().Get("/api/v1/characters/builtin-assistant/files/CHARACTER.md");
+    ASSERT_TRUE(builtin);
+    EXPECT_EQ(body(builtin)["writable"], false);
+    expect_error(server.client().Put("/api/v1/characters/builtin-assistant/files/CHARACTER.md",
+        nlohmann::json{{"content", "overwrite"}}.dump(), "application/json"), 404, "not_found");
+}
+
+TEST(LobbyRoutes, RollsBackFileChangesThatBreakCharacterTemplates) {
+    test::TestWorkspace fixture;
+    const auto directory = fixture.root() / "characters" / "guide";
+    std::ofstream(directory / "PROFILE.md") << "# Guide profile\n";
+    std::ofstream(directory / "CHARACTER.md") << "$$(PROFILE.md)\n";
+    const LobbyGraph graph(fixture.root());
+    LiveSessionManager manager(lobby_settings(2), counting_opener(graph));
+    TestServer server(graph, manager);
+    const auto database = graph.store->database_path();
+
+    const auto source = server.client().Get("/api/v1/characters/guide/files/CHARACTER.md");
+    ASSERT_TRUE(source);
+    EXPECT_EQ(body(source)["content"], "$$(PROFILE.md)\n");
+    const auto required = server.client().Delete("/api/v1/characters/guide/files/CHARACTER.md", "{}", "application/json");
+    expect_error(required, 400, "bad_request");
+    EXPECT_EQ(body(required)["error"]["message"], "CHARACTER.md is required.");
+    const auto included = server.client().Delete("/api/v1/characters/guide/files/PROFILE.md", "{}", "application/json");
+    expect_error(included, 400, "bad_request");
+    EXPECT_EQ(body(included)["error"]["message"], "This file is required by the character's templates.");
+    const auto invalid = server.client().Delete("/api/v1/characters/guide/files/character.toml", "{}", "application/json");
+    expect_error(invalid, 400, "bad_request");
+    EXPECT_EQ(body(invalid)["error"]["message"], "Invalid character file.");
+    EXPECT_EQ(config_row(database, "characters/guide/PROFILE.md"), "# Guide profile\n");
+    expect_error(server.client().Put("/api/v1/characters/guide/files/CHARACTER.md",
+        nlohmann::json{{"content", "$$(missing.md)"}}.dump(), "application/json"), 400, "bad_request");
+    EXPECT_EQ(config_row(database, "characters/guide/CHARACTER.md"), "$$(PROFILE.md)\n");
+    EXPECT_EQ(getws()->find_character("guide")->markdown_files.at("CHARACTER.md"), "$$(PROFILE.md)\n");
+    EXPECT_NE(getws()->find_character("guide")->markdown.find("Guide profile"), std::string::npos);
+}
+
 TEST(LobbyRoutes, PatchesCharacterSettingsAndLeavesTheFileAloneOnABadName) {
     test::TestWorkspace fixture;
     fixture.write_style("serif-italic", "font = \"serif\"\nstyle = \"italic\"\n");

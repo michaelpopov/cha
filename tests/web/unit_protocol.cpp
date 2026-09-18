@@ -151,6 +151,7 @@ TEST(WebProtocol, SerializesSpecifiedSuccessListingAndErrorBodies) {
             {"appearance", default_appearance()},
             {"character_markdown", "Prompt"},
             {"editable_markdown", "Source"},
+            {"markdown_files", nlohmann::json::array()},
             {"provider", "terra"},
             {"style", nullptr},
             {"voice_id", "brian"},

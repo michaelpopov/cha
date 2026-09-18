@@ -85,6 +85,7 @@ struct WorkspaceCharacter {
     std::string prompt_template;
     std::string markdown;
     std::string editable_markdown;
+    std::map<std::string, std::string, std::less<>> markdown_files;
 };
 
 struct WorkspaceForumMember {
@@ -261,6 +262,11 @@ public:
         std::string_view display_name,
         std::optional<std::string_view> markdown = std::nullopt) const;
     void delete_character(std::string_view character_id) const;
+    void write_character_file(
+        std::string_view character_id,
+        std::string_view filename,
+        std::optional<std::string_view> content,
+        bool create = false) const;
     void write_persona(
         std::string_view persona_id,
         std::string_view display_name,

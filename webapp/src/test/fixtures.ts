@@ -95,6 +95,7 @@ export const characterDetailFixture: CharacterDetail = {
   description: 'A deterministic test character',
   appearance: serifItalicVoice,
   character_markdown: '# Guide dossier\n\nA **careful** guide.\n\n- Listen\n- Respond',
+  markdown_files: ['CHARACTER.md'],
   editable_markdown: '# Guide dossier\n\nA **careful** guide.\n\n- Listen\n- Respond',
   provider: 'terra',
   style: 'serif-italic',
@@ -199,6 +200,13 @@ export function fixtureClient(overrides: Partial<ChaClient> = {}): ChaClient {
       ...update,
     }),
     deleteCharacter: async () => undefined,
+    getCharacterFile: async (characterId, filename) => {
+      const detail = await client.getCharacter(characterId);
+      return { filename, content: detail.editable_markdown, writable: detail.writable };
+    },
+    createCharacterFile: async (_characterId, filename, content) => ({ filename, content, writable: true }),
+    updateCharacterFile: async (_characterId, filename, content) => ({ filename, content, writable: true }),
+    deleteCharacterFile: async () => undefined,
     getPersona: async () => personaDetailFixture,
     createPersona: async ({ display_name }) => ({
       ...personaDetailFixture,

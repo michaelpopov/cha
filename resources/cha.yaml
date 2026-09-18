@@ -1207,6 +1207,113 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /api/v1/characters/{character_id}/files:
+    parameters:
+      - $ref: "#/components/parameters/CharacterId"
+    post:
+      tags: [Discovery]
+      operationId: createCharacterFile
+      summary: Add a Markdown file to a character
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCharacterFileRequest"
+      responses:
+        "201":
+          description: The new file, with its verbatim content.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CharacterFile"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/ForbiddenMutation"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/BodyTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/characters/{character_id}/files/{filename}:
+    parameters:
+      - $ref: "#/components/parameters/CharacterId"
+      - name: filename
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      tags: [Discovery]
+      operationId: getCharacterFile
+      summary: Read a character's Markdown file without template expansion
+      responses:
+        "200":
+          description: The file and whether it can be changed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CharacterFile"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    put:
+      tags: [Discovery]
+      operationId: updateCharacterFile
+      summary: Replace a character's Markdown file and reload affected sessions
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateCharacterFileRequest"
+      responses:
+        "200":
+          description: The saved file. Invalid template changes are rolled back.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CharacterFile"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/ForbiddenMutation"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/BodyTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      tags: [Discovery]
+      operationId: deleteCharacterFile
+      summary: Remove a character's Markdown file and reload affected sessions
+      description: CHARACTER.md and files required by templates cannot be removed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+      responses:
+        "204":
+          description: The file was removed.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/ForbiddenMutation"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/BodyTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /api/v1/personas:
     post:
       tags: [Discovery]
@@ -3179,6 +3286,7 @@ components:
         - appearance
         - character_markdown
         - editable_markdown
+        - markdown_files
         - provider
         - style
         - voice_id
@@ -3206,6 +3314,11 @@ components:
         editable_markdown:
           type: string
           description: Verbatim Markdown accepted by the definition editor.
+        markdown_files:
+          type: array
+          description: Sorted filenames directly in the character directory, without content.
+          items:
+            type: string
         provider:
           type: [string, "null"]
         style:
@@ -3236,6 +3349,37 @@ components:
         writable:
           type: boolean
           description: Whether the name and definition can be changed and the character deleted.
+
+    CharacterFile:
+      type: object
+      additionalProperties: false
+      required: [filename, content, writable]
+      properties:
+        filename:
+          type: string
+        content:
+          type: string
+          description: Verbatim file content, preserving template expressions.
+        writable:
+          type: boolean
+
+    CreateCharacterFileRequest:
+      type: object
+      additionalProperties: false
+      required: [filename, content]
+      properties:
+        filename:
+          type: string
+        content:
+          type: string
+
+    UpdateCharacterFileRequest:
+      type: object
+      additionalProperties: false
+      required: [content]
+      properties:
+        content:
+          type: string
 
     CreateCharacterRequest:
       type: object

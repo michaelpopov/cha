@@ -763,6 +763,52 @@ TEST(Workspace, TemplateIncludesResolveUnderThePhysicalRoot) {
         std::string::npos);
 }
 
+TEST(Workspace, CharacterFileEditsRequireAnExactListedFilename) {
+    test::TestWorkspace fixture;
+    const auto directory = fixture.root() / "characters" / "guide";
+    std::ofstream(directory / "PROFILE.md") << "Original profile\n";
+    const Workspace workspace = Workspace::load(fixture.root());
+    const auto original = file_bytes(directory / "CHARACTER.md");
+    EXPECT_THROW(workspace.write_character_file("guide", "profile.md", "Changed"), std::out_of_range);
+    EXPECT_THROW(workspace.write_character_file("guide", "character.md", std::nullopt), std::out_of_range);
+    EXPECT_THROW(workspace.write_character_file("guide", "CHARACTER.md", std::nullopt), std::invalid_argument);
+    EXPECT_EQ(file_bytes(directory / "PROFILE.md"), "Original profile\n");
+    EXPECT_EQ(file_bytes(directory / "CHARACTER.md"), original);
+}
+
+TEST(Workspace, CharacterVoiceMatchesLegacyIncludesAfterMovingTheCharacter) {
+    test::TestWorkspace fixture;
+    const auto characters = fixture.root() / "characters";
+    std::ofstream(characters / "character-voice.md")
+        << "Portray $${character.display_name} in $${forum.display_name}.\n";
+    std::ofstream(characters / "guide" / "PROFILE.md") << "Guide profile.\n";
+    std::ofstream(characters / "guide" / "CHARACTER.md")
+        << "$$(../character-voice.md)\n<character_profile>\n"
+           "$$(PROFILE.md)</character_profile>\n";
+    const Workspace legacy = Workspace::load(fixture.root());
+    const std::string expected = legacy.find_forum_member("lobby", "guide")->character_prompt;
+
+    std::ofstream(characters / "guide" / "CHARACTER.md")
+        << "$${CHARACTER_VOICE}\n<character_profile>\n"
+           "$$(PROFILE.md)</character_profile>\n";
+    std::filesystem::create_directories(characters / "group" / "nested");
+    std::filesystem::rename(characters / "guide", characters / "group" / "nested" / "guide");
+    const Workspace moved = Workspace::load(fixture.root());
+    ASSERT_NE(moved.find_character("guide"), nullptr);
+    EXPECT_EQ(moved.find_character("guide")->markdown, legacy.find_character("guide")->markdown);
+    EXPECT_EQ(moved.find_forum_member("lobby", "guide")->character_prompt, expected);
+
+    // Forum member templates can use the same shared file and their own includes.
+    const auto member = fixture.root() / "forums" / "lobby" / "members" / "guide";
+    std::ofstream(member / "PROFILE.md") << "Override profile.\n";
+    std::ofstream(member / "CHARACTER.md")
+        << "$${CHARACTER_VOICE}\n$$(PROFILE.md)";
+    const Workspace overridden = Workspace::load(fixture.root());
+    EXPECT_EQ(
+        overridden.find_forum_member("lobby", "guide")->character_prompt,
+        "Portray Guide in The Lobby.\n\nOverride profile.\n");
+}
+
 TEST(Workspace, LoadsLegacyProviderCredentialNamesWithoutUsingTheEnvironment) {
     test::TestWorkspace fixture;
     fixture.write_provider(

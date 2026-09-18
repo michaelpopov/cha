@@ -21,6 +21,7 @@ struct TemplateLimits {
 
 struct TemplateOptions {
     std::filesystem::path containment_root;
+    std::filesystem::path character_voice_directory; // shared character-voice.md
     std::string scope_file_name{"config.toml"};
     std::string scope_table_name{"prompt"};
     TemplateScope reserved;       // dotted names, cannot be shadowed

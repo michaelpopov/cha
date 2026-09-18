@@ -1092,6 +1092,24 @@ TEST_F(
         before.at("system/keys/api_key_2/config.toml"));
 }
 
+TEST_F(RuntimeWorkspaceConfigStoreTest, CharacterFileEditsPersistOnlyTheSelectedFile) {
+    const auto store = open_store();
+    const auto before = config_contents(database());
+    // An unused Markdown file is stored verbatim; its template syntax is not evaluated.
+    const auto created = store->apply_character_file(
+        "guide", "NOTES.md", std::string_view{"$$(unused.md)\n"}, true);
+    EXPECT_EQ(created.affected_forum_ids, std::vector<std::string>{"lobby"});
+    EXPECT_EQ(changed_config_names(before, config_contents(database())),
+        (std::set<std::string>{"characters/guide/NOTES.md"}));
+    EXPECT_EQ(getws()->find_character("guide")->markdown_files.at("NOTES.md"), "$$(unused.md)\n");
+    const auto snapshot = getws();
+    store->apply_character_file("guide", "NOTES.md", std::string_view{"Updated notes\n"});
+    EXPECT_EQ(snapshot->find_character("guide")->markdown_files.at("NOTES.md"), "$$(unused.md)\n");
+    store->apply_character_file("guide", "NOTES.md", std::nullopt);
+    EXPECT_EQ(config_contents(database()), before);
+    EXPECT_FALSE(getws()->find_character("guide")->markdown_files.contains("NOTES.md"));
+}
+
 TEST_F(
     RuntimeWorkspaceConfigStoreTest,
     CreatesAndDeletesOnlyRowsOwnedByEachItemType) {

@@ -17,6 +17,8 @@ export type MainView =
   | 'characters'
   | 'new-character'
   | 'character-detail'
+  | 'character-file'
+  | 'new-character-file'
   | 'character-settings'
   | 'forums'
   | 'new-forum'
@@ -69,6 +71,7 @@ export interface AppState {
   currentForumId: string | null;
   activeConversation: ActiveConversation | null;
   inspectedCharacterId: string | null;
+  inspectedCharacterFile: string | null;
   characterSettingsAvailable: boolean;
   characterEditingAvailable: boolean;
   inspectedPersonaId: string | null;
@@ -106,6 +109,7 @@ export const initialAppState: AppState = {
   currentForumId: null,
   activeConversation: null,
   inspectedCharacterId: null,
+  inspectedCharacterFile: null,
   characterSettingsAvailable: false,
   characterEditingAvailable: false,
   inspectedPersonaId: null,
@@ -151,6 +155,8 @@ export type AppAction =
   | { type: 'show-characters' }
   | { type: 'show-new-character' }
   | { type: 'inspect-character'; characterId: string }
+  | { type: 'inspect-character-file'; characterId: string; filename: string }
+  | { type: 'show-new-character-file' }
   | { type: 'character-detail-loaded'; characterId: string; settingsWritable: boolean; writable: boolean }
   | { type: 'character-created'; character: CharacterDetail }
   | { type: 'character-updated'; character: CharacterDetail }
@@ -395,6 +401,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         ...state,
         mainView: 'characters',
         inspectedCharacterId: null,
+        inspectedCharacterFile: null,
         characterSettingsAvailable: false,
         characterEditingAvailable: false,
         ...idleSessionOperation(),
@@ -406,6 +413,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         ...state,
         mainView: 'character-detail',
         inspectedCharacterId: action.characterId,
+        inspectedCharacterFile: null,
         characterSettingsAvailable: action.characterId === state.inspectedCharacterId
           ? state.characterSettingsAvailable
           : false,
@@ -414,6 +422,15 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           : false,
         ...idleSessionOperation(),
       };
+    case 'inspect-character-file':
+      return state.inspectedCharacterId === action.characterId
+        ? { ...state, mainView: 'character-file', inspectedCharacterFile: action.filename,
+          ...idleSessionOperation() }
+        : state;
+    case 'show-new-character-file':
+      return state.inspectedCharacterId && state.characterEditingAvailable
+        ? { ...state, mainView: 'new-character-file', ...idleSessionOperation() }
+        : state;
     case 'character-detail-loaded':
       // A reply for a character the reader has already left must not decide
       // whether the one now on screen offers its settings.
@@ -442,6 +459,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         mainView: 'character-detail',
         bootstrap: { ...state.bootstrap, characters },
         inspectedCharacterId: character.id,
+        inspectedCharacterFile: null,
         characterSettingsAvailable: character.settings_writable,
         characterEditingAvailable: character.writable,
         ...idleSessionOperation(),
@@ -498,6 +516,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           ),
         } : null,
         inspectedCharacterId: null,
+        inspectedCharacterFile: null,
         characterSettingsAvailable: false,
         characterEditingAvailable: false,
         ...idleSessionOperation(),
@@ -892,6 +911,8 @@ export function navigationTitle(state: AppState): string | null {
         ({ id }) => id === state.inspectedCharacterId,
       )?.display_name ?? 'Character';
     case 'character-settings': return 'Settings';
+    case 'character-file': return state.inspectedCharacterFile ?? 'File';
+    case 'new-character-file': return 'New file';
     case 'forums': return 'Forums';
     case 'new-forum': return 'New forum';
     case 'sessions': return 'Sessions';

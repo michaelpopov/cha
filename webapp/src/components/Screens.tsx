@@ -49,10 +49,7 @@ interface NavigationScreenProps extends DiscoveryScreenProps {
   sessionReport: ReactNode;
 }
 
-// Personas and Characters are the same control twice over: a roster of rows
-// showing a display name above its optional configured description, each row
-// opening that entry's read-only Markdown detail. Only the roster, the endpoint
-// behind a row, and the wording differ, so the pair below is written once.
+// Personas, characters, and character files use the same navigation rows.
 function RosterRow({ description, displayName, onSelect }: {
   description?: string;
   displayName: string;
@@ -73,54 +70,57 @@ interface RosterDetailCopy {
   absent: string;
   loading: string;
   failed: string;
-  // A persona's PERSONA.md is optional, so a roster entry can legitimately
-  // resolve to no Markdown at all. That is a configuration to report, not a
-  // failure and not a blank screen.
-  empty: string;
 }
 
-interface RosterDetailScreenProps {
+interface RosterDetailScreenProps<Value> {
   ariaLabel: string;
   backLabel: string;
   copy: RosterDetailCopy;
   // Stable across renders, so reading one entry does not restart itself.
-  load(subjectId: string): Promise<string>;
+  load(subjectId: string): Promise<Value>;
+  onLoaded?(value: Value, subjectId: string): void;
+  render(value: Value): ReactNode;
   onBack(): void;
   reloadVersion?: number;
   report?: ReactNode;
   sessionReport: ReactNode;
   subjectId: string | null;
-  // Facts the roster already knows, shown above the Markdown and while it is
+  // Facts the roster already knows, shown above the content and while it is
   // still loading. A persona or character has none; a forum names its cast.
   subtitle?: ReactNode;
   toolbarAction?: ReactNode;
 }
 
-function RosterDetailScreen({
+function RosterDetailScreen<Value>({
   ariaLabel,
   backLabel,
   copy,
   load,
+  onLoaded,
   onBack,
   reloadVersion = 0,
   report,
+  render,
   sessionReport,
   subjectId,
   subtitle,
   toolbarAction,
-}: RosterDetailScreenProps) {
-  const [markdown, setMarkdown] = useState<string | null>(null);
+}: RosterDetailScreenProps<Value>) {
+  const [value, setValue] = useState<Value | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [requestVersion, setRequestVersion] = useState(0);
 
   useEffect(() => {
     if (!subjectId) return;
     let current = true;
-    setMarkdown(null);
+    setValue(null);
     setError(null);
     void load(subjectId).then(
       (loaded) => {
-        if (current) setMarkdown(loaded);
+        if (current) {
+          setValue(loaded);
+          onLoaded?.(loaded, subjectId);
+        }
       },
       (failure: unknown) => {
         if (current) setError(publicErrorMessage(failure, copy.failed));
@@ -129,7 +129,7 @@ function RosterDetailScreen({
     return () => {
       current = false;
     };
-  }, [copy.failed, load, reloadVersion, requestVersion, subjectId]);
+  }, [copy.failed, load, onLoaded, reloadVersion, requestVersion, subjectId]);
 
   return (
     <section className="cha-screen cha-navigation" aria-label={ariaLabel}>
@@ -144,7 +144,7 @@ function RosterDetailScreen({
       {report}
       {subtitle}
       {!subjectId && <p className="cha-state-message">{copy.absent}</p>}
-      {subjectId && markdown === null && !error && (
+      {subjectId && value === null && !error && (
         <p className="cha-state-message" role="status">{copy.loading}</p>
       )}
       {error && (
@@ -159,11 +159,15 @@ function RosterDetailScreen({
           </button>
         </div>
       )}
-      {markdown !== null && (markdown.trim() === ''
-        ? <p className="cha-state-message">{copy.empty}</p>
-        : <Markdown source={markdown} />)}
+      {value !== null && render(value)}
     </section>
   );
+}
+
+function rosterMarkdown(markdown: string, empty: string): ReactNode {
+  return markdown.trim() === ''
+    ? <p className="cha-state-message">{empty}</p>
+    : <Markdown source={markdown} />;
 }
 
 interface RosterDetailProps extends NavigationScreenProps {
@@ -299,9 +303,9 @@ export function PersonaDetailScreen({
         absent: 'No persona is selected.',
         loading: 'Loading persona…',
         failed: 'Persona detail could not be loaded.',
-        empty: 'This persona has no PERSONA.md description.',
       }}
       load={load}
+      render={(markdown) => rosterMarkdown(markdown, 'This persona has no PERSONA.md description.')}
       onBack={() => dispatch({ type: 'show-personas' })}
       reloadVersion={reloadVersion}
       sessionReport={sessionReport}
@@ -444,18 +448,17 @@ export function CharacterDetailScreen({
   reloadVersion = 0,
   sessionReport,
 }: RosterDetailProps) {
-  const load = useCallback(
-    (characterId: string) => client.getCharacter(characterId).then((detail) => {
-      dispatch({
-        type: 'character-detail-loaded',
-        characterId,
-        settingsWritable: detail.settings_writable,
-        writable: detail.writable,
-      });
-      return detail.character_markdown;
-    }),
-    [client, dispatch],
-  );
+  const characterId = state.inspectedCharacterId;
+  const load = useCallback((id: string) => client.getCharacter(id), [client]);
+  const onLoaded = useCallback((detail: CharacterDetail, id: string) => {
+    dispatch({
+      type: 'character-detail-loaded',
+      characterId: id,
+      settingsWritable: detail.settings_writable,
+      writable: detail.writable,
+    });
+  }, [dispatch]);
+
   return (
     <RosterDetailScreen
       ariaLabel="Character detail navigation"
@@ -464,13 +467,13 @@ export function CharacterDetailScreen({
         absent: 'No character is selected.',
         loading: 'Loading character…',
         failed: 'Character detail could not be loaded.',
-        empty: 'This character has no definition yet.',
       }}
       load={load}
+      onLoaded={onLoaded}
       onBack={() => dispatch({ type: 'show-characters' })}
       reloadVersion={reloadVersion}
       sessionReport={sessionReport}
-      subjectId={state.inspectedCharacterId}
+      subjectId={characterId}
       toolbarAction={state.characterSettingsAvailable ? (
         <button
           className="cha-detail-link"
@@ -481,7 +484,182 @@ export function CharacterDetailScreen({
           <ChevronRightIcon />
         </button>
       ) : undefined}
+      render={(detail) => (
+        <div className="cha-roster">
+          {detail.writable && (
+            <button
+              className="cha-list-action"
+              onClick={() => dispatch({ type: 'show-new-character-file' })}
+              type="button"
+            >
+              <span className="cha-list-icon"><PlusIcon /></span>
+              <span className="cha-list-copy">
+                <span className="cha-primary-line">New file</span>
+              </span>
+              <ChevronRightIcon className="cha-chevron" />
+            </button>
+          )}
+          {detail.markdown_files.map((filename) => (
+            <RosterRow
+              displayName={filename}
+              key={filename}
+              onSelect={() => dispatch({ type: 'inspect-character-file', characterId: characterId!, filename })}
+            />
+          ))}
+          {detail.markdown_files.length === 0 && (
+            <p className="cha-state-message">No Markdown files.</p>
+          )}
+        </div>
+      )}
     />
+  );
+}
+
+export function CharacterFileScreen({
+  state,
+  dispatch,
+  client,
+  reloadVersion = 0,
+  sessionReport,
+}: RosterDetailProps) {
+  const filename = state.inspectedCharacterFile;
+  const load = useCallback((characterId: string) => (
+    client.getCharacterFile(characterId, filename!).then((file) => file.content)
+  ), [client, filename]);
+  const characterId = state.inspectedCharacterId;
+  const characterName = state.bootstrap?.characters.find(
+    ({ id }) => id === characterId,
+  )?.display_name;
+  return (
+    <RosterDetailScreen
+      ariaLabel="Character file navigation"
+      backLabel={characterName ?? 'Character'}
+      copy={{
+        absent: 'No file is selected.',
+        loading: 'Loading file…',
+        failed: 'Character file could not be loaded.',
+      }}
+      load={load}
+      render={(markdown) => rosterMarkdown(markdown, 'This file is empty.')}
+      onBack={() => dispatch({ type: 'inspect-character', characterId: characterId! })}
+      reloadVersion={reloadVersion}
+      sessionReport={sessionReport}
+      subjectId={filename ? characterId : null}
+    />
+  );
+}
+
+export function NewCharacterFileScreen({
+  state,
+  dispatch,
+  client,
+  sessionReport,
+}: RosterDetailProps) {
+  const [filename, setFilename] = useState('');
+  const [content, setContent] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [reading, setReading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const mounted = useRef(false);
+  const characterId = state.inspectedCharacterId!;
+  const characterName = state.bootstrap?.characters.find(
+    ({ id }) => id === characterId,
+  )?.display_name;
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (saving || reading || !filename.trim()) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const file = await client.createCharacterFile(characterId, filename.trim(), content);
+      if (mounted.current) {
+        dispatch({ type: 'inspect-character-file', characterId, filename: file.filename });
+      }
+    } catch (failure: unknown) {
+      setError(publicErrorMessage(failure, 'Character file could not be added.'));
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="cha-screen cha-navigation" aria-label="New character file navigation">
+      <button
+        className="cha-back-row"
+        onClick={() => dispatch({ type: 'inspect-character', characterId })}
+        type="button"
+      >
+        <ChevronLeftIcon />
+        <span>{characterName ?? 'Character'}</span>
+      </button>
+      {sessionReport}
+      <form className="cha-settings-form" onSubmit={(event) => void submit(event)}>
+        <label>
+          Filename
+          <input
+            className="cha-form-control"
+            value={filename}
+            onChange={(event) => setFilename(event.target.value)}
+            disabled={saving || reading}
+            required
+          />
+        </label>
+        <label>
+          Content
+          <textarea
+            className="cha-form-control"
+            value={content}
+            onChange={(event) => setContent(event.target.value)}
+            disabled={saving || reading}
+            rows={12}
+          />
+        </label>
+        <label>
+          Upload content
+          <input
+            accept=".md,.txt,text/markdown,text/plain"
+            type="file"
+            disabled={saving || reading}
+            onChange={async (event) => {
+              const file = event.target.files?.[0];
+              if (!file) return;
+              setReading(true);
+              setError(null);
+              try {
+                const text = await file.text();
+                if (!mounted.current) return;
+                setContent(text);
+                if (!filename) {
+                  setFilename(file.name.endsWith('.md')
+                    ? file.name : file.name.replace(/(.+)\.[^.]*$/, '$1') + '.md');
+                }
+              } catch {
+                setError('The local file could not be read.');
+              } finally {
+                setReading(false);
+              }
+            }}
+          />
+        </label>
+        {error && <p className="cha-error-message" role="alert">{error}</p>}
+        <div className="cha-dialog-actions">
+          <button
+            className="cha-button cha-button-primary"
+            disabled={saving || reading || !filename.trim()}
+            type="submit"
+          >
+            {saving ? 'Adding…' : 'Add file'}
+          </button>
+        </div>
+      </form>
+    </section>
   );
 }
 
@@ -1148,9 +1326,9 @@ export function ForumDetailScreen({
         absent: 'No forum is selected.',
         loading: 'Loading forum…',
         failed: 'Forum detail could not be loaded.',
-        empty: 'This forum has no FORUM.md description.',
       }}
       load={load}
+      render={(markdown) => rosterMarkdown(markdown, 'This forum has no FORUM.md description.')}
       onBack={() => dispatch({ type: 'show-sessions' })}
       reloadVersion={reloadVersion}
       sessionReport={sessionReport}

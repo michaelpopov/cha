@@ -43,6 +43,8 @@ import { AppErrorBoundary } from './AppErrorBoundary';
 import { TopBar } from './TopBar';
 import {
   CharacterDetailScreen,
+  CharacterFileScreen,
+  NewCharacterFileScreen,
   CharacterSettingsScreen,
   CharactersScreen,
   ForumDetailScreen,
@@ -197,6 +199,23 @@ function Screen({
         client={client}
         dispatch={dispatch}
         reloadVersion={characterRevision}
+        sessionReport={sessionReport}
+        state={state}
+      />
+    );
+    case 'character-file': return (
+      <CharacterFileScreen
+        client={client}
+        dispatch={dispatch}
+        reloadVersion={characterRevision}
+        sessionReport={sessionReport}
+        state={state}
+      />
+    );
+    case 'new-character-file': return (
+      <NewCharacterFileScreen
+        client={client}
+        dispatch={dispatch}
         sessionReport={sessionReport}
         state={state}
       />

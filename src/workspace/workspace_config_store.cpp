@@ -1095,7 +1095,13 @@ struct WorkspaceConfigStore::Impl {
         std::vector<std::string> affected_forum_ids;
         try {
             affected_forum_ids = writer(*published);
-            Workspace candidate = Workspace::load(tree->workspace());
+            Workspace candidate = [&] {
+                try {
+                    return Workspace::load(tree->workspace());
+                } catch (const std::runtime_error& error) {
+                    throw WorkspaceConfigValidationError(error.what());
+                }
+            }();
             if (consume_runtime_fault(WorkspaceConfigFault::collect_rows)) {
                 fail_path("Forced configuration row-collection failure");
             }
@@ -1346,6 +1352,18 @@ WorkspaceConfigEditResult WorkspaceConfigStore::apply_character_definition(
             forums_using_character(workspace, character_id);
         workspace.write_character_definition(
             character_id, display_name, markdown);
+        return affected;
+    });
+}
+
+WorkspaceConfigEditResult WorkspaceConfigStore::apply_character_file(
+    std::string_view character_id,
+    std::string_view filename,
+    std::optional<std::string_view> content,
+    bool create) {
+    return impl_->edit([&](const Workspace& workspace) {
+        auto affected = forums_using_character(workspace, character_id);
+        workspace.write_character_file(character_id, filename, content, create);
         return affected;
     });
 }

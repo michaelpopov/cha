@@ -394,26 +394,33 @@ it('retries a failed persona-detail request without exposing implementation deta
   expect(getPersona).toHaveBeenCalledTimes(2);
 });
 
-it('loads character detail and renders the restricted Markdown presentation', async () => {
-  render(<App client={fixtureClient()} />);
+it('opens the file list with settings before displaying a selected character file', async () => {
+  const getCharacterFile = vi.fn(async (_id, filename) => ({
+    filename, content: characterDetailFixture.editable_markdown, writable: true,
+  }));
+  render(<App client={fixtureClient({ getCharacterFile })} />);
   fireEvent.click(await screen.findByRole('button', { name: 'Characters' }));
-  expect(screen.getByText('A deterministic test character')).toBeInTheDocument();
-
   fireEvent.click(screen.getByRole('button', { name: /Guide/ }));
-  expect(await screen.findByRole('heading', { name: 'Guide dossier' })).toBeInTheDocument();
-  expect(screen.getByText('careful').tagName).toBe('STRONG');
+  const file = await screen.findByRole('button', { name: 'CHARACTER.md' });
+  expect(getCharacterFile).not.toHaveBeenCalled();
+  expect(screen.queryByRole('heading', { name: 'Guide dossier' })).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Rename Guide' })).toBeInTheDocument();
   expect(within(screen.getByLabelText('Character detail navigation'))
     .getByRole('button', { name: 'Settings' })).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Replace character definition from file' }))
-    .toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Edit character definition' }))
-    .toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Delete Guide' })).toBeInTheDocument();
-
-  fireEvent.click(within(screen.getByLabelText('Character detail navigation'))
-    .getByRole('button', { name: 'Characters' }));
-  expect(screen.getByRole('heading', { name: 'Characters' })).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Edit character file' })).not.toBeInTheDocument();
+  fireEvent.click(file);
+  expect(await screen.findByRole('heading', { name: 'Guide dossier' })).toBeInTheDocument();
+  expect(getCharacterFile).toHaveBeenCalledWith('guide', 'CHARACTER.md');
+  expect(screen.getByText('careful').tagName).toBe('STRONG');
+  expect(screen.getByRole('heading', { name: 'CHARACTER.md' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Edit character file' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Replace character file content from file' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Delete CHARACTER.md' })).toBeInTheDocument();
+  fireEvent.click(within(screen.getByLabelText('Character file navigation'))
+    .getByRole('button', { name: 'Guide' }));
+  expect(await screen.findByRole('button', { name: 'CHARACTER.md' })).toBeInTheDocument();
+  expect(within(screen.getByLabelText('Character detail navigation'))
+    .getByRole('button', { name: 'Settings' })).toBeInTheDocument();
 });
 
 it('loads a character editor from the unexpanded editable source', async () => {
@@ -426,12 +433,81 @@ it('loads a character editor from the unexpanded editable source', async () => {
   render(<App client={fixtureClient({ getCharacter })} />);
   await user.click(await screen.findByRole('button', { name: 'Characters' }));
   await user.click(screen.getByRole('button', { name: /Guide/ }));
-  await user.click(await screen.findByRole('button', { name: 'Edit character definition' }));
+  await user.click(await screen.findByRole('button', { name: 'CHARACTER.md' }));
+  await user.click(await screen.findByRole('button', { name: 'Edit character file' }));
 
-  const editor = screen.getByRole('textbox', { name: 'Edit character definition text' });
+  const editor = screen.getByRole('textbox', { name: 'Edit character file text' });
   await waitFor(() => expect(editor).toHaveValue(
     '# Source\n\n$${character.display_name}',
   ));
+});
+
+it('saves the selected file and returns to the list after deleting an optional file', async () => {
+  const user = userEvent.setup();
+  let content = '# Notes';
+  let names = ['CHARACTER.md', 'NOTES.md'];
+  const getCharacter = vi.fn(async () => ({ ...characterDetailFixture, markdown_files: names }));
+  const getCharacterFile = vi.fn(async (_id, filename) => ({ filename, content, writable: true }));
+  const updateCharacterFile = vi.fn(async (_id, filename, value) => {
+    content = value;
+    return { filename, content, writable: true };
+  });
+  const deleteCharacterFile = vi.fn(async () => { names = ['CHARACTER.md']; });
+  const deleteCharacter = vi.fn();
+  render(<App client={fixtureClient({ getCharacter, getCharacterFile,
+    updateCharacterFile, deleteCharacterFile, deleteCharacter })} />);
+  await user.click(await screen.findByRole('button', { name: 'Characters' }));
+  await user.click(screen.getByRole('button', { name: /Guide/ }));
+  await user.click(await screen.findByRole('button', { name: 'NOTES.md' }));
+  await user.click(screen.getByRole('button', { name: 'Edit character file' }));
+  const editor = await screen.findByRole('textbox', { name: 'Edit character file text' });
+  await waitFor(() => expect(editor).toHaveValue('# Notes'));
+  await user.clear(editor);
+  await user.type(editor, '# Updated notes');
+  await user.click(screen.getByRole('button', { name: 'Save' }));
+  await waitFor(() => expect(updateCharacterFile).toHaveBeenCalledWith('guide', 'NOTES.md', '# Updated notes'));
+  expect(await screen.findByRole('heading', { name: 'Updated notes' })).toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: 'Delete NOTES.md' }));
+  expect(screen.getByRole('dialog')).toHaveTextContent('NOTES.md');
+  await user.click(screen.getByRole('button', { name: 'Delete file' }));
+  expect(await screen.findByRole('button', { name: 'CHARACTER.md' })).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'NOTES.md' })).not.toBeInTheDocument();
+  expect(deleteCharacterFile).toHaveBeenCalledWith('guide', 'NOTES.md');
+  expect(deleteCharacter).not.toHaveBeenCalled();
+});
+
+it('adds a character file and opens the saved content', async () => {
+  const user = userEvent.setup();
+  let content = '';
+  const createCharacterFile = vi.fn(async (_id, filename, value) => {
+    content = value;
+    return { filename, content, writable: true };
+  });
+  const getCharacterFile = vi.fn(async (_id, filename) => ({ filename, content, writable: true }));
+  render(<App client={fixtureClient({ createCharacterFile, getCharacterFile })} />);
+  await user.click(await screen.findByRole('button', { name: 'Characters' }));
+  await user.click(screen.getByRole('button', { name: /Guide/ }));
+  await user.click(await screen.findByRole('button', { name: 'New file' }));
+  await user.type(screen.getByRole('textbox', { name: 'Filename' }), 'NOTES.md');
+  await user.type(screen.getByRole('textbox', { name: 'Content' }), '# New notes');
+  await user.click(screen.getByRole('button', { name: 'Add file' }));
+  expect(await screen.findByRole('heading', { name: 'New notes' })).toBeInTheDocument();
+  expect(createCharacterFile).toHaveBeenCalledWith('guide', 'NOTES.md', '# New notes');
+});
+
+it('preserves the basename when adding content from a dotfile', async () => {
+  const user = userEvent.setup();
+  const createCharacterFile = vi.fn(async (_id, filename, content) => ({ filename, content, writable: true }));
+  render(<App client={fixtureClient({ createCharacterFile })} />);
+  await user.click(await screen.findByRole('button', { name: 'Characters' }));
+  await user.click(screen.getByRole('button', { name: /Guide/ }));
+  await user.click(await screen.findByRole('button', { name: 'New file' }));
+  const file = new File(['Notes'], '.gitignore', { type: 'text/plain' });
+  Object.defineProperty(file, 'text', { value: async () => 'Notes' });
+  fireEvent.change(screen.getByLabelText('Upload content'), { target: { files: [file] } });
+  await waitFor(() => expect(screen.getByRole('textbox', { name: 'Filename' })).toHaveValue('.gitignore.md'));
+  await user.click(screen.getByRole('button', { name: 'Add file' }));
+  expect(createCharacterFile).toHaveBeenCalledWith('guide', '.gitignore.md', 'Notes');
 });
 
 it('keeps a character on screen and shows the server message when deletion is refused', async () => {
@@ -492,8 +568,7 @@ it('creates a providerless character draft and adds it to the roster immediately
   }));
   expect(await screen.findByRole('button', { name: 'Rename Cheburashka' }))
     .toBeInTheDocument();
-  expect(screen.getByText('This character has no definition yet.'))
-    .toBeInTheDocument();
+  expect(await screen.findByRole('button', { name: 'CHARACTER.md' })).toBeInTheDocument();
   await user.click(within(screen.getByLabelText('Character detail navigation'))
     .getByRole('button', { name: 'Characters' }));
   expect(within(screen.getByLabelText('Characters navigation'))
@@ -528,34 +603,27 @@ it('renames a writable character in place and updates the roster immediately', a
     .getByRole('button', { name: /Mentor/ })).toBeInTheDocument();
 });
 
-it('replaces character Markdown from the topbar file action', async () => {
-  let detail = characterDetailFixture;
-  const getCharacter = vi.fn(async () => detail);
-  const updateCharacterDefinition = vi.fn(async (_characterId, update) => {
-    detail = { ...detail, ...update };
-    return detail;
+it('replaces only the selected character file from the topbar upload action', async () => {
+  let content = '# Profile';
+  const getCharacter = vi.fn(async () => ({ ...characterDetailFixture,
+    markdown_files: ['CHARACTER.md', 'PROFILE.md'] }));
+  const getCharacterFile = vi.fn(async (_id, filename) => ({ filename, content, writable: true }));
+  const updateCharacterFile = vi.fn(async (_id, filename, replacement) => {
+    content = replacement;
+    return { filename, content, writable: true };
   });
   const { container } = render(<App client={fixtureClient({
-    getCharacter,
-    updateCharacterDefinition,
+    getCharacter, getCharacterFile, updateCharacterFile,
   })} />);
   fireEvent.click(await screen.findByRole('button', { name: 'Characters' }));
   fireEvent.click(screen.getByRole('button', { name: /Guide/ }));
-
-  await screen.findByRole('button', { name: 'Replace character definition from file' });
-  const file = new File(['# Replacement\n\nFresh voice.'], 'CHARACTER.md', {
-    type: 'text/markdown',
-  });
-  Object.defineProperty(file, 'text', {
-    value: vi.fn(async () => '# Replacement\n\nFresh voice.'),
-  });
-  fireEvent.change(container.querySelector(
-    '.cha-definition-topbar-action input[type="file"]',
-  ) as HTMLInputElement, { target: { files: [file] } });
-
-  await waitFor(() => expect(updateCharacterDefinition).toHaveBeenCalledWith('guide', {
-    character_markdown: '# Replacement\n\nFresh voice.',
-  }));
+  fireEvent.click(await screen.findByRole('button', { name: 'PROFILE.md' }));
+  await screen.findByRole('button', { name: 'Replace character file content from file' });
+  const file = new File(['# Replacement\n\nFresh voice.'], 'local.md', { type: 'text/markdown' });
+  Object.defineProperty(file, 'text', { value: vi.fn(async () => '# Replacement\n\nFresh voice.') });
+  fireEvent.change(container.querySelector('.cha-definition-topbar-action input[type="file"]') as HTMLInputElement,
+    { target: { files: [file] } });
+  await waitFor(() => expect(updateCharacterFile).toHaveBeenCalledWith('guide', 'PROFILE.md', '# Replacement\n\nFresh voice.'));
   expect(await screen.findByRole('heading', { name: 'Replacement' })).toBeInTheDocument();
   expect(screen.getByText('Fresh voice.')).toBeInTheDocument();
 });
@@ -573,7 +641,7 @@ it('retries a failed character-detail request without exposing implementation de
 
   expect(await screen.findByRole('alert')).toHaveTextContent('application API is unavailable');
   fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
-  expect(await screen.findByRole('heading', { name: 'Guide dossier' })).toBeInTheDocument();
+  expect(await screen.findByRole('button', { name: 'CHARACTER.md' })).toBeInTheDocument();
   expect(getCharacter).toHaveBeenCalledTimes(2);
 });
 
@@ -1663,7 +1731,7 @@ it('omits the settings row for a character that is not writable', async () => {
   })} />);
   fireEvent.click(await screen.findByRole('button', { name: 'Characters' }));
   fireEvent.click(screen.getByRole('button', { name: /Guide/ }));
-  expect(await screen.findByRole('heading', { name: 'Guide dossier' })).toBeInTheDocument();
+  expect(await screen.findByRole('button', { name: 'CHARACTER.md' })).toBeInTheDocument();
   expect(within(screen.getByLabelText('Character detail navigation'))
     .queryByRole('button', { name: 'Settings' })).not.toBeInTheDocument();
   expect(screen.getByRole('heading', { name: 'Guide' })).toBeInTheDocument();
@@ -1691,7 +1759,7 @@ it('keeps a late character detail from lending its settings row to the next char
   fireEvent.click(screen.getByRole('button', { name: /Guide/ }));
   fireEvent.click(document.querySelector('.cha-back-row') as HTMLElement);
   fireEvent.click(screen.getByRole('button', { name: /Assistant/ }));
-  expect(await screen.findByRole('heading', { name: 'Guide dossier' })).toBeInTheDocument();
+  expect(await screen.findByRole('button', { name: 'CHARACTER.md' })).toBeInTheDocument();
 
   await act(async () => { finishGuide({ ...characterDetailFixture, writable: true }); });
 

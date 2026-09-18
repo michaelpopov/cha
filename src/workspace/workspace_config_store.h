@@ -54,6 +54,11 @@ public:
     using std::runtime_error::runtime_error;
 };
 
+class WorkspaceConfigValidationError : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
+};
+
 struct WorkspaceConfigEditResult {
     std::vector<std::string> affected_forum_ids;
 };
@@ -120,6 +125,11 @@ public:
         std::optional<std::string_view> markdown = std::nullopt);
     WorkspaceConfigEditResult apply_character_delete(
         std::string_view character_id);
+    WorkspaceConfigEditResult apply_character_file(
+        std::string_view character_id,
+        std::string_view filename,
+        std::optional<std::string_view> content,
+        bool create = false);
     WorkspaceConfigEditResult apply_persona_update(
         std::string_view persona_id,
         std::string_view display_name,

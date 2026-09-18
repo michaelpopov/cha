@@ -245,6 +245,7 @@ test('renders discovery screens from the server workspace', async ({ page }) => 
   await expect(page.getByText('A deterministic test character')).toBeVisible();
   await page.getByRole('button', { name: /Guide/ }).click();
   await expect(page.getByRole('heading', { name: 'Guide' }).first()).toBeVisible();
+  await page.getByRole('button', { name: 'CHARACTER.md', exact: true }).click();
   await expect(page.getByText('Answer deterministically in browser tests.')).toBeVisible();
 
   await page.getByRole('button', { name: 'Forums' }).click();
@@ -262,6 +263,47 @@ test('renders discovery screens from the server workspace', async ({ page }) => 
   await page.getByLabel('Forum detail navigation')
     .getByRole('button', { name: 'Sessions' }).click();
   await expect(sessions).toBeVisible();
+});
+
+test('adds, edits, uploads, and deletes individual character files', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Characters', exact: true }).click();
+  await page.getByRole('button', { name: /Guide/ }).click();
+  const list = page.getByLabel('Character detail navigation');
+  await expect(list.getByRole('button', { name: 'Settings', exact: true })).toBeVisible();
+  await expect(list.getByRole('button', { name: 'CHARACTER.md', exact: true })).toBeVisible();
+  await expect(page.getByText('Answer deterministically in browser tests.')).not.toBeVisible();
+  await list.getByRole('button', { name: 'New file', exact: true }).click();
+  await page.getByLabel('Upload content').setInputFiles({
+    name: 'NOTES.txt', mimeType: 'text/plain', buffer: Buffer.from('# Character notes'),
+  });
+  await expect(page.getByRole('textbox', { name: 'Filename', exact: true })).toHaveValue('NOTES.md');
+  await expect(page.getByRole('textbox', { name: 'Content', exact: true })).toHaveValue('# Character notes');
+  await page.getByRole('button', { name: 'Add file', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'NOTES.md', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Character notes', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Edit character file', exact: true }).click();
+  const editor = page.getByRole('textbox', { name: 'Edit character file text', exact: true });
+  await expect(editor).toHaveValue('# Character notes');
+  await editor.fill('# Edited notes');
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Edited notes', exact: true })).toBeVisible();
+  await page.locator('.cha-definition-topbar-action input[type=file]').setInputFiles({
+    name: 'local.md', mimeType: 'text/markdown', buffer: Buffer.from('# Uploaded notes'),
+  });
+  await expect(page.getByRole('heading', { name: 'Uploaded notes', exact: true })).toBeVisible();
+  await page.getByLabel('Character file navigation').getByRole('button', { name: 'Guide', exact: true }).click();
+  await expect(list.getByRole('button', { name: 'NOTES.md', exact: true })).toBeVisible();
+  await list.getByRole('button', { name: 'CHARACTER.md', exact: true }).click();
+  await expect(page.getByText('Answer deterministically in browser tests.')).toBeVisible();
+  await page.getByLabel('Character file navigation').getByRole('button', { name: 'Guide', exact: true }).click();
+  await list.getByRole('button', { name: 'NOTES.md', exact: true }).click();
+  await page.getByRole('button', { name: 'Delete NOTES.md', exact: true }).click();
+  await page.getByRole('button', { name: 'Delete file', exact: true }).click();
+  await expect(list.getByRole('button', { name: 'CHARACTER.md', exact: true })).toBeVisible();
+  await expect(list.getByRole('button', { name: 'NOTES.md', exact: true })).not.toBeVisible();
+  await list.getByRole('button', { name: 'Settings', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Settings', exact: true })).toBeVisible();
 });
 
 test('recovers when the application API is initially unavailable', async ({ page }) => {

@@ -682,6 +682,52 @@ export interface paths {
         patch: operations["updateCharacterDefinition"];
         trace?: never;
     };
+    "/api/v1/characters/{character_id}/files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Stable URL-safe character identifier. */
+                character_id: components["parameters"]["CharacterId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Add a Markdown file to a character */
+        post: operations["createCharacterFile"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/characters/{character_id}/files/{filename}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Stable URL-safe character identifier. */
+                character_id: components["parameters"]["CharacterId"];
+                filename: string;
+            };
+            cookie?: never;
+        };
+        /** Read a character's Markdown file without template expansion */
+        get: operations["getCharacterFile"];
+        /** Replace a character's Markdown file and reload affected sessions */
+        put: operations["updateCharacterFile"];
+        post?: never;
+        /**
+         * Remove a character's Markdown file and reload affected sessions
+         * @description CHARACTER.md and files required by templates cannot be removed.
+         */
+        delete: operations["deleteCharacterFile"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/personas": {
         parameters: {
             query?: never;
@@ -1635,6 +1681,8 @@ export interface components {
             character_markdown: string;
             /** @description Verbatim Markdown accepted by the definition editor. */
             editable_markdown: string;
+            /** @description Sorted filenames directly in the character directory, without content. */
+            markdown_files: string[];
             provider: string | null;
             style: string | null;
             voice_id: string | null;
@@ -1649,6 +1697,19 @@ export interface components {
             settings_writable: boolean;
             /** @description Whether the name and definition can be changed and the character deleted. */
             writable: boolean;
+        };
+        CharacterFile: {
+            filename: string;
+            /** @description Verbatim file content, preserving template expressions. */
+            content: string;
+            writable: boolean;
+        };
+        CreateCharacterFileRequest: {
+            filename: string;
+            content: string;
+        };
+        UpdateCharacterFileRequest: {
+            content: string;
         };
         CreateCharacterRequest: {
             display_name: string;
@@ -3255,6 +3316,128 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["CharacterDetail"];
                 };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["ForbiddenMutation"];
+            404: components["responses"]["NotFound"];
+            413: components["responses"]["BodyTooLarge"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createCharacterFile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Stable URL-safe character identifier. */
+                character_id: components["parameters"]["CharacterId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateCharacterFileRequest"];
+            };
+        };
+        responses: {
+            /** @description The new file, with its verbatim content. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CharacterFile"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["ForbiddenMutation"];
+            404: components["responses"]["NotFound"];
+            413: components["responses"]["BodyTooLarge"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getCharacterFile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Stable URL-safe character identifier. */
+                character_id: components["parameters"]["CharacterId"];
+                filename: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The file and whether it can be changed. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CharacterFile"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    updateCharacterFile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Stable URL-safe character identifier. */
+                character_id: components["parameters"]["CharacterId"];
+                filename: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateCharacterFileRequest"];
+            };
+        };
+        responses: {
+            /** @description The saved file. Invalid template changes are rolled back. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CharacterFile"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["ForbiddenMutation"];
+            404: components["responses"]["NotFound"];
+            413: components["responses"]["BodyTooLarge"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    deleteCharacterFile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Stable URL-safe character identifier. */
+                character_id: components["parameters"]["CharacterId"];
+                filename: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": Record<string, never>;
+            };
+        };
+        responses: {
+            /** @description The file was removed. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             400: components["responses"]["BadRequest"];
             403: components["responses"]["ForbiddenMutation"];

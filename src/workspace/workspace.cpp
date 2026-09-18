@@ -1290,6 +1290,7 @@ LoadedCharacters load_characters(
         result.config_paths.emplace(id, config_path);
         TemplateOptions description_options{
             .containment_root = characters_directory,
+            .character_voice_directory = characters_directory,
             .scope_table_name = "prompt",
             .reserved = {
                 {"character.id", id},
@@ -1305,6 +1306,15 @@ LoadedCharacters load_characters(
             prompt_template == embedded_new_character_template()
             ? read_text(directory / "PROFILE.md", "character profile")
             : prompt_template;
+        std::map<std::string, std::string, std::less<>> markdown_files;
+        for (const auto& entry : std::filesystem::directory_iterator(directory)) {
+            if (entry.is_regular_file() && !entry.is_symlink()
+                && entry.path().extension() == ".md") {
+                markdown_files.emplace(
+                    utf8_path(entry.path().filename()),
+                    read_text(entry.path(), "character file"));
+            }
+        }
         result.characters.push_back({
             .character = {
                 .id = id,
@@ -1323,6 +1333,7 @@ LoadedCharacters load_characters(
             .markdown = character_description(
                 expand_template_file(prompt_path, description_options)),
             .editable_markdown = editable_markdown,
+            .markdown_files = std::move(markdown_files),
         });
     }
     return result;
@@ -1495,6 +1506,7 @@ LoadedForums load_forums(
             }
             TemplateOptions options{
                 .containment_root = prompt_override ? directory : characters_directory,
+                .character_voice_directory = characters_directory,
                 .scope_table_name = "prompt",
                 .reserved = {
                     {"character.id", character.character.id},
@@ -2381,6 +2393,47 @@ void Workspace::write_character_definition(
                 && character->prompt_template == embedded_new_character_template()
             ? "PROFILE.md" : "CHARACTER.md";
         create_private_file(config->second.parent_path() / filename, *markdown);
+    }
+}
+
+void Workspace::write_character_file(
+    std::string_view character_id,
+    std::string_view filename,
+    std::optional<std::string_view> content,
+    bool create) const {
+    const auto config = character_config_paths_.find(std::string(character_id));
+    if (config == character_config_paths_.end()) {
+        throw std::out_of_range("Unknown writable character");
+    }
+    try {
+        require_path_component(filename, config->second);
+    } catch (const std::runtime_error&) {
+        throw std::invalid_argument("Invalid Markdown filename");
+    }
+    const auto name = path_from_utf8(filename);
+    if (name.extension() != ".md") {
+        throw std::invalid_argument("Invalid Markdown filename");
+    }
+    const auto* character = find_character(character_id);
+    if (!create && (!character || !character->markdown_files.contains(filename))) {
+        throw std::out_of_range("Unknown character file");
+    }
+    const auto path = config->second.parent_path() / name;
+    if (std::filesystem::is_symlink(path)) {
+        throw std::invalid_argument("Invalid character file");
+    }
+    const bool exists = std::filesystem::is_regular_file(path);
+    if (create && std::filesystem::exists(path)) {
+        throw std::invalid_argument("Character file already exists");
+    }
+    if (!create && !exists) throw std::out_of_range("Unknown character file");
+    if (content) {
+        create_private_file(path, *content);
+    } else {
+        if (filename == "CHARACTER.md") {
+            throw std::invalid_argument("CHARACTER.md is required");
+        }
+        std::filesystem::remove(path);
     }
 }
 

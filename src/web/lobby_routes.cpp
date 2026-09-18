@@ -135,6 +135,12 @@ CharacterDetail character_detail(
         .editable_markdown = character.editable_markdown,
     };
     detail.writable = workspace.character_is_writable(character.character.id);
+    for (const auto& [filename, content] : character.markdown_files) {
+        detail.markdown_files.push_back(filename);
+    }
+    if (!detail.writable && detail.markdown_files.empty()) {
+        detail.markdown_files.push_back("CHARACTER.md");
+    }
     detail.settings_writable =
         workspace.character_settings_are_writable(character.character.id);
     if (detail.settings_writable) {
@@ -567,6 +573,94 @@ void LobbyRoutes::install(httplib::Server& server) const {
             response, 200,
             nlohmann::json(character_detail(*current, *updated)));
     });
+
+    server.Get(R"(/api/v1/characters/([^/]+)/files/([^/]+))",
+        [](const httplib::Request& request, httplib::Response& response) {
+        const auto workspace = published_workspace();
+        const std::string id = request.matches[1];
+        const std::string filename = request.matches[2];
+        const auto* character = is_valid_route_component(id)
+            ? workspace->find_character(id) : nullptr;
+        if (!character) {
+            return set_route_not_found(response, "That character file was not found.");
+        }
+        const auto file = character->markdown_files.find(filename);
+        const bool writable = workspace->character_is_writable(id);
+        if (file == character->markdown_files.end()) {
+            if (!writable && character->markdown_files.empty() && filename == "CHARACTER.md") {
+                return set_json_response(response, 200, nlohmann::json{
+                    {"filename", filename}, {"content", character->editable_markdown},
+                    {"writable", false}});
+            }
+            return set_route_not_found(response, "That character file was not found.");
+        }
+        set_json_response(response, 200, nlohmann::json{
+            {"filename", filename}, {"content", file->second}, {"writable", writable}});
+    });
+
+    const auto edit_character_file = [live_sessions, settings, config](
+        const httplib::Request& request, httplib::Response& response,
+        bool create, bool remove) {
+        const auto workspace = published_workspace();
+        const std::string id = request.matches[1];
+        if (!is_valid_route_component(id) || !workspace->character_is_writable(id)) {
+            return set_route_not_found(response, "That character file was not found.");
+        }
+        if (!validate_json_mutation(request, response)) return;
+        std::string filename = create ? std::string() : request.matches[2].str();
+        std::optional<std::string> content;
+        if (!parse_route_json_body(request, response, settings.request_body_limit,
+            [&](const nlohmann::json& json) {
+                if (remove) return parse_empty_object(json);
+                if (!json.is_object() || json.size() != (create ? 2 : 1)) {
+                    throw std::invalid_argument("Invalid character file");
+                }
+                if (create) filename = required_string(json, "filename");
+                content = required_string(json, "content");
+            })) return;
+        try {
+            const auto edited = config->apply_character_file(
+                id, filename, content ? std::optional<std::string_view>(*content) : std::nullopt,
+                create);
+            request_reload(*live_sessions, edited.affected_forum_ids);
+        } catch (const std::out_of_range&) {
+            return set_route_not_found(response, "That character file was not found.");
+        } catch (const std::invalid_argument&) {
+            return set_error_response(response, 400,
+                {ErrorCode::bad_request, remove && filename == "CHARACTER.md"
+                    ? "CHARACTER.md is required."
+                    : remove ? "Invalid character file." : "Invalid file or duplicate filename."});
+        } catch (const WorkspaceRestartRequiredError& error) {
+            return internal_error(response, error);
+        } catch (const WorkspaceConfigValidationError& error) {
+            log_warn(std::string("Rejected character file edit: ") + error.what());
+            return set_error_response(response, 400,
+                {ErrorCode::bad_request, remove
+                    ? "This file is required by the character's templates."
+                    : "The file change would make the character's templates invalid."});
+        } catch (const std::runtime_error& error) {
+            return internal_error(response, error);
+        }
+        if (remove) {
+            response.status = 204;
+            response.set_header("Cache-Control", "no-store");
+        } else {
+            set_json_response(response, create ? 201 : 200, nlohmann::json{
+                {"filename", filename}, {"content", *content}, {"writable", true}});
+        }
+    };
+    server.Post(R"(/api/v1/characters/([^/]+)/files)",
+        [edit_character_file](const auto& request, auto& response) {
+            edit_character_file(request, response, true, false);
+        });
+    server.Put(R"(/api/v1/characters/([^/]+)/files/([^/]+))",
+        [edit_character_file](const auto& request, auto& response) {
+            edit_character_file(request, response, false, false);
+        });
+    server.Delete(R"(/api/v1/characters/([^/]+)/files/([^/]+))",
+        [edit_character_file](const auto& request, auto& response) {
+            edit_character_file(request, response, false, true);
+        });
 
     server.Get(R"(/api/v1/personas/([^/]+))", [](const httplib::Request& request, httplib::Response& response) {
         const auto workspace = published_workspace();

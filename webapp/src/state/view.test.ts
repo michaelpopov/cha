@@ -210,9 +210,22 @@ describe('application navigation reducer', () => {
     expect(state.characterEditingAvailable).toBe(false);
   });
 
+  it('opens character files without losing settings and ignores a file for another character', () => {
+    let state = appReducer(readyState(), { type: 'inspect-character', characterId: 'guide' });
+    state = appReducer(state, { type: 'character-detail-loaded', characterId: 'guide', settingsWritable: true, writable: true });
+    state = appReducer(state, { type: 'inspect-character-file', characterId: 'guide', filename: 'PROFILE.md' });
+    expect(state.mainView).toBe('character-file');
+    expect(state.inspectedCharacterFile).toBe('PROFILE.md');
+    expect(state.characterSettingsAvailable).toBe(true);
+    state = appReducer(state, { type: 'inspect-character', characterId: 'assistant' });
+    expect(state.inspectedCharacterFile).toBeNull();
+    expect(appReducer(state, { type: 'inspect-character-file', characterId: 'guide', filename: 'NOTES.md' })).toBe(state);
+  });
+
   it('adds a created draft character and opens its detail', () => {
     const character = {
       ...bootstrapFixture.characters[1],
+      markdown_files: ['CHARACTER.md', 'PROFILE.md'],
       character_markdown: '',
       editable_markdown: '',
       provider: null,

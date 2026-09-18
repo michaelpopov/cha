@@ -28,6 +28,7 @@ struct SourceLocation {
 struct ExpansionState {
     const TemplateOptions& options;
     std::filesystem::path root_canonical;
+    std::filesystem::path diagnostic_root;
     std::vector<SourceLocation> stack;
     std::unordered_map<std::string, TemplateScope> scope_memo;
     std::size_t include_count{0};
@@ -85,11 +86,8 @@ std::string display_path(
     if (path == root_canonical) {
         return ".";
     }
-    if (path_is_under(root_canonical, path)) {
-        return generic_utf8_path(
-            std::filesystem::relative(path, root_canonical));
-    }
-    return utf8_path(path);
+    const auto relative = path.lexically_relative(root_canonical);
+    return generic_utf8_path(relative.empty() ? path.filename() : relative);
 }
 
 std::string format_location(
@@ -118,7 +116,7 @@ std::string format_include_chain(
 [[noreturn]] void throw_expansion_error(
     const ExpansionState& state,
     std::string message) {
-    message += format_include_chain(state.stack, state.root_canonical);
+    message += format_include_chain(state.stack, state.diagnostic_root);
     throw std::runtime_error(std::move(message));
 }
 
@@ -260,7 +258,7 @@ const TemplateScope& directory_scope(
         throw_expansion_error(
             state,
             "cannot inspect scope file '"
-                + display_path(scope_file, state.root_canonical)
+                + display_path(scope_file, state.diagnostic_root)
                 + "': " + status_error.message());
     }
     if (!status_error && std::filesystem::exists(scope_status)) {
@@ -271,7 +269,7 @@ const TemplateScope& directory_scope(
             throw_expansion_error(
                 state,
                 "cannot inspect scope file '"
-                    + display_path(scope_file, state.root_canonical)
+                    + display_path(scope_file, state.diagnostic_root)
                     + "': " + scope_error.message());
         }
         if (!path_is_under(state.root_canonical, scope_canonical)) {
@@ -283,7 +281,7 @@ const TemplateScope& directory_scope(
                 state, "scope file is not a regular file");
         }
         const std::string label =
-            display_path(scope_canonical, state.root_canonical);
+            display_path(scope_canonical, state.diagnostic_root);
         try {
             loaded = read_scope_table(
                 scope_canonical, state.options.scope_table_name, label);
@@ -362,7 +360,7 @@ std::filesystem::path resolve_include_path(
         throw_expansion_error(
             state,
             "cannot read included file '"
-                + display_path(canonical, state.root_canonical) + "'");
+                + display_path(canonical, state.diagnostic_root) + "'");
     }
     if (!std::filesystem::is_regular_file(status)) {
         throw_expansion_error(state, "included path is not a regular file");
@@ -465,7 +463,12 @@ void expand_text(
         // Consume through the closer so line/column match the scan.
         advance(cursor + 1 - index);
 
-        if (third == '(') {
+        const bool character_voice = third == '{' && body == "CHARACTER_VOICE";
+        if (character_voice && state.options.character_voice_directory.empty()) {
+            throw_expansion_error(
+                state, "CHARACTER_VOICE requires the shared characters directory");
+        }
+        if (third == '(' || character_voice) {
             if (body.empty()) {
                 throw_expansion_error(state, "empty include path");
             }
@@ -477,9 +480,28 @@ void expand_text(
                         + ") exceeded");
             }
             ++state.include_count;
-            const std::filesystem::path target = resolve_include_path(
-                state, body, path.parent_path());
-            expand_path(state, target, scope, output);
+            const std::filesystem::path previous_root = state.root_canonical;
+            try {
+                // This one variable includes the shared file, using the same
+                // scopes, cycle checks and limits as ordinary includes.
+                if (character_voice) {
+                    std::error_code error;
+                    state.root_canonical = std::filesystem::weakly_canonical(
+                        state.options.character_voice_directory, error);
+                    if (error) {
+                        throw_expansion_error(state, "cannot resolve CHARACTER_VOICE directory");
+                    }
+                }
+                const std::filesystem::path target = resolve_include_path(
+                    state,
+                    character_voice ? "character-voice.md" : body,
+                    character_voice ? state.root_canonical : path.parent_path());
+                expand_path(state, target, scope, output);
+            } catch (...) {
+                state.root_canonical = previous_root;
+                throw;
+            }
+            state.root_canonical = previous_root;
         } else {
             if (body.empty()) {
                 throw_expansion_error(state, "empty variable name");
@@ -506,7 +528,7 @@ void expand_path(
         throw_expansion_error(
             state,
             "cannot read included file '"
-                + display_path(path, state.root_canonical) + "'");
+                + display_path(path, state.diagnostic_root) + "'");
     }
     if (!path_is_under(state.root_canonical, canonical)) {
         throw_expansion_error(
@@ -519,12 +541,12 @@ void expand_path(
     for (const SourceLocation& frame : state.stack) {
         if (frame.path == canonical) {
             std::string message = "include cycle\n  "
-                + display_path(state.stack.front().path, state.root_canonical);
+                + display_path(state.stack.front().path, state.diagnostic_root);
             for (std::size_t index = 1; index < state.stack.size(); ++index) {
                 message += "\n  -> "
-                    + display_path(state.stack[index].path, state.root_canonical);
+                    + display_path(state.stack[index].path, state.diagnostic_root);
             }
-            message += "\n  -> " + display_path(canonical, state.root_canonical);
+            message += "\n  -> " + display_path(canonical, state.diagnostic_root);
             throw std::runtime_error(std::move(message));
         }
     }
@@ -547,7 +569,7 @@ void expand_path(
             throw_expansion_error(
                 state,
                 "cannot read included file '"
-                    + display_path(canonical, state.root_canonical) + "'");
+                    + display_path(canonical, state.diagnostic_root) + "'");
         }
 
         TemplateScope scope = inherited_scope;
@@ -599,6 +621,7 @@ std::string expand_template_file(
     ExpansionState state{
         .options = options,
         .root_canonical = root_canonical,
+        .diagnostic_root = root_canonical,
     };
 
     std::string output;

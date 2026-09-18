@@ -10,6 +10,7 @@ export type AudioDownloadStatus = components['schemas']['AudioDownloadStatus'];
 
 export type Bootstrap = components['schemas']['Bootstrap'];
 export type CharacterDetail = components['schemas']['CharacterDetail'];
+export type CharacterFile = components['schemas']['CharacterFile'];
 export type CreateCharacterRequest = components['schemas']['CreateCharacterRequest'];
 export type UpdateCharacterRequest = components['schemas']['UpdateCharacterRequest'];
 export type UpdateCharacterDefinitionRequest =
@@ -133,6 +134,10 @@ export interface ChaClient {
     update: UpdateCharacterDefinitionRequest,
   ): Promise<CharacterDetail>;
   deleteCharacter(characterId: string): Promise<void>;
+  getCharacterFile(characterId: string, filename: string): Promise<CharacterFile>;
+  createCharacterFile(characterId: string, filename: string, content: string): Promise<CharacterFile>;
+  updateCharacterFile(characterId: string, filename: string, content: string): Promise<CharacterFile>;
+  deleteCharacterFile(characterId: string, filename: string): Promise<void>;
   getPersona(personaId: string): Promise<PersonaDetail>;
   createPersona(request: CreatePersonaRequest): Promise<PersonaDetail>;
   updatePersona(personaId: string, update: UpdatePersonaRequest): Promise<PersonaDetail>;
@@ -277,11 +282,18 @@ function isPersonaSummary(value: unknown): boolean {
     && (value.voice === undefined || isSpeechVoice(value.voice));
 }
 
+function isCharacterFile(value: unknown): value is CharacterFile {
+  return isRecord(value) && typeof value.filename === 'string'
+    && typeof value.content === 'string' && typeof value.writable === 'boolean';
+}
+
 function isCharacterDetail(value: unknown): value is CharacterDetail {
   return isCharacterSummary(value)
     && isRecord(value)
     && typeof value.character_markdown === 'string'
     && typeof value.editable_markdown === 'string'
+    && Array.isArray(value.markdown_files)
+    && value.markdown_files.every((filename) => typeof filename === 'string')
     && (value.provider === null || typeof value.provider === 'string')
     && (value.style === null || typeof value.style === 'string')
     && (value.voice_id === null || typeof value.voice_id === 'string')
@@ -641,6 +653,32 @@ export function createChaClient(
     deleteCharacter: (characterId) => requestEmpty(
       fetcher,
       `/api/v1/characters/${component(characterId)}`,
+      jsonMutation({}, 'DELETE'),
+    ),
+
+    getCharacterFile: (characterId, filename) => requestValidated(
+      fetcher,
+      `/api/v1/characters/${component(characterId)}/files/${component(filename)}`,
+      isCharacterFile,
+    ),
+
+    createCharacterFile: (characterId, filename, content) => requestValidated(
+      fetcher,
+      `/api/v1/characters/${component(characterId)}/files`,
+      isCharacterFile,
+      jsonMutation({ filename, content }),
+    ),
+
+    updateCharacterFile: (characterId, filename, content) => requestValidated(
+      fetcher,
+      `/api/v1/characters/${component(characterId)}/files/${component(filename)}`,
+      isCharacterFile,
+      jsonMutation({ content }, 'PUT'),
+    ),
+
+    deleteCharacterFile: (characterId, filename) => requestEmpty(
+      fetcher,
+      `/api/v1/characters/${component(characterId)}/files/${component(filename)}`,
       jsonMutation({}, 'DELETE'),
     ),
 

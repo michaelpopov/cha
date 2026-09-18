@@ -194,13 +194,20 @@ interface TopBarProps {
 
 type DeleteSubject = {
   id: string;
-  kind: 'persona' | 'character' | 'forum';
+  kind: 'persona' | 'character' | 'character-file' | 'forum';
   name: string;
+};
+
+type EditorSubject = Omit<DeleteSubject, 'kind'> & {
+  kind: Exclude<DeleteSubject['kind'], 'character'>;
 };
 
 function deleteMessage({ kind, name }: DeleteSubject): string {
   if (kind === 'persona') {
     return `Delete “${name}”? This permanently removes its profile. This cannot be undone.`;
+  }
+  if (kind === 'character-file') {
+    return `Delete “${name}”? This permanently removes this Markdown file. This cannot be undone.`;
   }
   if (kind === 'character') {
     return `Delete “${name}”? This permanently removes its definition and settings. Existing chat transcripts are kept. This cannot be undone.`;
@@ -208,9 +215,9 @@ function deleteMessage({ kind, name }: DeleteSubject): string {
   return `Delete “${name}”? This permanently removes the forum and all of its sessions. This cannot be undone.`;
 }
 
-function editorTitle(kind: DeleteSubject['kind']): string {
+function editorTitle(kind: EditorSubject['kind']): string {
   if (kind === 'persona') return 'Edit persona profile';
-  if (kind === 'character') return 'Edit character definition';
+  if (kind === 'character-file') return 'Edit character file';
   return 'Edit forum description';
 }
 
@@ -232,7 +239,7 @@ export function TopBar({
   const [confirmingDelete, setConfirmingDelete] = useState<DeleteSubject | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
-  const [editorSubject, setEditorSubject] = useState<DeleteSubject | null>(null);
+  const [editorSubject, setEditorSubject] = useState<EditorSubject | null>(null);
   const [editorText, setEditorText] = useState('');
   const [editorLoading, setEditorLoading] = useState(false);
   const [editorReady, setEditorReady] = useState(false);
@@ -241,6 +248,7 @@ export function TopBar({
   const personaId = state.inspectedPersonaId;
   const personaName = state.bootstrap?.personas.find(({ id }) => id === personaId)?.display_name;
   const characterId = state.inspectedCharacterId;
+  const characterFile = state.inspectedCharacterFile;
   const characterName = state.bootstrap?.characters.find(
     ({ id }) => id === characterId,
   )?.display_name;
@@ -266,7 +274,7 @@ export function TopBar({
     setEditorReady(false);
     setEditorSaving(false);
     setEditorError(null);
-  }, [apiKeyId, characterId, forumId, personaId, providerId, state.mainView, styleId, vaultName, voiceId]);
+  }, [apiKeyId, characterId, characterFile, forumId, personaId, providerId, state.mainView, styleId, vaultName, voiceId]);
 
   let titleControl = title && <h1>{title}</h1>;
   if (state.mainView === 'persona-detail') {
@@ -445,16 +453,16 @@ export function TopBar({
   } else if (state.mainView === 'character-detail'
       && state.characterEditingAvailable && characterId && characterName) {
     deleteSubject = { id: characterId, kind: 'character', name: characterName };
+  } else if (state.mainView === 'character-file'
+      && state.characterEditingAvailable && characterId && characterFile) {
+    deleteSubject = { id: characterId, kind: 'character-file', name: characterFile };
     uploadAction = (
       <DefinitionUpload
-        ariaLabel="Replace character definition from file"
-        failureMessage="Character definition could not be replaced."
-        id={characterId}
-        onUpload={async (characterMarkdown) => {
-          const character = await client.updateCharacterDefinition(characterId, {
-            character_markdown: characterMarkdown,
-          });
-          dispatch({ type: 'character-updated', character });
+        ariaLabel="Replace character file content from file"
+        failureMessage="Character file could not be replaced."
+        id={`${characterId}/${characterFile}`}
+        onUpload={async (content) => {
+          await client.updateCharacterFile(characterId, characterFile, content);
           onCharacterDefinitionUpdated();
         }}
       />
@@ -487,16 +495,22 @@ export function TopBar({
     try {
       if (subject.kind === 'persona') await onDeletePersona(subject.id);
       else if (subject.kind === 'character') await onDeleteCharacter(subject.id);
-      else await onDeleteForum(subject.id);
+      else if (subject.kind === 'character-file') {
+        await client.deleteCharacterFile(subject.id, subject.name);
+        dispatch({ type: 'inspect-character', characterId: subject.id });
+        onCharacterDefinitionUpdated();
+      } else await onDeleteForum(subject.id);
     } catch (failure: unknown) {
-      const label = subject.kind[0].toUpperCase() + subject.kind.slice(1);
+      const label = subject.kind === 'character-file'
+        ? 'Character file' : subject.kind[0].toUpperCase() + subject.kind.slice(1);
       setDeleteError(publicErrorMessage(failure, `${label} could not be deleted.`));
       setDeleting(false);
     }
   }
 
   async function openEditor(subject: DeleteSubject) {
-    setEditorSubject(subject);
+    if (subject.kind === 'character') return;
+    setEditorSubject({ ...subject, kind: subject.kind });
     setEditorText('');
     setEditorLoading(true);
     setEditorReady(false);
@@ -504,8 +518,8 @@ export function TopBar({
     try {
       if (subject.kind === 'persona') {
         setEditorText((await client.getPersona(subject.id)).persona_markdown);
-      } else if (subject.kind === 'character') {
-        setEditorText((await client.getCharacter(subject.id)).editable_markdown);
+      } else if (subject.kind === 'character-file') {
+        setEditorText((await client.getCharacterFile(subject.id, subject.name)).content);
       } else {
         setEditorText((await client.getForum(subject.id)).forum_markdown);
       }
@@ -532,11 +546,8 @@ export function TopBar({
         });
         dispatch({ type: 'persona-updated', persona });
         onPersonaDefinitionUpdated();
-      } else if (subject.kind === 'character') {
-        const character = await client.updateCharacterDefinition(subject.id, {
-          character_markdown: editorText,
-        });
-        dispatch({ type: 'character-updated', character });
+      } else if (subject.kind === 'character-file') {
+        await client.updateCharacterFile(subject.id, subject.name, editorText);
         onCharacterDefinitionUpdated();
       } else {
         const forum = await client.updateForum(subject.id, {
@@ -575,7 +586,7 @@ export function TopBar({
         {title && <div className="cha-topbar-balance" aria-hidden="true" />}
         {deleteSubject && (
           <div className="cha-topbar-actions">
-            <button
+            {deleteSubject.kind !== 'character' && <button
               aria-label={editorTitle(deleteSubject.kind)}
               className="cha-compact-icon-action"
               onClick={() => void openEditor(deleteSubject)}
@@ -583,7 +594,7 @@ export function TopBar({
               type="button"
             >
               <TextLinesIcon />
-            </button>
+            </button>}
             {uploadAction}
             <button
               aria-label={`Delete ${deleteSubject.name}`}
@@ -603,11 +614,11 @@ export function TopBar({
       </header>
       {confirmingDelete && (
         <ConfirmDialog
-          confirmLabel={`Delete ${confirmingDelete.kind}`}
+          confirmLabel={`Delete ${confirmingDelete.kind === 'character-file' ? 'file' : confirmingDelete.kind}`}
           message={deleteMessage(confirmingDelete)}
           onCancel={() => setConfirmingDelete(null)}
           onConfirm={() => void confirmDelete()}
-          title={`Delete ${confirmingDelete.kind}?`}
+          title={`Delete ${confirmingDelete.kind === 'character-file' ? 'file' : confirmingDelete.kind}?`}
         />
       )}
       {editorSubject && (
