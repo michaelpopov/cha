@@ -467,6 +467,7 @@ if(BUILD_TESTING)
         tests/web/unit_asset_handler.cpp
         tests/web/unit_r2_database_transfer.cpp
         tests/web/unit_protocol.cpp
+        tests/web/unit_wire_fixtures.cpp
         tests/web/unit_session_markdown.cpp
         tests/web/unit_session_mirror.cpp
         tests/web/unit_session_projection.cpp
@@ -486,6 +487,10 @@ if(BUILD_TESTING)
     target_link_libraries(
         cha_web_tests PRIVATE cha_web cha_sqlite3 GTest::gtest_main)
     target_include_directories(cha_web_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+    target_compile_definitions(
+        cha_web_tests
+        PRIVATE
+            CHA_WIRE_FIXTURE_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/wire")
     if(TARGET cha_lease_test_helper)
         target_compile_definitions(
             cha_web_tests
@@ -622,6 +627,7 @@ if(WIN32)
             comdlg32
             ole32
             shell32
+            shlwapi
             user32)
     target_link_options(
         cha_windows_app PRIVATE "/MANIFESTINPUT:${CHA_WINDOWS_MANIFEST}")

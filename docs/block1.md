@@ -6,7 +6,7 @@ are included here. Reading `docs/plan.md`, `docs/redesign.md`, or other block br
 is not required. The current source code and actual prior implementation/evidence
 are still required inputs; this document does not claim those prerequisites exist.
 
-**Initial status:** not started. **Environment:** macOS and Windows/WebView2, with microphones and the supported minimum OS/runtime versions.
+**Initial status:** waiting for evidence. **Environment:** macOS and Windows/WebView2, with microphones and the supported minimum OS/runtime versions.
 
 ## Objective and scope
 
@@ -47,8 +47,8 @@ ordinary functions, and existing owners. Do not add a general RPC/service/event
 framework, durable replay ledger, generic filesystem API, or unnecessary classes.
 
 The migration keeps React presentation and C++ domain state. The final dependency
-direction is host → bridge → app → core. The final products are macOS/WKWebView and
-Windows/WebView2; Linux retains common tests, not a server release or new GUI.
+direction is host → bridge → app → core. The only supported products are
+macOS/WKWebView and Windows/WebView2.
 Keep provider networking, controller semantics, workspace transactions/publication,
 leases, SQLCipher/database format, mirroring, and final persistence unchanged.
 
@@ -114,9 +114,8 @@ for application state, domain behavior, providers, and persistence.
 
 The supported release applications in this migration are macOS (WKWebView) and
 Windows (WebView2). The standalone application becomes the only supported
-deployment model. Retire the existing Linux browser/server package at cutover;
-retain Linux builds for core, application, bridge, and deterministic provider
-tests. A Linux desktop WebView host and an iOS product are separate projects.
+deployment model. Retire the existing browser/server package at cutover. An iOS
+product is a separate project.
 
 The primary benefit is removing an operating model and its failure modes:
 localhost listeners, access cookies, HTTP request workers, browser-facing SSE,
@@ -244,7 +243,7 @@ Minimum coverage:
 | Maintenance | Configuration import/export, database upload/download, reopen failure |
 | Audio | Uncached speech/preview, cache lookup/clear, single/batch generation, status, playback and cancellation |
 | Native host | Startup unlock, menu state/actions, file dialogs, external links, close/quit/reload |
-| Packaging | Native assets, type generation, release verification, upgrade compatibility, Linux server retirement |
+| Packaging | Native assets, type generation, release verification, upgrade compatibility, legacy server retirement |
 
 Retain `src/chat`, `src/characters`, `src/providers`, `src/session`,
 `src/workspace`, and non-transport utilities. Provider-side SSE decoding,
@@ -503,20 +502,16 @@ icons, signing, resource paths, and the current startup/upgrade behavior. Keep
 WebView2 runtime checks in the Windows host.
 
 Both desktop packaging scripts currently verify production web files using
-`chaweb`; macOS also reuses Linux package-check machinery. Replace those checks
+`chaweb`; macOS also reuses legacy package-check machinery. Replace those checks
 with application-level compatibility tests plus real native-host verification
 before removing the server target. Do not relabel a browser test with a fake
 bridge as a packaged native end-to-end test.
 
 At cutover remove the server executable, listener/runtime cookie wiring, port
 flags, production HTTP asset serving, Vite API proxy, server launch scripts, and
-Linux server package target. Retain reusable seed data and compatibility tests;
-move shared assets out of Linux-specific locations when necessary rather than
+legacy server package target. Retain reusable seed data and compatibility tests;
+move shared assets out of package-specific locations when necessary rather than
 deleting them with the package.
-
-Linux can continue to compile and test common code without WebView dependencies.
-An actual Linux GUI product requires a separately scoped host; this migration
-does not leave a server release as an accidental supported fallback.
 
 ## Implementation steps
 
@@ -655,16 +650,74 @@ when its revision/coverage remains applicable. Do not require the next agent to
 read an entire conversation to recover decisions.
 
 ```text
-Status: not started | in progress | waiting for evidence | complete
+Status: waiting for evidence
 Starting and resulting revision/checkpoint:
+  start: 6ed20f39963d6d353c3127aa3c6f3c59761ca72a (clean)
+  result: uncommitted working tree on the same revision; no commit
 Files changed/moved and actual new APIs/targets:
+  webapp/src/state/route.ts — usesHashRoutes, currentAppRoute, appHref, writeAppRoute
+  packaging/macos/feasibility.swift — ChaAssetSchemeHandler (cha://app), ChaProbeReceiver
+  packaging/macos/main.swift — --feasibility [--assets DIR]
+  packaging/windows/main.cpp — --feasibility --assets DIR [--cdp-port N] [--user-data DIR]
+  tests/native/macos/test_host.swift + run.sh → build/ninja/ChaNativeTestHost.app
+  tests/native/windows/playwright.config.ts, webview2.spec.ts, run.ps1
+  tests/fixtures/wire/*.json + tests/web/unit_wire_fixtures.cpp + webapp/src/api/wireFixtures.test.ts
+  CMakeLists.txt — unit_wire_fixtures, CHA_WIRE_FIXTURE_DIRECTORY, Windows shlwapi
 Implemented behavior and key ownership/contract decisions:
+  HTTP frontend keeps path routing (protocol http:). Native origins use hash routes.
+  Native reload uses location.reload(); assigning #/ is not a document reload.
+  Feasibility mode loads packaged React assets and does not call cha_runtime_create /
+  ApplicationRuntime::start. Chosen macOS loader: public WKURLSchemeHandler cha://app.
+  Windows loader (unrun here): https://app.cha.local virtual-host folder mapping.
+  Probe receiver is a small trusted main-frame echo, not the final dispatcher.
+  CSP is applied as a response header on the shell before page scripts.
+  run.sh pass is origin/trust only. Blob playback/seek/mic are --expect audio and
+  must not be inferred from a pass exit. voiceAnswer is a credential-ownership
+  POST of raw SDP, not the existing voice-input provider protocol.
 Prerequisites verified and evidence used:
+  Checkout has C++/React/macOS Swift host/Windows WebView2 host.
+  Supported versions from packaging: macOS 13.3+ to build; a package built on this
+  machine targets 26.0+. Windows x64 + Evergreen WebView2 Runtime, SDK 1.0.4191.47.
+  Node 22.23.1 / npm 10.9.8 from webapp/package.json. No isolated voice vault
+  credentials were present.
 Temporary compatibility code and when it can be removed:
+  --feasibility / test host / probe receiver / cha:// handler after native cutover
+  proves production loaders, or earlier if a different proven loader replaces them.
+  HTTP path routing until the HTTP frontend is removed.
+  Shipping CHA.app currently accepts --feasibility --assets <arbitrary-dir> and
+  installs the probe receiver in that mode. Ordinary launch (no args) is unchanged.
+  Remove the flag, arbitrary-dir loader, and probe receiver at cutover (or sooner
+  if a production loader exists). Broader than needed for a release binary.
 Exact commands, working directories, platform/runtime versions, and results:
+  repo root, macOS 26.7 25G229 arm64
+  ./build/ninja/cha_tests — 466 passed, 2 skipped (CHA_OPENAI_OAUTH_LIVE)
+  ./build/ninja/cha_web_tests — 293 passed (includes WebWireFixtures)
+  npm --prefix webapp run check — 350 passed
+  npm --prefix webapp run build — ok
+  tests/native/macos/run.sh pass — origin/trust PASS only; not media/voice proof
+  tests/native/macos/run.sh fail — exit 1, intentional assertion failure
+  tests/native/macos/run.sh timeout --timeout-ms 800 — exit 1, native probe timed out
+  tests/native/macos/run.sh audio — expected FAIL until Blob <audio> seek/play and
+  live microphone capture succeed (do not treat pass as a substitute)
+  npm --prefix webapp run e2e — 46 passed (served + chromium)
 Known failures, checks not run, and exact missing evidence:
+  Windows host/CDP/Playwright not run (no Windows/WebView2 machine).
+  Windows missing-asset 404 is assumed from virtual-host mapping, not proven.
+  Windows mic permission checks URI/kind only, not frame; note before the real dispatcher.
+  Minimum macOS 13.3 not run (development machine is 26.7).
+  Microphone capture and Blob/object-URL <audio> playback/seek/release are not
+  proven. --expect audio is the gate; a previous decodeAudioData success is not.
+  voiceAnswer does not verify the existing provider setup protocol.
+  No CHA_VOICE_PROBE_URL / API_KEY. Ordinary packaged CHA.app launch not rebuilt.
 Inventory/coverage changes and remaining work:
+  Full operation/file inventory recorded below. Broad extraction is blocked until
+  Windows probes, minimum-macOS probes, microphone/WebRTC, and Blob playback are
+  proven or a small supported alternative is chosen.
 Next unfinished numbered step if this block needs continuation:
+  Step 8/10 on Windows + macOS 13.3 with isolated voice creds: prove mic/WebRTC
+  + voiceInput.connect against the real provider protocol; prove Blob seek/resume/
+  release on cha://app (or adopt a proven alternative). Do not treat run.sh pass
+  as media/voice proof.
 ```
 
 Maintain concise rows for the operations/files/assertions touched by this block.
@@ -673,11 +726,73 @@ carry forward existing evidence and record the relevant updates.
 
 | Operation/caller or source/test path | Retained behavior/result/errors | Native destination or deletion reason | Context/cancellation/lifetime | Verification and status |
 |---|---|---|---|---|
-| Populate during execution | | | | |
+| `ChaClient.getBootstrap` `GET /api/v1/bootstrap` | Bootstrap DTO; ChaError / unavailable / protocol | Application operation | Request abort; vault-scoped | wire fixture + `validateBootstrap`; later native |
+| Characters CRUD + markdown files (`/api/v1/characters…`) | CharacterDetail / MarkdownFile; 4xx/5xx ChaError | Application operation | Request abort | client.ts validators; lobby_routes tests |
+| Personas CRUD (`/api/v1/personas…`) | PersonaDetail; ChaError | Application operation | Request abort | client + lobby_routes tests |
+| Forums CRUD, members, files (`/api/v1/forums…`) | ForumDetail / files; ChaError | Application operation | Request abort; live session effects | client + lobby_routes tests |
+| Sessions list/create/rename/delete/open/download/audio-cache | listing/create/label/open results; markdown download | Application operation + resource (download) | Open timeout/limit; owner thread | session_routes + e2e |
+| `getSessionSnapshot` `GET …/api/v1/session` | SessionSnapshot | Application operation | Live session required | `isSessionSnapshot` + wire fixture |
+| `openSessionEvents` `GET …/api/v1/events` EventSource | snapshot/append/superseded; stream_failure | Session event channel | One stream per session; close; no reconnect-after-takeover | events.ts; sse_mailbox/stream tests — keep coalescing |
+| submit/stop/cover/uncover/delete-turn/default-character | CommandResult `{clear_input, notice?}` | Application operation | command_timeout, queue_full, session_stopping; AbortSignal | session_routes + LiveChat tests |
+| Providers CRUD/test | ProviderDetail; used_by constraints | Application operation | test is outbound HTTP | settings_routes tests |
+| OpenAI auth status/start/poll/disconnect | OpenAiAuth; system browser for URL | Application operation + native UI (open URL) | poll lifetime | openai_auth_routes tests |
+| Styles/voices CRUD | StyleDetail/VoiceDetail; in-use 409 | Application operation | Request abort | settings_routes tests |
+| Voice input settings `GET/PUT /api/v1/voice-input` | settings with api_key id | Application operation | Request abort | settings_routes |
+| `getVoiceInputRuntime` `GET /api/v1/voice-input/runtime` | **returns stored credential today** | Must become non-secret runtime + `voiceInput.connect` | Cancel pending setup | current JS fetch is secret-bearing; native probe pending credentials |
+| Voice output settings/runtime | runtime omits secret | Application operation; speech later uses resource handles | AbortSignal | textToSpeech.ts |
+| API keys metadata/create/rename/replace/delete | has_value only on read | Application operation; write-only secret | Request abort | credential routes |
+| R2 storage get/save/delete | has_secret_key | Application operation | Request abort | settings_routes |
+| Vaults list/create/update/delete/switch/merge + R2 list/download | VaultDetail; password required codes | Application operation + native unlock UI | switch/merge password; vault_changed | vault_routes tests |
+| Audio download batch/single/status + `GET …/entries/N/audio` | jobs + cached bytes | Application jobs + resource fetch | job identity survives reload; cancel ≠ stop playback | audio_download tests |
+| `cachedAudioUrl` + `textToSpeech.ts` fetch | Blob + object URL playback | Resource handler; not JSON | AbortSignal; revoke object URL | `--expect audio` gate; Blob `<audio>` not proven |
+| `voiceInput.ts` getUserMedia + RTCPeerConnection + provider POST | transcription in JS | Keep capture/WebRTC in WebView; move credential POST native | stop tracks on all terminals | `--expect audio` + real provider protocol; voiceAnswer is not proof |
+| `download.ts` showSaveFilePicker / blob `<a download>` | session markdown | Native save panel already exists | user abort | host WKDownload / WebView2 download |
+| `sessionStorage` `cha.restoreVoiceSettings` | restore Voice settings after reload | Keep; used-storage probe | document origin | macOS probe storage=ok |
+| `GET /health` | process liveness | Transport-only | server lifetime | delete with listener |
+| Asset handler `/` `/s/…/` `/assets/*` + CSP header | shell + hashed assets | Native loader | missing asset must 404 | HTTP tests exist; native 404 proven on macOS; Windows mapping default unproven |
+| Access cookie `CHA_RUNTIME`, localhost listener, SSE heartbeat | transport | Delete at cutover | connection lifetime | do not keep in production native |
+| macOS host: vault password, Database Import/Export/Upload/Download, Quit, external https, file panels, mic permission, reload after import/download | native UI | Stay in host; no session policy | UI must not block owners | existing host; feasibility skips runtime |
+| Windows host: same menus, WebView2 cookie, smoke-test, Evergreen runtime | native UI | Stay in host | same | code added; not executed |
+| `sse_mailbox.cpp` / `unit_sse_mailbox.cpp` | coalescing/backpressure | Keep; move out of HTTP name later | mailbox/stream token | existing unit tests |
+| Deterministic fake provider / httplib test listeners | outbound test HTTP | Keep as test dependency | test process | not the application server |
+
+| Source/test path | keep / move / split / delete | Where retained behavior goes |
+|---|---|---|
+| `src/chat`, `src/characters`, `src/providers`, `src/session`, `src/workspace`, non-transport `src/util` | keep | core |
+| `src/web/protocol.{h,cpp}` `json.cpp` | keep/split | DTOs stay; HTTP types do not leak into app |
+| `src/web/route_support.*` | split | validation vs httplib |
+| `src/web/sse_mailbox.*` `sse_stream.*` | split | mailbox keep; HTTP writer delete at cutover |
+| `src/web/live_session*` `command_queue.*` `session_projection.*` `text_*` | keep/move | application |
+| `src/web/{lobby,session,settings,vault,openai_auth,audio_download}_routes.cpp` | split then delete routes | operations extracted, httplib adapters go |
+| `src/web/http_server.*` `http_response.*` `asset_handler.*` `browser_connection_state.*` `application_runtime` listener/cookie | delete at cutover | native loader/CSP/host replace assets+cookie |
+| `src/web/fish_audio.*` `audio_download.*` `r2_database_transfer.*` | keep | outbound providers/R2 |
+| `src/web_main.cpp` `chaweb` legacy server package | delete at cutover | no replacement |
+| `webapp/src/api/client.ts` `events.ts` | split | typed client over native; EventSource adapter deleted |
+| `webapp/src/state/route.ts` | keep | hash in native, path in HTTP until cutover |
+| `webapp/src/voiceInput.ts` | split | capture/WebRTC stay; credential fetch → `voiceInput.connect` |
+| `webapp/src/textToSpeech.ts` `audioDownloads.ts` `download.ts` | keep/split | Blob playback stay; URLs become opaque resources |
+| `webapp/playwright.config.ts` `e2e/*` | split | HTTP e2e while coexistence; not native proof |
+| `tests/web/unit_sse_mailbox.cpp` etc. | keep | move with mailbox |
+| `tests/web/process_web_server.cpp` | delete with server or keep as HTTP regression until cutover | |
+| `packaging/macos/main.swift` `packaging/windows/main.cpp` | keep | add native bridge later; feasibility is non-shipping |
+| `packaging/macos/feasibility.swift` `tests/native/**` | temporary | remove once production loader/automation exist |
+| E2E served CSP header assertion | rewrite | native loader CSP tests, not delete with HTTP header |
 
 | Required flow/assertion | Common test evidence | macOS evidence | Windows evidence | Remaining limitation |
 |---|---|---|---|---|
-| Populate during execution | | | | |
+| Baseline C++ / frontend | cha_tests 466 pass + 2 skip; cha_web_tests 293 pass; npm check 350 pass; e2e 46 pass | same machine | not run | |
+| Wire fixtures | WebWireFixtures + wireFixtures.test.ts | n/a | n/a | representative, not every DTO |
+| Origin/module/missing asset | n/a | cha://app, moduleScripts true, missing 404 | not run | min macOS 13.3 missing |
+| Hash history | route.test.ts | hashSession/hashRoot in probe | not run | App HTTP path tests still cover http: |
+| Storage | n/a | sessionStorage ok | not run | |
+| CSP before scripts | HTTP header tests still pass | eval blocked; remote fetch blocked | not run | HTMLAudioElement may need media-src self; meta vs header on Windows unrun |
+| Trust / popup / remote nav | n/a | main-frame echo of script string; popup denied; stayed on cha://app | not run | |
+| Round trip | n/a | roundTrip true | not run | probe only, not dispatcher |
+| No application listener | n/a | runtime_listener=none; test host does not link ChaRuntime | not run | |
+| Automation pass/fail/timeout | n/a | run.sh pass/fail/timeout | Playwright spec written, not run; fail script must match assertion output | |
+| Microphone / WebRTC / provider | n/a | `--expect audio` (not `pass`); provider protocol unrun | not run | blocks voice cutover |
+| Audio fetch / Blob play / seek / release | n/a | `--expect audio` hard-fails unless Blob `<audio>` seek/play/release | not run | Blob playback not proven |
+| Release launch has no debug hooks | n/a | --feasibility is explicit; typecheck of host ok | ordinary args still start runtime | packaged app still contains --assets; remove at cutover |
 
 The final response must state what was implemented, why, what was actually tested,
 and any unresolved limitation. If incomplete, give the exact next step and missing

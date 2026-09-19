@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "command_timeout",
+    "message": "<script>alert(1)</script>"
+  }
+}

@@ -69,8 +69,10 @@ private struct DownloadDestination {
 private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
     NSMenuDelegate, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
     private let fileManager = FileManager.default
+    private let feasibilityAssets: URL?
     private var window: NSWindow!
     private var webView: WKWebView!
+    private var probeReceiver: ChaProbeReceiver?
     private var webViewTitleObservation: NSKeyValueObservation?
     private var runtime: OpaquePointer?
     private var runtimeURL: URL?
@@ -84,6 +86,11 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
     private var terminationPending = false
     private var quitting = false
 
+    init(feasibilityAssets: URL? = nil) {
+        self.feasibilityAssets = feasibilityAssets
+        super.init()
+    }
+
     private var supportDirectory: URL {
         fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent(applicationName, isDirectory: true)
@@ -94,6 +101,10 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
         showWindow()
 
         do {
+            if let feasibilityAssets {
+                showFeasibility(assets: feasibilityAssets)
+                return
+            }
             try prepareApplicationData()
             guard try startRuntime() else {
                 NSApp.terminate(nil)
@@ -366,6 +377,27 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
         }
     }
 
+    private func showFeasibility(assets: URL) {
+        guard webView == nil else { return }
+        let built = makeFeasibilityWebViewConfiguration(assetRoot: assets)
+        let view = WKWebView(frame: .zero, configuration: built.0)
+        view.allowsMagnification = true
+        view.navigationDelegate = self
+        view.uiDelegate = self
+        built.2.attach(to: view)
+        probeReceiver = built.2
+        webView = view
+        window.contentView = view
+        window.makeFirstResponder(view)
+        webViewTitleObservation = view.observe(\.title, options: [.new]) {
+            [weak self] _, _ in
+            Task { @MainActor [weak self] in
+                self?.updateWindowTitle()
+            }
+        }
+        view.load(URLRequest(url: URL(string: "\(chaAssetOrigin)/")!))
+    }
+
     @objc private func uploadDatabase(_ sender: Any?) {
         performDatabaseOperation(.upload)
     }
@@ -555,7 +587,16 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
         initiatedByFrame frame: WKFrameInfo,
         type: WKMediaCaptureType,
         decisionHandler: @escaping (WKPermissionDecision) -> Void) {
+        if feasibilityAssets != nil {
+            guard type == .microphone, frame.isMainFrame, isChaAssetOrigin(origin) else {
+                decisionHandler(.deny)
+                return
+            }
+            decisionHandler(.grant)
+            return
+        }
         guard type == .microphone,
+              frame.isMainFrame,
               let runtimeURL,
               origin.protocol == runtimeURL.scheme,
               origin.host == runtimeURL.host,
@@ -567,6 +608,9 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
     }
 
     private func isApplicationURL(_ url: URL) -> Bool {
+        if feasibilityAssets != nil {
+            return isChaAssetURL(url)
+        }
         guard let runtimeURL,
               url.scheme?.caseInsensitiveCompare("http") == .orderedSame,
               url.host == runtimeURL.host,
@@ -670,12 +714,57 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
     }
 }
 
+private func parseLaunchOptions() throws -> URL? {
+    let arguments = Array(CommandLine.arguments.dropFirst()).filter { argument in
+        if argument.hasPrefix("-psn")
+            || (argument.hasPrefix("-") && !argument.hasPrefix("--")) {
+            FileHandle.standardError.write(
+                Data("warning: ignoring unused launch argument \(argument)\n".utf8))
+            return false
+        }
+        return true
+    }
+    if arguments.isEmpty { return nil }
+    guard arguments.first == "--feasibility" else {
+        throw LauncherError.cannotStart
+    }
+    var assets: URL?
+    var index = 1
+    while index < arguments.count {
+        if arguments[index] == "--assets" {
+            index += 1
+            guard index < arguments.count else { throw LauncherError.cannotStart }
+            assets = URL(fileURLWithPath: arguments[index], isDirectory: true)
+        } else {
+            throw LauncherError.cannotStart
+        }
+        index += 1
+    }
+    if let assets { return assets }
+    guard let resources = Bundle.main.resourceURL else {
+        throw LauncherError.incompleteApplication
+    }
+    return resources.appendingPathComponent("web", isDirectory: true)
+}
+
 @main
 private struct Main {
     @MainActor
     static func main() {
         let application = NSApplication.shared
-        let delegate = ApplicationDelegate()
+        let feasibilityAssets: URL?
+        do {
+            feasibilityAssets = try parseLaunchOptions()
+        } catch {
+            let alert = NSAlert()
+            alert.alertStyle = .critical
+            alert.messageText = "CHA cannot continue"
+            alert.informativeText = error.localizedDescription
+            alert.addButton(withTitle: "Quit")
+            alert.runModal()
+            return
+        }
+        let delegate = ApplicationDelegate(feasibilityAssets: feasibilityAssets)
         application.setActivationPolicy(.regular)
         application.delegate = delegate
         application.run()

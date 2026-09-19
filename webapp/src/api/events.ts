@@ -33,7 +33,7 @@ export interface SessionEventConnection {
 const streamFailure: SessionStreamFailure = Object.freeze({ kind: 'stream_failure' });
 const streamSuperseded: SessionStreamFailure = Object.freeze({ kind: 'superseded' });
 
-function isAppend(value: unknown): value is AppendEvent {
+export function isAppendEvent(value: unknown): value is AppendEvent {
   if (!isRecord(value) || !isRecord(value.target)) return false;
   if (typeof value.text !== 'string'
       || !Number.isSafeInteger(value.seq)
@@ -79,7 +79,7 @@ export function openSessionEvents(
   source.addEventListener('append', (event) => {
     if (closed) return;
     try {
-      const append = parseEvent(event.data, isAppend);
+      const append = parseEvent(event.data, isAppendEvent);
       if (append.seq !== nextAppendSequence) {
         reportFailure();
         return;

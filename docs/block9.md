@@ -47,8 +47,8 @@ ordinary functions, and existing owners. Do not add a general RPC/service/event
 framework, durable replay ledger, generic filesystem API, or unnecessary classes.
 
 The migration keeps React presentation and C++ domain state. The final dependency
-direction is host → bridge → app → core. The final products are macOS/WKWebView and
-Windows/WebView2; Linux retains common tests, not a server release or new GUI.
+direction is host → bridge → app → core. The only supported products are
+macOS/WKWebView and Windows/WebView2.
 Keep provider networking, controller semantics, workspace transactions/publication,
 leases, SQLCipher/database format, mirroring, and final persistence unchanged.
 
@@ -114,9 +114,8 @@ for application state, domain behavior, providers, and persistence.
 
 The supported release applications in this migration are macOS (WKWebView) and
 Windows (WebView2). The standalone application becomes the only supported
-deployment model. Retire the existing Linux browser/server package at cutover;
-retain Linux builds for core, application, bridge, and deterministic provider
-tests. A Linux desktop WebView host and an iOS product are separate projects.
+deployment model. Retire the existing browser/server package at cutover. An iOS
+product is a separate project.
 
 The primary benefit is removing an operating model and its failure modes:
 localhost listeners, access cookies, HTTP request workers, browser-facing SSE,
@@ -244,7 +243,7 @@ Minimum coverage:
 | Maintenance | Configuration import/export, database upload/download, reopen failure |
 | Audio | Uncached speech/preview, cache lookup/clear, single/batch generation, status, playback and cancellation |
 | Native host | Startup unlock, menu state/actions, file dialogs, external links, close/quit/reload |
-| Packaging | Native assets, type generation, release verification, upgrade compatibility, Linux server retirement |
+| Packaging | Native assets, type generation, release verification, upgrade compatibility, legacy server retirement |
 
 Retain `src/chat`, `src/characters`, `src/providers`, `src/session`,
 `src/workspace`, and non-transport utilities. Provider-side SSE decoding,
@@ -1005,20 +1004,16 @@ icons, signing, resource paths, and the current startup/upgrade behavior. Keep
 WebView2 runtime checks in the Windows host.
 
 Both desktop packaging scripts currently verify production web files using
-`chaweb`; macOS also reuses Linux package-check machinery. Replace those checks
+`chaweb`; macOS also reuses legacy package-check machinery. Replace those checks
 with application-level compatibility tests plus real native-host verification
 before removing the server target. Do not relabel a browser test with a fake
 bridge as a packaged native end-to-end test.
 
 At cutover remove the server executable, listener/runtime cookie wiring, port
 flags, production HTTP asset serving, Vite API proxy, server launch scripts, and
-Linux server package target. Retain reusable seed data and compatibility tests;
-move shared assets out of Linux-specific locations when necessary rather than
+legacy server package target. Retain reusable seed data and compatibility tests;
+move shared assets out of package-specific locations when necessary rather than
 deleting them with the package.
-
-Linux can continue to compile and test common code without WebView dependencies.
-An actual Linux GUI product requires a separately scoped host; this migration
-does not leave a server release as an accidental supported fallback.
 
 ### Verification and Acceptance
 
@@ -1175,7 +1170,7 @@ or pretending all asynchronous failure modes disappear.
 Do not combine this migration with a backend language rewrite, database/schema
 migration, replacement of SQLCipher/provider transport, character/session
 redesign, plugin architecture, multi-window behavior, a full native media-stack
-rewrite, Linux desktop support, or iOS lifecycle implementation. Keep platform
+rewrite or iOS lifecycle implementation. Keep platform
 types out of common code so a later host can reuse it without making that future
 product part of the current implementation.
 
@@ -1199,12 +1194,12 @@ product part of the current implementation.
 5. Verify shipping builds cannot enable automation/CDP/development-origin hooks,
    including relevant launch/environment overrides. Keep instrumented native
    test hosts separate while using the same application implementation/assets.
-6. Move shared seed/config data out of Linux-only locations where needed and
-   update all consumers. Build both shipping hosts with native startup and app/
-   bridge/core only; keep `chaweb` solely as a separate temporary migration target.
+6. Move shared seed/config data out of locations owned by the retiring server
+   package and update all consumers. Build both shipping hosts with native startup
+   and app/bridge/core only; keep `chaweb` solely as a temporary migration target.
 7. Update macOS packaging: direct built assets, proven loader layout, protected
    first launch, icons/signing/library/OS checks. Replace port-based runtime smoke
-   assumptions and the temporary `chaweb` assembly/Linux package-check reuse with
+   assumptions and the temporary `chaweb` assembly/legacy package-check reuse with
    retained application/startup and native-host assertions.
 8. Update Windows packaging: mapped built assets, shared seed/config data, manifest/
    icons/runtime checks. Remove build/copy/run requirements for `chaweb.exe` in

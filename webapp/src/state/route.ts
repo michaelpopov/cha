@@ -26,3 +26,53 @@ export function sessionRoute(forumId: string, sessionId: string): string {
   }
   return `/s/${forumId}/${sessionId}/`;
 }
+
+// Native packaged origins keep a fixed document path and identify the view in
+// the fragment. The temporary HTTP frontend keeps path routing.
+export function usesHashRoutes(
+  location: Pick<Location, 'protocol'> = window.location,
+): boolean {
+  return location.protocol !== 'http:';
+}
+
+export function currentAppRoute(
+  location: Pick<Location, 'protocol' | 'pathname' | 'hash'> = window.location,
+): AppRoute {
+  if (usesHashRoutes(location)) {
+    const raw = location.hash.startsWith('#') ? location.hash.slice(1) : '';
+    return parseAppRoute(raw === '' ? '/' : raw);
+  }
+  return parseAppRoute(location.pathname);
+}
+
+export function appHref(
+  path: string,
+  location: Pick<Location, 'protocol' | 'pathname' | 'search'> = window.location,
+): string {
+  if (usesHashRoutes(location)) {
+    return `${location.pathname}${location.search}#${path}`;
+  }
+  return path;
+}
+
+export function writeAppRoute(
+  path: string,
+  mode: 'push' | 'replace' = 'push',
+  location: Pick<Location, 'protocol' | 'pathname' | 'search'> = window.location,
+): void {
+  const href = appHref(path, location);
+  if (mode === 'replace') window.history.replaceState(null, '', href);
+  else window.history.pushState(null, '', href);
+}
+
+// Hash hrefs are same-document. Native post-maintenance reload must replace
+// the document, not only the fragment.
+export function reloadApplication(
+  location: Pick<Location, 'protocol' | 'assign' | 'reload'> = window.location,
+): void {
+  if (usesHashRoutes(location)) {
+    location.reload();
+    return;
+  }
+  location.assign('/');
+}

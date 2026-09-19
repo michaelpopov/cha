@@ -1,6 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-import { parseAppRoute, sessionRoute } from './route';
+import {
+  appHref,
+  currentAppRoute,
+  parseAppRoute,
+  reloadApplication,
+  sessionRoute,
+  usesHashRoutes,
+} from './route';
 
 describe('application routes', () => {
   it('recognizes the root and a stored-session route', () => {
@@ -26,5 +33,46 @@ describe('application routes', () => {
   it('formats the canonical route with its required trailing slash', () => {
     expect(sessionRoute('lobby', 'planning')).toBe('/s/lobby/planning/');
     expect(() => sessionRoute('not/safe', 'planning')).toThrow(TypeError);
+  });
+
+  it('keeps path routing on the HTTP frontend and hash routing on native origins', () => {
+    expect(usesHashRoutes({ protocol: 'http:' })).toBe(false);
+    expect(usesHashRoutes({ protocol: 'https:' })).toBe(true);
+    expect(usesHashRoutes({ protocol: 'cha:' })).toBe(true);
+    expect(appHref('/s/lobby/planning/', {
+      protocol: 'http:', pathname: '/', search: '',
+    })).toBe('/s/lobby/planning/');
+    expect(appHref('/s/lobby/planning/', {
+      protocol: 'cha:', pathname: '/', search: '',
+    })).toBe('/#/s/lobby/planning/');
+    expect(currentAppRoute({
+      protocol: 'http:', pathname: '/s/lobby/planning/', hash: '',
+    })).toEqual({ kind: 'session', forumId: 'lobby', sessionId: 'planning' });
+    expect(currentAppRoute({
+      protocol: 'cha:', pathname: '/', hash: '#/s/lobby/planning/',
+    })).toEqual({ kind: 'session', forumId: 'lobby', sessionId: 'planning' });
+    expect(currentAppRoute({
+      protocol: 'https:', pathname: '/', hash: '#/',
+    })).toEqual({ kind: 'root' });
+  });
+
+  it('reloads the document on native origins instead of assigning a fragment', () => {
+    const http = {
+      protocol: 'http:' as const,
+      assign: vi.fn(),
+      reload: vi.fn(),
+    };
+    reloadApplication(http);
+    expect(http.assign).toHaveBeenCalledWith('/');
+    expect(http.reload).not.toHaveBeenCalled();
+
+    const native = {
+      protocol: 'cha:' as const,
+      assign: vi.fn(),
+      reload: vi.fn(),
+    };
+    reloadApplication(native);
+    expect(native.reload).toHaveBeenCalledOnce();
+    expect(native.assign).not.toHaveBeenCalled();
   });
 });

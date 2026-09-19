@@ -46,8 +46,8 @@ ordinary functions, and existing owners. Do not add a general RPC/service/event
 framework, durable replay ledger, generic filesystem API, or unnecessary classes.
 
 The migration keeps React presentation and C++ domain state. The final dependency
-direction is host → bridge → app → core. The final products are macOS/WKWebView and
-Windows/WebView2; Linux retains common tests, not a server release or new GUI.
+direction is host → bridge → app → core. The only supported products are
+macOS/WKWebView and Windows/WebView2.
 Keep provider networking, controller semantics, workspace transactions/publication,
 leases, SQLCipher/database format, mirroring, and final persistence unchanged.
 

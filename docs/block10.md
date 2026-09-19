@@ -6,7 +6,7 @@ are included here. Reading `docs/plan.md`, `docs/redesign.md`, or other block br
 is not required. The current source code and actual prior implementation/evidence
 are still required inputs; this document does not claim those prerequisites exist.
 
-**Initial status:** not started. **Environment:** macOS, Windows/WebView2, and Linux for common builds/tests.
+**Initial status:** not started. **Environment:** macOS and Windows/WebView2.
 
 ## Objective and scope
 
@@ -23,7 +23,7 @@ This is the only block authorizing complete server/legacy frontend removal. Pres
   deletion inventory classifies affected source/tests/targets/scripts by behavior.
 - A transport-independent authoritative schema, generated checks, C++ serializer
   fixtures, and final native development/test commands already work.
-- Shared seed/config data is safe outside retiring Linux server packaging.
+- Shared seed/config data is safe outside retiring server packaging.
   Initial revision, file-set/command for baseline measurements, and prior size/
   dependency/configuration results are available or reproducible from repository
   history. Missing parity evidence blocks destructive transport deletion.
@@ -49,8 +49,8 @@ ordinary functions, and existing owners. Do not add a general RPC/service/event
 framework, durable replay ledger, generic filesystem API, or unnecessary classes.
 
 The migration keeps React presentation and C++ domain state. The final dependency
-direction is host → bridge → app → core. The final products are macOS/WKWebView and
-Windows/WebView2; Linux retains common tests, not a server release or new GUI.
+direction is host → bridge → app → core. The only supported products are
+macOS/WKWebView and Windows/WebView2.
 Keep provider networking, controller semantics, workspace transactions/publication,
 leases, SQLCipher/database format, mirroring, and final persistence unchanged.
 
@@ -94,7 +94,7 @@ leases, SQLCipher/database format, mirroring, and final persistence unchanged.
 
 Start with the platform-feasibility work's baseline, the contract/package-parity stage's deletion
 list, remaining `src/web` files, `CMakeLists.txt`, `Makefile`, `src/web_main.cpp`,
-frontend/staging/launch scripts, Linux packaging, and the final target graph.
+frontend/staging/launch scripts, legacy server packaging, and the final target graph.
 
 Read the steps and embedded requirements below before changing behavior. Names of
 new modules are illustrative; reuse the current implementation and avoid parallel
@@ -115,9 +115,8 @@ for application state, domain behavior, providers, and persistence.
 
 The supported release applications in this migration are macOS (WKWebView) and
 Windows (WebView2). The standalone application becomes the only supported
-deployment model. Retire the existing Linux browser/server package at cutover;
-retain Linux builds for core, application, bridge, and deterministic provider
-tests. A Linux desktop WebView host and an iOS product are separate projects.
+deployment model. Retire the existing browser/server package at cutover. An iOS
+product is a separate project.
 
 The primary benefit is removing an operating model and its failure modes:
 localhost listeners, access cookies, HTTP request workers, browser-facing SSE,
@@ -245,7 +244,7 @@ Minimum coverage:
 | Maintenance | Configuration import/export, database upload/download, reopen failure |
 | Audio | Uncached speech/preview, cache lookup/clear, single/batch generation, status, playback and cancellation |
 | Native host | Startup unlock, menu state/actions, file dialogs, external links, close/quit/reload |
-| Packaging | Native assets, type generation, release verification, upgrade compatibility, Linux server retirement |
+| Packaging | Native assets, type generation, release verification, upgrade compatibility, legacy server retirement |
 
 Retain `src/chat`, `src/characters`, `src/providers`, `src/session`,
 `src/workspace`, and non-transport utilities. Provider-side SSE decoding,
@@ -1182,20 +1181,16 @@ icons, signing, resource paths, and the current startup/upgrade behavior. Keep
 WebView2 runtime checks in the Windows host.
 
 Both desktop packaging scripts currently verify production web files using
-`chaweb`; macOS also reuses Linux package-check machinery. Replace those checks
+`chaweb`; macOS also reuses legacy package-check machinery. Replace those checks
 with application-level compatibility tests plus real native-host verification
 before removing the server target. Do not relabel a browser test with a fake
 bridge as a packaged native end-to-end test.
 
 At cutover remove the server executable, listener/runtime cookie wiring, port
 flags, production HTTP asset serving, Vite API proxy, server launch scripts, and
-Linux server package target. Retain reusable seed data and compatibility tests;
-move shared assets out of Linux-specific locations when necessary rather than
+legacy server package target. Retain reusable seed data and compatibility tests;
+move shared assets out of package-specific locations when necessary rather than
 deleting them with the package.
-
-Linux can continue to compile and test common code without WebView dependencies.
-An actual Linux GUI product requires a separately scoped host; this migration
-does not leave a server release as an accidental supported fallback.
 
 ### Verification and Acceptance
 
@@ -1352,7 +1347,7 @@ or pretending all asynchronous failure modes disappear.
 Do not combine this migration with a backend language rewrite, database/schema
 migration, replacement of SQLCipher/provider transport, character/session
 redesign, plugin architecture, multi-window behavior, a full native media-stack
-rewrite, Linux desktop support, or iOS lifecycle implementation. Keep platform
+rewrite or iOS lifecycle implementation. Keep platform
 types out of common code so a later host can reuse it without making that future
 product part of the current implementation.
 
@@ -1375,9 +1370,9 @@ product part of the current implementation.
 5. Remove server-only settings from new examples/options, retaining warning-and-
    ignore compatibility for old `[web]`. Preserve unrelated user configuration
    and database format. Remove remaining temporary incomplete-native capabilities.
-6. Retire Linux server release/package/staging targets and transport-only checks.
-   Preserve relocated seed data, upgrade assertions, and Linux common/app/bridge/
-   provider tests. Remove production `cpp-httplib` and unconditional production
+6. Retire legacy server release/package/staging targets and transport-only checks.
+   Preserve relocated seed data, upgrade assertions, and necessary outbound-provider
+   tests. Remove production `cpp-httplib` and unconditional production
    setup, retaining it only in test targets that need it.
 7. Update CMake/Make/npm commands and operational READMEs. Flag stale `docs/`
    guidance outside the authorized scope. Search for removed mechanisms and
@@ -1385,7 +1380,7 @@ product part of the current implementation.
    URLs remain valid; an unused server fallback does not.
 8. Build from fresh directories with tests enabled and disabled. Run common C++,
    frontend, affected race/sanitizer, both native integration, and both package/
-   upgrade checks after deletion, plus Linux common tests. Inspect shipped target
+   upgrade checks after deletion. Inspect shipped target
    dependencies and application runtime listeners rather than relying on caches.
 9. Complete final media/maintenance/lifetime/Stop/long-conversation checks on the
    final implementation. Reuse passing same-revision evidence; rerun affected
@@ -1399,7 +1394,7 @@ product part of the current implementation.
     behavior/tests or chasing an invented reduction percentage.
 11. Complete the final acceptance record. Report unresolved blockers rather than
     declaring completion because one host works or the context is nearly full.
-    Keep unrelated database/language/native-media/Linux-GUI/iOS/multi-window
+    Keep unrelated database/language/native-media/iOS/multi-window
     redesign outside this migration.
 
 ## Verification for this block
@@ -1410,8 +1405,7 @@ product part of the current implementation.
   classify outbound provider/test/resource occurrences instead of deleting blindly.
 - Build with testing both enabled and disabled from fresh directories, inspect
   actual shipped target/dependency graphs, and confirm production does not depend
-  on cpp-httplib or the removed runtime. Linux still builds common app/bridge/core
-  and outbound-provider tests without a desktop product.
+  on cpp-httplib or the removed runtime.
 - Run common/frontend/schema/fixture checks, affected races/sanitizers, both actual
   native suites, and both package/upgrade scripts after deletion. Verify packages
   with old server files absent; inspect runtime listeners and test-hook isolation.
@@ -1474,8 +1468,8 @@ provider listener does not authorize an application HTTP fallback in production.
 ## Acceptance gate
 
 Production and package verification have no internal HTTP/SSE/
-`chaweb` or production `cpp-httplib` dependency. Both native packages and Linux
-common tests pass, retained behavior has evidence, temporary fallback/probe code
+`chaweb` or production `cpp-httplib` dependency. Both native packages pass,
+retained behavior has evidence, temporary fallback/probe code
 is gone, and the simplification report is reproducible.
 
 Mark complete only after the numbered steps and relevant checks above pass.
@@ -1535,7 +1529,7 @@ prerequisite/evidence. A context limit or a mostly working platform is not succe
 - [ ] Generated DTO checks and real C++ wire-fixture checks remain effective.
 - [ ] Both packages pass startup, protected-vault, persistence, and upgrade checks.
 - [ ] Production and package verification have no internal HTTP/SSE/`chaweb` dependency.
-- [ ] Linux common tests and necessary outbound-provider test infrastructure remain.
+- [ ] Necessary outbound-provider test infrastructure remains.
 - [ ] Temporary fallback/probe code and obsolete server configuration are removed.
 - [ ] Net code/dependency/configuration changes are measured against the platform-feasibility work.
 - [ ] Retained behavioral assertions were preserved rather than deleted for line savings.

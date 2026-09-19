@@ -1,0 +1,65 @@
+{
+  "vault_name": "Personal",
+  "vaults": ["Personal"],
+  "initial_forum_id": "entrance",
+  "initial_session_id": "welcome",
+  "personas": [
+    {
+      "id": "guest",
+      "display_name": "Guest",
+      "description": "The built-in visitor persona",
+      "appearance": {
+        "font": "sans",
+        "style": "normal",
+        "weight": "normal",
+        "size": "normal",
+        "text_color": "normal"
+      }
+    }
+  ],
+  "characters": [
+    {
+      "id": "assistant",
+      "display_name": "Assistant",
+      "description": "CHA application guide",
+      "appearance": {
+        "font": "sans",
+        "style": "normal",
+        "weight": "normal",
+        "size": "normal",
+        "text_color": "normal"
+      }
+    }
+  ],
+  "forums": [
+    {
+      "id": "entrance",
+      "display_name": "Entrance",
+      "default_character_id": "assistant",
+      "default_persona_id": "guest",
+      "default_persona_display_name": "Guest",
+      "members": [
+        {
+          "id": "assistant",
+          "display_name": "Assistant",
+          "description": "CHA application guide",
+          "appearance": {
+            "font": "sans",
+            "style": "normal",
+            "weight": "normal",
+            "size": "normal",
+            "text_color": "normal"
+          }
+        }
+      ]
+    }
+  ],
+  "recent_sessions": [
+    {
+      "forum_id": "entrance",
+      "session_id": "welcome",
+      "session_label": "Welcome",
+      "updated_at": 2
+    }
+  ]
+}

@@ -114,6 +114,7 @@ xcrun swiftc \
     -Xlinker -rpath \
     -Xlinker @executable_path/../Frameworks \
     "$repository/packaging/macos/main.swift" \
+    "$repository/packaging/macos/feasibility.swift" \
     -o "$contents/MacOS/CHA"
 
 sed -e "s/@VERSION@/$version/g" \

@@ -88,7 +88,7 @@ keep their results in one handoff rather than repeating common implementation.
 | [07](block7.md) | Providers, credentials, OAuth, and settings | Native compiler + Node + both hosts | 180–280K |
 | [08](block8.md) | Local resources, speech, audio jobs, and voice input | Both hosts + deterministic providers/microphones | 250–320K |
 | [09](block9.md) | Final contract, development workflow, and package parity | Both hosts + Node | 220–300K |
-| [10](block10.md) | Remove HTTP/SSE and verify simplification | Both hosts + Linux common build | 200–300K |
+| [10](block10.md) | Remove HTTP/SSE and verify simplification | Both hosts | 200–300K |
 
 The principal gates are:
 
@@ -654,12 +654,12 @@ completed operation/assertion inventory.
 5. Verify shipping builds cannot enable automation/CDP/development-origin hooks,
    including relevant launch/environment overrides. Keep instrumented native
    test hosts separate while using the same application implementation/assets.
-6. Move shared seed/config data out of Linux-only locations where needed and
-   update all consumers. Build both shipping hosts with native startup and app/
-   bridge/core only; keep `chaweb` solely as a separate temporary migration target.
+6. Move shared seed/config data out of locations owned by the retiring server
+   package and update all consumers. Build both shipping hosts with native startup
+   and app/bridge/core only; keep `chaweb` solely as a temporary migration target.
 7. Update macOS packaging: direct built assets, proven loader layout, protected
    first launch, icons/signing/library/OS checks. Replace port-based runtime smoke
-   assumptions and the temporary `chaweb` assembly/Linux package-check reuse with
+   assumptions and the temporary `chaweb` assembly/legacy package-check reuse with
    retained application/startup and native-host assertions.
 8. Update Windows packaging: mapped built assets, shared seed/config data, manifest/
    icons/runtime checks. Remove build/copy/run requirements for `chaweb.exe` in
@@ -692,7 +692,7 @@ results, completed coverage matrix, and the checked deletion list.
 
 **Read:** redesign Sections 1 and 18–21; Block 01's baseline, Block 09's deletion
 list, remaining `src/web` files, `CMakeLists.txt`, `Makefile`, `src/web_main.cpp`,
-frontend/staging/launch scripts, Linux packaging, and the final target graph.
+frontend/staging/launch scripts, legacy server packaging, and the final target graph.
 
 **Steps**
 
@@ -713,9 +713,9 @@ frontend/staging/launch scripts, Linux packaging, and the final target graph.
 5. Remove server-only settings from new examples/options, retaining warning-and-
    ignore compatibility for old `[web]`. Preserve unrelated user configuration
    and database format. Remove remaining temporary incomplete-native capabilities.
-6. Retire Linux server release/package/staging targets and transport-only checks.
-   Preserve relocated seed data, upgrade assertions, and Linux common/app/bridge/
-   provider tests. Remove production `cpp-httplib` and unconditional production
+6. Retire legacy server release/package/staging targets and transport-only checks.
+   Preserve relocated seed data, upgrade assertions, and necessary outbound-provider
+   tests. Remove production `cpp-httplib` and unconditional production
    setup, retaining it only in test targets that need it.
 7. Update CMake/Make/npm commands and operational READMEs. Flag stale `docs/`
    guidance outside the authorized scope. Search for removed mechanisms and
@@ -723,7 +723,7 @@ frontend/staging/launch scripts, Linux packaging, and the final target graph.
    URLs remain valid; an unused server fallback does not.
 8. Build from fresh directories with tests enabled and disabled. Run common C++,
    frontend, affected race/sanitizer, both native integration, and both package/
-   upgrade checks after deletion, plus Linux common tests. Inspect shipped target
+   upgrade checks after deletion. Inspect shipped target
    dependencies and application runtime listeners rather than relying on caches.
 9. Complete final media/maintenance/lifetime/Stop/long-conversation checks on the
    final implementation. Reuse passing same-revision evidence; rerun affected
@@ -737,12 +737,12 @@ frontend/staging/launch scripts, Linux packaging, and the final target graph.
     behavior/tests or chasing an invented reduction percentage.
 11. Complete the final acceptance record. Report unresolved blockers rather than
     declaring completion because one host works or the context is nearly full.
-    Keep unrelated database/language/native-media/Linux-GUI/iOS/multi-window
+    Keep unrelated database/language/native-media/iOS/multi-window
     redesign outside this migration.
 
 **Acceptance:** production and package verification have no internal HTTP/SSE/
-`chaweb` or production `cpp-httplib` dependency. Both native packages and Linux
-common tests pass, retained behavior has evidence, temporary fallback/probe code
+`chaweb` or production `cpp-httplib` dependency. Both native packages pass,
+retained behavior has evidence, temporary fallback/probe code
 is gone, and the simplification report is reproducible.
 
 **Handoff:** final implementation summary, measured before/after results,
@@ -807,7 +807,7 @@ continuation. Do not begin later blocks implicitly.
 - [ ] Generated DTO checks and real C++ wire-fixture checks remain effective.
 - [ ] Both packages pass startup, protected-vault, persistence, and upgrade checks.
 - [ ] Production and package verification have no internal HTTP/SSE/`chaweb` dependency.
-- [ ] Linux common tests and necessary outbound-provider test infrastructure remain.
+- [ ] Necessary outbound-provider test infrastructure remains.
 - [ ] Temporary fallback/probe code and obsolete server configuration are removed.
 - [ ] Net code/dependency/configuration changes are measured against Block 01.
 - [ ] Retained behavioral assertions were preserved rather than deleted for line savings.

@@ -1,0 +1,36 @@
+{
+  "id": "guide",
+  "display_name": "Guide",
+  "appearance": {
+    "font": "sans",
+    "style": "normal",
+    "weight": "normal",
+    "size": "normal",
+    "text_color": "normal"
+  },
+  "character_markdown": "Prompt",
+  "editable_markdown": "Source",
+  "markdown_files": [],
+  "provider": "terra",
+  "style": null,
+  "voice_id": "brian",
+  "reasoning_effort": "high",
+  "web_search": "auto",
+  "available_providers": [{"id": "terra", "label": "Terra"}],
+  "available_styles": [
+    {
+      "id": "serif-italic",
+      "label": "Serif italic",
+      "appearance": {
+        "font": "serif",
+        "style": "italic",
+        "weight": "normal",
+        "size": "normal",
+        "text_color": "normal"
+      }
+    }
+  ],
+  "available_voices": [{"id": "brian", "label": "Brian"}],
+  "settings_writable": true,
+  "writable": true
+}

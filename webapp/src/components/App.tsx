@@ -21,7 +21,13 @@ import {
 } from '../api/events';
 import { validateBootstrap } from '../state/bootstrap';
 import { saveMarkdownDownload } from '../download';
-import { parseAppRoute, sessionRoute } from '../state/route';
+import {
+  currentAppRoute,
+  reloadApplication,
+  sessionRoute,
+  usesHashRoutes,
+  writeAppRoute,
+} from '../state/route';
 import { consumeVoiceSettingsRestore } from '../state/voiceSettingsReload';
 import {
   isSessionLimit,
@@ -465,7 +471,7 @@ export type SessionEventsConnector = (
 ) => SessionEventConnection;
 
 function defaultReload() {
-  window.location.assign('/');
+  reloadApplication();
 }
 
 interface AppProps {
@@ -837,7 +843,7 @@ export function App({
 
       dispatch({ type: 'conversation-opened', snapshot });
       if (updateHistory) {
-        window.history.pushState(null, '', sessionRoute(snapshot.forum.id, snapshot.session_id));
+        writeAppRoute(sessionRoute(snapshot.forum.id, snapshot.session_id));
       }
       connectStream(forumId, sessionId, generation, false);
       if (refreshRecent) void refreshBootstrap();
@@ -939,7 +945,7 @@ export function App({
     resetLiveSession();
     retryTarget.current = null;
     navigate({ type: 'show-initial-conversation' });
-    window.history.pushState(null, '', '/');
+    writeAppRoute('/');
   }, [navigate, resetLiveSession]);
 
   const retrySessionOpen = useCallback(() => {
@@ -1079,7 +1085,7 @@ export function App({
       resetLiveSession();
       retryTarget.current = null;
       navigate({ type: 'show-initial-conversation' });
-      window.history.replaceState(null, '', '/');
+      writeAppRoute('/', 'replace');
     }
     await refreshBootstrap();
     setCatalogRevision((revision) => revision + 1);
@@ -1101,7 +1107,7 @@ export function App({
     if (state.activeConversation?.forumId === forumId) {
       resetLiveSession();
       retryTarget.current = null;
-      window.history.replaceState(null, '', '/');
+      writeAppRoute('/', 'replace');
     }
     navigate({ type: 'forum-deleted', forumId });
     setCatalogRevision((revision) => revision + 1);
@@ -1111,7 +1117,7 @@ export function App({
     if (state.bootstrapStatus !== 'ready' || initialRouteHandled.current) return;
     initialRouteHandled.current = true;
     const restoreVoiceSettings = consumeVoiceSettingsRestore();
-    const route = parseAppRoute(window.location.pathname);
+    const route = currentAppRoute();
     if (route.kind === 'root') {
       if (restoreVoiceSettings) navigate({ type: 'show-settings-voice-input' });
       setInitialRouteReady(true);
@@ -1165,7 +1171,7 @@ export function App({
 
   useEffect(() => {
     const visitHistoryRoute = () => {
-      const route = parseAppRoute(window.location.pathname);
+      const route = currentAppRoute();
       if (route.kind === 'root') {
         resetLiveSession();
         navigate({ type: 'show-initial-conversation' });
@@ -1179,7 +1185,11 @@ export function App({
       }
     };
     window.addEventListener('popstate', visitHistoryRoute);
-    return () => window.removeEventListener('popstate', visitHistoryRoute);
+    if (usesHashRoutes()) window.addEventListener('hashchange', visitHistoryRoute);
+    return () => {
+      window.removeEventListener('popstate', visitHistoryRoute);
+      window.removeEventListener('hashchange', visitHistoryRoute);
+    };
   }, [navigate, openConversation, resetLiveSession]);
 
   useEffect(() => () => {

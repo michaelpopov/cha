@@ -1,0 +1,62 @@
+{
+  "forum": {
+    "id": "entrance",
+    "display_name": "Entrance",
+    "default_character_id": "assistant",
+    "default_persona_id": "guest",
+    "default_persona_display_name": "Guest",
+    "members": [
+      {
+        "id": "assistant",
+        "display_name": "Assistant",
+        "description": "CHA application guide",
+        "appearance": {
+          "font": "sans",
+          "style": "normal",
+          "weight": "normal",
+          "size": "normal",
+          "text_color": "normal"
+        }
+      }
+    ]
+  },
+  "session_id": "welcome",
+  "session_label": "Welcome",
+  "characters": [
+    {
+      "id": "assistant",
+      "display_name": "Assistant",
+      "description": "CHA application guide",
+      "appearance": {
+        "font": "sans",
+        "style": "normal",
+        "weight": "normal",
+        "size": "normal",
+        "text_color": "normal"
+      }
+    }
+  ],
+  "default_character_id": "assistant",
+  "transcript": [
+    {
+      "id": 1,
+      "kind": "human",
+      "participant_id": "guest",
+      "display_name": "Guest",
+      "addressed_to": "assistant",
+      "addressed_to_name": "Assistant",
+      "text": "Hello",
+      "status": "complete",
+      "created_at": 1700000000,
+      "has_cached_audio": true
+    }
+  ],
+  "generation": {
+    "active": false,
+    "character_id": "",
+    "character_display_name": "",
+    "phase": "waiting",
+    "reasoning_text": ""
+  },
+  "lifecycle": "running"
+}
