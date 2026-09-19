@@ -2,6 +2,8 @@
 
 set -euo pipefail
 
+started_at=$SECONDS
+
 usage() {
     echo "Usage: $0 N" >&2
     exit 2
@@ -40,6 +42,18 @@ cd "$repo_root"
 if [[ ! -f $block_file ]]; then
     echo "Missing block file: $block_file" >&2
     exit 1
+fi
+
+if (( 10#$block_number > 1 )); then
+    previous_block_file="docs/block$((10#$block_number - 1)).md"
+    if [[ ! -f $previous_block_file ]]; then
+        echo "Missing previous block file: $previous_block_file" >&2
+        exit 1
+    fi
+    if ! grep -qw -- COMPLETED "$previous_block_file"; then
+        echo "Previous block is not completed: $previous_block_file" >&2
+        exit 1
+    fi
 fi
 
 for command in grok pi git jq; do
@@ -96,7 +110,8 @@ if [[ -z $review_output ]]; then
 fi
 
 printf -v fix_prompt \
-    'Address the code review comments below for the uncommitted changes implementing %s. Make only the necessary fixes, run relevant tests, and leave the changes uncommitted. If the review says NO_FINDINGS, verify the current changes and do not invent work.\n\nCode review comments:\n%s' \
+    'Address the code review comments below for the uncommitted changes implementing %s. Make only the necessary fixes, run relevant tests, and leave the changes uncommitted. If the review says NO_FINDINGS, verify the current changes and do not invent work. After finishing the review work, append a line containing exactly COMPLETED to %s as the final action.\n\nCode review comments:\n%s' \
+    "$block_file" \
     "$block_file" "$review_output"
 
 echo "Applying review feedback with Grok..."
@@ -109,3 +124,7 @@ if git diff --cached --quiet; then
     exit 1
 fi
 git commit -m "Block $block_number"
+
+elapsed=$((SECONDS - started_at))
+printf 'Completed in %02d:%02d:%02d\n' \
+    "$((elapsed / 3600))" "$(((elapsed % 3600) / 60))" "$((elapsed % 60))"
