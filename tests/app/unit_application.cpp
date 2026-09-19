@@ -81,11 +81,11 @@ TEST(Application, StartsWithoutAListenerAndBootstraps) {
         test::import_test_database(workspace.root());
     auto application = Application::open(make_command(workspace, database));
     EXPECT_TRUE(application->running());
-    EXPECT_EQ(application->state(), ApplicationState::ready);
+    EXPECT_EQ(application->state(), ApplicationState::running);
     EXPECT_GE(application->context_epoch(), 1U);
 
     const ApplicationBootstrap boot = application->bootstrap();
-    EXPECT_EQ(boot.state, ApplicationState::ready);
+    EXPECT_EQ(boot.state, ApplicationState::running);
     EXPECT_EQ(boot.presentation.initial_forum_id, entrance_id);
     EXPECT_EQ(boot.presentation.initial_session_id, welcome_id);
     EXPECT_FALSE(boot.presentation.forums.empty());

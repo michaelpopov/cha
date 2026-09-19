@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <iterator>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -195,6 +196,144 @@ TEST_F(NativeRuntimeTest, CloseAndHandleDoNotPropagateExceptions) {
     cha_runtime_close_connection(runtime_, "missing-connection");
     auto info = call("bridge.info");
     ASSERT_TRUE(info["ok"]);
+}
+
+TEST_F(NativeRuntimeTest, VaultSwitchPublishesANewEpochAndRejectsStaleWork) {
+    auto bootstrap = call("app.bootstrap");
+    ASSERT_TRUE(bootstrap["ok"]);
+    epoch_ = bootstrap["result"]["context_epoch"].get<std::uint64_t>();
+    auto listed = call("vault.list");
+    ASSERT_TRUE(listed["ok"]);
+    ASSERT_TRUE(listed["result"].is_array());
+    EXPECT_GE(listed["result"].size(), 1U);
+
+    auto created = call(
+        "vault.create",
+        {{"display_name", "Extra"},
+         {"copy_from", nullptr},
+         {"password", nullptr}});
+    ASSERT_TRUE(created["ok"]) << created.dump();
+
+    const auto old_epoch = epoch_;
+    auto switched = call(
+        "vault.switch", {{"vault_name", "Extra"}, {"password", nullptr}});
+    ASSERT_TRUE(switched["ok"]) << switched.dump();
+    epoch_ = switched["result"]["context_epoch"].get<std::uint64_t>();
+    EXPECT_GT(epoch_, old_epoch);
+
+    auto rejected = call(
+        "session.create",
+        {{"forum_id", "lobby"}, {"label", "Stale"}},
+        old_epoch);
+    ASSERT_TRUE(rejected.contains("ok"));
+    EXPECT_FALSE(rejected["ok"]);
+    EXPECT_EQ(rejected["error"]["code"], "vault_changed");
+}
+
+TEST_F(NativeRuntimeTest, VaultSwitchPersistsAcrossRestart) {
+    auto bootstrap = call("app.bootstrap");
+    ASSERT_TRUE(bootstrap["ok"]);
+    epoch_ = bootstrap["result"]["context_epoch"].get<std::uint64_t>();
+    auto created = call(
+        "vault.create",
+        {{"display_name", "Kept"},
+         {"copy_from", nullptr},
+         {"password", nullptr}});
+    ASSERT_TRUE(created["ok"]) << created.dump();
+    auto switched = call(
+        "vault.switch", {{"vault_name", "Kept"}, {"password", nullptr}});
+    ASSERT_TRUE(switched["ok"]) << switched.dump();
+
+    cha_runtime_close_connection(runtime_, connection_.c_str());
+    cha_runtime_request_shutdown(runtime_);
+    (void)cha_runtime_join_shutdown(runtime_, 2000);
+    cha_runtime_destroy(runtime_);
+    runtime_ = nullptr;
+    connection_.clear();
+
+    char* error = nullptr;
+    int32_t password_error = 0;
+    runtime_ = cha_runtime_create(
+        config_.c_str(),
+        resources_.c_str(),
+        "",
+        "",
+        0,
+        &password_error,
+        &error);
+    ASSERT_NE(runtime_, nullptr) << (error ? error : "");
+    cha_string_free(error);
+    cha_runtime_set_delivery_callback(runtime_, on_delivery, captured_.get());
+    char* connection = cha_runtime_open_connection(runtime_, &error);
+    ASSERT_NE(connection, nullptr);
+    connection_ = connection;
+    cha_string_free(connection);
+    cha_string_free(error);
+    next_id_ = 1;
+    epoch_ = 0;
+    auto restarted = call("app.bootstrap");
+    ASSERT_TRUE(restarted["ok"]) << restarted.dump();
+    EXPECT_EQ(restarted["result"]["bootstrap"]["vault_name"], "Kept");
+}
+
+TEST_F(NativeRuntimeTest, SaveFileUsesTemporaryReplaceAndHonorsEpoch) {
+    auto bootstrap = call("app.bootstrap");
+    ASSERT_TRUE(bootstrap["ok"]);
+    epoch_ = bootstrap["result"]["context_epoch"].get<std::uint64_t>();
+    const auto destination = workspace_.root() / "export.md";
+    std::ofstream(destination) << "original";
+    const std::string payload = "# Exported\n";
+    char* error = nullptr;
+    EXPECT_EQ(
+        cha_runtime_save_file(
+            runtime_,
+            epoch_,
+            destination.c_str(),
+            payload.c_str(),
+            payload.size(),
+            &error),
+        1);
+    cha_string_free(error);
+    std::ifstream input(destination);
+    std::string body(
+        (std::istreambuf_iterator<char>(input)),
+        std::istreambuf_iterator<char>());
+    EXPECT_EQ(body, payload);
+
+    const auto empty_destination = workspace_.root() / "empty.txt";
+    EXPECT_EQ(
+        cha_runtime_save_file(
+            runtime_,
+            epoch_,
+            empty_destination.c_str(),
+            nullptr,
+            0,
+            &error),
+        1);
+    cha_string_free(error);
+    std::ifstream empty_input(empty_destination);
+    std::string empty_body(
+        (std::istreambuf_iterator<char>(empty_input)),
+        std::istreambuf_iterator<char>());
+    EXPECT_TRUE(empty_body.empty());
+
+    EXPECT_EQ(
+        cha_runtime_save_file(
+            runtime_,
+            epoch_ + 99,
+            destination.c_str(),
+            "stale",
+            5,
+            &error),
+        0);
+    ASSERT_NE(error, nullptr);
+    EXPECT_STREQ(error, "The vault context has changed.");
+    cha_string_free(error);
+    std::ifstream after(destination);
+    std::string kept(
+        (std::istreambuf_iterator<char>(after)),
+        std::istreambuf_iterator<char>());
+    EXPECT_EQ(kept, payload);
 }
 
 TEST_F(NativeRuntimeTest, CloseAndReopenConnectionDoesNotCrossResolve) {

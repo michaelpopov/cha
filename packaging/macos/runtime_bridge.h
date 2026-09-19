@@ -63,6 +63,16 @@ int32_t cha_runtime_export_configuration(
     ChaRuntime* runtime,
     uint64_t* file_count,
     char** error);
+// Hosts pick the destination on the UI thread, then call this off that thread
+// after revalidating context. Writes through a temporary file and replaces
+// the destination only after the write succeeds.
+int32_t cha_runtime_save_file(
+    ChaRuntime* runtime,
+    uint64_t context_epoch,
+    const char* destination_utf8,
+    const char* data,
+    uint64_t size,
+    char** error);
 
 void cha_runtime_set_delivery_callback(
     ChaRuntime* runtime,

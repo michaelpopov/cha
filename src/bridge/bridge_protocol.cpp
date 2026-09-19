@@ -18,6 +18,14 @@ const std::pair<Method, std::string_view> kMethods[] = {
     {Method::session_snapshot, "session.snapshot"},
     {Method::session_subscribe, "session.subscribe"},
     {Method::session_unsubscribe, "session.unsubscribe"},
+    {Method::vault_list, "vault.list"},
+    {Method::vault_create, "vault.create"},
+    {Method::vault_update, "vault.update"},
+    {Method::vault_delete, "vault.delete"},
+    {Method::vault_switch, "vault.switch"},
+    {Method::vault_merge, "vault.merge"},
+    {Method::vault_r2_list, "vault.r2.list"},
+    {Method::vault_r2_download, "vault.r2.download"},
 };
 
 bool has_only_keys(
@@ -269,6 +277,18 @@ nlohmann::json delivery_batch(
         {"connection_id", connection_id},
         {"delivery_id", delivery_id},
         {"messages", std::move(messages)},
+    };
+}
+
+nlohmann::json context_changed_event(
+    std::string_view connection_id,
+    std::uint64_t context_epoch,
+    std::string_view state) {
+    return {
+        {"connection_id", connection_id},
+        {"event", "app.contextChanged"},
+        {"context_epoch", context_epoch},
+        {"state", state},
     };
 }
 

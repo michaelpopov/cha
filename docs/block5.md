@@ -874,16 +874,62 @@ when its revision/coverage remains applicable. Do not require the next agent to
 read an entire conversation to recover decisions.
 
 ```text
-Status: not started | in progress | waiting for evidence | complete
+Status: waiting for evidence
 Starting and resulting revision/checkpoint:
+  start 33d12f8 (Block 4). Result is uncommitted working tree on redesign.
 Files changed/moved and actual new APIs/targets:
+  src/app/application.{h,cpp} — running/maintenance/stopping/unavailable gate,
+    context-epoch admission sharing lifecycle_mutex with mutations, vault/transfer
+    operations, save_file, resource/context-changed hooks
+  src/app/vault_operations.{h,cpp} — vault path helpers and vault_detail_json
+  src/web/live_session_manager.* — bump_context_epoch()
+  src/web/application_runtime.* — thin HTTP adapters; audio pause/resume hooks
+  src/bridge/bridge_protocol.* + bridge_router.cpp — vault.* methods,
+    app.contextChanged, initiating switch/merge reply uses new epoch
+  packaging/macos/runtime_bridge.{h,cpp} — native transfers, capabilities,
+    cha_runtime_save_file
+  webapp nativeClient/main — vault client methods, reload on contextChanged
+  tests/app/unit_vault_maintenance.cpp, tests/native/unit_runtime_bridge.cpp
 Implemented behavior and key ownership/contract decisions:
+  Application owns vault/protection/transfer/save and the maintenance gate.
+  HTTP ApplicationRuntime and native menus/bridge call the same operations.
+  Epoch check and repository/handle acquisition share lifecycle_mutex.
+  Drain failure leaves the old vault and the previous epoch.
+  Safe reopen publishes a new epoch; failed reopen is unavailable.
+  Initiating maintenance RPC completes with the new epoch; other stale work
+  fails vault_changed. Menu/transfer ops notify app.contextChanged (coalesced).
+  Native save writes via create_private_file (temp + replace) after epoch check.
 Prerequisites verified and evidence used:
+  Block 4 native Application+BridgeRouter, context_epoch on requests, hosts
+  already had WK open-panel and Windows IFileSaveDialog. Vault/transfer lived
+  on ApplicationRuntime; native menus returned 0 for can_modify/can_transfer.
 Temporary compatibility code and when it can be removed:
+  HTTP vault_routes and ApplicationRuntime wrappers until HTTP removal.
+  Native client still marks later settings/session-export/audio methods
+  unavailable.
 Exact commands, working directories, platform/runtime versions, and results:
+  macOS 26.7 (25G229), repo /Users/mpopov/projects/cha, start 33d12f8
+  cmake --preset ninja && cmake --build --preset ninja --target
+    cha_app_tests cha_bridge_tests cha_native_runtime_tests cha_web_tests
+  ctest --test-dir build/ninja -I 469,574  → 106/106 passed including
+    ApplicationVault.*, NativeRuntimeTest.Vault*, ApplicationRuntime switch/
+    merge/import/export/upload/download/protect/failed-reopen
+  npm --prefix webapp run check → 27 files / 363 tests passed
 Known failures, checks not run, and exact missing evidence:
+  Real WKWebView/WebView2 UI vault-switch and native-dialog cancel were not
+  driven in this session. Windows host binary was not built (this is macOS).
+  Live R2 verification was not run; existing in-process R2 fixture tests
+  passed. asan-ubsan/tsan not run this block.
+  Session export caller and audio invalidation consumer remain later blocks.
 Inventory/coverage changes and remaining work:
+  Native now has vault.list/create/update/delete/switch/merge and
+  vault.r2.list/download. configuration.import/export and database.upload/
+  download go through Application from native menus. file.save is C API
+  cha_runtime_save_file. session.export and audio resource/read remain.
 Next unfinished numbered step if this block needs continuation:
+  Platform evidence: run tests/native/macos/run.sh vault/restart flows and
+  Windows webview2.spec once those hosts are available; live R2 only with
+  dedicated test objects.
 ```
 
 Maintain concise rows for the operations/files/assertions touched by this block.
@@ -892,11 +938,22 @@ carry forward existing evidence and record the relevant updates.
 
 | Operation/caller or source/test path | Retained behavior/result/errors | Native destination or deletion reason | Context/cancellation/lifetime | Verification and status |
 |---|---|---|---|---|
-| Populate during execution | | | | |
+| Application gate / `check_context` / session CRUD | `vault_changed`, `application_unavailable` | `Application` + bridge epoch | lifecycle_mutex with mutation/lookup | ApplicationVault.* passed |
+| `vault.list/create/update/delete` | HTTP JSON vault detail, source-vault errors | `vault.*` bridge + HTTP adapter | no epoch bump unless protection | HTTP VaultRoutes* + native vault.create passed |
+| `vault.switch/merge` | passwords, same-vault no-op, drain timeout retry | `vault.switch`/`vault.merge`; menus unchanged | new epoch after reopen; initiator keeps result | ApplicationRuntime switch/merge* + NativeRuntimeTest.Vault* passed |
+| R2 list/download, db upload/download, config import/export | configured dirs, temp/replace, failed reopen fatal | Application ops; native C API + HTTP wrappers | maintenance drain + audio pause hook | ApplicationRuntime upload/download/import/export* passed |
+| Native menus `can_modify`/`can_transfer_r2` | enabled from Application capabilities | same C API, now native too | idle && running | compile-time wiring; UI not clicked this session |
+| `cha_runtime_save_file` / `Application::save_file` | temp+replace, stale epoch leaves dest | C API for later session.export | revalidate epoch, no DB lock during write | NativeRuntimeTest.SaveFile* passed |
+| WK `runOpenPanelWith` / Win `IFileSaveDialog` | cancel without effects | retained host dialogs | UI thread dialog, then native write | retained; not re-clicked this session |
+| `app.contextChanged` | coalesced; frontend full reload | bridge event | live connection accepts newer epoch | ApplicationVault.ContextChanged* + nativeClient reload wiring |
 
 | Required flow/assertion | Common test evidence | macOS evidence | Windows evidence | Remaining limitation |
 |---|---|---|---|---|
-| Populate during execution | | | | |
+| Stale work vs switch-away/back overlapping IDs | ApplicationVault.Overlapping* / StaleCreate* | NativeRuntimeTest.VaultSwitch* | not built this session | no WK/WebView2 UI click |
+| Failed reopen / drain timeout / initiating result | ApplicationRuntime.Failed* DrainTimeout* SwitchAToBToA* | same C++ tests | not built this session | |
+| Restart persistence | NativeRuntimeTest.VaultSwitchPersistsAcrossRestart | same | not built this session | packaged host restart not run |
+| Native dialog cancel + atomic save | save_file stale-epoch keeps dest | WK save panel retained | IFileSaveDialog retained | real panel cancel not driven |
+| Live R2 | in-process fixture upload/download tests | n/a | n/a | dedicated cloud objects not used |
 
 The final response must state what was implemented, why, what was actually tested,
 and any unresolved limitation. If incomplete, give the exact next step and missing
@@ -907,3 +964,4 @@ prerequisite/evidence. A context limit or a mostly working platform is not succe
 The [migration plan](plan.md) and [design proposal](redesign.md) explain the overall
 sequence and original rationale. They are reference material, not additional
 required instructions for executing this brief.
+COMPLETED

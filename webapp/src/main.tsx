@@ -5,6 +5,7 @@ import { installNativeHostBridge } from './api/nativeBridge';
 import { createNativeChaClient } from './api/nativeClient';
 import { createNativeSessionEvents } from './api/nativeEvents';
 import { App } from './components/App';
+import { reloadApplication } from './state/route';
 import './styles/app.css';
 
 const root = document.getElementById('root');
@@ -14,6 +15,11 @@ if (!root) {
 }
 
 const native = installNativeHostBridge();
+if (native) {
+  native.on('app.contextChanged', () => {
+    reloadApplication();
+  });
+}
 const app = native
   ? (
     <App

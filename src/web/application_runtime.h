@@ -1,5 +1,6 @@
 #pragma once
 
+#include "app/application.h"
 #include "web/application_config.h"
 #include "web/r2_database_transfer.h"
 #include "workspace/workspace_config_store.h"
@@ -13,25 +14,8 @@
 
 namespace cha::web {
 
-struct VaultCreate {
-    std::string display_name;
-    std::optional<std::string> copy_from;
-    std::string password;
-};
-
-struct VaultUpdate {
-    std::string display_name;
-    std::string password;
-};
-
-struct VaultRegistrySnapshot {
-    std::vector<VaultDefinition> vaults;
-    VaultDefinition active;
-};
-
-// Owns one complete running web application. The command-line executable and
-// the macOS in-process bridge share this composition root; only the requested
-// listener port and optional private access token differ.
+// Temporary HTTP adapter around Application. Vault, transfer, and maintenance
+// operations are owned by Application; this object binds the listener.
 class ApplicationRuntime {
 public:
     static std::unique_ptr<ApplicationRuntime> open(

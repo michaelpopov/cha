@@ -122,6 +122,9 @@ public:
     [[nodiscard]] std::optional<FullSessionId> selected() const;
     void close_session(const FullSessionId& key);
     [[nodiscard]] std::uint64_t context_epoch() const;
+    // Invalidates subscriptions and old-context work. The application gate
+    // publishes the returned epoch after a safe reopen.
+    std::uint64_t bump_context_epoch();
     // Answers reattach and shutdown cases entirely from manager state. An
     // empty result means the caller must validate storage before open().
     [[nodiscard]] std::optional<LiveSessionOpenResult> try_reattach(

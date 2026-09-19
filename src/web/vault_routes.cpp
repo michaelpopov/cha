@@ -1,5 +1,6 @@
 #include "web/vault_routes.h"
 
+#include "app/vault_operations.h"
 #include "util/path_name.h"
 #include "web/application_config.h"
 #include "web/application_runtime.h"
@@ -40,18 +41,7 @@ nlohmann::json vault_json(
     const VaultDefinition& vault,
     std::string_view active_name,
     std::size_t vault_count) {
-    return {
-        {"display_name", vault.name},
-        {"protected", vault.password_protected},
-        {"data_path", utf8_path(vault.data)},
-        {"mirror_path", vault.mirror
-            ? nlohmann::json(utf8_path(*vault.mirror)) : nlohmann::json(nullptr)},
-        {"modify_path", vault.modify
-            ? nlohmann::json(utf8_path(*vault.modify)) : nlohmann::json(nullptr)},
-        {"active", same_vault_name(vault.name, active_name)},
-        {"can_delete", vault_count > 1
-            && !same_vault_name(vault.name, active_name)},
-    };
+    return cha::app::vault::vault_detail_json(vault, active_name, vault_count);
 }
 
 } // namespace

@@ -243,6 +243,12 @@ std::uint64_t LiveSessionManager::context_epoch() const {
     return context_epoch_;
 }
 
+std::uint64_t LiveSessionManager::bump_context_epoch() {
+    std::lock_guard lock(mutex_);
+    ++context_epoch_;
+    return context_epoch_;
+}
+
 void LiveSessionManager::close_session(const FullSessionId& key) {
     LiveSessionHandle actor;
     {

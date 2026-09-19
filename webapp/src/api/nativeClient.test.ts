@@ -27,7 +27,7 @@ describe('native CHA client', () => {
     const bridge = createFakeNativeBridge({
       'bridge.info': () => loadFixture('bridge-info.json'),
       'app.bootstrap': () => ({
-        state: 'ready',
+        state: 'running',
         context_epoch: 3,
         bootstrap: bootstrapFixture,
       }),
@@ -45,14 +45,35 @@ describe('native CHA client', () => {
       .resolves.toEqual({ forum_id: 'lobby', session_id: 'planning' });
   });
 
+  it('lists and switches vaults through native methods', async () => {
+    const vault = {
+      display_name: 'Personal',
+      protected: false,
+      data_path: '/tmp/personal.sqlite3',
+      mirror_path: null,
+      modify_path: null,
+      active: true,
+      can_delete: false,
+    };
+    const bridge = createFakeNativeBridge({
+      'bridge.info': () => loadFixture('bridge-info.json'),
+      'vault.list': () => [vault],
+      'vault.switch': () => ({ state: 'running', context_epoch: 4 }),
+    });
+    const client = createNativeChaClient(bridge);
+    await expect(client.listVaults()).resolves.toEqual([vault]);
+    await expect(client.switchVault('Projects')).resolves.toBeUndefined();
+    expect(bridge.contextEpoch()).toBe(4);
+  });
+
   it('marks unmigrated methods unavailable instead of forwarding them', async () => {
     const client = createNativeChaClient(createFakeNativeBridge());
-    await expect(client.listVaults()).rejects.toBeInstanceOf(ChaError);
-    await expect(client.listVaults()).rejects.toMatchObject({
+    await expect(client.listProviders()).rejects.toBeInstanceOf(ChaError);
+    await expect(client.listProviders()).rejects.toMatchObject({
       code: 'invalid_argument',
       message: 'That operation is not available in native mode.',
     });
-    await expect(client.switchVault('Personal')).rejects.toMatchObject({
+    await expect(client.getR2Storage()).rejects.toMatchObject({
       code: 'invalid_argument',
     });
   });

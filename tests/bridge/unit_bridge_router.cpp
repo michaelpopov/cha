@@ -263,6 +263,14 @@ TEST_F(BridgeRouterTest, RejectsMalformedUnknownStaleDuplicateAndUnavailableMeth
     EXPECT_EQ(reply["error"]["code"], "vault_changed");
     ack_delivery(*router_, connection_, *batch);
 
+    reply = call("vault.create", {{"copy_from", nullptr}});
+    EXPECT_FALSE(reply["ok"]);
+    EXPECT_EQ(reply["error"]["code"], "invalid_argument");
+
+    reply = call("vault.delete", {{"vault_name", 1}});
+    EXPECT_FALSE(reply["ok"]);
+    EXPECT_EQ(reply["error"]["code"], "invalid_argument");
+
     EXPECT_EQ(
         application_->live_sessions().snapshot().live_session_count, before);
 }

@@ -6,9 +6,12 @@ import {
   type ChaClient,
   type CommandResult,
   type CreateSessionResult,
+  type CreateVaultRequest,
   type InputRequest,
   type OpenSessionResult,
   type SessionSnapshot,
+  type VaultDetail,
+  type VaultUpdate,
 } from './client';
 import { nativeProtocolVersion, type NativeBridge } from './nativeBridge';
 import { isRecord } from './guards';
@@ -51,6 +54,27 @@ function isBootstrapResult(value: unknown): value is {
     && Number.isSafeInteger(value.context_epoch)
     && (value.context_epoch as number) >= 1
     && 'bootstrap' in value;
+}
+
+function isVaultDetail(value: unknown): value is VaultDetail {
+  return isRecord(value)
+    && typeof value.display_name === 'string'
+    && typeof value.protected === 'boolean'
+    && typeof value.data_path === 'string'
+    && (value.mirror_path === null || typeof value.mirror_path === 'string')
+    && (value.modify_path === null || typeof value.modify_path === 'string')
+    && typeof value.active === 'boolean'
+    && typeof value.can_delete === 'boolean';
+}
+
+function isMaintenanceResult(value: unknown): value is {
+  state: string;
+  context_epoch: number;
+} {
+  return isRecord(value)
+    && typeof value.state === 'string'
+    && Number.isSafeInteger(value.context_epoch)
+    && (value.context_epoch as number) >= 1;
 }
 
 export async function connectNativeBridge(bridge: NativeBridge): Promise<void> {
@@ -137,12 +161,35 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient {
     startOpenAiAuth: nativeUnavailable,
     pollOpenAiAuth: nativeUnavailable,
     disconnectOpenAiAuth: nativeUnavailable,
-    listVaults: nativeUnavailable,
-    createVault: nativeUnavailable,
-    listR2Vaults: nativeUnavailable,
-    downloadR2Vault: nativeUnavailable,
-    updateVault: nativeUnavailable,
-    deleteVault: nativeUnavailable,
+    listVaults: () => call(
+      'vault.list',
+      {},
+      (value): value is VaultDetail[] => Array.isArray(value) && value.every(isVaultDetail),
+    ),
+    createVault: (request: CreateVaultRequest) => call(
+      'vault.create',
+      request,
+      isVaultDetail,
+    ),
+    listR2Vaults: () => call(
+      'vault.r2.list',
+      {},
+      (value): value is string[] => Array.isArray(value)
+        && value.every((name) => typeof name === 'string'),
+    ),
+    downloadR2Vault: (name) => call(
+      'vault.r2.download',
+      { name },
+      isVaultDetail,
+    ),
+    updateVault: (vaultName, update: VaultUpdate) => call(
+      'vault.update',
+      { vault_name: vaultName, ...update },
+      isVaultDetail,
+    ),
+    deleteVault: async (vaultName) => {
+      await call('vault.delete', { vault_name: vaultName }, isRecord);
+    },
     listProviders: nativeUnavailable,
     createProvider: nativeUnavailable,
     getProvider: nativeUnavailable,
@@ -174,8 +221,22 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient {
     startAudioDownloadBatch: nativeUnavailable,
     startAudioDownload: nativeUnavailable,
     getAudioDownloads: nativeUnavailable,
-    switchVault: nativeUnavailable,
-    mergeVault: nativeUnavailable,
+    switchVault: async (vaultName, password) => {
+      const result = await call(
+        'vault.switch',
+        { vault_name: vaultName, password: password || null },
+        isMaintenanceResult,
+      );
+      bridge.setContextEpoch(result.context_epoch);
+    },
+    mergeVault: async (sourceVault, password) => {
+      const result = await call(
+        'vault.merge',
+        { source_vault: sourceVault, password: password || null },
+        isMaintenanceResult,
+      );
+      bridge.setContextEpoch(result.context_epoch);
+    },
   };
 }
 

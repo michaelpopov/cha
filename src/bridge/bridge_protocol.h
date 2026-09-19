@@ -29,6 +29,14 @@ enum class Method {
     session_snapshot,
     session_subscribe,
     session_unsubscribe,
+    vault_list,
+    vault_create,
+    vault_update,
+    vault_delete,
+    vault_switch,
+    vault_merge,
+    vault_r2_list,
+    vault_r2_download,
 };
 
 struct ParsedRequest {
@@ -89,5 +97,9 @@ struct DeliveryAck {
     std::string_view connection_id,
     std::uint64_t delivery_id,
     std::vector<nlohmann::json> messages);
+[[nodiscard]] nlohmann::json context_changed_event(
+    std::string_view connection_id,
+    std::uint64_t context_epoch,
+    std::string_view state);
 
 } // namespace cha::bridge

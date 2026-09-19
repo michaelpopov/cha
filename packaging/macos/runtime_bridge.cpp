@@ -3,6 +3,7 @@
 #include "app/application.h"
 #include "bridge/bridge_router.h"
 #include "util/logging.h"
+#include "util/path_name.h"
 #include "web/application_config.h"
 #include "web/application_runtime.h"
 #include "workspace/workspace_config_store.h"
@@ -20,6 +21,7 @@
 #include <new>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -161,14 +163,20 @@ int32_t transfer(
     char** error,
     bool download) {
     clear_error(error);
-    if (!runtime || !runtime->http_application || !byte_count) {
-        set_string(error, "That database operation is not available yet.");
+    if (!runtime || !byte_count) {
+        set_string(error, "That database operation is not available.");
         return 0;
     }
     try {
-        const cha::web::R2DatabaseTransfer result = download
-            ? runtime->http_application->download_database()
-            : runtime->http_application->upload_database();
+        const cha::web::R2DatabaseTransfer result = runtime->native_application
+            ? (download
+                ? runtime->native_application->download_database()
+                : runtime->native_application->upload_database())
+            : runtime->http_application
+            ? (download
+                ? runtime->http_application->download_database()
+                : runtime->http_application->upload_database())
+            : throw std::runtime_error("CHA runtime is not available");
         *byte_count = result.byte_count;
         return 1;
     } catch (const cha::WorkspaceRestartRequiredError& fatal) {
@@ -186,14 +194,20 @@ int32_t transfer_configuration(
     char** error,
     bool importing) {
     clear_error(error);
-    if (!runtime || !runtime->http_application || !file_count) {
-        set_string(error, "That database operation is not available yet.");
+    if (!runtime || !file_count) {
+        set_string(error, "That database operation is not available.");
         return 0;
     }
     try {
-        const WorkspaceConfigTransfer result = importing
-            ? runtime->http_application->import_configuration()
-            : runtime->http_application->export_configuration();
+        const WorkspaceConfigTransfer result = runtime->native_application
+            ? (importing
+                ? runtime->native_application->import_configuration()
+                : runtime->native_application->export_configuration())
+            : runtime->http_application
+            ? (importing
+                ? runtime->http_application->import_configuration()
+                : runtime->http_application->export_configuration())
+            : throw std::runtime_error("CHA runtime is not available");
         *file_count = result.file_count;
         return 1;
     } catch (const cha::WorkspaceRestartRequiredError& fatal) {
@@ -338,17 +352,31 @@ int32_t cha_runtime_is_native(const ChaRuntime* runtime) {
 }
 
 int32_t cha_runtime_can_modify(const ChaRuntime* runtime) {
-    if (!runtime || runtime->native || !runtime->http_application) return 0;
+    if (!runtime) return 0;
     try {
-        return runtime->http_application->current_vault().modify ? 1 : 0;
+        if (runtime->native_application) {
+            return runtime->native_application->capabilities().can_modify ? 1 : 0;
+        }
+        if (runtime->http_application) {
+            return runtime->http_application->current_vault().modify ? 1 : 0;
+        }
     } catch (...) {
-        return 0;
     }
+    return 0;
 }
 
 int32_t cha_runtime_can_transfer_r2(const ChaRuntime* runtime) {
-    return runtime && !runtime->native && runtime->http_application
-        && runtime->http_application->has_r2_storage() ? 1 : 0;
+    if (!runtime) return 0;
+    try {
+        if (runtime->native_application) {
+            return runtime->native_application->capabilities().can_transfer_r2 ? 1 : 0;
+        }
+        if (runtime->http_application) {
+            return runtime->http_application->has_r2_storage() ? 1 : 0;
+        }
+    } catch (...) {
+    }
+    return 0;
 }
 
 int32_t cha_runtime_upload(
@@ -377,6 +405,44 @@ int32_t cha_runtime_export_configuration(
     uint64_t* file_count,
     char** error) {
     return transfer_configuration(runtime, file_count, error, false);
+}
+
+int32_t cha_runtime_save_file(
+    ChaRuntime* runtime,
+    uint64_t context_epoch,
+    const char* destination_utf8,
+    const char* data,
+    uint64_t size,
+    char** error) {
+    clear_error(error);
+    if (!runtime || !runtime->native_application
+        || !destination_utf8 || destination_utf8[0] == '\0'
+        || (!data && size != 0)) {
+        set_string(error, "That file operation is not available.");
+        return 0;
+    }
+    try {
+        const std::string_view contents =
+            size == 0
+                ? std::string_view{}
+                : std::string_view(data, static_cast<std::size_t>(size));
+        runtime->native_application->save_file(
+            context_epoch,
+            cha::path_from_utf8(destination_utf8),
+            contents);
+        return 1;
+    } catch (const cha::app::ApplicationError& denied) {
+        set_string(
+            error,
+            std::string(cha::bridge::public_error_message(denied.code)).c_str());
+        return 0;
+    } catch (const cha::WorkspaceRestartRequiredError& fatal) {
+        set_string(error, fatal.what());
+        return -1;
+    } catch (...) {
+        set_current_error(error);
+        return -1;
+    }
 }
 
 void cha_runtime_set_delivery_callback(
