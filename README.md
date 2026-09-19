@@ -1,26 +1,27 @@
 # CHA
 
-CHA is a C++20 browser application for chatting with OpenAI-compatible model
-servers. The `chaweb` process serves the browser client and its HTTP/SSE API.
+CHA is a C++20 desktop application for chatting with OpenAI-compatible model
+servers. The supported products are macOS (WKWebView) and Windows (WebView2).
+Domain calls use a native bridge; there is no application HTTP listener.
 
 ## Start chatting
 
-Initialize a development database once, then start the staged application:
+On macOS, build and launch the packaged app, or use native development with
+Vite serving only frontend assets:
 
 ```sh
-make import-dev CONFIG="$PWD/cha-config" VAULT=Dev
-make run
+make package-macos VERSION=0.0.0-dev
+make run-native-dev CONFIG="$PWD/cha-config"
 ```
 
-Open the address printed by the launcher. CHA starts in the process-local
-**Entrance / Welcome** conversation as **Guest** with **Assistant**. Use the
-browser to inspect forums, create or reopen a stored session, and select a forum
-character. Which persona you speak as follows the forum you are in and is set in
-that forum's configuration, not in the browser.
+CHA starts in the process-local **Entrance / Welcome** conversation as **Guest**
+with **Assistant**. Inspect forums, create or reopen a stored session, and
+select a forum character. Which persona you speak as follows the forum you are
+in and is set in that forum's configuration.
 
-Welcome is private to the running server and is deleted on shutdown. All stored
-sessions and workspace metadata remain in the SQLite database selected by the
-active vault.
+Welcome is private to the running application and is deleted on shutdown. All
+stored sessions and workspace metadata remain in the SQLite database selected
+by the active vault.
 
 The chat input also accepts these controller-level commands:
 
@@ -63,8 +64,9 @@ screen. Saving Members stores the selected ID as `default_persona` in the forum
 config and reloads the forum's live sessions.
 
 The external application configuration is a directory. `app.toml` selects the
-startup vault and holds web and logging settings. Each other `.toml` file is
-one vault and supplies that vault's data paths:
+startup vault and holds logging settings. An obsolete `[web]` section is
+ignored with a warning. Each other `.toml` file is one vault and supplies that
+vault's data paths:
 
 ```text
 cha-config/
@@ -75,10 +77,6 @@ cha-config/
 ```toml
 # app.toml
 vault = "Personal"
-
-[web]
-host = "0.0.0.0"
-port = 8086
 
 [logging]
 file = "logs/cha.log"
@@ -206,24 +204,25 @@ included as plaintext TOML in workspace exports. OpenAI subscription
 credentials live in `openai-auth.json` in the application configuration
 directory.
 
-Normal startup takes the application root for installed `web/` assets from the
-executable directory, or from `--root`. Relative `data` and `logging.file` paths
-resolve against the configuration directory; `mirror` and `modify` must be
-absolute. Template includes resolve beneath the private materialized workspace.
+Native hosts load packaged frontend assets themselves. Relative `data` and
+`logging.file` paths resolve against the configuration directory; `mirror` and
+`modify` must be absolute. Template includes resolve beneath the private
+materialized workspace.
 
 ### Command line and configuration maintenance
 
-The complete public command interface is:
+Offline import, export, upload, and download remain available on the
+application command line:
 
 ```text
-chaweb --config=CONFIG_DIR [--root PATH]
-chaweb --config=CONFIG_DIR --vault=NAME --import DIRECTORY
-chaweb --config=CONFIG_DIR --vault=NAME --export DIRECTORY
-chaweb --config=CONFIG_DIR --vault=NAME --upload
-chaweb --config=CONFIG_DIR --vault=NAME --download
+CHA --config=CONFIG_DIR
+CHA --config=CONFIG_DIR --vault=NAME --import DIRECTORY
+CHA --config=CONFIG_DIR --vault=NAME --export DIRECTORY
+CHA --config=CONFIG_DIR --vault=NAME --upload
+CHA --config=CONFIG_DIR --vault=NAME --download
 ```
 
-`--config` is mandatory and names the configuration directory. Server mode
+`--config` is mandatory and names the configuration directory. Ordinary launch
 opens the vault selected by `app.toml`. `--vault` is required for import,
 export, upload, and download, and names the vault those commands act on. That
 vault's `data` setting names the SQLite file containing sessions and workspace
@@ -320,7 +319,7 @@ installation:
 4. Run the import and inspect its file-count summary:
 
    ```sh
-   chaweb --config=/absolute/path/cha-config --vault=Personal \
+   CHA --config=/absolute/path/cha-config --vault=Personal \
           --import /absolute/path/workspace
    ```
 
@@ -330,14 +329,14 @@ installation:
    with the source:
 
    ```sh
-   chaweb --config=/absolute/path/cha-config --vault=Personal \
+   CHA --config=/absolute/path/cha-config --vault=Personal \
           --export /absolute/path/exported-workspace
    ```
 
 7. Move the original configuration directory aside and start only with:
 
    ```sh
-   chaweb --config=/absolute/path/cha-config
+   CHA --config=/absolute/path/cha-config
    ```
 
    Open and resume a session, exercise the three narrow settings, restart, and
@@ -349,13 +348,9 @@ installation:
 Do not delete the old backup as part of the cutover. Backup retention and
 eventual removal are operator decisions.
 
-The Linux package contains `cha-config.example/` and `import-seed/` as source
-material, not live storage. Copy the example directory to `../cha-config` and
-initialize the configured database explicitly with
-`chaweb --config=../cha-config --vault="Personal" --import import-seed`
-before running `start-cha.sh`. The real configuration and database remain
-outside the replaceable application directory; the launcher writes process
-output to `chaweb.log` beside the executable.
+Shared seed and example configuration live under `packaging/shared/`. Copy
+`cha-config.example` to a configuration directory outside the application
+bundle and import `import-seed` into the selected vault before first launch.
 
 There is no automatic migration from a single `cha.toml`. To move an existing
 installation:
@@ -381,7 +376,7 @@ provider's Credentials field. Later launches reuse the conversations and
 settings already on that Mac, so replacing `CHA.app` upgrades the application
 without removing them.
 
-`chaweb` loads discovery — the roster, descriptions, and Markdown shown in
+`CHA` loads discovery — the roster, descriptions, and Markdown shown in
 Personas, Characters, and Forums — from the database as one validated immutable
 workspace. Runtime values own their parsed data eagerly; normal reads never
 reopen the materialized files.

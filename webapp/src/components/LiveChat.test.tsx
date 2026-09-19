@@ -1719,6 +1719,7 @@ describe('live chat', () => {
     render(<App
       client={fixtureClient({ getSessionSnapshot })}
       connectSessionEvents={events.connect}
+      streamRecovery="http"
       retryDelays={[0]}
     />);
     await attachInitial(events, transcriptSnapshot());
@@ -1777,6 +1778,7 @@ describe('live chat', () => {
       <App
         client={fixtureClient({ getSessionSnapshot, stopGeneration })}
         connectSessionEvents={events.connect}
+        streamRecovery="http"
       />,
     );
     await attachInitial(events, active);
@@ -1808,7 +1810,8 @@ describe('live stream recovery', () => {
       <App
         client={fixtureClient({ getSessionSnapshot, openSession })}
         connectSessionEvents={events.connect}
-        retryDelays={[0]}
+        streamRecovery="http"
+      retryDelays={[0]}
       />,
     );
     await attachInitial(events);
@@ -1830,7 +1833,8 @@ describe('live stream recovery', () => {
       <App
         client={fixtureClient({ getSessionSnapshot })}
         connectSessionEvents={events.connect}
-        retryDelays={[0, 0]}
+        streamRecovery="http"
+      retryDelays={[0, 0]}
       />,
     );
     await attachInitial(events, snapshot);
@@ -1857,7 +1861,8 @@ describe('live stream recovery', () => {
       <App
         client={fixtureClient({ getSessionSnapshot: async () => snapshot })}
         connectSessionEvents={events.connect}
-        retryDelays={[0, 0]}
+        streamRecovery="http"
+      retryDelays={[0, 0]}
       />,
     );
     await attachInitial(events, snapshot);
@@ -1882,7 +1887,8 @@ describe('live stream recovery', () => {
       <App
         client={fixtureClient({ getSessionSnapshot: async () => snapshot })}
         connectSessionEvents={events.connect}
-        retryDelays={[0]}
+        streamRecovery="http"
+      retryDelays={[0]}
       />,
     );
     await attachInitial(events, snapshot);
@@ -1908,7 +1914,8 @@ describe('live stream recovery', () => {
       <App
         client={client}
         connectSessionEvents={events.connect}
-        retryDelays={[0, 0, 0, 0, 0]}
+        streamRecovery="http"
+      retryDelays={[0, 0, 0, 0, 0]}
       />,
     );
     await attachInitial(events);
@@ -1935,7 +1942,8 @@ describe('live session capacity', () => {
       <App
         client={fixtureClient({ openSession })}
         connectSessionEvents={events.connect}
-        retryDelays={[0, 0]}
+        streamRecovery="http"
+      retryDelays={[0, 0]}
       />,
     );
 
@@ -1944,10 +1952,10 @@ describe('live session capacity', () => {
   });
 
   it('offers Retry and Return to Welcome after the session-limit bound is exhausted', async () => {
-    window.history.replaceState(null, '', '/s/lobby/planning/');
+    window.history.replaceState(null, '', '/#/s/lobby/planning/');
     const openSession = vi.fn(async () => { throw capacityError(); });
     const client: ChaClient = fixtureClient({ openSession });
-    render(<App client={client} retryDelays={[0, 0]} />);
+    render(<App client={client} streamRecovery="http" retryDelays={[0, 0]} />);
 
     expect(await screen.findByRole('heading', { name: 'Session unavailable' })).toBeInTheDocument();
     expect(screen.getByRole('alert')).toHaveTextContent('Another session has not closed yet');
@@ -1984,7 +1992,8 @@ describe('live session capacity', () => {
           openSession,
         })}
         connectSessionEvents={events.connect}
-        retryDelays={[0]}
+        streamRecovery="http"
+      retryDelays={[0]}
       />,
     );
 

@@ -36,18 +36,18 @@ describe('application routes', () => {
     expect(() => sessionRoute('not/safe', 'planning')).toThrow(TypeError);
   });
 
-  it('keeps path routing on the HTTP frontend and hash routing on native origins', () => {
-    expect(usesHashRoutes({ protocol: 'http:' })).toBe(false);
+  it('uses hash routes on packaged and development origins', () => {
+    expect(usesHashRoutes({ protocol: 'http:' })).toBe(true);
     expect(usesHashRoutes({ protocol: 'https:' })).toBe(true);
     expect(usesHashRoutes({ protocol: 'cha:' })).toBe(true);
     expect(appHref('/s/lobby/planning/', {
       protocol: 'http:', pathname: '/', search: '',
-    })).toBe('/s/lobby/planning/');
+    })).toBe('/#/s/lobby/planning/');
     expect(appHref('/s/lobby/planning/', {
       protocol: 'cha:', pathname: '/', search: '',
     })).toBe('/#/s/lobby/planning/');
     expect(currentAppRoute({
-      protocol: 'http:', pathname: '/s/lobby/planning/', hash: '',
+      protocol: 'http:', pathname: '/', hash: '#/s/lobby/planning/',
     })).toEqual({ kind: 'session', forumId: 'lobby', sessionId: 'planning' });
     expect(currentAppRoute({
       protocol: 'cha:', pathname: '/', hash: '#/s/lobby/planning/',
@@ -57,11 +57,7 @@ describe('application routes', () => {
     })).toEqual({ kind: 'root' });
   });
 
-  it('writes fragment history on native origins and path history on HTTP', () => {
-    const http = { protocol: 'http:' as const, pathname: '/', search: '' };
-    writeAppRoute('/s/lobby/planning/', 'push', http);
-    expect(`${window.location.pathname}${window.location.search}`).toBe('/s/lobby/planning/');
-
+  it('writes fragment history without changing the document path', () => {
     window.history.replaceState(null, '', '/shell');
     writeAppRoute('/s/lobby/planning/', 'replace', {
       protocol: 'cha:', pathname: '/shell', search: '',
@@ -70,15 +66,15 @@ describe('application routes', () => {
     expect(window.location.hash).toBe('#/s/lobby/planning/');
   });
 
-  it('reloads the document on native origins instead of assigning a fragment', () => {
+  it('reloads the document instead of assigning a fragment', () => {
     const http = {
       protocol: 'http:' as const,
       assign: vi.fn(),
       reload: vi.fn(),
     };
     reloadApplication(http);
-    expect(http.assign).toHaveBeenCalledWith('/');
-    expect(http.reload).not.toHaveBeenCalled();
+    expect(http.reload).toHaveBeenCalledOnce();
+    expect(http.assign).not.toHaveBeenCalled();
 
     const native = {
       protocol: 'cha:' as const,

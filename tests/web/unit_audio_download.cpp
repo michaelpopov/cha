@@ -1,14 +1,11 @@
 #include "web/audio_download.h"
-#include "web/audio_download_routes.h"
 #include "web/current_vault.h"
-#include "web/web_settings.h"
 #include "providers/api_key_store.h"
 #include "session/sqlite_storage.h"
 #include "support/test_workspace.h"
 #include "support/test_transcript.h"
 #include "workspace/workspace_config_store.h"
 #include <gtest/gtest.h>
-#include <httplib.h>
 #include <future>
 
 namespace cha::web {
@@ -344,113 +341,6 @@ TEST_F(AudioDownloads, DeletedEntryCannotSaveLateAudio) {
     release = true;
     ASSERT_TRUE(eventually([&] { return downloads->status(session, "Test").downloads.empty(); }));
     EXPECT_TRUE(sessions->cached_audio_entries(session).empty());
-}
-TEST_F(AudioDownloads, AcceptedHttpRequestFinishesWithoutClientOrLiveSession) {
-    std::atomic_bool release{}, started{};
-    auto downloads = make([&](const auto&, const auto&, const auto&, const auto&) -> std::optional<EntryAudio> {
-        started = true;
-        while (!release) std::this_thread::sleep_for(2ms);
-        return EntryAudio{"audio", "audio/mpeg"};
-    });
-    ReleaseOnExit cleanup{release};
-    const auto cached_entry = sessions->lookup_entry_audio(session, 3, false);
-    ASSERT_TRUE(cached_entry);
-    sessions->save_entry_audio(*cached_entry, {"seeded", "audio/mpeg"});
-    httplib::Server server;
-    install_audio_download_routes(server, *downloads, WebSettings{});
-    const int port = server.bind_to_any_port("127.0.0.1");
-    ASSERT_GT(port, 0);
-    std::jthread listener([&] { server.listen_after_bind(); });
-    struct Stop { httplib::Server& server; ~Stop() { server.stop(); } } stop{server};
-    server.wait_until_ready();
-    const auto base = "/api/v1/forums/" + session.forum_id + "/sessions/" + session.session_id;
-    {
-        httplib::Client client("127.0.0.1", port);
-        auto accepted = client.Post(base + "/entries/1/audio-download", http_input().dump(), "application/json");
-        ASSERT_TRUE(accepted); EXPECT_EQ(accepted->status, 202);
-        const auto pending = Json::parse(accepted->body);
-        EXPECT_EQ(pending.at("cached"), false);
-        EXPECT_TRUE(pending.at("state") == "queued" || pending.at("state") == "running");
-        auto cached = client.Post(base + "/entries/3/audio-download", http_input().dump(), "application/json");
-        ASSERT_TRUE(cached);
-        EXPECT_EQ(cached->status, 200);
-        const auto cached_body = Json::parse(cached->body);
-        EXPECT_EQ(cached_body, Json({{"entry_id", 3}, {"cached", true}}));
-        EXPECT_FALSE(cached_body.contains("state"));
-        Json batch{{"vault_name", "Test"}, {"entries", Json::array({
-            {{"entry_id", 1}, {"reference_id", "voice"}}, {{"entry_id", 2}, {"reference_id", "voice"}},
-            {{"entry_id", 3}, {"reference_id", "voice"}}
-        })}};
-        auto accepted_batch = client.Post(base + "/audio-downloads", batch.dump(), "application/json");
-        ASSERT_TRUE(accepted_batch); EXPECT_EQ(accepted_batch->status, 202);
-        const auto batch_entries = Json::parse(accepted_batch->body).at("entries");
-        ASSERT_EQ(batch_entries.size(), 3);
-        for (std::size_t i = 0; i < 2; ++i) {
-            EXPECT_EQ(batch_entries[i].at("cached"), false);
-            EXPECT_TRUE(batch_entries[i].at("state") == "queued" || batch_entries[i].at("state") == "running");
-        }
-        EXPECT_EQ(batch_entries[2], cached_body);
-        EXPECT_FALSE(batch_entries[2].contains("state"));
-        // Reuse skips synthesis validation; preparing new work consumes it.
-        const std::vector<std::pair<Json, std::string>> invalid_synthesis{
-            {Json::object(), "Invalid FishAudio request"},
-            {Json{{"reference_id", 42}}, "Invalid FishAudio request"},
-            {Json{{"reference_id", ""}}, "Missing text or voice ID"},
-            {Json{{"reference_id", "voice"}, {"settings", {{"speed", 3.0}}}}, "Invalid speed"},
-            {Json{{"reference_id", "voice"}, {"settings", nullptr}}, "Invalid voice settings"},
-            {Json{{"reference_id", "voice"}, {"settings", {{"speed", "fast"}}}}, "Invalid FishAudio request"},
-        };
-        for (const auto& [synthesis, error] : invalid_synthesis) {
-            SCOPED_TRACE(synthesis.dump());
-            Json single = synthesis;
-            single["vault_name"] = "Test";
-            for (const EntryId id : {1, 3, 4}) {
-                auto result = client.Post(base + "/entries/" + std::to_string(id) + "/audio-download",
-                    single.dump(), "application/json");
-                ASSERT_TRUE(result);
-                EXPECT_EQ(result->status, id == 1 ? 202 : id == 3 ? 200 : 400);
-                const auto body = Json::parse(result->body);
-                if (id == 4) {
-                    EXPECT_EQ(body.at("error").at("message"), error);
-                } else if (id == 3) {
-                    EXPECT_EQ(body, cached_body);
-                } else {
-                    EXPECT_EQ(body.at("cached"), false);
-                    EXPECT_TRUE(body.at("state") == "queued" || body.at("state") == "running");
-                }
-            }
-            const bool valid_reference = synthesis.contains("reference_id")
-                && synthesis.at("reference_id").is_string()
-                && !synthesis.at("reference_id").get<std::string>().empty();
-            for (const EntryId id : {1, 3, 4}) {
-                Json entry = synthesis;
-                entry["entry_id"] = id;
-                const Json boundary_batch{{"vault_name", "Test"}, {"entries", Json::array({entry})}};
-                auto result = client.Post(base + "/audio-downloads", boundary_batch.dump(), "application/json");
-                ASSERT_TRUE(result);
-                EXPECT_EQ(result->status, valid_reference && id != 4 ? 202 : 400);
-                if (valid_reference && id == 3) {
-                    EXPECT_EQ(Json::parse(result->body).at("entries")[0], cached_body);
-                }
-            }
-        }
-        batch["entries"].push_back(batch["entries"].front());
-        auto duplicate_ids = client.Post(base + "/audio-downloads", batch.dump(), "application/json");
-        ASSERT_TRUE(duplicate_ids); EXPECT_EQ(duplicate_ids->status, 400);
-        batch["entries"] = Json::array();
-        auto empty = client.Post(base + "/audio-downloads", batch.dump(), "application/json");
-        ASSERT_TRUE(empty); EXPECT_EQ(empty->status, 400);
-        auto snapshot = client.Get(base + "/audio-downloads?vault_name=Test");
-        ASSERT_TRUE(snapshot); EXPECT_EQ(snapshot->status, 200);
-    }
-    ASSERT_TRUE(eventually([&] { return started.load(); }));
-    release = true;
-    ASSERT_TRUE(eventually([&] { return sessions->cached_audio_entries(session).contains(1) && sessions->cached_audio_entries(session).contains(2); }));
-    httplib::Client client("127.0.0.1", port);
-    auto audio = client.Get(base + "/entries/1/audio?vault_name=Test");
-    ASSERT_TRUE(audio); EXPECT_EQ(audio->body, "audio");
-    auto wrong = client.Get(base + "/entries/1/audio?vault_name=Other");
-    ASSERT_TRUE(wrong); EXPECT_EQ(wrong->status, 409);
 }
 TEST_F(AudioDownloads, OldVaultCompletionCannotSaveAfterSwitchingAwayAndBack) {
     std::atomic_bool started{}, cancelled{}, release{};

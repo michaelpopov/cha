@@ -15,23 +15,22 @@ if (!root) {
 }
 
 const native = installNativeHostBridge();
-if (native) {
-  native.on('app.contextChanged', () => {
-    reloadApplication();
-  });
+if (!native) {
+  throw new Error('CHA requires the native host bridge.');
 }
-const app = native
-  ? (
-    <App
-      client={createNativeChaClient(native)}
-      connectSessionEvents={createNativeSessionEvents(native, {
-        connectionId: window.__CHA_NATIVE_CONNECTION_ID__ ?? 'view-1',
-        contextEpoch: () => native.contextEpoch(),
-      })}
-      streamRecovery="replace"
-    />
-  )
-  : <App />;
+native.on('app.contextChanged', () => {
+  reloadApplication();
+});
+const app = (
+  <App
+    client={createNativeChaClient(native)}
+    connectSessionEvents={createNativeSessionEvents(native, {
+      connectionId: window.__CHA_NATIVE_CONNECTION_ID__ ?? 'view-1',
+      contextEpoch: () => native.contextEpoch(),
+    })}
+    streamRecovery="replace"
+  />
+);
 
 createRoot(root).render(
   <StrictMode>

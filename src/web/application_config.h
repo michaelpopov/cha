@@ -59,19 +59,13 @@ struct ApplicationCommand {
     std::filesystem::path log_file;
     std::string log_level;
     std::vector<std::string> warnings;
-    // Browser automation uses this command-line-only seam to prove a real
-    // disconnect/unload/reopen cycle without adding thirty seconds per run.
-    std::optional<int> test_idle_grace_ms;
     // Test-only bound for vault-switch drain. Production always uses the
     // ordinary shutdown grace.
     std::optional<int> test_shutdown_grace_ms;
 };
 
-enum class ConfigurationTransport { native, http };
-
 ConfigurationDirectory load_configuration_directory(
-    const std::filesystem::path& directory,
-    ConfigurationTransport transport = ConfigurationTransport::http);
+    const std::filesystem::path& directory);
 VaultDefinition load_vault_definition_file(
     const std::filesystem::path& configuration_directory,
     const std::filesystem::path& source);
@@ -95,20 +89,13 @@ void require_openable_protected_database(
 ApplicationCommand parse_application_command(
     int argc,
     const char* const* argv);
-ApplicationCommand parse_application_command(
-    int argc,
-    const char* const* argv,
-    ConfigurationTransport transport);
 
-// Customer-facing, so it omits --test-idle-grace-ms. That option shortens the
-// runtime's idle unload so the browser suite can observe a real one; it is
-// accepted but deliberately not advertised to someone who mistyped an option.
 inline constexpr const char web_usage[] =
     "Usage:\n"
-    "  chaweb --config=CONFIG_DIR [--root PATH]\n"
-    "  chaweb --config=CONFIG_DIR --vault=NAME --import SOURCE_DIRECTORY\n"
-    "  chaweb --config=CONFIG_DIR --vault=NAME --export DESTINATION_DIRECTORY\n"
-    "  chaweb --config=CONFIG_DIR --vault=NAME --upload\n"
-    "  chaweb --config=CONFIG_DIR --vault=NAME --download";
+    "  CHA --config=CONFIG_DIR\n"
+    "  CHA --config=CONFIG_DIR --vault=NAME --import SOURCE_DIRECTORY\n"
+    "  CHA --config=CONFIG_DIR --vault=NAME --export DESTINATION_DIRECTORY\n"
+    "  CHA --config=CONFIG_DIR --vault=NAME --upload\n"
+    "  CHA --config=CONFIG_DIR --vault=NAME --download";
 
 } // namespace cha::web

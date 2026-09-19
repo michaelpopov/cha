@@ -552,7 +552,7 @@ TEST_F(WorkspaceConfigStoreTest, LegacyDetectorUsesTargetExistenceMessages) {
     } catch (const std::runtime_error& error) {
         const std::string message = error.what();
         EXPECT_NE(message.find("archived"), std::string::npos) << message;
-        EXPECT_NE(message.find("chaweb --migration"), std::string::npos)
+        EXPECT_NE(message.find("CHA --migration"), std::string::npos)
             << message;
     }
     EXPECT_EQ(

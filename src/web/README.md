@@ -1,14 +1,12 @@
-# Web frontend boundary
+# Application protocol and live sessions
 
 Workspace characters select their providers in their own `character.toml`.
-The external application config supplies `data`, `[web]`, and `[logging]`,
-while `--root` names only the installed web assets. Web
-discovery has its own HTTP projection, including Guest, Assistant, Entrance,
-and Welcome, but does not use terminal presentation result types.
+The external application config supplies `data` and `[logging]`. An obsolete
+`[web]` section is ignored. Guest, Assistant, Entrance, and Welcome remain
+application discovery data, not a browser HTTP projection.
 
-`cha_web` owns HTTP/SSE transport, web protocol values, serialization, and
-live-session coordination, including the textual grammar accepted by the
-browser's chat box. The composition root owns one `WorkspaceConfigStore`, which
+`cha_app` owns protocol values, serialization, and live-session coordination,
+including the textual grammar accepted by the chat box. The composition root owns one `WorkspaceConfigStore`, which
 holds the database lease, materialization, and configuration mutex; it publishes
 one immutable `Workspace` and supplies explicit paths to an independent
 `SessionRepository`. Routes acquire the current workspace with `getws()`, and

@@ -11,7 +11,6 @@
 #include <toml++/toml.hpp>
 
 #include <algorithm>
-#include <charconv>
 #include <fstream>
 #include <initializer_list>
 #include <optional>
@@ -33,7 +32,6 @@ struct ParsedOptions {
     bool upload{};
     bool download{};
     std::optional<std::filesystem::path> root;
-    std::optional<int> test_idle_grace_ms;
 };
 
 struct LoadedVault {
@@ -43,21 +41,6 @@ struct LoadedVault {
 
 std::runtime_error argument_error(std::string message) {
     return std::runtime_error(std::move(message) + "\n" + web_usage);
-}
-
-int parse_positive_integer(
-    std::string_view option,
-    std::string_view value) {
-    int result{};
-    const auto parsed = std::from_chars(
-        value.data(), value.data() + value.size(), result);
-    if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size()
-        || result < 1) {
-        throw argument_error(
-            "Invalid " + std::string(option) + " value '" + std::string(value)
-            + "'; expected a positive integer.");
-    }
-    return result;
 }
 
 std::filesystem::path normalize_cli_path(
@@ -117,8 +100,7 @@ ParsedOptions parse_arguments(int argc, const char* const* argv) {
         const std::string_view option = argument.substr(0, equals);
         if (option != "--config" && option != "--vault" && option != "--import"
             && option != "--export" && option != "--root"
-            && option != "--upload" && option != "--download"
-            && option != "--test-idle-grace-ms") {
+            && option != "--upload" && option != "--download") {
             throw argument_error("Unknown option '" + std::string(option) + "'.");
         }
 
@@ -150,13 +132,6 @@ ParsedOptions parse_arguments(int argc, const char* const* argv) {
             assign_unique_path(result.export_directory, option, value);
         } else if (option == "--root") {
             assign_unique_path(result.root, option, value);
-        } else {
-            if (result.test_idle_grace_ms) {
-                throw argument_error(
-                    "Option '--test-idle-grace-ms' was provided more than once.");
-            }
-            result.test_idle_grace_ms =
-                parse_positive_integer(option, value);
         }
     }
     return result;
@@ -563,60 +538,8 @@ void ignore_obsolete_web_section(
         + "' [web] settings are unused and were ignored.");
 }
 
-bool load_http_web_section(
-    const toml::table& app,
-    const std::filesystem::path& app_file,
-    std::string_view app_kind,
-    std::string& host,
-    int& port,
-    std::vector<std::string>& warnings) {
-    if (!app.contains("web")) {
-        host = "127.0.0.1";
-        port = 8086;
-        return true;
-    }
-    const toml::table* const web = app["web"].as_table();
-    if (web == nullptr) {
-        throw std::runtime_error(
-            std::string(app_kind) + " '" + utf8_path(app_file)
-            + "' requires [web] to be a table.");
-    }
-    for (const auto& [key, value] : *web) {
-        (void)value;
-        if (key.str() == "host" || key.str() == "port") continue;
-        warnings.push_back(
-            "Application config '" + utf8_path(app_file)
-            + "' [web] field '" + std::string(key.str())
-            + "' is unused and was ignored.");
-    }
-    if (web->contains("host")) {
-        const std::optional<std::string> value = (*web)["host"].value<std::string>();
-        if (!value || value->empty()) {
-            throw std::runtime_error(
-                std::string(app_kind) + " '" + utf8_path(app_file)
-                + "' requires a non-empty string 'host' in [web].");
-        }
-        host = *value;
-    } else {
-        host = "127.0.0.1";
-    }
-    if (web->contains("port")) {
-        const std::optional<int> value = (*web)["port"].value<int>();
-        if (!value || *value < 0 || *value > 65535) {
-            throw std::runtime_error(
-                std::string(app_kind) + " '" + utf8_path(app_file)
-                + "' requires an integer 'port' between 0 and 65535 in [web].");
-        }
-        port = *value;
-    } else {
-        port = 8086;
-    }
-    return true;
-}
-
 ConfigurationDirectory load_configuration_directory(
-    const std::filesystem::path& directory,
-    ConfigurationTransport transport) {
+    const std::filesystem::path& directory) {
     if (!std::filesystem::is_directory(directory)) {
         throw std::runtime_error(
             "Configuration directory '" + utf8_path(directory)
@@ -639,16 +562,10 @@ ConfigurationDirectory load_configuration_directory(
         app, root, app_file, "mirror", app_kind);
     const std::optional<std::filesystem::path> modify_base = optional_app_path(
         app, root, app_file, "modify", app_kind);
-    std::string host;
+    std::string host = "127.0.0.1";
     int port = 0;
     std::vector<std::string> warnings;
-    if (transport == ConfigurationTransport::native) {
-        ignore_obsolete_web_section(app, app_file, warnings);
-        host = "127.0.0.1";
-        port = 0;
-    } else {
-        load_http_web_section(app, app_file, app_kind, host, port, warnings);
-    }
+    ignore_obsolete_web_section(app, app_file, warnings);
     const toml::table& logging =
         required_table(app, app_file, "logging", app_kind);
     reject_unknown_fields(
@@ -724,13 +641,6 @@ ConfigurationDirectory load_configuration_directory(
 ApplicationCommand parse_application_command(
     int argc,
     const char* const* argv) {
-    return parse_application_command(argc, argv, ConfigurationTransport::http);
-}
-
-ApplicationCommand parse_application_command(
-    int argc,
-    const char* const* argv,
-    ConfigurationTransport transport) {
     const ParsedOptions options = parse_arguments(argc, argv);
     if (!options.config) {
         throw argument_error("Missing --config=CONFIG_DIR.");
@@ -764,18 +674,14 @@ ApplicationCommand parse_application_command(
         if (options.root) {
             reject_runtime_option_in_offline_mode("--root", offline_option);
         }
-        if (options.test_idle_grace_ms) {
-            reject_runtime_option_in_offline_mode(
-                "--test-idle-grace-ms", offline_option);
-        }
     } else if (options.vault) {
         throw argument_error(
-            "Option '--vault' cannot be used in server mode.");
+            "Option '--vault' requires --import, --export, --upload, or --download.");
     }
 
     if (!offline) bootstrap_configuration_directory(*options.config);
     const ConfigurationDirectory settings =
-        load_configuration_directory(*options.config, transport);
+        load_configuration_directory(*options.config);
     if (options.import_directory
         && path_is_under(*options.import_directory, settings.directory)) {
         throw argument_error(
@@ -820,7 +726,6 @@ ApplicationCommand parse_application_command(
         .log_file = settings.log_file,
         .log_level = settings.log_level,
         .warnings = settings.warnings,
-        .test_idle_grace_ms = options.test_idle_grace_ms,
     };
 }
 

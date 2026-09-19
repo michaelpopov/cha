@@ -4,8 +4,6 @@
 
 #include <nlohmann/json.hpp>
 
-#include <algorithm>
-#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <optional>
@@ -17,30 +15,6 @@
 
 namespace cha::web {
 namespace {
-
-std::string lower(std::string_view value) {
-    std::string result(value);
-    std::transform(
-        result.begin(),
-        result.end(),
-        result.begin(),
-        [](unsigned char character) {
-            return static_cast<char>(std::tolower(character));
-        });
-    return result;
-}
-
-std::string_view trim_ascii_whitespace(std::string_view value) {
-    while (!value.empty()
-           && std::isspace(static_cast<unsigned char>(value.front()))) {
-        value.remove_prefix(1);
-    }
-    while (!value.empty()
-           && std::isspace(static_cast<unsigned char>(value.back()))) {
-        value.remove_suffix(1);
-    }
-    return value;
-}
 
 void exact_keys(
     const nlohmann::json& json,
@@ -65,25 +39,6 @@ const std::string& required_string(
         throw std::invalid_argument("Invalid web command");
     }
     return json.at(name).get_ref<const std::string&>();
-}
-
-bool is_json_content_type(std::string_view content_type) {
-    const auto semicolon = content_type.find(';');
-    return lower(trim_ascii_whitespace(content_type.substr(0, semicolon)))
-        == "application/json";
-}
-
-nlohmann::json parse_json_body(
-    std::string_view body,
-    std::size_t maximum_bytes) {
-    if (body.size() > maximum_bytes) {
-        throw std::length_error("Web request body is too large");
-    }
-    try {
-        return nlohmann::json::parse(body.begin(), body.end());
-    } catch (const nlohmann::json::exception&) {
-        throw std::invalid_argument("Invalid JSON request body");
-    }
 }
 
 RawCommand parse_input_command(const nlohmann::json& json) {

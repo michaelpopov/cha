@@ -1,44 +1,41 @@
 # Native architecture
 
-CHA has one production composition root: `web_main.cpp`. It builds the
-`chaweb` server, which serves the browser client and coordinates live sessions
-through HTTP and server-sent events.
+CHA's production composition root is the platform host plus `Application`.
+macOS and Windows hosts load packaged React assets in a WebView and talk to C++
+through the common bridge. There is no application HTTP listener.
 
 ## Dependency shape
 
 ```text
-chaweb_app -> cha_web
-cha_web    -> cha_core
+cha_macos / cha_windows -> cha_bridge -> cha_app -> cha_core
 
 cha_core -> workspace / providers / characters / chat / session / util
-cha_web  -> cpp-httplib / nlohmann-json
-cha_core -> curl / sqlite / libuv / threads / toml++ / spdlog
+cha_app  -> live sessions, settings, vaults, audio, DTOs
+cha_core -> curl / sqlite / libuv / threads / toml++ / spdlog / nlohmann-json
 ```
 
-`cha_core` contains no `web/` or executable sources. The browser chat grammar is
-part of `cha_web`, including its editor-clearing policy.
-HTTP workers never access a `SessionController` directly; they submit bounded
-commands to a registry-owned session thread.
+`cha_core` contains no WebView, bridge, or inbound HTTP types. Outbound
+provider HTTP/SSE and R2 remain in core/providers.
 
 ## Composition root
 
-`web_main.cpp` owns only process wiring and top-level error handling. It opens
-the process-owned `WorkspaceConfigStore`, then constructs the session
-repository, live-session manager, routes, assets, HTTP listener, and shutdown
-coordinator. The store owns the selected database lease and handle, one private
-root with materialized `workspace/` and temporary `welcome/` children, the
-configuration mutex, publication, and cleanup. Reusable configuration policy
-remains in `workspace/`, and HTTP/SSE policy remains in `web/`.
+The native host opens `Application`, which owns the process-owned
+`WorkspaceConfigStore`, session repository, live-session manager, providers,
+credentials, audio, and vault maintenance. The store owns the selected database
+lease and handle, one private root with materialized `workspace/` and temporary
+`welcome/` children, the configuration mutex, publication, and cleanup.
 
-Declaration order in the composition root also defines shutdown order: the HTTP
-server and live-session owners are released before the repository and provider
-supervisor, and diagnostic logging remains available until teardown finishes.
+Declaration order in the composition root also defines shutdown order: session
+owners are released before the repository and provider supervisor, and
+diagnostic logging remains available until teardown finishes.
 
 ## Directories
 
 | Directory | Responsibility |
 | --- | --- |
-| `web/` | HTTP/SSE transport, chat-input grammar, API DTOs, live-session registry, mailboxes, and lifecycle policy. |
+| `app/` | Application composition root and domain operations. |
+| `bridge/` | Native request envelopes and the operation dispatcher. |
+| `web/` | Chat-input grammar, API DTOs, live-session registry, and projection. |
 | `workspace/` | The loaded workspace model, built-ins, and the one controller-opening operation. |
 | `session/` | Session storage, databases and leases, controller state, persistence, and character resolution. |
 | `providers/` | Provider transport, request execution, cancellation, protocol decoding, and event delivery. |
@@ -102,16 +99,16 @@ appear immediately.
 | Target | Purpose |
 | --- | --- |
 | `cha_core` | Domain, workspace model, session storage, and session opening. |
-| `cha_web` | HTTP/SSE frontend. |
-| `chaweb_app` (`chaweb`) | Production server executable. |
-| `cha_tests` | Core, session, and application unit/component tests. |
-| `cha_web_tests` | Web input-grammar, route, protocol, registry, runtime, and SSE tests. |
-| `cha_web_stress_tests` | Concurrent live-session stress tests. |
-| `cha_web_process_tests` | Real-process HTTP, SSE, restart, and shutdown tests. |
+| `cha_app` | Application operations, live sessions, and DTOs. |
+| `cha_bridge` | Native request dispatcher. |
+| `cha_macos_runtime` / `cha_windows_app` | Production desktop hosts. |
+| `cha_tests` | Core, session, and workspace unit/component tests. |
+| `cha_app_tests` | Application, live-session, protocol, and audio tests. |
+| `cha_bridge_tests` | Native envelope and dispatcher tests. |
 | `itest` | Live-provider integration tests for the retained core stack. |
 
-The browser has Vitest checks and Playwright development/production flows under
-`../webapp/`.
+The React UI has Vitest checks under `../webapp/`. Native host automation is
+under `../tests/native/`.
 
 ## Detailed contracts
 

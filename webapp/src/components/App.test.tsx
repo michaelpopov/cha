@@ -84,8 +84,9 @@ function recordingSessionEvents() {
 
 // jsdom's history has no user gesture, so a Back is the entry it would restore
 // followed by the event the browser would deliver.
-function goBackTo(pathname: string) {
-  window.history.replaceState(null, '', pathname);
+function goBackTo(route: string) {
+  const hash = route === '/' ? '#/' : (route.startsWith('#') ? route : `#${route}`);
+  window.history.replaceState(null, '', `/${hash}`);
   window.dispatchEvent(new PopStateEvent('popstate'));
 }
 
@@ -987,7 +988,7 @@ it('lists sessions with compact time metadata and opens a stored session once', 
   fireEvent.click(session);
   await waitFor(() => expect(open).toHaveBeenCalledWith('lobby', 'planning'));
   expect(open.mock.calls.filter(([, sessionId]) => sessionId === 'planning')).toHaveLength(1);
-  await waitFor(() => expect(window.location.pathname).toBe('/s/lobby/planning/'));
+  await waitFor(() => expect(window.location.hash).toBe('#/s/lobby/planning/'));
   expect(screen.getByLabelText('Current chat context')).toHaveTextContent('The Lobby');
 });
 
@@ -1039,7 +1040,7 @@ it('trims a required name, creates then opens it, and refreshes Recent', async (
   await waitFor(() => expect(getBootstrap).toHaveBeenCalledTimes(2));
   expect(connect).toHaveBeenCalledWith('lobby', 'created', expect.any(Object));
   expect(connect.mock.calls.filter(([, sessionId]) => sessionId === 'created')).toHaveLength(1);
-  expect(window.location.pathname).toBe('/s/lobby/created/');
+  expect(window.location.hash).toBe('#/s/lobby/created/');
   expect(screen.getByLabelText('Current chat context')).toHaveTextContent(
     'The LobbyFrom: ReaderTo: Guide',
   );
@@ -1231,14 +1232,14 @@ it('deleting the active session replaces its URL and returns to Welcome', async 
   await waitFor(() => expect(events.connections.some(({ key }) => key === 'lobby/planning')).toBe(true));
   const planning = events.connections.findIndex(({ key }) => key === 'lobby/planning');
   act(() => events.handlers[planning].onSnapshot(lobbySnapshot()));
-  await waitFor(() => expect(window.location.pathname).toBe('/s/lobby/planning/'));
+  await waitFor(() => expect(window.location.hash).toBe('#/s/lobby/planning/'));
 
   await user.click(screen.getByLabelText('Actions for Planning'));
   await user.click(screen.getByRole('menuitem', { name: 'Delete…' }));
   await user.click(screen.getByRole('button', { name: 'Delete' }));
 
   await waitFor(() => expect(deleteSession).toHaveBeenCalledWith('lobby', 'planning'));
-  await waitFor(() => expect(window.location.pathname).toBe('/'));
+  await waitFor(() => expect(window.location.hash).toBe('#/'));
   await waitFor(() => expect(
     events.connections.filter(({ key }) => key === 'entrance/welcome'),
   ).toHaveLength(2));
@@ -1288,7 +1289,7 @@ it('refreshes Recent when a creation lands after the reader cancelled', async ()
 });
 
 it('restores a deep link and offers Welcome when the requested session cannot open', async () => {
-  window.history.replaceState(null, '', '/s/lobby/planning/');
+  window.history.replaceState(null, '', '/#/s/lobby/planning/');
   const client = fixtureClient({
     openSession: async (forumId, sessionId) => {
       if (sessionId === 'planning') {
@@ -1303,11 +1304,11 @@ it('restores a deep link and offers Welcome when the requested session cannot op
   expect(screen.getByRole('alert')).toHaveTextContent('could not be opened');
   fireEvent.click(screen.getByRole('button', { name: 'Return to Welcome' }));
   await waitFor(() => expect(screen.getByLabelText('Current chat context')).toHaveTextContent('Entrance'));
-  expect(window.location.pathname).toBe('/');
+  expect(window.location.hash).toBe('#/');
 });
 
 it('opens and snapshots a session-shaped deep link before showing Chat', async () => {
-  window.history.replaceState(null, '', '/s/lobby/planning/');
+  window.history.replaceState(null, '', '/#/s/lobby/planning/');
   const openSession = vi.fn(async () => ({ forum_id: 'lobby', session_id: 'planning' }));
   const getSessionSnapshot = vi.fn(async () => lobbySnapshot());
   render(
@@ -1322,7 +1323,7 @@ it('opens and snapshots a session-shaped deep link before showing Chat', async (
   ));
   expect(openSession).toHaveBeenCalledWith('lobby', 'planning');
   expect(getSessionSnapshot).toHaveBeenCalledWith('lobby', 'planning');
-  expect(window.location.pathname).toBe('/s/lobby/planning/');
+  expect(window.location.hash).toBe('#/s/lobby/planning/');
 });
 
 it('keeps a live stream attached through StrictMode effect replay', async () => {
@@ -1344,7 +1345,7 @@ it('keeps a live stream attached through StrictMode effect replay', async () => 
 it.each(['session_stopping', 'session_open_timeout'] as const)(
   'offers Retry when open fails with %s',
   async (code) => {
-    window.history.replaceState(null, '', '/s/lobby/planning/');
+    window.history.replaceState(null, '', '/#/s/lobby/planning/');
     render(
       <App
         client={fixtureClient({
@@ -1365,7 +1366,7 @@ it('returns to Welcome and drops the stream when the browser goes back to the ro
   const events = recordingSessionEvents();
   render(<App client={storedPlanningClient()} connectSessionEvents={events.connect} />);
   await openPlanningFromTheLobby();
-  await waitFor(() => expect(window.location.pathname).toBe('/s/lobby/planning/'));
+  await waitFor(() => expect(window.location.hash).toBe('#/s/lobby/planning/'));
   const planning = events.connections.find(({ key }) => key === 'lobby/planning');
   expect(planning).toBeDefined();
 
@@ -1392,7 +1393,7 @@ it('re-opens the session named by a restored history entry without pushing it ag
   expect(openSession).toHaveBeenCalledWith('lobby', 'planning');
   expect(events.connections.filter(({ key }) => key === 'lobby/planning'))
     .toEqual([expect.objectContaining({ key: 'lobby/planning' })]);
-  expect(window.location.pathname).toBe('/s/lobby/planning/');
+  expect(window.location.hash).toBe('#/s/lobby/planning/');
   expect(window.history.length).toBe(entries);
 });
 
@@ -1505,7 +1506,7 @@ it('lets a second navigation supersede an open that is still in flight', async (
   expect(openSession).toHaveBeenCalledWith('entrance', 'welcome');
   expect(events.connections.filter(({ close }) => !close.mock.calls.length))
     .toEqual([expect.objectContaining({ key: 'entrance/welcome' })]);
-  expect(window.location.pathname).toBe('/s/entrance/welcome/');
+  expect(window.location.hash).toBe('#/s/entrance/welcome/');
 });
 
 it('leaves the successor stream attached when a superseded open finishes late', async () => {
@@ -1648,6 +1649,7 @@ it('probes and reconnects when its stream fails', async () => {
     <App
       client={client}
       connectSessionEvents={events.connect}
+      streamRecovery="http"
       retryDelays={[0]}
     />,
   );
@@ -1884,6 +1886,7 @@ it('reopens a live conversation after a settings save without leaving the settin
   render(<App
     client={storedPlanningClient({ getSessionSnapshot, openSession, updateCharacter })}
     connectSessionEvents={events.connect}
+    streamRecovery="http"
     retryDelays={[0]}
   />);
 
@@ -1955,6 +1958,7 @@ it('retries a settings reload when the first reopen meets a stopping session', a
       updateCharacter: async () => ({ ...characterDetailFixture, style: 'mono-large' }),
     })}
     connectSessionEvents={events.connect}
+    streamRecovery="http"
     retryDelays={[0, 0]}
   />);
 

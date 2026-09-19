@@ -532,7 +532,7 @@ void remove_directory_contents(const std::filesystem::path& directory) {
         fail_path(
             "Workspace session database '" + utf8_path(database)
             + "' does not exist. Stop CHA and run:\n"
-              "chaweb --config=CONFIG_DIR --vault=NAME --import WORKSPACE");
+              "CHA --config=CONFIG_DIR --vault=NAME --import WORKSPACE");
     }
     fail_database_state(database, state);
 }
@@ -657,7 +657,7 @@ std::string busy_message(const std::filesystem::path& database) {
         "Legacy session databases were found in workspace '"
         + utf8_path(source)
         + "'. This build cannot migrate them. Use an archived "
-          "migration-capable CHA build to run 'chaweb --migration "
+          "migration-capable CHA build to run 'CHA --migration "
           "--workspace <workspace>', verify 'workspace.sqlite3', then "
           "remove the legacy session files before starting this build");
 }
@@ -674,7 +674,7 @@ std::string busy_message(const std::filesystem::path& database) {
         fail_path(
             "Workspace session database '" + utf8_path(database)
             + "' is a valid CHA schema-1 database. Stop CHA and run:\n"
-              "chaweb --config=CONFIG_DIR --vault=NAME --import WORKSPACE");
+              "CHA --config=CONFIG_DIR --vault=NAME --import WORKSPACE");
     case WorkspaceDatabaseState::wrong_application_id:
     case WorkspaceDatabaseState::unsupported_version:
         fail_path(

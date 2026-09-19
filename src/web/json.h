@@ -11,8 +11,6 @@
 
 namespace cha::web {
 
-bool is_json_content_type(std::string_view content_type);
-nlohmann::json parse_json_body(std::string_view body, std::size_t maximum_bytes);
 const std::string& required_string(
     const nlohmann::json& json,
     std::string_view key);

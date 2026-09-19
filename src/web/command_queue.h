@@ -18,7 +18,6 @@ namespace cha::web {
 using CommandSubmitResult = std::variant<
     CommandResult,
     SessionSnapshot,
-    SseConnectResult,
     SessionLabelResult,
     SubscribeResult,
     ErrorCode>;
@@ -44,19 +43,12 @@ private:
     mutable std::function<void()> ready_callback_;
 };
 
-struct SseDisconnectNotification {
-    std::uint64_t connection_id{};
-    std::size_t collapsed_payloads{};
-};
-using OwnerNotification = SseDisconnectNotification;
-
 struct OwnerCommand {
     WebCommand command;
     std::shared_ptr<CommandReply> reply;
     // Owner-local subscribe generation; not a wire field.
     std::uint64_t subscribe_ticket{};
 };
-using OwnerWork = std::variant<OwnerCommand, OwnerNotification>;
 
 struct CommandEnqueueResult {
     bool accepted{};
@@ -68,17 +60,12 @@ public:
     explicit CommandQueue(std::size_t capacity) : capacity_(capacity) {}
 
     [[nodiscard]] CommandEnqueueResult try_push(OwnerCommand command);
-    [[nodiscard]] bool push_notification(OwnerNotification notification);
-    [[nodiscard]] std::optional<OwnerWork> try_pop();
+    [[nodiscard]] std::optional<OwnerCommand> try_pop();
 
 private:
     const std::size_t capacity_;
     std::mutex mutex_;
     std::deque<OwnerCommand> commands_;
-    // Disconnects are lossless owner-state transitions, so they cannot share
-    // the command bound. At most the close callbacks for accepted streams can
-    // produce them; allocation failure follows the process-fatal policy.
-    std::deque<OwnerNotification> notifications_;
 };
 
 } // namespace cha::web

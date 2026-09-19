@@ -84,7 +84,7 @@ std::string_view generation_terminal_status(
     return "unknown";
 }
 
-static_assert(std::variant_size_v<WebCommand> == 11);
+static_assert(std::variant_size_v<WebCommand> == 10);
 
 } // namespace
 
@@ -95,13 +95,6 @@ WebSettings validate_live_session_settings(WebSettings settings) {
     }
     if (settings.command_batch_size == 0 || settings.event_batch_size == 0) {
         throw std::invalid_argument("Live session batch sizes must be positive");
-    }
-    if (settings.orphan_limit < settings.idle_grace) {
-        throw std::invalid_argument("Web orphan limit must be at least idle grace");
-    }
-    if (settings.delete_deadline <= settings.sse_drain_deadline) {
-        throw std::invalid_argument(
-            "Web delete deadline must exceed the SSE drain deadline");
     }
     return settings;
 }
@@ -119,9 +112,7 @@ LiveSession::LiveSession(
       }),
       notifier_(std::make_shared<OwnerWakeSignal>()),
       output_(std::make_shared<cha::app::SessionOutput>(
-          settings_.monotonic_event_sequence
-              ? cha::app::SequencePolicy::monotonic
-              : cha::app::SequencePolicy::reset_on_snapshot,
+          cha::app::SequencePolicy::monotonic,
           settings_.pending_append_byte_limit)),
       commands_(settings_.command_queue_capacity) {
     if (!opener_) throw std::invalid_argument("Live session needs a session opener");
@@ -217,28 +208,13 @@ void LiveSession::acknowledge_output() noexcept {
     output_->acknowledge();
 }
 
-void LiveSession::disconnect_sse(
-    std::uint64_t connection_id,
-    std::size_t collapsed_payloads) noexcept {
-    if (commands_.push_notification(
-            SseDisconnectNotification{connection_id, collapsed_payloads})) {
-        notifier_->wake();
-    }
-}
-
 void LiveSession::request_shutdown(ShutdownReason reason) {
-    bool interrupt_final_drain = false;
     {
         std::lock_guard lock(lifecycle_mutex_);
         stopping_ = true;
         shutdown_reason_ = keep_higher_priority_reason(shutdown_reason_, reason);
-        interrupt_final_drain = shutdown_reason_ == ShutdownReason::session_failed
-            || shutdown_reason_ == ShutdownReason::server_stopping;
     }
-    // The owner may already be waiting on the mailbox rather than its ordinary
-    // wake signal. Fatal and process-stop reasons skip that drain, so wake that
-    // wait separately after releasing the lifecycle lock.
-    if (interrupt_final_drain) output_->interrupt_wait();
+    output_->interrupt_wait();
     notifier_->wake();
 }
 
@@ -398,7 +374,6 @@ void LiveSession::owner_loop() {
     bool fatal = false;
     try {
         log_event("lease_acquired_owner_started");
-        browser_connection_.published(clock_());
         publish_current_snapshot();
         while (true) {
             std::size_t processed = 0;
@@ -409,11 +384,7 @@ void LiveSession::owner_loop() {
                 }
                 auto work = commands_.try_pop();
                 if (!work) break;
-                if (auto* notification = std::get_if<OwnerNotification>(&*work)) {
-                    apply_notification(std::move(*notification));
-                    continue;
-                }
-                execute(std::move(std::get<OwnerCommand>(*work)));
+                execute(std::move(*work));
                 ++processed;
             }
             {
@@ -436,17 +407,6 @@ void LiveSession::owner_loop() {
                 std::lock_guard lock(lifecycle_mutex_);
                 if (stopping_) { reason = shutdown_reason_; break; }
             }
-            std::optional<std::chrono::steady_clock::time_point> deadline;
-            if (settings_.browser_disconnect_lifetime) {
-                deadline = browser_connection_.deadline(
-                    controller_->is_generating(), settings_.idle_grace,
-                    settings_.orphan_limit);
-                if (deadline && clock_() >= *deadline) {
-                    log_event("disconnect_deadline_expired");
-                    reason = mark_stopping(ShutdownReason::browser_disconnected);
-                    break;
-                }
-            }
             bool retire = false;
             {
                 std::lock_guard lock(lifecycle_mutex_);
@@ -458,7 +418,7 @@ void LiveSession::owner_loop() {
             }
             if (processed == settings_.command_batch_size || events.full) continue;
             (void)notifier_->wait_until(
-                deadline.value_or(std::chrono::steady_clock::time_point::max()));
+                std::chrono::steady_clock::time_point::max());
         }
     } catch (const std::bad_alloc&) {
         std::terminate();
@@ -512,32 +472,6 @@ void LiveSession::execute(OwnerCommand command) {
         (void)command.reply->complete(CommandResult{});
         return;
     }
-    if (std::holds_alternative<SseConnectCommand>(command.command)) {
-        // One reader on one device at a time, and the device that just
-        // connected is the one they are looking at: it takes the session over
-        // immediately rather than waiting for the previous stream to die.
-        const BrowserConnectionState::Accepted accepted =
-            browser_connection_.accept();
-        // The snapshot sent on connect establishes the mailbox's append base
-        // and resets its sequence accounting, so a later append is always
-        // relative to what this browser actually received.
-        output_->attach();
-        output_->publish_snapshot(make_snapshot());
-        if (!command.reply->complete(SseConnectResult{
-                {}, {}, accepted.connection_id})) {
-            // Mutations retain their unknown outcome after a timeout, but an
-            // unclaimed connect must not retain the browser slot.
-            output_->detach();
-            (void)browser_connection_.close(accepted.connection_id, clock_());
-        } else {
-            std::string_view event = "sse_connected";
-            if (accepted.superseded_connection_id) event = "sse_taken_over";
-            else if (has_connected_sse_) event = "sse_reconnected";
-            log_event(event);
-            has_connected_sse_ = true;
-        }
-        return;
-    }
     if (auto* rename = std::get_if<RenameSessionCommand>(&command.command)) {
         controller_->rename(rename->label);
         label_ = std::move(rename->label);
@@ -574,8 +508,6 @@ void LiveSession::execute(OwnerCommand command) {
             throw std::logic_error("Rename command handled before dispatch");
         } else if constexpr (std::is_same_v<T, SnapshotCommand>) {
             throw std::logic_error("Snapshot command handled before dispatch");
-        } else if constexpr (std::is_same_v<T, SseConnectCommand>) {
-            throw std::logic_error("SSE connect handled before dispatch");
         } else if constexpr (std::is_same_v<T, SubscribeCommand>) {
             throw std::logic_error("Subscribe handled before dispatch");
         } else if constexpr (std::is_same_v<T, UnsubscribeCommand>) {
@@ -608,14 +540,6 @@ void LiveSession::execute(OwnerCommand command) {
     (void)command.reply->complete(std::move(outcome));
     if (session_ended) {
         (void)mark_stopping(ShutdownReason::browser_disconnected);
-    }
-}
-
-void LiveSession::apply_notification(OwnerNotification notification) {
-    if (browser_connection_.close(notification.connection_id, clock_())) {
-        log_event(
-            "sse_disconnected collapsed_payloads="
-            + std::to_string(notification.collapsed_payloads));
     }
 }
 
@@ -763,21 +687,10 @@ void LiveSession::teardown(ShutdownReason reason, bool skip_final_drain) noexcep
     (void)run_guarded([this] {
         log_info(session_log(identity_, "registry_stopping"));
     });
-    skip_final_drain = skip_final_drain
-        || reason == ShutdownReason::server_stopping
-        || !settings_.browser_disconnect_lifetime;
+    (void)skip_final_drain;
     log_event("runtime_stopping reason=" + std::string(to_string(reason)));
     if (controller_) {
-        (void)run_guarded([&] {
-            publish_final(reason);
-            if (!skip_final_drain) {
-                (void)output_->wait_until_consumed(settings_.sse_drain_deadline);
-            }
-        });
-        // A process stop can arrive after local teardown has published its
-        // final snapshot and entered the ordinary drain. request_shutdown()
-        // interrupts that wait; reselect and republish the higher-priority
-        // reason before closing output.
+        (void)run_guarded([&] { publish_final(reason); });
         ShutdownReason latest_reason;
         {
             std::lock_guard lock(lifecycle_mutex_);
@@ -788,16 +701,12 @@ void LiveSession::teardown(ShutdownReason reason, bool skip_final_drain) noexcep
             (void)run_guarded([&] { publish_final(reason); });
         }
     }
-    // End presentation output immediately after its bounded final drain. Later
-    // teardown work must not keep an SSE request alive.
     output_->close();
     // A queue/reply mutex failure may strand later waiters, but it must
     // not strand the controller, journal, or workers.
     (void)run_guarded([&] {
         while (auto work = commands_.try_pop()) {
-            auto* command = std::get_if<OwnerCommand>(&*work);
-            if (!command) continue;
-            (void)command->reply->complete(
+            (void)work->reply->complete(
                 reason == ShutdownReason::server_stopping
                     ? ErrorCode::server_stopping
                     : ErrorCode::session_not_live);

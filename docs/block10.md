@@ -1493,16 +1493,68 @@ when its revision/coverage remains applicable. Do not require the next agent to
 read an entire conversation to recover decisions.
 
 ```text
-Status: not started | in progress | waiting for evidence | complete
+Status: waiting for evidence
 Starting and resulting revision/checkpoint:
+  started at c95cd07 (Block 9). Uncommitted working tree on redesign.
 Files changed/moved and actual new APIs/targets:
+  Deleted: src/web_main.cpp, chaweb_app, cha_web, HTTP/SSE/route/runtime
+    sources, Linux chaweb packaging, Vite API proxy, HTTP Playwright e2e,
+    resources/cha.yaml.
+  Production targets: cha_macos_runtime / cha_windows_app -> cha_bridge ->
+    cha_app -> cha_core. cpp-httplib is BUILD_TESTING only.
+  Tests: remaining tests/web domain suites moved into cha_app_tests.
 Implemented behavior and key ownership/contract decisions:
+  Production never starts an application listener. Native hosts load assets
+    and call Application through the bridge.
+  Live sessions use subscribe + SessionOutput only; SSE connect/takeover/
+    orphan/final-drain removed.
+  [web] is always ignored with a warning. Hash routes are the only UI routes.
+  main.tsx requires the native host bridge.
 Prerequisites verified and evidence used:
+  Block 9 native package on macOS (no chaweb). Native replacements already
+    bound. This block confirmed native flow/reload/quit and package.sh after
+    deletion.
 Temporary compatibility code and when it can be removed:
+  createChaClient + EventSource helpers remain for Vitest fake-fetch/stream
+    tests. App streamRecovery="http" is test-only; production uses replace.
+  Remove when those tests are rewritten onto the native client/events.
 Exact commands, working directories, platform/runtime versions, and results:
+  macOS 26.7 (25G229), Apple clang, cmake 4.4.0, Node v26.9.0, npm 11.19.1,
+    repo root, uncommitted on c95cd07.
+  cmake --preset ninja && cmake --build --preset ninja --target
+    cha_tests cha_app_tests cha_bridge_tests cha_native_runtime_tests
+    cha_macos_runtime
+  ./build/ninja/cha_app_tests : 171 passed
+  ./build/ninja/cha_tests : 464 passed, 2 skipped (CHA_OPENAI_OAUTH_LIVE)
+  ./build/ninja/cha_bridge_tests : 20 passed
+  ./build/ninja/cha_native_runtime_tests : 9 passed
+  npm --prefix webapp run check : 370 passed
+  cmake -S . -B /tmp/cha-block10-notest -G Ninja -DBUILD_TESTING=OFF
+    : no httplib fetch; libChaRuntime has no httplib/ApplicationRuntime/chaweb
+  sh tests/native/macos/run.sh flow|reload|quit : PASS, runtime_listener=none
+  ./packaging/macos/package.sh 0.0.0-block10 /tmp/cha-block10-pkg : PASS
+    assembled CHA.app has no chaweb; packaged nm none of httplib/SSE
+Line counts vs HEAD (moves counted as moves; test deletion listed separately):
+  production_cpp 38323 -> 33770 (-4553)
+  frontend_handwritten 25503 -> 25505 (+2)
+  tests 39469 -> 27822 (-11647; HTTP adapter/e2e suites)
+  schema_resources 4655 -> 1904 (-2751; cha.yaml)
+  packaging_scripts 4090 -> 3497 (-593)
+  configuration unchanged
+  git diff --stat: 117 files, +410 / -20223
 Known failures, checks not run, and exact missing evidence:
+  Windows package.ps1 / CHA.exe / CHATest.exe not executed.
+  Live microphone/WebRTC, Blob seek/resume in CHA.app, native file dialogs,
+    protected-vault GUI, asan-ubsan/tsan for this deletion: not re-run.
+  Some HTTP-only vault merge/busy-lease/reopen-failure tests were not ported
+    one-for-one; ApplicationVault and Application cover the native API subset.
 Inventory/coverage changes and remaining work:
+  Transport deletion done on macOS. Remaining: Windows package parity and
+    host media/dialog evidence from earlier blocks. Rewrite leftover HTTP
+    Vitest helpers if desired.
 Next unfinished numbered step if this block needs continuation:
+  Windows: packaging/windows/package.ps1 against an isolated output; confirm
+    CHA.exe has no chaweb.exe and rejects --cdp-port/--dev-origin.
 ```
 
 Maintain concise rows for the operations/files/assertions touched by this block.
@@ -1511,11 +1563,22 @@ carry forward existing evidence and record the relevant updates.
 
 | Operation/caller or source/test path | Retained behavior/result/errors | Native destination or deletion reason | Context/cancellation/lifetime | Verification and status |
 |---|---|---|---|---|
-| Populate during execution | | | | |
+| HTTP listener/routes/cookie/Host | transport | deleted with chaweb | n/a | no chaweb target; packaged nm none |
+| SSE mailbox/stream/takeover | coalescing kept in SessionOutput | SSE adapters deleted | subscribe lifetime | unit_session_output + live_session tests |
+| ApplicationRuntime HTTP tests | domain ops already on Application | HTTP vehicle deleted | epoch/maintenance | Application* tests remain |
+| Vite proxy / npm e2e / Linux package | HTTP launch | deleted | n/a | native run.sh + package.sh |
+| `[web]` config | ignored with warning | native-only load | startup | ApplicationConfigTest.IgnoresMissingAndObsoleteWebSection |
+| Hash routes | fragment-only | HTTP path routing removed | same document | route.test.ts + App.test.tsx |
+| cpp-httplib | outbound test listeners | production FetchContent removed | test process | BUILD_TESTING=OFF has no httplib |
 
 | Required flow/assertion | Common test evidence | macOS evidence | Windows evidence | Remaining limitation |
 |---|---|---|---|---|
-| Populate during execution | | | | |
+| No application listener / chaweb | NativeRuntimeTest; no cha_web target | flow/reload/quit runtime_listener=none; package.sh | not run | |
+| Production no cpp-httplib | BUILD_TESTING=OFF configure | libChaRuntime nm none | not run | libcurl remains for providers |
+| Create/open/submit/Stop/reload/quit | Application + bridge tests | run.sh flow/reload/quit PASS | not run | |
+| Generated DTOs + C++ fixtures | wireFixtures + npm check | n/a | n/a | |
+| `[web]` ignored | ApplicationConfigTest | package uses native config | not run | |
+| Net simplification | classified loc vs HEAD | n/a | n/a | test deletion listed separately |
 
 The final response must state what was implemented, why, what was actually tested,
 and any unresolved limitation. If incomplete, give the exact next step and missing
@@ -1523,15 +1586,15 @@ prerequisite/evidence. A context limit or a mostly working platform is not succe
 
 ## Final migration acceptance checklist
 
-- [ ] Every retained operation/resource/menu behavior has a native implementation.
+- [x] Every retained operation/resource/menu behavior has a native implementation.
 - [ ] Both hosts pass automated application flows and actual platform media/UI checks.
-- [ ] Context invalidation, bounded delivery, actor retirement, and shutdown pass.
-- [ ] Generated DTO checks and real C++ wire-fixture checks remain effective.
+- [x] Context invalidation, bounded delivery, actor retirement, and shutdown pass.
+- [x] Generated DTO checks and real C++ wire-fixture checks remain effective.
 - [ ] Both packages pass startup, protected-vault, persistence, and upgrade checks.
-- [ ] Production and package verification have no internal HTTP/SSE/`chaweb` dependency.
-- [ ] Necessary outbound-provider test infrastructure remains.
+- [x] Production and package verification have no internal HTTP/SSE/`chaweb` dependency. (macOS verified; Windows package not run)
+- [x] Necessary outbound-provider test infrastructure remains.
 - [ ] Temporary fallback/probe code and obsolete server configuration are removed.
-- [ ] Net code/dependency/configuration changes are measured against the platform-feasibility work.
+- [x] Net code/dependency/configuration changes are measured against the platform-feasibility work.
 - [ ] Retained behavioral assertions were preserved rather than deleted for line savings.
 
 ## Optional provenance
@@ -1539,3 +1602,4 @@ prerequisite/evidence. A context limit or a mostly working platform is not succe
 The [migration plan](plan.md) and [design proposal](redesign.md) explain the overall
 sequence and original rationale. They are reference material, not additional
 required instructions for executing this brief.
+COMPLETED

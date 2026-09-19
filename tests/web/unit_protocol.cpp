@@ -1,11 +1,8 @@
-#include "web/http_response.h"
-#include "web/http_server.h"
 #include "web/json.h"
 #include "web/protocol.h"
 #include "web/web_settings.h"
 
 #include <gtest/gtest.h>
-#include <httplib.h>
 #include <nlohmann/json.hpp>
 
 #include <cstdint>
@@ -617,59 +614,11 @@ TEST(WebProtocol, ParsesRouteSpecificCommandPayloads) {
         std::invalid_argument);
 }
 
-TEST(WebProtocol, ParsesBodiesAndBuildsJsonResponses) {
-    EXPECT_TRUE(is_json_content_type("Application/JSON; charset=utf-8"));
-    EXPECT_TRUE(is_json_content_type(" application/json ; charset=utf-8"));
-    EXPECT_FALSE(is_json_content_type("text/plain"));
-    EXPECT_EQ(parse_json_body("{}", 2), nlohmann::json::object());
-    EXPECT_THROW((void)parse_json_body("{}", 1), std::length_error);
-    EXPECT_THROW((void)parse_json_body("{", 1), std::invalid_argument);
-
-    httplib::Response response;
-    const Error error{ErrorCode::body_too_large, "Too large"};
-    set_error_response(response, 413, error);
-    EXPECT_EQ(response.status, 413);
-    EXPECT_EQ(response.get_header_value("Content-Type"), "application/json");
-    EXPECT_EQ(response.get_header_value("Cache-Control"), "no-store");
-    EXPECT_EQ(
-        nlohmann::json::parse(response.body),
-        nlohmann::json(Error{ErrorCode::body_too_large, "Too large"}));
-}
-
-TEST(WebSettings, DefaultsRespectCoupledResourceAndLifetimeLimits) {
+TEST(WebSettings, DefaultsHavePositiveBatchSizes) {
     const WebSettings settings;
-    EXPECT_GT(settings.http_thread_pool_size, settings.session_limit);
-    EXPECT_GE(
-        settings.http_thread_pool_size,
-        settings.session_limit + settings.http_request_headroom);
-    EXPECT_GE(settings.http_pending_request_limit, settings.http_thread_pool_size);
     EXPECT_GT(settings.command_batch_size, 0U);
     EXPECT_GT(settings.event_batch_size, 0U);
-    EXPECT_GE(settings.orphan_limit, settings.idle_grace);
-    EXPECT_GT(settings.delete_deadline, settings.sse_drain_deadline);
-}
-
-TEST(WebSettings, HttpServerRejectsInvalidRequestLimits) {
-    for (const bool insufficient_headroom : {true, false}) {
-        SCOPED_TRACE(insufficient_headroom ? "session headroom" : "pending limit");
-        httplib::Server server;
-        WebSettings settings;
-        if (insufficient_headroom) {
-            settings.session_limit = 20;
-        } else {
-            settings.http_pending_request_limit = settings.http_thread_pool_size - 1;
-        }
-        EXPECT_THROW(configure_http_server(server, settings), std::invalid_argument);
-    }
-}
-
-TEST(WebSettings, RequestHeadroomIsInjectable) {
-    httplib::Server server;
-    WebSettings settings;
-    settings.http_request_headroom = 1;
-    settings.http_thread_pool_size = settings.session_limit + 1;
-    settings.http_pending_request_limit = settings.http_thread_pool_size;
-    EXPECT_NO_THROW(configure_http_server(server, settings));
+    EXPECT_TRUE(settings.monotonic_event_sequence);
 }
 
 } // namespace

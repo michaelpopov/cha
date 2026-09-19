@@ -23,7 +23,7 @@ namespace {
 using namespace std::chrono_literals;
 using cha::web::ApplicationCommand;
 using cha::web::ConfigurationDirectory;
-using cha::web::ConfigurationTransport;
+
 using cha::web::ErrorCode;
 using cha::web::VaultCreate;
 using cha::web::VaultDefinition;
@@ -51,7 +51,7 @@ ApplicationCommand load_command(
         ++index;
     }
     const ConfigurationDirectory loaded = load_configuration_directory(
-        config_directory, ConfigurationTransport::native);
+        config_directory);
     const VaultDefinition* const selected =
         find_vault(loaded.vaults, loaded.startup_vault);
     return {

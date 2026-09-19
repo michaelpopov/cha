@@ -38,15 +38,6 @@ if(NOT CHA_SANITIZER STREQUAL "none")
     endif()
     add_compile_options(${CHA_SANITIZER_FLAGS})
     add_link_options(${CHA_SANITIZER_FLAGS})
-
-    # cpp-httplib's non-blocking resolver calls glibc getaddrinfo_a, which
-    # services requests on threads created inside libanl rather than through
-    # pthread_create. ThreadSanitizer cannot intercept those, and every test
-    # that issues an HTTP request dies on a null dereference before it runs.
-    # The blocking resolver is behaviourally equivalent here: chaweb resolves
-    # one bind address at startup, and no production code path uses the
-    # cpp-httplib client. Instrumented builds therefore use it.
-    set(HTTPLIB_USE_NON_BLOCKING_GETADDRINFO OFF CACHE BOOL "" FORCE)
 endif()
 
 include(FetchContent)
@@ -93,12 +84,6 @@ FetchContent_Declare(
     URL https://github.com/marzer/tomlplusplus/archive/refs/tags/v3.4.0.zip
 )
 FetchContent_MakeAvailable(tomlplusplus)
-
-FetchContent_Declare(
-    cpp_httplib
-    URL https://github.com/yhirose/cpp-httplib/archive/refs/tags/v0.51.0.zip
-)
-FetchContent_MakeAvailable(cpp_httplib)
 
 if(WIN32)
     # WebView2 is the Windows equivalent of the WKWebView used by CHA.app.
@@ -344,7 +329,6 @@ add_library(cha_app STATIC
     src/app/media_operations.cpp
     src/web/fish_audio.cpp
     src/web/audio_download.cpp
-    src/web/browser_connection_state.cpp
     src/web/command_queue.cpp
     src/web/json.cpp
     src/web/protocol.cpp
@@ -381,34 +365,6 @@ target_link_libraries(
         nlohmann_json::nlohmann_json)
 cha_enable_warnings(cha_bridge)
 
-add_library(cha_web STATIC
-    src/web/application_runtime.cpp
-    src/web/asset_handler.cpp
-    src/web/http_response.cpp
-    src/web/http_server.cpp
-    src/web/lobby_routes.cpp
-    src/web/openai_auth_routes.cpp
-    src/web/route_support.cpp
-    src/web/server_shutdown.cpp
-    src/web/session_routes.cpp
-    src/web/settings_routes.cpp
-    src/web/vault_routes.cpp
-    src/web/fish_audio_http.cpp
-    src/web/audio_download_routes.cpp
-    src/web/sse_stream.cpp
-    src/web/sse_mailbox.cpp
-    src/web/live_session_sse.cpp
-)
-target_compile_features(cha_web PUBLIC cxx_std_20)
-target_include_directories(cha_web PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
-target_link_libraries(
-    cha_web
-    PUBLIC
-        cha_app
-        httplib::httplib
-        nlohmann_json::nlohmann_json)
-cha_enable_warnings(cha_web)
-
 if(BUILD_TESTING)
     if(MSVC)
         # cha_tests uses MSVC's shared CRT by default. Keep the statically
@@ -422,6 +378,14 @@ if(BUILD_TESTING)
     )
     set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
     FetchContent_MakeAvailable(googletest)
+
+    # Outbound-provider test listeners only. Production does not use cpp-httplib.
+    set(HTTPLIB_USE_NON_BLOCKING_GETADDRINFO OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(
+        cpp_httplib
+        URL https://github.com/yhirose/cpp-httplib/archive/refs/tags/v0.51.0.zip
+    )
+    FetchContent_MakeAvailable(cpp_httplib)
 
     set(CHA_TEST_SOURCES
         tests/util/unit_environment.cpp
@@ -492,48 +456,6 @@ if(BUILD_TESTING)
     cha_enable_warnings(cha_tests)
 
     add_executable(
-        cha_web_tests
-        tests/web/unit_application_runtime.cpp
-        tests/web/unit_fish_audio.cpp
-        tests/web/unit_audio_download.cpp
-        tests/web/unit_application_config.cpp
-        tests/web/unit_asset_handler.cpp
-        tests/web/unit_r2_database_transfer.cpp
-        tests/web/unit_protocol.cpp
-        tests/web/unit_wire_fixtures.cpp
-        tests/web/unit_session_markdown.cpp
-        tests/web/unit_session_mirror.cpp
-        tests/web/unit_session_projection.cpp
-        tests/web/unit_browser_connection_state.cpp
-        tests/web/unit_lobby_routes.cpp
-        tests/web/unit_openai_auth_routes.cpp
-        tests/web/unit_session_routes.cpp
-        tests/web/unit_live_session_manager.cpp
-        tests/web/unit_sse_mailbox.cpp
-        tests/web/unit_sse_stream.cpp
-        tests/web/unit_text_command.cpp
-        tests/web/unit_text_input.cpp
-        tests/web/unit_text_mention.cpp
-        tests/web/unit_text_multicast.cpp
-        tests/web/unit_live_session.cpp
-        tests/support/test_workspace.cpp)
-    target_link_libraries(
-        cha_web_tests PRIVATE cha_web cha_sqlite3 GTest::gtest_main)
-    target_include_directories(cha_web_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
-    target_compile_definitions(
-        cha_web_tests
-        PRIVATE
-            CHA_WIRE_FIXTURE_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/wire")
-    if(TARGET cha_lease_test_helper)
-        target_compile_definitions(
-            cha_web_tests
-            PRIVATE
-                CHA_LEASE_TEST_HELPER="$<TARGET_FILE:cha_lease_test_helper>")
-        add_dependencies(cha_web_tests cha_lease_test_helper)
-    endif()
-    cha_enable_warnings(cha_web_tests)
-
-    add_executable(
         cha_app_tests
         tests/app/unit_application.cpp
         tests/app/unit_media_resources.cpp
@@ -542,11 +464,35 @@ if(BUILD_TESTING)
         tests/app/unit_vault_maintenance.cpp
         tests/app/unit_session_output.cpp
         tests/app/unit_session_retirement.cpp
+        tests/web/unit_fish_audio.cpp
+        tests/web/unit_audio_download.cpp
+        tests/web/unit_application_config.cpp
+        tests/web/unit_r2_database_transfer.cpp
+        tests/web/unit_protocol.cpp
+        tests/web/unit_wire_fixtures.cpp
+        tests/web/unit_session_markdown.cpp
+        tests/web/unit_session_mirror.cpp
+        tests/web/unit_session_projection.cpp
+        tests/web/unit_live_session_manager.cpp
+        tests/web/unit_text_command.cpp
+        tests/web/unit_text_input.cpp
+        tests/web/unit_text_mention.cpp
+        tests/web/unit_text_multicast.cpp
+        tests/web/unit_live_session.cpp
         tests/support/test_workspace.cpp)
     target_link_libraries(
-        cha_app_tests PRIVATE cha_app cha_sqlite3 GTest::gtest_main)
+        cha_app_tests
+        PRIVATE
+            cha_app
+            cha_sqlite3
+            httplib::httplib
+            GTest::gtest_main)
     target_include_directories(
         cha_app_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+    target_compile_definitions(
+        cha_app_tests
+        PRIVATE
+            CHA_WIRE_FIXTURE_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/wire")
     if(TARGET cha_lease_test_helper)
         target_compile_definitions(
             cha_app_tests
@@ -606,19 +552,7 @@ if(BUILD_TESTING)
         cha_prepare_test_vault PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
     cha_enable_warnings(cha_prepare_test_vault)
 
-    add_executable(
-        cha_web_stress_tests
-        tests/web/stress_web_sessions.cpp
-        tests/support/test_workspace.cpp)
-    target_link_libraries(
-        cha_web_stress_tests PRIVATE cha_web cha_sqlite3 GTest::gtest_main)
-    target_include_directories(
-        cha_web_stress_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
-    cha_enable_warnings(cha_web_stress_tests)
-
     if(NOT WIN32)
-        # The live-provider and web process harnesses currently use POSIX
-        # sockets and fork/exec, so they are not part of the Windows build.
         add_executable(
             itest
             tests/integration/integration_test.cpp
@@ -628,21 +562,6 @@ if(BUILD_TESTING)
         target_include_directories(itest PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
         cha_enable_warnings(itest)
         target_compile_definitions(itest PRIVATE CHA_WORKSPACE_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/workspace")
-
-        add_executable(
-            cha_web_process_tests
-            tests/web/process_web_server.cpp
-            tests/support/test_workspace.cpp
-            tests/support/web_server_process.cpp)
-        target_link_libraries(
-            cha_web_process_tests PRIVATE cha_web cha_sqlite3 GTest::gtest_main)
-        target_include_directories(
-            cha_web_process_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
-        target_compile_definitions(
-            cha_web_process_tests
-            PRIVATE CHA_WEB_BINARY="$<TARGET_FILE:chaweb_app>")
-        add_dependencies(cha_web_process_tests chaweb_app)
-        cha_enable_warnings(cha_web_process_tests)
     endif()
 
     # Every test binary carries the sanitizer suppression list. The file is
@@ -654,10 +573,7 @@ if(BUILD_TESTING)
             cha_app_tests
             cha_bridge_tests
             cha_native_runtime_tests
-            cha_web_tests
-            cha_web_stress_tests
-            itest
-            cha_web_process_tests)
+            itest)
         if(TARGET ${cha_test_target})
             target_sources(
                 ${cha_test_target}
@@ -670,23 +586,6 @@ if(BUILD_TESTING)
     gtest_discover_tests(cha_app_tests)
     gtest_discover_tests(cha_bridge_tests)
     gtest_discover_tests(cha_native_runtime_tests)
-    gtest_discover_tests(cha_web_tests)
-    gtest_discover_tests(cha_web_stress_tests PROPERTIES LABELS web_stress)
-    if(TARGET cha_web_process_tests)
-        gtest_discover_tests(cha_web_process_tests PROPERTIES LABELS web_process)
-    endif()
-endif()
-
-add_executable(chaweb_app src/web_main.cpp)
-target_link_libraries(chaweb_app PRIVATE cha_web)
-set_target_properties(chaweb_app PROPERTIES OUTPUT_NAME chaweb)
-cha_enable_warnings(chaweb_app)
-# The web process tests run this executable as a forked child, so the copy
-# compiled into the test binaries above never reaches it. Without its own copy
-# an instrumented server reports SQLite's WAL-index false positive and exits
-# nonzero, failing tests that write from two live sessions at once.
-if(NOT CHA_SANITIZER STREQUAL "none")
-    target_sources(chaweb_app PRIVATE tests/support/sanitizer_suppressions.cpp)
 endif()
 
 if(APPLE)
@@ -771,15 +670,3 @@ if(WIN32)
     set_target_properties(cha_windows_test_app PROPERTIES OUTPUT_NAME CHATest)
     cha_enable_warnings(cha_windows_test_app)
 endif()
-add_custom_command(
-    TARGET chaweb_app
-    POST_BUILD
-    COMMAND
-        ${CMAKE_COMMAND}
-        -DEXECUTABLE=$<TARGET_FILE:chaweb_app>
-        -DOUTPUT_DIRECTORY=${CMAKE_CURRENT_SOURCE_DIR}/bin
-        -DWEBAPP_DIST=${CMAKE_CURRENT_SOURCE_DIR}/webapp/dist
-        -DIMPORT_SEED_DIRECTORY=${CMAKE_CURRENT_SOURCE_DIR}/packaging/shared/import-seed
-        -DCONFIG_EXAMPLE_DIRECTORY=${CMAKE_CURRENT_SOURCE_DIR}/packaging/shared/cha-config.example
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/stage_local_deployment.cmake
-    VERBATIM)

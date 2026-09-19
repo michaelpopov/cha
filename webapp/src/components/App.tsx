@@ -9,13 +9,11 @@ import {
 
 import {
   ChaError,
-  chaClient,
   publicErrorMessage,
   type Bootstrap,
   type ChaClient,
 } from '../api/client';
 import {
-  openSessionEvents,
   type SessionEventConnection,
   type SessionEventHandlers,
 } from '../api/events';
@@ -475,11 +473,10 @@ function defaultReload() {
 }
 
 interface AppProps {
-  client?: ChaClient;
+  client: ChaClient;
   connectSessionEvents?: SessionEventsConnector;
   retryDelays?: readonly number[];
   reload?: () => void;
-  // HTTP keeps the reconnect ladder. Native replaces the subscription in place.
   streamRecovery?: 'http' | 'replace';
 }
 
@@ -511,12 +508,16 @@ function isRetryableSessionOpen(failure: unknown): failure is ChaError {
   );
 }
 
+function closedEvents(): SessionEventConnection {
+  return { close() {} };
+}
+
 export function App({
-  client = chaClient,
-  connectSessionEvents = openSessionEvents,
+  client,
+  connectSessionEvents = () => closedEvents(),
   retryDelays = liveRetryDelays,
   reload = defaultReload,
-  streamRecovery = 'http',
+  streamRecovery = 'replace',
 }: AppProps) {
   const [state, dispatch] = useReducer(appReducer, initialAppState);
   const [initialRouteReady, setInitialRouteReady] = useState(false);

@@ -63,20 +63,8 @@ CommandEnqueueResult CommandQueue::try_push(OwnerCommand command) {
     };
 }
 
-bool CommandQueue::push_notification(OwnerNotification notification) {
+std::optional<OwnerCommand> CommandQueue::try_pop() {
     std::lock_guard lock(mutex_);
-    const bool wake_owner = notifications_.empty() && commands_.empty();
-    notifications_.push_back(std::move(notification));
-    return wake_owner;
-}
-
-std::optional<OwnerWork> CommandQueue::try_pop() {
-    std::lock_guard lock(mutex_);
-    if (!notifications_.empty()) {
-        OwnerNotification notification = std::move(notifications_.front());
-        notifications_.pop_front();
-        return notification;
-    }
     if (commands_.empty()) {
         return std::nullopt;
     }

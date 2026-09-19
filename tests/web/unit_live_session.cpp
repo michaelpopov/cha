@@ -1,7 +1,6 @@
 #include "web/live_session.h"
 
 #include "web/live_session_manager.h"
-#include "web/sse_mailbox.h"
 
 #include "support/test_backends.h"
 #include "support/test_live_session.h"
@@ -41,39 +40,6 @@ WebSettings test_settings(
     settings.event_batch_size = event_batch_size;
     return settings;
 }
-
-// Owner-thread monotonic time under test control. It is a scalar dependency,
-// not an ownership facade: the actor still owns its own clock reads.
-class FakeSessionClock {
-public:
-    using Clock = std::chrono::steady_clock;
-
-    FakeSessionClock() : now_(Clock::now() + 24h) {}
-
-    Clock::time_point now() {
-        std::lock_guard lock(mutex_);
-        ++observations_;
-        observed_.notify_all();
-        return now_;
-    }
-
-    std::size_t advance(std::chrono::milliseconds amount) {
-        std::lock_guard lock(mutex_);
-        now_ += amount;
-        return observations_ + 1;
-    }
-
-    bool wait_until_observed(std::size_t target) {
-        std::unique_lock lock(mutex_);
-        return observed_.wait_for(lock, 2s, [&] { return observations_ >= target; });
-    }
-
-private:
-    std::mutex mutex_;
-    std::condition_variable observed_;
-    Clock::time_point now_;
-    std::size_t observations_{};
-};
 
 // A rendezvous the controller's activation hook enters on the owner thread.
 // Blocking there is the deterministic way to hold the owner inside one command
@@ -157,30 +123,28 @@ SessionOpener scripted_opener(
     };
 }
 
-// Reads the mailbox until it produces a payload or the deadline expires. The
-// writer heartbeat is a real result, so a helper is the only way to keep these
-// tests bounded without hiding delivery races.
-std::shared_ptr<const SsePayload> next_payload(
-    const SseConnectResult& connection,
+std::shared_ptr<const cha::app::SessionOutputItem> next_output(
+    LiveSession& session,
     std::chrono::milliseconds timeout = 2s) {
     const auto deadline = std::chrono::steady_clock::now() + timeout;
     while (std::chrono::steady_clock::now() < deadline) {
-        SseMailbox::Next next = connection.mailbox->next(connection.stream, 10ms);
-        if (!next.open) return {};
-        if (next.payload) return next.payload;
+        if (auto item = session.take_output()) return item;
+        std::this_thread::sleep_for(1ms);
     }
-    return {};
+    return session.take_output();
 }
 
-SseConnectResult connect(LiveSession& session) {
-    CommandSubmitResult connected = session.connect_sse(2s);
-    SseConnectResult* result = std::get_if<SseConnectResult>(&connected);
-    if (!result) throw std::runtime_error("SSE connect was rejected");
-    return std::move(*result);
-}
-
-const SessionSnapshot& snapshot_of(const SsePayload& payload) {
-    return std::get<SnapshotEvent>(payload).snapshot;
+void subscribe(LiveSession& session, std::string_view subscription_id = "sub-1") {
+    CommandSubmitResult connected = session.subscribe(
+        SubscribeCommand{
+            .connection_id = "view-1",
+            .context_epoch = 1,
+            .subscription_id = std::string(subscription_id),
+        },
+        2s);
+    if (!std::get_if<SubscribeResult>(&connected)) {
+        throw std::runtime_error("subscribe was rejected");
+    }
 }
 
 void execute_sql(const std::filesystem::path& path, const char* statement) {
@@ -244,16 +208,6 @@ TEST(LiveSession, RejectsZeroQueueAndBatchSizesBeforeStarting) {
 
     settings = test_settings(2);
     settings.event_batch_size = 0;
-    EXPECT_THROW(
-        (void)validate_live_session_settings(settings), std::invalid_argument);
-
-    settings = test_settings(2);
-    settings.orphan_limit = settings.idle_grace - 1ms;
-    EXPECT_THROW(
-        (void)validate_live_session_settings(settings), std::invalid_argument);
-
-    settings = test_settings(2);
-    settings.delete_deadline = settings.sse_drain_deadline;
     EXPECT_THROW(
         (void)validate_live_session_settings(settings), std::invalid_argument);
 }
@@ -577,109 +531,92 @@ TEST(LiveSession, PublishesExactAppendsAndSnapshotsForStructuralUpdates) {
     test::TemporarySessionFile file("live_session_appends");
     auto controls = std::make_shared<test::BackendControls>();
     LiveSessionHost host(test_settings(), scripted_opener(file.path(), controls));
-
-    const SseConnectResult connection = connect(*host);
-    std::shared_ptr<const SsePayload> initial = next_payload(connection);
+    subscribe(*host);
+    auto initial = next_output(*host);
     ASSERT_TRUE(initial);
-    ASSERT_TRUE(std::holds_alternative<SnapshotEvent>(*initial));
-    EXPECT_TRUE(snapshot_of(*initial).transcript.empty());
-    connection.mailbox->written(connection.stream);
+    EXPECT_EQ(initial->kind, cha::app::SessionOutputItem::Kind::snapshot);
+    EXPECT_TRUE(initial->snapshot.transcript.empty());
+    host->acknowledge_output();
 
-    // A new prompt is a structural transcript change, so it must arrive as a
-    // full snapshot rather than an append.
     ASSERT_TRUE(std::holds_alternative<CommandResult>(
         host->submit(RawCommand{"Question"}, 2s)));
-    std::shared_ptr<const SsePayload> structural = next_payload(connection);
+    auto structural = next_output(*host);
     ASSERT_TRUE(structural);
-    ASSERT_TRUE(std::holds_alternative<SnapshotEvent>(*structural));
-    EXPECT_FALSE(snapshot_of(*structural).transcript.empty());
-    connection.mailbox->written(connection.stream);
+    EXPECT_EQ(structural->kind, cha::app::SessionOutputItem::Kind::snapshot);
+    EXPECT_FALSE(structural->snapshot.transcript.empty());
+    host->acknowledge_output();
 
     ASSERT_TRUE(controls->wait_until_running());
     controls->emit_answer("one");
-    std::shared_ptr<const SsePayload> first_append = next_payload(connection);
-    ASSERT_TRUE(first_append);
-    // The answer entry may still arrive as a snapshot when the controller
-    // opened it in the same drain; either way the next fragment is an append.
-    connection.mailbox->written(connection.stream);
-    if (std::holds_alternative<SnapshotEvent>(*first_append)) {
+    auto first = next_output(*host);
+    ASSERT_TRUE(first);
+    host->acknowledge_output();
+    if (first->kind == cha::app::SessionOutputItem::Kind::snapshot) {
         controls->emit_answer(" more");
-        first_append = next_payload(connection);
-        ASSERT_TRUE(first_append);
-        connection.mailbox->written(connection.stream);
+        first = next_output(*host);
+        ASSERT_TRUE(first);
+        host->acknowledge_output();
     }
-    ASSERT_TRUE(std::holds_alternative<AppendEvent>(*first_append));
-    const AppendEvent& append = std::get<AppendEvent>(*first_append);
-    EXPECT_TRUE(std::holds_alternative<EntryTextTarget>(append.target));
-    EXPECT_FALSE(append.text.empty());
-
+    EXPECT_EQ(first->kind, cha::app::SessionOutputItem::Kind::append);
+    EXPECT_TRUE(std::holds_alternative<EntryTextTarget>(first->target));
+    EXPECT_FALSE(first->text.empty());
     controls->finish();
-    connection.mailbox->end_stream(connection.stream);
-    host->disconnect_sse(connection.connection_id, 0);
 }
 
 TEST(LiveSession, IncompatibleAppendTargetRepairsBrowserStateWithASnapshot) {
     test::TemporarySessionFile file("live_session_target_change");
     auto controls = std::make_shared<test::BackendControls>();
     LiveSessionHost host(test_settings(), scripted_opener(file.path(), controls));
-    const SseConnectResult connection = connect(*host);
-    ASSERT_TRUE(next_payload(connection));
-    connection.mailbox->written(connection.stream);
+    subscribe(*host);
+    ASSERT_TRUE(next_output(*host));
+    host->acknowledge_output();
 
     ASSERT_TRUE(std::holds_alternative<CommandResult>(
         host->submit(RawCommand{"Question"}, 2s)));
     ASSERT_TRUE(controls->wait_until_running());
 
-    // Reasoning text and answer text are different append targets. The first
-    // reasoning fragment has no compatible base yet, so it arrives as a
-    // snapshot that re-bases the stream on the reasoning target; the second is
-    // then an exact append.
     bool saw_reasoning_append = false;
     bool saw_answer_snapshot = false;
-    const auto drain = [&](bool& reasoning_flag, bool& answer_flag) {
+    const auto drain = [&] {
         for (int index = 0; index != 8; ++index) {
-            std::shared_ptr<const SsePayload> payload = next_payload(connection, 300ms);
-            if (!payload) return;
-            connection.mailbox->written(connection.stream);
-            if (const auto* append = std::get_if<AppendEvent>(payload.get())) {
-                if (std::holds_alternative<ReasoningTextTarget>(append->target)) {
-                    reasoning_flag = true;
+            auto item = next_output(*host, 300ms);
+            if (!item) return;
+            host->acknowledge_output();
+            if (item->kind == cha::app::SessionOutputItem::Kind::append) {
+                if (std::holds_alternative<ReasoningTextTarget>(item->target)) {
+                    saw_reasoning_append = true;
                 }
                 continue;
             }
-            for (const cha::TranscriptEntry& entry : snapshot_of(*payload).transcript) {
+            for (const cha::TranscriptEntry& entry : item->snapshot.transcript) {
                 if (entry.kind == EntryKind::character
                     && entry.text.find("answer") != std::string::npos) {
-                    answer_flag = true;
+                    saw_answer_snapshot = true;
                 }
             }
         }
     };
 
     controls->emit_reasoning("thinking");
-    drain(saw_reasoning_append, saw_answer_snapshot);
+    drain();
     controls->emit_reasoning(" harder");
-    drain(saw_reasoning_append, saw_answer_snapshot);
+    drain();
     EXPECT_TRUE(saw_reasoning_append);
 
-    // Switching to answer text cannot be represented against the reasoning
-    // base, so the actor repairs the browser with one fresh snapshot.
     controls->emit_answer("answer");
-    drain(saw_reasoning_append, saw_answer_snapshot);
+    drain();
     controls->finish();
-    drain(saw_reasoning_append, saw_answer_snapshot);
+    drain();
     EXPECT_TRUE(saw_answer_snapshot);
-    connection.mailbox->end_stream(connection.stream);
-    host->disconnect_sse(connection.connection_id, 0);
 }
 
 TEST(LiveSession, PresentationChangesPublishOneSnapshotEach) {
     test::TemporarySessionFile file("live_session_notice");
     auto controls = std::make_shared<test::BackendControls>();
     LiveSessionHost host(test_settings(), scripted_opener(file.path(), controls));
-    const SseConnectResult connection = connect(*host);
-    ASSERT_TRUE(next_payload(connection));
-    connection.mailbox->written(connection.stream);
+    subscribe(*host);
+    ASSERT_TRUE(next_output(*host));
+    host->acknowledge_output();
 
     const auto result = host->submit(RawCommand{"/nonsense"}, 2s);
     ASSERT_TRUE(std::holds_alternative<CommandResult>(result));
@@ -687,23 +624,19 @@ TEST(LiveSession, PresentationChangesPublishOneSnapshotEach) {
     EXPECT_NE(
         std::get<CommandResult>(result).session.notice->find("Unknown command"),
         std::string::npos);
-    std::shared_ptr<const SsePayload> noticed = next_payload(connection);
+    auto noticed = next_output(*host);
     ASSERT_TRUE(noticed);
-    ASSERT_TRUE(std::holds_alternative<SnapshotEvent>(*noticed));
-    ASSERT_TRUE(snapshot_of(*noticed).notice);
-    EXPECT_TRUE(snapshot_of(*noticed).transcript.empty());
+    EXPECT_EQ(noticed->kind, cha::app::SessionOutputItem::Kind::snapshot);
+    ASSERT_TRUE(noticed->snapshot.notice);
+    EXPECT_TRUE(noticed->snapshot.transcript.empty());
     EXPECT_NE(
-        snapshot_of(*noticed).notice->find("Unknown command"), std::string::npos);
-    connection.mailbox->written(connection.stream);
+        noticed->snapshot.notice->find("Unknown command"), std::string::npos);
+    host->acknowledge_output();
 
-    // Repeating the same notice is not a presentation change.
     ASSERT_TRUE(std::holds_alternative<CommandResult>(
         host->submit(RawCommand{"/nonsense"}, 2s)));
     ASSERT_TRUE(std::holds_alternative<SessionSnapshot>(host->snapshot(2s)));
-    EXPECT_FALSE(connection.mailbox->next(connection.stream, 50ms).payload);
-
-    connection.mailbox->end_stream(connection.stream);
-    host->disconnect_sse(connection.connection_id, 0);
+    EXPECT_FALSE(next_output(*host, 50ms));
 }
 
 TEST(LiveSession, PublishesAnOpenedSessionNoticeOnTheFirstSnapshot) {
@@ -721,281 +654,63 @@ TEST(LiveSession, PublishesAnOpenedSessionNoticeOnTheFirstSnapshot) {
             return opened;
         });
 
-    const SseConnectResult connection = connect(*host);
-    const std::shared_ptr<const SsePayload> initial = next_payload(connection);
+    subscribe(*host);
+    auto initial = next_output(*host);
     ASSERT_TRUE(initial);
-    ASSERT_TRUE(snapshot_of(*initial).notice);
+    ASSERT_TRUE(initial->snapshot.notice);
     EXPECT_NE(
-        snapshot_of(*initial).notice->find("could not be reloaded"),
+        initial->snapshot.notice->find("could not be reloaded"),
         std::string::npos);
-    connection.mailbox->end_stream(connection.stream);
-    host->disconnect_sse(connection.connection_id, 0);
 }
 
 TEST(LiveSession, ReloadingOutranksBrowserDisconnectedOnTheFinalSnapshot) {
     test::TemporarySessionFile file("live_session_reloading");
     auto controls = std::make_shared<test::BackendControls>();
     LiveSessionHost host(test_settings(), scripted_opener(file.path(), controls));
-
-    const SseConnectResult connection = connect(*host);
-    ASSERT_TRUE(next_payload(connection));
-    connection.mailbox->written(connection.stream);
+    subscribe(*host);
+    ASSERT_TRUE(next_output(*host));
+    host->acknowledge_output();
 
     host->request_shutdown(ShutdownReason::reloading);
-    const std::shared_ptr<const SsePayload> final_payload = next_payload(connection);
+    auto final_payload = next_output(*host);
     ASSERT_TRUE(final_payload);
-    ASSERT_TRUE(std::holds_alternative<SnapshotEvent>(*final_payload));
+    EXPECT_EQ(final_payload->kind, cha::app::SessionOutputItem::Kind::snapshot);
     EXPECT_EQ(
-        snapshot_of(*final_payload).shutdown_reason,
-        ShutdownReason::reloading);
-    connection.mailbox->written(connection.stream);
+        final_payload->snapshot.shutdown_reason, ShutdownReason::reloading);
     EXPECT_TRUE(wait_for_finished(host.handle()));
 }
 
-// The reader carries one session from device to device, so a second connection
-// takes it over at once rather than being refused, and the device it displaced
-// is told so instead of being left to reconnect and take it back.
-TEST(LiveSession, ASecondBrowserTakesTheSessionOver) {
-    test::TemporarySessionFile file("live_session_streams");
-    auto controls = std::make_shared<test::BackendControls>();
-    LiveSessionHost host(test_settings(), scripted_opener(file.path(), controls));
-
-    const SseConnectResult first = connect(*host);
-    ASSERT_TRUE(next_payload(first));
-    const SseConnectResult second = connect(*host);
-    EXPECT_NE(second.connection_id, first.connection_id);
-
-    const SseMailbox::Next displaced = first.mailbox->next(first.stream, 10ms);
-    EXPECT_FALSE(displaced.open);
-    EXPECT_EQ(displaced.ending, SseMailbox::Ending::superseded);
-    // The new device still receives its own opening snapshot.
-    const std::shared_ptr<const SsePayload> opening = next_payload(second);
-    ASSERT_TRUE(opening);
-    EXPECT_TRUE(std::holds_alternative<SnapshotEvent>(*opening));
-
-    // The displaced device tears down late. Neither its end_stream nor its
-    // disconnect may disturb the connection that now holds the session.
-    EXPECT_EQ(first.mailbox->end_stream(first.stream), 0U);
-    host->disconnect_sse(first.connection_id, 0);
-    second.mailbox->written(second.stream);
-    ASSERT_TRUE(std::holds_alternative<CommandResult>(
-        host->submit(RawCommand{"Question"}, 2s)));
-    ASSERT_TRUE(next_payload(second));
-
-    second.mailbox->end_stream(second.stream);
-    host->disconnect_sse(second.connection_id, 0);
-}
-
-TEST(LiveSession, ReconnectStartsFromAFreshSnapshot) {
+TEST(LiveSession, ResubscribeStartsFromAFreshSnapshot) {
     test::TemporarySessionFile file("live_session_reconnect");
     auto controls = std::make_shared<test::BackendControls>();
-    WebSettings settings = test_settings();
-    settings.idle_grace = 5s;
-    settings.orphan_limit = 10s;
-    LiveSessionHost host(settings, scripted_opener(file.path(), controls));
-
-    const SseConnectResult first = connect(*host);
-    ASSERT_TRUE(next_payload(first));
-    first.mailbox->end_stream(first.stream);
-    host->disconnect_sse(first.connection_id, 0);
-    ASSERT_TRUE(std::holds_alternative<SessionSnapshot>(host->snapshot(2s)));
-
-    const SseConnectResult second = connect(*host);
-    std::shared_ptr<const SsePayload> reconnected = next_payload(second);
+    LiveSessionHost host(test_settings(), scripted_opener(file.path(), controls));
+    subscribe(*host, "sub-1");
+    ASSERT_TRUE(next_output(*host));
+    host->acknowledge_output();
+    ASSERT_TRUE(std::holds_alternative<CommandResult>(
+        host->unsubscribe(
+            UnsubscribeCommand{
+                .connection_id = "view-1",
+                .context_epoch = 1,
+                .subscription_id = "sub-1",
+            },
+            2s)));
+    subscribe(*host, "sub-2");
+    auto reconnected = next_output(*host);
     ASSERT_TRUE(reconnected);
-    EXPECT_TRUE(std::holds_alternative<SnapshotEvent>(*reconnected));
-    second.mailbox->end_stream(second.stream);
-    host->disconnect_sse(second.connection_id, 0);
+    EXPECT_EQ(reconnected->kind, cha::app::SessionOutputItem::Kind::snapshot);
 }
 
-TEST(LiveSession, TimedOutSseConnectReleasesItsUnclaimedStream) {
-    test::TemporarySessionFile file("live_session_abandoned_stream");
-    auto controls = std::make_shared<test::BackendControls>();
-    OwnerGate gate;
-    LiveSessionHost host(
-        test_settings(4),
-        scripted_opener(file.path(), controls, [&gate](std::size_t) {
-            gate.wait();
-        }));
-
-    EXPECT_EQ(
-        std::get<ErrorCode>(host->submit(RawCommand{"Slow"}, 5ms)),
-        ErrorCode::command_timeout);
-    ASSERT_TRUE(gate.wait_until_entered());
-    const CommandSubmitResult abandoned = host->connect_sse(5ms);
-    gate.release();
-    ASSERT_TRUE(std::holds_alternative<ErrorCode>(abandoned));
-    EXPECT_EQ(std::get<ErrorCode>(abandoned), ErrorCode::command_timeout);
-
-    ASSERT_TRUE(controls->wait_until_running());
-    controls->finish();
-    const SseConnectResult fresh = connect(*host);
-    fresh.mailbox->end_stream(fresh.stream);
-    host->disconnect_sse(fresh.connection_id, 0);
-}
-
-TEST(LiveSession, InitialIdleDeadlineUnloadsAnUnvisitedSession) {
-    test::TemporarySessionFile file("live_session_idle");
-    auto controls = std::make_shared<test::BackendControls>();
-    auto clock = std::make_shared<FakeSessionClock>();
-    WebSettings settings = test_settings();
-    settings.idle_grace = 10ms;
-    settings.orphan_limit = 20ms;
-    LiveSessionHost host(
-        settings, scripted_opener(file.path(), controls),
-        [clock] { return clock->now(); });
-
-    ASSERT_TRUE(std::holds_alternative<SessionSnapshot>(host->snapshot(2s)));
-    const std::size_t before_deadline = clock->advance(9ms);
-    ASSERT_TRUE(std::holds_alternative<SessionSnapshot>(host->snapshot(2s)));
-    ASSERT_TRUE(clock->wait_until_observed(before_deadline));
-    EXPECT_TRUE(std::holds_alternative<SessionSnapshot>(host->snapshot(2s)));
-
-    const std::size_t at_deadline = clock->advance(1ms);
-    (void)host->snapshot(2s);
-    ASSERT_TRUE(clock->wait_until_observed(at_deadline));
-    EXPECT_TRUE(wait_for_finished(host.handle()));
-}
-
-TEST(LiveSession, GeneratingDisconnectUsesOrphanLimitFromDisconnection) {
-    test::TemporarySessionFile file("live_session_orphan");
-    auto controls = std::make_shared<test::BackendControls>();
-    auto clock = std::make_shared<FakeSessionClock>();
-    WebSettings settings = test_settings();
-    settings.idle_grace = 10ms;
-    settings.orphan_limit = 100ms;
-    LiveSessionHost host(
-        settings, scripted_opener(file.path(), controls),
-        [clock] { return clock->now(); });
-
-    const SseConnectResult connection = connect(*host);
-    connection.mailbox->end_stream(connection.stream);
-    host->disconnect_sse(connection.connection_id, 0);
-    ASSERT_TRUE(std::holds_alternative<CommandResult>(
-        host->submit(RawCommand{"Question"}, 2s)));
-    ASSERT_TRUE(controls->wait_until_running());
-
-    // Generation is active, so the idle grace does not apply.
-    const std::size_t before_orphan_limit = clock->advance(99ms);
-    ASSERT_TRUE(std::holds_alternative<SessionSnapshot>(host->snapshot(2s)));
-    ASSERT_TRUE(clock->wait_until_observed(before_orphan_limit));
-    EXPECT_TRUE(std::holds_alternative<SessionSnapshot>(host->snapshot(2s)));
-
-    const std::size_t at_orphan_limit = clock->advance(1ms);
-    (void)host->snapshot(2s);
-    ASSERT_TRUE(clock->wait_until_observed(at_orphan_limit));
-    EXPECT_TRUE(wait_for_finished(host.handle()));
-}
-
-TEST(LiveSession, GenerationFinalizationReevaluatesDisconnectDeadline) {
-    test::TemporarySessionFile file("live_session_idle_after_generation");
-    auto controls = std::make_shared<test::BackendControls>();
-    auto clock = std::make_shared<FakeSessionClock>();
-    WebSettings settings = test_settings();
-    settings.idle_grace = 10ms;
-    settings.orphan_limit = 5s;
-    LiveSessionHost host(
-        settings, scripted_opener(file.path(), controls),
-        [clock] { return clock->now(); });
-
-    const SseConnectResult connection = connect(*host);
-    connection.mailbox->end_stream(connection.stream);
-    host->disconnect_sse(connection.connection_id, 0);
-    ASSERT_TRUE(std::holds_alternative<CommandResult>(
-        host->submit(RawCommand{"Question"}, 2s)));
-    ASSERT_TRUE(controls->wait_until_running());
-
-    const std::size_t at_idle_deadline = clock->advance(10ms);
-    ASSERT_TRUE(std::holds_alternative<SessionSnapshot>(host->snapshot(2s)));
-    ASSERT_TRUE(clock->wait_until_observed(at_idle_deadline));
-    EXPECT_TRUE(std::holds_alternative<SessionSnapshot>(host->snapshot(2s)));
-
-    // Once generation ends the disconnected session falls back to idle grace,
-    // which the clock has already passed.
-    controls->finish();
-    EXPECT_TRUE(wait_for_finished(host.handle()));
-}
-
-TEST(LiveSession, StalledReaderExpiresTheBoundedFinalDrain) {
-    test::TemporarySessionFile file("live_session_drain");
-    auto controls = std::make_shared<test::BackendControls>();
-    WebSettings settings = test_settings();
-    settings.sse_drain_deadline = 100ms;
-    LiveSessionHost host(settings, scripted_opener(file.path(), controls));
-
-    const SseConnectResult connection = connect(*host);
-    // Take the initial payload but never acknowledge it, matching a reader
-    // that stopped after the server began the write.
-    ASSERT_TRUE(next_payload(connection));
-
-    const auto started = std::chrono::steady_clock::now();
-    host->request_shutdown();
-    ASSERT_TRUE(wait_for_finished(host.handle()));
-    EXPECT_GE(
-        std::chrono::steady_clock::now() - started, settings.sse_drain_deadline);
-    EXPECT_FALSE(connection.mailbox->next(connection.stream, 1ms).open);
-}
-
-TEST(LiveSession, AcknowledgedFinalSnapshotEndsTheDrainImmediately) {
-    test::TemporarySessionFile file("live_session_fast_drain");
-    auto controls = std::make_shared<test::BackendControls>();
-    WebSettings settings = test_settings();
-    settings.sse_drain_deadline = 5s;
-    LiveSessionHost host(settings, scripted_opener(file.path(), controls));
-
-    const SseConnectResult connection = connect(*host);
-    ASSERT_TRUE(next_payload(connection));
-    connection.mailbox->written(connection.stream);
-
-    const auto started = std::chrono::steady_clock::now();
-    host->request_shutdown();
-    // The writer keeps acknowledging, so the drain must end well inside its
-    // configured deadline.
-    std::thread reader([&] {
-        while (connection.mailbox->next(connection.stream, 5ms).open) {
-            connection.mailbox->written(connection.stream);
-        }
-    });
-    EXPECT_TRUE(wait_for_finished(host.handle()));
-    reader.join();
-    EXPECT_LT(std::chrono::steady_clock::now() - started, 2s);
-}
-
-TEST(LiveSession, ProcessStopWinsTheShutdownReasonAndSkipsTheDrain) {
+TEST(LiveSession, ProcessStopCompletesWithoutWaitingForPresentation) {
     test::TemporarySessionFile file("live_session_process_stop");
     auto controls = std::make_shared<test::BackendControls>();
-    WebSettings settings = test_settings();
-    settings.sse_drain_deadline = 5s;
-    LiveSessionHost host(settings, scripted_opener(file.path(), controls));
-
-    const SseConnectResult connection = connect(*host);
-    const std::shared_ptr<const SsePayload> initial = next_payload(connection);
-    ASSERT_TRUE(initial);
-
-    // Enter local teardown first and hold its final snapshot in flight. This
-    // deterministically places the owner in the ordinary mailbox drain before
-    // the process-wide reason arrives.
-    host->request_shutdown(ShutdownReason::browser_disconnected);
-    const auto stopping_deadline = std::chrono::steady_clock::now() + 2s;
-    while (host->lifecycle() != LiveSessionState::stopping
-        && std::chrono::steady_clock::now() < stopping_deadline) {
-        std::this_thread::sleep_for(1ms);
-    }
-    ASSERT_EQ(host->lifecycle(), LiveSessionState::stopping);
-    connection.mailbox->written(connection.stream);
-    const std::shared_ptr<const SsePayload> local_final = next_payload(connection);
-    ASSERT_TRUE(local_final);
-    ASSERT_TRUE(std::holds_alternative<SnapshotEvent>(*local_final));
-    EXPECT_EQ(
-        snapshot_of(*local_final).shutdown_reason,
-        ShutdownReason::browser_disconnected);
-
+    LiveSessionHost host(test_settings(), scripted_opener(file.path(), controls));
+    subscribe(*host);
+    ASSERT_TRUE(next_output(*host));
     host->request_shutdown(ShutdownReason::server_stopping);
     EXPECT_EQ(
         std::get<ErrorCode>(host->submit(RawCommand{"late"}, 1s)),
         ErrorCode::server_stopping);
-    // The higher-priority request interrupts the already-active five-second
-    // local drain rather than merely waking the ordinary owner loop.
     EXPECT_TRUE(wait_for_finished(host.handle(), 500ms));
 }
 

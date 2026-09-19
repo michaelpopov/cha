@@ -124,8 +124,7 @@ private:
 
 cha::web::WebSettings native_settings();
 
-// Transport-neutral composition root. Construction does not bind a port or
-// start a listener. The temporary HTTP runtime wraps this object.
+// Composition root. Construction does not bind a port or start a listener.
 class Application {
 public:
     static std::unique_ptr<Application> open(

@@ -4,7 +4,6 @@
 #include "session/controller_update.h"
 #include "session/opened_session.h"
 #include "chat/session_identity.h"
-#include "web/browser_connection_state.h"
 #include "web/command_queue.h"
 #include "web/owner_wake_signal.h"
 #include "web/protocol.h"
@@ -68,11 +67,12 @@ enum class LiveSessionStartResult {
 
 // One complete live-session actor: its permanent owner thread, the concrete
 // SessionController that thread exclusively owns, the bounded command queue
-// HTTP threads submit through, the coalescing owner wake signal, browser and
-// presentation state, the SSE mailbox, and one lifecycle record.
+// callers submit through, the coalescing owner wake signal, presentation
+// output, and one lifecycle record.
 //
-// Routes retain a shared pointer to this object and use only the command API.
-// They never reach the controller, the wake signal, or the thread.
+// Application code retains a shared pointer to this object and uses only the
+// command API. Callers never reach the controller, the wake signal, or the
+// thread.
 class LiveSession {
 public:
     // Destruction never joins: the manager is the join authority and makes the
@@ -90,17 +90,12 @@ public:
     enqueue(WebCommand command);
     [[nodiscard]] CommandSubmitResult snapshot(
         std::chrono::milliseconds deadline);
-    [[nodiscard]] CommandSubmitResult connect_sse(
-        std::chrono::milliseconds deadline);
     [[nodiscard]] CommandSubmitResult subscribe(
         SubscribeCommand command,
         std::chrono::milliseconds deadline);
     [[nodiscard]] CommandSubmitResult unsubscribe(
         UnsubscribeCommand command,
         std::chrono::milliseconds deadline);
-    void disconnect_sse(
-        std::uint64_t connection_id,
-        std::size_t collapsed_payloads) noexcept;
     void request_shutdown(
         ShutdownReason reason = ShutdownReason::browser_disconnected);
     void request_retire_when_idle();
@@ -155,7 +150,6 @@ private:
     void publish_finished() noexcept;
     void owner_loop();
     void execute(OwnerCommand command);
-    void apply_notification(OwnerNotification notification);
     [[nodiscard]] SessionSnapshot make_snapshot();
     [[nodiscard]] WebPresentationState presentation(
         SessionLifecycle lifecycle,
@@ -179,13 +173,10 @@ private:
     LiveSessionClock clock_;
     std::shared_ptr<OwnerWakeSignal> notifier_;
     std::shared_ptr<cha::app::SessionOutput> output_;
-    // HTTP SSE adapter, created on first connect_sse. Held as void so cha_app
-    // does not depend on SseMailbox.
-    std::shared_ptr<void> sse_adapter_;
     CommandQueue commands_;
 
     // The one lifecycle record. It is the only actor state shared between the
-    // owner thread, HTTP threads, and the manager.
+    // owner thread, application callers, and the manager.
     mutable std::mutex lifecycle_mutex_;
     std::condition_variable lifecycle_changed_;
     LiveSessionState state_{LiveSessionState::starting};
@@ -214,8 +205,6 @@ private:
     bool logged_generation_active_{};
     std::optional<RequestId> logged_active_request_;
     bool fatal_logged_{};
-    BrowserConnectionState browser_connection_;
-    bool has_connected_sse_{};
     bool generating_{};
     bool retire_when_idle_{};
     std::uint64_t subscribe_ticket_{};

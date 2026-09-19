@@ -4,9 +4,6 @@ info:
   version: 1.0.0
   description: |
     Transport-neutral application DTOs and native bridge envelopes.
-    The temporary HTTP catalog in `cha.yaml` references these definitions.
-    Native and HTTP callers share this one schema; do not copy types into
-    route documents.
 paths: {}
 components:
   schemas:

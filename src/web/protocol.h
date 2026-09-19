@@ -19,8 +19,6 @@
 
 namespace cha::web {
 
-class SseMailbox;
-
 enum class SessionLifecycle { starting, running, stopping };
 enum class ShutdownReason {
     browser_disconnected,
@@ -145,10 +143,9 @@ struct RenameSessionCommand {
     std::string label;
 };
 
-// A snapshot request shares the owner queue with mutations so HTTP threads
+// A snapshot request shares the owner queue with mutations so callers
 // never read controller-owned state directly.
 struct SnapshotCommand {};
-struct SseConnectCommand {};
 struct SubscribeCommand {
     std::string connection_id;
     std::uint64_t context_epoch{};
@@ -165,16 +162,6 @@ struct SubscribeResult {
     std::string subscription_id;
 };
 
-struct SseStreamToken {
-    std::uint64_t id{};
-};
-
-struct SseConnectResult {
-    std::shared_ptr<SseMailbox> mailbox;
-    SseStreamToken stream;
-    std::uint64_t connection_id{};
-};
-
 using WebCommand = std::variant<
     RawCommand,
     StopCommand,
@@ -184,7 +171,6 @@ using WebCommand = std::variant<
     SetDefaultCharacterCommand,
     RenameSessionCommand,
     SnapshotCommand,
-    SseConnectCommand,
     SubscribeCommand,
     UnsubscribeCommand>;
 

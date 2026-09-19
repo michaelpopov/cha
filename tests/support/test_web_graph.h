@@ -8,7 +8,6 @@
 #include "session/session_repository.h"
 #include "support/test_workspace.h"
 #include "web/live_session.h"
-#include "web/lobby_routes.h"
 
 #include <filesystem>
 #include <memory>
@@ -46,10 +45,6 @@ public:
             return open_session(
                 *repository, identity, *providers, std::move(notifier), *config);
         };
-    }
-
-    static web::InitialSelection initial_selection() {
-        return {{std::string(entrance_id), std::string(welcome_id)}};
     }
 
     static FullSessionId welcome() {

@@ -24,7 +24,7 @@ using cha::web::load_configuration_directory;
 using cha::web::find_vault;
 using cha::web::VaultDefinition;
 using cha::web::ConfigurationDirectory;
-using cha::web::ConfigurationTransport;
+
 using cha::web::CommandResult;
 using cha::web::RawCommand;
 using cha::web::SessionSnapshot;
@@ -48,7 +48,7 @@ ApplicationCommand make_command(
               << "data = " << std::quoted(database.string()) << "\n";
     }
     const ConfigurationDirectory loaded = load_configuration_directory(
-        config_directory, ConfigurationTransport::native);
+        config_directory);
     const VaultDefinition* const vault =
         find_vault(loaded.vaults, loaded.startup_vault);
     std::vector<VaultDefinition> vaults = loaded.vaults;
@@ -209,7 +209,7 @@ TEST(Application, IgnoresObsoleteNativeWebSection) {
               << "data = " << std::quoted(database.string()) << "\n";
     }
     const auto loaded = load_configuration_directory(
-        config_directory, ConfigurationTransport::native);
+        config_directory);
     ASSERT_FALSE(loaded.warnings.empty());
     EXPECT_NE(loaded.warnings.front().find("[web]"), std::string::npos);
     VaultDefinition selected = *find_vault(loaded.vaults, loaded.startup_vault);

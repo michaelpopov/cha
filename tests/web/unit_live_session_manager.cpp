@@ -691,7 +691,6 @@ TEST(LiveSessionManager, ReopensSameKeyAfterTheOldOwnerHasBeenJoined) {
 TEST(LiveSessionManager, DeletionReservationStopsTheActorAndBlocksOpenAndReattach) {
     SessionFiles files;
     WebSettings settings = manager_settings(2);
-    settings.sse_drain_deadline = 10ms;
     settings.delete_deadline = 1s;
     LiveSessionManager manager(settings, test_opener(files));
     const FullSessionId key{"forum", "reserved"};

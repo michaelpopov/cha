@@ -27,12 +27,10 @@ export function sessionRoute(forumId: string, sessionId: string): string {
   return `/s/${forumId}/${sessionId}/`;
 }
 
-// Native packaged origins keep a fixed document path and identify the view in
-// the fragment. The temporary HTTP frontend keeps path routing.
 export function usesHashRoutes(
-  location: Pick<Location, 'protocol'> = window.location,
+  _location: Pick<Location, 'protocol'> = window.location,
 ): boolean {
-  return location.protocol !== 'http:';
+  return true;
 }
 
 export function currentAppRoute(

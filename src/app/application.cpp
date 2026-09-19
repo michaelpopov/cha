@@ -255,10 +255,7 @@ FullSessionId fallback_session(const SessionRepository& sessions) {
 } // namespace
 
 cha::web::WebSettings native_settings() {
-    WebSettings settings;
-    settings.browser_disconnect_lifetime = false;
-    settings.monotonic_event_sequence = true;
-    return settings;
+    return {};
 }
 
 struct Application::Impl {

@@ -24,7 +24,7 @@ using cha::MockHttpServer;
 using cha::http_response;
 using cha::web::ApplicationCommand;
 using cha::web::ConfigurationDirectory;
-using cha::web::ConfigurationTransport;
+
 using cha::web::VaultDefinition;
 using cha::web::find_vault;
 using cha::web::load_configuration_directory;
@@ -46,7 +46,7 @@ ApplicationCommand make_command(
               << "data = " << std::quoted(database.string()) << "\n";
     }
     const ConfigurationDirectory loaded = load_configuration_directory(
-        config_directory, ConfigurationTransport::native);
+        config_directory);
     const VaultDefinition* const vault =
         find_vault(loaded.vaults, loaded.startup_vault);
     std::vector<VaultDefinition> vaults = loaded.vaults;

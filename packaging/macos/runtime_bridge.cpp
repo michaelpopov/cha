@@ -28,7 +28,7 @@ using cha::WorkspaceConfigTransfer;
 using cha::app::Application;
 using cha::bridge::BridgeRouter;
 using cha::web::ApplicationCommand;
-using cha::web::ConfigurationTransport;
+
 using cha::web::parse_application_command;
 
 namespace {
@@ -92,8 +92,7 @@ ApplicationCommand runtime_command(
     const char* resource_path) {
     const char* arguments[] = {
         "CHA", "--root", resource_path, "--config", config_path};
-    return parse_application_command(
-        5, arguments, ConfigurationTransport::native);
+    return parse_application_command(5, arguments);
 }
 
 void stop_pump(ChaRuntime* runtime) {

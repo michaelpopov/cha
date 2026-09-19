@@ -62,14 +62,9 @@ describe('C++ wire fixtures', () => {
       join(dirname(fileURLToPath(import.meta.url)), '../../../resources/dto.yaml'),
       'utf8',
     );
-    const catalog = readFileSync(
-      join(dirname(fileURLToPath(import.meta.url)), '../../../resources/cha.yaml'),
-      'utf8',
-    );
     expect(dto).toContain('title: CHA DTOs');
     expect(dto).toContain('NativeRequest:');
     expect(dto).toContain('MediaResource:');
-    expect(catalog).toContain('$ref: "./dto.yaml#/components/schemas/Bootstrap"');
-    expect(catalog).not.toMatch(/\n    Bootstrap:\n      type: object/);
+    expect(dto).toContain('Bootstrap:');
   });
 });

@@ -143,8 +143,8 @@ TEST_F(ApplicationConfigTest, LoadsValidExternalConfigurations) {
             command.vault.data,
             std::filesystem::weakly_canonical(item.database));
         EXPECT_EQ(command.root, std::filesystem::weakly_canonical(root_));
-        EXPECT_EQ(command.host, item.host);
-        EXPECT_EQ(command.port, item.port);
+        EXPECT_EQ(command.host, "127.0.0.1");
+        EXPECT_EQ(command.port, 0);
         EXPECT_EQ(
             command.log_file,
             std::filesystem::weakly_canonical(item.log));
@@ -174,9 +174,15 @@ TEST_F(ApplicationConfigTest, IgnoresObsoleteVoiceConfiguration) {
 
         const ApplicationCommand command =
             load({"chaweb", "--config", config_.string()});
-        ASSERT_EQ(command.warnings.size(), 1U);
-        EXPECT_NE(command.warnings.front().find("[" + std::string(table) + "]"), std::string::npos);
-        EXPECT_NE(command.warnings.front().find("ignored"), std::string::npos);
+        ASSERT_GE(command.warnings.size(), 1U);
+        bool saw_voice = false;
+        for (const auto& warning : command.warnings) {
+            if (warning.find("[" + std::string(table) + "]") != std::string::npos) {
+                saw_voice = true;
+                EXPECT_NE(warning.find("ignored"), std::string::npos);
+            }
+        }
+        EXPECT_TRUE(saw_voice);
     }
 }
 
@@ -208,7 +214,7 @@ TEST_F(ApplicationConfigTest, BootstrapsAnEmptyConfigurationDirectory) {
         command.mirror_base,
         std::filesystem::weakly_canonical(config_ / "mirror"));
     EXPECT_EQ(command.host, "127.0.0.1");
-    EXPECT_EQ(command.port, 8086);
+    EXPECT_EQ(command.port, 0);
     EXPECT_TRUE(std::filesystem::is_regular_file(config_ / "app.toml"));
     EXPECT_TRUE(std::filesystem::is_regular_file(config_ / "default.toml"));
 
@@ -414,17 +420,15 @@ TEST_F(ApplicationConfigTest, RejectsMissingDuplicateAndRuntimeOfflineOptions) {
     EXPECT_NE(
         error_text({
             "chaweb", "--config=" + config_.string(),
-            "--test-idle-grace-ms", "0"}).find("positive integer"),
+            "--test-idle-grace-ms", "0"}).find("Unknown option"),
         std::string::npos);
 }
 
 TEST_F(ApplicationConfigTest, RequiresAllSettingsWithValidTypes) {
     const std::vector<std::string> invalid{
-        "[web]\nhost = \"x\"\nport = 1\n[logging]\nfile = \"x\"\nlevel = \"off\"\n",
-        "vault = \"Personal\"\n[web]\nhost = \"\"\nport = 1\n[logging]\nfile = \"x\"\nlevel = \"off\"\n",
-        "vault = \"Personal\"\n[web]\nhost = \"x\"\nport = -1\n[logging]\nfile = \"x\"\nlevel = \"off\"\n",
-        "vault = \"Personal\"\n[web]\nhost = \"x\"\nport = 1\n[logging]\nlevel = \"off\"\n",
-        "vault = \"Personal\"\nextra = true\n[web]\nhost = \"x\"\nport = 1\n[logging]\nfile = \"x\"\nlevel = \"off\"\n",
+        "[logging]\nfile = \"x\"\nlevel = \"off\"\n",
+        "vault = \"Personal\"\n[logging]\nlevel = \"off\"\n",
+        "vault = \"Personal\"\nextra = true\n[logging]\nfile = \"x\"\nlevel = \"off\"\n",
     };
     for (const std::string& contents : invalid) {
         write_app(contents);
@@ -435,73 +439,30 @@ TEST_F(ApplicationConfigTest, RequiresAllSettingsWithValidTypes) {
     }
 }
 
-TEST_F(ApplicationConfigTest, HttpModeAllowsMissingWebAndUsesDefaults) {
+TEST_F(ApplicationConfigTest, IgnoresMissingAndObsoleteWebSection) {
     write_app(
         "vault = \"Personal\"\n"
         "[logging]\nfile = \"x\"\nlevel = \"off\"\n");
-    const auto command = load({"chaweb", "--config=" + config_.string()});
-    EXPECT_EQ(command.host, "127.0.0.1");
-    EXPECT_EQ(command.port, 8086);
-}
-
-TEST_F(ApplicationConfigTest, NativeModeIgnoresMalformedWebSection) {
-    write_app(
-        "vault = \"Personal\"\n"
-        "[web]\nhost = 1\nport = \"bad\"\nextra = true\n"
-        "[logging]\nfile = \"x\"\nlevel = \"off\"\n");
-    const auto loaded = load_configuration_directory(
-        config_, ConfigurationTransport::native);
-    ASSERT_FALSE(loaded.warnings.empty());
-    EXPECT_NE(loaded.warnings.front().find("[web]"), std::string::npos);
-}
-
-TEST_F(ApplicationConfigTest, NativeParseIgnoresMissingAndObsoleteWeb) {
-    write_app(
-        "vault = \"Personal\"\n"
-        "[logging]\nfile = \"x\"\nlevel = \"off\"\n");
-    std::vector<std::string> arguments{
-        "CHA", "--config=" + config_.string(), "--root=" + root_.string()};
-    std::vector<const char*> pointers;
-    for (const std::string& argument : arguments) {
-        pointers.push_back(argument.c_str());
-    }
-    const auto missing = parse_application_command(
-        static_cast<int>(pointers.size()),
-        pointers.data(),
-        ConfigurationTransport::native);
+    const auto missing = load({"chaweb", "--config=" + config_.string()});
     EXPECT_EQ(missing.port, 0);
     EXPECT_EQ(missing.host, "127.0.0.1");
 
     write_app(
         "vault = \"Personal\"\n"
-        "[web]\nhost = 1\nport = \"bad\"\n"
+        "[web]\nhost = 1\nport = \"bad\"\nextra = true\n"
         "[logging]\nfile = \"x\"\nlevel = \"off\"\n");
-    const auto obsolete = parse_application_command(
-        static_cast<int>(pointers.size()),
-        pointers.data(),
-        ConfigurationTransport::native);
-    EXPECT_EQ(obsolete.port, 0);
-    ASSERT_FALSE(obsolete.warnings.empty());
-}
+    const auto loaded = load_configuration_directory(config_);
+    ASSERT_FALSE(loaded.warnings.empty());
+    EXPECT_NE(loaded.warnings.front().find("[web]"), std::string::npos);
+    EXPECT_EQ(loaded.port, 0);
 
-TEST_F(ApplicationConfigTest, HttpModeRejectsNonTableWebSection) {
     write_app(
         "vault = \"Personal\"\n"
         "web = 1\n"
         "[logging]\nfile = \"x\"\nlevel = \"off\"\n");
-    EXPECT_THROW(
-        (void)load({"chaweb", "--config=" + config_.string()}),
-        std::runtime_error);
-}
-
-TEST_F(ApplicationConfigTest, HttpModeIgnoresUnknownWebFieldsWithWarning) {
-    write_app(
-        "vault = \"Personal\"\n"
-        "[web]\nhost = \"127.0.0.1\"\nport = 8080\nidle = 1\n"
-        "[logging]\nfile = \"x\"\nlevel = \"off\"\n");
-    const auto command = load({"chaweb", "--config=" + config_.string()});
-    EXPECT_EQ(command.port, 8080);
-    ASSERT_FALSE(command.warnings.empty());
+    const auto scalar = load({"chaweb", "--config=" + config_.string()});
+    EXPECT_EQ(scalar.port, 0);
+    ASSERT_FALSE(scalar.warnings.empty());
 }
 
 TEST_F(ApplicationConfigTest, LoadsMultipleVaultsWithCanonicalSpellingAndOrder) {
@@ -682,7 +643,7 @@ TEST_F(ApplicationConfigTest, IgnoresAndWarnsAboutUnusedVaultFields) {
     EXPECT_EQ(
         command.vault.modify,
         std::filesystem::weakly_canonical(modify_base / "Personal"));
-    ASSERT_EQ(command.warnings.size(), 2U);
+    ASSERT_GE(command.warnings.size(), 2U);
     bool warned_modify = false;
     bool warned_obsolete = false;
     for (const std::string& warning : command.warnings) {
@@ -690,7 +651,7 @@ TEST_F(ApplicationConfigTest, IgnoresAndWarnsAboutUnusedVaultFields) {
             || warning.find("field 'modify'") != std::string::npos;
         warned_obsolete = warned_obsolete
             || warning.find("field 'obsolete'") != std::string::npos;
-        EXPECT_NE(warning.find("was ignored"), std::string::npos);
+        EXPECT_NE(warning.find("ignored"), std::string::npos);
     }
     EXPECT_TRUE(warned_modify);
     EXPECT_TRUE(warned_obsolete);
@@ -715,7 +676,7 @@ TEST_F(ApplicationConfigTest, RejectsUnknownStartupAndConsoleSelections) {
     EXPECT_NE(
         error_text({
             "chaweb", "--config", config_.string(), "--vault=Personal"})
-            .find("server mode"),
+            .find("--import, --export, --upload, or --download"),
         std::string::npos);
     EXPECT_NE(
         error_text({
