@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import Foundation
 import WebKit
 
@@ -7,12 +8,18 @@ private enum ProbeExpectation: String {
     case fail
     case timeout
     case audio
+    case flow
+    case reload
+    case rendererFail = "renderer-fail"
+    case stall
+    case quit
 }
 
 private struct HostOptions {
     var assets: URL
     var expectation = ProbeExpectation.pass
     var timeoutMs = 20000
+    var config: URL?
 }
 
 private enum HostError: LocalizedError {
@@ -23,7 +30,7 @@ private enum HostError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .usage:
-            return "usage: cha_macos_native_test_host --assets <dir> [--expect pass|fail|timeout|audio] [--timeout-ms N]"
+            return "usage: cha_macos_native_test_host --assets <dir> [--config <dir>] [--expect pass|fail|timeout|audio|flow|reload|renderer-fail|stall|quit] [--timeout-ms N]"
         case .probeFailed(let detail):
             return detail
         case .timedOut:
@@ -37,6 +44,7 @@ private func parseOptions() throws -> HostOptions {
     var assets: URL?
     var expectation = ProbeExpectation.pass
     var timeoutMs = 20000
+    var config: URL?
     var index = 0
     while index < arguments.count {
         let argument = arguments[index]
@@ -48,6 +56,8 @@ private func parseOptions() throws -> HostOptions {
         switch argument {
         case "--assets":
             assets = URL(fileURLWithPath: try takeValue(), isDirectory: true)
+        case "--config":
+            config = URL(fileURLWithPath: try takeValue(), isDirectory: true)
         case "--expect":
             guard let parsed = ProbeExpectation(rawValue: try takeValue()) else {
                 throw HostError.usage
@@ -64,33 +74,87 @@ private func parseOptions() throws -> HostOptions {
         index += 1
     }
     guard let assets else { throw HostError.usage }
-    return HostOptions(assets: assets, expectation: expectation, timeoutMs: timeoutMs)
+    return HostOptions(
+        assets: assets, expectation: expectation, timeoutMs: timeoutMs, config: config)
+}
+
+private func isProbe(_ expectation: ProbeExpectation) -> Bool {
+    switch expectation {
+    case .pass, .fail, .timeout, .audio: return true
+    default: return false
+    }
+}
+
+private struct TestRuntimeHandle: @unchecked Sendable {
+    let pointer: OpaquePointer
 }
 
 @MainActor
 private final class NativeTestHost: NSObject, WKNavigationDelegate, WKUIDelegate {
     private let options: HostOptions
-    private let receiver: ChaProbeReceiver
+    private var probeReceiver: ChaProbeReceiver?
+    private var nativeBridge: ChaNativeBridgeReceiver?
+    private var runtime: OpaquePointer?
     private var webView: WKWebView!
     private var finished = false
+    private var flowPhase = 0
+    private var initialFlowStarted = false
+    private var rendererFailures = 0
 
     init(options: HostOptions) {
         self.options = options
-        let configuration: WKWebViewConfiguration
-        let built = makeFeasibilityWebViewConfiguration(assetRoot: options.assets)
-        configuration = built.0
-        receiver = built.2
         super.init()
-        let view = WKWebView(frame: NSRect(x: 0, y: 0, width: 800, height: 600),
-                             configuration: configuration)
+        if isProbe(options.expectation) {
+            let built = makeFeasibilityWebViewConfiguration(assetRoot: options.assets)
+            probeReceiver = built.2
+            let view = WKWebView(
+                frame: NSRect(x: 0, y: 0, width: 800, height: 600),
+                configuration: built.0)
+            view.navigationDelegate = self
+            view.uiDelegate = self
+            built.2.attach(to: view)
+            webView = view
+            return
+        }
+        guard let config = options.config else {
+            FileHandle.standardError.write(Data("FAIL missing --config for native flow\n".utf8))
+            exit(2)
+        }
+        var error: UnsafeMutablePointer<CChar>?
+        var passwordError: Int32 = 0
+        let created = config.path.withCString { configPath in
+            options.assets.path.withCString { resourcePath in
+                "".withCString { token in
+                    "".withCString { password in
+                        cha_runtime_create(
+                            configPath, resourcePath, token, password, 0,
+                            &passwordError, &error)
+                    }
+                }
+            }
+        }
+        guard let created else {
+            let message = error.map { String(cString: $0) } ?? "runtime create failed"
+            cha_string_free(error)
+            FileHandle.standardError.write(Data("FAIL \(message)\n".utf8))
+            exit(2)
+        }
+        runtime = created
+        FileHandle.standardError.write(
+            Data("runtime_listener=\(cha_runtime_port(created) == 0 ? "none" : "http")\n".utf8))
+        let built = makeNativeWebViewConfiguration(assetRoot: options.assets)
+        let view = WKWebView(
+            frame: NSRect(x: 0, y: 0, width: 800, height: 600),
+            configuration: built.0)
         view.navigationDelegate = self
         view.uiDelegate = self
+        let receiver = ChaNativeBridgeReceiver(runtime: created)
         receiver.attach(to: view)
+        nativeBridge = receiver
         webView = view
     }
 
     func start() {
-        FileHandle.standardError.write(Data("runtime_listener=none\n".utf8))
         FileHandle.standardError.write(Data("loader=WKURLSchemeHandler cha://app\n".utf8))
         webView.load(URLRequest(url: URL(string: "\(chaAssetOrigin)/")!))
         DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(options.timeoutMs)) {
@@ -112,7 +176,23 @@ private final class NativeTestHost: NSObject, WKNavigationDelegate, WKUIDelegate
             evaluate(passProbeSource)
         case .audio:
             evaluate(audioProbeSource)
+        case .flow, .reload, .rendererFail, .stall, .quit:
+            if flowPhase == 0 {
+                guard !initialFlowStarted else { return }
+                initialFlowStarted = true
+            }
+            runFlow()
         }
+    }
+
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        rendererFailures += 1
+        nativeBridge?.prepareDocumentReplacement()
+        if rendererFailures >= 3 {
+            finish(error: HostError.probeFailed("renderer failed repeatedly"))
+            return
+        }
+        webView.reload()
     }
 
     func webView(
@@ -120,6 +200,7 @@ private final class NativeTestHost: NSObject, WKNavigationDelegate, WKUIDelegate
         didFail navigation: WKNavigation!,
         withError error: Error
     ) {
+        if options.expectation == .rendererFail && flowPhase == 1 { return }
         finish(error: HostError.probeFailed(error.localizedDescription))
     }
 
@@ -128,6 +209,7 @@ private final class NativeTestHost: NSObject, WKNavigationDelegate, WKUIDelegate
         didFailProvisionalNavigation navigation: WKNavigation!,
         withError error: Error
     ) {
+        if options.expectation == .rendererFail && flowPhase == 1 { return }
         finish(error: HostError.probeFailed(error.localizedDescription))
     }
 
@@ -143,6 +225,12 @@ private final class NativeTestHost: NSObject, WKNavigationDelegate, WKUIDelegate
         if let frame = navigationAction.targetFrame, !frame.isMainFrame, !isChaAssetURL(url) {
             decisionHandler(.cancel)
             return
+        }
+        if navigationAction.targetFrame?.isMainFrame == true
+            && !isSameDocumentHashChange(from: webView.url, to: url)
+            && nativeBridge != nil
+            && navigationAction.navigationType == .reload {
+            nativeBridge?.prepareDocumentReplacement()
         }
         decisionHandler(.allow)
     }
@@ -188,6 +276,16 @@ private final class NativeTestHost: NSObject, WKNavigationDelegate, WKUIDelegate
         }
     }
 
+    private func runFlow() {
+        evaluate(flowScript())
+    }
+
+    private func flowScript() -> String {
+        if flowPhase > 0 { return restoreFlowSource }
+        if options.expectation == .stall { return stallFlowSource }
+        return firstFlowSource
+    }
+
     private func handleProbe(_ result: Any?) {
         guard let report = result as? [String: Any] else {
             finish(error: HostError.probeFailed("probe returned no report"))
@@ -197,17 +295,115 @@ private final class NativeTestHost: NSObject, WKNavigationDelegate, WKUIDelegate
            let text = String(data: json, encoding: .utf8) {
             FileHandle.standardOutput.write(Data((text + "\n").utf8))
         }
-        if let ok = report["ok"] as? Bool, ok {
-            finish(error: nil)
+        if let ok = report["ok"] as? Bool, !ok {
+            let reason = report["reason"] as? String ?? "probe failed"
+            finish(error: HostError.probeFailed(reason))
             return
         }
-        let reason = report["reason"] as? String ?? "probe failed"
-        finish(error: HostError.probeFailed(reason))
+        guard report["ok"] as? Bool == true else {
+            finish(error: HostError.probeFailed("probe returned no report"))
+            return
+        }
+        switch options.expectation {
+        case .reload where flowPhase == 0:
+            flowPhase = 1
+            nativeBridge?.prepareDocumentReplacement()
+            webView.reload()
+        case .rendererFail where flowPhase == 0:
+            flowPhase = 1
+            terminateOwnWebContent()
+            DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(2)) { [weak self] in
+                guard let self, !self.finished else { return }
+                self.nativeBridge?.prepareDocumentReplacement()
+                self.webView.reload()
+            }
+        case .quit:
+            shutdownAndExit(success: true)
+        default:
+            finish(error: nil)
+        }
+    }
+
+    private func terminateOwnWebContent() {
+        let pipe = Pipe()
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/ps")
+        process.arguments = ["-axo", "pid=,ppid=,pgid=,comm="]
+        process.standardOutput = pipe
+        do {
+            try process.run()
+        } catch {
+            FileHandle.standardError.write(Data("ps failed; reloading instead\n".utf8))
+            return
+        }
+        let text = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        process.waitUntilExit()
+        let selfPid = Int(getpid())
+        let selfGroup = Int(getpgrp())
+        var parent: [Int: Int] = [:]
+        var groups: [Int: Int] = [:]
+        var contentPids: [Int] = []
+        for line in text.split(separator: "\n") {
+            let parts = line.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+            guard parts.count >= 4,
+                  let pid = Int(parts[0]),
+                  let ppid = Int(parts[1]),
+                  let pgid = Int(parts[2]) else {
+                continue
+            }
+            parent[pid] = ppid
+            groups[pid] = pgid
+            if parts[3].localizedCaseInsensitiveContains("WebContent") {
+                contentPids.append(pid)
+            }
+        }
+        func owned(_ pid: Int) -> Bool {
+            if groups[pid] == selfGroup { return true }
+            var current = parent[pid]
+            var hops = 0
+            while let next = current, hops < 8 {
+                if next == selfPid { return true }
+                current = parent[next]
+                hops += 1
+            }
+            return false
+        }
+        let targets = contentPids.filter(owned)
+        FileHandle.standardError.write(
+            Data("web content candidates \(contentPids) targets \(targets)\n".utf8))
+        for pid in targets { kill(pid_t(pid), SIGKILL) }
+    }
+
+    private func shutdownAndExit(success: Bool) {
+        nativeBridge?.detach()
+        nativeBridge = nil
+        if let runtime {
+            cha_runtime_request_shutdown(runtime)
+            let handle = TestRuntimeHandle(pointer: runtime)
+            DispatchQueue.global(qos: .userInitiated).async {
+                _ = cha_runtime_join_shutdown(handle.pointer, 10000)
+                DispatchQueue.main.async {
+                    cha_runtime_destroy(handle.pointer)
+                    self.runtime = nil
+                    self.finish(error: success ? nil : HostError.probeFailed("quit failed"))
+                }
+            }
+            return
+        }
+        finish(error: success ? nil : HostError.probeFailed("quit failed"))
     }
 
     private func finish(error: Error?) {
         guard !finished else { return }
         finished = true
+        nativeBridge?.detach()
+        nativeBridge = nil
+        if let runtime {
+            cha_runtime_request_shutdown(runtime)
+            _ = cha_runtime_join_shutdown(runtime, 2000)
+            cha_runtime_destroy(runtime)
+            self.runtime = nil
+        }
         if let error {
             FileHandle.standardError.write(Data(("FAIL \(error.localizedDescription)\n").utf8))
             exit(1)
@@ -216,6 +412,156 @@ private final class NativeTestHost: NSObject, WKNavigationDelegate, WKUIDelegate
         exit(0)
     }
 }
+
+private let firstFlowSource = """
+return await (async function() {
+  const report = {ok: false, origin: location.origin};
+  const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const until = async (label, check) => {
+    const started = Date.now();
+    while (Date.now() - started < 15000) {
+      const value = check();
+      if (value) return value;
+      await wait(50);
+    }
+    throw new Error('timeout waiting for ' + label);
+  };
+  const setReactValue = (node, text) => {
+    const proto = node.tagName === 'TEXTAREA'
+      ? window.HTMLTextAreaElement.prototype
+      : window.HTMLInputElement.prototype;
+    const setter = Object.getOwnPropertyDescriptor(proto, 'value').set;
+    setter.call(node, text);
+    node.dispatchEvent(new Event('input', {bubbles: true}));
+  };
+  try {
+    if (!window.__CHA_NATIVE_POST__ || !window.__CHA_NATIVE_CONNECTION_ID__) {
+      report.reason = 'native bridge hooks missing';
+      return report;
+    }
+    const input = await until('composer', () => document.querySelector('textarea[aria-label="Message"]'));
+    const rpc = (() => {
+      let next = 9000000;
+      return function(method, params, epoch) {
+        const id = next++;
+        return new Promise((resolve, reject) => {
+          const previous = window.__CHA_NATIVE_RECEIVE__;
+          const timer = setTimeout(() => reject(new Error(method + ' timed out')), 8000);
+          window.__CHA_NATIVE_RECEIVE__ = function(batch) {
+            if (typeof previous === 'function') previous(batch);
+            for (const message of (batch && batch.messages) || []) {
+              if (message && message.id === id) {
+                clearTimeout(timer);
+                window.__CHA_NATIVE_RECEIVE__ = previous;
+                if (message.ok) resolve(message.result);
+                else reject(new Error((message.error && message.error.message) || method));
+              }
+            }
+          };
+          window.__CHA_NATIVE_POST__(JSON.stringify({
+            connection_id: window.__CHA_NATIVE_CONNECTION_ID__,
+            id,
+            context_epoch: epoch || 0,
+            method,
+            params: params || {}
+          }));
+        });
+      };
+    })();
+    const boot = await rpc('app.bootstrap', {}, 0);
+    const created = await rpc('session.create', {forum_id: 'lobby', label: 'Native flow'}, boot.context_epoch);
+    location.hash = '#/s/lobby/' + created.id + '/';
+    await until('session hash', () => location.hash.indexOf(created.id) !== -1);
+    await until('composer ready', () => {
+      const node = document.querySelector('textarea[aria-label="Message"]');
+      return node && !node.disabled ? node : null;
+    });
+    setReactValue(document.querySelector('textarea[aria-label="Message"]'), 'Hello from native host');
+    await wait(50);
+    const send = document.querySelector('button[aria-label="Send message"]');
+    if (!send || send.disabled) {
+      report.reason = 'send control was not ready';
+      return report;
+    }
+    send.click();
+    await until('generation or transcript', () => {
+      return document.querySelector('button[aria-label="Stop generation"]')
+        || Array.from(document.querySelectorAll('[aria-label="Conversation transcript"] *'))
+          .some((node) => (node.textContent || '').indexOf('Hello from native host') !== -1);
+    });
+    const stop = document.querySelector('button[aria-label="Stop generation"]');
+    if (stop) stop.click();
+    await until('visible transcript', () => {
+      const text = (document.querySelector('[aria-label="Conversation transcript"]') || {}).textContent || '';
+      return text.indexOf('Hello from native host') !== -1;
+    });
+    report.transcript = (document.querySelector('[aria-label="Conversation transcript"]') || {}).textContent || '';
+    report.sessionId = created.id;
+    report.ok = true;
+    return report;
+  } catch (error) {
+    report.reason = String(error && error.message ? error.message : error);
+    return report;
+  }
+})()
+"""
+
+private let restoreFlowSource = """
+return await (async function() {
+  const report = {ok: false, origin: location.origin, restored: true};
+  const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const until = async (label, check) => {
+    const started = Date.now();
+    while (Date.now() - started < 15000) {
+      const value = check();
+      if (value) return value;
+      await wait(50);
+    }
+    throw new Error('timeout waiting for ' + label);
+  };
+  try {
+    if (!window.__CHA_NATIVE_POST__ || !window.__CHA_NATIVE_CONNECTION_ID__) {
+      report.reason = 'native bridge hooks missing after reload';
+      return report;
+    }
+    await until('composer', () => {
+      const node = document.querySelector('textarea[aria-label="Message"]');
+      return node && !node.disabled ? node : null;
+    });
+    report.connectionId = window.__CHA_NATIVE_CONNECTION_ID__;
+    report.transcript = (document.querySelector('[aria-label="Conversation transcript"]') || {}).textContent || '';
+    report.ok = true;
+    return report;
+  } catch (error) {
+    report.reason = String(error && error.message ? error.message : error);
+    return report;
+  }
+})()
+"""
+
+private let stallFlowSource: String = {
+    let prefix = """
+  const originalPost = window.__CHA_NATIVE_POST__;
+  window.__CHA_HELD_ACKS__ = [];
+  window.__CHA_NATIVE_POST__ = function(message) {
+    try {
+      const parsed = JSON.parse(message);
+      if (parsed && parsed.delivery_id != null && parsed.method == null) {
+        window.__CHA_HELD_ACKS__.push(message);
+        if (window.__CHA_HELD_ACKS__.length > 4) {
+          const held = window.__CHA_HELD_ACKS__.splice(0);
+          held.forEach((ack) => originalPost(ack));
+        }
+        return;
+      }
+    } catch (error) {}
+    originalPost(message);
+  };
+"""
+    return firstFlowSource.replacingOccurrences(
+        of: "    setReactValue(document.querySelector('textarea[aria-label=\"Message\"]'), 'Hello from native host');",
+        with: prefix + "    setReactValue(document.querySelector('textarea[aria-label=\"Message\"]'), 'Hello from native host');")
+}()
 
 private let passProbeSource = """
 return await (async function() {

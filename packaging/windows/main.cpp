@@ -48,6 +48,8 @@ constexpr UINT kDatabaseUpload = 1103;
 constexpr UINT kDatabaseDownload = 1104;
 constexpr UINT kOperationComplete = WM_APP + 1;
 constexpr UINT kFatalError = WM_APP + 2;
+constexpr UINT kDeliveryReady = WM_APP + 3;
+constexpr UINT kShutdownDone = WM_APP + 4;
 constexpr wchar_t kPasswordWindowClass[] = L"CHA.PasswordDialog";
 
 class LaunchCancelled final : public std::exception {
@@ -352,10 +354,40 @@ struct OperationResult {
 struct LaunchOptions {
     bool smoke_test{};
     bool feasibility{};
+    bool http_mode{};
     std::optional<std::filesystem::path> data_root;
     std::optional<std::filesystem::path> assets;
     std::optional<int> cdp_port;
 };
+
+struct DeliveryPayload {
+    std::string connection_id;
+    std::string json;
+};
+
+std::wstring without_fragment(std::wstring_view uri) {
+    const auto pos = uri.find(L'#');
+    return std::wstring(pos == std::wstring_view::npos ? uri : uri.substr(0, pos));
+}
+
+std::wstring native_bootstrap_script(std::string_view connection_id) {
+    const std::wstring id = wide_from_utf8(connection_id);
+    return L"window.__CHA_NATIVE_CONNECTION_ID__='" + id + L"';"
+        L"window.__CHA_NATIVE_QUEUE__=window.__CHA_NATIVE_QUEUE__||[];"
+        L"if(typeof window.__CHA_NATIVE_RECEIVE__!=='function'){"
+        L"window.__CHA_NATIVE_RECEIVE__=function(batch){"
+        L"window.__CHA_NATIVE_QUEUE__.push(batch);};}"
+        L"window.__CHA_NATIVE_POST__=function(message){"
+        L"if(window.chrome&&window.chrome.webview){"
+        L"window.chrome.webview.postMessage(message);}};"
+        L"if(window.chrome&&window.chrome.webview){"
+        L"window.chrome.webview.addEventListener('message',function(event){"
+        L"var batch=event.data;"
+        L"if(typeof window.__CHA_NATIVE_RECEIVE__==='function'){"
+        L"window.__CHA_NATIVE_RECEIVE__(batch);}"
+        L"else{(window.__CHA_NATIVE_QUEUE__=window.__CHA_NATIVE_QUEUE__||[]).push(batch);}"
+        L"});}";
+}
 
 constexpr wchar_t kFeasibilityHost[] = L"app.cha.local";
 constexpr wchar_t kFeasibilityOrigin[] = L"https://app.cha.local";
@@ -429,6 +461,8 @@ LaunchOptions parse_launch_options() {
         };
         if (argument == L"--feasibility") {
             options.feasibility = true;
+        } else if (argument == L"--http") {
+            options.http_mode = true;
         } else if (argument == L"--assets") {
             options.assets = std::filesystem::path(require_value());
         } else if (argument == L"--cdp-port") {
@@ -439,7 +473,7 @@ LaunchOptions parse_launch_options() {
             throw std::runtime_error("CHA does not accept command-line arguments");
         }
     }
-    if (!options.feasibility || !options.assets) {
+    if (options.feasibility && !options.assets) {
         throw std::runtime_error("CHA does not accept command-line arguments");
     }
     return options;
@@ -450,6 +484,7 @@ class WindowsApplication final
 public:
     ~WindowsApplication() {
         if (operation_thread_.joinable()) operation_thread_.join();
+        if (shutdown_thread_.joinable()) shutdown_thread_.join();
         shutdown_runtime();
         if (window_ != nullptr && ::IsWindow(window_)) {
             ::DestroyWindow(window_);
@@ -463,8 +498,12 @@ public:
         instance_ = instance;
         smoke_test_ = options.smoke_test;
         feasibility_ = options.feasibility;
+        http_mode_ = options.http_mode;
         assets_ = options.assets;
         cdp_port_ = options.cdp_port;
+        if (!assets_ && !feasibility_) {
+            assets_ = cha::executable_directory() / "web";
+        }
         create_window(show_command);
         if (feasibility_) {
             std::optional<std::filesystem::path> isolated = options.data_root;
@@ -551,6 +590,12 @@ private:
             show_fatal_error(
                 std::unique_ptr<std::wstring>(
                     reinterpret_cast<std::wstring*>(lparam)));
+            return 0;
+        case kDeliveryReady:
+            deliver_batch(reinterpret_cast<DeliveryPayload*>(lparam));
+            return 0;
+        case kShutdownDone:
+            finish_shutdown();
             return 0;
         case WM_DESTROY:
             window_ = nullptr;
@@ -678,6 +723,7 @@ private:
                 resource_path.c_str(),
                 runtime_token_.c_str(),
                 password.c_str(),
+                http_mode_ ? 1 : 0,
                 &password_error,
                 &bridge_error);
             if (runtime_ != nullptr) break;
@@ -688,13 +734,38 @@ private:
             if (!entered) throw LaunchCancelled();
             password = *entered;
         }
-        const int32_t port = cha_runtime_port(runtime_);
-        if (port <= 0) {
-            throw std::runtime_error("CHA could not start its private server");
+        if (http_mode_) {
+            const int32_t port = cha_runtime_port(runtime_);
+            if (port <= 0) {
+                throw std::runtime_error("CHA could not start its private server");
+            }
+            runtime_origin_ = L"http://127.0.0.1:" + std::to_wstring(port);
+            runtime_url_ = runtime_origin_ + L"/";
+        } else {
+            runtime_origin_ = kFeasibilityOrigin;
+            runtime_url_ = std::wstring(kFeasibilityOrigin) + L"/";
+            cha_runtime_set_delivery_callback(runtime_, native_delivery, this);
         }
-        runtime_origin_ = L"http://127.0.0.1:" + std::to_wstring(port);
-        runtime_url_ = runtime_origin_ + L"/";
         update_database_menu_items();
+    }
+
+    static void native_delivery(
+        void* context, const char* connection_id, const char* json) {
+        auto* self = static_cast<WindowsApplication*>(context);
+        if (self == nullptr || connection_id == nullptr || json == nullptr) {
+            return;
+        }
+        self->post_delivery(connection_id, json);
+    }
+
+    void post_delivery(const char* connection_id, const char* json) {
+        auto payload = std::make_unique<DeliveryPayload>(
+            DeliveryPayload{connection_id, json});
+        DeliveryPayload* const posted = payload.release();
+        if (!::PostMessageW(
+                window_, kDeliveryReady, 0, reinterpret_cast<LPARAM>(posted))) {
+            delete posted;
+        }
     }
 
     void start_webview() {
@@ -770,11 +841,18 @@ private:
                     result, L"CHA could not map its packaged assets"));
                 return S_OK;
             }
-        } else {
+        } else if (http_mode_) {
             result = install_runtime_cookie();
             if (FAILED(result)) {
                 post_fatal_error(hresult_message(
                     result, L"CHA could not secure its private browser session"));
+                return S_OK;
+            }
+        } else {
+            result = install_native_origin();
+            if (FAILED(result)) {
+                post_fatal_error(hresult_message(
+                    result, L"CHA could not map its packaged assets"));
                 return S_OK;
             }
         }
@@ -793,6 +871,32 @@ private:
                     if (!is_application_uri(uri)) {
                         args->put_Cancel(TRUE);
                         open_https(uri);
+                        return S_OK;
+                    }
+                    wchar_t* raw_current = nullptr;
+                    std::wstring current;
+                    if (webview_ && SUCCEEDED(webview_->get_Source(&raw_current))) {
+                        current = take_com_string(raw_current);
+                    }
+                    const bool hash_only = !current.empty()
+                        && without_fragment(uri) == without_fragment(current)
+                        && uri != current;
+                    if (!feasibility_ && !http_mode_ && !hash_only) {
+                        replace_document_connection();
+                    }
+                    return S_OK;
+                }).Get(),
+            &ignored);
+        webview_->add_ProcessFailed(
+            Callback<ICoreWebView2ProcessFailedEventHandler>(
+                [this](ICoreWebView2*, ICoreWebView2ProcessFailedEventArgs* args) {
+                    COREWEBVIEW2_PROCESS_FAILED_KIND kind{};
+                    if (FAILED(args->get_ProcessFailedKind(&kind))) return S_OK;
+                    if (kind == COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED
+                        || kind == COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED
+                        || kind
+                            == COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_UNRESPONSIVE) {
+                        handle_renderer_failure();
                     }
                     return S_OK;
                 }).Get(),
@@ -816,8 +920,6 @@ private:
         webview_->add_PermissionRequested(
             Callback<ICoreWebView2PermissionRequestedEventHandler>(
                 [this](ICoreWebView2*, ICoreWebView2PermissionRequestedEventArgs* args) {
-                    // Probe-only: kind + application URI. The real dispatcher
-                    // must also recheck main-frame/document identity.
                     COREWEBVIEW2_PERMISSION_KIND kind{};
                     wchar_t* raw_uri = nullptr;
                     const bool readable = SUCCEEDED(args->get_PermissionKind(&kind))
@@ -825,7 +927,8 @@ private:
                     const std::wstring uri = take_com_string(raw_uri);
                     const bool allowed = readable
                         && kind == COREWEBVIEW2_PERMISSION_KIND_MICROPHONE
-                        && is_application_uri(uri);
+                        && is_application_uri(uri)
+                        && current_document_is_trusted();
                     args->put_State(allowed
                         ? COREWEBVIEW2_PERMISSION_STATE_ALLOW
                         : COREWEBVIEW2_PERMISSION_STATE_DENY);
@@ -866,6 +969,27 @@ private:
                 Callback<ICoreWebView2DownloadStartingEventHandler>(
                     [this](ICoreWebView2*, ICoreWebView2DownloadStartingEventArgs* args) {
                         choose_download_destination(args);
+                        return S_OK;
+                    }).Get(),
+                &ignored);
+            webview4->add_FrameCreated(
+                Callback<ICoreWebView2FrameCreatedEventHandler>(
+                    [](ICoreWebView2*, ICoreWebView2FrameCreatedEventArgs* args) {
+                        ComPtr<ICoreWebView2Frame> frame;
+                        if (FAILED(args->get_Frame(&frame)) || !frame) return S_OK;
+                        ComPtr<ICoreWebView2Frame3> frame3;
+                        if (FAILED(frame.As(&frame3))) return S_OK;
+                        EventRegistrationToken frame_token{};
+                        frame3->add_PermissionRequested(
+                            Callback<ICoreWebView2FramePermissionRequestedEventHandler>(
+                                [](ICoreWebView2Frame*,
+                                   ICoreWebView2PermissionRequestedEventArgs2* frame_args) {
+                                    frame_args->put_State(
+                                        COREWEBVIEW2_PERMISSION_STATE_DENY);
+                                    frame_args->put_Handled(TRUE);
+                                    return S_OK;
+                                }).Get(),
+                            &frame_token);
                         return S_OK;
                     }).Get(),
                 &ignored);
@@ -1011,6 +1135,112 @@ private:
         return respond_with_bytes(args, 200, L"OK", headers, body);
     }
 
+    HRESULT install_native_origin() {
+        if (!assets_) return E_INVALIDARG;
+        ComPtr<ICoreWebView2_3> webview3;
+        HRESULT result = webview_.As(&webview3);
+        if (FAILED(result)) return result;
+        result = webview3->SetVirtualHostNameToFolderMapping(
+            kFeasibilityHost,
+            assets_->c_str(),
+            COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_DENY);
+        if (FAILED(result)) return result;
+        result = webview_->AddWebResourceRequestedFilter(
+            L"https://app.cha.local/*",
+            COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL);
+        if (FAILED(result)) return result;
+        EventRegistrationToken ignored{};
+        const std::shared_ptr<WindowsApplication> self = shared_from_this();
+        result = webview_->add_WebResourceRequested(
+            Callback<ICoreWebView2WebResourceRequestedEventHandler>(
+                [self](ICoreWebView2*, ICoreWebView2WebResourceRequestedEventArgs* args) {
+                    return self->handle_feasibility_resource(args);
+                }).Get(),
+            &ignored);
+        if (FAILED(result)) return result;
+        result = webview_->add_WebMessageReceived(
+            Callback<ICoreWebView2WebMessageReceivedEventHandler>(
+                [self](ICoreWebView2*, ICoreWebView2WebMessageReceivedEventArgs* args) {
+                    return self->handle_native_message(args);
+                }).Get(),
+            &ignored);
+        if (FAILED(result)) return result;
+        return replace_document_connection();
+    }
+
+    HRESULT replace_document_connection() {
+        if (runtime_ == nullptr) return E_UNEXPECTED;
+        if (!connection_id_.empty()) {
+            cha_runtime_close_connection(runtime_, connection_id_.c_str());
+            connection_id_.clear();
+        }
+        if (!native_script_id_.empty() && webview_) {
+            webview_->RemoveScriptToExecuteOnDocumentCreated(
+                native_script_id_.c_str());
+            native_script_id_.clear();
+        }
+        char* error = nullptr;
+        char* opened = cha_runtime_open_connection(runtime_, &error);
+        if (opened == nullptr) {
+            take_bridge_error(error);
+            return E_FAIL;
+        }
+        connection_id_ = opened;
+        cha_string_free(opened);
+        const std::wstring script = native_bootstrap_script(connection_id_);
+        const std::shared_ptr<WindowsApplication> self = shared_from_this();
+        return webview_->AddScriptToExecuteOnDocumentCreated(
+            script.c_str(),
+            Callback<ICoreWebView2AddScriptToExecuteOnDocumentCreatedCompletedHandler>(
+                [self](HRESULT, LPCWSTR id) {
+                    if (id != nullptr) self->native_script_id_ = id;
+                    return S_OK;
+                }).Get());
+    }
+
+    HRESULT handle_native_message(
+        ICoreWebView2WebMessageReceivedEventArgs* args) {
+        wchar_t* raw_source = nullptr;
+        if (FAILED(args->get_Source(&raw_source))) return S_OK;
+        const std::wstring source = take_com_string(raw_source);
+        if (!is_trusted_main_document(source) || connection_id_.empty()
+            || runtime_ == nullptr) {
+            return S_OK;
+        }
+        wchar_t* raw_message = nullptr;
+        std::string payload;
+        if (SUCCEEDED(args->TryGetWebMessageAsString(&raw_message))) {
+            payload = cha::utf8_from_wide(take_com_string(raw_message));
+        } else {
+            wchar_t* raw_json = nullptr;
+            if (FAILED(args->get_WebMessageAsJson(&raw_json))) return S_OK;
+            payload = cha::utf8_from_wide(take_com_string(raw_json));
+        }
+        cha_runtime_handle_message(
+            runtime_, connection_id_.c_str(), payload.c_str());
+        return S_OK;
+    }
+
+    void deliver_batch(DeliveryPayload* raw) {
+        const std::unique_ptr<DeliveryPayload> payload(raw);
+        if (!payload || closing_ || !webview_) return;
+        if (payload->connection_id != connection_id_) return;
+        const std::wstring encoded = wide_from_utf8(payload->json);
+        webview_->PostWebMessageAsJson(encoded.c_str());
+    }
+
+    void handle_renderer_failure() {
+        if (feasibility_ || http_mode_ || closing_) return;
+        renderer_failures_ += 1;
+        replace_document_connection();
+        if (renderer_failures_ >= 3) {
+            post_fatal_error(
+                L"CHA's browser process stopped repeatedly. Quit and open CHA again.");
+            return;
+        }
+        navigate_home();
+    }
+
     HRESULT handle_feasibility_message(
         ICoreWebView2WebMessageReceivedEventArgs* args) {
         wchar_t* raw_source = nullptr;
@@ -1041,6 +1271,24 @@ private:
             post_fatal_error(hresult_message(
                 result, L"CHA could not load its browser application"));
         }
+    }
+
+    std::wstring current_top_level_source() const {
+        if (!webview_) return {};
+        wchar_t* raw_current = nullptr;
+        if (FAILED(webview_->get_Source(&raw_current))) return {};
+        return take_com_string(raw_current);
+    }
+
+    bool current_document_is_trusted() const {
+        return is_application_uri(current_top_level_source());
+    }
+
+    bool is_trusted_main_document(std::wstring_view sender) const {
+        const std::wstring current = current_top_level_source();
+        return is_application_uri(sender)
+            && is_application_uri(current)
+            && without_fragment(sender) == without_fragment(current);
     }
 
     bool is_application_uri(std::wstring_view uri) const {
@@ -1282,16 +1530,43 @@ private:
             ::SetWindowTextW(window_, L"CHA - Finishing database operation...");
             return;
         }
-        close_now();
+        begin_shutdown();
     }
 
-    void close_now() {
+    void begin_shutdown() {
         if (closing_) return;
         closing_ = true;
+        if (!connection_id_.empty() && runtime_ != nullptr) {
+            cha_runtime_close_connection(runtime_, connection_id_.c_str());
+            connection_id_.clear();
+        }
+        if (runtime_ != nullptr) {
+            cha_runtime_set_delivery_callback(runtime_, nullptr, nullptr);
+            cha_runtime_request_shutdown(runtime_);
+            ChaRuntime* const runtime = runtime_;
+            HWND window = window_;
+            if (shutdown_thread_.joinable()) shutdown_thread_.join();
+            shutdown_thread_ = std::thread([runtime, window] {
+                (void)cha_runtime_join_shutdown(runtime, 10000);
+                if (window != nullptr) {
+                    ::PostMessageW(window, kShutdownDone, 0, 0);
+                }
+            });
+            return;
+        }
+        finish_shutdown();
+    }
+
+    void finish_shutdown() {
+        if (shutdown_thread_.joinable()) shutdown_thread_.join();
         shutdown_runtime();
         if (window_ != nullptr && ::IsWindow(window_)) {
             ::DestroyWindow(window_);
         }
+    }
+
+    void close_now() {
+        begin_shutdown();
     }
 
     void shutdown_runtime() {
@@ -1356,8 +1631,13 @@ private:
     ComPtr<ICoreWebView2Controller> controller_;
     ComPtr<ICoreWebView2> webview_;
     std::thread operation_thread_;
+    std::thread shutdown_thread_;
     bool smoke_test_{};
     bool feasibility_{};
+    bool http_mode_{};
+    std::string connection_id_;
+    std::wstring native_script_id_;
+    int renderer_failures_{};
     bool initial_navigation_pending_{};
     bool database_operation_in_progress_{};
     bool close_pending_{};

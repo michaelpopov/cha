@@ -569,6 +569,35 @@ if(BUILD_TESTING)
     cha_enable_warnings(cha_bridge_tests)
 
     add_executable(
+        cha_native_runtime_tests
+        tests/native/unit_runtime_bridge.cpp
+        packaging/macos/runtime_bridge.cpp
+        tests/support/test_workspace.cpp)
+    target_link_libraries(
+        cha_native_runtime_tests
+        PRIVATE
+            cha_bridge
+            cha_web
+            cha_sqlite3
+            GTest::gtest_main)
+    target_include_directories(
+        cha_native_runtime_tests
+        PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests"
+            "${CMAKE_CURRENT_SOURCE_DIR}/packaging/macos")
+    cha_enable_warnings(cha_native_runtime_tests)
+
+    add_executable(
+        cha_prepare_test_vault
+        tests/native/prepare_test_vault.cpp
+        tests/support/test_workspace.cpp)
+    target_link_libraries(
+        cha_prepare_test_vault PRIVATE cha_core cha_sqlite3)
+    target_include_directories(
+        cha_prepare_test_vault PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+    cha_enable_warnings(cha_prepare_test_vault)
+
+    add_executable(
         cha_web_stress_tests
         tests/web/stress_web_sessions.cpp
         tests/support/test_workspace.cpp)
@@ -615,6 +644,7 @@ if(BUILD_TESTING)
             cha_tests
             cha_app_tests
             cha_bridge_tests
+            cha_native_runtime_tests
             cha_web_tests
             cha_web_stress_tests
             itest
@@ -630,6 +660,7 @@ if(BUILD_TESTING)
     gtest_discover_tests(cha_tests)
     gtest_discover_tests(cha_app_tests)
     gtest_discover_tests(cha_bridge_tests)
+    gtest_discover_tests(cha_native_runtime_tests)
     gtest_discover_tests(cha_web_tests)
     gtest_discover_tests(cha_web_stress_tests PROPERTIES LABELS web_stress)
     if(TARGET cha_web_process_tests)
@@ -653,7 +684,7 @@ if(APPLE)
     add_library(
         cha_macos_runtime SHARED
         packaging/macos/runtime_bridge.cpp)
-    target_link_libraries(cha_macos_runtime PRIVATE cha_web)
+    target_link_libraries(cha_macos_runtime PRIVATE cha_web cha_bridge)
     target_include_directories(
         cha_macos_runtime PRIVATE packaging/macos)
     set_target_properties(
@@ -695,6 +726,7 @@ if(WIN32)
         cha_windows_app
         PRIVATE
             cha_web
+            cha_bridge
             cha_webview2_loader
             comdlg32
             ole32

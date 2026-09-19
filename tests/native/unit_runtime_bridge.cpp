@@ -1,0 +1,216 @@
+#include "runtime_bridge.h"
+
+#include "support/test_workspace.h"
+
+#include <gtest/gtest.h>
+#include <nlohmann/json.hpp>
+
+#include <chrono>
+#include <condition_variable>
+#include <filesystem>
+#include <fstream>
+#include <iomanip>
+#include <mutex>
+#include <string>
+#include <thread>
+#include <vector>
+
+namespace {
+using namespace std::chrono_literals;
+
+struct CapturedDeliveries {
+    std::mutex mutex;
+    std::condition_variable ready;
+    std::vector<nlohmann::json> batches;
+};
+
+void on_delivery(void* context, const char*, const char* json) {
+    auto* captured = static_cast<CapturedDeliveries*>(context);
+    std::lock_guard lock(captured->mutex);
+    captured->batches.push_back(nlohmann::json::parse(json));
+    captured->ready.notify_all();
+}
+
+std::filesystem::path make_config(const cha::test::TestWorkspace& workspace) {
+    const auto database = cha::test::import_test_database(workspace.root());
+    const auto config = workspace.root() / "cha-config";
+    std::filesystem::create_directories(config);
+    std::ofstream(config / "app.toml")
+        << "vault = \"Test\"\n[logging]\nfile = \"runtime.log\"\nlevel = \"off\"\n";
+    std::ofstream(config / "test.toml")
+        << "vault_name = \"Test\"\ndata = " << std::quoted(database.string())
+        << "\n";
+    return config;
+}
+
+nlohmann::json wait_batch(
+    CapturedDeliveries& captured,
+    std::chrono::milliseconds timeout = 2s) {
+    std::unique_lock lock(captured.mutex);
+    if (captured.ready.wait_for(lock, timeout, [&] {
+            return !captured.batches.empty();
+        })) {
+        nlohmann::json batch = std::move(captured.batches.front());
+        captured.batches.erase(captured.batches.begin());
+        return batch;
+    }
+    return {};
+}
+
+nlohmann::json request(
+    std::string_view connection,
+    std::uint64_t id,
+    std::uint64_t epoch,
+    std::string_view method,
+    nlohmann::json params = nlohmann::json::object()) {
+    return {
+        {"connection_id", connection},
+        {"id", id},
+        {"context_epoch", epoch},
+        {"method", method},
+        {"params", std::move(params)},
+    };
+}
+
+class NativeRuntimeTest : public ::testing::Test {
+protected:
+    void SetUp() override {
+        config_ = make_config(workspace_);
+        resources_ = workspace_.root();
+        captured_ = std::make_unique<CapturedDeliveries>();
+        char* error = nullptr;
+        int32_t password_error = 0;
+        runtime_ = cha_runtime_create(
+            config_.c_str(),
+            resources_.c_str(),
+            "",
+            "",
+            0,
+            &password_error,
+            &error);
+        ASSERT_NE(runtime_, nullptr) << (error ? error : "");
+        cha_string_free(error);
+        EXPECT_EQ(cha_runtime_port(runtime_), 0);
+        EXPECT_EQ(cha_runtime_is_native(runtime_), 1);
+        cha_runtime_set_delivery_callback(runtime_, on_delivery, captured_.get());
+        char* connection_error = nullptr;
+        char* connection = cha_runtime_open_connection(
+            runtime_, &connection_error);
+        ASSERT_NE(connection, nullptr) << (connection_error ? connection_error : "");
+        connection_ = connection;
+        cha_string_free(connection);
+        cha_string_free(connection_error);
+    }
+
+    void TearDown() override {
+        if (runtime_) {
+            if (!connection_.empty()) {
+                cha_runtime_close_connection(runtime_, connection_.c_str());
+            }
+            cha_runtime_request_shutdown(runtime_);
+            (void)cha_runtime_join_shutdown(runtime_, 2000);
+            cha_runtime_destroy(runtime_);
+            runtime_ = nullptr;
+        }
+    }
+
+    nlohmann::json call(
+        std::string_view method,
+        nlohmann::json params = nlohmann::json::object(),
+        std::uint64_t epoch = 0) {
+        const auto id = next_id_++;
+        const auto body = request(
+            connection_, id, epoch == 0 ? epoch_ : epoch, method, std::move(params));
+        cha_runtime_handle_message(
+            runtime_, connection_.c_str(), body.dump().c_str());
+        auto batch = wait_batch(*captured_);
+        EXPECT_FALSE(batch.is_null() || batch.empty()) << method;
+        if (batch.is_null() || batch.empty()) return {};
+        nlohmann::json reply;
+        for (const auto& message : batch.at("messages")) {
+            if (message.contains("id") && message["id"] == id) reply = message;
+        }
+        const auto ack = nlohmann::json{
+            {"connection_id", connection_},
+            {"delivery_id", batch.at("delivery_id")},
+        };
+        cha_runtime_handle_message(
+            runtime_, connection_.c_str(), ack.dump().c_str());
+        return reply;
+    }
+
+    cha::test::TestWorkspace workspace_;
+    std::filesystem::path config_;
+    std::filesystem::path resources_;
+    std::unique_ptr<CapturedDeliveries> captured_;
+    ChaRuntime* runtime_{};
+    std::string connection_;
+    std::uint64_t epoch_{0};
+    std::uint64_t next_id_{1};
+};
+
+TEST_F(NativeRuntimeTest, StartsWithoutAListenerAndRunsFirstFlow) {
+    auto info = call("bridge.info");
+    ASSERT_TRUE(info["ok"]);
+    EXPECT_EQ(info["result"]["protocol_version"], 1);
+    EXPECT_TRUE(
+        info["result"]["platform"] == "macos"
+        || info["result"]["platform"] == "windows"
+        || info["result"]["platform"] == "unknown");
+
+    auto bootstrap = call("app.bootstrap");
+    ASSERT_TRUE(bootstrap["ok"]);
+    epoch_ = bootstrap["result"]["context_epoch"].get<std::uint64_t>();
+    EXPECT_GE(epoch_, 1U);
+
+    auto created = call(
+        "session.create", {{"forum_id", "lobby"}, {"label", "Native"}});
+    ASSERT_TRUE(created["ok"]);
+    const std::string session_id = created["result"]["id"];
+    auto opened = call(
+        "session.open",
+        {{"forum_id", "lobby"}, {"session_id", session_id}});
+    ASSERT_TRUE(opened["ok"]);
+    auto submitted = call(
+        "session.submit",
+        {{"forum_id", "lobby"},
+         {"session_id", session_id},
+         {"input", {{"text", "Hello"}}}});
+    ASSERT_TRUE(submitted["ok"]);
+    EXPECT_TRUE(submitted["result"]["clear_input"].get<bool>());
+    auto stopped = call(
+        "session.stop", {{"forum_id", "lobby"}, {"session_id", session_id}});
+    EXPECT_TRUE(stopped["ok"]);
+    auto snapshot = call(
+        "session.snapshot",
+        {{"forum_id", "lobby"}, {"session_id", session_id}});
+    ASSERT_TRUE(snapshot["ok"]);
+    EXPECT_EQ(snapshot["result"]["session_id"], session_id);
+}
+
+TEST_F(NativeRuntimeTest, CloseAndHandleDoNotPropagateExceptions) {
+    cha_runtime_handle_message(runtime_, connection_.c_str(), "not-json");
+    cha_runtime_handle_message(runtime_, connection_.c_str(), "[]");
+    cha_runtime_handle_message(runtime_, connection_.c_str(), "{}");
+    cha_runtime_close_connection(runtime_, "missing-connection");
+    auto info = call("bridge.info");
+    ASSERT_TRUE(info["ok"]);
+}
+
+TEST_F(NativeRuntimeTest, CloseAndReopenConnectionDoesNotCrossResolve) {
+    auto bootstrap = call("app.bootstrap");
+    ASSERT_TRUE(bootstrap["ok"]);
+    epoch_ = bootstrap["result"]["context_epoch"].get<std::uint64_t>();
+    cha_runtime_close_connection(runtime_, connection_.c_str());
+    char* error = nullptr;
+    char* next = cha_runtime_open_connection(runtime_, &error);
+    ASSERT_NE(next, nullptr);
+    connection_ = next;
+    cha_string_free(next);
+    cha_string_free(error);
+    next_id_ = 1;
+    auto info = call("bridge.info");
+    ASSERT_TRUE(info["ok"]);
+}
+
+} // namespace

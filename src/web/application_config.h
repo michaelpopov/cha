@@ -95,6 +95,10 @@ void require_openable_protected_database(
 ApplicationCommand parse_application_command(
     int argc,
     const char* const* argv);
+ApplicationCommand parse_application_command(
+    int argc,
+    const char* const* argv,
+    ConfigurationTransport transport);
 
 // Customer-facing, so it omits --test-idle-grace-ms. That option shortens the
 // runtime's idle unload so the browser suite can observe a real one; it is

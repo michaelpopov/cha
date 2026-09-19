@@ -455,6 +455,35 @@ TEST_F(ApplicationConfigTest, NativeModeIgnoresMalformedWebSection) {
     EXPECT_NE(loaded.warnings.front().find("[web]"), std::string::npos);
 }
 
+TEST_F(ApplicationConfigTest, NativeParseIgnoresMissingAndObsoleteWeb) {
+    write_app(
+        "vault = \"Personal\"\n"
+        "[logging]\nfile = \"x\"\nlevel = \"off\"\n");
+    std::vector<std::string> arguments{
+        "CHA", "--config=" + config_.string(), "--root=" + root_.string()};
+    std::vector<const char*> pointers;
+    for (const std::string& argument : arguments) {
+        pointers.push_back(argument.c_str());
+    }
+    const auto missing = parse_application_command(
+        static_cast<int>(pointers.size()),
+        pointers.data(),
+        ConfigurationTransport::native);
+    EXPECT_EQ(missing.port, 0);
+    EXPECT_EQ(missing.host, "127.0.0.1");
+
+    write_app(
+        "vault = \"Personal\"\n"
+        "[web]\nhost = 1\nport = \"bad\"\n"
+        "[logging]\nfile = \"x\"\nlevel = \"off\"\n");
+    const auto obsolete = parse_application_command(
+        static_cast<int>(pointers.size()),
+        pointers.data(),
+        ConfigurationTransport::native);
+    EXPECT_EQ(obsolete.port, 0);
+    ASSERT_FALSE(obsolete.warnings.empty());
+}
+
 TEST_F(ApplicationConfigTest, HttpModeRejectsNonTableWebSection) {
     write_app(
         "vault = \"Personal\"\n"

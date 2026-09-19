@@ -881,6 +881,7 @@ std::optional<nlohmann::json> BridgeRouter::take_delivery(
 bool BridgeRouter::wait_for_work(std::chrono::milliseconds timeout) {
     std::unique_lock lock(impl_->mutex);
     return impl_->work.wait_for(lock, timeout, [&] {
+        if (impl_->stopping) return true;
         if (!impl_->ordinary_tasks.empty() || !impl_->control_tasks.empty()) {
             return true;
         }
@@ -902,6 +903,7 @@ void BridgeRouter::shutdown() {
     for (auto& [id, connection] : impl_->connections) {
         impl_->invalidate(connection);
     }
+    impl_->notify();
 }
 
 } // namespace cha::bridge

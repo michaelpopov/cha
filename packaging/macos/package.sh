@@ -115,6 +115,7 @@ xcrun swiftc \
     -Xlinker @executable_path/../Frameworks \
     "$repository/packaging/macos/main.swift" \
     "$repository/packaging/macos/feasibility.swift" \
+    "$repository/packaging/macos/native_bridge.swift" \
     -o "$contents/MacOS/CHA"
 
 sed -e "s/@VERSION@/$version/g" \

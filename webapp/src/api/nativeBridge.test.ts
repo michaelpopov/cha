@@ -8,6 +8,7 @@ import {
   createEnvelopeNativeBridge,
   createFakeNativeBridge,
   dispatchDeliveryBatch,
+  installNativeHostBridge,
 } from './nativeBridge';
 
 const wireDirectory = join(
@@ -66,6 +67,33 @@ describe('native bridge', () => {
     const leftover = bridge.invoke('session.stop', {});
     bridge.dispose();
     await expect(leftover).rejects.toBeInstanceOf(ChaProtocolError);
+  });
+
+  it('drains host-queued deliveries when the receiver is installed', () => {
+    window.__CHA_NATIVE_CONNECTION_ID__ = 'view-9';
+    window.__CHA_NATIVE_POST__ = () => {};
+    window.__CHA_NATIVE_QUEUE__ = [{
+      connection_id: 'view-9',
+      delivery_id: 7,
+      messages: [{
+        connection_id: 'view-9',
+        context_epoch: 1,
+        subscription_id: 'sub-1',
+        event: 'session.snapshot',
+        forum_id: 'history',
+        session_id: 'session-1',
+        seq: 0,
+        payload: loadFixture('snapshot.json'),
+      }],
+    }];
+    const bridge = installNativeHostBridge();
+    expect(bridge).not.toBeNull();
+    expect(window.__CHA_NATIVE_QUEUE__).toEqual([]);
+    expect(window.__CHA_NATIVE_RECEIVE__).toBeTypeOf('function');
+    delete window.__CHA_NATIVE_POST__;
+    delete window.__CHA_NATIVE_RECEIVE__;
+    delete window.__CHA_NATIVE_CONNECTION_ID__;
+    delete window.__CHA_NATIVE_QUEUE__;
   });
 
   it('turns a real C++ error envelope into ChaError', async () => {

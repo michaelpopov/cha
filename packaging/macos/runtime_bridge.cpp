@@ -1,27 +1,66 @@
 #include "runtime_bridge.h"
 
+#include "app/application.h"
+#include "bridge/bridge_router.h"
 #include "util/logging.h"
 #include "web/application_config.h"
 #include "web/application_runtime.h"
 #include "workspace/workspace_config_store.h"
 
+#include <nlohmann/json.hpp>
+
+#include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <exception>
 #include <memory>
+#include <mutex>
 #include <new>
+#include <optional>
 #include <string>
+#include <thread>
+#include <vector>
 
 using cha::WorkspaceConfigTransfer;
+using cha::app::Application;
+using cha::bridge::BridgeRouter;
 using cha::web::ApplicationCommand;
 using cha::web::ApplicationRuntime;
-using cha::web::R2DatabaseTransfer;
+using cha::web::ConfigurationTransport;
 using cha::web::parse_application_command;
 
+namespace {
+
+#if defined(_WIN32)
+constexpr const char* kPlatform = "windows";
+#elif defined(__APPLE__)
+constexpr const char* kPlatform = "macos";
+#else
+constexpr const char* kPlatform = "unknown";
+#endif
+
+} // namespace
+
 struct ChaRuntime {
-    std::unique_ptr<ApplicationRuntime> application;
+    std::unique_ptr<Application> native_application;
+    std::unique_ptr<BridgeRouter> router;
+    std::unique_ptr<ApplicationRuntime> http_application;
     int port{};
     bool logging{};
+    bool native{};
+    bool joined{};
+
+    std::mutex callback_mutex;
+    cha_runtime_delivery_fn delivery_callback{};
+    void* delivery_context{};
+
+    std::mutex connections_mutex;
+    std::vector<std::string> connections;
+
+    std::atomic<bool> pump_stop{false};
+    std::thread pump;
 };
 
 namespace {
@@ -51,17 +90,69 @@ void set_current_error(char** error) noexcept {
 
 ApplicationCommand runtime_command(
     const char* config_path,
-    const char* resource_path) {
+    const char* resource_path,
+    bool http) {
     const char* arguments[] = {
         "CHA", "--root", resource_path, "--config", config_path};
-    ApplicationCommand command = parse_application_command(5, arguments);
-    // CHA.app does not use [web]. The only client is the WKWebView in this
-    // process, so the listener is always private loopback on a port the
-    // operating system picks; the section exists because the shared
-    // configuration format requires it.
-    command.host = "127.0.0.1";
-    command.port = 0;
+    ApplicationCommand command = parse_application_command(
+        5,
+        arguments,
+        http ? ConfigurationTransport::http : ConfigurationTransport::native);
+    if (http) {
+        // CHA.app does not use [web]. The only client is the WebView in this
+        // process, so the listener is always private loopback on a port the
+        // operating system picks.
+        command.host = "127.0.0.1";
+        command.port = 0;
+    }
     return command;
+}
+
+void stop_pump(ChaRuntime* runtime) {
+    if (!runtime) return;
+    runtime->pump_stop.store(true);
+    if (runtime->router) runtime->router->shutdown();
+}
+
+void join_pump(ChaRuntime* runtime) {
+    if (runtime && runtime->pump.joinable()) runtime->pump.join();
+}
+
+void run_pump(ChaRuntime* runtime) {
+    using namespace std::chrono_literals;
+    while (!runtime->pump_stop.load()) {
+        if (!runtime->router) break;
+        runtime->router->wait_for_work(50ms);
+        if (runtime->pump_stop.load()) break;
+        try {
+            runtime->router->run_tasks();
+            runtime->router->expire_timeouts();
+            runtime->router->pump_output();
+        } catch (...) {
+            continue;
+        }
+        std::vector<std::string> ids;
+        {
+            std::lock_guard lock(runtime->connections_mutex);
+            ids = runtime->connections;
+        }
+        for (const auto& id : ids) {
+            if (runtime->pump_stop.load()) break;
+            std::optional<nlohmann::json> batch;
+            try {
+                batch = runtime->router->take_delivery(id);
+            } catch (...) {
+                continue;
+            }
+            if (!batch) continue;
+            const std::string json = batch->dump();
+            std::lock_guard lock(runtime->callback_mutex);
+            if (runtime->delivery_callback) {
+                runtime->delivery_callback(
+                    runtime->delivery_context, id.c_str(), json.c_str());
+            }
+        }
+    }
 }
 
 int32_t transfer(
@@ -70,14 +161,14 @@ int32_t transfer(
     char** error,
     bool download) {
     clear_error(error);
-    if (!runtime || !runtime->application || !byte_count) {
-        set_string(error, "CHA runtime is not available");
+    if (!runtime || !runtime->http_application || !byte_count) {
+        set_string(error, "That database operation is not available yet.");
         return 0;
     }
     try {
-        const R2DatabaseTransfer result = download
-            ? runtime->application->download_database()
-            : runtime->application->upload_database();
+        const cha::web::R2DatabaseTransfer result = download
+            ? runtime->http_application->download_database()
+            : runtime->http_application->upload_database();
         *byte_count = result.byte_count;
         return 1;
     } catch (const cha::WorkspaceRestartRequiredError& fatal) {
@@ -95,14 +186,14 @@ int32_t transfer_configuration(
     char** error,
     bool importing) {
     clear_error(error);
-    if (!runtime || !runtime->application || !file_count) {
-        set_string(error, "CHA runtime is not available");
+    if (!runtime || !runtime->http_application || !file_count) {
+        set_string(error, "That database operation is not available yet.");
         return 0;
     }
     try {
         const WorkspaceConfigTransfer result = importing
-            ? runtime->application->import_configuration()
-            : runtime->application->export_configuration();
+            ? runtime->http_application->import_configuration()
+            : runtime->http_application->export_configuration();
         *file_count = result.file_count;
         return 1;
     } catch (const cha::WorkspaceRestartRequiredError& fatal) {
@@ -121,12 +212,14 @@ ChaRuntime* cha_runtime_create(
     const char* resource_path,
     const char* access_token,
     const char* vault_password,
+    int32_t http_mode,
     int32_t* password_error,
     char** error) {
     clear_error(error);
     if (password_error) *password_error = 0;
-    if (!config_path || !resource_path || !access_token || !vault_password
-        || *access_token == '\0') {
+    const bool http = http_mode != 0;
+    if (!config_path || !resource_path || !vault_password
+        || (http && (!access_token || *access_token == '\0'))) {
         set_string(error, "CHA runtime configuration is incomplete");
         return nullptr;
     }
@@ -134,14 +227,27 @@ ChaRuntime* cha_runtime_create(
     std::unique_ptr<ChaRuntime> runtime;
     try {
         ApplicationCommand command = runtime_command(
-            config_path, resource_path);
+            config_path, resource_path, http);
         runtime = std::make_unique<ChaRuntime>();
         cha::initialize_diagnostic_logging(
             command.log_file, command.log_level);
         runtime->logging = true;
-        runtime->application = ApplicationRuntime::open(
-            command, access_token, vault_password);
-        runtime->port = runtime->application->start();
+        if (http) {
+            runtime->http_application = ApplicationRuntime::open(
+                command, access_token, vault_password);
+            runtime->port = runtime->http_application->start();
+            runtime->native = false;
+            return runtime.release();
+        }
+        runtime->native_application = Application::open(
+            command, vault_password, cha::app::native_settings());
+        BridgeRouter::Options options;
+        options.platform = kPlatform;
+        runtime->router = std::make_unique<BridgeRouter>(
+            *runtime->native_application, std::move(options));
+        runtime->native = true;
+        runtime->port = 0;
+        runtime->pump = std::thread(run_pump, runtime.get());
         return runtime.release();
     } catch (const cha::web::VaultPasswordError&) {
         if (password_error) *password_error = 1;
@@ -151,6 +257,10 @@ ChaRuntime* cha_runtime_create(
         set_current_error(error);
         return nullptr;
     } catch (...) {
+        if (runtime) {
+            stop_pump(runtime.get());
+            join_pump(runtime.get());
+        }
         if (runtime && runtime->logging) {
             cha::shutdown_diagnostic_logging();
         }
@@ -171,7 +281,8 @@ int32_t cha_runtime_requires_password(
         return -1;
     }
     try {
-        const ApplicationCommand command = runtime_command(config_path, resource_path);
+        const ApplicationCommand command = runtime_command(
+            config_path, resource_path, false);
         set_string(vault_name, command.vault.name.c_str());
         if (vault_name && !*vault_name) throw std::bad_alloc();
         return command.vault.password_protected ? 1 : 0;
@@ -183,16 +294,35 @@ int32_t cha_runtime_requires_password(
 
 void cha_runtime_destroy(ChaRuntime* runtime) {
     if (!runtime) return;
-    if (runtime->application) {
+    {
+        std::lock_guard lock(runtime->callback_mutex);
+        runtime->delivery_callback = nullptr;
+        runtime->delivery_context = nullptr;
+    }
+    stop_pump(runtime);
+    join_pump(runtime);
+    if (runtime->native_application && !runtime->joined) {
         try {
-            runtime->application->shutdown();
-            runtime->application.reset();
+            runtime->native_application->request_shutdown();
+            (void)runtime->native_application->join_shutdown(
+                std::chrono::milliseconds{10000});
+            runtime->joined = true;
         } catch (...) {
-            // This boundary is called from Swift during application teardown;
-            // no C++ exception may cross it. A failed shutdown intentionally
-            // leaks the runtime until process exit rather than destroying
-            // possibly live owner threads.
-            (void)runtime->application.release();
+            (void)runtime->native_application.release();
+            if (runtime->logging) cha::shutdown_diagnostic_logging();
+            return;
+        }
+    }
+    runtime->router.reset();
+    runtime->native_application.reset();
+    if (runtime->http_application) {
+        try {
+            runtime->http_application->shutdown();
+            runtime->http_application.reset();
+        } catch (...) {
+            (void)runtime->http_application.release();
+            if (runtime->logging) cha::shutdown_diagnostic_logging();
+            return;
         }
     }
     if (runtime->logging) cha::shutdown_diagnostic_logging();
@@ -203,18 +333,22 @@ int32_t cha_runtime_port(const ChaRuntime* runtime) {
     return runtime ? runtime->port : 0;
 }
 
+int32_t cha_runtime_is_native(const ChaRuntime* runtime) {
+    return runtime && runtime->native ? 1 : 0;
+}
+
 int32_t cha_runtime_can_modify(const ChaRuntime* runtime) {
-    if (!runtime || !runtime->application) return 0;
+    if (!runtime || runtime->native || !runtime->http_application) return 0;
     try {
-        return runtime->application->current_vault().modify ? 1 : 0;
+        return runtime->http_application->current_vault().modify ? 1 : 0;
     } catch (...) {
         return 0;
     }
 }
 
 int32_t cha_runtime_can_transfer_r2(const ChaRuntime* runtime) {
-    return runtime && runtime->application
-        && runtime->application->has_r2_storage() ? 1 : 0;
+    return runtime && !runtime->native && runtime->http_application
+        && runtime->http_application->has_r2_storage() ? 1 : 0;
 }
 
 int32_t cha_runtime_upload(
@@ -243,6 +377,97 @@ int32_t cha_runtime_export_configuration(
     uint64_t* file_count,
     char** error) {
     return transfer_configuration(runtime, file_count, error, false);
+}
+
+void cha_runtime_set_delivery_callback(
+    ChaRuntime* runtime,
+    cha_runtime_delivery_fn callback,
+    void* context) {
+    if (!runtime) return;
+    std::lock_guard lock(runtime->callback_mutex);
+    runtime->delivery_callback = callback;
+    runtime->delivery_context = context;
+}
+
+char* cha_runtime_open_connection(ChaRuntime* runtime, char** error) {
+    clear_error(error);
+    if (!runtime || !runtime->router) {
+        set_string(error, "CHA runtime is not available");
+        return nullptr;
+    }
+    try {
+        std::string id = runtime->router->open_connection();
+        {
+            std::lock_guard lock(runtime->connections_mutex);
+            runtime->connections.push_back(id);
+        }
+        char* copy = nullptr;
+        set_string(&copy, id.c_str());
+        if (!copy) throw std::bad_alloc();
+        return copy;
+    } catch (...) {
+        set_current_error(error);
+        return nullptr;
+    }
+}
+
+void cha_runtime_close_connection(
+    ChaRuntime* runtime,
+    const char* connection_id) {
+    if (!runtime || !runtime->router || !connection_id) return;
+    try {
+        runtime->router->close_connection(connection_id);
+        std::lock_guard lock(runtime->connections_mutex);
+        auto& ids = runtime->connections;
+        ids.erase(
+            std::remove(ids.begin(), ids.end(), std::string(connection_id)),
+            ids.end());
+    } catch (...) {
+    }
+}
+
+void cha_runtime_handle_message(
+    ChaRuntime* runtime,
+    const char* connection_id,
+    const char* json) {
+    if (!runtime || !runtime->router || !connection_id || !json) return;
+    try {
+        const nlohmann::json parsed = nlohmann::json::parse(json, nullptr, false);
+        if (parsed.is_discarded() || !parsed.is_object()) return;
+        if (parsed.contains("method")) {
+            runtime->router->handle_request(connection_id, json);
+        } else {
+            runtime->router->handle_ack(connection_id, json);
+        }
+    } catch (...) {
+    }
+}
+
+void cha_runtime_request_shutdown(ChaRuntime* runtime) {
+    if (!runtime) return;
+    stop_pump(runtime);
+    if (runtime->native_application) {
+        runtime->native_application->request_shutdown();
+    }
+}
+
+int32_t cha_runtime_join_shutdown(ChaRuntime* runtime, int32_t grace_ms) {
+    if (!runtime) return 1;
+    join_pump(runtime);
+    if (runtime->native_application && !runtime->joined) {
+        runtime->joined = true;
+        const auto grace = std::chrono::milliseconds{
+            grace_ms > 0 ? grace_ms : 10000};
+        return runtime->native_application->join_shutdown(grace) ? 1 : 0;
+    }
+    if (runtime->http_application) {
+        try {
+            runtime->http_application->shutdown();
+        } catch (...) {
+            return 0;
+        }
+    }
+    return 1;
 }
 
 void cha_string_free(char* value) {

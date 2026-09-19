@@ -267,6 +267,7 @@ declare global {
     __CHA_NATIVE_POST__?: (message: string) => void;
     __CHA_NATIVE_CONNECTION_ID__?: string;
     __CHA_NATIVE_RECEIVE__?: (batch: unknown) => void;
+    __CHA_NATIVE_QUEUE__?: unknown[];
   }
 }
 
@@ -274,6 +275,9 @@ export function installNativeHostBridge(): NativeBridge | null {
   if (typeof window === 'undefined' || !window.__CHA_NATIVE_POST__) return null;
   const post = window.__CHA_NATIVE_POST__;
   const connectionId = window.__CHA_NATIVE_CONNECTION_ID__ ?? 'view-1';
+  const queued = Array.isArray(window.__CHA_NATIVE_QUEUE__)
+    ? window.__CHA_NATIVE_QUEUE__.splice(0)
+    : [];
   const bridge = createEnvelopeNativeBridge({
     connectionId,
     post(message) {
@@ -281,5 +285,6 @@ export function installNativeHostBridge(): NativeBridge | null {
     },
   });
   window.__CHA_NATIVE_RECEIVE__ = (batch) => bridge.receive(batch);
+  for (const batch of queued) bridge.receive(batch);
   return bridge;
 }

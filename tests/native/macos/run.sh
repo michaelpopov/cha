@@ -16,7 +16,13 @@ else
 fi
 
 contents="$bundle/Contents"
-mkdir -p "$contents/MacOS"
+mkdir -p "$contents/MacOS" "$contents/Frameworks"
+runtime_lib=${CHA_RUNTIME_LIB:-"$repository/build/ninja/libChaRuntime.dylib"}
+if [ ! -f "$runtime_lib" ]; then
+    echo "native test host: $runtime_lib is missing; build cha_macos_runtime first" >&2
+    exit 2
+fi
+cp "$runtime_lib" "$contents/Frameworks/libChaRuntime.dylib"
 xcrun swiftc \
     -swift-version 5 \
     -parse-as-library \
@@ -24,7 +30,13 @@ xcrun swiftc \
     -target "arm64-apple-macos$deployment_target" \
     -framework AppKit \
     -framework WebKit \
+    -import-objc-header "$repository/packaging/macos/runtime_bridge.h" \
+    -L "$(dirname "$runtime_lib")" \
+    -lChaRuntime \
+    -Xlinker -rpath \
+    -Xlinker @executable_path/../Frameworks \
     "$repository/packaging/macos/feasibility.swift" \
+    "$repository/packaging/macos/native_bridge.swift" \
     "$repository/tests/native/macos/test_host.swift" \
     -o "$contents/MacOS/ChaNativeTestHost"
 
@@ -53,4 +65,22 @@ EOF
 
 expect=${1:-pass}
 shift $(( $# > 0 ? 1 : 0 ))
+vault=""
+case "$expect" in
+    flow|reload|renderer-fail|stall|quit)
+        vault=${CHA_NATIVE_TEST_CONFIG:-}
+        if [ -z "$vault" ]; then
+            vault=$(mktemp -d "${TMPDIR:-/tmp}/cha-native-vault.XXXXXX")
+            prepare=${CHA_PREPARE_TEST_VAULT:-"$repository/build/ninja/cha_prepare_test_vault"}
+            if [ ! -x "$prepare" ]; then
+                echo "native test host: $prepare is missing; build cha_prepare_test_vault first" >&2
+                exit 2
+            fi
+            "$prepare" "$vault"
+        fi
+        ;;
+esac
+if [ -n "$vault" ]; then
+    exec "$contents/MacOS/ChaNativeTestHost" --assets "$assets" --expect "$expect" --config "$vault" "$@"
+fi
 exec "$contents/MacOS/ChaNativeTestHost" --assets "$assets" --expect "$expect" "$@"

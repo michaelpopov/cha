@@ -724,6 +724,13 @@ ConfigurationDirectory load_configuration_directory(
 ApplicationCommand parse_application_command(
     int argc,
     const char* const* argv) {
+    return parse_application_command(argc, argv, ConfigurationTransport::http);
+}
+
+ApplicationCommand parse_application_command(
+    int argc,
+    const char* const* argv,
+    ConfigurationTransport transport) {
     const ParsedOptions options = parse_arguments(argc, argv);
     if (!options.config) {
         throw argument_error("Missing --config=CONFIG_DIR.");
@@ -768,7 +775,7 @@ ApplicationCommand parse_application_command(
 
     if (!offline) bootstrap_configuration_directory(*options.config);
     const ConfigurationDirectory settings =
-        load_configuration_directory(*options.config);
+        load_configuration_directory(*options.config, transport);
     if (options.import_directory
         && path_is_under(*options.import_directory, settings.directory)) {
         throw argument_error(

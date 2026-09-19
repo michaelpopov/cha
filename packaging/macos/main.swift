@@ -65,14 +65,21 @@ private struct DownloadDestination {
     let finalURL: URL
 }
 
+private struct HostLaunchOptions {
+    var feasibilityAssets: URL?
+    var httpMode = false
+    var userData: URL?
+}
+
 @MainActor
 private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
     NSMenuDelegate, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
     private let fileManager = FileManager.default
-    private let feasibilityAssets: URL?
+    private let launchOptions: HostLaunchOptions
     private var window: NSWindow!
     private var webView: WKWebView!
     private var probeReceiver: ChaProbeReceiver?
+    private var nativeBridge: ChaNativeBridgeReceiver?
     private var webViewTitleObservation: NSKeyValueObservation?
     private var runtime: OpaquePointer?
     private var runtimeURL: URL?
@@ -85,14 +92,20 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
     private var databaseOperationInProgress = false
     private var terminationPending = false
     private var quitting = false
+    private var rendererFailures = 0
+    private let rendererFailureLimit = 3
 
-    init(feasibilityAssets: URL? = nil) {
-        self.feasibilityAssets = feasibilityAssets
+    init(launchOptions: HostLaunchOptions = HostLaunchOptions()) {
+        self.launchOptions = launchOptions
         super.init()
     }
 
+    private var feasibilityAssets: URL? { launchOptions.feasibilityAssets }
+    private var httpMode: Bool { launchOptions.httpMode }
+
     private var supportDirectory: URL {
-        fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        if let userData = launchOptions.userData { return userData }
+        return fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent(applicationName, isDirectory: true)
     }
 
@@ -120,22 +133,28 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
         true
     }
 
-    // A database operation runs off the main thread against the runtime pointer,
-    // and applicationWillTerminate destroys it. Quitting therefore waits for
-    // the operation to hand the pointer back, rather than freeing it underneath.
+    // A database operation runs off the main thread against the runtime pointer.
+    // Quitting waits for that work to finish, then joins owners off the UI thread.
     func applicationShouldTerminate(
         _ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard databaseOperationInProgress else { return .terminateNow }
-        terminationPending = true
+        if databaseOperationInProgress {
+            terminationPending = true
+            return .terminateLater
+        }
+        guard runtime != nil, !quitting else { return .terminateNow }
+        quitting = true
+        shutdownRuntimeThen {
+            NSApp.reply(toApplicationShouldTerminate: true)
+        }
         return .terminateLater
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         quitting = true
-        if let runtime {
-            cha_runtime_destroy(runtime)
-            self.runtime = nil
-        }
+        nativeBridge?.detach()
+        nativeBridge = nil
+        // Join and destroy run off the UI thread from applicationShouldTerminate
+        // or showFatalError. Blocking here would wait on owners for up to 10s.
     }
 
     private func installMenus() {
@@ -316,6 +335,7 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
                                 resourcePath,
                                 token,
                                 passwordValue,
+                                httpMode ? 1 : 0,
                                 &passwordError,
                                 &bridgeError)
                         }
@@ -323,14 +343,18 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
                 }
             }
             if let created {
-                let port = cha_runtime_port(created)
-                guard port > 0,
-                      let url = URL(string: "http://127.0.0.1:\(port)/") else {
-                    cha_runtime_destroy(created)
-                    throw LauncherError.cannotStart
+                if httpMode {
+                    let port = cha_runtime_port(created)
+                    guard port > 0,
+                          let url = URL(string: "http://127.0.0.1:\(port)/") else {
+                        cha_runtime_destroy(created)
+                        throw LauncherError.cannotStart
+                    }
+                    runtimeURL = url
+                } else {
+                    runtimeURL = URL(string: "\(chaAssetOrigin)/")
                 }
                 runtime = created
-                runtimeURL = url
                 updateDatabaseMenuItems()
                 return true
             }
@@ -345,9 +369,43 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
 
     private func showApplication() {
         guard webView == nil, let runtimeURL else { return }
-        let configuration = WKWebViewConfiguration()
-        configuration.mediaTypesRequiringUserActionForPlayback = []
-        let view = WKWebView(frame: .zero, configuration: configuration)
+        if httpMode {
+            let configuration = WKWebViewConfiguration()
+            configuration.mediaTypesRequiringUserActionForPlayback = []
+            let view = WKWebView(frame: .zero, configuration: configuration)
+            attachWebView(view)
+            let properties: [HTTPCookiePropertyKey: Any] = [
+                .domain: "127.0.0.1",
+                .path: "/",
+                .name: "CHA_RUNTIME",
+                .value: runtimeToken,
+                HTTPCookiePropertyKey("HttpOnly"): "TRUE",
+                HTTPCookiePropertyKey("SameSite"): "Strict",
+            ]
+            guard let cookie = HTTPCookie(properties: properties) else {
+                return showFatalError(LauncherError.cannotStart)
+            }
+            view.configuration.websiteDataStore.httpCookieStore.setCookie(cookie) {
+                view.load(URLRequest(url: runtimeURL))
+            }
+            return
+        }
+        guard let resources = Bundle.main.resourceURL else {
+            return showFatalError(LauncherError.incompleteApplication)
+        }
+        let assets = resources.appendingPathComponent("web", isDirectory: true)
+        let built = makeNativeWebViewConfiguration(assetRoot: assets)
+        let view = WKWebView(frame: .zero, configuration: built.0)
+        attachWebView(view)
+        if let runtime {
+            let receiver = ChaNativeBridgeReceiver(runtime: runtime)
+            receiver.attach(to: view)
+            nativeBridge = receiver
+        }
+        view.load(URLRequest(url: runtimeURL))
+    }
+
+    private func attachWebView(_ view: WKWebView) {
         view.allowsMagnification = true
         view.navigationDelegate = self
         view.uiDelegate = self
@@ -359,21 +417,6 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
             Task { @MainActor [weak self] in
                 self?.updateWindowTitle()
             }
-        }
-
-        let properties: [HTTPCookiePropertyKey: Any] = [
-            .domain: "127.0.0.1",
-            .path: "/",
-            .name: "CHA_RUNTIME",
-            .value: runtimeToken,
-            HTTPCookiePropertyKey("HttpOnly"): "TRUE",
-            HTTPCookiePropertyKey("SameSite"): "Strict",
-        ]
-        guard let cookie = HTTPCookie(properties: properties) else {
-            return showFatalError(LauncherError.cannotStart)
-        }
-        view.configuration.websiteDataStore.httpCookieStore.setCookie(cookie) {
-            view.load(URLRequest(url: runtimeURL))
         }
     }
 
@@ -464,7 +507,9 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
                 self.updateDatabaseMenuItems()
                 if self.terminationPending {
                     self.terminationPending = false
-                    NSApp.reply(toApplicationShouldTerminate: true)
+                    if self.applicationShouldTerminate(NSApp) == .terminateNow {
+                        NSApp.reply(toApplicationShouldTerminate: true)
+                    }
                     return
                 }
                 guard !self.quitting else { return }
@@ -542,6 +587,12 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
             return
         }
         if isApplicationURL(url) {
+            if navigationAction.targetFrame?.isMainFrame == true
+                && !isSameDocumentHashChange(from: webView.url, to: url)
+                && nativeBridge != nil
+                && navigationAction.navigationType != .other {
+                nativeBridge?.prepareDocumentReplacement()
+            }
             decisionHandler(.allow)
             return
         }
@@ -549,6 +600,18 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
         // navigation prevents createWebViewWith from being called.
         openHTTPSInSystemBrowser(url)
         decisionHandler(.cancel)
+    }
+
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        guard feasibilityAssets == nil else { return }
+        rendererFailures += 1
+        nativeBridge?.prepareDocumentReplacement()
+        if rendererFailures >= rendererFailureLimit {
+            showFatalError(RuntimeBridgeError(
+                message: "CHA's browser process stopped repeatedly. Quit and open CHA again."))
+            return
+        }
+        webView.reload()
     }
 
     func webView(
@@ -587,7 +650,7 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
         initiatedByFrame frame: WKFrameInfo,
         type: WKMediaCaptureType,
         decisionHandler: @escaping (WKPermissionDecision) -> Void) {
-        if feasibilityAssets != nil {
+        if feasibilityAssets != nil || !httpMode {
             guard type == .microphone, frame.isMainFrame, isChaAssetOrigin(origin) else {
                 decisionHandler(.deny)
                 return
@@ -608,7 +671,7 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
     }
 
     private func isApplicationURL(_ url: URL) -> Bool {
-        if feasibilityAssets != nil {
+        if feasibilityAssets != nil || !httpMode {
             return isChaAssetURL(url)
         }
         guard let runtimeURL,
@@ -696,25 +759,41 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
             detail: "Choose another location and try again.")
     }
 
+    private func shutdownRuntimeThen(_ completion: @escaping () -> Void) {
+        nativeBridge?.detach()
+        nativeBridge = nil
+        guard let runtime else {
+            completion()
+            return
+        }
+        cha_runtime_request_shutdown(runtime)
+        let handle = RuntimeHandle(pointer: runtime)
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            _ = cha_runtime_join_shutdown(handle.pointer, 10000)
+            DispatchQueue.main.async {
+                cha_runtime_destroy(handle.pointer)
+                self?.runtime = nil
+                completion()
+            }
+        }
+    }
+
     private func showFatalError(_ error: Error) {
         guard !quitting else { return }
         quitting = true
-        if let runtime {
-            cha_runtime_destroy(runtime)
-            self.runtime = nil
+        shutdownRuntimeThen {
+            let alert = NSAlert()
+            alert.alertStyle = .critical
+            alert.messageText = "CHA cannot continue"
+            alert.informativeText = error.localizedDescription
+            alert.addButton(withTitle: "Quit")
+            alert.runModal()
+            NSApp.terminate(nil)
         }
-
-        let alert = NSAlert()
-        alert.alertStyle = .critical
-        alert.messageText = "CHA cannot continue"
-        alert.informativeText = error.localizedDescription
-        alert.addButton(withTitle: "Quit")
-        alert.runModal()
-        NSApp.terminate(nil)
     }
 }
 
-private func parseLaunchOptions() throws -> URL? {
+private func parseLaunchOptions() throws -> HostLaunchOptions {
     let arguments = Array(CommandLine.arguments.dropFirst()).filter { argument in
         if argument.hasPrefix("-psn")
             || (argument.hasPrefix("-") && !argument.hasPrefix("--")) {
@@ -724,27 +803,42 @@ private func parseLaunchOptions() throws -> URL? {
         }
         return true
     }
-    if arguments.isEmpty { return nil }
-    guard arguments.first == "--feasibility" else {
-        throw LauncherError.cannotStart
-    }
+    var options = HostLaunchOptions()
+    var index = 0
+    var feasibility = false
     var assets: URL?
-    var index = 1
     while index < arguments.count {
-        if arguments[index] == "--assets" {
+        let argument = arguments[index]
+        func takeValue() throws -> String {
             index += 1
             guard index < arguments.count else { throw LauncherError.cannotStart }
-            assets = URL(fileURLWithPath: arguments[index], isDirectory: true)
-        } else {
+            return arguments[index]
+        }
+        switch argument {
+        case "--feasibility":
+            feasibility = true
+        case "--http":
+            options.httpMode = true
+        case "--assets":
+            assets = URL(fileURLWithPath: try takeValue(), isDirectory: true)
+        case "--user-data":
+            options.userData = URL(fileURLWithPath: try takeValue(), isDirectory: true)
+        default:
             throw LauncherError.cannotStart
         }
         index += 1
     }
-    if let assets { return assets }
-    guard let resources = Bundle.main.resourceURL else {
-        throw LauncherError.incompleteApplication
+    if feasibility {
+        if let assets {
+            options.feasibilityAssets = assets
+        } else if let resources = Bundle.main.resourceURL {
+            options.feasibilityAssets = resources.appendingPathComponent(
+                "web", isDirectory: true)
+        } else {
+            throw LauncherError.incompleteApplication
+        }
     }
-    return resources.appendingPathComponent("web", isDirectory: true)
+    return options
 }
 
 @main
@@ -752,9 +846,9 @@ private struct Main {
     @MainActor
     static func main() {
         let application = NSApplication.shared
-        let feasibilityAssets: URL?
+        let launchOptions: HostLaunchOptions
         do {
-            feasibilityAssets = try parseLaunchOptions()
+            launchOptions = try parseLaunchOptions()
         } catch {
             let alert = NSAlert()
             alert.alertStyle = .critical
@@ -764,7 +858,7 @@ private struct Main {
             alert.runModal()
             return
         }
-        let delegate = ApplicationDelegate(feasibilityAssets: feasibilityAssets)
+        let delegate = ApplicationDelegate(launchOptions: launchOptions)
         application.setActivationPolicy(.regular)
         application.delegate = delegate
         application.run()

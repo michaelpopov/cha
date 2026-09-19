@@ -448,6 +448,129 @@ TEST_F(BridgeRouterTest, SaturatingOrdinaryWorkInvalidatesTheConnection) {
     EXPECT_FALSE(wait_delivery(*router_, connection_, 50ms));
 }
 
+TEST_F(BridgeRouterTest, StalledAckKeepsOneOutstandingDelivery) {
+    bootstrap_epoch();
+    auto created = call(
+        "session.create", {{"forum_id", "lobby"}, {"label", "Stall"}});
+    ASSERT_TRUE(created["ok"]);
+    const std::string session_id = created["result"]["id"];
+    ASSERT_TRUE(
+        call(
+            "session.open",
+            {{"forum_id", "lobby"}, {"session_id", session_id}})["ok"]);
+    ASSERT_TRUE(
+        call(
+            "session.subscribe",
+            {{"forum_id", "lobby"},
+             {"session_id", session_id},
+             {"subscription_id", "sub-stall"}})["ok"]);
+    auto snapshot = wait_delivery(*router_, connection_, 2s);
+    if (snapshot) ack_delivery(*router_, connection_, *snapshot);
+
+    ASSERT_TRUE(
+        call(
+            "session.submit",
+            {{"forum_id", "lobby"},
+             {"session_id", session_id},
+             {"input", {{"text", "Burst"}}}})["ok"]);
+    auto first = wait_delivery(*router_, connection_);
+    ASSERT_TRUE(first);
+    EXPECT_FALSE(router_->take_delivery(connection_));
+    std::this_thread::sleep_for(20ms);
+    router_->run_tasks();
+    router_->pump_output();
+    EXPECT_FALSE(router_->take_delivery(connection_));
+    ack_delivery(*router_, connection_, *first);
+    auto stopped = call(
+        "session.stop", {{"forum_id", "lobby"}, {"session_id", session_id}});
+    EXPECT_TRUE(stopped["ok"]);
+}
+
+TEST_F(BridgeRouterTest, NewConnectionReusesIdsWithoutResolvingOldReplies) {
+    bootstrap_epoch();
+    const auto old_id = next_id_++;
+    router_->handle_request(
+        connection_,
+        request_json(connection_, old_id, epoch_, "bridge.info").dump());
+    auto old_batch = wait_delivery(*router_, connection_);
+    ASSERT_TRUE(old_batch);
+    const auto old_delivery = old_batch->at("delivery_id").get<std::uint64_t>();
+    router_->close_connection(connection_);
+    connection_ = router_->open_connection();
+    next_id_ = 1;
+    bootstrap_epoch();
+    router_->handle_ack(
+        connection_,
+        nlohmann::json{
+            {"connection_id", connection_},
+            {"delivery_id", old_delivery},
+        }.dump());
+    auto reply = call("bridge.info");
+    ASSERT_TRUE(reply["ok"]);
+}
+
+TEST_F(BridgeRouterTest, ShutdownDoesNotWaitForRendererAck) {
+    bootstrap_epoch();
+    auto created = call(
+        "session.create", {{"forum_id", "lobby"}, {"label", "Quit"}});
+    ASSERT_TRUE(created["ok"]);
+    const std::string session_id = created["result"]["id"];
+    ASSERT_TRUE(
+        call(
+            "session.open",
+            {{"forum_id", "lobby"}, {"session_id", session_id}})["ok"]);
+    ASSERT_TRUE(
+        call(
+            "session.submit",
+            {{"forum_id", "lobby"},
+             {"session_id", session_id},
+             {"input", {{"text", "Still running"}}}})["ok"]);
+    auto pending = wait_delivery(*router_, connection_, 500ms);
+    router_->shutdown();
+    application_->request_shutdown();
+    EXPECT_TRUE(application_->join_shutdown(2s));
+    if (pending) {
+        router_->handle_ack(
+            connection_,
+            nlohmann::json{
+                {"connection_id", connection_},
+                {"delivery_id", pending->at("delivery_id")},
+            }.dump());
+    }
+}
+
+TEST_F(BridgeRouterTest, SnapshotCaptureAndSerializeStayBounded) {
+    bootstrap_epoch();
+    auto created = call(
+        "session.create", {{"forum_id", "lobby"}, {"label", "Measure"}});
+    ASSERT_TRUE(created["ok"]);
+    const std::string session_id = created["result"]["id"];
+    ASSERT_TRUE(
+        call(
+            "session.open",
+            {{"forum_id", "lobby"}, {"session_id", session_id}})["ok"]);
+    ASSERT_TRUE(
+        call(
+            "session.submit",
+            {{"forum_id", "lobby"},
+             {"session_id", session_id},
+             {"input", {{"text", std::string(4000, 'x')}}}})["ok"]);
+    const auto started = std::chrono::steady_clock::now();
+    auto reply = call(
+        "session.snapshot",
+        {{"forum_id", "lobby"}, {"session_id", session_id}});
+    const auto elapsed = std::chrono::steady_clock::now() - started;
+    ASSERT_TRUE(reply["ok"]);
+    const auto serialized = reply["result"].dump();
+    RecordProperty("snapshot_bytes", static_cast<int>(serialized.size()));
+    RecordProperty(
+        "snapshot_ms",
+        static_cast<int>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(elapsed)
+                .count()));
+    EXPECT_LT(elapsed, 5s);
+}
+
 TEST_F(BridgeRouterTest, StopRemainsAdmittedWhenOrdinaryWorkIsFull) {
     router_ = std::make_unique<BridgeRouter>(
         *application_,

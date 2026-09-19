@@ -6,7 +6,7 @@ are included here. Reading `docs/plan.md`, `docs/redesign.md`, or other block br
 is not required. The current source code and actual prior implementation/evidence
 are still required inputs; this document does not claim those prerequisites exist.
 
-**Initial status:** not started. **Environment:** macOS and Windows/WebView2 plus common native tests.
+**Initial status:** waiting for evidence. **Environment:** macOS and Windows/WebView2 plus common native tests.
 
 ## Objective and scope
 
@@ -849,16 +849,63 @@ when its revision/coverage remains applicable. Do not require the next agent to
 read an entire conversation to recover decisions.
 
 ```text
-Status: not started | in progress | waiting for evidence | complete
+Status: waiting for evidence
 Starting and resulting revision/checkpoint:
+  start 9ad12e7 (Block 3). Result is uncommitted working tree on redesign.
 Files changed/moved and actual new APIs/targets:
+  packaging/macos/runtime_bridge.{h,cpp} — native Application+BridgeRouter,
+    pump thread, connection/message/ack/delivery callback, async shutdown
+  packaging/macos/native_bridge.swift — WK receiver, document connection,
+    callAsyncJavaScript delivery with JSON arguments
+  packaging/macos/main.swift — native default (cha://app), --http coexistence,
+    process-terminate recovery, UI-thread-free shutdown join
+  packaging/windows/main.cpp — native default (https://app.cha.local), --http,
+    ProcessFailed recovery, PostMessage delivery, async shutdown
+  tests/native/macos/test_host.swift + run.sh — flow/reload/stall/quit/renderer-fail
+  tests/native/{prepare_test_vault,unit_runtime_bridge}.cpp
+  cha_native_runtime_tests, cha_prepare_test_vault
+  webapp/src/api/nativeBridge.ts — drain __CHA_NATIVE_QUEUE__ before React
 Implemented behavior and key ownership/contract decisions:
+  Packaged hosts start Application + BridgeRouter with no listener (port 0)
+  Temporary HTTP remains --http; database menus stay HTTP-only until Block 5
+  One pump thread runs tasks/timeouts/take_delivery; UI only posts JSON
+  Document connection is native-owned; hash navigation keeps it; reload/process
+    failure replaces it before the new document runs
+  Delivery uses structured JS arguments / PostWebMessageAsJson, never interpolation
+  Renderer failures retry 3 times then show a quit/reopen error
+  Shutdown: request_shutdown on UI, join_shutdown off UI, one 10s grace
 Prerequisites verified and evidence used:
+  Block 3: cha_bridge_tests / cha_app_tests / native client already present
+  Block 1: cha://app WKURLSchemeHandler and https://app.cha.local mapping reused
 Temporary compatibility code and when it can be removed:
+  --http / cha_runtime_create(..., http_mode=1) until HTTP removal
+  Feasibility probe receiver/scripts until Block 9/10
+  Database import/export/R2 C APIs require HTTP runtime (Block 5)
 Exact commands, working directories, platform/runtime versions, and results:
+  repo /Users/mpopov/projects/cha, macOS 26.7 arm64, Apple clang 21.0.0, cmake 4.4.0
+  ./build/ninja/cha_bridge_tests --gtest_filter='BridgeRouterTest.*:CommandReply.*' -> 12 passed
+  ./build/ninja/cha_native_runtime_tests -> 2 passed
+  ./build/ninja/cha_app_tests -> 16 passed
+  ApplicationConfigTest.Native* -> 2 passed
+  snapshot capture/serialize: 9152 bytes, 4 ms (gtest properties)
+  asan-ubsan same BridgeRouter+NativeRuntime tests passed
+  tsan BridgeRouter stall/reload/shutdown + NativeRuntime passed
+  npm --prefix webapp run check -> 362 passed; npm run build ok
+  tests/native/macos/run.sh pass|flow|reload|stall|quit|renderer-fail passed
+    (runtime_listener=none, loader=WKURLSchemeHandler cha://app)
 Known failures, checks not run, and exact missing evidence:
+  Windows/WebView2 host not executed (no Windows machine in this session)
+  WebContent XPC is not a child of the test host (ppid/pgid 1); renderer-fail
+    recovered via the same invalidate+reload path, not a confirmed SIGKILL
+  npm --prefix webapp run e2e not run (HTTP baseline, not native proof)
+  Database menus disabled in native mode until maintenance work
 Inventory/coverage changes and remaining work:
+  First native chat flow is bound on both packaged hosts
+  Settings/vault/audio/OAuth/native menus remain unavailable in native mode
+  Windows runner: build CHA.exe, then tests/native/windows/run.ps1 plus a
+    --user-data native launch against cha_prepare_test_vault output
 Next unfinished numbered step if this block needs continuation:
+  Run the Windows WebView2 first-flow/lifetime suite on a Windows machine
 ```
 
 Maintain concise rows for the operations/files/assertions touched by this block.
@@ -867,11 +914,22 @@ carry forward existing evidence and record the relevant updates.
 
 | Operation/caller or source/test path | Retained behavior/result/errors | Native destination or deletion reason | Context/cancellation/lifetime | Verification and status |
 |---|---|---|---|---|
-| Populate during execution | | | | |
+| cha_runtime_create http_mode=0 | Application+BridgeRouter, port 0 | replaces HTTP listener default | pump thread; destroy joins owners | NativeRuntimeTest passed |
+| cha_runtime_create http_mode=1 | previous loopback+cookie runtime | `--http` coexistence | existing ApplicationRuntime shutdown | code path retained, not re-run as product default |
+| session.create/open/submit/stop | CommandResult; submit != generation | BridgeRouter allowlist | owner queue, async reply | C++ + macOS WK flow passed |
+| document connection | native-owned view-N | hash keeps it; reload/process replace | late ack/reply dropped | reload restored transcript; C++ reuse-id passed |
+| delivery + ack | one outstanding batch | JS finally-ack / PostWebMessage | no UI wait, no replay | stall host + StalledAck C++ passed |
+| quit | one 10s grace, no UI join | Application::join_shutdown | actors do not wait for ack | ShutdownDoesNotWait + run.sh quit passed |
+| database menus | import/export/R2 | still HTTP-only | n/a | disabled in native; Block 5 |
 
 | Required flow/assertion | Common test evidence | macOS evidence | Windows evidence | Remaining limitation |
 |---|---|---|---|---|
-| Populate during execution | | | | |
+| create/open/submit/stream/Stop | NativeRuntimeTest, BridgeRouterTest | run.sh flow PASS, listener=none | implemented, not run | Windows host pending |
+| reload/resubscribe, no replay | NewConnectionReusesIds | run.sh reload restored transcript | implemented, not run | |
+| stall JS, one outstanding, Stop | StalledAckKeepsOneOutstandingDelivery | run.sh stall PASS | implemented, not run | host stall flushes after 4 held acks |
+| renderer failure / view recovery | n/a | terminate delegate + fallback reload PASS | ProcessFailed wired, not run | WebContent XPC not SIGKILL-proven |
+| quit with work, no UI join | ShutdownDoesNotWaitForRendererAck | run.sh quit PASS | async WM shutdown wired | |
+| snapshot cost / sanitizers | 9152 B / 4 ms; asan+tsan passed | n/a | n/a | not a long-conversation corpus |
 
 The final response must state what was implemented, why, what was actually tested,
 and any unresolved limitation. If incomplete, give the exact next step and missing
