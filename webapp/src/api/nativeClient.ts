@@ -1,12 +1,20 @@
 import {
   ChaError,
   ChaProtocolError,
+  isCharacterDetail,
   isCommandResult,
+  isForumDetail,
+  isMarkdownFile,
+  isPersonaDetail,
+  isSessionLabelResult,
+  isSessionListingArray,
   isSessionSnapshot,
   type ChaClient,
   type CommandResult,
+  type CoverRequest,
   type CreateSessionResult,
   type CreateVaultRequest,
+  type DeleteTurnRequest,
   type InputRequest,
   type OpenSessionResult,
   type SessionSnapshot,
@@ -54,6 +62,10 @@ function isBootstrapResult(value: unknown): value is {
     && Number.isSafeInteger(value.context_epoch)
     && (value.context_epoch as number) >= 1
     && 'bootstrap' in value;
+}
+
+function isSessionExport(value: unknown): value is { markdown: string } {
+  return isRecord(value) && typeof value.markdown === 'string';
 }
 
 function isVaultDetail(value: unknown): value is VaultDetail {
@@ -126,37 +138,160 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient {
       { forum_id: forumId, session_id: sessionId },
       isCommandResult,
     ),
-    getCharacter: nativeUnavailable,
-    createCharacter: nativeUnavailable,
-    updateCharacter: nativeUnavailable,
-    updateCharacterDefinition: nativeUnavailable,
-    deleteCharacter: nativeUnavailable,
-    getCharacterFile: nativeUnavailable,
-    createCharacterFile: nativeUnavailable,
-    updateCharacterFile: nativeUnavailable,
-    deleteCharacterFile: nativeUnavailable,
-    getPersona: nativeUnavailable,
-    createPersona: nativeUnavailable,
-    updatePersona: nativeUnavailable,
-    deletePersona: nativeUnavailable,
-    getForumFile: nativeUnavailable,
-    createForumFile: nativeUnavailable,
-    updateForumFile: nativeUnavailable,
-    deleteForumFile: nativeUnavailable,
-    getForum: nativeUnavailable,
-    createForum: nativeUnavailable,
-    updateForum: nativeUnavailable,
-    deleteForum: nativeUnavailable,
-    updateForumMembers: nativeUnavailable,
-    listSessions: nativeUnavailable,
-    renameSession: nativeUnavailable,
-    deleteSession: nativeUnavailable,
+    getCharacter: (characterId) => call(
+      'character.get',
+      { character_id: characterId },
+      isCharacterDetail,
+    ),
+    createCharacter: (request) => call(
+      'character.create',
+      request,
+      isCharacterDetail,
+    ),
+    updateCharacter: (characterId, settings) => call(
+      'character.update',
+      { character_id: characterId, ...settings },
+      isCharacterDetail,
+    ),
+    updateCharacterDefinition: (characterId, update) => call(
+      'character.updateDefinition',
+      { character_id: characterId, ...update },
+      isCharacterDetail,
+    ),
+    deleteCharacter: async (characterId) => {
+      await call('character.delete', { character_id: characterId }, isRecord);
+    },
+    getCharacterFile: (characterId, filename) => call(
+      'character.file.get',
+      { character_id: characterId, filename },
+      isMarkdownFile,
+    ),
+    createCharacterFile: (characterId, filename, content) => call(
+      'character.file.create',
+      { character_id: characterId, filename, content },
+      isMarkdownFile,
+    ),
+    updateCharacterFile: (characterId, filename, content) => call(
+      'character.file.update',
+      { character_id: characterId, filename, content },
+      isMarkdownFile,
+    ),
+    deleteCharacterFile: async (characterId, filename) => {
+      await call(
+        'character.file.delete',
+        { character_id: characterId, filename },
+        isRecord,
+      );
+    },
+    getPersona: (personaId) => call(
+      'persona.get',
+      { persona_id: personaId },
+      isPersonaDetail,
+    ),
+    createPersona: (request) => call(
+      'persona.create',
+      request,
+      isPersonaDetail,
+    ),
+    updatePersona: (personaId, update) => call(
+      'persona.update',
+      { persona_id: personaId, ...update },
+      isPersonaDetail,
+    ),
+    deletePersona: async (personaId) => {
+      await call('persona.delete', { persona_id: personaId }, isRecord);
+    },
+    getForumFile: (forumId, filename) => call(
+      'forum.file.get',
+      { forum_id: forumId, filename },
+      isMarkdownFile,
+    ),
+    createForumFile: (forumId, filename, content) => call(
+      'forum.file.create',
+      { forum_id: forumId, filename, content },
+      isMarkdownFile,
+    ),
+    updateForumFile: (forumId, filename, content) => call(
+      'forum.file.update',
+      { forum_id: forumId, filename, content },
+      isMarkdownFile,
+    ),
+    deleteForumFile: async (forumId, filename) => {
+      await call(
+        'forum.file.delete',
+        { forum_id: forumId, filename },
+        isRecord,
+      );
+    },
+    getForum: (forumId) => call(
+      'forum.get',
+      { forum_id: forumId },
+      isForumDetail,
+    ),
+    createForum: (request) => call(
+      'forum.create',
+      request,
+      isForumDetail,
+    ),
+    updateForum: (forumId, update) => call(
+      'forum.update',
+      { forum_id: forumId, ...update },
+      isForumDetail,
+    ),
+    deleteForum: async (forumId) => {
+      await call('forum.delete', { forum_id: forumId }, isRecord);
+    },
+    updateForumMembers: (forumId, update) => call(
+      'forum.members.update',
+      { forum_id: forumId, ...update },
+      isForumDetail,
+    ),
+    listSessions: (forumId) => call(
+      'session.list',
+      { forum_id: forumId },
+      isSessionListingArray,
+    ),
+    renameSession: (forumId, sessionId, label) => call(
+      'session.rename',
+      { forum_id: forumId, session_id: sessionId, label },
+      isSessionLabelResult,
+    ),
+    deleteSession: async (forumId, sessionId) => {
+      await call(
+        'session.delete',
+        { forum_id: forumId, session_id: sessionId },
+        isRecord,
+      );
+    },
     clearSessionAudioCache: nativeUnavailable,
-    downloadSession: nativeUnavailable,
-    coverConversation: nativeUnavailable,
-    uncoverConversation: nativeUnavailable,
-    deleteTurn: nativeUnavailable,
-    setDefaultCharacter: nativeUnavailable,
+    downloadSession: async (forumId, sessionId) => {
+      const exported = await call(
+        'session.export',
+        { forum_id: forumId, session_id: sessionId },
+        isSessionExport,
+      );
+      return exported.markdown;
+    },
+    coverConversation: (forumId, sessionId, request: CoverRequest) => call(
+      'session.cover',
+      { forum_id: forumId, session_id: sessionId, ...request },
+      isCommandResult,
+    ),
+    uncoverConversation: (forumId, sessionId) => call(
+      'session.uncover',
+      { forum_id: forumId, session_id: sessionId },
+      isCommandResult,
+    ),
+    deleteTurn: (forumId, sessionId, request: DeleteTurnRequest) => call(
+      'session.deleteTurn',
+      { forum_id: forumId, session_id: sessionId, ...request },
+      isCommandResult,
+    ),
+    setDefaultCharacter: (forumId, sessionId, characterId) => call(
+      'session.setDefaultCharacter',
+      { forum_id: forumId, session_id: sessionId, character_id: characterId },
+      isCommandResult,
+    ),
     getOpenAiAuth: nativeUnavailable,
     startOpenAiAuth: nativeUnavailable,
     pollOpenAiAuth: nativeUnavailable,

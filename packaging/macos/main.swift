@@ -399,6 +399,10 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
         attachWebView(view)
         if let runtime {
             let receiver = ChaNativeBridgeReceiver(runtime: runtime)
+            receiver.saveText = { [weak self] id, suggestedName, contents in
+                self?.saveNativeText(
+                    id: id, suggestedName: suggestedName, contents: contents)
+            }
             receiver.attach(to: view)
             nativeBridge = receiver
         }
@@ -696,6 +700,47 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
         navigationAction: WKNavigationAction,
         didBecome download: WKDownload) {
         download.delegate = self
+    }
+
+    private func saveNativeText(id: String, suggestedName: String, contents: String) {
+        guard let runtime else {
+            nativeBridge?.completeSave(id: id, ok: false, message: "unavailable")
+            return
+        }
+        var epoch: UInt64 = 0
+        if cha_runtime_context_epoch(runtime, &epoch) == 0 {
+            nativeBridge?.completeSave(id: id, ok: false, message: "unavailable")
+            return
+        }
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = suggestedName
+        panel.beginSheetModal(for: window) { [weak self] result in
+            guard let self else { return }
+            guard result == .OK, let destination = panel.url else {
+                self.nativeBridge?.completeSave(id: id, ok: true, message: "cancelled")
+                return
+            }
+            let capturedEpoch = epoch
+            let path = destination.path
+            DispatchQueue.global(qos: .userInitiated).async {
+                var error: UnsafeMutablePointer<CChar>?
+                let status = contents.withCString { bytes in
+                    cha_runtime_save_file(
+                        runtime,
+                        capturedEpoch,
+                        path,
+                        bytes,
+                        UInt64(contents.utf8.count),
+                        &error)
+                }
+                let message = error.map { String(cString: $0) } ?? ""
+                cha_string_free(error)
+                DispatchQueue.main.async {
+                    self.nativeBridge?.completeSave(
+                        id: id, ok: status == 1, message: message)
+                }
+            }
+        }
     }
 
     @available(macOS 11.3, *)

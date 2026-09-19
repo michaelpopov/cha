@@ -131,4 +131,27 @@ std::string session_markdown(
     return result;
 }
 
+std::string session_markdown_filename(std::string_view label) {
+    std::string safe;
+    safe.reserve(label.size());
+    for (unsigned char character : label) {
+        if (character < 0x20
+            || character == '<' || character == '>' || character == ':'
+            || character == '"' || character == '/' || character == '\\'
+            || character == '|' || character == '?' || character == '*'
+            || character == '#' || character == '^' || character == '['
+            || character == ']') {
+            safe.push_back('-');
+        } else {
+            safe.push_back(static_cast<char>(character));
+        }
+    }
+    while (!safe.empty()
+        && (safe.back() == ' ' || safe.back() == '.')) {
+        safe.pop_back();
+    }
+    if (safe.empty()) safe = "session";
+    return safe + ".md";
+}
+
 } // namespace cha::web

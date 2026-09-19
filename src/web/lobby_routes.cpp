@@ -1,6 +1,8 @@
 #include "web/lobby_routes.h"
 #include "web/audio_download.h"
 
+#include "app/application.h"
+#include "app/workspace_operations.h"
 #include "workspace/workspace.h"
 #include "workspace/workspace_config_store.h"
 #include "session/not_found_error.h"
@@ -31,11 +33,6 @@
 
 namespace cha::web {
 namespace {
-
-bool is_running(const LiveSessionManagerSnapshot& snapshot, const FullSessionId& key) {
-    return std::find(snapshot.running_sessions.begin(), snapshot.running_sessions.end(), key)
-        != snapshot.running_sessions.end();
-}
 
 std::string session_event(
     const FullSessionId& identity,
@@ -107,156 +104,36 @@ void set_command_error(httplib::Response& response, ErrorCode code) {
     }
 }
 
-CharacterSummary character_summary(
-    const Workspace& workspace,
-    const WorkspaceCharacter& character) {
-    CharacterSummary summary{
-        .id = character.character.id,
-        .display_name = character.character.display_name,
-        .description = character.character.description,
-        .appearance = character.character.appearance,
-        .voice = resolve_speech_voice(workspace, character),
-    };
-    return summary;
+void set_application_error(
+    httplib::Response& response,
+    const cha::app::ApplicationError& error) {
+    switch (error.code) {
+    case ErrorCode::not_found:
+        return set_route_not_found(response, error.what());
+    case ErrorCode::invalid_argument: {
+        const std::string_view message = error.what();
+        const int status =
+            message.find("still used") != std::string_view::npos ? 409 : 400;
+        return set_error_response(
+            response, status, {ErrorCode::bad_request, std::string(message)});
+    }
+    case ErrorCode::application_unavailable:
+        return set_error_response(
+            response, 500, {ErrorCode::internal_error, error.what()});
+    default:
+        return set_error_response(
+            response, 500,
+            {ErrorCode::internal_error, "The request could not be completed."});
+    }
 }
 
-std::shared_ptr<const Workspace> published_workspace() {
+std::shared_ptr<const Workspace> loaded_workspace() {
     std::shared_ptr<const Workspace> workspace = getws();
     if (!workspace) throw std::runtime_error("Workspace is not loaded");
     return workspace;
 }
 
-CharacterDetail character_detail(
-    const Workspace& workspace,
-    const WorkspaceCharacter& character) {
-    CharacterDetail detail{
-        .summary = character_summary(workspace, character),
-        .character_markdown = character.markdown,
-        .editable_markdown = character.editable_markdown,
-    };
-    detail.writable = workspace.character_is_writable(character.character.id);
-    for (const auto& [filename, content] : character.markdown_files) {
-        detail.markdown_files.push_back(filename);
-    }
-    if (!detail.writable && detail.markdown_files.empty()) {
-        detail.markdown_files.push_back("CHARACTER.md");
-    }
-    detail.settings_writable =
-        workspace.character_settings_are_writable(character.character.id);
-    if (detail.settings_writable) {
-        detail.provider = character.provider_id;
-        detail.style = character.style_id;
-        detail.voice = character.voice_id;
-        detail.reasoning_effort = character.reasoning_effort;
-        detail.web_search = character.web_search;
-    }
-    for (const WorkspaceProvider& provider : workspace.providers()) {
-        detail.available_providers.push_back({provider.id, provider.label});
-    }
-    for (const WorkspaceStyle& style : workspace.styles()) {
-        detail.available_styles.push_back(
-            {style.id, style.label, style.appearance});
-    }
-    for (const WorkspaceVoice& voice : workspace.voices()) {
-        detail.available_voices.push_back({voice.id, voice.label});
-    }
-    return detail;
-}
-
-PersonaSummary persona_summary(
-    const Workspace& workspace,
-    const WorkspacePersona& persona) {
-    return {
-        .id = persona.id,
-        .display_name = persona.display_name,
-        .description = persona.description,
-        .appearance = persona.appearance,
-        .voice = resolve_speech_voice(workspace, persona),
-    };
-}
-
-PersonaDetail persona_detail(
-    const Workspace& workspace,
-    const WorkspacePersona& persona) {
-    PersonaDetail detail{
-        .summary = persona_summary(workspace, persona),
-        .persona_markdown = persona.prompt,
-        .style = persona.style_id,
-        .voice = persona.voice_id,
-        .writable = workspace.persona_is_writable(persona.id),
-    };
-    for (const WorkspaceStyle& style : workspace.styles()) {
-        detail.available_styles.push_back(
-            {style.id, style.label, style.appearance});
-    }
-    for (const WorkspaceVoice& voice : workspace.voices()) {
-        detail.available_voices.push_back({voice.id, voice.label});
-    }
-    return detail;
-}
-
-ForumSummary forum_summary(
-    const WorkspaceForum& forum,
-    const Workspace& workspace) {
-    const WorkspacePersona* persona =
-        workspace.find_persona(forum.default_persona_id);
-    if (persona == nullptr) {
-        throw std::runtime_error("Forum default persona is absent from the workspace");
-    }
-    ForumSummary result{
-        .id = forum.id,
-        .display_name = forum.display_name,
-        .description = forum.description,
-        .default_character_id = forum.default_character_id,
-        .default_persona_id = forum.default_persona_id,
-        .default_persona_display_name = persona->display_name,
-    };
-    result.members.reserve(forum.members.size());
-    for (const WorkspaceForumMember& member : forum.members) {
-        const WorkspaceCharacter* character =
-            workspace.find_character(member.character_id);
-        if (character == nullptr) {
-            throw std::runtime_error("Forum member is absent from the workspace");
-        }
-        result.members.push_back(character_summary(workspace, *character));
-    }
-    std::ranges::sort(
-        result.members, {},
-        [](const CharacterSummary& character) {
-            return fold_ascii(character.display_name);
-        });
-    return result;
-}
-
-ForumDetail forum_detail(
-    const Workspace& workspace,
-    const WorkspaceForum& forum) {
-    ForumDetail detail{
-        .summary = forum_summary(forum, workspace),
-        .forum_markdown = forum.prompt_template,
-        .writable = workspace.forum_is_writable(forum.id),
-    };
-    for (const auto& [filename, content] : forum.markdown_files) {
-        detail.markdown_files.push_back(filename);
-    }
-    if (!detail.writable && detail.markdown_files.empty()) {
-        detail.markdown_files.push_back("FORUM.md");
-    }
-    return detail;
-}
-
-std::vector<SessionListing> sessions_for(
-    const SessionRepository& sessions,
-    const LiveSessionManagerSnapshot& snapshot,
-    std::string_view forum_id) {
-    std::vector<SessionListing> result;
-    for (const StoredSession& stored : sessions.list(forum_id)) {
-        result.push_back({stored.identity.session_id, stored.label,
-                          is_running(snapshot, stored.identity),
-                          stored.updated_at});
-    }
-    return result;
-}
+using cha::app::workspace::sessions_for;
 
 Bootstrap bootstrap_for(
     const Workspace& workspace,
@@ -267,13 +144,16 @@ Bootstrap bootstrap_for(
     Bootstrap bootstrap{.initial_forum_id = initial.session.forum_id,
                         .initial_session_id = initial.session.session_id};
     for (const WorkspacePersona& persona : workspace.personas()) {
-        bootstrap.personas.push_back(persona_summary(workspace, persona));
+        bootstrap.personas.push_back(
+            cha::app::workspace::persona_summary(workspace, persona));
     }
     for (const WorkspaceCharacter& character : workspace.characters()) {
-        bootstrap.characters.push_back(character_summary(workspace, character));
+        bootstrap.characters.push_back(
+            cha::app::workspace::character_summary(workspace, character));
     }
     for (const WorkspaceForum& forum : workspace.forums()) {
-        bootstrap.forums.push_back(forum_summary(forum, workspace));
+        bootstrap.forums.push_back(
+            cha::app::workspace::forum_summary(forum, workspace));
     }
     bootstrap.recent_sessions.reserve(recent.size());
     for (const StoredSession& stored : recent) {
@@ -328,7 +208,7 @@ void LobbyRoutes::install(httplib::Server& server) const {
 
     server.Get("/api/v1/bootstrap", [sessions, initial, current_vault, vault_names](
                                         const httplib::Request&, httplib::Response& response) {
-        const std::shared_ptr<const Workspace> current = published_workspace();
+        const std::shared_ptr<const Workspace> current = loaded_workspace();
         const std::vector<StoredSession> recent = sessions->recent();
         auto [vault, current_names] = current_vault->snapshot();
         if (current_names.empty()) current_names = vault_names;
@@ -348,25 +228,14 @@ void LobbyRoutes::install(httplib::Server& server) const {
                 [&display_name](const nlohmann::json& json) {
                     display_name = parse_create_persona_name(json);
                 })) return;
-
-        std::string id;
         try {
-            id = config->create_persona(display_name);
-        } catch (const std::invalid_argument&) {
-            return set_error_response(response, 400,
-                {ErrorCode::bad_request, "Invalid persona."});
-        } catch (const WorkspaceRestartRequiredError& error) {
-            return internal_error(response, error);
+            set_json_response(
+                response, 201,
+                nlohmann::json(cha::app::workspace::create_persona(
+                    *config, display_name)));
+        } catch (const cha::app::ApplicationError& error) {
+            set_application_error(response, error);
         }
-        const auto current = published_workspace();
-        const WorkspacePersona* created = current->find_persona(id);
-        if (created == nullptr) {
-            return set_error_response(response, 500,
-                {ErrorCode::internal_error, "The persona could not be created."});
-        }
-        set_json_response(
-            response, 201,
-            nlohmann::json(persona_detail(*current, *created)));
     });
 
     server.Post("/api/v1/characters",
@@ -379,26 +248,14 @@ void LobbyRoutes::install(httplib::Server& server) const {
                 [&create](const nlohmann::json& json) {
                     create = parse_create_character_request(json);
                 })) return;
-
-        std::string id;
         try {
-            id = config->create_character(
-                create.display_name, create.description);
-        } catch (const std::invalid_argument&) {
-            return set_error_response(response, 400,
-                {ErrorCode::bad_request, "Invalid character."});
-        } catch (const WorkspaceRestartRequiredError& error) {
-            return internal_error(response, error);
+            set_json_response(
+                response, 201,
+                nlohmann::json(cha::app::workspace::create_character(
+                    *config, create.display_name, create.description)));
+        } catch (const cha::app::ApplicationError& error) {
+            set_application_error(response, error);
         }
-        const auto current = published_workspace();
-        const WorkspaceCharacter* created = current->find_character(id);
-        if (created == nullptr) {
-            return set_error_response(response, 500,
-                {ErrorCode::internal_error, "The character could not be created."});
-        }
-        set_json_response(
-            response, 201,
-            nlohmann::json(character_detail(*current, *created)));
     });
 
     server.Post("/api/v1/forums",
@@ -411,49 +268,35 @@ void LobbyRoutes::install(httplib::Server& server) const {
                 [&create](const nlohmann::json& json) {
                     create = parse_create_forum_request(json);
                 })) return;
-
-        std::string id;
         try {
-            id = config->create_forum(
-                create.display_name, create.persona_id);
-        } catch (const std::invalid_argument&) {
-            return set_error_response(response, 400,
-                {ErrorCode::bad_request, "Invalid forum."});
-        } catch (const WorkspaceRestartRequiredError& error) {
-            return internal_error(response, error);
+            set_json_response(
+                response, 201,
+                nlohmann::json(cha::app::workspace::create_forum(
+                    *config, create.display_name, create.persona_id)));
+        } catch (const cha::app::ApplicationError& error) {
+            set_application_error(response, error);
         }
-        const auto current = published_workspace();
-        const WorkspaceForum* created = current->find_forum(id);
-        if (created == nullptr) {
-            return set_error_response(response, 500,
-                {ErrorCode::internal_error, "The forum could not be created."});
-        }
-        set_json_response(
-            response, 201,
-            nlohmann::json(forum_detail(*current, *created)));
     });
 
     server.Get(R"(/api/v1/characters/([^/]+))", [](const httplib::Request& request, httplib::Response& response) {
-        const auto workspace = published_workspace();
         const std::string id = request.matches[1];
         if (!is_valid_route_component(id)) {
             return set_route_not_found(response, "That character was not found.");
         }
-        const WorkspaceCharacter* character = workspace->find_character(id);
-        if (character == nullptr) {
-            return set_route_not_found(response, "That character was not found.");
+        try {
+            set_json_response(
+                response, 200,
+                nlohmann::json(cha::app::workspace::get_character(id)));
+        } catch (const cha::app::ApplicationError& error) {
+            set_application_error(response, error);
         }
-        set_json_response(response, 200, nlohmann::json(character_detail(*workspace, *character)));
     });
 
     server.Delete(R"(/api/v1/characters/([^/]+))",
         [settings, config](const httplib::Request& request,
                            httplib::Response& response) {
-        const auto workspace = published_workspace();
         const std::string id = request.matches[1];
-        if (!is_valid_route_component(id)
-            || workspace->find_character(id) == nullptr
-            || !workspace->character_is_writable(id)) {
+        if (!is_valid_route_component(id)) {
             return set_route_not_found(response, "That character was not found.");
         }
         if (!validate_json_mutation(request, response)) return;
@@ -461,31 +304,19 @@ void LobbyRoutes::install(httplib::Server& server) const {
                 request, response, settings.request_body_limit,
                 [](const nlohmann::json& json) { parse_empty_object(json); })) return;
         try {
-            config->apply_character_delete(id);
-        } catch (const std::invalid_argument&) {
-            return set_error_response(response, 409,
-                {ErrorCode::bad_request,
-                 "This character is still used by one or more forums."});
-        } catch (const WorkspaceRestartRequiredError& error) {
-            return internal_error(response, error);
+            cha::app::workspace::delete_character(*config, id);
+            response.status = 204;
+            response.set_header("Cache-Control", "no-store");
+        } catch (const cha::app::ApplicationError& error) {
+            set_application_error(response, error);
         }
-        response.status = 204;
-        response.set_header("Cache-Control", "no-store");
     });
 
     server.Patch(R"(/api/v1/characters/([^/]+))",
         [live_sessions, settings, config](const httplib::Request& request,
                                   httplib::Response& response) {
-        const auto workspace = published_workspace();
         const std::string id = request.matches[1];
         if (!is_valid_route_component(id)) {
-            return set_route_not_found(response, "That character was not found.");
-        }
-        const WorkspaceCharacter* character = workspace->find_character(id);
-        if (character == nullptr) {
-            return set_route_not_found(response, "That character was not found.");
-        }
-        if (!workspace->character_settings_are_writable(id)) {
             return set_route_not_found(response, "That character was not found.");
         }
         if (!validate_json_mutation(request, response)) return;
@@ -495,53 +326,21 @@ void LobbyRoutes::install(httplib::Server& server) const {
                 [&update](const nlohmann::json& json) {
                     update = parse_character_settings_update(json);
                 })) return;
-        const bool changed = !character->provider_id
-            || update.provider != *character->provider_id
-            || update.style != character->style_id
-            || update.voice != character->voice_id
-            || update.reasoning_effort != character->reasoning_effort
-            || update.web_search != character->web_search;
         try {
-            const std::optional<std::string_view> style = update.style
-                ? std::optional<std::string_view>(*update.style) : std::nullopt;
-            const std::optional<std::string_view> reasoning_effort =
-                update.reasoning_effort
-                ? std::optional<std::string_view>(*update.reasoning_effort)
-                : std::nullopt;
-            const std::optional<std::string_view> voice = update.voice
-                ? std::optional<std::string_view>(*update.voice) : std::nullopt;
-            if (changed) {
-                const WorkspaceConfigEditResult edited = config->apply_character_settings(
-                    id, update.provider, style, voice,
-                    reasoning_effort, update.web_search);
-                request_reload(*live_sessions, edited.affected_forum_ids);
-            }
-        } catch (const std::invalid_argument&) {
-            return set_error_response(response, 400,
-                {ErrorCode::bad_request, "Invalid character settings."});
-        } catch (const WorkspaceRestartRequiredError& error) {
-            return internal_error(response, error);
+            set_json_response(
+                response, 200,
+                nlohmann::json(cha::app::workspace::update_character_settings(
+                    *config, *live_sessions, id, update)));
+        } catch (const cha::app::ApplicationError& error) {
+            set_application_error(response, error);
         }
-        const auto current = published_workspace();
-        const WorkspaceCharacter* updated = current->find_character(id);
-        if (updated == nullptr) {
-            return set_route_not_found(response, "That character was not found.");
-        }
-        set_json_response(
-            response, 200,
-            nlohmann::json(character_detail(*current, *updated)));
     });
 
     server.Patch(R"(/api/v1/characters/([^/]+)/definition)",
         [live_sessions, settings, config](const httplib::Request& request,
                                           httplib::Response& response) {
-        const auto workspace = published_workspace();
         const std::string id = request.matches[1];
         if (!is_valid_route_component(id)) {
-            return set_route_not_found(response, "That character was not found.");
-        }
-        const WorkspaceCharacter* character = workspace->find_character(id);
-        if (character == nullptr || !workspace->character_is_writable(id)) {
             return set_route_not_found(response, "That character was not found.");
         }
         if (!validate_json_mutation(request, response)) return;
@@ -551,70 +350,37 @@ void LobbyRoutes::install(httplib::Server& server) const {
                 [&update](const nlohmann::json& json) {
                     update = parse_character_definition_update(json);
                 })) return;
-        const std::string& display_name = update.display_name
-            ? *update.display_name : character->character.display_name;
-        const bool changed = display_name != character->character.display_name
-            || update.character_markdown.has_value();
         try {
-            if (changed) {
-                const WorkspaceConfigEditResult edited =
-                    config->apply_character_definition(
-                        id, display_name,
-                        update.character_markdown
-                            ? std::optional<std::string_view>(*update.character_markdown)
-                            : std::nullopt);
-                request_reload(*live_sessions, edited.affected_forum_ids);
-            }
-        } catch (const std::invalid_argument&) {
-            return set_error_response(response, 400,
-                {ErrorCode::bad_request, "Invalid character."});
-        } catch (const WorkspaceConfigValidationError& error) {
-            log_warn(std::string("Rejected character template edit: ") + error.what());
-            return set_error_response(response, 400,
-                {ErrorCode::bad_request, error.what()});
-        } catch (const WorkspaceRestartRequiredError& error) {
-            return internal_error(response, error);
+            set_json_response(
+                response, 200,
+                nlohmann::json(cha::app::workspace::update_character_definition(
+                    *config, *live_sessions, id, update)));
+        } catch (const cha::app::ApplicationError& error) {
+            set_application_error(response, error);
         }
-        const auto current = published_workspace();
-        const WorkspaceCharacter* updated = current->find_character(id);
-        if (updated == nullptr) {
-            return set_route_not_found(response, "That character was not found.");
-        }
-        set_json_response(
-            response, 200,
-            nlohmann::json(character_detail(*current, *updated)));
     });
 
     server.Get(R"(/api/v1/characters/([^/]+)/files/([^/]+))",
         [](const httplib::Request& request, httplib::Response& response) {
-        const auto workspace = published_workspace();
         const std::string id = request.matches[1];
         const std::string filename = request.matches[2];
-        const auto* character = is_valid_route_component(id)
-            ? workspace->find_character(id) : nullptr;
-        if (!character) {
+        if (!is_valid_route_component(id)) {
             return set_route_not_found(response, "That character file was not found.");
         }
-        const auto file = character->markdown_files.find(filename);
-        const bool writable = workspace->character_is_writable(id);
-        if (file == character->markdown_files.end()) {
-            if (!writable && character->markdown_files.empty() && filename == "CHARACTER.md") {
-                return set_json_response(response, 200, nlohmann::json{
-                    {"filename", filename}, {"content", character->editable_markdown},
-                    {"writable", false}});
-            }
-            return set_route_not_found(response, "That character file was not found.");
+        try {
+            set_json_response(
+                response, 200,
+                nlohmann::json(cha::app::workspace::get_character_file(id, filename)));
+        } catch (const cha::app::ApplicationError& error) {
+            set_application_error(response, error);
         }
-        set_json_response(response, 200, nlohmann::json{
-            {"filename", filename}, {"content", file->second}, {"writable", writable}});
     });
 
     const auto edit_character_file = [live_sessions, settings, config](
         const httplib::Request& request, httplib::Response& response,
         bool create, bool remove) {
-        const auto workspace = published_workspace();
         const std::string id = request.matches[1];
-        if (!is_valid_route_component(id) || !workspace->character_is_writable(id)) {
+        if (!is_valid_route_component(id)) {
             return set_route_not_found(response, "That character file was not found.");
         }
         if (!validate_json_mutation(request, response)) return;
@@ -630,32 +396,21 @@ void LobbyRoutes::install(httplib::Server& server) const {
                 content = required_string(json, "content");
             })) return;
         try {
-            const auto edited = config->apply_character_file(
-                id, filename, content ? std::optional<std::string_view>(*content) : std::nullopt,
-                create);
-            request_reload(*live_sessions, edited.affected_forum_ids);
-        } catch (const std::out_of_range&) {
-            return set_route_not_found(response, "That character file was not found.");
-        } catch (const std::invalid_argument&) {
-            return set_error_response(response, 400,
-                {ErrorCode::bad_request, remove && filename == "CHARACTER.md"
-                    ? "CHARACTER.md is required."
-                    : remove ? "Invalid character file." : "Invalid file or duplicate filename."});
-        } catch (const WorkspaceRestartRequiredError& error) {
-            return internal_error(response, error);
-        } catch (const WorkspaceConfigValidationError& error) {
-            log_warn(std::string("Rejected character file edit: ") + error.what());
-            return set_error_response(response, 400,
-                {ErrorCode::bad_request, error.what()});
-        } catch (const std::runtime_error& error) {
-            return internal_error(response, error);
-        }
-        if (remove) {
-            response.status = 204;
-            response.set_header("Cache-Control", "no-store");
-        } else {
-            set_json_response(response, create ? 201 : 200, nlohmann::json{
-                {"filename", filename}, {"content", *content}, {"writable", true}});
+            if (remove) {
+                cha::app::workspace::delete_character_file(
+                    *config, *live_sessions, id, filename);
+                response.status = 204;
+                response.set_header("Cache-Control", "no-store");
+                return;
+            }
+            const auto file = create
+                ? cha::app::workspace::create_character_file(
+                    *config, *live_sessions, id, filename, *content)
+                : cha::app::workspace::update_character_file(
+                    *config, *live_sessions, id, filename, *content);
+            set_json_response(response, create ? 201 : 200, nlohmann::json(file));
+        } catch (const cha::app::ApplicationError& error) {
+            set_application_error(response, error);
         }
     };
     server.Post(R"(/api/v1/characters/([^/]+)/files)",
@@ -672,26 +427,24 @@ void LobbyRoutes::install(httplib::Server& server) const {
         });
 
     server.Get(R"(/api/v1/personas/([^/]+))", [](const httplib::Request& request, httplib::Response& response) {
-        const auto workspace = published_workspace();
         const std::string id = request.matches[1];
         if (!is_valid_route_component(id)) {
             return set_route_not_found(response, "That persona was not found.");
         }
-        const WorkspacePersona* const persona = workspace->find_persona(id);
-        if (persona == nullptr) {
-            return set_route_not_found(response, "That persona was not found.");
+        try {
+            set_json_response(
+                response, 200,
+                nlohmann::json(cha::app::workspace::get_persona(id)));
+        } catch (const cha::app::ApplicationError& error) {
+            set_application_error(response, error);
         }
-        set_json_response(response, 200, nlohmann::json(persona_detail(*workspace, *persona)));
     });
 
     server.Delete(R"(/api/v1/personas/([^/]+))",
         [settings, config](const httplib::Request& request,
                            httplib::Response& response) {
-        const auto workspace = published_workspace();
         const std::string id = request.matches[1];
-        if (!is_valid_route_component(id)
-            || workspace->find_persona(id) == nullptr
-            || !workspace->persona_is_writable(id)) {
+        if (!is_valid_route_component(id)) {
             return set_route_not_found(response, "That persona was not found.");
         }
         if (!validate_json_mutation(request, response)) return;
@@ -699,28 +452,19 @@ void LobbyRoutes::install(httplib::Server& server) const {
                 request, response, settings.request_body_limit,
                 [](const nlohmann::json& json) { parse_empty_object(json); })) return;
         try {
-            config->apply_persona_delete(id);
-        } catch (const std::invalid_argument&) {
-            return set_error_response(response, 409,
-                {ErrorCode::bad_request,
-                 "This persona is still used by one or more forums."});
-        } catch (const WorkspaceRestartRequiredError& error) {
-            return internal_error(response, error);
+            cha::app::workspace::delete_persona(*config, id);
+            response.status = 204;
+            response.set_header("Cache-Control", "no-store");
+        } catch (const cha::app::ApplicationError& error) {
+            set_application_error(response, error);
         }
-        response.status = 204;
-        response.set_header("Cache-Control", "no-store");
     });
 
     server.Patch(R"(/api/v1/personas/([^/]+))",
         [live_sessions, settings, config](const httplib::Request& request,
                                           httplib::Response& response) {
-        const auto workspace = published_workspace();
         const std::string id = request.matches[1];
         if (!is_valid_route_component(id)) {
-            return set_route_not_found(response, "That persona was not found.");
-        }
-        const WorkspacePersona* persona = workspace->find_persona(id);
-        if (persona == nullptr || !workspace->persona_is_writable(id)) {
             return set_route_not_found(response, "That persona was not found.");
         }
         if (!validate_json_mutation(request, response)) return;
@@ -730,73 +474,37 @@ void LobbyRoutes::install(httplib::Server& server) const {
                 [&update](const nlohmann::json& json) {
                     update = parse_persona_update(json);
                 })) return;
-        const std::string& display_name = update.display_name
-            ? *update.display_name : persona->display_name;
-        const std::string& markdown = update.persona_markdown
-            ? *update.persona_markdown : persona->prompt;
-        const std::optional<std::string> style = update.style
-            ? *update.style : persona->style_id;
-        const std::optional<std::string> voice = update.voice
-            ? *update.voice : persona->voice_id;
-        const bool changed = display_name != persona->display_name
-            || markdown != persona->prompt
-            || style != persona->style_id
-            || voice != persona->voice_id;
         try {
-            if (changed) {
-                const WorkspaceConfigEditResult edited =
-                    config->apply_persona_update(
-                        id, display_name, markdown,
-                        style ? std::optional<std::string_view>(*style) : std::nullopt,
-                        voice ? std::optional<std::string_view>(*voice) : std::nullopt);
-                request_reload(*live_sessions, edited.affected_forum_ids);
-            }
-        } catch (const std::invalid_argument&) {
-            return set_error_response(response, 400,
-                {ErrorCode::bad_request, "Invalid persona."});
-        } catch (const WorkspaceRestartRequiredError& error) {
-            return internal_error(response, error);
+            set_json_response(
+                response, 200,
+                nlohmann::json(cha::app::workspace::update_persona(
+                    *config, *live_sessions, id, update)));
+        } catch (const cha::app::ApplicationError& error) {
+            set_application_error(response, error);
         }
-        const auto current = published_workspace();
-        const WorkspacePersona* updated = current->find_persona(id);
-        if (updated == nullptr) {
-            return set_route_not_found(response, "That persona was not found.");
-        }
-        set_json_response(
-            response, 200,
-            nlohmann::json(persona_detail(*current, *updated)));
     });
 
     server.Get(R"(/api/v1/forums/([^/]+)/files/([^/]+))",
         [](const httplib::Request& request, httplib::Response& response) {
-        const auto workspace = published_workspace();
         const std::string id = request.matches[1];
         const std::string filename = request.matches[2];
-        const auto* forum = is_valid_route_component(id)
-            ? workspace->find_forum(id) : nullptr;
-        if (!forum) {
+        if (!is_valid_route_component(id)) {
             return set_route_not_found(response, "That forum file was not found.");
         }
-        const auto file = forum->markdown_files.find(filename);
-        const bool writable = workspace->forum_is_writable(id);
-        if (file == forum->markdown_files.end()) {
-            if (!writable && forum->markdown_files.empty() && filename == "FORUM.md") {
-                return set_json_response(response, 200, nlohmann::json{
-                    {"filename", filename}, {"content", forum->prompt_template},
-                    {"writable", false}});
-            }
-            return set_route_not_found(response, "That forum file was not found.");
+        try {
+            set_json_response(
+                response, 200,
+                nlohmann::json(cha::app::workspace::get_forum_file(id, filename)));
+        } catch (const cha::app::ApplicationError& error) {
+            set_application_error(response, error);
         }
-        set_json_response(response, 200, nlohmann::json{
-            {"filename", filename}, {"content", file->second}, {"writable", writable}});
     });
 
     const auto edit_forum_file = [live_sessions, settings, config](
         const httplib::Request& request, httplib::Response& response,
         bool create, bool remove) {
-        const auto workspace = published_workspace();
         const std::string id = request.matches[1];
-        if (!is_valid_route_component(id) || !workspace->forum_is_writable(id)) {
+        if (!is_valid_route_component(id)) {
             return set_route_not_found(response, "That forum file was not found.");
         }
         if (!validate_json_mutation(request, response)) return;
@@ -812,32 +520,21 @@ void LobbyRoutes::install(httplib::Server& server) const {
                 content = required_string(json, "content");
             })) return;
         try {
-            const auto edited = config->apply_forum_file(
-                id, filename, content ? std::optional<std::string_view>(*content) : std::nullopt,
-                create);
-            request_reload(*live_sessions, edited.affected_forum_ids);
-        } catch (const std::out_of_range&) {
-            return set_route_not_found(response, "That forum file was not found.");
-        } catch (const std::invalid_argument&) {
-            return set_error_response(response, 400,
-                {ErrorCode::bad_request, remove && filename == "FORUM.md"
-                    ? "FORUM.md is required."
-                    : remove ? "Invalid forum file." : "Invalid file or duplicate filename."});
-        } catch (const WorkspaceRestartRequiredError& error) {
-            return internal_error(response, error);
-        } catch (const WorkspaceConfigValidationError& error) {
-            log_warn(std::string("Rejected forum file edit: ") + error.what());
-            return set_error_response(response, 400,
-                {ErrorCode::bad_request, error.what()});
-        } catch (const std::runtime_error& error) {
-            return internal_error(response, error);
-        }
-        if (remove) {
-            response.status = 204;
-            response.set_header("Cache-Control", "no-store");
-        } else {
-            set_json_response(response, create ? 201 : 200, nlohmann::json{
-                {"filename", filename}, {"content", *content}, {"writable", true}});
+            if (remove) {
+                cha::app::workspace::delete_forum_file(
+                    *config, *live_sessions, id, filename);
+                response.status = 204;
+                response.set_header("Cache-Control", "no-store");
+                return;
+            }
+            const auto file = create
+                ? cha::app::workspace::create_forum_file(
+                    *config, *live_sessions, id, filename, *content)
+                : cha::app::workspace::update_forum_file(
+                    *config, *live_sessions, id, filename, *content);
+            set_json_response(response, create ? 201 : 200, nlohmann::json(file));
+        } catch (const cha::app::ApplicationError& error) {
+            set_application_error(response, error);
         }
     };
     server.Post(R"(/api/v1/forums/([^/]+)/files)",
@@ -856,23 +553,22 @@ void LobbyRoutes::install(httplib::Server& server) const {
     // `[^/]+` cannot span the separator, so this never shadows the session
     // routes registered below it.
     server.Get(R"(/api/v1/forums/([^/]+))", [](const httplib::Request& request, httplib::Response& response) {
-        const auto workspace = published_workspace();
         const std::string id = request.matches[1];
         if (!is_valid_route_component(id)) return set_route_not_found(response);
-        const WorkspaceForum* const forum = workspace->find_forum(id);
-        if (forum == nullptr) return set_route_not_found(response);
-        set_json_response(
-            response, 200, nlohmann::json(forum_detail(*workspace, *forum)));
+        try {
+            set_json_response(
+                response, 200,
+                nlohmann::json(cha::app::workspace::get_forum(id)));
+        } catch (const cha::app::ApplicationError& error) {
+            set_application_error(response, error);
+        }
     });
 
     server.Delete(R"(/api/v1/forums/([^/]+))",
         [live_sessions, settings, config](const httplib::Request& request,
                                           httplib::Response& response) {
-        const auto workspace = published_workspace();
         const std::string id = request.matches[1];
-        if (!is_valid_route_component(id)
-            || workspace->find_forum(id) == nullptr
-            || !workspace->forum_is_writable(id)) {
+        if (!is_valid_route_component(id)) {
             return set_route_not_found(response, "That forum was not found.");
         }
         if (!validate_json_mutation(request, response)) return;
@@ -880,26 +576,19 @@ void LobbyRoutes::install(httplib::Server& server) const {
                 request, response, settings.request_body_limit,
                 [](const nlohmann::json& json) { parse_empty_object(json); })) return;
         try {
-            const WorkspaceConfigEditResult edited =
-                config->apply_forum_delete(id);
-            request_reload(*live_sessions, edited.affected_forum_ids);
-        } catch (const WorkspaceRestartRequiredError& error) {
-            return internal_error(response, error);
+            cha::app::workspace::delete_forum(*config, *live_sessions, id);
+            response.status = 204;
+            response.set_header("Cache-Control", "no-store");
+        } catch (const cha::app::ApplicationError& error) {
+            set_application_error(response, error);
         }
-        response.status = 204;
-        response.set_header("Cache-Control", "no-store");
     });
 
     server.Patch(R"(/api/v1/forums/([^/]+))",
         [live_sessions, settings, config](const httplib::Request& request,
                                           httplib::Response& response) {
-        const auto workspace = published_workspace();
         const std::string id = request.matches[1];
         if (!is_valid_route_component(id)) {
-            return set_route_not_found(response, "That forum was not found.");
-        }
-        const WorkspaceForum* forum = workspace->find_forum(id);
-        if (forum == nullptr || !workspace->forum_is_writable(id)) {
             return set_route_not_found(response, "That forum was not found.");
         }
         if (!validate_json_mutation(request, response)) return;
@@ -909,47 +598,21 @@ void LobbyRoutes::install(httplib::Server& server) const {
                 [&update](const nlohmann::json& json) {
                     update = parse_forum_update(json);
                 })) return;
-        const std::string& display_name = update.display_name
-            ? *update.display_name : forum->display_name;
-        const std::string& markdown = update.forum_markdown
-            ? *update.forum_markdown : forum->prompt_template;
-        const bool changed = display_name != forum->display_name
-            || markdown != forum->prompt_template;
         try {
-            if (changed) {
-                const WorkspaceConfigEditResult edited =
-                    config->apply_forum_update(id, display_name, markdown);
-                request_reload(*live_sessions, edited.affected_forum_ids);
-            }
-        } catch (const std::invalid_argument&) {
-            return set_error_response(response, 400,
-                {ErrorCode::bad_request, "Invalid forum."});
-        } catch (const WorkspaceConfigValidationError& error) {
-            log_warn(std::string("Rejected forum template edit: ") + error.what());
-            return set_error_response(response, 400,
-                {ErrorCode::bad_request, error.what()});
-        } catch (const WorkspaceRestartRequiredError& error) {
-            return internal_error(response, error);
+            set_json_response(
+                response, 200,
+                nlohmann::json(cha::app::workspace::update_forum(
+                    *config, *live_sessions, id, update)));
+        } catch (const cha::app::ApplicationError& error) {
+            set_application_error(response, error);
         }
-        const auto current = published_workspace();
-        const WorkspaceForum* updated = current->find_forum(id);
-        if (updated == nullptr) {
-            return set_route_not_found(response, "That forum was not found.");
-        }
-        set_json_response(
-            response, 200, nlohmann::json(forum_detail(*current, *updated)));
     });
 
     server.Put(R"(/api/v1/forums/([^/]+)/members)",
         [live_sessions, settings, config](const httplib::Request& request,
                                           httplib::Response& response) {
-        const auto workspace = published_workspace();
         const std::string id = request.matches[1];
         if (!is_valid_route_component(id)) {
-            return set_route_not_found(response, "That forum was not found.");
-        }
-        const WorkspaceForum* forum = workspace->find_forum(id);
-        if (forum == nullptr || !workspace->forum_is_writable(id)) {
             return set_route_not_found(response, "That forum was not found.");
         }
         if (!validate_json_mutation(request, response)) return;
@@ -960,25 +623,13 @@ void LobbyRoutes::install(httplib::Server& server) const {
                     update = parse_forum_members_update(json);
                 })) return;
         try {
-            const WorkspaceConfigEditResult edited =
-                config->apply_forum_members_and_persona(
-                    id, update.character_ids, update.persona_id);
-            request_reload(*live_sessions, edited.affected_forum_ids);
-        } catch (const std::invalid_argument&) {
-            return set_error_response(response, 400,
-                {ErrorCode::bad_request,
-                 "Select a configured persona and at least one configured "
-                 "character."});
-        } catch (const WorkspaceRestartRequiredError& error) {
-            return internal_error(response, error);
+            set_json_response(
+                response, 200,
+                nlohmann::json(cha::app::workspace::update_forum_members(
+                    *config, *live_sessions, id, update)));
+        } catch (const cha::app::ApplicationError& error) {
+            set_application_error(response, error);
         }
-        const auto current = published_workspace();
-        const WorkspaceForum* updated = current->find_forum(id);
-        if (updated == nullptr) {
-            return set_route_not_found(response, "That forum was not found.");
-        }
-        set_json_response(
-            response, 200, nlohmann::json(forum_detail(*current, *updated)));
     });
 
     server.Get(R"(/api/v1/forums/([^/]+)/sessions)", [sessions, live_sessions](const httplib::Request& request, httplib::Response& response) {

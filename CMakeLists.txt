@@ -337,6 +337,7 @@ cha_enable_warnings(cha_core)
 add_library(cha_app STATIC
     src/app/application.cpp
     src/app/vault_operations.cpp
+    src/app/workspace_operations.cpp
     src/app/session_output.cpp
     src/web/browser_connection_state.cpp
     src/web/command_queue.cpp

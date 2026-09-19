@@ -380,6 +380,20 @@ std::wstring native_bootstrap_script(std::string_view connection_id) {
         L"window.__CHA_NATIVE_POST__=function(message){"
         L"if(window.chrome&&window.chrome.webview){"
         L"window.chrome.webview.postMessage(message);}};"
+        L"window.__CHA_NATIVE_SAVE_PENDING__={};"
+        L"window.__CHA_NATIVE_SAVE_SEQ__=0;"
+        L"window.__CHA_NATIVE_SAVE_TEXT__=function(suggestedName,contents){"
+        L"return new Promise(function(resolve,reject){"
+        L"var id=String(++window.__CHA_NATIVE_SAVE_SEQ__);"
+        L"window.__CHA_NATIVE_SAVE_PENDING__[id]={resolve:resolve,reject:reject};"
+        L"window.__CHA_NATIVE_POST__(JSON.stringify({"
+        L"native_action:'save_text',id:id,suggested_name:suggestedName,contents:contents"
+        L"}));});};"
+        L"window.__CHA_NATIVE_SAVE_DONE__=function(id,ok,message){"
+        L"var pending=window.__CHA_NATIVE_SAVE_PENDING__[id];"
+        L"if(!pending)return;"
+        L"delete window.__CHA_NATIVE_SAVE_PENDING__[id];"
+        L"if(ok)pending.resolve();else pending.reject(new Error(message||'Save failed'));};"
         L"if(window.chrome&&window.chrome.webview){"
         L"window.chrome.webview.addEventListener('message',function(event){"
         L"var batch=event.data;"
@@ -1216,9 +1230,89 @@ private:
             if (FAILED(args->get_WebMessageAsJson(&raw_json))) return S_OK;
             payload = cha::utf8_from_wide(take_com_string(raw_json));
         }
+        if (handle_native_save(payload)) return S_OK;
         cha_runtime_handle_message(
             runtime_, connection_id_.c_str(), payload.c_str());
         return S_OK;
+    }
+
+    bool handle_native_save(const std::string& payload) {
+        nlohmann::json json;
+        try {
+            json = nlohmann::json::parse(payload);
+        } catch (const nlohmann::json::exception&) {
+            return false;
+        }
+        if (!json.is_object()
+            || json.value("native_action", "") != "save_text") {
+            return false;
+        }
+        const std::string id = json.value("id", "");
+        const std::string suggested = json.value("suggested_name", "session.md");
+        const std::string contents = json.value("contents", "");
+        uint64_t epoch = 0;
+        if (runtime_ == nullptr
+            || cha_runtime_context_epoch(runtime_, &epoch) == 0) {
+            complete_native_save(id, false, "unavailable");
+            return true;
+        }
+        ComPtr<IFileSaveDialog> dialog;
+        HRESULT result = ::CoCreateInstance(
+            CLSID_FileSaveDialog,
+            nullptr,
+            CLSCTX_INPROC_SERVER,
+            IID_PPV_ARGS(&dialog));
+        if (SUCCEEDED(result)) {
+            DWORD options = 0;
+            dialog->GetOptions(&options);
+            dialog->SetOptions(options | FOS_FORCEFILESYSTEM | FOS_OVERWRITEPROMPT);
+            const std::wstring name = wide_from_utf8(suggested);
+            dialog->SetFileName(name.c_str());
+            result = dialog->Show(window_);
+        }
+        if (result == HRESULT_FROM_WIN32(ERROR_CANCELLED)) {
+            complete_native_save(id, true, "cancelled");
+            return true;
+        }
+        ComPtr<IShellItem> item;
+        wchar_t* raw_destination = nullptr;
+        if (SUCCEEDED(result)) result = dialog->GetResult(&item);
+        if (SUCCEEDED(result)) {
+            result = item->GetDisplayName(SIGDN_FILESYSPATH, &raw_destination);
+        }
+        const std::wstring destination = take_com_string(raw_destination);
+        if (FAILED(result) || destination.empty()) {
+            complete_native_save(id, false, "save failed");
+            return true;
+        }
+        const std::string path = cha::utf8_from_wide(destination);
+        char* error = nullptr;
+        const int32_t status = cha_runtime_save_file(
+            runtime_,
+            epoch,
+            path.c_str(),
+            contents.c_str(),
+            contents.size(),
+            &error);
+        const std::string message = error ? error : "";
+        cha_string_free(error);
+        complete_native_save(id, status == 1, message);
+        return true;
+    }
+
+    void complete_native_save(
+        const std::string& id,
+        bool ok,
+        const std::string& message) {
+        if (!webview_) return;
+        const std::wstring encoded = wide_from_utf8(
+            "if(typeof window.__CHA_NATIVE_SAVE_DONE__==='function'){"
+            "window.__CHA_NATIVE_SAVE_DONE__("
+            + nlohmann::json(id).dump() + ","
+            + std::string(ok ? "true" : "false") + ","
+            + nlohmann::json(message).dump()
+            + ");}");
+        webview_->ExecuteScript(encoded.c_str(), nullptr);
     }
 
     void deliver_batch(DeliveryPayload* raw) {

@@ -4,6 +4,7 @@ import { saveMarkdownDownload, sessionMarkdownFilename } from './download';
 
 afterEach(() => {
   Reflect.deleteProperty(window, 'showSaveFilePicker');
+  Reflect.deleteProperty(window, '__CHA_NATIVE_SAVE_TEXT__');
   vi.restoreAllMocks();
 });
 
@@ -32,6 +33,16 @@ describe('session Markdown downloads', () => {
     expect(picker).toHaveBeenCalledWith(expect.objectContaining({ suggestedName: 'Planning.md' }));
     expect(write).toHaveBeenCalledWith('# Planning\n');
     expect(order).toEqual(['pick', 'load', 'write', 'close']);
+  });
+
+  it('uses the native save action when the host provides one', async () => {
+    const save = vi.fn(async () => undefined);
+    Object.defineProperty(window, '__CHA_NATIVE_SAVE_TEXT__', {
+      configurable: true,
+      value: save,
+    });
+    await saveMarkdownDownload('Planning', async () => '# Planning\n');
+    expect(save).toHaveBeenCalledWith('Planning.md', '# Planning\n');
   });
 
   it('does not load anything when the save dialog is cancelled', async () => {

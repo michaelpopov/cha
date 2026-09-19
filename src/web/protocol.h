@@ -327,6 +327,16 @@ struct ForumDetail {
     bool writable{};
 };
 
+struct MarkdownFile {
+    std::string filename;
+    std::string content;
+    bool writable{};
+};
+
+struct SessionExport {
+    std::string markdown;
+};
+
 struct Error {
     ErrorCode code{ErrorCode::internal_error};
     std::string message;
@@ -386,6 +396,8 @@ void to_json(nlohmann::json& json, const VoiceOption& value);
 void to_json(nlohmann::json& json, const CharacterDetail& value);
 void to_json(nlohmann::json& json, const PersonaDetail& value);
 void to_json(nlohmann::json& json, const ForumDetail& value);
+void to_json(nlohmann::json& json, const MarkdownFile& value);
+void to_json(nlohmann::json& json, const SessionExport& value);
 void to_json(nlohmann::json& json, const Error& value);
 void to_json(nlohmann::json& json, const SnapshotEvent& value);
 void to_json(nlohmann::json& json, const AppendEvent& value);

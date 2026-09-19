@@ -1,12 +1,14 @@
 #include "app/application.h"
 
 #include "app/vault_operations.h"
+#include "app/workspace_operations.h"
 #include "providers/openai_oauth.h"
 #include "providers/api_key_store.h"
 #include "providers/credentials.h"
 #include "providers/provider_client.h"
 #include "providers/providers.h"
 #include "session/not_found_error.h"
+#include "session/session_label.h"
 #include "session/session_lease.h"
 #include "session/session_repository.h"
 #include "session/workspace_session_database.h"
@@ -17,6 +19,7 @@
 #include "util/text.h"
 #include "util/toml_file.h"
 #include "web/current_vault.h"
+#include "web/session_markdown.h"
 #include "web/session_mirror.h"
 #include "web/session_projection.h"
 #include "workspace/builtins.h"
@@ -599,10 +602,16 @@ cha::web::CreateSessionSuccess Application::create_session(
     std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
-    const StoredSession created =
-        impl_->sessions->create(forum_id, std::move(label));
-    if (impl_->mirror) impl_->mirror->add(created);
-    return {created.identity.session_id, created.label};
+    try {
+        if (!label.empty()) validate_session_label(label);
+        const StoredSession created =
+            impl_->sessions->create(forum_id, std::move(label));
+        if (impl_->mirror) impl_->mirror->add(created);
+        return {created.identity.session_id, created.label};
+    } catch (const std::invalid_argument&) {
+        throw ApplicationError(
+            ErrorCode::invalid_argument, "Invalid session label.");
+    }
 }
 
 std::variant<cha::web::OpenSessionSuccess, cha::web::ErrorCode>
@@ -770,6 +779,9 @@ std::optional<cha::web::ErrorCode> Application::delete_session(
     {
         const std::lock_guard lifecycle(impl_->lifecycle_mutex);
         if (const auto error = impl_->admit_locked(epoch)) return *error;
+        if (workspace::is_welcome_session(key.forum_id, key.session_id)) {
+            return ErrorCode::not_found;
+        }
     }
     cha::web::MaintenanceReservationResult reserved =
         impl_->live_sessions->reserve_for_deletion(
@@ -788,6 +800,313 @@ std::optional<cha::web::ErrorCode> Application::delete_session(
         return cha::web::ErrorCode::not_found;
     }
     return std::nullopt;
+}
+
+std::vector<cha::web::SessionListing> Application::list_sessions(
+    std::string_view forum_id,
+    std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    try {
+        return workspace::sessions_for(
+            *impl_->sessions, impl_->live_sessions->snapshot(), forum_id);
+    } catch (const ForumNotFoundError&) {
+        throw ApplicationError(ErrorCode::not_found);
+    }
+}
+
+cha::web::SessionLabelResult Application::rename_session(
+    std::string_view forum_id,
+    std::string_view session_id,
+    std::string label,
+    std::uint64_t epoch) {
+    const FullSessionId key{std::string(forum_id), std::string(session_id)};
+    cha::web::LiveSessionHandle live;
+    {
+        const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+        impl_->require_admitted(epoch);
+        if (workspace::is_welcome_session(key.forum_id, key.session_id)) {
+            throw ApplicationError(ErrorCode::not_found);
+        }
+        try {
+            validate_session_label(label);
+        } catch (const std::invalid_argument&) {
+            throw ApplicationError(
+                ErrorCode::invalid_argument, "Invalid session label.");
+        }
+        live = impl_->live_sessions->lookup(key);
+    }
+    if (live) {
+        const auto result = live->submit(
+            cha::web::RenameSessionCommand{std::move(label)},
+            impl_->settings.command_deadline);
+        if (const auto* renamed =
+                std::get_if<cha::web::SessionLabelResult>(&result)) {
+            return *renamed;
+        }
+        if (const auto* error = std::get_if<ErrorCode>(&result)) {
+            throw ApplicationError(*error);
+        }
+        throw ApplicationError(ErrorCode::internal_error);
+    }
+    try {
+        const StoredSession renamed =
+            impl_->sessions->rename(key, std::move(label));
+        if (impl_->mirror) {
+            impl_->mirror->update(
+                renamed.identity,
+                renamed.label,
+                impl_->sessions->history(renamed.identity));
+        }
+        return {renamed.identity.session_id, renamed.label};
+    } catch (const std::invalid_argument&) {
+        throw ApplicationError(
+            ErrorCode::invalid_argument, "Invalid session label.");
+    }
+}
+
+cha::web::SessionExport Application::export_session(
+    std::string_view forum_id,
+    std::string_view session_id,
+    std::uint64_t epoch) {
+    const FullSessionId key{std::string(forum_id), std::string(session_id)};
+    cha::web::LiveSessionHandle live;
+    {
+        const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+        impl_->require_admitted(epoch);
+        live = impl_->live_sessions->lookup(key);
+    }
+    if (live) {
+        const auto result = live->snapshot(impl_->settings.command_deadline);
+        if (const auto* snapshot =
+                std::get_if<cha::web::SessionSnapshot>(&result)) {
+            return {cha::web::session_markdown(
+                snapshot->session_label, snapshot->transcript)};
+        }
+        if (const auto* error = std::get_if<ErrorCode>(&result)) {
+            throw ApplicationError(*error);
+        }
+        throw ApplicationError(ErrorCode::internal_error);
+    }
+    try {
+        const PreparedSession prepared = impl_->sessions->prepare(key);
+        return {cha::web::session_markdown(
+            prepared.label, prepared.restore.entries)};
+    } catch (const SessionNotFoundError&) {
+        throw ApplicationError(ErrorCode::not_found);
+    } catch (const ForumNotFoundError&) {
+        throw ApplicationError(ErrorCode::not_found);
+    }
+}
+
+cha::web::CharacterDetail Application::get_character(
+    std::string_view character_id,
+    std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    return workspace::get_character(character_id);
+}
+
+cha::web::CharacterDetail Application::create_character(
+    cha::web::CreateCharacterRequest create,
+    std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    return workspace::create_character(
+        *impl_->store, create.display_name, create.description);
+}
+
+cha::web::CharacterDetail Application::update_character(
+    std::string_view character_id,
+    cha::web::CharacterSettingsUpdate update,
+    std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    return workspace::update_character_settings(
+        *impl_->store, *impl_->live_sessions, character_id, update);
+}
+
+cha::web::CharacterDetail Application::update_character_definition(
+    std::string_view character_id,
+    cha::web::CharacterDefinitionUpdate update,
+    std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    return workspace::update_character_definition(
+        *impl_->store, *impl_->live_sessions, character_id, update);
+}
+
+void Application::delete_character(
+    std::string_view character_id,
+    std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    workspace::delete_character(*impl_->store, character_id);
+}
+
+cha::web::MarkdownFile Application::get_character_file(
+    std::string_view character_id,
+    std::string_view filename,
+    std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    return workspace::get_character_file(character_id, filename);
+}
+
+cha::web::MarkdownFile Application::create_character_file(
+    std::string_view character_id,
+    std::string filename,
+    std::string content,
+    std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    return workspace::create_character_file(
+        *impl_->store, *impl_->live_sessions, character_id,
+        std::move(filename), std::move(content));
+}
+
+cha::web::MarkdownFile Application::update_character_file(
+    std::string_view character_id,
+    std::string filename,
+    std::string content,
+    std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    return workspace::update_character_file(
+        *impl_->store, *impl_->live_sessions, character_id,
+        std::move(filename), std::move(content));
+}
+
+void Application::delete_character_file(
+    std::string_view character_id,
+    std::string_view filename,
+    std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    workspace::delete_character_file(
+        *impl_->store, *impl_->live_sessions, character_id, std::string(filename));
+}
+
+cha::web::PersonaDetail Application::get_persona(
+    std::string_view persona_id,
+    std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    return workspace::get_persona(persona_id);
+}
+
+cha::web::PersonaDetail Application::create_persona(
+    std::string display_name,
+    std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    return workspace::create_persona(*impl_->store, display_name);
+}
+
+cha::web::PersonaDetail Application::update_persona(
+    std::string_view persona_id,
+    cha::web::PersonaUpdate update,
+    std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    return workspace::update_persona(
+        *impl_->store, *impl_->live_sessions, persona_id, update);
+}
+
+void Application::delete_persona(
+    std::string_view persona_id,
+    std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    workspace::delete_persona(*impl_->store, persona_id);
+}
+
+cha::web::ForumDetail Application::get_forum(
+    std::string_view forum_id,
+    std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    return workspace::get_forum(forum_id);
+}
+
+cha::web::ForumDetail Application::create_forum(
+    cha::web::CreateForumRequest create,
+    std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    return workspace::create_forum(
+        *impl_->store, create.display_name, create.persona_id);
+}
+
+cha::web::ForumDetail Application::update_forum(
+    std::string_view forum_id,
+    cha::web::ForumUpdate update,
+    std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    return workspace::update_forum(
+        *impl_->store, *impl_->live_sessions, forum_id, update);
+}
+
+void Application::delete_forum(
+    std::string_view forum_id,
+    std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    workspace::delete_forum(*impl_->store, *impl_->live_sessions, forum_id);
+}
+
+cha::web::ForumDetail Application::update_forum_members(
+    std::string_view forum_id,
+    cha::web::ForumMembersUpdate update,
+    std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    return workspace::update_forum_members(
+        *impl_->store, *impl_->live_sessions, forum_id, update);
+}
+
+cha::web::MarkdownFile Application::get_forum_file(
+    std::string_view forum_id,
+    std::string_view filename,
+    std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    return workspace::get_forum_file(forum_id, filename);
+}
+
+cha::web::MarkdownFile Application::create_forum_file(
+    std::string_view forum_id,
+    std::string filename,
+    std::string content,
+    std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    return workspace::create_forum_file(
+        *impl_->store, *impl_->live_sessions, forum_id,
+        std::move(filename), std::move(content));
+}
+
+cha::web::MarkdownFile Application::update_forum_file(
+    std::string_view forum_id,
+    std::string filename,
+    std::string content,
+    std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    return workspace::update_forum_file(
+        *impl_->store, *impl_->live_sessions, forum_id,
+        std::move(filename), std::move(content));
+}
+
+void Application::delete_forum_file(
+    std::string_view forum_id,
+    std::string_view filename,
+    std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    workspace::delete_forum_file(
+        *impl_->store, *impl_->live_sessions, forum_id, std::string(filename));
 }
 
 std::optional<FullSessionId> Application::selected_session() const {

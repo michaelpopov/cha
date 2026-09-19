@@ -336,6 +336,33 @@ TEST_F(NativeRuntimeTest, SaveFileUsesTemporaryReplaceAndHonorsEpoch) {
     EXPECT_EQ(kept, payload);
 }
 
+TEST_F(NativeRuntimeTest, ExportSessionWritesMarkdownThroughSaveFile) {
+    auto bootstrap = call("app.bootstrap");
+    ASSERT_TRUE(bootstrap["ok"]);
+    epoch_ = bootstrap["result"]["context_epoch"].get<std::uint64_t>();
+    auto created = call(
+        "session.create", {{"forum_id", "lobby"}, {"label", "Exported"}});
+    ASSERT_TRUE(created["ok"]);
+    const std::string session_id = created["result"]["id"];
+    const auto destination = workspace_.root() / "session.md";
+    char* error = nullptr;
+    EXPECT_EQ(
+        cha_runtime_export_session(
+            runtime_,
+            epoch_,
+            "lobby",
+            session_id.c_str(),
+            destination.c_str(),
+            &error),
+        1);
+    cha_string_free(error);
+    std::ifstream input(destination);
+    std::string body(
+        (std::istreambuf_iterator<char>(input)),
+        std::istreambuf_iterator<char>());
+    EXPECT_NE(body.find("CHA session: Exported"), std::string::npos);
+}
+
 TEST_F(NativeRuntimeTest, CloseAndReopenConnectionDoesNotCrossResolve) {
     auto bootstrap = call("app.bootstrap");
     ASSERT_TRUE(bootstrap["ok"]);

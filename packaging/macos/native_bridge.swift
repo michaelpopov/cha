@@ -19,6 +19,27 @@ func nativeBootstrapJavaScript(connectionId: String) -> String {
         window.webkit.messageHandlers.cha.postMessage(message);
       }
     };
+    window.__CHA_NATIVE_SAVE_PENDING__ = {};
+    window.__CHA_NATIVE_SAVE_SEQ__ = 0;
+    window.__CHA_NATIVE_SAVE_TEXT__ = function(suggestedName, contents) {
+      return new Promise(function(resolve, reject) {
+        var id = String(++window.__CHA_NATIVE_SAVE_SEQ__);
+        window.__CHA_NATIVE_SAVE_PENDING__[id] = {resolve: resolve, reject: reject};
+        window.__CHA_NATIVE_POST__(JSON.stringify({
+          native_action: "save_text",
+          id: id,
+          suggested_name: suggestedName,
+          contents: contents
+        }));
+      });
+    };
+    window.__CHA_NATIVE_SAVE_DONE__ = function(id, ok, message) {
+      var pending = window.__CHA_NATIVE_SAVE_PENDING__[id];
+      if (!pending) return;
+      delete window.__CHA_NATIVE_SAVE_PENDING__[id];
+      if (ok) pending.resolve();
+      else pending.reject(new Error(message || "Save failed"));
+    };
     """
 }
 
@@ -74,6 +95,7 @@ final class ChaNativeBridgeReceiver: NSObject, WKScriptMessageHandler {
     var isTrustedOrigin: ((WKSecurityOrigin) -> Bool) = { origin in
         isChaAssetOrigin(origin)
     }
+    var saveText: ((String, String, String) -> Void)?
 
     init(runtime: OpaquePointer) {
         self.runtime = runtime
@@ -155,11 +177,35 @@ final class ChaNativeBridgeReceiver: NSObject, WKScriptMessageHandler {
               let body = message.body as? String else {
             return
         }
+        if let data = body.data(using: .utf8),
+           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           object["native_action"] as? String == "save_text",
+           let id = object["id"] as? String {
+            saveText?(
+                id,
+                object["suggested_name"] as? String ?? "session.md",
+                object["contents"] as? String ?? "")
+            return
+        }
         connectionId.withCString { connection in
             body.withCString { json in
                 cha_runtime_handle_message(runtime, connection, json)
             }
         }
+    }
+
+    func completeSave(id: String, ok: Bool, message: String) {
+        guard let webView else { return }
+        webView.callAsyncJavaScript(
+            """
+            if (typeof window.__CHA_NATIVE_SAVE_DONE__ === "function") {
+              window.__CHA_NATIVE_SAVE_DONE__(id, ok, message);
+            }
+            """,
+            arguments: ["id": id, "ok": ok, "message": message],
+            in: nil,
+            in: .page,
+            completionHandler: { _ in })
     }
 
     func deliver(connectionId: String, json: String) {

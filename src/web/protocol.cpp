@@ -358,6 +358,18 @@ void to_json(nlohmann::json& json, const ForumDetail& value) {
     json["writable"] = value.writable;
 }
 
+void to_json(nlohmann::json& json, const MarkdownFile& value) {
+    json = {
+        {"filename", value.filename},
+        {"content", value.content},
+        {"writable", value.writable},
+    };
+}
+
+void to_json(nlohmann::json& json, const SessionExport& value) {
+    json = {{"markdown", value.markdown}};
+}
+
 void to_json(nlohmann::json& json, const Error& value) {
     json = {
         {"error",

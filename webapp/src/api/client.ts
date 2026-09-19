@@ -289,12 +289,12 @@ function isPersonaSummary(value: unknown): boolean {
     && (value.voice === undefined || isSpeechVoice(value.voice));
 }
 
-function isMarkdownFile(value: unknown): value is MarkdownFile {
+export function isMarkdownFile(value: unknown): value is MarkdownFile {
   return isRecord(value) && typeof value.filename === 'string'
     && typeof value.content === 'string' && typeof value.writable === 'boolean';
 }
 
-function isCharacterDetail(value: unknown): value is CharacterDetail {
+export function isCharacterDetail(value: unknown): value is CharacterDetail {
   return isCharacterSummary(value)
     && isRecord(value)
     && typeof value.character_markdown === 'string'
@@ -321,7 +321,7 @@ function isCharacterDetail(value: unknown): value is CharacterDetail {
     && typeof value.writable === 'boolean';
 }
 
-function isPersonaDetail(value: unknown): value is PersonaDetail {
+export function isPersonaDetail(value: unknown): value is PersonaDetail {
   return isPersonaSummary(value)
     && isRecord(value)
     && typeof value.persona_markdown === 'string'
@@ -338,7 +338,7 @@ function isPersonaDetail(value: unknown): value is PersonaDetail {
     && typeof value.writable === 'boolean';
 }
 
-function isForumDetail(value: unknown): value is ForumDetail {
+export function isForumDetail(value: unknown): value is ForumDetail {
   return isRecord(value)
     && hasIdentity(value)
     && typeof value.default_character_id === 'string'
@@ -475,7 +475,7 @@ function isR2StorageDetail(value: unknown): value is R2StorageDetail {
     && typeof value.has_secret_key === 'boolean';
 }
 
-function isSessionListingArray(value: unknown): value is SessionListing[] {
+export function isSessionListingArray(value: unknown): value is SessionListing[] {
   return Array.isArray(value) && value.every((session) => isRecord(session)
     && typeof session.id === 'string'
     && typeof session.label === 'string'
@@ -487,6 +487,10 @@ function isSessionListingArray(value: unknown): value is SessionListing[] {
 // A snapshot arrives two ways, over this request and over the event stream, and
 // both are parsed JSON that the generated types only describe at compile time.
 // The check lives here so neither route trusts a shape the other would reject.
+export function isSessionLabelResult(value: unknown): value is SessionLabelResult {
+  return isRecord(value) && typeof value.id === 'string' && typeof value.label === 'string';
+}
+
 export function isCommandResult(value: unknown): value is CommandResult {
   return isRecord(value)
     && typeof value.clear_input === 'boolean'

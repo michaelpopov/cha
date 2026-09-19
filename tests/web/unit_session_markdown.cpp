@@ -32,6 +32,13 @@ TEST(SessionMarkdown, ExportsAnEmptySessionAsItsTitle) {
     EXPECT_EQ(session_markdown("Notes", {}), "<!-- CHA session: Notes -->\n");
 }
 
+TEST(SessionMarkdown, SanitizesExportFilenames) {
+    EXPECT_EQ(session_markdown_filename("Architecture: review?"),
+        "Architecture- review-.md");
+    EXPECT_EQ(session_markdown_filename("Trailing. "), "Trailing.md");
+    EXPECT_EQ(session_markdown_filename(""), "session.md");
+}
+
 TEST(SessionMarkdown, ExportsAMulticastPromptOnceAndEveryResponse) {
     TranscriptEntry first_prompt = make_human_entry({
         .id = 1,

@@ -14,5 +14,6 @@ namespace cha::web {
 std::string session_markdown(
     std::string_view label,
     std::span<const TranscriptEntry> entries);
+[[nodiscard]] std::string session_markdown_filename(std::string_view label);
 
 } // namespace cha::web

@@ -16,6 +16,13 @@ function saveFilePicker(): SaveFilePicker | undefined {
   return (window as Window & { showSaveFilePicker?: SaveFilePicker }).showSaveFilePicker;
 }
 
+type NativeSaveText = (suggestedName: string, contents: string) => Promise<void>;
+
+function nativeSaveText(): NativeSaveText | undefined {
+  return (window as Window & { __CHA_NATIVE_SAVE_TEXT__?: NativeSaveText })
+    .__CHA_NATIVE_SAVE_TEXT__;
+}
+
 export function sessionMarkdownFilename(label: string): string {
   const safe = label
     .replace(/[<>:"/\\|?*#^\[\]\u0000-\u001f]/g, '-')
@@ -27,6 +34,11 @@ export async function saveMarkdownDownload(
   label: string,
   load: () => Promise<string>,
 ): Promise<void> {
+  const nativeSave = nativeSaveText();
+  if (nativeSave) {
+    await nativeSave(sessionMarkdownFilename(label), await load());
+    return;
+  }
   const picker = saveFilePicker();
   if (picker) {
     let file: PickedFile;

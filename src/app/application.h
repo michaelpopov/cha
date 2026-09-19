@@ -18,6 +18,7 @@
 #include <string>
 #include <string_view>
 #include <variant>
+#include <vector>
 
 namespace cha {
 class SessionRepository;
@@ -157,6 +158,104 @@ public:
     [[nodiscard]] std::optional<cha::web::ErrorCode> delete_session(
         std::string_view forum_id,
         std::string_view session_id,
+        std::uint64_t epoch = 0);
+    [[nodiscard]] std::vector<cha::web::SessionListing> list_sessions(
+        std::string_view forum_id,
+        std::uint64_t epoch = 0);
+    [[nodiscard]] cha::web::SessionLabelResult rename_session(
+        std::string_view forum_id,
+        std::string_view session_id,
+        std::string label,
+        std::uint64_t epoch = 0);
+    [[nodiscard]] cha::web::SessionExport export_session(
+        std::string_view forum_id,
+        std::string_view session_id,
+        std::uint64_t epoch = 0);
+
+    [[nodiscard]] cha::web::CharacterDetail get_character(
+        std::string_view character_id,
+        std::uint64_t epoch = 0);
+    [[nodiscard]] cha::web::CharacterDetail create_character(
+        cha::web::CreateCharacterRequest create,
+        std::uint64_t epoch = 0);
+    [[nodiscard]] cha::web::CharacterDetail update_character(
+        std::string_view character_id,
+        cha::web::CharacterSettingsUpdate update,
+        std::uint64_t epoch = 0);
+    [[nodiscard]] cha::web::CharacterDetail update_character_definition(
+        std::string_view character_id,
+        cha::web::CharacterDefinitionUpdate update,
+        std::uint64_t epoch = 0);
+    void delete_character(
+        std::string_view character_id,
+        std::uint64_t epoch = 0);
+    [[nodiscard]] cha::web::MarkdownFile get_character_file(
+        std::string_view character_id,
+        std::string_view filename,
+        std::uint64_t epoch = 0);
+    [[nodiscard]] cha::web::MarkdownFile create_character_file(
+        std::string_view character_id,
+        std::string filename,
+        std::string content,
+        std::uint64_t epoch = 0);
+    [[nodiscard]] cha::web::MarkdownFile update_character_file(
+        std::string_view character_id,
+        std::string filename,
+        std::string content,
+        std::uint64_t epoch = 0);
+    void delete_character_file(
+        std::string_view character_id,
+        std::string_view filename,
+        std::uint64_t epoch = 0);
+
+    [[nodiscard]] cha::web::PersonaDetail get_persona(
+        std::string_view persona_id,
+        std::uint64_t epoch = 0);
+    [[nodiscard]] cha::web::PersonaDetail create_persona(
+        std::string display_name,
+        std::uint64_t epoch = 0);
+    [[nodiscard]] cha::web::PersonaDetail update_persona(
+        std::string_view persona_id,
+        cha::web::PersonaUpdate update,
+        std::uint64_t epoch = 0);
+    void delete_persona(
+        std::string_view persona_id,
+        std::uint64_t epoch = 0);
+
+    [[nodiscard]] cha::web::ForumDetail get_forum(
+        std::string_view forum_id,
+        std::uint64_t epoch = 0);
+    [[nodiscard]] cha::web::ForumDetail create_forum(
+        cha::web::CreateForumRequest create,
+        std::uint64_t epoch = 0);
+    [[nodiscard]] cha::web::ForumDetail update_forum(
+        std::string_view forum_id,
+        cha::web::ForumUpdate update,
+        std::uint64_t epoch = 0);
+    void delete_forum(
+        std::string_view forum_id,
+        std::uint64_t epoch = 0);
+    [[nodiscard]] cha::web::ForumDetail update_forum_members(
+        std::string_view forum_id,
+        cha::web::ForumMembersUpdate update,
+        std::uint64_t epoch = 0);
+    [[nodiscard]] cha::web::MarkdownFile get_forum_file(
+        std::string_view forum_id,
+        std::string_view filename,
+        std::uint64_t epoch = 0);
+    [[nodiscard]] cha::web::MarkdownFile create_forum_file(
+        std::string_view forum_id,
+        std::string filename,
+        std::string content,
+        std::uint64_t epoch = 0);
+    [[nodiscard]] cha::web::MarkdownFile update_forum_file(
+        std::string_view forum_id,
+        std::string filename,
+        std::string content,
+        std::uint64_t epoch = 0);
+    void delete_forum_file(
+        std::string_view forum_id,
+        std::string_view filename,
         std::uint64_t epoch = 0);
 
     [[nodiscard]] cha::web::VaultRegistrySnapshot vault_snapshot() const;

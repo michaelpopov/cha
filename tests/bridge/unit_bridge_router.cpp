@@ -204,6 +204,75 @@ TEST_F(BridgeRouterTest, InfoBootstrapCreateOpenSubmitStopSnapshotAndClose) {
     ASSERT_TRUE(reply["ok"]);
 }
 
+TEST_F(BridgeRouterTest, ListsRenamesExportsAndEditsWorkspaceOverTheBridge) {
+    bootstrap_epoch();
+    auto reply = call(
+        "session.create", {{"forum_id", "lobby"}, {"label", "Catalog"}});
+    ASSERT_TRUE(reply["ok"]);
+    const std::string session_id = reply["result"]["id"];
+
+    reply = call("session.list", {{"forum_id", "lobby"}});
+    ASSERT_TRUE(reply["ok"]);
+    ASSERT_TRUE(reply["result"].is_array());
+    EXPECT_EQ(reply["result"][0]["id"], session_id);
+    EXPECT_EQ(reply["result"][0]["label"], "Catalog");
+    EXPECT_FALSE(reply["result"][0]["live"]);
+
+    reply = call(
+        "session.rename",
+        {{"forum_id", "lobby"}, {"session_id", session_id}, {"label", "Renamed"}});
+    ASSERT_TRUE(reply["ok"]);
+    EXPECT_EQ(reply["result"]["label"], "Renamed");
+
+    reply = call(
+        "session.export",
+        {{"forum_id", "lobby"}, {"session_id", session_id}});
+    ASSERT_TRUE(reply["ok"]);
+    EXPECT_NE(
+        reply["result"]["markdown"].get<std::string>().find("Renamed"),
+        std::string::npos);
+
+    reply = call(
+        "session.open", {{"forum_id", "lobby"}, {"session_id", session_id}});
+    ASSERT_TRUE(reply["ok"]);
+    reply = call(
+        "session.setDefaultCharacter",
+        {{"forum_id", "lobby"},
+         {"session_id", session_id},
+         {"character_id", "guide"}});
+    ASSERT_TRUE(reply["ok"]);
+    reply = call(
+        "session.uncover",
+        {{"forum_id", "lobby"}, {"session_id", session_id}});
+    ASSERT_TRUE(reply["ok"]);
+
+    reply = call(
+        "character.create",
+        {{"display_name", "Mentor"}, {"description", "A guide"}});
+    ASSERT_TRUE(reply["ok"]);
+    const std::string character_id = reply["result"]["id"];
+    EXPECT_EQ(reply["result"]["display_name"], "Mentor");
+
+    reply = call("character.get", {{"character_id", character_id}});
+    ASSERT_TRUE(reply["ok"]);
+    EXPECT_EQ(reply["result"]["id"], character_id);
+
+    reply = call("persona.create", {{"display_name", "Narrator"}});
+    ASSERT_TRUE(reply["ok"]);
+    const std::string persona_id = reply["result"]["id"];
+
+    reply = call(
+        "forum.create",
+        {{"display_name", "Workshop"}, {"persona_id", persona_id}});
+    ASSERT_TRUE(reply["ok"]);
+    EXPECT_EQ(reply["result"]["display_name"], "Workshop");
+
+    reply = call(
+        "session.delete",
+        {{"forum_id", "lobby"}, {"session_id", session_id}});
+    ASSERT_TRUE(reply["ok"]);
+}
+
 TEST_F(BridgeRouterTest, RejectsMalformedUnknownStaleDuplicateAndUnavailableMethods) {
     bootstrap_epoch();
     const auto before = application_->live_sessions().snapshot().live_session_count;

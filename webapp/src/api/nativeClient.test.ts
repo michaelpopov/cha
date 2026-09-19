@@ -66,6 +66,23 @@ describe('native CHA client', () => {
     expect(bridge.contextEpoch()).toBe(4);
   });
 
+  it('lists sessions and loads character details through native methods', async () => {
+    const character = loadFixture('character-detail.json');
+    const bridge = createFakeNativeBridge({
+      'session.list': () => [
+        { id: 'planning', label: 'Planning', live: false, updated_at: 1 },
+      ],
+      'session.export': () => ({ markdown: '# Planning\n' }),
+      'character.get': () => character,
+    });
+    const client = createNativeChaClient(bridge);
+    await expect(client.listSessions('lobby')).resolves.toEqual([
+      { id: 'planning', label: 'Planning', live: false, updated_at: 1 },
+    ]);
+    await expect(client.downloadSession('lobby', 'planning')).resolves.toBe('# Planning\n');
+    await expect(client.getCharacter('guide')).resolves.toMatchObject({ id: 'guide' });
+  });
+
   it('marks unmigrated methods unavailable instead of forwarding them', async () => {
     const client = createNativeChaClient(createFakeNativeBridge());
     await expect(client.listProviders()).rejects.toBeInstanceOf(ChaError);

@@ -224,5 +224,81 @@ TEST(Application, IgnoresObsoleteNativeWebSection) {
     EXPECT_TRUE(application->running());
 }
 
+TEST(Application, ListsRenamesExportsAndProtectsWelcome) {
+    test::TestWorkspace workspace;
+    const std::filesystem::path database =
+        test::import_test_database(workspace.root());
+    auto application = Application::open(make_command(workspace, database));
+
+    const auto created = application->create_session("lobby", "Notes");
+    const auto listed = application->list_sessions("lobby");
+    ASSERT_FALSE(listed.empty());
+    EXPECT_EQ(listed.front().id, created.id);
+    EXPECT_EQ(listed.front().label, "Notes");
+    EXPECT_FALSE(listed.front().live);
+
+    const auto renamed = application->rename_session(
+        "lobby", created.id, "Renamed");
+    EXPECT_EQ(renamed.label, "Renamed");
+
+    const auto exported = application->export_session("lobby", created.id);
+    EXPECT_NE(exported.markdown.find("CHA session: Renamed"), std::string::npos);
+
+    EXPECT_THROW(
+        (void)application->rename_session(
+            "builtin-entrance", "builtin-welcome", "Hijacked"),
+        ApplicationError);
+    EXPECT_EQ(
+        application->delete_session("builtin-entrance", "builtin-welcome"),
+        ErrorCode::not_found);
+}
+
+TEST(Application, CharacterPersonaForumAndFileEditsUseTheStore) {
+    test::TestWorkspace workspace;
+    const std::filesystem::path database =
+        test::import_test_database(workspace.root());
+    auto application = Application::open(make_command(workspace, database));
+
+    const auto character = application->create_character(
+        {.display_name = "Mentor", .description = "A guide"});
+    EXPECT_FALSE(character.summary.id.empty());
+    EXPECT_EQ(character.summary.display_name, "Mentor");
+    EXPECT_TRUE(character.writable);
+
+    const auto fetched = application->get_character(character.summary.id);
+    EXPECT_EQ(fetched.summary.display_name, "Mentor");
+
+    const auto defined = application->update_character_definition(
+        character.summary.id,
+        {.display_name = "Mentor", .character_markdown = "Be brief."});
+    EXPECT_EQ(defined.character_markdown, "Be brief.");
+
+    const auto file = application->create_character_file(
+        character.summary.id, "NOTES.md", "# Notes\n");
+    EXPECT_EQ(file.filename, "NOTES.md");
+    EXPECT_EQ(file.content, "# Notes\n");
+    EXPECT_TRUE(file.writable);
+
+    const auto persona = application->create_persona("Narrator");
+    EXPECT_EQ(persona.summary.display_name, "Narrator");
+    const auto updated_persona = application->update_persona(
+        persona.summary.id,
+        {.display_name = "Narrator", .persona_markdown = "Speak plainly."});
+    EXPECT_EQ(updated_persona.persona_markdown, "Speak plainly.");
+
+    const auto forum = application->create_forum(
+        {.display_name = "Workshop", .persona_id = persona.summary.id});
+    EXPECT_EQ(forum.summary.display_name, "Workshop");
+    const auto members = application->update_forum_members(
+        forum.summary.id,
+        {.character_ids = {"guide"}, .persona_id = persona.summary.id});
+    ASSERT_FALSE(members.summary.members.empty());
+    EXPECT_EQ(members.summary.members.front().id, "guide");
+
+    application->delete_forum(forum.summary.id);
+    application->delete_character(character.summary.id);
+    application->delete_persona(persona.summary.id);
+}
+
 } // namespace
 } // namespace cha::app

@@ -407,6 +407,50 @@ int32_t cha_runtime_export_configuration(
     return transfer_configuration(runtime, file_count, error, false);
 }
 
+int32_t cha_runtime_context_epoch(
+    const ChaRuntime* runtime,
+    uint64_t* epoch) {
+    if (!runtime || !runtime->native_application || !epoch) return 0;
+    *epoch = runtime->native_application->context_epoch();
+    return 1;
+}
+
+int32_t cha_runtime_export_session(
+    ChaRuntime* runtime,
+    uint64_t context_epoch,
+    const char* forum_id,
+    const char* session_id,
+    const char* destination_utf8,
+    char** error) {
+    clear_error(error);
+    if (!runtime || !runtime->native_application
+        || !forum_id || !session_id || !destination_utf8
+        || destination_utf8[0] == '\0') {
+        set_string(error, "That file operation is not available.");
+        return 0;
+    }
+    try {
+        const auto exported = runtime->native_application->export_session(
+            forum_id, session_id, context_epoch);
+        runtime->native_application->save_file(
+            context_epoch,
+            cha::path_from_utf8(destination_utf8),
+            exported.markdown);
+        return 1;
+    } catch (const cha::app::ApplicationError& denied) {
+        set_string(
+            error,
+            std::string(cha::bridge::public_error_message(denied.code)).c_str());
+        return 0;
+    } catch (const cha::WorkspaceRestartRequiredError& fatal) {
+        set_string(error, fatal.what());
+        return -1;
+    } catch (...) {
+        set_current_error(error);
+        return -1;
+    }
+}
+
 int32_t cha_runtime_save_file(
     ChaRuntime* runtime,
     uint64_t context_epoch,

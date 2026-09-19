@@ -91,6 +91,24 @@ std::optional<std::string> nullable_string(
     return value;
 }
 
+nlohmann::json without_key(nlohmann::json params, std::string_view key) {
+    params.erase(std::string(key));
+    return params;
+}
+
+std::string require_filename(
+    const nlohmann::json& params,
+    std::string_view key) {
+    const std::string value = require_string(params, key);
+    if (value.empty()
+        || value.find('/') != std::string::npos
+        || value.find('\\') != std::string::npos
+        || value.find('\0') != std::string::npos) {
+        throw std::invalid_argument("The request was not valid.");
+    }
+    return value;
+}
+
 nlohmann::json encode_command_result(const cha::web::CommandSubmitResult& result) {
     if (const auto* error = std::get_if<ErrorCode>(&result)) {
         throw *error;
@@ -542,6 +560,207 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                 result = nlohmann::json::object();
                 break;
             }
+            case Method::session_list: {
+                require_only_keys(params, {"forum_id"});
+                result = application.list_sessions(
+                    require_identifier(params, "forum_id"), epoch);
+                break;
+            }
+            case Method::session_rename: {
+                require_only_keys(params, {"forum_id", "session_id", "label"});
+                if (!params["label"].is_string()) {
+                    throw std::invalid_argument("The request was not valid.");
+                }
+                result = application.rename_session(
+                    require_identifier(params, "forum_id"),
+                    require_identifier(params, "session_id"),
+                    params["label"].get<std::string>(),
+                    epoch);
+                break;
+            }
+            case Method::session_delete: {
+                const auto identity = parse_session_identity(params);
+                if (const auto error = application.delete_session(
+                        identity.forum_id, identity.session_id, epoch)) {
+                    fail(*error);
+                    return;
+                }
+                result = nlohmann::json::object();
+                break;
+            }
+            case Method::session_export: {
+                const auto identity = parse_session_identity(params);
+                result = application.export_session(
+                    identity.forum_id, identity.session_id, epoch);
+                break;
+            }
+            case Method::character_get: {
+                require_only_keys(params, {"character_id"});
+                result = application.get_character(
+                    require_identifier(params, "character_id"), epoch);
+                break;
+            }
+            case Method::character_create: {
+                result = application.create_character(
+                    cha::web::parse_create_character_request(params), epoch);
+                break;
+            }
+            case Method::character_update: {
+                const std::string id = require_identifier(params, "character_id");
+                result = application.update_character(
+                    id,
+                    cha::web::parse_character_settings_update(
+                        without_key(params, "character_id")),
+                    epoch);
+                break;
+            }
+            case Method::character_update_definition: {
+                const std::string id = require_identifier(params, "character_id");
+                result = application.update_character_definition(
+                    id,
+                    cha::web::parse_character_definition_update(
+                        without_key(params, "character_id")),
+                    epoch);
+                break;
+            }
+            case Method::character_delete: {
+                require_only_keys(params, {"character_id"});
+                application.delete_character(
+                    require_identifier(params, "character_id"), epoch);
+                result = nlohmann::json::object();
+                break;
+            }
+            case Method::character_file_get: {
+                require_only_keys(params, {"character_id", "filename"});
+                result = application.get_character_file(
+                    require_identifier(params, "character_id"),
+                    require_filename(params, "filename"),
+                    epoch);
+                break;
+            }
+            case Method::character_file_create: {
+                require_only_keys(params, {"character_id", "filename", "content"});
+                result = application.create_character_file(
+                    require_identifier(params, "character_id"),
+                    require_filename(params, "filename"),
+                    require_string(params, "content"),
+                    epoch);
+                break;
+            }
+            case Method::character_file_update: {
+                require_only_keys(params, {"character_id", "filename", "content"});
+                result = application.update_character_file(
+                    require_identifier(params, "character_id"),
+                    require_filename(params, "filename"),
+                    require_string(params, "content"),
+                    epoch);
+                break;
+            }
+            case Method::character_file_delete: {
+                require_only_keys(params, {"character_id", "filename"});
+                application.delete_character_file(
+                    require_identifier(params, "character_id"),
+                    require_filename(params, "filename"),
+                    epoch);
+                result = nlohmann::json::object();
+                break;
+            }
+            case Method::persona_get: {
+                require_only_keys(params, {"persona_id"});
+                result = application.get_persona(
+                    require_identifier(params, "persona_id"), epoch);
+                break;
+            }
+            case Method::persona_create: {
+                result = application.create_persona(
+                    cha::web::parse_create_persona_name(params), epoch);
+                break;
+            }
+            case Method::persona_update: {
+                const std::string id = require_identifier(params, "persona_id");
+                result = application.update_persona(
+                    id,
+                    cha::web::parse_persona_update(without_key(params, "persona_id")),
+                    epoch);
+                break;
+            }
+            case Method::persona_delete: {
+                require_only_keys(params, {"persona_id"});
+                application.delete_persona(
+                    require_identifier(params, "persona_id"), epoch);
+                result = nlohmann::json::object();
+                break;
+            }
+            case Method::forum_get: {
+                require_only_keys(params, {"forum_id"});
+                result = application.get_forum(
+                    require_identifier(params, "forum_id"), epoch);
+                break;
+            }
+            case Method::forum_create: {
+                result = application.create_forum(
+                    cha::web::parse_create_forum_request(params), epoch);
+                break;
+            }
+            case Method::forum_update: {
+                const std::string id = require_identifier(params, "forum_id");
+                result = application.update_forum(
+                    id,
+                    cha::web::parse_forum_update(without_key(params, "forum_id")),
+                    epoch);
+                break;
+            }
+            case Method::forum_delete: {
+                require_only_keys(params, {"forum_id"});
+                application.delete_forum(
+                    require_identifier(params, "forum_id"), epoch);
+                result = nlohmann::json::object();
+                break;
+            }
+            case Method::forum_members_update: {
+                const std::string id = require_identifier(params, "forum_id");
+                result = application.update_forum_members(
+                    id,
+                    cha::web::parse_forum_members_update(
+                        without_key(params, "forum_id")),
+                    epoch);
+                break;
+            }
+            case Method::forum_file_get: {
+                require_only_keys(params, {"forum_id", "filename"});
+                result = application.get_forum_file(
+                    require_identifier(params, "forum_id"),
+                    require_filename(params, "filename"),
+                    epoch);
+                break;
+            }
+            case Method::forum_file_create: {
+                require_only_keys(params, {"forum_id", "filename", "content"});
+                result = application.create_forum_file(
+                    require_identifier(params, "forum_id"),
+                    require_filename(params, "filename"),
+                    require_string(params, "content"),
+                    epoch);
+                break;
+            }
+            case Method::forum_file_update: {
+                require_only_keys(params, {"forum_id", "filename", "content"});
+                result = application.update_forum_file(
+                    require_identifier(params, "forum_id"),
+                    require_filename(params, "filename"),
+                    require_string(params, "content"),
+                    epoch);
+                break;
+            }
+            case Method::forum_file_delete: {
+                require_only_keys(params, {"forum_id", "filename"});
+                application.delete_forum_file(
+                    require_identifier(params, "forum_id"),
+                    require_filename(params, "filename"),
+                    epoch);
+                result = nlohmann::json::object();
+                break;
+            }
             case Method::vault_list: {
                 require_only_keys(params, {});
                 const auto snapshot = application.vault_snapshot();
@@ -716,6 +935,47 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                     command = cha::web::SnapshotCommand{};
                     break;
                 }
+                case Method::session_cover: {
+                    require_only_keys(
+                        params, {"forum_id", "session_id", "through_entry_id"});
+                    outstanding.forum_id = require_identifier(params, "forum_id");
+                    outstanding.session_id = require_identifier(params, "session_id");
+                    command = cha::web::parse_cover_command({
+                        {"through_entry_id", params["through_entry_id"]},
+                    });
+                    break;
+                }
+                case Method::session_uncover: {
+                    const auto identity = parse_session_identity(params);
+                    outstanding.forum_id = identity.forum_id;
+                    outstanding.session_id = identity.session_id;
+                    command = cha::web::UncoverCommand{};
+                    break;
+                }
+                case Method::session_delete_turn: {
+                    require_only_keys(
+                        params, {"forum_id", "session_id", "response_entry_id"});
+                    outstanding.forum_id = require_identifier(params, "forum_id");
+                    outstanding.session_id = require_identifier(params, "session_id");
+                    command = cha::web::parse_delete_turn_command({
+                        {"response_entry_id", params["response_entry_id"]},
+                    });
+                    break;
+                }
+                case Method::session_set_default_character: {
+                    require_only_keys(
+                        params, {"forum_id", "session_id", "character_id"});
+                    outstanding.forum_id = require_identifier(params, "forum_id");
+                    outstanding.session_id = require_identifier(params, "session_id");
+                    auto parsed = cha::web::parse_default_character_command({
+                        {"character_id", params["character_id"]},
+                    });
+                    if (parsed.character_id.empty()) {
+                        throw std::invalid_argument("The request was not valid.");
+                    }
+                    command = std::move(parsed);
+                    break;
+                }
                 case Method::session_subscribe: {
                     require_only_keys(
                         params, {"forum_id", "session_id", "subscription_id"});
@@ -782,6 +1042,10 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
         return method == Method::session_submit
             || method == Method::session_stop
             || method == Method::session_snapshot
+            || method == Method::session_cover
+            || method == Method::session_uncover
+            || method == Method::session_delete_turn
+            || method == Method::session_set_default_character
             || method == Method::session_subscribe
             || method == Method::session_unsubscribe;
     }

@@ -73,6 +73,17 @@ int32_t cha_runtime_save_file(
     const char* data,
     uint64_t size,
     char** error);
+int32_t cha_runtime_context_epoch(
+    const ChaRuntime* runtime,
+    uint64_t* epoch);
+// Export a session as markdown and write it through save_file.
+int32_t cha_runtime_export_session(
+    ChaRuntime* runtime,
+    uint64_t context_epoch,
+    const char* forum_id,
+    const char* session_id,
+    const char* destination_utf8,
+    char** error);
 
 void cha_runtime_set_delivery_callback(
     ChaRuntime* runtime,
