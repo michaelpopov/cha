@@ -1,0 +1,1562 @@
+openapi: 3.1.0
+info:
+  title: CHA DTOs
+  version: 1.0.0
+  description: |
+    Transport-neutral application DTOs and native bridge envelopes.
+    The temporary HTTP catalog in `cha.yaml` references these definitions.
+    Native and HTTP callers share this one schema; do not copy types into
+    route documents.
+paths: {}
+components:
+  schemas:
+    Identifier:
+      type: string
+      minLength: 1
+      pattern: "^(?!\\.{1,2}$)[A-Za-z0-9._~-]+$"
+      examples: [lobby]
+
+    EmptyObject:
+      type: object
+      additionalProperties: false
+
+    OpenAiAuth:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [signed_out, waiting, connected]
+        user_code:
+          type: string
+          description: |
+            Present only while `status` is `waiting`. The code the user enters
+            at the verification URL.
+        verification_url:
+          type: string
+          format: uri
+          description: |
+            Present only while `status` is `waiting`. Always
+            `https://auth.openai.com/codex/device`.
+        attempt_expires_at:
+          $ref: "#/components/schemas/UnixTimestamp"
+          description: |
+            Present only while `status` is `waiting`. Unix seconds when this
+            pending login expires. The browser can compare with `Date.now()/1000`.
+        next_poll_delay_ms:
+          type: integer
+          minimum: 0
+          description: |
+            Present only while `status` is `waiting`. Milliseconds until the
+            next eligible `POST /api/v1/openai/auth/poll`. The browser can pass
+            this value to `setTimeout`.
+        error:
+          type: string
+          description: |
+            Sanitized operator-facing message when the last owner operation
+            failed. Omitted when there is no such message.
+
+    Health:
+      type: object
+      additionalProperties: false
+      required: [ready, live_session_count]
+      properties:
+        ready:
+          type: boolean
+          const: true
+        live_session_count:
+          type: integer
+          minimum: 0
+
+    PersonaSummary:
+      type: object
+      additionalProperties: false
+      required: [id, display_name, appearance]
+      properties:
+        id:
+          $ref: "#/components/schemas/Identifier"
+        display_name:
+          type: string
+        description:
+          type: string
+        appearance:
+          $ref: "#/components/schemas/CharacterAppearance"
+        voice:
+          $ref: "#/components/schemas/SpeechVoice"
+
+    CharacterAppearance:
+      type: object
+      additionalProperties: false
+      description: |
+        How the browser sets this character's words, so a reader can tell one
+        speaker from another without reading every name. A closed vocabulary:
+        the browser owns the actual typefaces, sizes, and colors and pairs each choice
+        with a dark-mode variant, and a workspace cannot supply styling of its
+        own. Always present, defaults included.
+      required: [font, style, weight, size, text_color]
+      properties:
+        font:
+          type: string
+          enum: [sans, serif, mono]
+        style:
+          type: string
+          enum: [normal, italic]
+        weight:
+          type: string
+          enum: [light, normal, medium, semibold, bold]
+        size:
+          type: string
+          enum: [small, normal, large]
+        text_color:
+          type: string
+          enum: [normal, muted, accent]
+
+    SpeechVoiceSettings:
+      type: object
+      additionalProperties: false
+      properties:
+        speed:
+          type: number
+          minimum: 0.7
+          maximum: 1.2
+
+    SpeechVoice:
+      type: object
+      additionalProperties: false
+      required: [id, display_name, elevenlabs_voice_id, settings]
+      properties:
+        id:
+          $ref: "#/components/schemas/Identifier"
+        display_name:
+          type: string
+        elevenlabs_voice_id:
+          description: FishAudio reference ID; field name retained for compatibility.
+          type: string
+        settings:
+          $ref: "#/components/schemas/SpeechVoiceSettings"
+
+    CharacterSummary:
+      type: object
+      additionalProperties: false
+      required: [id, display_name, appearance]
+      properties:
+        id:
+          $ref: "#/components/schemas/Identifier"
+        display_name:
+          type: string
+        description:
+          type: string
+        appearance:
+          $ref: "#/components/schemas/CharacterAppearance"
+        voice:
+          $ref: "#/components/schemas/SpeechVoice"
+
+    ForumSummary:
+      type: object
+      additionalProperties: false
+      required: [id, display_name, default_character_id, default_persona_id, default_persona_display_name, members]
+      properties:
+        id:
+          $ref: "#/components/schemas/Identifier"
+        display_name:
+          type: string
+        description:
+          type: string
+        default_character_id:
+          $ref: "#/components/schemas/Identifier"
+        default_persona_id:
+          $ref: "#/components/schemas/Identifier"
+        default_persona_display_name:
+          type: string
+        members:
+          type: array
+          items:
+            $ref: "#/components/schemas/CharacterSummary"
+
+    SessionListing:
+      type: object
+      additionalProperties: false
+      required: [id, label, live, updated_at]
+      properties:
+        id:
+          $ref: "#/components/schemas/Identifier"
+        label:
+          type: string
+        live:
+          type: boolean
+        updated_at:
+          $ref: "#/components/schemas/UnixTimestamp"
+
+    RecentSession:
+      type: object
+      additionalProperties: false
+      required: [forum_id, session_id, session_label, updated_at]
+      properties:
+        forum_id:
+          $ref: "#/components/schemas/Identifier"
+        session_id:
+          $ref: "#/components/schemas/Identifier"
+        session_label:
+          type: string
+        updated_at:
+          $ref: "#/components/schemas/UnixTimestamp"
+
+    VaultSwitchRequest:
+      type: object
+      additionalProperties: false
+      required: [vault_name, password]
+      properties:
+        vault_name:
+          type: string
+          minLength: 1
+        password:
+          type: [string, "null"]
+          minLength: 1
+
+    MergeVaultRequest:
+      type: object
+      additionalProperties: false
+      required: [source_vault, password]
+      properties:
+        source_vault:
+          type: string
+          minLength: 1
+        password:
+          type: [string, "null"]
+
+    VaultDetail:
+      type: object
+      additionalProperties: false
+      required:
+        - display_name
+        - protected
+        - data_path
+        - mirror_path
+        - modify_path
+        - active
+        - can_delete
+      properties:
+        display_name:
+          type: string
+          minLength: 1
+        protected:
+          type: boolean
+        data_path:
+          type: string
+          minLength: 1
+        mirror_path:
+          type: [string, "null"]
+          description: Absolute mirror directory path.
+        modify_path:
+          type: [string, "null"]
+          description: Absolute editable-workspace directory path.
+        active:
+          type: boolean
+        can_delete:
+          type: boolean
+
+    CreateVaultRequest:
+      type: object
+      additionalProperties: false
+      required: [display_name, copy_from, password]
+      properties:
+        display_name:
+          type: string
+          minLength: 1
+        copy_from:
+          type: [string, "null"]
+        password:
+          type: [string, "null"]
+          minLength: 1
+
+    DownloadR2VaultRequest:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+
+    UpdateVaultRequest:
+      type: object
+      additionalProperties: false
+      required: [vault_name, display_name, password]
+      properties:
+        vault_name:
+          type: string
+          minLength: 1
+        display_name:
+          type: string
+          minLength: 1
+        password:
+          type: [string, "null"]
+          minLength: 1
+    DeleteVaultRequest:
+      type: object
+      additionalProperties: false
+      required: [vault_name]
+      properties:
+        vault_name:
+          type: string
+          minLength: 1
+
+    Bootstrap:
+      type: object
+      additionalProperties: false
+      required:
+        - vault_name
+        - vaults
+        - initial_forum_id
+        - initial_session_id
+        - personas
+        - characters
+        - forums
+        - recent_sessions
+      properties:
+        vault_name:
+          type: string
+          minLength: 1
+        vaults:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            minLength: 1
+        initial_forum_id:
+          $ref: "#/components/schemas/Identifier"
+        initial_session_id:
+          $ref: "#/components/schemas/Identifier"
+        personas:
+          type: array
+          items:
+            $ref: "#/components/schemas/PersonaSummary"
+        characters:
+          type: array
+          items:
+            $ref: "#/components/schemas/CharacterSummary"
+        forums:
+          type: array
+          items:
+            $ref: "#/components/schemas/ForumSummary"
+        recent_sessions:
+          type: array
+          description: All sessions ordered by `updated_at` descending.
+          items:
+            $ref: "#/components/schemas/RecentSession"
+
+    ProviderOption:
+      type: object
+      additionalProperties: false
+      required: [id, label]
+      properties:
+        id:
+          $ref: "#/components/schemas/Identifier"
+        label:
+          type: string
+
+    ProviderSummary:
+      type: object
+      additionalProperties: false
+      required: [id, display_name, model, host]
+      properties:
+        id:
+          $ref: "#/components/schemas/Identifier"
+        display_name:
+          type: string
+        model:
+          type: string
+        host:
+          type: string
+
+    CreateProviderRequest:
+      type: object
+      additionalProperties: false
+      required: [display_name, copy_from]
+      properties:
+        display_name:
+          type: string
+        copy_from:
+          type: [string, "null"]
+          description: Existing provider ID whose settings should be copied.
+
+    ProviderUpdate:
+      type: object
+      additionalProperties: false
+      required:
+        - display_name
+        - host
+        - port
+        - base_path
+        - mode
+        - model
+        - stream
+        - temperature
+        - max_tokens
+        - timeout_s
+        - idle_timeout_s
+        - api_key
+        - reasoning_effort
+        - reasoning_format
+        - https
+        - api
+        - auth
+        - web_search
+        - cache_retention
+      properties:
+        display_name:
+          type: string
+        host:
+          type: string
+        port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+        base_path:
+          type: string
+        mode:
+          type: string
+          enum: [net, test]
+        model:
+          type: string
+        stream:
+          type: boolean
+        temperature:
+          type: [number, "null"]
+          minimum: 0
+          maximum: 2
+        max_tokens:
+          type: [integer, "null"]
+          minimum: 1
+        timeout_s:
+          type: integer
+          minimum: 1
+        idle_timeout_s:
+          type: integer
+          minimum: 1
+        api_key:
+          type: [string, "null"]
+        reasoning_effort:
+          type: string
+        reasoning_format:
+          type: string
+          enum: [auto, none, reasoning_content, reasoning]
+        https:
+          type: boolean
+        api:
+          type: string
+          enum: [chat_completions, responses]
+        auth:
+          type: string
+          enum: [none, openai_subscription]
+        web_search:
+          type: string
+          enum: [off, auto, required]
+        cache_retention:
+          type: string
+          enum: [off, short, long]
+        openrouter_targets:
+          type: array
+          items:
+            type: string
+
+    ProviderDetail:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - display_name
+        - host
+        - port
+        - base_path
+        - mode
+        - model
+        - stream
+        - temperature
+        - max_tokens
+        - timeout_s
+        - idle_timeout_s
+        - api_key
+        - reasoning_effort
+        - reasoning_format
+        - https
+        - api
+        - auth
+        - web_search
+        - cache_retention
+        - openrouter_targets
+        - writable
+        - used_by
+      properties:
+        id:
+          $ref: "#/components/schemas/Identifier"
+        display_name:
+          type: string
+        host:
+          type: string
+        port:
+          type: integer
+        base_path:
+          type: string
+        mode:
+          type: string
+          enum: [net, test]
+        model:
+          type: string
+        stream:
+          type: boolean
+        temperature:
+          type: [number, "null"]
+        max_tokens:
+          type: [integer, "null"]
+        timeout_s:
+          type: integer
+        idle_timeout_s:
+          type: integer
+        api_key:
+          type: [string, "null"]
+        reasoning_effort:
+          type: string
+        reasoning_format:
+          type: string
+          enum: [auto, none, reasoning_content, reasoning]
+        https:
+          type: boolean
+        api:
+          type: string
+          enum: [chat_completions, responses]
+        auth:
+          type: string
+          enum: [none, openai_subscription]
+        web_search:
+          type: string
+          enum: [off, auto, required]
+        cache_retention:
+          type: string
+          enum: [off, short, long]
+        openrouter_targets:
+          type: array
+          items:
+            type: string
+        writable:
+          type: boolean
+        used_by:
+          type: array
+          items:
+            type: string
+
+    StyleUpdate:
+      type: object
+      additionalProperties: false
+      required: [display_name, font, style, weight, size, text_color]
+      properties:
+        display_name:
+          type: string
+        font:
+          type: string
+          enum: [sans, serif, mono]
+        style:
+          type: string
+          enum: [normal, italic]
+        weight:
+          type: string
+          enum: [light, normal, medium, semibold, bold]
+        size:
+          type: string
+          enum: [small, normal, large]
+        text_color:
+          type: string
+          enum: [normal, muted, accent]
+
+    CreateStyleRequest:
+      type: object
+      additionalProperties: false
+      required: [display_name]
+      properties:
+        display_name:
+          type: string
+
+    StyleDetail:
+      type: object
+      additionalProperties: false
+      required: [id, display_name, font, style, weight, size, text_color, writable, used_by]
+      properties:
+        id:
+          $ref: "#/components/schemas/Identifier"
+        display_name:
+          type: string
+        font:
+          type: string
+          enum: [sans, serif, mono]
+        style:
+          type: string
+          enum: [normal, italic]
+        weight:
+          type: string
+          enum: [light, normal, medium, semibold, bold]
+        size:
+          type: string
+          enum: [small, normal, large]
+        text_color:
+          type: string
+          enum: [normal, muted, accent]
+        writable:
+          type: boolean
+        used_by:
+          type: array
+          items:
+            type: string
+
+    VoiceUpdate:
+      type: object
+      additionalProperties: false
+      required: [display_name, description, elevenlabs_voice_id, speed]
+      properties:
+        display_name:
+          type: string
+        description:
+          type: string
+        elevenlabs_voice_id:
+          description: FishAudio reference ID; field name retained for compatibility.
+          type: string
+        speed:
+          type: [number, "null"]
+          minimum: 0.7
+          maximum: 1.2
+
+    CreateVoiceRequest:
+      type: object
+      additionalProperties: false
+      required: [display_name, description, elevenlabs_voice_id]
+      properties:
+        display_name:
+          type: string
+        description:
+          type: string
+        elevenlabs_voice_id:
+          description: FishAudio reference ID; field name retained for compatibility.
+          type: string
+
+    VoiceDetail:
+      type: object
+      additionalProperties: false
+      required: [id, display_name, description, elevenlabs_voice_id, speed, writable, used_by]
+      properties:
+        id:
+          $ref: "#/components/schemas/Identifier"
+        display_name:
+          type: string
+        description:
+          type: string
+        elevenlabs_voice_id:
+          description: FishAudio reference ID; field name retained for compatibility.
+          type: string
+        speed:
+          type: [number, "null"]
+          minimum: 0.7
+          maximum: 1.2
+        writable:
+          type: boolean
+        used_by:
+          type: array
+          items:
+            type: string
+
+    VoiceInputSettings:
+      type: object
+      additionalProperties: false
+      required: [url, model, api_key, delay, prompt]
+      properties:
+        url:
+          type: string
+          minLength: 1
+        model:
+          type: string
+          minLength: 1
+        api_key:
+          $ref: "#/components/schemas/Identifier"
+        delay:
+          type: string
+          enum: [low, medium, high, xhigh]
+        prompt:
+          type: string
+
+    VoiceInputRuntime:
+      type: object
+      additionalProperties: false
+      required: [url, model, api_key, delay, prompt]
+      properties:
+        url:
+          type: string
+          minLength: 1
+        model:
+          type: string
+          minLength: 1
+        api_key:
+          type: string
+          minLength: 1
+        delay:
+          type: string
+          enum: [low, medium, high, xhigh]
+        prompt:
+          type: string
+
+    VoiceOutputSettings:
+      type: object
+      additionalProperties: false
+      required: [url, model, api_key, output_format, default_voice]
+      properties:
+        url:
+          type: string
+          minLength: 1
+        model:
+          type: string
+          minLength: 1
+        api_key:
+          $ref: "#/components/schemas/Identifier"
+        output_format:
+          type: string
+          minLength: 1
+        default_voice:
+          type: string
+          minLength: 1
+
+    VoiceOutputRuntime:
+      type: object
+      additionalProperties: false
+      required: [url, model, output_format, default_voice_id]
+      properties:
+        url:
+          type: string
+          minLength: 1
+        model:
+          type: string
+          minLength: 1
+        output_format:
+          type: string
+          minLength: 1
+        default_voice_id:
+          type: string
+          minLength: 1
+
+    ApiKeyDetail:
+      type: object
+      additionalProperties: false
+      required: [id, display_name, has_value, used_by]
+      properties:
+        id:
+          $ref: "#/components/schemas/Identifier"
+        display_name:
+          type: string
+        has_value:
+          type: boolean
+        used_by:
+          type: array
+          items:
+            type: string
+
+    CreateApiKeyRequest:
+      type: object
+      additionalProperties: false
+      required: [display_name, value]
+      properties:
+        display_name:
+          type: string
+        value:
+          type: string
+
+    RenameApiKeyRequest:
+      type: object
+      additionalProperties: false
+      required: [display_name]
+      properties:
+        display_name:
+          type: string
+
+    ReplaceApiKeyValueRequest:
+      type: object
+      additionalProperties: false
+      required: [value]
+      properties:
+        value:
+          type: string
+
+    R2StorageDetail:
+      type: object
+      additionalProperties: false
+      required: [id, display_name, url, access_key_id, has_secret_key]
+      properties:
+        id:
+          $ref: "#/components/schemas/Identifier"
+        display_name:
+          type: string
+        url:
+          type: string
+        access_key_id:
+          type: string
+        has_secret_key:
+          type: boolean
+
+    SaveR2StorageRequest:
+      type: object
+      additionalProperties: false
+      required: [display_name, url, access_key_id, secret_key]
+      properties:
+        display_name:
+          type: string
+        url:
+          type: string
+        access_key_id:
+          type: string
+        secret_key:
+          description: Null keeps the existing secret key; creating requires a value.
+          type: [string, "null"]
+
+    StyleOption:
+      type: object
+      additionalProperties: false
+      required: [id, label, appearance]
+      properties:
+        id:
+          $ref: "#/components/schemas/Identifier"
+        label:
+          type: string
+        appearance:
+          $ref: "#/components/schemas/CharacterAppearance"
+
+    VoiceOption:
+      type: object
+      additionalProperties: false
+      required: [id, label]
+      properties:
+        id:
+          $ref: "#/components/schemas/Identifier"
+        label:
+          type: string
+
+    CharacterDetail:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - display_name
+        - appearance
+        - character_markdown
+        - editable_markdown
+        - markdown_files
+        - provider
+        - style
+        - voice_id
+        - reasoning_effort
+        - web_search
+        - available_providers
+        - available_styles
+        - available_voices
+        - settings_writable
+        - writable
+      properties:
+        id:
+          $ref: "#/components/schemas/Identifier"
+        display_name:
+          type: string
+        description:
+          type: string
+        appearance:
+          $ref: "#/components/schemas/CharacterAppearance"
+        voice:
+          $ref: "#/components/schemas/SpeechVoice"
+        character_markdown:
+          type: string
+          description: Template-expanded Markdown used for display.
+        editable_markdown:
+          type: string
+          description: Verbatim Markdown accepted by the definition editor.
+        markdown_files:
+          type: array
+          description: Sorted filenames directly in the character directory, without content.
+          items:
+            type: string
+        provider:
+          type: [string, "null"]
+        style:
+          type: [string, "null"]
+        voice_id:
+          type: [string, "null"]
+        reasoning_effort:
+          type: [string, "null"]
+          enum: [low, medium, high, xhigh, null]
+        web_search:
+          type: [string, "null"]
+          enum: [off, auto, required, null]
+        available_providers:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProviderOption"
+        available_styles:
+          type: array
+          items:
+            $ref: "#/components/schemas/StyleOption"
+        available_voices:
+          type: array
+          items:
+            $ref: "#/components/schemas/VoiceOption"
+        settings_writable:
+          type: boolean
+          description: Whether model, style, and voice settings can be changed.
+        writable:
+          type: boolean
+          description: Whether the name and definition can be changed and the character deleted.
+
+    MarkdownFile:
+      type: object
+      additionalProperties: false
+      required: [filename, content, writable]
+      properties:
+        filename:
+          type: string
+        content:
+          type: string
+          description: Verbatim file content, preserving template expressions.
+        writable:
+          type: boolean
+
+    CreateMarkdownFileRequest:
+      type: object
+      additionalProperties: false
+      required: [filename, content]
+      properties:
+        filename:
+          type: string
+        content:
+          type: string
+
+    UpdateMarkdownFileRequest:
+      type: object
+      additionalProperties: false
+      required: [content]
+      properties:
+        content:
+          type: string
+
+    CreateCharacterRequest:
+      type: object
+      additionalProperties: false
+      required: [display_name, description]
+      properties:
+        display_name:
+          type: string
+        description:
+          type: string
+
+    UpdateCharacterRequest:
+      type: object
+      additionalProperties: false
+      required: [provider, style, voice_id, reasoning_effort, web_search]
+      properties:
+        provider:
+          type: string
+        style:
+          type: [string, "null"]
+        voice_id:
+          type: [string, "null"]
+        reasoning_effort:
+          type: [string, "null"]
+          enum: [low, medium, high, xhigh, null]
+        web_search:
+          type: [string, "null"]
+          enum: [off, auto, required, null]
+
+    UpdateCharacterDefinitionRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        display_name:
+          type: string
+        character_markdown:
+          type: string
+
+    PersonaDetail:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - display_name
+        - appearance
+        - persona_markdown
+        - style
+        - voice_id
+        - available_styles
+        - available_voices
+        - writable
+      properties:
+        id:
+          $ref: "#/components/schemas/Identifier"
+        display_name:
+          type: string
+        description:
+          type: string
+        appearance:
+          $ref: "#/components/schemas/CharacterAppearance"
+        voice:
+          $ref: "#/components/schemas/SpeechVoice"
+        persona_markdown:
+          type: string
+        style:
+          type: [string, "null"]
+        voice_id:
+          type: [string, "null"]
+        available_styles:
+          type: array
+          items:
+            $ref: "#/components/schemas/StyleOption"
+        available_voices:
+          type: array
+          items:
+            $ref: "#/components/schemas/VoiceOption"
+        writable:
+          type: boolean
+
+    UpdatePersonaRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        display_name:
+          type: string
+        persona_markdown:
+          type: string
+        style:
+          type: [string, "null"]
+        voice_id:
+          type: [string, "null"]
+
+    CreatePersonaRequest:
+      type: object
+      additionalProperties: false
+      required: [display_name]
+      properties:
+        display_name:
+          type: string
+
+    ForumDetail:
+      type: object
+      additionalProperties: false
+      required: [id, display_name, default_character_id, default_persona_id, default_persona_display_name, members, forum_markdown, markdown_files, writable]
+      properties:
+        id:
+          $ref: "#/components/schemas/Identifier"
+        display_name:
+          type: string
+        description:
+          type: string
+        default_character_id:
+          $ref: "#/components/schemas/Identifier"
+        default_persona_id:
+          $ref: "#/components/schemas/Identifier"
+        default_persona_display_name:
+          type: string
+        members:
+          type: array
+          items:
+            $ref: "#/components/schemas/CharacterSummary"
+        forum_markdown:
+          type: string
+        markdown_files:
+          type: array
+          items:
+            type: string
+        writable:
+          type: boolean
+
+    CreateForumRequest:
+      type: object
+      additionalProperties: false
+      required: [display_name, persona_id]
+      properties:
+        display_name:
+          type: string
+        persona_id:
+          $ref: "#/components/schemas/Identifier"
+
+    UpdateForumRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        display_name:
+          type: string
+        forum_markdown:
+          type: string
+
+    UpdateForumMembersRequest:
+      type: object
+      additionalProperties: false
+      required: [character_ids, persona_id]
+      properties:
+        character_ids:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/Identifier"
+        persona_id:
+          $ref: "#/components/schemas/Identifier"
+
+    CreateSessionRequest:
+      type: object
+      additionalProperties: false
+      required: [label]
+      properties:
+        label:
+          type: string
+          maxLength: 200
+
+    RenameSessionRequest:
+      type: object
+      additionalProperties: false
+      required: [label]
+      properties:
+        label:
+          type: string
+          minLength: 1
+          maxLength: 200
+
+    CreateSessionResult:
+      type: object
+      additionalProperties: false
+      required: [id, label]
+      properties:
+        id:
+          $ref: "#/components/schemas/Identifier"
+        label:
+          type: string
+
+    SessionLabelResult:
+      type: object
+      additionalProperties: false
+      required: [id, label]
+      properties:
+        id:
+          $ref: "#/components/schemas/Identifier"
+        label:
+          type: string
+
+    OpenSessionResult:
+      type: object
+      additionalProperties: false
+      required: [forum_id, session_id]
+      properties:
+        forum_id:
+          $ref: "#/components/schemas/Identifier"
+        session_id:
+          $ref: "#/components/schemas/Identifier"
+
+    InputRequest:
+      type: object
+      additionalProperties: false
+      required: [text]
+      properties:
+        text:
+          type: string
+          description: Input text, limited by the server's configured prompt byte limit.
+
+    CoverRequest:
+      type: object
+      additionalProperties: false
+      required: [through_entry_id]
+      properties:
+        through_entry_id:
+          type: integer
+          minimum: 1
+
+    DeleteTurnRequest:
+      type: object
+      additionalProperties: false
+      required: [response_entry_id]
+      properties:
+        response_entry_id:
+          type: integer
+          minimum: 1
+
+    SetDefaultCharacterRequest:
+      type: object
+      additionalProperties: false
+      required: [character_id]
+      properties:
+        character_id:
+          type: string
+          minLength: 1
+
+    CommandResult:
+      type: object
+      additionalProperties: false
+      required: [clear_input]
+      properties:
+        clear_input:
+          type: boolean
+        notice:
+          type: string
+
+    TranscriptEntry:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - kind
+        - participant_id
+        - display_name
+        - addressed_to
+        - addressed_to_name
+        - text
+        - status
+        - created_at
+      properties:
+        id:
+          $ref: "#/components/schemas/UnsignedInteger"
+        kind:
+          type: string
+          enum: [human, character, notice, error]
+        participant_id:
+          type: string
+        display_name:
+          type: string
+        addressed_to:
+          type: string
+        addressed_to_name:
+          type: string
+        text:
+          type: string
+        status:
+          type: string
+          enum: [complete, streaming, cancelled, failed]
+        request_id:
+          $ref: "#/components/schemas/UnsignedInteger"
+        created_at:
+          description: Unix seconds when the entry was created; null when unknown (rows stored before schema version 3).
+          type: [integer, "null"]
+        has_cached_audio:
+          description: Whether saved audio is available for this entry.
+          type: boolean
+
+    GenerationState:
+      type: object
+      additionalProperties: false
+      required: [active, character_id, character_display_name, phase, reasoning_text]
+      properties:
+        active:
+          type: boolean
+        request_id:
+          $ref: "#/components/schemas/UnsignedInteger"
+        character_id:
+          type: string
+        character_display_name:
+          type: string
+        phase:
+          type: string
+          enum: [waiting, reasoning, answering, stopping]
+        reasoning_text:
+          type: string
+
+    SessionSnapshot:
+      type: object
+      additionalProperties: false
+      required:
+        - forum
+        - session_id
+        - session_label
+        - characters
+        - default_character_id
+        - transcript
+        - generation
+        - lifecycle
+      properties:
+        forum:
+          $ref: "#/components/schemas/ForumSummary"
+        session_id:
+          $ref: "#/components/schemas/Identifier"
+        session_label:
+          type: string
+        characters:
+          type: array
+          items:
+            $ref: "#/components/schemas/CharacterSummary"
+        default_character_id:
+          $ref: "#/components/schemas/Identifier"
+        transcript:
+          type: array
+          items:
+            $ref: "#/components/schemas/TranscriptEntry"
+        covered_until:
+          $ref: "#/components/schemas/UnsignedInteger"
+        generation:
+          $ref: "#/components/schemas/GenerationState"
+        notice:
+          type: string
+        lifecycle:
+          type: string
+          enum: [starting, running, stopping]
+        shutdown_reason:
+          type: string
+          enum: [browser_disconnected, reloading, session_failed, session_deleted, server_stopping]
+
+    AppendTargetEntry:
+      type: object
+      additionalProperties: false
+      required: [kind, entry_id]
+      properties:
+        kind:
+          type: string
+          const: entry
+        entry_id:
+          $ref: "#/components/schemas/UnsignedInteger"
+
+    AppendTargetReasoning:
+      type: object
+      additionalProperties: false
+      required: [kind, request_id]
+      properties:
+        kind:
+          type: string
+          const: reasoning
+        request_id:
+          $ref: "#/components/schemas/UnsignedInteger"
+
+    AppendTarget:
+      oneOf:
+        - $ref: "#/components/schemas/AppendTargetEntry"
+        - $ref: "#/components/schemas/AppendTargetReasoning"
+      discriminator:
+        propertyName: kind
+        mapping:
+          entry: "#/components/schemas/AppendTargetEntry"
+          reasoning: "#/components/schemas/AppendTargetReasoning"
+
+    AppendEvent:
+      type: object
+      additionalProperties: false
+      required: [target, text, seq]
+      properties:
+        target:
+          $ref: "#/components/schemas/AppendTarget"
+        text:
+          type: string
+        seq:
+          $ref: "#/components/schemas/UnsignedInteger"
+
+    AudioDownloadRequest:
+      type: object
+      additionalProperties: false
+      required: [vault_name, reference_id]
+      properties:
+        vault_name: {type: string, minLength: 1}
+        reference_id: {type: string, minLength: 1}
+        settings:
+          type: object
+          properties:
+            speed: {type: number, minimum: 0.5, maximum: 2}
+    AudioDownloadBatchEntry:
+      type: object
+      additionalProperties: false
+      required: [entry_id, reference_id]
+      properties:
+        entry_id: {type: integer, minimum: 1}
+        reference_id: {type: string, minLength: 1}
+        settings:
+          type: object
+          properties:
+            speed: {type: number, minimum: 0.5, maximum: 2}
+    AudioDownloadBatchRequest:
+      type: object
+      additionalProperties: false
+      required: [vault_name, entries]
+      properties:
+        vault_name: {type: string, minLength: 1}
+        entries:
+          type: array
+          minItems: 1
+          description: Entry IDs must be unique within the batch.
+          items: {$ref: "#/components/schemas/AudioDownloadBatchEntry"}
+    AudioDownloadBatchAcceptance:
+      type: object
+      additionalProperties: false
+      required: [entries]
+      properties:
+        entries:
+          type: array
+          items: {$ref: "#/components/schemas/AudioDownloadAcceptance"}
+    AudioDownloadAcceptance:
+      type: object
+      additionalProperties: false
+      required: [entry_id, cached]
+      properties:
+        entry_id: {type: integer, minimum: 1}
+        cached: {type: boolean}
+        state: {type: string, enum: [queued, running]}
+    AudioDownloadJob:
+      type: object
+      additionalProperties: false
+      required: [entry_id, state]
+      properties:
+        entry_id: {type: integer, minimum: 1}
+        state: {type: string, enum: [queued, running, failed]}
+        error: {type: string}
+    AudioDownloadStatus:
+      type: object
+      additionalProperties: false
+      required: [cached_entry_ids, downloads]
+      properties:
+        cached_entry_ids:
+          type: array
+          items: {type: integer, minimum: 1}
+        downloads:
+          type: array
+          items: {$ref: "#/components/schemas/AudioDownloadJob"}
+
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum:
+                - not_found
+                - bad_request
+                - body_too_large
+                - prompt_too_large
+                - forbidden_origin
+                - internal_error
+                - speech_busy
+                - vault_changed
+                - session_stopping
+                - session_limit_reached
+                - session_open_timeout
+                - server_stopping
+                - session_not_live
+                - command_timeout
+                - command_queue_full
+                - vault_password_required
+                - source_vault_password_required
+                - invalid_argument
+                - operation_cancelled
+                - application_unavailable
+            message:
+              type: string
+
+    NativeSafeInteger:
+      type: integer
+      minimum: 0
+      maximum: 9007199254740991
+
+    BridgeInfo:
+      type: object
+      additionalProperties: false
+      required: [protocol_version, application_version, platform]
+      properties:
+        protocol_version:
+          type: integer
+          enum: [1]
+        application_version:
+          type: string
+        platform:
+          type: string
+
+    NativeRequest:
+      type: object
+      additionalProperties: false
+      required: [connection_id, id, context_epoch, method]
+      properties:
+        connection_id: {type: string}
+        id: {$ref: "#/components/schemas/NativeSafeInteger"}
+        context_epoch: {$ref: "#/components/schemas/NativeSafeInteger"}
+        method: {type: string}
+        params:
+          type: object
+          additionalProperties: true
+
+    NativeReply:
+      type: object
+      additionalProperties: false
+      required: [connection_id, id, context_epoch, ok]
+      properties:
+        connection_id: {type: string}
+        id: {$ref: "#/components/schemas/NativeSafeInteger"}
+        context_epoch: {$ref: "#/components/schemas/NativeSafeInteger"}
+        ok: {type: boolean}
+        result: {}
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message]
+          properties:
+            code: {type: string}
+            message: {type: string}
+
+    NativeSessionEvent:
+      type: object
+      additionalProperties: false
+      required:
+        - connection_id
+        - context_epoch
+        - subscription_id
+        - event
+        - forum_id
+        - session_id
+        - seq
+        - payload
+      properties:
+        connection_id: {type: string}
+        context_epoch: {$ref: "#/components/schemas/NativeSafeInteger"}
+        subscription_id: {type: string}
+        event:
+          type: string
+          enum: [session.snapshot, session.append]
+        forum_id: {type: string}
+        session_id: {type: string}
+        seq: {$ref: "#/components/schemas/NativeSafeInteger"}
+        payload: {}
+
+    NativeDeliveryBatch:
+      type: object
+      additionalProperties: false
+      required: [connection_id, delivery_id, messages]
+      properties:
+        connection_id: {type: string}
+        delivery_id: {$ref: "#/components/schemas/NativeSafeInteger"}
+        messages:
+          type: array
+          items: {}
+
+    NativeDeliveryAck:
+      type: object
+      additionalProperties: false
+      required: [connection_id, delivery_id]
+      properties:
+        connection_id: {type: string}
+        delivery_id: {$ref: "#/components/schemas/NativeSafeInteger"}
+
+    MediaResource:
+      type: object
+      additionalProperties: false
+      required: [resource_id, url, mime_type, byte_length]
+      properties:
+        resource_id: {type: string}
+        url: {type: string}
+        mime_type: {type: string}
+        byte_length: {$ref: "#/components/schemas/NativeSafeInteger"}
+
+    UnixTimestamp:
+      type: integer
+      format: int64
+      description: Whole seconds since the Unix epoch.
+
+    UnsignedInteger:
+      type: integer
+      minimum: 0

@@ -481,7 +481,7 @@ if(BUILD_TESTING)
     target_compile_definitions(
         cha_tests
         PRIVATE
-            CHA_IMPORT_SEED_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/packaging/linux/import-seed")
+            CHA_IMPORT_SEED_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/packaging/shared/import-seed")
     if(TARGET cha_lease_test_helper)
         target_compile_definitions(
             cha_tests
@@ -587,7 +587,6 @@ if(BUILD_TESTING)
         cha_native_runtime_tests
         PRIVATE
             cha_bridge
-            cha_web
             cha_sqlite3
             GTest::gtest_main)
     target_include_directories(
@@ -694,7 +693,7 @@ if(APPLE)
     add_library(
         cha_macos_runtime SHARED
         packaging/macos/runtime_bridge.cpp)
-    target_link_libraries(cha_macos_runtime PRIVATE cha_web cha_bridge)
+    target_link_libraries(cha_macos_runtime PRIVATE cha_bridge)
     target_include_directories(
         cha_macos_runtime PRIVATE packaging/macos)
     set_target_properties(
@@ -735,7 +734,6 @@ if(WIN32)
     target_link_libraries(
         cha_windows_app
         PRIVATE
-            cha_web
             cha_bridge
             cha_webview2_loader
             comdlg32
@@ -747,6 +745,31 @@ if(WIN32)
         cha_windows_app PRIVATE "/MANIFESTINPUT:${CHA_WINDOWS_MANIFEST}")
     set_target_properties(cha_windows_app PROPERTIES OUTPUT_NAME CHA)
     cha_enable_warnings(cha_windows_app)
+
+    add_executable(
+        cha_windows_test_app WIN32
+        packaging/windows/main.cpp
+        packaging/macos/runtime_bridge.cpp
+        ${CMAKE_CURRENT_BINARY_DIR}/generated/CHA.rc
+        ${CHA_WINDOWS_ICON})
+    target_include_directories(
+        cha_windows_test_app PRIVATE packaging/macos)
+    target_compile_definitions(
+        cha_windows_test_app PRIVATE CHA_NATIVE_INSTRUMENTATION)
+    target_link_libraries(
+        cha_windows_test_app
+        PRIVATE
+            cha_bridge
+            cha_webview2_loader
+            comdlg32
+            ole32
+            shell32
+            shlwapi
+            user32)
+    target_link_options(
+        cha_windows_test_app PRIVATE "/MANIFESTINPUT:${CHA_WINDOWS_MANIFEST}")
+    set_target_properties(cha_windows_test_app PROPERTIES OUTPUT_NAME CHATest)
+    cha_enable_warnings(cha_windows_test_app)
 endif()
 add_custom_command(
     TARGET chaweb_app
@@ -756,7 +779,7 @@ add_custom_command(
         -DEXECUTABLE=$<TARGET_FILE:chaweb_app>
         -DOUTPUT_DIRECTORY=${CMAKE_CURRENT_SOURCE_DIR}/bin
         -DWEBAPP_DIST=${CMAKE_CURRENT_SOURCE_DIR}/webapp/dist
-        -DIMPORT_SEED_DIRECTORY=${CMAKE_CURRENT_SOURCE_DIR}/packaging/linux/import-seed
-        -DCONFIG_EXAMPLE_DIRECTORY=${CMAKE_CURRENT_SOURCE_DIR}/packaging/linux/cha-config.example
+        -DIMPORT_SEED_DIRECTORY=${CMAKE_CURRENT_SOURCE_DIR}/packaging/shared/import-seed
+        -DCONFIG_EXAMPLE_DIRECTORY=${CMAKE_CURRENT_SOURCE_DIR}/packaging/shared/cha-config.example
         -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/stage_local_deployment.cmake
     VERBATIM)

@@ -10,8 +10,16 @@ if (-not $Assets) {
     $Assets = Join-Path $repository 'webapp\dist'
 }
 if (-not $Executable) {
-    $candidate = Join-Path $repository 'build\ninja\CHA.exe'
-    if (Test-Path $candidate) { $Executable = $candidate }
+    foreach ($candidate in @(
+            (Join-Path $repository 'build\ninja\CHATest.exe'),
+            (Join-Path $repository 'build\ninja\Release\CHATest.exe'),
+            (Join-Path $repository 'build\ninja\CHA.exe')
+        )) {
+        if (Test-Path $candidate) {
+            $Executable = $candidate
+            break
+        }
+    }
 }
 if (-not $Executable) {
     throw 'CHA_WEBVIEW2_EXECUTABLE is required on Windows'

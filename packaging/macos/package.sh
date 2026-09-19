@@ -79,9 +79,6 @@ trap cleanup EXIT HUP INT TERM
 echo "==> Installing locked browser build dependencies"
 (cd "$webapp" && npm ci --no-audit)
 
-echo "==> Installing the Playwright Chromium browser"
-(cd "$webapp" && npx playwright install chromium)
-
 echo "==> Checking generated API types and browser application"
 (cd "$webapp" && npm run check)
 
@@ -95,7 +92,7 @@ cmake -S "$repository" -B "$native_build" -G Ninja \
     -DCMAKE_OSX_DEPLOYMENT_TARGET="$deployment_target" \
     -DBUILD_TESTING=OFF \
     -DOPENSSL_USE_STATIC_LIBS=TRUE
-cmake --build "$native_build" --target cha_macos_runtime chaweb_app
+cmake --build "$native_build" --target cha_macos_runtime
 
 echo "==> Assembling CHA.app"
 cmake -E remove_directory "$temporary"
@@ -185,7 +182,12 @@ for executable in "$contents/MacOS/CHA" "$contents/Frameworks/libChaRuntime.dyli
     fi
 done
 
-echo "==> Testing the embedded runtime from the assembled bundle"
+if find "$application" -name chaweb -print -quit | grep -q .; then
+    echo "package check: chaweb leaked into CHA.app" >&2
+    exit 1
+fi
+
+echo "==> Testing the embedded native runtime from the assembled bundle"
 bundle_test="$temporary/bundle-test"
 bundle_config="$bundle_test/config"
 mkdir -p "$bundle_config"
@@ -199,33 +201,47 @@ xcrun clang \
 DYLD_LIBRARY_PATH="$contents/Frameworks" "$bundle_test/runtime-smoke" \
     "$bundle_config" \
     "$resources"
+
+echo "==> Rejecting development and automation hooks in the shipping binary"
+if "$contents/MacOS/CHA" --dev-origin "http://127.0.0.1:5173" \
+        >/dev/null 2>"$bundle_test/reject-dev.err"; then
+    echo "package check: shipping CHA accepted --dev-origin" >&2
+    exit 1
+fi
+if ! grep -q "does not accept command-line arguments" "$bundle_test/reject-dev.err"; then
+    echo "package check: shipping CHA did not reject --dev-origin" >&2
+    cat "$bundle_test/reject-dev.err" >&2
+    exit 1
+fi
+if "$contents/MacOS/CHA" --http >/dev/null 2>"$bundle_test/reject-http.err"; then
+    echo "package check: shipping CHA accepted --http" >&2
+    exit 1
+fi
+if CHA_DEV_ORIGIN="http://127.0.0.1:5173" "$contents/MacOS/CHA" --feasibility \
+        >/dev/null 2>"$bundle_test/reject-feasibility.err"; then
+    echo "package check: shipping CHA accepted --feasibility" >&2
+    exit 1
+fi
+
+echo "==> Exercising assembled assets through the native test host"
+prepare="$repository/build/ninja/cha_prepare_test_vault"
+if [ ! -x "$prepare" ]; then
+    cmake --preset ninja
+    cmake --build --preset ninja --target cha_prepare_test_vault
+fi
+CHA_NATIVE_ASSETS="$resources/web" \
+CHA_RUNTIME_LIB="$contents/Frameworks/libChaRuntime.dylib" \
+CHA_PREPARE_TEST_VAULT="$prepare" \
+    "$repository/tests/native/macos/run.sh" flow --timeout-ms 25000
+CHA_NATIVE_ASSETS="$resources/web" \
+CHA_RUNTIME_LIB="$contents/Frameworks/libChaRuntime.dylib" \
+CHA_PREPARE_TEST_VAULT="$prepare" \
+    "$repository/tests/native/macos/run.sh" reload --timeout-ms 30000
+CHA_NATIVE_ASSETS="$resources/web" \
+CHA_RUNTIME_LIB="$contents/Frameworks/libChaRuntime.dylib" \
+CHA_PREPARE_TEST_VAULT="$prepare" \
+    "$repository/tests/native/macos/run.sh" quit --timeout-ms 25000
 cmake -E remove_directory "$bundle_test"
-
-# The browser suite and the upgrade check both expect the flat Linux package,
-# down to files CHA.app has no use for: webapp/e2e/start-cha.mjs refuses to run
-# without start-cha.sh and cha-config.example. Both are staged here to satisfy
-# that assertion; the bundle itself ships neither.
-echo "==> Testing the assembled application through production chaweb"
-test_application="$temporary/test-application"
-mkdir -p "$test_application"
-cp "$native_build/chaweb" "$test_application/chaweb"
-cp "$repository/bin/start-cha.sh" "$test_application/start-cha.sh"
-cp -R "$repository/packaging/linux/cha-config.example" \
-    "$test_application/cha-config.example"
-cp -R "$repository/packaging/linux/import-seed" \
-    "$test_application/import-seed"
-cp -R "$resources/web" "$test_application/web"
-chmod 755 "$test_application"
-chmod 755 "$test_application/chaweb" "$test_application/start-cha.sh"
-chmod -R u=rwX,go=rX "$test_application/web" "$test_application/import-seed" \
-    "$test_application/cha-config.example"
-
-"$repository/scripts/check-linux-package.sh" "$test_application"
-(cd "$webapp" && \
-    CHA_E2E_APPLICATION_ROOT="$test_application" \
-    npx playwright test --project=served)
-"$repository/scripts/test-linux-package-upgrade.sh" "$test_application"
-cmake -E remove_directory "$test_application"
 
 echo "==> Ad-hoc signing application"
 codesign --force --sign - --timestamp=none "$contents/Frameworks/libChaRuntime.dylib"

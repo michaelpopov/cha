@@ -65,8 +65,14 @@ cmake -E remove_directory "$temporary"
 mkdir -p "$temporary/web"
 cp "$native_build/chaweb" "$temporary/chaweb"
 cp "$repository/bin/start-cha.sh" "$temporary/start-cha.sh"
-cp -R "$repository/packaging/linux/cha-config.example" "$temporary/cha-config.example"
-cp -R "$repository/packaging/linux/import-seed" "$temporary/import-seed"
+cp -R "$repository/packaging/shared/cha-config.example" "$temporary/cha-config.example"
+cat >> "$temporary/cha-config.example/app.toml" <<'EOF'
+
+[web]
+host = "0.0.0.0"
+port = 8086
+EOF
+cp -R "$repository/packaging/shared/import-seed" "$temporary/import-seed"
 cp -R "$webapp/dist/." "$temporary/web/"
 chmod 755 "$temporary"
 chmod 755 "$temporary/chaweb" "$temporary/start-cha.sh"

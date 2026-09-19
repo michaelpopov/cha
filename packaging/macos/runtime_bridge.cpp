@@ -5,7 +5,6 @@
 #include "util/logging.h"
 #include "util/path_name.h"
 #include "web/application_config.h"
-#include "web/application_runtime.h"
 #include "workspace/workspace_config_store.h"
 
 #include <nlohmann/json.hpp>
@@ -29,7 +28,6 @@ using cha::WorkspaceConfigTransfer;
 using cha::app::Application;
 using cha::bridge::BridgeRouter;
 using cha::web::ApplicationCommand;
-using cha::web::ApplicationRuntime;
 using cha::web::ConfigurationTransport;
 using cha::web::parse_application_command;
 
@@ -48,7 +46,6 @@ constexpr const char* kPlatform = "unknown";
 struct ChaRuntime {
     std::unique_ptr<Application> native_application;
     std::unique_ptr<BridgeRouter> router;
-    std::unique_ptr<ApplicationRuntime> http_application;
     int port{};
     bool logging{};
     bool native{};
@@ -92,22 +89,11 @@ void set_current_error(char** error) noexcept {
 
 ApplicationCommand runtime_command(
     const char* config_path,
-    const char* resource_path,
-    bool http) {
+    const char* resource_path) {
     const char* arguments[] = {
         "CHA", "--root", resource_path, "--config", config_path};
-    ApplicationCommand command = parse_application_command(
-        5,
-        arguments,
-        http ? ConfigurationTransport::http : ConfigurationTransport::native);
-    if (http) {
-        // CHA.app does not use [web]. The only client is the WebView in this
-        // process, so the listener is always private loopback on a port the
-        // operating system picks.
-        command.host = "127.0.0.1";
-        command.port = 0;
-    }
-    return command;
+    return parse_application_command(
+        5, arguments, ConfigurationTransport::native);
 }
 
 void stop_pump(ChaRuntime* runtime) {
@@ -168,15 +154,12 @@ int32_t transfer(
         return 0;
     }
     try {
-        const cha::web::R2DatabaseTransfer result = runtime->native_application
-            ? (download
-                ? runtime->native_application->download_database()
-                : runtime->native_application->upload_database())
-            : runtime->http_application
-            ? (download
-                ? runtime->http_application->download_database()
-                : runtime->http_application->upload_database())
-            : throw std::runtime_error("CHA runtime is not available");
+        if (!runtime->native_application) {
+            throw std::runtime_error("CHA runtime is not available");
+        }
+        const cha::web::R2DatabaseTransfer result = download
+            ? runtime->native_application->download_database()
+            : runtime->native_application->upload_database();
         *byte_count = result.byte_count;
         return 1;
     } catch (const cha::WorkspaceRestartRequiredError& fatal) {
@@ -199,15 +182,12 @@ int32_t transfer_configuration(
         return 0;
     }
     try {
-        const WorkspaceConfigTransfer result = runtime->native_application
-            ? (importing
-                ? runtime->native_application->import_configuration()
-                : runtime->native_application->export_configuration())
-            : runtime->http_application
-            ? (importing
-                ? runtime->http_application->import_configuration()
-                : runtime->http_application->export_configuration())
-            : throw std::runtime_error("CHA runtime is not available");
+        if (!runtime->native_application) {
+            throw std::runtime_error("CHA runtime is not available");
+        }
+        const WorkspaceConfigTransfer result = importing
+            ? runtime->native_application->import_configuration()
+            : runtime->native_application->export_configuration();
         *file_count = result.file_count;
         return 1;
     } catch (const cha::WorkspaceRestartRequiredError& fatal) {
@@ -231,28 +211,26 @@ ChaRuntime* cha_runtime_create(
     char** error) {
     clear_error(error);
     if (password_error) *password_error = 0;
-    const bool http = http_mode != 0;
-    if (!config_path || !resource_path || !vault_password
-        || (http && (!access_token || *access_token == '\0'))) {
+    if (http_mode != 0) {
+        set_string(
+            error,
+            "The native runtime does not start an application listener");
+        return nullptr;
+    }
+    if (!config_path || !resource_path || !vault_password) {
         set_string(error, "CHA runtime configuration is incomplete");
         return nullptr;
     }
+    (void)access_token;
 
     std::unique_ptr<ChaRuntime> runtime;
     try {
         ApplicationCommand command = runtime_command(
-            config_path, resource_path, http);
+            config_path, resource_path);
         runtime = std::make_unique<ChaRuntime>();
         cha::initialize_diagnostic_logging(
             command.log_file, command.log_level);
         runtime->logging = true;
-        if (http) {
-            runtime->http_application = ApplicationRuntime::open(
-                command, access_token, vault_password);
-            runtime->port = runtime->http_application->start();
-            runtime->native = false;
-            return runtime.release();
-        }
         runtime->native_application = Application::open(
             command, vault_password, cha::app::native_settings());
         BridgeRouter::Options options;
@@ -296,7 +274,7 @@ int32_t cha_runtime_requires_password(
     }
     try {
         const ApplicationCommand command = runtime_command(
-            config_path, resource_path, false);
+            config_path, resource_path);
         set_string(vault_name, command.vault.name.c_str());
         if (vault_name && !*vault_name) throw std::bad_alloc();
         return command.vault.password_protected ? 1 : 0;
@@ -329,16 +307,6 @@ void cha_runtime_destroy(ChaRuntime* runtime) {
     }
     runtime->router.reset();
     runtime->native_application.reset();
-    if (runtime->http_application) {
-        try {
-            runtime->http_application->shutdown();
-            runtime->http_application.reset();
-        } catch (...) {
-            (void)runtime->http_application.release();
-            if (runtime->logging) cha::shutdown_diagnostic_logging();
-            return;
-        }
-    }
     if (runtime->logging) cha::shutdown_diagnostic_logging();
     delete runtime;
 }
@@ -357,9 +325,6 @@ int32_t cha_runtime_can_modify(const ChaRuntime* runtime) {
         if (runtime->native_application) {
             return runtime->native_application->capabilities().can_modify ? 1 : 0;
         }
-        if (runtime->http_application) {
-            return runtime->http_application->current_vault().modify ? 1 : 0;
-        }
     } catch (...) {
     }
     return 0;
@@ -370,9 +335,6 @@ int32_t cha_runtime_can_transfer_r2(const ChaRuntime* runtime) {
     try {
         if (runtime->native_application) {
             return runtime->native_application->capabilities().can_transfer_r2 ? 1 : 0;
-        }
-        if (runtime->http_application) {
-            return runtime->http_application->has_r2_storage() ? 1 : 0;
         }
     } catch (...) {
     }
@@ -615,13 +577,6 @@ int32_t cha_runtime_join_shutdown(ChaRuntime* runtime, int32_t grace_ms) {
         const auto grace = std::chrono::milliseconds{
             grace_ms > 0 ? grace_ms : 10000};
         return runtime->native_application->join_shutdown(grace) ? 1 : 0;
-    }
-    if (runtime->http_application) {
-        try {
-            runtime->http_application->shutdown();
-        } catch (...) {
-            return 0;
-        }
     }
     return 1;
 }

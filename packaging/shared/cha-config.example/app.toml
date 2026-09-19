@@ -2,10 +2,6 @@ vault = "Personal"
 # mirror = "/absolute/path/to/mirrors"
 # modify = "/absolute/path/to/editable-workspaces"
 
-[web]
-host = "0.0.0.0"
-port = 8086
-
 [logging]
 file = "logs/cha.log"
 level = "info"

@@ -150,6 +150,25 @@ protected:
     std::uint64_t next_id_{1};
 };
 
+TEST_F(NativeRuntimeTest, RejectsHttpModeInsteadOfStartingAListener) {
+    char* error = nullptr;
+    int32_t password_error = 0;
+    ChaRuntime* http = cha_runtime_create(
+        config_.c_str(),
+        resources_.c_str(),
+        "token",
+        "",
+        1,
+        &password_error,
+        &error);
+    EXPECT_EQ(http, nullptr);
+    EXPECT_NE(error, nullptr);
+    if (error) {
+        EXPECT_NE(std::string(error).find("listener"), std::string::npos);
+    }
+    cha_string_free(error);
+}
+
 TEST_F(NativeRuntimeTest, RejectsUnknownAndUnownedMediaResources) {
     char* mime = nullptr;
     void* bytes = nullptr;

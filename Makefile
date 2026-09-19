@@ -1,4 +1,4 @@
-.PHONY: build build-web import-dev package-linux package-macos package-windows web-check web-stage web-e2e test itest run run-web-dev clean-san
+.PHONY: build build-web import-dev package-linux package-macos package-windows web-check web-stage web-e2e test itest run run-web-dev run-native-dev clean-san
 
 build:
 	cmake --preset ninja
@@ -40,7 +40,7 @@ run: build-web web-stage
 
 import-dev: build-web
 	@test -n "$(CONFIG)" && test -n "$(VAULT)" || (echo "usage: make import-dev CONFIG=/path/to/cha-config VAULT=Personal" >&2; exit 2)
-	./build/ninja/chaweb --config="$(CONFIG)" --vault="$(VAULT)" --import packaging/linux/import-seed
+	./build/ninja/chaweb --config="$(CONFIG)" --vault="$(VAULT)" --import packaging/shared/import-seed
 
 # The API server behind 'npm run dev'. It listens on the port the Vite proxy
 # targets, which is not the port the staged loop above uses; see
@@ -50,6 +50,13 @@ import-dev: build-web
 run-web-dev: build-web web-stage
 	@test -n "$(CONFIG)" || (echo "usage: make run-web-dev CONFIG=/path/to/cha-config" >&2; exit 2)
 	./build/ninja/chaweb --root bin --config="$(CONFIG)"
+
+# Native development: Vite serves http://127.0.0.1:5173 and the host uses the
+# bridge. Domain calls never go through the Vite proxy. Keep `npm run e2e` /
+# `npm run e2e:http` as the temporary HTTP browser suite.
+run-native-dev: build
+	@test -n "$(CONFIG)" || (echo "usage: make run-native-dev CONFIG=/path/to/cha-config" >&2; exit 2)
+	./scripts/run-native-dev.sh "$(CONFIG)"
 
 clean-san:
 	rm -rf build/asan-ubsan build/tsan

@@ -62,13 +62,12 @@ export type CreateApiKeyRequest = components['schemas']['CreateApiKeyRequest'];
 export type R2StorageDetail = components['schemas']['R2StorageDetail'];
 export type SaveR2StorageRequest = components['schemas']['SaveR2StorageRequest'];
 export type ErrorCode = components['schemas']['ErrorResponse']['error']['code'];
-
-export interface MediaResource {
-  resource_id: string;
-  url: string;
-  mime_type: string;
-  byte_length: number;
-}
+export type MediaResource = components['schemas']['MediaResource'];
+export type BridgeInfo = components['schemas']['BridgeInfo'];
+export type NativeRequest = components['schemas']['NativeRequest'];
+export type NativeReply = components['schemas']['NativeReply'];
+export type NativeSessionEvent = components['schemas']['NativeSessionEvent'];
+export type NativeDeliveryAck = components['schemas']['NativeDeliveryAck'];
 
 // Generated API unions are compile-time only. Keeping the runtime list checked
 // against that union prevents a newer or malformed server string from being

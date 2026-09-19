@@ -358,6 +358,7 @@ struct LaunchOptions {
     std::optional<std::filesystem::path> data_root;
     std::optional<std::filesystem::path> assets;
     std::optional<int> cdp_port;
+    std::optional<std::wstring> dev_origin;
 };
 
 struct DeliveryPayload {
@@ -458,6 +459,7 @@ LaunchOptions parse_launch_options() {
     } guard{arguments};
 
     if (count == 1) return {};
+#if defined(CHA_NATIVE_INSTRUMENTATION)
     if (count == 3 && std::wstring_view(arguments[1]) == L"--smoke-test") {
         return {
             .smoke_test = true,
@@ -475,14 +477,18 @@ LaunchOptions parse_launch_options() {
         };
         if (argument == L"--feasibility") {
             options.feasibility = true;
-        } else if (argument == L"--http") {
-            options.http_mode = true;
         } else if (argument == L"--assets") {
             options.assets = std::filesystem::path(require_value());
         } else if (argument == L"--cdp-port") {
             options.cdp_port = std::stoi(std::wstring(require_value()));
         } else if (argument == L"--user-data") {
             options.data_root = std::filesystem::path(require_value());
+        } else if (argument == L"--dev-origin") {
+            const std::wstring value(require_value());
+            if (value != L"http://127.0.0.1:5173") {
+                throw std::runtime_error("CHA does not accept command-line arguments");
+            }
+            options.dev_origin = value;
         } else {
             throw std::runtime_error("CHA does not accept command-line arguments");
         }
@@ -491,6 +497,10 @@ LaunchOptions parse_launch_options() {
         throw std::runtime_error("CHA does not accept command-line arguments");
     }
     return options;
+#else
+    (void)arguments;
+    throw std::runtime_error("CHA does not accept command-line arguments");
+#endif
 }
 
 class WindowsApplication final
@@ -512,9 +522,10 @@ public:
         instance_ = instance;
         smoke_test_ = options.smoke_test;
         feasibility_ = options.feasibility;
-        http_mode_ = options.http_mode;
+        http_mode_ = false;
         assets_ = options.assets;
         cdp_port_ = options.cdp_port;
+        dev_origin_ = options.dev_origin;
         if (!assets_ && !feasibility_) {
             assets_ = cha::executable_directory() / "web";
         }
@@ -737,7 +748,7 @@ private:
                 resource_path.c_str(),
                 runtime_token_.c_str(),
                 password.c_str(),
-                http_mode_ ? 1 : 0,
+                0,
                 &password_error,
                 &bridge_error);
             if (runtime_ != nullptr) break;
@@ -748,18 +759,17 @@ private:
             if (!entered) throw LaunchCancelled();
             password = *entered;
         }
-        if (http_mode_) {
-            const int32_t port = cha_runtime_port(runtime_);
-            if (port <= 0) {
-                throw std::runtime_error("CHA could not start its private server");
-            }
-            runtime_origin_ = L"http://127.0.0.1:" + std::to_wstring(port);
+        if (cha_runtime_port(runtime_) != 0) {
+            throw std::runtime_error("CHA started an application listener");
+        }
+        if (dev_origin_) {
+            runtime_origin_ = *dev_origin_;
             runtime_url_ = runtime_origin_ + L"/";
         } else {
             runtime_origin_ = kFeasibilityOrigin;
             runtime_url_ = std::wstring(kFeasibilityOrigin) + L"/";
-            cha_runtime_set_delivery_callback(runtime_, native_delivery, this);
         }
+        cha_runtime_set_delivery_callback(runtime_, native_delivery, this);
         update_database_menu_items();
     }
 
@@ -783,12 +793,17 @@ private:
     }
 
     void start_webview() {
+#if defined(CHA_NATIVE_INSTRUMENTATION)
         if (cdp_port_) {
             const std::wstring arguments =
                 L"--remote-debugging-port=" + std::to_wstring(*cdp_port_);
             ::SetEnvironmentVariableW(
                 L"WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", arguments.c_str());
         }
+#else
+        ::SetEnvironmentVariableW(L"WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", nullptr);
+        ::SetEnvironmentVariableW(L"CHA_DEV_ORIGIN", nullptr);
+#endif
         const std::shared_ptr<WindowsApplication> self = shared_from_this();
         const HRESULT result = ::CreateCoreWebView2EnvironmentWithOptions(
             nullptr,
@@ -1431,11 +1446,15 @@ private:
     }
 
     bool is_application_uri(std::wstring_view uri) const {
-        if (uri == runtime_origin_) return true;
-        const std::wstring prefix = runtime_origin_ + L"/";
-        if (starts_with_case_insensitive(uri, prefix)) return true;
-        const std::wstring blob_prefix = L"blob:" + prefix;
-        if (starts_with_case_insensitive(uri, blob_prefix)) return true;
+        const auto matches_origin = [&](std::wstring_view origin) {
+            if (uri == origin) return true;
+            const std::wstring prefix = std::wstring(origin) + L"/";
+            if (starts_with_case_insensitive(uri, prefix)) return true;
+            const std::wstring blob_prefix = L"blob:" + prefix;
+            return starts_with_case_insensitive(uri, blob_prefix);
+        };
+        if (matches_origin(runtime_origin_)) return true;
+        if (dev_origin_ && matches_origin(kFeasibilityOrigin)) return true;
         if (feasibility_) {
             const std::wstring blob_origin = L"blob:" + std::wstring(kFeasibilityOrigin);
             return starts_with_case_insensitive(uri, blob_origin);
@@ -1766,6 +1785,7 @@ private:
     std::wstring runtime_url_;
     std::optional<std::filesystem::path> assets_;
     std::optional<int> cdp_port_;
+    std::optional<std::wstring> dev_origin_;
     ComPtr<ICoreWebView2Environment> environment_;
     ComPtr<ICoreWebView2Controller> controller_;
     ComPtr<ICoreWebView2> webview_;
@@ -1812,7 +1832,9 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int show_command) {
         if (com_initialized) ::CoUninitialize();
         return 0;
     } catch (const std::exception& error) {
-        if (!smoke_test) {
+        const bool argument_error = std::string_view(error.what()).find(
+            "command-line arguments") != std::string_view::npos;
+        if (!smoke_test && !argument_error) {
             std::wstring message;
             try {
                 message = wide_from_utf8(error.what());
@@ -1826,6 +1848,6 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int show_command) {
                 MB_OK | MB_ICONERROR);
         }
         if (com_initialized) ::CoUninitialize();
-        return 1;
+        return argument_error ? 2 : 1;
     }
 }

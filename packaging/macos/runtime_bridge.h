@@ -19,10 +19,10 @@ typedef void (*cha_runtime_delivery_fn)(
 // Returned strings belong to the caller and must be released with
 // cha_string_free().
 //
-// http_mode 0 starts Application and the common bridge with no listener.
-// http_mode 1 is the temporary HTTP runtime: loopback on an OS-chosen port,
-// answering only requests carrying access_token as a CHA_RUNTIME cookie.
-// Native mode ignores access_token. config_path is the configuration directory.
+// http_mode must be 0. Native hosts start Application and the common bridge
+// with no listener. The temporary HTTP runtime is the separate chaweb
+// process, not this library. Native mode ignores access_token.
+// config_path is the configuration directory.
 ChaRuntime* cha_runtime_create(
     const char* config_path,
     const char* resource_path,

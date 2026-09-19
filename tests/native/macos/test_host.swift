@@ -20,6 +20,7 @@ private struct HostOptions {
     var expectation = ProbeExpectation.pass
     var timeoutMs = 20000
     var config: URL?
+    var devOrigin: URL?
 }
 
 private enum HostError: LocalizedError {
@@ -30,7 +31,7 @@ private enum HostError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .usage:
-            return "usage: cha_macos_native_test_host --assets <dir> [--config <dir>] [--expect pass|fail|timeout|audio|flow|reload|renderer-fail|stall|quit] [--timeout-ms N]"
+            return "usage: cha_macos_native_test_host --assets <dir> [--config <dir>] [--dev-origin http://127.0.0.1:5173] [--expect pass|fail|timeout|audio|flow|reload|renderer-fail|stall|quit] [--timeout-ms N]"
         case .probeFailed(let detail):
             return detail
         case .timedOut:
@@ -45,6 +46,7 @@ private func parseOptions() throws -> HostOptions {
     var expectation = ProbeExpectation.pass
     var timeoutMs = 20000
     var config: URL?
+    var devOrigin: URL?
     var index = 0
     while index < arguments.count {
         let argument = arguments[index]
@@ -68,6 +70,13 @@ private func parseOptions() throws -> HostOptions {
                 throw HostError.usage
             }
             timeoutMs = parsed
+        case "--dev-origin":
+            let value = try takeValue()
+            guard value == "http://127.0.0.1:5173",
+                  let parsed = URL(string: value) else {
+                throw HostError.usage
+            }
+            devOrigin = parsed
         default:
             throw HostError.usage
         }
@@ -75,7 +84,11 @@ private func parseOptions() throws -> HostOptions {
     }
     guard let assets else { throw HostError.usage }
     return HostOptions(
-        assets: assets, expectation: expectation, timeoutMs: timeoutMs, config: config)
+        assets: assets,
+        expectation: expectation,
+        timeoutMs: timeoutMs,
+        config: config,
+        devOrigin: devOrigin)
 }
 
 private func isProbe(_ expectation: ProbeExpectation) -> Bool {
@@ -96,6 +109,7 @@ private final class NativeTestHost: NSObject, WKNavigationDelegate, WKUIDelegate
     private var nativeBridge: ChaNativeBridgeReceiver?
     private var runtime: OpaquePointer?
     private var webView: WKWebView!
+    private var window: NSWindow?
     private var finished = false
     private var flowPhase = 0
     private var initialFlowStarted = false
@@ -104,7 +118,7 @@ private final class NativeTestHost: NSObject, WKNavigationDelegate, WKUIDelegate
     init(options: HostOptions) {
         self.options = options
         super.init()
-        if isProbe(options.expectation) {
+        if isProbe(options.expectation) && options.devOrigin == nil {
             let built = makeFeasibilityWebViewConfiguration(assetRoot: options.assets)
             probeReceiver = built.2
             let view = WKWebView(
@@ -142,6 +156,10 @@ private final class NativeTestHost: NSObject, WKNavigationDelegate, WKUIDelegate
         runtime = created
         FileHandle.standardError.write(
             Data("runtime_listener=\(cha_runtime_port(created) == 0 ? "none" : "http")\n".utf8))
+        if cha_runtime_port(created) != 0 {
+            FileHandle.standardError.write(Data("FAIL native runtime opened a listener\n".utf8))
+            exit(1)
+        }
         let built = makeNativeWebViewConfiguration(assetRoot: options.assets)
         let view = WKWebView(
             frame: NSRect(x: 0, y: 0, width: 800, height: 600),
@@ -149,12 +167,38 @@ private final class NativeTestHost: NSObject, WKNavigationDelegate, WKUIDelegate
         view.navigationDelegate = self
         view.uiDelegate = self
         let receiver = ChaNativeBridgeReceiver(runtime: created)
+        if let origin = options.devOrigin {
+            receiver.isTrustedOrigin = { securityOrigin in
+                isChaAssetOrigin(securityOrigin)
+                    || (securityOrigin.protocol.caseInsensitiveCompare("http") == .orderedSame
+                        && securityOrigin.host == "127.0.0.1"
+                        && securityOrigin.port == (origin.port ?? 5173))
+            }
+        }
         receiver.attach(to: view, mediaHandler: built.1)
         nativeBridge = receiver
         webView = view
     }
 
     func start() {
+        if let origin = options.devOrigin {
+            FileHandle.standardError.write(
+                Data("loader=dev-origin \(origin.absoluteString)\n".utf8))
+            let window = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 1040, height: 760),
+                styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                backing: .buffered,
+                defer: false)
+            window.title = "CHA"
+            window.contentView = webView
+            window.center()
+            window.makeKeyAndOrderFront(nil)
+            NSApp.setActivationPolicy(.regular)
+            NSApp.activate(ignoringOtherApps: true)
+            self.window = window
+            webView.load(URLRequest(url: origin))
+            return
+        }
         FileHandle.standardError.write(Data("loader=WKURLSchemeHandler cha://app\n".utf8))
         webView.load(URLRequest(url: URL(string: "\(chaAssetOrigin)/")!))
         DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(options.timeoutMs)) {
@@ -167,6 +211,7 @@ private final class NativeTestHost: NSObject, WKNavigationDelegate, WKUIDelegate
         _ webView: WKWebView,
         didFinish navigation: WKNavigation!
     ) {
+        if options.devOrigin != nil { return }
         switch options.expectation {
         case .timeout:
             return
@@ -218,11 +263,11 @@ private final class NativeTestHost: NSObject, WKNavigationDelegate, WKUIDelegate
         decidePolicyFor navigationAction: WKNavigationAction,
         decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
     ) {
-        guard let url = navigationAction.request.url, isChaAssetURL(url) else {
+        guard let url = navigationAction.request.url, isAllowedNavigation(url) else {
             decisionHandler(.cancel)
             return
         }
-        if let frame = navigationAction.targetFrame, !frame.isMainFrame, !isChaAssetURL(url) {
+        if let frame = navigationAction.targetFrame, !frame.isMainFrame, !isAllowedNavigation(url) {
             decisionHandler(.cancel)
             return
         }
@@ -251,11 +296,27 @@ private final class NativeTestHost: NSObject, WKNavigationDelegate, WKUIDelegate
         type: WKMediaCaptureType,
         decisionHandler: @escaping (WKPermissionDecision) -> Void
     ) {
-        if type == .microphone, isChaAssetOrigin(origin), frame.isMainFrame {
+        if type == .microphone, frame.isMainFrame, trustedMediaOrigin(origin) {
             decisionHandler(.grant)
         } else {
             decisionHandler(.deny)
         }
+    }
+
+    private func trustedMediaOrigin(_ origin: WKSecurityOrigin) -> Bool {
+        if isChaAssetOrigin(origin) { return true }
+        guard let allowed = options.devOrigin else { return false }
+        return origin.protocol.caseInsensitiveCompare("http") == .orderedSame
+            && origin.host == "127.0.0.1"
+            && origin.port == (allowed.port ?? 5173)
+    }
+
+    private func isAllowedNavigation(_ url: URL) -> Bool {
+        if isChaAssetURL(url) { return true }
+        guard let origin = options.devOrigin else { return false }
+        return url.scheme?.caseInsensitiveCompare("http") == .orderedSame
+            && url.host == "127.0.0.1"
+            && url.port == (origin.port ?? 5173)
     }
 
     private func evaluate(_ source: String) {
@@ -765,7 +826,8 @@ private struct Main {
         do {
             let options = try parseOptions()
             let application = NSApplication.shared
-            application.setActivationPolicy(.accessory)
+            application.setActivationPolicy(
+                options.devOrigin == nil ? .accessory : .regular)
             let host = NativeTestHost(options: options)
             host.start()
             application.run()

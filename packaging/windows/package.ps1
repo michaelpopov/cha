@@ -81,13 +81,10 @@ try {
     Write-Host '==> Installing locked browser build dependencies'
     Invoke-Native 'npm.cmd' @('ci', '--no-audit') $webapp
 
-    Write-Host '==> Installing the Playwright Chromium browser'
-    Invoke-Native 'npx.cmd' @('playwright', 'install', 'chromium') $webapp
-
     Write-Host '==> Checking generated API types and browser application'
     $generatedSchema = Join-Path $temporary 'schema.d.ts'
     Invoke-Native 'npx.cmd' @(
-        'openapi-typescript', '../resources/cha.yaml', '-o', $generatedSchema
+        'openapi-typescript', '../resources/dto.yaml', '-o', $generatedSchema
     ) $webapp
     $committedSchemaText = (Get-Content -LiteralPath (Join-Path $webapp 'src\api\schema.d.ts') -Raw) -replace "`r`n", "`n"
     $generatedSchemaText = (Get-Content -LiteralPath $generatedSchema -Raw) -replace "`r`n", "`n"
@@ -114,7 +111,7 @@ try {
     Invoke-Native 'cmake' @(
         '--build', $nativeBuild,
         '--config', 'Release',
-        '--target', 'cha_windows_app', 'chaweb_app'
+        '--target', 'cha_windows_app', 'cha_windows_test_app'
     ) $repository
 
     Write-Host '==> Assembling portable application'
@@ -140,7 +137,7 @@ try {
         throw "Private data leaked into the application: $($privateArtifacts[0].FullName)"
     }
     $runtimeArtifacts = Get-ChildItem -LiteralPath $application -Recurse -Force | Where-Object {
-        $_.Name -in @('node_modules', 'node.exe', 'npm.cmd', 'npx.cmd', 'chaweb.exe')
+        $_.Name -in @('node_modules', 'node.exe', 'npm.cmd', 'npx.cmd', 'chaweb.exe', 'CHATest.exe')
     }
     if ($runtimeArtifacts) {
         throw "A development runtime leaked into the application: $($runtimeArtifacts[0].FullName)"
@@ -159,27 +156,33 @@ try {
         ) $repository
     }
 
-    Write-Host '==> Testing the assembled native application'
+    Write-Host '==> Testing assembled assets with the instrumented native host'
+    New-Item -ItemType Directory -Path $testApplication -Force | Out-Null
+    Copy-Item -LiteralPath (Join-Path $nativeBuild 'Release\CHATest.exe') -Destination $testApplication
+    Copy-Item -LiteralPath (Join-Path $application 'web') -Destination $testApplication -Recurse
     $smokeRoot = Join-Path $temporary 'smoke-data'
     $smokeArguments = @('--smoke-test', ('"{0}"' -f $smokeRoot))
-    $smoke = Start-Process -FilePath (Join-Path $application 'CHA.exe') -ArgumentList $smokeArguments -PassThru -Wait -WindowStyle Hidden
+    $smoke = Start-Process -FilePath (Join-Path $testApplication 'CHATest.exe') -ArgumentList $smokeArguments -PassThru -Wait -WindowStyle Hidden
     if ($smoke.ExitCode -ne 0) {
         throw "The native application smoke test failed with exit code $($smoke.ExitCode)."
     }
 
-    Write-Host '==> Testing production web files through chaweb.exe'
-    New-Item -ItemType Directory -Path $testApplication -Force | Out-Null
-    Copy-Item -LiteralPath (Join-Path $nativeBuild 'Release\chaweb.exe') -Destination $testApplication
-    Copy-Item -LiteralPath (Join-Path $repository 'bin\start-cha.bat') -Destination $testApplication
-    Copy-Item -LiteralPath (Join-Path $repository 'packaging\linux\cha-config.example') -Destination $testApplication -Recurse
-    Copy-Item -LiteralPath (Join-Path $repository 'packaging\linux\import-seed') -Destination $testApplication -Recurse
-    Copy-Item -LiteralPath (Join-Path $application 'web') -Destination $testApplication -Recurse
-    $previousApplicationRoot = $env:CHA_E2E_APPLICATION_ROOT
-    try {
-        $env:CHA_E2E_APPLICATION_ROOT = $testApplication
-        Invoke-Native 'npx.cmd' @('playwright', 'test', '--project=served') $webapp
-    } finally {
-        $env:CHA_E2E_APPLICATION_ROOT = $previousApplicationRoot
+    Write-Host '==> Rejecting development and automation hooks in the shipping binary'
+    $reject = Start-Process -FilePath (Join-Path $application 'CHA.exe') -ArgumentList @('--cdp-port', '9222') -PassThru -Wait -WindowStyle Hidden
+    if ($reject.ExitCode -eq 0) {
+        throw 'Shipping CHA.exe accepted --cdp-port.'
+    }
+    $rejectOrigin = Start-Process -FilePath (Join-Path $application 'CHA.exe') -ArgumentList @('--dev-origin', 'http://127.0.0.1:5173') -PassThru -Wait -WindowStyle Hidden
+    if ($rejectOrigin.ExitCode -eq 0) {
+        throw 'Shipping CHA.exe accepted --dev-origin.'
+    }
+    $env:CHA_DEV_ORIGIN = 'http://127.0.0.1:5173'
+    $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = '--remote-debugging-port=9222'
+    $rejectEnv = Start-Process -FilePath (Join-Path $application 'CHA.exe') -ArgumentList @('--http') -PassThru -Wait -WindowStyle Hidden
+    Remove-Item Env:CHA_DEV_ORIGIN
+    Remove-Item Env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
+    if ($rejectEnv.ExitCode -eq 0) {
+        throw 'Shipping CHA.exe accepted --http.'
     }
 
     Write-Host '==> Writing distribution files'

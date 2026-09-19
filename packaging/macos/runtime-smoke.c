@@ -1,11 +1,8 @@
 #include "runtime_bridge.h"
 
-#include <arpa/inet.h>
-#include <netinet/in.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/socket.h>
 #include <unistd.h>
 
 static int fail(char* error) {
@@ -15,70 +12,84 @@ static int fail(char* error) {
     return 1;
 }
 
-// Returns the HTTP status the embedded runtime answers with, or -1. Written
-// against sockets so the whole check stays inside one process, which is the
-// point of running the runtime in-process in the first place.
-static int http_status(int port, const char* path, const char* token) {
-    struct sockaddr_in address;
-    memset(&address, 0, sizeof address);
-    address.sin_family = AF_INET;
-    address.sin_port = htons((unsigned short)port);
-    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+static volatile int got_delivery;
+static char last_delivery[8192];
 
-    const int connection = socket(AF_INET, SOCK_STREAM, 0);
-    if (connection == -1) return -1;
-    if (connect(connection, (struct sockaddr*)&address, sizeof address) != 0) {
-        close(connection);
-        return -1;
-    }
-
-    char request[512];
-    const int length = snprintf(request, sizeof request,
-        "GET %s HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n%s%s%s\r\n",
-        path,
-        token ? "Cookie: CHA_RUNTIME=" : "", token ? token : "",
-        token ? "\r\n" : "");
-    if (length < 0 || (size_t)length >= sizeof request
-        || write(connection, request, (size_t)length) != length) {
-        close(connection);
-        return -1;
-    }
-
-    char response[64];
-    const ssize_t received = read(connection, response, sizeof response - 1);
-    close(connection);
-    if (received <= 0) return -1;
-    response[received] = '\0';
-
-    int status = -1;
-    if (sscanf(response, "HTTP/1.1 %d", &status) != 1) return -1;
-    return status;
+static void on_delivery(void* context, const char* connection, const char* json) {
+    (void)context;
+    (void)connection;
+    if (!json) return;
+    snprintf(last_delivery, sizeof last_delivery, "%s", json);
+    got_delivery = 1;
 }
 
-static int check(const char* what, int status, int expected) {
-    if (status == expected) return 1;
-    fprintf(stderr,
-        "embedded runtime smoke test failed: %s answered %d, expected %d\n",
-        what, status, expected);
-    return 0;
+static int reopen_native(const char* config, const char* resources, const char* what) {
+    char* error = NULL;
+    int32_t password_error = 0;
+    ChaRuntime* runtime = cha_runtime_create(
+        config, resources, "", "", 0, &password_error, &error);
+    if (!runtime) {
+        fprintf(stderr, "embedded runtime smoke test failed: %s: %s\n",
+            what, error ? error : "unknown error");
+        cha_string_free(error);
+        return 0;
+    }
+    const int ok = cha_runtime_is_native(runtime) == 1
+        && cha_runtime_port(runtime) == 0;
+    cha_runtime_request_shutdown(runtime);
+    cha_runtime_join_shutdown(runtime, 2000);
+    cha_runtime_destroy(runtime);
+    if (!ok) {
+        fprintf(stderr,
+            "embedded runtime smoke test failed: %s opened a listener\n", what);
+        return 0;
+    }
+    return 1;
+}
+
+static int write_file(const char* path, const char* contents) {
+    FILE* file = fopen(path, "w");
+    if (!file) return 0;
+    if (fputs(contents, file) == EOF) {
+        fclose(file);
+        return 0;
+    }
+    return fclose(file) == 0;
 }
 
 int main(int argc, const char* argv[]) {
     if (argc != 3) return 2;
     if (unsetenv("CHA_R2_URL") != 0
         || unsetenv("CHA_R2_ACCESS_KEY_ID") != 0
-        || unsetenv("CHA_R2_SECRET_ACCESS_KEY") != 0) {
+        || unsetenv("CHA_R2_SECRET_ACCESS_KEY") != 0
+        || unsetenv("CHA_DEV_ORIGIN") != 0
+        || unsetenv("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS") != 0) {
         return 1;
     }
 
-    static const char* const token = "package-private-token";
     char* error = NULL;
     int32_t password_error = 0;
+    ChaRuntime* rejected = cha_runtime_create(
+        argv[1], argv[2], "token", "", 1, &password_error, &error);
+    if (rejected) {
+        fprintf(stderr,
+            "embedded runtime smoke test failed: http_mode started a runtime\n");
+        cha_runtime_destroy(rejected);
+        return 1;
+    }
+    cha_string_free(error);
+    error = NULL;
+
     ChaRuntime* runtime = cha_runtime_create(
-        argv[1], argv[2], token, "", &password_error, &error);
+        argv[1], argv[2], "", "", 0, &password_error, &error);
     if (!runtime) return fail(error);
-    if (!cha_runtime_can_modify(runtime)
-        || cha_runtime_can_transfer_r2(runtime)) {
+    if (cha_runtime_port(runtime) != 0 || cha_runtime_is_native(runtime) != 1) {
+        fprintf(stderr,
+            "embedded runtime smoke test failed: native runtime opened a listener\n");
+        cha_runtime_destroy(runtime);
+        return 1;
+    }
+    if (!cha_runtime_can_modify(runtime) || cha_runtime_can_transfer_r2(runtime)) {
         fprintf(stderr,
             "embedded runtime smoke test failed: incorrect menu capabilities\n");
         cha_runtime_destroy(runtime);
@@ -94,35 +105,82 @@ int main(int argc, const char* argv[]) {
         return 1;
     }
 
-    const int port = cha_runtime_port(runtime);
-    int served = port > 0;
-    if (!served) {
-        fprintf(stderr, "embedded runtime smoke test failed: no port\n");
-    } else {
-        // The bundle layout is what this checks: the browser application is
-        // served out of CHA.app/Contents/Resources/web, and only to the
-        // launcher's private cookie.
-        served = check("/ without the cookie", http_status(port, "/", NULL), 404)
-            & check("/health", http_status(port, "/health", token), 200)
-            & check("/", http_status(port, "/", token), 200)
-            & check("/api/v1/openai/auth without the cookie",
-                http_status(port, "/api/v1/openai/auth", NULL), 404)
-            & check("/api/v1/openai/auth",
-                http_status(port, "/api/v1/openai/auth", token), 200);
-    }
-
     uint64_t file_count = 0;
-    if (served && cha_runtime_export_configuration(
-            runtime, &file_count, &error) != 1) {
+    if (cha_runtime_export_configuration(runtime, &file_count, &error) != 1) {
         cha_runtime_destroy(runtime);
         return fail(error);
     }
-    if (served && cha_runtime_import_configuration(
-            runtime, &file_count, &error) != 1) {
+    if (cha_runtime_import_configuration(runtime, &file_count, &error) != 1) {
         cha_runtime_destroy(runtime);
         return fail(error);
     }
 
+    got_delivery = 0;
+    last_delivery[0] = '\0';
+    cha_runtime_set_delivery_callback(runtime, on_delivery, NULL);
+    char* connection = cha_runtime_open_connection(runtime, &error);
+    if (!connection) {
+        cha_runtime_destroy(runtime);
+        return fail(error);
+    }
+    char request[512];
+    if (snprintf(
+            request,
+            sizeof request,
+            "{\"connection_id\":\"%s\",\"id\":1,\"context_epoch\":0,"
+            "\"method\":\"bridge.info\",\"params\":{}}",
+            connection)
+        >= (int)sizeof request) {
+        cha_string_free(connection);
+        cha_runtime_destroy(runtime);
+        fprintf(stderr, "embedded runtime smoke test failed: request too large\n");
+        return 1;
+    }
+    cha_runtime_handle_message(runtime, connection, request);
+    for (int attempt = 0; attempt < 100 && !got_delivery; ++attempt) {
+        usleep(20000);
+    }
+    cha_string_free(connection);
+    if (!got_delivery || strstr(last_delivery, "\"protocol_version\":1") == NULL
+        || strstr(last_delivery, "\"ok\":true") == NULL) {
+        fprintf(stderr,
+            "embedded runtime smoke test failed: bridge.info was not delivered\n");
+        cha_runtime_destroy(runtime);
+        return 1;
+    }
+
+    cha_runtime_request_shutdown(runtime);
+    if (cha_runtime_join_shutdown(runtime, 4000) != 1) {
+        fprintf(stderr, "embedded runtime smoke test failed: shutdown stalled\n");
+        cha_runtime_destroy(runtime);
+        return 1;
+    }
     cha_runtime_destroy(runtime);
-    return served ? 0 : 1;
+
+    char app_path[1024];
+    if (snprintf(app_path, sizeof app_path, "%s/app.toml", argv[1])
+        >= (int)sizeof app_path) {
+        return 1;
+    }
+    if (!write_file(
+            app_path,
+            "vault = \"Default\"\n"
+            "mirror = \"mirror\"\n"
+            "modify = \"modify\"\n"
+            "[web]\nhost = \"127.0.0.1\"\nport = 8086\n"
+            "[logging]\nfile = \"logs/cha.log\"\nlevel = \"info\"\n")
+        || !reopen_native(argv[1], argv[2], "valid [web]")) {
+        return 1;
+    }
+    if (!write_file(
+            app_path,
+            "vault = \"Default\"\n"
+            "mirror = \"mirror\"\n"
+            "modify = \"modify\"\n"
+            "[web]\nhost = 1\nport = \"bad\"\nextra = true\n"
+            "[logging]\nfile = \"logs/cha.log\"\nlevel = \"info\"\n")
+        || !reopen_native(argv[1], argv[2], "obsolete [web]")) {
+        return 1;
+    }
+    return 0;
 }

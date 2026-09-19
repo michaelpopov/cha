@@ -1316,16 +1316,72 @@ when its revision/coverage remains applicable. Do not require the next agent to
 read an entire conversation to recover decisions.
 
 ```text
-Status: not started | in progress | waiting for evidence | complete
+Status: waiting for evidence
 Starting and resulting revision/checkpoint:
+  started at e1ebd25 (Block 8). Uncommitted working tree on redesign.
 Files changed/moved and actual new APIs/targets:
+  New: resources/dto.yaml (authoritative DTOs + native envelopes),
+    packaging/shared/{import-seed,cha-config.example} (moved from
+    packaging/linux), scripts/run-native-dev.sh, CMake target
+    cha_windows_test_app (CHATest.exe, CHA_NATIVE_INSTRUMENTATION).
+  Generation: npm run api-types reads dto.yaml; cha.yaml $refs it.
+  Runtime: cha_macos_runtime / cha_windows_app / cha_native_runtime_tests
+    link cha_bridge only (no cha_web / httplib). http_mode!=0 is rejected.
+  Dev: CHA_NATIVE_DEV=1 Vite origin http://127.0.0.1:5173; npm run
+    dev:native; make run-native-dev; npm run e2e:http alias.
 Implemented behavior and key ownership/contract decisions:
+  One DTO source (dto.yaml). HTTP catalog aliases, does not copy schemas.
+  Shipping hosts are native-only: no listener, no --http/--feasibility/
+    --cdp-port/--dev-origin. Instrumented Windows host keeps CDP/smoke.
+  Newly generated config example has no [web]. Native ignores missing,
+    valid, and obsolete [web]. Linux package still injects [web] for chaweb.
+  Native package verification uses runtime-smoke.c + ChaNativeTestHost
+    against assembled assets, not chaweb/Playwright.
 Prerequisites verified and evidence used:
+  Block 8 native methods bound; ChaClient has no nativeUnavailable.
+  Native flow/reload/quit already existed; reused against packaged assets.
 Temporary compatibility code and when it can be removed:
+  chaweb, HTTP routes, Vite API proxy, npm run e2e / e2e:http, Linux
+    package/check/upgrade scripts. Remove in block 10 after Windows
+    package.ps1 is run and remaining host evidence exists.
 Exact commands, working directories, platform/runtime versions, and results:
+  macOS 26.7 (25G229), Apple clang 21.0.0, cmake 4.4.0, Node v26.9.0,
+    npm 11.19.1, repo root, revision e1ebd25 + uncommitted block 9.
+  cmake --build --preset ninja --target cha_app_tests cha_bridge_tests
+    cha_native_runtime_tests cha_macos_runtime cha_prepare_test_vault
+  ./build/ninja/cha_native_runtime_tests : 9 passed (http_mode rejected)
+  ./build/ninja/cha_bridge_tests : 20 passed
+  ./build/ninja/cha_app_tests : 36 passed
+  ./build/ninja/cha_web_tests --gtest_filter=ApplicationConfigTest.* : 28 passed
+  npm --prefix webapp run check : 370 passed
+  Deliberate bridge-info.json protocol_version 99 failed wireFixtures,
+    then restored; api-types:check and wireFixtures passed after restore.
+  sh tests/native/macos/run.sh flow|reload|quit : PASS, runtime_listener=none
+  ./packaging/macos/package.sh 0.0.0-block9 /tmp/cha-block9-pkg : PASS
+    assembled CHA.app has no chaweb; libChaRuntime has no ApplicationRuntime;
+    shipping CHA rejects --dev-origin/--http/--feasibility (exit 2);
+    native smoke + flow/reload/quit against assembled web/.
+  Native development origin is http://127.0.0.1:5173 exactly.
+    make run-native-dev CONFIG=<cha-config>
+    CHA_NATIVE_DEV=1 npm --prefix webapp run dev:native
+    npm --prefix webapp run e2e:http   # temporary HTTP suite, not native proof
 Known failures, checks not run, and exact missing evidence:
+  Windows package.ps1 / CHATest.exe / shipping CHA.exe not executed
+    (no Windows/WebView2 host here).
+  Live microphone/WebRTC/transcription, Blob seek/resume in CHA.app,
+    native file dialogs, protected-vault wrong-password GUI, work-active
+    quit of the shipping app, asan-ubsan/tsan for this block: not re-run.
+  Node engine warning: package.json pins 22.23.1, machine is v26.9.0.
 Inventory/coverage changes and remaining work:
+  Native placeholders closed (no silent success / HTTP fallback in native
+    client). Package scripts no longer build or launch chaweb. Seed/config
+    live under packaging/shared. Remaining: Windows package parity and
+    real-host media/dialog evidence before block 10 transport deletion.
 Next unfinished numbered step if this block needs continuation:
+  Step 8/9/11 on Windows: run packaging/windows/package.ps1 against an
+    isolated output, confirm CHA.exe rejects --cdp-port/--dev-origin,
+    CHATest.exe smokes assembled assets, no chaweb.exe. Then complete
+    remaining real-host media/file-dialog/protected-vault GUI checks.
 ```
 
 Maintain concise rows for the operations/files/assertions touched by this block.
@@ -1334,11 +1390,25 @@ carry forward existing evidence and record the relevant updates.
 
 | Operation/caller or source/test path | Retained behavior/result/errors | Native destination or deletion reason | Context/cancellation/lifetime | Verification and status |
 |---|---|---|---|---|
-| Populate during execution | | | | |
+| resources/dto.yaml + cha.yaml $ref | Shared DTOs + native envelopes | One authoritative schema | Generation/check atomic | api-types:check + mismatch fail/restore |
+| ChaClient / nativeClient / bridge methods | All frontend operations native | No placeholder / HTTP fallback | Request-id cancel for speech/voice | nativeClient tests + native flow PASS |
+| configuration.import/export database.upload/download | Menu + C API | Native-only; no React button required | UI thread dialog; runtime off UI | runtime-smoke import/export PASS |
+| packaging/shared seed + config example | Seed unchanged; example has no [web] | Moved out of linux package | Linux package injects [web] | package-linux.sh copies shared |
+| cha_macos_runtime / CHA.app | Native Application + bridge | No cha_web / listener | http_mode rejected | package.sh + otool + nm |
+| Shipping CHA launch flags | Unknown args exit 2 | --http/--feasibility/--dev-origin rejected | Env CHA_DEV_ORIGIN ignored | package.sh reject checks |
+| CHATest.exe / --cdp-port | Instrumented only | CDP not in shipping CHA.exe | Test-only | Code landed; not run on Windows |
+| npm run dev:native / run-native-dev.sh | Vite assets only; bridge for domain | Exact origin http://127.0.0.1:5173 | Release ignores origin | Script landed; HMR loop not host-proven |
+| npm run e2e / e2e:http | Temporary HTTP suite | Distinct from native proof | chaweb until block 10 | Not re-run this block |
 
 | Required flow/assertion | Common test evidence | macOS evidence | Windows evidence | Remaining limitation |
 |---|---|---|---|---|
-| Populate during execution | | | | |
+| No native placeholder / HTTP fallback | nativeClient typecheck; no nativeUnavailable | flow uses bridge.info/bootstrap/session | not run | Windows UI not executed |
+| Generated types + C++ fixtures | wireFixtures + WebWireFixtures; mismatch 99 failed | n/a | n/a | representative fixtures |
+| Native HMR origin, shipping rejects hooks | vite CHA_NATIVE_DEV; run-native-dev.sh | CHA.app rejects --dev-origin/--http/--feasibility | CHA.exe reject coded, not run | Interactive HMR not exercised |
+| Package without chaweb | n/a | package.sh 0.0.0-block9; no chaweb; native smoke+flow | package.ps1 not run | Windows parity pending |
+| [web] missing/valid/obsolete | ApplicationConfigTest.Native* | runtime-smoke reopen native | not run | Protected-vault GUI not run |
+| Create/open/submit/Stop/reload/quit | n/a | run.sh flow/reload/quit on assembled assets | not run | Microphone/Blob seek still pending |
+| No application listener | NativeRuntimeTest port==0 | runtime_listener=none; packaged nm none | not run | |
 
 The final response must state what was implemented, why, what was actually tested,
 and any unresolved limitation. If incomplete, give the exact next step and missing
@@ -1349,3 +1419,4 @@ prerequisite/evidence. A context limit or a mostly working platform is not succe
 The [migration plan](plan.md) and [design proposal](redesign.md) explain the overall
 sequence and original rationale. They are reference material, not additional
 required instructions for executing this brief.
+COMPLETED

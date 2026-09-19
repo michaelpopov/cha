@@ -56,4 +56,20 @@ describe('C++ wire fixtures', () => {
     )).toBe(true);
     expect(isNativeSessionEvent(loadFixture('native-event-append.json'))).toBe(true);
   });
+
+  it('loads DTOs from the transport-neutral schema rather than HTTP paths', () => {
+    const dto = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), '../../../resources/dto.yaml'),
+      'utf8',
+    );
+    const catalog = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), '../../../resources/cha.yaml'),
+      'utf8',
+    );
+    expect(dto).toContain('title: CHA DTOs');
+    expect(dto).toContain('NativeRequest:');
+    expect(dto).toContain('MediaResource:');
+    expect(catalog).toContain('$ref: "./dto.yaml#/components/schemas/Bootstrap"');
+    expect(catalog).not.toMatch(/\n    Bootstrap:\n      type: object/);
+  });
 });
