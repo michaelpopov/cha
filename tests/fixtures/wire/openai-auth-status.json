@@ -1,0 +1,7 @@
+{
+  "status": "waiting",
+  "user_code": "ABCD-EFGH",
+  "verification_url": "https://auth.openai.com/codex/device",
+  "attempt_expires_at": 1700000900,
+  "next_poll_delay_ms": 1000
+}

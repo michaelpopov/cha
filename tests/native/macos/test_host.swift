@@ -497,6 +497,26 @@ return await (async function() {
     });
     report.transcript = (document.querySelector('[aria-label="Conversation transcript"]') || {}).textContent || '';
     report.sessionId = created.id;
+    const settings = document.querySelector('button[aria-label="Settings"]');
+    if (settings) settings.click();
+    await until('settings screen', () => document.querySelector('[aria-label="Settings"], [aria-label="Providers settings"], .cha-settings'));
+    const providers = await rpc('provider.list', {}, boot.context_epoch);
+    const keys = await rpc('apiKey.list', {}, boot.context_epoch);
+    const r2 = await rpc('r2Storage.get', {}, boot.context_epoch);
+    const auth = await rpc('openaiAuth.get', {}, boot.context_epoch);
+    const runtime = await rpc('voiceInput.runtime', {}, boot.context_epoch);
+    if (!Array.isArray(providers) || JSON.stringify(providers).indexOf('private-') !== -1) {
+      report.reason = 'provider list missing or contained a secret';
+      return report;
+    }
+    if (!Array.isArray(keys) || JSON.stringify(keys).indexOf('private-') !== -1) {
+      report.reason = 'api key list contained a secret';
+      return report;
+    }
+    report.providerCount = providers.length;
+    report.r2 = r2;
+    report.authStatus = auth && auth.status;
+    report.voiceRuntimeHasKey = !!(runtime && runtime.api_key);
     report.ok = true;
     return report;
   } catch (error) {

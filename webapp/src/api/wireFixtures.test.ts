@@ -43,6 +43,14 @@ describe('C++ wire fixtures', () => {
 
     const info = loadFixture('bridge-info.json') as { protocol_version: number };
     expect(info.protocol_version).toBe(nativeProtocolVersion);
+    const provider = loadFixture('provider-detail.json') as { api_key: unknown };
+    expect(provider.api_key).toBeNull();
+    const runtime = loadFixture('voice-input-runtime.json') as Record<string, unknown>;
+    expect(runtime).not.toHaveProperty('api_key');
+    const key = loadFixture('api-key-detail.json') as { has_value: boolean };
+    expect(key.has_value).toBe(true);
+    const auth = loadFixture('openai-auth-status.json') as { status: string };
+    expect(auth.status).toBe('waiting');
     expect(isCommandResult(
       (loadFixture('native-reply-command.json') as { result: unknown }).result,
     )).toBe(true);

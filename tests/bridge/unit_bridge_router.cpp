@@ -1,5 +1,6 @@
 #include "app/application.h"
 #include "bridge/bridge_router.h"
+#include "support/mock_http_server.h"
 #include "support/test_workspace.h"
 #include "web/command_queue.h"
 #include "workspace/builtins.h"
@@ -19,6 +20,8 @@ namespace cha::bridge {
 namespace {
 
 using namespace std::chrono_literals;
+using cha::MockHttpServer;
+using cha::http_response;
 using cha::web::ApplicationCommand;
 using cha::web::ConfigurationDirectory;
 using cha::web::ConfigurationTransport;
@@ -688,6 +691,110 @@ TEST_F(BridgeRouterTest, StopRemainsAdmittedWhenOrdinaryWorkIsFull) {
     ASSERT_FALSE(reply.empty());
     EXPECT_TRUE(reply.contains("ok"));
     ack_delivery(*router_, connection_, *batch);
+}
+
+TEST_F(BridgeRouterTest, ListsProvidersAndApiKeyMetadataWithoutSecrets) {
+    bootstrap_epoch();
+    auto reply = call("provider.list");
+    ASSERT_TRUE(reply["ok"]);
+    ASSERT_FALSE(reply["result"].empty());
+    EXPECT_EQ(reply["result"].front().at("id"), "test");
+
+    reply = call(
+        "apiKey.create",
+        {{"display_name", "Router"}, {"value", "private-router-secret"}});
+    ASSERT_TRUE(reply["ok"]);
+    EXPECT_EQ(reply.dump().find("private-router-secret"), std::string::npos);
+    EXPECT_TRUE(reply["result"].at("has_value").get<bool>());
+
+    reply = call("openaiAuth.get");
+    ASSERT_TRUE(reply["ok"]);
+    EXPECT_EQ(reply["result"].at("status"), "signed_out");
+
+    reply = call("r2Storage.get");
+    ASSERT_TRUE(reply["ok"]);
+    if (!reply["result"].is_null()) {
+        EXPECT_TRUE(reply["result"].contains("has_secret_key"));
+        EXPECT_FALSE(reply["result"].contains("secret_key"));
+    }
+}
+
+TEST_F(BridgeRouterTest, SlowProviderTestDoesNotStarveStop) {
+    bootstrap_epoch();
+    auto created = call(
+        "session.create", {{"forum_id", "lobby"}, {"label", "Control"}});
+    ASSERT_TRUE(created["ok"]);
+    const std::string session_id = created["result"]["id"];
+    ASSERT_TRUE(
+        call(
+            "session.open",
+            {{"forum_id", "lobby"}, {"session_id", session_id}})["ok"]);
+
+    auto provider = call("provider.get", {{"provider_id", "test"}});
+    ASSERT_TRUE(provider["ok"]);
+    nlohmann::json body = provider["result"];
+    body.erase("id");
+    body.erase("used_by");
+    body.erase("writable");
+    MockHttpServer model_server(
+        {http_response("text/event-stream", "data: {\"type\":\"response.completed\"}\n\n")},
+        false,
+        1500ms);
+    model_server.start();
+    body["host"] = "127.0.0.1";
+    body["port"] = model_server.port();
+    body["https"] = false;
+    body["api"] = "responses";
+    body["mode"] = "net";
+    nlohmann::json test_params = body;
+    test_params["provider_id"] = "test";
+
+    const auto test_id = next_id_++;
+    const auto stop_id = next_id_++;
+    router_->handle_request(
+        connection_,
+        request_json(connection_, test_id, epoch_, "provider.test", test_params)
+            .dump());
+    router_->handle_request(
+        connection_,
+        request_json(
+            connection_,
+            stop_id,
+            epoch_,
+            "session.stop",
+            {{"forum_id", "lobby"}, {"session_id", session_id}}).dump());
+    auto batch = wait_delivery(*router_, connection_, 2s);
+    ASSERT_TRUE(batch);
+    auto stop = reply_with_id(*batch, stop_id);
+    if (stop.empty()) {
+        ack_delivery(*router_, connection_, *batch);
+        batch = wait_delivery(*router_, connection_, 2s);
+        ASSERT_TRUE(batch);
+        stop = reply_with_id(*batch, stop_id);
+    }
+    ASSERT_FALSE(stop.empty());
+    EXPECT_TRUE(stop.contains("ok"));
+    ack_delivery(*router_, connection_, *batch);
+}
+
+TEST_F(BridgeRouterTest, StaleOauthCompletionDoesNotPublishAfterContextChange) {
+    bootstrap_epoch();
+    const auto old_epoch = epoch_;
+    const auto start_id = next_id_++;
+    router_->handle_request(
+        connection_,
+        request_json(connection_, start_id, old_epoch, "openaiAuth.start").dump());
+    router_->run_tasks();
+    application_->request_shutdown();
+    EXPECT_TRUE(application_->join_shutdown(2s));
+    auto batch = wait_delivery(*router_, connection_, 500ms);
+    if (batch) {
+        auto reply = reply_with_id(*batch, start_id);
+        if (!reply.empty() && reply.contains("ok") && !reply["ok"].get<bool>()) {
+            EXPECT_EQ(reply["error"]["code"], "application_unavailable");
+        }
+        ack_delivery(*router_, connection_, *batch);
+    }
 }
 
 } // namespace

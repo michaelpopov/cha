@@ -168,6 +168,7 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
         bool control{};
         std::chrono::steady_clock::time_point deadline{};
         std::shared_ptr<cha::web::CommandReply> reply;
+        std::shared_ptr<cha::app::OperationReply> operation;
         std::string forum_id;
         std::string session_id;
         std::string subscription_id;
@@ -322,6 +323,7 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
         connection->invalid = true;
         for (auto& [id, outstanding] : connection->outstanding) {
             if (outstanding.reply) outstanding.reply->abandon();
+            if (outstanding.operation) outstanding.operation->abandon();
         }
         connection->outstanding.clear();
         connection->ordinary_count = 0;
@@ -429,6 +431,83 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
             fail_request(connection, id, outstanding.context_epoch, code);
         }
         pump();
+    }
+
+    void complete_background(
+        std::string connection_id,
+        std::uint64_t id) {
+        std::shared_ptr<Connection> connection;
+        Outstanding outstanding;
+        {
+            std::lock_guard lock(mutex);
+            connection = find_connection(connection_id);
+            if (!connection) return;
+            const auto found = connection->outstanding.find(id);
+            if (found == connection->outstanding.end() || !found->second.operation) {
+                return;
+            }
+            outstanding = found->second;
+        }
+        const auto peeked = outstanding.operation->peek();
+        if (!peeked) return;
+        if (const auto context =
+                check_epoch(outstanding.method, outstanding.context_epoch)) {
+            std::lock_guard lock(mutex);
+            connection = find_connection(connection_id);
+            if (connection) {
+                fail_request(
+                    connection, id, outstanding.context_epoch, *context);
+            }
+            return;
+        }
+        if (const auto* failure =
+                std::get_if<cha::app::OperationReply::Failure>(&*peeked)) {
+            std::lock_guard lock(mutex);
+            connection = find_connection(connection_id);
+            if (!connection) return;
+            fail_request(
+                connection,
+                id,
+                outstanding.context_epoch,
+                failure->code,
+                failure->message);
+            return;
+        }
+        std::lock_guard lock(mutex);
+        connection = find_connection(connection_id);
+        if (!connection) return;
+        finish_request(
+            connection,
+            id,
+            reply_ok(
+                connection->id,
+                id,
+                outstanding.context_epoch,
+                std::get<nlohmann::json>(*peeked)));
+    }
+
+    void start_background(
+        std::string connection_id,
+        std::uint64_t id,
+        std::shared_ptr<cha::app::OperationReply> reply) {
+        {
+            std::lock_guard lock(mutex);
+            auto connection = find_connection(connection_id);
+            if (!connection) return;
+            const auto found = connection->outstanding.find(id);
+            if (found == connection->outstanding.end()) return;
+            found->second.operation = reply;
+        }
+        auto weak = std::weak_ptr<Impl>(shared_from_this());
+        reply->set_ready_callback([weak, connection_id, id] {
+            if (auto impl = weak.lock()) impl->complete_background(connection_id, id);
+        });
+    }
+
+    template<typename T>
+    nlohmann::json encode_optional(const std::optional<T>& value) {
+        if (!value) return nlohmann::json(nullptr);
+        return nlohmann::json(*value);
     }
 
     void pump() {
@@ -838,6 +917,174 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                     created, snapshot.active.name, snapshot.vaults.size());
                 break;
             }
+            case Method::provider_list:
+                require_only_keys(params, {});
+                result = application.list_providers(epoch);
+                break;
+            case Method::provider_get:
+                require_only_keys(params, {"provider_id"});
+                result = application.get_provider(
+                    require_identifier(params, "provider_id"), epoch);
+                break;
+            case Method::provider_create:
+                result = application.create_provider(
+                    cha::web::parse_create_provider_request(params), epoch);
+                break;
+            case Method::provider_update: {
+                const std::string id = require_identifier(params, "provider_id");
+                result = application.update_provider(
+                    id, without_key(params, "provider_id"), epoch);
+                break;
+            }
+            case Method::provider_delete:
+                require_only_keys(params, {"provider_id"});
+                application.delete_provider(
+                    require_identifier(params, "provider_id"), epoch);
+                result = nlohmann::json::object();
+                break;
+            case Method::provider_test: {
+                const std::string provider_id =
+                    require_identifier(params, "provider_id");
+                start_background(
+                    connection_id,
+                    id,
+                    application.test_provider(
+                        provider_id, without_key(params, "provider_id"), epoch));
+                return;
+            }
+            case Method::style_list:
+                require_only_keys(params, {});
+                result = application.list_styles(epoch);
+                break;
+            case Method::style_create:
+                result = application.create_style(
+                    cha::web::parse_create_display_name(params), epoch);
+                break;
+            case Method::style_update: {
+                const std::string id = require_identifier(params, "style_id");
+                result = application.update_style(
+                    id,
+                    cha::web::parse_style_update(without_key(params, "style_id")),
+                    epoch);
+                break;
+            }
+            case Method::style_delete:
+                require_only_keys(params, {"style_id"});
+                application.delete_style(
+                    require_identifier(params, "style_id"), epoch);
+                result = nlohmann::json::object();
+                break;
+            case Method::voice_list:
+                require_only_keys(params, {});
+                result = application.list_voices(epoch);
+                break;
+            case Method::voice_create:
+                result = application.create_voice(
+                    cha::web::parse_create_voice_request(params), epoch);
+                break;
+            case Method::voice_update: {
+                const std::string id = require_identifier(params, "voice_id");
+                result = application.update_voice(
+                    id,
+                    cha::web::parse_voice_update(without_key(params, "voice_id")),
+                    epoch);
+                break;
+            }
+            case Method::voice_delete:
+                require_only_keys(params, {"voice_id"});
+                application.delete_voice(
+                    require_identifier(params, "voice_id"), epoch);
+                result = nlohmann::json::object();
+                break;
+            case Method::voice_input_get:
+                require_only_keys(params, {});
+                result = encode_optional(application.get_voice_input_settings(epoch));
+                break;
+            case Method::voice_input_save:
+                result = application.save_voice_input_settings(
+                    cha::web::parse_voice_input_settings(params), epoch);
+                break;
+            case Method::voice_input_runtime:
+                require_only_keys(params, {});
+                result = encode_optional(application.get_voice_input_runtime(epoch));
+                break;
+            case Method::voice_output_get:
+                require_only_keys(params, {});
+                result = encode_optional(
+                    application.get_voice_output_settings(epoch));
+                break;
+            case Method::voice_output_save:
+                result = application.save_voice_output_settings(
+                    cha::web::parse_voice_output_settings(params), epoch);
+                break;
+            case Method::voice_output_runtime:
+                require_only_keys(params, {});
+                result = encode_optional(
+                    application.get_voice_output_runtime(epoch));
+                break;
+            case Method::api_key_list:
+                require_only_keys(params, {});
+                result = application.list_api_keys(epoch);
+                break;
+            case Method::api_key_create:
+                result = application.create_api_key(
+                    cha::web::parse_create_api_key_request(params), epoch);
+                break;
+            case Method::api_key_rename: {
+                const std::string id = require_identifier(params, "api_key_id");
+                result = application.rename_api_key(
+                    id,
+                    cha::web::parse_rename_display_name(
+                        without_key(params, "api_key_id")),
+                    epoch);
+                break;
+            }
+            case Method::api_key_replace_value: {
+                const std::string id = require_identifier(params, "api_key_id");
+                result = application.replace_api_key_value(
+                    id,
+                    cha::web::parse_replace_secret_value(
+                        without_key(params, "api_key_id")),
+                    epoch);
+                break;
+            }
+            case Method::api_key_delete:
+                require_only_keys(params, {"api_key_id"});
+                application.delete_api_key(
+                    require_identifier(params, "api_key_id"), epoch);
+                result = nlohmann::json::object();
+                break;
+            case Method::r2_storage_get:
+                require_only_keys(params, {});
+                result = encode_optional(application.get_r2_storage(epoch));
+                break;
+            case Method::r2_storage_save:
+                result = application.save_r2_storage(
+                    cha::web::parse_save_r2_storage_request(params), epoch);
+                break;
+            case Method::r2_storage_delete:
+                require_only_keys(params, {});
+                application.delete_r2_storage(epoch);
+                result = nlohmann::json::object();
+                break;
+            case Method::openai_auth_get:
+                require_only_keys(params, {});
+                result = application.openai_auth_status(epoch);
+                break;
+            case Method::openai_auth_start:
+                require_only_keys(params, {});
+                start_background(
+                    connection_id, id, application.start_openai_auth(epoch));
+                return;
+            case Method::openai_auth_poll:
+                require_only_keys(params, {});
+                start_background(
+                    connection_id, id, application.poll_openai_auth(epoch));
+                return;
+            case Method::openai_auth_disconnect:
+                require_only_keys(params, {});
+                result = application.disconnect_openai_auth(epoch);
+                break;
             default:
                 fail(ErrorCode::invalid_argument, "That method is not available.");
                 return;
@@ -1268,6 +1515,7 @@ void BridgeRouter::expire_timeouts() {
             const auto found = connection->outstanding.find(request_id);
             if (found == connection->outstanding.end()) continue;
             if (found->second.reply) found->second.reply->abandon();
+            if (found->second.operation) found->second.operation->abandon();
             const auto epoch = found->second.context_epoch;
             impl_->fail_request(
                 connection, request_id, epoch, ErrorCode::command_timeout);

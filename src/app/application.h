@@ -9,6 +9,7 @@
 #include "workspace/workspace_config_store.h"
 
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -19,6 +20,8 @@
 #include <string_view>
 #include <variant>
 #include <vector>
+
+#include <nlohmann/json.hpp>
 
 namespace cha {
 class SessionRepository;
@@ -88,6 +91,30 @@ public:
         cha::web::ErrorCode code,
         std::string message = {});
     cha::web::ErrorCode code;
+};
+
+// Terminal result for provider tests and OAuth network work. Abandoned replies
+// ignore a later completion; the work itself is not rolled back.
+class OperationReply {
+public:
+    struct Failure {
+        cha::web::ErrorCode code{cha::web::ErrorCode::internal_error};
+        std::string message;
+    };
+    using Result = std::variant<nlohmann::json, Failure>;
+
+    bool complete(nlohmann::json result);
+    bool fail(cha::web::ErrorCode code, std::string message);
+    void set_ready_callback(std::function<void()> callback);
+    [[nodiscard]] std::optional<Result> peek() const;
+    void abandon() const;
+
+private:
+    mutable std::mutex mutex_;
+    mutable std::condition_variable ready_;
+    mutable bool abandoned_{};
+    std::optional<Result> result_;
+    mutable std::function<void()> ready_callback_;
 };
 
 [[nodiscard]] std::string_view application_state_name(
@@ -256,6 +283,94 @@ public:
     void delete_forum_file(
         std::string_view forum_id,
         std::string_view filename,
+        std::uint64_t epoch = 0);
+
+    [[nodiscard]] std::vector<cha::web::ProviderSummary> list_providers(
+        std::uint64_t epoch = 0);
+    [[nodiscard]] cha::web::ProviderDetail get_provider(
+        std::string_view provider_id,
+        std::uint64_t epoch = 0);
+    [[nodiscard]] cha::web::ProviderDetail create_provider(
+        cha::web::CreateProviderRequest create,
+        std::uint64_t epoch = 0);
+    [[nodiscard]] cha::web::ProviderDetail update_provider(
+        std::string_view provider_id,
+        nlohmann::json body,
+        std::uint64_t epoch = 0);
+    void delete_provider(
+        std::string_view provider_id,
+        std::uint64_t epoch = 0);
+    [[nodiscard]] std::shared_ptr<OperationReply> test_provider(
+        std::string_view provider_id,
+        nlohmann::json body,
+        std::uint64_t epoch = 0);
+
+    [[nodiscard]] std::vector<cha::web::StyleDetail> list_styles(
+        std::uint64_t epoch = 0);
+    [[nodiscard]] cha::web::StyleDetail create_style(
+        std::string display_name,
+        std::uint64_t epoch = 0);
+    [[nodiscard]] cha::web::StyleDetail update_style(
+        std::string_view style_id,
+        cha::web::StyleUpdate update,
+        std::uint64_t epoch = 0);
+    void delete_style(std::string_view style_id, std::uint64_t epoch = 0);
+
+    [[nodiscard]] std::vector<cha::web::VoiceDetail> list_voices(
+        std::uint64_t epoch = 0);
+    [[nodiscard]] cha::web::VoiceDetail create_voice(
+        cha::web::CreateVoiceRequest create,
+        std::uint64_t epoch = 0);
+    [[nodiscard]] cha::web::VoiceDetail update_voice(
+        std::string_view voice_id,
+        cha::web::VoiceUpdate update,
+        std::uint64_t epoch = 0);
+    void delete_voice(std::string_view voice_id, std::uint64_t epoch = 0);
+
+    [[nodiscard]] std::optional<cha::web::VoiceInputSettings>
+    get_voice_input_settings(std::uint64_t epoch = 0);
+    [[nodiscard]] cha::web::VoiceInputSettings save_voice_input_settings(
+        cha::web::VoiceInputSettings settings,
+        std::uint64_t epoch = 0);
+    [[nodiscard]] std::optional<cha::web::VoiceInputRuntime>
+    get_voice_input_runtime(std::uint64_t epoch = 0);
+    [[nodiscard]] std::optional<cha::web::VoiceOutputSettings>
+    get_voice_output_settings(std::uint64_t epoch = 0);
+    [[nodiscard]] cha::web::VoiceOutputSettings save_voice_output_settings(
+        cha::web::VoiceOutputSettings settings,
+        std::uint64_t epoch = 0);
+    [[nodiscard]] std::optional<cha::web::VoiceOutputRuntime>
+    get_voice_output_runtime(std::uint64_t epoch = 0);
+
+    [[nodiscard]] std::vector<cha::web::ApiKeyDetail> list_api_keys(
+        std::uint64_t epoch = 0);
+    [[nodiscard]] cha::web::ApiKeyDetail create_api_key(
+        cha::web::CreateApiKeyRequest create,
+        std::uint64_t epoch = 0);
+    [[nodiscard]] cha::web::ApiKeyDetail rename_api_key(
+        std::string_view api_key_id,
+        std::string display_name,
+        std::uint64_t epoch = 0);
+    [[nodiscard]] cha::web::ApiKeyDetail replace_api_key_value(
+        std::string_view api_key_id,
+        std::string value,
+        std::uint64_t epoch = 0);
+    void delete_api_key(std::string_view api_key_id, std::uint64_t epoch = 0);
+
+    [[nodiscard]] std::optional<cha::web::R2StorageDetail> get_r2_storage(
+        std::uint64_t epoch = 0);
+    [[nodiscard]] cha::web::R2StorageDetail save_r2_storage(
+        cha::web::SaveR2StorageRequest request,
+        std::uint64_t epoch = 0);
+    void delete_r2_storage(std::uint64_t epoch = 0);
+
+    [[nodiscard]] cha::web::OpenAiAuth openai_auth_status(
+        std::uint64_t epoch = 0);
+    [[nodiscard]] std::shared_ptr<OperationReply> start_openai_auth(
+        std::uint64_t epoch = 0);
+    [[nodiscard]] std::shared_ptr<OperationReply> poll_openai_auth(
+        std::uint64_t epoch = 0);
+    [[nodiscard]] cha::web::OpenAiAuth disconnect_openai_auth(
         std::uint64_t epoch = 0);
 
     [[nodiscard]] cha::web::VaultRegistrySnapshot vault_snapshot() const;

@@ -16,6 +16,7 @@ import {
 import {
   publicErrorMessage,
   cachedAudioUrl,
+  isVoiceInputRuntime,
   type AudioDownloadBatchEntry,
   type ChaClient,
   type CharacterAppearance,
@@ -397,13 +398,13 @@ export function ChatScreen({
     void client.getVoiceInputRuntime().then(
       (configuration) => {
         if (!current) return;
-        setVoiceConfiguration(configuration && {
+        setVoiceConfiguration(configuration && isVoiceInputRuntime(configuration) ? {
           url: configuration.url,
           model: configuration.model,
           apiKey: configuration.api_key,
           delay: configuration.delay,
           prompt: configuration.prompt,
-        });
+        } : null);
       },
       () => { if (current) setVoiceConfiguration(null); },
     );

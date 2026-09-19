@@ -370,6 +370,132 @@ void to_json(nlohmann::json& json, const SessionExport& value) {
     json = {{"markdown", value.markdown}};
 }
 
+void to_json(nlohmann::json& json, const ProviderSummary& value) {
+    json = {
+        {"id", value.id},
+        {"display_name", value.display_name},
+        {"model", value.model},
+        {"host", value.host},
+    };
+}
+
+void to_json(nlohmann::json& json, const ProviderDetail& value) {
+    json = {
+        {"id", value.id},
+        {"display_name", value.display_name},
+        {"host", value.host},
+        {"port", value.port},
+        {"base_path", value.base_path},
+        {"mode", value.mode},
+        {"model", value.model},
+        {"stream", value.stream},
+        {"temperature", value.temperature
+            ? nlohmann::json(*value.temperature) : nlohmann::json(nullptr)},
+        {"max_tokens", value.max_tokens
+            ? nlohmann::json(*value.max_tokens) : nlohmann::json(nullptr)},
+        {"timeout_s", value.timeout_s},
+        {"idle_timeout_s", value.idle_timeout_s},
+        {"api_key", value.api_key
+            ? nlohmann::json(*value.api_key) : nlohmann::json(nullptr)},
+        {"reasoning_effort", value.reasoning_effort},
+        {"reasoning_format", value.reasoning_format},
+        {"https", value.https},
+        {"api", value.api},
+        {"auth", value.auth},
+        {"web_search", value.web_search},
+        {"cache_retention", value.cache_retention},
+        {"openrouter_targets", value.openrouter_targets},
+        {"writable", value.writable},
+        {"used_by", value.used_by},
+    };
+}
+
+void to_json(nlohmann::json& json, const StyleDetail& value) {
+    json = appearance_json(value.appearance);
+    json["id"] = value.id;
+    json["display_name"] = value.display_name;
+    json["writable"] = value.writable;
+    json["used_by"] = value.used_by;
+}
+
+void to_json(nlohmann::json& json, const VoiceDetail& value) {
+    json = {
+        {"id", value.id},
+        {"display_name", value.display_name},
+        {"description", value.description},
+        {"elevenlabs_voice_id", value.elevenlabs_voice_id},
+        {"speed", value.speed ? nlohmann::json(*value.speed) : nlohmann::json(nullptr)},
+        {"writable", value.writable},
+        {"used_by", value.used_by},
+    };
+}
+
+void to_json(nlohmann::json& json, const VoiceInputSettings& value) {
+    json = {
+        {"url", value.url},
+        {"model", value.model},
+        {"api_key", value.api_key},
+        {"delay", value.delay},
+        {"prompt", value.prompt},
+    };
+}
+
+void to_json(nlohmann::json& json, const VoiceInputRuntime& value) {
+    json = {
+        {"url", value.url},
+        {"model", value.model},
+        {"delay", value.delay},
+        {"prompt", value.prompt},
+    };
+}
+
+void to_json(nlohmann::json& json, const VoiceOutputSettings& value) {
+    json = {
+        {"url", value.url},
+        {"model", value.model},
+        {"api_key", value.api_key},
+        {"output_format", value.output_format},
+        {"default_voice", value.default_voice},
+    };
+}
+
+void to_json(nlohmann::json& json, const VoiceOutputRuntime& value) {
+    json = {
+        {"url", value.url},
+        {"model", value.model},
+        {"output_format", value.output_format},
+        {"default_voice_id", value.default_voice_id},
+    };
+}
+
+void to_json(nlohmann::json& json, const ApiKeyDetail& value) {
+    json = {
+        {"id", value.id},
+        {"display_name", value.display_name},
+        {"has_value", value.has_value},
+        {"used_by", value.used_by},
+    };
+}
+
+void to_json(nlohmann::json& json, const R2StorageDetail& value) {
+    json = {
+        {"id", value.id},
+        {"display_name", value.display_name},
+        {"url", value.url},
+        {"access_key_id", value.access_key_id},
+        {"has_secret_key", value.has_secret_key},
+    };
+}
+
+void to_json(nlohmann::json& json, const OpenAiAuth& value) {
+    json = {{"status", value.status}};
+    put_optional(json, "user_code", value.user_code);
+    put_optional(json, "verification_url", value.verification_url);
+    put_optional(json, "attempt_expires_at", value.attempt_expires_at);
+    put_optional(json, "next_poll_delay_ms", value.next_poll_delay_ms);
+    put_optional(json, "error", value.error);
+}
+
 void to_json(nlohmann::json& json, const Error& value) {
     json = {
         {"error",

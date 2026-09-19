@@ -338,6 +338,7 @@ add_library(cha_app STATIC
     src/app/application.cpp
     src/app/vault_operations.cpp
     src/app/workspace_operations.cpp
+    src/app/settings_operations.cpp
     src/app/session_output.cpp
     src/web/browser_connection_state.cpp
     src/web/command_queue.cpp
@@ -532,6 +533,7 @@ if(BUILD_TESTING)
     add_executable(
         cha_app_tests
         tests/app/unit_application.cpp
+        tests/app/unit_settings_operations.cpp
         tests/app/unit_vault_maintenance.cpp
         tests/app/unit_session_output.cpp
         tests/app/unit_session_retirement.cpp

@@ -755,16 +755,58 @@ when its revision/coverage remains applicable. Do not require the next agent to
 read an entire conversation to recover decisions.
 
 ```text
-Status: not started | in progress | waiting for evidence | complete
+Status: complete
 Starting and resulting revision/checkpoint:
+  start 79b602d (Block 6). Result: uncommitted working tree on the same branch.
 Files changed/moved and actual new APIs/targets:
+  New: src/app/settings_operations.{h,cpp}, tests/app/unit_settings_operations.cpp
+  Native methods: provider.list/get/create/update/delete/test,
+    style.list/create/update/delete, voice.list/create/update/delete,
+    voiceInput.get/save/runtime, voiceOutput.get/save/runtime,
+    apiKey.list/create/rename/replaceValue/delete,
+    r2Storage.get/save/delete,
+    openaiAuth.get/start/poll/disconnect
+  Application::test_provider, start_openai_auth, poll_openai_auth return
+    OperationReply and run on application background threads.
 Implemented behavior and key ownership/contract decisions:
+  Domain policy lives in settings_operations; HTTP routes are thin adapters.
+  Native reads return IDs/presence only. VoiceInputRuntime omits api_key;
+  HTTP GET /voice-input/runtime still attaches the secret for the JS path.
+  Provider tests and OAuth start/poll do not occupy the ordinary bridge worker.
+  Completions recheck context; abandoned replies are not rolled back.
+  voiceInput.connect / speech / audio jobs remain nativeUnavailable.
 Prerequisites verified and evidence used:
+  Application/bridge/workspace/vault operations from 79b602d and passing
+    cha_app_tests / cha_bridge_tests / ApplicationRuntime settings tests.
 Temporary compatibility code and when it can be removed:
+  HTTP settings and OpenAI auth routes; HTTP voice-input runtime secret field.
+  Remove with the HTTP server in the final cutover. Media connect/synthesis
+  remains for the media implementation stage.
 Exact commands, working directories, platform/runtime versions, and results:
+  macOS 26.7 (25G229), Apple clang 21.0.0, cmake 4.4.0, Node v26.9.0
+  repo root:
+    cmake --build --preset ninja --target cha_app_tests cha_bridge_tests cha_web_tests
+    ctest --test-dir build/ninja --output-on-failure -R 'ApplicationSettings|BridgeRouter|ApplicationRuntime.StoresApiKeys|ApplicationRuntime.ManagesR2|ApplicationRuntime.PreservesOpenRouter|OpenAiAuthRoutes|WebWireFixtures'
+    cmake --build --preset asan-ubsan --target cha_app_tests cha_bridge_tests
+    ./build/asan-ubsan/cha_app_tests --gtest_filter='ApplicationSettings*'
+    ./build/asan-ubsan/cha_bridge_tests --gtest_filter='BridgeRouterTest.SlowProvider*:BridgeRouterTest.StaleOauth*:BridgeRouterTest.ListsProviders*'
+    npm --prefix webapp run check
+    npm --prefix webapp run build
+    sh tests/native/macos/run.sh flow --timeout-ms 25000
+    sh tests/native/macos/run.sh reload --timeout-ms 30000
+  All of the above passed. Native flow: runtime_listener=none,
+    voiceRuntimeHasKey=false, authStatus=signed_out, providerCount=1.
 Known failures, checks not run, and exact missing evidence:
+  Windows/WebView2 native settings UI not run (no Windows host here).
+  tsan preset not run. Live provider/R2 account verification not run.
+  Native authorization-link click uses the existing OpenAiConnection
+    https-only guard; no live ChatGPT login was performed.
 Inventory/coverage changes and remaining work:
+  Settings/credential/OAuth/appearance operations are native. Remaining
+    nativeUnavailable: audio.start/startBatch/status/source/clearCache/release,
+    speech.start/cancel/release, voiceInput.connect/cancel.
 Next unfinished numbered step if this block needs continuation:
+  none for this block; media execution is the next stage.
 ```
 
 Maintain concise rows for the operations/files/assertions touched by this block.
@@ -773,11 +815,23 @@ carry forward existing evidence and record the relevant updates.
 
 | Operation/caller or source/test path | Retained behavior/result/errors | Native destination or deletion reason | Context/cancellation/lifetime | Verification and status |
 |---|---|---|---|---|
-| Populate during execution | | | | |
+| `provider.list/get/create/update/delete` `src/app/settings_operations.cpp` | Canonical editable config, used-by, writable, 409 when still used | `Application` + `provider.*` | Epoch on admission; store locks | `ApplicationSettings.ListsAndUpdatesProvidersWithoutSecrets` pass |
+| `provider.test` HTTP `/providers/{id}/test` | Deterministic mock success/malformed/failure; public "Provider test failed" | Background `OperationReply`; HTTP waits on worker | Cancel on shutdown; timeout is unknown outcome | Mock success; `SlowProviderTestDoesNotStarveStop` pass |
+| `apiKey.*` | Metadata/presence only; write-only value | `apiKey.list/create/rename/replaceValue/delete` | Epoch; no secret in JSON | HTTP + native fixtures; dump has no stored value |
+| `r2Storage.get/save/delete` | `has_secret_key`, no secret_key in reads | `r2Storage.*` | Epoch | `ApplicationRuntime.ManagesR2CredentialsThroughSettingsRoutes` pass |
+| `openaiAuth.get/start/poll/disconnect` | Snapshot without tokens; https verification URL | `openaiAuth.*`; start/poll background | Stale epoch → `vault_changed`/`application_unavailable` | `OpenAiAuthRoutesTest` + `StaleOauthCompletionDoesNotPublishAfterContextChange` |
+| `style.*` `voice.*` | Defaults, references, appearance publication | `style.*` `voice.*` | Affected-session reload via existing invalidation | Application + HTTP runtime tests pass |
+| `voiceInput/Output.get/save/runtime` | Settings include key IDs; native runtime omits secrets | `voiceInput.*` `voiceOutput.*` | Runtime null if missing key | Native `voiceRuntimeHasKey=false`; HTTP still adds secret |
+| `webapp/src/api/nativeClient.ts` | Typed client for migrated methods | Replaces `nativeUnavailable` | Media methods still unavailable | `nativeClient.test.ts` 5 tests pass |
 
 | Required flow/assertion | Common test evidence | macOS evidence | Windows evidence | Remaining limitation |
 |---|---|---|---|---|
-| Populate during execution | | | | |
+| Provider CRUD + deterministic test | `ApplicationSettings.*`, HTTP `StoresApiKeysInTheVault...` | native flow `provider.list` | not run | live-account test isolated/not run |
+| Key/R2 reads have no stored secret | fixtures + ApplicationSettings | flow JSON has `has_secret_key`, no `secret_key` | not run | env R2 access_key_id may appear |
+| OAuth status/start/poll/disconnect | `OpenAiAuthRoutesTest` | `authStatus=signed_out` | not run | no live ChatGPT login |
+| Slow provider work does not starve Stop | `BridgeRouterTest.SlowProviderTestDoesNotStarveStop` asan | — | not run | — |
+| Appearance/runtime persistence + reload | ApplicationSettings + HTTP | `run.sh reload` PASS | not run | media connect still unavailable |
+| Schema/fixture/TS | `WebWireFixtures`, `npm run check` 366 tests | — | — | — |
 
 The final response must state what was implemented, why, what was actually tested,
 and any unresolved limitation. If incomplete, give the exact next step and missing
@@ -788,3 +842,4 @@ prerequisite/evidence. A context limit or a mostly working platform is not succe
 The [migration plan](plan.md) and [design proposal](redesign.md) explain the overall
 sequence and original rationale. They are reference material, not additional
 required instructions for executing this brief.
+COMPLETED

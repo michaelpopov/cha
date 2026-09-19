@@ -1,0 +1,6 @@
+{
+  "url": "https://api.openai.com/v1/realtime",
+  "model": "gpt-4o-transcribe",
+  "delay": "low",
+  "prompt": ""
+}

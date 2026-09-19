@@ -1,0 +1,7 @@
+{
+  "id": "api_key_1",
+  "display_name": "Backups",
+  "url": "https://account.example/bucket",
+  "access_key_id": "access-one",
+  "has_secret_key": true
+}

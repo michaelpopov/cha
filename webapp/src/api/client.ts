@@ -51,6 +51,10 @@ export type CreateVoiceRequest = components['schemas']['CreateVoiceRequest'];
 export type VoiceUpdate = components['schemas']['VoiceUpdate'];
 export type VoiceInputSettings = components['schemas']['VoiceInputSettings'];
 export type VoiceInputRuntime = components['schemas']['VoiceInputRuntime'];
+// Native wire omits the HTTP secret. `api_key?: never` keeps the union distinct.
+export type NativeVoiceInputRuntime = Omit<VoiceInputRuntime, 'api_key'> & {
+  readonly api_key?: never;
+};
 export type VoiceOutputSettings = components['schemas']['VoiceOutputSettings'];
 export type VoiceOutputRuntime = components['schemas']['VoiceOutputRuntime'];
 export type ApiKeyDetail = components['schemas']['ApiKeyDetail'];
@@ -209,7 +213,7 @@ export interface ChaClient {
   deleteVoice(voiceId: string): Promise<void>;
   getVoiceInputSettings(): Promise<VoiceInputSettings | null>;
   saveVoiceInputSettings(settings: VoiceInputSettings): Promise<VoiceInputSettings>;
-  getVoiceInputRuntime(): Promise<VoiceInputRuntime | null>;
+  getVoiceInputRuntime(): Promise<VoiceInputRuntime | NativeVoiceInputRuntime | null>;
   getVoiceOutputSettings(): Promise<VoiceOutputSettings | null>;
   saveVoiceOutputSettings(settings: VoiceOutputSettings): Promise<VoiceOutputSettings>;
   getVoiceOutputRuntime(): Promise<VoiceOutputRuntime | null>;
@@ -352,7 +356,7 @@ export function isForumDetail(value: unknown): value is ForumDetail {
     && typeof value.writable === 'boolean';
 }
 
-function isProviderSummary(value: unknown): value is ProviderSummary {
+export function isProviderSummary(value: unknown): value is ProviderSummary {
   return isRecord(value) && hasIdentity(value)
     && typeof value.model === 'string' && typeof value.host === 'string';
 }
@@ -368,7 +372,7 @@ function isVaultDetail(value: unknown): value is VaultDetail {
     && typeof value.can_delete === 'boolean';
 }
 
-function isProviderDetail(value: unknown): value is ProviderDetail {
+export function isProviderDetail(value: unknown): value is ProviderDetail {
   return isRecord(value) && hasIdentity(value)
     && typeof value.model === 'string' && typeof value.host === 'string'
     && isOneOf(value.mode, ['net', 'test'])
@@ -396,7 +400,7 @@ function isProviderDetail(value: unknown): value is ProviderDetail {
     && value.used_by.every((name) => typeof name === 'string');
 }
 
-function isStyleDetail(value: unknown): value is StyleDetail {
+export function isStyleDetail(value: unknown): value is StyleDetail {
   return isRecord(value) && hasIdentity(value)
     && isOneOf(value.font, ['sans', 'serif', 'mono'])
     && isOneOf(value.style, ['normal', 'italic'])
@@ -418,7 +422,7 @@ function isNullableBoundedNumber(
       && value >= minimum && value <= maximum);
 }
 
-function isVoiceDetail(value: unknown): value is VoiceDetail {
+export function isVoiceDetail(value: unknown): value is VoiceDetail {
   return isRecord(value) && hasIdentity(value)
     && typeof value.description === 'string'
     && typeof value.elevenlabs_voice_id === 'string'
@@ -429,14 +433,14 @@ function isVoiceDetail(value: unknown): value is VoiceDetail {
     && value.used_by.every((name) => typeof name === 'string');
 }
 
-function isApiKeyDetail(value: unknown): value is ApiKeyDetail {
+export function isApiKeyDetail(value: unknown): value is ApiKeyDetail {
   return isRecord(value) && hasIdentity(value)
     && typeof value.has_value === 'boolean'
     && Array.isArray(value.used_by)
     && value.used_by.every((name) => typeof name === 'string');
 }
 
-function isVoiceInputSettings(value: unknown): value is VoiceInputSettings {
+export function isVoiceInputSettings(value: unknown): value is VoiceInputSettings {
   return isRecord(value)
     && typeof value.url === 'string' && value.url.length > 0
     && typeof value.model === 'string' && value.model.length > 0
@@ -446,11 +450,11 @@ function isVoiceInputSettings(value: unknown): value is VoiceInputSettings {
     && typeof value.prompt === 'string';
 }
 
-function isVoiceInputRuntime(value: unknown): value is VoiceInputRuntime {
+export function isVoiceInputRuntime(value: unknown): value is VoiceInputRuntime {
   return isVoiceInputSettings(value);
 }
 
-function isVoiceOutputSettings(value: unknown): value is VoiceOutputSettings {
+export function isVoiceOutputSettings(value: unknown): value is VoiceOutputSettings {
   return isRecord(value)
     && typeof value.url === 'string' && value.url.length > 0
     && typeof value.model === 'string' && value.model.length > 0
@@ -459,7 +463,7 @@ function isVoiceOutputSettings(value: unknown): value is VoiceOutputSettings {
     && typeof value.default_voice === 'string' && value.default_voice.length > 0;
 }
 
-function isVoiceOutputRuntime(value: unknown): value is VoiceOutputRuntime {
+export function isVoiceOutputRuntime(value: unknown): value is VoiceOutputRuntime {
   return isRecord(value)
     && typeof value.url === 'string' && value.url.length > 0
     && typeof value.model === 'string' && value.model.length > 0
@@ -468,11 +472,28 @@ function isVoiceOutputRuntime(value: unknown): value is VoiceOutputRuntime {
     && value.default_voice_id.length > 0;
 }
 
-function isR2StorageDetail(value: unknown): value is R2StorageDetail {
+export function isR2StorageDetail(value: unknown): value is R2StorageDetail {
   return isRecord(value) && hasIdentity(value)
     && typeof value.url === 'string'
     && typeof value.access_key_id === 'string'
     && typeof value.has_secret_key === 'boolean';
+}
+
+export function isOpenAiAuth(value: unknown): value is OpenAiAuth {
+  return isRecord(value)
+    && (value.status === 'signed_out'
+      || value.status === 'waiting'
+      || value.status === 'connected')
+    && (value.user_code === undefined || typeof value.user_code === 'string')
+    && (value.verification_url === undefined
+      || typeof value.verification_url === 'string')
+    && (value.attempt_expires_at === undefined
+      || (typeof value.attempt_expires_at === 'number'
+        && Number.isSafeInteger(value.attempt_expires_at)))
+    && (value.next_poll_delay_ms === undefined
+      || (typeof value.next_poll_delay_ms === 'number'
+        && Number.isSafeInteger(value.next_poll_delay_ms)))
+    && (value.error === undefined || typeof value.error === 'string');
 }
 
 export function isSessionListingArray(value: unknown): value is SessionListing[] {

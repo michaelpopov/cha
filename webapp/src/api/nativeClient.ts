@@ -1,25 +1,53 @@
 import {
   ChaError,
   ChaProtocolError,
+  isApiKeyDetail,
   isCharacterDetail,
   isCommandResult,
   isForumDetail,
   isMarkdownFile,
+  isOpenAiAuth,
   isPersonaDetail,
+  isProviderDetail,
+  isProviderSummary,
+  isR2StorageDetail,
   isSessionLabelResult,
   isSessionListingArray,
   isSessionSnapshot,
+  isStyleDetail,
+  isVoiceDetail,
+  isVoiceInputSettings,
+  isVoiceOutputRuntime,
+  isVoiceOutputSettings,
+  type ApiKeyDetail,
   type ChaClient,
   type CommandResult,
   type CoverRequest,
+  type CreateApiKeyRequest,
+  type CreateProviderRequest,
   type CreateSessionResult,
+  type CreateStyleRequest,
   type CreateVaultRequest,
+  type CreateVoiceRequest,
   type DeleteTurnRequest,
   type InputRequest,
   type OpenSessionResult,
+  type ProviderDetail,
+  type ProviderSummary,
+  type ProviderUpdate,
+  type R2StorageDetail,
+  type SaveR2StorageRequest,
   type SessionSnapshot,
+  type StyleDetail,
+  type StyleUpdate,
   type VaultDetail,
   type VaultUpdate,
+  type VoiceDetail,
+  type NativeVoiceInputRuntime,
+  type VoiceInputSettings,
+  type VoiceOutputRuntime,
+  type VoiceOutputSettings,
+  type VoiceUpdate,
 } from './client';
 import { nativeProtocolVersion, type NativeBridge } from './nativeBridge';
 import { isRecord } from './guards';
@@ -66,6 +94,23 @@ function isBootstrapResult(value: unknown): value is {
 
 function isSessionExport(value: unknown): value is { markdown: string } {
   return isRecord(value) && typeof value.markdown === 'string';
+}
+
+function isNativeVoiceInputRuntime(value: unknown): value is NativeVoiceInputRuntime {
+  return isRecord(value)
+    && typeof value.url === 'string' && value.url.length > 0
+    && typeof value.model === 'string' && value.model.length > 0
+    && (value.delay === 'low' || value.delay === 'medium'
+      || value.delay === 'high' || value.delay === 'xhigh')
+    && typeof value.prompt === 'string'
+    && value.api_key === undefined;
+}
+
+function isNullable<T>(
+  value: unknown,
+  check: (value: unknown) => value is T,
+): value is T | null {
+  return value === null || check(value);
 }
 
 function isVaultDetail(value: unknown): value is VaultDetail {
@@ -292,10 +337,10 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient {
       { forum_id: forumId, session_id: sessionId, character_id: characterId },
       isCommandResult,
     ),
-    getOpenAiAuth: nativeUnavailable,
-    startOpenAiAuth: nativeUnavailable,
-    pollOpenAiAuth: nativeUnavailable,
-    disconnectOpenAiAuth: nativeUnavailable,
+    getOpenAiAuth: () => call('openaiAuth.get', {}, isOpenAiAuth),
+    startOpenAiAuth: () => call('openaiAuth.start', {}, isOpenAiAuth),
+    pollOpenAiAuth: () => call('openaiAuth.poll', {}, isOpenAiAuth),
+    disconnectOpenAiAuth: () => call('openaiAuth.disconnect', {}, isOpenAiAuth),
     listVaults: () => call(
       'vault.list',
       {},
@@ -325,34 +370,152 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient {
     deleteVault: async (vaultName) => {
       await call('vault.delete', { vault_name: vaultName }, isRecord);
     },
-    listProviders: nativeUnavailable,
-    createProvider: nativeUnavailable,
-    getProvider: nativeUnavailable,
-    testProvider: nativeUnavailable,
-    updateProvider: nativeUnavailable,
-    deleteProvider: nativeUnavailable,
-    listStyles: nativeUnavailable,
-    createStyle: nativeUnavailable,
-    updateStyle: nativeUnavailable,
-    deleteStyle: nativeUnavailable,
-    listVoices: nativeUnavailable,
-    createVoice: nativeUnavailable,
-    updateVoice: nativeUnavailable,
-    deleteVoice: nativeUnavailable,
-    getVoiceInputSettings: nativeUnavailable,
-    saveVoiceInputSettings: nativeUnavailable,
-    getVoiceInputRuntime: nativeUnavailable,
-    getVoiceOutputSettings: nativeUnavailable,
-    saveVoiceOutputSettings: nativeUnavailable,
-    getVoiceOutputRuntime: nativeUnavailable,
-    listApiKeys: nativeUnavailable,
-    createApiKey: nativeUnavailable,
-    renameApiKey: nativeUnavailable,
-    replaceApiKeyValue: nativeUnavailable,
-    deleteApiKey: nativeUnavailable,
-    getR2Storage: nativeUnavailable,
-    saveR2Storage: nativeUnavailable,
-    deleteR2Storage: nativeUnavailable,
+    listProviders: () => call(
+      'provider.list',
+      {},
+      (value): value is ProviderSummary[] => Array.isArray(value)
+        && value.every(isProviderSummary),
+    ),
+    createProvider: (request: CreateProviderRequest) => call(
+      'provider.create',
+      request,
+      isProviderDetail,
+    ),
+    getProvider: (providerId) => call(
+      'provider.get',
+      { provider_id: providerId },
+      isProviderDetail,
+    ),
+    testProvider: async (providerId, candidate: ProviderUpdate) => {
+      await call(
+        'provider.test',
+        { provider_id: providerId, ...candidate },
+        isRecord,
+      );
+    },
+    updateProvider: (providerId, update: ProviderUpdate) => call(
+      'provider.update',
+      { provider_id: providerId, ...update },
+      isProviderDetail,
+    ),
+    deleteProvider: async (providerId) => {
+      await call('provider.delete', { provider_id: providerId }, isRecord);
+    },
+    listStyles: () => call(
+      'style.list',
+      {},
+      (value): value is StyleDetail[] => Array.isArray(value)
+        && value.every(isStyleDetail),
+    ),
+    createStyle: (request: CreateStyleRequest) => call(
+      'style.create',
+      request,
+      isStyleDetail,
+    ),
+    updateStyle: (styleId, update: StyleUpdate) => call(
+      'style.update',
+      { style_id: styleId, ...update },
+      isStyleDetail,
+    ),
+    deleteStyle: async (styleId) => {
+      await call('style.delete', { style_id: styleId }, isRecord);
+    },
+    listVoices: () => call(
+      'voice.list',
+      {},
+      (value): value is VoiceDetail[] => Array.isArray(value)
+        && value.every(isVoiceDetail),
+    ),
+    createVoice: (request: CreateVoiceRequest) => call(
+      'voice.create',
+      request,
+      isVoiceDetail,
+    ),
+    updateVoice: (voiceId, update: VoiceUpdate) => call(
+      'voice.update',
+      { voice_id: voiceId, ...update },
+      isVoiceDetail,
+    ),
+    deleteVoice: async (voiceId) => {
+      await call('voice.delete', { voice_id: voiceId }, isRecord);
+    },
+    getVoiceInputSettings: () => call(
+      'voiceInput.get',
+      {},
+      (value): value is VoiceInputSettings | null => (
+        isNullable(value, isVoiceInputSettings)
+      ),
+    ),
+    saveVoiceInputSettings: (settings: VoiceInputSettings) => call(
+      'voiceInput.save',
+      settings,
+      isVoiceInputSettings,
+    ),
+    getVoiceInputRuntime: () => call(
+      'voiceInput.runtime',
+      {},
+      (value): value is NativeVoiceInputRuntime | null => (
+        isNullable(value, isNativeVoiceInputRuntime)
+      ),
+    ),
+    getVoiceOutputSettings: () => call(
+      'voiceOutput.get',
+      {},
+      (value): value is VoiceOutputSettings | null => (
+        isNullable(value, isVoiceOutputSettings)
+      ),
+    ),
+    saveVoiceOutputSettings: (settings: VoiceOutputSettings) => call(
+      'voiceOutput.save',
+      settings,
+      isVoiceOutputSettings,
+    ),
+    getVoiceOutputRuntime: () => call(
+      'voiceOutput.runtime',
+      {},
+      (value): value is VoiceOutputRuntime | null => (
+        isNullable(value, isVoiceOutputRuntime)
+      ),
+    ),
+    listApiKeys: () => call(
+      'apiKey.list',
+      {},
+      (value): value is ApiKeyDetail[] => Array.isArray(value)
+        && value.every(isApiKeyDetail),
+    ),
+    createApiKey: (request: CreateApiKeyRequest) => call(
+      'apiKey.create',
+      request,
+      isApiKeyDetail,
+    ),
+    renameApiKey: (apiKeyId, displayName) => call(
+      'apiKey.rename',
+      { api_key_id: apiKeyId, display_name: displayName },
+      isApiKeyDetail,
+    ),
+    replaceApiKeyValue: (apiKeyId, value) => call(
+      'apiKey.replaceValue',
+      { api_key_id: apiKeyId, value },
+      isApiKeyDetail,
+    ),
+    deleteApiKey: async (apiKeyId) => {
+      await call('apiKey.delete', { api_key_id: apiKeyId }, isRecord);
+    },
+    getR2Storage: () => call(
+      'r2Storage.get',
+      {},
+      (value): value is R2StorageDetail | null => (
+        isNullable(value, isR2StorageDetail)
+      ),
+    ),
+    saveR2Storage: (request: SaveR2StorageRequest) => call(
+      'r2Storage.save',
+      request,
+      isR2StorageDetail,
+    ),
+    deleteR2Storage: async () => {
+      await call('r2Storage.delete', {}, isRecord);
+    },
     startAudioDownloadBatch: nativeUnavailable,
     startAudioDownload: nativeUnavailable,
     getAudioDownloads: nativeUnavailable,

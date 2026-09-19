@@ -1,5 +1,6 @@
 #include "app/application.h"
 
+#include "app/settings_operations.h"
 #include "app/vault_operations.h"
 #include "app/workspace_operations.h"
 #include "providers/openai_oauth.h"
@@ -32,10 +33,12 @@
 #include <algorithm>
 #include <atomic>
 #include <exception>
+#include <functional>
 #include <filesystem>
 #include <optional>
 #include <span>
 #include <stdexcept>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -63,6 +66,55 @@ ApplicationError::ApplicationError(ErrorCode code, std::string message)
     : std::runtime_error(
           message.empty() ? "The application operation failed" : std::move(message)),
       code(code) {}
+
+bool OperationReply::complete(nlohmann::json result) {
+    std::function<void()> callback;
+    {
+        std::lock_guard lock(mutex_);
+        if (result_ || abandoned_) return false;
+        result_ = std::move(result);
+        callback = std::move(ready_callback_);
+    }
+    ready_.notify_all();
+    if (callback) callback();
+    return true;
+}
+
+bool OperationReply::fail(ErrorCode code, std::string message) {
+    std::function<void()> callback;
+    {
+        std::lock_guard lock(mutex_);
+        if (result_ || abandoned_) return false;
+        result_ = Failure{code, std::move(message)};
+        callback = std::move(ready_callback_);
+    }
+    ready_.notify_all();
+    if (callback) callback();
+    return true;
+}
+
+void OperationReply::set_ready_callback(std::function<void()> callback) {
+    {
+        std::lock_guard lock(mutex_);
+        if (abandoned_) return;
+        if (!result_) {
+            ready_callback_ = std::move(callback);
+            return;
+        }
+    }
+    if (callback) callback();
+}
+
+std::optional<OperationReply::Result> OperationReply::peek() const {
+    std::lock_guard lock(mutex_);
+    return result_;
+}
+
+void OperationReply::abandon() const {
+    std::lock_guard lock(mutex_);
+    abandoned_ = true;
+    ready_callback_ = {};
+}
 
 std::string_view application_state_name(ApplicationState state) noexcept {
     switch (state) {
@@ -506,7 +558,56 @@ struct Application::Impl {
         return std::move(*result);
     }
 
+    bool launch_background(std::function<void(std::atomic_bool&)> work) {
+        auto cancel = std::make_shared<std::atomic_bool>(false);
+        auto finished = std::make_shared<std::atomic_bool>(false);
+        std::lock_guard lock(background_mutex);
+        if (background_closed) return false;
+        reap_finished_locked();
+        background_jobs.push_back({std::thread{}, cancel, finished});
+        try {
+            background_jobs.back().worker = std::thread(
+                [work = std::move(work), cancel, finished] {
+                    work(*cancel);
+                    finished->store(true);
+                });
+        } catch (...) {
+            background_jobs.pop_back();
+            throw;
+        }
+        return true;
+    }
+
+    void join_background() {
+        for (;;) {
+            std::vector<BackgroundJob> jobs;
+            {
+                std::lock_guard lock(background_mutex);
+                background_closed = true;
+                jobs.swap(background_jobs);
+            }
+            if (jobs.empty()) return;
+            for (auto& job : jobs) {
+                job.cancel->store(true);
+                if (job.worker.joinable()) job.worker.join();
+            }
+        }
+    }
+
+    void reap_finished_locked() {
+        const auto first_live = std::remove_if(
+            background_jobs.begin(),
+            background_jobs.end(),
+            [](BackgroundJob& job) {
+                if (!job.finished->load()) return false;
+                if (job.worker.joinable()) job.worker.join();
+                return true;
+            });
+        background_jobs.erase(first_live, background_jobs.end());
+    }
+
     ~Impl() {
+        join_background();
         if (running && !stopped) {
             live_sessions->begin_shutdown();
             (void)live_sessions->join_shutdown(settings.shutdown_grace);
@@ -525,6 +626,14 @@ struct Application::Impl {
     std::unique_ptr<OpenAiOAuth> openai_auth;
     Providers providers;
     std::unique_ptr<cha::web::LiveSessionManager> live_sessions;
+    struct BackgroundJob {
+        std::thread worker;
+        std::shared_ptr<std::atomic_bool> cancel;
+        std::shared_ptr<std::atomic_bool> finished;
+    };
+    std::mutex background_mutex;
+    std::vector<BackgroundJob> background_jobs;
+    bool background_closed{};
     mutable std::timed_mutex lifecycle_mutex;
     std::atomic_bool stopping_flag{};
     bool running{};
@@ -1109,6 +1218,326 @@ void Application::delete_forum_file(
         *impl_->store, *impl_->live_sessions, forum_id, std::string(filename));
 }
 
+std::vector<cha::web::ProviderSummary> Application::list_providers(
+    std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    return settings::list_providers();
+}
+
+cha::web::ProviderDetail Application::get_provider(
+    std::string_view provider_id,
+    std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    return settings::get_provider(provider_id, *impl_->api_keys);
+}
+
+cha::web::ProviderDetail Application::create_provider(
+    cha::web::CreateProviderRequest create,
+    std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    return settings::create_provider(*impl_->store, *impl_->api_keys, create);
+}
+
+cha::web::ProviderDetail Application::update_provider(
+    std::string_view provider_id,
+    nlohmann::json body,
+    std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    return settings::update_provider(
+        *impl_->store,
+        *impl_->live_sessions,
+        *impl_->api_keys,
+        provider_id,
+        body);
+}
+
+void Application::delete_provider(
+    std::string_view provider_id,
+    std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    settings::delete_provider(*impl_->store, provider_id);
+}
+
+std::shared_ptr<OperationReply> Application::test_provider(
+    std::string_view provider_id,
+    nlohmann::json body,
+    std::uint64_t epoch) {
+    auto reply = std::make_shared<OperationReply>();
+    OpenAiOAuth* oauth = nullptr;
+    ApiKeyStore* keys = nullptr;
+    std::string id(provider_id);
+    {
+        const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+        impl_->require_admitted(epoch);
+        (void)settings::get_provider(id, *impl_->api_keys);
+        oauth = impl_->openai_auth.get();
+        keys = impl_->api_keys.get();
+    }
+    if (!impl_->launch_background(
+            [reply, id = std::move(id), body = std::move(body), oauth, keys](
+                std::atomic_bool& cancel) {
+                try {
+                    settings::test_provider(id, body, *oauth, *keys, cancel);
+                    if (cancel.load()) {
+                        reply->fail(
+                            ErrorCode::operation_cancelled,
+                            "The operation was cancelled.");
+                        return;
+                    }
+                    reply->complete(nlohmann::json::object());
+                } catch (const ApplicationError& error) {
+                    reply->fail(error.code, error.what());
+                } catch (const std::exception& error) {
+                    reply->fail(
+                        ErrorCode::invalid_argument,
+                        "Provider test failed: " + std::string(error.what()));
+                } catch (...) {
+                    reply->fail(ErrorCode::internal_error, {});
+                }
+            })) {
+        reply->fail(
+            ErrorCode::operation_cancelled, "The operation was cancelled.");
+    }
+    return reply;
+}
+
+std::vector<cha::web::StyleDetail> Application::list_styles(
+    std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    return settings::list_styles();
+}
+
+cha::web::StyleDetail Application::create_style(
+    std::string display_name,
+    std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    return settings::create_style(*impl_->store, display_name);
+}
+
+cha::web::StyleDetail Application::update_style(
+    std::string_view style_id,
+    cha::web::StyleUpdate update,
+    std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    return settings::update_style(
+        *impl_->store, *impl_->live_sessions, style_id, update);
+}
+
+void Application::delete_style(std::string_view style_id, std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    settings::delete_style(*impl_->store, style_id);
+}
+
+std::vector<cha::web::VoiceDetail> Application::list_voices(
+    std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    return settings::list_voices();
+}
+
+cha::web::VoiceDetail Application::create_voice(
+    cha::web::CreateVoiceRequest create,
+    std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    return settings::create_voice(*impl_->store, create);
+}
+
+cha::web::VoiceDetail Application::update_voice(
+    std::string_view voice_id,
+    cha::web::VoiceUpdate update,
+    std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    return settings::update_voice(
+        *impl_->store, *impl_->live_sessions, voice_id, update);
+}
+
+void Application::delete_voice(std::string_view voice_id, std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    settings::delete_voice(*impl_->store, voice_id);
+}
+
+std::optional<cha::web::VoiceInputSettings>
+Application::get_voice_input_settings(std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    return settings::get_voice_input_settings();
+}
+
+cha::web::VoiceInputSettings Application::save_voice_input_settings(
+    cha::web::VoiceInputSettings voice_settings,
+    std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    return settings::save_voice_input_settings(
+        *impl_->store, *impl_->api_keys, voice_settings);
+}
+
+std::optional<cha::web::VoiceInputRuntime>
+Application::get_voice_input_runtime(std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    return settings::get_voice_input_runtime(*impl_->api_keys, true);
+}
+
+std::optional<cha::web::VoiceOutputSettings>
+Application::get_voice_output_settings(std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    return settings::get_voice_output_settings();
+}
+
+cha::web::VoiceOutputSettings Application::save_voice_output_settings(
+    cha::web::VoiceOutputSettings voice_settings,
+    std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    return settings::save_voice_output_settings(
+        *impl_->store, *impl_->api_keys, voice_settings);
+}
+
+std::optional<cha::web::VoiceOutputRuntime>
+Application::get_voice_output_runtime(std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    return settings::get_voice_output_runtime(*impl_->api_keys, true);
+}
+
+std::vector<cha::web::ApiKeyDetail> Application::list_api_keys(
+    std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    return settings::list_api_keys(*impl_->api_keys);
+}
+
+cha::web::ApiKeyDetail Application::create_api_key(
+    cha::web::CreateApiKeyRequest create,
+    std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    return settings::create_api_key(*impl_->api_keys, create);
+}
+
+cha::web::ApiKeyDetail Application::rename_api_key(
+    std::string_view api_key_id,
+    std::string display_name,
+    std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    return settings::rename_api_key(*impl_->api_keys, api_key_id, display_name);
+}
+
+cha::web::ApiKeyDetail Application::replace_api_key_value(
+    std::string_view api_key_id,
+    std::string value,
+    std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    return settings::replace_api_key_value(*impl_->api_keys, api_key_id, value);
+}
+
+void Application::delete_api_key(
+    std::string_view api_key_id,
+    std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    settings::delete_api_key(*impl_->api_keys, api_key_id);
+}
+
+std::optional<cha::web::R2StorageDetail> Application::get_r2_storage(
+    std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    return settings::get_r2_storage(*impl_->api_keys);
+}
+
+cha::web::R2StorageDetail Application::save_r2_storage(
+    cha::web::SaveR2StorageRequest request,
+    std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    return settings::save_r2_storage(*impl_->api_keys, request);
+}
+
+void Application::delete_r2_storage(std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    settings::delete_r2_storage(*impl_->api_keys);
+}
+
+cha::web::OpenAiAuth Application::openai_auth_status(std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    return settings::openai_auth_status(*impl_->openai_auth);
+}
+
+std::shared_ptr<OperationReply> Application::start_openai_auth(
+    std::uint64_t epoch) {
+    auto reply = std::make_shared<OperationReply>();
+    OpenAiOAuth* oauth = nullptr;
+    {
+        const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+        impl_->require_admitted(epoch);
+        oauth = impl_->openai_auth.get();
+    }
+    if (!impl_->launch_background(
+            [reply, oauth](std::atomic_bool&) {
+                try {
+                    reply->complete(settings::start_openai_auth(*oauth));
+                } catch (const ApplicationError& error) {
+                    reply->fail(error.code, error.what());
+                } catch (...) {
+                    reply->fail(ErrorCode::internal_error, {});
+                }
+            })) {
+        reply->fail(
+            ErrorCode::operation_cancelled, "The operation was cancelled.");
+    }
+    return reply;
+}
+
+std::shared_ptr<OperationReply> Application::poll_openai_auth(
+    std::uint64_t epoch) {
+    auto reply = std::make_shared<OperationReply>();
+    OpenAiOAuth* oauth = nullptr;
+    {
+        const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+        impl_->require_admitted(epoch);
+        oauth = impl_->openai_auth.get();
+    }
+    if (!impl_->launch_background(
+            [reply, oauth](std::atomic_bool&) {
+                try {
+                    reply->complete(settings::poll_openai_auth(*oauth));
+                } catch (const ApplicationError& error) {
+                    reply->fail(error.code, error.what());
+                } catch (...) {
+                    reply->fail(ErrorCode::internal_error, {});
+                }
+            })) {
+        reply->fail(
+            ErrorCode::operation_cancelled, "The operation was cancelled.");
+    }
+    return reply;
+}
+
+cha::web::OpenAiAuth Application::disconnect_openai_auth(std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    return settings::disconnect_openai_auth(*impl_->openai_auth);
+}
+
 std::optional<FullSessionId> Application::selected_session() const {
     return impl_->live_sessions->selected();
 }
@@ -1171,6 +1600,7 @@ void Application::request_shutdown() {
 }
 
 bool Application::join_shutdown(std::chrono::milliseconds grace) {
+    impl_->join_background();
     const bool joined = impl_->live_sessions->join_shutdown(grace);
     impl_->providers.shutdown();
     impl_->stopped = true;

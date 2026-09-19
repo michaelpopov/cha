@@ -83,15 +83,84 @@ describe('native CHA client', () => {
     await expect(client.getCharacter('guide')).resolves.toMatchObject({ id: 'guide' });
   });
 
-  it('marks unmigrated methods unavailable instead of forwarding them', async () => {
+  it('lists providers, keys, and R2 metadata through native methods', async () => {
+    const provider = {
+      id: 'test',
+      display_name: 'Test',
+      host: 'test',
+      port: 1,
+      base_path: '',
+      mode: 'test' as const,
+      model: 'fake',
+      stream: true,
+      temperature: null,
+      max_tokens: null,
+      timeout_s: 600,
+      idle_timeout_s: 60,
+      api_key: null,
+      reasoning_effort: '',
+      reasoning_format: 'auto' as const,
+      https: false,
+      api: 'responses' as const,
+      auth: 'none' as const,
+      web_search: 'off' as const,
+      cache_retention: 'short' as const,
+      openrouter_targets: [],
+      writable: true,
+      used_by: ['Guide'],
+    };
+    const key = {
+      id: 'api_key_1',
+      display_name: 'Router',
+      has_value: true,
+      used_by: ['Test'],
+    };
+    const r2 = {
+      id: 'api_key_2',
+      display_name: 'Backups',
+      url: 'https://account.example/bucket',
+      access_key_id: 'access',
+      has_secret_key: true,
+    };
+    const bridge = createFakeNativeBridge({
+      'provider.list': () => [{
+        id: 'test', display_name: 'Test', model: 'fake', host: 'test',
+      }],
+      'provider.get': () => provider,
+      'apiKey.list': () => [key],
+      'r2Storage.get': () => r2,
+      'openaiAuth.get': () => ({ status: 'signed_out' }),
+      'voiceInput.runtime': () => ({
+        url: 'https://api.openai.com/v1/realtime',
+        model: 'gpt-4o-transcribe',
+        delay: 'low',
+        prompt: '',
+      }),
+    });
+    const client = createNativeChaClient(bridge);
+    await expect(client.listProviders()).resolves.toEqual([
+      { id: 'test', display_name: 'Test', model: 'fake', host: 'test' },
+    ]);
+    await expect(client.getProvider('test')).resolves.toMatchObject({ id: 'test' });
+    await expect(client.listApiKeys()).resolves.toEqual([key]);
+    await expect(client.getR2Storage()).resolves.toEqual(r2);
+    await expect(client.getOpenAiAuth()).resolves.toEqual({ status: 'signed_out' });
+    await expect(client.getVoiceInputRuntime()).resolves.toEqual({
+      url: 'https://api.openai.com/v1/realtime',
+      model: 'gpt-4o-transcribe',
+      delay: 'low',
+      prompt: '',
+    });
+  });
+
+  it('marks unmigrated media methods unavailable instead of forwarding them', async () => {
     const client = createNativeChaClient(createFakeNativeBridge());
-    await expect(client.listProviders()).rejects.toBeInstanceOf(ChaError);
-    await expect(client.listProviders()).rejects.toMatchObject({
-      code: 'invalid_argument',
-      message: 'That operation is not available in native mode.',
-    });
-    await expect(client.getR2Storage()).rejects.toMatchObject({
-      code: 'invalid_argument',
-    });
+    await expect(client.getAudioDownloads('lobby', 'planning', 'Personal'))
+      .rejects.toBeInstanceOf(ChaError);
+    await expect(client.getAudioDownloads('lobby', 'planning', 'Personal'))
+      .rejects.toMatchObject({
+        code: 'invalid_argument',
+        message: 'That operation is not available in native mode.',
+      });
   });
 });

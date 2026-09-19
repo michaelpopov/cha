@@ -337,6 +337,153 @@ struct SessionExport {
     std::string markdown;
 };
 
+struct ProviderSummary {
+    std::string id;
+    std::string display_name;
+    std::string model;
+    std::string host;
+};
+
+struct ProviderDetail {
+    std::string id;
+    std::string display_name;
+    std::string host;
+    int port{};
+    std::string base_path;
+    std::string mode;
+    std::string model;
+    bool stream{};
+    std::optional<double> temperature;
+    std::optional<int> max_tokens;
+    int timeout_s{};
+    int idle_timeout_s{};
+    std::optional<std::string> api_key;
+    std::string reasoning_effort;
+    std::string reasoning_format;
+    bool https{};
+    std::string api;
+    std::string auth;
+    std::string web_search;
+    std::string cache_retention;
+    std::vector<std::string> openrouter_targets;
+    bool writable{};
+    std::vector<std::string> used_by;
+};
+
+struct ProviderUpdate {
+    std::string display_name;
+    ModelBackendConfig config;
+};
+
+struct CreateProviderRequest {
+    std::string display_name;
+    std::string copy_from;
+};
+
+struct StyleDetail {
+    std::string id;
+    std::string display_name;
+    CharacterAppearance appearance;
+    bool writable{};
+    std::vector<std::string> used_by;
+};
+
+struct StyleUpdate {
+    std::string display_name;
+    CharacterAppearance appearance;
+};
+
+struct VoiceDetail {
+    std::string id;
+    std::string display_name;
+    std::string description;
+    std::string elevenlabs_voice_id;
+    std::optional<double> speed;
+    bool writable{};
+    std::vector<std::string> used_by;
+};
+
+struct VoiceUpdate {
+    std::string display_name;
+    std::string description;
+    std::string elevenlabs_voice_id;
+    SpeechVoiceSettings settings;
+};
+
+struct CreateVoiceRequest {
+    std::string display_name;
+    std::string description;
+    std::string elevenlabs_voice_id;
+};
+
+struct VoiceInputSettings {
+    std::string url;
+    std::string model;
+    std::string api_key;
+    std::string delay;
+    std::string prompt;
+};
+
+// Native runtime omits stored secrets. HTTP adapters may add a credential
+// for the temporary JavaScript voice-input path.
+struct VoiceInputRuntime {
+    std::string url;
+    std::string model;
+    std::string delay;
+    std::string prompt;
+};
+
+struct VoiceOutputSettings {
+    std::string url;
+    std::string model;
+    std::string api_key;
+    std::string output_format;
+    std::string default_voice;
+};
+
+struct VoiceOutputRuntime {
+    std::string url;
+    std::string model;
+    std::string output_format;
+    std::string default_voice_id;
+};
+
+struct ApiKeyDetail {
+    std::string id;
+    std::string display_name;
+    bool has_value{};
+    std::vector<std::string> used_by;
+};
+
+struct CreateApiKeyRequest {
+    std::string display_name;
+    std::string value;
+};
+
+struct R2StorageDetail {
+    std::string id;
+    std::string display_name;
+    std::string url;
+    std::string access_key_id;
+    bool has_secret_key{};
+};
+
+struct SaveR2StorageRequest {
+    std::string display_name;
+    std::string url;
+    std::string access_key_id;
+    std::optional<std::string> secret_key;
+};
+
+struct OpenAiAuth {
+    std::string status;
+    std::optional<std::string> user_code;
+    std::optional<std::string> verification_url;
+    std::optional<std::int64_t> attempt_expires_at;
+    std::optional<std::int64_t> next_poll_delay_ms;
+    std::optional<std::string> error;
+};
+
 struct Error {
     ErrorCode code{ErrorCode::internal_error};
     std::string message;
@@ -398,6 +545,17 @@ void to_json(nlohmann::json& json, const PersonaDetail& value);
 void to_json(nlohmann::json& json, const ForumDetail& value);
 void to_json(nlohmann::json& json, const MarkdownFile& value);
 void to_json(nlohmann::json& json, const SessionExport& value);
+void to_json(nlohmann::json& json, const ProviderSummary& value);
+void to_json(nlohmann::json& json, const ProviderDetail& value);
+void to_json(nlohmann::json& json, const StyleDetail& value);
+void to_json(nlohmann::json& json, const VoiceDetail& value);
+void to_json(nlohmann::json& json, const VoiceInputSettings& value);
+void to_json(nlohmann::json& json, const VoiceInputRuntime& value);
+void to_json(nlohmann::json& json, const VoiceOutputSettings& value);
+void to_json(nlohmann::json& json, const VoiceOutputRuntime& value);
+void to_json(nlohmann::json& json, const ApiKeyDetail& value);
+void to_json(nlohmann::json& json, const R2StorageDetail& value);
+void to_json(nlohmann::json& json, const OpenAiAuth& value);
 void to_json(nlohmann::json& json, const Error& value);
 void to_json(nlohmann::json& json, const SnapshotEvent& value);
 void to_json(nlohmann::json& json, const AppendEvent& value);

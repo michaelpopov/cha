@@ -1,5 +1,6 @@
 #include "web/openai_auth_routes.h"
 
+#include "app/settings_operations.h"
 #include "providers/openai_oauth.h"
 #include "web/http_response.h"
 #include "web/json.h"
@@ -8,34 +9,8 @@
 #include <httplib.h>
 #include <nlohmann/json.hpp>
 
-#include <string_view>
-
 namespace cha::web {
 namespace {
-
-std::string_view status_name(OpenAiOAuthState state) {
-    switch (state) {
-    case OpenAiOAuthState::waiting:
-        return "waiting";
-    case OpenAiOAuthState::connected:
-        return "connected";
-    case OpenAiOAuthState::signed_out:
-        return "signed_out";
-    }
-    return "signed_out";
-}
-
-nlohmann::json snapshot_json(const OpenAiOAuthSnapshot& snapshot) {
-    nlohmann::json json{{"status", status_name(snapshot.state)}};
-    if (snapshot.state == OpenAiOAuthState::waiting) {
-        if (snapshot.user_code) json["user_code"] = *snapshot.user_code;
-        if (snapshot.verification_url) json["verification_url"] = *snapshot.verification_url;
-        if (snapshot.attempt_expires_at) json["attempt_expires_at"] = *snapshot.attempt_expires_at;
-        if (snapshot.next_poll_delay_ms) json["next_poll_delay_ms"] = *snapshot.next_poll_delay_ms;
-    }
-    if (snapshot.error) json["error"] = *snapshot.error;
-    return json;
-}
 
 bool accept_empty_json_post(
     const httplib::Request& request,
@@ -51,8 +26,8 @@ bool accept_empty_json_post(
 
 void set_snapshot(
     httplib::Response& response,
-    const OpenAiOAuthSnapshot& snapshot) {
-    set_json_response(response, 200, snapshot_json(snapshot));
+    const OpenAiAuth& snapshot) {
+    set_json_response(response, 200, snapshot);
 }
 
 } // namespace
@@ -67,7 +42,7 @@ void OpenAiAuthRoutes::install(httplib::Server& server) const {
     server.Get(
         "/api/v1/openai/auth",
         [owner](const httplib::Request&, httplib::Response& response) {
-            set_snapshot(response, owner->status());
+            set_snapshot(response, cha::app::settings::openai_auth_status(*owner));
         });
 
     server.Post(
@@ -75,7 +50,7 @@ void OpenAiAuthRoutes::install(httplib::Server& server) const {
         [owner, settings](
             const httplib::Request& request, httplib::Response& response) {
             if (!accept_empty_json_post(request, response, settings)) return;
-            set_snapshot(response, owner->start());
+            set_snapshot(response, cha::app::settings::start_openai_auth(*owner));
         });
 
     server.Post(
@@ -83,7 +58,7 @@ void OpenAiAuthRoutes::install(httplib::Server& server) const {
         [owner, settings](
             const httplib::Request& request, httplib::Response& response) {
             if (!accept_empty_json_post(request, response, settings)) return;
-            set_snapshot(response, owner->poll());
+            set_snapshot(response, cha::app::settings::poll_openai_auth(*owner));
         });
 
     server.Post(
@@ -91,7 +66,8 @@ void OpenAiAuthRoutes::install(httplib::Server& server) const {
         [owner, settings](
             const httplib::Request& request, httplib::Response& response) {
             if (!accept_empty_json_post(request, response, settings)) return;
-            set_snapshot(response, owner->disconnect());
+            set_snapshot(
+                response, cha::app::settings::disconnect_openai_auth(*owner));
         });
 }
 
