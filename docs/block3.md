@@ -6,7 +6,7 @@ are included here. Reading `docs/plan.md`, `docs/redesign.md`, or other block br
 is not required. The current source code and actual prior implementation/evidence
 are still required inputs; this document does not claim those prerequisites exist.
 
-**Initial status:** not started. **Environment:** a supported native compiler and Node/npm.
+**Initial status:** complete. **Environment:** a supported native compiler and Node/npm.
 
 ## Objective and scope
 
@@ -940,16 +940,57 @@ when its revision/coverage remains applicable. Do not require the next agent to
 read an entire conversation to recover decisions.
 
 ```text
-Status: not started | in progress | waiting for evidence | complete
+Status: complete
 Starting and resulting revision/checkpoint:
+  start bc5f3a3 (Block 2). Result is uncommitted working tree on redesign.
 Files changed/moved and actual new APIs/targets:
+  src/bridge/{bridge_protocol,bridge_router}.*
+  tests/bridge/unit_bridge_{protocol,router}.cpp
+  cha_bridge / cha_bridge_tests
+  src/web/json.cpp moved into cha_app (parsers reused by the bridge)
+  CommandReply::{set_ready_callback,peek,abandon}
+  Application::{unsubscribe,check_context}
+  webapp/src/api/native{Bridge,Client,Events}.ts
+  webapp/src/main.tsx injects native client when __CHA_NATIVE_POST__ exists
+  OpenAPI native envelope schemas + invalid_argument/operation_cancelled/application_unavailable
 Implemented behavior and key ownership/contract decisions:
+  protocol_version=1, application_version="0"
+  Native-owned connection_id via BridgeRouter::open_connection(); JSON id must match
+  Allowlist: bridge.info, app.bootstrap, session.{create,open,submit,stop,close,snapshot,subscribe,unsubscribe}
+  Other methods: invalid_argument "That method is not available."
+  Ordinary in-flight 16, control (stop/unsubscribe) 8; overflow invalidates with one error
+  Session commands complete asynchronously via CommandReply callback; no UI-thread wait
+  One outstanding native-to-JS delivery batch; ack is connection_id+delivery_id, not an RPC
+  Latest subscription_id recorded before owner enqueue; stale subscribe -> operation_cancelled
+  Native ChaClient does not fall back to HTTP; unmigrated methods throw invalid_argument
+  Native stream recovery is 'replace' (new subscription), not the HTTP reconnect ladder
+  Hash routing already existed; writes/reload tests extended
 Prerequisites verified and evidence used:
+  cha_app_tests (16) passed: bootstrap, create/open/submit/stop/snapshot/close, async submit, subscribe seq 0
+  HTTP adapter still linked and ApplicationRuntime/LiveSession/WebWireFixtures tests passed
 Temporary compatibility code and when it can be removed:
+  HTTP frontend (createChaClient, EventSource, path routes) until transport-removal block
+  OpenAPI HTTP paths retained; native envelopes live beside them
+  window.__CHA_NATIVE_POST__/__CHA_NATIVE_RECEIVE__/__CHA_NATIVE_CONNECTION_ID__ host hooks; real WebView attachment is later
 Exact commands, working directories, platform/runtime versions, and results:
+  repo /Users/mpopov/projects/cha, macOS arm64, Apple clang 21.0.0, cmake 4.4.0, Node v26.9.0 / npm 11.19.1
+  cmake --build --preset ninja --target cha_bridge_tests cha_app_tests cha_web_tests
+  ./build/ninja/cha_bridge_tests  -> 11 passed
+  ./build/ninja/cha_app_tests     -> 16 passed
+  ./build/ninja/cha_web_tests --gtest_filter='WebWireFixtures.*:LiveSession.*:ApplicationRuntime.*' -> 89 passed
+  npm --prefix webapp run check   -> 361 passed
+  npm --prefix webapp run build   -> production build ok
 Known failures, checks not run, and exact missing evidence:
+  asan-ubsan / tsan not run
+  npm --prefix webapp run e2e not run (HTTP baseline; not native proof)
+  No real WKWebView/WebView2 user-flow in this block (explicitly out of scope)
+  Windows host evidence still pending for later platform work
 Inventory/coverage changes and remaining work:
+  First-flow session operations bound on the common bridge and typed native client
+  Settings/vault/audio/OAuth/native menus remain unavailable in native mode
+  Platform hosts must call BridgeRouter from a non-UI thread and post take_delivery batches
 Next unfinished numbered step if this block needs continuation:
+  none for this block
 ```
 
 Maintain concise rows for the operations/files/assertions touched by this block.
@@ -958,11 +999,21 @@ carry forward existing evidence and record the relevant updates.
 
 | Operation/caller or source/test path | Retained behavior/result/errors | Native destination or deletion reason | Context/cancellation/lifetime | Verification and status |
 |---|---|---|---|---|
-| Populate during execution | | | | |
+| bridge.info | protocol_version 1, application_version, platform | BridgeRouter allowlist | no epoch | unit_bridge_protocol / BridgeRouterTest passed |
+| app.bootstrap | ApplicationBootstrap DTO + context_epoch | app.bootstrap | no prior epoch; sets connection epoch | BridgeRouterTest passed |
+| session.create/open/submit/stop/snapshot/close | existing CommandResult / OpenSessionSuccess / Snapshot DTOs and public errors | bound to Application | epoch checked at admit and before effects | BridgeRouterTest passed |
+| session.subscribe/unsubscribe | SubscribeResult; monotonic seq 0 snapshot | owner enqueue; latest sub recorded first | stale subscribe cancelled; late unsub of old id ignored | SubscribeSnapshotAndAppendUseOneSequence passed |
+| unmigrated ChaClient methods | invalid_argument, not HTTP | explicit native gap | n/a | nativeClient.test.ts passed |
+| HTTP createChaClient / EventSource / path routes | unchanged | coexistence | n/a | App.test / events.test / ApplicationRuntime passed |
 
 | Required flow/assertion | Common test evidence | macOS evidence | Windows evidence | Remaining limitation |
 |---|---|---|---|---|
-| Populate during execution | | | | |
+| Dispatcher malformed/unknown/stale/duplicate/one reply | cha_bridge_tests | n/a this block | n/a this block | no real WebView |
+| Timeout then late completion without replay | CommandReply abandon + expire_timeouts | n/a | n/a | not measured under provider burst |
+| Subscribe reply vs snapshot either order, gaps, newer snapshot | C++ wait across batches; nativeEvents.test.ts | n/a | n/a | host fragment nav untested here |
+| Fake bridge + C++ wire fixtures | wireFixtures.test.ts, nativeClient.test.ts | n/a | n/a | |
+| Native hash writes/back-forward/reload; HTTP path routes | route.test.ts, App hashchange listener | n/a | n/a | actual host fragment nav later |
+| Schema/TS/frontend build | npm check 361, vite build | n/a | n/a | |
 
 The final response must state what was implemented, why, what was actually tested,
 and any unresolved limitation. If incomplete, give the exact next step and missing

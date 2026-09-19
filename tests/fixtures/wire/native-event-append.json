@@ -1,0 +1,13 @@
+{
+  "connection_id": "view-9",
+  "context_epoch": 3,
+  "subscription_id": "sub-5",
+  "event": "session.append",
+  "forum_id": "history",
+  "session_id": "session-1",
+  "seq": 1,
+  "payload": {
+    "target": { "kind": "entry", "entry_id": 123 },
+    "text": "Hello"
+  }
+}

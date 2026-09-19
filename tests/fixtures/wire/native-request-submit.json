@@ -1,0 +1,11 @@
+{
+  "connection_id": "view-9",
+  "id": 42,
+  "context_epoch": 3,
+  "method": "session.submit",
+  "params": {
+    "forum_id": "history",
+    "session_id": "session-1",
+    "input": { "text": "Hello" }
+  }
+}

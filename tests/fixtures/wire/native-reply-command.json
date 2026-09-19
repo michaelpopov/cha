@@ -1,0 +1,10 @@
+{
+  "connection_id": "view-9",
+  "id": 42,
+  "context_epoch": 3,
+  "ok": true,
+  "result": {
+    "clear_input": true,
+    "notice": "Saved"
+  }
+}

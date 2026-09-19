@@ -1960,9 +1960,56 @@ export interface components {
         ErrorResponse: {
             error: {
                 /** @enum {string} */
-                code: "not_found" | "bad_request" | "body_too_large" | "prompt_too_large" | "forbidden_origin" | "internal_error" | "speech_busy" | "vault_changed" | "session_stopping" | "session_limit_reached" | "session_open_timeout" | "server_stopping" | "session_not_live" | "command_timeout" | "command_queue_full" | "vault_password_required" | "source_vault_password_required";
+                code: "not_found" | "bad_request" | "body_too_large" | "prompt_too_large" | "forbidden_origin" | "internal_error" | "speech_busy" | "vault_changed" | "session_stopping" | "session_limit_reached" | "session_open_timeout" | "server_stopping" | "session_not_live" | "command_timeout" | "command_queue_full" | "vault_password_required" | "source_vault_password_required" | "invalid_argument" | "operation_cancelled" | "application_unavailable";
                 message: string;
             };
+        };
+        NativeSafeInteger: number;
+        BridgeInfo: {
+            /** @enum {integer} */
+            protocol_version: 1;
+            application_version: string;
+            platform: string;
+        };
+        NativeRequest: {
+            connection_id: string;
+            id: components["schemas"]["NativeSafeInteger"];
+            context_epoch: components["schemas"]["NativeSafeInteger"];
+            method: string;
+            params?: {
+                [key: string]: unknown;
+            };
+        };
+        NativeReply: {
+            connection_id: string;
+            id: components["schemas"]["NativeSafeInteger"];
+            context_epoch: components["schemas"]["NativeSafeInteger"];
+            ok: boolean;
+            result?: unknown;
+            error?: {
+                code: string;
+                message: string;
+            };
+        };
+        NativeSessionEvent: {
+            connection_id: string;
+            context_epoch: components["schemas"]["NativeSafeInteger"];
+            subscription_id: string;
+            /** @enum {string} */
+            event: "session.snapshot" | "session.append";
+            forum_id: string;
+            session_id: string;
+            seq: components["schemas"]["NativeSafeInteger"];
+            payload: unknown;
+        };
+        NativeDeliveryBatch: {
+            connection_id: string;
+            delivery_id: components["schemas"]["NativeSafeInteger"];
+            messages: unknown[];
+        };
+        NativeDeliveryAck: {
+            connection_id: string;
+            delivery_id: components["schemas"]["NativeSafeInteger"];
         };
         /**
          * Format: int64

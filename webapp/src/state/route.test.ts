@@ -7,6 +7,7 @@ import {
   reloadApplication,
   sessionRoute,
   usesHashRoutes,
+  writeAppRoute,
 } from './route';
 
 describe('application routes', () => {
@@ -54,6 +55,19 @@ describe('application routes', () => {
     expect(currentAppRoute({
       protocol: 'https:', pathname: '/', hash: '#/',
     })).toEqual({ kind: 'root' });
+  });
+
+  it('writes fragment history on native origins and path history on HTTP', () => {
+    const http = { protocol: 'http:' as const, pathname: '/', search: '' };
+    writeAppRoute('/s/lobby/planning/', 'push', http);
+    expect(`${window.location.pathname}${window.location.search}`).toBe('/s/lobby/planning/');
+
+    window.history.replaceState(null, '', '/shell');
+    writeAppRoute('/s/lobby/planning/', 'replace', {
+      protocol: 'cha:', pathname: '/shell', search: '',
+    });
+    expect(window.location.pathname).toBe('/shell');
+    expect(window.location.hash).toBe('#/s/lobby/planning/');
   });
 
   it('reloads the document on native origins instead of assigning a fragment', () => {

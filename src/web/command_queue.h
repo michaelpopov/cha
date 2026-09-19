@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -29,12 +30,18 @@ public:
     [[nodiscard]] bool complete(CommandSubmitResult result);
     [[nodiscard]] std::optional<CommandSubmitResult> wait_for(
         std::chrono::milliseconds timeout) const;
+    // Native completion: invoked once when a result is stored. Already-complete
+    // replies run the callback immediately. Abandoned replies ignore it.
+    void set_ready_callback(std::function<void()> callback);
+    [[nodiscard]] std::optional<CommandSubmitResult> peek() const;
+    void abandon() const;
 
 private:
     mutable std::mutex mutex_;
     mutable std::condition_variable ready_;
     mutable bool abandoned_{};
     std::optional<CommandSubmitResult> result_;
+    mutable std::function<void()> ready_callback_;
 };
 
 struct SseDisconnectNotification {

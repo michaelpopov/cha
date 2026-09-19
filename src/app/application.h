@@ -89,6 +89,10 @@ public:
         std::string_view forum_id,
         std::string_view session_id,
         cha::web::SubscribeCommand command);
+    [[nodiscard]] cha::web::CommandSubmitResult unsubscribe(
+        std::string_view forum_id,
+        std::string_view session_id,
+        cha::web::UnsubscribeCommand command);
     void close_session(std::string_view forum_id, std::string_view session_id);
     [[nodiscard]] std::optional<cha::web::ErrorCode> delete_session(
         std::string_view forum_id,
@@ -96,6 +100,9 @@ public:
 
     [[nodiscard]] std::optional<FullSessionId> selected_session() const;
     [[nodiscard]] std::uint64_t context_epoch() const;
+    // Reads state and epoch under lifecycle_mutex, matching bootstrap/create.
+    [[nodiscard]] std::optional<cha::web::ErrorCode> check_context(
+        std::uint64_t epoch) const;
     [[nodiscard]] bool running() const;
     [[nodiscard]] ApplicationState state() const;
 

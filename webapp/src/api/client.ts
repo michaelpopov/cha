@@ -80,6 +80,9 @@ const knownErrorCodes = {
   command_queue_full: true,
   vault_password_required: true,
   source_vault_password_required: true,
+  invalid_argument: true,
+  operation_cancelled: true,
+  application_unavailable: true,
 } satisfies Record<ErrorCode, true>;
 
 function isErrorCode(value: unknown): value is ErrorCode {
@@ -484,6 +487,12 @@ function isSessionListingArray(value: unknown): value is SessionListing[] {
 // A snapshot arrives two ways, over this request and over the event stream, and
 // both are parsed JSON that the generated types only describe at compile time.
 // The check lives here so neither route trusts a shape the other would reject.
+export function isCommandResult(value: unknown): value is CommandResult {
+  return isRecord(value)
+    && typeof value.clear_input === 'boolean'
+    && (value.notice === undefined || typeof value.notice === 'string');
+}
+
 export function isSessionSnapshot(value: unknown): value is SessionSnapshot {
   return isRecord(value)
     && isRecord(value.forum)

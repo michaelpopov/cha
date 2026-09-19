@@ -409,6 +409,16 @@ cha::web::CommandSubmitResult Application::subscribe(
     return session->subscribe(std::move(command), impl_->settings.command_deadline);
 }
 
+cha::web::CommandSubmitResult Application::unsubscribe(
+    std::string_view forum_id,
+    std::string_view session_id,
+    cha::web::UnsubscribeCommand command) {
+    const FullSessionId key{std::string(forum_id), std::string(session_id)};
+    auto session = impl_->live_sessions->lookup(key);
+    if (!session) return cha::web::ErrorCode::session_not_live;
+    return session->unsubscribe(std::move(command), impl_->settings.command_deadline);
+}
+
 void Application::close_session(
     std::string_view forum_id,
     std::string_view session_id) {
@@ -448,6 +458,20 @@ std::optional<FullSessionId> Application::selected_session() const {
 
 std::uint64_t Application::context_epoch() const {
     return impl_->live_sessions->context_epoch();
+}
+
+std::optional<cha::web::ErrorCode> Application::check_context(
+    std::uint64_t epoch) const {
+    // Same mutex bootstrap/create use. Maintenance admission is later work;
+    // this does not span blocking select()/open_deadline.
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    if (impl_->unusable || impl_->stopping_flag || impl_->stopped) {
+        return cha::web::ErrorCode::application_unavailable;
+    }
+    if (epoch != impl_->live_sessions->context_epoch()) {
+        return cha::web::ErrorCode::vault_changed;
+    }
+    return std::nullopt;
 }
 
 bool Application::running() const {

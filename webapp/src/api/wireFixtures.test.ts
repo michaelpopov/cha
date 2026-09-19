@@ -3,8 +3,10 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-import { createChaClient, isSessionSnapshot } from './client';
+import { createChaClient, isCommandResult, isSessionSnapshot } from './client';
 import { isAppendEvent } from './events';
+import { isNativeSessionEvent } from './nativeEvents';
+import { nativeProtocolVersion } from './nativeBridge';
 import { validateBootstrap } from '../state/bootstrap';
 
 const wireDirectory = join(
@@ -38,5 +40,12 @@ describe('C++ wire fixtures', () => {
       headers: { 'Content-Type': 'application/json' },
     }));
     await expect(client.getCharacter('guide')).resolves.toMatchObject({ id: 'guide' });
+
+    const info = loadFixture('bridge-info.json') as { protocol_version: number };
+    expect(info.protocol_version).toBe(nativeProtocolVersion);
+    expect(isCommandResult(
+      (loadFixture('native-reply-command.json') as { result: unknown }).result,
+    )).toBe(true);
+    expect(isNativeSessionEvent(loadFixture('native-event-append.json'))).toBe(true);
   });
 });

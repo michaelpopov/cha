@@ -479,6 +479,8 @@ interface AppProps {
   connectSessionEvents?: SessionEventsConnector;
   retryDelays?: readonly number[];
   reload?: () => void;
+  // HTTP keeps the reconnect ladder. Native replaces the subscription in place.
+  streamRecovery?: 'http' | 'replace';
 }
 
 interface AttachedStream {
@@ -514,6 +516,7 @@ export function App({
   connectSessionEvents = openSessionEvents,
   retryDelays = liveRetryDelays,
   reload = defaultReload,
+  streamRecovery = 'http',
 }: AppProps) {
   const [state, dispatch] = useReducer(appReducer, initialAppState);
   const [initialRouteReady, setInitialRouteReady] = useState(false);
@@ -756,6 +759,10 @@ export function App({
     // A ladder already running for this live session owns the retries; a
     // stale generation belongs to a conversation the user has left.
     if (liveGeneration.current !== generation || recovery.current) return;
+    if (streamRecovery === 'replace') {
+      connectStream(forumId, sessionId, generation, true);
+      return;
+    }
     const run: RecoveryRun = { forumId, sessionId, generation };
     recovery.current = run;
     const cancelled = () => recovery.current !== run
@@ -785,7 +792,7 @@ export function App({
         });
       }
     });
-  }, [attachStream, client, retryDelays, waitForRetry]);
+  }, [attachStream, client, connectStream, retryDelays, streamRecovery, waitForRetry]);
 
   // A stream error is the only caller, and a stream cannot exist before the
   // effects of the commit that created it have run, so publishing the current

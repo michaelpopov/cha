@@ -339,6 +339,7 @@ add_library(cha_app STATIC
     src/app/session_output.cpp
     src/web/browser_connection_state.cpp
     src/web/command_queue.cpp
+    src/web/json.cpp
     src/web/protocol.cpp
     src/web/session_markdown.cpp
     src/web/session_mirror.cpp
@@ -360,12 +361,24 @@ target_link_libraries(
         nlohmann_json::nlohmann_json)
 cha_enable_warnings(cha_app)
 
+add_library(cha_bridge STATIC
+    src/bridge/bridge_protocol.cpp
+    src/bridge/bridge_router.cpp
+)
+target_compile_features(cha_bridge PUBLIC cxx_std_20)
+target_include_directories(cha_bridge PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_link_libraries(
+    cha_bridge
+    PUBLIC
+        cha_app
+        nlohmann_json::nlohmann_json)
+cha_enable_warnings(cha_bridge)
+
 add_library(cha_web STATIC
     src/web/application_runtime.cpp
     src/web/asset_handler.cpp
     src/web/http_response.cpp
     src/web/http_server.cpp
-    src/web/json.cpp
     src/web/lobby_routes.cpp
     src/web/openai_auth_routes.cpp
     src/web/route_support.cpp
@@ -534,6 +547,28 @@ if(BUILD_TESTING)
     cha_enable_warnings(cha_app_tests)
 
     add_executable(
+        cha_bridge_tests
+        tests/bridge/unit_bridge_protocol.cpp
+        tests/bridge/unit_bridge_router.cpp
+        tests/support/test_workspace.cpp)
+    target_link_libraries(
+        cha_bridge_tests PRIVATE cha_bridge cha_sqlite3 GTest::gtest_main)
+    target_include_directories(
+        cha_bridge_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+    target_compile_definitions(
+        cha_bridge_tests
+        PRIVATE
+            CHA_WIRE_FIXTURE_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/wire")
+    if(TARGET cha_lease_test_helper)
+        target_compile_definitions(
+            cha_bridge_tests
+            PRIVATE
+                CHA_LEASE_TEST_HELPER="$<TARGET_FILE:cha_lease_test_helper>")
+        add_dependencies(cha_bridge_tests cha_lease_test_helper)
+    endif()
+    cha_enable_warnings(cha_bridge_tests)
+
+    add_executable(
         cha_web_stress_tests
         tests/web/stress_web_sessions.cpp
         tests/support/test_workspace.cpp)
@@ -579,6 +614,7 @@ if(BUILD_TESTING)
     foreach(cha_test_target IN ITEMS
             cha_tests
             cha_app_tests
+            cha_bridge_tests
             cha_web_tests
             cha_web_stress_tests
             itest
@@ -593,6 +629,7 @@ if(BUILD_TESTING)
     include(GoogleTest)
     gtest_discover_tests(cha_tests)
     gtest_discover_tests(cha_app_tests)
+    gtest_discover_tests(cha_bridge_tests)
     gtest_discover_tests(cha_web_tests)
     gtest_discover_tests(cha_web_stress_tests PROPERTIES LABELS web_stress)
     if(TARGET cha_web_process_tests)

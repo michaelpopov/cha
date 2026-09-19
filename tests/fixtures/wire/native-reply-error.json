@@ -1,0 +1,10 @@
+{
+  "connection_id": "view-9",
+  "id": 42,
+  "context_epoch": 3,
+  "ok": false,
+  "error": {
+    "code": "session_not_live",
+    "message": "That session is not open."
+  }
+}
