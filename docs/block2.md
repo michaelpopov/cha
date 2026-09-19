@@ -6,7 +6,7 @@ are included here. Reading `docs/plan.md`, `docs/redesign.md`, or other block br
 is not required. The current source code and actual prior implementation/evidence
 are still required inputs; this document does not claim those prerequisites exist.
 
-**Initial status:** not started. **Environment:** a supported native compiler and Node/npm; platform feasibility must already be established.
+**Initial status:** complete. **Environment:** a supported native compiler and Node/npm; platform feasibility must already be established.
 
 ## Objective and scope
 
@@ -819,16 +819,58 @@ when its revision/coverage remains applicable. Do not require the next agent to
 read an entire conversation to recover decisions.
 
 ```text
-Status: not started | in progress | waiting for evidence | complete
+Status: complete (review comments addressed)
 Starting and resulting revision/checkpoint:
+  start: 28ee875 (Block 1, branch redesign)
+  result: uncommitted working tree on redesign (not committed)
 Files changed/moved and actual new APIs/targets:
+  New library cha_app (no httplib). New target cha_app_tests.
+  src/app/application.h/.cpp — cha::app::Application composition root
+  src/app/session_output.h/.cpp — coalescing output, SequencePolicy
+  src/web/live_session_sse.cpp — HTTP SSE bind (not in cha_app)
+  LiveSession: enqueue(), subscribe/unsubscribe, retire-when-idle
+  LiveSessionManager::select/selected/close_session/context_epoch
+  ConfigurationTransport {native, http} on load_configuration_directory
+  ErrorCode: invalid_argument, operation_cancelled, application_unavailable
+  ShutdownReason::retired
 Implemented behavior and key ownership/contract decisions:
+  Application opens workspace/providers/actors/mirror without a listener.
+  HTTP ApplicationRuntime wraps Application; vault routes still on Runtime.
+  Native select() retires idle deselected actors; HTTP open() unchanged.
+  CommandReply is the async completion seam; submit() still waits for HTTP.
+  Native sequence is monotonic; SSE writer/heartbeat/takeover stay in cha_web.
+  SessionOutput is not a scoped native envelope (connection/subscription); that
+  is later bridge work. Native delete_session reserves then deletes storage.
+  Native config ignores [web] with a warning, including malformed unused fields.
+  HTTP [web] is optional (defaults 127.0.0.1:8086); unknown [web] fields warn.
+  Newly generated app.toml no longer writes [web].
 Prerequisites verified and evidence used:
+  Block 1 committed at 28ee875. macOS native runner tests/native/macos/run.sh
+  exists; this block did not re-run platform media/mic evidence.
+  HTTP application and owner/mailbox tests still build.
 Temporary compatibility code and when it can be removed:
+  HTTP SSE mailbox, browser idle/orphan timers, lobby bootstrap_for duplicate,
+  Runtime vault method bodies, OpenAPI HTTP DTOs, chaweb listener.
+  Remove in the final server-removal stage (later blocks).
 Exact commands, working directories, platform/runtime versions, and results:
+  cwd: repository root
+  cmake --build --preset ninja --target cha_app cha_app_tests cha_web cha_web_tests chaweb_app
+  ./build/ninja/cha_app_tests — 13/13 passed
+  ./build/ninja/cha_web_tests — 296/296 passed
+  ctest --test-dir build/ninja -R ApplicationConfig — 26/26 passed
+  cmake --build --preset asan-ubsan --target cha_app_tests cha_web_tests
+  ./build/asan-ubsan/cha_app_tests — 13/13 passed
+  ./build/asan-ubsan/cha_web_tests --gtest_filter='LiveSession*:LiveSessionManager*:SseMailbox*:ApplicationRuntime*:ApplicationConfig*' — 141/141 passed
+  Apple clang 21.0.0, macOS 26.7, node engines 22.23.1 / npm 10.9.8 (frontend unchanged)
 Known failures, checks not run, and exact missing evidence:
+  tsan not run. npm --prefix webapp run check/e2e not run (no frontend change).
+  Windows WebView2 runner not re-run. Native host shutdown stress is later.
+  Live provider/R2 not exercised.
 Inventory/coverage changes and remaining work:
+  Headless bootstrap/create/open/submit/stop/snapshot/subscribe/close/shutdown
+  covered. Platform bridge, native maintenance RPC, CRUD migration remain.
 Next unfinished numbered step if this block needs continuation:
+  none for this block. Next migration work is Block 3 (not started here).
 ```
 
 Maintain concise rows for the operations/files/assertions touched by this block.
@@ -837,11 +879,22 @@ carry forward existing evidence and record the relevant updates.
 
 | Operation/caller or source/test path | Retained behavior/result/errors | Native destination or deletion reason | Context/cancellation/lifetime | Verification and status |
 |---|---|---|---|---|
-| Populate during execution | | | | |
+| `cha::app::Application::open/bootstrap/create_session/open_session/submit/stop/snapshot/subscribe/close_session` | CommandResult, snapshots, session_not_live, session_limit_reached, application_unavailable | Native composition root; HTTP Runtime wraps it | One owner per actor; select/retire; request_shutdown then join | `cha_app_tests` 13/13 ninja+asan |
+| `LiveSession::enqueue/submit` | CommandResult after short command; command_timeout unknown; queue full | enqueue is native async seam; submit waits (HTTP) | Owner executes; reply does not wait for generation | LiveSession timeout/queue tests + Application async test |
+| `LiveSessionManager::select` | Keep selection on failed open; reap idle before limit; busy work not cancelled | Native single-window policy; HTTP `open()` unchanged | Retire-when-idle; starting/stopping count | `SessionRetirement.*` ninja+asan |
+| `SessionOutput` / `SseMailbox` | Merge compatible appends; snapshot fallback; one in-flight | Native monotonic seq; SSE reset-on-snapshot in adapter | Consumer ack releases next; no periodic timer | unit_session_output + existing SseMailbox tests |
+| `load_configuration_directory(native/http)` | Malformed TOML still fails; unused [web] warned | Native ignores [web]; HTTP optional with defaults | N/A | ApplicationConfig tests 26/26 |
+| HTTP session/lobby/vault routes | Existing errors/status mapping | Temporary adapters until server removal | Unchanged HTTP worker wait | `cha_web_tests` 296/296 |
 
 | Required flow/assertion | Common test evidence | macOS evidence | Windows evidence | Remaining limitation |
 |---|---|---|---|---|
-| Populate during execution | | | | |
+| Headless Application without listener | cha_app_tests Application.* | same (host is macOS) | not run | no native UI host in this block |
+| Owner/mailbox/manager regressions | cha_web_tests LiveSession*/SseMailbox*/LiveSessionManager* | ninja + asan-ubsan | not run | tsan not run |
+| CommandResult before generation | Application.AsyncSubmitCompletesBeforeGenerationFinishes; existing timeout tests | asan-ubsan passed | not run | uses test provider |
+| Visit more idle sessions than cap | SessionRetirement.VisitsMoreIdleSessionsThanTheActorLimit | asan-ubsan passed | not run | |
+| Busy deselected generation then retire | SessionRetirement.BusyDeselectedGenerationFinishesThenRetires | asan-ubsan passed | not run | |
+| Native [web] ignore / HTTP defaults | ApplicationConfig native/http tests; Application.IgnoresObsoleteNativeWebSection | passed | not run | |
+| HTTP still uses same domain | ApplicationRuntime tests; Runtime wraps Application | 296 web tests | not run | vault methods still on Runtime |
 
 The final response must state what was implemented, why, what was actually tested,
 and any unresolved limitation. If incomplete, give the exact next step and missing

@@ -2,11 +2,22 @@
 
 #include <filesystem>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
 
 namespace cha::web {
+
+class UnknownVaultError : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
+};
+
+class VaultPasswordError : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
+};
 
 struct VaultDefinition {
     std::string name;
@@ -24,6 +35,8 @@ struct ConfigurationDirectory {
     std::optional<std::filesystem::path> modify_base;
     std::vector<VaultDefinition> vaults;
     std::string host;
+    // Native loads leave this 0: there is no listener. HTTP missing [web]
+    // defaults to 8086; an explicit HTTP [web] port is validated 0–65535.
     int port{};
     std::filesystem::path log_file;
     std::string log_level;
@@ -54,8 +67,11 @@ struct ApplicationCommand {
     std::optional<int> test_shutdown_grace_ms;
 };
 
+enum class ConfigurationTransport { native, http };
+
 ConfigurationDirectory load_configuration_directory(
-    const std::filesystem::path& directory);
+    const std::filesystem::path& directory,
+    ConfigurationTransport transport = ConfigurationTransport::http);
 VaultDefinition load_vault_definition_file(
     const std::filesystem::path& configuration_directory,
     const std::filesystem::path& source);
@@ -65,6 +81,14 @@ const VaultDefinition* find_vault(
 void validate_vault_definitions(
     const std::filesystem::path& directory,
     const std::vector<VaultDefinition>& vaults);
+void require_switchable_database(
+    const std::filesystem::path& database,
+    std::string_view password = {});
+void require_openable_protected_database(
+    const std::filesystem::path& database,
+    std::string_view password);
+[[nodiscard]] std::optional<std::filesystem::path> session_mirror_root(
+    const VaultDefinition& vault);
 
 // Parses the public command line and its required configuration directory.
 // Relative paths in that directory's files are resolved from the directory.

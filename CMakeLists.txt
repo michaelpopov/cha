@@ -334,21 +334,41 @@ target_link_libraries(
 target_link_libraries(cha_core PRIVATE OpenSSL::Crypto)
 cha_enable_warnings(cha_core)
 
+add_library(cha_app STATIC
+    src/app/application.cpp
+    src/app/session_output.cpp
+    src/web/browser_connection_state.cpp
+    src/web/command_queue.cpp
+    src/web/protocol.cpp
+    src/web/session_markdown.cpp
+    src/web/session_mirror.cpp
+    src/web/session_projection.cpp
+    src/web/live_session.cpp
+    src/web/live_session_manager.cpp
+    src/web/text_command.cpp
+    src/web/text_input.cpp
+    src/web/text_mention.cpp
+    src/web/text_multicast.cpp
+    src/web/owner_wake_signal.cpp
+)
+target_compile_features(cha_app PUBLIC cxx_std_20)
+target_include_directories(cha_app PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_link_libraries(
+    cha_app
+    PUBLIC
+        cha_core
+        nlohmann_json::nlohmann_json)
+cha_enable_warnings(cha_app)
+
 add_library(cha_web STATIC
     src/web/application_runtime.cpp
     src/web/asset_handler.cpp
-    src/web/browser_connection_state.cpp
-    src/web/command_queue.cpp
     src/web/http_response.cpp
     src/web/http_server.cpp
     src/web/json.cpp
     src/web/lobby_routes.cpp
     src/web/openai_auth_routes.cpp
-    src/web/protocol.cpp
     src/web/route_support.cpp
-    src/web/session_markdown.cpp
-    src/web/session_mirror.cpp
-    src/web/session_projection.cpp
     src/web/server_shutdown.cpp
     src/web/session_routes.cpp
     src/web/settings_routes.cpp
@@ -356,22 +376,16 @@ add_library(cha_web STATIC
     src/web/fish_audio.cpp
     src/web/audio_download.cpp
     src/web/audio_download_routes.cpp
-    src/web/live_session.cpp
-    src/web/live_session_manager.cpp
-    src/web/sse_mailbox.cpp
     src/web/sse_stream.cpp
-    src/web/text_command.cpp
-    src/web/text_input.cpp
-    src/web/text_mention.cpp
-    src/web/text_multicast.cpp
-    src/web/owner_wake_signal.cpp
+    src/web/sse_mailbox.cpp
+    src/web/live_session_sse.cpp
 )
 target_compile_features(cha_web PUBLIC cxx_std_20)
 target_include_directories(cha_web PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_link_libraries(
     cha_web
     PUBLIC
-        cha_core
+        cha_app
         httplib::httplib
         nlohmann_json::nlohmann_json)
 cha_enable_warnings(cha_web)
@@ -501,6 +515,25 @@ if(BUILD_TESTING)
     cha_enable_warnings(cha_web_tests)
 
     add_executable(
+        cha_app_tests
+        tests/app/unit_application.cpp
+        tests/app/unit_session_output.cpp
+        tests/app/unit_session_retirement.cpp
+        tests/support/test_workspace.cpp)
+    target_link_libraries(
+        cha_app_tests PRIVATE cha_app cha_sqlite3 GTest::gtest_main)
+    target_include_directories(
+        cha_app_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+    if(TARGET cha_lease_test_helper)
+        target_compile_definitions(
+            cha_app_tests
+            PRIVATE
+                CHA_LEASE_TEST_HELPER="$<TARGET_FILE:cha_lease_test_helper>")
+        add_dependencies(cha_app_tests cha_lease_test_helper)
+    endif()
+    cha_enable_warnings(cha_app_tests)
+
+    add_executable(
         cha_web_stress_tests
         tests/web/stress_web_sessions.cpp
         tests/support/test_workspace.cpp)
@@ -545,6 +578,7 @@ if(BUILD_TESTING)
     # TSAN_OPTIONS.
     foreach(cha_test_target IN ITEMS
             cha_tests
+            cha_app_tests
             cha_web_tests
             cha_web_stress_tests
             itest
@@ -558,6 +592,7 @@ if(BUILD_TESTING)
 
     include(GoogleTest)
     gtest_discover_tests(cha_tests)
+    gtest_discover_tests(cha_app_tests)
     gtest_discover_tests(cha_web_tests)
     gtest_discover_tests(cha_web_stress_tests PROPERTIES LABELS web_stress)
     if(TARGET cha_web_process_tests)

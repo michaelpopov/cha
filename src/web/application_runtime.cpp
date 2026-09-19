@@ -1,5 +1,6 @@
 #include "web/application_runtime.h"
 
+#include "app/application.h"
 #include "providers/openai_oauth.h"
 #include "providers/api_key_store.h"
 #include "providers/provider_client.h"
@@ -71,63 +72,12 @@ void configure_test_idle_grace(
     }
 }
 
-void require_switchable_database(
-    const std::filesystem::path& database,
-    std::string_view password = {}) {
-    const WorkspaceDatabaseState state =
-        inspect_workspace_session_database(database, password);
-    if (state == WorkspaceDatabaseState::valid_v2) return;
-    if (state == WorkspaceDatabaseState::missing) {
-        throw std::runtime_error(
-            "Workspace session database '" + utf8_path(database)
-            + "' does not exist");
-    }
-    if (state == WorkspaceDatabaseState::valid_v1) {
-        throw std::runtime_error(
-            "Workspace session database '" + utf8_path(database)
-            + "' is a valid CHA schema-1 database");
-    }
-    if (state == WorkspaceDatabaseState::wrong_application_id
-        || state == WorkspaceDatabaseState::unsupported_version) {
-        throw std::runtime_error(
-            "Workspace session database '" + utf8_path(database)
-            + "' has an unsupported schema");
-    }
-    throw std::runtime_error(
-        "Workspace session database '" + utf8_path(database)
-        + "' is not a valid CHA database");
-}
-
-void require_openable_protected_database(
-    const std::filesystem::path& database,
-    std::string_view password) {
-    const WorkspaceDatabaseState state =
-        inspect_workspace_session_database(database, password);
-    if (state == WorkspaceDatabaseState::valid_v2) return;
-    if (state != WorkspaceDatabaseState::corrupt) {
-        require_switchable_database(database, password);
-    }
-
-    const WorkspaceDatabaseState without_password =
-        inspect_workspace_session_database(database);
-    if (without_password == WorkspaceDatabaseState::valid_v2) {
-        throw std::runtime_error(
-            "Vault '" + utf8_path(database)
-            + "' is marked as protected, but its database is not encrypted");
-    }
-    if (without_password != WorkspaceDatabaseState::corrupt) {
-        require_switchable_database(database);
-    }
-    try {
-        storage::SqliteDatabase handle(
-            database, storage::SqliteDatabase::Mode::read_only, password);
-        (void)handle.pragma_integer("application_id");
-        (void)handle.pragma_integer("user_version");
-    } catch (const std::runtime_error&) {
-        throw VaultPasswordError(
-            "The vault password is incorrect, or its database is damaged");
-    }
-    require_switchable_database(database, password);
+WebSettings http_application_settings(const ApplicationCommand& command) {
+    WebSettings settings;
+    configure_test_idle_grace(settings, command);
+    settings.browser_disconnect_lifetime = true;
+    settings.monotonic_event_sequence = false;
+    return settings;
 }
 
 void log_startup(const WebSettings& settings) {
@@ -181,15 +131,6 @@ std::shared_ptr<const Workspace> current_workspace() {
     return workspace;
 }
 
-ProviderClientFactory shared_openai_provider_factory(
-    OpenAiOAuth* oauth,
-    ApiKeyStore* api_keys) {
-    return [oauth, api_keys](SharedCharacterDefinition definition) {
-        return std::make_unique<ProviderClient>(
-            std::move(definition), oauth, api_keys);
-    };
-}
-
 std::filesystem::path normalized_vault_path(
     const std::filesystem::path& config_directory,
     const std::filesystem::path& value) {
@@ -221,18 +162,6 @@ void assign_vault_paths(
     const ApplicationCommand& command) {
     vault.mirror = vault_path(command.mirror_base, vault.name);
     vault.modify = vault_path(command.modify_base, vault.name);
-}
-
-std::optional<std::filesystem::path> session_mirror_root(
-    const VaultDefinition& vault) {
-    if (vault.password_protected) {
-        if (vault.mirror) {
-            log_warn("Ignoring session mirror for password-protected vault '"
-                + vault.name + "'");
-        }
-        return std::nullopt;
-    }
-    return vault.mirror;
 }
 
 using VaultDirectoryMove =
@@ -354,59 +283,26 @@ struct ApplicationRuntime::Impl {
         const ApplicationCommand& selected_command,
         std::string selected_access_token,
         std::string selected_vault_password)
-        : command(selected_command),
+        : application(cha::app::Application::open(
+              selected_command,
+              std::move(selected_vault_password),
+              http_application_settings(selected_command))),
+          command(application->command()),
           access_token(std::move(selected_access_token)),
-          active_password(std::move(selected_vault_password)),
-          settings(),
-          current_vault_(selected_command.vault),
-          store(WorkspaceConfigStore::open(
-              command.vault.data, active_password)),
-          api_keys(std::make_unique<ApiKeyStore>(
-              *store,
-              command.config_directory / "api-keys.json")),
-          openai_auth(std::make_unique<OpenAiOAuth>(
-              command.config_directory / "openai-auth.json")),
-          providers(shared_openai_provider_factory(
-              openai_auth.get(), api_keys.get())) {
-        publish_vault_names();
-        configure_test_idle_grace(settings, command);
-        const auto seed = TemporarySessionSeed{
-            {std::string(entrance_id), std::string(welcome_id)},
-            std::string(welcome_name)};
-        sessions = std::make_shared<SessionRepository>(
-            store->database_path(),
-            store->workspace_path(),
-            store->welcome_path(),
-            seed,
-            active_password);
+          active_password(application->mutable_active_password()),
+          settings(application->settings()),
+          current_vault_(application->current_vault()),
+          store(&application->store()),
+          sessions(application->sessions()),
+          mirror(application->mirror()),
+          api_keys(&application->api_keys()),
+          openai_auth(&application->openai_auth()),
+          providers(application->providers()),
+          live_sessions(&application->live_sessions()),
+          lifecycle_mutex(application->lifecycle_mutex()),
+          unusable(application->mutable_unusable()) {
         audio_downloads = std::make_unique<AudioDownloadManager>(
             *sessions, current_vault_, true);
-        mirror = std::make_shared<SessionMirror>();
-        if (const auto root = session_mirror_root(command.vault)) {
-            try {
-                mirror->rebuild(root, *sessions);
-            } catch (const std::exception& error) {
-                log_warn(
-                    "Session mirror rebuild failed: "
-                    + std::string(error.what()));
-                mirror->rebuild(std::nullopt, *sessions);
-            }
-        }
-
-        auto opener = [this](
-                          const FullSessionId& identity,
-                          std::shared_ptr<WakeNotifier> notifier) {
-            OpenedSession opened = open_session(
-                *sessions, identity, providers, std::move(notifier), *store);
-            const auto selected_mirror = mirror;
-            opened.mirror = [selected_mirror, identity](
-                                std::string_view label,
-                                std::span<const TranscriptEntry> entries) {
-                selected_mirror->update(identity, label, entries);
-            };
-            return opened;
-        };
-        live_sessions = std::make_unique<LiveSessionManager>(settings, opener);
     }
 
     void publish_vault_names() {
@@ -427,9 +323,7 @@ struct ApplicationRuntime::Impl {
         current_vault_.set(std::move(vault), std::move(names));
     }
 
-    // shutdown() covers the running case; this covers the paths that never got
-    // there, such as a start() that failed after the providers were built.
-    ~Impl() { providers.shutdown(); }
+    ~Impl() = default;
 
     struct AudioMaintenance {
         Impl& runtime;
@@ -538,29 +432,30 @@ struct ApplicationRuntime::Impl {
         reopen(database, repository);
     }
 
-    ApplicationCommand command;
+    std::unique_ptr<cha::app::Application> application;
+    ApplicationCommand& command;
     std::string access_token;
-    std::string active_password;
-    WebSettings settings;
-    CurrentVault current_vault_;
-    std::unique_ptr<WorkspaceConfigStore> store;
+    std::string& active_password;
+    const WebSettings& settings;
+    CurrentVault& current_vault_;
+    WorkspaceConfigStore* store;
     std::shared_ptr<SessionRepository> sessions;
     std::shared_ptr<SessionMirror> mirror;
-    std::unique_ptr<ApiKeyStore> api_keys;
-    std::unique_ptr<OpenAiOAuth> openai_auth;
-    Providers providers;
-    std::unique_ptr<LiveSessionManager> live_sessions;
+    ApiKeyStore* api_keys;
+    OpenAiOAuth* openai_auth;
+    Providers& providers;
+    LiveSessionManager* live_sessions;
     FishAudioProxy fish_audio;
     std::unique_ptr<AudioDownloadManager> audio_downloads;
     std::unique_ptr<httplib::Server> server;
     std::thread listener;
-    mutable std::timed_mutex lifecycle_mutex;
+    std::timed_mutex& lifecycle_mutex;
     std::atomic_bool stopping{};
     bool started{};
     bool stopped{};
     // Set when the workspace database could not be reopened. The HTTP server is
     // stopped at the same time because the runtime can no longer serve safely.
-    bool unusable{};
+    bool& unusable;
     bool server_stop_requested{};
 
     void stop_http() {
@@ -576,7 +471,7 @@ ApplicationRuntime::ApplicationRuntime(std::unique_ptr<Impl> impl)
     : impl_(std::move(impl)) {}
 
 ApplicationRuntime::~ApplicationRuntime() {
-    if (impl_ && impl_->started && !impl_->stopped) shutdown();
+    if (impl_ && !impl_->stopped) shutdown();
 }
 
 std::unique_ptr<ApplicationRuntime> ApplicationRuntime::open(
@@ -1140,15 +1035,23 @@ void ApplicationRuntime::wait_for_shutdown_signal() {
 
 void ApplicationRuntime::shutdown() {
     impl_->stopping = true;
+    impl_->application->request_shutdown();
+    {
+        const std::lock_guard operation(impl_->lifecycle_mutex);
+        if (impl_->stopped) return;
+    }
+    if (impl_->started) {
+        ServerShutdownCoordinator coordinator(
+            *impl_->live_sessions,
+            *impl_->server,
+            [this] { impl_->stop_http(); },
+            [this](auto deadline) {
+                return impl_->audio_downloads->join_until(deadline);
+            });
+        coordinator.shutdown_now(impl_->listener, impl_->settings.shutdown_grace);
+    }
+    (void)impl_->application->join_shutdown(impl_->settings.shutdown_grace);
     const std::lock_guard operation(impl_->lifecycle_mutex);
-    if (!impl_->started || impl_->stopped) return;
-    ServerShutdownCoordinator coordinator(
-        *impl_->live_sessions,
-        *impl_->server,
-        [this] { impl_->stop_http(); },
-        [this](auto deadline) { return impl_->audio_downloads->join_until(deadline); });
-    coordinator.shutdown_now(impl_->listener, impl_->settings.shutdown_grace);
-    impl_->providers.shutdown();
     impl_->stopped = true;
 }
 

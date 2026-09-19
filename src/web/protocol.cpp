@@ -154,6 +154,7 @@ std::string_view to_string(ShutdownReason value) {
             {ShutdownReason::session_failed, "session_failed"},
             {ShutdownReason::session_deleted, "session_deleted"},
             {ShutdownReason::server_stopping, "server_stopping"},
+            {ShutdownReason::retired, "retired"},
         });
 }
 
@@ -179,6 +180,9 @@ std::string_view to_string(ErrorCode value) {
             {ErrorCode::vault_password_required, "vault_password_required"},
             {ErrorCode::source_vault_password_required,
              "source_vault_password_required"},
+            {ErrorCode::invalid_argument, "invalid_argument"},
+            {ErrorCode::operation_cancelled, "operation_cancelled"},
+            {ErrorCode::application_unavailable, "application_unavailable"},
         });
 }
 

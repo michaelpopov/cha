@@ -15,7 +15,12 @@
 namespace cha::web {
 
 using CommandSubmitResult = std::variant<
-    CommandResult, SessionSnapshot, SseConnectResult, SessionLabelResult, ErrorCode>;
+    CommandResult,
+    SessionSnapshot,
+    SseConnectResult,
+    SessionLabelResult,
+    SubscribeResult,
+    ErrorCode>;
 
 class CommandReply {
 public:
@@ -41,6 +46,8 @@ using OwnerNotification = SseDisconnectNotification;
 struct OwnerCommand {
     WebCommand command;
     std::shared_ptr<CommandReply> reply;
+    // Owner-local subscribe generation; not a wire field.
+    std::uint64_t subscribe_ticket{};
 };
 using OwnerWork = std::variant<OwnerCommand, OwnerNotification>;
 

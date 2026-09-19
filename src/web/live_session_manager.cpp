@@ -233,6 +233,127 @@ LiveSessionOpenResult LiveSessionManager::open(
     return map_start_result(*outcome);
 }
 
+std::optional<FullSessionId> LiveSessionManager::selected() const {
+    std::lock_guard lock(mutex_);
+    return selected_;
+}
+
+std::uint64_t LiveSessionManager::context_epoch() const {
+    std::lock_guard lock(mutex_);
+    return context_epoch_;
+}
+
+void LiveSessionManager::close_session(const FullSessionId& key) {
+    LiveSessionHandle actor;
+    {
+        std::lock_guard select_lock(select_mutex_);
+        std::lock_guard lock(mutex_);
+        if (selected_ && *selected_ == key) selected_.reset();
+        const auto found = sessions_.find(key);
+        if (found != sessions_.end()) actor = found->second;
+    }
+    if (actor) actor->request_shutdown(ShutdownReason::retired);
+}
+
+void LiveSessionManager::request_retire_locked(const FullSessionId& key) {
+    const auto found = sessions_.find(key);
+    if (found == sessions_.end()) return;
+    found->second->request_retire_when_idle();
+}
+
+LiveSessionOpenResult LiveSessionManager::select(
+    FullSessionId key,
+    std::chrono::milliseconds deadline) {
+    std::lock_guard select_lock(select_mutex_);
+    const auto abs_deadline = std::chrono::steady_clock::now() + deadline;
+    const auto remaining = [&] {
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= abs_deadline) return std::chrono::milliseconds{0};
+        return std::chrono::duration_cast<std::chrono::milliseconds>(
+            abs_deadline - now);
+    };
+
+    RetiredSessions retired;
+    LiveSessionHandle wait_finished;
+    std::vector<LiveSessionHandle> others;
+    std::optional<LiveSessionOpenFailure> rejected;
+    bool already_running = false;
+    {
+        std::lock_guard lock(mutex_);
+        retired = sweep_locked();
+        if (stopping_ || global_maintenance_) {
+            rejected = LiveSessionOpenFailure::manager_stopping;
+        } else if (maintenance_.contains(key)) {
+            rejected = LiveSessionOpenFailure::stopping;
+        } else {
+            const auto found = sessions_.find(key);
+            if (found != sessions_.end()
+                && found->second->lifecycle() == LiveSessionState::running) {
+                found->second->cancel_retirement();
+                const auto previous = selected_;
+                selected_ = key;
+                if (previous && *previous != key) request_retire_locked(*previous);
+                already_running = true;
+            } else if (found != sessions_.end()
+                && (found->second->lifecycle() == LiveSessionState::stopping
+                    || found->second->lifecycle() == LiveSessionState::finished)) {
+                wait_finished = found->second;
+            }
+            if (!already_running && sessions_.size() >= settings_.session_limit) {
+                for (const auto& [identity, session] : sessions_) {
+                    if (identity == key) continue;
+                    others.push_back(session);
+                }
+            }
+        }
+    }
+    reap(std::move(retired));
+    if (rejected) return *rejected;
+    if (already_running) return LiveSessionReady{};
+
+    if (wait_finished) {
+        if (!wait_finished->wait_until_finished(abs_deadline)) {
+            return LiveSessionOpenFailure::open_timeout;
+        }
+        sweep();
+    }
+    for (const LiveSessionHandle& session : others) {
+        session->request_retire_when_idle();
+    }
+    for (const LiveSessionHandle& session : others) {
+        (void)session->wait_until_finished(abs_deadline);
+    }
+    if (!others.empty()) sweep();
+
+    bool at_limit = false;
+    {
+        std::lock_guard lock(mutex_);
+        retired = sweep_locked();
+        const auto found = sessions_.find(key);
+        const bool present = found != sessions_.end()
+            && (found->second->lifecycle() == LiveSessionState::running
+                || found->second->lifecycle() == LiveSessionState::starting);
+        at_limit = !present && sessions_.size() >= settings_.session_limit;
+    }
+    reap(std::move(retired));
+    if (at_limit) return LiveSessionOpenFailure::limit_reached;
+
+    const LiveSessionOpenResult result = open(key, remaining());
+    if (std::holds_alternative<LiveSessionReady>(result)) {
+        std::lock_guard lock(mutex_);
+        if (stopping_ || global_maintenance_) {
+            return LiveSessionOpenFailure::manager_stopping;
+        }
+        if (maintenance_.contains(key)) {
+            return LiveSessionOpenFailure::stopping;
+        }
+        const auto previous = selected_;
+        selected_ = key;
+        if (previous && *previous != key) request_retire_locked(*previous);
+    }
+    return result;
+}
+
 std::optional<LiveSessionOpenResult> LiveSessionManager::try_reattach(
     const FullSessionId& key) {
     RetiredSessions retired;
@@ -330,6 +451,7 @@ MaintenanceReservationResult LiveSessionManager::reserve_for_deletion(
             failure = MaintenanceFailure::stopping;
         } else {
             maintenance_.insert(key);
+            if (selected_ && *selected_ == key) selected_.reset();
             const auto found = sessions_.find(key);
             if (found != sessions_.end()) actor = found->second;
         }
@@ -407,6 +529,7 @@ void LiveSessionManager::begin_shutdown(
         std::lock_guard lock(mutex_);
         retired = sweep_locked();
         stopping_ = true;
+        ++context_epoch_;
         for (const auto& [key, session] : sessions_) {
             (void)key;
             live.push_back(session);

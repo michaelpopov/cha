@@ -13,16 +13,6 @@
 
 namespace cha::web {
 
-class UnknownVaultError : public std::runtime_error {
-public:
-    using std::runtime_error::runtime_error;
-};
-
-class VaultPasswordError : public std::runtime_error {
-public:
-    using std::runtime_error::runtime_error;
-};
-
 struct VaultCreate {
     std::string display_name;
     std::optional<std::string> copy_from;

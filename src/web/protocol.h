@@ -28,6 +28,7 @@ enum class ShutdownReason {
     session_failed,
     session_deleted,
     server_stopping,
+    retired,
 };
 enum class ErrorCode {
     not_found, bad_request, body_too_large, prompt_too_large, forbidden_origin,
@@ -36,6 +37,9 @@ enum class ErrorCode {
     session_not_live, command_timeout,
     command_queue_full, vault_password_required,
     source_vault_password_required,
+    // Native-first codes. HTTP adapters currently map unknown codes to 500;
+    // invalid_argument and application_unavailable are also mapped explicitly.
+    invalid_argument, operation_cancelled, application_unavailable,
 };
 
 struct SessionListing {
@@ -145,6 +149,21 @@ struct RenameSessionCommand {
 // never read controller-owned state directly.
 struct SnapshotCommand {};
 struct SseConnectCommand {};
+struct SubscribeCommand {
+    std::string connection_id;
+    std::uint64_t context_epoch{};
+    std::string subscription_id;
+};
+struct UnsubscribeCommand {
+    std::string connection_id;
+    std::uint64_t context_epoch{};
+    std::string subscription_id;
+};
+struct SubscribeResult {
+    std::string connection_id;
+    std::uint64_t context_epoch{};
+    std::string subscription_id;
+};
 
 struct SseStreamToken {
     std::uint64_t id{};
@@ -165,7 +184,9 @@ using WebCommand = std::variant<
     SetDefaultCharacterCommand,
     RenameSessionCommand,
     SnapshotCommand,
-    SseConnectCommand>;
+    SseConnectCommand,
+    SubscribeCommand,
+    UnsubscribeCommand>;
 
 struct CommandResult {
     // Owner-thread effects stay in this in-process result. The JSON serializer
@@ -332,6 +353,13 @@ struct AppendEvent {
     TextTarget target;
     std::string text;
     std::uint64_t seq{};
+};
+
+// Whether coalesced output represented one controller-proven append exactly,
+// or needs the owner to publish a current full snapshot instead.
+enum class AppendPublishResult {
+    Accepted,
+    SnapshotRequired,
 };
 
 std::string_view to_string(EntryKind value);

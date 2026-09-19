@@ -1,5 +1,6 @@
 #pragma once
 
+#include "app/session_output.h"
 #include "session/controller_update.h"
 #include "session/opened_session.h"
 #include "chat/session_identity.h"
@@ -8,7 +9,6 @@
 #include "web/owner_wake_signal.h"
 #include "web/protocol.h"
 #include "web/session_projection.h"
-#include "web/sse_mailbox.h"
 #include "web/web_settings.h"
 
 #include <chrono>
@@ -84,15 +84,34 @@ public:
     [[nodiscard]] CommandSubmitResult submit(
         WebCommand command,
         std::chrono::milliseconds deadline);
+    // Enqueues without waiting. HTTP workers may still wait on the reply;
+    // native callers complete asynchronously from the owner thread.
+    [[nodiscard]] std::variant<std::shared_ptr<CommandReply>, ErrorCode>
+    enqueue(WebCommand command);
     [[nodiscard]] CommandSubmitResult snapshot(
         std::chrono::milliseconds deadline);
     [[nodiscard]] CommandSubmitResult connect_sse(
+        std::chrono::milliseconds deadline);
+    [[nodiscard]] CommandSubmitResult subscribe(
+        SubscribeCommand command,
+        std::chrono::milliseconds deadline);
+    [[nodiscard]] CommandSubmitResult unsubscribe(
+        UnsubscribeCommand command,
         std::chrono::milliseconds deadline);
     void disconnect_sse(
         std::uint64_t connection_id,
         std::size_t collapsed_payloads) noexcept;
     void request_shutdown(
         ShutdownReason reason = ShutdownReason::browser_disconnected);
+    void request_retire_when_idle();
+    void cancel_retirement();
+    [[nodiscard]] bool idle_for_retirement();
+    [[nodiscard]] std::shared_ptr<const cha::app::SessionOutputItem>
+    take_output();
+    void acknowledge_output() noexcept;
+    [[nodiscard]] std::shared_ptr<cha::app::SessionOutput> output() const {
+        return output_;
+    }
 
     [[nodiscard]] const FullSessionId& identity() const noexcept {
         return identity_;
@@ -159,7 +178,10 @@ private:
     SessionOpener opener_;
     LiveSessionClock clock_;
     std::shared_ptr<OwnerWakeSignal> notifier_;
-    std::shared_ptr<SseMailbox> mailbox_;
+    std::shared_ptr<cha::app::SessionOutput> output_;
+    // HTTP SSE adapter, created on first connect_sse. Held as void so cha_app
+    // does not depend on SseMailbox.
+    std::shared_ptr<void> sse_adapter_;
     CommandQueue commands_;
 
     // The one lifecycle record. It is the only actor state shared between the
@@ -194,6 +216,10 @@ private:
     bool fatal_logged_{};
     BrowserConnectionState browser_connection_;
     bool has_connected_sse_{};
+    bool generating_{};
+    bool retire_when_idle_{};
+    std::uint64_t subscribe_ticket_{};
+    std::optional<SubscribeCommand> active_subscription_;
 };
 
 } // namespace cha::web

@@ -4,6 +4,7 @@
 
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <map>
 #include <memory>
@@ -112,6 +113,15 @@ public:
     [[nodiscard]] LiveSessionOpenResult open(
         FullSessionId key,
         std::chrono::milliseconds deadline);
+    // Native single-window selection: opens the actor, keeps it across reload,
+    // and retires the previous selected actor once it is idle. HTTP open()
+    // does not change selection, so concurrent HTTP sessions stay unchanged.
+    [[nodiscard]] LiveSessionOpenResult select(
+        FullSessionId key,
+        std::chrono::milliseconds deadline);
+    [[nodiscard]] std::optional<FullSessionId> selected() const;
+    void close_session(const FullSessionId& key);
+    [[nodiscard]] std::uint64_t context_epoch() const;
     // Answers reattach and shutdown cases entirely from manager state. An
     // empty result means the caller must validate storage before open().
     [[nodiscard]] std::optional<LiveSessionOpenResult> try_reattach(
@@ -170,13 +180,17 @@ private:
     static void reap(RetiredSessions retired);
     void release_maintenance(const FullSessionId& key) noexcept;
     void release_global_maintenance() noexcept;
+    void request_retire_locked(const FullSessionId& key);
 
     WebSettings settings_;
     SessionOpener opener_;
     LiveSessionClock clock_;
-    std::mutex mutex_;
+    std::mutex select_mutex_;
+    mutable std::mutex mutex_;
     std::map<FullSessionId, LiveSessionHandle, std::less<>> sessions_;
     std::set<FullSessionId, std::less<>> maintenance_;
+    std::optional<FullSessionId> selected_;
+    std::uint64_t context_epoch_{1};
     bool global_maintenance_{};
     bool stopping_{};
 };

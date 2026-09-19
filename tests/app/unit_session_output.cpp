@@ -1,0 +1,135 @@
+#include "app/session_output.h"
+
+#include <gtest/gtest.h>
+
+#include <string>
+
+namespace cha::app {
+namespace {
+
+using cha::web::SessionSnapshot;
+
+SessionSnapshot streaming_snapshot(std::string text = "a") {
+    return {
+        .transcript = {{
+            .id = 42,
+            .kind = EntryKind::character,
+            .text = std::move(text),
+            .status = EntryStatus::streaming,
+        }},
+        .generation = {
+            .active = true,
+            .request_id = 7,
+            .phase = ResponsePhase::answering,
+        },
+    };
+}
+
+TEST(SessionOutput, MonotonicSequenceDoesNotResetOnLaterSnapshot) {
+    SessionOutput output(SequencePolicy::monotonic);
+    output.attach();
+    output.publish_snapshot(streaming_snapshot("a"));
+    auto first = output.take();
+    ASSERT_TRUE(first);
+    EXPECT_EQ(first->kind, SessionOutputItem::Kind::snapshot);
+    EXPECT_EQ(first->seq, 0U);
+    output.acknowledge();
+
+    EXPECT_EQ(
+        output.publish_append({EntryTextTarget{42}, "b"}),
+        cha::web::AppendPublishResult::Accepted);
+    auto append = output.take();
+    ASSERT_TRUE(append);
+    EXPECT_EQ(append->kind, SessionOutputItem::Kind::append);
+    EXPECT_EQ(append->seq, 1U);
+    output.acknowledge();
+
+    output.publish_snapshot(streaming_snapshot("ab"));
+    auto second = output.take();
+    ASSERT_TRUE(second);
+    EXPECT_EQ(second->kind, SessionOutputItem::Kind::snapshot);
+    EXPECT_EQ(second->seq, 2U);
+}
+
+TEST(SessionOutput, ResetOnSnapshotKeepsSseAppendNumbering) {
+    SessionOutput output(SequencePolicy::reset_on_snapshot);
+    output.attach();
+    output.publish_snapshot(streaming_snapshot("a"));
+    (void)output.take();
+    output.acknowledge();
+
+    EXPECT_EQ(
+        output.publish_append({EntryTextTarget{42}, "b"}),
+        cha::web::AppendPublishResult::Accepted);
+    auto first = output.take();
+    ASSERT_TRUE(first);
+    EXPECT_EQ(first->seq, 0U);
+    output.acknowledge();
+
+    output.publish_snapshot(streaming_snapshot("ab"));
+    (void)output.take();
+    output.acknowledge();
+    EXPECT_EQ(
+        output.publish_append({EntryTextTarget{42}, "c"}),
+        cha::web::AppendPublishResult::Accepted);
+    auto following = output.take();
+    ASSERT_TRUE(following);
+    EXPECT_EQ(following->seq, 0U);
+}
+
+TEST(SessionOutput, MergesCompatibleAppendsAndBoundsPendingBytes) {
+    SessionOutput output(SequencePolicy::monotonic, 4);
+    output.attach();
+    output.publish_snapshot(streaming_snapshot("a"));
+    (void)output.take();
+    output.acknowledge();
+
+    EXPECT_EQ(
+        output.publish_append({EntryTextTarget{42}, "bb"}),
+        cha::web::AppendPublishResult::Accepted);
+    EXPECT_EQ(
+        output.publish_append({EntryTextTarget{42}, "c"}),
+        cha::web::AppendPublishResult::Accepted);
+    auto merged = output.take();
+    ASSERT_TRUE(merged);
+    EXPECT_EQ(merged->text, "bbc");
+    output.acknowledge();
+
+    EXPECT_EQ(
+        output.publish_append({EntryTextTarget{42}, "xxxx"}),
+        cha::web::AppendPublishResult::Accepted);
+    EXPECT_EQ(
+        output.publish_append({EntryTextTarget{42}, "y"}),
+        cha::web::AppendPublishResult::SnapshotRequired);
+    EXPECT_EQ(
+        output.publish_append({EntryTextTarget{42}, "zzzzz"}),
+        cha::web::AppendPublishResult::SnapshotRequired);
+}
+
+TEST(SessionOutput, CloseKeepsTerminalPending) {
+    SessionOutput output(SequencePolicy::monotonic);
+    output.attach();
+    output.publish_snapshot(streaming_snapshot("final"));
+    output.close();
+    auto item = output.take();
+    ASSERT_TRUE(item);
+    EXPECT_EQ(item->snapshot.transcript[0].text, "final");
+}
+
+TEST(SessionOutput, OneInFlightUntilAcknowledged) {
+    SessionOutput output(SequencePolicy::monotonic);
+    output.attach();
+    output.publish_snapshot(streaming_snapshot("a"));
+    auto first = output.take();
+    ASSERT_TRUE(first);
+    output.publish_snapshot(streaming_snapshot("b"));
+    EXPECT_TRUE(output.has_pending());
+    EXPECT_FALSE(output.take());
+    output.acknowledge();
+    auto second = output.take();
+    ASSERT_TRUE(second);
+    EXPECT_EQ(second->snapshot.transcript[0].text, "b");
+}
+
+} // namespace
+} // namespace cha::app

@@ -421,7 +421,6 @@ TEST_F(ApplicationConfigTest, RejectsMissingDuplicateAndRuntimeOfflineOptions) {
 TEST_F(ApplicationConfigTest, RequiresAllSettingsWithValidTypes) {
     const std::vector<std::string> invalid{
         "[web]\nhost = \"x\"\nport = 1\n[logging]\nfile = \"x\"\nlevel = \"off\"\n",
-        "vault = \"Personal\"\n[logging]\nfile = \"x\"\nlevel = \"off\"\n",
         "vault = \"Personal\"\n[web]\nhost = \"\"\nport = 1\n[logging]\nfile = \"x\"\nlevel = \"off\"\n",
         "vault = \"Personal\"\n[web]\nhost = \"x\"\nport = -1\n[logging]\nfile = \"x\"\nlevel = \"off\"\n",
         "vault = \"Personal\"\n[web]\nhost = \"x\"\nport = 1\n[logging]\nlevel = \"off\"\n",
@@ -434,6 +433,46 @@ TEST_F(ApplicationConfigTest, RequiresAllSettingsWithValidTypes) {
             std::runtime_error)
             << contents;
     }
+}
+
+TEST_F(ApplicationConfigTest, HttpModeAllowsMissingWebAndUsesDefaults) {
+    write_app(
+        "vault = \"Personal\"\n"
+        "[logging]\nfile = \"x\"\nlevel = \"off\"\n");
+    const auto command = load({"chaweb", "--config=" + config_.string()});
+    EXPECT_EQ(command.host, "127.0.0.1");
+    EXPECT_EQ(command.port, 8086);
+}
+
+TEST_F(ApplicationConfigTest, NativeModeIgnoresMalformedWebSection) {
+    write_app(
+        "vault = \"Personal\"\n"
+        "[web]\nhost = 1\nport = \"bad\"\nextra = true\n"
+        "[logging]\nfile = \"x\"\nlevel = \"off\"\n");
+    const auto loaded = load_configuration_directory(
+        config_, ConfigurationTransport::native);
+    ASSERT_FALSE(loaded.warnings.empty());
+    EXPECT_NE(loaded.warnings.front().find("[web]"), std::string::npos);
+}
+
+TEST_F(ApplicationConfigTest, HttpModeRejectsNonTableWebSection) {
+    write_app(
+        "vault = \"Personal\"\n"
+        "web = 1\n"
+        "[logging]\nfile = \"x\"\nlevel = \"off\"\n");
+    EXPECT_THROW(
+        (void)load({"chaweb", "--config=" + config_.string()}),
+        std::runtime_error);
+}
+
+TEST_F(ApplicationConfigTest, HttpModeIgnoresUnknownWebFieldsWithWarning) {
+    write_app(
+        "vault = \"Personal\"\n"
+        "[web]\nhost = \"127.0.0.1\"\nport = 8080\nidle = 1\n"
+        "[logging]\nfile = \"x\"\nlevel = \"off\"\n");
+    const auto command = load({"chaweb", "--config=" + config_.string()});
+    EXPECT_EQ(command.port, 8080);
+    ASSERT_FALSE(command.warnings.empty());
 }
 
 TEST_F(ApplicationConfigTest, LoadsMultipleVaultsWithCanonicalSpellingAndOrder) {

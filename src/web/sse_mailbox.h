@@ -1,5 +1,6 @@
 #pragma once
 
+#include "app/session_output.h"
 #include "web/protocol.h"
 
 #include <chrono>
@@ -8,27 +9,21 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
-#include <optional>
 #include <variant>
 
 namespace cha::web {
 
 using SsePayload = std::variant<SnapshotEvent, AppendEvent>;
 
-// Whether the mailbox represented one controller-proven append exactly, or
-// needs the owner to publish a current full snapshot instead.
-enum class AppendPublishResult {
-    Accepted,
-    SnapshotRequired,
-};
-
-// The only cross-thread presentation queue for one live session.  Its producer
-// is the owner thread and its consumer is the HTTP streaming thread.
+// HTTP SSE adapter over SessionOutput: stream takeover, heartbeat waits, and
+// final-drain signalling. Merge/snapshot/one-in-flight live in SessionOutput.
 class SseMailbox final {
 public:
+    explicit SseMailbox(
+        cha::app::SequencePolicy policy = cha::app::SequencePolicy::reset_on_snapshot,
+        std::size_t pending_append_byte_limit = 65536);
+    explicit SseMailbox(std::shared_ptr<cha::app::SessionOutput> output);
     using Stream = SseStreamToken;
-    // Why a stream stopped, so the writer can tell a reader who moved to
-    // another device from one whose session simply ended.
     enum class Ending {
         closed,
         superseded,
@@ -40,6 +35,8 @@ public:
     };
 
     [[nodiscard]] Stream begin_stream(SnapshotEvent snapshot);
+    // Adopt an already-attached SessionOutput (owner published the snapshot).
+    [[nodiscard]] Stream listen();
     [[nodiscard]] Next next(
         Stream stream,
         std::chrono::milliseconds heartbeat_interval);
@@ -47,20 +44,14 @@ public:
     std::size_t end_stream(Stream stream) noexcept;
 
     void publish(SnapshotEvent snapshot);
-    // A pending snapshot cannot safely coexist with a later append. Rejecting
-    // the append leaves the mailbox payload untouched and obliges the owner to
-    // project and publish a current full snapshot.
     [[nodiscard]] AppendPublishResult publish_append(TextAppend append);
     [[nodiscard]] bool wait_for_written(std::chrono::milliseconds deadline);
-    // Wakes a final-drain wait when the actor receives a shutdown reason that
-    // must not spend the ordinary SSE drain interval. The interruption is
-    // remembered so it also wins a race immediately before the wait begins.
     void interrupt_final_drain() noexcept;
     void close() noexcept;
 
 private:
-    void publish_snapshot_locked(SnapshotEvent snapshot);
-    [[nodiscard]] AppendPublishResult publish_append_locked(TextAppend append);
+    [[nodiscard]] static SsePayload to_sse(const cha::app::SessionOutputItem& item);
+    [[nodiscard]] bool stream_live(Stream stream) const;
 
     std::mutex mutex_;
     std::condition_variable changed_;
@@ -68,11 +59,9 @@ private:
     bool final_drain_interrupted_{};
     std::uint64_t active_stream_{};
     std::uint64_t next_stream_{1};
+    std::uint64_t bound_generation_{};
+    std::shared_ptr<cha::app::SessionOutput> output_;
     std::shared_ptr<const SsePayload> in_flight_;
-    std::shared_ptr<const SsePayload> pending_;
-    std::optional<TextTarget> target_;
-    std::uint64_t next_sequence_{};
-    std::size_t collapsed_payloads_{};
 };
 
 } // namespace cha::web

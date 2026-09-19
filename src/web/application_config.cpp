@@ -498,9 +498,6 @@ void bootstrap_configuration_directory(
             "vault = \"Default\"\n\n"
             "mirror = \"mirror\"\n"
             "modify = \"modify\"\n\n"
-            "[web]\n"
-            "host = \"127.0.0.1\"\n"
-            "port = 8086\n\n"
             "[logging]\n"
             "file = \"logs/cha.log\"\n"
             "level = \"info\"\n");
@@ -556,8 +553,70 @@ void validate_vault_definitions(
     validate_vault_registry(directory, loaded);
 }
 
+void ignore_obsolete_web_section(
+    const toml::table& app,
+    const std::filesystem::path& app_file,
+    std::vector<std::string>& warnings) {
+    if (!app.contains("web")) return;
+    warnings.push_back(
+        "Application config '" + utf8_path(app_file)
+        + "' [web] settings are unused and were ignored.");
+}
+
+bool load_http_web_section(
+    const toml::table& app,
+    const std::filesystem::path& app_file,
+    std::string_view app_kind,
+    std::string& host,
+    int& port,
+    std::vector<std::string>& warnings) {
+    if (!app.contains("web")) {
+        host = "127.0.0.1";
+        port = 8086;
+        return true;
+    }
+    const toml::table* const web = app["web"].as_table();
+    if (web == nullptr) {
+        throw std::runtime_error(
+            std::string(app_kind) + " '" + utf8_path(app_file)
+            + "' requires [web] to be a table.");
+    }
+    for (const auto& [key, value] : *web) {
+        (void)value;
+        if (key.str() == "host" || key.str() == "port") continue;
+        warnings.push_back(
+            "Application config '" + utf8_path(app_file)
+            + "' [web] field '" + std::string(key.str())
+            + "' is unused and was ignored.");
+    }
+    if (web->contains("host")) {
+        const std::optional<std::string> value = (*web)["host"].value<std::string>();
+        if (!value || value->empty()) {
+            throw std::runtime_error(
+                std::string(app_kind) + " '" + utf8_path(app_file)
+                + "' requires a non-empty string 'host' in [web].");
+        }
+        host = *value;
+    } else {
+        host = "127.0.0.1";
+    }
+    if (web->contains("port")) {
+        const std::optional<int> value = (*web)["port"].value<int>();
+        if (!value || *value < 0 || *value > 65535) {
+            throw std::runtime_error(
+                std::string(app_kind) + " '" + utf8_path(app_file)
+                + "' requires an integer 'port' between 0 and 65535 in [web].");
+        }
+        port = *value;
+    } else {
+        port = 8086;
+    }
+    return true;
+}
+
 ConfigurationDirectory load_configuration_directory(
-    const std::filesystem::path& directory) {
+    const std::filesystem::path& directory,
+    ConfigurationTransport transport) {
     if (!std::filesystem::is_directory(directory)) {
         throw std::runtime_error(
             "Configuration directory '" + utf8_path(directory)
@@ -580,14 +639,15 @@ ConfigurationDirectory load_configuration_directory(
         app, root, app_file, "mirror", app_kind);
     const std::optional<std::filesystem::path> modify_base = optional_app_path(
         app, root, app_file, "modify", app_kind);
-    const toml::table& web = required_table(app, app_file, "web", app_kind);
-    reject_unknown_fields(web, app_file, {"host", "port"}, "[web]", app_kind);
-    const std::string host = required_string(web, app_file, "host", app_kind);
-    const std::optional<int> port = web["port"].value<int>();
-    if (!port || *port < 0 || *port > 65535) {
-        throw std::runtime_error(
-            std::string(app_kind) + " '" + utf8_path(app_file)
-            + "' requires an integer 'port' between 0 and 65535 in [web].");
+    std::string host;
+    int port = 0;
+    std::vector<std::string> warnings;
+    if (transport == ConfigurationTransport::native) {
+        ignore_obsolete_web_section(app, app_file, warnings);
+        host = "127.0.0.1";
+        port = 0;
+    } else {
+        load_http_web_section(app, app_file, app_kind, host, port, warnings);
     }
     const toml::table& logging =
         required_table(app, app_file, "logging", app_kind);
@@ -608,7 +668,6 @@ ConfigurationDirectory load_configuration_directory(
     }
     std::sort(vault_files.begin(), vault_files.end());
 
-    std::vector<std::string> warnings;
     if (app.contains("voice_input")) {
         warnings.push_back(
             "Application config '" + utf8_path(app_file)
@@ -654,7 +713,7 @@ ConfigurationDirectory load_configuration_directory(
         .modify_base = modify_base,
         .vaults = std::move(vaults),
         .host = host,
-        .port = *port,
+        .port = port,
         .log_file = resolve_config_path(
             root, app_file, "logging.file", log_file, app_kind),
         .log_level = log_level,
@@ -756,6 +815,77 @@ ApplicationCommand parse_application_command(
         .warnings = settings.warnings,
         .test_idle_grace_ms = options.test_idle_grace_ms,
     };
+}
+
+void require_switchable_database(
+    const std::filesystem::path& database,
+    std::string_view password) {
+    const WorkspaceDatabaseState state =
+        inspect_workspace_session_database(database, password);
+    if (state == WorkspaceDatabaseState::valid_v2) return;
+    if (state == WorkspaceDatabaseState::missing) {
+        throw std::runtime_error(
+            "Workspace session database '" + utf8_path(database)
+            + "' does not exist");
+    }
+    if (state == WorkspaceDatabaseState::valid_v1) {
+        throw std::runtime_error(
+            "Workspace session database '" + utf8_path(database)
+            + "' is a valid CHA schema-1 database");
+    }
+    if (state == WorkspaceDatabaseState::wrong_application_id
+        || state == WorkspaceDatabaseState::unsupported_version) {
+        throw std::runtime_error(
+            "Workspace session database '" + utf8_path(database)
+            + "' has an unsupported schema");
+    }
+    throw std::runtime_error(
+        "Workspace session database '" + utf8_path(database)
+        + "' is not a valid CHA database");
+}
+
+void require_openable_protected_database(
+    const std::filesystem::path& database,
+    std::string_view password) {
+    const WorkspaceDatabaseState state =
+        inspect_workspace_session_database(database, password);
+    if (state == WorkspaceDatabaseState::valid_v2) return;
+    if (state != WorkspaceDatabaseState::corrupt) {
+        require_switchable_database(database, password);
+    }
+
+    const WorkspaceDatabaseState without_password =
+        inspect_workspace_session_database(database);
+    if (without_password == WorkspaceDatabaseState::valid_v2) {
+        throw std::runtime_error(
+            "Vault '" + utf8_path(database)
+            + "' is marked as protected, but its database is not encrypted");
+    }
+    if (without_password != WorkspaceDatabaseState::corrupt) {
+        require_switchable_database(database);
+    }
+    try {
+        storage::SqliteDatabase handle(
+            database, storage::SqliteDatabase::Mode::read_only, password);
+        (void)handle.pragma_integer("application_id");
+        (void)handle.pragma_integer("user_version");
+    } catch (const std::runtime_error&) {
+        throw VaultPasswordError(
+            "The vault password is incorrect, or its database is damaged");
+    }
+    require_switchable_database(database, password);
+}
+
+std::optional<std::filesystem::path> session_mirror_root(
+    const VaultDefinition& vault) {
+    if (vault.password_protected) {
+        if (vault.mirror) {
+            log_warn("Ignoring session mirror for password-protected vault '"
+                + vault.name + "'");
+        }
+        return std::nullopt;
+    }
+    return vault.mirror;
 }
 
 } // namespace cha::web
