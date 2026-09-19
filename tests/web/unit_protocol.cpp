@@ -72,10 +72,11 @@ TEST(WebProtocol, SerializesSpecifiedSuccessListingAndErrorBodies) {
         nlohmann::json(ForumDetail{
             {"forum", "Forum", std::nullopt, "guide", "reader", "Reader", {{"guide", "Guide"}}},
             "# House rules",
+            {"FORUM.md"},
             true}),
         nlohmann::json({{"display_name", "Forum"}, {"id", "forum"}, {"default_character_id", "guide"}, {"default_persona_id", "reader"}, {"default_persona_display_name", "Reader"},
             {"members", {{{"id", "guide"}, {"display_name", "Guide"}, {"appearance", default_appearance()}}}},
-            {"forum_markdown", "# House rules"}, {"writable", true}}));
+            {"forum_markdown", "# House rules"}, {"markdown_files", {"FORUM.md"}}, {"writable", true}}));
     EXPECT_EQ(
         nlohmann::json(PersonaSummary{"reader", "Reader"}),
         nlohmann::json({{"display_name", "Reader"}, {"id", "reader"},

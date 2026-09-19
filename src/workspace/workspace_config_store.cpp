@@ -1480,6 +1480,17 @@ WorkspaceConfigEditResult WorkspaceConfigStore::apply_forum_delete(
     }, forum_id);
 }
 
+WorkspaceConfigEditResult WorkspaceConfigStore::apply_forum_file(
+    std::string_view forum_id,
+    std::string_view filename,
+    std::optional<std::string_view> content,
+    bool create) {
+    return impl_->edit([&](const Workspace& workspace) {
+        workspace.write_forum_file(forum_id, filename, content, create);
+        return std::vector<std::string>{std::string(forum_id)};
+    });
+}
+
 WorkspaceConfigEditResult WorkspaceConfigStore::apply_forum_members_and_persona(
     std::string_view forum_id,
     std::span<const std::string> character_ids,

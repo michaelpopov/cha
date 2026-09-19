@@ -13,6 +13,7 @@ import {
   type ChaClient,
   type CharacterAppearance,
   type CharacterDetail,
+  type ForumDetail,
   type ForumSummary,
   type PersonaDetail,
   type SessionListing,
@@ -63,6 +64,41 @@ function RosterRow({ description, displayName, onSelect }: {
       </span>
       <ChevronRightIcon className="cha-chevron" />
     </button>
+  );
+}
+
+function MarkdownFileList({ filenames, writable, onNew, onSelect }: {
+  filenames: string[];
+  writable: boolean;
+  onNew(): void;
+  onSelect(filename: string): void;
+}) {
+  return (
+    <div className="cha-roster">
+      {writable && (
+        <button
+          className="cha-list-action"
+          onClick={onNew}
+          type="button"
+        >
+          <span className="cha-list-icon"><PlusIcon /></span>
+          <span className="cha-list-copy">
+            <span className="cha-primary-line">New file</span>
+          </span>
+          <ChevronRightIcon className="cha-chevron" />
+        </button>
+      )}
+      {filenames.map((filename) => (
+        <RosterRow
+          displayName={filename}
+          key={filename}
+          onSelect={() => onSelect(filename)}
+        />
+      ))}
+      {filenames.length === 0 && (
+        <p className="cha-state-message">No Markdown files.</p>
+      )}
+    </div>
   );
 }
 
@@ -485,31 +521,12 @@ export function CharacterDetailScreen({
         </button>
       ) : undefined}
       render={(detail) => (
-        <div className="cha-roster">
-          {detail.writable && (
-            <button
-              className="cha-list-action"
-              onClick={() => dispatch({ type: 'show-new-character-file' })}
-              type="button"
-            >
-              <span className="cha-list-icon"><PlusIcon /></span>
-              <span className="cha-list-copy">
-                <span className="cha-primary-line">New file</span>
-              </span>
-              <ChevronRightIcon className="cha-chevron" />
-            </button>
-          )}
-          {detail.markdown_files.map((filename) => (
-            <RosterRow
-              displayName={filename}
-              key={filename}
-              onSelect={() => dispatch({ type: 'inspect-character-file', characterId: characterId!, filename })}
-            />
-          ))}
-          {detail.markdown_files.length === 0 && (
-            <p className="cha-state-message">No Markdown files.</p>
-          )}
-        </div>
+        <MarkdownFileList
+          filenames={detail.markdown_files}
+          writable={detail.writable}
+          onNew={() => dispatch({ type: 'show-new-character-file' })}
+          onSelect={(filename) => dispatch({ type: 'inspect-character-file', characterId: characterId!, filename })}
+        />
       )}
     />
   );
@@ -549,22 +566,37 @@ export function CharacterFileScreen({
   );
 }
 
-export function NewCharacterFileScreen({
+export function NewCharacterFileScreen(props: RosterDetailProps) {
+  return <NewMarkdownFileScreen {...props} kind="character" />;
+}
+
+export function NewForumFileScreen(props: RosterDetailProps) {
+  return <NewMarkdownFileScreen {...props} kind="forum" />;
+}
+
+function normalizeMarkdownFilename(filename: string) {
+  const trimmed = filename.trim();
+  return trimmed.endsWith('.md')
+    ? trimmed
+    : trimmed.replace(/(.+)\.[^.]*$/, '$1') + '.md';
+}
+
+function NewMarkdownFileScreen({
+  kind,
   state,
   dispatch,
   client,
   sessionReport,
-}: RosterDetailProps) {
+}: RosterDetailProps & { kind: 'character' | 'forum' }) {
   const [filename, setFilename] = useState('');
   const [content, setContent] = useState('');
   const [saving, setSaving] = useState(false);
   const [reading, setReading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const mounted = useRef(false);
-  const characterId = state.inspectedCharacterId!;
-  const characterName = state.bootstrap?.characters.find(
-    ({ id }) => id === characterId,
-  )?.display_name;
+  const subjectId = (kind === 'character' ? state.inspectedCharacterId : state.currentForumId)!;
+  const subjectName = (kind === 'character' ? state.bootstrap?.characters : state.bootstrap?.forums)
+    ?.find(({ id }) => id === subjectId)?.display_name;
 
   useEffect(() => {
     mounted.current = true;
@@ -576,28 +608,35 @@ export function NewCharacterFileScreen({
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (saving || reading || !filename.trim()) return;
+    const normalizedFilename = normalizeMarkdownFilename(filename);
+    setFilename(normalizedFilename);
     setSaving(true);
     setError(null);
     try {
-      const file = await client.createCharacterFile(characterId, filename.trim(), content);
+      const file = await (kind === 'character'
+        ? client.createCharacterFile(subjectId, normalizedFilename, content)
+        : client.createForumFile(subjectId, normalizedFilename, content));
       if (mounted.current) {
-        dispatch({ type: 'inspect-character-file', characterId, filename: file.filename });
+        dispatch(kind === 'character'
+          ? { type: 'inspect-character-file', characterId: subjectId, filename: file.filename }
+          : { type: 'inspect-forum-file', forumId: subjectId, filename: file.filename });
       }
     } catch (failure: unknown) {
-      setError(publicErrorMessage(failure, 'Character file could not be added.'));
+      setError(publicErrorMessage(failure, `${kind === 'character' ? 'Character' : 'Forum'} file could not be added.`));
       setSaving(false);
     }
   }
 
   return (
-    <section className="cha-screen cha-navigation" aria-label="New character file navigation">
+    <section className="cha-screen cha-navigation" aria-label={`New ${kind} file navigation`}>
       <button
         className="cha-back-row"
-        onClick={() => dispatch({ type: 'inspect-character', characterId })}
+        onClick={() => dispatch(kind === 'character'
+          ? { type: 'inspect-character', characterId: subjectId } : { type: 'show-forum-detail' })}
         type="button"
       >
         <ChevronLeftIcon />
-        <span>{characterName ?? 'Character'}</span>
+        <span>{subjectName ?? (kind === 'character' ? 'Character' : 'Forum')}</span>
       </button>
       {sessionReport}
       <form className="cha-settings-form" onSubmit={(event) => void submit(event)}>
@@ -637,8 +676,7 @@ export function NewCharacterFileScreen({
                 if (!mounted.current) return;
                 setContent(text);
                 if (!filename) {
-                  setFilename(file.name.endsWith('.md')
-                    ? file.name : file.name.replace(/(.+)\.[^.]*$/, '$1') + '.md');
+                  setFilename(normalizeMarkdownFilename(file.name));
                 }
               } catch {
                 setError('The local file could not be read.');
@@ -1310,13 +1348,10 @@ export function ForumDetailScreen({
   reloadVersion = 0,
   sessionReport,
 }: RosterDetailProps) {
-  const load = useCallback(
-    (forumId: string) => client.getForum(forumId).then((detail) => {
-      dispatch({ type: 'forum-detail-loaded', forumId, writable: detail.writable });
-      return detail.forum_markdown;
-    }),
-    [client, dispatch],
-  );
+  const load = useCallback((forumId: string) => client.getForum(forumId), [client]);
+  const onLoaded = useCallback((detail: ForumDetail, forumId: string) => {
+    dispatch({ type: 'forum-detail-loaded', forumId, writable: detail.writable });
+  }, [dispatch]);
   const forum = state.bootstrap?.forums.find(({ id }) => id === state.currentForumId);
   return (
     <RosterDetailScreen
@@ -1328,7 +1363,15 @@ export function ForumDetailScreen({
         failed: 'Forum detail could not be loaded.',
       }}
       load={load}
-      render={(markdown) => rosterMarkdown(markdown, 'This forum has no FORUM.md description.')}
+      onLoaded={onLoaded}
+      render={(detail) => (
+        <MarkdownFileList
+          filenames={detail.markdown_files}
+          writable={detail.writable}
+          onNew={() => dispatch({ type: 'show-new-forum-file' })}
+          onSelect={(filename) => dispatch({ type: 'inspect-forum-file', forumId: state.currentForumId!, filename })}
+        />
+      )}
       onBack={() => dispatch({ type: 'show-sessions' })}
       reloadVersion={reloadVersion}
       sessionReport={sessionReport}
@@ -1344,6 +1387,33 @@ export function ForumDetailScreen({
           <ChevronRightIcon />
         </button>
       ) : undefined}
+    />
+  );
+}
+
+export function ForumFileScreen({
+  state, dispatch, client, reloadVersion = 0, sessionReport,
+}: RosterDetailProps) {
+  const filename = state.inspectedForumFile;
+  const load = useCallback((forumId: string) => (
+    client.getForumFile(forumId, filename!).then((file) => file.content)
+  ), [client, filename]);
+  const forumName = state.bootstrap?.forums.find(({ id }) => id === state.currentForumId)?.display_name;
+  return (
+    <RosterDetailScreen
+      ariaLabel="Forum file navigation"
+      backLabel={forumName ?? 'Forum'}
+      copy={{
+        absent: 'No file is selected.',
+        loading: 'Loading file…',
+        failed: 'Forum file could not be loaded.',
+      }}
+      load={load}
+      render={(markdown) => rosterMarkdown(markdown, 'This file is empty.')}
+      onBack={() => dispatch({ type: 'show-forum-detail' })}
+      reloadVersion={reloadVersion}
+      sessionReport={sessionReport}
+      subjectId={filename ? state.currentForumId : null}
     />
   );
 }

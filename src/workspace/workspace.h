@@ -103,6 +103,7 @@ struct WorkspaceForum {
     std::string default_character_id;
     std::string default_persona_id;
     std::string prompt_template;
+    std::map<std::string, std::string, std::less<>> markdown_files;
     std::vector<WorkspaceForumMember> members;
 };
 
@@ -289,6 +290,11 @@ public:
         std::string_view forum_id,
         std::string_view display_name,
         std::string_view markdown) const;
+    void write_forum_file(
+        std::string_view forum_id,
+        std::string_view filename,
+        std::optional<std::string_view> content,
+        bool create = false) const;
     void delete_forum(std::string_view forum_id) const;
     void write_forum_members(
         std::string_view forum_id,

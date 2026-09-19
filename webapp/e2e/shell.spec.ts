@@ -257,9 +257,12 @@ test('renders discovery screens from the server workspace', async ({ page }) => 
   // Sessions is titled Sessions, so its header is the only thing naming the
   // forum, and it is the way into that forum's description.
   await sessions.getByRole('button', { name: /The Lobby\s+Guide/ }).click();
+  await page.getByRole('button', { name: 'FORUM.md', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Lobby house rules' })).toBeVisible();
-  await expect(page.getByText('Guide · speaking as Reader')).toBeVisible();
   await expect(page.getByText('Ask one thing at a time')).toBeVisible();
+  await page.getByLabel('Forum file navigation').getByRole('button', { name: 'The Lobby', exact: true }).click();
+  await expect(page.getByText('Guide · speaking as Reader')).toBeVisible();
+
   await page.getByLabel('Forum detail navigation')
     .getByRole('button', { name: 'Sessions' }).click();
   await expect(sessions).toBeVisible();
@@ -274,11 +277,8 @@ test('adds, edits, uploads, and deletes individual character files', async ({ pa
   await expect(list.getByRole('button', { name: 'CHARACTER.md', exact: true })).toBeVisible();
   await expect(page.getByText('Answer deterministically in browser tests.')).not.toBeVisible();
   await list.getByRole('button', { name: 'New file', exact: true }).click();
-  await page.getByLabel('Upload content').setInputFiles({
-    name: 'NOTES.txt', mimeType: 'text/plain', buffer: Buffer.from('# Character notes'),
-  });
-  await expect(page.getByRole('textbox', { name: 'Filename', exact: true })).toHaveValue('NOTES.md');
-  await expect(page.getByRole('textbox', { name: 'Content', exact: true })).toHaveValue('# Character notes');
+  await page.getByRole('textbox', { name: 'Filename', exact: true }).fill('NOTES');
+  await page.getByRole('textbox', { name: 'Content', exact: true }).fill('# Character notes');
   await page.getByRole('button', { name: 'Add file', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'NOTES.md', exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Character notes', exact: true })).toBeVisible();
@@ -304,6 +304,62 @@ test('adds, edits, uploads, and deletes individual character files', async ({ pa
   await expect(list.getByRole('button', { name: 'NOTES.md', exact: true })).not.toBeVisible();
   await list.getByRole('button', { name: 'Settings', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Settings', exact: true })).toBeVisible();
+});
+
+test('adds, edits, uploads, and deletes individual forum files', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Forums', exact: true }).click();
+  await page.getByRole('button', { name: /The Lobby\s+Guide/ }).click();
+  await page.getByLabel('Forum sessions navigation').getByRole('button', { name: /The Lobby\s+Guide/ }).click();
+  const list = page.getByLabel('Forum detail navigation');
+  await expect(list.getByRole('button', { name: 'Members', exact: true })).toBeVisible();
+  await expect(list.getByRole('button', { name: 'FORUM.md', exact: true })).toBeVisible();
+  await expect(page.getByText('Ask one thing at a time')).not.toBeVisible();
+  await list.getByRole('button', { name: 'New file', exact: true }).click();
+  await page.getByLabel('Upload content').setInputFiles({
+    name: 'HOUSE-RULES.txt', mimeType: 'text/plain', buffer: Buffer.from('# Forum notes'),
+  });
+  await expect(page.getByRole('textbox', { name: 'Filename', exact: true })).toHaveValue('HOUSE-RULES.md');
+  await expect(page.getByRole('textbox', { name: 'Content', exact: true })).toHaveValue('# Forum notes');
+  await page.getByRole('button', { name: 'Add file', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'HOUSE-RULES.md', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Forum notes', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Edit forum file', exact: true }).click();
+  const editor = page.getByRole('textbox', { name: 'Edit forum file text', exact: true });
+  await expect(editor).toHaveValue('# Forum notes');
+  await editor.fill('# Edited notes');
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Edited notes', exact: true })).toBeVisible();
+  await page.locator('.cha-definition-topbar-action input[type=file]').setInputFiles({
+    name: 'local.md', mimeType: 'text/markdown', buffer: Buffer.from('# Uploaded notes'),
+  });
+  await expect(page.getByRole('heading', { name: 'Uploaded notes', exact: true })).toBeVisible();
+  await page.getByLabel('Forum file navigation').getByRole('button', { name: 'The Lobby', exact: true }).click();
+  await expect(list.getByRole('button', { name: 'HOUSE-RULES.md', exact: true })).toBeVisible();
+  await list.getByRole('button', { name: 'FORUM.md', exact: true }).click();
+  await expect(page.getByText('Ask one thing at a time')).toBeVisible();
+  await page.getByRole('button', { name: 'Edit forum file', exact: true }).click();
+  const templateEditor = page.getByRole('textbox', { name: 'Edit forum file text', exact: true });
+  await templateEditor.fill('# Forum template\n$$(missing.md)');
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText("cannot read included file 'missing.md'");
+  await expect(page.getByRole('alert')).toContainText('FORUM.md:2:1');
+  await templateEditor.fill('# Forum template\n$$(HOUSE-RULES.md)');
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(page.getByText('$$(HOUSE-RULES.md)', { exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Uploaded notes', exact: true })).not.toBeVisible();
+  await page.getByRole('button', { name: 'Edit forum file', exact: true }).click();
+  await templateEditor.fill('# Plain forum text');
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+
+  await page.getByLabel('Forum file navigation').getByRole('button', { name: 'The Lobby', exact: true }).click();
+  await list.getByRole('button', { name: 'HOUSE-RULES.md', exact: true }).click();
+  await page.getByRole('button', { name: 'Delete HOUSE-RULES.md', exact: true }).click();
+  await page.getByRole('button', { name: 'Delete file', exact: true }).click();
+  await expect(list.getByRole('button', { name: 'FORUM.md', exact: true })).toBeVisible();
+  await expect(list.getByRole('button', { name: 'HOUSE-RULES.md', exact: true })).not.toBeVisible();
+  await list.getByRole('button', { name: 'Members', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Members', exact: true })).toBeVisible();
 });
 
 test('recovers when the application API is initially unavailable', async ({ page }) => {

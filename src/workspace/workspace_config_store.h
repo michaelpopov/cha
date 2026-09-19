@@ -152,6 +152,11 @@ public:
         std::string_view markdown);
     WorkspaceConfigEditResult apply_forum_delete(
         std::string_view forum_id);
+    WorkspaceConfigEditResult apply_forum_file(
+        std::string_view forum_id,
+        std::string_view filename,
+        std::optional<std::string_view> content,
+        bool create = false);
     WorkspaceConfigEditResult apply_forum_members_and_persona(
         std::string_view forum_id,
         std::span<const std::string> character_ids,

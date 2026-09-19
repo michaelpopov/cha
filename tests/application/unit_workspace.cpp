@@ -767,6 +767,7 @@ TEST(Workspace, CharacterFileEditsRequireAnExactListedFilename) {
     test::TestWorkspace fixture;
     const auto directory = fixture.root() / "characters" / "guide";
     std::ofstream(directory / "PROFILE.md") << "Original profile\n";
+    std::ofstream(fixture.root() / "forums" / "lobby" / "NOTES.md") << "Forum notes\n";
     const Workspace workspace = Workspace::load(fixture.root());
     const auto original = file_bytes(directory / "CHARACTER.md");
     EXPECT_THROW(workspace.write_character_file("guide", "profile.md", "Changed"), std::out_of_range);
@@ -774,6 +775,14 @@ TEST(Workspace, CharacterFileEditsRequireAnExactListedFilename) {
     EXPECT_THROW(workspace.write_character_file("guide", "CHARACTER.md", std::nullopt), std::invalid_argument);
     EXPECT_EQ(file_bytes(directory / "PROFILE.md"), "Original profile\n");
     EXPECT_EQ(file_bytes(directory / "CHARACTER.md"), original);
+    // A listed file can disappear after the immutable workspace snapshot was loaded.
+    std::filesystem::remove(directory / "PROFILE.md");
+    EXPECT_THROW(workspace.write_character_file("guide", "PROFILE.md", "Changed"), std::out_of_range);
+    const auto forum_file = fixture.root() / "forums" / "lobby" / "NOTES.md";
+    std::filesystem::remove(forum_file);
+    EXPECT_THROW(workspace.write_forum_file("lobby", "NOTES.md", "Changed"), std::out_of_range);
+    EXPECT_FALSE(std::filesystem::exists(directory / "PROFILE.md"));
+    EXPECT_FALSE(std::filesystem::exists(forum_file));
 }
 
 TEST(Workspace, CharacterVoiceMatchesLegacyIncludesAfterMovingTheCharacter) {
@@ -807,6 +816,50 @@ TEST(Workspace, CharacterVoiceMatchesLegacyIncludesAfterMovingTheCharacter) {
     EXPECT_EQ(
         overridden.find_forum_member("lobby", "guide")->character_prompt,
         "Portray Guide in The Lobby.\n\nOverride profile.\n");
+}
+
+TEST(Workspace, ForumDefinitionExpandsSharedAndLocalFilesForEachMember) {
+    test::TestWorkspace fixture;
+    const auto forums = fixture.root() / "forums";
+    const auto directory = forums / "lobby";
+    const Workspace plain = Workspace::load(fixture.root());
+    EXPECT_FALSE(std::filesystem::exists(forums / "forum-definition.md"));
+    plain.create_forum("newcomer", "Newcomer", "reader");
+    EXPECT_FALSE(std::filesystem::exists(forums / "forum-definition.md"));
+    EXPECT_EQ(file_bytes(forums / "newcomer" / "FORUM.md"), "");
+
+    std::ofstream(forums / "forum-definition.md")
+        << "$$(shared.md)\n";
+    std::ofstream(forums / "shared.md")
+        << "$${character.display_name} in $${forum.display_name}.\n";
+    std::ofstream(fixture.root() / "characters" / "character-voice.md")
+        << "Voice of $${character.display_name}.\n";
+    std::ofstream(directory / "HOUSE-RULES.md") << "Local rules.\n";
+    std::ofstream(directory / "NOTES.md") << "$$(unused.md)";
+    std::ofstream(directory / "FORUM.md")
+        << "$${FORUM_DEFINITION}\n$${CHARACTER_VOICE}\n$$(HOUSE-RULES.md)";
+    fixture.add_character("writer", "Writer");
+    std::filesystem::create_directories(directory / "members" / "writer");
+    std::ofstream(directory / "members" / "writer" / "character.toml") << "# Member\n";
+    const Workspace workspace = Workspace::load(fixture.root());
+    const auto* forum = workspace.find_forum("lobby");
+    ASSERT_NE(forum, nullptr);
+    EXPECT_EQ(forum->markdown_files.size(), 3U);
+    EXPECT_FALSE(forum->markdown_files.contains("forum-definition.md"));
+    EXPECT_EQ(forum->markdown_files.at("NOTES.md"), "$$(unused.md)");
+    EXPECT_EQ(forum->prompt_template, "$${FORUM_DEFINITION}\n$${CHARACTER_VOICE}\n$$(HOUSE-RULES.md)");
+    for (const auto& member : forum->members) {
+        const auto* character = workspace.find_character(member.character_id);
+        EXPECT_NE(member.system_prompt.find(
+            character->character.display_name + " in The Lobby."), std::string::npos);
+        EXPECT_NE(member.system_prompt.find("Local rules."), std::string::npos);
+        EXPECT_NE(member.system_prompt.find("Voice of " + character->character.display_name + "."), std::string::npos);
+        EXPECT_EQ(member.system_prompt.find("FORUM_DEFINITION"), std::string::npos);
+    }
+    std::filesystem::remove(forums / "forum-definition.md");
+    EXPECT_THROW((void)Workspace::load(fixture.root()), std::runtime_error);
+    std::ofstream(directory / "FORUM.md") << "Plain text still works.\n";
+    EXPECT_NO_THROW((void)Workspace::load(fixture.root()));
 }
 
 TEST(Workspace, LoadsLegacyProviderCredentialNamesWithoutUsingTheEnvironment) {

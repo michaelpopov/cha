@@ -464,11 +464,16 @@ void expand_text(
         advance(cursor + 1 - index);
 
         const bool character_voice = third == '{' && body == "CHARACTER_VOICE";
-        if (character_voice && state.options.character_voice_directory.empty()) {
+        const bool forum_definition = third == '{' && body == "FORUM_DEFINITION";
+        const bool shared_include = character_voice || forum_definition;
+        const auto& shared_directory = character_voice
+            ? state.options.character_voice_directory : state.options.forum_definition_directory;
+        if (shared_include && shared_directory.empty()) {
             throw_expansion_error(
-                state, "CHARACTER_VOICE requires the shared characters directory");
+                state, std::string(body) + " requires the shared "
+                    + (character_voice ? "characters" : "forums") + " directory");
         }
-        if (third == '(' || character_voice) {
+        if (third == '(' || shared_include) {
             if (body.empty()) {
                 throw_expansion_error(state, "empty include path");
             }
@@ -482,20 +487,21 @@ void expand_text(
             ++state.include_count;
             const std::filesystem::path previous_root = state.root_canonical;
             try {
-                // This one variable includes the shared file, using the same
+                // These fixed variables include shared files, using the same
                 // scopes, cycle checks and limits as ordinary includes.
-                if (character_voice) {
+                if (shared_include) {
                     std::error_code error;
                     state.root_canonical = std::filesystem::weakly_canonical(
-                        state.options.character_voice_directory, error);
+                        shared_directory, error);
                     if (error) {
-                        throw_expansion_error(state, "cannot resolve CHARACTER_VOICE directory");
+                        throw_expansion_error(state, "cannot resolve " + std::string(body) + " directory");
                     }
                 }
                 const std::filesystem::path target = resolve_include_path(
                     state,
-                    character_voice ? "character-voice.md" : body,
-                    character_voice ? state.root_canonical : path.parent_path());
+                    character_voice ? "character-voice.md"
+                        : forum_definition ? "forum-definition.md" : body,
+                    shared_include ? state.root_canonical : path.parent_path());
                 expand_path(state, target, scope, output);
             } catch (...) {
                 state.root_canonical = previous_root;

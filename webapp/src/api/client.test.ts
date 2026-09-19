@@ -49,6 +49,30 @@ describe('CHA API client', () => {
     const malformed = createChaClient(async () => jsonResponse({ ...file, content: 42 }));
     await expect(malformed.getCharacterFile('guide', file.filename)).rejects.toBeInstanceOf(ChaProtocolError);
   });
+  it('uses file-specific routes and validates raw forum file responses', async () => {
+    const file = { filename: 'My notes.md', content: '$$(RULES.md)', writable: true };
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(file))
+      .mockResolvedValueOnce(jsonResponse(file, 201))
+      .mockResolvedValueOnce(jsonResponse(file))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    const client = createChaClient(fetcher);
+    await expect(client.getForumFile('a b', 'My notes.md')).resolves.toEqual(file);
+    await client.createForumFile('a b', file.filename, file.content);
+    await client.updateForumFile('a b', file.filename, file.content);
+    await client.deleteForumFile('a b', file.filename);
+    expect(fetcher.mock.calls.map(([url]) => url)).toEqual([
+      '/api/v1/forums/a%20b/files/My%20notes.md',
+      '/api/v1/forums/a%20b/files',
+      '/api/v1/forums/a%20b/files/My%20notes.md',
+      '/api/v1/forums/a%20b/files/My%20notes.md',
+    ]);
+    expect(fetcher.mock.calls[1][1]?.body).toBe(JSON.stringify({ filename: file.filename, content: file.content }));
+    expect(fetcher.mock.calls[2][1]?.method).toBe('PUT');
+    expect(fetcher.mock.calls[2][1]?.body).toBe(JSON.stringify({ content: file.content }));
+    const malformed = createChaClient(async () => jsonResponse({ ...file, content: 42 }));
+    await expect(malformed.getForumFile('guide', file.filename)).rejects.toBeInstanceOf(ChaProtocolError);
+  });
 
   it('submits background audio and reads status using encoded session and vault names', async () => {
     const acceptance = { entry_id: 7, cached: false, state: 'queued' };

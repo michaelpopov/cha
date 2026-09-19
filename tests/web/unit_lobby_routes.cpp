@@ -9,6 +9,7 @@
 #include "support/test_workspace.h"
 
 #include "workspace/builtins.h"
+#include "util/path_name.h"
 
 #include "session/not_found_error.h"
 #include "session/session_controller.h"
@@ -1311,16 +1312,100 @@ TEST(LobbyRoutes, RollsBackFileChangesThatBreakCharacterTemplates) {
     EXPECT_EQ(body(required)["error"]["message"], "CHARACTER.md is required.");
     const auto included = server.client().Delete("/api/v1/characters/guide/files/PROFILE.md", "{}", "application/json");
     expect_error(included, 400, "bad_request");
-    EXPECT_EQ(body(included)["error"]["message"], "This file is required by the character's templates.");
+    const auto include_error = body(included)["error"]["message"].get<std::string>();
+    EXPECT_NE(include_error.find("PROFILE.md"), std::string::npos);
+    EXPECT_NE(include_error.find("CHARACTER.md:1:1"), std::string::npos);
+    EXPECT_EQ(include_error.find(utf8_path(getws()->root())), std::string::npos);
     const auto invalid = server.client().Delete("/api/v1/characters/guide/files/character.toml", "{}", "application/json");
     expect_error(invalid, 400, "bad_request");
     EXPECT_EQ(body(invalid)["error"]["message"], "Invalid character file.");
     EXPECT_EQ(config_row(database, "characters/guide/PROFILE.md"), "# Guide profile\n");
-    expect_error(server.client().Put("/api/v1/characters/guide/files/CHARACTER.md",
-        nlohmann::json{{"content", "$$(missing.md)"}}.dump(), "application/json"), 400, "bad_request");
+    const auto broken_file = server.client().Put("/api/v1/characters/guide/files/CHARACTER.md",
+        nlohmann::json{{"content", "$$(missing.md)"}}.dump(), "application/json");
+    expect_error(broken_file, 400, "bad_request");
+    const auto file_error = body(broken_file)["error"]["message"].get<std::string>();
+    EXPECT_NE(file_error.find("missing.md"), std::string::npos);
+    EXPECT_NE(file_error.find("CHARACTER.md:1:1"), std::string::npos);
+    EXPECT_EQ(file_error.find(utf8_path(getws()->root())), std::string::npos);
+    const auto broken_definition = server.client().Patch("/api/v1/characters/guide/definition",
+        nlohmann::json{{"character_markdown", "$$(missing.md)"}}.dump(), "application/json");
+    expect_error(broken_definition, 400, "bad_request");
+    EXPECT_EQ(body(broken_definition)["error"]["message"], file_error);
     EXPECT_EQ(config_row(database, "characters/guide/CHARACTER.md"), "$$(PROFILE.md)\n");
     EXPECT_EQ(getws()->find_character("guide")->markdown_files.at("CHARACTER.md"), "$$(PROFILE.md)\n");
     EXPECT_NE(getws()->find_character("guide")->markdown.find("Guide profile"), std::string::npos);
+}
+
+TEST(LobbyRoutes, ListsEditsAndValidatesForumFilesWithoutExposingTheSharedFile) {
+    test::TestWorkspace fixture;
+    const auto directory = fixture.root() / "forums" / "lobby";
+    std::ofstream(fixture.root() / "forums" / "forum-definition.md")
+        << "$${character.display_name} in $${forum.display_name}.\n";
+    std::ofstream(directory / "RULES.md") << "# House rules\n";
+    std::ofstream(directory / "NOTES.md") << "$$(unused.md)";
+    std::filesystem::create_directories(directory / "nested");
+    std::ofstream(directory / "nested" / "hidden.md") << "Nested\n";
+    std::ofstream(directory / "FORUM.md") << "$${FORUM_DEFINITION}\n$$(RULES.md)";
+    const LobbyGraph graph(fixture.root());
+    LiveSessionManager manager(lobby_settings(2), counting_opener(graph));
+    TestServer server(graph, manager);
+    const auto database = graph.store->database_path();
+    const auto before = getws();
+    const auto detail = server.client().Get("/api/v1/forums/lobby");
+    ASSERT_TRUE(detail);
+    EXPECT_EQ(body(detail)["markdown_files"], nlohmann::json::array({"FORUM.md", "NOTES.md", "RULES.md"}));
+    const auto source = server.client().Get("/api/v1/forums/lobby/files/FORUM.md");
+    ASSERT_TRUE(source);
+    EXPECT_EQ(body(source)["content"], "$${FORUM_DEFINITION}\n$$(RULES.md)");
+    const auto saved = server.client().Put("/api/v1/forums/lobby/files/RULES.md",
+        nlohmann::json{{"content", "# Updated rules\n"}}.dump(), "application/json");
+    ASSERT_TRUE(saved);
+    ASSERT_EQ(saved->status, 200);
+    EXPECT_EQ(config_row(database, "forums/lobby/RULES.md"), "# Updated rules\n");
+    EXPECT_EQ(before->find_forum("lobby")->markdown_files.at("RULES.md"), "# House rules\n");
+    EXPECT_NE(getws()->find_forum_member("lobby", "guide")->system_prompt.find("Updated rules"), std::string::npos);
+    const auto created = server.client().Post("/api/v1/forums/lobby/files",
+        nlohmann::json{{"filename", "New notes.md"}, {"content", "New notes"}}.dump(), "application/json");
+    ASSERT_TRUE(created);
+    EXPECT_EQ(created->status, 201);
+    EXPECT_EQ(body(server.client().Get("/api/v1/forums/lobby/files/New%20notes.md"))["content"], "New notes");
+    const auto removed = server.client().Delete("/api/v1/forums/lobby/files/New%20notes.md", "{}", "application/json");
+    ASSERT_TRUE(removed);
+    EXPECT_EQ(removed->status, 204);
+    EXPECT_FALSE(getws()->find_forum("lobby")->markdown_files.contains("New notes.md"));
+    expect_error(server.client().Delete("/api/v1/forums/lobby/files/FORUM.md", "{}", "application/json"),
+        400, "bad_request", "FORUM.md is required.");
+    const auto included = server.client().Delete("/api/v1/forums/lobby/files/RULES.md", "{}", "application/json");
+    expect_error(included, 400, "bad_request");
+    const auto include_error = body(included)["error"]["message"].get<std::string>();
+    EXPECT_NE(include_error.find("RULES.md"), std::string::npos);
+    EXPECT_NE(include_error.find("FORUM.md:2:1"), std::string::npos);
+    EXPECT_EQ(include_error.find(utf8_path(getws()->root())), std::string::npos);
+    const auto broken_file = server.client().Put("/api/v1/forums/lobby/files/FORUM.md",
+        nlohmann::json{{"content", "$$(missing.md)"}}.dump(), "application/json");
+    expect_error(broken_file, 400, "bad_request");
+    const auto file_error = body(broken_file)["error"]["message"].get<std::string>();
+    EXPECT_NE(file_error.find("missing.md"), std::string::npos);
+    EXPECT_NE(file_error.find("FORUM.md:1:1"), std::string::npos);
+    EXPECT_EQ(file_error.find(utf8_path(getws()->root())), std::string::npos);
+    const auto broken_definition = patch_forum(server, "lobby", {{"forum_markdown", "$$(missing.md)"}});
+    expect_error(broken_definition, 400, "bad_request");
+    EXPECT_EQ(body(broken_definition)["error"]["message"], file_error);
+    EXPECT_EQ(config_row(database, "forums/lobby/FORUM.md"), "$${FORUM_DEFINITION}\n$$(RULES.md)");
+    EXPECT_EQ(config_row(database, "forums/lobby/RULES.md"), "# Updated rules\n");
+    expect_error(server.client().Put("/api/v1/forums/lobby/files/rules.md",
+        nlohmann::json{{"content", "Wrong case"}}.dump(), "application/json"), 404, "not_found");
+    expect_error(server.client().Delete("/api/v1/forums/lobby/files/forum.md", "{}", "application/json"), 404, "not_found");
+    expect_error(server.client().Post("/api/v1/forums/lobby/files",
+        nlohmann::json{{"filename", "../outside.md"}, {"content", "Invalid"}}.dump(), "application/json"), 400, "bad_request");
+    expect_error(server.client().Post("/api/v1/forums/lobby/files",
+        nlohmann::json{{"filename", "config.toml"}, {"content", "Invalid"}}.dump(), "application/json"), 400, "bad_request");
+    expect_error(server.client().Get("/api/v1/forums/lobby/files/forum-definition.md"), 404, "not_found");
+    const auto builtin = server.client().Get("/api/v1/forums/builtin-entrance/files/FORUM.md");
+    ASSERT_TRUE(builtin);
+    EXPECT_EQ(body(builtin)["writable"], false);
+    expect_error(server.client().Put("/api/v1/forums/builtin-entrance/files/FORUM.md",
+        nlohmann::json{{"content", "Overwrite"}}.dump(), "application/json"), 404, "not_found");
 }
 
 TEST(LobbyRoutes, PatchesCharacterSettingsAndLeavesTheFileAloneOnABadName) {

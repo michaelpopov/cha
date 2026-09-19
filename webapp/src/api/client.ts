@@ -10,7 +10,7 @@ export type AudioDownloadStatus = components['schemas']['AudioDownloadStatus'];
 
 export type Bootstrap = components['schemas']['Bootstrap'];
 export type CharacterDetail = components['schemas']['CharacterDetail'];
-export type CharacterFile = components['schemas']['CharacterFile'];
+export type MarkdownFile = components['schemas']['MarkdownFile'];
 export type CreateCharacterRequest = components['schemas']['CreateCharacterRequest'];
 export type UpdateCharacterRequest = components['schemas']['UpdateCharacterRequest'];
 export type UpdateCharacterDefinitionRequest =
@@ -134,14 +134,18 @@ export interface ChaClient {
     update: UpdateCharacterDefinitionRequest,
   ): Promise<CharacterDetail>;
   deleteCharacter(characterId: string): Promise<void>;
-  getCharacterFile(characterId: string, filename: string): Promise<CharacterFile>;
-  createCharacterFile(characterId: string, filename: string, content: string): Promise<CharacterFile>;
-  updateCharacterFile(characterId: string, filename: string, content: string): Promise<CharacterFile>;
+  getCharacterFile(characterId: string, filename: string): Promise<MarkdownFile>;
+  createCharacterFile(characterId: string, filename: string, content: string): Promise<MarkdownFile>;
+  updateCharacterFile(characterId: string, filename: string, content: string): Promise<MarkdownFile>;
   deleteCharacterFile(characterId: string, filename: string): Promise<void>;
   getPersona(personaId: string): Promise<PersonaDetail>;
   createPersona(request: CreatePersonaRequest): Promise<PersonaDetail>;
   updatePersona(personaId: string, update: UpdatePersonaRequest): Promise<PersonaDetail>;
   deletePersona(personaId: string): Promise<void>;
+  getForumFile(forumId: string, filename: string): Promise<MarkdownFile>;
+  createForumFile(forumId: string, filename: string, content: string): Promise<MarkdownFile>;
+  updateForumFile(forumId: string, filename: string, content: string): Promise<MarkdownFile>;
+  deleteForumFile(forumId: string, filename: string): Promise<void>;
   getForum(forumId: string): Promise<ForumDetail>;
   createForum(request: CreateForumRequest): Promise<ForumDetail>;
   updateForum(forumId: string, update: UpdateForumRequest): Promise<ForumDetail>;
@@ -282,7 +286,7 @@ function isPersonaSummary(value: unknown): boolean {
     && (value.voice === undefined || isSpeechVoice(value.voice));
 }
 
-function isCharacterFile(value: unknown): value is CharacterFile {
+function isMarkdownFile(value: unknown): value is MarkdownFile {
   return isRecord(value) && typeof value.filename === 'string'
     && typeof value.content === 'string' && typeof value.writable === 'boolean';
 }
@@ -340,6 +344,8 @@ function isForumDetail(value: unknown): value is ForumDetail {
     && Array.isArray(value.members)
     && value.members.every(isCharacterSummary)
     && typeof value.forum_markdown === 'string'
+    && Array.isArray(value.markdown_files)
+    && value.markdown_files.every((filename) => typeof filename === 'string')
     && typeof value.writable === 'boolean';
 }
 
@@ -659,20 +665,20 @@ export function createChaClient(
     getCharacterFile: (characterId, filename) => requestValidated(
       fetcher,
       `/api/v1/characters/${component(characterId)}/files/${component(filename)}`,
-      isCharacterFile,
+      isMarkdownFile,
     ),
 
     createCharacterFile: (characterId, filename, content) => requestValidated(
       fetcher,
       `/api/v1/characters/${component(characterId)}/files`,
-      isCharacterFile,
+      isMarkdownFile,
       jsonMutation({ filename, content }),
     ),
 
     updateCharacterFile: (characterId, filename, content) => requestValidated(
       fetcher,
       `/api/v1/characters/${component(characterId)}/files/${component(filename)}`,
-      isCharacterFile,
+      isMarkdownFile,
       jsonMutation({ content }, 'PUT'),
     ),
 
@@ -705,6 +711,32 @@ export function createChaClient(
     deletePersona: (personaId) => requestEmpty(
       fetcher,
       `/api/v1/personas/${component(personaId)}`,
+      jsonMutation({}, 'DELETE'),
+    ),
+
+    getForumFile: (forumId, filename) => requestValidated(
+      fetcher,
+      `/api/v1/forums/${component(forumId)}/files/${component(filename)}`,
+      isMarkdownFile,
+    ),
+
+    createForumFile: (forumId, filename, content) => requestValidated(
+      fetcher,
+      `/api/v1/forums/${component(forumId)}/files`,
+      isMarkdownFile,
+      jsonMutation({ filename, content }),
+    ),
+
+    updateForumFile: (forumId, filename, content) => requestValidated(
+      fetcher,
+      `/api/v1/forums/${component(forumId)}/files/${component(filename)}`,
+      isMarkdownFile,
+      jsonMutation({ content }, 'PUT'),
+    ),
+
+    deleteForumFile: (forumId, filename) => requestEmpty(
+      fetcher,
+      `/api/v1/forums/${component(forumId)}/files/${component(filename)}`,
       jsonMutation({}, 'DELETE'),
     ),
 

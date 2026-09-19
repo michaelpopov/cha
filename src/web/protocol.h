@@ -302,6 +302,7 @@ struct ForumDetail {
     // FORUM.md verbatim, and empty for a forum that has none. The same file is
     // the forum's system prompt; publishing it whole is deliberate.
     std::string forum_markdown;
+    std::vector<std::string> markdown_files;
     bool writable{};
 };
 

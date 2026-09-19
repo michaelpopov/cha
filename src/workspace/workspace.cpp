@@ -92,6 +92,45 @@ std::string read_text(
     return std::move(contents).str();
 }
 
+void write_markdown_file(
+    const std::filesystem::path& config_path,
+    const std::map<std::string, std::string, std::less<>>& markdown_files,
+    std::string_view filename,
+    std::optional<std::string_view> content,
+    bool create,
+    std::string_view required_filename,
+    std::string_view subject) {
+    try {
+        require_path_component(filename, config_path);
+    } catch (const std::runtime_error&) {
+        throw std::invalid_argument("Invalid Markdown filename");
+    }
+    const auto name = path_from_utf8(filename);
+    if (name.extension() != ".md") {
+        throw std::invalid_argument("Invalid Markdown filename");
+    }
+    if (!create && !markdown_files.contains(filename)) {
+        throw std::out_of_range("Unknown " + std::string(subject) + " file");
+    }
+    const auto path = config_path.parent_path() / name;
+    if (std::filesystem::is_symlink(path)) {
+        throw std::invalid_argument("Invalid " + std::string(subject) + " file");
+    }
+    const bool exists = std::filesystem::is_regular_file(path);
+    if (create && std::filesystem::exists(path)) {
+        throw std::invalid_argument("File already exists");
+    }
+    if (!create && !exists) throw std::out_of_range("Unknown " + std::string(subject) + " file");
+    if (content) {
+        create_private_file(path, *content);
+    } else {
+        if (filename == required_filename) {
+            throw std::invalid_argument(std::string(required_filename) + " is required");
+        }
+        std::filesystem::remove(path);
+    }
+}
+
 toml::table read_toml(const std::filesystem::path& path, std::string_view kind) {
     return read_toml_file(path, kind);
 }
@@ -1310,9 +1349,9 @@ LoadedCharacters load_characters(
         for (const auto& entry : std::filesystem::directory_iterator(directory)) {
             if (entry.is_regular_file() && !entry.is_symlink()
                 && entry.path().extension() == ".md") {
-                markdown_files.emplace(
-                    utf8_path(entry.path().filename()),
-                    read_text(entry.path(), "character file"));
+                const auto filename = utf8_path(entry.path().filename());
+                markdown_files.emplace(filename, filename == "CHARACTER.md"
+                    ? prompt_template : read_text(entry.path(), "character file"));
             }
         }
         result.characters.push_back({
@@ -1462,6 +1501,14 @@ LoadedForums load_forums(
             .default_persona_id = config.default_persona_id,
             .prompt_template = read_text(forum_prompt_path, "forum prompt"),
         };
+        for (const auto& entry : std::filesystem::directory_iterator(directory)) {
+            if (entry.is_regular_file() && !entry.is_symlink()
+                && entry.path().extension() == ".md") {
+                const auto filename = utf8_path(entry.path().filename());
+                forum.markdown_files.emplace(filename, filename == "FORUM.md"
+                    ? forum.prompt_template : read_text(entry.path(), "forum file"));
+            }
+        }
         result.config_paths.emplace(
             id, directory / "config.toml");
         const std::filesystem::path defaults_path =
@@ -1524,7 +1571,9 @@ LoadedForums load_forums(
                 character_prompt = expand_template_file(
                     character_directories.at(member_id) / "CHARACTER.md", options);
             }
+            // Forum prompts may also use CHARACTER_VOICE for the current member.
             options.containment_root = directory;
+            options.forum_definition_directory = forums_directory;
             std::string forum_prompt = expand_template_file(forum_prompt_path, options);
             forum.members.push_back({
                 .character_id = member_id,
@@ -2402,39 +2451,12 @@ void Workspace::write_character_file(
     std::optional<std::string_view> content,
     bool create) const {
     const auto config = character_config_paths_.find(std::string(character_id));
-    if (config == character_config_paths_.end()) {
+    const auto* character = find_character(character_id);
+    if (config == character_config_paths_.end() || !character) {
         throw std::out_of_range("Unknown writable character");
     }
-    try {
-        require_path_component(filename, config->second);
-    } catch (const std::runtime_error&) {
-        throw std::invalid_argument("Invalid Markdown filename");
-    }
-    const auto name = path_from_utf8(filename);
-    if (name.extension() != ".md") {
-        throw std::invalid_argument("Invalid Markdown filename");
-    }
-    const auto* character = find_character(character_id);
-    if (!create && (!character || !character->markdown_files.contains(filename))) {
-        throw std::out_of_range("Unknown character file");
-    }
-    const auto path = config->second.parent_path() / name;
-    if (std::filesystem::is_symlink(path)) {
-        throw std::invalid_argument("Invalid character file");
-    }
-    const bool exists = std::filesystem::is_regular_file(path);
-    if (create && std::filesystem::exists(path)) {
-        throw std::invalid_argument("Character file already exists");
-    }
-    if (!create && !exists) throw std::out_of_range("Unknown character file");
-    if (content) {
-        create_private_file(path, *content);
-    } else {
-        if (filename == "CHARACTER.md") {
-            throw std::invalid_argument("CHARACTER.md is required");
-        }
-        std::filesystem::remove(path);
-    }
+    write_markdown_file(config->second, character->markdown_files,
+        filename, content, create, "CHARACTER.md", "character");
 }
 
 void Workspace::delete_character(std::string_view character_id) const {
@@ -2785,6 +2807,20 @@ void Workspace::write_forum(
         table.insert_or_assign("display_name", std::string(display_name));
     });
     create_private_file(config->second.parent_path() / "FORUM.md", markdown);
+}
+
+void Workspace::write_forum_file(
+    std::string_view forum_id,
+    std::string_view filename,
+    std::optional<std::string_view> content,
+    bool create) const {
+    const auto config = forum_config_paths_.find(std::string(forum_id));
+    const auto* forum = find_forum(forum_id);
+    if (config == forum_config_paths_.end() || !forum) {
+        throw std::out_of_range("Unknown writable forum");
+    }
+    write_markdown_file(config->second, forum->markdown_files,
+        filename, content, create, "FORUM.md", "forum");
 }
 
 void Workspace::write_forum_members(

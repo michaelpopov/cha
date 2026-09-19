@@ -1110,6 +1110,34 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, CharacterFileEditsPersistOnlyTheSelected
     EXPECT_FALSE(getws()->find_character("guide")->markdown_files.contains("NOTES.md"));
 }
 
+TEST_F(RuntimeWorkspaceConfigStoreTest, ForumFilesPersistExpandAndRollBackInvalidChanges) {
+    write_bytes(source() / "forums" / "forum-definition.md",
+        "$${character.display_name} in $${forum.display_name}.\n");
+    (void)import_workspace_configuration(source(), database());
+    const auto store = open_store();
+    const auto snapshot = getws();
+    const auto created = store->apply_forum_file(
+        "lobby", "HOUSE-RULES.md", std::string_view{"Local rules.\n"}, true);
+    EXPECT_EQ(created.affected_forum_ids, std::vector<std::string>{"lobby"});
+    EXPECT_FALSE(snapshot->find_forum("lobby")->markdown_files.contains("HOUSE-RULES.md"));
+    store->apply_forum_file("lobby", "FORUM.md",
+        std::string_view{"$${FORUM_DEFINITION}\n$$(HOUSE-RULES.md)"});
+    EXPECT_NE(getws()->find_forum_member("lobby", "guide")->system_prompt.find("Guide in The Lobby."), std::string::npos);
+    const auto before = config_contents(database());
+    EXPECT_THROW(store->apply_forum_file("lobby", "FORUM.md", std::nullopt), std::invalid_argument);
+    EXPECT_THROW(store->apply_forum_file("lobby", "HOUSE-RULES.md", std::nullopt), WorkspaceConfigValidationError);
+    EXPECT_THROW(store->apply_forum_file("lobby", "forum.md", "Changed"), std::out_of_range);
+    EXPECT_THROW(store->apply_forum_file("lobby", "../outside.md", "Changed", true), std::invalid_argument);
+    EXPECT_THROW(store->apply_forum_file("lobby", "HOUSE-RULES.md", "Duplicate", true), std::invalid_argument);
+    EXPECT_EQ(config_contents(database()), before);
+    store->apply_forum_file("lobby", "NOTES.md", std::string_view{"$$(unused.md)"}, true);
+    EXPECT_EQ(getws()->find_forum("lobby")->markdown_files.at("NOTES.md"), "$$(unused.md)");
+    store->apply_forum_file("lobby", "FORUM.md", std::string_view{"Plain text"});
+    store->apply_forum_file("lobby", "HOUSE-RULES.md", std::nullopt);
+    EXPECT_FALSE(getws()->find_forum("lobby")->markdown_files.contains("HOUSE-RULES.md"));
+    EXPECT_EQ(config_contents(database()).at("forums/lobby/FORUM.md"), "Plain text");
+}
+
 TEST_F(
     RuntimeWorkspaceConfigStoreTest,
     CreatesAndDeletesOnlyRowsOwnedByEachItemType) {

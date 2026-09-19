@@ -1219,14 +1219,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/CreateCharacterFileRequest"
+              $ref: "#/components/schemas/CreateMarkdownFileRequest"
       responses:
         "201":
           description: The new file, with its verbatim content.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/CharacterFile"
+                $ref: "#/components/schemas/MarkdownFile"
         "400":
           $ref: "#/components/responses/BadRequest"
         "403":
@@ -1256,7 +1256,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/CharacterFile"
+                $ref: "#/components/schemas/MarkdownFile"
         "404":
           $ref: "#/components/responses/NotFound"
         "500":
@@ -1270,14 +1270,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/UpdateCharacterFileRequest"
+              $ref: "#/components/schemas/UpdateMarkdownFileRequest"
       responses:
         "200":
           description: The saved file. Invalid template changes are rolled back.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/CharacterFile"
+                $ref: "#/components/schemas/MarkdownFile"
         "400":
           $ref: "#/components/responses/BadRequest"
         "403":
@@ -1462,6 +1462,113 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /api/v1/forums/{forum_id}/files:
+    parameters:
+      - $ref: "#/components/parameters/ForumId"
+    post:
+      tags: [Discovery]
+      operationId: createForumFile
+      summary: Add a Markdown file to a forum
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateMarkdownFileRequest"
+      responses:
+        "201":
+          description: The new file, with its verbatim content.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MarkdownFile"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/ForbiddenMutation"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/BodyTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/forums/{forum_id}/files/{filename}:
+    parameters:
+      - $ref: "#/components/parameters/ForumId"
+      - name: filename
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      tags: [Discovery]
+      operationId: getForumFile
+      summary: Read a forum's Markdown file without template expansion
+      responses:
+        "200":
+          description: The file and whether it can be changed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MarkdownFile"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    put:
+      tags: [Discovery]
+      operationId: updateForumFile
+      summary: Replace a forum's Markdown file and reload affected sessions
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateMarkdownFileRequest"
+      responses:
+        "200":
+          description: The saved file. Invalid template changes are rolled back.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MarkdownFile"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/ForbiddenMutation"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/BodyTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      tags: [Discovery]
+      operationId: deleteForumFile
+      summary: Remove a forum's Markdown file and reload affected sessions
+      description: FORUM.md and files required by templates cannot be removed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+      responses:
+        "204":
+          description: The file was removed.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/ForbiddenMutation"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/BodyTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /api/v1/forums/{forum_id}:
     parameters:
       - $ref: "#/components/parameters/ForumId"
@@ -1470,7 +1577,8 @@ paths:
       operationId: getForum
       summary: Get forum details
       description: |
-        Returns the forum summary and its `FORUM.md` verbatim. That file is
+        Returns the forum summary, its direct Markdown file names, and its
+        `FORUM.md` verbatim. That file is
         also the forum's system prompt, and is published whole by design.
         Template placeholders such as `$${character.display_name}` are not
         expanded, because a description belongs to no single member.
@@ -3350,7 +3458,7 @@ components:
           type: boolean
           description: Whether the name and definition can be changed and the character deleted.
 
-    CharacterFile:
+    MarkdownFile:
       type: object
       additionalProperties: false
       required: [filename, content, writable]
@@ -3363,7 +3471,7 @@ components:
         writable:
           type: boolean
 
-    CreateCharacterFileRequest:
+    CreateMarkdownFileRequest:
       type: object
       additionalProperties: false
       required: [filename, content]
@@ -3373,7 +3481,7 @@ components:
         content:
           type: string
 
-    UpdateCharacterFileRequest:
+    UpdateMarkdownFileRequest:
       type: object
       additionalProperties: false
       required: [content]
@@ -3485,7 +3593,7 @@ components:
     ForumDetail:
       type: object
       additionalProperties: false
-      required: [id, display_name, default_character_id, default_persona_id, default_persona_display_name, members, forum_markdown, writable]
+      required: [id, display_name, default_character_id, default_persona_id, default_persona_display_name, members, forum_markdown, markdown_files, writable]
       properties:
         id:
           $ref: "#/components/schemas/Identifier"
@@ -3505,6 +3613,10 @@ components:
             $ref: "#/components/schemas/CharacterSummary"
         forum_markdown:
           type: string
+        markdown_files:
+          type: array
+          items:
+            type: string
         writable:
           type: boolean
 

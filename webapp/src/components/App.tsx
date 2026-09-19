@@ -48,6 +48,8 @@ import {
   CharacterSettingsScreen,
   CharactersScreen,
   ForumDetailScreen,
+  ForumFileScreen,
+  NewForumFileScreen,
   ForumMembersScreen,
   ForumsScreen,
   NewPersonaScreen,
@@ -254,6 +256,23 @@ function Screen({
         client={client}
         dispatch={dispatch}
         reloadVersion={forumRevision}
+        sessionReport={sessionReport}
+        state={state}
+      />
+    );
+    case 'forum-file': return (
+      <ForumFileScreen
+        client={client}
+        dispatch={dispatch}
+        reloadVersion={forumRevision}
+        sessionReport={sessionReport}
+        state={state}
+      />
+    );
+    case 'new-forum-file': return (
+      <NewForumFileScreen
+        client={client}
+        dispatch={dispatch}
         sessionReport={sessionReport}
         state={state}
       />

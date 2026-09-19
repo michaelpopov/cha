@@ -194,19 +194,19 @@ interface TopBarProps {
 
 type DeleteSubject = {
   id: string;
-  kind: 'persona' | 'character' | 'character-file' | 'forum';
+  kind: 'persona' | 'character' | 'character-file' | 'forum' | 'forum-file';
   name: string;
 };
 
 type EditorSubject = Omit<DeleteSubject, 'kind'> & {
-  kind: Exclude<DeleteSubject['kind'], 'character'>;
+  kind: Exclude<DeleteSubject['kind'], 'character' | 'forum'>;
 };
 
 function deleteMessage({ kind, name }: DeleteSubject): string {
   if (kind === 'persona') {
     return `Delete “${name}”? This permanently removes its profile. This cannot be undone.`;
   }
-  if (kind === 'character-file') {
+  if (kind === 'character-file' || kind === 'forum-file') {
     return `Delete “${name}”? This permanently removes this Markdown file. This cannot be undone.`;
   }
   if (kind === 'character') {
@@ -218,7 +218,7 @@ function deleteMessage({ kind, name }: DeleteSubject): string {
 function editorTitle(kind: EditorSubject['kind']): string {
   if (kind === 'persona') return 'Edit persona profile';
   if (kind === 'character-file') return 'Edit character file';
-  return 'Edit forum description';
+  return 'Edit forum file';
 }
 
 export function TopBar({
@@ -249,6 +249,7 @@ export function TopBar({
   const personaName = state.bootstrap?.personas.find(({ id }) => id === personaId)?.display_name;
   const characterId = state.inspectedCharacterId;
   const characterFile = state.inspectedCharacterFile;
+  const forumFile = state.inspectedForumFile;
   const characterName = state.bootstrap?.characters.find(
     ({ id }) => id === characterId,
   )?.display_name;
@@ -274,7 +275,7 @@ export function TopBar({
     setEditorReady(false);
     setEditorSaving(false);
     setEditorError(null);
-  }, [apiKeyId, characterId, characterFile, forumId, personaId, providerId, state.mainView, styleId, vaultName, voiceId]);
+  }, [apiKeyId, characterId, characterFile, forumFile, forumId, personaId, providerId, state.mainView, styleId, vaultName, voiceId]);
 
   let titleControl = title && <h1>{title}</h1>;
   if (state.mainView === 'persona-detail') {
@@ -470,16 +471,16 @@ export function TopBar({
   } else if (state.mainView === 'forum-detail'
       && state.forumEditingAvailable && forumId && forumName) {
     deleteSubject = { id: forumId, kind: 'forum', name: forumName };
+  } else if (state.mainView === 'forum-file'
+      && state.forumEditingAvailable && forumId && forumFile) {
+    deleteSubject = { id: forumId, kind: 'forum-file', name: forumFile };
     uploadAction = (
       <DefinitionUpload
-        ariaLabel="Replace forum definition from file"
-        failureMessage="Forum definition could not be replaced."
-        id={forumId}
-        onUpload={async (forumMarkdown) => {
-          const forum = await client.updateForum(forumId, {
-            forum_markdown: forumMarkdown,
-          });
-          dispatch({ type: 'forum-updated', forum });
+        ariaLabel="Replace forum file content from file"
+        failureMessage="Forum file could not be replaced."
+        id={`${forumId}/${forumFile}`}
+        onUpload={async (content) => {
+          await client.updateForumFile(forumId, forumFile, content);
           onForumDefinitionUpdated();
         }}
       />
@@ -499,17 +500,21 @@ export function TopBar({
         await client.deleteCharacterFile(subject.id, subject.name);
         dispatch({ type: 'inspect-character', characterId: subject.id });
         onCharacterDefinitionUpdated();
+      } else if (subject.kind === 'forum-file') {
+        await client.deleteForumFile(subject.id, subject.name);
+        dispatch({ type: 'show-forum-detail' });
+        onForumDefinitionUpdated();
       } else await onDeleteForum(subject.id);
     } catch (failure: unknown) {
       const label = subject.kind === 'character-file'
-        ? 'Character file' : subject.kind[0].toUpperCase() + subject.kind.slice(1);
+        ? 'Character file' : subject.kind === 'forum-file' ? 'Forum file' : subject.kind[0].toUpperCase() + subject.kind.slice(1);
       setDeleteError(publicErrorMessage(failure, `${label} could not be deleted.`));
       setDeleting(false);
     }
   }
 
   async function openEditor(subject: DeleteSubject) {
-    if (subject.kind === 'character') return;
+    if (subject.kind === 'character' || subject.kind === 'forum') return;
     setEditorSubject({ ...subject, kind: subject.kind });
     setEditorText('');
     setEditorLoading(true);
@@ -521,7 +526,7 @@ export function TopBar({
       } else if (subject.kind === 'character-file') {
         setEditorText((await client.getCharacterFile(subject.id, subject.name)).content);
       } else {
-        setEditorText((await client.getForum(subject.id)).forum_markdown);
+        setEditorText((await client.getForumFile(subject.id, subject.name)).content);
       }
       setEditorReady(true);
     } catch (failure: unknown) {
@@ -550,10 +555,7 @@ export function TopBar({
         await client.updateCharacterFile(subject.id, subject.name, editorText);
         onCharacterDefinitionUpdated();
       } else {
-        const forum = await client.updateForum(subject.id, {
-          forum_markdown: editorText,
-        });
-        dispatch({ type: 'forum-updated', forum });
+        await client.updateForumFile(subject.id, subject.name, editorText);
         onForumDefinitionUpdated();
       }
       setEditorSubject(null);
@@ -586,7 +588,7 @@ export function TopBar({
         {title && <div className="cha-topbar-balance" aria-hidden="true" />}
         {deleteSubject && (
           <div className="cha-topbar-actions">
-            {deleteSubject.kind !== 'character' && <button
+            {deleteSubject.kind !== 'character' && deleteSubject.kind !== 'forum' && <button
               aria-label={editorTitle(deleteSubject.kind)}
               className="cha-compact-icon-action"
               onClick={() => void openEditor(deleteSubject)}
@@ -614,11 +616,11 @@ export function TopBar({
       </header>
       {confirmingDelete && (
         <ConfirmDialog
-          confirmLabel={`Delete ${confirmingDelete.kind === 'character-file' ? 'file' : confirmingDelete.kind}`}
+          confirmLabel={`Delete ${confirmingDelete.kind.endsWith('-file') ? 'file' : confirmingDelete.kind}`}
           message={deleteMessage(confirmingDelete)}
           onCancel={() => setConfirmingDelete(null)}
           onConfirm={() => void confirmDelete()}
-          title={`Delete ${confirmingDelete.kind === 'character-file' ? 'file' : confirmingDelete.kind}?`}
+          title={`Delete ${confirmingDelete.kind.endsWith('-file') ? 'file' : confirmingDelete.kind}?`}
         />
       )}
       {editorSubject && (

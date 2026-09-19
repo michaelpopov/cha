@@ -210,6 +210,20 @@ describe('application navigation reducer', () => {
     expect(state.characterEditingAvailable).toBe(false);
   });
 
+  it('opens forum files and ignores a file for another forum', () => {
+    let state = appReducer(initialAppState, { type: 'bootstrap-loaded', bootstrap: bootstrapFixture });
+    state = appReducer(state, { type: 'select-forum', forumId: 'lobby' });
+    state = appReducer(state, { type: 'inspect-forum-file', forumId: 'lobby', filename: 'RULES.md' });
+    expect(state.mainView).toBe('forum-file');
+    expect(state.inspectedForumFile).toBe('RULES.md');
+    expect(appReducer(state, { type: 'show-new-forum-file' })).toBe(state);
+    state = appReducer(state, { type: 'forum-detail-loaded', forumId: 'lobby', writable: true });
+    expect(appReducer(state, { type: 'show-new-forum-file' }).mainView).toBe('new-forum-file');
+    state = appReducer(state, { type: 'select-forum', forumId: 'entrance' });
+    expect(state.inspectedForumFile).toBeNull();
+    expect(appReducer(state, { type: 'inspect-forum-file', forumId: 'lobby', filename: 'NOTES.md' })).toBe(state);
+  });
+
   it('opens character files without losing settings and ignores a file for another character', () => {
     let state = appReducer(readyState(), { type: 'inspect-character', characterId: 'guide' });
     state = appReducer(state, { type: 'character-detail-loaded', characterId: 'guide', settingsWritable: true, writable: true });

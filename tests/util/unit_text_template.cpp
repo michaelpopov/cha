@@ -212,6 +212,34 @@ TEST(TextTemplate, CharacterVoiceWithoutItsDirectoryReportsALocatedError) {
     }
 }
 
+TEST(TextTemplate, ForumDefinitionRetainsIncludeChecksAndRelativeDiagnostics) {
+    const TempDir root("forum_definition");
+    const auto forum = root.path() / "lobby";
+    const auto file = forum / "FORUM.md";
+    TemplateOptions options = options_for(forum);
+    options.forum_definition_directory = root.path();
+    write_file(file, "$${FORUM_DEFINITION}");
+    EXPECT_THROW((void)expand_template_file(file, options), std::runtime_error);
+    write_file(root.path() / "forum-definition.md", "Shared rules");
+    EXPECT_EQ(expand_template_file(file, options), "Shared rules");
+    options.limits.max_includes = 0;
+    EXPECT_THROW((void)expand_template_file(file, options), std::runtime_error);
+    options.limits.max_includes = 256;
+    write_file(root.path() / "forum-definition.md", "$${FORUM_DEFINITION}");
+    try {
+        (void)expand_template_file(file, options);
+        FAIL();
+    } catch (const std::runtime_error& error) {
+        const std::string message = error.what();
+        EXPECT_NE(message.find("include cycle"), std::string::npos);
+        EXPECT_EQ(message.find(utf8_path(root.path())), std::string::npos) << message;
+    }
+    write_file(root.path() / "forum-definition.md", "Shared rules");
+    write_file(root.path() / "outside.md", "Must not be accessible through an ordinary include");
+    write_file(file, "$${FORUM_DEFINITION}$$(../outside.md)");
+    EXPECT_THROW((void)expand_template_file(file, options), std::runtime_error);
+}
+
 TEST(TextTemplate, CharacterVoiceKeepsForumIncludeDiagnosticsRelative) {
     const TempDir root("character_voice_diagnostics");
     const auto characters = root.path() / "characters";

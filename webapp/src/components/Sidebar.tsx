@@ -46,7 +46,7 @@ interface DialogState extends SelectedSession {
 const navigation = [
   { action: 'show-personas' as const, views: ['personas', 'persona-detail', 'persona-settings'] as MainView[], label: 'Personas', icon: PersonasIcon },
   { action: 'show-characters' as const, views: ['characters', 'character-detail', 'character-file', 'new-character-file', 'character-settings'] as MainView[], label: 'Characters', icon: CharacterIcon },
-  { action: 'show-forums' as const, views: ['forums', 'new-forum', 'sessions', 'forum-detail', 'forum-members', 'new-session'] as MainView[], label: 'Forums', icon: ForumsIcon },
+  { action: 'show-forums' as const, views: ['forums', 'new-forum', 'sessions', 'forum-detail', 'forum-file', 'new-forum-file', 'forum-members', 'new-session'] as MainView[], label: 'Forums', icon: ForumsIcon },
 ];
 
 const settingsViews: MainView[] = [

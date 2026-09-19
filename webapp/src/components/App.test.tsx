@@ -442,7 +442,7 @@ it('loads a character editor from the unexpanded editable source', async () => {
   ));
 });
 
-it('saves the selected file and returns to the list after deleting an optional file', async () => {
+it('saves the selected character file and returns to its list after deleting an optional file', async () => {
   const user = userEvent.setup();
   let content = '# Notes';
   let names = ['CHARACTER.md', 'NOTES.md'];
@@ -488,7 +488,7 @@ it('adds a character file and opens the saved content', async () => {
   await user.click(await screen.findByRole('button', { name: 'Characters' }));
   await user.click(screen.getByRole('button', { name: /Guide/ }));
   await user.click(await screen.findByRole('button', { name: 'New file' }));
-  await user.type(screen.getByRole('textbox', { name: 'Filename' }), 'NOTES.md');
+  await user.type(screen.getByRole('textbox', { name: 'Filename' }), 'NOTES');
   await user.type(screen.getByRole('textbox', { name: 'Content' }), '# New notes');
   await user.click(screen.getByRole('button', { name: 'Add file' }));
   expect(await screen.findByRole('heading', { name: 'New notes' })).toBeInTheDocument();
@@ -690,31 +690,29 @@ it('prefers a forum’s configured description to its membership on the roster r
   expect(forums.getByRole('button', { name: 'EntranceAssistant' })).toBeInTheDocument();
 });
 
-it('names the forum above its sessions and opens its FORUM.md description', async () => {
+it('opens the forum file list with members before displaying a selected file', async () => {
   const getForum = vi.fn(async () => forumDetailFixture);
-  render(<App client={fixtureClient({ getForum })} />);
+  const getForumFile = vi.fn(async (_id, filename) => ({ filename, content: forumDetailFixture.forum_markdown, writable: true }));
+  render(<App client={fixtureClient({ getForum, getForumFile })} />);
   fireEvent.click(await screen.findByRole('button', { name: 'Forums' }));
   fireEvent.click(screen.getByRole('button', { name: 'The LobbyGuide' }));
-
-  // Sessions is titled Sessions, so the header is the only thing naming the
-  // forum whose list this is.
   const sessions = within(screen.getByLabelText('Forum sessions navigation'));
-  const header = sessions.getByRole('button', { name: 'The LobbyGuide' });
-  fireEvent.click(header);
-
-  expect(await screen.findByRole('heading', { name: 'House rules' })).toBeInTheDocument();
-  expect(screen.getByText('deliberate').tagName).toBe('STRONG');
-  expect(getForum).toHaveBeenCalledWith('lobby');
-  // The topbar names the forum from bootstrap while its description loads, and
-  // the cast is shown without a request of its own.
+  fireEvent.click(sessions.getByRole('button', { name: 'The LobbyGuide' }));
+  expect(await screen.findByRole('button', { name: 'FORUM.md' })).toBeInTheDocument();
+  expect(getForumFile).not.toHaveBeenCalled();
+  expect(screen.getByRole('button', { name: 'Members' })).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Rename The Lobby' })).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Replace forum definition from file' }))
-    .toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Edit forum description' }))
-    .toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Delete The Lobby' })).toBeInTheDocument();
   expect(screen.getByText('Guide · speaking as Reader')).toBeInTheDocument();
-
+  expect(screen.queryByRole('button', { name: 'Edit forum file' })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'FORUM.md' }));
+  expect(await screen.findByRole('heading', { name: 'House rules' })).toBeInTheDocument();
+  expect(screen.getByText('deliberate').tagName).toBe('STRONG');
+  expect(getForumFile).toHaveBeenCalledWith('lobby', 'FORUM.md');
+  expect(screen.getByRole('button', { name: 'Replace forum file content from file' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Edit forum file' })).toBeInTheDocument();
+  fireEvent.click(within(screen.getByLabelText('Forum file navigation'))
+    .getByRole('button', { name: 'The Lobby' }));
   fireEvent.click(within(screen.getByLabelText('Forum detail navigation'))
     .getByRole('button', { name: 'Sessions' }));
   expect(screen.getByRole('heading', { name: 'Sessions' })).toBeInTheDocument();
@@ -828,20 +826,78 @@ it('edits a forum’s members and persona with one Save action', async () => {
   expect(await screen.findByText('Critic · speaking as Guest')).toBeInTheDocument();
 });
 
-it('replaces forum Markdown from the topbar file action', async () => {
-  let detail = forumDetailFixture;
-  const getForum = vi.fn(async () => detail);
-  const updateForum = vi.fn(async (_forumId, update) => {
-    detail = { ...detail, ...update };
-    return detail;
+it('saves the selected forum file and returns to its list after deleting an optional file', async () => {
+  const user = userEvent.setup();
+  let content = '# Notes';
+  let names = ['FORUM.md', 'NOTES.md'];
+  const getForum = vi.fn(async () => ({ ...forumDetailFixture, markdown_files: names }));
+  const getForumFile = vi.fn(async (_id, filename) => ({ filename, content, writable: true }));
+  const updateForumFile = vi.fn(async (_id, filename, value) => {
+    content = value;
+    return { filename, content, writable: true };
   });
-  const { container } = render(<App client={fixtureClient({ getForum, updateForum })} />);
+  const deleteForumFile = vi.fn(async () => { names = ['FORUM.md']; });
+  const deleteForum = vi.fn();
+  render(<App client={fixtureClient({ getForum, getForumFile,
+    updateForumFile, deleteForumFile, deleteForum })} />);
+  await user.click(await screen.findByRole('button', { name: 'Forums' }));
+  await user.click(screen.getByRole('button', { name: 'The LobbyGuide' }));
+  await user.click(within(screen.getByLabelText('Forum sessions navigation'))
+    .getByRole('button', { name: 'The LobbyGuide' }));
+  await user.click(await screen.findByRole('button', { name: 'NOTES.md' }));
+  await user.click(screen.getByRole('button', { name: 'Edit forum file' }));
+  const editor = await screen.findByRole('textbox', { name: 'Edit forum file text' });
+  await waitFor(() => expect(editor).toHaveValue('# Notes'));
+  await user.clear(editor);
+  await user.type(editor, '# Updated notes');
+  await user.click(screen.getByRole('button', { name: 'Save' }));
+  await waitFor(() => expect(updateForumFile).toHaveBeenCalledWith('lobby', 'NOTES.md', '# Updated notes'));
+  expect(await screen.findByRole('heading', { name: 'Updated notes' })).toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: 'Delete NOTES.md' }));
+  expect(screen.getByRole('dialog')).toHaveTextContent('NOTES.md');
+  await user.click(screen.getByRole('button', { name: 'Delete file' }));
+  expect(await screen.findByRole('button', { name: 'FORUM.md' })).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'NOTES.md' })).not.toBeInTheDocument();
+  expect(deleteForumFile).toHaveBeenCalledWith('lobby', 'NOTES.md');
+  expect(deleteForum).not.toHaveBeenCalled();
+});
+
+it('adds a forum file and opens the saved content', async () => {
+  const user = userEvent.setup();
+  let content = '';
+  const createForumFile = vi.fn(async (_id, filename, value) => {
+    content = value;
+    return { filename, content, writable: true };
+  });
+  const getForumFile = vi.fn(async (_id, filename) => ({ filename, content, writable: true }));
+  render(<App client={fixtureClient({ createForumFile, getForumFile })} />);
+  await user.click(await screen.findByRole('button', { name: 'Forums' }));
+  await user.click(screen.getByRole('button', { name: 'The LobbyGuide' }));
+  await user.click(within(screen.getByLabelText('Forum sessions navigation'))
+    .getByRole('button', { name: 'The LobbyGuide' }));
+  await user.click(await screen.findByRole('button', { name: 'New file' }));
+  await user.type(screen.getByRole('textbox', { name: 'Filename' }), 'NOTES');
+  await user.type(screen.getByRole('textbox', { name: 'Content' }), '# New notes');
+  await user.click(screen.getByRole('button', { name: 'Add file' }));
+  expect(await screen.findByRole('heading', { name: 'New notes' })).toBeInTheDocument();
+  expect(createForumFile).toHaveBeenCalledWith('lobby', 'NOTES.md', '# New notes');
+});
+
+it('replaces forum Markdown from the topbar file action', async () => {
+  let content = forumDetailFixture.forum_markdown;
+  const getForumFile = vi.fn(async (_id, filename) => ({ filename, content, writable: true }));
+  const updateForumFile = vi.fn(async (_id, filename, replacement) => {
+    content = replacement;
+    return { filename, content, writable: true };
+  });
+  const { container } = render(<App client={fixtureClient({ getForumFile, updateForumFile })} />);
   fireEvent.click(await screen.findByRole('button', { name: 'Forums' }));
   fireEvent.click(screen.getByRole('button', { name: 'The LobbyGuide' }));
   fireEvent.click(within(screen.getByLabelText('Forum sessions navigation'))
     .getByRole('button', { name: 'The LobbyGuide' }));
 
-  await screen.findByRole('button', { name: 'Replace forum definition from file' });
+  fireEvent.click(await screen.findByRole('button', { name: 'FORUM.md' }));
+  await screen.findByRole('button', { name: 'Replace forum file content from file' });
   const file = new File(['# New forum\n\nFresh rules.'], 'FORUM.md', {
     type: 'text/markdown',
   });
@@ -852,14 +908,12 @@ it('replaces forum Markdown from the topbar file action', async () => {
     '.cha-definition-topbar-action input[type="file"]',
   ) as HTMLInputElement, { target: { files: [file] } });
 
-  await waitFor(() => expect(updateForum).toHaveBeenCalledWith('lobby', {
-    forum_markdown: '# New forum\n\nFresh rules.',
-  }));
+  await waitFor(() => expect(updateForumFile).toHaveBeenCalledWith('lobby', 'FORUM.md', '# New forum\n\nFresh rules.'));
   expect(await screen.findByRole('heading', { name: 'New forum' })).toBeInTheDocument();
   expect(screen.getByText('Fresh rules.')).toBeInTheDocument();
 });
 
-it('reports a forum with no FORUM.md rather than an empty screen', async () => {
+it('reports an empty forum file rather than an empty screen', async () => {
   const getForum = vi.fn(async () => ({ ...forumDetailFixture, forum_markdown: '' }));
   render(<App client={fixtureClient({ getForum })} />);
   fireEvent.click(await screen.findByRole('button', { name: 'Forums' }));
@@ -867,7 +921,8 @@ it('reports a forum with no FORUM.md rather than an empty screen', async () => {
   fireEvent.click(within(screen.getByLabelText('Forum sessions navigation'))
     .getByRole('button', { name: 'The LobbyGuide' }));
 
-  expect(await screen.findByText('This forum has no FORUM.md description.'))
+  fireEvent.click(await screen.findByRole('button', { name: 'FORUM.md' }));
+  expect(await screen.findByText('This file is empty.'))
     .toBeInTheDocument();
   expect(screen.queryByRole('alert')).not.toBeInTheDocument();
 });
@@ -884,7 +939,7 @@ it('retries a failed forum-detail request without exposing implementation detail
 
   expect(await screen.findByRole('alert')).toHaveTextContent('application API is unavailable');
   fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
-  expect(await screen.findByRole('heading', { name: 'House rules' })).toBeInTheDocument();
+  expect(await screen.findByRole('button', { name: 'FORUM.md' })).toBeInTheDocument();
   expect(getForum).toHaveBeenCalledTimes(2);
 });
 

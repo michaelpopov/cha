@@ -24,6 +24,8 @@ export type MainView =
   | 'new-forum'
   | 'sessions'
   | 'forum-detail'
+  | 'forum-file'
+  | 'new-forum-file'
   | 'forum-members'
   | 'new-session'
   | 'settings'
@@ -76,6 +78,7 @@ export interface AppState {
   characterEditingAvailable: boolean;
   inspectedPersonaId: string | null;
   personaEditingAvailable: boolean;
+  inspectedForumFile: string | null;
   forumEditingAvailable: boolean;
   inspectedVaultName: string | null;
   inspectedProviderId: string | null;
@@ -114,6 +117,7 @@ export const initialAppState: AppState = {
   characterEditingAvailable: false,
   inspectedPersonaId: null,
   personaEditingAvailable: false,
+  inspectedForumFile: null,
   forumEditingAvailable: false,
   inspectedVaultName: null,
   inspectedProviderId: null,
@@ -168,6 +172,8 @@ export type AppAction =
   | { type: 'select-forum'; forumId: string }
   | { type: 'show-sessions' }
   | { type: 'show-forum-detail' }
+  | { type: 'inspect-forum-file'; forumId: string; filename: string }
+  | { type: 'show-new-forum-file' }
   | { type: 'show-forum-members' }
   | { type: 'forum-detail-loaded'; forumId: string; writable: boolean }
   | { type: 'forum-updated'; forum: ForumDetail }
@@ -529,7 +535,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return { ...state, mainView: 'new-forum', ...idleSessionOperation() };
     case 'forum-created': {
       if (!state.bootstrap) return state;
-      const { forum_markdown: _markdown, writable, ...summary } = action.forum;
+      const { forum_markdown: _markdown, markdown_files: _files, writable, ...summary } = action.forum;
       const forums = [...state.bootstrap.forums, summary].sort(
         (left, right) => left.display_name.localeCompare(right.display_name),
       );
@@ -538,6 +544,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         mainView: 'forum-detail',
         bootstrap: { ...state.bootstrap, forums },
         currentForumId: summary.id,
+        inspectedForumFile: null,
         forumEditingAvailable: writable,
         ...idleSessionOperation(),
       };
@@ -547,6 +554,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         ...state,
         mainView: 'sessions',
         currentForumId: action.forumId,
+        inspectedForumFile: null,
         forumEditingAvailable: action.forumId === state.currentForumId
           ? state.forumEditingAvailable
           : false,
@@ -557,7 +565,16 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     // The detail always describes the current forum: it is reachable only from
     // that forum's Sessions screen, so it needs no subject of its own.
     case 'show-forum-detail':
-      return { ...state, mainView: 'forum-detail', ...idleSessionOperation() };
+      return { ...state, mainView: 'forum-detail', inspectedForumFile: null, ...idleSessionOperation() };
+    case 'inspect-forum-file':
+      return state.currentForumId === action.forumId
+        ? { ...state, mainView: 'forum-file', inspectedForumFile: action.filename,
+            ...idleSessionOperation() }
+        : state;
+    case 'show-new-forum-file':
+      return state.currentForumId && state.forumEditingAvailable
+        ? { ...state, mainView: 'new-forum-file', ...idleSessionOperation() }
+        : state;
     case 'show-forum-members':
       return { ...state, mainView: 'forum-members', ...idleSessionOperation() };
     case 'forum-detail-loaded':
@@ -565,7 +582,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return { ...state, forumEditingAvailable: action.writable };
     case 'forum-updated': {
       if (!state.bootstrap) return state;
-      const { forum_markdown: _markdown, writable, ...summary } = action.forum;
+      const { forum_markdown: _markdown, markdown_files: _files, writable, ...summary } = action.forum;
       const bootstrap = {
         ...state.bootstrap,
         forums: state.bootstrap.forums.map((forum) => (
@@ -598,6 +615,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           ),
         } : null,
         currentForumId: null,
+        inspectedForumFile: null,
         forumEditingAvailable: false,
         ...(activeDeleted ? {
           activeConversation: null,
@@ -821,6 +839,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         ...state,
         mainView: 'chat',
         currentForumId: action.snapshot.forum.id,
+        inspectedForumFile: null,
         activeConversation: {
           forumId: action.snapshot.forum.id,
           sessionId: action.snapshot.session_id,
@@ -916,6 +935,8 @@ export function navigationTitle(state: AppState): string | null {
     case 'forums': return 'Forums';
     case 'new-forum': return 'New forum';
     case 'sessions': return 'Sessions';
+    case 'forum-file': return state.inspectedForumFile ?? 'File';
+    case 'new-forum-file': return 'New file';
     case 'forum-detail':
       return state.bootstrap?.forums.find(
         ({ id }) => id === state.currentForumId,

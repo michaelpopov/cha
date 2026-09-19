@@ -812,6 +812,52 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/forums/{forum_id}/files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Stable URL-safe forum identifier. */
+                forum_id: components["parameters"]["ForumId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Add a Markdown file to a forum */
+        post: operations["createForumFile"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/forums/{forum_id}/files/{filename}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Stable URL-safe forum identifier. */
+                forum_id: components["parameters"]["ForumId"];
+                filename: string;
+            };
+            cookie?: never;
+        };
+        /** Read a forum's Markdown file without template expansion */
+        get: operations["getForumFile"];
+        /** Replace a forum's Markdown file and reload affected sessions */
+        put: operations["updateForumFile"];
+        post?: never;
+        /**
+         * Remove a forum's Markdown file and reload affected sessions
+         * @description FORUM.md and files required by templates cannot be removed.
+         */
+        delete: operations["deleteForumFile"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/forums/{forum_id}": {
         parameters: {
             query?: never;
@@ -824,7 +870,8 @@ export interface paths {
         };
         /**
          * Get forum details
-         * @description Returns the forum summary and its `FORUM.md` verbatim. That file is
+         * @description Returns the forum summary, its direct Markdown file names, and its
+         *     `FORUM.md` verbatim. That file is
          *     also the forum's system prompt, and is published whole by design.
          *     Template placeholders such as `$${character.display_name}` are not
          *     expanded, because a description belongs to no single member.
@@ -1698,17 +1745,17 @@ export interface components {
             /** @description Whether the name and definition can be changed and the character deleted. */
             writable: boolean;
         };
-        CharacterFile: {
+        MarkdownFile: {
             filename: string;
             /** @description Verbatim file content, preserving template expressions. */
             content: string;
             writable: boolean;
         };
-        CreateCharacterFileRequest: {
+        CreateMarkdownFileRequest: {
             filename: string;
             content: string;
         };
-        UpdateCharacterFileRequest: {
+        UpdateMarkdownFileRequest: {
             content: string;
         };
         CreateCharacterRequest: {
@@ -1759,6 +1806,7 @@ export interface components {
             default_persona_display_name: string;
             members: components["schemas"]["CharacterSummary"][];
             forum_markdown: string;
+            markdown_files: string[];
             writable: boolean;
         };
         CreateForumRequest: {
@@ -3336,7 +3384,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["CreateCharacterFileRequest"];
+                "application/json": components["schemas"]["CreateMarkdownFileRequest"];
             };
         };
         responses: {
@@ -3346,7 +3394,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["CharacterFile"];
+                    "application/json": components["schemas"]["MarkdownFile"];
                 };
             };
             400: components["responses"]["BadRequest"];
@@ -3375,7 +3423,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["CharacterFile"];
+                    "application/json": components["schemas"]["MarkdownFile"];
                 };
             };
             404: components["responses"]["NotFound"];
@@ -3395,7 +3443,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["UpdateCharacterFileRequest"];
+                "application/json": components["schemas"]["UpdateMarkdownFileRequest"];
             };
         };
         responses: {
@@ -3405,7 +3453,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["CharacterFile"];
+                    "application/json": components["schemas"]["MarkdownFile"];
                 };
             };
             400: components["responses"]["BadRequest"];
@@ -3590,6 +3638,128 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             403: components["responses"]["ForbiddenMutation"];
+            413: components["responses"]["BodyTooLarge"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createForumFile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Stable URL-safe forum identifier. */
+                forum_id: components["parameters"]["ForumId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateMarkdownFileRequest"];
+            };
+        };
+        responses: {
+            /** @description The new file, with its verbatim content. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MarkdownFile"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["ForbiddenMutation"];
+            404: components["responses"]["NotFound"];
+            413: components["responses"]["BodyTooLarge"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getForumFile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Stable URL-safe forum identifier. */
+                forum_id: components["parameters"]["ForumId"];
+                filename: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The file and whether it can be changed. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MarkdownFile"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    updateForumFile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Stable URL-safe forum identifier. */
+                forum_id: components["parameters"]["ForumId"];
+                filename: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateMarkdownFileRequest"];
+            };
+        };
+        responses: {
+            /** @description The saved file. Invalid template changes are rolled back. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MarkdownFile"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["ForbiddenMutation"];
+            404: components["responses"]["NotFound"];
+            413: components["responses"]["BodyTooLarge"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    deleteForumFile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Stable URL-safe forum identifier. */
+                forum_id: components["parameters"]["ForumId"];
+                filename: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": Record<string, never>;
+            };
+        };
+        responses: {
+            /** @description The file was removed. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["ForbiddenMutation"];
+            404: components["responses"]["NotFound"];
             413: components["responses"]["BodyTooLarge"];
             500: components["responses"]["InternalError"];
         };
