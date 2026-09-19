@@ -405,6 +405,29 @@ describe('live chat', () => {
     expect(getAudioDownloads).toHaveBeenCalledTimes(2);
   });
 
+  it('refreshes a native cached audio miss and offers generation without automatically starting it', async () => {
+    const startAudioDownload = vi.fn();
+    const getAudioDownloads = vi.fn().mockResolvedValueOnce({ cached_entry_ids: [2], downloads: [] })
+      .mockResolvedValue({ cached_entry_ids: [], downloads: [] });
+    const resolveAudioSource = vi.fn(async () => {
+      throw new ChaError(404, 'not_found', 'Cached audio not found.');
+    });
+    const events = drivableEvents();
+    render(<App client={fixtureClient({
+      getVoiceOutputRuntime: async () => voiceOutputRuntimeFixture,
+      getAudioDownloads, startAudioDownload, resolveAudioSource,
+    })} connectSessionEvents={events.connect} />);
+    await attachInitial(events, { ...snapshotFixture, transcript: [
+      { id: 2, kind: 'character', participant_id: 'assistant', display_name: 'Assistant',
+        addressed_to: '', addressed_to_name: '', text: 'Answer', status: 'complete', created_at: 2, has_cached_audio: true },
+    ] });
+    fireEvent.click(await screen.findByRole('button', { name: "Play cached audio for Assistant's response" }));
+    await screen.findByRole('button', { name: "Generate audio for Assistant's response" });
+    expect(resolveAudioSource).toHaveBeenCalledWith('entrance', 'welcome', 2, 'Personal');
+    expect(startAudioDownload).not.toHaveBeenCalled();
+    expect(getAudioDownloads).toHaveBeenCalledTimes(2);
+  });
+
   it('plays committed audio when no synthesis configuration or key is available', async () => {
     const fetcher = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('audio'));
     vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:cached');

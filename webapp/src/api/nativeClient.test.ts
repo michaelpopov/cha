@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-import { ChaError, isCommandResult } from './client';
+import { isCommandResult } from './client';
 import { createFakeNativeBridge } from './nativeBridge';
 import { createNativeChaClient } from './nativeClient';
 import { bootstrapFixture } from '../test/fixtures';
@@ -153,14 +153,35 @@ describe('native CHA client', () => {
     });
   });
 
-  it('marks unmigrated media methods unavailable instead of forwarding them', async () => {
-    const client = createNativeChaClient(createFakeNativeBridge());
+  it('starts audio jobs and resolves opaque media resources', async () => {
+    const resource = {
+      resource_id: 'r1',
+      url: '/media/r1',
+      mime_type: 'audio/mpeg',
+      byte_length: 4,
+    };
+    const bridge = createFakeNativeBridge({
+      'audio.status': () => ({ cached_entry_ids: [2], downloads: [] }),
+      'audio.start': () => ({ entry_id: 1, cached: false, state: 'queued' }),
+      'audio.source': () => resource,
+      'speech.start': () => resource,
+      'speech.release': () => ({}),
+      'audio.clearCache': () => ({}),
+      'voiceInput.connect': () => ({ sdp: 'v=0 answer' }),
+    });
+    const client = createNativeChaClient(bridge);
     await expect(client.getAudioDownloads('lobby', 'planning', 'Personal'))
-      .rejects.toBeInstanceOf(ChaError);
-    await expect(client.getAudioDownloads('lobby', 'planning', 'Personal'))
-      .rejects.toMatchObject({
-        code: 'invalid_argument',
-        message: 'That operation is not available in native mode.',
-      });
+      .resolves.toEqual({ cached_entry_ids: [2], downloads: [] });
+    await expect(client.startAudioDownload('lobby', 'planning', 1, {
+      vault_name: 'Personal', reference_id: 'voice',
+    })).resolves.toEqual({ entry_id: 1, cached: false, state: 'queued' });
+    await expect(client.resolveAudioSource!('lobby', 'planning', 2, 'Personal'))
+      .resolves.toEqual(resource);
+    await expect(client.previewSpeech!('Hello', 'voice', undefined))
+      .resolves.toEqual(resource);
+    await expect(client.connectVoiceInput!('v=0 offer', ['en']))
+      .resolves.toBe('v=0 answer');
+    await client.clearSessionAudioCache('lobby', 'planning');
+    await client.releaseResource!('r1');
   });
 });

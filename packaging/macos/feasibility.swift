@@ -80,6 +80,7 @@ final class ChaAssetSchemeHandler: NSObject, WKURLSchemeHandler {
     private let root: URL
     private let lock = NSLock()
     private var stopped = Set<ObjectIdentifier>()
+    var readMedia: ((String) -> (type: String, body: Data)?)?
 
     init(root: URL) {
         self.root = chaAssetRootURL(root)
@@ -96,6 +97,25 @@ final class ChaAssetSchemeHandler: NSObject, WKURLSchemeHandler {
         }
 
         let path = requestURL.path.isEmpty ? "/" : requestURL.path
+        if path.hasPrefix("/media/") {
+            let id = String(path.dropFirst("/media/".count))
+            if id.contains("/") || id.contains("\\") || id.contains("..") {
+                finish(task: urlSchemeTask, identity: identity, url: requestURL,
+                       status: 404, type: "text/plain; charset=utf-8", cache: "no-store",
+                       body: Data("not found".utf8), csp: false)
+                return
+            }
+            if let readMedia, let media = readMedia(id) {
+                finish(task: urlSchemeTask, identity: identity, url: requestURL,
+                       status: 200, type: media.type, cache: "no-store",
+                       body: media.body, csp: false)
+            } else {
+                finish(task: urlSchemeTask, identity: identity, url: requestURL,
+                       status: 404, type: "text/plain; charset=utf-8", cache: "no-store",
+                       body: Data("not found".utf8), csp: false)
+            }
+            return
+        }
         if path == "/probe/audio" {
             finish(task: urlSchemeTask, identity: identity, url: requestURL,
                    status: 200, type: "audio/wav", cache: "no-store",

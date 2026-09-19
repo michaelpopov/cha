@@ -19,6 +19,7 @@ import {
   type SessionListing,
 } from '../api/client';
 import {
+  nativeSpeechFromClient,
   TextToSpeechError,
   TextToSpeechSession,
   speechVoice,
@@ -768,6 +769,10 @@ function VoicePreview({ client, voiceId, appearance }: {
         if (sessionRef.current === session) sessionRef.current = null;
         setPlaying(false);
       },
+      undefined,
+      undefined,
+      undefined,
+      nativeSpeechFromClient(client),
     );
     sessionRef.current = session;
     setPlaying(true);

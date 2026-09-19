@@ -3,6 +3,23 @@ import { useEffect, useState } from 'react';
 import type { ChaClient, VoiceUpdate } from './api/client';
 import { audioRequest, type AudioRequest } from './textToSpeechRequest';
 
+export function nativeSpeechFromClient(client: ChaClient): NativeSpeech | undefined {
+  if (!client.previewSpeech || !client.releaseResource) return undefined;
+  return {
+    preview(text, voice, signal) {
+      return client.previewSpeech!(
+        text,
+        voice?.elevenlabs_voice_id,
+        voice?.settings,
+        signal,
+      );
+    },
+    release(resourceId) {
+      return client.releaseResource!(resourceId);
+    },
+  };
+}
+
 export interface TextToSpeechConfiguration {
   baseUrl: string;
   voiceId: string;
@@ -124,11 +141,29 @@ function waitForSpeechRetry(signal?: AbortSignal): Promise<void> {
   });
 }
 
+export interface NativeSpeech {
+  preview(
+    text: string,
+    voice: TextToSpeechVoice | undefined,
+    signal: AbortSignal,
+  ): Promise<{ url: string; resource_id: string }>;
+  release(resourceId: string): Promise<void>;
+}
+
+export async function fetchLocalResource(url: string, signal?: AbortSignal): Promise<Blob> {
+  const response = await fetch(url, { signal, cache: 'no-store' });
+  if (!response.ok) {
+    throw await speechError(response, url.includes('/media/') ? 'Audio' : 'Cached audio');
+  }
+  return response.blob();
+}
+
 export class TextToSpeechSession {
   private readonly request = new AbortController();
   private audio: HTMLAudioElement | null = null;
   private objectUrl: string | null = null;
   private stopped = false;
+  private nativeResourceId: string | null = null;
 
   constructor(
     private readonly configuration: TextToSpeechConfiguration | null,
@@ -141,23 +176,41 @@ export class TextToSpeechSession {
     },
     private readonly cachedUrl?: string,
     private readonly onCached?: () => void,
+    private readonly nativeSpeech?: NativeSpeech,
+    private readonly onDispose?: () => void,
   ) {}
 
   async play(): Promise<void> {
     let blob: Blob;
     if (this.cachedUrl) {
-      const response = await fetch(this.cachedUrl, { signal: this.request.signal });
-      if (!response.ok) throw await speechError(response, 'Cached audio');
-      blob = await response.blob();
+      blob = await fetchLocalResource(this.cachedUrl, this.request.signal);
+    } else if (this.nativeSpeech) {
+      const resource = await this.nativeSpeech.preview(
+        this.text, this.voice, this.request.signal,
+      );
+      this.nativeResourceId = resource.resource_id;
+      if (this.stopped) {
+        this.releaseNative();
+        return;
+      }
+      blob = await fetchLocalResource(resource.url, this.request.signal);
     } else {
       if (!this.configuration) throw new TextToSpeechError('Voice output is not configured.');
       blob = await requestAudio(audioRequest(this.configuration, this.voice, this.text), this.request.signal);
     }
-    if (this.stopped) return;
+    if (this.stopped) {
+      this.releaseNative();
+      return;
+    }
     if (this.cachedUrl) this.onCached?.();
 
     this.objectUrl = URL.createObjectURL(blob);
-    if (this.stopped) return this.releaseObjectUrl();
+    if (this.stopped) {
+      this.releaseObjectUrl();
+      this.releaseNative();
+      this.onDispose?.();
+      return;
+    }
     const audio = new Audio(this.objectUrl);
     this.audio = audio;
     audio.addEventListener('ended', () => this.finish(true), { once: true });
@@ -187,6 +240,14 @@ export class TextToSpeechSession {
     }
     this.audio = null;
     this.releaseObjectUrl();
+    this.releaseNative();
+    this.onDispose?.();
+  }
+
+  private releaseNative(): void {
+    const id = this.nativeResourceId;
+    this.nativeResourceId = null;
+    if (id && this.nativeSpeech) void this.nativeSpeech.release(id);
   }
 
   private finish(completed = false): void {

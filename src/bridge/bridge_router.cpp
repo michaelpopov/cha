@@ -1,15 +1,19 @@
 #include "bridge/bridge_router.h"
 
+#include "app/media_operations.h"
 #include "app/vault_operations.h"
 #include "session/not_found_error.h"
 #include "util/path_name.h"
 #include "web/application_config.h"
+#include "web/audio_download.h"
+#include "web/fish_audio.h"
 #include "web/json.h"
 #include "web/live_session.h"
 
 #include <condition_variable>
 #include <deque>
 #include <mutex>
+#include <set>
 #include <stdexcept>
 #include <unordered_map>
 #include <unordered_set>
@@ -96,6 +100,22 @@ nlohmann::json without_key(nlohmann::json params, std::string_view key) {
     return params;
 }
 
+std::uint64_t require_safe_id(const nlohmann::json& params, std::string_view key) {
+    const std::string name(key);
+    if (!params.contains(name)) {
+        throw std::invalid_argument("The request was not valid.");
+    }
+    const auto value = as_safe_uint(params[name]);
+    if (!value || *value == 0) {
+        throw std::invalid_argument("The request was not valid.");
+    }
+    return *value;
+}
+
+cha::web::FishAudioSynthesis parse_synthesis_fields(const nlohmann::json& params) {
+    return cha::web::decode_fish_audio_synthesis(params);
+}
+
 std::string require_filename(
     const nlohmann::json& params,
     std::string_view key) {
@@ -166,6 +186,7 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
     struct Outstanding {
         Method method{Method::bridge_info};
         bool control{};
+        bool cancelled{};
         std::chrono::steady_clock::time_point deadline{};
         std::shared_ptr<cha::web::CommandReply> reply;
         std::shared_ptr<cha::app::OperationReply> operation;
@@ -344,6 +365,7 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                 connection->active->subscription_id});
         }
         connection->active.reset();
+        application.release_connection_resources(connection->id);
         notify();
     }
 
@@ -590,6 +612,18 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
             if (const auto context = check_epoch(method, epoch)) {
                 fail(*context);
                 return;
+            }
+            {
+                std::lock_guard lock(mutex);
+                auto connection = find_connection(connection_id);
+                if (!connection) return;
+                const auto found = connection->outstanding.find(id);
+                if (found == connection->outstanding.end()) return;
+                if (found->second.cancelled) {
+                    fail_request(
+                        connection, id, epoch, ErrorCode::operation_cancelled);
+                    return;
+                }
             }
             nlohmann::json result = nlohmann::json::object();
             switch (method) {
@@ -1008,6 +1042,56 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                 require_only_keys(params, {});
                 result = encode_optional(application.get_voice_input_runtime(epoch));
                 break;
+            case Method::voice_input_connect: {
+                if (!params.is_object() || !params.contains("sdp")
+                    || !params["sdp"].is_string()) {
+                    throw std::invalid_argument("The request was not valid.");
+                }
+                for (const auto& [name, value] : params.items()) {
+                    if (name != "sdp" && name != "languages") {
+                        throw std::invalid_argument("The request was not valid.");
+                    }
+                }
+                std::vector<std::string> languages;
+                if (params.contains("languages")) {
+                    if (!params["languages"].is_array()) {
+                        throw std::invalid_argument("The request was not valid.");
+                    }
+                    for (const auto& language : params["languages"]) {
+                        if (!language.is_string()) {
+                            throw std::invalid_argument("The request was not valid.");
+                        }
+                        languages.push_back(language.get<std::string>());
+                    }
+                }
+                start_background(
+                    connection_id,
+                    id,
+                    application.connect_voice_input(
+                        connection_id,
+                        id,
+                        params["sdp"].get<std::string>(),
+                        std::move(languages),
+                        epoch));
+                return;
+            }
+            case Method::voice_input_cancel: {
+                require_only_keys(params, {"request_id"});
+                const auto target = require_safe_id(params, "request_id");
+                {
+                    std::lock_guard lock(mutex);
+                    auto connection = find_connection(connection_id);
+                    if (connection) {
+                        const auto found = connection->outstanding.find(target);
+                        if (found != connection->outstanding.end()) {
+                            found->second.cancelled = true;
+                        }
+                    }
+                }
+                application.cancel_voice_input(connection_id, target, epoch);
+                result = nlohmann::json::object();
+                break;
+            }
             case Method::voice_output_get:
                 require_only_keys(params, {});
                 result = encode_optional(
@@ -1022,6 +1106,150 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                 result = encode_optional(
                     application.get_voice_output_runtime(epoch));
                 break;
+            case Method::speech_start: {
+                if (!params.is_object() || !params.contains("text")
+                    || !params["text"].is_string()) {
+                    throw std::invalid_argument("The request was not valid.");
+                }
+                for (const auto& [name, value] : params.items()) {
+                    if (name != "text" && name != "reference_id"
+                        && name != "settings") {
+                        throw std::invalid_argument("The request was not valid.");
+                    }
+                }
+                start_background(
+                    connection_id,
+                    id,
+                    application.start_speech(
+                        connection_id,
+                        id,
+                        params["text"].get<std::string>(),
+                        parse_synthesis_fields(params),
+                        epoch));
+                return;
+            }
+            case Method::speech_cancel: {
+                require_only_keys(params, {"request_id"});
+                const auto target = require_safe_id(params, "request_id");
+                {
+                    std::lock_guard lock(mutex);
+                    auto connection = find_connection(connection_id);
+                    if (connection) {
+                        const auto found = connection->outstanding.find(target);
+                        if (found != connection->outstanding.end()) {
+                            found->second.cancelled = true;
+                        }
+                    }
+                }
+                application.cancel_speech(connection_id, target, epoch);
+                result = nlohmann::json::object();
+                break;
+            }
+            case Method::speech_release:
+            case Method::audio_release:
+                require_only_keys(params, {"resource_id"});
+                application.release_resource(
+                    connection_id, require_string(params, "resource_id"), epoch);
+                result = nlohmann::json::object();
+                break;
+            case Method::audio_start: {
+                if (!params.is_object()
+                    || !params.contains("forum_id")
+                    || !params.contains("session_id")
+                    || !params.contains("entry_id")
+                    || !params.contains("vault_name")) {
+                    throw std::invalid_argument("The request was not valid.");
+                }
+                for (const auto& [name, value] : params.items()) {
+                    if (name != "forum_id" && name != "session_id"
+                        && name != "entry_id" && name != "vault_name"
+                        && name != "reference_id" && name != "settings") {
+                        throw std::invalid_argument("The request was not valid.");
+                    }
+                }
+                cha::web::AudioDownloadRequest request{
+                    require_string(params, "vault_name"),
+                    parse_synthesis_fields(params)};
+                result = cha::app::audio_acceptance_json(application.start_audio(
+                    require_identifier(params, "forum_id"),
+                    require_identifier(params, "session_id"),
+                    require_safe_id(params, "entry_id"),
+                    std::move(request),
+                    epoch));
+                break;
+            }
+            case Method::audio_start_batch: {
+                require_only_keys(
+                    params, {"forum_id", "session_id", "vault_name", "entries"});
+                if (!params["entries"].is_array() || params["entries"].empty()) {
+                    throw std::invalid_argument("The request was not valid.");
+                }
+                cha::web::AudioDownloadBatchRequest request;
+                request.vault_name = require_string(params, "vault_name");
+                std::set<EntryId> ids;
+                for (const auto& entry : params["entries"]) {
+                    if (!entry.is_object() || !entry.contains("entry_id")
+                        || !entry.contains("reference_id")) {
+                        throw std::invalid_argument("The request was not valid.");
+                    }
+                    for (const auto& [name, value] : entry.items()) {
+                        if (name != "entry_id" && name != "reference_id"
+                            && name != "settings") {
+                            throw std::invalid_argument("The request was not valid.");
+                        }
+                    }
+                    const EntryId entry_id = require_safe_id(entry, "entry_id");
+                    if (!ids.insert(entry_id).second) {
+                        throw std::invalid_argument("The request was not valid.");
+                    }
+                    request.entries.push_back(
+                        {entry_id, parse_synthesis_fields(entry)});
+                }
+                nlohmann::json entries = nlohmann::json::array();
+                for (const auto& acceptance : application.start_audio_batch(
+                         require_identifier(params, "forum_id"),
+                         require_identifier(params, "session_id"),
+                         std::move(request),
+                         epoch)) {
+                    entries.push_back(cha::app::audio_acceptance_json(acceptance));
+                }
+                result = {{"entries", std::move(entries)}};
+                break;
+            }
+            case Method::audio_status: {
+                require_only_keys(
+                    params, {"forum_id", "session_id", "vault_name"});
+                result = cha::app::audio_status_json(application.audio_status(
+                    require_identifier(params, "forum_id"),
+                    require_identifier(params, "session_id"),
+                    require_string(params, "vault_name"),
+                    epoch));
+                break;
+            }
+            case Method::audio_source: {
+                require_only_keys(
+                    params,
+                    {"forum_id", "session_id", "entry_id", "vault_name"});
+                const auto resource = application.audio_source(
+                    connection_id,
+                    require_identifier(params, "forum_id"),
+                    require_identifier(params, "session_id"),
+                    require_safe_id(params, "entry_id"),
+                    require_string(params, "vault_name"),
+                    epoch);
+                result = cha::app::media_resource_json(
+                    resource.resource_id,
+                    resource.mime_type,
+                    resource.byte_length);
+                break;
+            }
+            case Method::audio_clear_cache: {
+                const auto identity = parse_session_identity(params);
+                application.clear_audio_cache(
+                    identity.forum_id, identity.session_id, epoch);
+                result = nlohmann::json::object();
+                break;
+            }
             case Method::api_key_list:
                 require_only_keys(params, {});
                 result = application.list_api_keys(epoch);

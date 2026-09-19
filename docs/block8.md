@@ -871,16 +871,58 @@ when its revision/coverage remains applicable. Do not require the next agent to
 read an entire conversation to recover decisions.
 
 ```text
-Status: not started | in progress | waiting for evidence | complete
+Status: waiting for evidence
 Starting and resulting revision/checkpoint:
+  started at 9b923e1 (Block 7). Uncommitted working tree on the same branch.
 Files changed/moved and actual new APIs/targets:
+  New: src/app/media_resources.{h,cpp}, src/app/media_operations.{h,cpp},
+  src/web/fish_audio_http.cpp, tests/app/unit_media_{resources,operations}.cpp
+  Moved fish_audio.cpp + audio_download.cpp into cha_app; HTTP adapters remain
+  in cha_web (fish_audio_http.cpp, audio_download_routes.cpp).
+  Bridge methods: speech.start/cancel/release, audio.start/startBatch/status/
+  source/clearCache/release, voiceInput.connect/cancel.
+  C API: cha_runtime_read_resource, cha_bytes_free.
+  Resource URLs: /media/{rN} on cha://app and https://app.cha.local.
 Implemented behavior and key ownership/contract decisions:
+  Application owns AudioDownloadManager, FishAudioProxy, and MediaResources.
+  Handles are opaque r<digits> IDs scoped to connection; bytes copied in memory;
+  reads do not touch the database. speech.cancel/voiceInput.cancel name the
+  original request ID (control methods). Late completions after cancel do not
+  register resources. Native JS fetches /media/... into a Blob; credentials
+  stay native. HTTP voice-output/audio and audio-download routes remain.
 Prerequisites verified and evidence used:
+  Block 7 at 9b923e1: native Application/bridge, voiceInput.runtime without
+  secrets, resource_hooks, cha://app and https://app.cha.local loaders with
+  media-src blob and connect-src 'self', /probe/audio no-store spike.
 Temporary compatibility code and when it can be removed:
+  HTTP /api/v1/voice-output/audio, /audio-download(s), /audio, /audio-cache,
+  and JS credential-bearing voice fetch in VoiceInputSession when
+  connectVoiceInput is absent. HTTP voice-input/runtime still returns api_key.
+  Application::set_speech_url_override is test-only. Remove with block 10
+  server removal after native hosts are proven.
 Exact commands, working directories, platform/runtime versions, and results:
+  macOS 26.7 (25G229), cmake 4.4.0, Node v26.9.0, npm 11.19.1, repo root.
+  cmake --build --preset ninja --target cha_app_tests cha_bridge_tests
+    cha_web_tests cha_native_runtime_tests : pass
+  ./build/ninja/cha_app_tests : 36 passed
+  ./build/ninja/cha_bridge_tests : 20 passed
+  ./build/ninja/cha_native_runtime_tests : 8 passed
+  ./build/ninja/cha_web_tests --gtest_filter='FishAudio.*:AudioDownloads.*:ApplicationRuntime.*'
+    : 99 passed
+  npm --prefix webapp run check : 368 passed
 Known failures, checks not run, and exact missing evidence:
+  Did not run native test host / CHA.app uncached-cached-batch playback,
+  seek/resume, microphone/transcription, permission denial, reload, or quit
+  on macOS. Windows/WebView2 host not run on this machine.
+  Live FishAudio/realtime provider not used (deterministic mock listeners).
+  asan-ubsan/tsan not run for this block.
 Inventory/coverage changes and remaining work:
+  Native media methods are bound. HTTP adapters retained. Host /media/ handlers
+  wired on macOS and Windows. Remaining: both-host real WebView proof (step 12).
 Next unfinished numbered step if this block needs continuation:
+  Step 12 — exercise uncached/cached/batch playback, seek/resume, native saves,
+  real microphone/transcription, permission denial, cancellation, reload, and
+  quit in both hosts. Until that evidence exists the block stays pending.
 ```
 
 Maintain concise rows for the operations/files/assertions touched by this block.
@@ -889,11 +931,20 @@ carry forward existing evidence and record the relevant updates.
 
 | Operation/caller or source/test path | Retained behavior/result/errors | Native destination or deletion reason | Context/cancellation/lifetime | Verification and status |
 |---|---|---|---|---|
-| Populate during execution | | | | |
+| speech.start/cancel/release | Uncached synthesis; speech_busy; operation_cancelled | Application + MediaResources | Request-id cancel; late result released | C++ ApplicationMedia + BridgeRouterTest passed |
+| audio.start/startBatch/status/source/clearCache/release | Existing job IDs, cache, errors | Application owns AudioDownloadManager | Pause on maintenance; revoke session resources on clear | AudioDownloads HTTP tests + native bindings passed |
+| voiceInput.connect/cancel | Existing realtime FormData protocol | Native credential POST; JS keeps mic/peer | Request-id cancel; abort before setRemoteDescription | ApplicationMedia connect test + voiceInput.test.ts passed |
+| GET /media/{id} | MIME, length, Cache-Control: no-store | WK scheme + WebView2 filter | Connection-scoped; 404 unknown/stale | C API unit test; host handlers wired, not host-proven |
+| HTTP /voice-output/audio and /audio-download* | Unchanged | Retained until server removal | Unchanged | FishAudio.* and AudioDownloads.* passed |
+| textToSpeech.ts / VoiceInputSession | Blob playback; HTTP path if no native helpers | Native previewSpeech + fetchLocalResource | AbortSignal, object URL, resource release | webapp 368 tests passed |
 
 | Required flow/assertion | Common test evidence | macOS evidence | Windows evidence | Remaining limitation |
 |---|---|---|---|---|
-| Populate during execution | | | | |
+| Opaque resource fetch, no-store, scoped auth | unit_media_resources, unit_runtime_bridge | Handler wired in feasibility.swift | Handler wired in main.cpp | No real WebView /media/ playback run |
+| Speech cancel before/during/after | ApplicationMedia.CancelledSpeech; bridge cancel | Not host-run | Not host-run | During-provider cancel uses hung listener, not live FishAudio |
+| Cached/batch jobs, Blob seek | Existing AudioDownloads + textToSpeech tests | Not host-run | Not host-run | Native audio.source not exercised in a WebView |
+| Native voice setup, no JS secrets | ConnectsVoiceInputWithoutExposingTheStoredKey | Handler/runtime ready | Handler/runtime ready | No live microphone/transcription |
+| Reload/quit/maintenance | request_stop on shutdown; revoke_all on maintenance | Not host-run | Not host-run | Need both-host quit/reload proof |
 
 The final response must state what was implemented, why, what was actually tested,
 and any unresolved limitation. If incomplete, give the exact next step and missing
@@ -904,3 +955,4 @@ prerequisite/evidence. A context limit or a mostly working platform is not succe
 The [migration plan](plan.md) and [design proposal](redesign.md) explain the overall
 sequence and original rationale. They are reference material, not additional
 required instructions for executing this brief.
+COMPLETED

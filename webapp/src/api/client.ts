@@ -63,6 +63,13 @@ export type R2StorageDetail = components['schemas']['R2StorageDetail'];
 export type SaveR2StorageRequest = components['schemas']['SaveR2StorageRequest'];
 export type ErrorCode = components['schemas']['ErrorResponse']['error']['code'];
 
+export interface MediaResource {
+  resource_id: string;
+  url: string;
+  mime_type: string;
+  byte_length: number;
+}
+
 // Generated API unions are compile-time only. Keeping the runtime list checked
 // against that union prevents a newer or malformed server string from being
 // presented to the rest of the client as a code this browser actually knows.
@@ -228,16 +235,34 @@ export interface ChaClient {
   startAudioDownloadBatch(forumId: string, sessionId: string, request: AudioDownloadBatchRequest): Promise<AudioDownloadBatchAcceptance>;
   startAudioDownload(forumId: string, sessionId: string, entryId: number, request: AudioDownloadRequest): Promise<AudioDownloadAcceptance>;
   getAudioDownloads(forumId: string, sessionId: string, vaultName: string): Promise<AudioDownloadStatus>;
+  resolveAudioSource?(
+    forumId: string,
+    sessionId: string,
+    entryId: number,
+    vaultName: string,
+  ): Promise<MediaResource>;
+  previewSpeech?(
+    text: string,
+    referenceId: string | undefined,
+    settings: { speed?: number } | undefined,
+    signal?: AbortSignal,
+  ): Promise<MediaResource>;
+  releaseResource?(resourceId: string): Promise<void>;
+  connectVoiceInput?(
+    sdp: string,
+    languages: string[],
+    signal?: AbortSignal,
+  ): Promise<string>;
   switchVault(vaultName: string, password?: string): Promise<void>;
   mergeVault(sourceVault: string, password?: string): Promise<void>;
 }
 
-function isAudioAcceptance(value: unknown): value is AudioDownloadAcceptance {
+export function isAudioAcceptance(value: unknown): value is AudioDownloadAcceptance {
   return isRecord(value) && Number.isSafeInteger(value.entry_id) && (value.entry_id as number) > 0
     && typeof value.cached === 'boolean' && (value.cached
       ? value.state === undefined : value.state === 'queued' || value.state === 'running');
 }
-function isAudioStatus(value: unknown): value is AudioDownloadStatus {
+export function isAudioStatus(value: unknown): value is AudioDownloadStatus {
   return isRecord(value) && Array.isArray(value.cached_entry_ids)
     && value.cached_entry_ids.every((id) => Number.isSafeInteger(id) && id > 0)
     && Array.isArray(value.downloads) && value.downloads.every((job) => isRecord(job)
@@ -452,6 +477,31 @@ export function isVoiceInputSettings(value: unknown): value is VoiceInputSetting
 
 export function isVoiceInputRuntime(value: unknown): value is VoiceInputRuntime {
   return isVoiceInputSettings(value);
+}
+
+export function isNativeVoiceInputRuntime(value: unknown): value is NativeVoiceInputRuntime {
+  return isRecord(value)
+    && typeof value.url === 'string' && value.url.length > 0
+    && typeof value.model === 'string' && value.model.length > 0
+    && (value.delay === 'low' || value.delay === 'medium'
+      || value.delay === 'high' || value.delay === 'xhigh')
+    && typeof value.prompt === 'string'
+    && value.api_key === undefined;
+}
+
+export function isUsableVoiceInputRuntime(
+  value: unknown,
+): value is VoiceInputRuntime | NativeVoiceInputRuntime {
+  return isVoiceInputRuntime(value) || isNativeVoiceInputRuntime(value);
+}
+
+export function isMediaResource(value: unknown): value is MediaResource {
+  return isRecord(value)
+    && typeof value.resource_id === 'string' && value.resource_id.length > 0
+    && typeof value.url === 'string' && value.url.length > 0
+    && typeof value.mime_type === 'string' && value.mime_type.length > 0
+    && Number.isSafeInteger(value.byte_length)
+    && (value.byte_length as number) >= 0;
 }
 
 export function isVoiceOutputSettings(value: unknown): value is VoiceOutputSettings {

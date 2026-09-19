@@ -1,0 +1,224 @@
+#include "app/application.h"
+
+#include "support/mock_http_server.h"
+#include "support/test_workspace.h"
+#include "workspace/builtins.h"
+
+#include <gtest/gtest.h>
+#include <nlohmann/json.hpp>
+
+#include <chrono>
+#include <filesystem>
+#include <fstream>
+#include <iomanip>
+#include <string>
+#include <thread>
+
+namespace cha::app {
+namespace {
+
+using namespace std::chrono_literals;
+using cha::MockHttpServer;
+using cha::http_response;
+using cha::web::ApplicationCommand;
+using cha::web::ErrorCode;
+using cha::web::load_configuration_directory;
+using cha::web::find_vault;
+using cha::web::VaultDefinition;
+using cha::web::ConfigurationDirectory;
+using cha::web::ConfigurationTransport;
+
+ApplicationCommand make_command(
+    const test::TestWorkspace& workspace,
+    const std::filesystem::path& database) {
+    const std::filesystem::path config_directory =
+        workspace.root() / "cha-config";
+    std::filesystem::create_directories(config_directory);
+    {
+        std::ofstream app(config_directory / "app.toml");
+        app << "vault = \"Test\"\n"
+            << "[logging]\nfile = \"runtime.log\"\nlevel = \"off\"\n";
+    }
+    {
+        std::ofstream vault(config_directory / "test.toml");
+        vault << "vault_name = \"Test\"\n"
+              << "data = " << std::quoted(database.string()) << "\n";
+    }
+    const ConfigurationDirectory loaded = load_configuration_directory(
+        config_directory, ConfigurationTransport::native);
+    const VaultDefinition* const vault =
+        find_vault(loaded.vaults, loaded.startup_vault);
+    std::vector<VaultDefinition> vaults = loaded.vaults;
+    VaultDefinition selected = *vault;
+    vaults.front() = selected;
+    return {
+        .config_directory = loaded.directory,
+        .vaults = std::move(vaults),
+        .vault = std::move(selected),
+        .log_file = loaded.log_file,
+        .log_level = loaded.log_level,
+        .warnings = loaded.warnings,
+    };
+}
+
+nlohmann::json wait_reply(
+    const std::shared_ptr<OperationReply>& reply,
+    std::chrono::milliseconds timeout = 2s) {
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (auto peeked = reply->peek()) {
+            if (const auto* failure =
+                    std::get_if<OperationReply::Failure>(&*peeked)) {
+                throw ApplicationError(failure->code, failure->message);
+            }
+            return std::get<nlohmann::json>(*peeked);
+        }
+        std::this_thread::sleep_for(2ms);
+    }
+    throw std::runtime_error("Timed out waiting for media reply");
+}
+
+TEST(ApplicationMedia, SynthesizesSpeechIntoARevocableResource) {
+    MockHttpServer server({http_response("audio/mpeg", "AUDIO")});
+    server.start();
+    test::TestWorkspace workspace;
+    const std::filesystem::path database =
+        test::import_test_database(workspace.root());
+    auto application = Application::open(make_command(workspace, database));
+    const auto key = application->create_api_key(
+        {.display_name = "Fish", .value = "fish-secret"});
+    const auto voice = application->create_voice({
+        .display_name = "Narrator",
+        .description = "Test",
+        .elevenlabs_voice_id = "voice-ref",
+    });
+    (void)application->save_voice_output_settings({
+        .url = "https://api.fish.audio/v1/tts",
+        .model = "s2.1-pro",
+        .api_key = key.id,
+        .output_format = "mp3",
+        .default_voice = voice.display_name,
+    });
+    application->set_speech_url_override(
+        "http://127.0.0.1:" + std::to_string(server.port()) + "/v1/tts");
+
+    const auto reply = application->start_speech(
+        "view-1", 7, "Hello",
+        {.reference_id = "voice-ref"}, 1);
+    const auto result = wait_reply(reply);
+    EXPECT_EQ(result["url"], "/media/" + result["resource_id"].get<std::string>());
+    EXPECT_EQ(result["mime_type"], "audio/mpeg");
+    EXPECT_EQ(result["byte_length"], 5);
+
+    const auto body = application->read_resource(
+        "view-1", result["resource_id"].get<std::string>());
+    ASSERT_TRUE(body);
+    EXPECT_EQ(body->body, "AUDIO");
+    EXPECT_FALSE(application->read_resource(
+        "view-2", result["resource_id"].get<std::string>()));
+
+    application->release_resource(
+        "view-1", result["resource_id"].get<std::string>(), 1);
+    EXPECT_FALSE(application->read_resource(
+        "view-1", result["resource_id"].get<std::string>()));
+
+    application->request_shutdown();
+    (void)application->join_shutdown(2s);
+    server.join();
+}
+
+TEST(ApplicationMedia, CancelledSpeechDoesNotRegisterAResource) {
+    MockHttpServer server({http_response("audio/mpeg", "AUDIO")});
+    test::TestWorkspace workspace;
+    const std::filesystem::path database =
+        test::import_test_database(workspace.root());
+    auto application = Application::open(make_command(workspace, database));
+    const auto key = application->create_api_key(
+        {.display_name = "Fish", .value = "fish-secret"});
+    const auto voice = application->create_voice({
+        .display_name = "Narrator",
+        .description = "Test",
+        .elevenlabs_voice_id = "voice-ref",
+    });
+    (void)application->save_voice_output_settings({
+        .url = "https://api.fish.audio/v1/tts",
+        .model = "s2.1-pro",
+        .api_key = key.id,
+        .output_format = "mp3",
+        .default_voice = voice.display_name,
+    });
+    application->set_speech_url_override(
+        "http://127.0.0.1:" + std::to_string(server.port()) + "/v1/tts");
+
+    const auto reply = application->start_speech(
+        "view-1", 3, "Hello",
+        {.reference_id = "voice-ref"}, 1);
+    std::this_thread::sleep_for(20ms);
+    application->cancel_speech("view-1", 3, 1);
+    try {
+        (void)wait_reply(reply, 2s);
+        FAIL() << "cancelled speech should not complete";
+    } catch (const ApplicationError& error) {
+        EXPECT_EQ(error.code, ErrorCode::operation_cancelled);
+    }
+
+    application->request_shutdown();
+    (void)application->join_shutdown(2s);
+}
+
+TEST(ApplicationMedia, ConnectsVoiceInputWithoutExposingTheStoredKey) {
+    MockHttpServer server({http_response("application/sdp", "v=0 answer")});
+    server.start();
+    test::TestWorkspace workspace;
+    const std::filesystem::path database =
+        test::import_test_database(workspace.root());
+    auto application = Application::open(make_command(workspace, database));
+    const auto key = application->create_api_key(
+        {.display_name = "Realtime", .value = "voice-secret"});
+    (void)application->save_voice_input_settings({
+        .url = "http://127.0.0.1:" + std::to_string(server.port()) + "/v1/realtime",
+        .model = "gpt-4o-transcribe",
+        .api_key = key.id,
+        .delay = "low",
+        .prompt = "",
+    });
+    const auto runtime = application->get_voice_input_runtime();
+    ASSERT_TRUE(runtime);
+    EXPECT_FALSE(nlohmann::json(*runtime).contains("api_key"));
+    EXPECT_EQ(nlohmann::json(*runtime).dump().find("voice-secret"),
+        std::string::npos);
+
+    const auto reply = application->connect_voice_input(
+        "view-1", 4, "v=0 offer", {"en"}, 1);
+    const auto result = wait_reply(reply);
+    EXPECT_EQ(result["sdp"], "v=0 answer");
+    ASSERT_FALSE(server.requests().empty());
+    EXPECT_NE(server.requests().front().find("Bearer voice-secret"), std::string::npos);
+    EXPECT_NE(server.requests().front().find("v=0 offer"), std::string::npos);
+
+    application->request_shutdown();
+    (void)application->join_shutdown(2s);
+    server.join();
+}
+
+TEST(ApplicationMedia, RejectsUnknownAudioSourcesAndClearsConnectionResources) {
+    test::TestWorkspace workspace;
+    const std::filesystem::path database =
+        test::import_test_database(workspace.root());
+    auto application = Application::open(make_command(workspace, database));
+    try {
+        (void)application->audio_source(
+            "view-1", "lobby", "welcome", 1, "Test", 1);
+        FAIL() << "missing cached audio should fail";
+    } catch (const ApplicationError& error) {
+        EXPECT_EQ(error.code, ErrorCode::not_found);
+    }
+    const auto status = application->audio_status("lobby", "welcome", "Test", 1);
+    EXPECT_TRUE(status.downloads.empty());
+    application->release_connection_resources("view-1");
+    application->request_shutdown();
+    (void)application->join_shutdown(2s);
+}
+
+} // namespace
+} // namespace cha::app

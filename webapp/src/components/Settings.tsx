@@ -25,6 +25,7 @@ import {
   type VaultDetail,
 } from '../api/client';
 import {
+  nativeSpeechFromClient,
   TextToSpeechError,
   TextToSpeechSession,
   speechVoice,
@@ -1577,6 +1578,10 @@ export function VoiceScreen({
         if (preview.current === session) preview.current = null;
         setPreviewing(false);
       },
+      undefined,
+      undefined,
+      undefined,
+      nativeSpeechFromClient(client),
     );
     preview.current = session;
     setPreviewing(true);

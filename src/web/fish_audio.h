@@ -32,6 +32,7 @@ std::optional<EntryAudio> download_fish_audio(
     const FishAudioRequest& request, const std::function<bool()>& cancelled);
 std::string entry_speech_text(const EntryAudioLookup& entry);
 bool valid_entry_audio(const EntryAudio& audio);
+std::string fish_audio_http_error_message(long status);
 
 // Browser shape errors are retained until new synthesis is actually prepared.
 struct FishAudioSynthesis {
@@ -50,10 +51,20 @@ void forward_fish_audio(
     const FishAudioRequest& request, httplib::Response& response,
     const std::function<bool()>& cancelled = [] { return false; });
 
+struct FishAudioTransfer {
+    bool busy{};
+    bool cancelled{};
+    long status{};
+    EntryAudio audio;
+};
+
 // Admission is immediate: synthesis must never queue on a request worker.
 class FishAudioProxy {
 public:
     void stop() { stopped_ = true; }
+    FishAudioTransfer synthesize(
+        const WorkspaceVoiceOutput& output, const std::string& key,
+        const FishAudioRequest& request, const std::function<bool()>& cancelled);
     void forward(
         const WorkspaceVoiceOutput& output, const std::string& key,
         const FishAudioRequest& request, httplib::Response& response,

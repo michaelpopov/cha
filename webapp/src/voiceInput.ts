@@ -52,13 +52,29 @@ function normalizeDictationCommands(transcription: string): string {
   return result.replace(/[ \t]*\n[ \t]*/g, '\n');
 }
 
+export type VoiceInputConnect = (
+  sdp: string,
+  signal: AbortSignal,
+) => Promise<string>;
+
 async function connect(
   configuration: VoiceInputConfiguration,
   peer: RTCPeerConnection,
+  nativeConnect?: VoiceInputConnect,
+  signal?: AbortSignal,
 ): Promise<void> {
   const offer = await peer.createOffer();
   await peer.setLocalDescription(offer);
   if (!offer.sdp) throw new Error('Voice input could not create an audio connection.');
+
+  if (nativeConnect) {
+    const answer = await nativeConnect(offer.sdp, signal ?? new AbortController().signal);
+    if (signal?.aborted) {
+      throw new DOMException('The operation was aborted.', 'AbortError');
+    }
+    await peer.setRemoteDescription({ type: 'answer', sdp: answer });
+    return;
+  }
 
   const body = new FormData();
   body.set('sdp', offer.sdp);
@@ -80,6 +96,7 @@ async function connect(
     method: 'POST',
     headers: { Authorization: `Bearer ${configuration.apiKey}` },
     body,
+    signal,
   });
   if (!response.ok) throw new Error('The realtime transcription request failed.');
   await peer.setRemoteDescription({ type: 'answer', sdp: await response.text() });
@@ -139,12 +156,14 @@ export class VoiceInputSession {
     configuration: VoiceInputConfiguration,
     onTranscription: (text: string) => void,
     onFailure: (failure: unknown) => void,
+    nativeConnect?: VoiceInputConnect,
   ): Promise<VoiceInputSession> {
     if (!VoiceInputSession.supported()) {
       throw new Error('Voice input is unavailable.');
     }
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     let session: VoiceInputSession | null = null;
+    const setup = new AbortController();
     try {
       const peer = new RTCPeerConnection();
       for (const track of stream.getAudioTracks()) peer.addTrack(track, stream);
@@ -152,9 +171,18 @@ export class VoiceInputSession {
       session = new VoiceInputSession(
         stream, peer, events, onTranscription, onFailure,
       );
-      await Promise.all([connect(configuration, peer), session.opened]);
+      const previousCancel = session.cancel.bind(session);
+      session.cancel = () => {
+        setup.abort();
+        previousCancel();
+      };
+      await Promise.all([
+        connect(configuration, peer, nativeConnect, setup.signal),
+        session.opened,
+      ]);
       return session;
     } catch (failure) {
+      setup.abort();
       if (session) session.cancel();
       else for (const track of stream.getTracks()) track.stop();
       throw failure;

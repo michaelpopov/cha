@@ -150,14 +150,6 @@ struct ApplicationRuntime::Impl {
           live_sessions(&application->live_sessions()),
           lifecycle_mutex(application->lifecycle_mutex()),
           unusable(application->mutable_unusable()) {
-        audio_downloads = std::make_unique<AudioDownloadManager>(
-            *sessions, current_vault_, true);
-        application->set_resource_hooks({
-            .pause = [this](bool cancel) { audio_downloads->pause(cancel); },
-            .resume = [this] {
-                if (!unusable) audio_downloads->resume();
-            },
-        });
         application->set_context_changed(
             [this](std::uint64_t, cha::app::ApplicationState state) {
                 if (state == cha::app::ApplicationState::unavailable) {
@@ -167,7 +159,6 @@ struct ApplicationRuntime::Impl {
     }
 
     ~Impl() {
-        application->set_resource_hooks({});
         application->set_context_changed({});
     }
 
@@ -184,8 +175,6 @@ struct ApplicationRuntime::Impl {
     OpenAiOAuth* openai_auth;
     Providers& providers;
     LiveSessionManager* live_sessions;
-    FishAudioProxy fish_audio;
-    std::unique_ptr<AudioDownloadManager> audio_downloads;
     std::unique_ptr<httplib::Server> server;
     std::thread listener;
     std::timed_mutex& lifecycle_mutex;
@@ -198,10 +187,9 @@ struct ApplicationRuntime::Impl {
     bool server_stop_requested{};
 
     void stop_http() {
-        if (audio_downloads) audio_downloads->request_stop();
         if (!server || server_stop_requested) return;
         server_stop_requested = true;
-        fish_audio.stop();
+        application->speech_proxy().stop();
         server->stop();
     }
 };
@@ -335,7 +323,7 @@ int ApplicationRuntime::start(int port_override) {
             while (!impl_->stopping && !lifecycle.try_lock_for(std::chrono::milliseconds(10))) {}
             if (impl_->stopping || impl_->stopped || impl_->unusable)
                 throw AudioDownloadError(503, "speech_busy", "Audio downloads are temporarily unavailable.");
-            impl_->audio_downloads->clear(session);
+            impl_->application->audio_downloads().clear(session);
         }).install(*server);
     install_vault_routes(*server, this, impl_->settings);
     OpenAiAuthRoutes(*impl_->openai_auth, impl_->settings).install(*server);
@@ -345,8 +333,9 @@ int ApplicationRuntime::start(int port_override) {
         *impl_->store,
         *impl_->api_keys,
         *impl_->openai_auth,
-        true, impl_->fish_audio).install(*server);
-    install_audio_download_routes(*server, *impl_->audio_downloads, impl_->settings);
+        true, impl_->application->speech_proxy()).install(*server);
+    install_audio_download_routes(
+        *server, impl_->application->audio_downloads(), impl_->settings);
     SessionRoutes(
         *impl_->live_sessions, impl_->settings, assets).install(*server);
     log_startup(http_settings);
@@ -402,7 +391,7 @@ void ApplicationRuntime::shutdown() {
             *impl_->server,
             [this] { impl_->stop_http(); },
             [this](auto deadline) {
-                return impl_->audio_downloads->join_until(deadline);
+                return impl_->application->audio_downloads().join_until(deadline);
             });
         coordinator.shutdown_now(impl_->listener, impl_->settings.shutdown_grace);
     }

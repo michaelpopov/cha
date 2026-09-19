@@ -1,19 +1,12 @@
 #include "web/fish_audio.h"
 
-#include "providers/api_key_store.h"
 #include "util/curl.h"
 #include "util/logging.h"
 #include "util/text.h"
-#include "web/http_response.h"
-#include "web/protocol.h"
-#include "web/route_support.h"
-#include "web/web_settings.h"
 #include "workspace/workspace.h"
 #include "session/session_repository.h"
-#include "session/not_found_error.h"
 
 #include <curl/curl.h>
-#include <httplib.h>
 #include <cmath>
 #include <memory>
 #include <regex>
@@ -138,49 +131,34 @@ bool valid_entry_audio(const EntryAudio& audio) {
     return !audio.audio.empty() && type.size() > 6 && starts_with_folded(type, "audio/");
 }
 
-void forward_fish_audio(
-    const WorkspaceVoiceOutput& output, const std::string& key,
-    const FishAudioRequest& request, httplib::Response& response,
-    const std::function<bool()>& cancelled) {
-    auto result = transfer_fish_audio(output, key, request, cancelled);
-    if (!result) {
-        set_error_response(response, 503, {ErrorCode::internal_error, "Speech generation cancelled."});
-        return;
+std::string fish_audio_http_error_message(long status) {
+    switch (status) {
+    case 401: return "Authentication failed. Check the FishAudio API key.";
+    case 403: return "Access denied by FishAudio.";
+    case 402: return "Insufficient FishAudio credits.";
+    case 413: return "Text is too large for FishAudio.";
+    case 429: return "FishAudio rate limit reached. Try again shortly.";
+    default: return "FishAudio request failed.";
     }
-    const long status = result->status;
-    auto& audio = result->audio.audio;
-    if (status >= 400 && trim_view(audio).empty()) {
-        std::string message;
-        switch (status) {
-        case 401: message = "Authentication failed. Check the FishAudio API key."; break;
-        case 403: message = "Access denied by FishAudio."; break;
-        case 402: message = "Insufficient FishAudio credits."; break;
-        case 413: message = "Text is too large for FishAudio."; break;
-        case 429: message = "FishAudio rate limit reached. Try again shortly."; break;
-        default: message = "FishAudio request failed."; break;
-        }
-        set_error_response(response, static_cast<int>(status), {ErrorCode::internal_error, message});
-    } else {
-        response.status = static_cast<int>(status);
-        response.set_content(std::move(audio), result->audio.content_type.empty() ? "audio/mpeg" : result->audio.content_type);
-    }
-    response.set_header("Cache-Control", "no-store");
 }
 
-void FishAudioProxy::forward(
+FishAudioTransfer FishAudioProxy::synthesize(
     const WorkspaceVoiceOutput& output, const std::string& key,
-    const FishAudioRequest& request, httplib::Response& response,
-    const std::function<bool()>& cancelled) {
+    const FishAudioRequest& request, const std::function<bool()>& cancelled) {
     if (!slots_.try_acquire()) {
-        set_error_response(response, 503, {ErrorCode::speech_busy, "Speech generation is busy. Try again shortly."});
-        return;
+        return {.busy = true};
     }
     struct ReleaseSlot {
         std::counting_semaphore<fish_audio_concurrency>& slots;
         ~ReleaseSlot() { slots.release(); }
     } release{slots_};
-    forward_fish_audio(output, key, request, response,
-        [&] { return stopped_ || cancelled(); });
+    auto result = transfer_fish_audio(
+        output, key, request, [&] { return stopped_ || cancelled(); });
+    if (!result) return {.cancelled = true};
+    return {
+        .status = result->status,
+        .audio = std::move(result->audio),
+    };
 }
 
 FishAudioSynthesis decode_fish_audio_synthesis(const Json& input) {
@@ -234,32 +212,4 @@ FishAudioRequest make_fish_audio_request(
     throw std::invalid_argument("Invalid FishAudio request");
 }
 
-void install_fish_audio_route(
-    httplib::Server& server, ApiKeyStore& api_keys,
-    const WebSettings& settings, bool voice_enabled, FishAudioProxy& proxy) {
-    server.Post("/api/v1/voice-output/audio",
-        [&api_keys, settings, voice_enabled, &proxy](const httplib::Request& request, httplib::Response& response) {
-            if (!validate_json_mutation(request, response)) return;
-            Json input;
-            if (!parse_route_json_body(request, response, settings.request_body_limit, [&](const Json& parsed) {
-                if (parsed.contains("entry")) throw std::invalid_argument("Use the entry audio-download endpoint.");
-                input = parsed;
-            })) return;
-            try {
-                const auto workspace = getws();
-                const auto* output = workspace && workspace->voice_output() ? &*workspace->voice_output() : nullptr;
-                if (!voice_enabled || !output || !api_keys.find(output->api_key_id)) {
-                    set_route_not_found(response, "FishAudio output is not configured.");
-                    return;
-                }
-                proxy.forward(*output, api_keys.value(output->api_key_id), make_fish_audio_request(*output, input), response,
-                    request.is_connection_closed);
-            } catch (const std::invalid_argument& error) {
-                set_error_response(response, 400, {ErrorCode::bad_request, error.what()});
-            } catch (const std::exception& error) {
-                log_warn(error.what());
-                set_error_response(response, 502, {ErrorCode::internal_error, "FishAudio request failed."});
-            }
-        });
-}
 }

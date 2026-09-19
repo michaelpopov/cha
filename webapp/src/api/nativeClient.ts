@@ -1,5 +1,4 @@
 import {
-  ChaError,
   ChaProtocolError,
   isApiKeyDetail,
   isCharacterDetail,
@@ -16,10 +15,17 @@ import {
   isSessionSnapshot,
   isStyleDetail,
   isVoiceDetail,
+  isAudioAcceptance,
+  isAudioStatus,
+  isMediaResource,
+  isNativeVoiceInputRuntime,
   isVoiceInputSettings,
   isVoiceOutputRuntime,
   isVoiceOutputSettings,
   type ApiKeyDetail,
+  type AudioDownloadAcceptance,
+  type AudioDownloadBatchAcceptance,
+  type AudioDownloadStatus,
   type ChaClient,
   type CommandResult,
   type CoverRequest,
@@ -52,12 +58,6 @@ import {
 import { nativeProtocolVersion, type NativeBridge } from './nativeBridge';
 import { isRecord } from './guards';
 import { validateBootstrap } from '../state/bootstrap';
-
-const unavailableMessage = 'That operation is not available in native mode.';
-
-function nativeUnavailable(): Promise<never> {
-  return Promise.reject(new ChaError(0, 'invalid_argument', unavailableMessage));
-}
 
 function isCreateSessionResult(value: unknown): value is CreateSessionResult {
   return isRecord(value) && typeof value.id === 'string' && typeof value.label === 'string';
@@ -94,16 +94,6 @@ function isBootstrapResult(value: unknown): value is {
 
 function isSessionExport(value: unknown): value is { markdown: string } {
   return isRecord(value) && typeof value.markdown === 'string';
-}
-
-function isNativeVoiceInputRuntime(value: unknown): value is NativeVoiceInputRuntime {
-  return isRecord(value)
-    && typeof value.url === 'string' && value.url.length > 0
-    && typeof value.model === 'string' && value.model.length > 0
-    && (value.delay === 'low' || value.delay === 'medium'
-      || value.delay === 'high' || value.delay === 'xhigh')
-    && typeof value.prompt === 'string'
-    && value.api_key === undefined;
 }
 
 function isNullable<T>(
@@ -308,7 +298,13 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient {
         isRecord,
       );
     },
-    clearSessionAudioCache: nativeUnavailable,
+    clearSessionAudioCache: async (forumId, sessionId) => {
+      await call(
+        'audio.clearCache',
+        { forum_id: forumId, session_id: sessionId },
+        isRecord,
+      );
+    },
     downloadSession: async (forumId, sessionId) => {
       const exported = await call(
         'session.export',
@@ -516,9 +512,66 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient {
     deleteR2Storage: async () => {
       await call('r2Storage.delete', {}, isRecord);
     },
-    startAudioDownloadBatch: nativeUnavailable,
-    startAudioDownload: nativeUnavailable,
-    getAudioDownloads: nativeUnavailable,
+    startAudioDownloadBatch: (forumId, sessionId, request) => call(
+      'audio.startBatch',
+      {
+        forum_id: forumId,
+        session_id: sessionId,
+        vault_name: request.vault_name,
+        entries: request.entries,
+      },
+      (value): value is AudioDownloadBatchAcceptance => isRecord(value)
+        && Array.isArray(value.entries)
+        && value.entries.every(isAudioAcceptance),
+    ),
+    startAudioDownload: (forumId, sessionId, entryId, request) => call(
+      'audio.start',
+      {
+        forum_id: forumId,
+        session_id: sessionId,
+        entry_id: entryId,
+        vault_name: request.vault_name,
+        reference_id: request.reference_id,
+        settings: request.settings,
+      },
+      isAudioAcceptance,
+    ),
+    getAudioDownloads: (forumId, sessionId, vaultName) => call(
+      'audio.status',
+      { forum_id: forumId, session_id: sessionId, vault_name: vaultName },
+      isAudioStatus,
+    ),
+    resolveAudioSource: (forumId, sessionId, entryId, vaultName) => call(
+      'audio.source',
+      {
+        forum_id: forumId,
+        session_id: sessionId,
+        entry_id: entryId,
+        vault_name: vaultName,
+      },
+      isMediaResource,
+    ),
+    previewSpeech: (text, referenceId, settings, signal) => bridge.invoke(
+      'speech.start',
+      { text, reference_id: referenceId, settings: settings ?? {} },
+      { signal, cancelMethod: 'speech.cancel' },
+    ).then((value) => {
+      if (!isMediaResource(value)) throw new ChaProtocolError();
+      return value;
+    }),
+    releaseResource: async (resourceId) => {
+      await call('speech.release', { resource_id: resourceId }, isRecord);
+    },
+    connectVoiceInput: (sdp, languages, signal) => bridge.invoke(
+      'voiceInput.connect',
+      { sdp, languages },
+      { signal, cancelMethod: 'voiceInput.cancel' },
+    ).then((value) => {
+      if (!isRecord(value) || typeof value.sdp !== 'string' || !value.sdp) {
+        throw new ChaProtocolError();
+      }
+      return value.sdp;
+    }),
     switchVault: async (vaultName, password) => {
       const result = await call(
         'vault.switch',

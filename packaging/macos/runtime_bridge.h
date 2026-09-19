@@ -97,6 +97,18 @@ void cha_runtime_handle_message(
     ChaRuntime* runtime,
     const char* connection_id,
     const char* json);
+// Complete-resource read. Bytes and mime_type are malloc'd; free with
+// cha_bytes_free and cha_string_free. Returns 1 on success, 0 when the
+// handle is unknown, released, or not owned by this connection.
+int32_t cha_runtime_read_resource(
+    ChaRuntime* runtime,
+    const char* connection_id,
+    const char* resource_id,
+    char** mime_type,
+    void** bytes,
+    uint64_t* size,
+    char** error);
+void cha_bytes_free(void* value);
 void cha_runtime_request_shutdown(ChaRuntime* runtime);
 // Joins the pump thread and application owners. Do not call from the UI
 // thread. Returns 1 when every owner finished inside grace_ms.

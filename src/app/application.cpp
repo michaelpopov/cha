@@ -1,5 +1,6 @@
 #include "app/application.h"
 
+#include "app/media_operations.h"
 #include "app/settings_operations.h"
 #include "app/vault_operations.h"
 #include "app/workspace_operations.h"
@@ -35,6 +36,7 @@
 #include <exception>
 #include <functional>
 #include <filesystem>
+#include <map>
 #include <optional>
 #include <span>
 #include <stdexcept>
@@ -314,6 +316,8 @@ struct Application::Impl {
         };
         live_sessions = std::make_unique<cha::web::LiveSessionManager>(
             settings, opener);
+        audio_downloads = std::make_unique<cha::web::AudioDownloadManager>(
+            *sessions, current_vault_, true);
         running = true;
         notified_epoch = live_sessions->context_epoch();
     }
@@ -365,11 +369,15 @@ struct Application::Impl {
     }
 
     void pause_resources(bool cancel) {
+        cancel_all_pending_media();
+        media_resources.revoke_all();
+        if (audio_downloads) audio_downloads->pause(cancel);
         if (resource_hooks.pause) resource_hooks.pause(cancel);
     }
 
     void resume_resources() {
         if (unusable) return;
+        if (audio_downloads) audio_downloads->resume();
         if (resource_hooks.resume) resource_hooks.resume();
     }
 
@@ -607,6 +615,9 @@ struct Application::Impl {
     }
 
     ~Impl() {
+        speech_proxy.stop();
+        cancel_all_pending_media();
+        if (audio_downloads) audio_downloads->request_stop();
         join_background();
         if (running && !stopped) {
             live_sessions->begin_shutdown();
@@ -626,6 +637,86 @@ struct Application::Impl {
     std::unique_ptr<OpenAiOAuth> openai_auth;
     Providers providers;
     std::unique_ptr<cha::web::LiveSessionManager> live_sessions;
+    std::unique_ptr<cha::web::AudioDownloadManager> audio_downloads;
+    cha::web::FishAudioProxy speech_proxy;
+    MediaResources media_resources;
+    std::optional<std::string> speech_url_override;
+    struct PendingMedia {
+        std::string connection_id;
+        std::uint64_t request_id{};
+        std::shared_ptr<std::atomic_bool> cancelled;
+        std::string resource_id;
+    };
+    std::mutex media_mutex;
+    std::map<std::pair<std::string, std::uint64_t>, std::shared_ptr<PendingMedia>>
+        pending_media;
+
+    std::shared_ptr<PendingMedia> remember_pending(
+        std::string connection_id,
+        std::uint64_t request_id) {
+        auto pending = std::make_shared<PendingMedia>();
+        pending->connection_id = std::move(connection_id);
+        pending->request_id = request_id;
+        pending->cancelled = std::make_shared<std::atomic_bool>(false);
+        std::lock_guard lock(media_mutex);
+        pending_media[{pending->connection_id, request_id}] = pending;
+        return pending;
+    }
+
+    std::shared_ptr<PendingMedia> find_pending(
+        std::string_view connection_id,
+        std::uint64_t request_id) {
+        std::lock_guard lock(media_mutex);
+        const auto found = pending_media.find(
+            {std::string(connection_id), request_id});
+        if (found == pending_media.end()) return {};
+        return found->second;
+    }
+
+    void forget_pending(
+        std::string_view connection_id,
+        std::uint64_t request_id) {
+        std::lock_guard lock(media_mutex);
+        pending_media.erase({std::string(connection_id), request_id});
+    }
+
+    void cancel_pending(
+        std::string_view connection_id,
+        std::uint64_t request_id) {
+        std::shared_ptr<PendingMedia> pending;
+        {
+            std::lock_guard lock(media_mutex);
+            const auto found = pending_media.find(
+                {std::string(connection_id), request_id});
+            if (found == pending_media.end()) return;
+            pending = found->second;
+        }
+        pending->cancelled->store(true);
+        if (!pending->resource_id.empty()) {
+            media_resources.release(connection_id, pending->resource_id);
+            pending->resource_id.clear();
+        }
+    }
+
+    void cancel_connection_media(std::string_view connection_id) {
+        std::vector<std::shared_ptr<PendingMedia>> pending;
+        {
+            std::lock_guard lock(media_mutex);
+            for (auto& [key, item] : pending_media) {
+                if (item->connection_id == connection_id) pending.push_back(item);
+            }
+        }
+        for (auto& item : pending) item->cancelled->store(true);
+        media_resources.revoke_connection(connection_id);
+    }
+
+    void cancel_all_pending_media() {
+        std::lock_guard lock(media_mutex);
+        for (auto& [key, item] : pending_media) {
+            item->cancelled->store(true);
+        }
+    }
+
     struct BackgroundJob {
         std::thread worker;
         std::shared_ptr<std::atomic_bool> cancel;
@@ -1414,6 +1505,346 @@ Application::get_voice_output_runtime(std::uint64_t epoch) {
     return settings::get_voice_output_runtime(*impl_->api_keys, true);
 }
 
+std::shared_ptr<OperationReply> Application::start_speech(
+    std::string_view connection_id,
+    std::uint64_t request_id,
+    std::string text,
+    cha::web::FishAudioSynthesis synthesis,
+    std::uint64_t epoch) {
+    auto reply = std::make_shared<OperationReply>();
+    WorkspaceVoiceOutput output;
+    std::string key;
+    cha::web::FishAudioRequest request;
+    std::shared_ptr<Impl::PendingMedia> pending;
+    {
+        const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+        impl_->require_admitted(epoch);
+        const auto workspace = getws();
+        if (!workspace || !workspace->voice_output()
+            || !impl_->api_keys->find(workspace->voice_output()->api_key_id)) {
+            throw ApplicationError(
+                ErrorCode::not_found, "Voice output is not configured.");
+        }
+        output = *workspace->voice_output();
+        if (impl_->speech_url_override) output.url = *impl_->speech_url_override;
+        if (!synthesis.reference_id) {
+            const WorkspaceVoice* voice =
+                workspace->find_voice_by_name(output.default_voice);
+            if (!voice) {
+                throw ApplicationError(
+                    ErrorCode::not_found, "Voice output is not configured.");
+            }
+            synthesis.reference_id = voice->elevenlabs_voice_id;
+        }
+        key = impl_->api_keys->value(output.api_key_id);
+        request = cha::web::make_fish_audio_request(output, text, synthesis);
+        pending = impl_->remember_pending(std::string(connection_id), request_id);
+    }
+    if (!impl_->launch_background(
+            [this, reply, pending, output = std::move(output),
+             key = std::move(key), request = std::move(request), epoch](
+                std::atomic_bool& cancel) {
+                const auto cancelled = [&] {
+                    return cancel.load() || pending->cancelled->load();
+                };
+                try {
+                    if (cancelled()) {
+                        reply->fail(
+                            ErrorCode::operation_cancelled,
+                            "The operation was cancelled.");
+                        return;
+                    }
+                    const auto transfer = impl_->speech_proxy.synthesize(
+                        output, key, request, cancelled);
+                    if (cancelled() || transfer.cancelled) {
+                        reply->fail(
+                            ErrorCode::operation_cancelled,
+                            "The operation was cancelled.");
+                        return;
+                    }
+                    if (transfer.busy) {
+                        reply->fail(
+                            ErrorCode::speech_busy,
+                            "Speech generation is busy. Try again shortly.");
+                        return;
+                    }
+                    if (transfer.status != 200
+                        || !cha::web::valid_entry_audio(transfer.audio)) {
+                        throw_speech_provider_error(
+                            transfer.status, transfer.audio.audio);
+                    }
+                    std::string id;
+                    {
+                        const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+                        if (cancelled()) {
+                            reply->fail(
+                                ErrorCode::operation_cancelled,
+                                "The operation was cancelled.");
+                            return;
+                        }
+                        if (const auto error = impl_->admit_locked(epoch)) {
+                            reply->fail(*error, {});
+                            return;
+                        }
+                        id = impl_->media_resources.add(
+                            pending->connection_id,
+                            epoch,
+                            ResourceKind::speech,
+                            {transfer.audio.content_type, transfer.audio.audio});
+                        pending->resource_id = id;
+                    }
+                    reply->complete(media_resource_json(
+                        id, transfer.audio.content_type,
+                        transfer.audio.audio.size()));
+                } catch (const ApplicationError& error) {
+                    reply->fail(error.code, error.what());
+                } catch (const std::invalid_argument& error) {
+                    reply->fail(ErrorCode::invalid_argument, error.what());
+                } catch (const std::exception& error) {
+                    log_warn(error.what());
+                    reply->fail(
+                        ErrorCode::internal_error, "FishAudio request failed.");
+                } catch (...) {
+                    reply->fail(ErrorCode::internal_error, {});
+                }
+                impl_->forget_pending(
+                    pending->connection_id, pending->request_id);
+            })) {
+        impl_->forget_pending(std::string(connection_id), request_id);
+        reply->fail(
+            ErrorCode::operation_cancelled, "The operation was cancelled.");
+    }
+    return reply;
+}
+
+void Application::cancel_speech(
+    std::string_view connection_id,
+    std::uint64_t request_id,
+    std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    impl_->cancel_pending(connection_id, request_id);
+}
+
+void Application::release_resource(
+    std::string_view connection_id,
+    std::string_view resource_id,
+    std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    impl_->media_resources.release(connection_id, resource_id);
+}
+
+cha::web::AudioAcceptance Application::start_audio(
+    std::string_view forum_id,
+    std::string_view session_id,
+    EntryId entry_id,
+    cha::web::AudioDownloadRequest request,
+    std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    try {
+        return impl_->audio_downloads->submit(
+            {std::string(forum_id), std::string(session_id)},
+            entry_id, request);
+    } catch (const cha::web::AudioDownloadError& error) {
+        throw_audio_error(error);
+    }
+}
+
+std::vector<cha::web::AudioAcceptance> Application::start_audio_batch(
+    std::string_view forum_id,
+    std::string_view session_id,
+    cha::web::AudioDownloadBatchRequest request,
+    std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    try {
+        return impl_->audio_downloads->submit_batch(
+            {std::string(forum_id), std::string(session_id)}, request);
+    } catch (const cha::web::AudioDownloadError& error) {
+        throw_audio_error(error);
+    }
+}
+
+cha::web::AudioDownloadStatus Application::audio_status(
+    std::string_view forum_id,
+    std::string_view session_id,
+    std::string_view vault_name,
+    std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    try {
+        return impl_->audio_downloads->status(
+            {std::string(forum_id), std::string(session_id)},
+            std::string(vault_name));
+    } catch (const cha::web::AudioDownloadError& error) {
+        throw_audio_error(error);
+    }
+}
+
+MediaResource Application::audio_source(
+    std::string_view connection_id,
+    std::string_view forum_id,
+    std::string_view session_id,
+    EntryId entry_id,
+    std::string_view vault_name,
+    std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    std::optional<EntryAudio> audio;
+    try {
+        audio = impl_->audio_downloads->audio(
+            {std::string(forum_id), std::string(session_id)},
+            entry_id, std::string(vault_name));
+    } catch (const cha::web::AudioDownloadError& error) {
+        throw_audio_error(error);
+    }
+    if (!audio) {
+        throw ApplicationError(ErrorCode::not_found, "Cached audio not found.");
+    }
+    const std::string id = impl_->media_resources.add(
+        connection_id,
+        epoch,
+        ResourceKind::entry_audio,
+        {audio->content_type, audio->audio},
+        FullSessionId{std::string(forum_id), std::string(session_id)},
+        entry_id);
+    return {
+        id,
+        MediaResources::url_for(id),
+        audio->content_type,
+        audio->audio.size(),
+    };
+}
+
+void Application::clear_audio_cache(
+    std::string_view forum_id,
+    std::string_view session_id,
+    std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    const FullSessionId session{std::string(forum_id), std::string(session_id)};
+    try {
+        impl_->audio_downloads->clear(session);
+    } catch (const cha::web::AudioDownloadError& error) {
+        throw_audio_error(error);
+    }
+    impl_->media_resources.revoke_session(session);
+}
+
+std::shared_ptr<OperationReply> Application::connect_voice_input(
+    std::string_view connection_id,
+    std::uint64_t request_id,
+    std::string sdp,
+    std::vector<std::string> languages,
+    std::uint64_t epoch) {
+    if (sdp.empty() || sdp.size() > 32768) {
+        throw ApplicationError(
+            ErrorCode::invalid_argument, "The request was not valid.");
+    }
+    if (languages.size() > 8) {
+        throw ApplicationError(
+            ErrorCode::invalid_argument, "The request was not valid.");
+    }
+    for (const std::string& language : languages) {
+        if (language.empty() || language.size() > 16) {
+            throw ApplicationError(
+                ErrorCode::invalid_argument, "The request was not valid.");
+        }
+    }
+    auto reply = std::make_shared<OperationReply>();
+    std::string url;
+    std::string key;
+    std::string model;
+    std::string delay;
+    std::string prompt;
+    std::shared_ptr<Impl::PendingMedia> pending;
+    {
+        const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+        impl_->require_admitted(epoch);
+        const auto secret = settings::voice_input_secret(*impl_->api_keys, true);
+        const auto runtime = settings::get_voice_input_runtime(
+            *impl_->api_keys, true);
+        if (!secret || !runtime) {
+            throw ApplicationError(
+                ErrorCode::not_found, "Voice input is not configured.");
+        }
+        url = runtime->url;
+        key = *secret;
+        model = runtime->model;
+        delay = runtime->delay;
+        prompt = runtime->prompt;
+        pending = impl_->remember_pending(std::string(connection_id), request_id);
+    }
+    if (!impl_->launch_background(
+            [this, reply, pending, url = std::move(url), key = std::move(key),
+             model = std::move(model), delay = std::move(delay),
+             prompt = std::move(prompt), sdp = std::move(sdp),
+             languages = std::move(languages)](std::atomic_bool& cancel) {
+                const auto cancelled = [&] {
+                    return cancel.load() || pending->cancelled->load();
+                };
+                try {
+                    if (cancelled()) {
+                        reply->fail(
+                            ErrorCode::operation_cancelled,
+                            "The operation was cancelled.");
+                        return;
+                    }
+                    auto answer = connect_voice_transcription(
+                        url, key, sdp, model, delay, prompt, languages,
+                        cancelled);
+                    if (!answer || cancelled()) {
+                        reply->fail(
+                            ErrorCode::operation_cancelled,
+                            "The operation was cancelled.");
+                        return;
+                    }
+                    reply->complete({{"sdp", std::move(*answer)}});
+                } catch (const ApplicationError& error) {
+                    reply->fail(error.code, error.what());
+                } catch (const std::exception& error) {
+                    log_warn(error.what());
+                    reply->fail(
+                        ErrorCode::internal_error,
+                        "The realtime transcription request failed.");
+                } catch (...) {
+                    reply->fail(ErrorCode::internal_error, {});
+                }
+                impl_->forget_pending(
+                    pending->connection_id, pending->request_id);
+            })) {
+        impl_->forget_pending(std::string(connection_id), request_id);
+        reply->fail(
+            ErrorCode::operation_cancelled, "The operation was cancelled.");
+    }
+    return reply;
+}
+
+void Application::cancel_voice_input(
+    std::string_view connection_id,
+    std::uint64_t request_id,
+    std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    impl_->cancel_pending(connection_id, request_id);
+}
+
+std::optional<ResourceBytes> Application::read_resource(
+    std::string_view connection_id,
+    std::string_view resource_id) const {
+    return impl_->media_resources.read(connection_id, resource_id);
+}
+
+void Application::release_connection_resources(std::string_view connection_id) {
+    impl_->cancel_connection_media(connection_id);
+}
+
+void Application::set_speech_url_override(std::string url) {
+    impl_->speech_url_override = std::move(url);
+}
+
 std::vector<cha::web::ApiKeyDetail> Application::list_api_keys(
     std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
@@ -1596,11 +2027,20 @@ void Application::set_context_changed(ContextChanged callback) {
 void Application::request_shutdown() {
     impl_->stopping_flag = true;
     impl_->state = ApplicationState::stopping;
+    impl_->speech_proxy.stop();
+    if (impl_->audio_downloads) impl_->audio_downloads->request_stop();
+    impl_->pause_resources(true);
     impl_->live_sessions->begin_shutdown();
 }
 
 bool Application::join_shutdown(std::chrono::milliseconds grace) {
     impl_->join_background();
+    if (impl_->audio_downloads) {
+        impl_->audio_downloads->request_stop();
+        (void)impl_->audio_downloads->join_until(
+            std::chrono::steady_clock::now() + grace);
+    }
+    impl_->media_resources.revoke_all();
     const bool joined = impl_->live_sessions->join_shutdown(grace);
     impl_->providers.shutdown();
     impl_->stopped = true;
@@ -2177,6 +2617,14 @@ std::shared_ptr<SessionRepository> Application::sessions() {
 
 cha::web::LiveSessionManager& Application::live_sessions() {
     return *impl_->live_sessions;
+}
+
+cha::web::AudioDownloadManager& Application::audio_downloads() {
+    return *impl_->audio_downloads;
+}
+
+cha::web::FishAudioProxy& Application::speech_proxy() {
+    return impl_->speech_proxy;
 }
 
 Providers& Application::providers() {

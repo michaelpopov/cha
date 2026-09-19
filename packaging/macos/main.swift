@@ -403,7 +403,7 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
                 self?.saveNativeText(
                     id: id, suggestedName: suggestedName, contents: contents)
             }
-            receiver.attach(to: view)
+            receiver.attach(to: view, mediaHandler: built.1)
             nativeBridge = receiver
         }
         view.load(URLRequest(url: runtimeURL))

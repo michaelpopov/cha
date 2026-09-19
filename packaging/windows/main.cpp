@@ -1053,6 +1053,48 @@ private:
         return args->put_Response(response.Get());
     }
 
+    HRESULT handle_media_resource(
+        ICoreWebView2WebResourceRequestedEventArgs* args,
+        const std::wstring& uri) {
+        const std::wstring prefix = L"https://app.cha.local/media/";
+        const std::string id = cha::utf8_from_wide(uri.substr(prefix.size()));
+        const auto not_found = [&] {
+            return respond_with_bytes(
+                args, 404, L"Not Found",
+                L"Content-Type: text/plain; charset=utf-8\nCache-Control: no-store",
+                "not found");
+        };
+        if (id.empty() || id.find('/') != std::string::npos
+            || id.find('\\') != std::string::npos
+            || id.find("..") != std::string::npos
+            || runtime_ == nullptr || connection_id_.empty()) {
+            return not_found();
+        }
+        char* mime = nullptr;
+        void* bytes = nullptr;
+        uint64_t size = 0;
+        char* error = nullptr;
+        const int32_t ok = cha_runtime_read_resource(
+            runtime_, connection_id_.c_str(), id.c_str(),
+            &mime, &bytes, &size, &error);
+        cha_string_free(error);
+        if (ok == 0 || bytes == nullptr) {
+            cha_string_free(mime);
+            cha_bytes_free(bytes);
+            return not_found();
+        }
+        const std::string type = mime ? mime : "application/octet-stream";
+        const std::string body(
+            static_cast<const char*>(bytes),
+            static_cast<std::size_t>(size));
+        cha_string_free(mime);
+        cha_bytes_free(bytes);
+        const std::wstring headers =
+            L"Content-Type: " + wide_from_utf8(type)
+            + L"\nCache-Control: no-store";
+        return respond_with_bytes(args, 200, L"OK", headers, body);
+    }
+
     HRESULT install_feasibility_origin() {
         if (!assets_) {
             return E_INVALIDARG;
@@ -1119,6 +1161,9 @@ private:
         wchar_t* raw_uri = nullptr;
         if (FAILED(request->get_Uri(&raw_uri))) return S_OK;
         const std::wstring uri = take_com_string(raw_uri);
+        if (uri.rfind(L"https://app.cha.local/media/", 0) == 0) {
+            return handle_media_resource(args, uri);
+        }
         if (uri == L"https://app.cha.local/probe/audio") {
             const std::string wav = probe_wav_bytes();
             return respond_with_bytes(

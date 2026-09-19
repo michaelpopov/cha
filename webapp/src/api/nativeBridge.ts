@@ -8,7 +8,11 @@ import { isRecord } from './guards';
 export const nativeProtocolVersion = 1;
 
 export interface NativeBridge {
-  invoke<T>(method: string, params?: unknown): Promise<T>;
+  invoke<T>(
+    method: string,
+    params?: unknown,
+    options?: { signal?: AbortSignal; cancelMethod?: string },
+  ): Promise<T>;
   on<T>(event: string, handler: (payload: T) => void): () => void;
   dispose(): void;
   setContextEpoch(epoch: number): void;
@@ -170,7 +174,11 @@ export function createEnvelopeNativeBridge(options: {
     contextEpoch() {
       return epoch;
     },
-    invoke<T>(method: string, params?: unknown): Promise<T> {
+    invoke<T>(
+      method: string,
+      params?: unknown,
+      invokeOptions?: { signal?: AbortSignal; cancelMethod?: string },
+    ): Promise<T> {
       if (disposed) return Promise.reject(new ChaProtocolError());
       const id = nextId;
       nextId += 1;
@@ -183,9 +191,37 @@ export function createEnvelopeNativeBridge(options: {
       }
       // info/bootstrap ignore the value; 0 until the first bootstrap result.
       return new Promise<T>((resolve, reject) => {
+        const abort = () => {
+          const request = pending.get(id);
+          if (!request) return;
+          pending.delete(id);
+          if (invokeOptions?.cancelMethod) {
+            const cancelId = nextId;
+            nextId += 1;
+            options.post({
+              connection_id: options.connectionId,
+              id: cancelId,
+              context_epoch: epoch,
+              method: invokeOptions.cancelMethod,
+              params: { request_id: id },
+            });
+          }
+          reject(new DOMException('The operation was aborted.', 'AbortError'));
+        };
+        if (invokeOptions?.signal?.aborted) {
+          abort();
+          return;
+        }
+        invokeOptions?.signal?.addEventListener('abort', abort, { once: true });
         pending.set(id, {
-          resolve: (value) => resolve(value as T),
-          reject,
+          resolve: (value) => {
+            invokeOptions?.signal?.removeEventListener('abort', abort);
+            resolve(value as T);
+          },
+          reject: (error) => {
+            invokeOptions?.signal?.removeEventListener('abort', abort);
+            reject(error);
+          },
         });
         options.post({
           connection_id: options.connectionId,

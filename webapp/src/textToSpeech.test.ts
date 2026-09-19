@@ -220,6 +220,31 @@ describe('playback position', () => {
 });
 
 describe('text to speech', () => {
+  it('loads native speech through a local resource URL and releases it', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(new TextEncoder().encode('audio'), { headers: { 'Content-Type': 'audio/mpeg' } }),
+    );
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:native');
+    const play = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal('Audio', vi.fn(function Audio() {
+      return { addEventListener: vi.fn(), play, pause: vi.fn() };
+    }));
+    const release = vi.fn(async () => undefined);
+    const preview = vi.fn(async () => ({ url: '/media/r9', resource_id: 'r9' }));
+    const session = new TextToSpeechSession(
+      null, { elevenlabs_voice_id: 'voice', settings: {} }, 'Hello', vi.fn(),
+      undefined, undefined, undefined, { preview, release },
+    );
+    await session.play();
+    expect(preview).toHaveBeenCalledOnce();
+    expect(fetchMock).toHaveBeenCalledWith('/media/r9', expect.objectContaining({
+      cache: 'no-store',
+    }));
+    expect(play).toHaveBeenCalledOnce();
+    session.stop();
+    expect(release).toHaveBeenCalledWith('r9');
+  });
+
   it('fetches committed audio on every playback without a preview request and releases temporary audio', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response('audio'));
     const url = '/api/v1/forums/lobby/sessions/chat/entries/2/audio?vault_name=Personal';

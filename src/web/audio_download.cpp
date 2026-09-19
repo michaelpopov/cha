@@ -1,8 +1,8 @@
 #include "web/audio_download.h"
 #include "web/current_vault.h"
-#include "web/route_support.h"
 #include "session/not_found_error.h"
 #include "util/logging.h"
+#include "util/path_name.h"
 
 namespace cha::web {
 using namespace std::chrono_literals;
@@ -43,7 +43,8 @@ AudioDownloadManager::~AudioDownloadManager() {
     }
 }
 void AudioDownloadManager::check(const FullSessionId& session, const std::string& vault) const {
-    if (!is_valid_route_component(session.forum_id) || !is_valid_route_component(session.session_id)) {
+    if (!cha::is_url_safe_identifier(session.forum_id)
+        || !cha::is_url_safe_identifier(session.session_id)) {
         throw std::invalid_argument("Invalid session identity.");
     }
     if (vault != vault_.get().name) throw AudioDownloadError(409, "vault_changed", "The active vault changed.");

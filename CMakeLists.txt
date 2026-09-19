@@ -340,6 +340,10 @@ add_library(cha_app STATIC
     src/app/workspace_operations.cpp
     src/app/settings_operations.cpp
     src/app/session_output.cpp
+    src/app/media_resources.cpp
+    src/app/media_operations.cpp
+    src/web/fish_audio.cpp
+    src/web/audio_download.cpp
     src/web/browser_connection_state.cpp
     src/web/command_queue.cpp
     src/web/json.cpp
@@ -389,8 +393,7 @@ add_library(cha_web STATIC
     src/web/session_routes.cpp
     src/web/settings_routes.cpp
     src/web/vault_routes.cpp
-    src/web/fish_audio.cpp
-    src/web/audio_download.cpp
+    src/web/fish_audio_http.cpp
     src/web/audio_download_routes.cpp
     src/web/sse_stream.cpp
     src/web/sse_mailbox.cpp
@@ -533,6 +536,8 @@ if(BUILD_TESTING)
     add_executable(
         cha_app_tests
         tests/app/unit_application.cpp
+        tests/app/unit_media_resources.cpp
+        tests/app/unit_media_operations.cpp
         tests/app/unit_settings_operations.cpp
         tests/app/unit_vault_maintenance.cpp
         tests/app/unit_session_output.cpp

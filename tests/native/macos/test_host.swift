@@ -149,7 +149,7 @@ private final class NativeTestHost: NSObject, WKNavigationDelegate, WKUIDelegate
         view.navigationDelegate = self
         view.uiDelegate = self
         let receiver = ChaNativeBridgeReceiver(runtime: created)
-        receiver.attach(to: view)
+        receiver.attach(to: view, mediaHandler: built.1)
         nativeBridge = receiver
         webView = view
     }

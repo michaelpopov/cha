@@ -109,12 +109,40 @@ final class ChaNativeBridgeReceiver: NSObject, WKScriptMessageHandler {
         }
     }
 
-    func attach(to webView: WKWebView) {
+    func attach(to webView: WKWebView, mediaHandler: ChaAssetSchemeHandler? = nil) {
         self.webView = webView
         webView.configuration.userContentController.add(
             self, name: chaMessageHandlerName)
+        if let mediaHandler {
+            mediaHandler.readMedia = { [weak self] id in
+                self?.readMedia(id)
+            }
+        }
         installDeliveryCallback()
         prepareDocumentReplacement()
+    }
+
+    private func readMedia(_ resourceId: String) -> (type: String, body: Data)? {
+        guard let connectionId else { return nil }
+        var mime: UnsafeMutablePointer<CChar>?
+        var bytes: UnsafeMutableRawPointer?
+        var size: UInt64 = 0
+        var error: UnsafeMutablePointer<CChar>?
+        let ok = connectionId.withCString { connection in
+            resourceId.withCString { resource in
+                cha_runtime_read_resource(
+                    runtime, connection, resource, &mime, &bytes, &size, &error)
+            }
+        }
+        cha_string_free(error)
+        defer {
+            cha_string_free(mime)
+            cha_bytes_free(bytes)
+        }
+        guard ok != 0, let bytes else { return nil }
+        let type = mime.map { String(cString: $0) } ?? "application/octet-stream"
+        let body = Data(bytes: bytes, count: Int(size))
+        return (type, body)
     }
 
     func detach() {

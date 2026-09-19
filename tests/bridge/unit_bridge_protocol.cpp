@@ -37,6 +37,12 @@ TEST(BridgeProtocol, ParsesSubmitEnvelopeAndRejectsMalformedRequests) {
     EXPECT_EQ(method_from_name("openaiAuth.poll"), Method::openai_auth_poll);
     EXPECT_EQ(method_from_name("apiKey.replaceValue"), Method::api_key_replace_value);
     EXPECT_EQ(method_name(Method::voice_input_runtime), "voiceInput.runtime");
+    EXPECT_EQ(method_from_name("speech.start"), Method::speech_start);
+    EXPECT_EQ(method_from_name("audio.startBatch"), Method::audio_start_batch);
+    EXPECT_EQ(method_from_name("voiceInput.connect"), Method::voice_input_connect);
+    EXPECT_TRUE(is_control_method(Method::speech_cancel));
+    EXPECT_TRUE(is_control_method(Method::voice_input_cancel));
+    EXPECT_FALSE(is_control_method(Method::speech_start));
 
     const auto unknown_method = parse_request(
         nlohmann::json{

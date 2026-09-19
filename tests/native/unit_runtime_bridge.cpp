@@ -150,6 +150,35 @@ protected:
     std::uint64_t next_id_{1};
 };
 
+TEST_F(NativeRuntimeTest, RejectsUnknownAndUnownedMediaResources) {
+    char* mime = nullptr;
+    void* bytes = nullptr;
+    uint64_t size = 0;
+    char* error = nullptr;
+    EXPECT_EQ(
+        cha_runtime_read_resource(
+            runtime_, connection_.c_str(), "../secret",
+            &mime, &bytes, &size, &error),
+        0);
+    EXPECT_EQ(size, 0U);
+    cha_string_free(error);
+    cha_string_free(mime);
+    cha_bytes_free(bytes);
+
+    mime = nullptr;
+    bytes = nullptr;
+    size = 0;
+    error = nullptr;
+    EXPECT_EQ(
+        cha_runtime_read_resource(
+            runtime_, connection_.c_str(), "r1",
+            &mime, &bytes, &size, &error),
+        0);
+    cha_string_free(error);
+    cha_string_free(mime);
+    cha_bytes_free(bytes);
+}
+
 TEST_F(NativeRuntimeTest, StartsWithoutAListenerAndRunsFirstFlow) {
     auto info = call("bridge.info");
     ASSERT_TRUE(info["ok"]);

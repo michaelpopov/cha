@@ -553,6 +553,52 @@ void cha_runtime_handle_message(
     }
 }
 
+int32_t cha_runtime_read_resource(
+    ChaRuntime* runtime,
+    const char* connection_id,
+    const char* resource_id,
+    char** mime_type,
+    void** bytes,
+    uint64_t* size,
+    char** error) {
+    clear_error(error);
+    if (mime_type) *mime_type = nullptr;
+    if (bytes) *bytes = nullptr;
+    if (size) *size = 0;
+    if (!runtime || !runtime->native_application || !connection_id
+        || !resource_id || !mime_type || !bytes || !size) {
+        set_string(error, "That resource is not available.");
+        return 0;
+    }
+    try {
+        auto body = runtime->native_application->read_resource(
+            connection_id, resource_id);
+        if (!body) {
+            set_string(error, "That resource is not available.");
+            return 0;
+        }
+        set_string(mime_type, body->mime_type.c_str());
+        void* copy = std::malloc(body->body.size() ? body->body.size() : 1);
+        if (!copy) {
+            set_string(error, "That resource is not available.");
+            return 0;
+        }
+        if (!body->body.empty()) {
+            std::memcpy(copy, body->body.data(), body->body.size());
+        }
+        *bytes = copy;
+        *size = body->body.size();
+        return 1;
+    } catch (...) {
+        set_current_error(error);
+        return 0;
+    }
+}
+
+void cha_bytes_free(void* value) {
+    std::free(value);
+}
+
 void cha_runtime_request_shutdown(ChaRuntime* runtime) {
     if (!runtime) return;
     stop_pump(runtime);

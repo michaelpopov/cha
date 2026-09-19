@@ -73,9 +73,20 @@ const std::pair<Method, std::string_view> kMethods[] = {
     {Method::voice_input_get, "voiceInput.get"},
     {Method::voice_input_save, "voiceInput.save"},
     {Method::voice_input_runtime, "voiceInput.runtime"},
+    {Method::voice_input_connect, "voiceInput.connect"},
+    {Method::voice_input_cancel, "voiceInput.cancel"},
     {Method::voice_output_get, "voiceOutput.get"},
     {Method::voice_output_save, "voiceOutput.save"},
     {Method::voice_output_runtime, "voiceOutput.runtime"},
+    {Method::speech_start, "speech.start"},
+    {Method::speech_cancel, "speech.cancel"},
+    {Method::speech_release, "speech.release"},
+    {Method::audio_start, "audio.start"},
+    {Method::audio_start_batch, "audio.startBatch"},
+    {Method::audio_status, "audio.status"},
+    {Method::audio_source, "audio.source"},
+    {Method::audio_clear_cache, "audio.clearCache"},
+    {Method::audio_release, "audio.release"},
     {Method::api_key_list, "apiKey.list"},
     {Method::api_key_create, "apiKey.create"},
     {Method::api_key_rename, "apiKey.rename"},
@@ -115,7 +126,9 @@ ParseFailure invalid(std::string message, std::optional<std::uint64_t> id = {}) 
 
 bool is_control_method(Method method) noexcept {
     return method == Method::session_stop
-        || method == Method::session_unsubscribe;
+        || method == Method::session_unsubscribe
+        || method == Method::speech_cancel
+        || method == Method::voice_input_cancel;
 }
 
 bool requires_context_epoch(Method method) noexcept {

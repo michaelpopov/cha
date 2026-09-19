@@ -777,6 +777,59 @@ TEST_F(BridgeRouterTest, SlowProviderTestDoesNotStarveStop) {
     ack_delivery(*router_, connection_, *batch);
 }
 
+TEST_F(BridgeRouterTest, SpeechAndAudioMethodsUseOpaqueResources) {
+    MockHttpServer server({http_response("audio/mpeg", "AUDIO")});
+    server.start();
+    bootstrap_epoch();
+    const auto key = call("apiKey.create", {
+        {"display_name", "Fish"}, {"value", "fish-secret"},
+    });
+    ASSERT_TRUE(key["ok"]);
+    const auto voice = call("voice.create", {
+        {"display_name", "Narrator"},
+        {"description", "Test"},
+        {"elevenlabs_voice_id", "voice-ref"},
+    });
+    ASSERT_TRUE(voice["ok"]);
+    const auto saved = call("voiceOutput.save", {
+        {"url", "https://api.fish.audio/v1/tts"},
+        {"model", "s2.1-pro"},
+        {"api_key", key["result"]["id"]},
+        {"output_format", "mp3"},
+        {"default_voice", "Narrator"},
+    });
+    ASSERT_TRUE(saved["ok"]);
+    application_->set_speech_url_override(
+        "http://127.0.0.1:" + std::to_string(server.port()) + "/v1/tts");
+
+    const auto started = call("speech.start", {
+        {"text", "Hello"}, {"reference_id", "voice-ref"},
+    });
+    ASSERT_TRUE(started["ok"]) << started.dump();
+    EXPECT_TRUE(started["result"]["url"].get<std::string>().starts_with("/media/"));
+    const auto resource_id = started["result"]["resource_id"].get<std::string>();
+    const auto body = application_->read_resource(connection_, resource_id);
+    ASSERT_TRUE(body);
+    EXPECT_EQ(body->body, "AUDIO");
+
+    const auto released = call("speech.release", {{"resource_id", resource_id}});
+    EXPECT_TRUE(released["ok"]);
+    EXPECT_FALSE(application_->read_resource(connection_, resource_id));
+
+    const auto missing = call("audio.source", {
+        {"forum_id", "lobby"},
+        {"session_id", "welcome"},
+        {"entry_id", 1},
+        {"vault_name", "Test"},
+    });
+    EXPECT_FALSE(missing["ok"]);
+    EXPECT_EQ(missing["error"]["code"], "not_found");
+
+    const auto cancelled = call("speech.cancel", {{"request_id", 1}});
+    EXPECT_TRUE(cancelled["ok"]);
+    server.join();
+}
+
 TEST_F(BridgeRouterTest, StaleOauthCompletionDoesNotPublishAfterContextChange) {
     bootstrap_epoch();
     const auto old_epoch = epoch_;

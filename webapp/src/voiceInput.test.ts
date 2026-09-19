@@ -140,4 +140,60 @@ describe('voice input', () => {
     expect(stopped).toBe(true);
     expect(stopTrack).toHaveBeenCalled();
   });
+
+  it('uses a native connect callback instead of a credential-bearing fetch', async () => {
+    const stopTrack = vi.fn();
+    const audioTrack = { kind: 'audio', stop: stopTrack } as unknown as MediaStreamTrack;
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia: vi.fn(async () => ({
+        getAudioTracks: () => [audioTrack],
+        getTracks: () => [audioTrack],
+      })) },
+    });
+    class FakeDataChannel extends EventTarget {
+      readyState: RTCDataChannelState = 'connecting';
+      send() {}
+      open() {
+        this.readyState = 'open';
+        this.dispatchEvent(new Event('open'));
+      }
+      close() { this.readyState = 'closed'; }
+    }
+    const channel = new FakeDataChannel();
+    class FakePeerConnection extends EventTarget {
+      connectionState: RTCPeerConnectionState = 'new';
+      addTrack = vi.fn();
+      createDataChannel() { return channel as unknown as RTCDataChannel; }
+      async createOffer() {
+        return { type: 'offer', sdp: 'native offer' } as RTCSessionDescriptionInit;
+      }
+      async setLocalDescription() {}
+      async setRemoteDescription() { channel.open(); }
+      close() { this.connectionState = 'closed'; }
+    }
+    vi.stubGlobal('RTCPeerConnection', FakePeerConnection);
+    const fetcher = vi.fn();
+    vi.stubGlobal('fetch', fetcher);
+    const connect = vi.fn(async (sdp: string) => {
+      expect(sdp).toBe('native offer');
+      return 'native answer';
+    });
+    const session = await VoiceInputSession.start(
+      {
+        url: 'https://api.openai.com/v1/realtime',
+        apiKey: '',
+        model: 'gpt-4o-transcribe',
+        delay: 'low',
+        prompt: '',
+      },
+      () => {},
+      () => {},
+      connect,
+    );
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(connect).toHaveBeenCalledOnce();
+    session.cancel();
+    expect(stopTrack).toHaveBeenCalled();
+  });
 });

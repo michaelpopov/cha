@@ -1,7 +1,10 @@
 #pragma once
 
+#include "app/media_resources.h"
 #include "web/application_config.h"
+#include "web/audio_download.h"
 #include "web/command_queue.h"
+#include "web/fish_audio.h"
 #include "web/live_session_manager.h"
 #include "web/protocol.h"
 #include "web/r2_database_transfer.h"
@@ -33,7 +36,6 @@ class OpenAiOAuth;
 namespace cha::web {
 class CurrentVault;
 class SessionMirror;
-class AudioDownloadManager;
 
 struct VaultCreate {
     std::string display_name;
@@ -342,6 +344,66 @@ public:
     [[nodiscard]] std::optional<cha::web::VoiceOutputRuntime>
     get_voice_output_runtime(std::uint64_t epoch = 0);
 
+    [[nodiscard]] std::shared_ptr<OperationReply> start_speech(
+        std::string_view connection_id,
+        std::uint64_t request_id,
+        std::string text,
+        cha::web::FishAudioSynthesis synthesis,
+        std::uint64_t epoch = 0);
+    void cancel_speech(
+        std::string_view connection_id,
+        std::uint64_t request_id,
+        std::uint64_t epoch = 0);
+    void release_resource(
+        std::string_view connection_id,
+        std::string_view resource_id,
+        std::uint64_t epoch = 0);
+
+    [[nodiscard]] cha::web::AudioAcceptance start_audio(
+        std::string_view forum_id,
+        std::string_view session_id,
+        EntryId entry_id,
+        cha::web::AudioDownloadRequest request,
+        std::uint64_t epoch = 0);
+    [[nodiscard]] std::vector<cha::web::AudioAcceptance> start_audio_batch(
+        std::string_view forum_id,
+        std::string_view session_id,
+        cha::web::AudioDownloadBatchRequest request,
+        std::uint64_t epoch = 0);
+    [[nodiscard]] cha::web::AudioDownloadStatus audio_status(
+        std::string_view forum_id,
+        std::string_view session_id,
+        std::string_view vault_name,
+        std::uint64_t epoch = 0);
+    [[nodiscard]] MediaResource audio_source(
+        std::string_view connection_id,
+        std::string_view forum_id,
+        std::string_view session_id,
+        EntryId entry_id,
+        std::string_view vault_name,
+        std::uint64_t epoch = 0);
+    void clear_audio_cache(
+        std::string_view forum_id,
+        std::string_view session_id,
+        std::uint64_t epoch = 0);
+
+    [[nodiscard]] std::shared_ptr<OperationReply> connect_voice_input(
+        std::string_view connection_id,
+        std::uint64_t request_id,
+        std::string sdp,
+        std::vector<std::string> languages,
+        std::uint64_t epoch = 0);
+    void cancel_voice_input(
+        std::string_view connection_id,
+        std::uint64_t request_id,
+        std::uint64_t epoch = 0);
+
+    [[nodiscard]] std::optional<ResourceBytes> read_resource(
+        std::string_view connection_id,
+        std::string_view resource_id) const;
+    void release_connection_resources(std::string_view connection_id);
+    void set_speech_url_override(std::string url);
+
     [[nodiscard]] std::vector<cha::web::ApiKeyDetail> list_api_keys(
         std::uint64_t epoch = 0);
     [[nodiscard]] cha::web::ApiKeyDetail create_api_key(
@@ -429,6 +491,8 @@ public:
     [[nodiscard]] cha::WorkspaceConfigStore& store();
     [[nodiscard]] std::shared_ptr<cha::SessionRepository> sessions();
     [[nodiscard]] cha::web::LiveSessionManager& live_sessions();
+    [[nodiscard]] cha::web::AudioDownloadManager& audio_downloads();
+    [[nodiscard]] cha::web::FishAudioProxy& speech_proxy();
     [[nodiscard]] cha::Providers& providers();
     [[nodiscard]] cha::ApiKeyStore& api_keys();
     [[nodiscard]] cha::OpenAiOAuth& openai_auth();
