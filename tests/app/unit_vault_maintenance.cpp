@@ -441,12 +441,8 @@ TEST(ApplicationVault, ContextCheckDoesNotWaitForMaintenanceLifecycleLock) {
     EXPECT_EQ(switching.get().state, ApplicationState::running);
 }
 
-TEST(ApplicationVault, SubscriptionCompletionCanLookupWhileMaintenanceDrainsItsActor) {
+TEST(ApplicationVault, SubscriptionCompletionCarriesItsEndpoint) {
     TwoVaults pair;
-    pair.workspace_a.add_character("writer", "Writer");
-    const auto member = pair.workspace_a.root() / "forums/lobby/members/writer";
-    std::filesystem::create_directories(member);
-    std::ofstream(member / "character.toml") << "# member\n";
     (void)test::import_test_database(pair.workspace_a.root(), pair.database_a);
     pair.command.test_shutdown_grace_ms = 1500;
     auto application = Application::open(pair.command);
@@ -455,51 +451,69 @@ TEST(ApplicationVault, SubscriptionCompletionCanLookupWhileMaintenanceDrainsItsA
     ASSERT_TRUE(std::holds_alternative<cha::web::OpenSessionSuccess>(
         application->open_session("lobby", created.id, epoch)));
 
-    // Block persistence of the preceding owner command so the subscribe callback
-    // is installed before the owner can complete it, rather than on this thread.
+    const auto result = application->subscribe(
+        "lobby",
+        created.id,
+        cha::web::SubscribeCommand{"view", epoch, "sub"},
+        epoch);
+    const auto* subscribed = std::get_if<cha::web::SubscribeResult>(&result);
+    ASSERT_NE(subscribed, nullptr);
+    EXPECT_TRUE(subscribed->session);
+
+    auto switching = std::async(std::launch::async, [&] {
+        return application->switch_vault("B", {}, epoch);
+    });
+    EXPECT_NO_THROW(EXPECT_EQ(switching.get().state, ApplicationState::running));
+    application->request_shutdown();
+    EXPECT_TRUE(application->join_shutdown(2s));
+}
+
+TEST(ApplicationVault, MaintenanceTimeoutRecoversWhileTheRuntimeRemainsBlocked) {
+    TwoVaults pair;
+    pair.workspace_a.add_character("writer", "Writer");
+    const auto member = pair.workspace_a.root() / "forums/lobby/members/writer";
+    std::filesystem::create_directories(member);
+    std::ofstream(member / "character.toml") << "# member\n";
+    (void)test::import_test_database(pair.workspace_a.root(), pair.database_a);
+    pair.command.test_shutdown_grace_ms = 50;
+    auto application = Application::open(pair.command);
+    const auto epoch = application->context_epoch();
+    const auto created = application->create_session("lobby", "Blocked runtime", epoch);
+    ASSERT_TRUE(std::holds_alternative<cha::web::OpenSessionSuccess>(
+        application->open_session("lobby", created.id, epoch)));
+
+    // Persistence of this accepted command blocks the runtime ahead of the
+    // maintenance reservation, without taking the application lifecycle lock.
     std::optional<WorkspaceConfigStore::MaintenanceGuard> edit_lock(
         application->store().reserve_maintenance());
     const auto changing = application->submit_async(
         "lobby", created.id, cha::web::SetDefaultCharacterCommand{"writer"}, epoch);
     ASSERT_TRUE(std::holds_alternative<std::shared_ptr<cha::web::CommandReply>>(changing));
-    const auto subscribing = application->submit_async(
-        "lobby", created.id, cha::web::SubscribeCommand{"view", epoch, "sub"}, epoch);
-    ASSERT_TRUE(std::holds_alternative<std::shared_ptr<cha::web::CommandReply>>(subscribing));
-    const auto reply = std::get<std::shared_ptr<cha::web::CommandReply>>(subscribing);
-    std::promise<void> entered;
-    std::promise<void> release;
-    std::promise<void> looked_up;
-    auto entered_future = entered.get_future();
-    auto release_future = release.get_future().share();
-    auto looked_up_future = looked_up.get_future();
-    reply->set_ready_callback([&] {
-        entered.set_value();
-        release_future.wait();
-        (void)application->subscription_handle("lobby", created.id);
-        looked_up.set_value();
-    });
-    edit_lock.reset();
-    const auto callback_status = entered_future.wait_for(2s);
-
     auto switching = std::async(std::launch::async, [&] {
-        return application->switch_vault("B", {}, epoch);
+        try {
+            (void)application->switch_vault("B", {}, epoch);
+            return false;
+        } catch (const std::runtime_error&) {
+            return true;
+        }
     });
-    const auto deadline = std::chrono::steady_clock::now() + 1s;
-    while (application->state() != ApplicationState::maintenance
-           && std::chrono::steady_clock::now() < deadline) {
-        std::this_thread::yield();
-    }
-    const auto state_during_callback = application->state();
-    release.set_value();
-    const auto lookup_status = looked_up_future.wait_for(500ms);
-    EXPECT_NO_THROW(EXPECT_EQ(switching.get().state, ApplicationState::running));
-    application->request_shutdown();
-    EXPECT_TRUE(application->join_shutdown(2s));
-    EXPECT_EQ(callback_status, std::future_status::ready);
-    EXPECT_EQ(state_during_callback, ApplicationState::maintenance);
-    EXPECT_EQ(lookup_status, std::future_status::ready);
-    ASSERT_TRUE(reply->peek());
-    EXPECT_TRUE(std::holds_alternative<cha::web::SubscribeResult>(*reply->peek()));
+    const auto status = switching.wait_for(500ms);
+    const auto recovered_state = application->state();
+    const auto recovered_epoch = application->context_epoch();
+    edit_lock.reset();
+
+    EXPECT_EQ(status, std::future_status::ready);
+    EXPECT_TRUE(switching.get());
+    EXPECT_EQ(recovered_state, ApplicationState::running);
+    EXPECT_GT(recovered_epoch, epoch);
+    EXPECT_EQ(application->current_vault().get().name, "A");
+    EXPECT_EQ(application->check_context(epoch), ErrorCode::vault_changed);
+    const auto& reply = std::get<std::shared_ptr<cha::web::CommandReply>>(changing);
+    ASSERT_TRUE(reply->wait_for(2s));
+    EXPECT_TRUE(std::holds_alternative<cha::web::SessionSnapshot>(
+        application->snapshot("lobby", created.id, application->context_epoch())));
+    EXPECT_EQ(application->switch_vault("B", {}, application->context_epoch()).state,
+        ApplicationState::running);
 }
 
 TEST(ApplicationVault, MaintenanceCompletionDoesNotUndoShutdown) {

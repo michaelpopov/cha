@@ -18,6 +18,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -79,6 +80,25 @@ bool wait_for_finished(
         std::this_thread::sleep_for(1ms);
     }
     return session->lifecycle() == LiveSessionState::finished;
+}
+
+std::optional<MaintenanceFailure> reserve_and_release(
+    LiveSessionManager& manager,
+    const FullSessionId& key,
+    bool global,
+    std::chrono::milliseconds deadline) {
+    if (global) {
+        auto result = manager.reserve_global_maintenance(deadline);
+        if (const auto* failure = std::get_if<MaintenanceFailure>(&result)) {
+            return *failure;
+        }
+    } else {
+        auto result = manager.reserve_for_deletion(key, deadline);
+        if (const auto* failure = std::get_if<MaintenanceFailure>(&result)) {
+            return *failure;
+        }
+    }
+    return std::nullopt;
 }
 
 // Holds one actor's owner thread inside SessionController::shutdown() by
@@ -272,50 +292,24 @@ TEST(LiveSessionManager, WelcomeReopensOnlyFromTheSameStorageWithItsForumPersona
 }
 
 TEST(LiveSessionManager, LimitHasStableError) {
-    std::mutex mutex;
-    std::condition_variable entered;
-    bool release{};
-    bool started{};
     SessionFiles limit_files;
-    LiveSessionManager limit(
-        manager_settings(1),
-        [&](const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier) {
-            {
-                std::unique_lock lock(mutex);
-                started = true;
-                entered.notify_all();
-                entered.wait(lock, [&] { return release; });
-            }
-            return test::open_test_session(
-                identity, limit_files.path_for(identity), notifier);
-        });
-    std::thread opener([&] { (void)limit.open({"f", "one"}, 5s); });
-    {
-        std::unique_lock lock(mutex);
-        ASSERT_TRUE(entered.wait_for(lock, 2s, [&] { return started; }));
-    }
+    LiveSessionManager limit(manager_settings(1), test_opener(limit_files));
+    ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(
+        limit.open({"f", "one"}, 5s)));
     EXPECT_EQ(
         failure_of(limit.open({"f", "two"}, 10ms)),
         LiveSessionOpenFailure::limit_reached);
-    {
-        std::lock_guard lock(mutex);
-        release = true;
-    }
-    entered.notify_all();
-    opener.join();
     limit.begin_shutdown();
 }
 
-TEST(LiveSessionManager, SimultaneousDistinctOpensNeverExceedLimit) {
+TEST(LiveSessionManager, SimultaneousDistinctOpensAreSerializedAndRespectLimit) {
     constexpr int request_count = 32;
     constexpr int session_limit = 4;
     SessionFiles files;
     std::mutex mutex;
-    std::condition_variable changed;
     int active{};
     int peak{};
     int started{};
-    bool release{};
     LiveSessionManager manager(
         manager_settings(session_limit),
         [&](const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier) {
@@ -324,8 +318,10 @@ TEST(LiveSessionManager, SimultaneousDistinctOpensNeverExceedLimit) {
                 ++active;
                 ++started;
                 peak = std::max(peak, active);
-                changed.notify_all();
-                changed.wait(lock, [&] { return release; });
+            }
+            std::this_thread::sleep_for(1ms);
+            {
+                std::lock_guard lock(mutex);
                 --active;
             }
             return test::open_test_session(
@@ -344,17 +340,6 @@ TEST(LiveSessionManager, SimultaneousDistinctOpensNeverExceedLimit) {
     }
     start_all.set_value();
 
-    bool filled_limit = false;
-    {
-        std::unique_lock lock(mutex);
-        filled_limit = changed.wait_for(lock, 5s, [&] {
-            return started == session_limit;
-        });
-        release = true;
-    }
-    changed.notify_all();
-    EXPECT_TRUE(filled_limit);
-
     int successes{};
     int rejected{};
     for (auto& open : opens) {
@@ -362,14 +347,16 @@ TEST(LiveSessionManager, SimultaneousDistinctOpensNeverExceedLimit) {
         if (std::holds_alternative<LiveSessionReady>(result)) {
             ++successes;
         } else {
-            EXPECT_EQ(failure_of(result), LiveSessionOpenFailure::limit_reached);
+            const auto failure = failure_of(result);
+            EXPECT_TRUE(failure == LiveSessionOpenFailure::limit_reached
+                || failure == LiveSessionOpenFailure::open_timeout);
             ++rejected;
         }
     }
     EXPECT_EQ(successes, session_limit);
     EXPECT_EQ(rejected, request_count - session_limit);
     EXPECT_EQ(started, session_limit);
-    EXPECT_EQ(peak, session_limit);
+    EXPECT_EQ(peak, 1);
     manager.begin_shutdown();
 }
 
@@ -399,8 +386,6 @@ TEST(LiveSessionManager, ConcurrentSameKeyOpensShareOneOwnerAndOutcome) {
         std::unique_lock lock(mutex);
         ASSERT_TRUE(changed.wait_for(lock, 2s, [&] { return entered; }));
     }
-    // A starting actor is not yet reachable through lookup.
-    EXPECT_FALSE(manager.lookup(key));
     auto second = std::async(std::launch::async, [&] { return manager.open(key, 10s); });
     {
         std::lock_guard lock(mutex);
@@ -413,11 +398,12 @@ TEST(LiveSessionManager, ConcurrentSameKeyOpensShareOneOwnerAndOutcome) {
     manager.begin_shutdown();
 }
 
-TEST(LiveSessionManager, ConcurrentDifferentKeyOpensProceedIndependently) {
+TEST(LiveSessionManager, ConcurrentDifferentKeyOpensAreSerialized) {
     SessionFiles files;
     std::mutex mutex;
     std::condition_variable changed;
     int entered{};
+    bool release_first{};
     LiveSessionManager manager(
         manager_settings(2),
         [&](const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier) {
@@ -425,21 +411,29 @@ TEST(LiveSessionManager, ConcurrentDifferentKeyOpensProceedIndependently) {
                 std::unique_lock lock(mutex);
                 ++entered;
                 changed.notify_all();
-                changed.wait(lock, [&] { return entered == 2; });
-                changed.notify_all();
+                if (identity.session_id == "one") {
+                    changed.wait(lock, [&] { return release_first; });
+                }
             }
             return test::open_test_session(
                 identity, files.path_for(identity), notifier);
-        });
+    });
     auto first = std::async(std::launch::async, [&] { return manager.open({"f", "one"}, 10s); });
-    auto second = std::async(std::launch::async, [&] { return manager.open({"f", "two"}, 10s); });
     {
         std::unique_lock lock(mutex);
-        ASSERT_TRUE(changed.wait_for(lock, 2s, [&] { return entered == 2; }));
-        changed.notify_all();
+        ASSERT_TRUE(changed.wait_for(lock, 2s, [&] { return entered == 1; }));
     }
+    auto second = std::async(std::launch::async, [&] { return manager.open({"f", "two"}, 10s); });
+    EXPECT_EQ(second.wait_for(20ms), std::future_status::timeout);
+    {
+        std::lock_guard lock(mutex);
+        EXPECT_EQ(entered, 1);
+        release_first = true;
+    }
+    changed.notify_all();
     EXPECT_TRUE(std::holds_alternative<LiveSessionReady>(first.get()));
     EXPECT_TRUE(std::holds_alternative<LiveSessionReady>(second.get()));
+    EXPECT_EQ(entered, 2);
     manager.begin_shutdown();
 }
 
@@ -548,7 +542,7 @@ TEST(LiveSessionManager, StoppingActorRejectsOpenConsumesCapacityAndLateHandleSt
     EXPECT_EQ(failure_of(manager.open(key, 10ms)), LiveSessionOpenFailure::stopping);
     EXPECT_EQ(
         failure_of(manager.open({"f", "other"}, 10ms)),
-        LiveSessionOpenFailure::limit_reached);
+        LiveSessionOpenFailure::open_timeout);
 
     wedged.release();
     ASSERT_TRUE(wait_for_finished(session));
@@ -585,10 +579,14 @@ TEST(LiveSessionManager, ShutdownExposesUnfinishedOwnersWithoutCompletingStartup
         std::unique_lock lock(mutex);
         ASSERT_TRUE(changed.wait_for(lock, 2s, [&] { return entered; }));
     }
+    auto snapshot = std::async(std::launch::async, [&] { return manager.snapshot(); });
+    ASSERT_EQ(snapshot.wait_for(20ms), std::future_status::timeout);
     manager.begin_shutdown();
     EXPECT_EQ(manager.unfinished_owners(), std::vector<FullSessionId>{key});
     ASSERT_EQ(waiter.wait_for(2s), std::future_status::ready);
     EXPECT_EQ(failure_of(waiter.get()), LiveSessionOpenFailure::manager_stopping);
+    ASSERT_EQ(snapshot.wait_for(2s), std::future_status::ready);
+    EXPECT_EQ(snapshot.get().live_session_count, 0U);
     {
         std::lock_guard lock(mutex);
         release = true;
@@ -766,6 +764,167 @@ TEST(LiveSessionManager, GlobalMaintenanceReleasesActorsAndResumesAdmission) {
 
     EXPECT_TRUE(std::holds_alternative<LiveSessionReady>(manager.open(key, 5s)));
     manager.begin_shutdown();
+}
+
+TEST(LiveSessionManager, MaintenanceDeadlinesIncludeAdmissionAndQueueWait) {
+    for (const bool global : {false, true}) {
+        for (const bool full_queue : {false, true}) {
+            SCOPED_TRACE(global ? "global" : "deletion");
+            SCOPED_TRACE(full_queue ? "full queue" : "queued admission");
+            SessionFiles files;
+            std::promise<void> entered;
+            std::promise<void> release;
+            auto entered_future = entered.get_future();
+            auto released = release.get_future().share();
+            auto settings = manager_settings(2);
+            settings.command_queue_capacity = 1;
+            const FullSessionId selected{"forum", "selected"};
+            const FullSessionId blocked{"forum", "blocked"};
+            LiveSessionManager manager(settings, [&](
+                                           const FullSessionId& identity,
+                                           std::shared_ptr<WakeNotifier> notifier) {
+                if (identity == blocked) {
+                    entered.set_value();
+                    released.wait();
+                }
+                return test::open_test_session(identity, files.path_for(identity), notifier);
+            });
+            ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(manager.select(selected, 2s)));
+            const auto session = manager.lookup(selected);
+            ASSERT_TRUE(session);
+            auto opening = std::async(std::launch::async, [&] {
+                return manager.open(blocked, 2s);
+            });
+            const auto entered_status = entered_future.wait_for(2s);
+            if (entered_status != std::future_status::ready) release.set_value();
+            ASSERT_EQ(entered_status, std::future_status::ready);
+            if (full_queue) {
+                EXPECT_TRUE(std::holds_alternative<std::shared_ptr<CommandReply>>(
+                    session->enqueue(SnapshotCommand{})));
+            }
+            auto reserving = std::async(std::launch::async, [&] {
+                return reserve_and_release(manager, selected, global, 20ms);
+            });
+            const auto status = reserving.wait_for(500ms);
+            release.set_value();
+            EXPECT_EQ(status, std::future_status::ready);
+            EXPECT_EQ(reserving.get(), MaintenanceFailure::stopping);
+            ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(opening.get()));
+
+            // The timed-out command must not stop either session later or
+            // leave a reservation that prevents another maintenance attempt.
+            EXPECT_EQ(manager.lookup(selected), session);
+            EXPECT_EQ(manager.selected(), selected);
+            EXPECT_TRUE(manager.lookup(blocked));
+            EXPECT_FALSE(reserve_and_release(manager, selected, global, 2s));
+            EXPECT_TRUE(std::holds_alternative<LiveSessionReady>(manager.select(selected, 2s)));
+        }
+    }
+}
+
+TEST(LiveSessionManager, MaintenanceTimeoutCleanupDoesNotWaitForQueueCapacity) {
+    for (const bool global : {false, true}) {
+        SCOPED_TRACE(global ? "global" : "deletion");
+        SessionFiles files;
+        std::promise<void> entered;
+        std::promise<void> release;
+        auto entered_future = entered.get_future();
+        auto released = release.get_future().share();
+        std::atomic<bool> block_snapshot{};
+        auto settings = manager_settings(2);
+        settings.command_queue_capacity = 1;
+        LiveSessionManager manager(settings, [&](
+                                       const FullSessionId& identity,
+                                       std::shared_ptr<WakeNotifier> notifier) {
+            auto opened = test::open_test_session(identity, files.path_for(identity), notifier);
+            opened.cached_audio_entries = [&] {
+                if (block_snapshot.exchange(false)) {
+                    entered.set_value();
+                    released.wait();
+                }
+                return std::set<EntryId>{};
+            };
+            return opened;
+        });
+        const FullSessionId key{"forum", "draining"};
+        ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(manager.select(key, 2s)));
+        const auto session = manager.lookup(key);
+        ASSERT_TRUE(session);
+        ASSERT_TRUE(std::holds_alternative<SubscribeResult>(
+            session->subscribe({"view", 1, "sub"}, 2s)));
+        block_snapshot.store(true);
+        auto reserving = std::async(std::launch::async, [&] {
+            return reserve_and_release(manager, key, global, 100ms);
+        });
+        const auto entered_status = entered_future.wait_for(2s);
+        if (entered_status == std::future_status::ready) {
+            // This accepted open fills the only queue slot while terminal
+            // snapshot construction holds the runtime inside retirement.
+            EXPECT_EQ(failure_of(manager.open({"forum", "queued"}, 0ms)),
+                LiveSessionOpenFailure::open_timeout);
+        }
+        const auto status = reserving.wait_for(500ms);
+        release.set_value();
+        EXPECT_EQ(entered_status, std::future_status::ready);
+        EXPECT_EQ(status, std::future_status::ready);
+        EXPECT_EQ(reserving.get(), MaintenanceFailure::stopping);
+        EXPECT_TRUE(std::holds_alternative<LiveSessionReady>(manager.select(key, 2s)));
+        EXPECT_FALSE(reserve_and_release(manager, key, global, 2s));
+    }
+}
+
+TEST(LiveSessionManager, ContextPublicationDoesNotWaitAndRejectsOldQueuedWork) {
+    SessionFiles files;
+    std::promise<void> entered;
+    std::promise<void> release;
+    auto entered_future = entered.get_future();
+    auto released = release.get_future().share();
+    const FullSessionId selected{"forum", "selected"};
+    const FullSessionId blocked{"forum", "blocked"};
+    LiveSessionManager manager(manager_settings(3), [&](
+                                   const FullSessionId& identity,
+                                   std::shared_ptr<WakeNotifier> notifier) {
+        if (identity == blocked) {
+            entered.set_value();
+            released.wait();
+        }
+        return test::open_test_session(identity, files.path_for(identity), notifier);
+    });
+    ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(manager.select(selected, 2s)));
+    const auto session = manager.lookup(selected);
+    ASSERT_TRUE(session);
+    const auto epoch = manager.context_epoch();
+    auto opening = std::async(std::launch::async, [&] {
+        return manager.select(blocked, 2s);
+    });
+    const auto entered_status = entered_future.wait_for(2s);
+    if (entered_status != std::future_status::ready) release.set_value();
+    ASSERT_EQ(entered_status, std::future_status::ready);
+    const auto queued = session->enqueue(RenameSessionCommand{"Old context"});
+    auto selecting = std::async(std::launch::async, [&] {
+        return manager.select({"forum", "queued"}, 2s);
+    });
+    EXPECT_EQ(selecting.wait_for(20ms), std::future_status::timeout);
+    auto publishing = std::async(std::launch::async, [&] {
+        return manager.bump_context_epoch();
+    });
+    const auto status = publishing.wait_for(500ms);
+    release.set_value();
+    EXPECT_EQ(status, std::future_status::ready);
+    EXPECT_EQ(publishing.get(), epoch + 1);
+    EXPECT_EQ(failure_of(opening.get()), LiveSessionOpenFailure::manager_stopping);
+    EXPECT_EQ(failure_of(selecting.get()), LiveSessionOpenFailure::manager_stopping);
+    ASSERT_TRUE(std::holds_alternative<std::shared_ptr<CommandReply>>(queued));
+    const auto reply = std::get<std::shared_ptr<CommandReply>>(queued)->wait_for(2s);
+    ASSERT_TRUE(reply);
+    ASSERT_TRUE(std::holds_alternative<ErrorCode>(*reply));
+    EXPECT_EQ(std::get<ErrorCode>(*reply), ErrorCode::vault_changed);
+    EXPECT_EQ(manager.selected(), selected);
+    EXPECT_FALSE(manager.lookup(selected, epoch));
+    EXPECT_EQ(manager.lookup(selected, epoch + 1), session);
+    EXPECT_EQ(read_session_database_metadata(files.path_for(selected)).label, "Test session");
+    EXPECT_TRUE(std::holds_alternative<SessionLabelResult>(
+        session->submit(RenameSessionCommand{"New context"}, 2s)));
 }
 
 } // namespace

@@ -2,15 +2,13 @@
 
 #include "web/live_session.h"
 
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
-#include <map>
 #include <memory>
-#include <mutex>
 #include <optional>
-#include <set>
 #include <variant>
 #include <vector>
 
@@ -18,12 +16,8 @@ namespace cha::web {
 
 class LiveSessionManager;
 
-// A route retains the live actor itself; there is no wrapper whose only
-// operation is to hand out the thing inside it.
 using LiveSessionHandle = std::shared_ptr<LiveSession>;
 
-// Manager results describe owner lifecycle only. HTTP paths and error
-// envelopes are constructed at the route boundary.
 struct LiveSessionReady {};
 
 enum class LiveSessionOpenFailure {
@@ -59,11 +53,11 @@ private:
     friend class LiveSessionManager;
     LiveSessionMaintenanceReservation(
         LiveSessionManager& manager,
-        FullSessionId identity);
+        std::shared_ptr<std::atomic_bool> active);
     void release() noexcept;
 
     LiveSessionManager* manager_{};
-    FullSessionId identity_;
+    std::shared_ptr<std::atomic_bool> active_;
 };
 
 class LiveSessionGlobalMaintenance {
@@ -78,10 +72,13 @@ public:
 
 private:
     friend class LiveSessionManager;
-    explicit LiveSessionGlobalMaintenance(LiveSessionManager& manager);
+    LiveSessionGlobalMaintenance(
+        LiveSessionManager& manager,
+        std::shared_ptr<std::atomic_bool> active);
     void release() noexcept;
 
     LiveSessionManager* manager_{};
+    std::shared_ptr<std::atomic_bool> active_;
 };
 
 using MaintenanceReservationResult = std::variant<
@@ -91,15 +88,9 @@ using GlobalMaintenanceResult = std::variant<
     LiveSessionGlobalMaintenance,
     MaintenanceFailure>;
 
-// The process-wide collection of live actors, and the sole authority for
-// in-process session liveness. It owns no storage or workspace knowledge: the
-// supplied opener constructs one session, and production passes a lambda
-// calling open_session(). Routes validate URL components before entering it.
-//
-// The manager coordinates the collection; each mapped LiveSession owns its own
-// thread, controller, and lifecycle. No actor ever calls back into here, so
-// the lock relationship is one-way: the manager may take an actor's short
-// lifecycle lock, never the reverse.
+// Compatibility facade around the one process-wide SessionRuntime. The
+// runtime thread is the sole owner of controllers, the live map, selection,
+// event processing, and retirement decisions.
 class LiveSessionManager {
 public:
     LiveSessionManager(
@@ -113,90 +104,39 @@ public:
     [[nodiscard]] LiveSessionOpenResult open(
         FullSessionId key,
         std::chrono::milliseconds deadline);
-    // Native single-window selection: opens the actor, keeps it across reload,
-    // and retires the previous selected actor once it is idle. HTTP open()
-    // does not change selection, so concurrent HTTP sessions stay unchanged.
     [[nodiscard]] LiveSessionOpenResult select(
         FullSessionId key,
         std::chrono::milliseconds deadline);
     [[nodiscard]] std::optional<FullSessionId> selected() const;
     void close_session(const FullSessionId& key, std::uint64_t epoch = 0);
     [[nodiscard]] std::uint64_t context_epoch() const;
-    // Invalidates subscriptions and old-context work. The application gate
-    // publishes the returned epoch after a safe reopen.
     std::uint64_t bump_context_epoch();
-    // Answers reattach and shutdown cases entirely from manager state. An
-    // empty result means the caller must validate storage before open().
     [[nodiscard]] std::optional<LiveSessionOpenResult> try_reattach(
         const FullSessionId& key);
     [[nodiscard]] LiveSessionHandle lookup(
-        const FullSessionId& key, std::uint64_t epoch = 0);
-    // A point-in-time view for lobby listings and health. Starting and
-    // stopping actors count against the bound but only running actors are
-    // returned as reattachable sessions.
+        const FullSessionId& key,
+        std::uint64_t epoch = 0);
     [[nodiscard]] LiveSessionManagerSnapshot snapshot();
-    // Every actor a workspace change could still reach: those already running,
-    // and those still opening. A starting actor may already have read its
-    // definitions, so leaving it out could let it come up on settings that were
-    // overwritten while it opened.
-    //
-    // It hands back the actors themselves rather than their identities because
-    // both of the ordinary ways to reach one -- snapshot()'s running_sessions
-    // and lookup() -- deliberately admit only Running actors, so an identity
-    // returned here could not be resolved back into anything to act on.
-    // Retaining the handles also keeps each actor alive for the caller's use.
     [[nodiscard]] std::vector<LiveSessionHandle> active_sessions();
-    // Reserves one identity against open/reattach and waits for any actor to
-    // finish, releasing its lease. Filesystem work happens only after this
-    // returns and therefore never under the manager mutex.
     [[nodiscard]] MaintenanceReservationResult reserve_for_deletion(
         const FullSessionId& key,
         std::chrono::milliseconds deadline);
-    // Temporarily rejects new live-session work, asks every actor to release
-    // its journal connection, and waits for all of them under one deadline.
-    // Destroying the returned reservation resumes normal admission.
     [[nodiscard]] GlobalMaintenanceResult reserve_global_maintenance(
         std::chrono::milliseconds deadline);
 
-    // Begins process shutdown without writing startup results. The optional
-    // callback runs after the stopping flag is published but before open
-    // waiters are woken and live actors are asked to stop. The process
-    // coordinator uses that point to stop HTTP acceptance in the documented
-    // order.
     void begin_shutdown(const std::function<void()>& stop_accepting = {});
-    // Returns the identities whose owner threads have not yet published
-    // Finished. The process-shutdown coordinator uses this after its bounded
-    // grace period to report owners it cannot safely join.
     [[nodiscard]] std::vector<FullSessionId> unfinished_owners();
-    // Waits under one process-wide deadline for every owner to finish, then
-    // reaps them outside this mutex. False leaves the stuck owners untouched
-    // for the process coordinator to report before it takes the no-destructor
-    // exit path.
     [[nodiscard]] bool join_shutdown(std::chrono::milliseconds grace);
+    // Kept as a harmless compatibility operation; retirement is immediate on
+    // the runtime thread, so there are no finished owner threads to reap.
     void sweep();
 
 private:
     friend class LiveSessionMaintenanceReservation;
     friend class LiveSessionGlobalMaintenance;
-    using RetiredSessions = std::vector<LiveSessionHandle>;
+    void release_maintenance(const std::shared_ptr<std::atomic_bool>& active) noexcept;
 
-    [[nodiscard]] RetiredSessions sweep_locked();
-    static void reap(RetiredSessions retired);
-    void release_maintenance(const FullSessionId& key) noexcept;
-    void release_global_maintenance() noexcept;
-    void request_retire_locked(const FullSessionId& key);
-
-    cha::app::RuntimeSettings settings_;
-    SessionOpener opener_;
-    LiveSessionClock clock_;
-    std::mutex select_mutex_;
-    mutable std::mutex mutex_;
-    std::map<FullSessionId, LiveSessionHandle, std::less<>> sessions_;
-    std::set<FullSessionId, std::less<>> maintenance_;
-    std::optional<FullSessionId> selected_;
-    std::uint64_t context_epoch_{1};
-    bool global_maintenance_{};
-    bool stopping_{};
+    std::shared_ptr<SessionRuntime> runtime_;
 };
 
 } // namespace cha::web

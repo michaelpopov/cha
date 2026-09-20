@@ -7,7 +7,9 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <condition_variable>
 #include <filesystem>
+#include <future>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -67,23 +69,58 @@ bool wait_finished(
 
 TEST(SessionRetirement, VisitsMoreIdleSessionsThanTheActorLimit) {
     SessionFiles files;
-    LiveSessionManager manager(native_manager_settings(2), test_opener(files));
+    std::mutex mutex;
+    std::condition_variable changed;
+    bool b_entered{};
+    bool release_b{};
+    bool a_finished_when_c_opened{};
+    LiveSessionHandle first;
     const FullSessionId a{"forum", "a"};
     const FullSessionId b{"forum", "b"};
     const FullSessionId c{"forum", "c"};
+    LiveSessionManager manager(
+        native_manager_settings(2),
+        [&](const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier) {
+            if (identity == b) {
+                std::unique_lock lock(mutex);
+                b_entered = true;
+                changed.notify_all();
+                changed.wait(lock, [&] { return release_b; });
+            } else if (identity == c) {
+                a_finished_when_c_opened = first
+                    && first->lifecycle() == LiveSessionState::finished;
+            }
+            return test::open_test_session(
+                identity, files.path_for(identity), notifier);
+        });
 
     ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(manager.select(a, 2s)));
-    ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(manager.select(b, 2s)));
-    EXPECT_EQ(manager.selected(), b);
-
-    const LiveSessionHandle first = manager.lookup(a);
+    first = manager.lookup(a);
     ASSERT_TRUE(first);
-    EXPECT_TRUE(wait_finished(first));
+    auto selecting_b = std::async(std::launch::async, [&] {
+        return manager.select(b, 2s);
+    });
+    {
+        std::unique_lock lock(mutex);
+        ASSERT_TRUE(changed.wait_for(lock, 2s, [&] { return b_entered; }));
+    }
+    auto selecting_c = std::async(std::launch::async, [&] {
+        return manager.select(c, 2s);
+    });
+    EXPECT_EQ(selecting_c.wait_for(20ms), std::future_status::timeout);
+    {
+        std::lock_guard lock(mutex);
+        release_b = true;
+    }
+    changed.notify_all();
 
-    ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(manager.select(c, 2s)));
+    ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(selecting_b.get()));
+    ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(selecting_c.get()));
+    EXPECT_TRUE(a_finished_when_c_opened);
+    EXPECT_EQ(first->lifecycle(), LiveSessionState::finished);
     EXPECT_EQ(manager.selected(), c);
     EXPECT_FALSE(manager.lookup(a));
-    EXPECT_EQ(manager.snapshot().live_session_count, 2U);
+    EXPECT_EQ(manager.snapshot().live_session_count, 1U);
 }
 
 TEST(SessionRetirement, FailedOpenLeavesPreviousSelection) {
@@ -107,6 +144,47 @@ TEST(SessionRetirement, FailedOpenLeavesPreviousSelection) {
         std::get<LiveSessionOpenFailure>(missing),
         LiveSessionOpenFailure::not_found);
     EXPECT_EQ(manager.selected(), a);
+}
+
+TEST(SessionRetirement, TimedOutOpenLeavesPreviousSelection) {
+    SessionFiles files;
+    std::mutex mutex;
+    std::condition_variable changed;
+    bool entered{};
+    bool release{};
+    auto opener = [&](const FullSessionId& identity,
+                      std::shared_ptr<WakeNotifier> notifier) {
+        if (identity.session_id == "slow") {
+            std::unique_lock lock(mutex);
+            entered = true;
+            changed.notify_all();
+            changed.wait(lock, [&] { return release; });
+        }
+        return test::open_test_session(
+            identity, files.path_for(identity), notifier);
+    };
+    LiveSessionManager manager(native_manager_settings(2), opener);
+    const FullSessionId selected{"forum", "selected"};
+    ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(
+        manager.select(selected, 2s)));
+
+    auto opening = std::async(std::launch::async, [&] {
+        return manager.select({"forum", "slow"}, 20ms);
+    });
+    {
+        std::unique_lock lock(mutex);
+        ASSERT_TRUE(changed.wait_for(lock, 2s, [&] { return entered; }));
+    }
+    ASSERT_EQ(opening.wait_for(2s), std::future_status::ready);
+    EXPECT_EQ(
+        std::get<LiveSessionOpenFailure>(opening.get()),
+        LiveSessionOpenFailure::open_timeout);
+    {
+        std::lock_guard lock(mutex);
+        release = true;
+    }
+    changed.notify_all();
+    EXPECT_EQ(manager.selected(), selected);
 }
 
 TEST(SessionRetirement, BusyDeselectedGenerationFinishesThenRetires) {

@@ -1,14 +1,25 @@
 #include "web/live_session_manager.h"
 
+#include "session/not_found_error.h"
 #include "util/logging.h"
+#include "web/owner_wake_signal.h"
 
+#include <algorithm>
+#include <atomic>
+#include <condition_variable>
+#include <deque>
 #include <exception>
+#include <future>
+#include <map>
+#include <mutex>
 #include <new>
+#include <set>
+#include <stop_token>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
-#include <variant>
 
 namespace cha::web {
 namespace {
@@ -18,25 +29,443 @@ std::string session_log(const FullSessionId& key, std::string_view event) {
         + " event=" + std::string(event);
 }
 
-LiveSessionOpenResult map_start_result(LiveSessionStartResult result) {
-    switch (result) {
-    case LiveSessionStartResult::ready: return LiveSessionReady{};
-    case LiveSessionStartResult::not_found:
-        return LiveSessionOpenFailure::not_found;
-    case LiveSessionStartResult::failed:
-        return LiveSessionOpenFailure::internal_error;
-    case LiveSessionStartResult::shutting_down:
-        return LiveSessionOpenFailure::stopping;
+template<typename T>
+class RuntimeReply {
+public:
+    bool complete(T value) {
+        {
+            std::lock_guard lock(mutex_);
+            if (value_ || abandoned_) return false;
+            value_ = std::move(value);
+        }
+        changed_.notify_all();
+        return true;
     }
-    return LiveSessionOpenFailure::internal_error;
-}
+
+    std::optional<T> wait_for(
+        std::chrono::milliseconds timeout,
+        std::stop_token stopping) {
+        return wait_until(std::chrono::steady_clock::now() + timeout, stopping);
+    }
+
+    std::optional<T> wait_until(
+        std::chrono::steady_clock::time_point deadline,
+        std::stop_token stopping) {
+        std::unique_lock lock(mutex_);
+        while (!value_ && !stopping.stop_requested()) {
+            if (claimed_) {
+                if (!changed_.wait(lock, stopping, [this] {
+                        return value_.has_value();
+                    })) break;
+            } else if (!changed_.wait_until(lock, stopping, deadline, [this] {
+                           return value_.has_value() || claimed_;
+                       })) {
+                break;
+            }
+        }
+        if (!value_) {
+            abandoned_ = true;
+            return std::nullopt;
+        }
+        return std::move(value_);
+    }
+
+    std::optional<T> wait(std::stop_token stopping) {
+        std::unique_lock lock(mutex_);
+        (void)changed_.wait(lock, stopping, [this] { return value_.has_value(); });
+        if (!value_) {
+            abandoned_ = true;
+            return std::nullopt;
+        }
+        return std::move(*value_);
+    }
+
+    [[nodiscard]] bool claim() {
+        {
+            std::lock_guard lock(mutex_);
+            if (abandoned_ || value_) return false;
+            claimed_ = true;
+        }
+        changed_.notify_all();
+        return true;
+    }
+
+private:
+    mutable std::mutex mutex_;
+    std::condition_variable_any changed_;
+    std::optional<T> value_;
+    bool abandoned_{};
+    bool claimed_{};
+};
 
 } // namespace
 
+struct SessionRuntime::Impl {
+    struct WebWork {
+        FullSessionId identity;
+        std::uint64_t instance{};
+        std::uint64_t context_epoch{};
+        OwnerCommand command;
+    };
+
+    struct Work {
+        std::optional<WebWork> web;
+        std::function<void()> control;
+    };
+
+    Impl(
+        SessionRuntime& owner,
+        cha::app::RuntimeSettings settings_value,
+        SessionOpener opener_value,
+        LiveSessionClock clock_value)
+        : owner(owner),
+          settings(validate_live_session_settings(std::move(settings_value))),
+          opener(std::move(opener_value)),
+          notifier(std::make_shared<OwnerWakeSignal>()) {
+        (void)clock_value;
+        if (!opener) {
+            throw std::invalid_argument("Session runtime needs a session opener");
+        }
+        if (settings.session_limit == 0) {
+            throw std::invalid_argument("Session runtime limit must be positive");
+        }
+    }
+
+    void start(std::weak_ptr<SessionRuntime> runtime_value) {
+        runtime = std::move(runtime_value);
+        thread = std::thread([this] { run(); });
+    }
+
+    bool enqueue_control_until(
+        std::function<void()> control,
+        std::chrono::steady_clock::time_point deadline) {
+        if (thread_finished.load()) return false;
+        {
+            std::unique_lock lock(queue_mutex);
+            if (!queue_changed.wait_until(lock, deadline, [this] {
+                    return thread_finished.load() || stopping_requested.load()
+                        || work.size() < settings.command_queue_capacity;
+                })) return false;
+            if (thread_finished.load() || stopping_requested.load()) return false;
+            work.push_back({.control = std::move(control)});
+        }
+        notifier->wake();
+        return true;
+    }
+
+    bool enqueue_control(std::function<void()> control) {
+        return enqueue_control_until(
+            std::move(control), std::chrono::steady_clock::time_point::max());
+    }
+
+    std::variant<std::shared_ptr<CommandReply>, ErrorCode> enqueue_web(
+        const FullSessionId& identity,
+        std::uint64_t instance,
+        WebCommand command,
+        std::uint64_t subscribe_ticket) {
+        if (stopping_requested.load()) return ErrorCode::server_stopping;
+        auto reply = std::make_shared<CommandReply>();
+        {
+            std::lock_guard lock(queue_mutex);
+            if (stopping_requested.load()) return ErrorCode::server_stopping;
+            if (work.size() >= settings.command_queue_capacity) {
+                return ErrorCode::command_queue_full;
+            }
+            work.push_back({.web = WebWork{
+                identity,
+                instance,
+                context_epoch.load(),
+                OwnerCommand{std::move(command), reply, subscribe_ticket}}});
+        }
+        notifier->wake();
+        return reply;
+    }
+
+    std::optional<Work> pop() {
+        std::lock_guard lock(queue_mutex);
+        if (work.empty()) return std::nullopt;
+        Work next = std::move(work.front());
+        work.pop_front();
+        queue_changed.notify_all();
+        return next;
+    }
+
+    std::shared_ptr<LiveSession> create_session(const FullSessionId& identity) {
+        auto session = owner.make_session(identity, next_instance++);
+        OpenedSession opened = opener(identity, notifier);
+        session->install(std::move(opened));
+        return session;
+    }
+
+    void publish_live(const FullSessionId& identity) {
+        std::lock_guard lock(state_mutex);
+        published_live.insert(identity);
+    }
+
+    void publish_released(const FullSessionId& identity) noexcept {
+        try {
+            {
+                std::lock_guard lock(state_mutex);
+                published_live.erase(identity);
+            }
+            state_changed.notify_all();
+        } catch (...) {
+            std::terminate();
+        }
+    }
+
+    std::vector<FullSessionId> published_identities() {
+        std::lock_guard lock(state_mutex);
+        return {published_live.begin(), published_live.end()};
+    }
+
+    LiveSessionOpenResult open_now(const FullSessionId& key, std::uint64_t epoch) {
+        if (stopping_requested.load() || global_maintenance || epoch != context_epoch.load()) {
+            return LiveSessionOpenFailure::manager_stopping;
+        }
+        if (maintenance.contains(key)) return LiveSessionOpenFailure::stopping;
+        if (const auto found = sessions.find(key); found != sessions.end()) {
+            return found->second->lifecycle() == LiveSessionState::running
+                ? LiveSessionOpenResult{LiveSessionReady{}}
+                : LiveSessionOpenResult{LiveSessionOpenFailure::stopping};
+        }
+        if (sessions.size() >= settings.session_limit) {
+            return LiveSessionOpenFailure::limit_reached;
+        }
+        publish_live(key);
+        try {
+            auto session = create_session(key);
+            if (stopping_requested.load() || global_maintenance || epoch != context_epoch.load()
+                || maintenance.contains(key)) {
+                session->finalize(stopping_requested.load()
+                    ? ShutdownReason::server_stopping
+                    : ShutdownReason::reloading);
+                publish_released(key);
+                return stopping_requested.load() || epoch != context_epoch.load()
+                    ? LiveSessionOpenResult{LiveSessionOpenFailure::manager_stopping}
+                    : LiveSessionOpenResult{LiveSessionOpenFailure::stopping};
+            }
+            session->set_running();
+            sessions.emplace(key, std::move(session));
+            log_info(session_log(key, "registry_running"));
+            return LiveSessionReady{};
+        } catch (const std::bad_alloc&) {
+            std::terminate();
+        } catch (const SessionNotFoundError&) {
+            publish_released(key);
+            log_warn(session_log(key, "storage_not_found"));
+            return LiveSessionOpenFailure::not_found;
+        } catch (const ForumNotFoundError&) {
+            publish_released(key);
+            log_warn(session_log(key, "storage_not_found"));
+            return LiveSessionOpenFailure::not_found;
+        } catch (...) {
+            publish_released(key);
+            log_error(session_log(key, "startup_failed"));
+            return LiveSessionOpenFailure::internal_error;
+        }
+    }
+
+    void retire(std::map<FullSessionId, LiveSessionHandle, std::less<>>::iterator it,
+                ShutdownReason reason) {
+        const FullSessionId identity = it->first;
+        auto session = std::move(it->second);
+        if (selected && *selected == identity) selected.reset();
+        sessions.erase(it);
+        session->finalize(reason);
+        publish_released(identity);
+        log_info(session_log(identity, "registry_retired"));
+    }
+
+    void cleanup_retired() {
+        for (auto it = sessions.begin(); it != sessions.end();) {
+            const bool explicit_stop = it->second->shutdown_requested();
+            const bool idle_retirement = it->second->retirement_requested()
+                && (!selected || *selected != it->first);
+            if (!explicit_stop && !idle_retirement) {
+                ++it;
+                continue;
+            }
+            const auto doomed = it++;
+            const ShutdownReason reason = explicit_stop
+                ? doomed->second->shutdown_reason()
+                : ShutdownReason::retired;
+            retire(doomed, reason);
+        }
+    }
+
+    void execute_web(WebWork web) {
+        if (stopping_requested.load()) {
+            (void)web.command.reply->complete(ErrorCode::server_stopping);
+            return;
+        }
+        if (web.context_epoch != context_epoch.load()) {
+            (void)web.command.reply->complete(ErrorCode::vault_changed);
+            return;
+        }
+        const auto found = sessions.find(web.identity);
+        if (found == sessions.end() || found->second->instance_ != web.instance
+            || found->second->lifecycle() != LiveSessionState::running) {
+            (void)web.command.reply->complete(stopping_requested.load()
+                ? ErrorCode::server_stopping
+                : ErrorCode::session_not_live);
+            return;
+        }
+        const auto reply = web.command.reply;
+        try {
+            found->second->execute(std::move(web.command));
+        } catch (const std::bad_alloc&) {
+            std::terminate();
+        } catch (...) {
+            found->second->fail_current(reply);
+        }
+    }
+
+    void drain_shutdown_queue() {
+        while (auto next = pop()) {
+            if (next->web) {
+                (void)next->web->command.reply->complete(ErrorCode::server_stopping);
+            } else if (next->control) {
+                next->control();
+            }
+        }
+    }
+
+    void finish_shutdown() {
+        for (auto it = sessions.begin(); it != sessions.end();) {
+            const auto doomed = it++;
+            retire(doomed, ShutdownReason::server_stopping);
+        }
+        drain_shutdown_queue();
+        {
+            std::lock_guard lock(state_mutex);
+            thread_finished.store(true);
+        }
+        queue_changed.notify_all();
+        state_changed.notify_all();
+    }
+
+    void cleanup_maintenance() {
+        std::erase_if(maintenance, [](const auto& entry) {
+            return !entry.second->load();
+        });
+        if (global_maintenance && !global_maintenance->load()) {
+            global_maintenance.reset();
+        }
+    }
+
+    void run() noexcept {
+        try {
+            for (;;) {
+                std::size_t processed = 0;
+                while (processed < settings.command_batch_size
+                    && !stopping_requested.load()) {
+                    auto next = pop();
+                    cleanup_maintenance();
+                    if (!next) break;
+                    if (next->web) execute_web(std::move(*next->web));
+                    else next->control();
+                    ++processed;
+                }
+
+                if (stopping_requested.load()) {
+                    finish_shutdown();
+                    return;
+                }
+
+                bool more_events = false;
+                for (auto& [identity, session] : sessions) {
+                    (void)identity;
+                    if (session->lifecycle() != LiveSessionState::running) continue;
+                    try {
+                        more_events |= session->receive_events(settings.event_batch_size);
+                    } catch (const std::bad_alloc&) {
+                        std::terminate();
+                    } catch (...) {
+                        session->fail_current();
+                    }
+                }
+                cleanup_retired();
+
+                if (processed == settings.command_batch_size || more_events) continue;
+                (void)notifier->wait_until(
+                    std::chrono::steady_clock::time_point::max());
+            }
+        } catch (...) {
+            stopping_requested.store(true);
+            finish_shutdown();
+        }
+    }
+
+    SessionRuntime& owner;
+    cha::app::RuntimeSettings settings;
+    SessionOpener opener;
+    std::weak_ptr<SessionRuntime> runtime;
+    std::shared_ptr<OwnerWakeSignal> notifier;
+
+    std::mutex queue_mutex;
+    std::condition_variable queue_changed;
+    std::deque<Work> work;
+    std::thread thread;
+    std::atomic<bool> stopping_requested{};
+    // Publishing a recovered context must not wait for a stalled controller.
+    std::atomic<std::uint64_t> context_epoch{1};
+    std::stop_source stop_source;
+    std::atomic<bool> thread_finished{};
+    std::mutex state_mutex;
+    std::condition_variable state_changed;
+    std::set<FullSessionId, std::less<>> published_live;
+
+    // Runtime-thread only.
+    std::map<FullSessionId, LiveSessionHandle, std::less<>> sessions;
+    // Releasing a reservation only cancels its token and wakes the runtime;
+    // it never waits for room in the ordinary command queue.
+    std::map<FullSessionId, std::shared_ptr<std::atomic_bool>, std::less<>> maintenance;
+    std::optional<FullSessionId> selected;
+    std::uint64_t next_instance{1};
+    std::shared_ptr<std::atomic_bool> global_maintenance;
+};
+
+SessionRuntime::SessionRuntime(
+    cha::app::RuntimeSettings settings,
+    SessionOpener opener,
+    LiveSessionClock clock)
+    : impl_(std::make_unique<Impl>(
+          *this, std::move(settings), std::move(opener), std::move(clock))) {}
+
+SessionRuntime::~SessionRuntime() {
+    impl_->stopping_requested.store(true);
+    impl_->notifier->wake();
+    if (impl_->thread.joinable()) impl_->thread.join();
+}
+
+std::shared_ptr<LiveSession> SessionRuntime::make_session(
+    FullSessionId identity,
+    std::uint64_t instance) {
+    return std::shared_ptr<LiveSession>(new LiveSession(
+        std::move(identity),
+        instance,
+        impl_->runtime,
+        impl_->settings.pending_append_byte_limit));
+}
+
+std::variant<std::shared_ptr<CommandReply>, ErrorCode> SessionRuntime::enqueue(
+    const FullSessionId& identity,
+    std::uint64_t instance,
+    WebCommand command,
+    std::uint64_t subscribe_ticket) {
+    return impl_->enqueue_web(
+        identity, instance, std::move(command), subscribe_ticket);
+}
+
+void SessionRuntime::wake() noexcept {
+    impl_->notifier->wake();
+}
+
 LiveSessionMaintenanceReservation::LiveSessionMaintenanceReservation(
     LiveSessionManager& manager,
-    FullSessionId identity)
-    : manager_(&manager), identity_(std::move(identity)) {}
+    std::shared_ptr<std::atomic_bool> active)
+    : manager_(&manager), active_(std::move(active)) {}
 
 LiveSessionMaintenanceReservation::~LiveSessionMaintenanceReservation() {
     release();
@@ -45,7 +474,7 @@ LiveSessionMaintenanceReservation::~LiveSessionMaintenanceReservation() {
 LiveSessionMaintenanceReservation::LiveSessionMaintenanceReservation(
     LiveSessionMaintenanceReservation&& other) noexcept
     : manager_(std::exchange(other.manager_, nullptr)),
-      identity_(std::move(other.identity_)) {}
+      active_(std::move(other.active_)) {}
 
 LiveSessionMaintenanceReservation&
 LiveSessionMaintenanceReservation::operator=(
@@ -53,20 +482,21 @@ LiveSessionMaintenanceReservation::operator=(
     if (this != &other) {
         release();
         manager_ = std::exchange(other.manager_, nullptr);
-        identity_ = std::move(other.identity_);
+        active_ = std::move(other.active_);
     }
     return *this;
 }
 
 void LiveSessionMaintenanceReservation::release() noexcept {
     if (LiveSessionManager* const manager = std::exchange(manager_, nullptr)) {
-        manager->release_maintenance(identity_);
+        manager->release_maintenance(active_);
     }
 }
 
 LiveSessionGlobalMaintenance::LiveSessionGlobalMaintenance(
-    LiveSessionManager& manager)
-    : manager_(&manager) {}
+    LiveSessionManager& manager,
+    std::shared_ptr<std::atomic_bool> active)
+    : manager_(&manager), active_(std::move(active)) {}
 
 LiveSessionGlobalMaintenance::~LiveSessionGlobalMaintenance() {
     release();
@@ -74,21 +504,22 @@ LiveSessionGlobalMaintenance::~LiveSessionGlobalMaintenance() {
 
 LiveSessionGlobalMaintenance::LiveSessionGlobalMaintenance(
     LiveSessionGlobalMaintenance&& other) noexcept
-    : manager_(std::exchange(other.manager_, nullptr)) {}
+    : manager_(std::exchange(other.manager_, nullptr)),
+      active_(std::move(other.active_)) {}
 
-LiveSessionGlobalMaintenance&
-LiveSessionGlobalMaintenance::operator=(
+LiveSessionGlobalMaintenance& LiveSessionGlobalMaintenance::operator=(
     LiveSessionGlobalMaintenance&& other) noexcept {
     if (this != &other) {
         release();
         manager_ = std::exchange(other.manager_, nullptr);
+        active_ = std::move(other.active_);
     }
     return *this;
 }
 
 void LiveSessionGlobalMaintenance::release() noexcept {
     if (LiveSessionManager* const manager = std::exchange(manager_, nullptr)) {
-        manager->release_global_maintenance();
+        manager->release_maintenance(active_);
     }
 }
 
@@ -96,557 +527,393 @@ LiveSessionManager::LiveSessionManager(
     cha::app::RuntimeSettings settings,
     SessionOpener opener,
     LiveSessionClock clock)
-    : settings_(validate_live_session_settings(std::move(settings))),
-      opener_(std::move(opener)),
-      clock_(std::move(clock)) {
-    if (!opener_) throw std::invalid_argument("Live session manager needs a session opener");
-    if (settings_.session_limit == 0) {
-        throw std::invalid_argument("Web session limit must be positive");
-    }
+    : runtime_(std::shared_ptr<SessionRuntime>(new SessionRuntime(
+          std::move(settings), std::move(opener), std::move(clock)))) {
+    runtime_->impl_->start(runtime_);
 }
 
 LiveSessionManager::~LiveSessionManager() {
-    // Production reaches normal destruction only after the process-shutdown
-    // coordinator's bounded grace period has confirmed that every owner can be
-    // joined.  If that grace expires, Section 19.1 requires immediate process
-    // exit without running destructors, so a wedged owner must never reach
-    // this unbounded final safety join.
     begin_shutdown();
-    RetiredSessions owners;
-    {
-        std::lock_guard lock(mutex_);
-        for (const auto& [key, session] : sessions_) {
-            (void)key;
-            owners.push_back(session);
-        }
+    if (!join_shutdown(runtime_->impl_->settings.shutdown_grace)) {
+        // The process coordinator owns the forced-exit path. Do not turn its
+        // bounded grace period into an unconditional thread join here.
+        (void)new std::shared_ptr<SessionRuntime>(std::move(runtime_));
     }
-    for (const LiveSessionHandle& owner : owners) owner->join_owner();
 }
 
 LiveSessionOpenResult LiveSessionManager::open(
     FullSessionId key,
     std::chrono::milliseconds deadline) {
-    log_info(session_log(key, "open_requested"));
-    RetiredSessions retired;
-    LiveSessionHandle starting;
-    std::string deferred_event;
-    {
-        std::unique_lock lock(mutex_);
-        retired = sweep_locked();
-        if (stopping_ || global_maintenance_) {
-            lock.unlock();
-            reap(std::move(retired));
-            return LiveSessionOpenFailure::manager_stopping;
-        }
-        if (maintenance_.contains(key)) {
-            lock.unlock();
-            reap(std::move(retired));
-            return LiveSessionOpenFailure::stopping;
-        }
-        const auto found = sessions_.find(key);
-        if (found != sessions_.end()) {
-            switch (found->second->lifecycle()) {
-            case LiveSessionState::running:
-                lock.unlock();
-                log_info(session_log(key, "reattached"));
-                reap(std::move(retired));
-                return LiveSessionReady{};
-            case LiveSessionState::stopping:
-            case LiveSessionState::finished:
-                lock.unlock();
-                log_warn(session_log(key, "open_rejected_stopping"));
-                reap(std::move(retired));
-                return LiveSessionOpenFailure::stopping;
-            case LiveSessionState::starting:
-                starting = found->second;
-                break;
-            }
-        } else {
-            if (sessions_.size() >= settings_.session_limit) {
-                lock.unlock();
-                log_warn(session_log(key, "open_rejected_limit"));
-                reap(std::move(retired));
-                return LiveSessionOpenFailure::limit_reached;
-            }
-            deferred_event = "registry_starting";
-            // LiveSession construction is manager-only so no actor can remain
-            // permanently Starting without an owner thread. A direct shared
-            // pointer construction is required because make_shared's internal
-            // constructor call is not covered by LiveSession's friendship.
-            starting = LiveSessionHandle(
-                new LiveSession(settings_, key, opener_, clock_));
-            // Inserting before starting the owner is what makes concurrent
-            // same-identity opens share one actor and one outcome, and what
-            // guarantees the owner thread's raw `this` stays alive.  Holding
-            // the mutex across both steps keeps insertion and thread start
-            // transactional, so no waiter can observe an actor whose owner
-            // failed to start.
-            auto [position, inserted] = sessions_.emplace(key, starting);
-            (void)inserted;
-            try {
-                starting->start_owner();
-            } catch (const std::bad_alloc&) {
-                std::terminate();
-            } catch (...) {
-                starting->resolve_unstarted(LiveSessionStartResult::failed);
-                sessions_.erase(position);
-                lock.unlock();
-                reap(std::move(retired));
-                return LiveSessionOpenFailure::internal_error;
-            }
-        }
+    auto& impl = *runtime_->impl_;
+    const auto epoch = impl.context_epoch.load();
+    const auto absolute_deadline = std::chrono::steady_clock::now() + deadline;
+    if (impl.stopping_requested.load()) {
+        return LiveSessionOpenFailure::manager_stopping;
     }
-    if (!deferred_event.empty()) log_info(session_log(key, deferred_event));
-    reap(std::move(retired));
-
-    // Waiting happens outside the manager mutex and uses only this caller's
-    // deadline. Timing out never cancels the shared startup.
-    const auto outcome = starting->wait_for_start(deadline);
-    if (!outcome) {
-        log_warn(session_log(key, "open_deadline_expired"));
-        std::lock_guard lock(mutex_);
-        return stopping_ || global_maintenance_
+    auto reply = std::make_shared<RuntimeReply<LiveSessionOpenResult>>();
+    if (!impl.enqueue_control_until([&impl, key = std::move(key), reply, epoch] {
+            (void)reply->complete(impl.open_now(key, epoch));
+        }, absolute_deadline)) {
+        return impl.stopping_requested.load()
             ? LiveSessionOpenResult{LiveSessionOpenFailure::manager_stopping}
             : LiveSessionOpenResult{LiveSessionOpenFailure::open_timeout};
     }
-    if (*outcome == LiveSessionStartResult::shutting_down) {
-        std::lock_guard lock(mutex_);
-        if (stopping_ || global_maintenance_) {
-            return LiveSessionOpenFailure::manager_stopping;
-        }
-    }
-    if (*outcome == LiveSessionStartResult::ready) {
-        std::lock_guard lock(mutex_);
-        if (stopping_ || global_maintenance_) {
-            return LiveSessionOpenFailure::manager_stopping;
-        }
-        if (maintenance_.contains(key)) {
-            return LiveSessionOpenFailure::stopping;
-        }
-        const auto found = sessions_.find(key);
-        if (found == sessions_.end()
-            || found->second != starting
-            || found->second->lifecycle() != LiveSessionState::running) {
-            return LiveSessionOpenFailure::stopping;
-        }
-    }
-    return map_start_result(*outcome);
-}
-
-std::optional<FullSessionId> LiveSessionManager::selected() const {
-    std::lock_guard lock(mutex_);
-    return selected_;
-}
-
-std::uint64_t LiveSessionManager::context_epoch() const {
-    std::lock_guard lock(mutex_);
-    return context_epoch_;
-}
-
-std::uint64_t LiveSessionManager::bump_context_epoch() {
-    std::lock_guard lock(mutex_);
-    ++context_epoch_;
-    return context_epoch_;
-}
-
-void LiveSessionManager::close_session(const FullSessionId& key, std::uint64_t epoch) {
-    std::lock_guard lock(mutex_);
-    if (global_maintenance_ || (epoch != 0 && epoch != context_epoch_)) return;
-    if (selected_ && *selected_ == key) selected_.reset();
-    const auto found = sessions_.find(key);
-    if (found != sessions_.end()) {
-        found->second->request_shutdown(ShutdownReason::retired);
-    }
-}
-
-void LiveSessionManager::request_retire_locked(const FullSessionId& key) {
-    const auto found = sessions_.find(key);
-    if (found == sessions_.end()) return;
-    found->second->request_retire_when_idle();
+    const auto remaining = std::max(
+        std::chrono::milliseconds{0},
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            absolute_deadline - std::chrono::steady_clock::now()));
+    auto result = reply->wait_for(remaining, impl.stop_source.get_token());
+    if (result) return std::move(*result);
+    return impl.stopping_requested.load()
+        ? LiveSessionOpenResult{LiveSessionOpenFailure::manager_stopping}
+        : LiveSessionOpenResult{LiveSessionOpenFailure::open_timeout};
 }
 
 LiveSessionOpenResult LiveSessionManager::select(
     FullSessionId key,
     std::chrono::milliseconds deadline) {
-    std::lock_guard select_lock(select_mutex_);
-    const auto abs_deadline = std::chrono::steady_clock::now() + deadline;
-    const auto remaining = [&] {
-        const auto now = std::chrono::steady_clock::now();
-        if (now >= abs_deadline) return std::chrono::milliseconds{0};
-        return std::chrono::duration_cast<std::chrono::milliseconds>(
-            abs_deadline - now);
-    };
-
-    RetiredSessions retired;
-    LiveSessionHandle wait_finished;
-    std::vector<LiveSessionHandle> others;
-    std::optional<LiveSessionOpenFailure> rejected;
-    bool already_running = false;
-    {
-        std::lock_guard lock(mutex_);
-        retired = sweep_locked();
-        if (stopping_ || global_maintenance_) {
-            rejected = LiveSessionOpenFailure::manager_stopping;
-        } else if (maintenance_.contains(key)) {
-            rejected = LiveSessionOpenFailure::stopping;
-        } else {
-            const auto found = sessions_.find(key);
-            if (found != sessions_.end()
-                && found->second->lifecycle() == LiveSessionState::running) {
-                found->second->cancel_retirement();
-                const auto previous = selected_;
-                selected_ = key;
-                if (previous && *previous != key) request_retire_locked(*previous);
-                already_running = true;
-            } else if (found != sessions_.end()
-                && (found->second->lifecycle() == LiveSessionState::stopping
-                    || found->second->lifecycle() == LiveSessionState::finished)) {
-                wait_finished = found->second;
+    auto& impl = *runtime_->impl_;
+    const auto epoch = impl.context_epoch.load();
+    const auto absolute_deadline = std::chrono::steady_clock::now() + deadline;
+    if (impl.stopping_requested.load()) {
+        return LiveSessionOpenFailure::manager_stopping;
+    }
+    auto reply = std::make_shared<RuntimeReply<LiveSessionOpenResult>>();
+    if (!impl.enqueue_control_until([&impl, key = std::move(key), reply, epoch] {
+            if (impl.stopping_requested.load() || impl.global_maintenance
+                || epoch != impl.context_epoch.load()) {
+                (void)reply->complete(LiveSessionOpenFailure::manager_stopping);
+                return;
             }
-            if (!already_running && sessions_.size() >= settings_.session_limit) {
-                for (const auto& [identity, session] : sessions_) {
-                    if (identity == key || (selected_ && identity == *selected_)) {
-                        continue;
-                    }
-                    others.push_back(session);
+            if (impl.maintenance.contains(key)) {
+                (void)reply->complete(LiveSessionOpenFailure::stopping);
+                return;
+            }
+
+            impl.cleanup_retired();
+            if (const auto found = impl.sessions.find(key);
+                found != impl.sessions.end()) {
+                if (!reply->claim()) return;
+                found->second->cancel_retirement();
+                const auto previous = impl.selected;
+                impl.selected = key;
+                if (previous && *previous != key) {
+                    impl.sessions.at(*previous)->request_retire_when_idle();
+                }
+                (void)reply->complete(LiveSessionReady{});
+                return;
+            }
+
+            LiveSessionHandle replaceable;
+            if (impl.sessions.size() >= impl.settings.session_limit
+                && impl.selected) {
+                const auto selected = impl.sessions.find(*impl.selected);
+                if (selected != impl.sessions.end()
+                    && selected->second->idle_for_retirement()) {
+                    replaceable = selected->second;
                 }
             }
-        }
-    }
-    reap(std::move(retired));
-    if (rejected) return *rejected;
-    if (already_running) return LiveSessionReady{};
+            if (impl.sessions.size() >= impl.settings.session_limit
+                && !replaceable) {
+                (void)reply->complete(LiveSessionOpenFailure::limit_reached);
+                return;
+            }
 
-    if (wait_finished) {
-        if (!wait_finished->wait_until_finished(abs_deadline)) {
-            return LiveSessionOpenFailure::open_timeout;
-        }
-        sweep();
-    }
-    for (const LiveSessionHandle& session : others) {
-        session->request_retire_when_idle();
-    }
-    for (const LiveSessionHandle& session : others) {
-        (void)session->wait_until_finished(abs_deadline);
-    }
-    if (!others.empty()) sweep();
+            LiveSessionHandle candidate;
+            impl.publish_live(key);
+            try {
+                candidate = impl.create_session(key);
+            } catch (const std::bad_alloc&) {
+                std::terminate();
+            } catch (const SessionNotFoundError&) {
+                impl.publish_released(key);
+                (void)reply->complete(LiveSessionOpenFailure::not_found);
+                return;
+            } catch (const ForumNotFoundError&) {
+                impl.publish_released(key);
+                (void)reply->complete(LiveSessionOpenFailure::not_found);
+                return;
+            } catch (...) {
+                impl.publish_released(key);
+                (void)reply->complete(LiveSessionOpenFailure::internal_error);
+                return;
+            }
 
-    bool at_limit = false;
-    {
-        std::lock_guard lock(mutex_);
-        retired = sweep_locked();
-        const auto found = sessions_.find(key);
-        const bool present = found != sessions_.end()
-            && (found->second->lifecycle() == LiveSessionState::running
-                || found->second->lifecycle() == LiveSessionState::starting);
-        at_limit = !present && sessions_.size() >= settings_.session_limit;
-    }
-    reap(std::move(retired));
-    if (at_limit) return LiveSessionOpenFailure::limit_reached;
+            if (!reply->claim() || impl.stopping_requested.load()
+                || epoch != impl.context_epoch.load()
+                || impl.global_maintenance || impl.maintenance.contains(key)) {
+                candidate->finalize(impl.stopping_requested.load()
+                    ? ShutdownReason::server_stopping
+                    : ShutdownReason::retired);
+                impl.publish_released(key);
+                (void)reply->complete(LiveSessionOpenFailure::manager_stopping);
+                return;
+            }
 
-    const LiveSessionOpenResult result = open(key, remaining());
-    if (std::holds_alternative<LiveSessionReady>(result)) {
-        std::lock_guard lock(mutex_);
-        if (stopping_ || global_maintenance_) {
-            return LiveSessionOpenFailure::manager_stopping;
-        }
-        if (maintenance_.contains(key)) {
-            return LiveSessionOpenFailure::stopping;
-        }
-        const auto found = sessions_.find(key);
-        if (found == sessions_.end()
-            || found->second->lifecycle() != LiveSessionState::running) {
-            return LiveSessionOpenFailure::stopping;
-        }
-        const auto previous = selected_;
-        selected_ = key;
-        if (previous && *previous != key) request_retire_locked(*previous);
+            const auto previous = impl.selected;
+            candidate->set_running();
+            impl.sessions.emplace(key, candidate);
+            impl.selected = key;
+            if (previous && *previous != key) {
+                const auto old = impl.sessions.find(*previous);
+                if (old != impl.sessions.end()) old->second->request_retire_when_idle();
+            }
+            (void)reply->complete(LiveSessionReady{});
+        }, absolute_deadline)) {
+        return impl.stopping_requested.load()
+            ? LiveSessionOpenResult{LiveSessionOpenFailure::manager_stopping}
+            : LiveSessionOpenResult{LiveSessionOpenFailure::open_timeout};
     }
-    return result;
+    const auto remaining = std::max(
+        std::chrono::milliseconds{0},
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            absolute_deadline - std::chrono::steady_clock::now()));
+    auto result = reply->wait_for(remaining, impl.stop_source.get_token());
+    if (result) return std::move(*result);
+    return impl.stopping_requested.load()
+        ? LiveSessionOpenResult{LiveSessionOpenFailure::manager_stopping}
+        : LiveSessionOpenResult{LiveSessionOpenFailure::open_timeout};
+}
+
+std::optional<FullSessionId> LiveSessionManager::selected() const {
+    auto& impl = *runtime_->impl_;
+    if (impl.stopping_requested.load()) return std::nullopt;
+    auto reply = std::make_shared<RuntimeReply<std::optional<FullSessionId>>>();
+    if (!impl.enqueue_control([&impl, reply] {
+            (void)reply->complete(impl.selected);
+        })) return std::nullopt;
+    auto result = reply->wait(impl.stop_source.get_token());
+    return result ? std::move(*result) : std::nullopt;
+}
+
+void LiveSessionManager::close_session(
+    const FullSessionId& key,
+    std::uint64_t epoch) {
+    auto& impl = *runtime_->impl_;
+    if (impl.stopping_requested.load()) return;
+    (void)impl.enqueue_control([&impl, key, epoch] {
+        if (impl.global_maintenance
+            || (epoch != 0 && epoch != impl.context_epoch)) return;
+        const auto found = impl.sessions.find(key);
+        if (found != impl.sessions.end()) {
+            found->second->request_shutdown(ShutdownReason::retired);
+        }
+        if (impl.selected && *impl.selected == key) impl.selected.reset();
+    });
+}
+
+std::uint64_t LiveSessionManager::context_epoch() const {
+    return runtime_->impl_->context_epoch.load();
+}
+
+std::uint64_t LiveSessionManager::bump_context_epoch() {
+    return runtime_->impl_->context_epoch.fetch_add(1) + 1;
 }
 
 std::optional<LiveSessionOpenResult> LiveSessionManager::try_reattach(
     const FullSessionId& key) {
-    RetiredSessions retired;
-    std::optional<LiveSessionOpenResult> result;
-    {
-        std::lock_guard lock(mutex_);
-        retired = sweep_locked();
-        if (stopping_ || global_maintenance_) {
-            result = LiveSessionOpenFailure::manager_stopping;
-        } else if (maintenance_.contains(key)) {
-            result = LiveSessionOpenFailure::stopping;
-        } else {
-            const auto found = sessions_.find(key);
-            if (found != sessions_.end()
-                && found->second->lifecycle() == LiveSessionState::running) {
-                result = LiveSessionReady{};
+    auto& impl = *runtime_->impl_;
+    if (impl.stopping_requested.load()) {
+        return LiveSessionOpenFailure::manager_stopping;
+    }
+    auto reply = std::make_shared<RuntimeReply<std::optional<LiveSessionOpenResult>>>();
+    if (!impl.enqueue_control([&impl, key, reply] {
+            if (impl.global_maintenance) {
+                (void)reply->complete(LiveSessionOpenFailure::manager_stopping);
+            } else if (impl.maintenance.contains(key)) {
+                (void)reply->complete(LiveSessionOpenFailure::stopping);
+            } else if (impl.sessions.contains(key)) {
+                (void)reply->complete(LiveSessionReady{});
+            } else {
+                (void)reply->complete(std::nullopt);
             }
-        }
-    }
-    reap(std::move(retired));
-    if (result) {
-        if (std::holds_alternative<LiveSessionReady>(*result)) {
-            log_info(session_log(key, "reattached"));
-        } else {
-            log_warn(session_log(key, "open_rejected_server_stopping"));
-        }
-    }
-    return result;
+        })) return LiveSessionOpenFailure::manager_stopping;
+    auto result = reply->wait(impl.stop_source.get_token());
+    return result ? std::move(*result)
+                  : std::optional<LiveSessionOpenResult>{
+                        LiveSessionOpenFailure::manager_stopping};
 }
 
 LiveSessionHandle LiveSessionManager::lookup(
-    const FullSessionId& key, std::uint64_t epoch) {
-    RetiredSessions retired;
-    LiveSessionHandle result;
-    {
-        std::lock_guard lock(mutex_);
-        retired = sweep_locked();
-        const auto found = sessions_.find(key);
-        if (!stopping_ && !global_maintenance_
-            && (epoch == 0 || epoch == context_epoch_)
-            && found != sessions_.end()
-            && found->second->lifecycle() == LiveSessionState::running) {
-            result = found->second;
-        }
-    }
-    reap(std::move(retired));
-    return result;
+    const FullSessionId& key,
+    std::uint64_t epoch) {
+    auto& impl = *runtime_->impl_;
+    if (impl.stopping_requested.load()) return {};
+    auto reply = std::make_shared<RuntimeReply<LiveSessionHandle>>();
+    if (!impl.enqueue_control([&impl, key, epoch, reply] {
+            LiveSessionHandle result;
+            const auto found = impl.sessions.find(key);
+            if (!impl.global_maintenance
+                && (epoch == 0 || epoch == impl.context_epoch)
+                && found != impl.sessions.end()
+                && found->second->lifecycle() == LiveSessionState::running) {
+                result = found->second;
+            }
+            (void)reply->complete(std::move(result));
+        })) return {};
+    auto result = reply->wait(impl.stop_source.get_token());
+    return result ? std::move(*result) : LiveSessionHandle{};
 }
 
 LiveSessionManagerSnapshot LiveSessionManager::snapshot() {
-    RetiredSessions retired;
-    LiveSessionManagerSnapshot result;
-    {
-        std::lock_guard lock(mutex_);
-        retired = sweep_locked();
-        result.live_session_count = sessions_.size();
-        for (const auto& [key, session] : sessions_) {
-            if (session->lifecycle() == LiveSessionState::running) {
-                result.running_sessions.push_back(key);
+    auto& impl = *runtime_->impl_;
+    if (impl.stopping_requested.load()) return {};
+    auto reply = std::make_shared<RuntimeReply<LiveSessionManagerSnapshot>>();
+    if (!impl.enqueue_control([&impl, reply] {
+            LiveSessionManagerSnapshot result;
+            result.live_session_count = impl.sessions.size();
+            for (const auto& [key, session] : impl.sessions) {
+                if (session->lifecycle() == LiveSessionState::running) {
+                    result.running_sessions.push_back(key);
+                }
             }
-        }
-    }
-    reap(std::move(retired));
-    return result;
+            (void)reply->complete(std::move(result));
+        })) return {};
+    auto result = reply->wait(impl.stop_source.get_token());
+    return result ? std::move(*result) : LiveSessionManagerSnapshot{};
 }
 
 std::vector<LiveSessionHandle> LiveSessionManager::active_sessions() {
-    RetiredSessions retired;
-    std::vector<LiveSessionHandle> result;
-    {
-        std::lock_guard lock(mutex_);
-        retired = sweep_locked();
-        for (const auto& [key, session] : sessions_) {
-            (void)key;
-            const LiveSessionState state = session->lifecycle();
-            if (state == LiveSessionState::starting
-                || state == LiveSessionState::running) {
+    auto& impl = *runtime_->impl_;
+    if (impl.stopping_requested.load()) return {};
+    auto reply = std::make_shared<RuntimeReply<std::vector<LiveSessionHandle>>>();
+    if (!impl.enqueue_control([&impl, reply] {
+            std::vector<LiveSessionHandle> result;
+            result.reserve(impl.sessions.size());
+            for (const auto& [key, session] : impl.sessions) {
+                (void)key;
                 result.push_back(session);
             }
-        }
-    }
-    reap(std::move(retired));
-    return result;
+            (void)reply->complete(std::move(result));
+        })) return {};
+    auto result = reply->wait(impl.stop_source.get_token());
+    return result ? std::move(*result) : std::vector<LiveSessionHandle>{};
 }
 
 MaintenanceReservationResult LiveSessionManager::reserve_for_deletion(
     const FullSessionId& key,
     std::chrono::milliseconds deadline) {
-    RetiredSessions retired;
-    LiveSessionHandle actor;
-    std::optional<MaintenanceFailure> failure;
+    auto& impl = *runtime_->impl_;
+    const auto end = std::chrono::steady_clock::now() + deadline;
+    if (impl.stopping_requested.load()) return MaintenanceFailure::manager_stopping;
+    auto active = std::make_shared<std::atomic_bool>(true);
+    LiveSessionMaintenanceReservation reservation(*this, active);
+    auto reply = std::make_shared<RuntimeReply<bool>>();
+    if (!impl.enqueue_control_until([&impl, key, reply, active, end] {
+            if (!active->load() || std::chrono::steady_clock::now() >= end
+                || impl.stopping_requested.load() || impl.global_maintenance
+                || impl.maintenance.contains(key)) {
+                (void)reply->complete(false);
+                return;
+            }
+            impl.maintenance.emplace(key, active);
+            if (impl.selected && *impl.selected == key) impl.selected.reset();
+            const auto found = impl.sessions.find(key);
+            if (found != impl.sessions.end()) {
+                found->second->request_shutdown(ShutdownReason::session_deleted);
+            }
+            (void)reply->complete(true);
+        }, end)) {
+        return impl.stopping_requested.load()
+            ? MaintenanceFailure::manager_stopping : MaintenanceFailure::stopping;
+    }
+    auto admitted = reply->wait_until(end, impl.stop_source.get_token());
+    if (!admitted || impl.stopping_requested.load()) {
+        return impl.stopping_requested.load()
+            ? MaintenanceFailure::manager_stopping : MaintenanceFailure::stopping;
+    }
+    if (!*admitted) return MaintenanceFailure::stopping;
+
+    bool released;
     {
-        std::lock_guard lock(mutex_);
-        retired = sweep_locked();
-        if (stopping_ || global_maintenance_) {
-            failure = MaintenanceFailure::manager_stopping;
-        } else if (maintenance_.contains(key)) {
-            failure = MaintenanceFailure::stopping;
-        } else {
-            maintenance_.insert(key);
-            if (selected_ && *selected_ == key) selected_.reset();
-            const auto found = sessions_.find(key);
-            if (found != sessions_.end()) actor = found->second;
-        }
+        std::unique_lock lock(impl.state_mutex);
+        released = impl.state_changed.wait_until(lock, end, [&impl, &key] {
+            return !impl.published_live.contains(key);
+        });
     }
-    reap(std::move(retired));
-    if (failure) return *failure;
-
-    LiveSessionMaintenanceReservation reservation(*this, key);
-    if (!actor) return reservation;
-
-    log_info(session_log(key, "delete_shutdown_requested"));
-    actor->request_shutdown(ShutdownReason::session_deleted);
-    const auto absolute_deadline = std::chrono::steady_clock::now() + deadline;
-    if (!actor->wait_until_finished(absolute_deadline)) {
-        return MaintenanceFailure::stopping;
-    }
-    sweep();
+    if (!released) return MaintenanceFailure::stopping;
     return reservation;
 }
 
 GlobalMaintenanceResult LiveSessionManager::reserve_global_maintenance(
     std::chrono::milliseconds deadline) {
-    RetiredSessions retired;
-    RetiredSessions live;
-    std::optional<MaintenanceFailure> failure;
-    {
-        std::lock_guard lock(mutex_);
-        retired = sweep_locked();
-        if (stopping_) {
-            failure = MaintenanceFailure::manager_stopping;
-        } else if (global_maintenance_) {
-            failure = MaintenanceFailure::stopping;
-        } else {
-            // Snapshotting before publishing the flag keeps a failed
-            // allocation from leaving the manager closed with no owner.
-            for (const auto& [key, session] : sessions_) {
-                (void)key;
-                live.push_back(session);
+    auto& impl = *runtime_->impl_;
+    const auto end = std::chrono::steady_clock::now() + deadline;
+    if (impl.stopping_requested.load()) return MaintenanceFailure::manager_stopping;
+    auto active = std::make_shared<std::atomic_bool>(true);
+    LiveSessionGlobalMaintenance reservation(*this, active);
+    auto reply = std::make_shared<RuntimeReply<bool>>();
+    if (!impl.enqueue_control_until([&impl, reply, active, end] {
+            if (!active->load() || std::chrono::steady_clock::now() >= end
+                || impl.stopping_requested.load() || impl.global_maintenance) {
+                (void)reply->complete(false);
+                return;
             }
-            global_maintenance_ = true;
-        }
+            impl.global_maintenance = active;
+            impl.selected.reset();
+            for (const auto& [key, session] : impl.sessions) {
+                (void)key;
+                session->request_shutdown(ShutdownReason::reloading);
+            }
+            (void)reply->complete(true);
+        }, end)) {
+        return impl.stopping_requested.load()
+            ? MaintenanceFailure::manager_stopping : MaintenanceFailure::stopping;
     }
-    if (failure) {
-        reap(std::move(retired));
-        return *failure;
+    auto admitted = reply->wait_until(end, impl.stop_source.get_token());
+    if (!admitted || impl.stopping_requested.load()) {
+        return impl.stopping_requested.load()
+            ? MaintenanceFailure::manager_stopping : MaintenanceFailure::stopping;
     }
+    if (!*admitted) return MaintenanceFailure::stopping;
 
-    // The flag is now ours, so it is owned from here on: every failure below
-    // releases it instead of closing the manager for the rest of the process.
-    LiveSessionGlobalMaintenance reservation(*this);
-    for (const LiveSessionHandle& session : live) {
-        session->wake_start_waiters();
+    bool released;
+    {
+        std::unique_lock lock(impl.state_mutex);
+        released = impl.state_changed.wait_until(lock, end, [&impl] {
+            return impl.published_live.empty();
+        });
     }
-    reap(std::move(retired));
-    for (const LiveSessionHandle& session : live) {
-        session->request_shutdown(ShutdownReason::reloading);
-    }
-
-    const auto absolute_deadline =
-        std::chrono::steady_clock::now() + deadline;
-    for (const LiveSessionHandle& session : live) {
-        if (!session->wait_until_finished(absolute_deadline)) {
-            return MaintenanceFailure::stopping;
-        }
-    }
-    sweep();
+    if (!released) return MaintenanceFailure::stopping;
     return reservation;
 }
 
 void LiveSessionManager::begin_shutdown(
     const std::function<void()>& stop_accepting) {
-    RetiredSessions retired;
-    RetiredSessions live;
-    {
-        std::lock_guard lock(mutex_);
-        retired = sweep_locked();
-        stopping_ = true;
-        ++context_epoch_;
-        for (const auto& [key, session] : sessions_) {
-            (void)key;
-            live.push_back(session);
-        }
-    }
-    if (stop_accepting) stop_accepting();
-    // Waking startup waiters never writes a startup result: the owner remains
-    // its sole writer, and an interrupted waiter reports manager shutdown.
-    for (const LiveSessionHandle& session : live) session->wake_start_waiters();
-    reap(std::move(retired));
-    for (const LiveSessionHandle& session : live) {
-        session->request_shutdown(ShutdownReason::server_stopping);
-    }
+    auto& impl = *runtime_->impl_;
+    const bool first = !impl.stopping_requested.exchange(true);
+    (void)impl.stop_source.request_stop();
+    if (first && stop_accepting) stop_accepting();
+    impl.queue_changed.notify_all();
+    impl.notifier->wake();
 }
 
 bool LiveSessionManager::join_shutdown(std::chrono::milliseconds grace) {
-    // One absolute deadline for the whole process, never a fresh grace period
-    // per owner.
+    auto& impl = *runtime_->impl_;
+    begin_shutdown();
     const auto deadline = std::chrono::steady_clock::now() + grace;
-    RetiredSessions live;
     {
-        std::lock_guard lock(mutex_);
-        for (const auto& [key, session] : sessions_) {
-            (void)key;
-            live.push_back(session);
+        std::unique_lock lock(impl.state_mutex);
+        if (!impl.state_changed.wait_until(lock, deadline, [&impl] {
+                return impl.thread_finished.load();
+            })) {
+            return false;
         }
     }
-    for (const LiveSessionHandle& session : live) {
-        if (!session->wait_until_finished(deadline)) return false;
-    }
-    // Finished is published only after the controller and every blocking
-    // resource have been released. From that point to owner_main returning
-    // there is only non-blocking stack unwinding, so reaping here cannot turn
-    // an owner operation into an unbounded join outside the grace deadline.
-    sweep();
+    if (impl.thread.joinable()) impl.thread.join();
     return true;
 }
 
 std::vector<FullSessionId> LiveSessionManager::unfinished_owners() {
-    RetiredSessions retired;
-    std::vector<FullSessionId> result;
-    {
-        std::lock_guard lock(mutex_);
-        retired = sweep_locked();
-        result.reserve(sessions_.size());
-        for (const auto& [key, session] : sessions_) {
-            if (session->owner_pending()) result.push_back(key);
-        }
-    }
-    reap(std::move(retired));
-    return result;
+    return runtime_->impl_->published_identities();
 }
 
-void LiveSessionManager::sweep() {
-    RetiredSessions retired;
-    {
-        std::lock_guard lock(mutex_);
-        retired = sweep_locked();
-    }
-    reap(std::move(retired));
-}
-
-LiveSessionManager::RetiredSessions LiveSessionManager::sweep_locked() {
-    RetiredSessions retired;
-    for (auto it = sessions_.begin(); it != sessions_.end();) {
-        if (it->second->lifecycle() == LiveSessionState::finished) {
-            retired.push_back(std::move(it->second));
-            it = sessions_.erase(it);
-        } else {
-            ++it;
-        }
-    }
-    return retired;
-}
-
-void LiveSessionManager::reap(RetiredSessions retired) {
-    for (const LiveSessionHandle& session : retired) {
-        session->join_finished();
-        // Success is recorded after join so a wedged owner can never look
-        // like a successfully reaped session. An external route handle may
-        // still retain this actor; that is safe because its thread is joined
-        // and every call now returns the not-live/stopping result.
-        log_info(session_log(session->identity(), "registry_sweep_joined"));
-    }
-}
+void LiveSessionManager::sweep() {}
 
 void LiveSessionManager::release_maintenance(
-    const FullSessionId& key) noexcept {
-    try {
-        std::lock_guard lock(mutex_);
-        maintenance_.erase(key);
-    } catch (...) {
-        std::terminate();
-    }
-}
-
-void LiveSessionManager::release_global_maintenance() noexcept {
-    try {
-        std::lock_guard lock(mutex_);
-        global_maintenance_ = false;
-    } catch (...) {
-        std::terminate();
-    }
+    const std::shared_ptr<std::atomic_bool>& active) noexcept {
+    active->store(false);
+    runtime_->wake();
 }
 
 } // namespace cha::web

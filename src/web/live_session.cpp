@@ -1,10 +1,9 @@
 #include "web/live_session.h"
 
-#include "session/not_found_error.h"
-#include "session/session_controller.h"
 #include "chat/transcript.h"
-#include "web/text_input.h"
+#include "session/session_controller.h"
 #include "util/logging.h"
+#include "web/text_input.h"
 
 #include <exception>
 #include <new>
@@ -36,17 +35,6 @@ int shutdown_reason_priority(ShutdownReason reason) {
     return 0;
 }
 
-ShutdownReason keep_higher_priority_reason(
-    ShutdownReason current,
-    ShutdownReason candidate) {
-    return shutdown_reason_priority(candidate) > shutdown_reason_priority(current)
-        ? candidate
-        : current;
-}
-
-// Teardown is best effort for ordinary session-local failures. Exhausted
-// allocation capacity is not recoverable at this boundary and remains fatal to
-// the process instead of being mistaken for successful cleanup.
 template<typename Operation>
 bool run_guarded(Operation&& operation) noexcept {
     try {
@@ -75,12 +63,7 @@ std::string_view generation_terminal_status(
             return to_string(entry->status);
         }
     }
-    // A cancelled response may end before producing answer text, in which
-    // case the completed prompt is the request's only transcript entry.
     if (has_prompt) return to_string(EntryStatus::cancelled);
-    // A production terminal transition has a transcript entry for its request.
-    // Keep an explicit diagnostic value for malformed controller snapshots
-    // instead of reporting a made-up successful outcome.
     return "unknown";
 }
 
@@ -92,66 +75,40 @@ cha::app::RuntimeSettings validate_live_session_settings(
     cha::app::RuntimeSettings settings) {
     if (settings.command_queue_capacity == 0) {
         throw std::invalid_argument(
-            "Live session command queue capacity must be positive");
+            "Session runtime command queue capacity must be positive");
     }
     if (settings.command_batch_size == 0 || settings.event_batch_size == 0) {
-        throw std::invalid_argument("Live session batch sizes must be positive");
+        throw std::invalid_argument("Session runtime batch sizes must be positive");
     }
     return settings;
 }
 
 LiveSession::LiveSession(
-    cha::app::RuntimeSettings settings,
     FullSessionId identity,
-    SessionOpener opener,
-    LiveSessionClock clock)
+    std::uint64_t instance,
+    std::weak_ptr<SessionRuntime> runtime,
+    std::size_t pending_append_byte_limit)
     : identity_(std::move(identity)),
-      settings_(validate_live_session_settings(std::move(settings))),
-      opener_(std::move(opener)),
-      clock_(clock ? std::move(clock) : [] {
-          return std::chrono::steady_clock::now();
-      }),
-      notifier_(std::make_shared<OwnerWakeSignal>()),
+      instance_(instance),
+      runtime_(std::move(runtime)),
       output_(std::make_shared<cha::app::SessionOutput>(
-          settings_.pending_append_byte_limit)),
-      commands_(settings_.command_queue_capacity) {
-    if (!opener_) throw std::invalid_argument("Live session needs a session opener");
-}
+          pending_append_byte_limit)) {}
 
-LiveSession::~LiveSession() {
-    // The manager joins the owner before releasing its last reference, and
-    // grace expiry takes the no-destructor exit path instead of reaching here,
-    // so destruction never has to start a new blocking join.
-}
+LiveSession::~LiveSession() = default;
 
 std::variant<std::shared_ptr<CommandReply>, ErrorCode> LiveSession::enqueue(
     WebCommand command) {
-    auto reply = std::make_shared<CommandReply>();
-    bool wake_owner = false;
-    std::optional<ErrorCode> rejection;
-    {
-        std::lock_guard lock(lifecycle_mutex_);
-        std::uint64_t subscribe_ticket = 0;
-        if (std::holds_alternative<SubscribeCommand>(command)) {
-            subscribe_ticket = ++subscribe_ticket_;
-        }
-        if (stopping_) {
-            rejection = shutdown_reason_ == ShutdownReason::server_stopping
-                ? ErrorCode::server_stopping
-                : ErrorCode::session_not_live;
-        } else {
-            const CommandEnqueueResult enqueued =
-                commands_.try_push({std::move(command), reply, subscribe_ticket});
-            if (!enqueued.accepted) {
-                rejection = ErrorCode::command_queue_full;
-            } else {
-                wake_owner = enqueued.wake_owner;
-            }
-        }
+    if (state_.load() != LiveSessionState::running || stopping_.load()) {
+        return shutdown_reason() == ShutdownReason::server_stopping
+            ? ErrorCode::server_stopping
+            : ErrorCode::session_not_live;
     }
-    if (rejection) return *rejection;
-    if (wake_owner) notifier_->wake();
-    return reply;
+    const std::uint64_t ticket = std::holds_alternative<SubscribeCommand>(command)
+        ? subscribe_ticket_.fetch_add(1) + 1
+        : 0;
+    const auto runtime = runtime_.lock();
+    if (!runtime) return ErrorCode::session_not_live;
+    return runtime->enqueue(identity_, instance_, std::move(command), ticket);
 }
 
 CommandSubmitResult LiveSession::submit(
@@ -181,263 +138,73 @@ CommandSubmitResult LiveSession::unsubscribe(
     return submit(std::move(command), deadline);
 }
 
+void LiveSession::raise_shutdown_reason(ShutdownReason reason) noexcept {
+    ShutdownState current = shutdown_.load();
+    while (!current.finalized
+        && shutdown_reason_priority(reason) > shutdown_reason_priority(current.reason)
+        && !shutdown_.compare_exchange_weak(current, {reason, false})) {}
+}
+
+void LiveSession::request_shutdown(ShutdownReason reason) {
+    raise_shutdown_reason(reason);
+    stopping_.store(true);
+    LiveSessionState expected = LiveSessionState::running;
+    (void)state_.compare_exchange_strong(expected, LiveSessionState::stopping);
+    if (const auto runtime = runtime_.lock()) runtime->wake();
+}
+
 void LiveSession::request_retire_when_idle() {
-    {
-        std::lock_guard lock(lifecycle_mutex_);
-        if (state_ != LiveSessionState::running || stopping_) return;
-        retire_when_idle_ = true;
-    }
-    notifier_->wake();
+    retire_when_idle_.store(true);
+    if (const auto runtime = runtime_.lock()) runtime->wake();
 }
 
 void LiveSession::cancel_retirement() {
-    std::lock_guard lock(lifecycle_mutex_);
-    retire_when_idle_ = false;
+    retire_when_idle_.store(false);
 }
 
-bool LiveSession::idle_for_retirement() {
-    std::lock_guard lock(lifecycle_mutex_);
-    return state_ == LiveSessionState::running && !stopping_ && !generating_;
+bool LiveSession::idle_for_retirement() const {
+    return state_.load() == LiveSessionState::running
+        && !stopping_.load() && !generating_.load();
 }
 
 std::shared_ptr<const cha::app::SessionOutputItem> LiveSession::take_output() {
     auto item = output_->take();
-    if (output_->snapshot_needed()) notifier_->wake();
+    if (output_->snapshot_needed()) {
+        if (const auto runtime = runtime_.lock()) runtime->wake();
+    }
     return item;
 }
 
 void LiveSession::acknowledge_output() noexcept {
     output_->acknowledge();
-    notifier_->wake();
+    if (const auto runtime = runtime_.lock()) runtime->wake();
 }
 
 void LiveSession::refresh_presentation() {
     output_->require_snapshot();
-    notifier_->wake();
+    if (const auto runtime = runtime_.lock()) runtime->wake();
 }
 
-void LiveSession::request_shutdown(ShutdownReason reason) {
-    {
-        std::lock_guard lock(lifecycle_mutex_);
-        stopping_ = true;
-        shutdown_reason_ = keep_higher_priority_reason(shutdown_reason_, reason);
+void LiveSession::install(OpenedSession opened) {
+    if (!opened.controller) {
+        throw std::runtime_error("Session opener returned no controller");
     }
-    notifier_->wake();
-}
-
-LiveSessionState LiveSession::lifecycle() {
-    std::lock_guard lock(lifecycle_mutex_);
-    return state_;
-}
-
-void LiveSession::start_owner() {
-    // The thread captures raw `this`. Its lifetime guarantee is the manager's
-    // map entry, which is inserted before this call and erased only after the
-    // owner has published Finished.
-    owner_ = std::thread([this] { owner_main(); });
-}
-
-void LiveSession::resolve_unstarted(LiveSessionStartResult result) {
-    {
-        std::lock_guard lock(lifecycle_mutex_);
-        if (!start_result_) start_result_ = result;
-        stopping_ = true;
-        teardown_started_ = true;
-        state_ = LiveSessionState::finished;
+    label_ = std::move(opened.label);
+    controller_ = std::move(opened.controller);
+    persist_default_character_ = std::move(opened.persist_default_character);
+    mirror_ = std::move(opened.mirror);
+    cached_audio_entries_ = std::move(opened.cached_audio_entries);
+    if (mirror_) {
+        mirrored_revision_ = controller_->view().transcript.revision;
+        mirrored_label_ = label_;
     }
-    lifecycle_changed_.notify_all();
+    (void)apply_notice(opened.notice);
 }
 
-std::optional<LiveSessionStartResult> LiveSession::wait_for_start(
-    std::chrono::milliseconds deadline) {
-    std::unique_lock lock(lifecycle_mutex_);
-    lifecycle_changed_.wait_for(lock, deadline, [this] {
-        return start_result_.has_value() || start_waiters_woken_;
-    });
-    return start_result_;
-}
-
-void LiveSession::wake_start_waiters() {
-    {
-        std::lock_guard lock(lifecycle_mutex_);
-        start_waiters_woken_ = true;
-    }
-    lifecycle_changed_.notify_all();
-}
-
-bool LiveSession::wait_until_finished(
-    std::chrono::steady_clock::time_point deadline) {
-    std::unique_lock lock(lifecycle_mutex_);
-    return lifecycle_changed_.wait_until(lock, deadline, [this] {
-        return state_ == LiveSessionState::finished;
-    });
-}
-
-bool LiveSession::owner_pending() const {
-    std::lock_guard lock(lifecycle_mutex_);
-    return state_ != LiveSessionState::finished;
-}
-
-void LiveSession::join_finished() noexcept {
-    // Joining is bounded by invariant: Finished is published after every
-    // blocking teardown step, leaving only non-blocking stack unwinding. A
-    // wedged owner never publishes it and is never joined here.
-    {
-        std::lock_guard lock(lifecycle_mutex_);
-        if (state_ != LiveSessionState::finished) return;
-        if (joined_ || !owner_.joinable()) return;
-        joined_ = true;
-    }
-    owner_.join();
-}
-
-void LiveSession::join_owner() noexcept {
-    {
-        std::lock_guard lock(lifecycle_mutex_);
-        if (joined_ || !owner_.joinable()) return;
-        joined_ = true;
-    }
-    owner_.join();
-}
-
-void LiveSession::owner_main() {
-    if (!open_controller()) return;
-    if (commit_running()) log_info(session_log(identity_, "registry_running"));
-    owner_loop();
-}
-
-bool LiveSession::open_controller() {
-    LiveSessionStartResult failure = LiveSessionStartResult::failed;
-    try {
-        OpenedSession opened = opener_(identity_, notifier_);
-        if (!opened.controller) {
-            throw std::runtime_error("Session opener returned no controller");
-        }
-        label_ = std::move(opened.label);
-        controller_ = std::move(opened.controller);
-        persist_default_character_ = std::move(opened.persist_default_character);
-        mirror_ = std::move(opened.mirror);
-        cached_audio_entries_ = std::move(opened.cached_audio_entries);
-        if (mirror_) {
-            mirrored_revision_ = controller_->view().transcript.revision;
-            mirrored_label_ = label_;
-        }
-        (void)apply_notice(opened.notice);
-        return true;
-    } catch (const std::bad_alloc&) {
-        std::terminate();
-    } catch (const SessionNotFoundError&) {
-        log_warn(session_log(identity_, "storage_not_found"));
-        failure = LiveSessionStartResult::not_found;
-    } catch (const ForumNotFoundError&) {
-        log_warn(session_log(identity_, "storage_not_found"));
-        failure = LiveSessionStartResult::not_found;
-    } catch (...) {
-        log_error(session_log(identity_, "startup_failed"));
-        failure = LiveSessionStartResult::failed;
-    }
-    // Opening either installed a controller or released everything it had
-    // acquired, so a failed start has nothing left to tear down.
-    resolve_unstarted(failure);
-    return false;
-}
-
-bool LiveSession::commit_running() {
-    bool running = false;
-    {
-        std::lock_guard lock(lifecycle_mutex_);
-        // A shutdown request that arrived while the opener was running wins
-        // the commit race: Running is never published, and teardown proceeds.
-        if (stopping_) {
-            state_ = LiveSessionState::stopping;
-            if (!start_result_) {
-                start_result_ = LiveSessionStartResult::shutting_down;
-            }
-        } else {
-            state_ = LiveSessionState::running;
-            if (!start_result_) start_result_ = LiveSessionStartResult::ready;
-            running = true;
-        }
-    }
-    lifecycle_changed_.notify_all();
-    return running;
-}
-
-void LiveSession::publish_finished() noexcept {
-    {
-        std::lock_guard lock(lifecycle_mutex_);
-        // Startup is always resolved before teardown; completing it here only
-        // guarantees that no waiter can be stranded by a future change.
-        if (!start_result_) {
-            start_result_ = LiveSessionStartResult::shutting_down;
-        }
-        state_ = LiveSessionState::finished;
-    }
-    lifecycle_changed_.notify_all();
-}
-
-void LiveSession::owner_loop() {
-    ShutdownReason reason = ShutdownReason::session_closed;
-    bool fatal = false;
-    try {
-        log_event("lease_acquired_owner_started");
-        publish_current_snapshot();
-        while (true) {
-            std::size_t processed = 0;
-            while (processed < settings_.command_batch_size) {
-                {
-                    std::lock_guard lock(lifecycle_mutex_);
-                    if (stopping_) { reason = shutdown_reason_; break; }
-                }
-                auto work = commands_.try_pop();
-                if (!work) break;
-                execute(std::move(*work));
-                ++processed;
-            }
-            {
-                std::lock_guard lock(lifecycle_mutex_);
-                if (stopping_) { reason = shutdown_reason_; break; }
-            }
-            ControllerEventBatch events =
-                controller_->receive_events(settings_.event_batch_size);
-            {
-                std::lock_guard lock(lifecycle_mutex_);
-                generating_ = controller_->is_generating();
-            }
-            const bool presentation_changed = apply_notice(events.update.notice);
-            publish_update(std::move(events.update.state), presentation_changed);
-            if (output_->snapshot_needed()) {
-                output_->publish_snapshot(make_snapshot());
-            }
-            mirror_if_changed();
-            if (events.update.session_ended) {
-                (void)mark_stopping(ShutdownReason::session_closed);
-            }
-            {
-                std::lock_guard lock(lifecycle_mutex_);
-                if (stopping_) { reason = shutdown_reason_; break; }
-            }
-            bool retire = false;
-            {
-                std::lock_guard lock(lifecycle_mutex_);
-                retire = retire_when_idle_ && !generating_;
-            }
-            if (retire && !controller_->is_generating()) {
-                reason = mark_stopping(ShutdownReason::retired);
-                break;
-            }
-            if (processed == settings_.command_batch_size || events.full) continue;
-            (void)notifier_->wait_until(
-                std::chrono::steady_clock::time_point::max());
-        }
-    } catch (const std::bad_alloc&) {
-        std::terminate();
-    } catch (...) {
-        fatal = true;
-        reason = mark_stopping(ShutdownReason::session_failed);
-        log_fatal_once();
-    }
-    teardown(reason, fatal || reason == ShutdownReason::server_stopping);
+void LiveSession::set_running() {
+    state_.store(LiveSessionState::running);
+    log_event("lease_acquired_runtime_started");
+    publish_current_snapshot();
 }
 
 void LiveSession::execute(OwnerCommand command) {
@@ -446,39 +213,29 @@ void LiveSession::execute(OwnerCommand command) {
         return;
     }
     if (auto* subscribe = std::get_if<SubscribeCommand>(&command.command)) {
-        bool stale = false;
-        {
-            std::lock_guard lock(lifecycle_mutex_);
-            stale = command.subscribe_ticket != subscribe_ticket_;
-        }
-        if (stale) {
+        if (command.subscribe_ticket != subscribe_ticket_.load()) {
             (void)command.reply->complete(ErrorCode::operation_cancelled);
             return;
         }
         output_->attach();
         publish_current_snapshot();
-        {
-            std::lock_guard lock(lifecycle_mutex_);
-            active_subscription_ = *subscribe;
-        }
+        active_subscription_ = *subscribe;
         (void)command.reply->complete(SubscribeResult{
             subscribe->connection_id,
             subscribe->context_epoch,
-            subscribe->subscription_id});
+            subscribe->subscription_id,
+            shared_from_this()});
         return;
     }
     if (auto* unsubscribe = std::get_if<UnsubscribeCommand>(&command.command)) {
-        bool matches = false;
-        {
-            std::lock_guard lock(lifecycle_mutex_);
-            matches = active_subscription_
-                && active_subscription_->connection_id == unsubscribe->connection_id
-                && active_subscription_->context_epoch == unsubscribe->context_epoch
-                && active_subscription_->subscription_id
-                    == unsubscribe->subscription_id;
-            if (matches) active_subscription_.reset();
+        const bool matches = active_subscription_
+            && active_subscription_->connection_id == unsubscribe->connection_id
+            && active_subscription_->context_epoch == unsubscribe->context_epoch
+            && active_subscription_->subscription_id == unsubscribe->subscription_id;
+        if (matches) {
+            active_subscription_.reset();
+            output_->detach();
         }
-        if (matches) output_->detach();
         (void)command.reply->complete(CommandResult{});
         return;
     }
@@ -491,6 +248,7 @@ void LiveSession::execute(OwnerCommand command) {
             identity_.session_id, label_});
         return;
     }
+
     SessionController& controller = *controller_;
     CommandResult outcome = std::visit([&controller](auto&& value) -> CommandResult {
         using T = std::decay_t<decltype(value)>;
@@ -514,26 +272,22 @@ void LiveSession::execute(OwnerCommand command) {
                     std::string(controller.view().default_character_id);
             }
             return result;
-        } else if constexpr (std::is_same_v<T, RenameSessionCommand>) {
-            throw std::logic_error("Rename command handled before dispatch");
-        } else if constexpr (std::is_same_v<T, SnapshotCommand>) {
-            throw std::logic_error("Snapshot command handled before dispatch");
-        } else if constexpr (std::is_same_v<T, SubscribeCommand>) {
-            throw std::logic_error("Subscribe handled before dispatch");
-        } else if constexpr (std::is_same_v<T, UnsubscribeCommand>) {
-            throw std::logic_error("Unsubscribe handled before dispatch");
+        } else if constexpr (std::is_same_v<T, RenameSessionCommand>
+            || std::is_same_v<T, SnapshotCommand>
+            || std::is_same_v<T, SubscribeCommand>
+            || std::is_same_v<T, UnsubscribeCommand>) {
+            throw std::logic_error("Command handled before dispatch");
         } else {
             static_assert(unsupported_web_command<T>);
         }
     }, command.command);
+
     if (outcome.persist_default_character_id && persist_default_character_) {
         try {
             persist_default_character_(*outcome.persist_default_character_id);
         } catch (const std::bad_alloc&) {
             throw;
         } catch (const std::exception& error) {
-            // The session keeps the new default; only the saved copy is missing.
-            // The reason can name workspace paths, so it goes to the log alone.
             log_warn(session_log(
                 identity_, "default_character_not_saved " + std::string(error.what())));
             outcome.session.notice =
@@ -542,23 +296,50 @@ void LiveSession::execute(OwnerCommand command) {
         }
     }
     const bool presentation_changed = apply_notice(outcome.session.notice);
-    // The state effect is in-process only; the serialized result carries just
-    // clear_input and the notice.
     publish_update(std::move(outcome.session.state), presentation_changed);
     mirror_if_changed();
     const bool session_ended = outcome.session.session_ended;
     (void)command.reply->complete(std::move(outcome));
-    if (session_ended) {
-        (void)mark_stopping(ShutdownReason::session_closed);
-    }
+    if (session_ended) request_shutdown(ShutdownReason::session_closed);
+}
+
+bool LiveSession::receive_events(std::size_t batch_size) {
+    ControllerEventBatch events = controller_->receive_events(batch_size);
+    generating_.store(controller_->is_generating());
+    const bool presentation_changed = apply_notice(events.update.notice);
+    publish_update(std::move(events.update.state), presentation_changed);
+    if (output_->snapshot_needed()) output_->publish_snapshot(make_snapshot());
+    mirror_if_changed();
+    if (events.update.session_ended) request_shutdown(ShutdownReason::session_closed);
+    return events.full;
+}
+
+bool LiveSession::retirement_requested() const noexcept {
+    return retire_when_idle_.load() && !generating_.load();
+}
+
+bool LiveSession::shutdown_requested() const noexcept {
+    return stopping_.load();
+}
+
+ShutdownReason LiveSession::shutdown_reason() const noexcept {
+    return shutdown_.load().reason;
+}
+
+void LiveSession::fail_current(std::shared_ptr<CommandReply> reply) {
+    if (reply) (void)reply->complete(ErrorCode::internal_error);
+    raise_shutdown_reason(ShutdownReason::session_failed);
+    stopping_.store(true);
+    state_.store(LiveSessionState::stopping);
+    log_fatal_once();
 }
 
 SessionSnapshot LiveSession::make_snapshot() {
-    // The borrowed view lives only for this expression; to_snapshot() copies
-    // everything it needs into the returned owning value.
     SessionSnapshot snapshot = to_snapshot(
         *controller_->workspace(),
-        identity_, label_, controller_->view(),
+        identity_,
+        label_,
+        controller_->view(),
         presentation(SessionLifecycle::running));
     if (cached_audio_entries_) {
         try {
@@ -592,18 +373,9 @@ bool LiveSession::apply_notice(const std::optional<std::string>& notice) {
     return true;
 }
 
-ShutdownReason LiveSession::mark_stopping(ShutdownReason reason) {
-    std::lock_guard lock(lifecycle_mutex_);
-    stopping_ = true;
-    shutdown_reason_ = keep_higher_priority_reason(shutdown_reason_, reason);
-    return shutdown_reason_;
-}
-
 void LiveSession::publish_update(
     ControllerStateUpdate state,
     bool presentation_changed) {
-    // Notice lives only in a full snapshot under the current protocol, so a
-    // presentation change dominates append delivery.
     if (presentation_changed) {
         publish_current_snapshot();
         return;
@@ -629,9 +401,7 @@ void LiveSession::mirror_if_changed() {
     const TranscriptView transcript = controller_->view().transcript;
     const bool label_changed = label_ != mirrored_label_;
     if (!label_changed && controller_->is_generating()) return;
-    if (!label_changed && transcript.revision == mirrored_revision_) {
-        return;
-    }
+    if (!label_changed && transcript.revision == mirrored_revision_) return;
     mirror_(label_, transcript.entries);
     mirrored_revision_ = transcript.revision;
     mirrored_label_ = label_;
@@ -659,17 +429,7 @@ void LiveSession::log_generation_transitions(const ControllerView& current) {
     }
     logged_generation_active_ = is_active;
     logged_active_request_ = current.generation.request_id;
-    {
-        std::lock_guard lock(lifecycle_mutex_);
-        generating_ = is_active;
-    }
-}
-
-void LiveSession::publish_final(ShutdownReason reason) {
-    SessionSnapshot snapshot = make_snapshot();
-    snapshot.lifecycle = SessionLifecycle::stopping;
-    snapshot.shutdown_reason = reason;
-    output_->publish_snapshot(std::move(snapshot));
+    generating_.store(is_active);
 }
 
 void LiveSession::log_fatal_once() noexcept {
@@ -684,58 +444,39 @@ void LiveSession::log_event(std::string_view event) const noexcept {
     (void)run_guarded([this, event] { log_info(session_log(identity_, event)); });
 }
 
-void LiveSession::teardown(ShutdownReason reason, bool skip_final_drain) noexcept {
-    {
-        std::lock_guard lock(lifecycle_mutex_);
-        if (teardown_started_) return;
-        teardown_started_ = true;
-        stopping_ = true;
-        shutdown_reason_ = keep_higher_priority_reason(shutdown_reason_, reason);
-        reason = shutdown_reason_;
-        state_ = LiveSessionState::stopping;
+void LiveSession::finalize(ShutdownReason reason) noexcept {
+    raise_shutdown_reason(reason);
+    stopping_.store(true);
+    state_.store(LiveSessionState::stopping);
+    std::optional<SessionSnapshot> terminal;
+    if (controller_ && output_->attached()) {
+        if (!run_guarded([&] { terminal = make_snapshot(); })) {
+            log_event("terminal_snapshot_failed");
+        }
     }
-    lifecycle_changed_.notify_all();
-    (void)run_guarded([this] {
-        log_info(session_log(identity_, "registry_stopping"));
-    });
-    (void)skip_final_drain;
+    // Snapshot construction can block. Accept stronger reasons until the
+    // owning payload is ready, then freeze its reason before publication.
+    ShutdownState shutdown = shutdown_.load();
+    while (!shutdown_.compare_exchange_weak(shutdown, {shutdown.reason, true})) {}
+    reason = shutdown.reason;
     log_event("runtime_stopping reason=" + std::string(to_string(reason)));
-    if (controller_) {
-        (void)run_guarded([&] { publish_final(reason); });
-        ShutdownReason latest_reason;
-        {
-            std::lock_guard lock(lifecycle_mutex_);
-            latest_reason = shutdown_reason_;
-        }
-        if (latest_reason != reason) {
-            reason = latest_reason;
-            (void)run_guarded([&] { publish_final(reason); });
-        }
+    if (terminal) {
+        terminal->lifecycle = SessionLifecycle::stopping;
+        terminal->shutdown_reason = reason;
+        (void)run_guarded([&] { output_->publish_snapshot(std::move(*terminal)); });
     }
     output_->close();
-    // A queue/reply mutex failure may strand later waiters, but it must
-    // not strand the controller, journal, or workers.
-    (void)run_guarded([&] {
-        while (auto work = commands_.try_pop()) {
-            (void)work->reply->complete(
-                reason == ShutdownReason::server_stopping
-                    ? ErrorCode::server_stopping
-                    : ErrorCode::session_not_live);
-        }
-    });
     if (controller_) {
         if (!run_guarded([&] { controller_->shutdown(); })) {
-            (void)mark_stopping(ShutdownReason::session_failed);
+            raise_shutdown_reason(ShutdownReason::session_failed);
             log_fatal_once();
         }
-        // Destroy the controller before publishing Finished so a replacement
-        // actor can start immediately afterwards.
         controller_.reset();
         persist_default_character_ = {};
         mirror_ = {};
-        log_event("controller_released_owner_finished");
+        log_event("controller_released_runtime_finished");
     }
-    publish_finished();
+    state_.store(LiveSessionState::finished);
 }
 
 } // namespace cha::web

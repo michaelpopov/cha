@@ -229,12 +229,14 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
     cha::app::Application& application;
     Options options;
     std::mutex mutex;
+    std::mutex ready_tasks_mutex;
     std::condition_variable work;
     std::uint64_t next_connection{1};
     bool stopping{};
     std::unordered_map<std::string, std::shared_ptr<Connection>> connections;
     std::deque<std::function<void()>> ordinary_tasks;
     std::deque<std::function<void()>> control_tasks;
+    std::deque<std::function<void()>> ready_tasks;
     std::uint64_t notified_epoch{};
     cha::app::ApplicationState notified_state{cha::app::ApplicationState::running};
 
@@ -253,6 +255,11 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
 
     void notify() {
         work.notify_all();
+    }
+
+    bool has_ready_tasks() {
+        std::lock_guard lock(ready_tasks_mutex);
+        return !ready_tasks.empty();
     }
 
     nlohmann::json error_reply(
@@ -432,8 +439,7 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                 : nullptr;
             LiveSessionHandle subscribed_session;
             if (subscribed) {
-                subscribed_session = application.subscription_handle(
-                    outstanding.forum_id, outstanding.session_id);
+                subscribed_session = subscribed->session;
             }
             LiveSessionHandle stale_subscription;
             {
@@ -490,6 +496,24 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
             fail_request(connection, id, outstanding.context_epoch, code);
         }
         pump();
+    }
+
+    void schedule_session_completion(
+        std::string connection_id,
+        std::uint64_t id) {
+        auto weak = std::weak_ptr<Impl>(shared_from_this());
+        {
+            // This callback can run inline on the session runtime while a
+            // bridge task holds `mutex` waiting for a runtime lookup.
+            std::lock_guard lock(ready_tasks_mutex);
+            ready_tasks.push_back(
+                [weak, connection_id = std::move(connection_id), id] {
+                    if (auto impl = weak.lock()) {
+                        impl->complete_session(connection_id, id);
+                    }
+                });
+        }
+        notify();
     }
 
     void complete_background(
@@ -1244,7 +1268,9 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
         if (!reply) return;
         auto weak = std::weak_ptr<Impl>(shared_from_this());
         reply->set_ready_callback([weak, connection_id, id] {
-            if (auto impl = weak.lock()) impl->complete_session(connection_id, id);
+            if (auto impl = weak.lock()) {
+                impl->schedule_session_completion(connection_id, id);
+            }
         });
     }
 
@@ -1459,6 +1485,13 @@ void BridgeRouter::run_control_tasks() {
     for (;;) {
         std::function<void()> task;
         {
+            std::lock_guard lock(impl_->ready_tasks_mutex);
+            if (!impl_->ready_tasks.empty()) {
+                task = std::move(impl_->ready_tasks.front());
+                impl_->ready_tasks.pop_front();
+            }
+        }
+        if (!task) {
             std::lock_guard lock(impl_->mutex);
             if (!impl_->control_tasks.empty()) {
                 task = std::move(impl_->control_tasks.front());
@@ -1589,6 +1622,7 @@ bool BridgeRouter::wait_for_work(std::chrono::milliseconds timeout) {
     std::unique_lock lock(impl_->mutex);
     return impl_->work.wait_for(lock, timeout, [&] {
         if (impl_->stopping) return true;
+        if (impl_->has_ready_tasks()) return true;
         if (!impl_->control_tasks.empty()) {
             return true;
         }
@@ -1617,6 +1651,10 @@ void BridgeRouter::shutdown() {
     impl_->stopping = true;
     impl_->ordinary_tasks.clear();
     impl_->control_tasks.clear();
+    {
+        std::lock_guard ready_lock(impl_->ready_tasks_mutex);
+        impl_->ready_tasks.clear();
+    }
     for (auto& [id, connection] : impl_->connections) {
         impl_->invalidate(connection);
     }

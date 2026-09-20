@@ -1,249 +1,119 @@
-# Application protocol and live sessions
+# Native protocol and live sessions
 
-Workspace characters select their providers in their own `character.toml`.
-The external application config supplies `data` and `[logging]`. An obsolete
-`[web]` section is ignored. Guest, Assistant, Entrance, and Welcome remain
-application discovery data, not a browser HTTP projection.
+`cha_app` owns the native protocol values, session presentation, and the chat
+input grammar. The bridge exchanges owning request and result values with the
+application; it never reads a controller or a borrowed controller view.
 
-`cha_app` owns protocol values, serialization, and live-session coordination,
-including the textual grammar accepted by the chat box. The composition root owns one `WorkspaceConfigStore`, which
-holds the database lease, materialization, and configuration mutex; it publishes
-one immutable `Workspace` and supplies explicit paths to an independent
-`SessionRepository`. Routes acquire the current workspace with `getws()`, and
-the `SessionOpener` opens every session — including the built-in Welcome —
-through `open_session()` with the persona that session's forum configures. It depends on
-core `FullSessionId`, `OpenedSession`, `ControllerView`, and `ControllerUpdate`, but puts no
-HTTP or protocol type in `cha_core`. Its permanent session-owner thread is the sole owner of
-a `SessionController`; HTTP workers exchange only owning commands and results
-with it.
+Workspace characters choose providers in workspace configuration. A session's
+forum chooses its persona, so the submitter cannot select authorship. The raw
+input path recognizes an optional leading character mention and `/mcast`, then
+lets `SessionController` resolve recipients against the authoritative forum
+configuration.
 
-A persona is a property of the session, not of the submitter. A session uses
-its forum's configured persona. `GET
-/api/v1/bootstrap` returns the immutable discovery view, including stable IDs,
-display summaries, built-ins, and Recent; it deliberately exposes no prompt
-text. Each `ForumSummary` carries its `default_persona_id` and
-`default_persona_display_name`, which is how the browser names the author it is
-about to write as.
+## Session runtime
 
-Bootstrap also carries the workspace persona roster as summaries, and `GET
-/api/v1/personas/{id}` serves one persona's `PERSONA.md` the way `GET
-/api/v1/characters/{id}` serves a character definition. That is discovery for
-reading, not selection: neither endpoint takes part in attribution, and
-`persona_markdown` is empty for a persona that configures no `PERSONA.md`.
-Character detail also carries the character's current provider and style names,
-plus its optional reasoning-effort and web-search overrides. A null override
-means to inherit the provider default. It also carries the lists of options that
-resolve, `settings_writable`, and `writable`. The built-in Assistant allows
-settings writes but not definition changes or deletion. A provider option is
-only an id and a label — never host, model, or credential — so the response
-stays discovery-safe.
+There is one permanent `SessionRuntime` thread for all live sessions. It owns:
 
-`PATCH /api/v1/characters/{id}` requires a provider name and takes a nullable
-style, reasoning effort, and web search mode. Null erases that optional key and
-restores provider inheritance. The configuration store validates the
-materialized edit, commits the complete `config` table, publishes the candidate,
-and asks live sessions in every forum containing that character to shut down
-with `reloading`. The server does not reopen anything: the browser's existing
-stream-recovery ladder does that.
-`reloading` is ranked above `browser_disconnected` in
-`shutdown_reason_priority()`, or the reason never reaches the wire.
+- one bounded command queue;
+- one remembered-wake notifier shared by every provider request;
+- the map from `FullSessionId` to live controller entries; and
+- the selected session identity.
 
-The fan-out runs over `LiveSessionManager::active_sessions()`, not over
-`snapshot()`'s `running_sessions`. A session reads its definitions while it is
-still Starting, so one that is opening when the save commits already holds the
-old settings and has to restart like any other; both `running_sessions` and
-`lookup()` admit only Running actors, which is why that method exists and why it
-returns actors rather than identities. The write commits before the fan-out, so
-an actor that appears in neither is one that has yet to read the published
-configuration at all.
+The runtime thread constructs, calls, shuts down, and destroys every
+`SessionController`. Provider transports remain independent workers. Each
+provider request keeps its own event queue and wakes the shared notifier; on
+every turn the runtime drains a bounded event batch from every live controller.
+Bounded command and event batches keep either source from starving the other.
 
-There is no whole-workspace HTTP mutation. Operators stop the process and use
-database export/edit/import for other configuration changes. The narrow online
-writes for a forum's default character and its members/persona use the same
-validate/commit/publish store path and restart affected live sessions.
+`LiveSession` is the stable endpoint for one runtime instance. Controller state
+behind that endpoint is private to the runtime thread; callers see only
+immutable identity, an instance number, atomically published lifecycle state,
+and a shared `SessionOutput`. A handle may outlive retirement, but the runtime
+clears its controller before removal and a command includes the instance number,
+so it cannot reach a later controller opened for the same identity.
 
-A submitted input body is exactly `{"text": "<text>"}`. Naming a persona is
-rejected rather than ignored, so a client written against an older shape fails
-visibly. `LiveSession` supplies the session's current persona ID from the
-controller view, and `SessionController` resolves it against the workspace
-roster, so a submitter still cannot choose who a message is attributed to. A
-live session serves one browser connection at a time — the newest one, because
-the reader moves between devices. Changing the forum's persona from the Members
-screen saves it together with the member list and restarts the forum's live
-sessions so agent prompts carry that persona.
+The runtime loop performs these steps:
 
-## Chat input grammar
+1. process a bounded batch of commands;
+2. receive provider events from every live controller, including idle ones;
+3. satisfy requested presentation snapshots and mirror durable changes;
+4. retire ended entries and unselected entries whose generation is complete;
+5. wait on the shared notifier unless a batch indicated more work.
 
-The raw-input owner path recognizes optional leading character mentions and
-the `/mcast` command. Mentions and multicast recipient handles remain
-unresolved until `SessionController` applies the forum's authoritative
-character rules. While generation is active, input remains in the browser
-editor and the typed Stop action handles cancellation.
+Opening and journal work remain synchronous. A slow open or write can delay
+other live sessions, but it cannot create concurrent controller access. This is
+intentional until measurement demonstrates a need for more machinery.
 
-This grammar is web policy, not a reusable core or terminal abstraction.
-`handle_text_input()` returns the same `CommandResult` completed back
-to the HTTP request: it owns the controller's `ControllerUpdate`, `clear_input`,
-and optional notice. JSON exposes only `clear_input` and the notice.
+## Selection and retirement
 
-## The live-session actor
+Selecting an already-live identity reuses its controller. A stored session is
+opened before selection changes, so a failed or timed-out open preserves the
+previous selection. Selection changes do not cancel generation: a deselected
+generating controller remains in the map and continues receiving events until
+its complete durable result has been processed. An unselected idle controller
+is retired.
 
-`LiveSession` is one complete session actor. It owns its permanent
-`std::thread`, the concrete `SessionController` that thread exclusively uses,
-the bounded multi-producer `CommandQueue`, an `OwnerWakeSignal` (which
-implements core's producer-only `WakeNotifier` contract and adds the
-condition-variable wait consumed by the owner loop), its `SseMailbox`,
-`BrowserConnectionState`, web presentation state, and one lifecycle record.
-There is no second per-session object owning the loop, no adapter around the
-controller, and no virtual output port around the mailbox.
+Before a selection is rejected for capacity, the runtime removes eligible idle
+entries. An idle selected entry is replaceable after its candidate opens
+successfully. If all capacity is genuinely occupied by generation, selection
+fails promptly rather than waiting for progress that only the runtime thread
+can make.
 
-The controller is constructed, called, shut down, and destroyed only on that
-one thread. The actor calls `SessionOpener` from `owner_main()` and moves the
-resulting `OpenedSession` into owner-thread-only state; that opener exists
-because session construction combines application-owned model and repository
-data, and it always returns the production-shaped result with a concrete
-controller. HTTP-facing callers get only owning command results; the owner
-thread alone reaches a controller and continues draining generation notifications
-without a browser connection. It builds every full snapshot on demand: it
-borrows a `ControllerView` and passes it straight to `to_snapshot()`, which
-copies the descriptor, the view, and web presentation state into an owning
-protocol `SessionSnapshot` before the borrow ends. The snapshot owns copies of
-the core `TranscriptEntry` values, so there is no parallel web transcript model
-and the SSE writer never borrows controller state or blocks the owner. The
-actor keeps no snapshot or cursor cache and never compares two protocol values
-to discover what changed: it consumes the controller's own classification.
+Normal retirement publishes a terminal `stopping` snapshot with reason
+`retired`, closes the output producer, destroys the controller, and erases the
+entry. Explicit close may cancel generation. Neither operation deletes the
+stored conversation.
 
-Its lifecycle is one synchronized record guarded by a single mutex and
-condition variable:
+Shutdown reasons use this precedence:
 
 ```text
-                 open succeeds
-Starting ------------------------------> Running
-   |                                       |
-   | open fails                            | idle/orphan, command, controller
-   |                                       | failure, or shutdown request
-   v                                       v
-Finished <----------------------------- Stopping
+session_closed = retired < reloading < session_failed
+    < session_deleted < server_stopping
 ```
 
-A shutdown request that arrives while the opener is still running wins the
-commit race: `Running` is never published and teardown proceeds straight to
-`Finished`. The owner thread is the sole writer of the startup result; the
-manager only sets the stop-request flag and wakes waiters, so an open timeout
-is a waiter outcome that never cancels a shared startup. `Finished` is
-published last, after the final drain, mailbox close, queued-command replies,
-controller shutdown, and controller destruction — which is what lets a
-same-identity actor start immediately afterwards.
+The strongest reason observed before finalization is published. The final
+snapshot is an owning value, and `SessionOutput::close()` preserves pending and
+in-flight values so delivery can finish without retaining a controller or
+waiting for renderer acknowledgement.
 
-For each update the owner thread applies the notice, then publishes a full
-snapshot if presentation changed (notice lives only in a snapshot under the
-current protocol), publishes nothing for `NoStateUpdate`, publishes a full
-snapshot for `SnapshotRequired`, and otherwise offers the exact `TextAppend` to
-the mailbox. The mailbox returns `AppendPublishResult::Accepted` when it can
-represent the update exactly with its current base and pending payload, or
-`SnapshotRequired` when it cannot — an unset or different base target, an empty
-append, or an incompatible pending payload. Rejection leaves the mailbox's
-pending work untouched and obliges the owner to project one fresh snapshot, so
-no eager fallback snapshot is ever built for the common append path. Append
-acceptance is an optimization boundary, not a correctness promise: mailbox
-pressure may turn a controller-proven append into a full snapshot at any time.
-Core `TextAppend` targets cross the boundary unchanged; the mailbox adds
-sequence values only to payloads it actually stores. The actor's idempotent
-owner-thread teardown drains a final snapshot for a bounded interval and
-contains controller failures to that one session.
+## Commands and output
 
-## The live-session collection
+Every command names a full session identity and a live instance. Commands and
+replies own their arguments and results. An accepted ordinary mutation may
+finish after its caller's deadline; an abandoned reply simply drops that
+result. Selection has a commit boundary so a timeout before commit cannot
+change selection.
 
-`LiveSessionManager` is the process-local liveness authority and owns nothing
-per-session beyond the map. It is not a core session abstraction: it serializes
-open requests by `FullSessionId`, counts starting and stopping actors against
-the configured bound, and holds each actor through a
-`std::map<FullSessionId, std::shared_ptr<LiveSession>>`. Its outcomes describe
-only owner lifecycle; `LobbyRoutes` validates URL components, returns stable
-open identities, and maps lifecycle failures to HTTP errors. It publishes only
-running actors, and sweeps finished actors in two phases so joins occur outside
-its mutex.
+`SessionOutput` is the thread-safe producer/consumer boundary. It keeps at most
+one immutable in-flight payload and one replaceable pending payload, coalesces
+compatible text appends, and falls back to a fresh snapshot when an append can
+no longer be represented exactly. A background controller persists results
+without building snapshots unless output is attached and requested.
 
-Ownership flows one way. An actor is inserted into the map before its owner
-thread starts, and the thread captures a raw `LiveSession*` rather than a
-shared pointer, so an owner can never destroy itself by releasing the last
-reference and the map entry always outlives that raw pointer. No actor ever
-calls back into the manager; the manager learns state only by taking an actor's
-short lifecycle lock or waiting on its condition variable, and never waits,
-opens storage, runs controller work, or joins while holding its own mutex.
-Sweeping erases only actors that already published `Finished` and joins them
-afterwards, which is bounded by invariant: from that publication to the thread
-returning there is only non-blocking stack unwinding. A route handle may outlive
-removal safely, because the thread is already joined and every call on a
-finished actor returns the existing not-live result — which is also what lets
-the same identity open a new actor immediately.
+Subscription completion carries the endpoint that was attached. The bridge
+therefore does not synchronously look the session up from an inline runtime
+completion callback. Runtime completions are handed to a separate bridge-ready
+queue before bridge locks are taken, avoiding a cycle between bridge and
+runtime waits. Stale acknowledgements and unsubscribe commands are checked
+against subscription identity and output generation.
 
-`SessionRoutes` resolves path-scoped `std::shared_ptr<LiveSession>` values and
-uses their owner queue for snapshots and commands; it never reaches a controller
-directly. It serves the session API and chunked SSE route. The SSE close
-callback retains the actor so the callback's target stays alive even after the
-manager has removed and joined it.
-`SseMailbox` holds at most one immutable in-flight payload and one replaceable
-pending payload; its writer is the HTTP thread, never the session owner. Each
-stream begins with a fresh snapshot, then receives only snapshot or
-target/sequence-aware append events plus comment heartbeats.
-`BrowserConnectionState` is owner-thread-only state: it holds one SSE stream
-per session, assigns an opaque server-local connection ID, and ignores stale
-close notifications. CHA serves one reader who may move between devices, so a
-connect never fails and never waits: it takes the session over and reports the
-connection it displaced. Consulting a deadline there would make the reader wait
-out an abandoned device's socket, which is the delay this design exists to
-avoid, and ignoring the displaced device's late close is what keeps that
-teardown from starting a deadline against the connection that replaced it. The
-displaced stream ends with a `superseded` record so that browser parks instead
-of reconnecting and taking the session straight back. An actor starts
-disconnected, cancels its one deadline on stream acceptance, and on matching
-close unloads at `idle_grace` or the absolute `orphan_limit` from that same
-disconnection timestamp while generation is active.
-`LobbyRoutes` is the HTTP boundary for bootstrap discovery, character detail,
-stored-session discovery, create, rename, delete,
-and manager-backed open/reattach. It validates route identifiers before either
-the live-session map or session storage is consulted; creation reaches only
-`SessionRepository`, while opening first asks the manager for a disk-free
-reattach and otherwise strictly validates only the selected session's stored
-metadata before a new open. `AssetHandler` separately owns the HTML/asset boundary and serves
-the same client-routed shell at the root and session deep links.
+## Maintenance and shutdown
 
-Live rename is serialized through the actor's owner queue and republishes its
-descriptor snapshot. Delete first acquires a manager maintenance reservation,
-which blocks open and reattach for that identity, then requests the
-`session_deleted` shutdown reason and waits under the configured deadline before
-the repository transactionally deletes the session row and its transcript.
-`configure_http_server()` owns the server-global request pool, read/write
-timeouts, payload limit, and fallback error/exception handlers so route
-installers cannot silently replace one another's policy. It does not restrict
-the `Host` header: clients may reach the configured listener through a DNS
-name, IP address, proxy, or other network path. JSON mutations that send an
-`Origin` header must still use an origin authority equal to `Host`.
-`ServerShutdownCoordinator` implements the bounded process shutdown sequence:
-it waits for signal notification, sets the manager's stopping flag, stops HTTP
-acceptance, wakes opening waiters, requests every live actor to stop, waits for
-all owners under one absolute grace deadline rather than a fresh period per
-actor, logs stuck session identities and forces the no-destructor `std::_Exit`
-on expiry, then joins cpp-httplib's listener/request pool. A wedged owner is
-never joined: `std::thread` and explicit join points are retained precisely
-because a `std::jthread` destructor could hide an unbounded join after that
-grace period, and a stop token cannot interrupt SQLite, filesystem calls, or a
-model backend. Keeping that ordering in the coordinator makes the forced
-path directly testable and prevents a stuck HTTP worker from suppressing it.
-`ProcessShutdownSignal` is the portable signal bridge; its handler only records
-`sig_atomic_t` state and normal code performs the shutdown work.
-`web_main.cpp` is the composition root for the listener and one process-owned
-`Providers`. Process shutdown stops HTTP admission, joins every live-session
-owner, then calls `Providers::shutdown()` before diagnostic logging is closed.
-Provider shutdown waits for request transport cleanup, so curl callbacks and
-easy handles cannot outlive logging or process-owned provider state.
-Server-scoped log records use `web server`, while session-scoped records always
-carry `forum_id` and `session_id`; neither form includes prompt, answer,
-transcript, provider-message, or credential text. Route exceptions are recorded
-with their message so a 500 stays diagnosable, and the response itself always
-uses the common error envelope, which carries no exception detail.
-Generation logging retains only whether a generation was active and its request
-ID, not a snapshot. It treats an active request-ID change as a terminal event
-for the old request followed by a start event for the new request, covering
-multicast handoffs that never pass through an inactive snapshot; the terminal
-status is read from the freshly projected transcript.
+Deletion reserves one identity before releasing its live controller and keeps
+that reservation until storage and media cleanup finish. Global vault
+maintenance closes admission, publishes `reloading`, releases all controllers
+and their journal connections, performs the storage operation, then reopens
+admission with a new context epoch. Workspace invalidation uses the same
+terminal path; presentation-only edits request a fresh snapshot without ending
+the controller.
+
+Application shutdown sets a stop flag that does not depend on ordinary queue
+capacity, wakes the runtime, resolves queued work, publishes
+`server_stopping`, and releases every controller. One absolute grace period
+bounds the join. A runtime that misses that deadline is left to the existing
+forced-exit path rather than being joined unconditionally by a destructor.
+
+Controller failures are contained to their entry. Authoritative journal
+failures end that session; Markdown mirror failures retain their best-effort
+policy. Provider workers may finish transport cleanup after their controller
+releases request handles, and late notifier wakes are harmless.

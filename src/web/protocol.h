@@ -19,6 +19,8 @@
 
 namespace cha::web {
 
+class LiveSession;
+
 enum class SessionLifecycle { starting, running, stopping };
 enum class ShutdownReason {
     session_closed,
@@ -158,6 +160,10 @@ struct SubscribeResult {
     std::string connection_id;
     std::uint64_t context_epoch{};
     std::string subscription_id;
+    // In-process only. Subscription completion carries the immutable endpoint
+    // it just attached so an inline ready callback never reenters the runtime
+    // to look the session up again. Protocol serialization ignores this field.
+    std::shared_ptr<LiveSession> session;
 };
 
 using WebCommand = std::variant<

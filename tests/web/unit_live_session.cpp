@@ -10,6 +10,7 @@
 #include <sqlite3.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <filesystem>
@@ -17,6 +18,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -468,6 +470,43 @@ TEST(LiveSession, TimeoutLeavesAcceptedCommandAliveAndLateReplySafe) {
     EXPECT_TRUE(std::holds_alternative<CommandResult>(later));
 }
 
+TEST(LiveSession, ProcessShutdownRejectsQueuedMutationsEvenWhenTheQueueIsFull) {
+    test::TemporarySessionFile file("live_session_shutdown_queue");
+    auto controls = std::make_shared<test::BackendControls>();
+    OwnerGate gate;
+    LiveSessionHost host(
+        test_settings(2),
+        scripted_opener(file.path(), controls, [&gate](std::size_t) {
+            gate.wait();
+        }));
+    const auto running = host->enqueue(RawCommand{"First question"});
+    const bool entered = gate.wait_until_entered();
+    if (!entered) gate.release();
+    ASSERT_TRUE(entered);
+
+    const auto rename = host->enqueue(RenameSessionCommand{"Must not be saved"});
+    const auto prompt = host->enqueue(RawCommand{"Must not run"});
+    host.manager().begin_shutdown();
+    gate.release();
+
+    for (const auto& queued : {rename, prompt}) {
+        const auto* reply = std::get_if<std::shared_ptr<CommandReply>>(&queued);
+        ASSERT_NE(reply, nullptr);
+        const auto result = (*reply)->wait_for(2s);
+        ASSERT_TRUE(result);
+        ASSERT_TRUE(std::holds_alternative<ErrorCode>(*result));
+        EXPECT_EQ(std::get<ErrorCode>(*result), ErrorCode::server_stopping);
+    }
+    ASSERT_TRUE(host.manager().join_shutdown(2s));
+    const auto& reply = std::get<std::shared_ptr<CommandReply>>(running);
+    EXPECT_TRUE(reply->wait_for(2s));
+    EXPECT_EQ(read_session_database_metadata(file.path()).label, "Test session");
+    const auto stored = load_session_state(file.path());
+    EXPECT_TRUE(std::ranges::none_of(stored.entries, [](const auto& entry) {
+        return entry.text == "Must not run";
+    }));
+}
+
 TEST(LiveSession, NotificationPressureDoesNotStarveCommands) {
     test::TemporarySessionFile file("live_session_pressure");
     auto controls = std::make_shared<test::BackendControls>();
@@ -738,6 +777,42 @@ TEST(LiveSession, ReloadingOutranksSessionClosedOnTheFinalSnapshot) {
     EXPECT_TRUE(wait_for_finished(host.handle()));
 }
 
+TEST(LiveSession, FinalSnapshotIncludesReasonsRaisedDuringSnapshotConstruction) {
+    test::TemporarySessionFile file("live_session_terminal_reason");
+    OwnerGate gate;
+    std::atomic<bool> block_snapshot{};
+    LiveSessionHost host(test_settings(), [&](
+                             const FullSessionId& identity,
+                             std::shared_ptr<WakeNotifier> notifier) {
+        auto opened = test::open_test_session(identity, file.path(), notifier);
+        opened.cached_audio_entries = [&] {
+            if (block_snapshot.exchange(false)) gate.wait();
+            return std::set<EntryId>{};
+        };
+        return opened;
+    });
+    subscribe(*host);
+    // Keep the initial payload in flight throughout terminal publication.
+    ASSERT_TRUE(next_output(*host));
+    block_snapshot.store(true);
+    host->request_shutdown();
+    const bool entered = gate.wait_until_entered();
+    host->request_shutdown(ShutdownReason::reloading);
+    host->request_shutdown(ShutdownReason::session_closed);
+    gate.release();
+    ASSERT_TRUE(entered);
+    ASSERT_TRUE(wait_for_finished(host.handle()));
+
+    // Once finalized, a later operation cannot rewrite that instance's event.
+    host->request_shutdown(ShutdownReason::session_deleted);
+    host->acknowledge_output();
+    const auto terminal = next_output(*host);
+    ASSERT_TRUE(terminal);
+    EXPECT_EQ(terminal->snapshot.lifecycle, SessionLifecycle::stopping);
+    EXPECT_EQ(terminal->snapshot.shutdown_reason, ShutdownReason::reloading);
+    EXPECT_TRUE(host->output()->closed());
+}
+
 TEST(LiveSession, ResubscribeStartsFromAFreshSnapshot) {
     test::TemporarySessionFile file("live_session_reconnect");
     auto controls = std::make_shared<test::BackendControls>();
@@ -820,7 +895,7 @@ TEST(LiveSession, ControllerFailureIsContainedAndReleasesOnlyThatSession) {
     EXPECT_EQ(
         std::get<ErrorCode>(
             failing_session->submit(RawCommand{"Question"}, 200ms)),
-        ErrorCode::command_timeout);
+        ErrorCode::internal_error);
     EXPECT_TRUE(wait_for_finished(failing_session));
 
     // The failure is isolated; the healthy actor keeps serving.
