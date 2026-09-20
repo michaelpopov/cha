@@ -1,6 +1,6 @@
 # Native protocol and live sessions
 
-`cha_app` owns the native protocol values, session presentation, and the chat
+`cha_lib` owns the native protocol values, session presentation, and the chat
 input grammar. The bridge exchanges owning request and result values with the
 application; it never reads a controller or a borrowed controller view.
 

@@ -230,7 +230,7 @@ target_compile_definitions(
 )
 target_link_libraries(cha_sqlite3 PUBLIC OpenSSL::Crypto)
 
-add_library(cha_core STATIC
+add_library(cha_lib STATIC
     ${CMAKE_CURRENT_BINARY_DIR}/generated/application_guide.cpp
     ${CMAKE_CURRENT_BINARY_DIR}/generated/character_voice.cpp
     ${CMAKE_CURRENT_BINARY_DIR}/generated/new_character_template.cpp
@@ -272,58 +272,6 @@ add_library(cha_core STATIC
     src/workspace/workspace.cpp
     src/workspace/workspace_config_store.cpp
     src/workspace/session_open.cpp
-)
-
-add_custom_command(
-    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/generated/application_guide.cpp
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/generated
-    COMMAND ${CMAKE_COMMAND} -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/resources/application-guide.md -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/generated/application_guide.cpp -DSYMBOL=embedded_application_guide -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_text.cmake
-    DEPENDS resources/application-guide.md cmake/embed_text.cmake
-    VERBATIM)
-
-add_custom_command(
-    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/generated/character_voice.cpp
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/generated
-    COMMAND ${CMAKE_COMMAND} -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/resources/characters/character-voice.md -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/generated/character_voice.cpp -DSYMBOL=embedded_character_voice -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_text.cmake
-    DEPENDS resources/characters/character-voice.md cmake/embed_text.cmake
-    VERBATIM)
-
-add_custom_command(
-    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/generated/new_character_template.cpp
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/generated
-    COMMAND ${CMAKE_COMMAND} -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/resources/characters/CHARACTER.md -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/generated/new_character_template.cpp -DSYMBOL=embedded_new_character_template -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_text.cmake
-    DEPENDS resources/characters/CHARACTER.md cmake/embed_text.cmake
-    VERBATIM)
-
-target_compile_features(cha_core PUBLIC cxx_std_20)
-target_include_directories(cha_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
-if(WIN32)
-    target_compile_definitions(
-        cha_core
-        PUBLIC
-            NOMINMAX
-            WIN32_LEAN_AND_MEAN)
-    target_link_libraries(cha_core PUBLIC advapi32 PRIVATE bcrypt)
-elseif(APPLE)
-    find_library(CHA_COREFOUNDATION_FRAMEWORK CoreFoundation REQUIRED)
-    target_link_libraries(cha_core PRIVATE "${CHA_COREFOUNDATION_FRAMEWORK}")
-endif()
-target_link_libraries(
-    cha_core
-    PUBLIC
-        CURL::libcurl
-        Threads::Threads
-        uv_a
-        nlohmann_json::nlohmann_json
-        tomlplusplus::tomlplusplus
-        cha_sqlite3
-    PRIVATE
-        spdlog::spdlog
-)
-target_link_libraries(cha_core PRIVATE OpenSSL::Crypto)
-cha_enable_warnings(cha_core)
-
-add_library(cha_app STATIC
     src/app/application.cpp
     src/app/background_jobs.cpp
     src/app/pending_media_registry.cpp
@@ -348,32 +296,63 @@ add_library(cha_app STATIC
     src/web/text_mention.cpp
     src/web/text_multicast.cpp
     src/web/owner_wake_signal.cpp
-)
-target_compile_features(cha_app PUBLIC cxx_std_20)
-target_include_directories(cha_app PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
-target_link_libraries(
-    cha_app
-    PUBLIC
-        cha_core
-        nlohmann_json::nlohmann_json)
-cha_enable_warnings(cha_app)
-
-add_library(cha_bridge STATIC
     src/bridge/bridge_protocol.cpp
     src/bridge/bridge_router.cpp
     src/bridge/settings_dispatch.cpp
     src/bridge/workspace_dispatch.cpp
 )
-target_compile_features(cha_bridge PUBLIC cxx_std_20)
-target_include_directories(cha_bridge PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/generated/application_guide.cpp
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/generated
+    COMMAND ${CMAKE_COMMAND} -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/resources/application-guide.md -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/generated/application_guide.cpp -DSYMBOL=embedded_application_guide -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_text.cmake
+    DEPENDS resources/application-guide.md cmake/embed_text.cmake
+    VERBATIM)
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/generated/character_voice.cpp
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/generated
+    COMMAND ${CMAKE_COMMAND} -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/resources/characters/character-voice.md -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/generated/character_voice.cpp -DSYMBOL=embedded_character_voice -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_text.cmake
+    DEPENDS resources/characters/character-voice.md cmake/embed_text.cmake
+    VERBATIM)
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/generated/new_character_template.cpp
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/generated
+    COMMAND ${CMAKE_COMMAND} -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/resources/characters/CHARACTER.md -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/generated/new_character_template.cpp -DSYMBOL=embedded_new_character_template -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_text.cmake
+    DEPENDS resources/characters/CHARACTER.md cmake/embed_text.cmake
+    VERBATIM)
+
+target_compile_features(cha_lib PUBLIC cxx_std_20)
+target_include_directories(cha_lib PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+if(WIN32)
+    target_compile_definitions(
+        cha_lib
+        PUBLIC
+            NOMINMAX
+            WIN32_LEAN_AND_MEAN)
+    target_link_libraries(cha_lib PUBLIC advapi32 PRIVATE bcrypt)
+elseif(APPLE)
+    find_library(CHA_COREFOUNDATION_FRAMEWORK CoreFoundation REQUIRED)
+    target_link_libraries(cha_lib PRIVATE "${CHA_COREFOUNDATION_FRAMEWORK}")
+endif()
 target_link_libraries(
-    cha_bridge
+    cha_lib
     PUBLIC
-        cha_app
-        nlohmann_json::nlohmann_json)
+        CURL::libcurl
+        Threads::Threads
+        uv_a
+        nlohmann_json::nlohmann_json
+        tomlplusplus::tomlplusplus
+        cha_sqlite3
+    PRIVATE
+        spdlog::spdlog
+)
+target_link_libraries(cha_lib PRIVATE OpenSSL::Crypto)
+cha_enable_warnings(cha_lib)
+
 target_compile_definitions(
-    cha_bridge PRIVATE CHA_PACKAGE_VERSION="${CHA_PACKAGE_VERSION}")
-cha_enable_warnings(cha_bridge)
+    cha_lib PRIVATE CHA_PACKAGE_VERSION="${CHA_PACKAGE_VERSION}")
 
 # The instrumented Windows host uses this helper for its actual WebView2
 # workflow even in packaging builds, where the full GoogleTest suite is off.
@@ -383,7 +362,7 @@ if(WIN32 AND NOT BUILD_TESTING)
         tests/native/prepare_test_vault.cpp
         tests/support/test_workspace.cpp)
     target_link_libraries(
-        cha_prepare_test_vault PRIVATE cha_core cha_sqlite3)
+        cha_prepare_test_vault PRIVATE cha_lib cha_sqlite3)
     target_include_directories(
         cha_prepare_test_vault PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
     cha_enable_warnings(cha_prepare_test_vault)
@@ -451,7 +430,7 @@ if(BUILD_TESTING)
         add_executable(
             cha_lease_test_helper
             tests/support/lease_test_helper.cpp)
-        target_link_libraries(cha_lease_test_helper PRIVATE cha_core)
+        target_link_libraries(cha_lease_test_helper PRIVATE cha_lib)
         target_include_directories(
             cha_lease_test_helper PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
         cha_enable_warnings(cha_lease_test_helper)
@@ -462,7 +441,7 @@ if(BUILD_TESTING)
     target_link_libraries(
         cha_tests
         PRIVATE
-            cha_core
+            cha_lib
             cha_sqlite3
             GTest::gtest_main)
     target_include_directories(cha_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
@@ -509,7 +488,7 @@ if(BUILD_TESTING)
     target_link_libraries(
         cha_app_tests
         PRIVATE
-            cha_app
+            cha_lib
             cha_sqlite3
             httplib::httplib
             GTest::gtest_main)
@@ -534,7 +513,7 @@ if(BUILD_TESTING)
         tests/bridge/unit_bridge_router.cpp
         tests/support/test_workspace.cpp)
     target_link_libraries(
-        cha_bridge_tests PRIVATE cha_bridge cha_sqlite3 GTest::gtest_main)
+        cha_bridge_tests PRIVATE cha_lib cha_sqlite3 GTest::gtest_main)
     target_include_directories(
         cha_bridge_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
     target_compile_definitions(
@@ -558,7 +537,7 @@ if(BUILD_TESTING)
     target_link_libraries(
         cha_native_runtime_tests
         PRIVATE
-            cha_bridge
+            cha_lib
             cha_sqlite3
             GTest::gtest_main)
     target_include_directories(
@@ -573,7 +552,7 @@ if(BUILD_TESTING)
         tests/native/prepare_test_vault.cpp
         tests/support/test_workspace.cpp)
     target_link_libraries(
-        cha_prepare_test_vault PRIVATE cha_core cha_sqlite3)
+        cha_prepare_test_vault PRIVATE cha_lib cha_sqlite3)
     target_include_directories(
         cha_prepare_test_vault PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
     cha_enable_warnings(cha_prepare_test_vault)
@@ -584,7 +563,7 @@ if(BUILD_TESTING)
             tests/integration/integration_test.cpp
             tests/support/test_workspace.cpp)
         target_link_libraries(
-            itest PRIVATE cha_core GTest::gtest_main)
+            itest PRIVATE cha_lib GTest::gtest_main)
         target_include_directories(itest PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
         cha_enable_warnings(itest)
         target_compile_definitions(itest PRIVATE CHA_WORKSPACE_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/workspace")
@@ -624,7 +603,7 @@ if(APPLE)
     add_library(
         cha_macos_runtime SHARED
         packaging/macos/runtime_bridge.cpp)
-    target_link_libraries(cha_macos_runtime PRIVATE cha_bridge)
+    target_link_libraries(cha_macos_runtime PRIVATE cha_lib)
     target_include_directories(
         cha_macos_runtime PRIVATE packaging/macos)
     set_target_properties(
@@ -663,7 +642,7 @@ if(WIN32)
     target_link_libraries(
         cha_windows_app
         PRIVATE
-            cha_bridge
+            cha_lib
             cha_webview2_loader
             comdlg32
             ole32
@@ -688,7 +667,7 @@ if(WIN32)
     target_link_libraries(
         cha_windows_test_app
         PRIVATE
-            cha_bridge
+            cha_lib
             cha_webview2_loader
             comdlg32
             ole32

@@ -529,16 +529,8 @@ projections, not runtime sources of truth.</li>
 </tr>
 </thead>
 <tbody><tr>
-<td><code>cha_core</code></td>
-<td>Domain model, providers, storage, workspace, plus application-config parsing and R2 transfer</td>
-</tr>
-<tr>
-<td><code>cha_app</code></td>
-<td><code>Application</code>, operations, live sessions, presentation, mirroring, and audio; links <code>cha_core</code></td>
-</tr>
-<tr>
-<td><code>cha_bridge</code></td>
-<td>Message protocol, routing, and operation dispatch; links <code>cha_app</code></td>
+<td><code>cha_lib</code></td>
+<td>Every production source: domain model, providers, storage, workspace, <code>Application</code> and its operations, live sessions, presentation, mirroring, audio, and the message protocol, routing, and operation dispatch</td>
 </tr>
 <tr>
 <td><code>cha_macos_runtime</code></td>
@@ -549,15 +541,12 @@ projections, not runtime sources of truth.</li>
 <td>Windows native host and runtime integration</td>
 </tr>
 </tbody></table>
-<pre><code class="language-text">macOS host -&gt; cha_macos_runtime -&gt; cha_bridge -&gt; cha_app -&gt; cha_core
-Windows host -------------------&gt; cha_bridge -&gt; cha_app -&gt; cha_core
+<pre><code class="language-text">macOS host -&gt; cha_macos_runtime -&gt; cha_lib
+Windows host -------------------&gt; cha_lib
 </code></pre>
 <p>The directory <code>src/web/</code> retains its historical name; its shared support types
 now live in namespace <code>cha</code>. It contains application support, not an HTTP
-server. In particular,
-<code>application_config.cpp</code> and <code>r2_database_transfer.cpp</code> belong to <code>cha_core</code>;
-the remaining production sources there belong to <code>cha_app</code>. Use CMake to
-resolve target membership rather than guessing from that directory name.</p>
+server.</p>
 <p>Core session behavior does not depend on the native host, JSON routing, or
 React. The bridge adapts messages to application operations; platform hosts
 own WebView integration and platform UI work.</p>

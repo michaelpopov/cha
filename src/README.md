@@ -7,15 +7,17 @@ through the common bridge. There is no application HTTP listener.
 ## Dependency shape
 
 ```text
-cha_macos / cha_windows -> cha_bridge -> cha_app -> cha_core
+cha_macos / cha_windows -> cha_lib
 
-cha_core -> workspace / providers / characters / chat / session / util
-cha_app  -> live sessions, settings, vaults, audio, DTOs
-cha_core -> curl / sqlite / libuv / threads / toml++ / spdlog / nlohmann-json
+cha_lib -> app / bridge / web / workspace / providers / characters / chat / session / util
+cha_lib -> curl / sqlite / libuv / threads / toml++ / spdlog / nlohmann-json
 ```
 
-`cha_core` contains no WebView, bridge, or inbound HTTP types. Outbound
-provider HTTP/SSE and R2 remain in core/providers.
+One static library holds every production source. The layering below is a
+directory convention, not a link-time boundary: read the table under
+`Directories` for where a file belongs. `cha_lib` contains no WebView or
+inbound HTTP types. Outbound provider HTTP/SSE and R2 transfer live in it
+alongside everything else.
 
 ## Composition root
 
@@ -98,9 +100,7 @@ appear immediately.
 
 | Target | Purpose |
 | --- | --- |
-| `cha_core` | Domain, workspace model, session storage, and session opening. |
-| `cha_app` | Application operations, live sessions, and DTOs. |
-| `cha_bridge` | Native request dispatcher. |
+| `cha_lib` | All production sources: domain, storage, application operations, live sessions, DTOs, and the native request dispatcher. |
 | `cha_macos_runtime` / `cha_windows_app` | Production desktop hosts. |
 | `cha_tests` | Core, session, and workspace unit/component tests. |
 | `cha_app_tests` | Application, live-session, protocol, and audio tests. |

@@ -76,23 +76,18 @@ There are three distinct kinds of stored data:
 
 | Target | Role |
 | --- | --- |
-| `cha_core` | Domain model, providers, storage, workspace, plus application-config parsing and R2 transfer |
-| `cha_app` | `Application`, operations, live sessions, presentation, mirroring, and audio; links `cha_core` |
-| `cha_bridge` | Message protocol, routing, and operation dispatch; links `cha_app` |
+| `cha_lib` | Every production source: domain model, providers, storage, workspace, `Application` and its operations, live sessions, presentation, mirroring, audio, and the message protocol, routing, and operation dispatch |
 | `cha_macos_runtime` | macOS shared library exposing the C runtime ABI to the Swift host |
 | `cha_windows_app` | Windows native host and runtime integration |
 
 ```text
-macOS host -> cha_macos_runtime -> cha_bridge -> cha_app -> cha_core
-Windows host -------------------> cha_bridge -> cha_app -> cha_core
+macOS host -> cha_macos_runtime -> cha_lib
+Windows host -------------------> cha_lib
 ```
 
 The directory `src/web/` retains its historical name; its shared support types
 now live in namespace `cha`. It contains application support, not an HTTP
-server. In particular,
-`application_config.cpp` and `r2_database_transfer.cpp` belong to `cha_core`;
-the remaining production sources there belong to `cha_app`. Use CMake to
-resolve target membership rather than guessing from that directory name.
+server.
 
 Core session behavior does not depend on the native host, JSON routing, or
 React. The bridge adapts messages to application operations; platform hosts
