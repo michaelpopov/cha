@@ -20,7 +20,7 @@
 #include <utility>
 #include <vector>
 
-namespace cha::web {
+namespace cha {
 namespace {
 
 std::string toml_path(const std::filesystem::path& path) {
@@ -735,4 +735,4 @@ TEST_F(ApplicationConfigTest, ResolvesSymlinkedConfigParents) {
 }
 
 } // namespace
-} // namespace cha::web
+} // namespace cha

@@ -7,10 +7,10 @@
 #include <cstdint>
 #include <mutex>
 
-namespace cha::web {
+namespace cha {
 
 // A portable, coalescing wake source consumed by one session owner loop.
-class OwnerWakeSignal final : public cha::WakeNotifier {
+class OwnerWakeSignal final : public WakeNotifier {
 public:
     void wake() noexcept override;
 
@@ -25,4 +25,4 @@ private:
     std::uint64_t observed_{};
 };
 
-} // namespace cha::web
+} // namespace cha

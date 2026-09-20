@@ -26,14 +26,6 @@ namespace cha::app {
 namespace {
 
 using namespace std::chrono_literals;
-using cha::web::ApplicationCommand;
-using cha::web::ConfigurationDirectory;
-
-using cha::web::ErrorCode;
-using cha::web::VaultCreate;
-using cha::web::VaultDefinition;
-using cha::web::find_vault;
-using cha::web::load_configuration_directory;
 
 ApplicationCommand load_command(
     const std::filesystem::path& config_directory,
@@ -197,13 +189,13 @@ TEST(ApplicationVault, OverlappingSessionIdsStayOnTheirVault) {
     auto application = Application::open(pair.command);
     const auto on_a = application->create_session(
         "lobby", "Same label", application->context_epoch());
-    ASSERT_TRUE(std::holds_alternative<cha::web::OpenSessionSuccess>(
+    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(
         application->open_session("lobby", on_a.id, application->context_epoch())));
     const auto epoch_a = application->context_epoch();
     (void)application->switch_vault("B", {}, application->context_epoch());
     const auto on_b = application->create_session(
         "lobby", "Same label", application->context_epoch());
-    ASSERT_TRUE(std::holds_alternative<cha::web::OpenSessionSuccess>(
+    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(
         application->open_session("lobby", on_b.id, application->context_epoch())));
 
     for (const auto invalid_epoch : {std::uint64_t{0}, epoch_a}) {
@@ -214,14 +206,14 @@ TEST(ApplicationVault, OverlappingSessionIdsStayOnTheirVault) {
         EXPECT_EQ(std::get<ErrorCode>(rejected_open), ErrorCode::vault_changed);
 
         const auto rejected_submit = application->submit_async(
-            "lobby", on_b.id, cha::web::StopCommand{}, invalid_epoch);
+            "lobby", on_b.id, StopCommand{}, invalid_epoch);
         ASSERT_TRUE(std::holds_alternative<ErrorCode>(rejected_submit));
         EXPECT_EQ(std::get<ErrorCode>(rejected_submit), ErrorCode::vault_changed);
 
         EXPECT_EQ(application->delete_session("lobby", on_b.id, invalid_epoch),
             ErrorCode::vault_changed);
         application->close_session("lobby", on_b.id, invalid_epoch);
-        EXPECT_TRUE(std::holds_alternative<cha::web::SessionSnapshot>(
+        EXPECT_TRUE(std::holds_alternative<SessionSnapshot>(
             application->snapshot("lobby", on_b.id, application->context_epoch())));
     }
 
@@ -239,7 +231,7 @@ TEST(ApplicationVault, MergeUsesMaintenanceAndRetiresLiveSessions) {
     auto application = Application::open(pair.command);
     const auto created = application->create_session(
         "lobby", "Before merge", application->context_epoch());
-    ASSERT_TRUE(std::holds_alternative<cha::web::OpenSessionSuccess>(
+    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(
         application->open_session("lobby", created.id, application->context_epoch())));
     const auto old_epoch = application->context_epoch();
 
@@ -448,15 +440,15 @@ TEST(ApplicationVault, SubscriptionCompletionCarriesItsEndpoint) {
     auto application = Application::open(pair.command);
     const auto epoch = application->context_epoch();
     const auto created = application->create_session("lobby", "Callback race", epoch);
-    ASSERT_TRUE(std::holds_alternative<cha::web::OpenSessionSuccess>(
+    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(
         application->open_session("lobby", created.id, epoch)));
 
     const auto result = application->subscribe(
         "lobby",
         created.id,
-        cha::web::SubscribeCommand{"view", epoch, "sub"},
+        SubscribeCommand{"view", epoch, "sub"},
         epoch);
-    const auto* subscribed = std::get_if<cha::web::SubscribeResult>(&result);
+    const auto* subscribed = std::get_if<SubscribeResult>(&result);
     ASSERT_NE(subscribed, nullptr);
     EXPECT_TRUE(subscribed->session);
 
@@ -479,7 +471,7 @@ TEST(ApplicationVault, MaintenanceTimeoutRecoversWhileTheRuntimeRemainsBlocked) 
     auto application = Application::open(pair.command);
     const auto epoch = application->context_epoch();
     const auto created = application->create_session("lobby", "Blocked runtime", epoch);
-    ASSERT_TRUE(std::holds_alternative<cha::web::OpenSessionSuccess>(
+    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(
         application->open_session("lobby", created.id, epoch)));
 
     // Persistence of this accepted command blocks the runtime ahead of the
@@ -487,8 +479,8 @@ TEST(ApplicationVault, MaintenanceTimeoutRecoversWhileTheRuntimeRemainsBlocked) 
     std::optional<WorkspaceConfigStore::MaintenanceGuard> edit_lock(
         application->store().reserve_maintenance());
     const auto changing = application->submit_async(
-        "lobby", created.id, cha::web::SetDefaultCharacterCommand{"writer"}, epoch);
-    ASSERT_TRUE(std::holds_alternative<std::shared_ptr<cha::web::CommandReply>>(changing));
+        "lobby", created.id, SetDefaultCharacterCommand{"writer"}, epoch);
+    ASSERT_TRUE(std::holds_alternative<std::shared_ptr<CommandReply>>(changing));
     auto switching = std::async(std::launch::async, [&] {
         try {
             (void)application->switch_vault("B", {}, epoch);
@@ -508,9 +500,9 @@ TEST(ApplicationVault, MaintenanceTimeoutRecoversWhileTheRuntimeRemainsBlocked) 
     EXPECT_GT(recovered_epoch, epoch);
     EXPECT_EQ(application->current_vault().get().name, "A");
     EXPECT_EQ(application->check_context(epoch), ErrorCode::vault_changed);
-    const auto& reply = std::get<std::shared_ptr<cha::web::CommandReply>>(changing);
+    const auto& reply = std::get<std::shared_ptr<CommandReply>>(changing);
     ASSERT_TRUE(reply->wait_for(2s));
-    EXPECT_TRUE(std::holds_alternative<cha::web::SessionSnapshot>(
+    EXPECT_TRUE(std::holds_alternative<SessionSnapshot>(
         application->snapshot("lobby", created.id, application->context_epoch())));
     EXPECT_EQ(application->switch_vault("B", {}, application->context_epoch()).state,
         ApplicationState::running);

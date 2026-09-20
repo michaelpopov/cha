@@ -17,10 +17,6 @@
 namespace cha::app {
 namespace {
 
-using cha::web::AudioAcceptanceKind;
-using cha::web::AudioJobState;
-using cha::web::ErrorCode;
-
 std::size_t receive_body(char* data, std::size_t size, std::size_t count, void* user) {
     const std::size_t bytes = size * count;
     auto& body = *static_cast<std::string*>(user);
@@ -92,7 +88,7 @@ nlohmann::json media_resource_json(
     };
 }
 
-nlohmann::json audio_acceptance_json(const cha::web::AudioAcceptance& acceptance) {
+nlohmann::json audio_acceptance_json(const AudioAcceptance& acceptance) {
     nlohmann::json value{{"entry_id", acceptance.entry_id}};
     switch (acceptance.kind) {
     case AudioAcceptanceKind::cached:
@@ -110,7 +106,7 @@ nlohmann::json audio_acceptance_json(const cha::web::AudioAcceptance& acceptance
     return value;
 }
 
-nlohmann::json audio_status_json(const cha::web::AudioDownloadStatus& status) {
+nlohmann::json audio_status_json(const AudioDownloadStatus& status) {
     nlohmann::json pending = nlohmann::json::array();
     for (const auto& download : status.downloads) {
         nlohmann::json value{
@@ -128,7 +124,7 @@ nlohmann::json audio_status_json(const cha::web::AudioDownloadStatus& status) {
     };
 }
 
-void throw_audio_error(const cha::web::AudioDownloadError& error) {
+void throw_audio_error(const AudioDownloadError& error) {
     if (error.code == "vault_changed") {
         throw ApplicationError(ErrorCode::vault_changed, error.what());
     }
@@ -139,10 +135,10 @@ void throw_audio_error(const cha::web::AudioDownloadError& error) {
 }
 
 void throw_speech_provider_error(long status, std::string_view body) {
-    if (status >= 400 && cha::trim_view(body).empty()) {
+    if (status >= 400 && trim_view(body).empty()) {
         throw ApplicationError(
             ErrorCode::internal_error,
-            cha::web::fish_audio_http_error_message(status));
+            fish_audio_http_error_message(status));
     }
     throw ApplicationError(ErrorCode::internal_error, "FishAudio request failed.");
 }
@@ -230,12 +226,12 @@ std::shared_ptr<OperationReply> Application::start_speech(
     std::string_view connection_id,
     std::uint64_t request_id,
     std::string text,
-    cha::web::FishAudioSynthesis synthesis,
+    FishAudioSynthesis synthesis,
     std::uint64_t epoch) {
     auto reply = std::make_shared<OperationReply>();
     WorkspaceVoiceOutput output;
     std::string key;
-    cha::web::FishAudioRequest request;
+    FishAudioRequest request;
     std::shared_ptr<PendingMediaRegistry::PendingMedia> pending;
     {
         const std::lock_guard lifecycle(impl_->lifecycle_mutex);
@@ -258,7 +254,7 @@ std::shared_ptr<OperationReply> Application::start_speech(
             synthesis.reference_id = voice->elevenlabs_voice_id;
         }
         key = impl_->api_keys->value(output.api_key_id);
-        request = cha::web::make_fish_audio_request(output, text, synthesis);
+        request = make_fish_audio_request(output, text, synthesis);
         pending = impl_->pending_media.remember(std::string(connection_id), request_id);
     }
     if (!impl_->background_jobs.launch(
@@ -291,7 +287,7 @@ std::shared_ptr<OperationReply> Application::start_speech(
                         return;
                     }
                     if (transfer.status != 200
-                        || !cha::web::valid_entry_audio(transfer.audio)) {
+                        || !valid_entry_audio(transfer.audio)) {
                         throw_speech_provider_error(
                             transfer.status, transfer.audio.audio);
                     }
@@ -363,11 +359,11 @@ void Application::release_resource(
     impl_->pending_media.release_resource(connection_id, resource_id);
 }
 
-cha::web::AudioAcceptance Application::start_audio(
+AudioAcceptance Application::start_audio(
     std::string_view forum_id,
     std::string_view session_id,
     EntryId entry_id,
-    cha::web::AudioDownloadRequest request,
+    AudioDownloadRequest request,
     std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
@@ -375,27 +371,27 @@ cha::web::AudioAcceptance Application::start_audio(
         return impl_->audio_downloads->submit(
             {std::string(forum_id), std::string(session_id)},
             entry_id, request);
-    } catch (const cha::web::AudioDownloadError& error) {
+    } catch (const AudioDownloadError& error) {
         throw_audio_error(error);
     }
 }
 
-std::vector<cha::web::AudioAcceptance> Application::start_audio_batch(
+std::vector<AudioAcceptance> Application::start_audio_batch(
     std::string_view forum_id,
     std::string_view session_id,
-    cha::web::AudioDownloadBatchRequest request,
+    AudioDownloadBatchRequest request,
     std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
     try {
         return impl_->audio_downloads->submit_batch(
             {std::string(forum_id), std::string(session_id)}, request);
-    } catch (const cha::web::AudioDownloadError& error) {
+    } catch (const AudioDownloadError& error) {
         throw_audio_error(error);
     }
 }
 
-cha::web::AudioDownloadStatus Application::audio_status(
+AudioDownloadStatus Application::audio_status(
     std::string_view forum_id,
     std::string_view session_id,
     std::string_view vault_name,
@@ -406,7 +402,7 @@ cha::web::AudioDownloadStatus Application::audio_status(
         return impl_->audio_downloads->status(
             {std::string(forum_id), std::string(session_id)},
             std::string(vault_name));
-    } catch (const cha::web::AudioDownloadError& error) {
+    } catch (const AudioDownloadError& error) {
         throw_audio_error(error);
     }
 }
@@ -425,7 +421,7 @@ MediaResource Application::audio_source(
         audio = impl_->audio_downloads->audio(
             {std::string(forum_id), std::string(session_id)},
             entry_id, std::string(vault_name));
-    } catch (const cha::web::AudioDownloadError& error) {
+    } catch (const AudioDownloadError& error) {
         throw_audio_error(error);
     }
     if (!audio) {
@@ -455,7 +451,7 @@ void Application::clear_audio_cache(
     const FullSessionId session{std::string(forum_id), std::string(session_id)};
     try {
         impl_->audio_downloads->clear(session);
-    } catch (const cha::web::AudioDownloadError& error) {
+    } catch (const AudioDownloadError& error) {
         throw_audio_error(error);
     }
     impl_->media_resources.revoke_session(session);

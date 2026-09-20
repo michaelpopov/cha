@@ -11,7 +11,7 @@
 #include <iterator>
 #include <string>
 
-namespace cha::web {
+namespace cha {
 namespace {
 
 std::string read_file(const std::filesystem::path& path) {
@@ -60,4 +60,4 @@ TEST(SessionMirror, WritesActiveSessionsUnderForumDisplayNameAndNumbersDuplicate
 }
 
 } // namespace
-} // namespace cha::web
+} // namespace cha

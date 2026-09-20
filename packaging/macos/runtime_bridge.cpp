@@ -28,9 +28,9 @@
 using cha::WorkspaceConfigTransfer;
 using cha::app::Application;
 using cha::bridge::BridgeRouter;
-using cha::web::ApplicationCommand;
+using cha::ApplicationCommand;
 
-using cha::web::parse_application_command;
+using cha::parse_application_command;
 
 namespace {
 
@@ -195,7 +195,7 @@ int32_t transfer(
         if (!runtime->native_application) {
             throw std::runtime_error("CHA runtime is not available");
         }
-        const cha::web::R2DatabaseTransfer result = download
+        const cha::R2DatabaseTransfer result = download
             ? runtime->native_application->download_database()
             : runtime->native_application->upload_database();
         *byte_count = result.byte_count;
@@ -271,7 +271,7 @@ ChaRuntime* cha_runtime_create(
         runtime->ordinary_finished = false;
         runtime->ordinary_worker = std::thread(run_ordinary_worker, runtime.get());
         return runtime.release();
-    } catch (const cha::web::VaultPasswordError&) {
+    } catch (const cha::VaultPasswordError&) {
         if (password_error) *password_error = 1;
         if (runtime && runtime->logging) {
             cha::shutdown_diagnostic_logging();

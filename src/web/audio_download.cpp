@@ -4,7 +4,7 @@
 #include "util/logging.h"
 #include "util/path_name.h"
 
-namespace cha::web {
+namespace cha {
 using namespace std::chrono_literals;
 namespace {
 AudioAcceptance active_acceptance(EntryId id, AudioJobState state) {
@@ -43,8 +43,8 @@ AudioDownloadManager::~AudioDownloadManager() {
     }
 }
 void AudioDownloadManager::check(const FullSessionId& session, const std::string& vault) const {
-    if (!cha::is_url_safe_identifier(session.forum_id)
-        || !cha::is_url_safe_identifier(session.session_id)) {
+    if (!is_url_safe_identifier(session.forum_id)
+        || !is_url_safe_identifier(session.session_id)) {
         throw std::invalid_argument("Invalid session identity.");
     }
     if (vault != vault_.get().name) throw AudioDownloadError(409, "vault_changed", "The active vault changed.");

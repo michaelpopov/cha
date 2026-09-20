@@ -2,7 +2,7 @@
 
 #include <gtest/gtest.h>
 
-namespace cha::web {
+namespace cha {
 namespace {
 
 TEST(MulticastInput, ParsesRecipientsAndLiteralText) {
@@ -47,4 +47,4 @@ TEST(MulticastInput, RejectsMalformedRecipientLists) {
 }
 
 } // namespace
-} // namespace cha::web
+} // namespace cha

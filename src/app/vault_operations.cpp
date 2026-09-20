@@ -47,7 +47,7 @@ std::filesystem::path normalized_vault_path(
         std::filesystem::absolute(resolved));
 }
 
-toml::table vault_definition_table(const cha::web::VaultDefinition& vault) {
+toml::table vault_definition_table(const VaultDefinition& vault) {
     toml::table table;
     table.insert("vault_name", vault.name);
     table.insert("data", utf8_path(vault.data));
@@ -56,8 +56,8 @@ toml::table vault_definition_table(const cha::web::VaultDefinition& vault) {
 }
 
 void assign_vault_paths(
-    cha::web::VaultDefinition& vault,
-    const cha::web::ApplicationCommand& command) {
+    VaultDefinition& vault,
+    const ApplicationCommand& command) {
     vault.mirror = vault_path(command.mirror_base, vault.name);
     vault.modify = vault_path(command.modify_base, vault.name);
 }
@@ -73,9 +73,9 @@ std::filesystem::path next_vault_file(
 
 void validate_candidate_vaults(
     const std::filesystem::path& config_directory,
-    const std::vector<cha::web::VaultDefinition>& vaults) {
+    const std::vector<VaultDefinition>& vaults) {
     try {
-        for (const cha::web::VaultDefinition& vault : vaults) {
+        for (const VaultDefinition& vault : vaults) {
             validate_public_name(vault.name, "vault_name", vault.source);
             require_path_component(vault.name, vault.source);
         }
@@ -85,7 +85,7 @@ void validate_candidate_vaults(
     }
 }
 
-void validate_vault_paths(const cha::web::VaultDefinition& vault) {
+void validate_vault_paths(const VaultDefinition& vault) {
     if (!vault.password_protected && vault.mirror
         && std::filesystem::exists(*vault.mirror)
         && !std::filesystem::is_directory(*vault.mirror)) {
@@ -163,7 +163,7 @@ void restore_vault_directories(
 }
 
 nlohmann::json vault_detail_json(
-    const cha::web::VaultDefinition& vault,
+    const VaultDefinition& vault,
     std::string_view active_name,
     std::size_t vault_count) {
     return {
@@ -174,9 +174,9 @@ nlohmann::json vault_detail_json(
             ? nlohmann::json(utf8_path(*vault.mirror)) : nlohmann::json(nullptr)},
         {"modify_path", vault.modify
             ? nlohmann::json(utf8_path(*vault.modify)) : nlohmann::json(nullptr)},
-        {"active", cha::web::same_vault_name(vault.name, active_name)},
+        {"active", same_vault_name(vault.name, active_name)},
         {"can_delete", vault_count > 1
-            && !cha::web::same_vault_name(vault.name, active_name)},
+            && !same_vault_name(vault.name, active_name)},
     };
 }
 
@@ -188,28 +188,12 @@ void save_file_replace(
 
 } // namespace cha::app::vault
 
-using cha::web::VaultCreate;
-using cha::web::VaultDefinition;
-using cha::web::VaultRegistrySnapshot;
-using cha::web::VaultUpdate;
-using cha::web::UnknownVaultError;
-using cha::web::VaultPasswordError;
-using cha::web::find_vault;
-using cha::web::load_vault_definition_file;
-using cha::web::require_openable_protected_database;
-using cha::web::require_switchable_database;
-using cha::web::same_vault_name;
-using cha::WorkspaceRestartRequiredError;
-using cha::rewrite_toml_file;
-using cha::inspect_workspace_session_database;
-using cha::WorkspaceDatabaseState;
-
 namespace cha::app {
 
 void Application::Impl::VaultMaintenance::publish_vault_names() {
     std::vector<std::string> names;
     names.reserve(app.command.vaults.size());
-    for (const cha::web::VaultDefinition& vault : app.command.vaults) {
+    for (const VaultDefinition& vault : app.command.vaults) {
         names.push_back(vault.name);
     }
     app.current_vault_.set_names(std::move(names));
@@ -254,7 +238,7 @@ bool Application::Impl::VaultMaintenance::drain_for_maintenance(
         throw std::runtime_error("CHA application is unavailable");
     }
     app.state.store(ApplicationState::maintenance);
-    cha::web::GlobalMaintenanceResult reserved = [&] {
+    GlobalMaintenanceResult reserved = [&] {
         try {
             return app.live_sessions->reserve_global_maintenance(
                 maintenance_grace());
@@ -263,14 +247,14 @@ bool Application::Impl::VaultMaintenance::drain_for_maintenance(
             throw;
         }
     }();
-    if (std::holds_alternative<cha::web::MaintenanceFailure>(reserved)) {
+    if (std::holds_alternative<MaintenanceFailure>(reserved)) {
         // Reservation may already have stopped one or more actors. Keep
         // old queued work from treating the recovered context as intact.
         publish_epoch(notice, ApplicationState::running);
         return false;
     }
     global_maintenance = std::move(
-        std::get<cha::web::LiveSessionGlobalMaintenance>(reserved));
+        std::get<LiveSessionGlobalMaintenance>(reserved));
     try {
         app.pause_resources(cancel_audio);
     } catch (...) {
@@ -630,7 +614,7 @@ VaultDefinition Application::Impl::VaultMaintenance::update_vault(
             app.command.vault = candidate;
             publish_vault(candidate);
             app.publish_capabilities_locked();
-            rebuild_mirror(cha::web::session_mirror_root(candidate));
+            rebuild_mirror(session_mirror_root(candidate));
         } else {
             publish_vault_names();
         }
@@ -683,7 +667,7 @@ std::vector<std::string> Application::Impl::VaultMaintenance::list_r2_vaults(std
         }
     }
 
-    std::vector<std::string> names = cha::web::list_r2_database_names(
+    std::vector<std::string> names = list_r2_database_names(
         key, [this] { return app.stopping_flag.load(); });
     std::erase_if(names, [&](const std::string& name) {
         const std::string database_name = name + ".sqlite3";
@@ -721,7 +705,7 @@ VaultDefinition Application::Impl::VaultMaintenance::download_r2_vault(
     vault::require_available_database_path(candidate.data);
 
     try {
-        (void)cha::web::download_new_database_from_r2(
+        (void)download_new_database_from_r2(
             candidate.data, candidate.source, database_name, *r2,
             [this] { return app.stopping_flag.load(); });
         candidate = load_vault_definition_file(
@@ -828,7 +812,7 @@ MaintenanceResult Application::Impl::VaultMaintenance::switch_vault(
                 }
                 throw;
             }
-            rebuild_mirror(cha::web::session_mirror_root(selected));
+            rebuild_mirror(session_mirror_root(selected));
             try {
                 rewrite_toml_file(
                     app.command.config_directory / "app.toml",
@@ -894,7 +878,7 @@ MaintenanceResult Application::Impl::VaultMaintenance::merge_vault(
                 repository.synchronize_forums(*app.store->snapshot());
             }
             rebuild_mirror(
-                cha::web::session_mirror_root(app.current_vault_.get()));
+                session_mirror_root(app.current_vault_.get()));
         } catch (const WorkspaceRestartRequiredError&) {
             if (app.state.load() == ApplicationState::maintenance) {
                 end_maintenance_locked(false, notice);
@@ -935,35 +919,35 @@ MaintenanceResult Application::Impl::VaultMaintenance::merge_vault(
     return result;
 }
 
-cha::web::R2DatabaseTransfer Application::Impl::VaultMaintenance::upload_database() {
+R2DatabaseTransfer Application::Impl::VaultMaintenance::upload_database() {
     return maintain_database([this] {
         const std::optional<R2StorageKey> r2 = app.api_keys->r2();
         if (!r2) throw std::runtime_error("The active vault has no R2 key");
         const VaultDefinition vault = app.current_vault_.get();
-        return cha::web::upload_database_to_r2(
+        return upload_database_to_r2(
             vault.data,
             vault.source,
             *r2,
-            cha::web::R2DatabaseLease::already_held,
+            R2DatabaseLease::already_held,
             app.active_password, [this] { return app.stopping_flag.load(); });
     }, false);
 }
 
-cha::web::R2DatabaseTransfer Application::Impl::VaultMaintenance::download_database() {
+R2DatabaseTransfer Application::Impl::VaultMaintenance::download_database() {
     std::optional<VaultDefinition> downloaded_vault;
-    const cha::web::R2DatabaseTransfer result = maintain_database(
+    const R2DatabaseTransfer result = maintain_database(
         [this, &downloaded_vault] {
             const std::optional<R2StorageKey> r2 = app.api_keys->r2();
             if (!r2) {
                 throw std::runtime_error("The active vault has no R2 key");
             }
             const VaultDefinition vault = app.current_vault_.get();
-            const cha::web::R2DatabaseTransfer transferred =
-                cha::web::download_database_from_r2(
+            const R2DatabaseTransfer transferred =
+                download_database_from_r2(
                     vault.data,
                     vault.source,
                     *r2,
-                    cha::web::R2DatabaseLease::already_held,
+                    R2DatabaseLease::already_held,
                     app.active_password, [this] { return app.stopping_flag.load(); });
             downloaded_vault = load_vault_definition_file(
                 app.command.config_directory, vault.source);
@@ -985,7 +969,7 @@ cha::web::R2DatabaseTransfer Application::Impl::VaultMaintenance::download_datab
     if (!downloaded_vault) {
         throw std::logic_error("Downloaded vault definition was not published");
     }
-    rebuild_mirror(cha::web::session_mirror_root(*downloaded_vault));
+    rebuild_mirror(session_mirror_root(*downloaded_vault));
     return result;
 }
 

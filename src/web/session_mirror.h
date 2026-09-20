@@ -16,10 +16,6 @@ namespace cha {
 
 class SessionRepository;
 
-} // namespace cha
-
-namespace cha::web {
-
 // A best-effort runtime projection of persistent sessions into Markdown files.
 // Construction performs the initial synchronization and therefore fails when
 // the configured mirror cannot be used. Later updates are logged on failure so
@@ -67,4 +63,4 @@ private:
 // used for forum directories and session Markdown filenames.
 [[nodiscard]] std::string mirror_path_name(std::string_view display_name);
 
-} // namespace cha::web
+} // namespace cha

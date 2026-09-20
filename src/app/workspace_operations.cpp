@@ -20,14 +20,12 @@
 namespace cha::app::workspace {
 namespace {
 
-using cha::web::ErrorCode;
-
 [[noreturn]] void fail(ErrorCode code, std::string message) {
     throw ApplicationError(code, std::move(message));
 }
 
 void apply_edit(
-    cha::web::LiveSessionManager& live_sessions,
+    LiveSessionManager& live_sessions,
     const WorkspaceConfigEditResult& edited,
     bool restart = true) {
     if (restart) invalidate_affected_sessions(live_sessions, edited.affected_forum_ids);
@@ -52,9 +50,9 @@ auto with_workspace_edit(Fn&& fn) {
     }
 }
 
-cha::web::MarkdownFile edit_markdown_file(
+MarkdownFile edit_markdown_file(
     WorkspaceConfigStore& store,
-    cha::web::LiveSessionManager& live_sessions,
+    LiveSessionManager& live_sessions,
     bool character,
     std::string_view id,
     std::string filename,
@@ -107,7 +105,7 @@ cha::web::MarkdownFile edit_markdown_file(
                         : (character ? "Invalid character file."
                                      : "Invalid forum file."));
         }
-        if (!content) return cha::web::MarkdownFile{};
+        if (!content) return MarkdownFile{};
         return markdown_file(std::move(filename), std::move(*content), true);
     });
 }
@@ -120,7 +118,7 @@ bool is_welcome_session(
     return forum_id == entrance_id && session_id == welcome_id;
 }
 
-cha::web::CharacterSummary character_summary(
+CharacterSummary character_summary(
     const Workspace& workspace,
     const WorkspaceCharacter& character) {
     return {
@@ -128,14 +126,14 @@ cha::web::CharacterSummary character_summary(
         .display_name = character.character.display_name,
         .description = character.character.description,
         .appearance = character.character.appearance,
-        .voice = cha::web::resolve_speech_voice(workspace, character),
+        .voice = resolve_speech_voice(workspace, character),
     };
 }
 
-cha::web::CharacterDetail character_detail(
+CharacterDetail character_detail(
     const Workspace& workspace,
     const WorkspaceCharacter& character) {
-    cha::web::CharacterDetail detail{
+    CharacterDetail detail{
         .summary = character_summary(workspace, character),
         .character_markdown = character.markdown,
         .editable_markdown = character.editable_markdown,
@@ -169,7 +167,7 @@ cha::web::CharacterDetail character_detail(
     return detail;
 }
 
-cha::web::PersonaSummary persona_summary(
+PersonaSummary persona_summary(
     const Workspace& workspace,
     const WorkspacePersona& persona) {
     return {
@@ -177,14 +175,14 @@ cha::web::PersonaSummary persona_summary(
         .display_name = persona.display_name,
         .description = persona.description,
         .appearance = persona.appearance,
-        .voice = cha::web::resolve_speech_voice(workspace, persona),
+        .voice = resolve_speech_voice(workspace, persona),
     };
 }
 
-cha::web::PersonaDetail persona_detail(
+PersonaDetail persona_detail(
     const Workspace& workspace,
     const WorkspacePersona& persona) {
-    cha::web::PersonaDetail detail{
+    PersonaDetail detail{
         .summary = persona_summary(workspace, persona),
         .persona_markdown = persona.prompt,
         .style = persona.style_id,
@@ -201,7 +199,7 @@ cha::web::PersonaDetail persona_detail(
     return detail;
 }
 
-cha::web::ForumSummary forum_summary(
+ForumSummary forum_summary(
     const WorkspaceForum& forum,
     const Workspace& workspace) {
     const WorkspacePersona* persona =
@@ -210,7 +208,7 @@ cha::web::ForumSummary forum_summary(
         throw std::runtime_error(
             "Forum default persona is absent from the workspace");
     }
-    cha::web::ForumSummary result{
+    ForumSummary result{
         .id = forum.id,
         .display_name = forum.display_name,
         .description = forum.description,
@@ -230,16 +228,16 @@ cha::web::ForumSummary forum_summary(
     }
     std::ranges::sort(
         result.members, {},
-        [](const cha::web::CharacterSummary& character) {
+        [](const CharacterSummary& character) {
             return fold_ascii(character.display_name);
         });
     return result;
 }
 
-cha::web::ForumDetail forum_detail(
+ForumDetail forum_detail(
     const Workspace& workspace,
     const WorkspaceForum& forum) {
-    cha::web::ForumDetail detail{
+    ForumDetail detail{
         .summary = forum_summary(forum, workspace),
         .forum_markdown = forum.prompt_template,
         .writable = workspace.forum_is_writable(forum.id),
@@ -253,18 +251,18 @@ cha::web::ForumDetail forum_detail(
     return detail;
 }
 
-cha::web::MarkdownFile markdown_file(
+MarkdownFile markdown_file(
     std::string filename,
     std::string content,
     bool writable) {
     return {std::move(filename), std::move(content), writable};
 }
 
-std::vector<cha::web::SessionListing> sessions_for(
+std::vector<SessionListing> sessions_for(
     const SessionRepository& sessions,
-    const cha::web::LiveSessionManagerSnapshot& snapshot,
+    const LiveSessionManagerSnapshot& snapshot,
     std::string_view forum_id) {
-    std::vector<cha::web::SessionListing> result;
+    std::vector<SessionListing> result;
     for (const StoredSession& stored : sessions.list(forum_id)) {
         const bool live = std::find(
             snapshot.running_sessions.begin(),
@@ -280,19 +278,19 @@ std::vector<cha::web::SessionListing> sessions_for(
 }
 
 void invalidate_affected_sessions(
-    cha::web::LiveSessionManager& live_sessions,
+    LiveSessionManager& live_sessions,
     std::span<const std::string> forum_ids) {
     for (const auto& live : live_sessions.active_sessions()) {
         const FullSessionId& key = live->identity();
         if (std::ranges::find(forum_ids, key.forum_id) == forum_ids.end()) {
             continue;
         }
-        live->request_shutdown(cha::web::ShutdownReason::reloading);
+        live->request_shutdown(ShutdownReason::reloading);
     }
 }
 
 void refresh_affected_sessions(
-    cha::web::LiveSessionManager& live_sessions,
+    LiveSessionManager& live_sessions,
     std::span<const std::string> forum_ids) {
     for (const auto& live : live_sessions.active_sessions()) {
         if (std::ranges::find(forum_ids, live->identity().forum_id) != forum_ids.end()) {
@@ -301,7 +299,7 @@ void refresh_affected_sessions(
     }
 }
 
-cha::web::CharacterDetail get_character(
+CharacterDetail get_character(
     const Workspace& workspace,
     std::string_view id) {
     const WorkspaceCharacter* character = workspace.find_character(id);
@@ -311,7 +309,7 @@ cha::web::CharacterDetail get_character(
     return character_detail(workspace, *character);
 }
 
-cha::web::CharacterDetail create_character(
+CharacterDetail create_character(
     WorkspaceConfigStore& store,
     std::string_view display_name,
     std::string_view description) {
@@ -331,11 +329,11 @@ cha::web::CharacterDetail create_character(
     });
 }
 
-cha::web::CharacterDetail update_character_settings(
+CharacterDetail update_character_settings(
     WorkspaceConfigStore& store,
-    cha::web::LiveSessionManager& live_sessions,
+    LiveSessionManager& live_sessions,
     std::string_view id,
-    const cha::web::CharacterSettingsUpdate& update) {
+    const CharacterSettingsUpdate& update) {
     const auto workspace = store.snapshot();
     const WorkspaceCharacter* character = workspace->find_character(id);
     if (character == nullptr
@@ -379,11 +377,11 @@ cha::web::CharacterDetail update_character_settings(
     });
 }
 
-cha::web::CharacterDetail update_character_definition(
+CharacterDetail update_character_definition(
     WorkspaceConfigStore& store,
-    cha::web::LiveSessionManager& live_sessions,
+    LiveSessionManager& live_sessions,
     std::string_view id,
-    const cha::web::CharacterDefinitionUpdate& update) {
+    const CharacterDefinitionUpdate& update) {
     const auto workspace = store.snapshot();
     const WorkspaceCharacter* character = workspace->find_character(id);
     if (character == nullptr || !workspace->character_is_writable(id)) {
@@ -436,7 +434,7 @@ void delete_character(WorkspaceConfigStore& store, std::string_view id) {
     });
 }
 
-cha::web::MarkdownFile get_character_file(
+MarkdownFile get_character_file(
     const Workspace& workspace,
     std::string_view id,
     std::string_view filename) {
@@ -457,9 +455,9 @@ cha::web::MarkdownFile get_character_file(
     return markdown_file(std::string(filename), file->second, writable);
 }
 
-cha::web::MarkdownFile create_character_file(
+MarkdownFile create_character_file(
     WorkspaceConfigStore& store,
-    cha::web::LiveSessionManager& live_sessions,
+    LiveSessionManager& live_sessions,
     std::string_view id,
     std::string filename,
     std::string content) {
@@ -468,9 +466,9 @@ cha::web::MarkdownFile create_character_file(
         std::move(content), true);
 }
 
-cha::web::MarkdownFile update_character_file(
+MarkdownFile update_character_file(
     WorkspaceConfigStore& store,
-    cha::web::LiveSessionManager& live_sessions,
+    LiveSessionManager& live_sessions,
     std::string_view id,
     std::string filename,
     std::string content) {
@@ -481,7 +479,7 @@ cha::web::MarkdownFile update_character_file(
 
 void delete_character_file(
     WorkspaceConfigStore& store,
-    cha::web::LiveSessionManager& live_sessions,
+    LiveSessionManager& live_sessions,
     std::string_view id,
     std::string filename) {
     (void)edit_markdown_file(
@@ -489,7 +487,7 @@ void delete_character_file(
         std::nullopt, false);
 }
 
-cha::web::PersonaDetail get_persona(
+PersonaDetail get_persona(
     const Workspace& workspace,
     std::string_view id) {
     const WorkspacePersona* persona = workspace.find_persona(id);
@@ -499,7 +497,7 @@ cha::web::PersonaDetail get_persona(
     return persona_detail(workspace, *persona);
 }
 
-cha::web::PersonaDetail create_persona(
+PersonaDetail create_persona(
     WorkspaceConfigStore& store,
     std::string_view display_name) {
     return with_workspace_edit([&] {
@@ -518,11 +516,11 @@ cha::web::PersonaDetail create_persona(
     });
 }
 
-cha::web::PersonaDetail update_persona(
+PersonaDetail update_persona(
     WorkspaceConfigStore& store,
-    cha::web::LiveSessionManager& live_sessions,
+    LiveSessionManager& live_sessions,
     std::string_view id,
-    const cha::web::PersonaUpdate& update) {
+    const PersonaUpdate& update) {
     const auto workspace = store.snapshot();
     const WorkspacePersona* persona = workspace->find_persona(id);
     if (persona == nullptr || !workspace->persona_is_writable(id)) {
@@ -584,7 +582,7 @@ void delete_persona(WorkspaceConfigStore& store, std::string_view id) {
     });
 }
 
-cha::web::ForumDetail get_forum(
+ForumDetail get_forum(
     const Workspace& workspace,
     std::string_view id) {
     const WorkspaceForum* forum = workspace.find_forum(id);
@@ -594,7 +592,7 @@ cha::web::ForumDetail get_forum(
     return forum_detail(workspace, *forum);
 }
 
-cha::web::ForumDetail create_forum(
+ForumDetail create_forum(
     WorkspaceConfigStore& store,
     std::string_view display_name,
     std::string_view persona_id) {
@@ -614,11 +612,11 @@ cha::web::ForumDetail create_forum(
     });
 }
 
-cha::web::ForumDetail update_forum(
+ForumDetail update_forum(
     WorkspaceConfigStore& store,
-    cha::web::LiveSessionManager& live_sessions,
+    LiveSessionManager& live_sessions,
     std::string_view id,
-    const cha::web::ForumUpdate& update) {
+    const ForumUpdate& update) {
     const auto workspace = store.snapshot();
     const WorkspaceForum* forum = workspace->find_forum(id);
     if (forum == nullptr || !workspace->forum_is_writable(id)) {
@@ -651,7 +649,7 @@ cha::web::ForumDetail update_forum(
 
 void delete_forum(
     WorkspaceConfigStore& store,
-    cha::web::LiveSessionManager& live_sessions,
+    LiveSessionManager& live_sessions,
     std::string_view id) {
     const auto workspace = store.snapshot();
     if (workspace->find_forum(id) == nullptr
@@ -664,11 +662,11 @@ void delete_forum(
     });
 }
 
-cha::web::ForumDetail update_forum_members(
+ForumDetail update_forum_members(
     WorkspaceConfigStore& store,
-    cha::web::LiveSessionManager& live_sessions,
+    LiveSessionManager& live_sessions,
     std::string_view id,
-    const cha::web::ForumMembersUpdate& update) {
+    const ForumMembersUpdate& update) {
     const auto workspace = store.snapshot();
     const WorkspaceForum* forum = workspace->find_forum(id);
     if (forum == nullptr || !workspace->forum_is_writable(id)) {
@@ -695,7 +693,7 @@ cha::web::ForumDetail update_forum_members(
     });
 }
 
-cha::web::MarkdownFile get_forum_file(
+MarkdownFile get_forum_file(
     const Workspace& workspace,
     std::string_view id,
     std::string_view filename) {
@@ -716,9 +714,9 @@ cha::web::MarkdownFile get_forum_file(
     return markdown_file(std::string(filename), file->second, writable);
 }
 
-cha::web::MarkdownFile create_forum_file(
+MarkdownFile create_forum_file(
     WorkspaceConfigStore& store,
-    cha::web::LiveSessionManager& live_sessions,
+    LiveSessionManager& live_sessions,
     std::string_view id,
     std::string filename,
     std::string content) {
@@ -727,9 +725,9 @@ cha::web::MarkdownFile create_forum_file(
         std::move(content), true);
 }
 
-cha::web::MarkdownFile update_forum_file(
+MarkdownFile update_forum_file(
     WorkspaceConfigStore& store,
-    cha::web::LiveSessionManager& live_sessions,
+    LiveSessionManager& live_sessions,
     std::string_view id,
     std::string filename,
     std::string content) {
@@ -740,7 +738,7 @@ cha::web::MarkdownFile update_forum_file(
 
 void delete_forum_file(
     WorkspaceConfigStore& store,
-    cha::web::LiveSessionManager& live_sessions,
+    LiveSessionManager& live_sessions,
     std::string_view id,
     std::string filename) {
     (void)edit_markdown_file(

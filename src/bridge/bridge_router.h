@@ -26,8 +26,8 @@ public:
         std::function<std::chrono::steady_clock::time_point()> clock;
     };
 
-    explicit BridgeRouter(cha::app::Application& application);
-    BridgeRouter(cha::app::Application& application, Options options);
+    explicit BridgeRouter(app::Application& application);
+    BridgeRouter(app::Application& application, Options options);
     ~BridgeRouter();
     BridgeRouter(const BridgeRouter&) = delete;
     BridgeRouter& operator=(const BridgeRouter&) = delete;

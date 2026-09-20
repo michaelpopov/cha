@@ -325,8 +325,8 @@ TEST(R2Integration, UploadsDownloadsAndBacksUpThePreviousDatabase) {
     TemporaryR2Database fixture;
     const R2StorageKey storage = integration_r2_key();
 
-    const web::R2DatabaseTransfer uploaded =
-        web::upload_database_to_r2(
+    const R2DatabaseTransfer uploaded =
+        upload_database_to_r2(
             fixture.path(), fixture.vault(), storage);
     const std::string expected_download = file_bytes(fixture.path());
     const std::string expected_vault = file_bytes(fixture.vault());
@@ -340,8 +340,8 @@ TEST(R2Integration, UploadsDownloadsAndBacksUpThePreviousDatabase) {
     const std::string expected_backup = file_bytes(fixture.path());
     ASSERT_NE(expected_backup, expected_download);
 
-    const web::R2DatabaseTransfer downloaded =
-        web::download_database_from_r2(
+    const R2DatabaseTransfer downloaded =
+        download_database_from_r2(
             fixture.path(), fixture.vault(), storage);
     std::filesystem::path backup = fixture.path();
     backup += ".bac";

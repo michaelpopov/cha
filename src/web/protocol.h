@@ -1,7 +1,7 @@
 #pragma once
 
 #include "characters/character_config.h"
-#include "chat/character.h"
+#include "chat/character_metadata.h"
 #include "session/controller_update.h"
 #include "session/generation_status.h"
 
@@ -17,7 +17,7 @@
 
 #include <nlohmann/json_fwd.hpp>
 
-namespace cha::web {
+namespace cha {
 
 class LiveSession;
 
@@ -107,7 +107,7 @@ struct SessionSnapshot {
     std::string session_label;
     std::vector<CharacterSummary> characters;
     CharacterId default_character_id;
-    std::vector<cha::TranscriptEntry> transcript;
+    std::vector<TranscriptEntry> transcript;
     std::optional<EntryId> covered_until;
     GenerationStatus generation;
     std::optional<std::string> notice;
@@ -550,4 +550,4 @@ void to_json(nlohmann::json& json, const Error& value);
 void to_json(nlohmann::json& json, const SnapshotEvent& value);
 void to_json(nlohmann::json& json, const AppendEvent& value);
 
-} // namespace cha::web
+} // namespace cha

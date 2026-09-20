@@ -21,14 +21,6 @@ namespace cha::bridge {
 namespace {
 
 using namespace std::chrono_literals;
-using cha::MockHttpServer;
-using cha::http_response;
-using cha::web::ApplicationCommand;
-using cha::web::ConfigurationDirectory;
-
-using cha::web::VaultDefinition;
-using cha::web::find_vault;
-using cha::web::load_configuration_directory;
 
 ApplicationCommand make_command(
     const test::TestWorkspace& workspace,
@@ -115,7 +107,7 @@ class BridgeRouterTest : public ::testing::Test {
 protected:
     void SetUp() override {
         database_ = test::import_test_database(workspace_.root());
-        application_ = cha::app::Application::open(make_command(workspace_, database_));
+        application_ = app::Application::open(make_command(workspace_, database_));
         router_ = std::make_unique<BridgeRouter>(*application_);
         connection_ = router_->open_connection();
     }
@@ -156,7 +148,7 @@ protected:
 
     test::TestWorkspace workspace_;
     std::filesystem::path database_;
-    std::unique_ptr<cha::app::Application> application_;
+    std::unique_ptr<app::Application> application_;
     std::unique_ptr<BridgeRouter> router_;
     std::string connection_;
     std::uint64_t epoch_{1};
@@ -399,11 +391,11 @@ TEST_F(BridgeRouterTest, TimesOutAdmittedWorkWithoutExecutingALateMutation) {
 }
 
 TEST(CommandReply, LateCompletionAfterAbandonDoesNotReplay) {
-    cha::web::CommandReply reply;
+    CommandReply reply;
     bool called = false;
     reply.set_ready_callback([&] { called = true; });
     reply.abandon();
-    EXPECT_FALSE(reply.complete(cha::web::CommandResult{.clear_input = true}));
+    EXPECT_FALSE(reply.complete(CommandResult{.clear_input = true}));
     EXPECT_FALSE(called);
     EXPECT_FALSE(reply.peek());
 }
@@ -630,7 +622,7 @@ TEST_F(BridgeRouterTest, ClosingConnectionReleasesAPendingOrCompletedSubscriptio
     router_->close_connection(connection_);
 
     // An owner command after cleanup makes the detached assertion deterministic.
-    EXPECT_TRUE(std::holds_alternative<cha::web::SessionSnapshot>(
+    EXPECT_TRUE(std::holds_alternative<SessionSnapshot>(
         session->snapshot(2s)));
     EXPECT_FALSE(session->output()->attached());
     EXPECT_FALSE(router_->take_delivery(connection_));
@@ -696,7 +688,7 @@ TEST_F(BridgeRouterTest, RequestIdsMustIncreaseWithinAConnection) {
 
 TEST_F(BridgeRouterTest, ZeroAndStaleRequestsCannotMutateAfterVaultSwitch) {
     const auto old_epoch = bootstrap_epoch();
-    const auto created = application_->create_vault(cha::web::VaultCreate{
+    const auto created = application_->create_vault(VaultCreate{
         .display_name = "Copied",
         .copy_from = "Test",
         .password = {},
@@ -729,7 +721,7 @@ TEST_F(BridgeRouterTest, ZeroAndStaleRequestsCannotMutateAfterVaultSwitch) {
 
 TEST_F(BridgeRouterTest, ContextNotificationsCoalesceBehindInFlightDelivery) {
     bootstrap_epoch();
-    const auto created = application_->create_vault(cha::web::VaultCreate{
+    const auto created = application_->create_vault(VaultCreate{
         .display_name = "Copied",
         .copy_from = "Test",
         .password = {},
@@ -942,7 +934,7 @@ TEST_F(BridgeRouterTest, QueuedOldContextReplyIsInvalidatedBeforeDelivery) {
 TEST_F(BridgeRouterTest, BusyVaultLeasePreservesTheCurrentContextAndSession) {
     bootstrap_epoch();
     const auto target = application_->create_vault({.display_name = "Busy"}, epoch_);
-    const auto busy = cha::SessionLease::acquire(target.data, "test lease");
+    const auto busy = SessionLease::acquire(target.data, "test lease");
     const auto session = call("session.create", {{"forum_id", "lobby"}, {"label", "Kept"}});
     const auto identity = nlohmann::json{{"forum_id", "lobby"},
         {"session_id", session["result"]["id"]}};
@@ -956,7 +948,7 @@ TEST_F(BridgeRouterTest, BusyVaultLeasePreservesTheCurrentContextAndSession) {
 TEST_F(BridgeRouterTest, FailedMergeRecoveryKeepsShellAvailableAndRejectsDomainWork) {
     bootstrap_epoch();
     (void)application_->create_vault({.display_name = "Source"}, epoch_);
-    cha::force_next_forum_sync_failure();
+    force_next_forum_sync_failure();
     const auto failed = call("vault.merge", {{"source_vault", "Source"}, {"password", nullptr}});
     ASSERT_FALSE(failed["ok"]);
     EXPECT_EQ(failed["error"]["code"], "application_unavailable");

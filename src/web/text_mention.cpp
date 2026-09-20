@@ -2,7 +2,7 @@
 
 #include "util/text.h"
 
-namespace cha::web {
+namespace cha {
 
 AddressedPrompt parse_addressed_prompt(std::string_view input) {
     std::size_t start = 0;
@@ -32,4 +32,4 @@ AddressedPrompt parse_addressed_prompt(std::string_view input) {
     return {std::string(trimmed.substr(1, end - 1)), std::string(trimmed.substr(body))};
 }
 
-} // namespace cha::web
+} // namespace cha

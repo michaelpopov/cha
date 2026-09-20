@@ -1,7 +1,7 @@
 #pragma once
 
 #include "characters/model_context.h"
-#include "chat/character.h"
+#include "chat/character_metadata.h"
 #include "providers/generation_event.h"
 
 #include <atomic>

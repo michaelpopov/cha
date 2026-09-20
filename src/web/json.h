@@ -9,7 +9,7 @@
 
 #include <nlohmann/json_fwd.hpp>
 
-namespace cha::web {
+namespace cha {
 
 const std::string& required_string(
     const nlohmann::json& json,
@@ -45,4 +45,4 @@ std::string parse_rename_display_name(const nlohmann::json& json);
 std::string parse_replace_secret_value(const nlohmann::json& json);
 SaveR2StorageRequest parse_save_r2_storage_request(const nlohmann::json& json);
 
-} // namespace cha::web
+} // namespace cha

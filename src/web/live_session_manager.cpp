@@ -21,7 +21,7 @@
 #include <thread>
 #include <utility>
 
-namespace cha::web {
+namespace cha {
 namespace {
 
 std::string session_log(const FullSessionId& key, std::string_view event) {
@@ -115,7 +115,7 @@ struct SessionRuntime::Impl {
 
     Impl(
         SessionRuntime& owner,
-        cha::app::RuntimeSettings settings_value,
+        app::RuntimeSettings settings_value,
         SessionOpener opener_value,
         LiveSessionClock clock_value)
         : owner(owner),
@@ -398,7 +398,7 @@ struct SessionRuntime::Impl {
     }
 
     SessionRuntime& owner;
-    cha::app::RuntimeSettings settings;
+    app::RuntimeSettings settings;
     SessionOpener opener;
     std::weak_ptr<SessionRuntime> runtime;
     std::shared_ptr<OwnerWakeSignal> notifier;
@@ -427,7 +427,7 @@ struct SessionRuntime::Impl {
 };
 
 SessionRuntime::SessionRuntime(
-    cha::app::RuntimeSettings settings,
+    app::RuntimeSettings settings,
     SessionOpener opener,
     LiveSessionClock clock)
     : impl_(std::make_unique<Impl>(
@@ -524,7 +524,7 @@ void LiveSessionGlobalMaintenance::release() noexcept {
 }
 
 LiveSessionManager::LiveSessionManager(
-    cha::app::RuntimeSettings settings,
+    app::RuntimeSettings settings,
     SessionOpener opener,
     LiveSessionClock clock)
     : runtime_(std::shared_ptr<SessionRuntime>(new SessionRuntime(
@@ -916,4 +916,4 @@ void LiveSessionManager::release_maintenance(
     runtime_->wake();
 }
 
-} // namespace cha::web
+} // namespace cha

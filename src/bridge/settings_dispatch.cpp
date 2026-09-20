@@ -16,7 +16,7 @@ nlohmann::json encode_optional(const std::optional<T>& value) {
 } // namespace
 
 std::optional<nlohmann::json> dispatch_settings_operation(
-    cha::app::Application& application,
+    app::Application& application,
     Method method,
     const nlohmann::json& params,
     std::uint64_t epoch) {
@@ -33,7 +33,7 @@ std::optional<nlohmann::json> dispatch_settings_operation(
         break;
     case Method::provider_create:
         result = application.create_provider(
-            cha::web::parse_create_provider_request(params), epoch);
+            parse_create_provider_request(params), epoch);
         break;
     case Method::provider_update: {
         const std::string id = require_identifier(params, "provider_id");
@@ -53,13 +53,13 @@ std::optional<nlohmann::json> dispatch_settings_operation(
         break;
     case Method::style_create:
         result = application.create_style(
-            cha::web::parse_create_display_name(params), epoch);
+            parse_create_display_name(params), epoch);
         break;
     case Method::style_update: {
         const std::string id = require_identifier(params, "style_id");
         result = application.update_style(
             id,
-            cha::web::parse_style_update(without_key(params, "style_id")),
+            parse_style_update(without_key(params, "style_id")),
             epoch);
         break;
     }
@@ -75,13 +75,13 @@ std::optional<nlohmann::json> dispatch_settings_operation(
         break;
     case Method::voice_create:
         result = application.create_voice(
-            cha::web::parse_create_voice_request(params), epoch);
+            parse_create_voice_request(params), epoch);
         break;
     case Method::voice_update: {
         const std::string id = require_identifier(params, "voice_id");
         result = application.update_voice(
             id,
-            cha::web::parse_voice_update(without_key(params, "voice_id")),
+            parse_voice_update(without_key(params, "voice_id")),
             epoch);
         break;
     }
@@ -97,7 +97,7 @@ std::optional<nlohmann::json> dispatch_settings_operation(
         break;
     case Method::voice_input_save:
         result = application.save_voice_input_settings(
-            cha::web::parse_voice_input_settings(params), epoch);
+            parse_voice_input_settings(params), epoch);
         break;
     case Method::voice_input_runtime:
         require_only_keys(params, {});
@@ -110,7 +110,7 @@ std::optional<nlohmann::json> dispatch_settings_operation(
         break;
     case Method::voice_output_save:
         result = application.save_voice_output_settings(
-            cha::web::parse_voice_output_settings(params), epoch);
+            parse_voice_output_settings(params), epoch);
         break;
     case Method::voice_output_runtime:
         require_only_keys(params, {});
@@ -123,13 +123,13 @@ std::optional<nlohmann::json> dispatch_settings_operation(
         break;
     case Method::api_key_create:
         result = application.create_api_key(
-            cha::web::parse_create_api_key_request(params), epoch);
+            parse_create_api_key_request(params), epoch);
         break;
     case Method::api_key_rename: {
         const std::string id = require_identifier(params, "api_key_id");
         result = application.rename_api_key(
             id,
-            cha::web::parse_rename_display_name(
+            parse_rename_display_name(
                 without_key(params, "api_key_id")),
             epoch);
         break;
@@ -138,7 +138,7 @@ std::optional<nlohmann::json> dispatch_settings_operation(
         const std::string id = require_identifier(params, "api_key_id");
         result = application.replace_api_key_value(
             id,
-            cha::web::parse_replace_secret_value(
+            parse_replace_secret_value(
                 without_key(params, "api_key_id")),
             epoch);
         break;
@@ -155,7 +155,7 @@ std::optional<nlohmann::json> dispatch_settings_operation(
         break;
     case Method::r2_storage_save:
         result = application.save_r2_storage(
-            cha::web::parse_save_r2_storage_request(params), epoch);
+            parse_save_r2_storage_request(params), epoch);
         break;
     case Method::r2_storage_delete:
         require_only_keys(params, {});

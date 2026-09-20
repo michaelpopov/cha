@@ -47,6 +47,13 @@ collisions before writing where possible. Generate stable IDs in native code
 when the form only asks for a display name, and validate them against the
 workspace's reserved-ID and collision rules.
 
+Use the edit result's affected forum IDs to update live sessions. Presentation
+changes use `refresh_affected_sessions`; changes requiring new generation
+configuration use `invalidate_affected_sessions`, which requests `reloading`
+for every affected live controller, including background sessions. Provider
+requests retain their original inputs until cancellation. All controller work
+belongs on the shared `SessionRuntime` thread, never on the editor's caller.
+
 ## Keep the native contract synchronized
 
 For a new operation, update the pieces it actually needs:
@@ -87,6 +94,13 @@ forum, and active conversation are separate. Preserve that behavior when
 clearing or switching views. Writability comes from the canonical detail
 response. Character settings writability is distinct from definition editing;
 built-in Assistant can allow the former while forbidding the latter.
+
+Keep detail data and mutations in the detail screen. Reuse `EditableTitle` and
+`DetailActions` from `components/DetailActions.tsx` for rename and
+edit/upload/delete controls. Those controls own their dialogs; the screen
+supplies canonical values and save/delete callbacks and updates its loaded
+detail after success. `TopBar` only owns navigation presentation and the
+sidebar toggle. It should not fetch entity data or coordinate detail mutations.
 
 For simple lists, `useLoad(client, loader, failureMessage)` provides data, load
 error, retry, and stale-completion suppression. Use a stable loader function so

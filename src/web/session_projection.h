@@ -12,9 +12,6 @@ namespace cha {
 class Workspace;
 struct WorkspaceCharacter;
 struct Persona;
-}
-
-namespace cha::web {
 
 // Web-owned presentation data combined with core state only at the protocol
 // boundary. It deliberately excludes controller, transcript, and identity
@@ -45,4 +42,4 @@ struct WebPresentationState {
     const ControllerView& controller,
     const WebPresentationState& presentation);
 
-} // namespace cha::web
+} // namespace cha

@@ -114,7 +114,7 @@ and `modify` values, are ignored with warnings instead of blocking startup.
 
 CHA runs inside its native desktop host and has no application HTTP listener.
 An obsolete `[web]` table is ignored with a warning, including unused invalid
-listener values. Runtime actor limits and deadlines are internal
+listener values. Session runtime limits and deadlines are internal
 `cha::app::RuntimeSettings`, not listener configuration.
 
 The configuration directory must be outside the workspace import directory.
@@ -139,8 +139,8 @@ sessions. Choosing an existing vault as the source copies its full database,
 including sessions. A protected source can be copied only while it is active.
 Neither choice makes the new vault active.
 
-The editable page title renames a vault; the database path stays fixed, while
-existing derived mirror and modify directories move with the name. Settings can
+The editable name on the vault's detail screen renames it; the database path
+stays fixed, while existing derived mirror and modify directories move with the name. Settings can
 encrypt a new or existing vault with a password, but cannot remove protection
 or change that password. Only an inactive vault can be removed, and the last
 vault cannot be removed. Removal deletes the vault's TOML definition but
@@ -203,10 +203,20 @@ Failures have deliberately small, explicit outcomes:
 | Failure | Runtime result |
 | --- | --- |
 | The target is unknown, busy, or invalid | The old vault remains active. |
-| Live sessions do not drain before the timeout | The old vault remains active and the switch can be retried. |
+| Session maintenance cannot enter the runtime queue or release live sessions before its deadline | The old vault remains active and the switch can be retried. Sessions already stopped must be reopened. |
 | The target cannot be reopened after the database path changes | The application becomes unavailable because its database state is unusable. Quit and restart CHA; `app.toml` still selects the old vault. |
 | The target mirror cannot be rebuilt | The switch succeeds with mirroring inactive. |
 | The new selection cannot be saved to `app.toml` | The switch succeeds for the running process. The next launch uses the previously saved vault. |
+
+Live sessions share one runtime thread; provider requests use independent
+workers. Switching sessions leaves an accepted generation running in the
+background until completion. Vault maintenance instead stops live controllers
+and waits for their journals to close. Its session reservation has one deadline
+covering queue admission, queued work, and journal release. Timeout cleanup
+does not wait for the runtime queue, and a cancelled queued reservation cannot
+start later. Recovery publishes a new context epoch so old queued commands
+cannot run against the resumed application context. The shared runtime remains
+alive across a successful switch; sessions open again as needed.
 
 The macOS application stores this directory at
 `~/Library/Application Support/CHA`. During native startup, an empty

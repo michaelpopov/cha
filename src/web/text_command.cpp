@@ -4,7 +4,7 @@
 
 #include <array>
 
-namespace cha::web {
+namespace cha {
 namespace {
 
 struct CommandDescriptor {
@@ -45,4 +45,4 @@ std::string command_names() {
     return result;
 }
 
-} // namespace cha::web
+} // namespace cha

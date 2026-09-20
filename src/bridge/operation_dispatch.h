@@ -11,12 +11,12 @@ namespace cha::bridge {
 // A disengaged result means this dispatcher does not handle the method.
 // A JSON null is a handled response, such as an unconfigured setting.
 [[nodiscard]] std::optional<nlohmann::json> dispatch_workspace_operation(
-    cha::app::Application& application,
+    app::Application& application,
     Method method,
     const nlohmann::json& params,
     std::uint64_t epoch);
 [[nodiscard]] std::optional<nlohmann::json> dispatch_settings_operation(
-    cha::app::Application& application,
+    app::Application& application,
     Method method,
     const nlohmann::json& params,
     std::uint64_t epoch);

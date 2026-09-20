@@ -17,13 +17,13 @@
 #include <thread>
 #include <variant>
 
-namespace cha::web {
+namespace cha {
 namespace {
 
 using namespace std::chrono_literals;
 
-cha::app::RuntimeSettings native_manager_settings(std::size_t session_limit) {
-    cha::app::RuntimeSettings settings;
+app::RuntimeSettings native_manager_settings(std::size_t session_limit) {
+    app::RuntimeSettings settings;
     settings.session_limit = session_limit;
     settings.command_queue_capacity = 8;
 
@@ -276,4 +276,4 @@ TEST(SessionRetirement, ReselectCancelsIdleRetirement) {
 }
 
 } // namespace
-} // namespace cha::web
+} // namespace cha

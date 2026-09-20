@@ -7,7 +7,7 @@
 
 #include <utility>
 
-namespace cha::web {
+namespace cha {
 namespace {
 
 CommandResult handle_multicast_input(
@@ -61,4 +61,4 @@ CommandResult handle_text_input(
     return result;
 }
 
-} // namespace cha::web
+} // namespace cha

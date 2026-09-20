@@ -26,19 +26,15 @@ namespace cha {
 
 class SessionController;
 
-} // namespace cha
-
-namespace cha::web {
-
 using SessionOpener = std::function<OpenedSession(
     const FullSessionId&,
-    std::shared_ptr<cha::WakeNotifier>)>;
+    std::shared_ptr<WakeNotifier>)>;
 
 using LiveSessionClock =
     std::function<std::chrono::steady_clock::time_point()>;
 
-[[nodiscard]] cha::app::RuntimeSettings validate_live_session_settings(
-    cha::app::RuntimeSettings settings);
+[[nodiscard]] app::RuntimeSettings validate_live_session_settings(
+    app::RuntimeSettings settings);
 
 enum class LiveSessionState {
     starting,
@@ -68,7 +64,7 @@ private:
     friend class LiveSession;
     friend class LiveSessionManager;
     SessionRuntime(
-        cha::app::RuntimeSettings settings,
+        app::RuntimeSettings settings,
         SessionOpener opener,
         LiveSessionClock clock);
     [[nodiscard]] std::shared_ptr<LiveSession> make_session(
@@ -107,11 +103,11 @@ public:
     void request_retire_when_idle();
     void cancel_retirement();
     [[nodiscard]] bool idle_for_retirement() const;
-    [[nodiscard]] std::shared_ptr<const cha::app::SessionOutputItem>
+    [[nodiscard]] std::shared_ptr<const app::SessionOutputItem>
     take_output();
     void acknowledge_output() noexcept;
     void refresh_presentation();
-    [[nodiscard]] std::shared_ptr<cha::app::SessionOutput> output() const {
+    [[nodiscard]] std::shared_ptr<app::SessionOutput> output() const {
         return output_;
     }
 
@@ -160,7 +156,7 @@ private:
     const FullSessionId identity_;
     const std::uint64_t instance_;
     std::weak_ptr<SessionRuntime> runtime_;
-    std::shared_ptr<cha::app::SessionOutput> output_;
+    std::shared_ptr<app::SessionOutput> output_;
 
     std::atomic<LiveSessionState> state_{LiveSessionState::starting};
     std::atomic<bool> generating_{};
@@ -190,4 +186,4 @@ private:
     std::optional<SubscribeCommand> active_subscription_;
 };
 
-} // namespace cha::web
+} // namespace cha

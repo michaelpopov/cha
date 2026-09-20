@@ -461,8 +461,8 @@ color: inherit;
 </nav>
 <h1 id="learning-the-cha-c-codebase">Learning the CHA C++ codebase</h1>
 <p>This guide follows a conversation from the native desktop window through the
-application, session owner, provider worker, and database. It also explains how
-workspace edits and vault changes reach the React interface.</p>
+application, shared session runtime, provider worker, and database. It also
+explains how workspace edits and vault changes reach the React interface.</p>
 <h2 id="1-how-to-use-this-guide">1. How to use this guide</h2>
 <p>Read the public headers before their implementations. Start with the object and
 build maps below, then follow the domain, storage, and generation sections.
@@ -485,12 +485,13 @@ network connections, including SSE decoding for streaming model responses.</p>
     -&gt; Application
          -&gt; WorkspaceConfigStore -&gt; immutable Workspace snapshot
          -&gt; SessionRepository -&gt; vault SQLite database
-         -&gt; LiveSessionManager -&gt; LiveSession owner thread
-                                    -&gt; SessionController -&gt; SessionJournal
+         -&gt; LiveSessionManager -&gt; SessionRuntime (one session thread)
+                                    -&gt; live controllers -&gt; SessionJournal
                                     -&gt; Providers -&gt; ProviderRequest workers
          -&gt; media jobs and resources
 
-LiveSession -&gt; SessionOutput -&gt; BridgeRouter delivery -&gt; React projection
+SessionRuntime -&gt; LiveSession endpoint -&gt; SessionOutput
+    -&gt; BridgeRouter delivery -&gt; React projection
 </code></pre>
 <p><code>Application</code> is the composition root and lifecycle boundary. It owns the
 configuration store, session repository, live-session manager, provider
@@ -501,11 +502,13 @@ cannot silently target the newly selected vault.</p>
 <code>snapshot()</code> returns a <code>shared_ptr&lt;const Workspace&gt;</code>; readers hold it while
 using references into the snapshot. Settings and workspace operations receive
 the workspace explicitly. There is no process-global current workspace.</p>
-<p>A live session has one permanent owner thread. Only that thread calls its
-<code>SessionController</code>; other threads submit commands or enqueue generation
-results. Controllers retain stable IDs and consult their injected workspace
+<p>One <code>SessionRuntime</code> thread owns all live controllers, the session map, and the
+selected session. Only that thread calls <code>SessionController</code>; other threads
+submit commands or enqueue generation results. <code>LiveSessionManager</code> is the
+admission facade, and <code>LiveSession</code> is a stable endpoint that can outlive its
+controller. Controllers retain stable IDs and consult their injected workspace
 source. Each provider request owns the resolved configuration and history with
-which it started.</p>
+which it started and runs on its own worker.</p>
 <p>There are three distinct kinds of stored data:</p>
 <ul>
 <li>External configuration selects vaults, database paths, mirror/modify bases,
@@ -549,8 +552,9 @@ projections, not runtime sources of truth.</li>
 <pre><code class="language-text">macOS host -&gt; cha_macos_runtime -&gt; cha_bridge -&gt; cha_app -&gt; cha_core
 Windows host -------------------&gt; cha_bridge -&gt; cha_app -&gt; cha_core
 </code></pre>
-<p>The directory <code>src/web/</code> and namespace <code>cha::web</code> retain historical names.
-They contain shared application support, not an HTTP server. In particular,
+<p>The directory <code>src/web/</code> retains its historical name; its shared support types
+now live in namespace <code>cha</code>. It contains application support, not an HTTP
+server. In particular,
 <code>application_config.cpp</code> and <code>r2_database_transfer.cpp</code> belong to <code>cha_core</code>;
 the remaining production sources there belong to <code>cha_app</code>. Use CMake to
 resolve target membership rather than guessing from that directory name.</p>
@@ -650,12 +654,14 @@ supply the injected native bridge.</p>
 <p>IDs identify stored entities and bridge parameters. Names are presentation and
 prompt text. A display-name edit must not change an entity ID or rewrite the
 attribution saved in an old transcript entry.</p>
-<h3 id="52-there-is-one-mutable-owner-per-live-session">5.2 There is one mutable owner per live session</h3>
-<p><code>LiveSession::owner_main()</code> constructs and owns the controller. Application
-callers enqueue commands; provider workers enqueue events. The owner drains
-both. Thread confinement keeps the controller free of internal locking.</p>
+<h3 id="52-one-runtime-thread-owns-every-live-controller">5.2 One runtime thread owns every live controller</h3>
+<p><code>SessionRuntime::Impl::run()</code> processes commands and provider events for all
+live sessions. Controllers and journals are constructed, used, and destroyed
+on that thread. Application callers enqueue commands; provider workers enqueue
+events and wake the runtime. Thread confinement keeps controllers free of
+internal locking without creating a thread for each session.</p>
 <h3 id="53-workers-receive-copies-views-stay-local">5.3 Workers receive copies, views stay local</h3>
-<p><code>TranscriptView</code> and <code>ControllerView</code> borrow owner-thread storage for immediate
+<p><code>TranscriptView</code> and <code>ControllerView</code> borrow runtime-thread storage for immediate
 projection. <code>ModelHistory</code> owns a point-in-time copy suitable for a worker.
 Never retain a view into a transcript that may mutate.</p>
 <h3 id="54-snapshots-are-authoritative">5.4 Snapshots are authoritative</h3>
@@ -667,7 +673,7 @@ an append.</p>
 <h2 id="6-first-reading-pass-domain-vocabulary">6. First reading pass: domain vocabulary</h2>
 <p>Begin with <a href="../src/chat/ids.h">chat/ids.h</a>,
 <a href="../src/chat/persona.h">chat/persona.h</a>, and
-<a href="../src/chat/character.h">chat/character.h</a>.</p>
+<a href="../src/chat/character_metadata.h">chat/character_metadata.h</a>.</p>
 <p>The important split in character data is:</p>
 <ul>
 <li><code>CharacterMetadata</code> is public, discovery-safe information: ID, display name,
@@ -765,9 +771,11 @@ guarantee is how each generation execution reports exactly one completion,
 cancellation, or failure even on its exception path.</p>
 <h3 id="72-wakenotifier">7.2 <code>WakeNotifier</code></h3>
 <p><a href="../src/util/wake_notifier.h">util/wake_notifier.h</a> is the tiny seam by which a
-generation worker tells the session actor, “new events may be available.” The
-live-session implementation is <code>OwnerWakeSignal</code>. Waking does not carry state; queues
-remain the source of work.</p>
+generation worker tells the shared session runtime, “new events may be
+available.” Every live controller receives the same <code>OwnerWakeSignal</code>. It
+remembers a wake that arrives before the runtime waits, so work cannot be
+stranded between checking queues and sleeping. Waking does not carry events;
+queues remain the source of work.</p>
 <h3 id="73-configuration-helpers">7.3 Configuration helpers</h3>
 <p>The other utilities support important boundaries:</p>
 <ul>
@@ -808,9 +816,9 @@ protected = false
 <p>Relative paths resolve from the configuration directory. Mirror and modify
 paths append the vault display name: the example uses <code>mirror/Personal</code> and
 <code>modify/Personal</code>. Obsolete <code>[web]</code> listener settings and old per-vault
-mirror/modify fields are ignored with warnings. Actor bounds and deadlines
-live in <a href="../src/app/runtime_settings.h">RuntimeSettings</a>, separate from this
-external configuration.</p>
+mirror/modify fields are ignored with warnings. Session runtime bounds and
+deadlines live in <a href="../src/app/runtime_settings.h">RuntimeSettings</a>, separate
+from this external configuration.</p>
 <p>Vault-backed keys are included as plaintext in workspace exports. OAuth
 credentials remain in <code>openai-auth.json</code> outside the vault database. A protected
 vault uses SQLCipher; its password is supplied at launch or switch and retained
@@ -832,15 +840,16 @@ lease, materializes committed rows, and loads its immutable workspace.</li>
 a workspace-source callback. It creates the temporary Welcome database.</li>
 <li>Optional mirroring is initialized; a mirror failure is logged without
 preventing use of the vault.</li>
-<li><code>LiveSessionManager</code> receives an opener bound to this application&#39;s store,
-repository, and provider supervisor. Audio services use the same repository.</li>
-<li>The runtime creates <code>BridgeRouter</code> and its processing threads. The native
-host creates a document connection and installs the frontend bridge.</li>
+<li><code>LiveSessionManager</code> starts the shared <code>SessionRuntime</code> with an opener bound
+to this application&#39;s store, repository, and provider supervisor. Audio
+services use the same repository.</li>
+<li>The native host runtime creates <code>BridgeRouter</code> and its processing threads.
+The host creates a document connection and installs the frontend bridge.</li>
 <li>The frontend checks <code>bridge.info</code>, then obtains bootstrap state, capabilities,
 roster, and context epoch through <code>app.bootstrap</code>.</li>
 </ol>
 <p>The host owns the runtime. The application owns the database-related services;
-live actors must release their journals before the store releases its lease
+live controllers must release their journals before the store releases its lease
 and temporary tree.</p>
 <h3 id="81-what-workspaceload-builds">8.1 What <code>Workspace::load()</code> builds</h3>
 <p><a href="../src/workspace/workspace.h">workspace.h</a> and
@@ -949,16 +958,17 @@ isolation defect.</p>
 <p><code>StoredSession</code> describes a listing. <code>PreparedSession</code> is validated construction
 input: identity, label, database path/password, internal key, and restored
 transcript/counters. A listing can become stale; <code>prepare()</code> must validate again
-when an actor opens the session.</p>
+when the runtime opens the session.</p>
 <h3 id="92-lease-connections-and-transactions">9.2 Lease, connections, and transactions</h3>
 <p><code>WorkspaceConfigStore</code> holds a non-blocking lease on the database&#39;s companion
 <code>.cha-lock</code> file. The file remains stable while database files are replaced or
 WAL sidecars come and go. Its existence alone does not mean the database is
 busy; the held operating-system lock does.</p>
-<p>The repository uses short-lived connections. Each live actor owns a journal
-connection confined to its owner thread. Connections enable foreign keys;
-write transactions use <code>BEGIN IMMEDIATE</code>. Reading under a deferred transaction
-and later upgrading it can fail with <code>SQLITE_BUSY_SNAPSHOT</code> even with a busy
+<p>The repository uses short-lived connections. Each live controller owns a
+journal connection confined to the shared session runtime thread. Connections
+enable foreign keys; write transactions use <code>BEGIN IMMEDIATE</code>. Reading under
+a deferred transaction and later upgrading it can fail with
+<code>SQLITE_BUSY_SNAPSHOT</code> even with a busy
 timeout. Read-only restoration uses a consistent read snapshot.</p>
 <p>Normal runtime requires schema v2. The import implementation still contains
 schema-v1 upgrade and legacy per-session-database detection. These storage
@@ -984,8 +994,8 @@ finding the forum, prepares stored history, and constructs a controller with
 the store&#39;s workspace-source callback. It also supplies callbacks for default
 character persistence and cached-audio lookup.</p>
 <p>The application installs the mirror callback and gives this opener to the
-live-session manager. Only the actor&#39;s owner thread constructs and uses the
-controller and journal.</p>
+live-session manager. Only the shared session runtime thread constructs, uses,
+and destroys the controller and journal.</p>
 <h2 id="10-fifth-reading-pass-the-generation-pipeline">10. Fifth reading pass: the generation pipeline</h2>
 <p>Read the interfaces before the implementations:</p>
 <ol>
@@ -1103,7 +1113,7 @@ four groups:</p>
 <p>One controller owns:</p>
 <ul>
 <li>one <code>SessionJournal</code> connection, scoped to a single <code>session_key</code>;</li>
-<li>the owner-thread-confined <code>Transcript</code>;</li>
+<li>the runtime-thread-confined <code>Transcript</code>;</li>
 <li>a borrowed reference to the process-owned <code>Providers</code> supervisor;</li>
 <li>stable forum/persona IDs used to look up the current <code>Workspace</code>;</li>
 <li>default-character and current-persona selection;</li>
@@ -1112,8 +1122,8 @@ four groups:</p>
 <li>at most one <code>ActiveGeneration</code>, containing ordered request handles.</li>
 </ul>
 <p>The controller has no mutex. Its public mutation/view methods belong to the
-owner thread. Thread-safe communication is isolated inside request event
-queues, cancellation flags, and the wake mechanism.</p>
+shared session runtime thread. Thread-safe communication is isolated inside
+request event queues, cancellation flags, and the wake mechanism.</p>
 <p><code>Workspace</code> is the forum roster and handle resolver. It centralizes exact,
 normalized, and prefix matching plus ambiguity diagnostics, so prompt
 submission, multicast, and default-character changes use the same rules.
@@ -1175,7 +1185,7 @@ text.</li>
 <li>If no answer exists, the turn is cancelled without a response entry; the
 prompt remains.</li>
 </ul>
-<p><code>request_stop()</code> only sets cancellation and returns. It does not block the actor
+<p><code>request_stop()</code> only sets cancellation and returns. It does not block the runtime
 waiting for provider threads. Later event-loop passes drain terminal events and
 finish cleanup.</p>
 <h3 id="115-controllerupdate-is-an-effect-description">11.5 <code>ControllerUpdate</code> is an effect description</h3>
@@ -1205,7 +1215,8 @@ classification.</p>
 <li><a href="../src/bridge/workspace_dispatch.cpp">Workspace dispatch</a> and
 <a href="../src/bridge/settings_dispatch.cpp">settings dispatch</a></li>
 <li><a href="../src/app/session_output.h">Session output</a></li>
-<li><a href="../src/web/live_session.cpp">Live session</a></li>
+<li><a href="../src/web/live_session_manager.cpp">Session runtime and manager</a> and
+<a href="../src/web/live_session.cpp">live session endpoint</a></li>
 <li><a href="../webapp/src/api/nativeBridge.ts">Frontend native bridge</a> and
 <a href="../webapp/src/api/nativeEvents.ts">event projection</a></li>
 </ol>
@@ -1231,6 +1242,11 @@ the trusted host identity and envelope before dispatching.</p>
 subscriptions, delivery IDs, and acknowledgments. Ordinary work and control
 work have separate admission capacity. Slow generation or provider testing
 must not consume the path needed to stop or clean up work.</p>
+<p>Those bridge admission pools are separate from the session runtime&#39;s single
+command queue. A session reply&#39;s ready callback only queues a router
+completion; it must not synchronously call back into the session runtime.
+Subscription replies carry the endpoint needed to obtain output, avoiding a
+blocking manager lookup from that callback.</p>
 <p>Synchronous workspace and settings operations live in noun-specific dispatcher
 files. Each dispatcher returns an optional JSON result: no value means it did
 not handle the method, while a JSON null is a handled empty result. Session,
@@ -1240,12 +1256,33 @@ router. Shared parameter parsing lives in <code>request_params.h</code>.</p>
 reply timeout abandons observation of the result; it does not roll back a
 mutation already running. Connection teardown releases subscriptions and
 connection-owned resources.</p>
-<h3 id="123-actor-commands-and-output">12.3 Actor commands and output</h3>
-<p><code>CommandQueue</code> is a bounded queue of owning commands and replies. The
-application enqueues work; the live-session owner drains bounded batches of
-commands and provider events, so one source cannot starve the other.
-<code>OperationReply</code> and <code>CommandReply</code> support asynchronous completion and ignore
-late completion after abandonment.</p>
+<h3 id="123-runtime-commands-selection-and-output">12.3 Runtime commands, selection, and output</h3>
+<p><code>SessionRuntime</code> owns one bounded queue containing web commands and manager
+control operations. A web command captures its context epoch, full session
+identity, and controller instance. Execution rechecks them: an old epoch fails
+with <code>vault_changed</code>, and a retired or replaced instance fails with
+<code>session_not_live</code>. A command cannot silently target a newly opened controller
+with the same public identity. <code>OperationReply</code> and <code>CommandReply</code> support
+asynchronous completion and ignore late completion after abandonment.</p>
+<p>Each loop handles a bounded command batch, then a bounded event batch for each
+running controller, then retirement. Event processing also runs for idle
+controllers so terminal events such as <code>session_ended</code> are consumed. A full
+batch causes another pass before sleeping on the shared wake signal.</p>
+<p>The selected session stays live while idle. Selecting another session marks
+the previous one for retirement once its entire generation, including
+multicast, finishes and durable state is written. Selecting it again cancels
+that retirement. Unsubscribing only detaches delivery; it does not cancel
+generation or release a controller. Explicit Stop cancels generation, while
+explicit session close requests controller shutdown.</p>
+<p>Selection opens a candidate before committing the switch, preserving the
+previous selection if opening fails or the request is abandoned before that
+commit. Completed background sessions are cleaned up before checking capacity.
+At the limit, an idle selected session can be replaced; a generating session
+cannot be evicted just to make room.</p>
+<p>Journal writes, history restore, snapshot construction, and mirroring remain
+synchronous on this shared thread. Slow work there delays other sessions.
+Provider workers continue independently, and their event queues remain
+unbounded; the bounded runtime queue is not provider backpressure.</p>
 <p><code>ControllerView</code> borrows storage. <code>to_snapshot()</code> copies it immediately into an
 owning <code>SessionSnapshot</code>. <code>SessionOutput</code> coalesces pending output and uses a
 full snapshot when it cannot retain a correct append. No HTTP thread, SSE
@@ -1256,10 +1293,6 @@ sequence. An append must match both that sequence and an existing target.
 Duplicates are ignored; invalid current-scope data or a sequence gap fails the
 projection and invokes recovery through a new subscription/snapshot. Late events
 from a previous scope cannot corrupt the current session.</p>
-<p>Closing the displayed session requests retirement when idle. It need not stop
-an accepted generation immediately. Explicit Stop cancels generation; explicit
-session shutdown uses <code>session_closed</code>. Document and application teardown have
-their own cleanup paths.</p>
 <h3 id="124-text-input">12.4 Text input</h3>
 <p>The frontend submits raw text; <code>LiveSession</code> supplies the current persona ID.
 <code>text_mention.*</code>, <code>text_command.*</code>, <code>text_multicast.*</code>, and <code>text_input.*</code> resolve
@@ -1300,10 +1333,19 @@ built-in Assistant.</p>
 retry, and suppression of stale completion after a client change or unmount.
 Pass a stable loader function. Screens retain mutation errors separately, and
 complex detail/edit/subscription effects retain their specific behavior.</p>
+<p>Detail screens own their loaded data and mutations. <code>EditableTitle</code> and
+<code>DetailActions</code> in <a href="../webapp/src/components/DetailActions.tsx">DetailActions.tsx</a>
+provide rename controls and edit/upload/delete dialogs inside those screens.
+<code>TopBar</code> only handles the sidebar toggle and navigation title; it does not load
+or mutate entity details. Pending or failed session operations select the chat
+view so their progress or error is visible.</p>
+<p><a href="../webapp/src/state/route.ts">state/route.ts</a> always uses hash routes inside the
+native document. After maintenance requires a reload, <code>reloadApplication()</code>
+reloads the document; changing only its hash would leave the old bridge alive.</p>
 <h3 id="127-markdown-audio-and-native-resources">12.7 Markdown, audio, and native resources</h3>
 <p><code>session_markdown()</code> renders both explicit session exports and continuous
 mirrors. It omits transient cover markers and duplicate multicast prompts.
-Live-session export gets an owner-thread snapshot; closed-session export
+Live-session export gets a session-runtime snapshot; closed-session export
 restores stored history. The native host selects a destination, then writes
 through the context-checked runtime save operation off the UI thread.</p>
 <p><code>SessionMirror</code> writes private, atomic Markdown files under display-named forum
@@ -1330,37 +1372,50 @@ returned to the frontend.</p>
 <ol>
 <li>The frontend creates or lists sessions through the typed native client.</li>
 <li><code>session.open</code> passes the captured epoch to <code>Application</code>.</li>
-<li>The manager reuses or constructs an actor for the full session identity.</li>
-<li>The actor prepares stored history and constructs its controller.</li>
+<li>The manager queues selection of the full session identity on the runtime.</li>
+<li>The runtime reuses a live controller or prepares stored history and constructs
+one, then commits selection.</li>
 <li>A subscription delivers an initial snapshot.</li>
-<li><code>session.submit</code> queues text for the owner thread.</li>
+<li><code>session.submit</code> queues text for the shared session runtime thread.</li>
 <li>The controller commits the foreground prompt, starts provider requests, and
 applies their events in order.</li>
 <li>Owning snapshots/appends cross <code>SessionOutput</code>, router delivery, and the
 native adapter; the frontend acknowledges and projects them.</li>
-<li>Terminal generation state is committed and the optional mirror is refreshed.</li>
+<li>Terminal generation state is committed and the optional mirror is refreshed.
+An unselected session awaiting retirement can now release its controller.</li>
 </ol>
 <h3 id="132-editing-an-entity">13.2 Editing an entity</h3>
 <p>The screen submits a typed operation with its context epoch. <code>Application</code>
 checks admission and passes explicit dependencies to the operation helper.
 <code>WorkspaceConfigStore</code> validates and commits the candidate before publishing it.
 The operation returns canonical data; the reducer updates summaries, inspection
-state, and current visible references. Existing provider requests keep the
-inputs captured when they started.</p>
+state, and current visible references. Presentation-only changes refresh
+affected live sessions. Changes requiring new generation configuration stop
+all affected live controllers with <code>reloading</code>, including background sessions.
+Existing provider requests retain their captured inputs until cancellation;
+they are not mutated in place.</p>
 <h3 id="133-switching-or-maintaining-a-vault">13.3 Switching or maintaining a vault</h3>
 <p>Vault switching validates the target and acquires its lease before disturbing
 the current database. Application maintenance fences new work, coordinates
 media, drains live sessions, reserves the configuration store and repository,
 and releases handles needed for database work. The active lease remains held
 during maintenance of that database.</p>
+<p>Session deletion and global maintenance use one absolute reservation deadline
+for queue admission, queue wait, and controller/journal release. Releasing or
+timing out a reservation cancels its shared token and wakes the runtime; it
+does not wait for queue space. Expired queued reservations cannot start later.
+Context epoch publication is atomic and does not require a runtime round trip,
+so timeout recovery can invalidate old queued work even while the runtime is
+still blocked. A timeout does not undo shutdown already requested for a session.</p>
 <p>Import replaces configuration from the derived modify directory; Export writes
 that directory. Upload and Download transfer the database and companion vault
 TOML through R2. Download validates staged files before replacing the local
 pair, keeping <code>.bac</code> backups. Upload cannot atomically replace both remote
 objects and must be retried after a partial failure.</p>
-<p>After a successful cutover, owners are reopened, capabilities are refreshed,
-and context publication invalidates old work. The frontend refreshes or reloads
-for the new context. A pre-commit validation failure leaves the old vault usable.
+<p>After a successful cutover, storage is reopened, capabilities are refreshed,
+and context publication invalidates old work. The shared session runtime stays
+alive; sessions reopen on demand. The frontend refreshes or reloads for the new
+context. A pre-commit validation failure leaves the old vault usable.
 Failure to restore a usable database marks the application unavailable and
 requires restart; it must not resume with missing storage.</p>
 <p>Settings → Vaults can also create, rename, protect, remove definitions, download
@@ -1381,15 +1436,24 @@ controller repairs it to failed before normal operation.</p>
 removes the prompt and response entries before removing their turn row. The
 session&#39;s next request and entry counters keep advancing, so deleted IDs are
 never reused.</p>
-<h3 id="142-live-actor-lifecycle">14.2 Live actor lifecycle</h3>
+<h3 id="142-live-controller-and-endpoint-lifecycle">14.2 Live controller and endpoint lifecycle</h3>
 <pre><code class="language-text">starting -&gt; running -&gt; stopping -&gt; finished
     \---- open failed/not found ----&gt; finished
 </code></pre>
-<p><code>finished</code> is published only after blocking actor teardown work, controller
-destruction, and journal release. Provider requests are cancelled and released
-without waiting, so process-owned supervision may still be winding down their
-transport. A post-finished actor join is nevertheless
-bounded, and the manager may reap the old actor.</p>
+<p>For an attached output, the runtime constructs and publishes a terminal
+snapshot before closing output. It then shuts down and destroys the controller,
+releases its journal, and publishes <code>finished</code>. The endpoint and its owning
+output can outlive that cleanup for in-flight delivery. No per-session thread
+remains to join, and retirement does not wait for a renderer acknowledgment.</p>
+<p>Shutdown reasons have increasing precedence: ordinary close/retirement,
+<code>reloading</code>, <code>session_failed</code>, <code>session_deleted</code>, then <code>server_stopping</code>.
+Equal-priority requests preserve the existing reason. A stronger reason raised
+during terminal snapshot construction is included; the reason is frozen only
+when that snapshot is ready to publish. Closing output preserves accepted
+terminal data, including when an earlier payload is still in flight.</p>
+<p>Provider requests are cancelled and released without waiting, so process-owned
+supervision may still be winding down their transport. An ordinary session
+failure retires that controller without stopping unrelated sessions.</p>
 <h3 id="143-presentation-delivery">14.3 Presentation delivery</h3>
 <pre><code class="language-text">controller mutation
     -&gt; no update
@@ -1431,17 +1495,22 @@ context. They solve different problems and must not be used interchangeably.</p>
 <tr>
 <td><code>LiveSessionManager</code></td>
 <td>Application</td>
-<td>Protects registry and actor lifecycle</td>
+<td>Facade for runtime admission, maintenance, and shutdown</td>
+</tr>
+<tr>
+<td><code>SessionRuntime</code></td>
+<td>Manager</td>
+<td>One thread owns the live map, selection, controllers, and retirement</td>
 </tr>
 <tr>
 <td><code>LiveSession</code></td>
-<td>Manager plus admitted callers</td>
-<td>Permanent owner thread mutates the controller</td>
+<td>Runtime plus admitted callers/subscriptions</td>
+<td>Stable endpoint; private controller state is runtime-thread-only</td>
 </tr>
 <tr>
 <td><code>SessionController</code>, <code>Transcript</code>, <code>SessionJournal</code></td>
-<td>One actor</td>
-<td>Owner thread only</td>
+<td>One runtime entry</td>
+<td>Shared session runtime thread only</td>
 </tr>
 <tr>
 <td><code>Providers</code></td>
@@ -1451,16 +1520,16 @@ context. They solve different problems and must not be used interchangeably.</p>
 <tr>
 <td><code>ProviderRequest</code></td>
 <td>Supervisor, worker, controller handle</td>
-<td>Worker produces events; owner consumes; cancellation is synchronized</td>
+<td>Worker produces events; session runtime consumes; cancellation is synchronized</td>
 </tr>
 <tr>
 <td><code>SessionOutput</code></td>
-<td>Actor/subscription</td>
+<td>Endpoint/subscription</td>
 <td>Owning data crosses threads; bounded/coalesced publication</td>
 </tr>
 <tr>
 <td><code>BridgeRouter</code></td>
-<td>Runtime</td>
+<td>Native host runtime</td>
 <td>Coordinates request tasks, subscriptions, and delivery acknowledgment</td>
 </tr>
 <tr>
@@ -1574,16 +1643,20 @@ UI thread with one bounded grace interval. It must not destroy a runtime whose
 owners still access it. The C ABI exposes <code>cha_runtime_request_shutdown()</code> and
 <code>cha_runtime_join_shutdown()</code> for this separation.</p>
 <p>Shutdown stops admission, closes bridge connections/subscriptions, cancels
-background work, and stops live actors. An actor resolves or rejects queued
-commands, shuts down its controller, releases its journal, and only then
-publishes <code>finished</code>. No final SSE drain is required.</p>
+background work, and stops the session runtime. The stop flag and wake do not
+depend on command queue capacity. The runtime checks stopping before dispatch
+and between commands, rejects queued web mutations with <code>server_stopping</code>, and
+finalizes each live controller before its one thread exits. An operation already
+executing may finish. Controller and journal release precede <code>finished</code>; no
+renderer acknowledgment is required to complete shutdown.</p>
 <p>Controller shutdown cancels requests and closes the current durable turn. It
-does not wait for provider transport on the actor thread. Shared request/wake
-state keeps late worker completion from borrowing destroyed controller storage.
+does not wait for provider transport on the session runtime thread. Shared
+request/wake state keeps late worker completion from borrowing destroyed
+controller storage.
 The application coordinates provider and media shutdown within the shutdown
 budget. The host&#39;s bounded failure path handles owners that cannot finish;
 normal destruction must not introduce an unbounded UI-thread wait.</p>
-<p>When changing runtime member order or callbacks, recheck that actors,
+<p>When changing runtime member order or callbacks, recheck that controllers,
 repositories, and workers stop using storage before the configuration store
 releases its lease and private root. A late reply callback must not extend the
 advertised shutdown deadline.</p>
@@ -1608,7 +1681,7 @@ advertised shutdown deadline.</p>
 <td><code>tests/app/</code></td>
 </tr>
 <tr>
-<td>Protocol, actor, audio, mirror, configuration support</td>
+<td>Protocol, session runtime, audio, mirror, configuration support</td>
 <td><code>tests/web/</code></td>
 </tr>
 <tr>
@@ -1636,6 +1709,13 @@ name, not a suite for a running HTTP server. Workspace tests now live under
 tests. Positive wire fixtures prove acceptance of emitted data; malformed-value
 tests prove that unsafe data is rejected before rendering. Method-policy tests
 detect drift even when both languages still compile.</p>
+<p>For shared-runtime behavior, start with
+<a href="../tests/web/unit_live_session_manager.cpp">unit_live_session_manager.cpp</a>,
+<a href="../tests/web/unit_live_session.cpp">unit_live_session.cpp</a>, and
+<a href="../tests/app/unit_vault_maintenance.cpp">unit_vault_maintenance.cpp</a>. They cover
+selection and background retirement, full-queue maintenance deadlines and
+nonblocking timeout recovery, stale queued work, shutdown admission, and reason
+escalation while constructing a terminal snapshot.</p>
 <p>On macOS, after building the runtime and frontend assets, the native parity
 probe exercises the shared interface in a real WKWebView:</p>
 <pre><code class="language-sh">tests/native/macos/run.sh parity --timeout-ms 60000
@@ -1659,8 +1739,8 @@ the DTO schema also adds dispatch or a frontend method.</p>
 <p>For controller changes, first decide the journal transition and whether the
 presentation effect is structural or safely appendable. For provider changes,
 keep HTTP mechanics in <code>ProviderClient</code> and response meaning in the protocol
-decoder. For lifecycle changes, trace the actor, reply, resource, and database
-owners through cancellation and teardown.</p>
+decoder. For lifecycle changes, trace the runtime, endpoint, reply, resource,
+and database owners through cancellation and teardown.</p>
 <p>Run checks appropriate to the changed boundary. A pure screen edit does not
 need a new concurrency framework; a shutdown change needs more than a screen
 snapshot. Keep changes small enough that their invariants remain readable.</p>
@@ -1715,12 +1795,16 @@ failure or cancellation test before adding code.</p>
 <td>Internal SQLite identity scoping journal rows</td>
 </tr>
 <tr>
-<td>Actor</td>
-<td>Live session with one permanent owner thread</td>
+<td>Session runtime</td>
+<td>Single thread owning all live controllers and session selection</td>
+</tr>
+<tr>
+<td>Live session</td>
+<td>Stable endpoint for one controller instance and its output</td>
 </tr>
 <tr>
 <td>Controller</td>
-<td>Owner-thread conversation and generation state machine</td>
+<td>Runtime-thread conversation and generation state machine</td>
 </tr>
 <tr>
 <td>Snapshot</td>

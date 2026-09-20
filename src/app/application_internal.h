@@ -17,7 +17,7 @@ namespace cha::app {
 
 struct Application::Impl {
     explicit Impl(
-        const cha::web::ApplicationCommand& selected_command,
+        const ApplicationCommand& selected_command,
         std::string selected_vault_password,
         RuntimeSettings selected_settings);
 
@@ -30,7 +30,7 @@ struct Application::Impl {
 
     [[nodiscard]] ApplicationCapabilities capabilities() const noexcept;
 
-    [[nodiscard]] std::optional<cha::web::ErrorCode> admit_locked(std::uint64_t epoch) const;
+    [[nodiscard]] std::optional<ErrorCode> admit_locked(std::uint64_t epoch) const;
 
     void require_admitted(std::uint64_t epoch) const;
 
@@ -57,15 +57,15 @@ struct Application::Impl {
     struct VaultMaintenance {
         explicit VaultMaintenance(Impl& application) : app(application) {}
 
-        cha::web::VaultRegistrySnapshot vault_snapshot() const;
-        cha::web::VaultDefinition create_vault(cha::web::VaultCreate create, std::uint64_t epoch);
-        cha::web::VaultDefinition update_vault(
+        VaultRegistrySnapshot vault_snapshot() const;
+        VaultDefinition create_vault(VaultCreate create, std::uint64_t epoch);
+        VaultDefinition update_vault(
             std::string_view current_name,
-            cha::web::VaultUpdate update,
+            VaultUpdate update,
             std::uint64_t epoch);
         void delete_vault(std::string_view name, std::uint64_t epoch);
         std::vector<std::string> list_r2_vaults(std::uint64_t epoch) const;
-        cha::web::VaultDefinition download_r2_vault(
+        VaultDefinition download_r2_vault(
             std::string_view name,
             std::uint64_t epoch);
         MaintenanceResult switch_vault(
@@ -76,14 +76,14 @@ struct Application::Impl {
             std::string_view source_name,
             std::string password,
             std::uint64_t epoch);
-        cha::web::R2DatabaseTransfer upload_database();
-        cha::web::R2DatabaseTransfer download_database();
+        R2DatabaseTransfer upload_database();
+        R2DatabaseTransfer download_database();
         WorkspaceConfigTransfer import_configuration();
         WorkspaceConfigTransfer export_configuration();
 
         void publish_vault_names();
     private:
-        void publish_vault(cha::web::VaultDefinition vault);
+        void publish_vault(VaultDefinition vault);
         std::chrono::milliseconds maintenance_grace() const;
         std::uint64_t publish_epoch(
             PendingContextNotice& notice,
@@ -108,26 +108,26 @@ struct Application::Impl {
         auto maintain_database(Operation operation, bool cancel_audio = true);
 
         Impl& app;
-        std::optional<cha::web::LiveSessionGlobalMaintenance> global_maintenance;
+        std::optional<LiveSessionGlobalMaintenance> global_maintenance;
     };
 
     void take_context_notice(PendingContextNotice& notice);
 
     ~Impl();
 
-    cha::web::ApplicationCommand command;
+    ApplicationCommand command;
     std::string active_password;
     RuntimeSettings settings;
-    cha::web::CurrentVault current_vault_;
+    CurrentVault current_vault_;
     std::unique_ptr<WorkspaceConfigStore> store;
     std::shared_ptr<SessionRepository> sessions;
-    std::shared_ptr<cha::web::SessionMirror> mirror;
+    std::shared_ptr<SessionMirror> mirror;
     std::unique_ptr<ApiKeyStore> api_keys;
     std::unique_ptr<OpenAiOAuth> openai_auth;
     Providers providers;
-    std::unique_ptr<cha::web::LiveSessionManager> live_sessions;
-    std::unique_ptr<cha::web::AudioDownloadManager> audio_downloads;
-    cha::web::FishAudioProxy speech_proxy;
+    std::unique_ptr<LiveSessionManager> live_sessions;
+    std::unique_ptr<AudioDownloadManager> audio_downloads;
+    FishAudioProxy speech_proxy;
     MediaResources media_resources;
     std::optional<std::string> speech_url_override;
     PendingMediaRegistry pending_media{media_resources};

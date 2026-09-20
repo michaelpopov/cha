@@ -14,8 +14,8 @@ namespace cha::app {
 struct SessionOutputItem {
     enum class Kind { snapshot, append } kind{Kind::snapshot};
     std::uint64_t seq{};
-    cha::web::SessionSnapshot snapshot;
-    cha::TextTarget target;
+    SessionSnapshot snapshot;
+    TextTarget target;
     std::string text;
 };
 
@@ -32,13 +32,13 @@ public:
     [[nodiscard]] bool attached() const;
     [[nodiscard]] std::uint64_t generation() const;
 
-    void publish_snapshot(cha::web::SessionSnapshot snapshot);
+    void publish_snapshot(SessionSnapshot snapshot);
     // Discard an obsolete pending payload without copying the transcript.
     // The owner materializes it once the in-flight delivery is acknowledged.
     void require_snapshot();
     [[nodiscard]] bool snapshot_needed() const;
-    [[nodiscard]] cha::web::AppendPublishResult publish_append(
-        cha::TextAppend append);
+    [[nodiscard]] AppendPublishResult publish_append(
+        TextAppend append);
 
     [[nodiscard]] std::shared_ptr<const SessionOutputItem> take();
     void acknowledge() noexcept;
@@ -56,9 +56,9 @@ public:
     [[nodiscard]] bool closed() const;
 
 private:
-    void publish_snapshot_locked(cha::web::SessionSnapshot snapshot);
-    [[nodiscard]] cha::web::AppendPublishResult publish_append_locked(
-        cha::TextAppend append);
+    void publish_snapshot_locked(SessionSnapshot snapshot);
+    [[nodiscard]] AppendPublishResult publish_append_locked(
+        TextAppend append);
 
     std::size_t pending_append_byte_limit_;
     mutable std::mutex mutex_;
@@ -69,7 +69,7 @@ private:
     std::uint64_t generation_{};
     std::shared_ptr<const SessionOutputItem> in_flight_;
     std::shared_ptr<SessionOutputItem> pending_;
-    std::optional<cha::TextTarget> target_;
+    std::optional<TextTarget> target_;
     std::uint64_t next_sequence_{};
     std::size_t collapsed_payloads_{};
 };

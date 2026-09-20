@@ -12,7 +12,7 @@
 #include <variant>
 #include <vector>
 
-namespace cha::web {
+namespace cha {
 namespace {
 
 // A character that says nothing about its appearance still carries one on the
@@ -614,4 +614,4 @@ TEST(WebProtocol, ParsesRouteSpecificCommandPayloads) {
 }
 
 } // namespace
-} // namespace cha::web
+} // namespace cha

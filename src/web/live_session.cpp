@@ -12,7 +12,7 @@
 #include <utility>
 #include <variant>
 
-namespace cha::web {
+namespace cha {
 namespace {
 
 template<typename>
@@ -71,8 +71,8 @@ static_assert(std::variant_size_v<WebCommand> == 10);
 
 } // namespace
 
-cha::app::RuntimeSettings validate_live_session_settings(
-    cha::app::RuntimeSettings settings) {
+app::RuntimeSettings validate_live_session_settings(
+    app::RuntimeSettings settings) {
     if (settings.command_queue_capacity == 0) {
         throw std::invalid_argument(
             "Session runtime command queue capacity must be positive");
@@ -91,7 +91,7 @@ LiveSession::LiveSession(
     : identity_(std::move(identity)),
       instance_(instance),
       runtime_(std::move(runtime)),
-      output_(std::make_shared<cha::app::SessionOutput>(
+      output_(std::make_shared<app::SessionOutput>(
           pending_append_byte_limit)) {}
 
 LiveSession::~LiveSession() = default;
@@ -167,7 +167,7 @@ bool LiveSession::idle_for_retirement() const {
         && !stopping_.load() && !generating_.load();
 }
 
-std::shared_ptr<const cha::app::SessionOutputItem> LiveSession::take_output() {
+std::shared_ptr<const app::SessionOutputItem> LiveSession::take_output() {
     auto item = output_->take();
     if (output_->snapshot_needed()) {
         if (const auto runtime = runtime_.lock()) runtime->wake();
@@ -479,4 +479,4 @@ void LiveSession::finalize(ShutdownReason reason) noexcept {
     state_.store(LiveSessionState::finished);
 }
 
-} // namespace cha::web
+} // namespace cha

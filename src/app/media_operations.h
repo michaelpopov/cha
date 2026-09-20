@@ -17,11 +17,11 @@ namespace cha::app {
     std::string_view mime_type,
     std::size_t byte_length);
 [[nodiscard]] nlohmann::json audio_acceptance_json(
-    const cha::web::AudioAcceptance& acceptance);
+    const AudioAcceptance& acceptance);
 [[nodiscard]] nlohmann::json audio_status_json(
-    const cha::web::AudioDownloadStatus& status);
+    const AudioDownloadStatus& status);
 
-[[noreturn]] void throw_audio_error(const cha::web::AudioDownloadError& error);
+[[noreturn]] void throw_audio_error(const AudioDownloadError& error);
 [[noreturn]] void throw_speech_provider_error(long status, std::string_view body);
 
 // Authenticated realtime setup. JavaScript supplies only the SDP offer.

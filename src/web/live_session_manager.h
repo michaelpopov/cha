@@ -12,7 +12,7 @@
 #include <variant>
 #include <vector>
 
-namespace cha::web {
+namespace cha {
 
 class LiveSessionManager;
 
@@ -94,7 +94,7 @@ using GlobalMaintenanceResult = std::variant<
 class LiveSessionManager {
 public:
     LiveSessionManager(
-        cha::app::RuntimeSettings settings,
+        app::RuntimeSettings settings,
         SessionOpener opener,
         LiveSessionClock clock = {});
     ~LiveSessionManager();
@@ -139,4 +139,4 @@ private:
     std::shared_ptr<SessionRuntime> runtime_;
 };
 
-} // namespace cha::web
+} // namespace cha

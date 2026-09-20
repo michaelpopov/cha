@@ -33,12 +33,6 @@
 #include <utility>
 #include <vector>
 
-using cha::web::ErrorCode;
-using cha::web::VaultCreate;
-using cha::web::VaultDefinition;
-using cha::web::VaultRegistrySnapshot;
-using cha::web::VaultUpdate;
-
 namespace cha::app {
 
 ApplicationError::ApplicationError(ErrorCode code, std::string message)
@@ -120,7 +114,7 @@ ProviderClientFactory shared_openai_provider_factory(
     };
 }
 
-cha::web::CharacterSummary character_summary(
+CharacterSummary character_summary(
     const Workspace& workspace,
     const WorkspaceCharacter& character) {
     return {
@@ -128,11 +122,11 @@ cha::web::CharacterSummary character_summary(
         .display_name = character.character.display_name,
         .description = character.character.description,
         .appearance = character.character.appearance,
-        .voice = cha::web::resolve_speech_voice(workspace, character),
+        .voice = resolve_speech_voice(workspace, character),
     };
 }
 
-cha::web::PersonaSummary persona_summary(
+PersonaSummary persona_summary(
     const Workspace& workspace,
     const WorkspacePersona& persona) {
     return {
@@ -140,11 +134,11 @@ cha::web::PersonaSummary persona_summary(
         .display_name = persona.display_name,
         .description = persona.description,
         .appearance = persona.appearance,
-        .voice = cha::web::resolve_speech_voice(workspace, persona),
+        .voice = resolve_speech_voice(workspace, persona),
     };
 }
 
-cha::web::ForumSummary forum_summary(
+ForumSummary forum_summary(
     const WorkspaceForum& forum,
     const Workspace& workspace) {
     const WorkspacePersona* persona =
@@ -153,7 +147,7 @@ cha::web::ForumSummary forum_summary(
         throw std::runtime_error(
             "Forum default persona is absent from the workspace");
     }
-    cha::web::ForumSummary result{
+    ForumSummary result{
         .id = forum.id,
         .display_name = forum.display_name,
         .description = forum.description,
@@ -173,19 +167,19 @@ cha::web::ForumSummary forum_summary(
     }
     std::ranges::sort(
         result.members, {},
-        [](const cha::web::CharacterSummary& character) {
+        [](const CharacterSummary& character) {
             return fold_ascii(character.display_name);
         });
     return result;
 }
 
-cha::web::Bootstrap make_bootstrap(
+Bootstrap make_bootstrap(
     const Workspace& workspace,
     const std::vector<StoredSession>& recent,
     const FullSessionId& initial,
     std::string vault_name,
     std::vector<std::string> vaults) {
-    cha::web::Bootstrap bootstrap{
+    Bootstrap bootstrap{
         .initial_forum_id = initial.forum_id,
         .initial_session_id = initial.session_id};
     for (const WorkspacePersona& persona : workspace.personas()) {
@@ -226,7 +220,7 @@ FullSessionId fallback_session(const SessionRepository& sessions) {
 } // namespace
 
 Application::Impl::Impl(
-    const cha::web::ApplicationCommand& selected_command,
+    const ApplicationCommand& selected_command,
     std::string selected_vault_password,
     RuntimeSettings selected_settings)
     : command(selected_command),
@@ -253,8 +247,8 @@ Application::Impl::Impl(
         store->welcome_path(),
         seed,
         active_password);
-    mirror = std::make_shared<cha::web::SessionMirror>();
-    if (const auto root = cha::web::session_mirror_root(command.vault)) {
+    mirror = std::make_shared<SessionMirror>();
+    if (const auto root = session_mirror_root(command.vault)) {
         try {
             mirror->rebuild(root, *sessions);
         } catch (const std::exception& error) {
@@ -278,9 +272,9 @@ Application::Impl::Impl(
         };
         return opened;
     };
-    live_sessions = std::make_unique<cha::web::LiveSessionManager>(
+    live_sessions = std::make_unique<LiveSessionManager>(
         settings, opener);
-    audio_downloads = std::make_unique<cha::web::AudioDownloadManager>(
+    audio_downloads = std::make_unique<AudioDownloadManager>(
         *sessions, current_vault_, true);
     publish_capabilities_locked();
     running = true;
@@ -388,17 +382,17 @@ Application::~Application() {
 }
 
 std::unique_ptr<Application> Application::open(
-    const cha::web::ApplicationCommand& command,
+    const ApplicationCommand& command,
     std::string vault_password,
     RuntimeSettings settings) {
     for (const std::string& warning : command.warnings) log_warn(warning);
     load_dotenv(command.config_directory / ".env");
     if (command.vault.password_protected && vault_password.empty()) {
-        throw cha::web::VaultPasswordError(
+        throw VaultPasswordError(
             "Password required to open this vault");
     }
     if (command.vault.password_protected) {
-        cha::web::require_openable_protected_database(
+        require_openable_protected_database(
             command.vault.data, vault_password);
     }
     return std::unique_ptr<Application>(new Application(
@@ -456,7 +450,7 @@ ApplicationBootstrap Application::bootstrap() {
     return result;
 }
 
-cha::web::CreateSessionSuccess Application::create_session(
+CreateSessionSuccess Application::create_session(
     std::string_view forum_id,
     std::string label,
     std::uint64_t epoch) {
@@ -474,7 +468,7 @@ cha::web::CreateSessionSuccess Application::create_session(
     }
 }
 
-std::variant<cha::web::OpenSessionSuccess, cha::web::ErrorCode>
+std::variant<OpenSessionSuccess, ErrorCode>
 Application::open_session(
     std::string_view forum_id,
     std::string_view session_id,
@@ -496,40 +490,40 @@ Application::open_session(
     {
         const std::lock_guard lifecycle(impl_->lifecycle_mutex);
         if (const auto error = impl_->admit_locked(epoch)) {
-            if (std::holds_alternative<cha::web::LiveSessionReady>(outcome)) {
+            if (std::holds_alternative<LiveSessionReady>(outcome)) {
                 impl_->live_sessions->close_session(key);
             }
             return *error;
         }
     }
-    if (std::holds_alternative<cha::web::LiveSessionReady>(outcome)) {
-        return cha::web::OpenSessionSuccess{key.forum_id, key.session_id};
+    if (std::holds_alternative<LiveSessionReady>(outcome)) {
+        return OpenSessionSuccess{key.forum_id, key.session_id};
     }
-    switch (std::get<cha::web::LiveSessionOpenFailure>(outcome)) {
-    case cha::web::LiveSessionOpenFailure::not_found:
+    switch (std::get<LiveSessionOpenFailure>(outcome)) {
+    case LiveSessionOpenFailure::not_found:
         return ErrorCode::not_found;
-    case cha::web::LiveSessionOpenFailure::stopping:
+    case LiveSessionOpenFailure::stopping:
         return ErrorCode::session_stopping;
-    case cha::web::LiveSessionOpenFailure::limit_reached:
+    case LiveSessionOpenFailure::limit_reached:
         return ErrorCode::session_limit_reached;
-    case cha::web::LiveSessionOpenFailure::open_timeout:
+    case LiveSessionOpenFailure::open_timeout:
         return ErrorCode::session_open_timeout;
-    case cha::web::LiveSessionOpenFailure::manager_stopping:
+    case LiveSessionOpenFailure::manager_stopping:
         return ErrorCode::application_unavailable;
-    case cha::web::LiveSessionOpenFailure::internal_error:
+    case LiveSessionOpenFailure::internal_error:
         return ErrorCode::internal_error;
     }
     return ErrorCode::internal_error;
 }
 
-cha::web::CommandSubmitResult Application::submit(
+CommandSubmitResult Application::submit(
     std::string_view forum_id,
     std::string_view session_id,
-    cha::web::WebCommand command,
+    WebCommand command,
     std::uint64_t epoch) {
     const FullSessionId key{std::string(forum_id), std::string(session_id)};
     std::optional<ErrorCode> denied;
-    cha::web::LiveSessionHandle session;
+    LiveSessionHandle session;
     {
         const std::lock_guard lifecycle(impl_->lifecycle_mutex);
         denied = impl_->admit_locked(epoch);
@@ -540,11 +534,11 @@ cha::web::CommandSubmitResult Application::submit(
     return session->submit(std::move(command), impl_->settings.command_deadline);
 }
 
-std::variant<std::shared_ptr<cha::web::CommandReply>, cha::web::ErrorCode>
+std::variant<std::shared_ptr<CommandReply>, ErrorCode>
 Application::submit_async(
     std::string_view forum_id,
     std::string_view session_id,
-    cha::web::WebCommand command,
+    WebCommand command,
     std::uint64_t epoch) {
     const FullSessionId key{std::string(forum_id), std::string(session_id)};
     if (const auto denied = check_context(epoch)) return *denied;
@@ -556,20 +550,20 @@ Application::submit_async(
     return session->enqueue(std::move(command));
 }
 
-cha::web::CommandSubmitResult Application::stop(
+CommandSubmitResult Application::stop(
     std::string_view forum_id,
     std::string_view session_id,
     std::uint64_t epoch) {
-    return submit(forum_id, session_id, cha::web::StopCommand{}, epoch);
+    return submit(forum_id, session_id, StopCommand{}, epoch);
 }
 
-cha::web::CommandSubmitResult Application::snapshot(
+CommandSubmitResult Application::snapshot(
     std::string_view forum_id,
     std::string_view session_id,
     std::uint64_t epoch) {
     const FullSessionId key{std::string(forum_id), std::string(session_id)};
     std::optional<ErrorCode> denied;
-    cha::web::LiveSessionHandle session;
+    LiveSessionHandle session;
     {
         const std::lock_guard lifecycle(impl_->lifecycle_mutex);
         denied = impl_->admit_locked(epoch);
@@ -580,14 +574,14 @@ cha::web::CommandSubmitResult Application::snapshot(
     return session->snapshot(impl_->settings.command_deadline);
 }
 
-cha::web::CommandSubmitResult Application::subscribe(
+CommandSubmitResult Application::subscribe(
     std::string_view forum_id,
     std::string_view session_id,
-    cha::web::SubscribeCommand command,
+    SubscribeCommand command,
     std::uint64_t epoch) {
     const FullSessionId key{std::string(forum_id), std::string(session_id)};
     std::optional<ErrorCode> denied;
-    cha::web::LiveSessionHandle session;
+    LiveSessionHandle session;
     {
         const std::lock_guard lifecycle(impl_->lifecycle_mutex);
         denied = impl_->admit_locked(epoch);
@@ -598,14 +592,14 @@ cha::web::CommandSubmitResult Application::subscribe(
     return session->subscribe(std::move(command), impl_->settings.command_deadline);
 }
 
-cha::web::CommandSubmitResult Application::unsubscribe(
+CommandSubmitResult Application::unsubscribe(
     std::string_view forum_id,
     std::string_view session_id,
-    cha::web::UnsubscribeCommand command,
+    UnsubscribeCommand command,
     std::uint64_t epoch) {
     const FullSessionId key{std::string(forum_id), std::string(session_id)};
     std::optional<ErrorCode> denied;
-    cha::web::LiveSessionHandle session;
+    LiveSessionHandle session;
     {
         const std::lock_guard lifecycle(impl_->lifecycle_mutex);
         denied = impl_->admit_locked(epoch);
@@ -625,7 +619,7 @@ void Application::close_session(
         {std::string(forum_id), std::string(session_id)}, epoch);
 }
 
-std::optional<cha::web::ErrorCode> Application::delete_session(
+std::optional<ErrorCode> Application::delete_session(
     std::string_view forum_id,
     std::string_view session_id,
     std::uint64_t epoch) {
@@ -635,27 +629,27 @@ std::optional<cha::web::ErrorCode> Application::delete_session(
     if (workspace::is_welcome_session(key.forum_id, key.session_id)) {
         return ErrorCode::not_found;
     }
-    cha::web::MaintenanceReservationResult reserved =
+    MaintenanceReservationResult reserved =
         impl_->live_sessions->reserve_for_deletion(
             key, impl_->settings.delete_deadline);
     if (const auto* failure =
-            std::get_if<cha::web::MaintenanceFailure>(&reserved)) {
-        return *failure == cha::web::MaintenanceFailure::manager_stopping
-            ? cha::web::ErrorCode::application_unavailable
-            : cha::web::ErrorCode::session_stopping;
+            std::get_if<MaintenanceFailure>(&reserved)) {
+        return *failure == MaintenanceFailure::manager_stopping
+            ? ErrorCode::application_unavailable
+            : ErrorCode::session_stopping;
     }
     try {
         impl_->sessions->delete_session(key);
     } catch (const SessionNotFoundError&) {
-        return cha::web::ErrorCode::not_found;
+        return ErrorCode::not_found;
     } catch (const ForumNotFoundError&) {
-        return cha::web::ErrorCode::not_found;
+        return ErrorCode::not_found;
     }
     impl_->media_resources.revoke_session(key);
     return std::nullopt;
 }
 
-std::vector<cha::web::SessionListing> Application::list_sessions(
+std::vector<SessionListing> Application::list_sessions(
     std::string_view forum_id,
     std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
@@ -668,7 +662,7 @@ std::vector<cha::web::SessionListing> Application::list_sessions(
     }
 }
 
-cha::web::SessionLabelResult Application::rename_session(
+SessionLabelResult Application::rename_session(
     std::string_view forum_id,
     std::string_view session_id,
     std::string label,
@@ -685,13 +679,13 @@ cha::web::SessionLabelResult Application::rename_session(
         throw ApplicationError(
             ErrorCode::invalid_argument, "Invalid session label.");
     }
-    const cha::web::LiveSessionHandle live = impl_->live_sessions->lookup(key);
+    const LiveSessionHandle live = impl_->live_sessions->lookup(key);
     if (live) {
         const auto result = live->submit(
-            cha::web::RenameSessionCommand{std::move(label)},
+            RenameSessionCommand{std::move(label)},
             impl_->settings.command_deadline);
         if (const auto* renamed =
-                std::get_if<cha::web::SessionLabelResult>(&result)) {
+                std::get_if<SessionLabelResult>(&result)) {
             return *renamed;
         }
         if (const auto* error = std::get_if<ErrorCode>(&result)) {
@@ -715,19 +709,19 @@ cha::web::SessionLabelResult Application::rename_session(
     }
 }
 
-cha::web::SessionExport Application::export_session(
+SessionExport Application::export_session(
     std::string_view forum_id,
     std::string_view session_id,
     std::uint64_t epoch) {
     const FullSessionId key{std::string(forum_id), std::string(session_id)};
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
-    const cha::web::LiveSessionHandle live = impl_->live_sessions->lookup(key);
+    const LiveSessionHandle live = impl_->live_sessions->lookup(key);
     if (live) {
         const auto result = live->snapshot(impl_->settings.command_deadline);
         if (const auto* snapshot =
-                std::get_if<cha::web::SessionSnapshot>(&result)) {
-            return {cha::web::session_markdown(
+                std::get_if<SessionSnapshot>(&result)) {
+            return {session_markdown(
                 snapshot->session_label, snapshot->transcript)};
         }
         if (const auto* error = std::get_if<ErrorCode>(&result)) {
@@ -737,7 +731,7 @@ cha::web::SessionExport Application::export_session(
     }
     try {
         const PreparedSession prepared = impl_->sessions->prepare(key);
-        return {cha::web::session_markdown(
+        return {session_markdown(
             prepared.label, prepared.restore.entries)};
     } catch (const SessionNotFoundError&) {
         throw ApplicationError(ErrorCode::not_found);
@@ -746,7 +740,7 @@ cha::web::SessionExport Application::export_session(
     }
 }
 
-cha::web::CharacterDetail Application::get_character(
+CharacterDetail Application::get_character(
     std::string_view character_id,
     std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
@@ -754,8 +748,8 @@ cha::web::CharacterDetail Application::get_character(
     return workspace::get_character(*impl_->store->snapshot(), character_id);
 }
 
-cha::web::CharacterDetail Application::create_character(
-    cha::web::CreateCharacterRequest create,
+CharacterDetail Application::create_character(
+    CreateCharacterRequest create,
     std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
@@ -763,9 +757,9 @@ cha::web::CharacterDetail Application::create_character(
         *impl_->store, create.display_name, create.description);
 }
 
-cha::web::CharacterDetail Application::update_character(
+CharacterDetail Application::update_character(
     std::string_view character_id,
-    cha::web::CharacterSettingsUpdate update,
+    CharacterSettingsUpdate update,
     std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
@@ -773,9 +767,9 @@ cha::web::CharacterDetail Application::update_character(
         *impl_->store, *impl_->live_sessions, character_id, update);
 }
 
-cha::web::CharacterDetail Application::update_character_definition(
+CharacterDetail Application::update_character_definition(
     std::string_view character_id,
-    cha::web::CharacterDefinitionUpdate update,
+    CharacterDefinitionUpdate update,
     std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
@@ -791,7 +785,7 @@ void Application::delete_character(
     workspace::delete_character(*impl_->store, character_id);
 }
 
-cha::web::MarkdownFile Application::get_character_file(
+MarkdownFile Application::get_character_file(
     std::string_view character_id,
     std::string_view filename,
     std::uint64_t epoch) {
@@ -801,7 +795,7 @@ cha::web::MarkdownFile Application::get_character_file(
         *impl_->store->snapshot(), character_id, filename);
 }
 
-cha::web::MarkdownFile Application::create_character_file(
+MarkdownFile Application::create_character_file(
     std::string_view character_id,
     std::string filename,
     std::string content,
@@ -813,7 +807,7 @@ cha::web::MarkdownFile Application::create_character_file(
         std::move(filename), std::move(content));
 }
 
-cha::web::MarkdownFile Application::update_character_file(
+MarkdownFile Application::update_character_file(
     std::string_view character_id,
     std::string filename,
     std::string content,
@@ -835,7 +829,7 @@ void Application::delete_character_file(
         *impl_->store, *impl_->live_sessions, character_id, std::string(filename));
 }
 
-cha::web::PersonaDetail Application::get_persona(
+PersonaDetail Application::get_persona(
     std::string_view persona_id,
     std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
@@ -843,7 +837,7 @@ cha::web::PersonaDetail Application::get_persona(
     return workspace::get_persona(*impl_->store->snapshot(), persona_id);
 }
 
-cha::web::PersonaDetail Application::create_persona(
+PersonaDetail Application::create_persona(
     std::string display_name,
     std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
@@ -851,9 +845,9 @@ cha::web::PersonaDetail Application::create_persona(
     return workspace::create_persona(*impl_->store, display_name);
 }
 
-cha::web::PersonaDetail Application::update_persona(
+PersonaDetail Application::update_persona(
     std::string_view persona_id,
-    cha::web::PersonaUpdate update,
+    PersonaUpdate update,
     std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
@@ -869,7 +863,7 @@ void Application::delete_persona(
     workspace::delete_persona(*impl_->store, persona_id);
 }
 
-cha::web::ForumDetail Application::get_forum(
+ForumDetail Application::get_forum(
     std::string_view forum_id,
     std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
@@ -877,8 +871,8 @@ cha::web::ForumDetail Application::get_forum(
     return workspace::get_forum(*impl_->store->snapshot(), forum_id);
 }
 
-cha::web::ForumDetail Application::create_forum(
-    cha::web::CreateForumRequest create,
+ForumDetail Application::create_forum(
+    CreateForumRequest create,
     std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
@@ -886,9 +880,9 @@ cha::web::ForumDetail Application::create_forum(
         *impl_->store, create.display_name, create.persona_id);
 }
 
-cha::web::ForumDetail Application::update_forum(
+ForumDetail Application::update_forum(
     std::string_view forum_id,
-    cha::web::ForumUpdate update,
+    ForumUpdate update,
     std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
@@ -904,9 +898,9 @@ void Application::delete_forum(
     workspace::delete_forum(*impl_->store, *impl_->live_sessions, forum_id);
 }
 
-cha::web::ForumDetail Application::update_forum_members(
+ForumDetail Application::update_forum_members(
     std::string_view forum_id,
-    cha::web::ForumMembersUpdate update,
+    ForumMembersUpdate update,
     std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
@@ -914,7 +908,7 @@ cha::web::ForumDetail Application::update_forum_members(
         *impl_->store, *impl_->live_sessions, forum_id, update);
 }
 
-cha::web::MarkdownFile Application::get_forum_file(
+MarkdownFile Application::get_forum_file(
     std::string_view forum_id,
     std::string_view filename,
     std::uint64_t epoch) {
@@ -923,7 +917,7 @@ cha::web::MarkdownFile Application::get_forum_file(
     return workspace::get_forum_file(*impl_->store->snapshot(), forum_id, filename);
 }
 
-cha::web::MarkdownFile Application::create_forum_file(
+MarkdownFile Application::create_forum_file(
     std::string_view forum_id,
     std::string filename,
     std::string content,
@@ -935,7 +929,7 @@ cha::web::MarkdownFile Application::create_forum_file(
         std::move(filename), std::move(content));
 }
 
-cha::web::MarkdownFile Application::update_forum_file(
+MarkdownFile Application::update_forum_file(
     std::string_view forum_id,
     std::string filename,
     std::string content,
@@ -957,14 +951,14 @@ void Application::delete_forum_file(
         *impl_->store, *impl_->live_sessions, forum_id, std::string(filename));
 }
 
-std::vector<cha::web::ProviderSummary> Application::list_providers(
+std::vector<ProviderSummary> Application::list_providers(
     std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
     return settings::list_providers(*impl_->store->snapshot());
 }
 
-cha::web::ProviderDetail Application::get_provider(
+ProviderDetail Application::get_provider(
     std::string_view provider_id,
     std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
@@ -973,15 +967,15 @@ cha::web::ProviderDetail Application::get_provider(
         *impl_->store->snapshot(), provider_id, *impl_->api_keys);
 }
 
-cha::web::ProviderDetail Application::create_provider(
-    cha::web::CreateProviderRequest create,
+ProviderDetail Application::create_provider(
+    CreateProviderRequest create,
     std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
     return settings::create_provider(*impl_->store, *impl_->api_keys, create);
 }
 
-cha::web::ProviderDetail Application::update_provider(
+ProviderDetail Application::update_provider(
     std::string_view provider_id,
     nlohmann::json body,
     std::uint64_t epoch) {
@@ -1050,14 +1044,14 @@ std::shared_ptr<OperationReply> Application::test_provider(
     return reply;
 }
 
-std::vector<cha::web::StyleDetail> Application::list_styles(
+std::vector<StyleDetail> Application::list_styles(
     std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
     return settings::list_styles(*impl_->store->snapshot());
 }
 
-cha::web::StyleDetail Application::create_style(
+StyleDetail Application::create_style(
     std::string display_name,
     std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
@@ -1065,9 +1059,9 @@ cha::web::StyleDetail Application::create_style(
     return settings::create_style(*impl_->store, display_name);
 }
 
-cha::web::StyleDetail Application::update_style(
+StyleDetail Application::update_style(
     std::string_view style_id,
-    cha::web::StyleUpdate update,
+    StyleUpdate update,
     std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
@@ -1081,24 +1075,24 @@ void Application::delete_style(std::string_view style_id, std::uint64_t epoch) {
     settings::delete_style(*impl_->store, style_id);
 }
 
-std::vector<cha::web::VoiceDetail> Application::list_voices(
+std::vector<VoiceDetail> Application::list_voices(
     std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
     return settings::list_voices(*impl_->store->snapshot());
 }
 
-cha::web::VoiceDetail Application::create_voice(
-    cha::web::CreateVoiceRequest create,
+VoiceDetail Application::create_voice(
+    CreateVoiceRequest create,
     std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
     return settings::create_voice(*impl_->store, create);
 }
 
-cha::web::VoiceDetail Application::update_voice(
+VoiceDetail Application::update_voice(
     std::string_view voice_id,
-    cha::web::VoiceUpdate update,
+    VoiceUpdate update,
     std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
@@ -1112,15 +1106,15 @@ void Application::delete_voice(std::string_view voice_id, std::uint64_t epoch) {
     settings::delete_voice(*impl_->store, voice_id);
 }
 
-std::optional<cha::web::VoiceInputSettings>
+std::optional<VoiceInputSettings>
 Application::get_voice_input_settings(std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
     return settings::get_voice_input_settings(*impl_->store->snapshot());
 }
 
-cha::web::VoiceInputSettings Application::save_voice_input_settings(
-    cha::web::VoiceInputSettings voice_settings,
+VoiceInputSettings Application::save_voice_input_settings(
+    VoiceInputSettings voice_settings,
     std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
@@ -1128,7 +1122,7 @@ cha::web::VoiceInputSettings Application::save_voice_input_settings(
         *impl_->store, *impl_->api_keys, voice_settings);
 }
 
-std::optional<cha::web::VoiceInputRuntime>
+std::optional<VoiceInputRuntime>
 Application::get_voice_input_runtime(std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
@@ -1136,15 +1130,15 @@ Application::get_voice_input_runtime(std::uint64_t epoch) {
         *impl_->store->snapshot(), *impl_->api_keys, true);
 }
 
-std::optional<cha::web::VoiceOutputSettings>
+std::optional<VoiceOutputSettings>
 Application::get_voice_output_settings(std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
     return settings::get_voice_output_settings(*impl_->store->snapshot());
 }
 
-cha::web::VoiceOutputSettings Application::save_voice_output_settings(
-    cha::web::VoiceOutputSettings voice_settings,
+VoiceOutputSettings Application::save_voice_output_settings(
+    VoiceOutputSettings voice_settings,
     std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
@@ -1152,7 +1146,7 @@ cha::web::VoiceOutputSettings Application::save_voice_output_settings(
         *impl_->store, *impl_->api_keys, voice_settings);
 }
 
-std::optional<cha::web::VoiceOutputRuntime>
+std::optional<VoiceOutputRuntime>
 Application::get_voice_output_runtime(std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
@@ -1160,15 +1154,15 @@ Application::get_voice_output_runtime(std::uint64_t epoch) {
         *impl_->store->snapshot(), *impl_->api_keys, true);
 }
 
-std::vector<cha::web::ApiKeyDetail> Application::list_api_keys(
+std::vector<ApiKeyDetail> Application::list_api_keys(
     std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
     return settings::list_api_keys(*impl_->store->snapshot(), *impl_->api_keys);
 }
 
-cha::web::ApiKeyDetail Application::create_api_key(
-    cha::web::CreateApiKeyRequest create,
+ApiKeyDetail Application::create_api_key(
+    CreateApiKeyRequest create,
     std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
@@ -1176,7 +1170,7 @@ cha::web::ApiKeyDetail Application::create_api_key(
         *impl_->store->snapshot(), *impl_->api_keys, create);
 }
 
-cha::web::ApiKeyDetail Application::rename_api_key(
+ApiKeyDetail Application::rename_api_key(
     std::string_view api_key_id,
     std::string display_name,
     std::uint64_t epoch) {
@@ -1186,7 +1180,7 @@ cha::web::ApiKeyDetail Application::rename_api_key(
         *impl_->store->snapshot(), *impl_->api_keys, api_key_id, display_name);
 }
 
-cha::web::ApiKeyDetail Application::replace_api_key_value(
+ApiKeyDetail Application::replace_api_key_value(
     std::string_view api_key_id,
     std::string value,
     std::uint64_t epoch) {
@@ -1204,15 +1198,15 @@ void Application::delete_api_key(
     settings::delete_api_key(*impl_->api_keys, api_key_id);
 }
 
-std::optional<cha::web::R2StorageDetail> Application::get_r2_storage(
+std::optional<R2StorageDetail> Application::get_r2_storage(
     std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
     return settings::get_r2_storage(*impl_->api_keys);
 }
 
-cha::web::R2StorageDetail Application::save_r2_storage(
-    cha::web::SaveR2StorageRequest request,
+R2StorageDetail Application::save_r2_storage(
+    SaveR2StorageRequest request,
     std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
@@ -1228,7 +1222,7 @@ void Application::delete_r2_storage(std::uint64_t epoch) {
     impl_->publish_capabilities_locked();
 }
 
-cha::web::OpenAiAuth Application::openai_auth_status(std::uint64_t epoch) {
+OpenAiAuth Application::openai_auth_status(std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
     return settings::openai_auth_status(*impl_->openai_auth);
@@ -1300,7 +1294,7 @@ std::shared_ptr<OperationReply> Application::poll_openai_auth(
     return reply;
 }
 
-cha::web::OpenAiAuth Application::disconnect_openai_auth(std::uint64_t epoch) {
+OpenAiAuth Application::disconnect_openai_auth(std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
     return settings::disconnect_openai_auth(*impl_->openai_auth);
@@ -1314,7 +1308,7 @@ std::uint64_t Application::context_epoch() const {
     return impl_->published_epoch.load();
 }
 
-std::optional<cha::web::ErrorCode> Application::check_context(
+std::optional<ErrorCode> Application::check_context(
     std::uint64_t epoch) const {
     const ApplicationState state = impl_->state.load();
     if (state == ApplicationState::maintenance) {
@@ -1450,11 +1444,11 @@ MaintenanceResult Application::merge_vault(
         source_name, std::move(password), epoch);
 }
 
-cha::web::R2DatabaseTransfer Application::upload_database() {
+R2DatabaseTransfer Application::upload_database() {
     return impl_->vault_maintenance.upload_database();
 }
 
-cha::web::R2DatabaseTransfer Application::download_database() {
+R2DatabaseTransfer Application::download_database() {
     return impl_->vault_maintenance.download_database();
 }
 
@@ -1479,7 +1473,7 @@ const RuntimeSettings& Application::settings() const {
     return impl_->settings;
 }
 
-cha::web::LiveSessionHandle Application::subscription_handle(
+LiveSessionHandle Application::subscription_handle(
     std::string_view forum_id, std::string_view session_id) {
     return impl_->live_sessions->lookup(
         {std::string(forum_id), std::string(session_id)});
@@ -1489,11 +1483,11 @@ std::size_t Application::live_session_count() const {
     return impl_->live_sessions->snapshot().live_session_count;
 }
 
-cha::web::CurrentVault& Application::current_vault() {
+CurrentVault& Application::current_vault() {
     return impl_->current_vault_;
 }
 
-const cha::web::CurrentVault& Application::current_vault() const {
+const CurrentVault& Application::current_vault() const {
     return impl_->current_vault_;
 }
 

@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-namespace cha::web {
+namespace cha {
 namespace {
 
 // Backing storage a borrowed ControllerView points into. Tests mutate or
@@ -16,7 +16,7 @@ namespace {
 struct BackingState {
     std::string default_character_id;
     std::string default_persona_id{"persona"};
-    std::vector<cha::TranscriptEntry> transcript;
+    std::vector<TranscriptEntry> transcript;
     std::optional<EntryId> covered_until;
     std::string character_id;
     std::string character_display_name;
@@ -209,4 +209,4 @@ TEST(SessionProjection, ProjectsWorkspaceDataWithEmptySessionState) {
 }
 
 } // namespace
-} // namespace cha::web
+} // namespace cha

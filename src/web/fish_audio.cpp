@@ -13,10 +13,9 @@
 #include <stdexcept>
 #include <utility>
 
-namespace cha::web {
+namespace cha {
 namespace {
 using Json = nlohmann::json;
-
 
 std::size_t receive_audio(char* data, std::size_t size, std::size_t count, void* user) {
     const std::size_t bytes = size * count;
@@ -69,7 +68,6 @@ std::string entry_speech_text(const EntryAudioLookup& entry) {
         R"(^\s*\[[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?Z\]\s*)");
     return std::regex_replace(remove_source_references(entry.entry_text), timestamp_prefix, "");
 }
-
 
 struct FishAudioResult { long status; EntryAudio audio; };
 

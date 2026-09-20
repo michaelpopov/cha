@@ -6,7 +6,7 @@
 #include <string>
 #include <string_view>
 
-namespace cha::web {
+namespace cha {
 
 // A compact transcript export: the filename supplies the visible title, the
 // first known entry time appears once, and each message starts with a speaker
@@ -16,4 +16,4 @@ std::string session_markdown(
     std::span<const TranscriptEntry> entries);
 [[nodiscard]] std::string session_markdown_filename(std::string_view label);
 
-} // namespace cha::web
+} // namespace cha

@@ -2,7 +2,7 @@
 
 #include <gtest/gtest.h>
 
-namespace cha::web {
+namespace cha {
 namespace {
 
 TEST(Command, ParsesOnlySupportedCommands) {
@@ -39,4 +39,4 @@ TEST(Command, ParsesOnlySupportedCommands) {
 }
 
 } // namespace
-} // namespace cha::web
+} // namespace cha

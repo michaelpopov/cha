@@ -7,7 +7,7 @@
 #include <utility>
 #include <vector>
 
-namespace cha::web {
+namespace cha {
 
 // Holds the active vault definition and the names exposed with it. This is not
 // an atomic switch of the runtime resources that belong to the active vault.
@@ -48,4 +48,4 @@ private:
     std::vector<std::string> names_;
 };
 
-} // namespace cha::web
+} // namespace cha

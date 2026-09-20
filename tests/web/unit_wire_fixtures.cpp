@@ -7,7 +7,7 @@
 #include <stdexcept>
 #include <string>
 
-namespace cha::web {
+namespace cha {
 namespace {
 
 nlohmann::json load_fixture(std::string_view name) {
@@ -163,4 +163,4 @@ TEST(WebWireFixtures, SerializesBootstrapSnapshotCommandsErrorsAndAppends) {
 }
 
 } // namespace
-} // namespace cha::web
+} // namespace cha

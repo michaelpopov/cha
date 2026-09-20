@@ -1,6 +1,6 @@
 #pragma once
 
-#include "chat/character.h"
+#include "chat/character_metadata.h"
 
 #include <memory>
 #include <optional>

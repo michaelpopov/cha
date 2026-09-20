@@ -26,16 +26,16 @@
 #include <variant>
 #include <vector>
 
-namespace cha::web {
+namespace cha {
 namespace {
 
 using namespace std::chrono_literals;
 
-cha::app::RuntimeSettings test_settings(
+app::RuntimeSettings test_settings(
     std::size_t queue_capacity = 8,
     std::size_t command_batch_size = 8,
     std::size_t event_batch_size = 8) {
-    cha::app::RuntimeSettings settings;
+    app::RuntimeSettings settings;
     settings.session_limit = 4;
     settings.command_queue_capacity = queue_capacity;
     settings.command_batch_size = command_batch_size;
@@ -78,7 +78,7 @@ private:
 class LiveSessionHost {
 public:
     LiveSessionHost(
-        cha::app::RuntimeSettings settings,
+        app::RuntimeSettings settings,
         SessionOpener opener,
         LiveSessionClock clock = {},
         FullSessionId key = {"forum", "session"})
@@ -125,7 +125,7 @@ SessionOpener scripted_opener(
     };
 }
 
-std::shared_ptr<const cha::app::SessionOutputItem> next_output(
+std::shared_ptr<const app::SessionOutputItem> next_output(
     LiveSession& session,
     std::chrono::milliseconds timeout = 2s) {
     const auto deadline = std::chrono::steady_clock::now() + timeout;
@@ -199,7 +199,7 @@ TEST(CommandReply, TimeoutAtomicallyAbandonsLateReply) {
 }
 
 TEST(LiveSession, RejectsZeroQueueAndBatchSizesBeforeStarting) {
-    cha::app::RuntimeSettings settings = test_settings(0);
+    app::RuntimeSettings settings = test_settings(0);
     EXPECT_THROW(
         (void)validate_live_session_settings(settings), std::invalid_argument);
 
@@ -573,7 +573,7 @@ TEST(LiveSession, PublishesExactAppendsAndSnapshotsForStructuralUpdates) {
     subscribe(*host);
     auto initial = next_output(*host);
     ASSERT_TRUE(initial);
-    EXPECT_EQ(initial->kind, cha::app::SessionOutputItem::Kind::snapshot);
+    EXPECT_EQ(initial->kind, app::SessionOutputItem::Kind::snapshot);
     EXPECT_TRUE(initial->snapshot.transcript.empty());
     host->acknowledge_output();
 
@@ -581,7 +581,7 @@ TEST(LiveSession, PublishesExactAppendsAndSnapshotsForStructuralUpdates) {
         host->submit(RawCommand{"Question"}, 2s)));
     auto structural = next_output(*host);
     ASSERT_TRUE(structural);
-    EXPECT_EQ(structural->kind, cha::app::SessionOutputItem::Kind::snapshot);
+    EXPECT_EQ(structural->kind, app::SessionOutputItem::Kind::snapshot);
     EXPECT_FALSE(structural->snapshot.transcript.empty());
     host->acknowledge_output();
 
@@ -590,13 +590,13 @@ TEST(LiveSession, PublishesExactAppendsAndSnapshotsForStructuralUpdates) {
     auto first = next_output(*host);
     ASSERT_TRUE(first);
     host->acknowledge_output();
-    if (first->kind == cha::app::SessionOutputItem::Kind::snapshot) {
+    if (first->kind == app::SessionOutputItem::Kind::snapshot) {
         controls->emit_answer(" more");
         first = next_output(*host);
         ASSERT_TRUE(first);
         host->acknowledge_output();
     }
-    EXPECT_EQ(first->kind, cha::app::SessionOutputItem::Kind::append);
+    EXPECT_EQ(first->kind, app::SessionOutputItem::Kind::append);
     EXPECT_TRUE(std::holds_alternative<EntryTextTarget>(first->target));
     EXPECT_FALSE(first->text.empty());
     controls->finish();
@@ -637,7 +637,7 @@ TEST(LiveSession, StalledRendererDefersSnapshotCaptureUntilItRequestsDelivery) {
     host->acknowledge_output();
     const auto repaired = next_output(*host);
     ASSERT_TRUE(repaired);
-    EXPECT_EQ(repaired->kind, cha::app::SessionOutputItem::Kind::snapshot);
+    EXPECT_EQ(repaired->kind, app::SessionOutputItem::Kind::snapshot);
     EXPECT_EQ(repaired->seq, 1U);
     EXPECT_FALSE(repaired->snapshot.generation.active);
     EXPECT_EQ(captures.load(), initial_captures + 1);
@@ -662,13 +662,13 @@ TEST(LiveSession, IncompatibleAppendTargetRepairsBrowserStateWithASnapshot) {
             auto item = next_output(*host, 300ms);
             if (!item) return;
             host->acknowledge_output();
-            if (item->kind == cha::app::SessionOutputItem::Kind::append) {
+            if (item->kind == app::SessionOutputItem::Kind::append) {
                 if (std::holds_alternative<ReasoningTextTarget>(item->target)) {
                     saw_reasoning_append = true;
                 }
                 continue;
             }
-            for (const cha::TranscriptEntry& entry : item->snapshot.transcript) {
+            for (const TranscriptEntry& entry : item->snapshot.transcript) {
                 if (entry.kind == EntryKind::character
                     && entry.text.find("answer") != std::string::npos) {
                     saw_answer_snapshot = true;
@@ -706,7 +706,7 @@ TEST(LiveSession, PresentationChangesPublishOneSnapshotEach) {
         std::string::npos);
     auto noticed = next_output(*host);
     ASSERT_TRUE(noticed);
-    EXPECT_EQ(noticed->kind, cha::app::SessionOutputItem::Kind::snapshot);
+    EXPECT_EQ(noticed->kind, app::SessionOutputItem::Kind::snapshot);
     ASSERT_TRUE(noticed->snapshot.notice);
     EXPECT_TRUE(noticed->snapshot.transcript.empty());
     EXPECT_NE(
@@ -754,7 +754,7 @@ TEST(LiveSession, DefaultShutdownPublishesSessionClosed) {
     host->request_shutdown();
     const auto terminal = next_output(*host);
     ASSERT_TRUE(terminal);
-    EXPECT_EQ(terminal->kind, cha::app::SessionOutputItem::Kind::snapshot);
+    EXPECT_EQ(terminal->kind, app::SessionOutputItem::Kind::snapshot);
     ASSERT_EQ(terminal->snapshot.shutdown_reason, ShutdownReason::session_closed);
     EXPECT_EQ(to_string(*terminal->snapshot.shutdown_reason), "session_closed");
     EXPECT_TRUE(wait_for_finished(host.handle()));
@@ -771,7 +771,7 @@ TEST(LiveSession, ReloadingOutranksSessionClosedOnTheFinalSnapshot) {
     host->request_shutdown(ShutdownReason::reloading);
     auto final_payload = next_output(*host);
     ASSERT_TRUE(final_payload);
-    EXPECT_EQ(final_payload->kind, cha::app::SessionOutputItem::Kind::snapshot);
+    EXPECT_EQ(final_payload->kind, app::SessionOutputItem::Kind::snapshot);
     EXPECT_EQ(
         final_payload->snapshot.shutdown_reason, ShutdownReason::reloading);
     EXPECT_TRUE(wait_for_finished(host.handle()));
@@ -831,7 +831,7 @@ TEST(LiveSession, ResubscribeStartsFromAFreshSnapshot) {
     subscribe(*host, "sub-2");
     auto reconnected = next_output(*host);
     ASSERT_TRUE(reconnected);
-    EXPECT_EQ(reconnected->kind, cha::app::SessionOutputItem::Kind::snapshot);
+    EXPECT_EQ(reconnected->kind, app::SessionOutputItem::Kind::snapshot);
 }
 
 TEST(LiveSession, ProcessStopCompletesWithoutWaitingForPresentation) {
@@ -904,4 +904,4 @@ TEST(LiveSession, ControllerFailureIsContainedAndReleasesOnlyThatSession) {
 }
 
 } // namespace
-} // namespace cha::web
+} // namespace cha

@@ -7,7 +7,7 @@
 #include <string_view>
 #include <vector>
 
-namespace cha::web {
+namespace cha {
 
 class UnknownVaultError : public std::runtime_error {
 public:
@@ -98,4 +98,4 @@ inline constexpr const char web_usage[] =
     "  CHA --config=CONFIG_DIR --vault=NAME --upload\n"
     "  CHA --config=CONFIG_DIR --vault=NAME --download";
 
-} // namespace cha::web
+} // namespace cha

@@ -20,18 +20,6 @@ namespace cha::app {
 namespace {
 
 using namespace std::chrono_literals;
-using cha::web::ApplicationCommand;
-using cha::web::ErrorCode;
-using cha::web::load_configuration_directory;
-using cha::web::find_vault;
-using cha::web::VaultDefinition;
-using cha::web::ConfigurationDirectory;
-
-using cha::web::CommandResult;
-using cha::web::RawCommand;
-using cha::web::SessionSnapshot;
-using cha::web::SubscribeCommand;
-using cha::web::SubscribeResult;
 
 ApplicationCommand make_command(
     const test::TestWorkspace& workspace,
@@ -66,8 +54,8 @@ ApplicationCommand make_command(
     };
 }
 
-std::shared_ptr<const cha::app::SessionOutputItem> next_output(
-    cha::web::LiveSession& session,
+std::shared_ptr<const app::SessionOutputItem> next_output(
+    LiveSession& session,
     std::chrono::milliseconds timeout = 2s) {
     const auto deadline = std::chrono::steady_clock::now() + timeout;
     while (std::chrono::steady_clock::now() < deadline) {
@@ -111,7 +99,7 @@ TEST(Application, IndependentOwnersKeepWorkspaceSessionsAndCredentialsIsolated) 
     const auto first_epoch = first->context_epoch();
     const auto original = first->store().snapshot();
     const auto first_session = first->create_session("lobby", "First session", first_epoch);
-    ASSERT_TRUE(std::holds_alternative<cha::web::OpenSessionSuccess>(
+    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(
         first->open_session("lobby", first_session.id, first_epoch)));
 
     test::TestWorkspace second_fixture;
@@ -121,7 +109,7 @@ TEST(Application, IndependentOwnersKeepWorkspaceSessionsAndCredentialsIsolated) 
         second_fixture, test::import_test_database(second_fixture.root())));
     const auto second_epoch = second->context_epoch();
     const auto second_session = second->create_session("lobby", "Second session", second_epoch);
-    ASSERT_TRUE(std::holds_alternative<cha::web::OpenSessionSuccess>(
+    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(
         second->open_session("lobby", second_session.id, second_epoch)));
 
     EXPECT_EQ(first->get_character("guide", first_epoch).summary.display_name, "First guide");
@@ -168,7 +156,7 @@ TEST(Application, CreateOpenSubmitStopSnapshotCloseAndShutdown) {
 
     const auto created = application->create_session("lobby", "Headless", epoch);
     const auto opened = application->open_session("lobby", created.id, epoch);
-    ASSERT_TRUE(std::holds_alternative<cha::web::OpenSessionSuccess>(opened));
+    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(opened));
     EXPECT_EQ(application->selected_session()->session_id, created.id);
 
     const auto submitted = application->submit(
@@ -197,7 +185,7 @@ TEST(Application, SubscribeInstallsInitialSnapshotAtSequenceZero) {
     auto application = Application::open(make_command(workspace, database));
     const auto epoch = application->context_epoch();
     const auto created = application->create_session("lobby", "Events", epoch);
-    ASSERT_TRUE(std::holds_alternative<cha::web::OpenSessionSuccess>(
+    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(
         application->open_session("lobby", created.id, epoch)));
 
     const auto subscribed = application->subscribe(
@@ -230,7 +218,7 @@ TEST(Application, AppearanceEditsRefreshTheSubscriptionWithoutCancellingGenerati
     const auto voice = application->create_voice(
         {.display_name = "Narrator", .elevenlabs_voice_id = "voice-one"}, epoch);
     const auto created = application->create_session("lobby", "Appearance", epoch);
-    ASSERT_TRUE(std::holds_alternative<cha::web::OpenSessionSuccess>(
+    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(
         application->open_session("lobby", created.id, epoch)));
     auto session = application->subscription_handle("lobby", created.id);
     ASSERT_TRUE(session);
@@ -253,7 +241,7 @@ TEST(Application, AppearanceEditsRefreshTheSubscriptionWithoutCancellingGenerati
         EXPECT_TRUE(item);
         if (item) {
             EXPECT_EQ(item->kind, SessionOutputItem::Kind::snapshot);
-            EXPECT_EQ(item->snapshot.lifecycle, cha::web::SessionLifecycle::running);
+            EXPECT_EQ(item->snapshot.lifecycle, SessionLifecycle::running);
             EXPECT_TRUE(item->snapshot.generation.active);
             EXPECT_EQ(item->snapshot.generation.request_id, request_id);
         }
@@ -311,7 +299,7 @@ TEST(Application, FatalConfigurationEditsCloseAdmissionAndStopLiveSessions) {
         auto application = Application::open(make_command(workspace, database));
         const auto epoch = application->context_epoch();
         const auto created = application->create_session("lobby", "Failure", epoch);
-        ASSERT_TRUE(std::holds_alternative<cha::web::OpenSessionSuccess>(
+        ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(
             application->open_session("lobby", created.id, epoch)));
         auto session = application->subscription_handle("lobby", created.id);
         ASSERT_TRUE(session);
@@ -334,7 +322,7 @@ TEST(Application, FatalConfigurationEditsCloseAdmissionAndStopLiveSessions) {
         EXPECT_EQ(std::get<ErrorCode>(submitted), ErrorCode::application_unavailable);
         EXPECT_THROW((void)application->store().create_style("Rejected"), WorkspaceRestartRequiredError);
         EXPECT_TRUE(application->join_shutdown(2s));
-        EXPECT_EQ(session->lifecycle(), cha::web::LiveSessionState::finished);
+        EXPECT_EQ(session->lifecycle(), LiveSessionState::finished);
         session.reset();
         application.reset();
         auto reopened = Application::open(make_command(workspace, database));
@@ -367,11 +355,11 @@ TEST(Application, OwnerThreadConfigurationFailureClosesAdmission) {
         workspace, test::import_test_database(workspace.root())));
     const auto epoch = application->context_epoch();
     const auto created = application->create_session("lobby", "Owner failure", epoch);
-    ASSERT_TRUE(std::holds_alternative<cha::web::OpenSessionSuccess>(
+    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(
         application->open_session("lobby", created.id, epoch)));
     force_next_workspace_config_fault(WorkspaceConfigFault::publication);
     (void)application->submit("lobby", created.id,
-        cha::web::SetDefaultCharacterCommand{"other"}, epoch);
+        SetDefaultCharacterCommand{"other"}, epoch);
     EXPECT_EQ(application->state(), ApplicationState::unavailable);
     EXPECT_EQ(application->check_context(epoch), ErrorCode::application_unavailable);
     EXPECT_TRUE(application->join_shutdown(2s));
@@ -384,7 +372,7 @@ TEST(Application, CloseLeavesTerminalSnapshot) {
     auto application = Application::open(make_command(workspace, database));
     const auto epoch = application->context_epoch();
     const auto created = application->create_session("lobby", "Terminal", epoch);
-    ASSERT_TRUE(std::holds_alternative<cha::web::OpenSessionSuccess>(
+    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(
         application->open_session("lobby", created.id, epoch)));
     ASSERT_TRUE(std::holds_alternative<SubscribeResult>(
         application->subscribe(
@@ -395,7 +383,7 @@ TEST(Application, CloseLeavesTerminalSnapshot) {
     session->acknowledge_output();
     application->close_session("lobby", created.id, epoch);
     const auto deadline = std::chrono::steady_clock::now() + 2s;
-    while (session->lifecycle() != cha::web::LiveSessionState::finished
+    while (session->lifecycle() != LiveSessionState::finished
         && std::chrono::steady_clock::now() < deadline) {
         std::this_thread::sleep_for(1ms);
     }
@@ -403,7 +391,7 @@ TEST(Application, CloseLeavesTerminalSnapshot) {
     ASSERT_TRUE(terminal);
     EXPECT_EQ(terminal->kind, SessionOutputItem::Kind::snapshot);
     EXPECT_EQ(
-        terminal->snapshot.lifecycle, cha::web::SessionLifecycle::stopping);
+        terminal->snapshot.lifecycle, SessionLifecycle::stopping);
 }
 
 TEST(Application, AsyncSubmitCompletesBeforeGenerationFinishes) {
@@ -413,12 +401,12 @@ TEST(Application, AsyncSubmitCompletesBeforeGenerationFinishes) {
     auto application = Application::open(make_command(workspace, database));
     const auto epoch = application->context_epoch();
     const auto created = application->create_session("lobby", "Async", epoch);
-    ASSERT_TRUE(std::holds_alternative<cha::web::OpenSessionSuccess>(
+    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(
         application->open_session("lobby", created.id, epoch)));
 
     auto outcome = application->submit_async(
         "lobby", created.id, RawCommand{"Question"}, epoch);
-    auto* reply = std::get_if<std::shared_ptr<cha::web::CommandReply>>(&outcome);
+    auto* reply = std::get_if<std::shared_ptr<CommandReply>>(&outcome);
     ASSERT_TRUE(reply);
     const auto result = (*reply)->wait_for(2s);
     ASSERT_TRUE(result);

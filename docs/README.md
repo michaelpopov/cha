@@ -4,8 +4,8 @@
 - [Conversation guide](for_user.html): personas, characters, forums, and sessions.
 - [Workspace maintainer guide](MaintainerGuide.md): configuration files,
   validation, native import/export, and database maintenance.
-- [Codebase tutorial](tutorial.md) ([HTML](tutorial.html)): ownership, storage,
-  generation, native bridge, frontend state, and tests.
+- [Codebase tutorial](tutorial.md) ([HTML](tutorial.html)): shared session runtime,
+  ownership, storage, generation, native bridge, frontend state, and tests.
 - [Editing workspace entities](editing.md): implementing an editing workflow
   across the store, application, bridge, and frontend.
 

@@ -20,15 +20,6 @@ namespace cha::app {
 namespace {
 
 using namespace std::chrono_literals;
-using cha::MockHttpServer;
-using cha::http_response;
-using cha::web::ApplicationCommand;
-using cha::web::ErrorCode;
-using cha::web::load_configuration_directory;
-using cha::web::find_vault;
-using cha::web::VaultDefinition;
-using cha::web::ConfigurationDirectory;
-
 
 ApplicationCommand make_command(
     const test::TestWorkspace& workspace,
@@ -63,7 +54,7 @@ ApplicationCommand make_command(
     };
 }
 
-nlohmann::json provider_body(const cha::web::ProviderDetail& provider) {
+nlohmann::json provider_body(const ProviderDetail& provider) {
     nlohmann::json json = provider;
     json.erase("id");
     json.erase("used_by");

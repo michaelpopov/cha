@@ -24,9 +24,6 @@
 namespace cha::bridge {
 namespace {
 
-using cha::web::ErrorCode;
-using cha::web::LiveSessionHandle;
-
 struct SessionIdentity {
     std::string forum_id;
     std::string session_id;
@@ -72,29 +69,29 @@ std::uint64_t require_safe_id(const nlohmann::json& params, std::string_view key
     return *value;
 }
 
-cha::web::FishAudioSynthesis parse_synthesis_fields(const nlohmann::json& params) {
-    return cha::web::decode_fish_audio_synthesis(params);
+FishAudioSynthesis parse_synthesis_fields(const nlohmann::json& params) {
+    return decode_fish_audio_synthesis(params);
 }
 
-nlohmann::json encode_command_result(const cha::web::CommandSubmitResult& result) {
+nlohmann::json encode_command_result(const CommandSubmitResult& result) {
     if (const auto* error = std::get_if<ErrorCode>(&result)) {
         throw *error;
     }
-    if (const auto* command = std::get_if<cha::web::CommandResult>(&result)) {
+    if (const auto* command = std::get_if<CommandResult>(&result)) {
         return nlohmann::json(*command);
     }
-    if (const auto* snapshot = std::get_if<cha::web::SessionSnapshot>(&result)) {
+    if (const auto* snapshot = std::get_if<SessionSnapshot>(&result)) {
         return nlohmann::json(*snapshot);
     }
     if (const auto* subscribed =
-            std::get_if<cha::web::SubscribeResult>(&result)) {
+            std::get_if<SubscribeResult>(&result)) {
         return {
             {"connection_id", subscribed->connection_id},
             {"context_epoch", subscribed->context_epoch},
             {"subscription_id", subscribed->subscription_id},
         };
     }
-    if (const auto* label = std::get_if<cha::web::SessionLabelResult>(&result)) {
+    if (const auto* label = std::get_if<SessionLabelResult>(&result)) {
         return nlohmann::json(*label);
     }
     throw ErrorCode::internal_error;
@@ -105,15 +102,15 @@ nlohmann::json encode_output_item(
     const LiveSessionHandle& session,
     std::string_view subscription_id,
     std::uint64_t context_epoch,
-    const cha::app::SessionOutputItem& item) {
-    const std::string event = item.kind == cha::app::SessionOutputItem::Kind::snapshot
+    const app::SessionOutputItem& item) {
+    const std::string event = item.kind == app::SessionOutputItem::Kind::snapshot
         ? "session.snapshot"
         : "session.append";
     nlohmann::json payload;
-    if (item.kind == cha::app::SessionOutputItem::Kind::snapshot) {
+    if (item.kind == app::SessionOutputItem::Kind::snapshot) {
         payload = item.snapshot;
     } else {
-        payload = cha::web::AppendEvent{item.target, item.text, item.seq};
+        payload = AppendEvent{item.target, item.text, item.seq};
         payload.erase("seq");
     }
     return session_event(
@@ -135,8 +132,8 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
         bool control{};
         bool cancelled{};
         std::chrono::steady_clock::time_point deadline{};
-        std::shared_ptr<cha::web::CommandReply> reply;
-        std::shared_ptr<cha::app::OperationReply> operation;
+        std::shared_ptr<CommandReply> reply;
+        std::shared_ptr<app::OperationReply> operation;
         std::string forum_id;
         std::string session_id;
         std::string subscription_id;
@@ -189,7 +186,7 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
         std::size_t unadmitted_count{};
     };
 
-    Impl(cha::app::Application& application, Options options)
+    Impl(app::Application& application, Options options)
         : application(application),
           options(std::move(options)) {
         if (!this->options.clock) {
@@ -202,7 +199,7 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
     void listen_for_context_changes() {
         auto weak = std::weak_ptr<Impl>(shared_from_this());
         application.set_context_changed(
-            [weak](std::uint64_t epoch, cha::app::ApplicationState state) {
+            [weak](std::uint64_t epoch, app::ApplicationState state) {
                 if (auto impl = weak.lock()) {
                     impl->publish_context_changed(epoch, state);
                 }
@@ -211,12 +208,12 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
 
     void publish_context_changed(
         std::uint64_t epoch,
-        cha::app::ApplicationState state) {
+        app::ApplicationState state) {
         std::lock_guard lock(mutex);
         if (notified_epoch == epoch && notified_state == state) return;
         notified_epoch = epoch;
         notified_state = state;
-        const auto name = cha::app::application_state_name(state);
+        const auto name = app::application_state_name(state);
         for (auto& [id, connection] : connections) {
             (void)id;
             if (connection->invalid) continue;
@@ -226,7 +223,7 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
         notify();
     }
 
-    cha::app::Application& application;
+    app::Application& application;
     Options options;
     std::mutex mutex;
     std::mutex ready_tasks_mutex;
@@ -238,7 +235,7 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
     std::deque<std::function<void()>> control_tasks;
     std::deque<std::function<void()>> ready_tasks;
     std::uint64_t notified_epoch{};
-    cha::app::ApplicationState notified_state{cha::app::ApplicationState::running};
+    app::ApplicationState notified_state{app::ApplicationState::running};
 
     std::chrono::steady_clock::time_point now() const {
         return options.clock();
@@ -327,7 +324,7 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                 auto session = application.subscription_handle(
                     outstanding.forum_id, outstanding.session_id);
                 if (session) {
-                    (void)session->enqueue(cha::web::UnsubscribeCommand{
+                    (void)session->enqueue(UnsubscribeCommand{
                         connection->id,
                         outstanding.context_epoch,
                         outstanding.subscription_id});
@@ -369,7 +366,7 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
             connection->unadmitted_count = 0;
         }
         if (connection->active && connection->active->session) {
-            (void)connection->active->session->enqueue(cha::web::UnsubscribeCommand{
+            (void)connection->active->session->enqueue(UnsubscribeCommand{
                 connection->id,
                 connection->active->context_epoch,
                 connection->active->subscription_id});
@@ -435,7 +432,7 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
         try {
             nlohmann::json result = encode_command_result(*peeked);
             const auto* subscribed = outstanding.method == Method::session_subscribe
-                ? std::get_if<cha::web::SubscribeResult>(&*peeked)
+                ? std::get_if<SubscribeResult>(&*peeked)
                 : nullptr;
             LiveSessionHandle subscribed_session;
             if (subscribed) {
@@ -484,7 +481,7 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                 }
             }
             if (stale_subscription && subscribed) {
-                (void)stale_subscription->enqueue(cha::web::UnsubscribeCommand{
+                (void)stale_subscription->enqueue(UnsubscribeCommand{
                     connection_id,
                     subscribed->context_epoch,
                     subscribed->subscription_id});
@@ -544,7 +541,7 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
             return;
         }
         if (const auto* failure =
-                std::get_if<cha::app::OperationReply::Failure>(&*peeked)) {
+                std::get_if<app::OperationReply::Failure>(&*peeked)) {
             std::lock_guard lock(mutex);
             connection = find_connection(connection_id);
             if (!connection) return;
@@ -572,7 +569,7 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
     void start_background(
         std::string connection_id,
         std::uint64_t id,
-        std::shared_ptr<cha::app::OperationReply> reply) {
+        std::shared_ptr<app::OperationReply> reply) {
         {
             std::lock_guard lock(mutex);
             auto connection = find_connection(connection_id);
@@ -634,11 +631,11 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
         }
     }
 
-    std::shared_ptr<cha::web::CommandReply> start_session_command(
+    std::shared_ptr<CommandReply> start_session_command(
         const std::shared_ptr<Connection>& connection,
         std::uint64_t id,
         Outstanding outstanding,
-        cha::web::WebCommand command) {
+        WebCommand command) {
         auto outcome = application.submit_async(
             outstanding.forum_id,
             outstanding.session_id,
@@ -648,7 +645,7 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
             fail_request(connection, id, outstanding.context_epoch, *error);
             return {};
         }
-        auto reply = std::get<std::shared_ptr<cha::web::CommandReply>>(
+        auto reply = std::get<std::shared_ptr<CommandReply>>(
             std::move(outcome));
         outstanding.reply = reply;
         connection->outstanding.insert_or_assign(id, outstanding);
@@ -693,7 +690,7 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                 require_only_keys(params, {});
                 const auto boot = application.bootstrap();
                 result = {
-                    {"state", cha::app::application_state_name(boot.state)},
+                    {"state", app::application_state_name(boot.state)},
                     {"context_epoch", boot.context_epoch},
                     {"application_version", kApplicationVersion},
                     {"capabilities",
@@ -726,7 +723,7 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                     fail(*error);
                     return;
                 }
-                result = std::get<cha::web::OpenSessionSuccess>(opened);
+                result = std::get<OpenSessionSuccess>(opened);
                 break;
             }
             case Method::session_close: {
@@ -776,33 +773,33 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                 const auto snapshot = application.vault_snapshot();
                 result = nlohmann::json::array();
                 for (const auto& vault : snapshot.vaults) {
-                    result.push_back(cha::app::vault::vault_detail_json(
+                    result.push_back(app::vault::vault_detail_json(
                         vault, snapshot.active.name, snapshot.vaults.size()));
                 }
                 break;
             }
             case Method::vault_create: {
-                cha::web::VaultCreate create;
+                VaultCreate create;
                 create.display_name = require_string(params, "display_name");
                 create.copy_from = nullable_string(params, "copy_from");
                 create.password = optional_string(params, "password");
                 const auto created =
                     application.create_vault(std::move(create), epoch);
                 const auto snapshot = application.vault_snapshot();
-                result = cha::app::vault::vault_detail_json(
+                result = app::vault::vault_detail_json(
                     created, snapshot.active.name, snapshot.vaults.size());
                 break;
             }
             case Method::vault_update: {
                 const std::string name = require_string(params, "vault_name");
-                cha::web::VaultUpdate update;
+                VaultUpdate update;
                 update.display_name = require_string(params, "display_name");
                 update.password = optional_string(params, "password");
                 const auto updated =
                     application.update_vault(name, std::move(update), epoch);
                 epoch = application.context_epoch();
                 const auto snapshot = application.vault_snapshot();
-                result = cha::app::vault::vault_detail_json(
+                result = app::vault::vault_detail_json(
                     updated, snapshot.active.name, snapshot.vaults.size());
                 break;
             }
@@ -819,7 +816,7 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                     epoch);
                 epoch = switched.context_epoch;
                 result = {
-                    {"state", cha::app::application_state_name(switched.state)},
+                    {"state", app::application_state_name(switched.state)},
                     {"context_epoch", switched.context_epoch},
                 };
                 break;
@@ -831,7 +828,7 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                     epoch);
                 epoch = merged.context_epoch;
                 result = {
-                    {"state", cha::app::application_state_name(merged.state)},
+                    {"state", app::application_state_name(merged.state)},
                     {"context_epoch", merged.context_epoch},
                 };
                 break;
@@ -845,7 +842,7 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                 const auto created = application.download_r2_vault(
                     require_string(params, "name"), epoch);
                 const auto snapshot = application.vault_snapshot();
-                result = cha::app::vault::vault_detail_json(
+                result = app::vault::vault_detail_json(
                     created, snapshot.active.name, snapshot.vaults.size());
                 break;
             }
@@ -970,10 +967,10 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                         throw std::invalid_argument("The request was not valid.");
                     }
                 }
-                cha::web::AudioDownloadRequest request{
+                AudioDownloadRequest request{
                     require_string(params, "vault_name"),
                     parse_synthesis_fields(params)};
-                result = cha::app::audio_acceptance_json(application.start_audio(
+                result = app::audio_acceptance_json(application.start_audio(
                     require_identifier(params, "forum_id"),
                     require_identifier(params, "session_id"),
                     require_safe_id(params, "entry_id"),
@@ -987,7 +984,7 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                 if (!params["entries"].is_array() || params["entries"].empty()) {
                     throw std::invalid_argument("The request was not valid.");
                 }
-                cha::web::AudioDownloadBatchRequest request;
+                AudioDownloadBatchRequest request;
                 request.vault_name = require_string(params, "vault_name");
                 std::set<EntryId> ids;
                 for (const auto& entry : params["entries"]) {
@@ -1014,7 +1011,7 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                          require_identifier(params, "session_id"),
                          std::move(request),
                          epoch)) {
-                    entries.push_back(cha::app::audio_acceptance_json(acceptance));
+                    entries.push_back(app::audio_acceptance_json(acceptance));
                 }
                 result = {{"entries", std::move(entries)}};
                 break;
@@ -1022,7 +1019,7 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
             case Method::audio_status: {
                 require_only_keys(
                     params, {"forum_id", "session_id", "vault_name"});
-                result = cha::app::audio_status_json(application.audio_status(
+                result = app::audio_status_json(application.audio_status(
                     require_identifier(params, "forum_id"),
                     require_identifier(params, "session_id"),
                     require_string(params, "vault_name"),
@@ -1040,7 +1037,7 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                     require_safe_id(params, "entry_id"),
                     require_string(params, "vault_name"),
                     epoch);
-                result = cha::app::media_resource_json(
+                result = app::media_resource_json(
                     resource.resource_id,
                     resource.mime_type,
                     resource.byte_length);
@@ -1085,28 +1082,28 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                 reply_ok(connection->id, id, epoch, std::move(result)));
         } catch (const ErrorCode code) {
             fail(code);
-        } catch (const cha::app::ApplicationError& error) {
+        } catch (const app::ApplicationError& error) {
             fail(error.code, error.what());
-        } catch (const cha::web::UnknownVaultError& error) {
+        } catch (const UnknownVaultError& error) {
             fail(ErrorCode::invalid_argument, error.what());
-        } catch (const cha::web::VaultPasswordError& error) {
+        } catch (const VaultPasswordError& error) {
             fail(
                 method == Method::vault_merge
                     ? ErrorCode::source_vault_password_required
                     : ErrorCode::vault_password_required,
                 error.what());
-        } catch (const cha::SessionNotFoundError&) {
+        } catch (const SessionNotFoundError&) {
             fail(ErrorCode::not_found);
-        } catch (const cha::ForumNotFoundError&) {
+        } catch (const ForumNotFoundError&) {
             fail(ErrorCode::not_found);
         } catch (const std::out_of_range&) {
             fail(ErrorCode::not_found);
         } catch (const std::invalid_argument& error) {
             fail(ErrorCode::invalid_argument, error.what());
-        } catch (const cha::WorkspaceRestartRequiredError& error) {
+        } catch (const WorkspaceRestartRequiredError& error) {
             fail(ErrorCode::application_unavailable, error.what());
         } catch (const std::runtime_error&) {
-            fail(application.state() == cha::app::ApplicationState::running
+            fail(application.state() == app::ApplicationState::running
                 ? ErrorCode::internal_error
                 : ErrorCode::application_unavailable);
         } catch (...) {
@@ -1129,7 +1126,7 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
             }
             return;
         }
-        std::shared_ptr<cha::web::CommandReply> reply;
+        std::shared_ptr<CommandReply> reply;
         {
             std::lock_guard lock(mutex);
             auto connection = find_connection(connection_id);
@@ -1137,13 +1134,13 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
             const auto found = connection->outstanding.find(id);
             if (found == connection->outstanding.end()) return;
             try {
-                cha::web::WebCommand command;
+                WebCommand command;
                 switch (outstanding.method) {
                 case Method::session_submit: {
                     require_only_keys(params, {"forum_id", "session_id", "input"});
                     outstanding.forum_id = require_identifier(params, "forum_id");
                     outstanding.session_id = require_identifier(params, "session_id");
-                    auto input = cha::web::parse_input_command(params["input"]);
+                    auto input = parse_input_command(params["input"]);
                     if (input.text.size() > application.settings().prompt_limit) {
                         fail_request(
                             connection,
@@ -1159,14 +1156,14 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                     const auto identity = parse_session_identity(params);
                     outstanding.forum_id = identity.forum_id;
                     outstanding.session_id = identity.session_id;
-                    command = cha::web::StopCommand{};
+                    command = StopCommand{};
                     break;
                 }
                 case Method::session_snapshot: {
                     const auto identity = parse_session_identity(params);
                     outstanding.forum_id = identity.forum_id;
                     outstanding.session_id = identity.session_id;
-                    command = cha::web::SnapshotCommand{};
+                    command = SnapshotCommand{};
                     break;
                 }
                 case Method::session_cover: {
@@ -1174,7 +1171,7 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                         params, {"forum_id", "session_id", "through_entry_id"});
                     outstanding.forum_id = require_identifier(params, "forum_id");
                     outstanding.session_id = require_identifier(params, "session_id");
-                    command = cha::web::parse_cover_command({
+                    command = parse_cover_command({
                         {"through_entry_id", params["through_entry_id"]},
                     });
                     break;
@@ -1183,7 +1180,7 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                     const auto identity = parse_session_identity(params);
                     outstanding.forum_id = identity.forum_id;
                     outstanding.session_id = identity.session_id;
-                    command = cha::web::UncoverCommand{};
+                    command = UncoverCommand{};
                     break;
                 }
                 case Method::session_delete_turn: {
@@ -1191,7 +1188,7 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                         params, {"forum_id", "session_id", "response_entry_id"});
                     outstanding.forum_id = require_identifier(params, "forum_id");
                     outstanding.session_id = require_identifier(params, "session_id");
-                    command = cha::web::parse_delete_turn_command({
+                    command = parse_delete_turn_command({
                         {"response_entry_id", params["response_entry_id"]},
                     });
                     break;
@@ -1201,7 +1198,7 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                         params, {"forum_id", "session_id", "character_id"});
                     outstanding.forum_id = require_identifier(params, "forum_id");
                     outstanding.session_id = require_identifier(params, "session_id");
-                    auto parsed = cha::web::parse_default_character_command({
+                    auto parsed = parse_default_character_command({
                         {"character_id", params["character_id"]},
                     });
                     if (parsed.character_id.empty()) {
@@ -1226,7 +1223,7 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                             ErrorCode::operation_cancelled);
                         return;
                     }
-                    command = cha::web::SubscribeCommand{
+                    command = SubscribeCommand{
                         connection->id,
                         outstanding.context_epoch,
                         outstanding.subscription_id};
@@ -1239,7 +1236,7 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                     outstanding.session_id = require_identifier(params, "session_id");
                     outstanding.subscription_id =
                         require_identifier(params, "subscription_id");
-                    command = cha::web::UnsubscribeCommand{
+                    command = UnsubscribeCommand{
                         connection->id,
                         outstanding.context_epoch,
                         outstanding.subscription_id};
@@ -1394,10 +1391,10 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
     }
 };
 
-BridgeRouter::BridgeRouter(cha::app::Application& application)
+BridgeRouter::BridgeRouter(app::Application& application)
     : BridgeRouter(application, Options{}) {}
 
-BridgeRouter::BridgeRouter(cha::app::Application& application, Options options)
+BridgeRouter::BridgeRouter(app::Application& application, Options options)
     : impl_(std::make_shared<Impl>(application, std::move(options))) {
     impl_->listen_for_context_changes();
 }
@@ -1540,7 +1537,7 @@ void BridgeRouter::expire_timeouts() {
                 || found->second.method == Method::voice_input_connect) {
                 try {
                     impl_->application.cancel_speech(connection->id, request_id, epoch);
-                } catch (const cha::app::ApplicationError&) {
+                } catch (const app::ApplicationError&) {
                     // Context invalidation already revokes these resources.
                 }
             }

@@ -7,7 +7,7 @@
 #include <type_traits>
 #include <utility>
 
-namespace cha::web {
+namespace cha {
 namespace {
 
 template<typename Enum>
@@ -32,7 +32,7 @@ void put_optional(
     }
 }
 
-nlohmann::json transcript_entry_json(const cha::TranscriptEntry& value) {
+nlohmann::json transcript_entry_json(const TranscriptEntry& value) {
     nlohmann::json json = {
         {"id", value.id},
         {"kind", to_string(value.kind)},
@@ -187,7 +187,7 @@ std::string_view to_string(ErrorCode value) {
 std::optional<SnapshotAppendSelection> snapshot_append_selection(
     const SessionSnapshot& snapshot) {
     for (std::size_t index = 0; index != snapshot.transcript.size(); ++index) {
-        const cha::TranscriptEntry& entry = snapshot.transcript[index];
+        const TranscriptEntry& entry = snapshot.transcript[index];
         if (entry.status == EntryStatus::streaming) {
             return SnapshotAppendSelection{
                 EntryTextTarget{entry.id}, index};
@@ -245,7 +245,7 @@ void to_json(nlohmann::json& json, const CharacterSummary& value) {
 
 void to_json(nlohmann::json& json, const SessionSnapshot& value) {
     nlohmann::json transcript = nlohmann::json::array();
-    for (const cha::TranscriptEntry& entry : value.transcript) {
+    for (const TranscriptEntry& entry : value.transcript) {
         auto json_entry = transcript_entry_json(entry);
         json_entry["has_cached_audio"] = value.cached_audio_entries.contains(entry.id);
         transcript.push_back(std::move(json_entry));
@@ -516,4 +516,4 @@ void to_json(nlohmann::json& json, const AppendEvent& value) {
     };
 }
 
-} // namespace cha::web
+} // namespace cha

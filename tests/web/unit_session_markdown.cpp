@@ -5,7 +5,7 @@
 #include <regex>
 #include <utility>
 
-namespace cha::web {
+namespace cha {
 namespace {
 
 TEST(SessionMarkdown, ExportsSpeakerBadgesAndInlineMarkdown) {
@@ -133,4 +133,4 @@ TEST(SessionMarkdown, OmitsTransientCoverMarkers) {
 }
 
 } // namespace
-} // namespace cha::web
+} // namespace cha

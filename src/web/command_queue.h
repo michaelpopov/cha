@@ -4,16 +4,14 @@
 
 #include <chrono>
 #include <condition_variable>
-#include <cstddef>
 #include <cstdint>
-#include <deque>
 #include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <variant>
 
-namespace cha::web {
+namespace cha {
 
 using CommandSubmitResult = std::variant<
     CommandResult,
@@ -50,22 +48,4 @@ struct OwnerCommand {
     std::uint64_t subscribe_ticket{};
 };
 
-struct CommandEnqueueResult {
-    bool accepted{};
-    bool wake_owner{};
-};
-
-class CommandQueue {
-public:
-    explicit CommandQueue(std::size_t capacity) : capacity_(capacity) {}
-
-    [[nodiscard]] CommandEnqueueResult try_push(OwnerCommand command);
-    [[nodiscard]] std::optional<OwnerCommand> try_pop();
-
-private:
-    const std::size_t capacity_;
-    std::mutex mutex_;
-    std::deque<OwnerCommand> commands_;
-};
-
-} // namespace cha::web
+} // namespace cha

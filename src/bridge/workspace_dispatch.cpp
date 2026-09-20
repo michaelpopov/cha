@@ -23,7 +23,7 @@ std::string require_filename(
 } // namespace
 
 std::optional<nlohmann::json> dispatch_workspace_operation(
-    cha::app::Application& application,
+    app::Application& application,
     Method method,
     const nlohmann::json& params,
     std::uint64_t epoch) {
@@ -37,14 +37,14 @@ std::optional<nlohmann::json> dispatch_workspace_operation(
     }
     case Method::character_create: {
         result = application.create_character(
-            cha::web::parse_create_character_request(params), epoch);
+            parse_create_character_request(params), epoch);
         break;
     }
     case Method::character_update: {
         const std::string id = require_identifier(params, "character_id");
         result = application.update_character(
             id,
-            cha::web::parse_character_settings_update(
+            parse_character_settings_update(
                 without_key(params, "character_id")),
             epoch);
         break;
@@ -53,7 +53,7 @@ std::optional<nlohmann::json> dispatch_workspace_operation(
         const std::string id = require_identifier(params, "character_id");
         result = application.update_character_definition(
             id,
-            cha::web::parse_character_definition_update(
+            parse_character_definition_update(
                 without_key(params, "character_id")),
             epoch);
         break;
@@ -108,14 +108,14 @@ std::optional<nlohmann::json> dispatch_workspace_operation(
     }
     case Method::persona_create: {
         result = application.create_persona(
-            cha::web::parse_create_persona_name(params), epoch);
+            parse_create_persona_name(params), epoch);
         break;
     }
     case Method::persona_update: {
         const std::string id = require_identifier(params, "persona_id");
         result = application.update_persona(
             id,
-            cha::web::parse_persona_update(without_key(params, "persona_id")),
+            parse_persona_update(without_key(params, "persona_id")),
             epoch);
         break;
     }
@@ -134,14 +134,14 @@ std::optional<nlohmann::json> dispatch_workspace_operation(
     }
     case Method::forum_create: {
         result = application.create_forum(
-            cha::web::parse_create_forum_request(params), epoch);
+            parse_create_forum_request(params), epoch);
         break;
     }
     case Method::forum_update: {
         const std::string id = require_identifier(params, "forum_id");
         result = application.update_forum(
             id,
-            cha::web::parse_forum_update(without_key(params, "forum_id")),
+            parse_forum_update(without_key(params, "forum_id")),
             epoch);
         break;
     }
@@ -156,7 +156,7 @@ std::optional<nlohmann::json> dispatch_workspace_operation(
         const std::string id = require_identifier(params, "forum_id");
         result = application.update_forum_members(
             id,
-            cha::web::parse_forum_members_update(
+            parse_forum_members_update(
                 without_key(params, "forum_id")),
             epoch);
         break;

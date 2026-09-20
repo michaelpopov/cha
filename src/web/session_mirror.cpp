@@ -14,7 +14,7 @@
 #include <string>
 #include <utility>
 
-namespace cha::web {
+namespace cha {
 namespace {
 
 bool forbidden_path_character(char character) {
@@ -210,4 +210,4 @@ void SessionMirror::update_locked(
         session_markdown(label, entries));
 }
 
-} // namespace cha::web
+} // namespace cha

@@ -5,7 +5,7 @@
 #include <ctime>
 #include <regex>
 
-namespace cha::web {
+namespace cha {
 namespace {
 
 std::string comment_text(std::string_view text) {
@@ -154,4 +154,4 @@ std::string session_markdown_filename(std::string_view label) {
     return safe + ".md";
 }
 
-} // namespace cha::web
+} // namespace cha

@@ -2,7 +2,7 @@
 
 #include <gtest/gtest.h>
 
-namespace cha::web {
+namespace cha {
 
 TEST(Mention, ParsesAddressingAndPreservesLiteralText) {
     struct Case {
@@ -35,4 +35,4 @@ TEST(Mention, ParsesAddressingAndPreservesLiteralText) {
     }
 }
 
-} // namespace cha::web
+} // namespace cha

@@ -28,7 +28,7 @@
 #include <system_error>
 #include <utility>
 
-namespace cha::web {
+namespace cha {
 namespace {
 
 constexpr std::array sidecar_suffixes{
@@ -992,4 +992,4 @@ R2DatabaseTransfer download_new_database_from_r2(
     return {.byte_count = vault_bytes + database_bytes};
 }
 
-} // namespace cha::web
+} // namespace cha

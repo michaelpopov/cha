@@ -8,7 +8,7 @@
 #include <gtest/gtest.h>
 #include <future>
 
-namespace cha::web {
+namespace cha {
 namespace {
 using namespace std::chrono_literals;
 using Json = nlohmann::json;

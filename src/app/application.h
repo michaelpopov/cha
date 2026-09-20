@@ -28,9 +28,6 @@
 
 namespace cha {
 class ApiKeyStore;
-}
-
-namespace cha::web {
 class CurrentVault;
 
 struct VaultCreate {
@@ -68,7 +65,7 @@ struct ApplicationBootstrap {
     ApplicationState state{ApplicationState::running};
     std::uint64_t context_epoch{1};
     ApplicationCapabilities capabilities;
-    cha::web::Bootstrap presentation;
+    Bootstrap presentation;
 };
 
 struct MaintenanceResult {
@@ -87,9 +84,9 @@ using ContextChanged = std::function<
 class ApplicationError : public std::runtime_error {
 public:
     explicit ApplicationError(
-        cha::web::ErrorCode code,
+        ErrorCode code,
         std::string message = {});
-    cha::web::ErrorCode code;
+    ErrorCode code;
 };
 
 // Terminal result for provider tests and OAuth network work. Abandoned replies
@@ -97,13 +94,13 @@ public:
 class OperationReply {
 public:
     struct Failure {
-        cha::web::ErrorCode code{cha::web::ErrorCode::internal_error};
+        ErrorCode code{ErrorCode::internal_error};
         std::string message;
     };
     using Result = std::variant<nlohmann::json, Failure>;
 
     bool complete(nlohmann::json result);
-    bool fail(cha::web::ErrorCode code, std::string message);
+    bool fail(ErrorCode code, std::string message);
     void set_ready_callback(std::function<void()> callback);
     [[nodiscard]] std::optional<Result> peek() const;
     void abandon() const;
@@ -123,7 +120,7 @@ private:
 class Application {
 public:
     static std::unique_ptr<Application> open(
-        const cha::web::ApplicationCommand& command,
+        const ApplicationCommand& command,
         std::string vault_password = {},
         RuntimeSettings settings = {});
 
@@ -133,96 +130,96 @@ public:
 
     [[nodiscard]] ApplicationBootstrap bootstrap();
     // Context-bound operations require the nonzero epoch captured by the caller.
-    [[nodiscard]] cha::web::CreateSessionSuccess create_session(
+    [[nodiscard]] CreateSessionSuccess create_session(
         std::string_view forum_id,
         std::string label,
         std::uint64_t epoch);
     [[nodiscard]] std::variant<
-        cha::web::OpenSessionSuccess,
-        cha::web::ErrorCode>
+        OpenSessionSuccess,
+        ErrorCode>
     open_session(
         std::string_view forum_id,
         std::string_view session_id,
         std::uint64_t epoch);
-    [[nodiscard]] cha::web::CommandSubmitResult submit(
+    [[nodiscard]] CommandSubmitResult submit(
         std::string_view forum_id,
         std::string_view session_id,
-        cha::web::WebCommand command,
+        WebCommand command,
         std::uint64_t epoch);
     [[nodiscard]] std::variant<
-        std::shared_ptr<cha::web::CommandReply>,
-        cha::web::ErrorCode>
+        std::shared_ptr<CommandReply>,
+        ErrorCode>
     submit_async(
         std::string_view forum_id,
         std::string_view session_id,
-        cha::web::WebCommand command,
+        WebCommand command,
         std::uint64_t epoch);
-    [[nodiscard]] cha::web::CommandSubmitResult stop(
+    [[nodiscard]] CommandSubmitResult stop(
         std::string_view forum_id,
         std::string_view session_id,
         std::uint64_t epoch);
-    [[nodiscard]] cha::web::CommandSubmitResult snapshot(
+    [[nodiscard]] CommandSubmitResult snapshot(
         std::string_view forum_id,
         std::string_view session_id,
         std::uint64_t epoch);
-    [[nodiscard]] cha::web::CommandSubmitResult subscribe(
+    [[nodiscard]] CommandSubmitResult subscribe(
         std::string_view forum_id,
         std::string_view session_id,
-        cha::web::SubscribeCommand command,
+        SubscribeCommand command,
         std::uint64_t epoch);
-    [[nodiscard]] cha::web::CommandSubmitResult unsubscribe(
+    [[nodiscard]] CommandSubmitResult unsubscribe(
         std::string_view forum_id,
         std::string_view session_id,
-        cha::web::UnsubscribeCommand command,
+        UnsubscribeCommand command,
         std::uint64_t epoch);
     void close_session(
         std::string_view forum_id,
         std::string_view session_id,
         std::uint64_t epoch);
-    [[nodiscard]] std::optional<cha::web::ErrorCode> delete_session(
+    [[nodiscard]] std::optional<ErrorCode> delete_session(
         std::string_view forum_id,
         std::string_view session_id,
         std::uint64_t epoch);
-    [[nodiscard]] std::vector<cha::web::SessionListing> list_sessions(
+    [[nodiscard]] std::vector<SessionListing> list_sessions(
         std::string_view forum_id,
         std::uint64_t epoch);
-    [[nodiscard]] cha::web::SessionLabelResult rename_session(
+    [[nodiscard]] SessionLabelResult rename_session(
         std::string_view forum_id,
         std::string_view session_id,
         std::string label,
         std::uint64_t epoch);
-    [[nodiscard]] cha::web::SessionExport export_session(
+    [[nodiscard]] SessionExport export_session(
         std::string_view forum_id,
         std::string_view session_id,
         std::uint64_t epoch);
 
-    [[nodiscard]] cha::web::CharacterDetail get_character(
+    [[nodiscard]] CharacterDetail get_character(
         std::string_view character_id,
         std::uint64_t epoch);
-    [[nodiscard]] cha::web::CharacterDetail create_character(
-        cha::web::CreateCharacterRequest create,
+    [[nodiscard]] CharacterDetail create_character(
+        CreateCharacterRequest create,
         std::uint64_t epoch);
-    [[nodiscard]] cha::web::CharacterDetail update_character(
+    [[nodiscard]] CharacterDetail update_character(
         std::string_view character_id,
-        cha::web::CharacterSettingsUpdate update,
+        CharacterSettingsUpdate update,
         std::uint64_t epoch);
-    [[nodiscard]] cha::web::CharacterDetail update_character_definition(
+    [[nodiscard]] CharacterDetail update_character_definition(
         std::string_view character_id,
-        cha::web::CharacterDefinitionUpdate update,
+        CharacterDefinitionUpdate update,
         std::uint64_t epoch);
     void delete_character(
         std::string_view character_id,
         std::uint64_t epoch);
-    [[nodiscard]] cha::web::MarkdownFile get_character_file(
+    [[nodiscard]] MarkdownFile get_character_file(
         std::string_view character_id,
         std::string_view filename,
         std::uint64_t epoch);
-    [[nodiscard]] cha::web::MarkdownFile create_character_file(
+    [[nodiscard]] MarkdownFile create_character_file(
         std::string_view character_id,
         std::string filename,
         std::string content,
         std::uint64_t epoch);
-    [[nodiscard]] cha::web::MarkdownFile update_character_file(
+    [[nodiscard]] MarkdownFile update_character_file(
         std::string_view character_id,
         std::string filename,
         std::string content,
@@ -232,47 +229,47 @@ public:
         std::string_view filename,
         std::uint64_t epoch);
 
-    [[nodiscard]] cha::web::PersonaDetail get_persona(
+    [[nodiscard]] PersonaDetail get_persona(
         std::string_view persona_id,
         std::uint64_t epoch);
-    [[nodiscard]] cha::web::PersonaDetail create_persona(
+    [[nodiscard]] PersonaDetail create_persona(
         std::string display_name,
         std::uint64_t epoch);
-    [[nodiscard]] cha::web::PersonaDetail update_persona(
+    [[nodiscard]] PersonaDetail update_persona(
         std::string_view persona_id,
-        cha::web::PersonaUpdate update,
+        PersonaUpdate update,
         std::uint64_t epoch);
     void delete_persona(
         std::string_view persona_id,
         std::uint64_t epoch);
 
-    [[nodiscard]] cha::web::ForumDetail get_forum(
+    [[nodiscard]] ForumDetail get_forum(
         std::string_view forum_id,
         std::uint64_t epoch);
-    [[nodiscard]] cha::web::ForumDetail create_forum(
-        cha::web::CreateForumRequest create,
+    [[nodiscard]] ForumDetail create_forum(
+        CreateForumRequest create,
         std::uint64_t epoch);
-    [[nodiscard]] cha::web::ForumDetail update_forum(
+    [[nodiscard]] ForumDetail update_forum(
         std::string_view forum_id,
-        cha::web::ForumUpdate update,
+        ForumUpdate update,
         std::uint64_t epoch);
     void delete_forum(
         std::string_view forum_id,
         std::uint64_t epoch);
-    [[nodiscard]] cha::web::ForumDetail update_forum_members(
+    [[nodiscard]] ForumDetail update_forum_members(
         std::string_view forum_id,
-        cha::web::ForumMembersUpdate update,
+        ForumMembersUpdate update,
         std::uint64_t epoch);
-    [[nodiscard]] cha::web::MarkdownFile get_forum_file(
+    [[nodiscard]] MarkdownFile get_forum_file(
         std::string_view forum_id,
         std::string_view filename,
         std::uint64_t epoch);
-    [[nodiscard]] cha::web::MarkdownFile create_forum_file(
+    [[nodiscard]] MarkdownFile create_forum_file(
         std::string_view forum_id,
         std::string filename,
         std::string content,
         std::uint64_t epoch);
-    [[nodiscard]] cha::web::MarkdownFile update_forum_file(
+    [[nodiscard]] MarkdownFile update_forum_file(
         std::string_view forum_id,
         std::string filename,
         std::string content,
@@ -282,15 +279,15 @@ public:
         std::string_view filename,
         std::uint64_t epoch);
 
-    [[nodiscard]] std::vector<cha::web::ProviderSummary> list_providers(
+    [[nodiscard]] std::vector<ProviderSummary> list_providers(
         std::uint64_t epoch);
-    [[nodiscard]] cha::web::ProviderDetail get_provider(
+    [[nodiscard]] ProviderDetail get_provider(
         std::string_view provider_id,
         std::uint64_t epoch);
-    [[nodiscard]] cha::web::ProviderDetail create_provider(
-        cha::web::CreateProviderRequest create,
+    [[nodiscard]] ProviderDetail create_provider(
+        CreateProviderRequest create,
         std::uint64_t epoch);
-    [[nodiscard]] cha::web::ProviderDetail update_provider(
+    [[nodiscard]] ProviderDetail update_provider(
         std::string_view provider_id,
         nlohmann::json body,
         std::uint64_t epoch);
@@ -302,48 +299,48 @@ public:
         nlohmann::json body,
         std::uint64_t epoch);
 
-    [[nodiscard]] std::vector<cha::web::StyleDetail> list_styles(
+    [[nodiscard]] std::vector<StyleDetail> list_styles(
         std::uint64_t epoch);
-    [[nodiscard]] cha::web::StyleDetail create_style(
+    [[nodiscard]] StyleDetail create_style(
         std::string display_name,
         std::uint64_t epoch);
-    [[nodiscard]] cha::web::StyleDetail update_style(
+    [[nodiscard]] StyleDetail update_style(
         std::string_view style_id,
-        cha::web::StyleUpdate update,
+        StyleUpdate update,
         std::uint64_t epoch);
     void delete_style(std::string_view style_id, std::uint64_t epoch);
 
-    [[nodiscard]] std::vector<cha::web::VoiceDetail> list_voices(
+    [[nodiscard]] std::vector<VoiceDetail> list_voices(
         std::uint64_t epoch);
-    [[nodiscard]] cha::web::VoiceDetail create_voice(
-        cha::web::CreateVoiceRequest create,
+    [[nodiscard]] VoiceDetail create_voice(
+        CreateVoiceRequest create,
         std::uint64_t epoch);
-    [[nodiscard]] cha::web::VoiceDetail update_voice(
+    [[nodiscard]] VoiceDetail update_voice(
         std::string_view voice_id,
-        cha::web::VoiceUpdate update,
+        VoiceUpdate update,
         std::uint64_t epoch);
     void delete_voice(std::string_view voice_id, std::uint64_t epoch);
 
-    [[nodiscard]] std::optional<cha::web::VoiceInputSettings>
+    [[nodiscard]] std::optional<VoiceInputSettings>
     get_voice_input_settings(std::uint64_t epoch);
-    [[nodiscard]] cha::web::VoiceInputSettings save_voice_input_settings(
-        cha::web::VoiceInputSettings settings,
+    [[nodiscard]] VoiceInputSettings save_voice_input_settings(
+        VoiceInputSettings settings,
         std::uint64_t epoch);
-    [[nodiscard]] std::optional<cha::web::VoiceInputRuntime>
+    [[nodiscard]] std::optional<VoiceInputRuntime>
     get_voice_input_runtime(std::uint64_t epoch);
-    [[nodiscard]] std::optional<cha::web::VoiceOutputSettings>
+    [[nodiscard]] std::optional<VoiceOutputSettings>
     get_voice_output_settings(std::uint64_t epoch);
-    [[nodiscard]] cha::web::VoiceOutputSettings save_voice_output_settings(
-        cha::web::VoiceOutputSettings settings,
+    [[nodiscard]] VoiceOutputSettings save_voice_output_settings(
+        VoiceOutputSettings settings,
         std::uint64_t epoch);
-    [[nodiscard]] std::optional<cha::web::VoiceOutputRuntime>
+    [[nodiscard]] std::optional<VoiceOutputRuntime>
     get_voice_output_runtime(std::uint64_t epoch);
 
     [[nodiscard]] std::shared_ptr<OperationReply> start_speech(
         std::string_view connection_id,
         std::uint64_t request_id,
         std::string text,
-        cha::web::FishAudioSynthesis synthesis,
+        FishAudioSynthesis synthesis,
         std::uint64_t epoch);
     void cancel_speech(
         std::string_view connection_id,
@@ -354,18 +351,18 @@ public:
         std::string_view resource_id,
         std::uint64_t epoch);
 
-    [[nodiscard]] cha::web::AudioAcceptance start_audio(
+    [[nodiscard]] AudioAcceptance start_audio(
         std::string_view forum_id,
         std::string_view session_id,
         EntryId entry_id,
-        cha::web::AudioDownloadRequest request,
+        AudioDownloadRequest request,
         std::uint64_t epoch);
-    [[nodiscard]] std::vector<cha::web::AudioAcceptance> start_audio_batch(
+    [[nodiscard]] std::vector<AudioAcceptance> start_audio_batch(
         std::string_view forum_id,
         std::string_view session_id,
-        cha::web::AudioDownloadBatchRequest request,
+        AudioDownloadBatchRequest request,
         std::uint64_t epoch);
-    [[nodiscard]] cha::web::AudioDownloadStatus audio_status(
+    [[nodiscard]] AudioDownloadStatus audio_status(
         std::string_view forum_id,
         std::string_view session_id,
         std::string_view vault_name,
@@ -403,44 +400,44 @@ public:
     void release_connection_resources(std::string_view connection_id);
     void set_speech_url_override(std::string url);
 
-    [[nodiscard]] std::vector<cha::web::ApiKeyDetail> list_api_keys(
+    [[nodiscard]] std::vector<ApiKeyDetail> list_api_keys(
         std::uint64_t epoch);
-    [[nodiscard]] cha::web::ApiKeyDetail create_api_key(
-        cha::web::CreateApiKeyRequest create,
+    [[nodiscard]] ApiKeyDetail create_api_key(
+        CreateApiKeyRequest create,
         std::uint64_t epoch);
-    [[nodiscard]] cha::web::ApiKeyDetail rename_api_key(
+    [[nodiscard]] ApiKeyDetail rename_api_key(
         std::string_view api_key_id,
         std::string display_name,
         std::uint64_t epoch);
-    [[nodiscard]] cha::web::ApiKeyDetail replace_api_key_value(
+    [[nodiscard]] ApiKeyDetail replace_api_key_value(
         std::string_view api_key_id,
         std::string value,
         std::uint64_t epoch);
     void delete_api_key(std::string_view api_key_id, std::uint64_t epoch);
 
-    [[nodiscard]] std::optional<cha::web::R2StorageDetail> get_r2_storage(
+    [[nodiscard]] std::optional<R2StorageDetail> get_r2_storage(
         std::uint64_t epoch);
-    [[nodiscard]] cha::web::R2StorageDetail save_r2_storage(
-        cha::web::SaveR2StorageRequest request,
+    [[nodiscard]] R2StorageDetail save_r2_storage(
+        SaveR2StorageRequest request,
         std::uint64_t epoch);
     void delete_r2_storage(std::uint64_t epoch);
 
-    [[nodiscard]] cha::web::OpenAiAuth openai_auth_status(
+    [[nodiscard]] OpenAiAuth openai_auth_status(
         std::uint64_t epoch);
     [[nodiscard]] std::shared_ptr<OperationReply> start_openai_auth(
         std::uint64_t epoch);
     [[nodiscard]] std::shared_ptr<OperationReply> poll_openai_auth(
         std::uint64_t epoch);
-    [[nodiscard]] cha::web::OpenAiAuth disconnect_openai_auth(
+    [[nodiscard]] OpenAiAuth disconnect_openai_auth(
         std::uint64_t epoch);
 
-    [[nodiscard]] cha::web::VaultRegistrySnapshot vault_snapshot() const;
-    [[nodiscard]] cha::web::VaultDefinition create_vault(
-        cha::web::VaultCreate create,
+    [[nodiscard]] VaultRegistrySnapshot vault_snapshot() const;
+    [[nodiscard]] VaultDefinition create_vault(
+        VaultCreate create,
         std::uint64_t epoch);
-    [[nodiscard]] cha::web::VaultDefinition update_vault(
+    [[nodiscard]] VaultDefinition update_vault(
         std::string_view current_name,
-        cha::web::VaultUpdate update,
+        VaultUpdate update,
         std::uint64_t epoch);
     void delete_vault(std::string_view name, std::uint64_t epoch);
     [[nodiscard]] MaintenanceResult switch_vault(
@@ -453,11 +450,11 @@ public:
         std::uint64_t epoch);
     [[nodiscard]] std::vector<std::string> list_r2_vaults(
         std::uint64_t epoch) const;
-    [[nodiscard]] cha::web::VaultDefinition download_r2_vault(
+    [[nodiscard]] VaultDefinition download_r2_vault(
         std::string_view name,
         std::uint64_t epoch);
-    [[nodiscard]] cha::web::R2DatabaseTransfer upload_database();
-    [[nodiscard]] cha::web::R2DatabaseTransfer download_database();
+    [[nodiscard]] R2DatabaseTransfer upload_database();
+    [[nodiscard]] R2DatabaseTransfer download_database();
     [[nodiscard]] WorkspaceConfigTransfer import_configuration();
     [[nodiscard]] WorkspaceConfigTransfer export_configuration();
     void save_file(
@@ -469,7 +466,7 @@ public:
     [[nodiscard]] std::uint64_t context_epoch() const;
     // Nonblocking preflight only; it does not reserve the context. Operations
     // needing stable vault state must also check admission under their owning lock.
-    [[nodiscard]] std::optional<cha::web::ErrorCode> check_context(
+    [[nodiscard]] std::optional<ErrorCode> check_context(
         std::uint64_t epoch) const;
     [[nodiscard]] bool running() const;
     [[nodiscard]] ApplicationState state() const;
@@ -487,15 +484,15 @@ public:
     // Uses only the manager lock: actor callbacks must never wait on the
     // application lifecycle lock while maintenance is draining those actors.
     // May return empty during maintenance/shutdown. Retain the handle while used.
-    [[nodiscard]] cha::web::LiveSessionHandle subscription_handle(
+    [[nodiscard]] LiveSessionHandle subscription_handle(
         std::string_view forum_id, std::string_view session_id);
 
     // Test seams — not part of the application boundary.
     [[nodiscard]] std::size_t live_session_count() const;
-    [[nodiscard]] cha::web::CurrentVault& current_vault();
-    [[nodiscard]] const cha::web::CurrentVault& current_vault() const;
-    [[nodiscard]] cha::WorkspaceConfigStore& store();
-    [[nodiscard]] cha::ApiKeyStore& api_keys();
+    [[nodiscard]] CurrentVault& current_vault();
+    [[nodiscard]] const CurrentVault& current_vault() const;
+    [[nodiscard]] WorkspaceConfigStore& store();
+    [[nodiscard]] ApiKeyStore& api_keys();
     [[nodiscard]] std::string active_password() const;
     void mark_unusable();
 

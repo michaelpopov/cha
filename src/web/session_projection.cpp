@@ -6,7 +6,7 @@
 #include <algorithm>
 #include <stdexcept>
 
-namespace cha::web {
+namespace cha {
 
 namespace {
 
@@ -112,4 +112,4 @@ SessionSnapshot to_snapshot(
     return snapshot;
 }
 
-} // namespace cha::web
+} // namespace cha

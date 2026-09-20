@@ -9,15 +9,11 @@ namespace cha {
 
 class SessionController;
 
-} // namespace cha
-
-namespace cha::web {
-
 // Translates the web chat grammar into typed session-layer calls and the
-// command result returned by the HTTP endpoint.
+// command result returned to the bridge.
 [[nodiscard]] CommandResult handle_text_input(
     SessionController& controller,
     std::string_view author_id,
     std::string input);
 
-} // namespace cha::web
+} // namespace cha

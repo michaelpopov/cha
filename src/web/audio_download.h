@@ -13,7 +13,7 @@
 #include <thread>
 #include <vector>
 
-namespace cha::web {
+namespace cha {
 class CurrentVault;
 enum class AudioJobState { queued, running, failed };
 enum class AudioAcceptanceKind { cached, queued, running };

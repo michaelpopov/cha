@@ -14,7 +14,7 @@
 #include <iterator>
 #include <string>
 
-namespace cha::web {
+namespace cha {
 namespace {
 
 std::string file_bytes(const std::filesystem::path& path) {
@@ -367,4 +367,4 @@ TEST(R2DatabaseTransfer, RejectsInvalidR2KeyAndAnActiveLease) {
 }
 
 } // namespace
-} // namespace cha::web
+} // namespace cha

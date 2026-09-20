@@ -18,9 +18,8 @@
 #include <utility>
 #include <vector>
 
-namespace cha::web {
+namespace cha {
 namespace {
-
 
 test::NoopNotifier& notifier() {
     static test::NoopNotifier instance;
@@ -303,4 +302,4 @@ TEST(TextInput, SeparatesDraftClearingFromControllerAcceptance) {
 }
 
 } // namespace
-} // namespace cha::web
+} // namespace cha

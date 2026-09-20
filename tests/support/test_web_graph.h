@@ -40,7 +40,7 @@ public:
         return repository;
     }
 
-    web::SessionOpener opener() const {
+    SessionOpener opener() const {
         return [repository = repository, providers = providers, config = store.get()](
                    const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier) {
             return open_session(

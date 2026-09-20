@@ -1,4 +1,4 @@
-#include "chat/character.h"
+#include "chat/character_metadata.h"
 
 namespace cha {
 

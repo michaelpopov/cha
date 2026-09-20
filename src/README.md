@@ -45,26 +45,26 @@ diagnostic logging remains available until teardown finishes.
 | `../webapp/` | React browser application and its browser tests. |
 
 Dependencies point downward through those responsibilities. Core layers never
-import HTTP or browser presentation types. Web serialization owns the browser
-contract without introducing a second persistence model.
+import bridge or browser presentation types. Protocol serialization owns the
+browser contract without introducing a second persistence model.
 
 ## Runtime ownership
 
-One `LiveSession` actor owns one thread per live session. That thread
-exclusively owns its controller, live transcript, journal mutation, and
-provider event draining. HTTP threads communicate through `CommandQueue`; owner-produced state
-is copied into protocol snapshots or append events and delivered through an
-`SseMailbox`.
+One process-wide `SessionRuntime` thread owns every live session. That thread
+exclusively owns the live controllers, their transcripts, journal mutation, and
+provider event draining. Bridge threads submit commands to it and wait on a
+`CommandReply`; runtime-produced state is copied into protocol snapshots or
+append events and delivered through `SessionOutput`.
 
-`web_main.cpp` owns one process-wide `Providers` instance. Each
+`Application` owns one process-wide `Providers` instance. Each
 `SessionController` retains only request handles while it applies streamed
 events and persists turn transitions; every provider request owns its own
-worker, client, curl handle, cancellation state, and event queue. The owner
+worker, client, curl handle, cancellation state, and event queue. The runtime
 thread never waits for provider cleanup during a Stop action or controller teardown.
 `WorkspaceConfigStore` owns the one process-lifetime database lease.
 `SessionRepository` receives explicit database, materialized-workspace, and
-Welcome paths; it owns none of those outer resources. Each live actor owns a
-separate SQLite journal connection scoped by its internal session key;
+Welcome paths; it owns none of those outer resources. Each live controller owns
+a separate SQLite journal connection scoped by its internal session key;
 repository operations use short-lived connections.
 
 Welcome is the sole built-in Entrance session. Its database lives under the
@@ -76,7 +76,7 @@ are addressed by stable forum and session IDs.
 
 The transcript is the source of presentation-neutral chat history. The session
 journal persists typed turns and entries transactionally in SQLite. Stable IDs
-are stored and used in routes; display names and labels are presentation data.
+are stored and used in requests; display names and labels are presentation data.
 Opening a session resolves `(forum_id, session_id)` to an internal
 `session_key`, validates the workspace database identity, and restores only
 rows belonging to that key.
@@ -117,5 +117,5 @@ under `../tests/native/`.
 - [Character definitions and model context](characters/README.md)
 - [Sessions and persistence](session/README.md)
 - [Shared chat model](chat/README.md)
-- [Web frontend](web/README.md)
+- [Native protocol and live sessions](web/README.md)
 - [Utilities](util/README.md)

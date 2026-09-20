@@ -121,7 +121,7 @@ bool has_only_keys(
 }
 
 ParseFailure invalid(std::string message, std::optional<std::uint64_t> id = {}) {
-    return {id, cha::web::ErrorCode::invalid_argument, std::move(message)};
+    return {id, ErrorCode::invalid_argument, std::move(message)};
 }
 
 } // namespace
@@ -175,8 +175,7 @@ std::optional<std::uint64_t> as_safe_uint(const nlohmann::json& value) {
     return std::nullopt;
 }
 
-std::string_view public_error_message(cha::web::ErrorCode code) noexcept {
-    using cha::web::ErrorCode;
+std::string_view public_error_message(ErrorCode code) noexcept {
     switch (code) {
     case ErrorCode::not_found:
         return "That forum or session was not found.";
@@ -215,8 +214,8 @@ std::variant<ParsedRequest, ParseFailure> parse_request(
     if (text.size() > maximum_bytes) {
         return ParseFailure{
             std::nullopt,
-            cha::web::ErrorCode::body_too_large,
-            std::string(public_error_message(cha::web::ErrorCode::body_too_large))};
+            ErrorCode::body_too_large,
+            std::string(public_error_message(ErrorCode::body_too_large))};
     }
     nlohmann::json json;
     try {
@@ -234,7 +233,7 @@ std::variant<ParsedRequest, ParseFailure> parse_request(
         return invalid("The request envelope is missing a required field.");
     }
     if (!json["connection_id"].is_string()
-        || !cha::is_url_safe_identifier(
+        || !is_url_safe_identifier(
             json["connection_id"].get_ref<const std::string&>())) {
         return invalid("The request envelope is not valid.");
     }
@@ -248,7 +247,7 @@ std::variant<ParsedRequest, ParseFailure> parse_request(
     if (!method) {
         return ParseFailure{
             *id,
-            cha::web::ErrorCode::invalid_argument,
+            ErrorCode::invalid_argument,
             "That method is not available."};
     }
     if (requires_context_epoch(*method) && *epoch == 0) {
@@ -275,8 +274,8 @@ std::variant<DeliveryAck, ParseFailure> parse_ack(
     if (text.size() > maximum_bytes) {
         return ParseFailure{
             std::nullopt,
-            cha::web::ErrorCode::body_too_large,
-            std::string(public_error_message(cha::web::ErrorCode::body_too_large))};
+            ErrorCode::body_too_large,
+            std::string(public_error_message(ErrorCode::body_too_large))};
     }
     nlohmann::json json;
     try {
@@ -288,7 +287,7 @@ std::variant<DeliveryAck, ParseFailure> parse_ack(
         || !has_only_keys(json, {"connection_id", "delivery_id"})
         || !json.contains("connection_id") || !json.contains("delivery_id")
         || !json["connection_id"].is_string()
-        || !cha::is_url_safe_identifier(
+        || !is_url_safe_identifier(
             json["connection_id"].get_ref<const std::string&>())) {
         return invalid("The acknowledgement is not valid.");
     }
@@ -316,7 +315,7 @@ nlohmann::json reply_error(
     std::string_view connection_id,
     std::uint64_t id,
     std::uint64_t context_epoch,
-    cha::web::ErrorCode code,
+    ErrorCode code,
     std::string_view message) {
     return {
         {"connection_id", connection_id},
@@ -324,7 +323,7 @@ nlohmann::json reply_error(
         {"context_epoch", context_epoch},
         {"ok", false},
         {"error",
-         {{"code", cha::web::to_string(code)}, {"message", message}}},
+         {{"code", to_string(code)}, {"message", message}}},
     };
 }
 

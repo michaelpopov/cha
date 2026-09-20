@@ -13,7 +13,7 @@
 #include <vector>
 #include <nlohmann/json.hpp>
 
-namespace cha::web {
+namespace cha {
 
 inline constexpr std::size_t fish_audio_concurrency = 4;
 

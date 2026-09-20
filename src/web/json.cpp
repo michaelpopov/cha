@@ -13,7 +13,7 @@
 #include <utility>
 #include <vector>
 
-namespace cha::web {
+namespace cha {
 namespace {
 
 void exact_keys(
@@ -515,4 +515,4 @@ SaveR2StorageRequest parse_save_r2_storage_request(const nlohmann::json& json) {
     };
 }
 
-} // namespace cha::web
+} // namespace cha

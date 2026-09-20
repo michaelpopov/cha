@@ -20,7 +20,7 @@
 #include <thread>
 #include <vector>
 
-namespace cha::web {
+namespace cha {
 namespace {
 using Json = nlohmann::json;
 using namespace std::chrono_literals;

@@ -1,6 +1,6 @@
 #include "web/owner_wake_signal.h"
 
-namespace cha::web {
+namespace cha {
 
 void OwnerWakeSignal::wake() noexcept {
     {
@@ -25,4 +25,4 @@ bool OwnerWakeSignal::wait_until(
     return true;
 }
 
-} // namespace cha::web
+} // namespace cha

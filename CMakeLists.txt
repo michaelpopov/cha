@@ -245,7 +245,7 @@ add_library(cha_core STATIC
     src/util/text_template.cpp
     src/util/text_source.cpp
     src/util/toml_file.cpp
-    src/chat/character.cpp
+    src/chat/character_metadata.cpp
     src/chat/transcript.cpp
     src/characters/character.cpp
     src/characters/model_context.cpp

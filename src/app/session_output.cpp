@@ -39,7 +39,7 @@ std::uint64_t SessionOutput::generation() const {
     return generation_;
 }
 
-void SessionOutput::publish_snapshot(cha::web::SessionSnapshot snapshot) {
+void SessionOutput::publish_snapshot(SessionSnapshot snapshot) {
     std::lock_guard lock(mutex_);
     if (!attached_ || closed_) return;
     publish_snapshot_locked(std::move(snapshot));
@@ -58,11 +58,11 @@ bool SessionOutput::snapshot_needed() const {
     return attached_ && !closed_ && dirty_ && requested_ && !in_flight_;
 }
 
-cha::web::AppendPublishResult SessionOutput::publish_append(
-    cha::TextAppend append) {
+AppendPublishResult SessionOutput::publish_append(
+    TextAppend append) {
     std::lock_guard lock(mutex_);
     if (!attached_ || closed_ || dirty_) {
-        return cha::web::AppendPublishResult::Accepted;
+        return AppendPublishResult::Accepted;
     }
     const auto result = publish_append_locked(std::move(append));
     return result;
@@ -126,13 +126,13 @@ bool SessionOutput::closed() const {
     return closed_;
 }
 
-void SessionOutput::publish_snapshot_locked(cha::web::SessionSnapshot snapshot) {
+void SessionOutput::publish_snapshot_locked(SessionSnapshot snapshot) {
     dirty_ = false;
     requested_ = false;
     if (pending_) ++collapsed_payloads_;
-    const auto selection = cha::web::snapshot_append_selection(snapshot);
+    const auto selection = snapshot_append_selection(snapshot);
     target_ = selection
-        ? std::optional<cha::TextTarget>{selection->target}
+        ? std::optional<TextTarget>{selection->target}
         : std::nullopt;
     auto item = std::make_shared<SessionOutputItem>();
     item->kind = SessionOutputItem::Kind::snapshot;
@@ -140,35 +140,35 @@ void SessionOutput::publish_snapshot_locked(cha::web::SessionSnapshot snapshot) 
     pending_ = std::move(item);
 }
 
-cha::web::AppendPublishResult SessionOutput::publish_append_locked(
-    cha::TextAppend append) {
+AppendPublishResult SessionOutput::publish_append_locked(
+    TextAppend append) {
     if (append.text.empty() || !target_ || *target_ != append.target) {
-        return cha::web::AppendPublishResult::SnapshotRequired;
+        return AppendPublishResult::SnapshotRequired;
     }
     if (append.text.size() > pending_append_byte_limit_) {
-        return cha::web::AppendPublishResult::SnapshotRequired;
+        return AppendPublishResult::SnapshotRequired;
     }
     if (pending_ && pending_->kind == SessionOutputItem::Kind::append) {
         if (pending_->target != append.target) {
-            return cha::web::AppendPublishResult::SnapshotRequired;
+            return AppendPublishResult::SnapshotRequired;
         }
         if (pending_->text.size() + append.text.size()
             > pending_append_byte_limit_) {
-            return cha::web::AppendPublishResult::SnapshotRequired;
+            return AppendPublishResult::SnapshotRequired;
         }
         ++collapsed_payloads_;
         auto merged = std::make_shared<SessionOutputItem>(*pending_);
         merged->text += append.text;
         pending_ = std::move(merged);
-        return cha::web::AppendPublishResult::Accepted;
+        return AppendPublishResult::Accepted;
     }
-    if (pending_) return cha::web::AppendPublishResult::SnapshotRequired;
+    if (pending_) return AppendPublishResult::SnapshotRequired;
     auto item = std::make_shared<SessionOutputItem>();
     item->kind = SessionOutputItem::Kind::append;
     item->target = std::move(append.target);
     item->text = std::move(append.text);
     pending_ = std::move(item);
-    return cha::web::AppendPublishResult::Accepted;
+    return AppendPublishResult::Accepted;
 }
 
 } // namespace cha::app

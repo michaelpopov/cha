@@ -2,7 +2,7 @@
 
 #include <utility>
 
-namespace cha::web {
+namespace cha {
 
 bool CommandReply::complete(CommandSubmitResult result) {
     std::function<void()> callback;
@@ -50,27 +50,4 @@ void CommandReply::abandon() const {
     ready_callback_ = {};
 }
 
-CommandEnqueueResult CommandQueue::try_push(OwnerCommand command) {
-    std::lock_guard lock(mutex_);
-    if (commands_.size() == capacity_) {
-        return {};
-    }
-    const bool wake_owner = commands_.empty();
-    commands_.push_back(std::move(command));
-    return {
-        .accepted = true,
-        .wake_owner = wake_owner,
-    };
-}
-
-std::optional<OwnerCommand> CommandQueue::try_pop() {
-    std::lock_guard lock(mutex_);
-    if (commands_.empty()) {
-        return std::nullopt;
-    }
-    OwnerCommand command = std::move(commands_.front());
-    commands_.pop_front();
-    return command;
-}
-
-} // namespace cha::web
+} // namespace cha

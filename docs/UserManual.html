@@ -754,6 +754,11 @@
           While CHA is generating an answer, the Send button changes to
           <strong>Stop</strong>. Select it to stop generation.
         </p>
+        <p>
+          Switching to another session leaves the reply running in the background
+          and saves it when complete. Return to that session to read it or stop
+          generation. Switching vaults stops replies in the old vault.
+        </p>
 
         <h3>Use message controls</h3>
         <p>
@@ -884,8 +889,10 @@
         </div>
         <div class="warning">
           <p>
-            Saving character settings applies them to open conversations. If a reply
-            is being generated, that unfinished reply will be lost.
+            Changing a character's provider, reasoning effort, or web-search
+            settings stops replies in affected conversations, including those
+            running in the background. Changing only style or voice does not
+            stop generation.
           </p>
         </div>
       </section>
@@ -926,8 +933,8 @@
 
         <h3>Rename, protect, or remove a vault</h3>
         <p>
-          Select a vault under Settings → Vaults. Use the pencil beside the page
-          title to rename it. To encrypt an unprotected vault, select
+          Select a vault under Settings → Vaults. Use the pencil beside its name
+          on the detail screen to rename it. To encrypt an unprotected vault, select
           <strong>Protected vault</strong>, enter a password, and select
           <strong>Protect vault</strong>. Protection cannot be removed and the
           password cannot be changed in CHA. Keep it somewhere safe: CHA cannot
@@ -1033,8 +1040,8 @@
           </table>
         </div>
         <p>
-          The provider's name appears as the page title. Select the pencil beside
-          it to rename the provider without changing its identity.
+          Select the pencil beside the provider's name on its detail screen to
+          rename it without changing its identity.
         </p>
 
         <h3>Use a saved API key</h3>

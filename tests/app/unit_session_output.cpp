@@ -7,8 +7,6 @@
 namespace cha::app {
 namespace {
 
-using cha::web::SessionSnapshot;
-
 SessionSnapshot streaming_snapshot(std::string text = "a") {
     return {
         .transcript = {{
@@ -37,7 +35,7 @@ TEST(SessionOutput, MonotonicSequenceDoesNotResetOnLaterSnapshot) {
 
     EXPECT_EQ(
         output.publish_append({EntryTextTarget{42}, "b"}),
-        cha::web::AppendPublishResult::Accepted);
+        AppendPublishResult::Accepted);
     auto append = output.take();
     ASSERT_TRUE(append);
     EXPECT_EQ(append->kind, SessionOutputItem::Kind::append);
@@ -60,7 +58,7 @@ TEST(SessionOutput, DirtyProjectionWaitsForConsumerDemandAndAcknowledgement) {
     output.require_snapshot();
     for (int i = 0; i < 1000; ++i) {
         EXPECT_EQ(output.publish_append({EntryTextTarget{42}, "b"}),
-                  cha::web::AppendPublishResult::Accepted);
+                  AppendPublishResult::Accepted);
         EXPECT_FALSE(output.snapshot_needed());
     }
     EXPECT_FALSE(output.take());
@@ -89,10 +87,10 @@ TEST(SessionOutput, MergesCompatibleAppendsAndBoundsPendingBytes) {
 
     EXPECT_EQ(
         output.publish_append({EntryTextTarget{42}, "bb"}),
-        cha::web::AppendPublishResult::Accepted);
+        AppendPublishResult::Accepted);
     EXPECT_EQ(
         output.publish_append({EntryTextTarget{42}, "c"}),
-        cha::web::AppendPublishResult::Accepted);
+        AppendPublishResult::Accepted);
     auto merged = output.take();
     ASSERT_TRUE(merged);
     EXPECT_EQ(merged->text, "bbc");
@@ -100,13 +98,13 @@ TEST(SessionOutput, MergesCompatibleAppendsAndBoundsPendingBytes) {
 
     EXPECT_EQ(
         output.publish_append({EntryTextTarget{42}, "xxxx"}),
-        cha::web::AppendPublishResult::Accepted);
+        AppendPublishResult::Accepted);
     EXPECT_EQ(
         output.publish_append({EntryTextTarget{42}, "y"}),
-        cha::web::AppendPublishResult::SnapshotRequired);
+        AppendPublishResult::SnapshotRequired);
     EXPECT_EQ(
         output.publish_append({EntryTextTarget{42}, "zzzzz"}),
-        cha::web::AppendPublishResult::SnapshotRequired);
+        AppendPublishResult::SnapshotRequired);
 }
 
 TEST(SessionOutput, CloseKeepsTerminalPending) {

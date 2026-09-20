@@ -2,7 +2,7 @@
 
 #include "util/text.h"
 
-namespace cha::web {
+namespace cha {
 namespace {
 
 std::size_t skip_space(std::string_view input, std::size_t index) {
@@ -99,4 +99,4 @@ std::string_view multicast_parse_error_message(MulticastParseError error) {
     return "Malformed multicast command";
 }
 
-} // namespace cha::web
+} // namespace cha

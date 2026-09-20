@@ -19,7 +19,7 @@ inline std::string require_identifier(
     }
     const std::string& value =
         params[std::string(key)].get_ref<const std::string&>();
-    if (!cha::is_url_safe_identifier(value)) {
+    if (!is_url_safe_identifier(value)) {
         throw std::invalid_argument("The request was not valid.");
     }
     return value;

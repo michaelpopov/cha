@@ -57,7 +57,7 @@ TEST(BridgeProtocol, ParsesSubmitEnvelopeAndRejectsMalformedRequests) {
     const auto* method_error = std::get_if<ParseFailure>(&unknown_method);
     ASSERT_TRUE(method_error);
     EXPECT_EQ(method_error->id, 1U);
-    EXPECT_EQ(method_error->code, cha::web::ErrorCode::invalid_argument);
+    EXPECT_EQ(method_error->code, ErrorCode::invalid_argument);
     EXPECT_EQ(method_error->message, "That method is not available.");
 
     const auto extra_field = parse_request(
@@ -84,7 +84,7 @@ TEST(BridgeProtocol, ParsesSubmitEnvelopeAndRejectsMalformedRequests) {
     const auto too_large = parse_request("{}", 1);
     const auto* size_error = std::get_if<ParseFailure>(&too_large);
     ASSERT_TRUE(size_error);
-    EXPECT_EQ(size_error->code, cha::web::ErrorCode::body_too_large);
+    EXPECT_EQ(size_error->code, ErrorCode::body_too_large);
 }
 
 TEST(BridgeProtocol, EveryMethodMatchesTheSharedContextPolicy) {
@@ -114,7 +114,7 @@ TEST(BridgeProtocol, EveryMethodMatchesTheSharedContextPolicy) {
             const auto* failure = std::get_if<ParseFailure>(&parsed);
             ASSERT_TRUE(failure);
             EXPECT_EQ(failure->id, 1U);
-            EXPECT_EQ(failure->code, cha::web::ErrorCode::invalid_argument);
+            EXPECT_EQ(failure->code, ErrorCode::invalid_argument);
         }
     }
 }
@@ -126,7 +126,7 @@ TEST(BridgeProtocol, SerializesInfoRepliesEventsAndAcksAgainstFixtures) {
             "view-9",
             42,
             3,
-            cha::web::CommandResult{
+            CommandResult{
                 .session = {.notice = std::string("Saved")},
                 .clear_input = true}),
         load_fixture("native-reply-command.json"));
@@ -135,8 +135,8 @@ TEST(BridgeProtocol, SerializesInfoRepliesEventsAndAcksAgainstFixtures) {
             "view-9",
             42,
             3,
-            cha::web::ErrorCode::session_not_live,
-            public_error_message(cha::web::ErrorCode::session_not_live)),
+            ErrorCode::session_not_live,
+            public_error_message(ErrorCode::session_not_live)),
         load_fixture("native-reply-error.json"));
     EXPECT_EQ(
         session_event(

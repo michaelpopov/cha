@@ -9,7 +9,7 @@
 #include <string_view>
 #include <vector>
 
-namespace cha::web {
+namespace cha {
 
 struct R2DatabaseTransfer {
     std::uintmax_t byte_count{};
@@ -52,4 +52,4 @@ R2DatabaseTransfer download_new_database_from_r2(
     const R2StorageKey& storage,
     const std::function<bool()>& cancelled = {});
 
-} // namespace cha::web
+} // namespace cha

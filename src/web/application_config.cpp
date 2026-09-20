@@ -21,7 +21,7 @@
 #include <utility>
 #include <vector>
 
-namespace cha::web {
+namespace cha {
 namespace {
 
 struct ParsedOptions {
@@ -800,4 +800,4 @@ std::optional<std::filesystem::path> session_mirror_root(
     return vault.mirror;
 }
 
-} // namespace cha::web
+} // namespace cha

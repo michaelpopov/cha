@@ -127,7 +127,7 @@ struct ParsedRequest {
 
 struct ParseFailure {
     std::optional<std::uint64_t> id;
-    cha::web::ErrorCode code{cha::web::ErrorCode::invalid_argument};
+    ErrorCode code{ErrorCode::invalid_argument};
     std::string message;
 };
 
@@ -142,7 +142,7 @@ struct DeliveryAck {
 [[nodiscard]] std::string_view method_name(Method method) noexcept;
 [[nodiscard]] std::optional<Method> method_from_name(std::string_view name) noexcept;
 [[nodiscard]] std::optional<std::uint64_t> as_safe_uint(const nlohmann::json& value);
-[[nodiscard]] std::string_view public_error_message(cha::web::ErrorCode code) noexcept;
+[[nodiscard]] std::string_view public_error_message(ErrorCode code) noexcept;
 
 [[nodiscard]] std::variant<ParsedRequest, ParseFailure> parse_request(
     std::string_view text,
@@ -160,7 +160,7 @@ struct DeliveryAck {
     std::string_view connection_id,
     std::uint64_t id,
     std::uint64_t context_epoch,
-    cha::web::ErrorCode code,
+    ErrorCode code,
     std::string_view message);
 [[nodiscard]] nlohmann::json bridge_info_result(std::string_view platform);
 [[nodiscard]] nlohmann::json session_event(

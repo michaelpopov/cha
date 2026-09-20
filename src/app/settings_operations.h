@@ -17,50 +17,47 @@ namespace cha {
 class ApiKeyStore;
 class OpenAiOAuth;
 class WorkspaceConfigStore;
-}
-
-namespace cha::web {
 class LiveSessionManager;
 }
 
 namespace cha::app::settings {
 
-[[nodiscard]] cha::web::ProviderSummary provider_summary(
+[[nodiscard]] ProviderSummary provider_summary(
     const WorkspaceProvider& provider);
-[[nodiscard]] cha::web::ProviderDetail provider_detail(
+[[nodiscard]] ProviderDetail provider_detail(
     const WorkspaceProvider& provider,
     bool writable,
     std::vector<std::string> used_by,
     const ApiKeyStore& api_keys);
-[[nodiscard]] cha::web::StyleDetail style_detail(
+[[nodiscard]] StyleDetail style_detail(
     const WorkspaceStyle& style,
     bool writable,
     std::vector<std::string> used_by);
-[[nodiscard]] cha::web::VoiceDetail voice_detail(
+[[nodiscard]] VoiceDetail voice_detail(
     const WorkspaceVoice& voice,
     bool writable,
     std::vector<std::string> used_by);
-[[nodiscard]] cha::web::ApiKeyDetail api_key_detail(
+[[nodiscard]] ApiKeyDetail api_key_detail(
     const ApiKeyInfo& key,
     const Workspace& workspace);
-[[nodiscard]] cha::web::R2StorageDetail r2_storage_detail(
+[[nodiscard]] R2StorageDetail r2_storage_detail(
     const R2StorageInfo& key);
-[[nodiscard]] cha::web::OpenAiAuth openai_auth_from(
+[[nodiscard]] OpenAiAuth openai_auth_from(
     const OpenAiOAuthSnapshot& snapshot);
 
-[[nodiscard]] std::vector<cha::web::ProviderSummary> list_providers(
+[[nodiscard]] std::vector<ProviderSummary> list_providers(
     const Workspace& workspace);
-[[nodiscard]] cha::web::ProviderDetail get_provider(
+[[nodiscard]] ProviderDetail get_provider(
     const Workspace& workspace,
     std::string_view id,
     const ApiKeyStore& api_keys);
-[[nodiscard]] cha::web::ProviderDetail create_provider(
+[[nodiscard]] ProviderDetail create_provider(
     WorkspaceConfigStore& store,
     const ApiKeyStore& api_keys,
-    const cha::web::CreateProviderRequest& create);
-[[nodiscard]] cha::web::ProviderDetail update_provider(
+    const CreateProviderRequest& create);
+[[nodiscard]] ProviderDetail update_provider(
     WorkspaceConfigStore& store,
-    cha::web::LiveSessionManager& live_sessions,
+    LiveSessionManager& live_sessions,
     const ApiKeyStore& api_keys,
     std::string_view id,
     const nlohmann::json& body);
@@ -73,37 +70,37 @@ void test_provider(
     ApiKeyStore& api_keys,
     const std::atomic_bool& cancellation);
 
-[[nodiscard]] std::vector<cha::web::StyleDetail> list_styles(
+[[nodiscard]] std::vector<StyleDetail> list_styles(
     const Workspace& workspace);
-[[nodiscard]] cha::web::StyleDetail create_style(
+[[nodiscard]] StyleDetail create_style(
     WorkspaceConfigStore& store,
     std::string_view display_name);
-[[nodiscard]] cha::web::StyleDetail update_style(
+[[nodiscard]] StyleDetail update_style(
     WorkspaceConfigStore& store,
-    cha::web::LiveSessionManager& live_sessions,
+    LiveSessionManager& live_sessions,
     std::string_view id,
-    const cha::web::StyleUpdate& update);
+    const StyleUpdate& update);
 void delete_style(WorkspaceConfigStore& store, std::string_view id);
 
-[[nodiscard]] std::vector<cha::web::VoiceDetail> list_voices(
+[[nodiscard]] std::vector<VoiceDetail> list_voices(
     const Workspace& workspace);
-[[nodiscard]] cha::web::VoiceDetail create_voice(
+[[nodiscard]] VoiceDetail create_voice(
     WorkspaceConfigStore& store,
-    const cha::web::CreateVoiceRequest& create);
-[[nodiscard]] cha::web::VoiceDetail update_voice(
+    const CreateVoiceRequest& create);
+[[nodiscard]] VoiceDetail update_voice(
     WorkspaceConfigStore& store,
-    cha::web::LiveSessionManager& live_sessions,
+    LiveSessionManager& live_sessions,
     std::string_view id,
-    const cha::web::VoiceUpdate& update);
+    const VoiceUpdate& update);
 void delete_voice(WorkspaceConfigStore& store, std::string_view id);
 
-[[nodiscard]] std::optional<cha::web::VoiceInputSettings> get_voice_input_settings(
+[[nodiscard]] std::optional<VoiceInputSettings> get_voice_input_settings(
     const Workspace& workspace);
-[[nodiscard]] cha::web::VoiceInputSettings save_voice_input_settings(
+[[nodiscard]] VoiceInputSettings save_voice_input_settings(
     WorkspaceConfigStore& store,
     const ApiKeyStore& api_keys,
-    const cha::web::VoiceInputSettings& update);
-[[nodiscard]] std::optional<cha::web::VoiceInputRuntime> get_voice_input_runtime(
+    const VoiceInputSettings& update);
+[[nodiscard]] std::optional<VoiceInputRuntime> get_voice_input_runtime(
     const Workspace& workspace,
     const ApiKeyStore& api_keys,
     bool voice_enabled);
@@ -112,50 +109,50 @@ void delete_voice(WorkspaceConfigStore& store, std::string_view id);
     const ApiKeyStore& api_keys,
     bool voice_enabled);
 
-[[nodiscard]] std::optional<cha::web::VoiceOutputSettings> get_voice_output_settings(
+[[nodiscard]] std::optional<VoiceOutputSettings> get_voice_output_settings(
     const Workspace& workspace);
-[[nodiscard]] cha::web::VoiceOutputSettings save_voice_output_settings(
+[[nodiscard]] VoiceOutputSettings save_voice_output_settings(
     WorkspaceConfigStore& store,
     const ApiKeyStore& api_keys,
-    const cha::web::VoiceOutputSettings& update);
-[[nodiscard]] std::optional<cha::web::VoiceOutputRuntime> get_voice_output_runtime(
+    const VoiceOutputSettings& update);
+[[nodiscard]] std::optional<VoiceOutputRuntime> get_voice_output_runtime(
     const Workspace& workspace,
     const ApiKeyStore& api_keys,
     bool voice_enabled);
 
-[[nodiscard]] std::vector<cha::web::ApiKeyDetail> list_api_keys(
+[[nodiscard]] std::vector<ApiKeyDetail> list_api_keys(
     const Workspace& workspace,
     const ApiKeyStore& api_keys);
-[[nodiscard]] cha::web::ApiKeyDetail create_api_key(
+[[nodiscard]] ApiKeyDetail create_api_key(
     const Workspace& workspace,
     ApiKeyStore& api_keys,
-    const cha::web::CreateApiKeyRequest& create);
-[[nodiscard]] cha::web::ApiKeyDetail rename_api_key(
+    const CreateApiKeyRequest& create);
+[[nodiscard]] ApiKeyDetail rename_api_key(
     const Workspace& workspace,
     ApiKeyStore& api_keys,
     std::string_view id,
     std::string_view display_name);
-[[nodiscard]] cha::web::ApiKeyDetail replace_api_key_value(
+[[nodiscard]] ApiKeyDetail replace_api_key_value(
     const Workspace& workspace,
     ApiKeyStore& api_keys,
     std::string_view id,
     std::string_view value);
 void delete_api_key(ApiKeyStore& api_keys, std::string_view id);
 
-[[nodiscard]] std::optional<cha::web::R2StorageDetail> get_r2_storage(
+[[nodiscard]] std::optional<R2StorageDetail> get_r2_storage(
     const ApiKeyStore& api_keys);
-[[nodiscard]] cha::web::R2StorageDetail save_r2_storage(
+[[nodiscard]] R2StorageDetail save_r2_storage(
     ApiKeyStore& api_keys,
-    const cha::web::SaveR2StorageRequest& request);
+    const SaveR2StorageRequest& request);
 void delete_r2_storage(ApiKeyStore& api_keys);
 
-[[nodiscard]] cha::web::OpenAiAuth openai_auth_status(const OpenAiOAuth& owner);
-[[nodiscard]] cha::web::OpenAiAuth start_openai_auth(
+[[nodiscard]] OpenAiAuth openai_auth_status(const OpenAiOAuth& owner);
+[[nodiscard]] OpenAiAuth start_openai_auth(
     OpenAiOAuth& owner,
     const std::atomic_bool& cancelled);
-[[nodiscard]] cha::web::OpenAiAuth poll_openai_auth(
+[[nodiscard]] OpenAiAuth poll_openai_auth(
     OpenAiOAuth& owner,
     const std::atomic_bool& cancelled);
-[[nodiscard]] cha::web::OpenAiAuth disconnect_openai_auth(OpenAiOAuth& owner);
+[[nodiscard]] OpenAiAuth disconnect_openai_auth(OpenAiOAuth& owner);
 
 } // namespace cha::app::settings

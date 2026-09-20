@@ -18,15 +18,6 @@ namespace cha::app {
 namespace {
 
 using namespace std::chrono_literals;
-using cha::MockHttpServer;
-using cha::http_response;
-using cha::web::ApplicationCommand;
-using cha::web::ErrorCode;
-using cha::web::load_configuration_directory;
-using cha::web::find_vault;
-using cha::web::VaultDefinition;
-using cha::web::ConfigurationDirectory;
-
 
 ApplicationCommand make_command(
     const test::TestWorkspace& workspace,
