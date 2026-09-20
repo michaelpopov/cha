@@ -76,16 +76,13 @@ describe('voice input', () => {
       close() { this.connectionState = 'closed'; }
     }
     vi.stubGlobal('RTCPeerConnection', FakePeerConnection);
-    const fetcher = vi.fn().mockResolvedValue({
-      ok: true,
-      text: async () => 'test answer',
+    const connect = vi.fn(async (_sdp: string, languages: string[]) => {
+      expect(languages).toEqual(['ru', 'en']);
+      return 'test answer';
     });
-    vi.stubGlobal('fetch', fetcher);
     const received: string[] = [];
     const session = await VoiceInputSession.start(
       {
-        url: 'https://api.openai.com/v1/realtime/calls',
-        apiKey: 'secret',
         model: 'gpt-live-transcribe',
         delay: 'xhigh',
         prompt: 'A discussion about software architecture.',
@@ -93,28 +90,12 @@ describe('voice input', () => {
       },
       (text) => received.push(text),
       () => {},
+      connect,
     );
 
-    expect(fetcher).toHaveBeenCalledOnce();
-    const request = fetcher.mock.calls[0];
-    expect(request[0]).toBe('https://api.openai.com/v1/realtime/calls');
-    expect(request[1].headers).toEqual({ Authorization: 'Bearer secret' });
-    const body = request[1].body as FormData;
-    expect(body.get('sdp')).toBe('test offer');
-    expect(JSON.parse(body.get('session') as string)).toEqual({
-      type: 'transcription',
-      audio: {
-        input: {
-          transcription: {
-            model: 'gpt-live-transcribe',
-            prompt: 'A discussion about software architecture.',
-            languages: ['ru', 'en'],
-            delay: 'xhigh',
-          },
-          turn_detection: null,
-        },
-      },
-    });
+    expect(connect).toHaveBeenCalledWith(
+      'test offer', ['ru', 'en'], expect.any(AbortSignal),
+    );
 
     channel.message({
       type: 'conversation.item.input_audio_transcription.delta', delta: 'Hello',
@@ -175,14 +156,13 @@ describe('voice input', () => {
     vi.stubGlobal('RTCPeerConnection', FakePeerConnection);
     const fetcher = vi.fn();
     vi.stubGlobal('fetch', fetcher);
-    const connect = vi.fn(async (sdp: string) => {
+    const connect = vi.fn(async (sdp: string, languages: string[]) => {
       expect(sdp).toBe('native offer');
+      expect(languages).toEqual([]);
       return 'native answer';
     });
     const session = await VoiceInputSession.start(
       {
-        url: 'https://api.openai.com/v1/realtime',
-        apiKey: '',
         model: 'gpt-4o-transcribe',
         delay: 'low',
         prompt: '',
@@ -195,5 +175,55 @@ describe('voice input', () => {
     expect(connect).toHaveBeenCalledOnce();
     session.cancel();
     expect(stopTrack).toHaveBeenCalled();
+  });
+
+  it('cancels native setup and microphone capture before start resolves', async () => {
+    const stopTrack = vi.fn();
+    const audioTrack = { kind: 'audio', stop: stopTrack } as unknown as MediaStreamTrack;
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia: vi.fn(async () => ({
+        getAudioTracks: () => [audioTrack],
+        getTracks: () => [audioTrack],
+      })) },
+    });
+    class FakeDataChannel extends EventTarget {
+      readyState: RTCDataChannelState = 'connecting';
+      send() {}
+      close() { this.readyState = 'closed'; }
+    }
+    const closePeer = vi.fn();
+    class FakePeerConnection extends EventTarget {
+      connectionState: RTCPeerConnectionState = 'new';
+      addTrack = vi.fn();
+      createDataChannel() { return new FakeDataChannel() as unknown as RTCDataChannel; }
+      async createOffer() {
+        return { type: 'offer', sdp: 'pending offer' } as RTCSessionDescriptionInit;
+      }
+      async setLocalDescription() {}
+      async setRemoteDescription() {}
+      close() { closePeer(); this.connectionState = 'closed'; }
+    }
+    vi.stubGlobal('RTCPeerConnection', FakePeerConnection);
+    const connect = vi.fn((_sdp: string, _languages: string[], signal: AbortSignal) => (
+      new Promise<string>((_resolve, reject) => {
+        signal.addEventListener('abort', () => (
+          reject(new DOMException('Aborted', 'AbortError'))
+        ));
+      })
+    ));
+    const controller = new AbortController();
+    const starting = VoiceInputSession.start(
+      { model: 'gpt-4o-transcribe', delay: 'low', prompt: '' },
+      () => {},
+      () => {},
+      connect,
+      controller.signal,
+    );
+    await vi.waitFor(() => expect(connect).toHaveBeenCalledOnce());
+    controller.abort();
+    await expect(starting).rejects.toMatchObject({ name: 'AbortError' });
+    expect(stopTrack).toHaveBeenCalledOnce();
+    expect(closePeer).toHaveBeenCalledOnce();
   });
 });

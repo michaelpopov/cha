@@ -84,6 +84,21 @@ std::size_t receive_body(
     return bytes;
 }
 
+int transfer_progress(
+    void* user,
+    curl_off_t,
+    curl_off_t,
+    curl_off_t,
+    curl_off_t) noexcept {
+    const auto& cancelled =
+        *static_cast<const std::function<bool()>*>(user);
+    try {
+        return cancelled && cancelled() ? 1 : 0;
+    } catch (...) {
+        return 1;
+    }
+}
+
 OpenAiOAuthHttpResponse production_post(const OpenAiOAuthHttpRequest& request) {
     if (request.timeout <= std::chrono::milliseconds{0}) {
         throw std::runtime_error(login_timed_out);
@@ -120,6 +135,11 @@ OpenAiOAuthHttpResponse production_post(const OpenAiOAuthHttpRequest& request) {
     require_curl(curl_easy_setopt(curl.get(), CURLOPT_FOLLOWLOCATION, 0L));
     require_curl(curl_easy_setopt(curl.get(), CURLOPT_SSL_VERIFYPEER, 1L));
     require_curl(curl_easy_setopt(curl.get(), CURLOPT_SSL_VERIFYHOST, 2L));
+    require_curl(curl_easy_setopt(curl.get(), CURLOPT_NOPROGRESS, 0L));
+    require_curl(curl_easy_setopt(
+        curl.get(), CURLOPT_XFERINFOFUNCTION, transfer_progress));
+    require_curl(curl_easy_setopt(
+        curl.get(), CURLOPT_XFERINFODATA, &request.cancelled));
 
     const CURLcode result = curl_easy_perform(curl.get());
     if (result != CURLE_OK) {
@@ -384,7 +404,7 @@ OpenAiOAuthSnapshot OpenAiOAuth::status() const {
     return snapshot_unlocked();
 }
 
-OpenAiOAuthSnapshot OpenAiOAuth::start() {
+OpenAiOAuthSnapshot OpenAiOAuth::start(std::function<bool()> cancelled) {
     std::lock_guard lock(mutex_);
     discard_expired_attempt_unlocked();
     if (pending_) return snapshot_unlocked();
@@ -403,7 +423,8 @@ OpenAiOAuthSnapshot OpenAiOAuth::start() {
             start_path,
             json_content_type,
             dump_json(body, "OpenAI login request"),
-            deadline);
+            deadline,
+            cancelled);
     } catch (const std::runtime_error& error) {
         error_ = std::string(error.what()) == login_timed_out
             ? login_timed_out
@@ -437,7 +458,7 @@ OpenAiOAuthSnapshot OpenAiOAuth::start() {
     return snapshot_unlocked();
 }
 
-OpenAiOAuthSnapshot OpenAiOAuth::poll() {
+OpenAiOAuthSnapshot OpenAiOAuth::poll(std::function<bool()> cancelled) {
     std::lock_guard lock(mutex_);
     discard_expired_attempt_unlocked();
     if (!pending_) return snapshot_unlocked();
@@ -456,7 +477,8 @@ OpenAiOAuthSnapshot OpenAiOAuth::poll() {
             poll_path,
             json_content_type,
             dump_json(body, "OpenAI login poll"),
-            deadline);
+            deadline,
+            cancelled);
     } catch (const std::runtime_error& error) {
         pending_.reset();
         error_ = std::string(error.what()) == login_timed_out
@@ -474,7 +496,7 @@ OpenAiOAuthSnapshot OpenAiOAuth::poll() {
     const auto code_verifier = nonempty_string(object, "code_verifier");
     if (authorization_code && code_verifier) {
         if (!finish_login_unlocked(
-                *authorization_code, *code_verifier, deadline)) {
+                *authorization_code, *code_verifier, deadline, cancelled)) {
             return snapshot_unlocked();
         }
         log_info("OpenAI device login succeeded");
@@ -660,9 +682,10 @@ OpenAiOAuthHttpResponse OpenAiOAuth::post_unlocked(
     std::string_view path,
     std::string_view content_type,
     std::string body,
-    std::chrono::system_clock::time_point deadline) {
+    std::chrono::system_clock::time_point deadline,
+    const std::function<bool()>& cancelled) {
     const auto now = clock_();
-    if (now >= deadline) {
+    if (now >= deadline || (cancelled && cancelled())) {
         throw std::runtime_error(login_timed_out);
     }
     auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -675,13 +698,15 @@ OpenAiOAuthHttpResponse OpenAiOAuth::post_unlocked(
         .content_type = std::string(content_type),
         .body = std::move(body),
         .timeout = remaining,
+        .cancelled = cancelled,
     });
 }
 
 bool OpenAiOAuth::finish_login_unlocked(
     std::string authorization_code,
     std::string code_verifier,
-    std::chrono::system_clock::time_point deadline) {
+    std::chrono::system_clock::time_point deadline,
+    const std::function<bool()>& cancelled) {
     const std::string body = form_encode({
         {"grant_type", "authorization_code"},
         {"client_id", client_id},
@@ -691,7 +716,8 @@ bool OpenAiOAuth::finish_login_unlocked(
     });
     OpenAiOAuthHttpResponse response;
     try {
-        response = post_unlocked(token_path, form_content_type, body, deadline);
+        response = post_unlocked(
+            token_path, form_content_type, body, deadline, cancelled);
     } catch (const std::runtime_error& error) {
         pending_.reset();
         error_ = std::string(error.what()) == login_timed_out

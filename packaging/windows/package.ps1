@@ -111,7 +111,7 @@ try {
     Invoke-Native 'cmake' @(
         '--build', $nativeBuild,
         '--config', 'Release',
-        '--target', 'cha_windows_app', 'cha_windows_test_app'
+        '--target', 'cha_windows_app', 'cha_windows_test_app', 'cha_prepare_test_vault'
     ) $repository
 
     Write-Host '==> Assembling portable application'
@@ -166,6 +166,17 @@ try {
     if ($smoke.ExitCode -ne 0) {
         throw "The native application smoke test failed with exit code $($smoke.ExitCode)."
     }
+
+    Write-Host '==> Exercising the assembled application through WebView2 and the native runtime'
+    Invoke-Native 'powershell.exe' @(
+        '-NoProfile',
+        '-ExecutionPolicy', 'Bypass',
+        '-File', (Join-Path $repository 'tests\native\windows\run.ps1'),
+        '-Expect', 'pass',
+        '-Executable', (Join-Path $testApplication 'CHATest.exe'),
+        '-Assets', (Join-Path $testApplication 'web'),
+        '-PrepareVault', (Join-Path $nativeBuild 'Release\cha_prepare_test_vault.exe')
+    ) $repository
 
     Write-Host '==> Rejecting development and automation hooks in the shipping binary'
     $reject = Start-Process -FilePath (Join-Path $application 'CHA.exe') -ArgumentList @('--cdp-port', '9222') -PassThru -Wait -WindowStyle Hidden

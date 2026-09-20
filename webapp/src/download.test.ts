@@ -4,7 +4,7 @@ import { saveMarkdownDownload, sessionMarkdownFilename } from './download';
 
 afterEach(() => {
   Reflect.deleteProperty(window, 'showSaveFilePicker');
-  Reflect.deleteProperty(window, '__CHA_NATIVE_SAVE_TEXT__');
+  Reflect.deleteProperty(window, '__CHA_NATIVE_SAVE_SESSION__');
   vi.restoreAllMocks();
 });
 
@@ -25,7 +25,7 @@ describe('session Markdown downloads', () => {
     });
     Object.defineProperty(window, 'showSaveFilePicker', { configurable: true, value: picker });
 
-    await saveMarkdownDownload('Planning', async () => {
+    await saveMarkdownDownload('Planning', 'lobby', 'planning', async () => {
       order.push('load');
       return '# Planning\n';
     });
@@ -37,12 +37,14 @@ describe('session Markdown downloads', () => {
 
   it('uses the native save action when the host provides one', async () => {
     const save = vi.fn(async () => undefined);
-    Object.defineProperty(window, '__CHA_NATIVE_SAVE_TEXT__', {
+    Object.defineProperty(window, '__CHA_NATIVE_SAVE_SESSION__', {
       configurable: true,
       value: save,
     });
-    await saveMarkdownDownload('Planning', async () => '# Planning\n');
-    expect(save).toHaveBeenCalledWith('Planning.md', '# Planning\n');
+    const load = vi.fn(async () => '# Planning\n');
+    await saveMarkdownDownload('Planning', 'lobby', 'planning', load);
+    expect(save).toHaveBeenCalledWith('Planning.md', 'lobby', 'planning');
+    expect(load).not.toHaveBeenCalled();
   });
 
   it('does not load anything when the save dialog is cancelled', async () => {
@@ -51,7 +53,7 @@ describe('session Markdown downloads', () => {
       value: vi.fn(async () => { throw new DOMException('Cancelled', 'AbortError'); }),
     });
     const load = vi.fn(async () => '# Planning\n');
-    await saveMarkdownDownload('Planning', load);
+    await saveMarkdownDownload('Planning', 'lobby', 'planning', load);
     expect(load).not.toHaveBeenCalled();
   });
 });

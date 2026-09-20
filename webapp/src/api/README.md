@@ -1,15 +1,7 @@
-# Browser API boundary
+# Web API boundary
 
-Generated OpenAPI declarations and the hand-written HTTP client live here. The
-client owns every JSON URL, request header, request body, success parse, and API
-error conversion; browser components do not call `fetch` or construct API URLs.
-Stored-session creation, rename, recoverable deletion, and open are all exposed
-through this boundary; deletion treats its successful `204` as an empty response.
-`switchVault` is the same kind of empty `204` mutation: it posts
-`{"vault_name":"..."}` to `/api/v1/vault/switch` and returns nothing on
-success.
-`events.ts` provides the typed native `EventSource` boundary. It reports a
-generic stream failure so later recovery can probe the ordinary snapshot API,
-and separately reports the `superseded` record the server writes when the
-reader opened this session on another device, which parks the page instead of
-reconnecting.
+Generated DTO declarations and the hand-written application client live here.
+`nativeClient.ts` maps the host request/reply bridge onto `ChaClient`, while
+components only depend on that typed interface. `nativeEvents.ts` performs the
+same job for scoped session subscriptions. Browser code fetches only temporary
+local media resource URLs issued by the host.

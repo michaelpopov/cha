@@ -279,4 +279,26 @@ void Providers::shutdown() noexcept {
     });
 }
 
+bool Providers::shutdown_until(
+    std::chrono::steady_clock::time_point deadline) noexcept {
+    const std::shared_ptr<Registry> registry = registry_;
+    std::vector<std::shared_ptr<ProviderRequest>> active;
+    {
+        std::lock_guard lock(registry->mutex);
+        registry->admitting = false;
+        active.reserve(registry->active.size());
+        for (const auto& [_, request] : registry->active) {
+            active.push_back(request);
+        }
+    }
+    for (const std::shared_ptr<ProviderRequest>& request : active) {
+        request->cancel();
+    }
+
+    std::unique_lock lock(registry->mutex);
+    return registry->empty.wait_until(lock, deadline, [registry] {
+        return registry->active.empty() && registry->diagnostic_tails == 0;
+    });
+}
+
 } // namespace cha

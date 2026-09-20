@@ -75,12 +75,13 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
     private var webViewTitleObservation: NSKeyValueObservation?
     private var runtime: OpaquePointer?
     private var runtimeURL: URL?
-    private var runtimeToken = ""
     private var importMenuItem: NSMenuItem!
     private var exportMenuItem: NSMenuItem!
     private var uploadMenuItem: NSMenuItem!
     private var downloadMenuItem: NSMenuItem!
     private var downloadDestinations: [ObjectIdentifier: DownloadDestination] = [:]
+    private let nativeFileOperations = DispatchGroup()
+    private var savePanel: NSSavePanel?
     private var databaseOperationInProgress = false
     private var terminationPending = false
     private var quitting = false
@@ -282,7 +283,6 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
         guard let resources = Bundle.main.resourceURL else {
             throw LauncherError.incompleteApplication
         }
-        runtimeToken = UUID().uuidString + UUID().uuidString
         var requirementError: UnsafeMutablePointer<CChar>?
         var vaultName: UnsafeMutablePointer<CChar>?
         let passwordRequired = supportDirectory.path.withCString { configPath in
@@ -307,7 +307,7 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
             var passwordError: Int32 = 0
             let created = supportDirectory.path.withCString { configPath in
                 resources.path.withCString { resourcePath in
-                    runtimeToken.withCString { token in
+                    "".withCString { token in
                         password.withCString { passwordValue in
                             cha_runtime_create(
                                 configPath,
@@ -351,9 +351,15 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
         attachWebView(view)
         if let runtime {
             let receiver = ChaNativeBridgeReceiver(runtime: runtime)
-            receiver.saveText = { [weak self] id, suggestedName, contents in
-                self?.saveNativeText(
-                    id: id, suggestedName: suggestedName, contents: contents)
+            receiver.saveSession = {
+                [weak self] connectionId, id, contextEpoch, suggestedName, forumId, sessionId in
+                self?.saveNativeSession(
+                    connectionId: connectionId,
+                    id: id,
+                    contextEpoch: contextEpoch,
+                    suggestedName: suggestedName,
+                    forumId: forumId,
+                    sessionId: sessionId)
             }
             receiver.attach(to: view, mediaHandler: built.1)
             nativeBridge = receiver
@@ -610,45 +616,93 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
         download.delegate = self
     }
 
-    private func saveNativeText(id: String, suggestedName: String, contents: String) {
-        guard let runtime else {
-            nativeBridge?.completeSave(id: id, ok: false, message: "unavailable")
+    private func saveNativeSession(
+        connectionId: String,
+        id: String,
+        contextEpoch: UInt64,
+        suggestedName: String,
+        forumId: String,
+        sessionId: String
+    ) {
+        guard !quitting, savePanel == nil, let runtime else {
+            nativeBridge?.completeSave(
+                connectionId: connectionId,
+                id: id,
+                ok: false,
+                message: "unavailable")
             return
         }
-        var epoch: UInt64 = 0
-        if cha_runtime_context_epoch(runtime, &epoch) == 0 {
-            nativeBridge?.completeSave(id: id, ok: false, message: "unavailable")
+        var currentEpoch: UInt64 = 0
+        if cha_runtime_context_epoch(runtime, &currentEpoch) == 0
+            || currentEpoch != contextEpoch {
+            nativeBridge?.completeSave(
+                connectionId: connectionId,
+                id: id,
+                ok: false,
+                message: "unavailable")
             return
         }
         let panel = NSSavePanel()
+        savePanel = panel
         panel.nameFieldStringValue = suggestedName
         panel.beginSheetModal(for: window) { [weak self] result in
             guard let self else { return }
+            if self.savePanel === panel { self.savePanel = nil }
+            guard !self.quitting else { return }
+            guard self.isCurrentNativeDocument(
+                connectionId: connectionId,
+                contextEpoch: contextEpoch) else { return }
             guard result == .OK, let destination = panel.url else {
-                self.nativeBridge?.completeSave(id: id, ok: true, message: "cancelled")
+                self.nativeBridge?.completeSave(
+                    connectionId: connectionId,
+                    id: id,
+                    ok: true,
+                    message: "cancelled")
                 return
             }
-            let capturedEpoch = epoch
             let path = destination.path
+            self.nativeFileOperations.enter()
+            let operations = self.nativeFileOperations
             DispatchQueue.global(qos: .userInitiated).async {
+                defer { operations.leave() }
                 var error: UnsafeMutablePointer<CChar>?
-                let status = contents.withCString { bytes in
-                    cha_runtime_save_file(
-                        runtime,
-                        capturedEpoch,
-                        path,
-                        bytes,
-                        UInt64(contents.utf8.count),
-                        &error)
+                let status = forumId.withCString { forum in
+                    sessionId.withCString { session in
+                        cha_runtime_export_session(
+                            runtime,
+                            contextEpoch,
+                            forum,
+                            session,
+                            path,
+                            &error)
+                    }
                 }
                 let message = error.map { String(cString: $0) } ?? ""
                 cha_string_free(error)
                 DispatchQueue.main.async {
+                    guard self.isCurrentNativeDocument(
+                        connectionId: connectionId,
+                        contextEpoch: contextEpoch) else { return }
                     self.nativeBridge?.completeSave(
-                        id: id, ok: status == 1, message: message)
+                        connectionId: connectionId,
+                        id: id,
+                        ok: status == 1,
+                        message: message)
                 }
             }
         }
+    }
+
+    private func isCurrentNativeDocument(
+        connectionId: String,
+        contextEpoch: UInt64
+    ) -> Bool {
+        guard nativeBridge?.connectionId == connectionId, let runtime else {
+            return false
+        }
+        var currentEpoch: UInt64 = 0
+        return cha_runtime_context_epoch(runtime, &currentEpoch) != 0
+            && currentEpoch == contextEpoch
     }
 
     @available(macOS 11.3, *)
@@ -713,6 +767,10 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
     }
 
     private func shutdownRuntimeThen(_ completion: @escaping () -> Void) {
+        if let panel = savePanel {
+            savePanel = nil
+            panel.cancel(nil)
+        }
         nativeBridge?.detach()
         nativeBridge = nil
         guard let runtime else {
@@ -721,8 +779,29 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
         }
         cha_runtime_request_shutdown(runtime)
         let handle = RuntimeHandle(pointer: runtime)
+        let operations = nativeFileOperations
+        let deadline = DispatchTime.now() + .seconds(10)
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            _ = cha_runtime_join_shutdown(handle.pointer, 10000)
+            if operations.wait(timeout: deadline) == .timedOut {
+                FileHandle.standardError.write(
+                    Data("CHA shutdown timed out waiting for a file operation\n".utf8))
+                _exit(EXIT_FAILURE)
+            }
+            let now = DispatchTime.now().uptimeNanoseconds
+            guard now < deadline.uptimeNanoseconds else {
+                _exit(EXIT_FAILURE)
+            }
+            let remainingNanoseconds = deadline.uptimeNanoseconds - now
+            let remainingMilliseconds = min(
+                UInt64(Int32.max),
+                (remainingNanoseconds + 999_999) / 1_000_000)
+            guard cha_runtime_join_shutdown(
+                handle.pointer,
+                Int32(remainingMilliseconds)) != 0 else {
+                FileHandle.standardError.write(
+                    Data("CHA application shutdown timed out\n".utf8))
+                _exit(EXIT_FAILURE)
+            }
             DispatchQueue.main.async {
                 cha_runtime_destroy(handle.pointer)
                 self?.runtime = nil

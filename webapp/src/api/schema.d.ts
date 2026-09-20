@@ -296,7 +296,6 @@ export interface components {
         VoiceInputRuntime: {
             url: string;
             model: string;
-            api_key: string;
             /** @enum {string} */
             delay: "low" | "medium" | "high" | "xhigh";
             prompt: string;

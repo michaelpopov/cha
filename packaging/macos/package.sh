@@ -91,6 +91,7 @@ cmake -S "$repository" -B "$native_build" -G Ninja \
     -DCMAKE_OSX_ARCHITECTURES=arm64 \
     -DCMAKE_OSX_DEPLOYMENT_TARGET="$deployment_target" \
     -DBUILD_TESTING=OFF \
+    -DCHA_PACKAGE_VERSION="$version" \
     -DOPENSSL_USE_STATIC_LIBS=TRUE
 cmake --build "$native_build" --target cha_macos_runtime
 

@@ -28,13 +28,6 @@ import {
 } from '../state/route';
 import { consumeVoiceSettingsRestore } from '../state/voiceSettingsReload';
 import {
-  isSessionLimit,
-  movedMessage,
-  recoverSessionStream,
-  reconnectingMessage,
-  sessionProbe,
-} from '../state/sessionRecovery';
-import {
   appReducer,
   initialAppState,
   navigationTitle,
@@ -91,6 +84,8 @@ import {
 } from './Settings';
 
 export const liveRetryDelays = [250, 500, 1_000, 2_000, 4_000] as const;
+const reconnectingMessage = 'Reconnecting live updates…';
+const movedMessage = 'This conversation moved to another device';
 
 interface ScreenProps extends ChatActions {
   playbackPositions: Map<string, Map<number, number>>;
@@ -477,7 +472,6 @@ interface AppProps {
   connectSessionEvents?: SessionEventsConnector;
   retryDelays?: readonly number[];
   reload?: () => void;
-  streamRecovery?: 'http' | 'replace';
 }
 
 interface AttachedStream {
@@ -486,8 +480,8 @@ interface AttachedStream {
   generation: number;
 }
 
-// Marks a ladder as running, so the attach effect leaves the conversation
-// alone and a second failure cannot start a competing one.
+// Marks the single replacement subscription as running, so another failure
+// cannot start a competing replacement.
 interface RecoveryRun {
   forumId: string;
   sessionId: string;
@@ -508,6 +502,10 @@ function isRetryableSessionOpen(failure: unknown): failure is ChaError {
   );
 }
 
+function isSessionLimit(failure: unknown): failure is ChaError {
+  return failure instanceof ChaError && failure.code === 'session_limit_reached';
+}
+
 function closedEvents(): SessionEventConnection {
   return { close() {} };
 }
@@ -517,7 +515,6 @@ export function App({
   connectSessionEvents = () => closedEvents(),
   retryDelays = liveRetryDelays,
   reload = defaultReload,
-  streamRecovery = 'replace',
 }: AppProps) {
   const [state, dispatch] = useReducer(appReducer, initialAppState);
   const [initialRouteReady, setInitialRouteReady] = useState(false);
@@ -666,8 +663,8 @@ export function App({
     return liveGeneration.current;
   }, [cancelRetryTimer]);
 
-  // `onSettled` belongs to the ladder, which needs to know whether this stream
-  // reached its first snapshot. Without one, a failure simply starts recovery.
+  // `onSettled` belongs to a replacement attempt, which needs to know whether
+  // this stream reached its first snapshot. Without one, a failure starts one.
   const connectStream = useCallback((
     forumId: string,
     sessionId: string,
@@ -703,7 +700,7 @@ export function App({
           // The reader picked this session up on another device. Recovering
           // here would take it straight back, so this page parks instead and
           // waits for the reader to ask for it again. Ending the generation is
-          // what parks it: a ladder in flight, and the late failure callback of
+          // what parks it: a replacement in flight, and the late failure callback of
           // a stream that had already connected, both belong to that
           // generation and would otherwise reconnect behind the notice.
           if (failure.kind === 'superseded') {
@@ -733,7 +730,7 @@ export function App({
     }
   }, [cancelRetryTimer, connectSessionEvents, detachStream]);
 
-  // One ladder rung's attach: resolves true when the new stream delivers its
+  // One replacement attach: resolves true when the new stream delivers its
   // first snapshot, false when it fails first. A failure after that belongs to
   // a conversation that was working, so it starts recovery afresh.
   const attachStream = useCallback((
@@ -757,35 +754,19 @@ export function App({
     sessionId: string,
     generation: number,
   ) => {
-    // A ladder already running for this live session owns the retries; a
+    // A replacement already running for this live session owns recovery; a
     // stale generation belongs to a conversation the user has left.
     if (liveGeneration.current !== generation || recovery.current) return;
-    if (streamRecovery === 'replace') {
-      connectStream(forumId, sessionId, generation, true);
-      return;
-    }
     const run: RecoveryRun = { forumId, sessionId, generation };
     recovery.current = run;
     const cancelled = () => recovery.current !== run
       || liveGeneration.current !== generation;
     dispatch({ type: 'stream-state', status: 'reconnecting', message: reconnectingMessage });
 
-    void recoverSessionStream(retryDelays, {
-      cancelled,
-      probe: sessionProbe({
-        client,
-        forumId,
-        sessionId,
-        cancelled,
-        onSnapshot: (snapshot) => dispatch({ type: 'session-snapshot', snapshot }),
-      }),
-      report: (message) => dispatch({ type: 'stream-state', status: 'reconnecting', message }),
-      wait: (milliseconds) => waitForRetry(milliseconds, generation),
-      attach: () => attachStream(forumId, sessionId, generation),
-    }).then((outcome) => {
+    void attachStream(forumId, sessionId, generation).then((connected) => {
       if (cancelled()) return;
       recovery.current = null;
-      if (outcome === 'retry') {
+      if (!connected) {
         dispatch({
           type: 'stream-state',
           status: 'retry',
@@ -793,7 +774,7 @@ export function App({
         });
       }
     });
-  }, [attachStream, client, connectStream, retryDelays, streamRecovery, waitForRetry]);
+  }, [attachStream]);
 
   // A stream error is the only caller, and a stream cannot exist before the
   // effects of the commit that created it have run, so publishing the current
@@ -963,6 +944,7 @@ export function App({
 
   const switchVault = useCallback(async (vaultName: string, password?: string) => {
     await client.switchVault(vaultName, password);
+    writeAppRoute('/', 'replace');
     reload();
   }, [client, reload]);
 
@@ -1073,6 +1055,8 @@ export function App({
   ) => {
     await saveMarkdownDownload(
       label,
+      forumId,
+      sessionId,
       () => client.downloadSession(forumId, sessionId),
     );
   }, [client]);

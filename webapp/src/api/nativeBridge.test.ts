@@ -21,6 +21,51 @@ function loadFixture(name: string): unknown {
 }
 
 describe('native bridge', () => {
+  it('does not post an invocation that was already aborted', async () => {
+    const posts: unknown[] = [];
+    const bridge = createEnvelopeNativeBridge({
+      connectionId: 'view-9',
+      post: (message) => posts.push(message),
+    });
+    const cancellation = new AbortController();
+    cancellation.abort();
+
+    await expect(bridge.invoke('session.submit', {}, {
+      signal: cancellation.signal,
+      cancelMethod: 'request.cancel',
+    })).rejects.toMatchObject({ name: 'AbortError' });
+    expect(posts).toEqual([]);
+  });
+
+  it('replays an early receiver failure and only aliases session events', () => {
+    const bridge = createEnvelopeNativeBridge({
+      connectionId: 'view-9',
+      post: () => {},
+    });
+    bridge.receive({ invalid: true });
+    const onReceiverError = vi.fn();
+    bridge.on('receiver-error', onReceiverError);
+    expect(onReceiverError).toHaveBeenCalledOnce();
+
+    const onSession = vi.fn();
+    const onContextChanged = vi.fn();
+    bridge.on('session', onSession);
+    bridge.on('app.contextChanged', onContextChanged);
+    bridge.receive({
+      connection_id: 'view-9',
+      delivery_id: 1,
+      messages: [{ event: 'app.contextChanged' }],
+    });
+    expect(onContextChanged).toHaveBeenCalledOnce();
+    expect(onSession).not.toHaveBeenCalled();
+    bridge.receive({
+      connection_id: 'view-9',
+      delivery_id: 2,
+      messages: [{ event: 'session.snapshot' }],
+    });
+    expect(onSession).toHaveBeenCalledOnce();
+  });
+
   it('correlates replies, acks deliveries after a receiver error, and rejects on dispose', async () => {
     const posts: unknown[] = [];
     const bridge = createEnvelopeNativeBridge({
@@ -88,11 +133,14 @@ describe('native bridge', () => {
     }];
     const bridge = installNativeHostBridge();
     expect(bridge).not.toBeNull();
+    bridge?.setContextEpoch(7);
+    expect(window.__CHA_NATIVE_CONTEXT_EPOCH__).toBe(7);
     expect(window.__CHA_NATIVE_QUEUE__).toEqual([]);
     expect(window.__CHA_NATIVE_RECEIVE__).toBeTypeOf('function');
     delete window.__CHA_NATIVE_POST__;
     delete window.__CHA_NATIVE_RECEIVE__;
     delete window.__CHA_NATIVE_CONNECTION_ID__;
+    delete window.__CHA_NATIVE_CONTEXT_EPOCH__;
     delete window.__CHA_NATIVE_QUEUE__;
   });
 

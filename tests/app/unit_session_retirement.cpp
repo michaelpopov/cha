@@ -178,6 +178,11 @@ TEST(SessionRetirement, BusyActorsAtLimitAreNotCancelled) {
     EXPECT_EQ(manager.selected(), b);
     controls_a->finish();
     controls_b->finish();
+    EXPECT_TRUE(wait_finished(first));
+    EXPECT_FALSE(wait_finished(second, 200ms));
+    EXPECT_EQ(second->lifecycle(), LiveSessionState::running);
+    EXPECT_EQ(manager.selected(), b);
+    EXPECT_TRUE(manager.lookup(b));
 }
 
 TEST(SessionRetirement, ReselectCancelsIdleRetirement) {

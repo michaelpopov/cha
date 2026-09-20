@@ -16,9 +16,6 @@ import {
 import {
   ChaError,
   publicErrorMessage,
-  cachedAudioUrl,
-  isUsableVoiceInputRuntime,
-  isVoiceInputRuntime,
   type AudioDownloadBatchEntry,
   type ChaClient,
   type CharacterAppearance,
@@ -310,6 +307,7 @@ export function ChatScreen({
   const [voiceConfiguration, setVoiceConfiguration] =
     useState<VoiceInputConfiguration | null>(null);
   const voiceInputSession = useRef<VoiceInputSession | null>(null);
+  const voiceInputStartup = useRef<AbortController | null>(null);
   const voiceInputAttempt = useRef(0);
   const transcriptEnd = useRef<HTMLDivElement | null>(null);
   const textToSpeechSession = useRef<TextToSpeechSession | null>(null);
@@ -359,6 +357,7 @@ export function ChatScreen({
   const downloads = useAudioDownloads(client, snapshot?.forum.id, snapshot?.session_id,
     state.bootstrap?.vault_name, state.audioCacheClearCount);
   const speechSelection = useRef<number | null>(null);
+  const speechAttempt = useRef(0);
   const voiceInputActive = voiceInputState !== 'idle';
   const canSend = connected
     && pendingAction === null
@@ -401,10 +400,8 @@ export function ChatScreen({
     void client.getVoiceInputRuntime().then(
       (configuration) => {
         if (!current) return;
-        setVoiceConfiguration(configuration && isUsableVoiceInputRuntime(configuration) ? {
-          url: configuration.url,
+        setVoiceConfiguration(configuration ? {
           model: configuration.model,
-          apiKey: isVoiceInputRuntime(configuration) ? configuration.api_key : '',
           delay: configuration.delay,
           prompt: configuration.prompt,
         } : null);
@@ -425,12 +422,15 @@ export function ChatScreen({
   // A recording belongs to the conversation in which it started.
   useEffect(() => () => {
     voiceInputAttempt.current += 1;
+    voiceInputStartup.current?.abort();
+    voiceInputStartup.current = null;
     voiceInputSession.current?.cancel();
     voiceInputSession.current = null;
     setVoiceInputState('idle');
   }, [conversationKey, sessionAvailable]);
 
   useEffect(() => () => {
+    speechAttempt.current += 1;
     textToSpeechSession.current?.stop();
     textToSpeechSession.current = null;
     setSpokenEntry(null);
@@ -486,6 +486,7 @@ export function ChatScreen({
 
   function toggleSpeech(entry: SessionSnapshot['transcript'][number]) {
     if (!snapshot || (!entry.has_cached_audio && !textToSpeechConfiguration)) return;
+    speechAttempt.current += 1;
     if (speechSelection.current === entry.id && textToSpeechSession.current) {
       textToSpeechSession.current?.stop();
       textToSpeechSession.current = null;
@@ -511,6 +512,7 @@ export function ChatScreen({
 
   function playCached(entry: SessionSnapshot['transcript'][number]) {
     if (!snapshot) return;
+    const attempt = speechAttempt.current;
     const playbackKey = JSON.stringify([state.bootstrap?.vault_name, snapshot.forum.id, snapshot.session_id]);
     let positions = playbackPositions.get(playbackKey);
     if (!positions) {
@@ -544,8 +546,8 @@ export function ChatScreen({
           sessionId: snapshot.session_id, entryId: entry.id, cached: true,
         }),
         undefined,
-        resourceId && client.releaseResource
-          ? () => { void client.releaseResource!(resourceId); }
+        resourceId
+          ? () => { void client.releaseResource(resourceId); }
           : undefined,
       );
       textToSpeechSession.current = session;
@@ -574,32 +576,28 @@ export function ChatScreen({
         }
       });
     };
-    if (client.resolveAudioSource) {
-      void client.resolveAudioSource(
-        snapshot.forum.id, snapshot.session_id, entry.id, state.bootstrap!.vault_name,
-      ).then((resource) => {
-        if (speechSelection.current !== entry.id) {
-          void client.releaseResource?.(resource.resource_id);
-          return;
-        }
-        begin(resource.url, resource.resource_id);
-      }).catch((failure: unknown) => {
-        if (speechSelection.current !== entry.id) return;
-        speechSelection.current = null;
-        setSpokenEntry(null);
-        if ((failure instanceof TextToSpeechError && failure.status === 404)
-            || (failure instanceof ChaError && failure.code === 'not_found')) {
-          dispatch({ type: 'session-audio-cache', forumId: snapshot.forum.id,
-            sessionId: snapshot.session_id, entryId: entry.id, cached: false });
-          downloads.refresh(entry.id);
-          return;
-        }
-        setActionError(publicErrorMessage(
-          failure, 'This message could not be read aloud. Try again.'));
-      });
-      return;
-    }
-    begin(cachedAudioUrl(snapshot.forum.id, snapshot.session_id, entry.id, state.bootstrap!.vault_name));
+    void client.resolveAudioSource(
+      snapshot.forum.id, snapshot.session_id, entry.id, state.bootstrap!.vault_name,
+    ).then((resource) => {
+      if (speechAttempt.current !== attempt || speechSelection.current !== entry.id) {
+        void client.releaseResource(resource.resource_id);
+        return;
+      }
+      begin(resource.url, resource.resource_id);
+    }).catch((failure: unknown) => {
+      if (speechAttempt.current !== attempt || speechSelection.current !== entry.id) return;
+      speechSelection.current = null;
+      setSpokenEntry(null);
+      if ((failure instanceof TextToSpeechError && failure.status === 404)
+          || (failure instanceof ChaError && failure.code === 'not_found')) {
+        dispatch({ type: 'session-audio-cache', forumId: snapshot.forum.id,
+          sessionId: snapshot.session_id, entryId: entry.id, cached: false });
+        downloads.refresh(entry.id);
+        return;
+      }
+      setActionError(publicErrorMessage(
+        failure, 'This message could not be read aloud. Try again.'));
+    });
   }
 
   useEffect(() => {
@@ -828,6 +826,13 @@ export function ChatScreen({
   }
 
   async function toggleVoiceInput() {
+    if (voiceInputState === 'starting') {
+      voiceInputAttempt.current += 1;
+      voiceInputStartup.current?.abort();
+      voiceInputStartup.current = null;
+      setVoiceInputState('idle');
+      return;
+    }
     if (voiceInputSession.current) {
       await finishVoiceInput();
       return;
@@ -835,6 +840,8 @@ export function ChatScreen({
     if (!voiceConfiguration || !voiceInputAvailable || !sessionAvailable) return;
 
     const attempt = ++voiceInputAttempt.current;
+    const startup = new AbortController();
+    voiceInputStartup.current = startup;
     let receivedVoiceDelta = false;
     setVoiceInputState('starting');
     setActionError(null);
@@ -859,22 +866,19 @@ export function ChatScreen({
           setVoiceInputState('idle');
           setActionError(voiceInputMessage(failure));
         },
-        client.connectVoiceInput
-          ? (sdp, signal) => client.connectVoiceInput!(
-            sdp,
-            [transliteration.enabled ? 'ru' : 'en'],
-            signal,
-          )
-          : undefined,
+        client.connectVoiceInput,
+        startup.signal,
       );
       if (voiceInputAttempt.current !== attempt) {
         session.cancel();
         return;
       }
       voiceInputSession.current = session;
+      voiceInputStartup.current = null;
       setVoiceInputState('recording');
     } catch (failure: unknown) {
       if (voiceInputAttempt.current !== attempt) return;
+      voiceInputStartup.current = null;
       setVoiceInputState('idle');
       setActionError(voiceInputMessage(failure));
     }
@@ -885,7 +889,7 @@ export function ChatScreen({
     : voiceInputState === 'recording'
       ? 'Stop voice input'
       : voiceInputState === 'starting'
-        ? 'Starting voice input'
+        ? 'Cancel voice input setup'
         : 'Finishing transcription';
 
   // While the stream is down its own narration is the more useful message, so
@@ -1081,7 +1085,6 @@ export function ChatScreen({
                   className={`cha-composer-action cha-voice-input${voiceInputActive ? ' is-active' : ''}`}
                   disabled={!sessionAvailable
                     || pendingAction !== null
-                    || voiceInputState === 'starting'
                     || voiceInputState === 'finishing'}
                   onClick={() => void toggleVoiceInput()}
                   title={voiceInputLabel}

@@ -79,17 +79,24 @@ export function createNativeEventProjection(
     invalidated: () => invalidated,
     push(event: unknown) {
       if (invalidated) return;
+      // Scope is checked before payload validation. A late delivery from an old
+      // document/subscription is irrelevant even when its payload uses an old
+      // or malformed shape.
+      const hasScope = isRecord(event)
+        && typeof event.connection_id === 'string'
+        && Number.isSafeInteger(event.context_epoch)
+        && typeof event.subscription_id === 'string'
+        && typeof event.forum_id === 'string'
+        && typeof event.session_id === 'string';
+      if (hasScope && (
+        event.connection_id !== scope.connectionId
+        || event.context_epoch !== scope.contextEpoch
+        || event.subscription_id !== scope.subscriptionId
+        || event.forum_id !== scope.forumId
+        || event.session_id !== scope.sessionId
+      )) return;
       if (!isNativeSessionEvent(event)) {
         fail();
-        return;
-      }
-      if (event.connection_id !== scope.connectionId
-          || event.context_epoch !== scope.contextEpoch
-          || event.subscription_id !== scope.subscriptionId
-          || event.forum_id !== scope.forumId
-          || event.session_id !== scope.sessionId) {
-        // Stale-epoch events are dropped. Maintenance should later send
-        // app.contextChanged and recover with bootstrap + a new subscription.
         return;
       }
       if (event.event === 'session.snapshot') {

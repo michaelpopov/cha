@@ -8,9 +8,11 @@
 #include <nlohmann/json.hpp>
 
 #include <chrono>
+#include <condition_variable>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <mutex>
 #include <string>
 #include <thread>
 
@@ -147,6 +149,61 @@ TEST(ApplicationSettings, TestsProvidersOnBackgroundWork) {
     EXPECT_EQ(application->get_provider("test").model, "fake");
 }
 
+TEST(ApplicationSettings, ShutdownDeadlineBoundsUncooperativeReplyCallback) {
+    test::TestWorkspace workspace;
+    const std::filesystem::path database =
+        test::import_test_database(workspace.root());
+    auto application = Application::open(make_command(workspace, database));
+    auto provider = application->get_provider("test");
+    nlohmann::json body = provider_body(provider);
+    const std::string stream =
+        "data: {\"type\":\"response.output_text.delta\",\"delta\":\"OK\"}\n\n"
+        "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n";
+    MockHttpServer model_server({http_response("text/event-stream", stream)});
+    body["host"] = "127.0.0.1";
+    body["port"] = model_server.port();
+    body["base_path"] = "";
+    body["mode"] = "test";
+    body["model"] = "candidate-model";
+    body["https"] = false;
+    body["api"] = "responses";
+    body["timeout_s"] = 0;
+    body["idle_timeout_s"] = 0;
+
+    auto reply = application->test_provider("test", body);
+    std::mutex mutex;
+    std::condition_variable changed;
+    bool callback_started = false;
+    bool release = false;
+    reply->set_ready_callback([&] {
+        std::unique_lock lock(mutex);
+        callback_started = true;
+        changed.notify_all();
+        changed.wait(lock, [&] { return release; });
+    });
+    model_server.start();
+    bool reached_callback = false;
+    {
+        std::unique_lock lock(mutex);
+        reached_callback = changed.wait_for(
+            lock, 2s, [&] { return callback_started; });
+    }
+    EXPECT_TRUE(reached_callback);
+
+    application->request_shutdown();
+    const auto started = std::chrono::steady_clock::now();
+    EXPECT_FALSE(application->join_shutdown(50ms));
+    EXPECT_LT(std::chrono::steady_clock::now() - started, 500ms);
+
+    {
+        std::lock_guard lock(mutex);
+        release = true;
+    }
+    changed.notify_all();
+    model_server.join();
+    EXPECT_TRUE(application->join_shutdown(2s));
+}
+
 TEST(ApplicationSettings, MigratesAppearanceKeysR2AndNonsecretRuntime) {
     test::TestWorkspace workspace;
     workspace.write_style(
@@ -185,6 +242,7 @@ TEST(ApplicationSettings, MigratesAppearanceKeysR2AndNonsecretRuntime) {
         std::string::npos);
     EXPECT_FALSE(nlohmann::json(*runtime).contains("api_key"));
 
+    EXPECT_FALSE(application->capabilities().can_transfer_r2);
     const auto r2 = application->save_r2_storage({
         .display_name = "Backups",
         .url = "https://account.example/bucket",
@@ -193,8 +251,11 @@ TEST(ApplicationSettings, MigratesAppearanceKeysR2AndNonsecretRuntime) {
     });
     EXPECT_TRUE(r2.has_secret_key);
     EXPECT_EQ(nlohmann::json(r2).dump().find("private-secret"), std::string::npos);
+    EXPECT_TRUE(application->capabilities().can_transfer_r2);
+    EXPECT_TRUE(application->bootstrap().capabilities.can_transfer_r2);
     application->delete_r2_storage();
     EXPECT_FALSE(application->get_r2_storage());
+    EXPECT_FALSE(application->capabilities().can_transfer_r2);
 
     const auto auth = application->openai_auth_status();
     EXPECT_EQ(auth.status, "signed_out");

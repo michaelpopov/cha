@@ -10,13 +10,13 @@
 #include "web/json.h"
 #include "web/live_session.h"
 
+#include <algorithm>
 #include <condition_variable>
 #include <deque>
 #include <mutex>
 #include <set>
 #include <stdexcept>
 #include <unordered_map>
-#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -204,8 +204,18 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
         LiveSessionHandle session;
     };
 
+    enum class ReplyCapacity { ordinary, control, unadmitted };
+
+    struct PendingReply {
+        nlohmann::json message;
+        ReplyCapacity capacity{ReplyCapacity::unadmitted};
+    };
+
     struct InFlight {
         std::uint64_t delivery_id{};
+        std::size_t ordinary_replies{};
+        std::size_t control_replies{};
+        std::size_t unadmitted_replies{};
         bool has_session_event{};
         LiveSessionHandle session;
     };
@@ -213,19 +223,22 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
     struct Connection {
         std::string id;
         bool invalid{};
-        // Dev leftover: not wrapped at kMaxSafeInteger; replace the connection.
         std::uint64_t next_delivery_id{1};
-        std::unordered_set<std::uint64_t> used_ids;
+        std::optional<std::uint64_t> highest_request_id;
         std::unordered_map<std::uint64_t, Outstanding> outstanding;
         std::string latest_subscription_id;
+        std::uint64_t latest_subscription_epoch{};
         std::optional<ActiveSubscription> active;
-        std::deque<nlohmann::json> pending_replies;
+        std::deque<PendingReply> pending_replies;
+        std::optional<nlohmann::json> pending_context;
+        std::optional<nlohmann::json> pending_invalidation;
         // At most one taken SessionOutput item. Merge, snapshot fallback,
         // byte threshold, and dirty replacement stay in SessionOutput.
         std::optional<nlohmann::json> pending_session;
         std::optional<InFlight> in_flight;
         std::size_t ordinary_count{};
         std::size_t control_count{};
+        std::size_t unadmitted_count{};
     };
 
     Impl(cha::app::Application& application, Options options)
@@ -259,10 +272,10 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
         for (auto& [id, connection] : connections) {
             (void)id;
             if (connection->invalid) continue;
-            queue_message(
-                connection,
-                context_changed_event(connection->id, epoch, name));
+            connection->pending_context =
+                context_changed_event(connection->id, epoch, name);
         }
+        notify();
     }
 
     cha::app::Application& application;
@@ -308,8 +321,12 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
             message.empty() ? public_error_message(code) : message);
     }
 
-    void queue_message(const std::shared_ptr<Connection>& connection, nlohmann::json message) {
-        connection->pending_replies.push_back(std::move(message));
+    void queue_reply(
+        const std::shared_ptr<Connection>& connection,
+        nlohmann::json message,
+        ReplyCapacity capacity) {
+        connection->pending_replies.push_back(
+            {std::move(message), capacity});
         notify();
     }
 
@@ -319,11 +336,11 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
         nlohmann::json message) {
         const auto found = connection->outstanding.find(id);
         if (found == connection->outstanding.end()) return;
-        if (found->second.control) --connection->control_count;
-        else --connection->ordinary_count;
+        const ReplyCapacity capacity = found->second.control
+            ? ReplyCapacity::control
+            : ReplyCapacity::ordinary;
         connection->outstanding.erase(found);
-        connection->used_ids.insert(id);
-        queue_message(connection, std::move(message));
+        queue_reply(connection, std::move(message), capacity);
     }
 
     void fail_request(
@@ -341,22 +358,56 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
     void invalidate(
         const std::shared_ptr<Connection>& connection,
         bool drop_pending = true) {
+        const bool first_invalidation = !connection->invalid;
         connection->invalid = true;
         for (auto& [id, outstanding] : connection->outstanding) {
             if (outstanding.reply) outstanding.reply->abandon();
             if (outstanding.operation) outstanding.operation->abandon();
+            if (outstanding.method == Method::session_subscribe
+                && outstanding.reply) {
+                auto session = application.live_sessions().lookup(
+                    {outstanding.forum_id, outstanding.session_id});
+                if (session) {
+                    (void)session->enqueue(cha::web::UnsubscribeCommand{
+                        connection->id,
+                        outstanding.context_epoch,
+                        outstanding.subscription_id});
+                }
+            }
+            if (!drop_pending) {
+                connection->pending_replies.push_back({
+                    error_reply(
+                        connection->id,
+                        id,
+                        outstanding.context_epoch,
+                        ErrorCode::operation_cancelled),
+                    outstanding.control
+                        ? ReplyCapacity::control
+                        : ReplyCapacity::ordinary});
+            }
         }
         connection->outstanding.clear();
-        connection->ordinary_count = 0;
-        connection->control_count = 0;
+        connection->pending_context.reset();
+        if (!drop_pending && first_invalidation) {
+            connection->pending_invalidation =
+                connection_invalidated_event(connection->id);
+        }
+        if (connection->pending_session && connection->active
+            && connection->active->session) {
+            connection->active->session->acknowledge_output();
+        }
+        connection->pending_session.reset();
         if (drop_pending) {
             connection->pending_replies.clear();
-            connection->pending_session.reset();
+            connection->pending_invalidation.reset();
             if (connection->in_flight && connection->in_flight->has_session_event
                 && connection->in_flight->session) {
                 connection->in_flight->session->acknowledge_output();
             }
             connection->in_flight.reset();
+            connection->ordinary_count = 0;
+            connection->control_count = 0;
+            connection->unadmitted_count = 0;
         }
         if (connection->active && connection->active->session) {
             (void)connection->active->session->enqueue(cha::web::UnsubscribeCommand{
@@ -365,6 +416,8 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                 connection->active->subscription_id});
         }
         connection->active.reset();
+        connection->latest_subscription_id.clear();
+        connection->latest_subscription_epoch = 0;
         application.release_connection_resources(connection->id);
         notify();
     }
@@ -376,9 +429,20 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
         ErrorCode code,
         std::string_view message = {}) {
         if (!id) return;
-        queue_message(
+        if (!connection->highest_request_id
+            || *id > *connection->highest_request_id) {
+            connection->highest_request_id = *id;
+        }
+        const std::size_t error_limit = std::max<std::size_t>(1, options.control_limit);
+        if (connection->unadmitted_count >= error_limit) {
+            invalidate(connection, false);
+            return;
+        }
+        ++connection->unadmitted_count;
+        queue_reply(
             connection,
-            error_reply(connection->id, *id, epoch, code, message));
+            error_reply(connection->id, *id, epoch, code, message),
+            ReplyCapacity::unadmitted);
     }
 
     std::optional<ErrorCode> check_epoch(Method method, std::uint64_t epoch) {
@@ -411,41 +475,62 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
         if (!peeked) return;
         try {
             nlohmann::json result = encode_command_result(*peeked);
-            std::lock_guard lock(mutex);
-            connection = find_connection(connection_id);
-            if (!connection) return;
-            if (outstanding.method == Method::session_subscribe) {
-                const auto* subscribed =
-                    std::get_if<cha::web::SubscribeResult>(&*peeked);
-                if (subscribed
-                    && subscribed->subscription_id
-                        == connection->latest_subscription_id) {
-                    auto session = application.live_sessions().lookup(
-                        {outstanding.forum_id, outstanding.session_id});
-                    if (session) {
-                        connection->active = ActiveSubscription{
-                            subscribed->subscription_id,
-                            outstanding.forum_id,
-                            outstanding.session_id,
-                            subscribed->context_epoch,
-                            std::move(session)};
+            const auto* subscribed = outstanding.method == Method::session_subscribe
+                ? std::get_if<cha::web::SubscribeResult>(&*peeked)
+                : nullptr;
+            LiveSessionHandle subscribed_session;
+            if (subscribed) {
+                subscribed_session = application.live_sessions().lookup(
+                    {outstanding.forum_id, outstanding.session_id});
+            }
+            LiveSessionHandle stale_subscription;
+            {
+                std::lock_guard lock(mutex);
+                connection = find_connection(connection_id);
+                if (!connection) {
+                    stale_subscription = std::move(subscribed_session);
+                } else {
+                    if (outstanding.method == Method::session_subscribe) {
+                        const bool current = subscribed
+                            && subscribed->subscription_id
+                                == connection->latest_subscription_id
+                            && subscribed->context_epoch
+                                == connection->latest_subscription_epoch;
+                        if (subscribed_session && current) {
+                            connection->active = ActiveSubscription{
+                                subscribed->subscription_id,
+                                outstanding.forum_id,
+                                outstanding.session_id,
+                                subscribed->context_epoch,
+                                std::move(subscribed_session)};
+                        } else {
+                            stale_subscription = std::move(subscribed_session);
+                        }
                     }
+                    if (outstanding.method == Method::session_unsubscribe
+                        && connection->active
+                        && connection->active->subscription_id
+                            == outstanding.subscription_id
+                        && connection->active->context_epoch
+                            == outstanding.context_epoch) {
+                        connection->active.reset();
+                    }
+                    finish_request(
+                        connection,
+                        id,
+                        reply_ok(
+                            connection->id,
+                            id,
+                            outstanding.context_epoch,
+                            std::move(result)));
                 }
             }
-            if (outstanding.method == Method::session_unsubscribe
-                && connection->active
-                && connection->active->subscription_id
-                    == outstanding.subscription_id) {
-                connection->active.reset();
+            if (stale_subscription && subscribed) {
+                (void)stale_subscription->enqueue(cha::web::UnsubscribeCommand{
+                    connection_id,
+                    subscribed->context_epoch,
+                    subscribed->subscription_id});
             }
-            finish_request(
-                connection,
-                id,
-                reply_ok(
-                    connection->id,
-                    id,
-                    outstanding.context_epoch,
-                    std::move(result)));
         } catch (const ErrorCode code) {
             std::lock_guard lock(mutex);
             connection = find_connection(connection_id);
@@ -637,6 +722,12 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                 result = {
                     {"state", cha::app::application_state_name(boot.state)},
                     {"context_epoch", boot.context_epoch},
+                    {"application_version", kApplicationVersion},
+                    {"capabilities",
+                     {
+                         {"can_modify", boot.capabilities.can_modify},
+                         {"can_transfer_r2", boot.capabilities.can_transfer_r2},
+                     }},
                     {"bootstrap", boot.presentation},
                 };
                 epoch = boot.context_epoch;
@@ -1545,38 +1636,32 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                 "Duplicate outstanding request id.");
             return;
         }
-        if (connection->used_ids.contains(request.id)) {
+        if (connection->highest_request_id
+            && request.id <= *connection->highest_request_id) {
             admit_error(
                 connection,
                 request.id,
                 request.context_epoch,
                 ErrorCode::invalid_argument,
-                "Request ids cannot be reused.");
+                "Request ids must increase.");
             return;
         }
+        connection->highest_request_id = request.id;
         const bool control = is_control_method(request.method);
         const std::size_t& count =
             control ? connection->control_count : connection->ordinary_count;
         const std::size_t limit =
             control ? options.control_limit : options.ordinary_limit;
         if (count >= limit) {
-            if (!control) {
-                queue_message(
-                    connection,
-                    error_reply(
-                        connection->id,
-                        request.id,
-                        request.context_epoch,
-                        ErrorCode::invalid_argument,
-                        "Too many in-flight requests."));
-                invalidate(connection, false);
-            } else {
-                admit_error(
-                    connection,
-                    request.id,
-                    request.context_epoch,
-                    ErrorCode::command_queue_full);
-            }
+            admit_error(
+                connection,
+                request.id,
+                request.context_epoch,
+                control ? ErrorCode::command_queue_full
+                        : ErrorCode::invalid_argument,
+                control ? std::string_view{}
+                        : std::string_view{"Too many in-flight requests."});
+            if (!connection->invalid) invalidate(connection, false);
             return;
         }
         Outstanding outstanding;
@@ -1586,8 +1671,16 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
             + options.command_deadline.value_or(
                 application.settings().command_deadline);
         outstanding.context_epoch = request.context_epoch;
-        if (request.method == Method::session_subscribe) {
+        if (request.method == Method::session_subscribe
+            || request.method == Method::session_unsubscribe) {
             try {
+                require_only_keys(
+                    request.params,
+                    {"forum_id", "session_id", "subscription_id"});
+                outstanding.forum_id =
+                    require_identifier(request.params, "forum_id");
+                outstanding.session_id =
+                    require_identifier(request.params, "session_id");
                 outstanding.subscription_id =
                     require_identifier(request.params, "subscription_id");
             } catch (const std::invalid_argument&) {
@@ -1598,7 +1691,16 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                     ErrorCode::invalid_argument);
                 return;
             }
-            connection->latest_subscription_id = outstanding.subscription_id;
+            if (request.method == Method::session_subscribe) {
+                connection->latest_subscription_id = outstanding.subscription_id;
+                connection->latest_subscription_epoch = request.context_epoch;
+            } else if (connection->latest_subscription_id
+                           == outstanding.subscription_id
+                       && connection->latest_subscription_epoch
+                           == request.context_epoch) {
+                connection->latest_subscription_id.clear();
+                connection->latest_subscription_epoch = 0;
+            }
         }
         connection->outstanding.emplace(request.id, outstanding);
         if (control) ++connection->control_count;
@@ -1657,10 +1759,6 @@ void BridgeRouter::handle_request(
     std::string_view trusted_connection_id,
     std::string_view json) {
     auto parsed = parse_request(json, impl_->options.request_bytes_limit);
-    std::optional<cha::web::ErrorCode> stale;
-    if (const auto* request = std::get_if<ParsedRequest>(&parsed)) {
-        stale = impl_->check_epoch(request->method, request->context_epoch);
-    }
     std::lock_guard lock(impl_->mutex);
     if (impl_->stopping) return;
     auto connection = impl_->find_connection(trusted_connection_id);
@@ -1675,11 +1773,6 @@ void BridgeRouter::handle_request(
         return;
     }
     auto request = std::get<ParsedRequest>(std::move(parsed));
-    if (stale) {
-        impl_->admit_error(
-            connection, request.id, request.context_epoch, *stale);
-        return;
-    }
     impl_->handle_parsed(connection, std::move(request));
 }
 
@@ -1697,9 +1790,16 @@ void BridgeRouter::handle_ack(
             || ack->delivery_id != connection->in_flight->delivery_id) {
             return;
         }
-        if (connection->in_flight->has_session_event) {
-            session = connection->in_flight->session;
+        const auto& delivered = *connection->in_flight;
+        if (delivered.has_session_event) {
+            session = delivered.session;
         }
+        connection->ordinary_count -= std::min(
+            connection->ordinary_count, delivered.ordinary_replies);
+        connection->control_count -= std::min(
+            connection->control_count, delivered.control_replies);
+        connection->unadmitted_count -= std::min(
+            connection->unadmitted_count, delivered.unadmitted_replies);
         connection->in_flight.reset();
         impl_->notify();
     }
@@ -1762,21 +1862,44 @@ std::optional<nlohmann::json> BridgeRouter::take_delivery(
     std::lock_guard lock(impl_->mutex);
     auto connection = impl_->find_connection(connection_id, false);
     if (!connection || connection->in_flight) return std::nullopt;
-    std::vector<nlohmann::json> messages;
-    while (!connection->pending_replies.empty()) {
-        messages.push_back(std::move(connection->pending_replies.front()));
-        connection->pending_replies.pop_front();
+    if (connection->next_delivery_id > kMaxSafeInteger) {
+        impl_->invalidate(connection);
+        return std::nullopt;
     }
+    std::vector<nlohmann::json> messages;
     Impl::InFlight in_flight;
-    // Dev leftover: replace the connection before JS-safe integer exhaustion.
-    in_flight.delivery_id = connection->next_delivery_id++;
+    while (!connection->pending_replies.empty()) {
+        auto reply = std::move(connection->pending_replies.front());
+        connection->pending_replies.pop_front();
+        switch (reply.capacity) {
+        case Impl::ReplyCapacity::ordinary:
+            ++in_flight.ordinary_replies;
+            break;
+        case Impl::ReplyCapacity::control:
+            ++in_flight.control_replies;
+            break;
+        case Impl::ReplyCapacity::unadmitted:
+            ++in_flight.unadmitted_replies;
+            break;
+        }
+        messages.push_back(std::move(reply.message));
+    }
+    if (connection->pending_context) {
+        messages.push_back(std::move(*connection->pending_context));
+        connection->pending_context.reset();
+    }
+    if (connection->pending_invalidation) {
+        messages.push_back(std::move(*connection->pending_invalidation));
+        connection->pending_invalidation.reset();
+    }
     if (connection->pending_session) {
-        messages.push_back(*std::move(connection->pending_session));
+        messages.push_back(std::move(*connection->pending_session));
         connection->pending_session.reset();
         in_flight.has_session_event = true;
         if (connection->active) in_flight.session = connection->active->session;
     }
     if (messages.empty()) return std::nullopt;
+    in_flight.delivery_id = connection->next_delivery_id++;
     connection->in_flight = std::move(in_flight);
     return delivery_batch(
         connection->id, connection->in_flight->delivery_id, std::move(messages));
@@ -1790,8 +1913,11 @@ bool BridgeRouter::wait_for_work(std::chrono::milliseconds timeout) {
             return true;
         }
         for (const auto& [id, connection] : impl_->connections) {
-            if (!connection->pending_replies.empty()
-                || connection->pending_session) {
+            if (!connection->in_flight
+                && (!connection->pending_replies.empty()
+                    || connection->pending_context
+                    || connection->pending_invalidation
+                    || connection->pending_session)) {
                 return true;
             }
         }

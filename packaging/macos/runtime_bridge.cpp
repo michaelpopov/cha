@@ -49,6 +49,7 @@ struct ChaRuntime {
     int port{};
     bool logging{};
     bool native{};
+    bool join_attempted{};
     bool joined{};
 
     std::mutex callback_mutex;
@@ -292,12 +293,12 @@ void cha_runtime_destroy(ChaRuntime* runtime) {
     }
     stop_pump(runtime);
     join_pump(runtime);
-    if (runtime->native_application && !runtime->joined) {
+    if (runtime->native_application && !runtime->join_attempted) {
         try {
+            runtime->join_attempted = true;
             runtime->native_application->request_shutdown();
-            (void)runtime->native_application->join_shutdown(
+            runtime->joined = runtime->native_application->join_shutdown(
                 std::chrono::milliseconds{10000});
-            runtime->joined = true;
         } catch (...) {
             (void)runtime->native_application.release();
             if (runtime->logging) cha::shutdown_diagnostic_logging();
@@ -571,13 +572,14 @@ void cha_runtime_request_shutdown(ChaRuntime* runtime) {
 int32_t cha_runtime_join_shutdown(ChaRuntime* runtime, int32_t grace_ms) {
     if (!runtime) return 1;
     join_pump(runtime);
-    if (runtime->native_application && !runtime->joined) {
-        runtime->joined = true;
+    if (!runtime->native_application) return 1;
+    if (!runtime->join_attempted) {
+        runtime->join_attempted = true;
         const auto grace = std::chrono::milliseconds{
             grace_ms > 0 ? grace_ms : 10000};
-        return runtime->native_application->join_shutdown(grace) ? 1 : 0;
+        runtime->joined = runtime->native_application->join_shutdown(grace);
     }
-    return 1;
+    return runtime->joined ? 1 : 0;
 }
 
 void cha_string_free(char* value) {

@@ -127,7 +127,10 @@ ParseFailure invalid(std::string message, std::optional<std::uint64_t> id = {}) 
 bool is_control_method(Method method) noexcept {
     return method == Method::session_stop
         || method == Method::session_unsubscribe
+        || method == Method::session_close
         || method == Method::speech_cancel
+        || method == Method::speech_release
+        || method == Method::audio_release
         || method == Method::voice_input_cancel;
 }
 
@@ -364,6 +367,15 @@ nlohmann::json context_changed_event(
         {"event", "app.contextChanged"},
         {"context_epoch", context_epoch},
         {"state", state},
+    };
+}
+
+nlohmann::json connection_invalidated_event(
+    std::string_view connection_id) {
+    return {
+        {"connection_id", connection_id},
+        {"event", "app.connectionInvalidated"},
+        {"reason", "request_limit_exceeded"},
     };
 }
 

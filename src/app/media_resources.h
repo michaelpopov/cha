@@ -45,7 +45,8 @@ public:
 
     [[nodiscard]] std::optional<ResourceBytes> read(
         std::string_view connection_id,
-        std::string_view resource_id) const;
+        std::string_view resource_id,
+        std::uint64_t context_epoch) const;
 
     bool release(std::string_view connection_id, std::string_view resource_id);
     void revoke_connection(std::string_view connection_id);

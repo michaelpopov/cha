@@ -62,8 +62,15 @@ cha::web::AppendPublishResult SessionOutput::publish_append(
 std::shared_ptr<const SessionOutputItem> SessionOutput::take() {
     std::lock_guard lock(mutex_);
     if (in_flight_ || !pending_) return {};
-    in_flight_ = std::move(pending_);
-    pending_.reset();
+    auto committed = std::move(pending_);
+    if (policy_ == SequencePolicy::reset_on_snapshot
+        && committed->kind == SessionOutputItem::Kind::snapshot) {
+        next_sequence_ = 0;
+        committed->seq = 0;
+    } else {
+        committed->seq = next_sequence_++;
+    }
+    in_flight_ = std::move(committed);
     changed_.notify_all();
     return in_flight_;
 }
@@ -149,12 +156,6 @@ void SessionOutput::publish_snapshot_locked(cha::web::SessionSnapshot snapshot) 
     auto item = std::make_shared<SessionOutputItem>();
     item->kind = SessionOutputItem::Kind::snapshot;
     item->snapshot = std::move(snapshot);
-    if (policy_ == SequencePolicy::reset_on_snapshot) {
-        next_sequence_ = 0;
-        item->seq = 0;
-    } else {
-        item->seq = next_sequence_++;
-    }
     pending_ = std::move(item);
 }
 
@@ -185,7 +186,6 @@ cha::web::AppendPublishResult SessionOutput::publish_append_locked(
     item->kind = SessionOutputItem::Kind::append;
     item->target = std::move(append.target);
     item->text = std::move(append.text);
-    item->seq = next_sequence_++;
     pending_ = std::move(item);
     return cha::web::AppendPublishResult::Accepted;
 }

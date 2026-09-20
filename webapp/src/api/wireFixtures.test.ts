@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-import { createChaClient, isCommandResult, isSessionSnapshot } from './client';
+import { isCharacterDetail, isCommandResult, isSessionSnapshot } from './client';
 import { isAppendEvent } from './events';
 import { isNativeSessionEvent } from './nativeEvents';
 import { nativeProtocolVersion } from './nativeBridge';
@@ -19,7 +19,7 @@ function loadFixture(name: string): unknown {
 }
 
 describe('C++ wire fixtures', () => {
-  it('match frontend bootstrap, snapshot, append, and error expectations', async () => {
+  it('match frontend bootstrap, snapshot, append, and error expectations', () => {
     expect(validateBootstrap(loadFixture('bootstrap.json')).initial_session_id)
       .toBe('welcome');
     expect(isSessionSnapshot(loadFixture('snapshot.json'))).toBe(true);
@@ -36,10 +36,7 @@ describe('C++ wire fixtures', () => {
     expect(error.error.message).toBe('<script>alert(1)</script>');
 
     const character = loadFixture('character-detail.json');
-    const client = createChaClient(async () => new Response(JSON.stringify(character), {
-      headers: { 'Content-Type': 'application/json' },
-    }));
-    await expect(client.getCharacter('guide')).resolves.toMatchObject({ id: 'guide' });
+    expect(isCharacterDetail(character)).toBe(true);
 
     const info = loadFixture('bridge-info.json') as { protocol_version: number };
     expect(info.protocol_version).toBe(nativeProtocolVersion);

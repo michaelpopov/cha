@@ -5,6 +5,7 @@
 #include "util/wake_notifier.h"
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -67,6 +68,8 @@ public:
         ProviderRequestInput input,
         std::shared_ptr<WakeNotifier> notifier);
     void shutdown() noexcept;
+    [[nodiscard]] bool shutdown_until(
+        std::chrono::steady_clock::time_point deadline) noexcept;
 
 private:
     struct Registry;

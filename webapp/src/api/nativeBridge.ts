@@ -109,6 +109,7 @@ export function createEnvelopeNativeBridge(options: {
   connectionId: string;
   post(message: unknown): void;
   onAck?(connectionId: string, deliveryId: number): void;
+  onContextEpoch?(epoch: number): void;
 }): NativeBridge & {
   receive(batch: unknown): void;
   acks: Array<{ connection_id: string; delivery_id: number }>;
@@ -116,6 +117,7 @@ export function createEnvelopeNativeBridge(options: {
   let epoch = 0;
   let nextId = 1;
   let disposed = false;
+  let receiverFailed = false;
   const pending = new Map<number, Pending>();
   const listeners = new Map<string, Set<EventHandler>>();
   const acks: Array<{ connection_id: string; delivery_id: number }> = [];
@@ -147,7 +149,9 @@ export function createEnvelopeNativeBridge(options: {
     }
     if (isRecord(message) && typeof message.event === 'string') {
       emit(message.event as string, message);
-      emit('session', message);
+      if (message.event === 'session.snapshot' || message.event === 'session.append') {
+        emit('session', message);
+      }
     }
   };
 
@@ -161,7 +165,10 @@ export function createEnvelopeNativeBridge(options: {
         options.onAck?.(connectionId, deliveryId);
         options.post({ connection_id: connectionId, delivery_id: deliveryId });
       },
-      () => emit('receiver-error', undefined),
+      () => {
+        if (listeners.get('receiver-error')?.size) emit('receiver-error', undefined);
+        else receiverFailed = true;
+      },
     );
   };
 
@@ -170,6 +177,7 @@ export function createEnvelopeNativeBridge(options: {
     receive,
     setContextEpoch(value: number) {
       epoch = value;
+      options.onContextEpoch?.(value);
     },
     contextEpoch() {
       return epoch;
@@ -180,6 +188,9 @@ export function createEnvelopeNativeBridge(options: {
       invokeOptions?: { signal?: AbortSignal; cancelMethod?: string },
     ): Promise<T> {
       if (disposed) return Promise.reject(new ChaProtocolError());
+      if (invokeOptions?.signal?.aborted) {
+        return Promise.reject(new DOMException('The operation was aborted.', 'AbortError'));
+      }
       const id = nextId;
       nextId += 1;
       // Dev leftover: the spec replaces the connection before exhausting
@@ -208,10 +219,6 @@ export function createEnvelopeNativeBridge(options: {
           }
           reject(new DOMException('The operation was aborted.', 'AbortError'));
         };
-        if (invokeOptions?.signal?.aborted) {
-          abort();
-          return;
-        }
         invokeOptions?.signal?.addEventListener('abort', abort, { once: true });
         pending.set(id, {
           resolve: (value) => {
@@ -237,6 +244,10 @@ export function createEnvelopeNativeBridge(options: {
       const wrapped: EventHandler = (payload) => handler(payload as T);
       set.add(wrapped);
       listeners.set(event, set);
+      if (event === 'receiver-error' && receiverFailed) {
+        receiverFailed = false;
+        wrapped(undefined);
+      }
       return () => {
         set.delete(wrapped);
       };
@@ -302,6 +313,7 @@ declare global {
   interface Window {
     __CHA_NATIVE_POST__?: (message: string) => void;
     __CHA_NATIVE_CONNECTION_ID__?: string;
+    __CHA_NATIVE_CONTEXT_EPOCH__?: number;
     __CHA_NATIVE_RECEIVE__?: (batch: unknown) => void;
     __CHA_NATIVE_QUEUE__?: unknown[];
   }
@@ -318,6 +330,9 @@ export function installNativeHostBridge(): NativeBridge | null {
     connectionId,
     post(message) {
       post(JSON.stringify(message));
+    },
+    onContextEpoch(epoch) {
+      window.__CHA_NATIVE_CONTEXT_EPOCH__ = epoch;
     },
   });
   window.__CHA_NATIVE_RECEIVE__ = (batch) => bridge.receive(batch);

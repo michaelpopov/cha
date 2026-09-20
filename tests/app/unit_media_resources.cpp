@@ -15,16 +15,17 @@ TEST(MediaResources, IssuesOpaqueHandlesAndRejectsUnknownOrForeignReads) {
     EXPECT_FALSE(MediaResources::valid_id("r../x"));
     EXPECT_FALSE(MediaResources::valid_id(""));
 
-    const auto body = resources.read("view-1", id);
+    const auto body = resources.read("view-1", id, 3);
     ASSERT_TRUE(body);
     EXPECT_EQ(body->mime_type, "audio/mpeg");
     EXPECT_EQ(body->body, "bytes");
-    EXPECT_FALSE(resources.read("view-2", id));
-    EXPECT_FALSE(resources.read("view-1", "r999"));
-    EXPECT_FALSE(resources.read("view-1", "../r1"));
+    EXPECT_FALSE(resources.read("view-2", id, 3));
+    EXPECT_FALSE(resources.read("view-1", id, 4));
+    EXPECT_FALSE(resources.read("view-1", "r999", 3));
+    EXPECT_FALSE(resources.read("view-1", "../r1", 3));
 
     EXPECT_TRUE(resources.release("view-1", id));
-    EXPECT_FALSE(resources.read("view-1", id));
+    EXPECT_FALSE(resources.read("view-1", id, 3));
     EXPECT_FALSE(resources.release("view-1", id));
 }
 
@@ -38,13 +39,13 @@ TEST(MediaResources, RevokesOnConnectionLossAndSessionClear) {
     const std::string other = resources.add(
         "view-2", 1, ResourceKind::speech, {"audio/mpeg", "c"});
     resources.revoke_session(session);
-    EXPECT_FALSE(resources.read("view-1", cached));
-    EXPECT_TRUE(resources.read("view-1", speech));
+    EXPECT_FALSE(resources.read("view-1", cached, 1));
+    EXPECT_TRUE(resources.read("view-1", speech, 1));
     resources.revoke_connection("view-1");
-    EXPECT_FALSE(resources.read("view-1", speech));
-    EXPECT_TRUE(resources.read("view-2", other));
+    EXPECT_FALSE(resources.read("view-1", speech, 1));
+    EXPECT_TRUE(resources.read("view-2", other, 1));
     resources.revoke_all();
-    EXPECT_FALSE(resources.read("view-2", other));
+    EXPECT_FALSE(resources.read("view-2", other, 1));
 }
 
 } // namespace

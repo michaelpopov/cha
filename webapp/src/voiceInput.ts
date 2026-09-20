@@ -1,6 +1,4 @@
 export interface VoiceInputConfiguration {
-  url: string;
-  apiKey: string;
   model: string;
   delay: 'low' | 'medium' | 'high' | 'xhigh';
   prompt: string;
@@ -54,52 +52,27 @@ function normalizeDictationCommands(transcription: string): string {
 
 export type VoiceInputConnect = (
   sdp: string,
+  languages: string[],
   signal: AbortSignal,
 ) => Promise<string>;
 
 async function connect(
   configuration: VoiceInputConfiguration,
   peer: RTCPeerConnection,
-  nativeConnect?: VoiceInputConnect,
-  signal?: AbortSignal,
+  nativeConnect: VoiceInputConnect,
+  signal: AbortSignal,
 ): Promise<void> {
   const offer = await peer.createOffer();
+  if (signal.aborted) throw new DOMException('The operation was aborted.', 'AbortError');
   await peer.setLocalDescription(offer);
+  if (signal.aborted) throw new DOMException('The operation was aborted.', 'AbortError');
   if (!offer.sdp) throw new Error('Voice input could not create an audio connection.');
 
-  if (nativeConnect) {
-    const answer = await nativeConnect(offer.sdp, signal ?? new AbortController().signal);
-    if (signal?.aborted) {
-      throw new DOMException('The operation was aborted.', 'AbortError');
-    }
-    await peer.setRemoteDescription({ type: 'answer', sdp: answer });
-    return;
+  const answer = await nativeConnect(offer.sdp, configuration.languages ?? [], signal);
+  if (signal.aborted) {
+    throw new DOMException('The operation was aborted.', 'AbortError');
   }
-
-  const body = new FormData();
-  body.set('sdp', offer.sdp);
-  body.set('session', JSON.stringify({
-    type: 'transcription',
-    audio: {
-      input: {
-        transcription: {
-          model: configuration.model,
-          prompt: configuration.prompt,
-          languages: configuration.languages,
-          delay: configuration.delay,
-        },
-        turn_detection: null,
-      },
-    },
-  }));
-  const response = await fetch(configuration.url, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${configuration.apiKey}` },
-    body,
-    signal,
-  });
-  if (!response.ok) throw new Error('The realtime transcription request failed.');
-  await peer.setRemoteDescription({ type: 'answer', sdp: await response.text() });
+  await peer.setRemoteDescription({ type: 'answer', sdp: answer });
 }
 
 export class VoiceInputSession {
@@ -156,15 +129,30 @@ export class VoiceInputSession {
     configuration: VoiceInputConfiguration,
     onTranscription: (text: string) => void,
     onFailure: (failure: unknown) => void,
-    nativeConnect?: VoiceInputConnect,
+    nativeConnect: VoiceInputConnect,
+    signal?: AbortSignal,
   ): Promise<VoiceInputSession> {
     if (!VoiceInputSession.supported()) {
       throw new Error('Voice input is unavailable.');
     }
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    let session: VoiceInputSession | null = null;
     const setup = new AbortController();
+    let stream: MediaStream | null = null;
+    let session: VoiceInputSession | null = null;
+    const cancelSetup = () => {
+      setup.abort();
+      if (session) session.cancel();
+      else for (const track of stream?.getTracks() ?? []) track.stop();
+    };
+    if (signal?.aborted) {
+      throw new DOMException('The operation was aborted.', 'AbortError');
+    }
+    signal?.addEventListener('abort', cancelSetup, { once: true });
     try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (signal?.aborted) {
+        for (const track of stream.getTracks()) track.stop();
+        throw new DOMException('The operation was aborted.', 'AbortError');
+      }
       const peer = new RTCPeerConnection();
       for (const track of stream.getAudioTracks()) peer.addTrack(track, stream);
       const events = peer.createDataChannel('oai-events');
@@ -184,8 +172,10 @@ export class VoiceInputSession {
     } catch (failure) {
       setup.abort();
       if (session) session.cancel();
-      else for (const track of stream.getTracks()) track.stop();
+      else for (const track of stream?.getTracks() ?? []) track.stop();
       throw failure;
+    } finally {
+      signal?.removeEventListener('abort', cancelSetup);
     }
   }
 

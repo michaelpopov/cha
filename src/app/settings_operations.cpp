@@ -840,12 +840,16 @@ cha::web::OpenAiAuth openai_auth_status(const OpenAiOAuth& owner) {
     return openai_auth_from(owner.status());
 }
 
-cha::web::OpenAiAuth start_openai_auth(OpenAiOAuth& owner) {
-    return openai_auth_from(owner.start());
+cha::web::OpenAiAuth start_openai_auth(
+    OpenAiOAuth& owner,
+    const std::atomic_bool& cancelled) {
+    return openai_auth_from(owner.start([&] { return cancelled.load(); }));
 }
 
-cha::web::OpenAiAuth poll_openai_auth(OpenAiOAuth& owner) {
-    return openai_auth_from(owner.poll());
+cha::web::OpenAiAuth poll_openai_auth(
+    OpenAiOAuth& owner,
+    const std::atomic_bool& cancelled) {
+    return openai_auth_from(owner.poll([&] { return cancelled.load(); }));
 }
 
 cha::web::OpenAiAuth disconnect_openai_auth(OpenAiOAuth& owner) {

@@ -307,7 +307,9 @@ LiveSessionOpenResult LiveSessionManager::select(
             }
             if (!already_running && sessions_.size() >= settings_.session_limit) {
                 for (const auto& [identity, session] : sessions_) {
-                    if (identity == key) continue;
+                    if (identity == key || (selected_ && identity == *selected_)) {
+                        continue;
+                    }
                     others.push_back(session);
                 }
             }

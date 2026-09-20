@@ -1641,7 +1641,7 @@ it('offers New session for a stored forum but not for the built-in one', async (
   expect(screen.queryByRole('button', { name: /New session/ })).not.toBeInTheDocument();
 });
 
-it('probes and reconnects when its stream fails', async () => {
+it('replaces a failed stream without reopening the session', async () => {
   const events = drivableSessionEvents();
   const client = storedPlanningClient();
   const getSessionSnapshot = vi.spyOn(client, 'getSessionSnapshot');
@@ -1649,7 +1649,6 @@ it('probes and reconnects when its stream fails', async () => {
     <App
       client={client}
       connectSessionEvents={events.connect}
-      streamRecovery="http"
       retryDelays={[0]}
     />,
   );
@@ -1669,7 +1668,7 @@ it('probes and reconnects when its stream fails', async () => {
   expect(screen.getByLabelText('Current chat context')).toHaveTextContent('The Lobby');
   expect(getSessionSnapshot.mock.calls.filter(([forumId, sessionId]) => (
     forumId === 'lobby' && sessionId === 'planning'
-  ))).toHaveLength(2);
+  ))).toHaveLength(1);
 
   const reconnected = events.connections.map(({ key }) => key).lastIndexOf('lobby/planning');
   act(() => events.handlers[reconnected].onSnapshot({
@@ -1886,7 +1885,6 @@ it('reopens a live conversation after a settings save without leaving the settin
   render(<App
     client={storedPlanningClient({ getSessionSnapshot, openSession, updateCharacter })}
     connectSessionEvents={events.connect}
-    streamRecovery="http"
     retryDelays={[0]}
   />);
 
@@ -1918,7 +1916,7 @@ it('reopens a live conversation after a settings save without leaving the settin
   act(() => events.handlers[reattached].onSnapshot(next));
 
   expect(document.querySelector('main')).toHaveAttribute('data-view', 'character-settings');
-  expect(openSession.mock.calls.filter(([, sessionId]) => sessionId === 'planning')).toHaveLength(2);
+  expect(openSession.mock.calls.filter(([, sessionId]) => sessionId === 'planning')).toHaveLength(1);
 
   fireEvent.click(screen.getByRole('button', { name: /^Planning/ }));
   expect(screen.getByText('A considered answer')).toHaveClass(
@@ -1926,62 +1924,7 @@ it('reopens a live conversation after a settings save without leaving the settin
   );
 });
 
-it('retries a settings reload when the first reopen meets a stopping session', async () => {
-  const user = userEvent.setup();
-  const events = drivableSessionEvents();
-  const previous = planningVoiceSnapshot(serifItalicVoice);
-  const next = planningVoiceSnapshot(monoLargeVoice);
-  let planningOpens = 0;
-  const openSession = vi.fn(async (forumId: string, sessionId: string) => {
-    if (sessionId === 'planning') {
-      planningOpens += 1;
-      if (planningOpens === 2) {
-        throw new ChaError(409, 'session_stopping', 'Session is stopping.');
-      }
-    }
-    return { forum_id: forumId, session_id: sessionId };
-  });
-  let lobbySnapshots = 0;
-  const getSessionSnapshot = vi.fn(async (forumId: string) => {
-    if (forumId !== 'lobby') return snapshotFixture;
-    lobbySnapshots += 1;
-    if (lobbySnapshots === 1) return previous;
-    if (lobbySnapshots === 2 || lobbySnapshots === 3) {
-      throw new ChaError(409, 'session_not_live', 'Session is not live.');
-    }
-    return next;
-  });
-  render(<App
-    client={storedPlanningClient({
-      getSessionSnapshot,
-      openSession,
-      updateCharacter: async () => ({ ...characterDetailFixture, style: 'mono-large' }),
-    })}
-    connectSessionEvents={events.connect}
-    streamRecovery="http"
-    retryDelays={[0, 0]}
-  />);
-
-  const planning = await openGuideSettingsFromPlanning(events, previous);
-  await user.selectOptions(await screen.findByLabelText('Style'), 'mono-large');
-  await user.click(screen.getByRole('button', { name: 'Save' }));
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled());
-
-  act(() => events.handlers[planning].onSnapshot({
-    ...previous,
-    lifecycle: 'stopping',
-    shutdown_reason: 'reloading',
-  }));
-  act(() => events.handlers[planning].onError({ kind: 'stream_failure' }));
-
-  await waitFor(() => expect(
-    events.connections.filter(({ key }) => key === 'lobby/planning'),
-  ).toHaveLength(2));
-  expect(openSession.mock.calls.filter(([, sessionId]) => sessionId === 'planning')).toHaveLength(3);
-  expect(document.querySelector('main')).toHaveAttribute('data-view', 'character-settings');
-});
-
-it('reloads after switching vaults', async () => {
+it('clears the conversation route before reloading after a vault switch', async () => {
   const user = userEvent.setup();
   const switchVault = vi.fn(async () => undefined);
   const reload = vi.fn();
@@ -1993,7 +1936,10 @@ it('reloads after switching vaults', async () => {
     />,
   );
 
-  await user.selectOptions(await screen.findByLabelText('Vault'), 'Projects');
+  const vault = await screen.findByLabelText('Vault');
+  window.history.replaceState(null, '', '/#/s/entrance/welcome/');
+  await user.selectOptions(vault, 'Projects');
   await waitFor(() => expect(switchVault).toHaveBeenCalledWith('Projects', undefined));
+  expect(window.location.hash).toBe('#/');
   expect(reload).toHaveBeenCalledOnce();
 });

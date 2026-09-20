@@ -18,6 +18,26 @@ function loadFixture(name: string): unknown {
 }
 
 describe('native CHA client', () => {
+  it('reports maintenance before validating a partial bootstrap presentation', async () => {
+    const bridge = createFakeNativeBridge({
+      'bridge.info': () => loadFixture('bridge-info.json'),
+      'app.bootstrap': () => ({
+        state: 'maintenance',
+        context_epoch: 4,
+        application_version: 'development',
+        capabilities: { can_modify: false, can_transfer_r2: false },
+        bootstrap: { vault_name: 'Personal' },
+      }),
+    });
+    const client = createNativeChaClient(bridge);
+
+    await expect(client.getBootstrap()).rejects.toMatchObject({
+      code: 'application_unavailable',
+      message: 'CHA is applying workspace changes. Try again when maintenance finishes.',
+    });
+    expect(bridge.contextEpoch()).toBe(0);
+  });
+
   it('bootstraps, submits, and checks real C++ command-result fixtures', async () => {
     const command = loadFixture('native-reply-command.json') as {
       result: unknown;
@@ -29,6 +49,8 @@ describe('native CHA client', () => {
       'app.bootstrap': () => ({
         state: 'running',
         context_epoch: 3,
+        application_version: 'development',
+        capabilities: { can_modify: true, can_transfer_r2: false },
         bootstrap: bootstrapFixture,
       }),
       'session.submit': () => command.result,

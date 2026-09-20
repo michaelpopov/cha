@@ -6,6 +6,9 @@ project(cha LANGUAGES C CXX)
 
 include(CTest)
 
+set(CHA_PACKAGE_VERSION "development" CACHE STRING
+    "Version reported by the native application")
+
 find_package(Threads REQUIRED)
 find_package(CURL QUIET)
 if(WIN32)
@@ -363,7 +366,23 @@ target_link_libraries(
     PUBLIC
         cha_app
         nlohmann_json::nlohmann_json)
+target_compile_definitions(
+    cha_bridge PRIVATE CHA_PACKAGE_VERSION="${CHA_PACKAGE_VERSION}")
 cha_enable_warnings(cha_bridge)
+
+# The instrumented Windows host uses this helper for its actual WebView2
+# workflow even in packaging builds, where the full GoogleTest suite is off.
+if(WIN32 AND NOT BUILD_TESTING)
+    add_executable(
+        cha_prepare_test_vault EXCLUDE_FROM_ALL
+        tests/native/prepare_test_vault.cpp
+        tests/support/test_workspace.cpp)
+    target_link_libraries(
+        cha_prepare_test_vault PRIVATE cha_core cha_sqlite3)
+    target_include_directories(
+        cha_prepare_test_vault PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+    cha_enable_warnings(cha_prepare_test_vault)
+endif()
 
 if(BUILD_TESTING)
     if(MSVC)
@@ -605,8 +624,6 @@ if(APPLE)
     cha_enable_warnings(cha_macos_runtime)
 endif()
 if(WIN32)
-    set(CHA_PACKAGE_VERSION "development" CACHE STRING
-        "Version displayed by the Windows application")
     set(CHA_WINDOWS_ICON "${CMAKE_CURRENT_BINARY_DIR}/generated/CHA.ico")
     set(CHA_WINDOWS_MANIFEST
         "${CMAKE_CURRENT_SOURCE_DIR}/packaging/windows/CHA.manifest")

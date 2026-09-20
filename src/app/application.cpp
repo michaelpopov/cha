@@ -315,8 +315,10 @@ struct Application::Impl {
             settings, opener);
         audio_downloads = std::make_unique<cha::web::AudioDownloadManager>(
             *sessions, current_vault_, true);
+        publish_capabilities_locked();
         running = true;
         notified_epoch = live_sessions->context_epoch();
+        published_epoch.store(notified_epoch);
     }
 
     void publish_vault_names() {
@@ -337,17 +339,42 @@ struct Application::Impl {
         current_vault_.set(std::move(vault), std::move(names));
     }
 
+    static constexpr unsigned can_modify = 1U << 0;
+    static constexpr unsigned can_transfer_r2 = 1U << 1;
+
+    void publish_capabilities_locked() {
+        unsigned capabilities = 0;
+        if (current_vault_.get().modify) capabilities |= can_modify;
+        if (api_keys->r2()) capabilities |= can_transfer_r2;
+        published_capabilities.store(capabilities);
+    }
+
+    [[nodiscard]] ApplicationCapabilities capabilities() const noexcept {
+        const auto epoch = published_epoch.load();
+        if (state.load() != ApplicationState::running) return {};
+        const unsigned capabilities = published_capabilities.load();
+        if (state.load() != ApplicationState::running
+            || published_epoch.load() != epoch) {
+            return {};
+        }
+        return {
+            .can_modify = (capabilities & can_modify) != 0,
+            .can_transfer_r2 = (capabilities & can_transfer_r2) != 0,
+        };
+    }
+
     [[nodiscard]] std::optional<ErrorCode> admit_locked(std::uint64_t epoch) const {
         if (unusable || stopping_flag || stopped) {
             return ErrorCode::application_unavailable;
         }
-        if (state == ApplicationState::maintenance) {
+        const ApplicationState current_state = state.load();
+        if (current_state == ApplicationState::maintenance) {
             return ErrorCode::vault_changed;
         }
-        if (state != ApplicationState::running) {
+        if (current_state != ApplicationState::running) {
             return ErrorCode::application_unavailable;
         }
-        if (epoch != 0 && epoch != live_sessions->context_epoch()) {
+        if (epoch != 0 && epoch != published_epoch.load()) {
             return ErrorCode::vault_changed;
         }
         return std::nullopt;
@@ -392,53 +419,100 @@ struct Application::Impl {
     };
 
     void take_context_notice(PendingContextNotice& notice) {
-        const auto epoch = live_sessions->context_epoch();
-        if (notified_epoch == epoch && notified_state == state) return;
+        const auto epoch = published_epoch.load();
+        const ApplicationState current_state = state.load();
+        if (notified_epoch == epoch && notified_state == current_state) return;
         notified_epoch = epoch;
-        notified_state = state;
-        notice = {context_changed, epoch, state};
+        notified_state = current_state;
+        notice = {context_changed, epoch, current_state};
     }
 
-    std::uint64_t publish_epoch(PendingContextNotice& notice) {
+    std::uint64_t publish_epoch(
+        PendingContextNotice& notice,
+        ApplicationState next_state) {
         const auto epoch = live_sessions->bump_context_epoch();
+        published_epoch.store(epoch);
+        ApplicationState expected = ApplicationState::maintenance;
+        (void)state.compare_exchange_strong(expected, next_state);
         take_context_notice(notice);
         return epoch;
     }
 
     // Caller holds lifecycle_mutex. False leaves the previous vault selected.
-    bool drain_for_maintenance(bool cancel_audio = true) {
+    bool drain_for_maintenance(
+        PendingContextNotice& notice,
+        bool cancel_audio = true) {
         if (unusable) {
             throw WorkspaceRestartRequiredError(
                 "The workspace database could not be reopened after an earlier "
                 "maintenance operation. Restart is required");
         }
-        if (stopping_flag || stopped || state != ApplicationState::running) {
+        if (stopping_flag || stopped
+            || state.load() != ApplicationState::running) {
             throw std::runtime_error("CHA application is unavailable");
         }
-        state = ApplicationState::maintenance;
-        cha::web::GlobalMaintenanceResult reserved =
-            live_sessions->reserve_global_maintenance(maintenance_grace());
+        state.store(ApplicationState::maintenance);
+        cha::web::GlobalMaintenanceResult reserved = [&] {
+            try {
+                return live_sessions->reserve_global_maintenance(
+                    maintenance_grace());
+            } catch (...) {
+                state.store(ApplicationState::running);
+                throw;
+            }
+        }();
         if (std::holds_alternative<cha::web::MaintenanceFailure>(reserved)) {
-            state = ApplicationState::running;
+            // Reservation may already have stopped one or more actors. Keep
+            // old queued work from treating the recovered context as intact.
+            publish_epoch(notice, ApplicationState::running);
             return false;
         }
         global_maintenance = std::move(
             std::get<cha::web::LiveSessionGlobalMaintenance>(reserved));
-        pause_resources(cancel_audio);
+        try {
+            pause_resources(cancel_audio);
+        } catch (...) {
+            cancel_maintenance_locked(notice);
+            throw;
+        }
         return true;
+    }
+
+    void cancel_maintenance_locked(PendingContextNotice& notice) {
+        global_maintenance.reset();
+        publish_capabilities_locked();
+        publish_epoch(notice, ApplicationState::running);
+        if (state.load() != ApplicationState::running
+            || stopping_flag.load()) {
+            return;
+        }
+        resume_resources();
+        if (stopping_flag.load()) {
+            state.store(ApplicationState::stopping);
+            pause_resources(true);
+            take_context_notice(notice);
+        }
     }
 
     void end_maintenance_locked(bool available, PendingContextNotice& notice) {
         global_maintenance.reset();
         if (!available) {
             unusable = true;
-            state = ApplicationState::unavailable;
-            publish_epoch(notice);
+            publish_epoch(notice, ApplicationState::unavailable);
             return;
         }
-        state = ApplicationState::running;
-        publish_epoch(notice);
+        publish_capabilities_locked();
+        publish_epoch(notice, ApplicationState::running);
+        if (state.load() != ApplicationState::running
+            || stopping_flag.load()) {
+            return;
+        }
         resume_resources();
+        if (stopping_flag.load()) {
+            state.store(ApplicationState::stopping);
+            pause_resources(true);
+            take_context_notice(notice);
+        }
     }
 
     void reopen(
@@ -449,7 +523,6 @@ struct Application::Impl {
             repository.synchronize_forums(*current_workspace());
         } catch (...) {
             unusable = true;
-            state = ApplicationState::unavailable;
             throw;
         }
     }
@@ -480,38 +553,51 @@ struct Application::Impl {
     void protect_active_database(
         std::string password,
         PendingContextNotice& notice) {
-        if (!drain_for_maintenance()) {
+        if (!drain_for_maintenance(notice)) {
             throw std::runtime_error(
                 "Could not pause active sessions for database maintenance");
         }
-        auto database = store->reserve_maintenance();
-        SessionRepository::MaintenanceGuard repository =
-            sessions->reserve_maintenance();
-        const std::filesystem::path database_path = current_vault_.get().data;
-        repository.checkpoint();
-        database.close();
+        bool database_closed = false;
         try {
-            protect_workspace_session_database(database_path, password);
-        } catch (...) {
-            database.set_password(active_password);
+            auto database = store->reserve_maintenance();
+            SessionRepository::MaintenanceGuard repository =
+                sessions->reserve_maintenance();
+            const std::filesystem::path database_path = current_vault_.get().data;
+            repository.checkpoint();
+            database.close();
+            database_closed = true;
             try {
-                reopen_after_failure(database, repository);
+                protect_workspace_session_database(database_path, password);
+            } catch (...) {
+                database.set_password(active_password);
+                try {
+                    reopen_after_failure(database, repository);
+                    end_maintenance_locked(true, notice);
+                } catch (...) {
+                    end_maintenance_locked(false, notice);
+                    throw;
+                }
+                throw;
+            }
+            mirror->rebuild(std::nullopt, *sessions);
+            active_password = std::move(password);
+            database.set_password(active_password);
+            repository.retarget(database_path, active_password);
+            try {
+                reopen(database, repository);
                 end_maintenance_locked(true, notice);
             } catch (...) {
                 end_maintenance_locked(false, notice);
                 throw;
             }
-            throw;
-        }
-        mirror->rebuild(std::nullopt, *sessions);
-        active_password = std::move(password);
-        database.set_password(active_password);
-        repository.retarget(database_path, active_password);
-        try {
-            reopen(database, repository);
-            end_maintenance_locked(true, notice);
         } catch (...) {
-            end_maintenance_locked(false, notice);
+            if (state.load() == ApplicationState::maintenance) {
+                if (database_closed) {
+                    end_maintenance_locked(false, notice);
+                } else {
+                    cancel_maintenance_locked(notice);
+                }
+            }
             throw;
         }
     }
@@ -524,35 +610,42 @@ struct Application::Impl {
         std::exception_ptr error;
         try {
             const std::lock_guard lifecycle(lifecycle_mutex);
-            if (!drain_for_maintenance(cancel_audio)) {
+            if (!drain_for_maintenance(notice, cancel_audio)) {
                 throw std::runtime_error(
                     "Could not pause active sessions for database maintenance");
             }
-            auto database = store->reserve_maintenance();
-            SessionRepository::MaintenanceGuard repository =
-                sessions->reserve_maintenance();
-            repository.checkpoint();
-            database.close();
-            bool reopened = false;
             try {
-                result = operation();
-                reopen(database, repository);
-                reopened = true;
-                end_maintenance_locked(true, notice);
-            } catch (...) {
-                if (!reopened) {
-                    try {
-                        reopen_after_failure(database, repository);
-                        end_maintenance_locked(true, notice);
-                    } catch (...) {
+                auto database = store->reserve_maintenance();
+                SessionRepository::MaintenanceGuard repository =
+                    sessions->reserve_maintenance();
+                repository.checkpoint();
+                database.close();
+                bool reopened = false;
+                try {
+                    result = operation();
+                    reopen(database, repository);
+                    reopened = true;
+                    end_maintenance_locked(true, notice);
+                } catch (...) {
+                    if (!reopened) {
+                        try {
+                            reopen_after_failure(database, repository);
+                            end_maintenance_locked(true, notice);
+                        } catch (...) {
+                            end_maintenance_locked(false, notice);
+                            error = std::current_exception();
+                        }
+                        if (!error) error = std::current_exception();
+                    } else {
                         end_maintenance_locked(false, notice);
                         error = std::current_exception();
                     }
-                    if (!error) error = std::current_exception();
-                } else {
-                    end_maintenance_locked(false, notice);
-                    error = std::current_exception();
                 }
+            } catch (...) {
+                if (state.load() == ApplicationState::maintenance) {
+                    cancel_maintenance_locked(notice);
+                }
+                throw;
             }
         } catch (...) {
             notice.dispatch();
@@ -564,17 +657,20 @@ struct Application::Impl {
     }
 
     bool launch_background(std::function<void(std::atomic_bool&)> work) {
-        auto cancel = std::make_shared<std::atomic_bool>(false);
-        auto finished = std::make_shared<std::atomic_bool>(false);
+        auto control = std::make_shared<BackgroundControl>();
         std::lock_guard lock(background_mutex);
         if (background_closed) return false;
         reap_finished_locked();
-        background_jobs.push_back({std::thread{}, cancel, finished});
+        background_jobs.push_back({std::thread{}, control});
         try {
             background_jobs.back().worker = std::thread(
-                [work = std::move(work), cancel, finished] {
-                    work(*cancel);
-                    finished->store(true);
+                [work = std::move(work), control] {
+                    work(control->cancel);
+                    {
+                        std::lock_guard lock(control->mutex);
+                        control->finished.store(true);
+                    }
+                    control->changed.notify_all();
                 });
         } catch (...) {
             background_jobs.pop_back();
@@ -593,10 +689,45 @@ struct Application::Impl {
             }
             if (jobs.empty()) return;
             for (auto& job : jobs) {
-                job.cancel->store(true);
+                job.control->cancel.store(true);
                 if (job.worker.joinable()) job.worker.join();
             }
         }
+    }
+
+    bool join_background_until(
+        std::chrono::steady_clock::time_point deadline) {
+        std::vector<std::shared_ptr<BackgroundControl>> controls;
+        {
+            std::lock_guard lock(background_mutex);
+            background_closed = true;
+            controls.reserve(background_jobs.size());
+            for (const BackgroundJob& job : background_jobs) {
+                job.control->cancel.store(true);
+                controls.push_back(job.control);
+            }
+        }
+        for (const auto& control : controls) {
+            std::unique_lock lock(control->mutex);
+            if (!control->changed.wait_until(lock, deadline, [&] {
+                    return control->finished.load();
+                })) {
+                return false;
+            }
+        }
+
+        std::vector<BackgroundJob> jobs;
+        {
+            std::lock_guard lock(background_mutex);
+            jobs.swap(background_jobs);
+        }
+        // finished means all access to Application-owned state is complete.
+        // Detaching here keeps the deadline strict while the thread tears down
+        // its own harmless captures.
+        for (BackgroundJob& job : jobs) {
+            if (job.worker.joinable()) job.worker.detach();
+        }
+        return true;
     }
 
     void reap_finished_locked() {
@@ -604,8 +735,8 @@ struct Application::Impl {
             background_jobs.begin(),
             background_jobs.end(),
             [](BackgroundJob& job) {
-                if (!job.finished->load()) return false;
-                if (job.worker.joinable()) job.worker.join();
+                if (!job.control->finished.load()) return false;
+                if (job.worker.joinable()) job.worker.detach();
                 return true;
             });
         background_jobs.erase(first_live, background_jobs.end());
@@ -660,50 +791,71 @@ struct Application::Impl {
         return pending;
     }
 
-    std::shared_ptr<PendingMedia> find_pending(
-        std::string_view connection_id,
-        std::uint64_t request_id) {
+    void forget_pending(const std::shared_ptr<PendingMedia>& pending) {
         std::lock_guard lock(media_mutex);
         const auto found = pending_media.find(
-            {std::string(connection_id), request_id});
-        if (found == pending_media.end()) return {};
-        return found->second;
+            {pending->connection_id, pending->request_id});
+        if (found != pending_media.end() && found->second == pending) {
+            pending_media.erase(found);
+        }
     }
 
-    void forget_pending(
-        std::string_view connection_id,
-        std::uint64_t request_id) {
+    struct PendingMediaCleanup {
+        Impl* owner;
+        std::shared_ptr<PendingMedia> pending;
+
+        ~PendingMediaCleanup() {
+            owner->forget_pending(pending);
+        }
+    };
+
+    bool set_pending_resource(
+        const std::shared_ptr<PendingMedia>& pending,
+        std::string resource_id) {
         std::lock_guard lock(media_mutex);
-        pending_media.erase({std::string(connection_id), request_id});
+        const auto found = pending_media.find(
+            {pending->connection_id, pending->request_id});
+        if (found == pending_media.end() || found->second != pending
+            || pending->cancelled->load()) {
+            return false;
+        }
+        pending->resource_id = std::move(resource_id);
+        return true;
     }
 
     void cancel_pending(
         std::string_view connection_id,
         std::uint64_t request_id) {
         std::shared_ptr<PendingMedia> pending;
+        std::string resource_id;
         {
             std::lock_guard lock(media_mutex);
             const auto found = pending_media.find(
                 {std::string(connection_id), request_id});
             if (found == pending_media.end()) return;
             pending = found->second;
+            pending->cancelled->store(true);
+            resource_id = std::move(pending->resource_id);
+            pending_media.erase(found);
         }
-        pending->cancelled->store(true);
-        if (!pending->resource_id.empty()) {
-            media_resources.release(connection_id, pending->resource_id);
-            pending->resource_id.clear();
+        if (!resource_id.empty()) {
+            media_resources.release(connection_id, resource_id);
         }
     }
 
     void cancel_connection_media(std::string_view connection_id) {
-        std::vector<std::shared_ptr<PendingMedia>> pending;
         {
             std::lock_guard lock(media_mutex);
-            for (auto& [key, item] : pending_media) {
-                if (item->connection_id == connection_id) pending.push_back(item);
+            for (auto item = pending_media.begin();
+                 item != pending_media.end();) {
+                if (item->second->connection_id != connection_id) {
+                    ++item;
+                    continue;
+                }
+                item->second->cancelled->store(true);
+                item = pending_media.erase(item);
             }
         }
-        for (auto& item : pending) item->cancelled->store(true);
         media_resources.revoke_connection(connection_id);
     }
 
@@ -712,12 +864,18 @@ struct Application::Impl {
         for (auto& [key, item] : pending_media) {
             item->cancelled->store(true);
         }
+        pending_media.clear();
     }
 
+    struct BackgroundControl {
+        std::atomic_bool cancel{};
+        std::atomic_bool finished{};
+        std::mutex mutex;
+        std::condition_variable changed;
+    };
     struct BackgroundJob {
         std::thread worker;
-        std::shared_ptr<std::atomic_bool> cancel;
-        std::shared_ptr<std::atomic_bool> finished;
+        std::shared_ptr<BackgroundControl> control;
     };
     std::mutex background_mutex;
     std::vector<BackgroundJob> background_jobs;
@@ -727,7 +885,10 @@ struct Application::Impl {
     bool running{};
     bool stopped{};
     bool unusable{};
-    ApplicationState state{ApplicationState::running};
+    std::atomic_bool preserve_on_destroy{};
+    std::atomic<ApplicationState> state{ApplicationState::running};
+    std::atomic_uint64_t published_epoch{1};
+    std::atomic_uint published_capabilities{};
     ResourceHooks resource_hooks;
     ContextChanged context_changed;
     std::uint64_t notified_epoch{};
@@ -737,7 +898,14 @@ struct Application::Impl {
 
 Application::Application(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
 
-Application::~Application() = default;
+Application::~Application() {
+    if (impl_ && impl_->preserve_on_destroy.load()) {
+        // A worker that ignored cancellation still owns pointers into Impl.
+        // The process is already stopping, so retaining Impl is safer than
+        // either blocking destruction or detaching it from its dependencies.
+        (void)impl_.release();
+    }
+}
 
 std::unique_ptr<Application> Application::open(
     const cha::web::ApplicationCommand& command,
@@ -759,12 +927,27 @@ std::unique_ptr<Application> Application::open(
 }
 
 ApplicationBootstrap Application::bootstrap() {
-    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     ApplicationBootstrap result;
-    result.context_epoch = impl_->live_sessions->context_epoch();
-    result.state = impl_->unusable || impl_->stopping_flag || impl_->stopped
-        ? ApplicationState::unavailable
-        : impl_->state;
+    const auto read_published_state = [&] {
+        const ApplicationState state = impl_->state.load();
+        return state == ApplicationState::stopping
+            ? ApplicationState::unavailable
+            : state;
+    };
+    result.state = read_published_state();
+    result.capabilities = impl_->capabilities();
+    if (result.state != ApplicationState::running) {
+        result.context_epoch = impl_->published_epoch.load();
+        auto [vault, names] = impl_->current_vault_.snapshot();
+        result.presentation.vault_name = std::move(vault.name);
+        result.presentation.vaults = std::move(names);
+        return result;
+    }
+
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    result.context_epoch = impl_->published_epoch.load();
+    result.state = read_published_state();
+    result.capabilities = impl_->capabilities();
     auto [vault, names] = impl_->current_vault_.snapshot();
     if (names.empty()) {
         for (const auto& definition : impl_->command.vaults) {
@@ -973,12 +1156,10 @@ std::optional<cha::web::ErrorCode> Application::delete_session(
     std::string_view session_id,
     std::uint64_t epoch) {
     const FullSessionId key{std::string(forum_id), std::string(session_id)};
-    {
-        const std::lock_guard lifecycle(impl_->lifecycle_mutex);
-        if (const auto error = impl_->admit_locked(epoch)) return *error;
-        if (workspace::is_welcome_session(key.forum_id, key.session_id)) {
-            return ErrorCode::not_found;
-        }
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    if (const auto error = impl_->admit_locked(epoch)) return *error;
+    if (workspace::is_welcome_session(key.forum_id, key.session_id)) {
+        return ErrorCode::not_found;
     }
     cha::web::MaintenanceReservationResult reserved =
         impl_->live_sessions->reserve_for_deletion(
@@ -996,6 +1177,7 @@ std::optional<cha::web::ErrorCode> Application::delete_session(
     } catch (const ForumNotFoundError&) {
         return cha::web::ErrorCode::not_found;
     }
+    impl_->media_resources.revoke_session(key);
     return std::nullopt;
 }
 
@@ -1018,21 +1200,18 @@ cha::web::SessionLabelResult Application::rename_session(
     std::string label,
     std::uint64_t epoch) {
     const FullSessionId key{std::string(forum_id), std::string(session_id)};
-    cha::web::LiveSessionHandle live;
-    {
-        const std::lock_guard lifecycle(impl_->lifecycle_mutex);
-        impl_->require_admitted(epoch);
-        if (workspace::is_welcome_session(key.forum_id, key.session_id)) {
-            throw ApplicationError(ErrorCode::not_found);
-        }
-        try {
-            validate_session_label(label);
-        } catch (const std::invalid_argument&) {
-            throw ApplicationError(
-                ErrorCode::invalid_argument, "Invalid session label.");
-        }
-        live = impl_->live_sessions->lookup(key);
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    if (workspace::is_welcome_session(key.forum_id, key.session_id)) {
+        throw ApplicationError(ErrorCode::not_found);
     }
+    try {
+        validate_session_label(label);
+    } catch (const std::invalid_argument&) {
+        throw ApplicationError(
+            ErrorCode::invalid_argument, "Invalid session label.");
+    }
+    const cha::web::LiveSessionHandle live = impl_->live_sessions->lookup(key);
     if (live) {
         const auto result = live->submit(
             cha::web::RenameSessionCommand{std::move(label)},
@@ -1067,12 +1246,9 @@ cha::web::SessionExport Application::export_session(
     std::string_view session_id,
     std::uint64_t epoch) {
     const FullSessionId key{std::string(forum_id), std::string(session_id)};
-    cha::web::LiveSessionHandle live;
-    {
-        const std::lock_guard lifecycle(impl_->lifecycle_mutex);
-        impl_->require_admitted(epoch);
-        live = impl_->live_sessions->lookup(key);
-    }
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    const cha::web::LiveSessionHandle live = impl_->live_sessions->lookup(key);
     if (live) {
         const auto result = live->snapshot(impl_->settings.command_deadline);
         if (const auto* snapshot =
@@ -1538,9 +1714,10 @@ std::shared_ptr<OperationReply> Application::start_speech(
         pending = impl_->remember_pending(std::string(connection_id), request_id);
     }
     if (!impl_->launch_background(
-            [this, reply, pending, output = std::move(output),
+            [owner = impl_.get(), reply, pending, output = std::move(output),
              key = std::move(key), request = std::move(request), epoch](
                 std::atomic_bool& cancel) {
+                Impl::PendingMediaCleanup cleanup{owner, pending};
                 const auto cancelled = [&] {
                     return cancel.load() || pending->cancelled->load();
                 };
@@ -1551,7 +1728,7 @@ std::shared_ptr<OperationReply> Application::start_speech(
                             "The operation was cancelled.");
                         return;
                     }
-                    const auto transfer = impl_->speech_proxy.synthesize(
+                    const auto transfer = owner->speech_proxy.synthesize(
                         output, key, request, cancelled);
                     if (cancelled() || transfer.cancelled) {
                         reply->fail(
@@ -1572,23 +1749,30 @@ std::shared_ptr<OperationReply> Application::start_speech(
                     }
                     std::string id;
                     {
-                        const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+                        const std::lock_guard lifecycle(owner->lifecycle_mutex);
                         if (cancelled()) {
                             reply->fail(
                                 ErrorCode::operation_cancelled,
                                 "The operation was cancelled.");
                             return;
                         }
-                        if (const auto error = impl_->admit_locked(epoch)) {
+                        if (const auto error = owner->admit_locked(epoch)) {
                             reply->fail(*error, {});
                             return;
                         }
-                        id = impl_->media_resources.add(
+                        id = owner->media_resources.add(
                             pending->connection_id,
                             epoch,
                             ResourceKind::speech,
                             {transfer.audio.content_type, transfer.audio.audio});
-                        pending->resource_id = id;
+                        if (!owner->set_pending_resource(pending, id)) {
+                            (void)owner->media_resources.release(
+                                pending->connection_id, id);
+                            reply->fail(
+                                ErrorCode::operation_cancelled,
+                                "The operation was cancelled.");
+                            return;
+                        }
                     }
                     reply->complete(media_resource_json(
                         id, transfer.audio.content_type,
@@ -1604,10 +1788,8 @@ std::shared_ptr<OperationReply> Application::start_speech(
                 } catch (...) {
                     reply->fail(ErrorCode::internal_error, {});
                 }
-                impl_->forget_pending(
-                    pending->connection_id, pending->request_id);
             })) {
-        impl_->forget_pending(std::string(connection_id), request_id);
+        impl_->forget_pending(pending);
         reply->fail(
             ErrorCode::operation_cancelled, "The operation was cancelled.");
     }
@@ -1775,10 +1957,12 @@ std::shared_ptr<OperationReply> Application::connect_voice_input(
         pending = impl_->remember_pending(std::string(connection_id), request_id);
     }
     if (!impl_->launch_background(
-            [this, reply, pending, url = std::move(url), key = std::move(key),
+            [owner = impl_.get(), reply, pending, url = std::move(url),
+             key = std::move(key),
              model = std::move(model), delay = std::move(delay),
              prompt = std::move(prompt), sdp = std::move(sdp),
              languages = std::move(languages)](std::atomic_bool& cancel) {
+                Impl::PendingMediaCleanup cleanup{owner, pending};
                 const auto cancelled = [&] {
                     return cancel.load() || pending->cancelled->load();
                 };
@@ -1809,10 +1993,8 @@ std::shared_ptr<OperationReply> Application::connect_voice_input(
                 } catch (...) {
                     reply->fail(ErrorCode::internal_error, {});
                 }
-                impl_->forget_pending(
-                    pending->connection_id, pending->request_id);
             })) {
-        impl_->forget_pending(std::string(connection_id), request_id);
+        impl_->forget_pending(pending);
         reply->fail(
             ErrorCode::operation_cancelled, "The operation was cancelled.");
     }
@@ -1831,7 +2013,11 @@ void Application::cancel_voice_input(
 std::optional<ResourceBytes> Application::read_resource(
     std::string_view connection_id,
     std::string_view resource_id) const {
-    return impl_->media_resources.read(connection_id, resource_id);
+    const std::unique_lock lifecycle(
+        impl_->lifecycle_mutex, std::try_to_lock);
+    if (!lifecycle.owns_lock() || impl_->admit_locked(0)) return std::nullopt;
+    return impl_->media_resources.read(
+        connection_id, resource_id, impl_->published_epoch.load());
 }
 
 void Application::release_connection_resources(std::string_view connection_id) {
@@ -1895,13 +2081,16 @@ cha::web::R2StorageDetail Application::save_r2_storage(
     std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
-    return settings::save_r2_storage(*impl_->api_keys, request);
+    auto saved = settings::save_r2_storage(*impl_->api_keys, request);
+    impl_->publish_capabilities_locked();
+    return saved;
 }
 
 void Application::delete_r2_storage(std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
     settings::delete_r2_storage(*impl_->api_keys);
+    impl_->publish_capabilities_locked();
 }
 
 cha::web::OpenAiAuth Application::openai_auth_status(std::uint64_t epoch) {
@@ -1920,9 +2109,17 @@ std::shared_ptr<OperationReply> Application::start_openai_auth(
         oauth = impl_->openai_auth.get();
     }
     if (!impl_->launch_background(
-            [reply, oauth](std::atomic_bool&) {
+            [reply, oauth](std::atomic_bool& cancel) {
                 try {
-                    reply->complete(settings::start_openai_auth(*oauth));
+                    const auto result =
+                        settings::start_openai_auth(*oauth, cancel);
+                    if (cancel.load()) {
+                        reply->fail(
+                            ErrorCode::operation_cancelled,
+                            "The operation was cancelled.");
+                        return;
+                    }
+                    reply->complete(result);
                 } catch (const ApplicationError& error) {
                     reply->fail(error.code, error.what());
                 } catch (...) {
@@ -1945,9 +2142,17 @@ std::shared_ptr<OperationReply> Application::poll_openai_auth(
         oauth = impl_->openai_auth.get();
     }
     if (!impl_->launch_background(
-            [reply, oauth](std::atomic_bool&) {
+            [reply, oauth](std::atomic_bool& cancel) {
                 try {
-                    reply->complete(settings::poll_openai_auth(*oauth));
+                    const auto result =
+                        settings::poll_openai_auth(*oauth, cancel);
+                    if (cancel.load()) {
+                        reply->fail(
+                            ErrorCode::operation_cancelled,
+                            "The operation was cancelled.");
+                        return;
+                    }
+                    reply->complete(result);
                 } catch (const ApplicationError& error) {
                     reply->fail(error.code, error.what());
                 } catch (...) {
@@ -1971,39 +2176,42 @@ std::optional<FullSessionId> Application::selected_session() const {
 }
 
 std::uint64_t Application::context_epoch() const {
-    return impl_->live_sessions->context_epoch();
+    return impl_->published_epoch.load();
 }
 
 std::optional<cha::web::ErrorCode> Application::check_context(
     std::uint64_t epoch) const {
-    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
-    return impl_->admit_locked(epoch);
+    const ApplicationState state = impl_->state.load();
+    if (state == ApplicationState::maintenance) {
+        return ErrorCode::vault_changed;
+    }
+    if (state != ApplicationState::running) {
+        return ErrorCode::application_unavailable;
+    }
+    if (epoch != 0 && epoch != impl_->published_epoch.load()) {
+        return ErrorCode::vault_changed;
+    }
+    return std::nullopt;
 }
 
 bool Application::running() const {
-    return impl_->running && !impl_->stopped && !impl_->stopping_flag
-        && impl_->state == ApplicationState::running && !impl_->unusable;
+    return impl_->state.load() == ApplicationState::running;
 }
 
 ApplicationState Application::state() const {
-    if (impl_->unusable || impl_->stopped || impl_->stopping_flag) {
+    const ApplicationState state = impl_->state.load();
+    if (state == ApplicationState::stopping) {
         return ApplicationState::unavailable;
     }
-    return impl_->state;
+    return state;
 }
 
 ApplicationCapabilities Application::capabilities() const {
-    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
-    const VaultDefinition vault = impl_->current_vault_.get();
-    return {
-        .can_modify = static_cast<bool>(vault.modify) && impl_->state == ApplicationState::running,
-        .can_transfer_r2 = impl_->api_keys->r2().has_value()
-            && impl_->state == ApplicationState::running,
-    };
+    return impl_->capabilities();
 }
 
 bool Application::has_r2_storage() const {
-    return impl_->api_keys->r2().has_value();
+    return impl_->capabilities().can_transfer_r2;
 }
 
 void Application::set_resource_hooks(ResourceHooks hooks) {
@@ -2023,7 +2231,7 @@ void Application::set_context_changed(ContextChanged callback) {
 
 void Application::request_shutdown() {
     impl_->stopping_flag = true;
-    impl_->state = ApplicationState::stopping;
+    impl_->state.store(ApplicationState::stopping);
     impl_->speech_proxy.stop();
     if (impl_->audio_downloads) impl_->audio_downloads->request_stop();
     impl_->pause_resources(true);
@@ -2031,18 +2239,34 @@ void Application::request_shutdown() {
 }
 
 bool Application::join_shutdown(std::chrono::milliseconds grace) {
-    impl_->join_background();
+    const auto deadline = std::chrono::steady_clock::now() + grace;
+    if (!impl_->join_background_until(deadline)) {
+        impl_->state.store(ApplicationState::unavailable);
+        impl_->preserve_on_destroy.store(true);
+        return false;
+    }
+    std::unique_lock lifecycle(impl_->lifecycle_mutex, std::defer_lock);
+    if (!lifecycle.try_lock_until(deadline)) {
+        impl_->state.store(ApplicationState::unavailable);
+        impl_->preserve_on_destroy.store(true);
+        return false;
+    }
+    bool joined = true;
     if (impl_->audio_downloads) {
         impl_->audio_downloads->request_stop();
-        (void)impl_->audio_downloads->join_until(
-            std::chrono::steady_clock::now() + grace);
+        joined = impl_->audio_downloads->join_until(deadline) && joined;
     }
     impl_->media_resources.revoke_all();
-    const bool joined = impl_->live_sessions->join_shutdown(grace);
-    impl_->providers.shutdown();
+    const auto now = std::chrono::steady_clock::now();
+    const auto remaining = now < deadline
+        ? std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now)
+        : std::chrono::milliseconds::zero();
+    joined = impl_->live_sessions->join_shutdown(remaining) && joined;
+    joined = impl_->providers.shutdown_until(deadline) && joined;
     impl_->stopped = true;
     impl_->running = false;
-    impl_->state = ApplicationState::unavailable;
+    impl_->state.store(ApplicationState::unavailable);
+    impl_->preserve_on_destroy.store(!joined);
     return joined;
 }
 
@@ -2217,6 +2441,7 @@ VaultDefinition Application::update_vault(
         if (active) {
             impl_->command.vault = candidate;
             impl_->publish_vault(candidate);
+            impl_->publish_capabilities_locked();
             impl_->rebuild_mirror(cha::web::session_mirror_root(candidate));
         } else {
             impl_->publish_vault_names();
@@ -2279,6 +2504,10 @@ std::vector<std::string> Application::list_r2_vaults(std::uint64_t epoch) const 
                 return fold_ascii(local) == fold_ascii(database_name);
             });
     });
+    {
+        const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+        impl_->require_admitted(epoch);
+    }
     return names;
 }
 
@@ -2346,7 +2575,7 @@ MaintenanceResult Application::switch_vault(
         }
         if (same_vault_name(impl_->current_vault_.get().name, target->name)) {
             impl_->take_context_notice(notice);
-            result = {impl_->state, impl_->live_sessions->context_epoch()};
+            result = {impl_->state.load(), impl_->published_epoch.load()};
         } else {
             if (target->password_protected && password.empty()) {
                 throw VaultPasswordError(
@@ -2362,16 +2591,18 @@ MaintenanceResult Application::switch_vault(
             }
             require_switchable_database(selected.data, password);
 
-            if (!impl_->drain_for_maintenance()) {
+            if (!impl_->drain_for_maintenance(notice)) {
                 throw std::runtime_error(
                     "Could not pause active sessions for database maintenance");
             }
+            bool database_closed = false;
             try {
                 auto database = impl_->store->reserve_maintenance();
                 SessionRepository::MaintenanceGuard repository =
                     impl_->sessions->reserve_maintenance();
                 repository.checkpoint();
                 database.close();
+                database_closed = true;
                 database.retarget(
                     selected.data, std::move(target_lease), password);
                 repository.retarget(selected.data, password);
@@ -2379,24 +2610,28 @@ MaintenanceResult Application::switch_vault(
                 impl_->reopen(database, repository);
                 impl_->current_vault_.set(selected);
                 impl_->command.vault = selected;
+                try {
+                    impl_->api_keys->migrate_vault();
+                } catch (const std::exception& error) {
+                    log_warn(
+                        "Legacy API-key migration failed after switching vault: "
+                        + std::string(error.what()));
+                }
                 impl_->end_maintenance_locked(true, notice);
             } catch (...) {
-                impl_->global_maintenance.reset();
                 if (impl_->unusable) {
-                    impl_->state = ApplicationState::unavailable;
-                    impl_->publish_epoch(notice);
-                } else if (impl_->state == ApplicationState::maintenance) {
-                    impl_->state = ApplicationState::running;
-                    impl_->resume_resources();
+                    impl_->global_maintenance.reset();
+                    impl_->publish_epoch(
+                        notice, ApplicationState::unavailable);
+                } else if (
+                    impl_->state.load() == ApplicationState::maintenance) {
+                    if (database_closed) {
+                        impl_->end_maintenance_locked(false, notice);
+                    } else {
+                        impl_->cancel_maintenance_locked(notice);
+                    }
                 }
                 throw;
-            }
-            try {
-                impl_->api_keys->migrate_vault();
-            } catch (const std::exception& error) {
-                log_warn(
-                    "Legacy API-key migration failed after switching vault: "
-                    + std::string(error.what()));
             }
             impl_->rebuild_mirror(cha::web::session_mirror_root(selected));
             try {
@@ -2410,7 +2645,7 @@ MaintenanceResult Application::switch_vault(
                     "Failed to persist vault selection: "
                     + std::string(error.what()));
             }
-            result = {impl_->state, impl_->live_sessions->context_epoch()};
+            result = {impl_->state.load(), impl_->published_epoch.load()};
         }
     } catch (...) {
         notice.dispatch();
@@ -2450,36 +2685,53 @@ MaintenanceResult Application::merge_vault(
             require_openable_protected_database(selected.data, password);
         }
 
+        if (!impl_->drain_for_maintenance(notice)) {
+            throw std::runtime_error(
+                "Could not pause active sessions for database maintenance");
+        }
+        bool merged = false;
         try {
             impl_->store->merge(selected.data, source_lease, password);
+            merged = true;
+            {
+                SessionRepository::MaintenanceGuard repository =
+                    impl_->sessions->reserve_maintenance();
+                repository.synchronize_forums(*current_workspace());
+            }
+            impl_->rebuild_mirror(
+                cha::web::session_mirror_root(impl_->current_vault_.get()));
         } catch (const WorkspaceRestartRequiredError&) {
-            impl_->unusable = true;
-            impl_->state = ApplicationState::unavailable;
-            impl_->publish_epoch(notice);
+            if (impl_->state.load() == ApplicationState::maintenance) {
+                impl_->end_maintenance_locked(false, notice);
+            }
             throw;
-        }
-
-        try {
-            impl_->sessions->synchronize_forums();
         } catch (const std::exception& error) {
-            impl_->unusable = true;
-            impl_->state = ApplicationState::unavailable;
-            impl_->publish_epoch(notice);
+            if (impl_->state.load() == ApplicationState::maintenance) {
+                if (!merged) {
+                    impl_->cancel_maintenance_locked(notice);
+                    throw;
+                }
+                impl_->end_maintenance_locked(false, notice);
+            }
             throw WorkspaceRestartRequiredError(
                 std::string(
                     "Configuration was committed but forums could not be "
                     "synchronized: ")
                 + error.what() + ". Restart is required");
+        } catch (...) {
+            if (impl_->state.load() == ApplicationState::maintenance) {
+                if (!merged) {
+                    impl_->cancel_maintenance_locked(notice);
+                    throw;
+                }
+                impl_->end_maintenance_locked(false, notice);
+            }
+            throw WorkspaceRestartRequiredError(
+                "Configuration was committed but forums could not be "
+                "synchronized. Restart is required");
         }
-
-        for (const cha::web::LiveSessionHandle& live :
-             impl_->live_sessions->active_sessions()) {
-            live->request_shutdown(cha::web::ShutdownReason::reloading);
-        }
-        impl_->publish_epoch(notice);
-        impl_->rebuild_mirror(
-            cha::web::session_mirror_root(impl_->current_vault_.get()));
-        result = {impl_->state, impl_->live_sessions->context_epoch()};
+        impl_->end_maintenance_locked(true, notice);
+        result = {impl_->state.load(), impl_->published_epoch.load()};
     } catch (...) {
         notice.dispatch();
         throw;
@@ -2577,10 +2829,8 @@ void Application::save_file(
     std::uint64_t epoch,
     const std::filesystem::path& destination,
     std::string_view contents) {
-    {
-        const std::lock_guard lifecycle(impl_->lifecycle_mutex);
-        impl_->require_admitted(epoch);
-    }
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
     vault::save_file_replace(destination, contents);
 }
 
@@ -2666,6 +2916,7 @@ bool& Application::mutable_unusable() {
 
 void Application::mark_unusable() {
     impl_->unusable = true;
+    impl_->state.store(ApplicationState::unavailable);
 }
 
 bool Application::stopping() const {

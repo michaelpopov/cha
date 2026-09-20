@@ -1,7 +1,8 @@
 param(
     [string]$Expect = 'pass',
     [string]$Executable = $env:CHA_WEBVIEW2_EXECUTABLE,
-    [string]$Assets = $env:CHA_NATIVE_ASSETS
+    [string]$Assets = $env:CHA_NATIVE_ASSETS,
+    [string]$PrepareVault = $env:CHA_PREPARE_TEST_VAULT
 )
 
 $ErrorActionPreference = 'Stop'
@@ -24,11 +25,27 @@ if (-not $Executable) {
 if (-not $Executable) {
     throw 'CHA_WEBVIEW2_EXECUTABLE is required on Windows'
 }
+if (-not $PrepareVault) {
+    foreach ($candidate in @(
+            (Join-Path $repository 'build\ninja\cha_prepare_test_vault.exe'),
+            (Join-Path $repository 'build\ninja\Release\cha_prepare_test_vault.exe')
+        )) {
+        if (Test-Path $candidate) {
+            $PrepareVault = $candidate
+            break
+        }
+    }
+}
+if (-not $PrepareVault) {
+    throw 'CHA_PREPARE_TEST_VAULT is required on Windows'
+}
 
 $env:CHA_WEBVIEW2_EXECUTABLE = $Executable
 $env:CHA_NATIVE_ASSETS = $Assets
+$env:CHA_PREPARE_TEST_VAULT = $PrepareVault
 $env:CHA_WEBVIEW2_CDP_PORT = $(if ($env:CHA_WEBVIEW2_CDP_PORT) { $env:CHA_WEBVIEW2_CDP_PORT } else { '9222' })
 $webapp = Join-Path $repository 'webapp'
+$env:NODE_PATH = Join-Path $webapp 'node_modules'
 
 function Invoke-WebView2Probe {
     param([Parameter(Mandatory = $true)] [string]$Grep)
@@ -53,7 +70,7 @@ try {
         Write-Host 'FAIL intentional assertion failure'
         exit 1
     }
-    $result = Invoke-WebView2Probe 'proves a passing assertion'
+    $result = Invoke-WebView2Probe 'runs the packaged application through the real native runtime'
     if ($result.Code -ne 0) { exit $result.Code }
 } finally {
     Pop-Location

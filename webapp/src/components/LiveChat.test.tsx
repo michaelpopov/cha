@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { ChaError, type AudioDownloadAcceptance, type AudioDownloadBatchAcceptance, type AudioDownloadBatchRequest, type ChaClient, type SessionSnapshot } from '../api/client';
+import { ChaError, type AudioDownloadAcceptance, type AudioDownloadBatchAcceptance, type AudioDownloadBatchRequest, type ChaClient, type MediaResource, type SessionSnapshot } from '../api/client';
 import type { SessionEventHandlers } from '../api/events';
 import {
   bootstrapFixture,
@@ -381,30 +381,6 @@ describe('live chat', () => {
     expect(play).not.toHaveBeenCalled();
   });
 
-  it('refreshes a cached audio 404 and offers generation without automatically starting it', async () => {
-    const fetcher = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('Not found', { status: 404 }));
-    const startAudioDownload = vi.fn();
-    const getAudioDownloads = vi.fn().mockResolvedValueOnce({ cached_entry_ids: [2], downloads: [] })
-      .mockResolvedValue({ cached_entry_ids: [], downloads: [] });
-    const events = drivableEvents();
-    render(<App client={fixtureClient({
-      getVoiceOutputRuntime: async () => voiceOutputRuntimeFixture,
-      getAudioDownloads, startAudioDownload,
-    })} connectSessionEvents={events.connect} />);
-    await attachInitial(events, { ...snapshotFixture, transcript: [
-      { id: 2, kind: 'character', participant_id: 'assistant', display_name: 'Assistant',
-        addressed_to: '', addressed_to_name: '', text: 'Answer', status: 'complete', created_at: 2, has_cached_audio: true },
-    ] });
-    fireEvent.click(await screen.findByRole('button', { name: "Play cached audio for Assistant's response" }));
-    await screen.findByRole('button', { name: "Generate audio for Assistant's response" });
-    expect(fetcher).toHaveBeenCalledWith(
-      '/api/v1/forums/entrance/sessions/welcome/entries/2/audio?vault_name=Personal',
-      expect.objectContaining({ signal: expect.any(AbortSignal) }),
-    );
-    expect(startAudioDownload).not.toHaveBeenCalled();
-    expect(getAudioDownloads).toHaveBeenCalledTimes(2);
-  });
-
   it('refreshes a native cached audio miss and offers generation without automatically starting it', async () => {
     const startAudioDownload = vi.fn();
     const getAudioDownloads = vi.fn().mockResolvedValueOnce({ cached_entry_ids: [2], downloads: [] })
@@ -428,6 +404,59 @@ describe('live chat', () => {
     expect(getAudioDownloads).toHaveBeenCalledTimes(2);
   });
 
+  it('discards audio resolution completed for the previous conversation', async () => {
+    const play = vi.spyOn(TextToSpeechSession.prototype, 'play').mockResolvedValue();
+    let resolvePrevious!: (resource: MediaResource) => void;
+    let resolveCurrent!: (resource: MediaResource) => void;
+    const previous = new Promise<MediaResource>((resolve) => { resolvePrevious = resolve; });
+    const current = new Promise<MediaResource>((resolve) => { resolveCurrent = resolve; });
+    const resolveAudioSource = vi.fn()
+      .mockReturnValueOnce(previous)
+      .mockReturnValueOnce(current);
+    const releaseResource = vi.fn(async () => undefined);
+    const entry = {
+      id: 2, kind: 'character' as const, participant_id: 'assistant', display_name: 'Assistant',
+      addressed_to: '', addressed_to_name: '', text: 'Saved answer', status: 'complete' as const,
+      created_at: 2, has_cached_audio: true,
+    };
+    const planning: SessionSnapshot = {
+      ...snapshotFixture,
+      forum: bootstrapFixture.forums[1],
+      session_id: 'planning',
+      session_label: 'Planning',
+      transcript: [entry],
+    };
+    const events = drivableEvents();
+    render(<App client={fixtureClient({
+      getSessionSnapshot: async (forumId) => forumId === 'lobby' ? planning : snapshotFixture,
+      getAudioDownloads: async () => ({ cached_entry_ids: [2], downloads: [] }),
+      resolveAudioSource,
+      releaseResource,
+    })} connectSessionEvents={events.connect} />);
+    await attachInitial(events, { ...snapshotFixture, transcript: [entry] });
+
+    fireEvent.click(await screen.findByRole('button', {
+      name: "Play cached audio for Assistant's response",
+    }));
+    fireEvent.click(screen.getByRole('button', { name: /^Planning/ }));
+    await waitFor(() => expect(events.connections[1]?.key).toBe('lobby/planning'));
+    act(() => events.handlers[1].onSnapshot(planning));
+    fireEvent.click(await screen.findByRole('button', {
+      name: "Play cached audio for Assistant's response",
+    }));
+
+    await act(async () => resolvePrevious({
+      resource_id: 'old', url: '/media/old', mime_type: 'audio/mpeg', byte_length: 3,
+    }));
+    await waitFor(() => expect(releaseResource).toHaveBeenCalledWith('old'));
+    expect(play).not.toHaveBeenCalled();
+
+    await act(async () => resolveCurrent({
+      resource_id: 'current', url: '/media/current', mime_type: 'audio/mpeg', byte_length: 3,
+    }));
+    await waitFor(() => expect(play).toHaveBeenCalledOnce());
+  });
+
   it('plays committed audio when no synthesis configuration or key is available', async () => {
     const fetcher = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('audio'));
     vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:cached');
@@ -448,7 +477,7 @@ describe('live chat', () => {
     fireEvent.click(await screen.findByRole('button', { name: "Play cached audio for Assistant's response" }));
     await screen.findByRole('button', { name: "Stop reading Assistant's response" });
     expect(fetcher).toHaveBeenCalledWith(
-      '/api/v1/forums/entrance/sessions/welcome/entries/2/audio?vault_name=Personal', expect.any(Object));
+      '/media/cached-2', expect.any(Object));
     expect(startAudioDownload).not.toHaveBeenCalled();
   });
 
@@ -1266,7 +1295,6 @@ describe('live chat', () => {
           submitInput,
           getVoiceInputRuntime: async () => ({
             url: 'https://api.openai.com/v1/realtime/calls',
-            api_key: 'secret',
             model: 'gpt-live-transcribe',
             delay: 'high',
             prompt: 'Software design discussion.',
@@ -1315,7 +1343,6 @@ describe('live chat', () => {
     render(<App client={fixtureClient({
       getVoiceInputRuntime: async () => ({
         url: 'https://api.openai.com/v1/realtime/calls',
-        api_key: 'secret',
         model: 'gpt-live-transcribe',
         delay: 'xhigh',
         prompt: 'Russian technical discussion.',
@@ -1710,17 +1737,9 @@ describe('live chat', () => {
 
   it('offers recovery actions when a settings reload never reopens', async () => {
     const events = drivableEvents();
-    let snapshots = 0;
-    const getSessionSnapshot = vi.fn(async () => {
-      snapshots += 1;
-      if (snapshots === 1) return transcriptSnapshot();
-      throw new ChaError(500, 'internal_error', 'The request could not be completed.');
-    });
     render(<App
-      client={fixtureClient({ getSessionSnapshot })}
+      client={fixtureClient()}
       connectSessionEvents={events.connect}
-      streamRecovery="http"
-      retryDelays={[0]}
     />);
     await attachInitial(events, transcriptSnapshot());
 
@@ -1730,9 +1749,11 @@ describe('live chat', () => {
       shutdown_reason: 'reloading',
     }));
     act(() => events.handlers[0].onError({ kind: 'stream_failure' }));
+    await waitFor(() => expect(events.connections).toHaveLength(2));
+    act(() => events.handlers[1].onError({ kind: 'stream_failure' }));
 
-    // The ladder gives up while the last snapshot still says `reloading`, and
-    // that stale reason must not withhold the only way back.
+    // A failed replacement while the last snapshot still says `reloading`
+    // must not withhold the only way back.
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'Live updates could not be restored.',
     );
@@ -1778,7 +1799,6 @@ describe('live chat', () => {
       <App
         client={fixtureClient({ getSessionSnapshot, stopGeneration })}
         connectSessionEvents={events.connect}
-        streamRecovery="http"
       />,
     );
     await attachInitial(events, active);
@@ -1796,32 +1816,6 @@ describe('live chat', () => {
 });
 
 describe('live stream recovery', () => {
-  it('re-opens a session the server has unloaded before reconnecting', async () => {
-    const events = drivableEvents();
-    const openSession = vi.fn(async (forumId: string, sessionId: string) => ({
-      forum_id: forumId,
-      session_id: sessionId,
-    }));
-    const getSessionSnapshot = vi.fn()
-      .mockResolvedValueOnce(snapshotFixture)
-      .mockRejectedValueOnce(new ChaError(409, 'session_not_live', 'Session is not live.'))
-      .mockResolvedValueOnce(snapshotFixture);
-    render(
-      <App
-        client={fixtureClient({ getSessionSnapshot, openSession })}
-        connectSessionEvents={events.connect}
-        streamRecovery="http"
-      retryDelays={[0]}
-      />,
-    );
-    await attachInitial(events);
-    act(() => events.handlers[0].onError({ kind: 'stream_failure' }));
-
-    await waitFor(() => expect(events.connections).toHaveLength(2));
-    expect(openSession.mock.calls.filter(([, id]) => id === 'welcome')).toHaveLength(2);
-    expect(getSessionSnapshot).toHaveBeenCalledTimes(3);
-  });
-
   // The reader opened this conversation on another device. Reconnecting would
   // take it straight back, so this page parks with the transcript it has and
   // waits to be asked.
@@ -1833,7 +1827,6 @@ describe('live stream recovery', () => {
       <App
         client={fixtureClient({ getSessionSnapshot })}
         connectSessionEvents={events.connect}
-        streamRecovery="http"
       retryDelays={[0, 0]}
       />,
     );
@@ -1861,7 +1854,6 @@ describe('live stream recovery', () => {
       <App
         client={fixtureClient({ getSessionSnapshot: async () => snapshot })}
         connectSessionEvents={events.connect}
-        streamRecovery="http"
       retryDelays={[0, 0]}
       />,
     );
@@ -1887,7 +1879,6 @@ describe('live stream recovery', () => {
       <App
         client={fixtureClient({ getSessionSnapshot: async () => snapshot })}
         connectSessionEvents={events.connect}
-        streamRecovery="http"
       retryDelays={[0]}
       />,
     );
@@ -1900,30 +1891,22 @@ describe('live stream recovery', () => {
     await waitFor(() => expect(events.connections).toHaveLength(2));
   });
 
-  it('stops after bounded probe failures with an explicit Retry action', async () => {
+  it('stops after one failed replacement with an explicit Retry action', async () => {
     const events = drivableEvents();
-    let snapshots = 0;
-    const client = fixtureClient({
-      getSessionSnapshot: async () => {
-        snapshots += 1;
-        if (snapshots === 1) return snapshotFixture;
-        throw new Error('Server unavailable');
-      },
-    });
     render(
       <App
-        client={client}
+        client={fixtureClient()}
         connectSessionEvents={events.connect}
-        streamRecovery="http"
-      retryDelays={[0, 0, 0, 0, 0]}
       />,
     );
     await attachInitial(events);
     act(() => events.handlers[0].onError({ kind: 'stream_failure' }));
+    await waitFor(() => expect(events.connections).toHaveLength(2));
+    act(() => events.handlers[1].onError({ kind: 'stream_failure' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Live updates could not be restored');
     expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
-    expect(snapshots).toBe(6);
+    expect(events.connections).toHaveLength(2);
   });
 });
 
@@ -1942,7 +1925,6 @@ describe('live session capacity', () => {
       <App
         client={fixtureClient({ openSession })}
         connectSessionEvents={events.connect}
-        streamRecovery="http"
       retryDelays={[0, 0]}
       />,
     );
@@ -1955,7 +1937,7 @@ describe('live session capacity', () => {
     window.history.replaceState(null, '', '/#/s/lobby/planning/');
     const openSession = vi.fn(async () => { throw capacityError(); });
     const client: ChaClient = fixtureClient({ openSession });
-    render(<App client={client} streamRecovery="http" retryDelays={[0, 0]} />);
+    render(<App client={client} retryDelays={[0, 0]} />);
 
     expect(await screen.findByRole('heading', { name: 'Session unavailable' })).toBeInTheDocument();
     expect(screen.getByRole('alert')).toHaveTextContent('Another session has not closed yet');
@@ -1992,7 +1974,6 @@ describe('live session capacity', () => {
           openSession,
         })}
         connectSessionEvents={events.connect}
-        streamRecovery="http"
       retryDelays={[0]}
       />,
     );

@@ -31,8 +31,8 @@ struct SessionOutputItem {
 };
 
 // Coalescing owner-to-consumer queue: compatible-append merge, snapshot
-// fallback, and one in-flight payload. Sequence policy and byte bounds are
-// applied when a payload is committed to pending.
+// fallback, and one in-flight payload. Sequence numbers are assigned only when
+// the surviving pending payload is taken for delivery.
 class SessionOutput {
 public:
     explicit SessionOutput(
@@ -80,7 +80,7 @@ private:
     bool interrupt_{};
     std::uint64_t generation_{};
     std::shared_ptr<const SessionOutputItem> in_flight_;
-    std::shared_ptr<const SessionOutputItem> pending_;
+    std::shared_ptr<SessionOutputItem> pending_;
     std::optional<cha::TextTarget> target_;
     std::uint64_t next_sequence_{};
     std::size_t collapsed_payloads_{};

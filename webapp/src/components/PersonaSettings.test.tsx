@@ -80,6 +80,9 @@ describe('persona settings screen', () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(new TextEncoder().encode('audio')),
     );
+    const previewSpeech = vi.fn(async () => ({
+      url: '/media/preview', resource_id: 'preview', mime_type: 'audio/mpeg', byte_length: 5,
+    }));
     vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:audio');
     vi.stubGlobal('Audio', vi.fn(function Audio() {
       return {
@@ -89,6 +92,7 @@ describe('persona settings screen', () => {
       };
     }));
     renderSettings(fixtureClient({
+      previewSpeech,
       listVoices: async () => [voiceDetailFixture],
       getVoiceOutputRuntime: async () => ({
         ...voiceOutputRuntimeFixture,
@@ -104,11 +108,12 @@ describe('persona settings screen', () => {
     await userEvent.type(text, 'Read this persona draft.');
     await userEvent.click(screen.getByRole('button', { name: 'Play preview' }));
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      '/api/v1/voice-output/audio',
-      expect.objectContaining({
-        body: expect.stringContaining('Read this persona draft.'),
-      }),
+    await waitFor(() => expect(previewSpeech).toHaveBeenCalledWith(
+      'Read this persona draft.',
+      voiceDetailFixture.elevenlabs_voice_id,
+      { speed: 0.95 },
+      expect.any(AbortSignal),
     ));
+    expect(fetchMock).toHaveBeenCalledWith('/media/preview', expect.any(Object));
   });
 });

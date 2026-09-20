@@ -1,5 +1,6 @@
 #include "app/application.h"
 
+#include "session/session_repository.h"
 #include "support/test_workspace.h"
 #include "util/toml_file.h"
 #include "web/current_vault.h"
@@ -9,10 +10,13 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <condition_variable>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <iomanip>
 #include <iterator>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -162,6 +166,75 @@ TEST(ApplicationVault, OverlappingSessionIdsStayOnTheirVault) {
     EXPECT_TRUE(saw_a);
 }
 
+TEST(ApplicationVault, MergeUsesMaintenanceAndRetiresLiveSessions) {
+    TwoVaults pair;
+    auto application = Application::open(pair.command);
+    const auto created = application->create_session("lobby", "Before merge");
+    ASSERT_TRUE(std::holds_alternative<cha::web::OpenSessionSuccess>(
+        application->open_session("lobby", created.id)));
+    const auto old_epoch = application->context_epoch();
+
+    const auto merged = application->merge_vault("B");
+
+    EXPECT_EQ(merged.state, ApplicationState::running);
+    EXPECT_GT(merged.context_epoch, old_epoch);
+    EXPECT_EQ(application->current_vault().get().name, "A");
+    EXPECT_EQ(application->get_persona("beta").summary.display_name, "Beta");
+    EXPECT_EQ(application->check_context(old_epoch), ErrorCode::vault_changed);
+    const auto snapshot = application->snapshot(
+        "lobby", created.id, merged.context_epoch);
+    ASSERT_TRUE(std::holds_alternative<ErrorCode>(snapshot));
+    EXPECT_EQ(std::get<ErrorCode>(snapshot), ErrorCode::session_not_live);
+}
+
+TEST(ApplicationVault, MergeSynchronizationFailureMarksApplicationUnavailable) {
+    TwoVaults pair;
+    auto application = Application::open(pair.command);
+    const auto old_epoch = application->context_epoch();
+    force_next_forum_sync_failure();
+
+    EXPECT_THROW(
+        (void)application->merge_vault("B"),
+        WorkspaceRestartRequiredError);
+
+    EXPECT_EQ(application->state(), ApplicationState::unavailable);
+    EXPECT_GT(application->context_epoch(), old_epoch);
+    EXPECT_EQ(
+        application->check_context(application->context_epoch()),
+        ErrorCode::application_unavailable);
+}
+
+TEST(ApplicationVault, ProtectionSetupFailureRestoresRunningContext) {
+    TwoVaults pair;
+    auto application = Application::open(pair.command);
+    const auto old_epoch = application->context_epoch();
+    bool resumed = false;
+    application->set_resource_hooks({
+        .pause = [](bool) { throw std::runtime_error("pause failed"); },
+        .resume = [&] { resumed = true; },
+    });
+
+    EXPECT_THROW(
+        (void)application->update_vault(
+            "A", {.display_name = "A", .password = "secret"}),
+        std::runtime_error);
+
+    EXPECT_TRUE(resumed);
+    EXPECT_EQ(application->state(), ApplicationState::running);
+    EXPECT_GT(application->context_epoch(), old_epoch);
+    EXPECT_FALSE(application->vault_snapshot().active.password_protected);
+    EXPECT_FALSE(application->create_session(
+        "lobby", "After recovery", application->context_epoch()).id.empty());
+
+    application->set_resource_hooks({});
+    const auto protected_vault = application->update_vault(
+        "A", {.display_name = "A", .password = "secret"},
+        application->context_epoch());
+    EXPECT_TRUE(protected_vault.password_protected);
+    EXPECT_EQ(application->state(), ApplicationState::running);
+    EXPECT_EQ(application->active_password(), "secret");
+}
+
 TEST(ApplicationVault, CreateListAndSameVaultSwitch) {
     TwoVaults pair;
     auto application = Application::open(pair.command);
@@ -236,6 +309,122 @@ TEST(ApplicationVault, ContextChangedCoalescesAndReportsTheNewEpoch) {
     EXPECT_EQ(notices.back().second, ApplicationState::running);
 }
 
+TEST(ApplicationVault, ContextCheckDoesNotWaitForMaintenanceLifecycleLock) {
+    TwoVaults pair;
+    pair.command.vault.modify = pair.workspace_a.root() / "modify";
+    for (auto& vault : pair.command.vaults) {
+        if (vault.name == "A") vault.modify = pair.command.vault.modify;
+    }
+    auto application = Application::open(pair.command);
+    const auto old_epoch = application->context_epoch();
+    std::mutex mutex;
+    std::condition_variable changed;
+    bool paused = false;
+    bool release = false;
+    application->set_resource_hooks({
+        .pause = [&](bool) {
+            std::unique_lock lock(mutex);
+            paused = true;
+            changed.notify_all();
+            changed.wait(lock, [&] { return release; });
+        },
+        .resume = [] {},
+    });
+
+    auto switching = std::async(std::launch::async, [&] {
+        return application->switch_vault("B", {}, old_epoch);
+    });
+    bool reached_pause = false;
+    {
+        std::unique_lock lock(mutex);
+        reached_pause = changed.wait_for(lock, 2s, [&] { return paused; });
+    }
+    auto checked = std::async(std::launch::async, [&] {
+        return application->check_context(old_epoch);
+    });
+    auto bootstrapped = std::async(std::launch::async, [&] {
+        return application->bootstrap();
+    });
+    auto capabilities = std::async(std::launch::async, [&] {
+        return application->capabilities();
+    });
+    const auto check_status = checked.wait_for(1s);
+    const auto bootstrap_status = bootstrapped.wait_for(1s);
+    const auto capabilities_status = capabilities.wait_for(1s);
+    {
+        std::lock_guard lock(mutex);
+        release = true;
+    }
+    changed.notify_all();
+
+    EXPECT_TRUE(reached_pause);
+    EXPECT_EQ(check_status, std::future_status::ready);
+    EXPECT_EQ(bootstrap_status, std::future_status::ready);
+    EXPECT_EQ(capabilities_status, std::future_status::ready);
+    EXPECT_EQ(checked.get(), ErrorCode::vault_changed);
+    EXPECT_FALSE(capabilities.get().can_modify);
+    const auto maintenance = bootstrapped.get();
+    EXPECT_EQ(maintenance.state, ApplicationState::maintenance);
+    EXPECT_EQ(maintenance.context_epoch, old_epoch);
+    EXPECT_EQ(maintenance.presentation.vault_name, "A");
+    EXPECT_FALSE(maintenance.capabilities.can_modify);
+    EXPECT_EQ(switching.get().state, ApplicationState::running);
+}
+
+TEST(ApplicationVault, MaintenanceCompletionDoesNotUndoShutdown) {
+    TwoVaults pair;
+    auto application = Application::open(pair.command);
+    std::mutex mutex;
+    std::condition_variable changed;
+    int pauses = 0;
+    int resumes = 0;
+    bool release = false;
+    application->set_resource_hooks({
+        .pause = [&](bool) {
+            std::unique_lock lock(mutex);
+            ++pauses;
+            changed.notify_all();
+            if (pauses == 1) {
+                changed.wait(lock, [&] { return release; });
+            }
+        },
+        .resume = [&] {
+            std::lock_guard lock(mutex);
+            ++resumes;
+        },
+    });
+
+    auto switching = std::async(std::launch::async, [&] {
+        return application->switch_vault("B");
+    });
+    bool reached_pause = false;
+    {
+        std::unique_lock lock(mutex);
+        reached_pause = changed.wait_for(lock, 2s, [&] { return pauses == 1; });
+    }
+    EXPECT_TRUE(reached_pause);
+    application->request_shutdown();
+    const auto started = std::chrono::steady_clock::now();
+    EXPECT_FALSE(application->join_shutdown(50ms));
+    EXPECT_LT(std::chrono::steady_clock::now() - started, 500ms);
+    {
+        std::lock_guard lock(mutex);
+        release = true;
+    }
+    changed.notify_all();
+
+    const auto switched = switching.get();
+    EXPECT_EQ(switched.state, ApplicationState::unavailable);
+    EXPECT_EQ(application->state(), ApplicationState::unavailable);
+    EXPECT_FALSE(application->running());
+    {
+        std::lock_guard lock(mutex);
+        EXPECT_EQ(resumes, 0);
+        EXPECT_GE(pauses, 2);
+    }
+    EXPECT_TRUE(application->join_shutdown(2s));
+}
+
 TEST(ApplicationVault, StaleVaultMutationFailsVaultChanged) {
     TwoVaults pair;
     auto application = Application::open(pair.command);
@@ -252,9 +441,21 @@ TEST(ApplicationVault, StaleVaultMutationFailsVaultChanged) {
 
 TEST(ApplicationVault, CapabilitiesFollowModifyAndR2OnTheActiveVault) {
     TwoVaults pair;
+    pair.command.vault.modify = pair.workspace_a.root() / "modify";
+    for (auto& vault : pair.command.vaults) {
+        if (vault.name == "A") vault.modify = pair.command.vault.modify;
+    }
     auto application = Application::open(pair.command);
     const auto caps = application->capabilities();
-    EXPECT_FALSE(caps.can_modify);
+    EXPECT_TRUE(caps.can_modify);
+    EXPECT_TRUE(application->bootstrap().capabilities.can_modify);
+
+    (void)application->switch_vault("B");
+    EXPECT_FALSE(application->capabilities().can_modify);
+    EXPECT_FALSE(application->bootstrap().capabilities.can_modify);
+
+    (void)application->switch_vault("A");
+    EXPECT_TRUE(application->capabilities().can_modify);
 }
 
 TEST(ApplicationVault, BootstrapDuringUnavailableDoesNotReadClosedHandles) {

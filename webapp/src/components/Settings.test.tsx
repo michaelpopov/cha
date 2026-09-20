@@ -1343,6 +1343,9 @@ describe('Settings screens', () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(new TextEncoder().encode('audio')),
     );
+    const previewSpeech = vi.fn(async () => ({
+      url: '/media/preview', resource_id: 'preview', mime_type: 'audio/mpeg', byte_length: 5,
+    }));
     vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:audio');
     vi.stubGlobal('Audio', vi.fn(function Audio() {
       return {
@@ -1354,6 +1357,7 @@ describe('Settings screens', () => {
     render(
       <VoiceScreen
         client={fixtureClient({
+          previewSpeech,
           listVoices: async () => [voiceDetailFixture],
           getVoiceOutputRuntime: async () => ({
             url: 'https://api.fish.audio/v1/tts',
@@ -1385,18 +1389,13 @@ describe('Settings screens', () => {
     await userEvent.type(previewText, 'Read this draft.');
     await userEvent.click(screen.getByRole('button', { name: 'Play preview' }));
 
-    expect(fetchMock).toHaveBeenCalledWith(
-      '/api/v1/voice-output/audio',
-      expect.objectContaining({
-        body: JSON.stringify({
-          text: 'Read this draft.',
-          reference_id: 'unsaved-id',
-          settings: {
-            speed: 0.95,
-          },
-        }),
-      }),
+    expect(previewSpeech).toHaveBeenCalledWith(
+      'Read this draft.',
+      'unsaved-id',
+      { speed: 0.95 },
+      expect.any(AbortSignal),
     );
+    expect(fetchMock).toHaveBeenCalledWith('/media/preview', expect.any(Object));
   });
 
   it('renames a voice from the shared editable title', async () => {

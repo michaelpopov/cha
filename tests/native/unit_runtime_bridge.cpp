@@ -294,7 +294,8 @@ TEST_F(NativeRuntimeTest, VaultSwitchPersistsAcrossRestart) {
 
     cha_runtime_close_connection(runtime_, connection_.c_str());
     cha_runtime_request_shutdown(runtime_);
-    (void)cha_runtime_join_shutdown(runtime_, 2000);
+    ASSERT_EQ(cha_runtime_join_shutdown(runtime_, 2000), 1);
+    EXPECT_EQ(cha_runtime_join_shutdown(runtime_, 2000), 1);
     cha_runtime_destroy(runtime_);
     runtime_ = nullptr;
     connection_.clear();

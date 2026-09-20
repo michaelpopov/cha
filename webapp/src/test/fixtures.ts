@@ -330,6 +330,20 @@ export function fixtureClient(overrides: Partial<ChaClient> = {}): ChaClient {
     getAudioDownloads: async (forum, session) => ({
       cached_entry_ids: [...(audioCache.get(`${forum}/${session}`) ?? [])], downloads: [],
     }),
+    resolveAudioSource: async (_forum, _session, entryId) => ({
+      resource_id: `cached-${entryId}`,
+      url: `/media/cached-${entryId}`,
+      mime_type: 'audio/mpeg',
+      byte_length: 5,
+    }),
+    previewSpeech: async () => ({
+      resource_id: 'preview-1',
+      url: '/media/preview-1',
+      mime_type: 'audio/mpeg',
+      byte_length: 5,
+    }),
+    releaseResource: async () => undefined,
+    connectVoiceInput: async () => 'test answer',
     switchVault: async () => undefined,
     mergeVault: async () => undefined,
     ...overrides,

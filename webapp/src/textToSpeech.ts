@@ -1,13 +1,11 @@
 import { useEffect, useState } from 'react';
 
 import type { ChaClient, VoiceUpdate } from './api/client';
-import { audioRequest, type AudioRequest } from './textToSpeechRequest';
 
-export function nativeSpeechFromClient(client: ChaClient): NativeSpeech | undefined {
-  if (!client.previewSpeech || !client.releaseResource) return undefined;
+export function nativeSpeechFromClient(client: ChaClient): NativeSpeech {
   return {
     preview(text, voice, signal) {
-      return client.previewSpeech!(
+      return client.previewSpeech(
         text,
         voice?.elevenlabs_voice_id,
         voice?.settings,
@@ -15,7 +13,7 @@ export function nativeSpeechFromClient(client: ChaClient): NativeSpeech | undefi
       );
     },
     release(resourceId) {
-      return client.releaseResource!(resourceId);
+      return client.releaseResource(resourceId);
     },
   };
 }
@@ -74,73 +72,6 @@ export class TextToSpeechError extends Error {
   }
 }
 
-interface FishAudioJob {
-  start(): void;
-}
-
-const fishAudioQueue: FishAudioJob[] = [];
-let activeFishAudio = 0;
-
-function pumpFishAudio() {
-  // Leave browser connections for the event stream and normal CHA requests.
-  while (activeFishAudio < 3 && fishAudioQueue.length > 0) {
-    fishAudioQueue.shift()!.start();
-  }
-}
-
-function requestAudio(request: AudioRequest, signal: AbortSignal): Promise<Blob> {
-  return new Promise<Blob>((resolve, reject) => {
-    const cancel = () => {
-      const index = fishAudioQueue.indexOf(job);
-      if (index >= 0) fishAudioQueue.splice(index, 1);
-      reject(new DOMException('Speech generation cancelled.', 'AbortError'));
-    };
-    const job: FishAudioJob = {
-      start() {
-        signal.removeEventListener('abort', cancel);
-        activeFishAudio += 1;
-        // Hold the slot until the complete response body has been received.
-        void fetchAudio(request, signal).then(resolve, reject).finally(() => {
-          activeFishAudio -= 1;
-          pumpFishAudio();
-        });
-      },
-    };
-    if (signal.aborted) return cancel();
-    signal.addEventListener('abort', cancel, { once: true });
-    fishAudioQueue.push(job);
-    pumpFishAudio();
-  });
-}
-
-async function fetchAudio(request: AudioRequest, signal?: AbortSignal): Promise<Blob> {
-  for (let attempt = 0; ; attempt += 1) {
-    const response = await fetch(request.url, {
-      method: 'POST', headers: request.headers, body: request.body, signal,
-    });
-    if (response.ok) return response.blob();
-    const error = await speechError(response);
-    if (response.status !== 503
-      || error.code !== 'speech_busy' || attempt >= 3) throw error;
-    await waitForSpeechRetry(signal);
-  }
-}
-
-function waitForSpeechRetry(signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const cancel = () => {
-      clearTimeout(timer);
-      reject(new DOMException('Speech generation cancelled.', 'AbortError'));
-    };
-    const timer = setTimeout(() => {
-      signal?.removeEventListener('abort', cancel);
-      resolve();
-    }, 1000);
-    if (signal?.aborted) return cancel();
-    signal?.addEventListener('abort', cancel, { once: true });
-  });
-}
-
 export interface NativeSpeech {
   preview(
     text: string,
@@ -166,7 +97,7 @@ export class TextToSpeechSession {
   private nativeResourceId: string | null = null;
 
   constructor(
-    private readonly configuration: TextToSpeechConfiguration | null,
+    _configuration: TextToSpeechConfiguration | null,
     private readonly voice: TextToSpeechVoice | undefined,
     private readonly text: string,
     private readonly onEnded: () => void,
@@ -194,10 +125,7 @@ export class TextToSpeechSession {
         return;
       }
       blob = await fetchLocalResource(resource.url, this.request.signal);
-    } else {
-      if (!this.configuration) throw new TextToSpeechError('Voice output is not configured.');
-      blob = await requestAudio(audioRequest(this.configuration, this.voice, this.text), this.request.signal);
-    }
+    } else throw new TextToSpeechError('Voice output is unavailable.');
     if (this.stopped) {
       this.releaseNative();
       return;

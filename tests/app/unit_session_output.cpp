@@ -129,6 +129,26 @@ TEST(SessionOutput, OneInFlightUntilAcknowledged) {
     auto second = output.take();
     ASSERT_TRUE(second);
     EXPECT_EQ(second->snapshot.transcript[0].text, "b");
+    EXPECT_EQ(second->seq, 1U);
+}
+
+TEST(SessionOutput, ReplacedPendingPayloadsDoNotConsumeSequenceNumbers) {
+    SessionOutput output(SequencePolicy::monotonic);
+    output.attach();
+    output.publish_snapshot(streaming_snapshot("a"));
+    auto first = output.take();
+    ASSERT_TRUE(first);
+    EXPECT_EQ(first->seq, 0U);
+
+    output.publish_snapshot(streaming_snapshot("b"));
+    output.publish_snapshot(streaming_snapshot("c"));
+    EXPECT_EQ(output.next_sequence(), 1U);
+
+    output.acknowledge();
+    auto replacement = output.take();
+    ASSERT_TRUE(replacement);
+    EXPECT_EQ(replacement->snapshot.transcript[0].text, "c");
+    EXPECT_EQ(replacement->seq, 1U);
 }
 
 } // namespace

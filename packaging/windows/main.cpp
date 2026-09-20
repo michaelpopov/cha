@@ -5,7 +5,6 @@
 
 #include <windows.h>
 
-#include <bcrypt.h>
 #include <shellapi.h>
 #include <shlobj.h>
 #include <shobjidl.h>
@@ -16,12 +15,14 @@
 #include <nlohmann/json.hpp>
 #include <shlwapi.h>
 
-#include <array>
+#include <algorithm>
 #include <cmath>
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -50,6 +51,7 @@ constexpr UINT kOperationComplete = WM_APP + 1;
 constexpr UINT kFatalError = WM_APP + 2;
 constexpr UINT kDeliveryReady = WM_APP + 3;
 constexpr UINT kShutdownDone = WM_APP + 4;
+constexpr UINT kNativeSaveComplete = WM_APP + 5;
 constexpr wchar_t kPasswordWindowClass[] = L"CHA.PasswordDialog";
 
 class LaunchCancelled final : public std::exception {
@@ -132,25 +134,6 @@ void ensure_private_directory(const std::filesystem::path& path) {
             "Failed to inspect directory '" + cha::utf8_path(path) + "'");
     }
     cha::create_private_directory(path);
-}
-
-std::string random_access_token() {
-    std::array<unsigned char, 32> bytes{};
-    if (!BCRYPT_SUCCESS(::BCryptGenRandom(
-            nullptr,
-            bytes.data(),
-            static_cast<ULONG>(bytes.size()),
-            BCRYPT_USE_SYSTEM_PREFERRED_RNG))) {
-        throw std::runtime_error("Failed to create the private runtime token");
-    }
-    constexpr char digits[] = "0123456789abcdef";
-    std::string token;
-    token.reserve(bytes.size() * 2);
-    for (const unsigned char byte : bytes) {
-        token.push_back(digits[byte >> 4]);
-        token.push_back(digits[byte & 0x0f]);
-    }
-    return token;
 }
 
 bool starts_with_case_insensitive(
@@ -351,10 +334,17 @@ struct OperationResult {
     std::string error;
 };
 
+struct NativeSaveResult {
+    std::string connection_id;
+    std::string id;
+    uint64_t context_epoch{};
+    bool ok{};
+    std::string message;
+};
+
 struct LaunchOptions {
     bool smoke_test{};
     bool feasibility{};
-    bool http_mode{};
     std::optional<std::filesystem::path> data_root;
     std::optional<std::filesystem::path> assets;
     std::optional<int> cdp_port;
@@ -374,6 +364,7 @@ std::wstring without_fragment(std::wstring_view uri) {
 std::wstring native_bootstrap_script(std::string_view connection_id) {
     const std::wstring id = wide_from_utf8(connection_id);
     return L"window.__CHA_NATIVE_CONNECTION_ID__='" + id + L"';"
+        L"window.__CHA_NATIVE_CONTEXT_EPOCH__=0;"
         L"window.__CHA_NATIVE_QUEUE__=window.__CHA_NATIVE_QUEUE__||[];"
         L"if(typeof window.__CHA_NATIVE_RECEIVE__!=='function'){"
         L"window.__CHA_NATIVE_RECEIVE__=function(batch){"
@@ -383,12 +374,16 @@ std::wstring native_bootstrap_script(std::string_view connection_id) {
         L"window.chrome.webview.postMessage(message);}};"
         L"window.__CHA_NATIVE_SAVE_PENDING__={};"
         L"window.__CHA_NATIVE_SAVE_SEQ__=0;"
-        L"window.__CHA_NATIVE_SAVE_TEXT__=function(suggestedName,contents){"
+        L"window.__CHA_NATIVE_SAVE_SESSION__=function(suggestedName,forumId,sessionId){"
         L"return new Promise(function(resolve,reject){"
         L"var id=String(++window.__CHA_NATIVE_SAVE_SEQ__);"
         L"window.__CHA_NATIVE_SAVE_PENDING__[id]={resolve:resolve,reject:reject};"
         L"window.__CHA_NATIVE_POST__(JSON.stringify({"
-        L"native_action:'save_text',id:id,suggested_name:suggestedName,contents:contents"
+        L"native_action:'save_session',id:id,"
+        L"connection_id:window.__CHA_NATIVE_CONNECTION_ID__,"
+        L"context_epoch:window.__CHA_NATIVE_CONTEXT_EPOCH__,"
+        L"suggested_name:suggestedName,"
+        L"forum_id:forumId,session_id:sessionId"
         L"}));});};"
         L"window.__CHA_NATIVE_SAVE_DONE__=function(id,ok,message){"
         L"var pending=window.__CHA_NATIVE_SAVE_PENDING__[id];"
@@ -507,6 +502,7 @@ class WindowsApplication final
     : public std::enable_shared_from_this<WindowsApplication> {
 public:
     ~WindowsApplication() {
+        if (save_thread_.joinable()) save_thread_.join();
         if (operation_thread_.joinable()) operation_thread_.join();
         if (shutdown_thread_.joinable()) shutdown_thread_.join();
         shutdown_runtime();
@@ -522,7 +518,6 @@ public:
         instance_ = instance;
         smoke_test_ = options.smoke_test;
         feasibility_ = options.feasibility;
-        http_mode_ = false;
         assets_ = options.assets;
         cdp_port_ = options.cdp_port;
         dev_origin_ = options.dev_origin;
@@ -621,6 +616,10 @@ private:
             return 0;
         case kShutdownDone:
             finish_shutdown();
+            return 0;
+        case kNativeSaveComplete:
+            finish_native_save(
+                reinterpret_cast<NativeSaveResult*>(lparam));
             return 0;
         case WM_DESTROY:
             window_ = nullptr;
@@ -721,7 +720,6 @@ private:
     }
 
     void start_runtime() {
-        runtime_token_ = random_access_token();
         const std::filesystem::path resources = cha::executable_directory();
         const std::string config = cha::utf8_path(config_directory_);
         const std::string resource_path = cha::utf8_path(resources);
@@ -746,7 +744,7 @@ private:
             runtime_ = cha_runtime_create(
                 config.c_str(),
                 resource_path.c_str(),
-                runtime_token_.c_str(),
+                "",
                 password.c_str(),
                 0,
                 &password_error,
@@ -870,13 +868,6 @@ private:
                     result, L"CHA could not map its packaged assets"));
                 return S_OK;
             }
-        } else if (http_mode_) {
-            result = install_runtime_cookie();
-            if (FAILED(result)) {
-                post_fatal_error(hresult_message(
-                    result, L"CHA could not secure its private browser session"));
-                return S_OK;
-            }
         } else {
             result = install_native_origin();
             if (FAILED(result)) {
@@ -910,7 +901,7 @@ private:
                     const bool hash_only = !current.empty()
                         && without_fragment(uri) == without_fragment(current)
                         && uri != current;
-                    if (!feasibility_ && !http_mode_ && !hash_only) {
+                    if (!feasibility_ && !hash_only) {
                         replace_document_connection();
                     }
                     return S_OK;
@@ -1023,27 +1014,6 @@ private:
                     }).Get(),
                 &ignored);
         }
-    }
-
-    HRESULT install_runtime_cookie() {
-        ComPtr<ICoreWebView2_2> webview2;
-        HRESULT result = webview_.As(&webview2);
-        if (FAILED(result)) return result;
-        ComPtr<ICoreWebView2CookieManager> manager;
-        result = webview2->get_CookieManager(&manager);
-        if (FAILED(result)) return result;
-        ComPtr<ICoreWebView2Cookie> cookie;
-        const std::wstring token = wide_from_utf8(runtime_token_);
-        result = manager->CreateCookie(
-            L"CHA_RUNTIME", token.c_str(), L"127.0.0.1", L"/", &cookie);
-        if (FAILED(result)) return result;
-        if (FAILED(result = cookie->put_IsHttpOnly(TRUE))) return result;
-        if (FAILED(result = cookie->put_SameSite(
-                COREWEBVIEW2_COOKIE_SAME_SITE_KIND_STRICT))) {
-            return result;
-        }
-        if (FAILED(result = cookie->put_Expires(-1.0))) return result;
-        return manager->AddOrUpdateCookie(cookie.Get());
     }
 
     HRESULT respond_with_bytes(
@@ -1303,17 +1273,55 @@ private:
         } catch (const nlohmann::json::exception&) {
             return false;
         }
-        if (!json.is_object()
-            || json.value("native_action", "") != "save_text") {
+        if (!json.is_object()) {
             return false;
         }
-        const std::string id = json.value("id", "");
-        const std::string suggested = json.value("suggested_name", "session.md");
-        const std::string contents = json.value("contents", "");
+        const auto action = json.find("native_action");
+        if (action == json.end()) return false;
+        if (!action->is_string() || action->get<std::string>() != "save_session") {
+            return true;
+        }
+        const auto string_field = [&](const char* name)
+            -> std::optional<std::string> {
+            const auto value = json.find(name);
+            if (value == json.end() || !value->is_string()) return std::nullopt;
+            return value->get<std::string>();
+        };
+        const auto id_value = string_field("id");
+        const auto connection_value = string_field("connection_id");
+        const auto suggested_value = string_field("suggested_name");
+        const auto forum_value = string_field("forum_id");
+        const auto session_value = string_field("session_id");
+        if (!id_value || !connection_value || !suggested_value
+            || !forum_value || !session_value) {
+            return true;
+        }
+        const std::string& id = *id_value;
+        const std::string& originating_connection = *connection_value;
+        const std::string& suggested = *suggested_value;
+        const std::string& forum_id = *forum_value;
+        const std::string& session_id = *session_value;
+        if (originating_connection != connection_id_
+            || !json.contains("context_epoch")
+            || !json["context_epoch"].is_number_unsigned()) {
+            return true;
+        }
+        const uint64_t request_epoch = json["context_epoch"].get<uint64_t>();
         uint64_t epoch = 0;
-        if (runtime_ == nullptr
-            || cha_runtime_context_epoch(runtime_, &epoch) == 0) {
-            complete_native_save(id, false, "unavailable");
+        if (forum_id.empty() || session_id.empty() || runtime_ == nullptr
+            || request_epoch == 0
+            || request_epoch > 9007199254740991ULL
+            || cha_runtime_context_epoch(runtime_, &epoch) == 0
+            || epoch != request_epoch) {
+            return true;
+        }
+        if (save_dialog_ || save_operation_in_progress_) {
+            complete_native_save(
+                originating_connection,
+                id,
+                request_epoch,
+                false,
+                "Another save is in progress.");
             return true;
         }
         ComPtr<IFileSaveDialog> dialog;
@@ -1323,15 +1331,24 @@ private:
             CLSCTX_INPROC_SERVER,
             IID_PPV_ARGS(&dialog));
         if (SUCCEEDED(result)) {
+            save_dialog_ = dialog;
             DWORD options = 0;
             dialog->GetOptions(&options);
             dialog->SetOptions(options | FOS_FORCEFILESYSTEM | FOS_OVERWRITEPROMPT);
             const std::wstring name = wide_from_utf8(suggested);
             dialog->SetFileName(name.c_str());
             result = dialog->Show(window_);
+            save_dialog_.Reset();
         }
         if (result == HRESULT_FROM_WIN32(ERROR_CANCELLED)) {
-            complete_native_save(id, true, "cancelled");
+            complete_native_save(
+                originating_connection, id, request_epoch, true, "cancelled");
+            return true;
+        }
+        uint64_t current_epoch = 0;
+        if (closing_ || connection_id_ != originating_connection
+            || cha_runtime_context_epoch(runtime_, &current_epoch) == 0
+            || current_epoch != request_epoch) {
             return true;
         }
         ComPtr<IShellItem> item;
@@ -1342,29 +1359,87 @@ private:
         }
         const std::wstring destination = take_com_string(raw_destination);
         if (FAILED(result) || destination.empty()) {
-            complete_native_save(id, false, "save failed");
+            complete_native_save(
+                originating_connection, id, request_epoch, false, "save failed");
             return true;
         }
         const std::string path = cha::utf8_from_wide(destination);
-        char* error = nullptr;
-        const int32_t status = cha_runtime_save_file(
-            runtime_,
-            epoch,
-            path.c_str(),
-            contents.c_str(),
-            contents.size(),
-            &error);
-        const std::string message = error ? error : "";
-        cha_string_free(error);
-        complete_native_save(id, status == 1, message);
+        ChaRuntime* const runtime = runtime_;
+        HWND const window = window_;
+        save_operation_in_progress_ = true;
+        try {
+            save_thread_ = std::thread([
+                runtime,
+                window,
+                epoch,
+                forum_id,
+                session_id,
+                path,
+                originating_connection,
+                id,
+                request_epoch] {
+                auto completed = std::make_unique<NativeSaveResult>();
+                completed->connection_id = originating_connection;
+                completed->id = id;
+                completed->context_epoch = request_epoch;
+                char* error = nullptr;
+                const int32_t status = cha_runtime_export_session(
+                    runtime,
+                    epoch,
+                    forum_id.c_str(),
+                    session_id.c_str(),
+                    path.c_str(),
+                    &error);
+                completed->ok = status == 1;
+                completed->message = error ? error : "";
+                cha_string_free(error);
+                NativeSaveResult* const posted = completed.release();
+                if (!::PostMessageW(
+                        window,
+                        kNativeSaveComplete,
+                        0,
+                        reinterpret_cast<LPARAM>(posted))) {
+                    delete posted;
+                }
+            });
+        } catch (...) {
+            save_operation_in_progress_ = false;
+            complete_native_save(
+                originating_connection,
+                id,
+                request_epoch,
+                false,
+                "The save could not start.");
+        }
         return true;
     }
 
+    void finish_native_save(NativeSaveResult* raw_result) {
+        const std::unique_ptr<NativeSaveResult> result(raw_result);
+        if (save_thread_.joinable()) save_thread_.join();
+        save_operation_in_progress_ = false;
+        if (!result || closing_) return;
+        complete_native_save(
+            result->connection_id,
+            result->id,
+            result->context_epoch,
+            result->ok,
+            result->message);
+    }
+
     void complete_native_save(
+        const std::string& connection,
         const std::string& id,
+        uint64_t context_epoch,
         bool ok,
         const std::string& message) {
-        if (!webview_) return;
+        if (!webview_ || connection != connection_id_) return;
+        uint64_t current_epoch = 0;
+        if (runtime_ == nullptr
+            || cha_runtime_context_epoch(runtime_, &current_epoch) == 0
+            || current_epoch != context_epoch) {
+            return;
+        }
         const std::wstring encoded = wide_from_utf8(
             "if(typeof window.__CHA_NATIVE_SAVE_DONE__==='function'){"
             "window.__CHA_NATIVE_SAVE_DONE__("
@@ -1384,7 +1459,7 @@ private:
     }
 
     void handle_renderer_failure() {
-        if (feasibility_ || http_mode_ || closing_) return;
+        if (feasibility_ || closing_) return;
         renderer_failures_ += 1;
         replace_document_connection();
         if (renderer_failures_ >= 3) {
@@ -1694,6 +1769,10 @@ private:
     void begin_shutdown() {
         if (closing_) return;
         closing_ = true;
+        if (save_dialog_) {
+            save_dialog_->Close(HRESULT_FROM_WIN32(ERROR_CANCELLED));
+            save_dialog_.Reset();
+        }
         if (!connection_id_.empty() && runtime_ != nullptr) {
             cha_runtime_close_connection(runtime_, connection_id_.c_str());
             connection_id_.clear();
@@ -1703,9 +1782,44 @@ private:
             cha_runtime_request_shutdown(runtime_);
             ChaRuntime* const runtime = runtime_;
             HWND window = window_;
+            std::thread save_thread = std::move(save_thread_);
+            const auto deadline =
+                std::chrono::steady_clock::now() + std::chrono::seconds{10};
             if (shutdown_thread_.joinable()) shutdown_thread_.join();
-            shutdown_thread_ = std::thread([runtime, window] {
-                (void)cha_runtime_join_shutdown(runtime, 10000);
+            shutdown_thread_ = std::thread([
+                runtime,
+                window,
+                deadline,
+                save_thread = std::move(save_thread)]() mutable {
+                if (save_thread.joinable()) {
+                    const auto now = std::chrono::steady_clock::now();
+                    if (now >= deadline) ::ExitProcess(ERROR_TIMEOUT);
+                    const auto wait = std::chrono::duration_cast<
+                        std::chrono::milliseconds>(deadline - now);
+                    const DWORD wait_ms = static_cast<DWORD>(std::max<int64_t>(
+                        1,
+                        std::min<int64_t>(
+                            wait.count(),
+                            std::numeric_limits<DWORD>::max() - 1)));
+                    if (::WaitForSingleObject(
+                            save_thread.native_handle(), wait_ms)
+                        != WAIT_OBJECT_0) {
+                        ::ExitProcess(ERROR_TIMEOUT);
+                    }
+                    save_thread.join();
+                }
+                const auto now = std::chrono::steady_clock::now();
+                if (now >= deadline) ::ExitProcess(ERROR_TIMEOUT);
+                const auto remaining = std::chrono::duration_cast<
+                    std::chrono::milliseconds>(deadline - now);
+                const int grace_ms = static_cast<int>(std::max<int64_t>(
+                    1,
+                    std::min<int64_t>(
+                        remaining.count(),
+                        std::numeric_limits<int>::max())));
+                if (cha_runtime_join_shutdown(runtime, grace_ms) == 0) {
+                    ::ExitProcess(ERROR_TIMEOUT);
+                }
                 if (window != nullptr) {
                     ::PostMessageW(window, kShutdownDone, 0, 0);
                 }
@@ -1780,7 +1894,6 @@ private:
     std::filesystem::path data_root_;
     std::filesystem::path config_directory_;
     std::filesystem::path webview_directory_;
-    std::string runtime_token_;
     std::wstring runtime_origin_;
     std::wstring runtime_url_;
     std::optional<std::filesystem::path> assets_;
@@ -1789,15 +1902,17 @@ private:
     ComPtr<ICoreWebView2Environment> environment_;
     ComPtr<ICoreWebView2Controller> controller_;
     ComPtr<ICoreWebView2> webview_;
+    ComPtr<IFileSaveDialog> save_dialog_;
+    std::thread save_thread_;
     std::thread operation_thread_;
     std::thread shutdown_thread_;
     bool smoke_test_{};
     bool feasibility_{};
-    bool http_mode_{};
     std::string connection_id_;
     std::wstring native_script_id_;
     int renderer_failures_{};
     bool initial_navigation_pending_{};
+    bool save_operation_in_progress_{};
     bool database_operation_in_progress_{};
     bool close_pending_{};
     bool closing_{};

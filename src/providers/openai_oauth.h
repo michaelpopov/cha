@@ -43,6 +43,7 @@ struct OpenAiOAuthHttpRequest {
     std::string content_type;
     std::string body;
     std::chrono::milliseconds timeout{};
+    std::function<bool()> cancelled;
 };
 
 struct OpenAiOAuthHttpResponse {
@@ -69,8 +70,8 @@ public:
     OpenAiOAuth& operator=(const OpenAiOAuth&) = delete;
 
     [[nodiscard]] OpenAiOAuthSnapshot status() const;
-    OpenAiOAuthSnapshot start();
-    OpenAiOAuthSnapshot poll();
+    OpenAiOAuthSnapshot start(std::function<bool()> cancelled = {});
+    OpenAiOAuthSnapshot poll(std::function<bool()> cancelled = {});
     OpenAiOAuthSnapshot disconnect();
     OpenAiOAuthRequestCredentials credentials();
 
@@ -100,11 +101,13 @@ private:
         std::string_view path,
         std::string_view content_type,
         std::string body,
-        std::chrono::system_clock::time_point deadline);
+        std::chrono::system_clock::time_point deadline,
+        const std::function<bool()>& cancelled = {});
     bool finish_login_unlocked(
         std::string authorization_code,
         std::string code_verifier,
-        std::chrono::system_clock::time_point deadline);
+        std::chrono::system_clock::time_point deadline,
+        const std::function<bool()>& cancelled);
     bool refresh_unlocked();
 
     std::filesystem::path credential_path_;

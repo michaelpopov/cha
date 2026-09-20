@@ -14,9 +14,13 @@
 
 namespace cha::bridge {
 
+#ifndef CHA_PACKAGE_VERSION
+#define CHA_PACKAGE_VERSION "development"
+#endif
+
 inline constexpr int kProtocolVersion = 1;
 inline constexpr std::uint64_t kMaxSafeInteger = 9007199254740991ULL;
-inline constexpr std::string_view kApplicationVersion = "0";
+inline constexpr std::string_view kApplicationVersion = CHA_PACKAGE_VERSION;
 
 enum class Method {
     bridge_info,
@@ -174,5 +178,7 @@ struct DeliveryAck {
     std::string_view connection_id,
     std::uint64_t context_epoch,
     std::string_view state);
+[[nodiscard]] nlohmann::json connection_invalidated_event(
+    std::string_view connection_id);
 
 } // namespace cha::bridge

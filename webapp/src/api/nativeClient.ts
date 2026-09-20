@@ -1,4 +1,5 @@
 import {
+  ChaError,
   ChaProtocolError,
   isApiKeyDetail,
   isCharacterDetail,
@@ -81,14 +82,21 @@ function isBridgeInfo(value: unknown): value is {
 }
 
 function isBootstrapResult(value: unknown): value is {
-  state: string;
+  state: 'running' | 'maintenance' | 'stopping' | 'unavailable';
   context_epoch: number;
+  application_version: string;
+  capabilities: { can_modify: boolean; can_transfer_r2: boolean };
   bootstrap: unknown;
 } {
   return isRecord(value)
-    && typeof value.state === 'string'
+    && (value.state === 'running' || value.state === 'maintenance'
+      || value.state === 'stopping' || value.state === 'unavailable')
     && Number.isSafeInteger(value.context_epoch)
     && (value.context_epoch as number) >= 1
+    && typeof value.application_version === 'string'
+    && isRecord(value.capabilities)
+    && typeof value.capabilities.can_modify === 'boolean'
+    && typeof value.capabilities.can_transfer_r2 === 'boolean'
     && 'bootstrap' in value;
 }
 
@@ -145,6 +153,14 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient {
       await connectNativeBridge(bridge);
       const result = await bridge.invoke('app.bootstrap', {});
       if (!isBootstrapResult(result)) throw new ChaProtocolError();
+      if (result.state !== 'running') {
+        const message = result.state === 'maintenance'
+          ? 'CHA is applying workspace changes. Try again when maintenance finishes.'
+          : result.state === 'stopping'
+            ? 'CHA is shutting down. Restart CHA to continue.'
+            : 'CHA could not open the workspace. Restart CHA and check its logs.';
+        throw new ChaError(0, 'application_unavailable', message);
+      }
       bridge.setContextEpoch(result.context_epoch);
       return validateBootstrap(result.bootstrap);
     },

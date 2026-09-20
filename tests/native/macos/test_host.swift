@@ -529,10 +529,6 @@ return await (async function() {
         });
       };
     })();
-    const boot = await rpc('app.bootstrap', {}, 0);
-    const created = await rpc('session.create', {forum_id: 'lobby', label: 'Native flow'}, boot.context_epoch);
-    location.hash = '#/s/lobby/' + created.id + '/';
-    await until('session hash', () => location.hash.indexOf(created.id) !== -1);
     await until('composer ready', () => {
       const node = document.querySelector('textarea[aria-label="Message"]');
       return node && !node.disabled ? node : null;
@@ -557,10 +553,11 @@ return await (async function() {
       return text.indexOf('Hello from native host') !== -1;
     });
     report.transcript = (document.querySelector('[aria-label="Conversation transcript"]') || {}).textContent || '';
-    report.sessionId = created.id;
-    const settings = document.querySelector('button[aria-label="Settings"]');
-    if (settings) settings.click();
-    await until('settings screen', () => document.querySelector('[aria-label="Settings"], [aria-label="Providers settings"], .cha-settings'));
+    report.sessionId = location.hash;
+    // Direct probe RPCs use a separate high request-id range. Issue them only
+    // after the UI flow is complete so the frontend's own monotonic request
+    // sequence never has to follow an instrumented request on this document.
+    const boot = await rpc('app.bootstrap', {}, 0);
     const providers = await rpc('provider.list', {}, boot.context_epoch);
     const keys = await rpc('apiKey.list', {}, boot.context_epoch);
     const r2 = await rpc('r2Storage.get', {}, boot.context_epoch);

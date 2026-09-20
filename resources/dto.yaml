@@ -682,15 +682,12 @@ components:
     VoiceInputRuntime:
       type: object
       additionalProperties: false
-      required: [url, model, api_key, delay, prompt]
+      required: [url, model, delay, prompt]
       properties:
         url:
           type: string
           minLength: 1
         model:
-          type: string
-          minLength: 1
-        api_key:
           type: string
           minLength: 1
         delay:

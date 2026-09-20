@@ -40,12 +40,14 @@ std::string MediaResources::add(
 
 std::optional<ResourceBytes> MediaResources::read(
     std::string_view connection_id,
-    std::string_view resource_id) const {
+    std::string_view resource_id,
+    std::uint64_t context_epoch) const {
     if (!valid_id(resource_id)) return std::nullopt;
     std::lock_guard lock(mutex_);
     const auto found = entries_.find(std::string(resource_id));
     if (found == entries_.end()) return std::nullopt;
     if (found->second.connection_id != connection_id) return std::nullopt;
+    if (found->second.context_epoch != context_epoch) return std::nullopt;
     return found->second.bytes;
 }
 

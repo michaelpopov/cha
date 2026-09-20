@@ -207,6 +207,25 @@ TEST_F(BridgeRouterTest, InfoBootstrapCreateOpenSubmitStopSnapshotAndClose) {
     ASSERT_TRUE(reply["ok"]);
 }
 
+TEST_F(BridgeRouterTest, BootstrapIncludesVersionAndCapabilities) {
+    const auto expected = application_->capabilities();
+    router_->handle_request(
+        connection_,
+        request_json(connection_, next_id_++, 0, "app.bootstrap").dump());
+    auto batch = wait_delivery(*router_, connection_);
+    ASSERT_TRUE(batch);
+    const auto reply = reply_with_id(*batch, next_id_ - 1);
+    ASSERT_TRUE(reply["ok"]);
+    const auto& result = reply["result"];
+    EXPECT_EQ(result["application_version"], kApplicationVersion);
+    ASSERT_TRUE(result["capabilities"].is_object());
+    EXPECT_EQ(result["capabilities"]["can_modify"], expected.can_modify);
+    EXPECT_EQ(
+        result["capabilities"]["can_transfer_r2"],
+        expected.can_transfer_r2);
+    ack_delivery(*router_, connection_, *batch);
+}
+
 TEST_F(BridgeRouterTest, ListsRenamesExportsAndEditsWorkspaceOverTheBridge) {
     bootstrap_epoch();
     auto reply = call(
@@ -481,6 +500,114 @@ TEST_F(BridgeRouterTest, SubscribeSnapshotAndAppendUseOneSequence) {
     EXPECT_TRUE(replaced["ok"].get<bool>());
 }
 
+TEST_F(BridgeRouterTest, ImmediateUnsubscribeCancelsPendingSubscribe) {
+    bootstrap_epoch();
+    auto created = call(
+        "session.create", {{"forum_id", "lobby"}, {"label", "Events"}});
+    ASSERT_TRUE(created["ok"]);
+    const std::string session_id = created["result"]["id"];
+    ASSERT_TRUE(
+        call(
+            "session.open",
+            {{"forum_id", "lobby"}, {"session_id", session_id}})["ok"]);
+
+    const auto subscribe_id = next_id_++;
+    const auto unsubscribe_id = next_id_++;
+    const nlohmann::json identity{
+        {"forum_id", "lobby"},
+        {"session_id", session_id},
+        {"subscription_id", "sub-immediate"},
+    };
+    router_->handle_request(
+        connection_,
+        request_json(
+            connection_, subscribe_id, epoch_, "session.subscribe", identity).dump());
+    router_->handle_request(
+        connection_,
+        request_json(
+            connection_, unsubscribe_id, epoch_, "session.unsubscribe", identity).dump());
+
+    nlohmann::json subscribe_reply;
+    nlohmann::json unsubscribe_reply;
+    const auto deadline = std::chrono::steady_clock::now() + 2s;
+    while ((subscribe_reply.empty() || unsubscribe_reply.empty())
+           && std::chrono::steady_clock::now() < deadline) {
+        auto batch = wait_delivery(*router_, connection_, 200ms);
+        ASSERT_TRUE(batch);
+        if (subscribe_reply.empty()) {
+            subscribe_reply = reply_with_id(*batch, subscribe_id);
+        }
+        if (unsubscribe_reply.empty()) {
+            unsubscribe_reply = reply_with_id(*batch, unsubscribe_id);
+        }
+        ack_delivery(*router_, connection_, *batch);
+    }
+    ASSERT_FALSE(subscribe_reply.empty());
+    EXPECT_FALSE(subscribe_reply["ok"]);
+    EXPECT_EQ(subscribe_reply["error"]["code"], "operation_cancelled");
+    ASSERT_FALSE(unsubscribe_reply.empty());
+    EXPECT_TRUE(unsubscribe_reply["ok"]);
+    EXPECT_FALSE(wait_delivery(*router_, connection_, 100ms));
+}
+
+TEST_F(BridgeRouterTest, UnsubscribeCleansSubscribeAlreadySentToOwner) {
+    bootstrap_epoch();
+    auto created = call(
+        "session.create", {{"forum_id", "lobby"}, {"label", "Events"}});
+    ASSERT_TRUE(created["ok"]);
+    const std::string session_id = created["result"]["id"];
+    ASSERT_TRUE(
+        call(
+            "session.open",
+            {{"forum_id", "lobby"}, {"session_id", session_id}})["ok"]);
+
+    const auto subscribe_id = next_id_++;
+    const auto unsubscribe_id = next_id_++;
+    const nlohmann::json identity{
+        {"forum_id", "lobby"},
+        {"session_id", session_id},
+        {"subscription_id", "sub-owner-race"},
+    };
+    router_->handle_request(
+        connection_,
+        request_json(
+            connection_, subscribe_id, epoch_, "session.subscribe", identity).dump());
+    router_->run_tasks();
+    router_->handle_request(
+        connection_,
+        request_json(
+            connection_, unsubscribe_id, epoch_, "session.unsubscribe", identity).dump());
+
+    nlohmann::json subscribe_reply;
+    nlohmann::json unsubscribe_reply;
+    const auto deadline = std::chrono::steady_clock::now() + 2s;
+    while ((subscribe_reply.empty() || unsubscribe_reply.empty())
+           && std::chrono::steady_clock::now() < deadline) {
+        auto batch = wait_delivery(*router_, connection_, 200ms);
+        ASSERT_TRUE(batch);
+        if (subscribe_reply.empty()) {
+            subscribe_reply = reply_with_id(*batch, subscribe_id);
+        }
+        if (unsubscribe_reply.empty()) {
+            unsubscribe_reply = reply_with_id(*batch, unsubscribe_id);
+        }
+        ack_delivery(*router_, connection_, *batch);
+    }
+    ASSERT_FALSE(subscribe_reply.empty());
+    EXPECT_TRUE(subscribe_reply["ok"]);
+    ASSERT_FALSE(unsubscribe_reply.empty());
+    EXPECT_TRUE(unsubscribe_reply["ok"]);
+
+    auto session = application_->live_sessions().lookup({"lobby", session_id});
+    ASSERT_TRUE(session);
+    const auto detached = std::chrono::steady_clock::now() + 2s;
+    while (session->output()->attached()
+           && std::chrono::steady_clock::now() < detached) {
+        std::this_thread::sleep_for(1ms);
+    }
+    EXPECT_FALSE(session->output()->attached());
+}
+
 TEST_F(BridgeRouterTest, RetainsReplyUntilAckAndIgnoresLateAck) {
     bootstrap_epoch();
     const auto id = next_id_++;
@@ -501,6 +628,102 @@ TEST_F(BridgeRouterTest, RetainsReplyUntilAckAndIgnoresLateAck) {
     EXPECT_FALSE(router_->take_delivery(connection_));
 }
 
+TEST_F(BridgeRouterTest, EmptyDrainsDoNotConsumeDeliveryIds) {
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        EXPECT_FALSE(router_->take_delivery(connection_));
+    }
+    router_->handle_request(
+        connection_, request_json(connection_, 1, 0, "bridge.info").dump());
+    auto delivery = wait_delivery(*router_, connection_);
+    ASSERT_TRUE(delivery);
+    EXPECT_EQ(delivery->at("delivery_id"), 1U);
+    ack_delivery(*router_, connection_, *delivery);
+}
+
+TEST_F(BridgeRouterTest, RequestIdsMustIncreaseWithinAConnection) {
+    router_->handle_request(
+        connection_, request_json(connection_, 2, 0, "bridge.info").dump());
+    auto delivery = wait_delivery(*router_, connection_);
+    ASSERT_TRUE(delivery);
+    EXPECT_TRUE(reply_with_id(*delivery, 2)["ok"]);
+    ack_delivery(*router_, connection_, *delivery);
+
+    router_->handle_request(
+        connection_, request_json(connection_, 1, 0, "bridge.info").dump());
+    delivery = wait_delivery(*router_, connection_);
+    ASSERT_TRUE(delivery);
+    const auto rejected = reply_with_id(*delivery, 1);
+    ASSERT_FALSE(rejected.empty());
+    EXPECT_FALSE(rejected["ok"]);
+    EXPECT_EQ(rejected["error"]["message"], "Request ids must increase.");
+    ack_delivery(*router_, connection_, *delivery);
+
+    router_->handle_request(
+        connection_, request_json(connection_, 3, 0, "bridge.info").dump());
+    delivery = wait_delivery(*router_, connection_);
+    ASSERT_TRUE(delivery);
+    EXPECT_TRUE(reply_with_id(*delivery, 3)["ok"]);
+    ack_delivery(*router_, connection_, *delivery);
+}
+
+TEST_F(BridgeRouterTest, ContextNotificationsCoalesceBehindInFlightDelivery) {
+    bootstrap_epoch();
+    const auto created = application_->create_vault(cha::web::VaultCreate{
+        .display_name = "Copied",
+        .copy_from = "Test",
+        .password = {},
+    }, epoch_);
+
+    const auto request_id = next_id_++;
+    router_->handle_request(
+        connection_,
+        request_json(connection_, request_id, epoch_, "bridge.info").dump());
+    auto held = wait_delivery(*router_, connection_);
+    ASSERT_TRUE(held);
+
+    const auto switched = application_->switch_vault(
+        created.name, {}, application_->context_epoch());
+    const auto restored = application_->switch_vault(
+        "Test", {}, switched.context_epoch);
+    EXPECT_FALSE(router_->take_delivery(connection_));
+
+    ack_delivery(*router_, connection_, *held);
+    auto notification = wait_delivery(*router_, connection_);
+    ASSERT_TRUE(notification);
+    ASSERT_EQ(notification->at("messages").size(), 1U);
+    const auto& message = notification->at("messages").front();
+    EXPECT_EQ(message["event"], "app.contextChanged");
+    EXPECT_EQ(message["context_epoch"], restored.context_epoch);
+    ack_delivery(*router_, connection_, *notification);
+}
+
+TEST_F(BridgeRouterTest, CompletedReplyHoldsAdmissionUntilDeliveryAck) {
+    router_ = std::make_unique<BridgeRouter>(
+        *application_,
+        BridgeRouter::Options{.platform = "test", .ordinary_limit = 1});
+    connection_ = router_->open_connection();
+
+    router_->handle_request(
+        connection_, request_json(connection_, 1, 0, "bridge.info").dump());
+    router_->run_tasks();
+    auto first = router_->take_delivery(connection_);
+    ASSERT_TRUE(first);
+    EXPECT_TRUE(reply_with_id(*first, 1)["ok"]);
+
+    router_->handle_request(
+        connection_, request_json(connection_, 2, 0, "bridge.info").dump());
+    EXPECT_FALSE(router_->take_delivery(connection_));
+    ack_delivery(*router_, connection_, *first);
+
+    auto overflow = wait_delivery(*router_, connection_);
+    ASSERT_TRUE(overflow);
+    const auto reply = reply_with_id(*overflow, 2);
+    ASSERT_FALSE(reply.empty());
+    EXPECT_FALSE(reply["ok"]);
+    EXPECT_EQ(reply["error"]["message"], "Too many in-flight requests.");
+    ack_delivery(*router_, connection_, *overflow);
+}
+
 TEST_F(BridgeRouterTest, SaturatingOrdinaryWorkInvalidatesTheConnection) {
     router_ = std::make_unique<BridgeRouter>(
         *application_,
@@ -515,13 +738,26 @@ TEST_F(BridgeRouterTest, SaturatingOrdinaryWorkInvalidatesTheConnection) {
     auto batch = wait_delivery(*router_, connection_);
     ASSERT_TRUE(batch);
     bool saw_limit = false;
+    bool saw_cancelled = false;
+    bool saw_invalidation = false;
     for (const auto& message : batch->at("messages")) {
         if (message.contains("error")
             && message["error"]["message"] == "Too many in-flight requests.") {
             saw_limit = true;
         }
+        if (message.contains("id") && message["id"] == 1
+            && message.contains("error")
+            && message["error"]["code"] == "operation_cancelled") {
+            saw_cancelled = true;
+        }
+        if (message.value("event", "") == "app.connectionInvalidated"
+            && message.value("reason", "") == "request_limit_exceeded") {
+            saw_invalidation = true;
+        }
     }
     EXPECT_TRUE(saw_limit);
+    EXPECT_TRUE(saw_cancelled);
+    EXPECT_TRUE(saw_invalidation);
     router_->handle_request(
         connection_,
         request_json(connection_, 3, 0, "bridge.info").dump());

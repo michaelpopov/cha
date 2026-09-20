@@ -136,8 +136,12 @@ void delete_api_key(ApiKeyStore& api_keys, std::string_view id);
 void delete_r2_storage(ApiKeyStore& api_keys);
 
 [[nodiscard]] cha::web::OpenAiAuth openai_auth_status(const OpenAiOAuth& owner);
-[[nodiscard]] cha::web::OpenAiAuth start_openai_auth(OpenAiOAuth& owner);
-[[nodiscard]] cha::web::OpenAiAuth poll_openai_auth(OpenAiOAuth& owner);
+[[nodiscard]] cha::web::OpenAiAuth start_openai_auth(
+    OpenAiOAuth& owner,
+    const std::atomic_bool& cancelled);
+[[nodiscard]] cha::web::OpenAiAuth poll_openai_auth(
+    OpenAiOAuth& owner,
+    const std::atomic_bool& cancelled);
 [[nodiscard]] cha::web::OpenAiAuth disconnect_openai_auth(OpenAiOAuth& owner);
 
 } // namespace cha::app::settings

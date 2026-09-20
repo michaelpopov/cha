@@ -41,6 +41,8 @@ TEST(BridgeProtocol, ParsesSubmitEnvelopeAndRejectsMalformedRequests) {
     EXPECT_EQ(method_from_name("audio.startBatch"), Method::audio_start_batch);
     EXPECT_EQ(method_from_name("voiceInput.connect"), Method::voice_input_connect);
     EXPECT_TRUE(is_control_method(Method::speech_cancel));
+    EXPECT_TRUE(is_control_method(Method::speech_release));
+    EXPECT_TRUE(is_control_method(Method::audio_release));
     EXPECT_TRUE(is_control_method(Method::voice_input_cancel));
     EXPECT_FALSE(is_control_method(Method::speech_start));
 
@@ -124,6 +126,14 @@ TEST(BridgeProtocol, SerializesInfoRepliesEventsAndAcksAgainstFixtures) {
     ASSERT_TRUE(parsed);
     EXPECT_EQ(parsed->connection_id, "view-9");
     EXPECT_EQ(parsed->delivery_id, 1U);
+
+    EXPECT_EQ(
+        connection_invalidated_event("view-9"),
+        nlohmann::json({
+            {"connection_id", "view-9"},
+            {"event", "app.connectionInvalidated"},
+            {"reason", "request_limit_exceeded"},
+        }));
 }
 
 TEST(BridgeProtocol, RejectsUnknownMethodsAndKeepsVersionFixed) {
@@ -135,6 +145,7 @@ TEST(BridgeProtocol, RejectsUnknownMethodsAndKeepsVersionFixed) {
     EXPECT_TRUE(requires_context_epoch(Method::session_submit));
     EXPECT_TRUE(is_control_method(Method::session_stop));
     EXPECT_TRUE(is_control_method(Method::session_unsubscribe));
+    EXPECT_TRUE(is_control_method(Method::session_close));
     EXPECT_FALSE(is_control_method(Method::session_submit));
 }
 

@@ -16,11 +16,15 @@ function saveFilePicker(): SaveFilePicker | undefined {
   return (window as Window & { showSaveFilePicker?: SaveFilePicker }).showSaveFilePicker;
 }
 
-type NativeSaveText = (suggestedName: string, contents: string) => Promise<void>;
+type NativeSaveSession = (
+  suggestedName: string,
+  forumId: string,
+  sessionId: string,
+) => Promise<void>;
 
-function nativeSaveText(): NativeSaveText | undefined {
-  return (window as Window & { __CHA_NATIVE_SAVE_TEXT__?: NativeSaveText })
-    .__CHA_NATIVE_SAVE_TEXT__;
+function nativeSaveSession(): NativeSaveSession | undefined {
+  return (window as Window & { __CHA_NATIVE_SAVE_SESSION__?: NativeSaveSession })
+    .__CHA_NATIVE_SAVE_SESSION__;
 }
 
 export function sessionMarkdownFilename(label: string): string {
@@ -32,11 +36,13 @@ export function sessionMarkdownFilename(label: string): string {
 
 export async function saveMarkdownDownload(
   label: string,
+  forumId: string,
+  sessionId: string,
   load: () => Promise<string>,
 ): Promise<void> {
-  const nativeSave = nativeSaveText();
+  const nativeSave = nativeSaveSession();
   if (nativeSave) {
-    await nativeSave(sessionMarkdownFilename(label), await load());
+    await nativeSave(sessionMarkdownFilename(label), forumId, sessionId);
     return;
   }
   const picker = saveFilePicker();

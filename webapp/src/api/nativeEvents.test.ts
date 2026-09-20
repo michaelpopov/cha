@@ -95,6 +95,7 @@ describe('native session projection', () => {
       payload: { target: { kind: 'entry', entry_id: 1 }, text: 'later' },
     }));
     projection.push(event({ subscription_id: 'sub-old', seq: 6 }));
+    projection.push(event({ subscription_id: 'sub-old', payload: null }));
     expect(onSnapshot).toHaveBeenCalledTimes(2);
     expect(onAppend).toHaveBeenCalledOnce();
     expect(onError).not.toHaveBeenCalled();

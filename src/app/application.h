@@ -63,20 +63,21 @@ enum class ApplicationState {
     unavailable,
 };
 
+struct ApplicationCapabilities {
+    bool can_modify{};
+    bool can_transfer_r2{};
+};
+
 struct ApplicationBootstrap {
     ApplicationState state{ApplicationState::running};
     std::uint64_t context_epoch{1};
+    ApplicationCapabilities capabilities;
     cha::web::Bootstrap presentation;
 };
 
 struct MaintenanceResult {
     ApplicationState state{ApplicationState::running};
     std::uint64_t context_epoch{1};
-};
-
-struct ApplicationCapabilities {
-    bool can_modify{};
-    bool can_transfer_r2{};
 };
 
 struct ResourceHooks {

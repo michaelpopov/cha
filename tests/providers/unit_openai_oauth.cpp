@@ -312,6 +312,23 @@ TEST_F(OpenAiOAuthTest, StartUsesIntervalStringAndWaitsBeforeFirstPoll) {
     }
 }
 
+TEST_F(OpenAiOAuthTest, StartPassesCancellationToTheTransport) {
+    bool cancelled = false;
+    bool saw_live_callback = false;
+    state_->on_request = [&](const OpenAiOAuthHttpRequest& request) {
+        saw_live_callback = request.cancelled && !request.cancelled();
+        cancelled = true;
+        saw_live_callback = saw_live_callback && request.cancelled();
+    };
+    push(start_ok(1));
+    OpenAiOAuth oauth = make_owner();
+
+    const auto snapshot = oauth.start([&] { return cancelled; });
+
+    EXPECT_TRUE(saw_live_callback);
+    EXPECT_EQ(snapshot.state, OpenAiOAuthState::waiting);
+}
+
 TEST_F(OpenAiOAuthTest, StartWhileConnectedRequiresDisconnect) {
     OpenAiOAuth oauth = make_owner();
     EXPECT_EQ(complete_login(oauth).state, OpenAiOAuthState::connected);
