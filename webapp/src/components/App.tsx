@@ -14,13 +14,7 @@ import {
 } from '../api/client';
 import { validateBootstrap } from '../state/bootstrap';
 import { saveMarkdownDownload } from '../download';
-import {
-  currentAppRoute,
-  reloadApplication,
-  usesHashRoutes,
-  writeAppRoute,
-} from '../state/route';
-import { consumeVoiceSettingsRestore } from '../state/voiceSettingsReload';
+import { reloadApplication, writeAppRoute } from '../state/route';
 import { useLiveSession, type SessionEventsConnector } from '../useLiveSession';
 import {
   appReducer,
@@ -77,8 +71,6 @@ import {
   VaultScreen,
   VaultsScreen,
 } from './Settings';
-
-export { liveRetryDelays, type SessionEventsConnector } from '../useLiveSession';
 
 interface ScreenProps extends ChatActions {
   playbackPositions: Map<string, Map<number, number>>;
@@ -431,25 +423,6 @@ function SessionOperationState({
 // Every navigation supersedes an open still in flight, so a slow one cannot
 // land afterwards and pull the user into a conversation they have left. These
 // actions change no view and must therefore supersede nothing.
-const inPlaceActions = new Set<AppAction['type']>([
-  'toggle-sidebar',
-  'bootstrap-refreshed',
-  'character-detail-loaded',
-  'character-updated',
-  'persona-detail-loaded',
-  'persona-updated',
-  'forum-detail-loaded',
-  'forum-updated',
-  'provider-detail-loaded',
-  'provider-updated',
-  'style-detail-loaded',
-  'style-updated',
-  'voice-detail-loaded',
-  'voice-updated',
-  'api-key-detail-loaded',
-  'api-key-updated',
-]);
-
 function defaultReload() {
   reloadApplication();
 }
@@ -468,7 +441,6 @@ export function App({
   reload = defaultReload,
 }: AppProps) {
   const [state, dispatch] = useReducer(appReducer, initialAppState);
-  const [initialRouteReady, setInitialRouteReady] = useState(false);
   const [bootstrapAttempt, setBootstrapAttempt] = useState(0);
   const [catalogRevision, setCatalogRevision] = useState(0);
   const [characterRevision, setCharacterRevision] = useState(0);
@@ -480,7 +452,6 @@ export function App({
   const request = useRef<{ client: ChaClient; promise: Promise<Bootstrap> } | null>(null);
   const playbackPositions = useRef(new Map<string, Map<number, number>>());
   const pendingMutations = useRef(new Set<string>());
-  const initialRouteHandled = useRef(false);
 
   useEffect(() => {
     const vaultName = state.bootstrap?.vault_name;
@@ -544,24 +515,17 @@ export function App({
   }, [client]);
 
   const {
-    beginNavigation,
+    navigate,
     openConversation,
     createConversation,
     retrySessionOpen,
     retryStream,
-    resetLiveSession,
     clearLiveSession,
   } = useLiveSession(client, state, dispatch, {
     connectSessionEvents,
     retryDelays,
-    initialRouteReady,
     refreshBootstrap,
   });
-
-  const navigate = useCallback((action: AppAction) => {
-    if (!inPlaceActions.has(action.type)) beginNavigation();
-    dispatch(action);
-  }, [beginNavigation]);
 
   const returnToWelcome = useCallback(() => {
     clearLiveSession();
@@ -719,52 +683,6 @@ export function App({
     navigate({ type: 'forum-deleted', forumId });
     setCatalogRevision((revision) => revision + 1);
   }, [clearLiveSession, client, navigate, state.activeConversation]);
-
-  useEffect(() => {
-    if (state.bootstrapStatus !== 'ready' || initialRouteHandled.current) return;
-    initialRouteHandled.current = true;
-    const restoreVoiceSettings = consumeVoiceSettingsRestore();
-    const route = currentAppRoute();
-    if (route.kind === 'root') {
-      if (restoreVoiceSettings) navigate({ type: 'show-settings-voice-input' });
-      setInitialRouteReady(true);
-    } else if (route.kind === 'session') {
-      void openConversation(route.forumId, route.sessionId, false)
-        .finally(() => {
-          if (restoreVoiceSettings) navigate({ type: 'show-settings-voice-input' });
-          setInitialRouteReady(true);
-        });
-    } else {
-      dispatch({
-        type: 'session-operation-failed',
-        message: 'This address does not identify a CHA session.',
-      });
-      setInitialRouteReady(true);
-    }
-  }, [navigate, openConversation, state.bootstrapStatus]);
-
-  useEffect(() => {
-    const visitHistoryRoute = () => {
-      const route = currentAppRoute();
-      if (route.kind === 'root') {
-        resetLiveSession();
-        navigate({ type: 'show-initial-conversation' });
-      } else if (route.kind === 'session') {
-        void openConversation(route.forumId, route.sessionId, false);
-      } else {
-        navigate({
-          type: 'session-operation-failed',
-          message: 'This address does not identify a CHA session.',
-        });
-      }
-    };
-    window.addEventListener('popstate', visitHistoryRoute);
-    if (usesHashRoutes()) window.addEventListener('hashchange', visitHistoryRoute);
-    return () => {
-      window.removeEventListener('popstate', visitHistoryRoute);
-      window.removeEventListener('hashchange', visitHistoryRoute);
-    };
-  }, [navigate, openConversation, resetLiveSession]);
 
   const title = navigationTitle(state);
   const ready = state.bootstrapStatus === 'ready';

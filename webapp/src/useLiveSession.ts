@@ -2,10 +2,21 @@ import { useCallback, useEffect, useRef, useState, type Dispatch } from 'react';
 
 import { ChaError, publicErrorMessage, type ChaClient } from './api/client';
 import type { SessionEventConnection, SessionEventHandlers } from './api/events';
-import { sessionRoute, writeAppRoute } from './state/route';
+import {
+  currentAppRoute,
+  sessionRoute,
+  usesHashRoutes,
+  writeAppRoute,
+} from './state/route';
+import { consumeVoiceSettingsRestore } from './state/voiceSettingsReload';
 import type { AppAction, AppState } from './state/view';
 
-export const liveRetryDelays = [250, 500, 1_000, 2_000, 4_000] as const;
+// Owns everything a navigation can invalidate: the address bar, the epoch
+// marking which conversation the reader is on, and the open/subscribe/recover/
+// close ladder under it. They belong together because each cancels the others'
+// in-flight work; apart, the cancellation rules sit in a file that cannot see
+// what they cancel.
+const liveRetryDelays = [250, 500, 1_000, 2_000, 4_000] as const;
 const reconnectingMessage = 'Reconnecting live updates…';
 const movedMessage = 'This conversation moved to another device';
 
@@ -47,27 +58,46 @@ function isSessionLimit(failure: unknown): failure is ChaError {
   return failure instanceof ChaError && failure.code === 'session_limit_reached';
 }
 
-function closedEvents(): SessionEventConnection {
-  return { close() {} };
-}
+// One stable instance: a per-render default would rebuild connectStream and
+// every callback and effect that depends on it, on every render.
+const noSessionEvents: SessionEventsConnector = () => ({ close() {} });
+
+// These redraw the current screen. Every other action is a navigation intent
+// and ends the epoch, which is why the session actions dispatched below go
+// straight to `dispatch`: they report on the operation the epoch is guarding,
+// and routing one through `navigate` would cancel it.
+const inPlaceActions = new Set<AppAction['type']>([
+  'toggle-sidebar',
+  'bootstrap-refreshed',
+  'character-detail-loaded',
+  'character-updated',
+  'persona-detail-loaded',
+  'persona-updated',
+  'forum-detail-loaded',
+  'forum-updated',
+  'provider-detail-loaded',
+  'provider-updated',
+  'style-detail-loaded',
+  'style-updated',
+  'voice-detail-loaded',
+  'voice-updated',
+  'api-key-detail-loaded',
+  'api-key-updated',
+]);
 
 interface LiveSessionOptions {
   connectSessionEvents?: SessionEventsConnector;
   retryDelays?: readonly number[];
-  initialRouteReady: boolean;
   refreshBootstrap(): Promise<void>;
 }
 
-// App decides which actions count as navigation and calls beginNavigation.
-// The epoch and its rendered copy stay here with the work they invalidate.
 export function useLiveSession(
   client: ChaClient,
   state: AppState,
   dispatch: Dispatch<AppAction>,
   {
-    connectSessionEvents = () => closedEvents(),
+    connectSessionEvents = noSessionEvents,
     retryDelays = liveRetryDelays,
-    initialRouteReady,
     refreshBootstrap,
   }: LiveSessionOptions,
 ) {
@@ -75,6 +105,10 @@ export function useLiveSession(
   // work compares against; this is what a render can compare against without
   // reading that ref while rendering.
   const [renderedEpoch, setRenderedEpoch] = useState(0);
+  // The address the page started on is adopted once, before the reattach
+  // effect below is allowed to act on the reducer's initial conversation.
+  const [initialRouteReady, setInitialRouteReady] = useState(false);
+  const initialRouteHandled = useRef(false);
   // Bumped by every navigation intent. An open that finishes after the epoch
   // moved on belongs to a conversation the user has already left.
   const navigation = useRef(0);
@@ -103,6 +137,11 @@ export function useLiveSession(
     setRenderedEpoch(navigation.current);
     return navigation.current;
   }, []);
+
+  const navigate = useCallback((action: AppAction) => {
+    if (!inPlaceActions.has(action.type)) beginNavigation();
+    dispatch(action);
+  }, [beginNavigation, dispatch]);
 
   const cancelRetryTimer = useCallback(() => {
     retryTimerCancellation.current?.();
@@ -452,6 +491,29 @@ export function useLiveSession(
       state.sessionSnapshot?.shutdown_reason === 'reloading');
   }, [beginRecovery, cancelRetryTimer, state.activeConversation, state.sessionSnapshot]);
 
+  useEffect(() => {
+    if (state.bootstrapStatus !== 'ready' || initialRouteHandled.current) return;
+    initialRouteHandled.current = true;
+    const restoreVoiceSettings = consumeVoiceSettingsRestore();
+    const route = currentAppRoute();
+    if (route.kind === 'root') {
+      if (restoreVoiceSettings) navigate({ type: 'show-settings-voice-input' });
+      setInitialRouteReady(true);
+    } else if (route.kind === 'session') {
+      void openConversation(route.forumId, route.sessionId, false)
+        .finally(() => {
+          if (restoreVoiceSettings) navigate({ type: 'show-settings-voice-input' });
+          setInitialRouteReady(true);
+        });
+    } else {
+      dispatch({
+        type: 'session-operation-failed',
+        message: 'This address does not identify a CHA session.',
+      });
+      setInitialRouteReady(true);
+    }
+  }, [dispatch, navigate, openConversation, state.bootstrapStatus]);
+
   // Startup and Return to Welcome both adopt the initial IDs without an open
   // request. A matching snapshot without a connection is also attachable: this
   // matters when React StrictMode replays the unmount cleanup after the
@@ -485,17 +547,39 @@ export function useLiveSession(
     state.activeConversation, state.bootstrapStatus, state.mainView,
     state.sessionOperation, state.sessionSnapshot, state.streamStatus]);
 
+  useEffect(() => {
+    const visitHistoryRoute = () => {
+      const route = currentAppRoute();
+      if (route.kind === 'root') {
+        clearLiveSession();
+        navigate({ type: 'show-initial-conversation' });
+      } else if (route.kind === 'session') {
+        void openConversation(route.forumId, route.sessionId, false);
+      } else {
+        navigate({
+          type: 'session-operation-failed',
+          message: 'This address does not identify a CHA session.',
+        });
+      }
+    };
+    window.addEventListener('popstate', visitHistoryRoute);
+    if (usesHashRoutes()) window.addEventListener('hashchange', visitHistoryRoute);
+    return () => {
+      window.removeEventListener('popstate', visitHistoryRoute);
+      window.removeEventListener('hashchange', visitHistoryRoute);
+    };
+  }, [clearLiveSession, navigate, openConversation]);
+
   useEffect(() => () => {
     resetLiveSession();
   }, [resetLiveSession]);
 
   return {
-    beginNavigation,
+    navigate,
     openConversation,
     createConversation,
     retrySessionOpen,
     retryStream,
-    resetLiveSession,
     clearLiveSession,
   };
 }
