@@ -2607,20 +2607,25 @@ MaintenanceResult Application::switch_vault(
             }
             bool database_closed = false;
             try {
-                auto database = impl_->store->reserve_maintenance();
-                SessionRepository::MaintenanceGuard repository =
-                    impl_->sessions->reserve_maintenance();
-                repository.checkpoint();
-                database.close();
-                database_closed = true;
-                database.retarget(
-                    selected.data, std::move(target_lease), password);
-                repository.retarget(selected.data, password);
-                impl_->active_password = std::move(password);
-                impl_->reopen(database, repository);
+                {
+                    auto database = impl_->store->reserve_maintenance();
+                    SessionRepository::MaintenanceGuard repository =
+                        impl_->sessions->reserve_maintenance();
+                    repository.checkpoint();
+                    database.close();
+                    database_closed = true;
+                    database.retarget(
+                        selected.data, std::move(target_lease), password);
+                    repository.retarget(selected.data, password);
+                    impl_->active_password = std::move(password);
+                    impl_->reopen(database, repository);
+                }
                 impl_->current_vault_.set(selected);
                 impl_->command.vault = selected;
                 try {
+                    // Migration edits the store and takes its lock again.
+                    // Keep application maintenance active, but release the
+                    // database guards before starting that edit.
                     impl_->api_keys->migrate_vault();
                 } catch (const std::exception& error) {
                     log_warn(

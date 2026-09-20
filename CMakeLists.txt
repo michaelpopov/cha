@@ -601,8 +601,14 @@ if(BUILD_TESTING)
     endforeach()
 
     include(GoogleTest)
+    foreach(cha_unit_test_target IN ITEMS
+            cha_tests cha_app_tests cha_bridge_tests cha_native_runtime_tests)
+        target_sources(
+            ${cha_unit_test_target}
+            PRIVATE tests/support/unit_test_environment.cpp)
+    endforeach()
     gtest_discover_tests(cha_tests)
-    gtest_discover_tests(cha_app_tests)
+    gtest_discover_tests(cha_app_tests PROPERTIES TIMEOUT 60)
     gtest_discover_tests(cha_bridge_tests)
     gtest_discover_tests(cha_native_runtime_tests)
 endif()
