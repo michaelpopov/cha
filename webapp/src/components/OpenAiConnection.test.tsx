@@ -129,7 +129,7 @@ describe('OpenAI connection screen', () => {
 
   it('shows an API error with an explicit retry that reloads status', async () => {
     const getOpenAiAuth = vi.fn()
-      .mockRejectedValueOnce(new ChaError(500, 'internal_error', 'OpenAI login failed.'))
+      .mockRejectedValueOnce(new ChaError('internal_error', 'OpenAI login failed.'))
       .mockResolvedValueOnce(signedOutAuth);
     renderConnection(fixtureClient({ getOpenAiAuth }));
 
@@ -220,7 +220,7 @@ describe('OpenAI connection polling', () => {
     unmount();
 
     const failingPoll = vi.fn(async () => {
-      throw new ChaError(500, 'internal_error', 'OpenAI login failed.');
+      throw new ChaError('internal_error', 'OpenAI login failed.');
     });
     renderConnection(fixtureClient({
       getOpenAiAuth: async () => waitingAuth,

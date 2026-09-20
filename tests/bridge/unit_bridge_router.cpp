@@ -722,6 +722,7 @@ TEST_F(BridgeRouterTest, CompletedReplyHoldsAdmissionUntilDeliveryAck) {
     ASSERT_FALSE(reply.empty());
     EXPECT_FALSE(reply["ok"]);
     EXPECT_EQ(reply["error"]["message"], "Too many in-flight requests.");
+    EXPECT_EQ(reply["error"]["code"], "command_queue_full");
     ack_delivery(*router_, connection_, *overflow);
 }
 
@@ -744,6 +745,8 @@ TEST_F(BridgeRouterTest, SaturatingOrdinaryWorkInvalidatesTheConnection) {
     for (const auto& message : batch->at("messages")) {
         if (message.contains("error")
             && message["error"]["message"] == "Too many in-flight requests.") {
+            EXPECT_EQ(message["id"], 2);
+            EXPECT_EQ(message["error"]["code"], "command_queue_full");
             saw_limit = true;
         }
         if (message.contains("id") && message["id"] == 1

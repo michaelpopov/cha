@@ -349,7 +349,7 @@ describe('live chat', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Generate audio for your prompt' }));
     fireEvent.click(screen.getByRole('button', { name: "Generate audio for Assistant's response" }));
     expect(startAudioDownload).toHaveBeenCalledTimes(2);
-    await act(async () => { completions.get(1)!.reject(new ChaError(503, 'speech_busy', 'Audio downloads are temporarily unavailable.')); });
+    await act(async () => { completions.get(1)!.reject(new ChaError('speech_busy', 'Audio downloads are temporarily unavailable.')); });
     expect(screen.getAllByRole('alert')).toHaveLength(1);
     expect(screen.getByRole('alert')).toHaveTextContent('Audio downloads are temporarily unavailable.');
     expect(screen.getByRole('button', { name: 'Generate audio for your prompt' })).toBeEnabled();
@@ -386,7 +386,7 @@ describe('live chat', () => {
     const getAudioDownloads = vi.fn().mockResolvedValueOnce({ cached_entry_ids: [2], downloads: [] })
       .mockResolvedValue({ cached_entry_ids: [], downloads: [] });
     const resolveAudioSource = vi.fn(async () => {
-      throw new ChaError(404, 'not_found', 'Cached audio not found.');
+      throw new ChaError('not_found', 'Cached audio not found.');
     });
     const events = drivableEvents();
     render(<App client={fixtureClient({
@@ -636,7 +636,7 @@ describe('live chat', () => {
     const events = drivableEvents();
     render(<App client={fixtureClient({
       getVoiceOutputRuntime: async () => voiceOutputRuntimeFixture,
-      getAudioDownloads: async () => { throw new ChaError(409, 'vault_changed', 'The active vault changed.'); },
+      getAudioDownloads: async () => { throw new ChaError('vault_changed', 'The active vault changed.'); },
       startAudioDownloadBatch,
     })} connectSessionEvents={events.connect} />);
     await attachInitial(events, { ...snapshotFixture, transcript: [
@@ -788,7 +788,7 @@ describe('live chat', () => {
       const entries = request.entries.map(({ entry_id }) => ({ entry_id, cached: false, state: 'queued' as const }));
       jobs.push(...entries);
       return { entries };
-    }).mockRejectedValueOnce(new ChaError(503, 'speech_busy', 'Audio downloads are temporarily unavailable.'));
+    }).mockRejectedValueOnce(new ChaError('speech_busy', 'Audio downloads are temporarily unavailable.'));
     const events = drivableEvents();
     render(<App client={fixtureClient({
       getVoiceOutputRuntime: async () => voiceOutputRuntimeFixture,
@@ -840,7 +840,7 @@ describe('live chat', () => {
     act(() => events.handlers[1].onSnapshot(planning));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Cache conversation audio automatically' })).toBeEnabled());
     expect(screen.getByRole('button', { name: 'Cache conversation audio automatically' })).toHaveAttribute('aria-pressed', 'false');
-    await act(async () => { reject(new ChaError(503, 'speech_busy', 'Old audio request rejected.')); });
+    await act(async () => { reject(new ChaError('speech_busy', 'Old audio request rejected.')); });
     expect(startAudioDownload).toHaveBeenCalledOnce();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
@@ -881,7 +881,7 @@ describe('live chat', () => {
     render(<App client={fixtureClient({
       getVoiceOutputRuntime: async () => voiceOutputRuntimeFixture,
       getAudioDownloads,
-      startAudioDownload: async () => { throw new ChaError(404, 'not_found', 'Audio admission rejected.'); },
+      startAudioDownload: async () => { throw new ChaError('not_found', 'Audio admission rejected.'); },
     })} connectSessionEvents={events.connect} />);
     await attachInitial(events, {
       ...snapshotFixture,
@@ -1166,7 +1166,7 @@ describe('live chat', () => {
     const user = userEvent.setup();
     const events = drivableEvents();
     const submitInput = vi.fn()
-      .mockRejectedValueOnce(new ChaError(400, 'bad_request', 'The prompt was not accepted.'))
+      .mockRejectedValueOnce(new ChaError('bad_request', 'The prompt was not accepted.'))
       .mockResolvedValueOnce({ clear_input: true });
     render(
       <App
@@ -1194,7 +1194,7 @@ describe('live chat', () => {
     const user = userEvent.setup();
     const events = drivableEvents();
     const submitInput = vi.fn()
-      .mockRejectedValueOnce(new ChaError(400, 'bad_request', 'The prompt was not accepted.'))
+      .mockRejectedValueOnce(new ChaError('bad_request', 'The prompt was not accepted.'))
       .mockResolvedValue({ clear_input: true });
     const setDefaultCharacter = vi.fn(async () => ({ clear_input: false }));
     const snapshot: SessionSnapshot = {
@@ -1912,7 +1912,7 @@ describe('live stream recovery', () => {
 
 describe('live session capacity', () => {
   function capacityError() {
-    return new ChaError(503, 'session_limit_reached', 'Session limit reached.');
+    return new ChaError('session_limit_reached', 'Session limit reached.');
   }
 
   it('retries a transient session limit and eventually attaches', async () => {

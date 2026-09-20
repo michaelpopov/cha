@@ -5,7 +5,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   ChaError,
-  ChaUnavailableError,
   type Bootstrap,
   type CharacterAppearance,
   type CharacterDetail,
@@ -382,14 +381,14 @@ it('reports a persona with no PERSONA.md rather than an empty screen', async () 
 
 it('retries a failed persona-detail request without exposing implementation details', async () => {
   const getPersona = vi.fn()
-    .mockRejectedValueOnce(new ChaUnavailableError())
+    .mockRejectedValueOnce(new ChaError('command_timeout', 'The request timed out.'))
     .mockResolvedValueOnce(personaDetailFixture);
   render(<App client={fixtureClient({ getPersona })} />);
   fireEvent.click(await screen.findByRole('button', { name: 'Personas' }));
   fireEvent.click(within(screen.getByLabelText('Personas navigation'))
     .getByRole('button', { name: /Reader/ }));
 
-  expect(await screen.findByRole('alert')).toHaveTextContent('application API is unavailable');
+  expect(await screen.findByRole('alert')).toHaveTextContent('The request timed out.');
   fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
   expect(await screen.findByRole('heading', { name: 'Reader notes' })).toBeInTheDocument();
   expect(getPersona).toHaveBeenCalledTimes(2);
@@ -515,7 +514,6 @@ it('keeps a character on screen and shows the server message when deletion is re
   const user = userEvent.setup();
   const deleteCharacter = vi.fn(async () => {
     throw new ChaError(
-      409,
       'bad_request',
       'This character is still used by one or more forums.',
     );
@@ -631,7 +629,7 @@ it('replaces only the selected character file from the topbar upload action', as
 
 it('retries a failed character-detail request without exposing implementation details', async () => {
   const getCharacter = vi.fn()
-    .mockRejectedValueOnce(new ChaUnavailableError())
+    .mockRejectedValueOnce(new ChaError('command_timeout', 'The request timed out.'))
     .mockResolvedValueOnce({
       ...characterDetailFixture,
       character_markdown: '# Guide dossier',
@@ -640,7 +638,7 @@ it('retries a failed character-detail request without exposing implementation de
   fireEvent.click(await screen.findByRole('button', { name: 'Characters' }));
   fireEvent.click(screen.getByRole('button', { name: /Guide/ }));
 
-  expect(await screen.findByRole('alert')).toHaveTextContent('application API is unavailable');
+  expect(await screen.findByRole('alert')).toHaveTextContent('The request timed out.');
   fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
   expect(await screen.findByRole('button', { name: 'CHARACTER.md' })).toBeInTheDocument();
   expect(getCharacter).toHaveBeenCalledTimes(2);
@@ -930,7 +928,7 @@ it('reports an empty forum file rather than an empty screen', async () => {
 
 it('retries a failed forum-detail request without exposing implementation details', async () => {
   const getForum = vi.fn()
-    .mockRejectedValueOnce(new ChaUnavailableError())
+    .mockRejectedValueOnce(new ChaError('command_timeout', 'The request timed out.'))
     .mockResolvedValueOnce(forumDetailFixture);
   render(<App client={fixtureClient({ getForum })} />);
   fireEvent.click(await screen.findByRole('button', { name: 'Forums' }));
@@ -938,7 +936,7 @@ it('retries a failed forum-detail request without exposing implementation detail
   fireEvent.click(within(screen.getByLabelText('Forum sessions navigation'))
     .getByRole('button', { name: 'The LobbyGuide' }));
 
-  expect(await screen.findByRole('alert')).toHaveTextContent('application API is unavailable');
+  expect(await screen.findByRole('alert')).toHaveTextContent('The request timed out.');
   fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
   expect(await screen.findByRole('button', { name: 'FORUM.md' })).toBeInTheDocument();
   expect(getForum).toHaveBeenCalledTimes(2);
@@ -1293,7 +1291,7 @@ it('restores a deep link and offers Welcome when the requested session cannot op
   const client = fixtureClient({
     openSession: async (forumId, sessionId) => {
       if (sessionId === 'planning') {
-        throw new ChaError(500, 'internal_error', 'Planning could not be opened.');
+        throw new ChaError('internal_error', 'Planning could not be opened.');
       }
       return { forum_id: forumId, session_id: sessionId };
     },
@@ -1350,7 +1348,7 @@ it.each(['session_stopping', 'session_open_timeout'] as const)(
       <App
         client={fixtureClient({
           openSession: async () => {
-            throw new ChaError(409, code, `Retryable ${code}`);
+            throw new ChaError(code, `Retryable ${code}`);
           },
         })}
         connectSessionEvents={inertSessionEvents}
@@ -1573,7 +1571,7 @@ it('reports a failed create on the New session screen and keeps the typed name',
   const client = fixtureClient({
     listSessions: async () => [],
     createSession: async () => {
-      throw new ChaError(500, 'internal_error', 'The workspace is read-only.');
+      throw new ChaError('internal_error', 'The workspace is read-only.');
     },
   });
   render(<App client={client} connectSessionEvents={inertSessionEvents} />);
@@ -1592,7 +1590,7 @@ it('reports a failed create on the New session screen and keeps the typed name',
 it('reports a failed open on the sessions list without discarding it', async () => {
   const client = storedPlanningClient({
     openSession: async () => {
-      throw new ChaError(409, 'session_stopping', 'Planning is still stopping.');
+      throw new ChaError('session_stopping', 'Planning is still stopping.');
     },
   });
   render(<App client={client} connectSessionEvents={inertSessionEvents} />);
@@ -1610,7 +1608,7 @@ it('reports a Recent open failure on whichever navigation screen is showing', as
   const client = fixtureClient({
     openSession: async (forumId, sessionId) => {
       if (sessionId === 'planning') {
-        throw new ChaError(409, 'session_stopping', 'Planning is still stopping.');
+        throw new ChaError('session_stopping', 'Planning is still stopping.');
       }
       return { forum_id: forumId, session_id: sessionId };
     },
@@ -1870,7 +1868,7 @@ it('reopens a live conversation after a settings save without leaving the settin
     lobbySnapshots += 1;
     if (lobbySnapshots === 1) return previous;
     if (lobbySnapshots === 2) {
-      throw new ChaError(409, 'session_not_live', 'Session is not live.');
+      throw new ChaError('session_not_live', 'Session is not live.');
     }
     return next;
   });

@@ -147,7 +147,7 @@ export function createEnvelopeNativeBridge(options: {
       if (needsContext(request.method) && !changesContext(request.method)
           && request.epoch !== epoch) {
         pending.delete(id);
-        request.reject(new ChaError(0, 'vault_changed', 'The active vault changed.'));
+        request.reject(new ChaError('vault_changed', 'The active vault changed.'));
       }
     }
   };
@@ -171,7 +171,7 @@ export function createEnvelopeNativeBridge(options: {
         ? message.error.code
         : 'internal_error';
       const text = message.error?.message ?? 'The request could not be completed.';
-      request.reject(new ChaError(0, code, text));
+      request.reject(new ChaError(code, text));
       return;
     }
     if (isRecord(message) && typeof message.event === 'string') {

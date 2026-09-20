@@ -147,7 +147,7 @@ describe('native bridge', () => {
   it('turns a real C++ error envelope into ChaError', async () => {
     const bridge = createFakeNativeBridge({
       'session.submit': () => {
-        throw new ChaError(0, 'session_not_live', 'That session is not open.');
+        throw new ChaError('session_not_live', 'That session is not open.');
       },
     });
     await expect(bridge.invoke('session.submit', {}))

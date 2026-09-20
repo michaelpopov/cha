@@ -159,7 +159,7 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient {
           : result.state === 'stopping'
             ? 'CHA is shutting down. Restart CHA to continue.'
             : 'CHA could not open the workspace. Restart CHA and check its logs.';
-        throw new ChaError(0, 'application_unavailable', message);
+        throw new ChaError('application_unavailable', message);
       }
       bridge.setContextEpoch(result.context_epoch);
       return validateBootstrap(result.bootstrap);

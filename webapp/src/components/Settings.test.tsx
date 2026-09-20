@@ -331,7 +331,6 @@ describe('Settings screens', () => {
     const mergeVault = vi.fn(async (_source: string, password?: string) => {
       if (password !== 'secret') {
         throw new ChaError(
-          401,
           'source_vault_password_required',
           'Password required to merge this vault',
         );
@@ -369,7 +368,6 @@ describe('Settings screens', () => {
   it('sends no retry when the source password dialog is cancelled', async () => {
     const mergeVault = vi.fn(async () => {
       throw new ChaError(
-        401,
         'source_vault_password_required',
         'Password required to merge this vault',
       );
@@ -394,7 +392,7 @@ describe('Settings screens', () => {
 
   it('keeps a validation failure visible so merge can be retried', async () => {
     const mergeVault = vi.fn(async () => {
-      throw new ChaError(400, 'bad_request', 'Duplicate character id “guide”.');
+      throw new ChaError('bad_request', 'Duplicate character id “guide”.');
     });
     render(
       <MergeVaultScreen
@@ -1191,7 +1189,7 @@ describe('Settings screens', () => {
     const saveVoiceInputSettings = vi.fn(async (settings) => settings);
     const saveVoiceOutputSettings = vi.fn(async (settings) => {
       if (settings.url.startsWith('http:')) {
-        throw new ChaError(400, 'bad_request', 'FishAudio requires an HTTPS URL.');
+        throw new ChaError('bad_request', 'FishAudio requires an HTTPS URL.');
       }
       return { ...settings, url: 'https://api.fish.audio/v1/tts', model: settings.model.trim() };
     });

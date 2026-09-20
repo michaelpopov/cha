@@ -37,6 +37,7 @@ xcrun swiftc \
     -Xlinker @executable_path/../Frameworks \
     "$repository/packaging/macos/feasibility.swift" \
     "$repository/packaging/macos/native_bridge.swift" \
+    "$repository/tests/native/macos/probes.swift" \
     "$repository/tests/native/macos/test_host.swift" \
     -o "$contents/MacOS/ChaNativeTestHost"
 

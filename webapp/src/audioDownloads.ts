@@ -59,10 +59,13 @@ export function useAudioDownloads(client: ChaClient, forum: string | undefined,
           setStatus((old) => sameStatus(old, result) ? old : result);
         }
       } catch (failure) {
-        // Maintenance and transport failures can recover. A stale vault,
-        // missing session, denied access, or incompatible API cannot.
+        // Maintenance and command failures can recover. Invalid context,
+        // missing sessions, denied access, or incompatible APIs cannot.
         if (current && valid.current && (failure instanceof ChaProtocolError
-          || (failure instanceof ChaError && failure.status >= 400 && failure.status < 500))) {
+          || (failure instanceof ChaError && [
+            'not_found', 'vault_changed', 'session_not_live', 'invalid_argument',
+            'application_unavailable', 'bad_request', 'forbidden_origin',
+          ].includes(failure.code)))) {
           initialized = true;
           setUnavailable(publicErrorMessage(failure, 'Audio status is unavailable. Try again.'));
           pending.clear();

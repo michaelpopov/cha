@@ -1,3 +1,51 @@
+// Exercise the document's policy through DOM operations and require violation
+// events: a failed network request alone could just mean the host is offline.
+async function nativePolicyChecks() {
+  const violations = [];
+  const record = (event) => violations.push(event);
+  document.addEventListener('securitypolicyviolation', record);
+  const inline = document.createElement('script');
+  const remote = document.createElement('script');
+  const button = document.createElement('button');
+  const scriptUrl = 'https://cha-csp-test.invalid/disallowed.js';
+  const fetchUrl = 'https://cha-csp-test.invalid/disallowed-fetch';
+  window.__CHA_POLICY_INLINE__ = false;
+  window.__CHA_POLICY_HANDLER__ = false;
+  try {
+    inline.textContent = 'window.__CHA_POLICY_INLINE__ = true;';
+    document.head.append(inline);
+    button.setAttribute('onclick', 'window.__CHA_POLICY_HANDLER__ = true;');
+    document.body.append(button);
+    button.click();
+    remote.src = scriptUrl;
+    document.head.append(remote);
+    void fetch(fetchUrl).catch(() => {});
+    const blocked = (directive, uri) => violations.some((event) =>
+      event.effectiveDirective.startsWith(directive) && event.blockedURI === uri
+      && event.disposition === 'enforce');
+    const deadline = Date.now() + 3000;
+    while (!(blocked('script-src', 'inline') && blocked('script-src', scriptUrl)
+        && blocked('connect-src', fetchUrl))) {
+      if (Date.now() >= deadline) throw new Error('missing enforced CSP violations: '
+        + JSON.stringify(violations.map((event) => [event.effectiveDirective, event.blockedURI])));
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    if (window.__CHA_POLICY_INLINE__ || window.__CHA_POLICY_HANDLER__) {
+      throw new Error('injected JavaScript executed');
+    }
+    if ((await fetch('/probe/audio', {cache: 'no-store'})).status !== 404) {
+      throw new Error('prototype audio endpoint remains available');
+    }
+  } finally {
+    document.removeEventListener('securitypolicyviolation', record);
+    inline.remove();
+    remote.remove();
+    button.remove();
+    delete window.__CHA_POLICY_INLINE__;
+    delete window.__CHA_POLICY_HANDLER__;
+  }
+}
+
 // Shared real-host bridge checks. Runs only against the harness's disposable
 // vault. This probe owns delivery acknowledgements; reload before using the UI
 // again because instrumented request IDs share the document's monotonic range.
@@ -42,6 +90,7 @@ async function nativeParity() {
   });
   const check = (value, message) => { if (!value) throw new Error(message); };
   try {
+    await nativePolicyChecks();
     const boot = await rpc('app.bootstrap');
     epoch = boot.context_epoch;
     const originalVault = boot.bootstrap.vault_name;
@@ -96,7 +145,8 @@ async function nativeParity() {
     await rpc('session.delete', identity);
     check(!(await rpc('session.list', {forum_id: 'lobby'})).some((session) => session.id === created.id),
       'deleted conversation remained in storage');
-    return {ok: true, sessions: 'rename/reopen/delete', navigation: '12 selections',
+    return {ok: true, csp: 'inline scripts, event handlers, remote scripts and fetch blocked',
+      sessions: 'rename/reopen/delete', navigation: '12 selections',
       files: 'character and forum create/edit/delete', vaults: 'copy/switch/merge/delete'};
   } catch (error) {
     return {ok: false, reason: String(error.message || error)};

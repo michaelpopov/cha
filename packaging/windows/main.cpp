@@ -16,7 +16,6 @@
 #include <shlwapi.h>
 
 #include <algorithm>
-#include <cmath>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
@@ -344,7 +343,6 @@ struct NativeSaveResult {
 
 struct LaunchOptions {
     bool smoke_test{};
-    bool feasibility{};
     std::optional<std::filesystem::path> data_root;
     std::optional<std::filesystem::path> assets;
     std::optional<int> cdp_port;
@@ -399,48 +397,12 @@ std::wstring native_bootstrap_script(std::string_view connection_id) {
         L"});}";
 }
 
-constexpr wchar_t kFeasibilityHost[] = L"app.cha.local";
-constexpr wchar_t kFeasibilityOrigin[] = L"https://app.cha.local";
+constexpr wchar_t kAssetHost[] = L"app.cha.local";
+constexpr wchar_t kAssetOrigin[] = L"https://app.cha.local";
 constexpr char kNativeContentSecurityPolicy[] =
     "default-src 'none'; script-src 'self'; style-src 'self'; "
     "img-src 'self' data:; font-src 'self'; media-src 'self' blob:; connect-src 'self'; "
     "base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
-
-std::string probe_wav_bytes() {
-    constexpr std::uint32_t sample_rate = 8000;
-    constexpr std::uint32_t samples = 800;
-    std::string data;
-    data.reserve(44 + samples * 2);
-    const auto append_u32 = [&](std::uint32_t value) {
-        data.push_back(static_cast<char>(value));
-        data.push_back(static_cast<char>(value >> 8));
-        data.push_back(static_cast<char>(value >> 16));
-        data.push_back(static_cast<char>(value >> 24));
-    };
-    const auto append_u16 = [&](std::uint16_t value) {
-        data.push_back(static_cast<char>(value));
-        data.push_back(static_cast<char>(value >> 8));
-    };
-    data.append("RIFF", 4);
-    append_u32(36 + samples * 2);
-    data.append("WAVE", 4);
-    data.append("fmt ", 4);
-    append_u32(16);
-    append_u16(1);
-    append_u16(1);
-    append_u32(sample_rate);
-    append_u32(sample_rate * 2);
-    append_u16(2);
-    append_u16(16);
-    data.append("data", 4);
-    append_u32(samples * 2);
-    for (std::uint32_t index = 0; index < samples; ++index) {
-        const auto sample = static_cast<std::int16_t>(
-            std::sin(static_cast<double>(index) * 0.4) * 8000);
-        append_u16(static_cast<std::uint16_t>(sample));
-    }
-    return data;
-}
 
 LaunchOptions parse_launch_options() {
     int count = 0;
@@ -470,9 +432,7 @@ LaunchOptions parse_launch_options() {
             }
             return std::wstring_view(arguments[++index]);
         };
-        if (argument == L"--feasibility") {
-            options.feasibility = true;
-        } else if (argument == L"--assets") {
+        if (argument == L"--assets") {
             options.assets = std::filesystem::path(require_value());
         } else if (argument == L"--cdp-port") {
             options.cdp_port = std::stoi(std::wstring(require_value()));
@@ -487,9 +447,6 @@ LaunchOptions parse_launch_options() {
         } else {
             throw std::runtime_error("CHA does not accept command-line arguments");
         }
-    }
-    if (options.feasibility && !options.assets) {
-        throw std::runtime_error("CHA does not accept command-line arguments");
     }
     return options;
 #else
@@ -517,30 +474,13 @@ public:
         const LaunchOptions& options) {
         instance_ = instance;
         smoke_test_ = options.smoke_test;
-        feasibility_ = options.feasibility;
         assets_ = options.assets;
         cdp_port_ = options.cdp_port;
         dev_origin_ = options.dev_origin;
-        if (!assets_ && !feasibility_) {
+        if (!assets_) {
             assets_ = cha::executable_directory() / "web";
         }
         create_window(show_command);
-        if (feasibility_) {
-            std::optional<std::filesystem::path> isolated = options.data_root;
-            if (!isolated) {
-                wchar_t temporary[MAX_PATH]{};
-                const DWORD length = ::GetTempPathW(MAX_PATH, temporary);
-                if (length == 0 || length >= MAX_PATH) {
-                    throw std::runtime_error("Failed to locate a temporary directory");
-                }
-                isolated = std::filesystem::path(temporary) / L"cha-feasibility";
-            }
-            prepare_application_data(isolated);
-            runtime_origin_ = kFeasibilityOrigin;
-            runtime_url_ = std::wstring(kFeasibilityOrigin) + L"/";
-            start_webview();
-            return;
-        }
         prepare_application_data(options.data_root);
         start_runtime();
         start_webview();
@@ -764,8 +704,8 @@ private:
             runtime_origin_ = *dev_origin_;
             runtime_url_ = runtime_origin_ + L"/";
         } else {
-            runtime_origin_ = kFeasibilityOrigin;
-            runtime_url_ = std::wstring(kFeasibilityOrigin) + L"/";
+            runtime_origin_ = kAssetOrigin;
+            runtime_url_ = std::wstring(kAssetOrigin) + L"/";
         }
         cha_runtime_set_delivery_callback(runtime_, native_delivery, this);
         update_database_menu_items();
@@ -861,20 +801,11 @@ private:
         controller_->put_IsVisible(TRUE);
 
         install_webview_handlers();
-        if (feasibility_) {
-            result = install_feasibility_origin();
-            if (FAILED(result)) {
-                post_fatal_error(hresult_message(
-                    result, L"CHA could not map its packaged assets"));
-                return S_OK;
-            }
-        } else {
-            result = install_native_origin();
-            if (FAILED(result)) {
-                post_fatal_error(hresult_message(
-                    result, L"CHA could not map its packaged assets"));
-                return S_OK;
-            }
+        result = install_native_origin();
+        if (FAILED(result)) {
+            post_fatal_error(hresult_message(
+                result, L"CHA could not map its packaged assets"));
+            return S_OK;
         }
         navigate_home();
         return S_OK;
@@ -901,7 +832,7 @@ private:
                     const bool hash_only = !current.empty()
                         && without_fragment(uri) == without_fragment(current)
                         && uri != current;
-                    if (!feasibility_ && !hash_only) {
+                    if (!hash_only) {
                         replace_document_connection();
                     }
                     return S_OK;
@@ -1080,66 +1011,7 @@ private:
         return respond_with_bytes(args, 200, L"OK", headers, body);
     }
 
-    HRESULT install_feasibility_origin() {
-        if (!assets_) {
-            return E_INVALIDARG;
-        }
-        ComPtr<ICoreWebView2_3> webview3;
-        HRESULT result = webview_.As(&webview3);
-        if (FAILED(result)) return result;
-        result = webview3->SetVirtualHostNameToFolderMapping(
-            kFeasibilityHost,
-            assets_->c_str(),
-            COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_DENY);
-        if (FAILED(result)) return result;
-
-        result = webview_->AddWebResourceRequestedFilter(
-            L"https://app.cha.local/*",
-            COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL);
-        if (FAILED(result)) return result;
-
-        EventRegistrationToken ignored{};
-        const std::shared_ptr<WindowsApplication> self = shared_from_this();
-        result = webview_->add_WebResourceRequested(
-            Callback<ICoreWebView2WebResourceRequestedEventHandler>(
-                [self](ICoreWebView2*, ICoreWebView2WebResourceRequestedEventArgs* args) {
-                    return self->handle_feasibility_resource(args);
-                }).Get(),
-            &ignored);
-        if (FAILED(result)) return result;
-
-        result = webview_->add_WebMessageReceived(
-            Callback<ICoreWebView2WebMessageReceivedEventHandler>(
-                [self](ICoreWebView2*, ICoreWebView2WebMessageReceivedEventArgs* args) {
-                    return self->handle_feasibility_message(args);
-                }).Get(),
-            &ignored);
-        if (FAILED(result)) return result;
-
-        return webview_->AddScriptToExecuteOnDocumentCreated(
-            L"window.__chaProbePending={};"
-            L"window.__chaProbeResolve=function(id,reply){"
-            L"var pending=window.__chaProbePending[id];"
-            L"if(!pending)return;delete window.__chaProbePending[id];pending(reply);"
-            L"};"
-            L"window.__chaProbeSend=function(payload){"
-            L"return new Promise(function(resolve,reject){"
-            L"var id=String(Date.now())+Math.random();"
-            L"window.__chaProbePending[id]=resolve;"
-            L"payload=payload||{};payload.id=id;"
-            L"if(!window.chrome||!window.chrome.webview){"
-            L"reject(new Error('probe receiver missing'));return;}"
-            L"window.chrome.webview.postMessage(payload);"
-            L"});};"
-            L"if(window.chrome&&window.chrome.webview){"
-            L"window.chrome.webview.addEventListener('message',function(event){"
-            L"var reply=event.data;if(reply&&reply.id)window.__chaProbeResolve(reply.id,reply);"
-            L"});}",
-            Callback<ICoreWebView2AddScriptToExecuteOnDocumentCreatedCompletedHandler>(
-                [](HRESULT, LPCWSTR) { return S_OK; }).Get());
-    }
-
-    HRESULT handle_feasibility_resource(
+    HRESULT handle_asset_resource(
         ICoreWebView2WebResourceRequestedEventArgs* args) {
         ComPtr<ICoreWebView2WebResourceRequest> request;
         if (FAILED(args->get_Request(&request)) || !request) return S_OK;
@@ -1148,15 +1020,6 @@ private:
         const std::wstring uri = take_com_string(raw_uri);
         if (uri.rfind(L"https://app.cha.local/media/", 0) == 0) {
             return handle_media_resource(args, uri);
-        }
-        if (uri == L"https://app.cha.local/probe/audio") {
-            const std::string wav = probe_wav_bytes();
-            return respond_with_bytes(
-                args,
-                200,
-                L"OK",
-                L"Content-Type: audio/wav\nCache-Control: no-store",
-                wav);
         }
         const bool shell = uri == L"https://app.cha.local/"
             || uri == L"https://app.cha.local/index.html";
@@ -1185,7 +1048,7 @@ private:
         HRESULT result = webview_.As(&webview3);
         if (FAILED(result)) return result;
         result = webview3->SetVirtualHostNameToFolderMapping(
-            kFeasibilityHost,
+            kAssetHost,
             assets_->c_str(),
             COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_DENY);
         if (FAILED(result)) return result;
@@ -1198,7 +1061,7 @@ private:
         result = webview_->add_WebResourceRequested(
             Callback<ICoreWebView2WebResourceRequestedEventHandler>(
                 [self](ICoreWebView2*, ICoreWebView2WebResourceRequestedEventArgs* args) {
-                    return self->handle_feasibility_resource(args);
+                    return self->handle_asset_resource(args);
                 }).Get(),
             &ignored);
         if (FAILED(result)) return result;
@@ -1459,7 +1322,7 @@ private:
     }
 
     void handle_renderer_failure() {
-        if (feasibility_ || closing_) return;
+        if (closing_) return;
         renderer_failures_ += 1;
         replace_document_connection();
         if (renderer_failures_ >= 3) {
@@ -1468,27 +1331,6 @@ private:
             return;
         }
         navigate_home();
-    }
-
-    HRESULT handle_feasibility_message(
-        ICoreWebView2WebMessageReceivedEventArgs* args) {
-        wchar_t* raw_source = nullptr;
-        if (FAILED(args->get_Source(&raw_source))) return S_OK;
-        const std::wstring source = take_com_string(raw_source);
-        if (!is_application_uri(source)) return S_OK;
-        wchar_t* raw_json = nullptr;
-        if (FAILED(args->get_WebMessageAsJson(&raw_json))) return S_OK;
-        const std::string payload =
-            cha::utf8_from_wide(take_com_string(raw_json));
-        const nlohmann::json parsed = nlohmann::json::parse(payload, nullptr, false);
-        if (parsed.is_discarded() || !parsed.contains("id")) return S_OK;
-        const nlohmann::json reply = {
-            {"id", parsed["id"]},
-            {"echo", parsed.contains("echo") ? parsed["echo"] : nlohmann::json()},
-            {"trusted", true},
-        };
-        const std::wstring encoded = wide_from_utf8(reply.dump());
-        return webview_->PostWebMessageAsJson(encoded.c_str());
     }
 
     void navigate_home() {
@@ -1528,7 +1370,7 @@ private:
                 || document == std::wstring(origin) + L"/index.html";
         };
         return matches_shell(runtime_origin_)
-            || (dev_origin_ && matches_shell(kFeasibilityOrigin));
+            || (dev_origin_ && matches_shell(kAssetOrigin));
     }
 
     static void open_https(std::wstring_view uri) {
@@ -1901,7 +1743,6 @@ private:
     std::thread operation_thread_;
     std::thread shutdown_thread_;
     bool smoke_test_{};
-    bool feasibility_{};
     std::string connection_id_;
     std::wstring native_script_id_;
     int renderer_failures_{};

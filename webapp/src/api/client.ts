@@ -67,19 +67,11 @@ export type NativeDeliveryAck = components['schemas']['NativeDeliveryAck'];
 
 export class ChaError extends Error {
   constructor(
-    readonly status: number,
     readonly code: ErrorCode,
     message: string,
   ) {
     super(message);
     this.name = 'ChaError';
-  }
-}
-
-export class ChaUnavailableError extends Error {
-  constructor() {
-    super('CHA’s application API is unavailable. Check that CHA is running and try again.');
-    this.name = 'ChaUnavailableError';
   }
 }
 
@@ -95,7 +87,6 @@ export class ChaProtocolError extends TypeError {
 // kept out of the customer interface.
 export function publicErrorMessage(failure: unknown, fallback: string): string {
   return failure instanceof ChaError
-      || failure instanceof ChaUnavailableError
       || failure instanceof ChaProtocolError
     ? failure.message
     : fallback;

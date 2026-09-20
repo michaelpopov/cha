@@ -18,7 +18,7 @@ describe('Sidebar session actions', () => {
   it('reports a vault switch failure and restores the selector', async () => {
     const user = userEvent.setup();
     const onSwitchVault = vi.fn(async () => {
-      throw new ChaError(500, 'internal_error', 'Could not switch vault.');
+      throw new ChaError('internal_error', 'Could not switch vault.');
     });
     render(
       <Sidebar
@@ -44,7 +44,7 @@ describe('Sidebar session actions', () => {
     const onSwitchVault = vi.fn(async (_name: string, password?: string) => {
       if (!password) {
         throw new ChaError(
-          401, 'vault_password_required', 'Password required to open this vault',
+          'vault_password_required', 'Password required to open this vault',
         );
       }
     });
@@ -103,7 +103,7 @@ describe('Sidebar session actions', () => {
     ]) {
       const user = userEvent.setup();
       const failingAction = vi.fn(async () => {
-        throw new ChaError(500, 'internal_error', item.message);
+        throw new ChaError('internal_error', item.message);
       });
       render(
         <Sidebar
@@ -238,7 +238,7 @@ describe('Sidebar session actions', () => {
   it('keeps an edited name and displays the public rename error', async () => {
     const user = userEvent.setup();
     const onRename = vi.fn(async () => {
-      throw new ChaError(400, 'bad_request', 'Invalid session label.');
+      throw new ChaError('bad_request', 'Invalid session label.');
     });
     render(
       <Sidebar

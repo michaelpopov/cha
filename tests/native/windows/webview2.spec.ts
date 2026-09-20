@@ -192,7 +192,7 @@ test.describe('WebView2 native host', () => {
     expect(finalBootstrap.bootstrap.vault_name).toBe(originalVault);
   });
 
-  test('retains session, file, navigation and vault behavior', async () => {
+  test('enforces CSP and retains session, file, navigation and vault behavior', async () => {
     test.setTimeout(60000);
     await waitForApplication(page);
     const source = readFileSync(join(__dirname, '..', 'parity.js'), 'utf8');

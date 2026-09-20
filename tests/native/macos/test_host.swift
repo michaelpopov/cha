@@ -759,7 +759,7 @@ return await (async function() {
   try {
   const requireCapture = true;
   const report = {ok: false, origin: location.origin};
-  const audio = await fetch('/probe/audio', {cache: 'no-store'});
+  const audio = await fetch('/media/probe-audio', {cache: 'no-store'});
   if (!audio.ok) {
     report.reason = 'probe audio fetch failed';
     return report;

@@ -2,7 +2,7 @@ import { act, render, renderHook } from '@testing-library/react';
 import { createElement } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { useAudioDownloads } from './audioDownloads';
-import { ChaError, ChaUnavailableError, type AudioDownloadAcceptance, type AudioDownloadBatchAcceptance, type AudioDownloadStatus } from './api/client';
+import { ChaError, type AudioDownloadAcceptance, type AudioDownloadBatchAcceptance, type AudioDownloadStatus } from './api/client';
 import { fixtureClient } from './test/fixtures';
 
 const idle: AudioDownloadStatus = { cached_entry_ids: [], downloads: [] };
@@ -18,33 +18,35 @@ async function settle() { await act(async () => { await Promise.resolve(); }); }
 afterEach(() => { vi.useRealTimers(); });
 
 describe('background audio observer', () => {
-  it('retries a transient initial status failure and stops once an idle result is read', async () => {
-    vi.useFakeTimers();
-    const getAudioDownloads = vi.fn().mockRejectedValueOnce(new ChaUnavailableError()).mockResolvedValue(idle);
-    const client = fixtureClient({ getAudioDownloads });
-    const { result } = renderHook(() => useAudioDownloads(client, 'forum', 'session', 'Personal', 0));
-    await settle();
-    expect(result.current.status).toBeNull();
-    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
-    expect(result.current.status).toEqual(idle);
-    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
-    expect(getAudioDownloads).toHaveBeenCalledTimes(2);
-  });
+  it.each(['command_timeout', 'command_queue_full', 'speech_busy', 'internal_error'] as const)(
+    'retries a transient %s status failure and stops once an idle result is read', async (code) => {
+      vi.useFakeTimers();
+      const getAudioDownloads = vi.fn().mockRejectedValueOnce(new ChaError(code, 'Try again.')).mockResolvedValue(idle);
+      const client = fixtureClient({ getAudioDownloads });
+      const { result } = renderHook(() => useAudioDownloads(client, 'forum', 'session', 'Personal', 0));
+      await settle();
+      expect(result.current.status).toBeNull();
+      await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+      expect(result.current.status).toEqual(idle);
+      await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+      expect(getAudioDownloads).toHaveBeenCalledTimes(2);
+    });
 
-  it('does not retry a terminal initial status failure', async () => {
-    vi.useFakeTimers();
-    const getAudioDownloads = vi.fn().mockRejectedValue(new ChaError(409, 'vault_changed', 'The active vault changed.'));
-    const client = fixtureClient({ getAudioDownloads });
-    const { result } = renderHook(() => useAudioDownloads(client, 'forum', 'session', 'Personal', 0));
-    await settle();
-    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
-    expect(getAudioDownloads).toHaveBeenCalledOnce();
-    expect(result.current.unavailable).toBe('The active vault changed.');
-    getAudioDownloads.mockResolvedValue(idle);
-    act(() => { result.current.refresh(); });
-    await settle();
-    expect(result.current.unavailable).toBeNull();
-  });
+  it.each(['vault_changed', 'not_found', 'session_not_live', 'invalid_argument', 'application_unavailable'] as const)(
+    'stops polling after %s and allows an explicit retry', async (code) => {
+      vi.useFakeTimers();
+      const getAudioDownloads = vi.fn().mockRejectedValue(new ChaError(code, 'Audio status is unavailable.'));
+      const client = fixtureClient({ getAudioDownloads });
+      const { result } = renderHook(() => useAudioDownloads(client, 'forum', 'session', 'Personal', 0));
+      await settle();
+      await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+      expect(getAudioDownloads).toHaveBeenCalledOnce();
+      expect(result.current.unavailable).toBe('Audio status is unavailable.');
+      getAudioDownloads.mockResolvedValue(idle);
+      act(() => { result.current.refresh(); });
+      await settle();
+      expect(result.current.unavailable).toBeNull();
+    });
 
   it('does not render transcript children for unchanged polls but renders changed job state', async () => {
     vi.useFakeTimers();
@@ -153,13 +155,13 @@ describe('background audio observer', () => {
 
   it('leaves retry available and stops polling when submission and its status refresh both fail', async () => {
     vi.useFakeTimers();
-    const getAudioDownloads = vi.fn().mockResolvedValueOnce(idle).mockRejectedValue(new ChaUnavailableError());
+    const getAudioDownloads = vi.fn().mockResolvedValueOnce(idle).mockRejectedValue(new ChaError('command_timeout', 'The request timed out.'));
     const client = fixtureClient({ getAudioDownloads,
-      startAudioDownload: async () => { throw new ChaUnavailableError(); },
+      startAudioDownload: async () => { throw new ChaError('command_timeout', 'The request timed out.'); },
     });
     const { result } = renderHook(() => useAudioDownloads(client, 'forum', 'session', 'Personal', 0));
     await settle();
-    await act(async () => { await expect(result.current.submit(1, request)).rejects.toBeInstanceOf(ChaUnavailableError); });
+    await act(async () => { await expect(result.current.submit(1, request)).rejects.toBeInstanceOf(ChaError); });
     expect(result.current.status).toEqual(idle);
     await act(async () => { await vi.advanceTimersByTimeAsync(10000); });
     expect(getAudioDownloads).toHaveBeenCalledTimes(2);
@@ -169,7 +171,7 @@ describe('background audio observer', () => {
     const refresh = deferred<AudioDownloadStatus>();
     const getAudioDownloads = vi.fn().mockResolvedValueOnce(idle).mockReturnValue(refresh.promise);
     const client = fixtureClient({ getAudioDownloads,
-      startAudioDownload: async () => { throw new ChaError(404, 'not_found', 'Voice output is not configured.'); },
+      startAudioDownload: async () => { throw new ChaError('not_found', 'Voice output is not configured.'); },
     });
     const { result } = renderHook(() => useAudioDownloads(client, 'forum', 'session', 'Personal', 0));
     await settle();
@@ -182,7 +184,7 @@ describe('background audio observer', () => {
   it('stops polling and enables retry on a stale-vault status error', async () => {
     vi.useFakeTimers();
     const getAudioDownloads = vi.fn().mockResolvedValueOnce(pending)
-      .mockRejectedValue(new ChaError(409, 'vault_changed', 'The active vault changed.'));
+      .mockRejectedValue(new ChaError('vault_changed', 'The active vault changed.'));
     const client = fixtureClient({ getAudioDownloads });
     const { result } = renderHook(() => useAudioDownloads(client, 'forum', 'session', 'Personal', 0));
     await settle();
@@ -195,7 +197,7 @@ describe('background audio observer', () => {
   it('keeps polling known jobs while maintenance temporarily closes admission', async () => {
     vi.useFakeTimers();
     const getAudioDownloads = vi.fn().mockResolvedValueOnce(pending)
-      .mockRejectedValueOnce(new ChaError(503, 'speech_busy', 'Maintenance')).mockResolvedValue(idle);
+      .mockRejectedValueOnce(new ChaError('speech_busy', 'Maintenance')).mockResolvedValue(idle);
     const client = fixtureClient({ getAudioDownloads });
     const { result } = renderHook(() => useAudioDownloads(client, 'forum', 'session', 'Personal', 0));
     await settle();
@@ -250,7 +252,7 @@ describe('background audio observer', () => {
     act(() => { submission = result.current.submit(1, request); });
     rerender({ session: 'second' });
     await act(async () => {
-      accepted.reject(new ChaError(503, 'speech_busy', 'Maintenance'));
+      accepted.reject(new ChaError('speech_busy', 'Maintenance'));
       await expect(submission).resolves.toBeUndefined();
     });
     expect(result.current.status).toEqual(idle);

@@ -1670,8 +1670,7 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                 connection,
                 request.id,
                 request.context_epoch,
-                control ? ErrorCode::command_queue_full
-                        : ErrorCode::invalid_argument,
+                ErrorCode::command_queue_full,
                 control ? std::string_view{}
                         : std::string_view{"Too many in-flight requests."});
             if (!connection->invalid) invalidate(connection, false);
