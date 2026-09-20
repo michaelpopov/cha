@@ -346,8 +346,8 @@ export function PersonaDetailScreen({
       onBack={() => dispatch({ type: 'show-personas' })}
       reloadVersion={reloadVersion}
       sessionReport={sessionReport}
-      subjectId={state.inspectedPersonaId}
-      toolbarAction={state.personaEditingAvailable ? (
+      subjectId={state.inspectedPersona.id}
+      toolbarAction={state.inspectedPersona.writable ? (
         <button
           className="cha-detail-link"
           onClick={() => dispatch({ type: 'show-persona-settings' })}
@@ -485,7 +485,7 @@ export function CharacterDetailScreen({
   reloadVersion = 0,
   sessionReport,
 }: RosterDetailProps) {
-  const characterId = state.inspectedCharacterId;
+  const characterId = state.inspectedCharacter.id;
   const load = useCallback((id: string) => client.getCharacter(id), [client]);
   const onLoaded = useCallback((detail: CharacterDetail, id: string) => {
     dispatch({
@@ -511,7 +511,7 @@ export function CharacterDetailScreen({
       reloadVersion={reloadVersion}
       sessionReport={sessionReport}
       subjectId={characterId}
-      toolbarAction={state.characterSettingsAvailable ? (
+      toolbarAction={state.inspectedCharacter.settingsWritable ? (
         <button
           className="cha-detail-link"
           onClick={() => dispatch({ type: 'show-character-settings' })}
@@ -540,11 +540,11 @@ export function CharacterFileScreen({
   reloadVersion = 0,
   sessionReport,
 }: RosterDetailProps) {
-  const filename = state.inspectedCharacterFile;
+  const filename = state.inspectedCharacter.file;
   const load = useCallback((characterId: string) => (
     client.getCharacterFile(characterId, filename!).then((file) => file.content)
   ), [client, filename]);
-  const characterId = state.inspectedCharacterId;
+  const characterId = state.inspectedCharacter.id;
   const characterName = state.bootstrap?.characters.find(
     ({ id }) => id === characterId,
   )?.display_name;
@@ -595,7 +595,7 @@ function NewMarkdownFileScreen({
   const [reading, setReading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const mounted = useRef(false);
-  const subjectId = (kind === 'character' ? state.inspectedCharacterId : state.currentForumId)!;
+  const subjectId = (kind === 'character' ? state.inspectedCharacter.id : state.currentForumId)!;
   const subjectName = (kind === 'character' ? state.bootstrap?.characters : state.bootstrap?.forums)
     ?.find(({ id }) => id === subjectId)?.display_name;
 
@@ -817,7 +817,7 @@ export function PersonaSettingsScreen({
   client,
   sessionReport,
 }: RosterDetailProps) {
-  const personaId = state.inspectedPersonaId;
+  const personaId = state.inspectedPersona.id;
   const persona = state.bootstrap?.personas.find(({ id }) => id === personaId);
   const [detail, setDetail] = useState<PersonaDetail | null>(null);
   const [style, setStyle] = useState<string | null>(null);
@@ -974,7 +974,7 @@ export function CharacterSettingsScreen({
   client,
   sessionReport,
 }: RosterDetailProps) {
-  const characterId = state.inspectedCharacterId;
+  const characterId = state.inspectedCharacter.id;
   const character = state.bootstrap?.characters.find(({ id }) => id === characterId);
   const [detail, setDetail] = useState<CharacterDetail | null>(null);
   const [provider, setProvider] = useState<string | null>(null);
@@ -1382,7 +1382,7 @@ export function ForumDetailScreen({
       sessionReport={sessionReport}
       subjectId={state.currentForumId}
       subtitle={forum && <ForumCast forum={forum} />}
-      toolbarAction={state.forumEditingAvailable ? (
+      toolbarAction={state.inspectedForum.writable ? (
         <button
           className="cha-detail-link"
           onClick={() => dispatch({ type: 'show-forum-members' })}
@@ -1399,7 +1399,7 @@ export function ForumDetailScreen({
 export function ForumFileScreen({
   state, dispatch, client, reloadVersion = 0, sessionReport,
 }: RosterDetailProps) {
-  const filename = state.inspectedForumFile;
+  const filename = state.inspectedForum.file;
   const load = useCallback((forumId: string) => (
     client.getForumFile(forumId, filename!).then((file) => file.content)
   ), [client, filename]);

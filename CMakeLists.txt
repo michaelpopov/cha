@@ -358,6 +358,8 @@ cha_enable_warnings(cha_app)
 add_library(cha_bridge STATIC
     src/bridge/bridge_protocol.cpp
     src/bridge/bridge_router.cpp
+    src/bridge/settings_dispatch.cpp
+    src/bridge/workspace_dispatch.cpp
 )
 target_compile_features(cha_bridge PUBLIC cxx_std_20)
 target_include_directories(cha_bridge PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
@@ -430,10 +432,10 @@ if(BUILD_TESTING)
         tests/session/unit_session_repository.cpp
         tests/session/unit_workspace_session_database.cpp
         tests/session/unit_controller_update.cpp
-        tests/application/unit_workspace.cpp
-        tests/application/unit_workspace_config_store.cpp
-        tests/application/unit_session_open.cpp
-        tests/application/unit_builtins.cpp
+        tests/workspace/unit_workspace.cpp
+        tests/workspace/unit_workspace_config_store.cpp
+        tests/workspace/unit_session_open.cpp
+        tests/workspace/unit_builtins.cpp
         tests/support/test_workspace.cpp
     )
     if(NOT WIN32)

@@ -76,6 +76,13 @@ std::shared_ptr<const cha::app::SessionOutputItem> next_output(
     return {};
 }
 
+TEST(RuntimeSettings, DefaultsHavePositiveBatchSizes) {
+    const RuntimeSettings settings;
+    EXPECT_GT(settings.command_batch_size, 0U);
+    EXPECT_GT(settings.event_batch_size, 0U);
+    EXPECT_TRUE(settings.monotonic_event_sequence);
+}
+
 TEST(Application, StartsWithoutAListenerAndBootstraps) {
     test::TestWorkspace workspace;
     const std::filesystem::path database =

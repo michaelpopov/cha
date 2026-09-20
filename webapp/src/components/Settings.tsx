@@ -34,6 +34,7 @@ import {
 import { validateBootstrap } from '../state/bootstrap';
 import { reloadForVoiceSettings } from '../state/voiceSettingsReload';
 import type { AppAction, AppState } from '../state/view';
+import { useLoad } from '../useLoad';
 import { voiceClasses } from './characterAppearance';
 import { ConfirmDialog } from './ConfirmDialog';
 import { PasswordDialog } from './PasswordDialog';
@@ -59,6 +60,12 @@ interface SettingsScreenProps {
   sessionReport: ReactNode;
   state: AppState;
 }
+
+const loadVaults = (client: ChaClient) => client.listVaults();
+const loadProviders = (client: ChaClient) => client.listProviders();
+const loadStyles = (client: ChaClient) => client.listStyles();
+const loadVoices = (client: ChaClient) => client.listVoices();
+const loadApiKeys = (client: ChaClient) => client.listApiKeys();
 
 function BackToSettings({ dispatch }: { dispatch: Dispatch<AppAction> }) {
   return (
@@ -179,29 +186,16 @@ export function SettingsNavigation({ dispatch }: { dispatch: Dispatch<AppAction>
 }
 
 export function VaultsScreen({ client, dispatch, sessionReport }: SettingsScreenProps) {
-  const [vaults, setVaults] = useState<VaultDetail[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [revision, setRevision] = useState(0);
-
-  useEffect(() => {
-    let current = true;
-    setVaults(null);
-    setError(null);
-    void client.listVaults().then(
-      (loaded) => { if (current) setVaults(loaded); },
-      (failure: unknown) => {
-        if (current) setError(publicErrorMessage(failure, 'Vaults could not be loaded.'));
-      },
-    );
-    return () => { current = false; };
-  }, [client, revision]);
+  const { data: vaults, error, retry } = useLoad(
+    client, loadVaults, 'Vaults could not be loaded.',
+  );
 
   return (
     <section className="cha-screen cha-navigation" aria-label="Vaults settings">
       <BackToSettings dispatch={dispatch} />
       {sessionReport}
       {vaults === null && !error && <p className="cha-state-message" role="status">Loading vaults…</p>}
-      {error && <LoadFailure message={error} retry={() => setRevision((value) => value + 1)} />}
+      {error && <LoadFailure message={error} retry={retry} />}
       {vaults && (
         <div className="cha-list">
           <SettingsRow
@@ -313,7 +307,9 @@ async function voiceInputOrigin(client: ChaClient): Promise<string> {
 }
 
 export function MergeVaultScreen({ client, dispatch, sessionReport }: SettingsScreenProps) {
-  const [vaults, setVaults] = useState<VaultDetail[] | null>(null);
+  const { data: vaults, error: loadError, retry } = useLoad(
+    client, loadVaults, 'Vaults could not be loaded.',
+  );
   const [source, setSource] = useState('');
   const [confirming, setConfirming] = useState(false);
   const [passwordPrompt, setPasswordPrompt] = useState(false);
@@ -321,23 +317,8 @@ export function MergeVaultScreen({ client, dispatch, sessionReport }: SettingsSc
   const [pending, setPending] = useState(false);
   const [complete, setComplete] = useState(false);
   const [reloadNeeded, setReloadNeeded] = useState(false);
-  const [loadError, setLoadError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [revision, setRevision] = useState(0);
   const pendingRef = useRef(false);
-
-  useEffect(() => {
-    let current = true;
-    setVaults(null);
-    setLoadError(null);
-    void client.listVaults().then(
-      (loaded) => { if (current) setVaults(loaded); },
-      (failure: unknown) => {
-        if (current) setLoadError(publicErrorMessage(failure, 'Vaults could not be loaded.'));
-      },
-    );
-    return () => { current = false; };
-  }, [client, revision]);
 
   const destination = vaults?.find((vault) => vault.active)?.display_name ?? '';
   const sources = vaults?.filter((vault) => !vault.active) ?? [];
@@ -393,7 +374,7 @@ export function MergeVaultScreen({ client, dispatch, sessionReport }: SettingsSc
       <button className="cha-back-row" onClick={() => dispatch({ type: 'show-settings-vaults' })} type="button"><ChevronLeftIcon /><span>Vaults</span></button>
       {sessionReport}
       {!ready && !loadError && <p className="cha-state-message" role="status">Loading vaults…</p>}
-      {loadError && !ready && <LoadFailure message={loadError} retry={() => setRevision((value) => value + 1)} />}
+      {loadError && !ready && <LoadFailure message={loadError} retry={retry} />}
       {ready && sources.length === 0 && <p className="cha-empty-list">No other vaults</p>}
       {ready && sources.length > 0 && (
         <form
@@ -642,29 +623,16 @@ function UsedBy({ empty, items }: { empty: string; items: string[] }) {
 }
 
 export function ProvidersScreen({ client, dispatch, sessionReport }: SettingsScreenProps) {
-  const [providers, setProviders] = useState<ProviderSummary[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [revision, setRevision] = useState(0);
-
-  useEffect(() => {
-    let current = true;
-    setProviders(null);
-    setError(null);
-    void client.listProviders().then(
-      (loaded) => { if (current) setProviders(loaded); },
-      (failure: unknown) => {
-        if (current) setError(publicErrorMessage(failure, 'Providers could not be loaded.'));
-      },
-    );
-    return () => { current = false; };
-  }, [client, revision]);
+  const { data: providers, error, retry } = useLoad(
+    client, loadProviders, 'Providers could not be loaded.',
+  );
 
   return (
     <section className="cha-screen cha-navigation" aria-label="Providers settings">
       <BackToSettings dispatch={dispatch} />
       {sessionReport}
       {providers === null && !error && <p className="cha-state-message" role="status">Loading providers…</p>}
-      {error && <LoadFailure message={error} retry={() => setRevision((value) => value + 1)} />}
+      {error && <LoadFailure message={error} retry={retry} />}
       {providers && (
         <div className="cha-list">
           <SettingsRow
@@ -824,7 +792,7 @@ export function ProviderScreen({
   sessionReport,
   state,
 }: ProviderScreenProps) {
-  const id = state.inspectedProviderId;
+  const id = state.inspectedProvider.id;
   const [detail, setDetail] = useState<ProviderDetail | null>(null);
   const [draft, setDraft] = useState<ProviderUpdate | null>(null);
   const [baseUrl, setBaseUrl] = useState('');
@@ -1057,25 +1025,15 @@ export function ProviderScreen({
 }
 
 export function StylesScreen({ client, dispatch, sessionReport }: SettingsScreenProps) {
-  const [styles, setStyles] = useState<StyleDetail[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [revision, setRevision] = useState(0);
-  useEffect(() => {
-    let current = true;
-    setStyles(null);
-    setError(null);
-    void client.listStyles().then(
-      (loaded) => { if (current) setStyles(loaded); },
-      (failure: unknown) => { if (current) setError(publicErrorMessage(failure, 'Styles could not be loaded.')); },
-    );
-    return () => { current = false; };
-  }, [client, revision]);
+  const { data: styles, error, retry } = useLoad(
+    client, loadStyles, 'Styles could not be loaded.',
+  );
   return (
     <section className="cha-screen cha-navigation" aria-label="Styles settings">
       <BackToSettings dispatch={dispatch} />
       {sessionReport}
       {styles === null && !error && <p className="cha-state-message" role="status">Loading styles…</p>}
-      {error && <LoadFailure message={error} retry={() => setRevision((value) => value + 1)} />}
+      {error && <LoadFailure message={error} retry={retry} />}
       {styles && <div className="cha-list"><SettingsRow description="Start with a neutral character style" icon={<PlusIcon />} label="New style" onClick={() => dispatch({ type: 'show-settings-new-style' })} />{styles.length === 0 && <p className="cha-empty-list">No styles configured</p>}{styles.map((style) => (
         <SettingsRow description={`${style.font} · ${style.weight} · ${style.size}`} icon={<CharacterIcon />} key={style.id} label={style.display_name} onClick={() => dispatch({ type: 'inspect-style', styleId: style.id, styleName: style.display_name })} />
       ))}</div>}
@@ -1132,7 +1090,7 @@ export function StyleScreen({
   sessionReport,
   state,
 }: StyleScreenProps) {
-  const id = state.inspectedStyleId;
+  const id = state.inspectedStyle.id;
   const [detail, setDetail] = useState<StyleDetail | null>(null);
   const [draft, setDraft] = useState<StyleUpdate | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -1245,21 +1203,9 @@ export function StyleScreen({
 }
 
 export function VoicesScreen({ client, dispatch, sessionReport }: SettingsScreenProps) {
-  const [voices, setVoices] = useState<VoiceDetail[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [revision, setRevision] = useState(0);
-  useEffect(() => {
-    let current = true;
-    setVoices(null);
-    setError(null);
-    void client.listVoices().then(
-      (loaded) => { if (current) setVoices(loaded); },
-      (failure: unknown) => {
-        if (current) setError(publicErrorMessage(failure, 'Voices could not be loaded.'));
-      },
-    );
-    return () => { current = false; };
-  }, [client, revision]);
+  const { data: voices, error, retry } = useLoad(
+    client, loadVoices, 'Voices could not be loaded.',
+  );
   return (
     <section className="cha-screen cha-navigation" aria-label="Voices settings">
       <div className="cha-detail-toolbar">
@@ -1275,7 +1221,7 @@ export function VoicesScreen({ client, dispatch, sessionReport }: SettingsScreen
       </div>
       {sessionReport}
       {voices === null && !error && <p className="cha-state-message" role="status">Loading voices…</p>}
-      {error && <LoadFailure message={error} retry={() => setRevision((value) => value + 1)} />}
+      {error && <LoadFailure message={error} retry={retry} />}
       {voices && (
         <div className="cha-list">
           <SettingsRow description="Add a voice for character speech" icon={<PlusIcon />} label="New voice" onClick={() => dispatch({ type: 'show-settings-new-voice' })} />
@@ -1508,7 +1454,7 @@ export function VoiceScreen({
   sessionReport,
   state,
 }: VoiceScreenProps) {
-  const id = state.inspectedVoiceId;
+  const id = state.inspectedVoice.id;
   const [detail, setDetail] = useState<VoiceDetail | null>(null);
   const [draft, setDraft] = useState<VoiceUpdate | null>(null);
   const [previewText, setPreviewText] = useState(
@@ -1663,25 +1609,15 @@ export function VoiceScreen({
 }
 
 export function ApiKeysScreen({ client, dispatch, sessionReport }: SettingsScreenProps) {
-  const [keys, setKeys] = useState<ApiKeyDetail[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [revision, setRevision] = useState(0);
-  useEffect(() => {
-    let current = true;
-    setKeys(null);
-    setError(null);
-    void client.listApiKeys().then(
-      (loaded) => { if (current) setKeys(loaded); },
-      (failure: unknown) => { if (current) setError(publicErrorMessage(failure, 'API keys could not be loaded.')); },
-    );
-    return () => { current = false; };
-  }, [client, revision]);
+  const { data: keys, error, retry } = useLoad(
+    client, loadApiKeys, 'API keys could not be loaded.',
+  );
   return (
     <section className="cha-screen cha-navigation" aria-label="API keys settings">
       <BackToSettings dispatch={dispatch} />
       {sessionReport}
       {keys === null && !error && <p className="cha-state-message" role="status">Loading API keys…</p>}
-      {error && <LoadFailure message={error} retry={() => setRevision((value) => value + 1)} />}
+      {error && <LoadFailure message={error} retry={retry} />}
       {keys && <div className="cha-list"><SettingsRow description="Configure database upload and download" icon={<DatabaseIcon />} label="R2 storage" onClick={() => dispatch({ type: 'show-settings-r2-storage' })} /><SettingsRow description="Save a model-service secret in this vault" icon={<PlusIcon />} label="New API key" onClick={() => dispatch({ type: 'show-settings-new-api-key' })} />{keys.length === 0 && <p className="cha-empty-list">No model API keys saved</p>}{keys.map((key) => <SettingsRow description={key.used_by.length ? `Used by ${key.used_by.join(', ')}` : 'Saved in this vault · Not in use'} icon={<KeyIcon />} key={key.id} label={key.display_name} onClick={() => dispatch({ type: 'inspect-api-key', apiKeyId: key.id, apiKeyName: key.display_name })} />)}</div>}
     </section>
   );
@@ -1832,7 +1768,7 @@ export function NewApiKeyScreen({ client, dispatch, sessionReport }: SettingsScr
 }
 
 export function ApiKeyScreen({ client, dispatch, sessionReport, state }: SettingsScreenProps) {
-  const id = state.inspectedApiKeyId;
+  const id = state.inspectedApiKey.id;
   const [key, setKey] = useState<ApiKeyDetail | null>(null);
   const [replacement, setReplacement] = useState('');
   const [busy, setBusy] = useState<'value' | 'delete' | null>(null);
@@ -1894,7 +1830,7 @@ export function ApiKeyScreen({ client, dispatch, sessionReport, state }: Setting
       {confirming && (
         <ConfirmDialog
           confirmLabel="Remove API key"
-          message={`Remove “${state.inspectedApiKeyName ?? 'this key'}” from this vault? Features using it will stop authenticating.`}
+          message={`Remove “${state.inspectedApiKey.name ?? 'this key'}” from this vault? Features using it will stop authenticating.`}
           onCancel={() => setConfirming(false)}
           onConfirm={() => void remove()}
           title="Remove API key?"

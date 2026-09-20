@@ -87,14 +87,10 @@ protected:
             config_.c_str(),
             resources_.c_str(),
             "",
-            "",
-            0,
             &password_error,
             &error);
         ASSERT_NE(runtime_, nullptr) << (error ? error : "");
         cha_string_free(error);
-        EXPECT_EQ(cha_runtime_port(runtime_), 0);
-        EXPECT_EQ(cha_runtime_is_native(runtime_), 1);
         cha_runtime_set_delivery_callback(runtime_, on_delivery, captured_.get());
         char* connection_error = nullptr;
         char* connection = cha_runtime_open_connection(
@@ -166,7 +162,7 @@ TEST(NativeRuntimeDeathTest, ShutdownDeadlineIncludesBlockedDelivery) {
         char* error = nullptr;
         int32_t password_error{};
         auto* runtime = cha_runtime_create(config.c_str(), workspace.root().c_str(),
-            "", "", 0, &password_error, &error);
+            "", &password_error, &error);
         if (!runtime) std::_Exit(2);
         struct Blocked {
             std::mutex mutex;
@@ -195,25 +191,6 @@ TEST(NativeRuntimeDeathTest, ShutdownDeadlineIncludesBlockedDelivery) {
     }()), ::testing::ExitedWithCode(0), "");
 }
 #endif
-
-TEST_F(NativeRuntimeTest, RejectsHttpModeInsteadOfStartingAListener) {
-    char* error = nullptr;
-    int32_t password_error = 0;
-    ChaRuntime* http = cha_runtime_create(
-        config_.c_str(),
-        resources_.c_str(),
-        "token",
-        "",
-        1,
-        &password_error,
-        &error);
-    EXPECT_EQ(http, nullptr);
-    EXPECT_NE(error, nullptr);
-    if (error) {
-        EXPECT_NE(std::string(error).find("listener"), std::string::npos);
-    }
-    cha_string_free(error);
-}
 
 TEST_F(NativeRuntimeTest, RejectsUnknownAndUnownedMediaResources) {
     char* mime = nullptr;
@@ -384,8 +361,6 @@ TEST_F(NativeRuntimeTest, VaultSwitchPersistsAcrossRestart) {
         config_.c_str(),
         resources_.c_str(),
         "",
-        "",
-        0,
         &password_error,
         &error);
     ASSERT_NE(runtime_, nullptr) << (error ? error : "");

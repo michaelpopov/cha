@@ -529,7 +529,7 @@ export interface components {
             /** @enum {string} */
             lifecycle: "starting" | "running" | "stopping";
             /** @enum {string} */
-            shutdown_reason?: "browser_disconnected" | "reloading" | "session_failed" | "session_deleted" | "server_stopping";
+            shutdown_reason?: "session_closed" | "reloading" | "session_failed" | "session_deleted" | "server_stopping";
         };
         AppendTargetEntry: {
             /**
@@ -594,7 +594,7 @@ export interface components {
         ErrorResponse: {
             error: {
                 /** @enum {string} */
-                code: "not_found" | "bad_request" | "body_too_large" | "prompt_too_large" | "forbidden_origin" | "internal_error" | "speech_busy" | "vault_changed" | "session_stopping" | "session_limit_reached" | "session_open_timeout" | "server_stopping" | "session_not_live" | "command_timeout" | "command_queue_full" | "vault_password_required" | "source_vault_password_required" | "invalid_argument" | "operation_cancelled" | "application_unavailable";
+                code: "not_found" | "body_too_large" | "prompt_too_large" | "internal_error" | "speech_busy" | "vault_changed" | "session_stopping" | "session_limit_reached" | "session_open_timeout" | "server_stopping" | "session_not_live" | "command_timeout" | "command_queue_full" | "vault_password_required" | "source_vault_password_required" | "invalid_argument" | "operation_cancelled" | "application_unavailable";
                 message: string;
             };
         };

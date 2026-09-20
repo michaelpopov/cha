@@ -27,10 +27,8 @@ export interface NativeDeliveryBatch {
 
 const knownErrorCodes: Record<string, true> = {
   not_found: true,
-  bad_request: true,
   body_too_large: true,
   prompt_too_large: true,
-  forbidden_origin: true,
   internal_error: true,
   speech_busy: true,
   vault_changed: true,

@@ -19,15 +19,12 @@ typedef void (*cha_runtime_delivery_fn)(
 // Returned strings belong to the caller and must be released with
 // cha_string_free().
 //
-// http_mode must be 0. Native hosts start Application and the common bridge
-// with no listener. Native mode ignores access_token.
+// Starts Application and the common bridge with no listener.
 // config_path is the configuration directory.
 ChaRuntime* cha_runtime_create(
     const char* config_path,
     const char* resource_path,
-    const char* access_token,
     const char* vault_password,
-    int32_t http_mode,
     int32_t* password_error,
     char** error);
 // Returns 1 when the selected vault is protected, 0 when it is not, and -1
@@ -39,8 +36,6 @@ int32_t cha_runtime_requires_password(
     char** vault_name,
     char** error);
 void cha_runtime_destroy(ChaRuntime* runtime);
-int32_t cha_runtime_port(const ChaRuntime* runtime);
-int32_t cha_runtime_is_native(const ChaRuntime* runtime);
 int32_t cha_runtime_can_modify(const ChaRuntime* runtime);
 int32_t cha_runtime_can_transfer_r2(const ChaRuntime* runtime);
 // Return 1 on success and 0 on a failure the caller can retry. -1 means the

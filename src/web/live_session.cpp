@@ -26,7 +26,7 @@ std::string session_log(const FullSessionId& key, std::string_view event) {
 
 int shutdown_reason_priority(ShutdownReason reason) {
     switch (reason) {
-    case ShutdownReason::browser_disconnected: return 0;
+    case ShutdownReason::session_closed: return 0;
     case ShutdownReason::retired: return 0;
     case ShutdownReason::reloading: return 1;
     case ShutdownReason::session_failed: return 2;
@@ -88,7 +88,8 @@ static_assert(std::variant_size_v<WebCommand> == 10);
 
 } // namespace
 
-WebSettings validate_live_session_settings(WebSettings settings) {
+cha::app::RuntimeSettings validate_live_session_settings(
+    cha::app::RuntimeSettings settings) {
     if (settings.command_queue_capacity == 0) {
         throw std::invalid_argument(
             "Live session command queue capacity must be positive");
@@ -100,7 +101,7 @@ WebSettings validate_live_session_settings(WebSettings settings) {
 }
 
 LiveSession::LiveSession(
-    WebSettings settings,
+    cha::app::RuntimeSettings settings,
     FullSessionId identity,
     SessionOpener opener,
     LiveSessionClock clock)
@@ -371,7 +372,7 @@ void LiveSession::publish_finished() noexcept {
 }
 
 void LiveSession::owner_loop() {
-    ShutdownReason reason = ShutdownReason::browser_disconnected;
+    ShutdownReason reason = ShutdownReason::session_closed;
     bool fatal = false;
     try {
         log_event("lease_acquired_owner_started");
@@ -405,7 +406,7 @@ void LiveSession::owner_loop() {
             }
             mirror_if_changed();
             if (events.update.session_ended) {
-                (void)mark_stopping(ShutdownReason::browser_disconnected);
+                (void)mark_stopping(ShutdownReason::session_closed);
             }
             {
                 std::lock_guard lock(lifecycle_mutex_);
@@ -543,7 +544,7 @@ void LiveSession::execute(OwnerCommand command) {
     const bool session_ended = outcome.session.session_ended;
     (void)command.reply->complete(std::move(outcome));
     if (session_ended) {
-        (void)mark_stopping(ShutdownReason::browser_disconnected);
+        (void)mark_stopping(ShutdownReason::session_closed);
     }
 }
 

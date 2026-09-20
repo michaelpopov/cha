@@ -93,7 +93,7 @@ void LiveSessionGlobalMaintenance::release() noexcept {
 }
 
 LiveSessionManager::LiveSessionManager(
-    WebSettings settings,
+    cha::app::RuntimeSettings settings,
     SessionOpener opener,
     LiveSessionClock clock)
     : settings_(validate_live_session_settings(std::move(settings))),

@@ -245,24 +245,24 @@ export function TopBar({
   const [editorReady, setEditorReady] = useState(false);
   const [editorSaving, setEditorSaving] = useState(false);
   const [editorError, setEditorError] = useState<string | null>(null);
-  const personaId = state.inspectedPersonaId;
+  const personaId = state.inspectedPersona.id;
   const personaName = state.bootstrap?.personas.find(({ id }) => id === personaId)?.display_name;
-  const characterId = state.inspectedCharacterId;
-  const characterFile = state.inspectedCharacterFile;
-  const forumFile = state.inspectedForumFile;
+  const characterId = state.inspectedCharacter.id;
+  const characterFile = state.inspectedCharacter.file;
+  const forumFile = state.inspectedForum.file;
   const characterName = state.bootstrap?.characters.find(
     ({ id }) => id === characterId,
   )?.display_name;
   const forumId = state.currentForumId;
   const forumName = state.bootstrap?.forums.find(({ id }) => id === forumId)?.display_name;
-  const providerId = state.inspectedProviderId;
-  const providerName = state.inspectedProviderName ?? undefined;
-  const styleId = state.inspectedStyleId;
-  const styleName = state.inspectedStyleName ?? undefined;
-  const voiceId = state.inspectedVoiceId;
-  const voiceName = state.inspectedVoiceName ?? undefined;
-  const apiKeyId = state.inspectedApiKeyId;
-  const apiKeyName = state.inspectedApiKeyName ?? undefined;
+  const providerId = state.inspectedProvider.id;
+  const providerName = state.inspectedProvider.name ?? undefined;
+  const styleId = state.inspectedStyle.id;
+  const styleName = state.inspectedStyle.name ?? undefined;
+  const voiceId = state.inspectedVoice.id;
+  const voiceName = state.inspectedVoice.name ?? undefined;
+  const apiKeyId = state.inspectedApiKey.id;
+  const apiKeyName = state.inspectedApiKey.name ?? undefined;
   const vaultName = state.inspectedVaultName ?? undefined;
 
   useEffect(() => {
@@ -281,7 +281,7 @@ export function TopBar({
   if (state.mainView === 'persona-detail') {
     titleControl = (
       <EditableTitle
-        available={state.personaEditingAvailable}
+        available={state.inspectedPersona.writable}
         id={personaId}
         name={personaName}
         onSave={async (displayName) => {
@@ -294,7 +294,7 @@ export function TopBar({
   } else if (state.mainView === 'character-detail') {
     titleControl = (
       <EditableTitle
-        available={state.characterEditingAvailable}
+        available={state.inspectedCharacter.writable}
         id={characterId}
         name={characterName}
         onSave={async (displayName) => {
@@ -309,7 +309,7 @@ export function TopBar({
   } else if (state.mainView === 'forum-detail') {
     titleControl = (
       <EditableTitle
-        available={state.forumEditingAvailable}
+        available={state.inspectedForum.writable}
         id={forumId}
         name={forumName}
         onSave={async (displayName) => {
@@ -322,7 +322,7 @@ export function TopBar({
   } else if (state.mainView === 'settings-provider') {
     titleControl = (
       <EditableTitle
-        available={state.providerEditingAvailable}
+        available={state.inspectedProvider.writable}
         id={providerId}
         name={providerName}
         onSave={async (displayName) => {
@@ -346,7 +346,7 @@ export function TopBar({
   } else if (state.mainView === 'settings-style') {
     titleControl = (
       <EditableTitle
-        available={state.styleEditingAvailable}
+        available={state.inspectedStyle.writable}
         id={styleId}
         name={styleName}
         onSave={async (displayName) => {
@@ -371,7 +371,7 @@ export function TopBar({
   } else if (state.mainView === 'settings-voice') {
     titleControl = (
       <EditableTitle
-        available={state.voiceEditingAvailable}
+        available={state.inspectedVoice.writable}
         id={voiceId}
         name={voiceName}
         onSave={async (displayName) => {
@@ -435,7 +435,7 @@ export function TopBar({
   let deleteSubject: DeleteSubject | null = null;
   let uploadAction = null;
   if (state.mainView === 'persona-detail'
-      && state.personaEditingAvailable && personaId && personaName) {
+      && state.inspectedPersona.writable && personaId && personaName) {
     deleteSubject = { id: personaId, kind: 'persona', name: personaName };
     uploadAction = (
       <DefinitionUpload
@@ -452,10 +452,10 @@ export function TopBar({
       />
     );
   } else if (state.mainView === 'character-detail'
-      && state.characterEditingAvailable && characterId && characterName) {
+      && state.inspectedCharacter.writable && characterId && characterName) {
     deleteSubject = { id: characterId, kind: 'character', name: characterName };
   } else if (state.mainView === 'character-file'
-      && state.characterEditingAvailable && characterId && characterFile) {
+      && state.inspectedCharacter.writable && characterId && characterFile) {
     deleteSubject = { id: characterId, kind: 'character-file', name: characterFile };
     uploadAction = (
       <DefinitionUpload
@@ -469,10 +469,10 @@ export function TopBar({
       />
     );
   } else if (state.mainView === 'forum-detail'
-      && state.forumEditingAvailable && forumId && forumName) {
+      && state.inspectedForum.writable && forumId && forumName) {
     deleteSubject = { id: forumId, kind: 'forum', name: forumName };
   } else if (state.mainView === 'forum-file'
-      && state.forumEditingAvailable && forumId && forumFile) {
+      && state.inspectedForum.writable && forumId && forumFile) {
     deleteSubject = { id: forumId, kind: 'forum-file', name: forumFile };
     uploadAction = (
       <DefinitionUpload

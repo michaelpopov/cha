@@ -1,6 +1,7 @@
 #pragma once
 
 #include "app/media_resources.h"
+#include "app/runtime_settings.h"
 #include "web/application_config.h"
 #include "web/audio_download.h"
 #include "web/command_queue.h"
@@ -8,7 +9,6 @@
 #include "web/live_session_manager.h"
 #include "web/protocol.h"
 #include "web/r2_database_transfer.h"
-#include "web/web_settings.h"
 #include "workspace/workspace_config_store.h"
 
 #include <chrono>
@@ -123,15 +123,13 @@ private:
 [[nodiscard]] std::string_view application_state_name(
     ApplicationState state) noexcept;
 
-cha::web::WebSettings native_settings();
-
 // Composition root. Construction does not bind a port or start a listener.
 class Application {
 public:
     static std::unique_ptr<Application> open(
         const cha::web::ApplicationCommand& command,
         std::string vault_password = {},
-        cha::web::WebSettings settings = native_settings());
+        RuntimeSettings settings = {});
 
     ~Application();
     Application(const Application&) = delete;
@@ -490,7 +488,7 @@ public:
 
     [[nodiscard]] cha::web::ApplicationCommand& command();
     [[nodiscard]] const cha::web::ApplicationCommand& command() const;
-    [[nodiscard]] const cha::web::WebSettings& settings() const;
+    [[nodiscard]] const RuntimeSettings& settings() const;
     [[nodiscard]] cha::web::CurrentVault& current_vault();
     [[nodiscard]] const cha::web::CurrentVault& current_vault() const;
     [[nodiscard]] cha::WorkspaceConfigStore& store();

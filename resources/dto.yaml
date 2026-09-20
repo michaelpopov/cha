@@ -1293,7 +1293,7 @@ components:
           enum: [starting, running, stopping]
         shutdown_reason:
           type: string
-          enum: [browser_disconnected, reloading, session_failed, session_deleted, server_stopping]
+          enum: [session_closed, reloading, session_failed, session_deleted, server_stopping]
 
     AppendTargetEntry:
       type: object
@@ -1422,10 +1422,8 @@ components:
               type: string
               enum:
                 - not_found
-                - bad_request
                 - body_too_large
                 - prompt_too_large
-                - forbidden_origin
                 - internal_error
                 - speech_busy
                 - vault_changed

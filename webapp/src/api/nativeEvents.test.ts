@@ -38,6 +38,20 @@ function event(overrides: Record<string, unknown> = {}) {
 }
 
 describe('native session projection', () => {
+  it('invalidates a malformed snapshot before publishing it to the view', () => {
+    const handlers = { onSnapshot: vi.fn(), onAppend: vi.fn(), onError: vi.fn() };
+    const projection = createNativeEventProjection({
+      connectionId: 'view-9', contextEpoch: 3, subscriptionId: 'sub-5',
+      forumId: 'history', sessionId: 'session-1',
+    }, handlers);
+    projection.push(event({ payload: { ...snapshotFixture, generation: {} } }));
+    expect(projection.invalidated()).toBe(true);
+    expect(handlers.onError).toHaveBeenCalledExactlyOnceWith({ kind: 'stream_failure' });
+    expect(handlers.onSnapshot).not.toHaveBeenCalled();
+    projection.push(event({ seq: 1 }));
+    expect(handlers.onSnapshot).not.toHaveBeenCalled();
+  });
+
   it('accepts a C++ snapshot fixture and consecutive appends', () => {
     expect(isSessionSnapshot(snapshot)).toBe(true);
     expect(isNativeSessionEvent(event())).toBe(true);

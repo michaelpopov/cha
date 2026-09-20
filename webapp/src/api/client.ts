@@ -254,14 +254,7 @@ function isSpeechVoice(value: unknown): value is SpeechVoice {
     && isOptionalBoundedNumber(value.settings.speed, 0.7, 1.2);
 }
 
-function isCharacterSummary(value: unknown): boolean {
-  return isRecord(value)
-    && hasIdentity(value)
-    && isCharacterAppearance(value.appearance)
-    && (value.voice === undefined || isSpeechVoice(value.voice));
-}
-
-function isPersonaSummary(value: unknown): boolean {
+function isRosterSummary(value: unknown): boolean {
   return isRecord(value)
     && hasIdentity(value)
     && isCharacterAppearance(value.appearance)
@@ -274,7 +267,7 @@ export function isMarkdownFile(value: unknown): value is MarkdownFile {
 }
 
 export function isCharacterDetail(value: unknown): value is CharacterDetail {
-  return isCharacterSummary(value)
+  return isRosterSummary(value)
     && isRecord(value)
     && typeof value.character_markdown === 'string'
     && typeof value.editable_markdown === 'string'
@@ -301,7 +294,7 @@ export function isCharacterDetail(value: unknown): value is CharacterDetail {
 }
 
 export function isPersonaDetail(value: unknown): value is PersonaDetail {
-  return isPersonaSummary(value)
+  return isRosterSummary(value)
     && isRecord(value)
     && typeof value.persona_markdown === 'string'
     && (value.style === null || typeof value.style === 'string')
@@ -317,14 +310,21 @@ export function isPersonaDetail(value: unknown): value is PersonaDetail {
     && typeof value.writable === 'boolean';
 }
 
-export function isForumDetail(value: unknown): value is ForumDetail {
+function isForumSummary(value: unknown): boolean {
   return isRecord(value)
     && hasIdentity(value)
     && typeof value.default_character_id === 'string'
+    && value.default_character_id.length > 0
     && typeof value.default_persona_id === 'string'
+    && value.default_persona_id.length > 0
     && typeof value.default_persona_display_name === 'string'
     && Array.isArray(value.members)
-    && value.members.every(isCharacterSummary)
+    && value.members.every(isRosterSummary);
+}
+
+export function isForumDetail(value: unknown): value is ForumDetail {
+  return isForumSummary(value)
+    && isRecord(value)
     && typeof value.forum_markdown === 'string'
     && Array.isArray(value.markdown_files)
     && value.markdown_files.every((filename) => typeof filename === 'string')
@@ -334,17 +334,6 @@ export function isForumDetail(value: unknown): value is ForumDetail {
 export function isProviderSummary(value: unknown): value is ProviderSummary {
   return isRecord(value) && hasIdentity(value)
     && typeof value.model === 'string' && typeof value.host === 'string';
-}
-
-function isVaultDetail(value: unknown): value is VaultDetail {
-  return isRecord(value)
-    && typeof value.display_name === 'string'
-    && typeof value.protected === 'boolean'
-    && typeof value.data_path === 'string'
-    && (value.mirror_path === null || typeof value.mirror_path === 'string')
-    && (value.modify_path === null || typeof value.modify_path === 'string')
-    && typeof value.active === 'boolean'
-    && typeof value.can_delete === 'boolean';
 }
 
 export function isProviderDetail(value: unknown): value is ProviderDetail {
@@ -377,11 +366,7 @@ export function isProviderDetail(value: unknown): value is ProviderDetail {
 
 export function isStyleDetail(value: unknown): value is StyleDetail {
   return isRecord(value) && hasIdentity(value)
-    && isOneOf(value.font, ['sans', 'serif', 'mono'])
-    && isOneOf(value.style, ['normal', 'italic'])
-    && isOneOf(value.weight, ['light', 'normal', 'medium', 'semibold', 'bold'])
-    && isOneOf(value.size, ['small', 'normal', 'large'])
-    && isOneOf(value.text_color, ['normal', 'muted', 'accent'])
+    && isCharacterAppearance(value)
     && typeof value.writable === 'boolean'
     && Array.isArray(value.used_by)
     && value.used_by.every((name) => typeof name === 'string');
@@ -495,9 +480,6 @@ export function isSessionListingArray(value: unknown): value is SessionListing[]
     && Number.isFinite(session.updated_at));
 }
 
-// A snapshot arrives two ways, over this request and over the event stream, and
-// both are parsed JSON that the generated types only describe at compile time.
-// The check lives here so neither route trusts a shape the other would reject.
 export function isSessionLabelResult(value: unknown): value is SessionLabelResult {
   return isRecord(value) && typeof value.id === 'string' && typeof value.label === 'string';
 }
@@ -508,25 +490,55 @@ export function isCommandResult(value: unknown): value is CommandResult {
     && (value.notice === undefined || typeof value.notice === 'string');
 }
 
+function isUnsignedInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+}
+
+function isTranscriptEntry(value: unknown): boolean {
+  return isRecord(value)
+    && isUnsignedInteger(value.id)
+    && isOneOf(value.kind, ['human', 'character', 'notice', 'error'])
+    && typeof value.participant_id === 'string'
+    && typeof value.display_name === 'string'
+    && typeof value.addressed_to === 'string'
+    && typeof value.addressed_to_name === 'string'
+    && typeof value.text === 'string'
+    && isOneOf(value.status, ['complete', 'streaming', 'cancelled', 'failed'])
+    && (value.request_id === undefined || isUnsignedInteger(value.request_id))
+    && (value.created_at === null || Number.isSafeInteger(value.created_at))
+    && (value.has_cached_audio === undefined || typeof value.has_cached_audio === 'boolean');
+}
+
+function isGenerationState(value: unknown): boolean {
+  return isRecord(value)
+    && typeof value.active === 'boolean'
+    && (value.request_id === undefined || isUnsignedInteger(value.request_id))
+    && typeof value.character_id === 'string'
+    && typeof value.character_display_name === 'string'
+    && isOneOf(value.phase, ['waiting', 'reasoning', 'answering', 'stopping'])
+    && typeof value.reasoning_text === 'string';
+}
+
+// Requests and events share this check before publishing parsed JSON to React.
 export function isSessionSnapshot(value: unknown): value is SessionSnapshot {
   return isRecord(value)
     && isRecord(value.forum)
-    && typeof value.forum.default_persona_id === 'string'
-    && value.forum.default_persona_id.length > 0
+    && isForumSummary(value.forum)
     && typeof value.forum.default_persona_display_name === 'string'
     && value.forum.default_persona_display_name.length > 0
-    && typeof value.session_id === 'string'
+    && typeof value.session_id === 'string' && value.session_id.length > 0
     && typeof value.session_label === 'string'
     && Array.isArray(value.characters)
-    && value.characters.every(isCharacterSummary)
-    && typeof value.default_character_id === 'string'
+    && value.characters.every(isRosterSummary)
+    && typeof value.default_character_id === 'string' && value.default_character_id.length > 0
     && Array.isArray(value.transcript)
-    && value.transcript.every((entry) => isRecord(entry)
-      && (entry.has_cached_audio === undefined || typeof entry.has_cached_audio === 'boolean'))
+    && value.transcript.every(isTranscriptEntry)
     && (value.covered_until === undefined
-      || (typeof value.covered_until === 'number'
-        && Number.isSafeInteger(value.covered_until)
-        && value.covered_until > 0))
-    && isRecord(value.generation)
-    && typeof value.lifecycle === 'string';
+      || (isUnsignedInteger(value.covered_until) && value.covered_until > 0))
+    && isGenerationState(value.generation)
+    && (value.notice === undefined || typeof value.notice === 'string')
+    && isOneOf(value.lifecycle, ['starting', 'running', 'stopping'])
+    && (value.shutdown_reason === undefined || isOneOf(value.shutdown_reason, [
+      'session_closed', 'reloading', 'session_failed', 'session_deleted', 'server_stopping',
+    ]));
 }

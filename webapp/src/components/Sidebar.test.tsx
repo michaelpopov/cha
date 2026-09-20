@@ -238,7 +238,7 @@ describe('Sidebar session actions', () => {
   it('keeps an edited name and displays the public rename error', async () => {
     const user = userEvent.setup();
     const onRename = vi.fn(async () => {
-      throw new ChaError('bad_request', 'Invalid session label.');
+      throw new ChaError('invalid_argument', 'Invalid session label.');
     });
     render(
       <Sidebar

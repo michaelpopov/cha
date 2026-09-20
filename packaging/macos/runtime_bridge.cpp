@@ -47,9 +47,7 @@ constexpr const char* kPlatform = "unknown";
 struct ChaRuntime {
     std::unique_ptr<Application> native_application;
     std::unique_ptr<BridgeRouter> router;
-    int port{};
     bool logging{};
-    bool native{};
     bool join_attempted{};
     bool joined{};
 
@@ -244,24 +242,15 @@ int32_t transfer_configuration(
 ChaRuntime* cha_runtime_create(
     const char* config_path,
     const char* resource_path,
-    const char* access_token,
     const char* vault_password,
-    int32_t http_mode,
     int32_t* password_error,
     char** error) {
     clear_error(error);
     if (password_error) *password_error = 0;
-    if (http_mode != 0) {
-        set_string(
-            error,
-            "The native runtime does not start an application listener");
-        return nullptr;
-    }
     if (!config_path || !resource_path || !vault_password) {
         set_string(error, "CHA runtime configuration is incomplete");
         return nullptr;
     }
-    (void)access_token;
 
     std::unique_ptr<ChaRuntime> runtime;
     try {
@@ -272,13 +261,11 @@ ChaRuntime* cha_runtime_create(
             command.log_file, command.log_level);
         runtime->logging = true;
         runtime->native_application = Application::open(
-            command, vault_password, cha::app::native_settings());
+            command, vault_password);
         BridgeRouter::Options options;
         options.platform = kPlatform;
         runtime->router = std::make_unique<BridgeRouter>(
             *runtime->native_application, std::move(options));
-        runtime->native = true;
-        runtime->port = 0;
         runtime->pump_finished = false;
         runtime->pump = std::thread(run_pump, runtime.get());
         runtime->ordinary_finished = false;
@@ -346,14 +333,6 @@ void cha_runtime_destroy(ChaRuntime* runtime) {
     runtime->native_application.reset();
     if (runtime->logging) cha::shutdown_diagnostic_logging();
     delete runtime;
-}
-
-int32_t cha_runtime_port(const ChaRuntime* runtime) {
-    return runtime ? runtime->port : 0;
-}
-
-int32_t cha_runtime_is_native(const ChaRuntime* runtime) {
-    return runtime && runtime->native ? 1 : 0;
 }
 
 int32_t cha_runtime_can_modify(const ChaRuntime* runtime) {

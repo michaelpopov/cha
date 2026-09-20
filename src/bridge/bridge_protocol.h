@@ -114,6 +114,7 @@ enum class Method {
     openai_auth_start,
     openai_auth_poll,
     openai_auth_disconnect,
+    count,
 };
 
 struct ParsedRequest {
@@ -137,6 +138,7 @@ struct DeliveryAck {
 
 [[nodiscard]] bool is_control_method(Method method) noexcept;
 [[nodiscard]] bool requires_context_epoch(Method method) noexcept;
+[[nodiscard]] bool changes_context(Method method) noexcept;
 [[nodiscard]] std::string_view method_name(Method method) noexcept;
 [[nodiscard]] std::optional<Method> method_from_name(std::string_view name) noexcept;
 [[nodiscard]] std::optional<std::uint64_t> as_safe_uint(const nlohmann::json& value);

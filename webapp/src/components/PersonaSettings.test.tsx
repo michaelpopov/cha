@@ -23,8 +23,10 @@ function settingsState(): AppState {
     bootstrapStatus: 'ready',
     bootstrap: bootstrapFixture,
     mainView: 'persona-settings',
-    inspectedPersonaId: 'reader',
-    personaEditingAvailable: true,
+    inspectedPersona: {
+      id: 'reader',
+      writable: true,
+    },
   };
 }
 

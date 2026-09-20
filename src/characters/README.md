@@ -17,7 +17,7 @@ configuration publication cannot change work already in flight.
 | `model_context.*` | Owning model-history projection and request input. |
 
 Tests for workspace parsing and resolution live in
-`tests/application/unit_workspace.cpp`; model-history tests live in
+`tests/workspace/unit_workspace.cpp`; model-history tests live in
 `tests/agents/unit_model_context.cpp`.
 
 This directory may depend on `chat/` and `util/`. It must not depend on

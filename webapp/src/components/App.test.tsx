@@ -244,13 +244,21 @@ it('creates a named persona and adds it to the roster immediately', async () => 
     .getByRole('button', { name: /Project manager/ })).toBeInTheDocument();
 });
 
-it('renames a writable persona in place and updates the roster immediately', async () => {
+it('propagates a persona rename to the roster, forum details, and active chat', async () => {
   const user = userEvent.setup();
   const updatePersona = vi.fn(async (_personaId, update) => ({
     ...personaDetailFixture,
     ...update,
   }));
-  render(<App client={fixtureClient({ updatePersona })} />);
+  render(
+    <App
+      client={fixtureClient({ updatePersona, getSessionSnapshot: async () => lobbySnapshot() })}
+      connectSessionEvents={inertSessionEvents}
+    />,
+  );
+  await user.click(await screen.findByRole('button', { name: 'PlanningThe Lobby' }));
+  await waitFor(() => expect(screen.getByLabelText('Current chat context'))
+    .toHaveTextContent('From: Reader'));
   fireEvent.click(await screen.findByRole('button', { name: 'Personas' }));
   fireEvent.click(within(screen.getByLabelText('Personas navigation'))
     .getByRole('button', { name: /Reader/ }));
@@ -270,6 +278,15 @@ it('renames a writable persona in place and updates the roster immediately', asy
     .getByRole('button', { name: 'Personas' }));
   expect(within(screen.getByLabelText('Personas navigation'))
     .getByRole('button', { name: /Редактор/ })).toBeInTheDocument();
+
+  await user.click(screen.getByRole('button', { name: 'Forums' }));
+  await user.click(screen.getByRole('button', { name: 'The LobbyGuide' }));
+  await user.click(within(screen.getByLabelText('Forum sessions navigation'))
+    .getByRole('button', { name: 'The LobbyGuide' }));
+  expect(await screen.findByText('Guide · speaking as Редактор')).toBeInTheDocument();
+
+  await user.click(screen.getByRole('button', { name: 'PlanningThe Lobby' }));
+  expect(await screen.findByLabelText('Current chat context')).toHaveTextContent('From: Редактор');
 });
 
 it('replaces persona Markdown from the compact file action', async () => {
@@ -514,7 +531,7 @@ it('keeps a character on screen and shows the server message when deletion is re
   const user = userEvent.setup();
   const deleteCharacter = vi.fn(async () => {
     throw new ChaError(
-      'bad_request',
+      'invalid_argument',
       'This character is still used by one or more forums.',
     );
   });

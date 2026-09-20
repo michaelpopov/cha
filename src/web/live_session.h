@@ -1,5 +1,6 @@
 #pragma once
 
+#include "app/runtime_settings.h"
 #include "app/session_output.h"
 #include "session/controller_update.h"
 #include "session/opened_session.h"
@@ -8,7 +9,6 @@
 #include "web/owner_wake_signal.h"
 #include "web/protocol.h"
 #include "web/session_projection.h"
-#include "web/web_settings.h"
 
 #include <chrono>
 #include <condition_variable>
@@ -46,7 +46,8 @@ using LiveSessionClock =
 // Validates the per-actor bounds a LiveSession needs. The manager calls it at
 // construction so a misconfigured server fails at startup rather than at its
 // first open.
-[[nodiscard]] WebSettings validate_live_session_settings(WebSettings settings);
+[[nodiscard]] cha::app::RuntimeSettings validate_live_session_settings(
+    cha::app::RuntimeSettings settings);
 
 enum class LiveSessionState {
     starting,
@@ -97,7 +98,7 @@ public:
         UnsubscribeCommand command,
         std::chrono::milliseconds deadline);
     void request_shutdown(
-        ShutdownReason reason = ShutdownReason::browser_disconnected);
+        ShutdownReason reason = ShutdownReason::session_closed);
     void request_retire_when_idle();
     void cancel_retirement();
     [[nodiscard]] bool idle_for_retirement();
@@ -121,7 +122,7 @@ private:
     friend class LiveSessionManager;
 
     LiveSession(
-        WebSettings settings,
+        cha::app::RuntimeSettings settings,
         FullSessionId identity,
         SessionOpener opener,
         LiveSessionClock clock = {});
@@ -168,7 +169,7 @@ private:
     void teardown(ShutdownReason reason, bool skip_final_drain) noexcept;
 
     const FullSessionId identity_;
-    WebSettings settings_;
+    cha::app::RuntimeSettings settings_;
     SessionOpener opener_;
     LiveSessionClock clock_;
     std::shared_ptr<OwnerWakeSignal> notifier_;
@@ -183,7 +184,7 @@ private:
     std::optional<LiveSessionStartResult> start_result_;
     bool start_waiters_woken_{};
     bool stopping_{};
-    ShutdownReason shutdown_reason_{ShutdownReason::browser_disconnected};
+    ShutdownReason shutdown_reason_{ShutdownReason::session_closed};
     bool teardown_started_{};
     std::thread owner_;
     bool joined_{};

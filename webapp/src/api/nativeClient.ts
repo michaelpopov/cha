@@ -28,11 +28,9 @@ import {
   type AudioDownloadBatchAcceptance,
   type AudioDownloadStatus,
   type ChaClient,
-  type CommandResult,
   type CoverRequest,
   type CreateApiKeyRequest,
   type CreateProviderRequest,
-  type CreateSessionResult,
   type CreateStyleRequest,
   type CreateVaultRequest,
   type CreateVoiceRequest,
@@ -44,7 +42,6 @@ import {
   type ProviderUpdate,
   type R2StorageDetail,
   type SaveR2StorageRequest,
-  type SessionSnapshot,
   type StyleDetail,
   type StyleUpdate,
   type VaultDetail,
@@ -59,10 +56,6 @@ import {
 import { nativeProtocolVersion, type NativeBridge } from './nativeBridge';
 import { isRecord } from './guards';
 import { validateBootstrap } from '../state/bootstrap';
-
-function isCreateSessionResult(value: unknown): value is CreateSessionResult {
-  return isRecord(value) && typeof value.id === 'string' && typeof value.label === 'string';
-}
 
 function isOpenSessionResult(value: unknown): value is OpenSessionResult {
   return isRecord(value)
@@ -167,7 +160,7 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient {
     createSession: (forumId, label) => call(
       'session.create',
       { forum_id: forumId, label },
-      isCreateSessionResult,
+      isSessionLabelResult,
     ),
     openSession: (forumId, sessionId) => call(
       'session.open',
@@ -605,12 +598,4 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient {
       bridge.setContextEpoch(result.context_epoch);
     },
   };
-}
-
-export function isNativeCommandResult(value: unknown): value is CommandResult {
-  return isCommandResult(value);
-}
-
-export function isNativeSessionSnapshot(value: unknown): value is SessionSnapshot {
-  return isSessionSnapshot(value);
 }

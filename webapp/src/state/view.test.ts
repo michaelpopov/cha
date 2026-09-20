@@ -177,37 +177,37 @@ describe('application navigation reducer', () => {
   it('tracks character-settings availability only for the inspected character', () => {
     let state = readyState();
     state = appReducer(state, { type: 'inspect-character', characterId: 'guide' });
-    expect(state.characterSettingsAvailable).toBe(false);
+    expect(state.inspectedCharacter.settingsWritable).toBe(false);
     expect(navigationTitle(state)).toBe('Guide');
 
     state = appReducer(state, {
       type: 'character-detail-loaded', characterId: 'guide', settingsWritable: true, writable: true,
     });
-    expect(state.characterSettingsAvailable).toBe(true);
+    expect(state.inspectedCharacter.settingsWritable).toBe(true);
 
     state = appReducer(state, { type: 'show-character-settings' });
     expect(state.mainView).toBe('character-settings');
     expect(navigationTitle(state)).toBe('Settings');
-    expect(state.characterSettingsAvailable).toBe(true);
+    expect(state.inspectedCharacter.settingsWritable).toBe(true);
 
     state = appReducer(state, { type: 'inspect-character', characterId: 'guide' });
     expect(state.mainView).toBe('character-detail');
-    expect(state.characterSettingsAvailable).toBe(true);
+    expect(state.inspectedCharacter.settingsWritable).toBe(true);
 
     state = appReducer(state, { type: 'inspect-character', characterId: 'assistant' });
-    expect(state.characterSettingsAvailable).toBe(false);
-    expect(state.inspectedCharacterId).toBe('assistant');
+    expect(state.inspectedCharacter.settingsWritable).toBe(false);
+    expect(state.inspectedCharacter.id).toBe('assistant');
 
     state = appReducer(state, {
       type: 'character-detail-loaded', characterId: 'guide', settingsWritable: true, writable: true,
     });
-    expect(state.characterSettingsAvailable).toBe(false);
+    expect(state.inspectedCharacter.settingsWritable).toBe(false);
 
     state = appReducer(state, {
       type: 'character-detail-loaded', characterId: 'assistant', settingsWritable: true, writable: false,
     });
-    expect(state.characterSettingsAvailable).toBe(true);
-    expect(state.characterEditingAvailable).toBe(false);
+    expect(state.inspectedCharacter.settingsWritable).toBe(true);
+    expect(state.inspectedCharacter.writable).toBe(false);
   });
 
   it('opens forum files and ignores a file for another forum', () => {
@@ -215,12 +215,12 @@ describe('application navigation reducer', () => {
     state = appReducer(state, { type: 'select-forum', forumId: 'lobby' });
     state = appReducer(state, { type: 'inspect-forum-file', forumId: 'lobby', filename: 'RULES.md' });
     expect(state.mainView).toBe('forum-file');
-    expect(state.inspectedForumFile).toBe('RULES.md');
+    expect(state.inspectedForum.file).toBe('RULES.md');
     expect(appReducer(state, { type: 'show-new-forum-file' })).toBe(state);
     state = appReducer(state, { type: 'forum-detail-loaded', forumId: 'lobby', writable: true });
     expect(appReducer(state, { type: 'show-new-forum-file' }).mainView).toBe('new-forum-file');
     state = appReducer(state, { type: 'select-forum', forumId: 'entrance' });
-    expect(state.inspectedForumFile).toBeNull();
+    expect(state.inspectedForum.file).toBeNull();
     expect(appReducer(state, { type: 'inspect-forum-file', forumId: 'lobby', filename: 'NOTES.md' })).toBe(state);
   });
 
@@ -229,10 +229,10 @@ describe('application navigation reducer', () => {
     state = appReducer(state, { type: 'character-detail-loaded', characterId: 'guide', settingsWritable: true, writable: true });
     state = appReducer(state, { type: 'inspect-character-file', characterId: 'guide', filename: 'PROFILE.md' });
     expect(state.mainView).toBe('character-file');
-    expect(state.inspectedCharacterFile).toBe('PROFILE.md');
-    expect(state.characterSettingsAvailable).toBe(true);
+    expect(state.inspectedCharacter.file).toBe('PROFILE.md');
+    expect(state.inspectedCharacter.settingsWritable).toBe(true);
     state = appReducer(state, { type: 'inspect-character', characterId: 'assistant' });
-    expect(state.inspectedCharacterFile).toBeNull();
+    expect(state.inspectedCharacter.file).toBeNull();
     expect(appReducer(state, { type: 'inspect-character-file', characterId: 'guide', filename: 'NOTES.md' })).toBe(state);
   });
 
@@ -259,8 +259,8 @@ describe('application navigation reducer', () => {
     const state = appReducer(readyState(), { type: 'character-created', character });
 
     expect(state.mainView).toBe('character-detail');
-    expect(state.inspectedCharacterId).toBe('character_1');
-    expect(state.characterSettingsAvailable).toBe(true);
+    expect(state.inspectedCharacter.id).toBe('character_1');
+    expect(state.inspectedCharacter.settingsWritable).toBe(true);
     expect(state.bootstrap?.characters).toContainEqual(expect.objectContaining({
       id: 'character_1',
       display_name: 'Mentor',
@@ -281,14 +281,48 @@ describe('application navigation reducer', () => {
     expect(state.mainView).toBe('settings');
     expect(navigationTitle(state)).toBe('Settings');
     expect(state.activeConversation).toEqual(conversation);
-    expect(state.inspectedCharacterId).toBe('guide');
-    expect(state.characterSettingsAvailable).toBe(true);
+    expect(state.inspectedCharacter.id).toBe('guide');
+    expect(state.inspectedCharacter.settingsWritable).toBe(true);
 
     state = appReducer(state, { type: 'show-chat' });
     expect(state.mainView).toBe('chat');
     expect(state.activeConversation).toEqual(conversation);
-    expect(state.inspectedCharacterId).toBe('guide');
-    expect(state.characterSettingsAvailable).toBe(true);
+    expect(state.inspectedCharacter.id).toBe('guide');
+    expect(state.inspectedCharacter.settingsWritable).toBe(true);
+  });
+
+  it('remembers each inspection independently and ignores a superseded detail reply', () => {
+    let state = appReducer(readyState(), {
+      type: 'inspect-provider', providerId: 'first', providerName: 'First',
+    });
+    state = appReducer(state, {
+      type: 'provider-detail-loaded', providerId: 'first', providerName: 'First provider', writable: true,
+    });
+    const provider = state.inspectedProvider;
+    state = appReducer(state, {
+      type: 'inspect-style', styleId: 'serif', styleName: 'Serif',
+    });
+    state = appReducer(state, {
+      type: 'style-detail-loaded', styleId: 'serif', styleName: 'Serif italic', writable: false,
+    });
+    const style = state.inspectedStyle;
+    state = appReducer(state, { type: 'show-chat' });
+    expect(state.inspectedProvider).toEqual(provider);
+    expect(state.inspectedStyle).toEqual(style);
+
+    state = appReducer(state, {
+      type: 'inspect-provider', providerId: 'first', providerName: 'First provider',
+    });
+    expect(state.inspectedProvider.writable).toBe(true);
+    expect(navigationTitle(state)).toBe('First provider');
+    state = appReducer(state, {
+      type: 'inspect-provider', providerId: 'second', providerName: 'Second',
+    });
+    expect(state.inspectedProvider.writable).toBe(false);
+    expect(appReducer(state, {
+      type: 'provider-detail-loaded', providerId: 'first', providerName: 'Old reply', writable: true,
+    })).toBe(state);
+    expect(state.inspectedStyle).toEqual(style);
   });
 
   it('updates the vault selector without activating a newly created vault', () => {

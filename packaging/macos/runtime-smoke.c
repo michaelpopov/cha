@@ -27,23 +27,16 @@ static int reopen_native(const char* config, const char* resources, const char* 
     char* error = NULL;
     int32_t password_error = 0;
     ChaRuntime* runtime = cha_runtime_create(
-        config, resources, "", "", 0, &password_error, &error);
+        config, resources, "", &password_error, &error);
     if (!runtime) {
         fprintf(stderr, "embedded runtime smoke test failed: %s: %s\n",
             what, error ? error : "unknown error");
         cha_string_free(error);
         return 0;
     }
-    const int ok = cha_runtime_is_native(runtime) == 1
-        && cha_runtime_port(runtime) == 0;
     cha_runtime_request_shutdown(runtime);
     cha_runtime_join_shutdown(runtime, 2000);
     cha_runtime_destroy(runtime);
-    if (!ok) {
-        fprintf(stderr,
-            "embedded runtime smoke test failed: %s opened a listener\n", what);
-        return 0;
-    }
     return 1;
 }
 
@@ -69,26 +62,9 @@ int main(int argc, const char* argv[]) {
 
     char* error = NULL;
     int32_t password_error = 0;
-    ChaRuntime* rejected = cha_runtime_create(
-        argv[1], argv[2], "token", "", 1, &password_error, &error);
-    if (rejected) {
-        fprintf(stderr,
-            "embedded runtime smoke test failed: http_mode started a runtime\n");
-        cha_runtime_destroy(rejected);
-        return 1;
-    }
-    cha_string_free(error);
-    error = NULL;
-
     ChaRuntime* runtime = cha_runtime_create(
-        argv[1], argv[2], "", "", 0, &password_error, &error);
+        argv[1], argv[2], "", &password_error, &error);
     if (!runtime) return fail(error);
-    if (cha_runtime_port(runtime) != 0 || cha_runtime_is_native(runtime) != 1) {
-        fprintf(stderr,
-            "embedded runtime smoke test failed: native runtime opened a listener\n");
-        cha_runtime_destroy(runtime);
-        return 1;
-    }
     if (!cha_runtime_can_modify(runtime) || cha_runtime_can_transfer_r2(runtime)) {
         fprintf(stderr,
             "embedded runtime smoke test failed: incorrect menu capabilities\n");

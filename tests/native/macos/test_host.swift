@@ -141,12 +141,10 @@ private final class NativeTestHost: NSObject, WKNavigationDelegate, WKUIDelegate
         var passwordError: Int32 = 0
         let created = config.path.withCString { configPath in
             options.assets.path.withCString { resourcePath in
-                "".withCString { token in
-                    "".withCString { password in
-                        cha_runtime_create(
-                            configPath, resourcePath, token, password, 0,
-                            &passwordError, &error)
-                    }
+                "".withCString { password in
+                    cha_runtime_create(
+                        configPath, resourcePath, password,
+                        &passwordError, &error)
                 }
             }
         }
@@ -157,12 +155,6 @@ private final class NativeTestHost: NSObject, WKNavigationDelegate, WKUIDelegate
             exit(2)
         }
         runtime = created
-        FileHandle.standardError.write(
-            Data("runtime_listener=\(cha_runtime_port(created) == 0 ? "none" : "http")\n".utf8))
-        if cha_runtime_port(created) != 0 {
-            FileHandle.standardError.write(Data("FAIL native runtime opened a listener\n".utf8))
-            exit(1)
-        }
         let built = makeNativeWebViewConfiguration(assetRoot: options.assets)
         let view = WKWebView(
             frame: NSRect(x: 0, y: 0, width: 800, height: 600),

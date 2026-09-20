@@ -149,7 +149,7 @@ std::string_view to_string(ShutdownReason value) {
     return enum_name(
         value,
         {
-            {ShutdownReason::browser_disconnected, "browser_disconnected"},
+            {ShutdownReason::session_closed, "session_closed"},
             {ShutdownReason::reloading, "reloading"},
             {ShutdownReason::session_failed, "session_failed"},
             {ShutdownReason::session_deleted, "session_deleted"},
@@ -163,10 +163,8 @@ std::string_view to_string(ErrorCode value) {
         value,
         {
             {ErrorCode::not_found, "not_found"},
-            {ErrorCode::bad_request, "bad_request"},
             {ErrorCode::body_too_large, "body_too_large"},
             {ErrorCode::prompt_too_large, "prompt_too_large"},
-            {ErrorCode::forbidden_origin, "forbidden_origin"},
             {ErrorCode::internal_error, "internal_error"},
             {ErrorCode::speech_busy, "speech_busy"},
             {ErrorCode::vault_changed, "vault_changed"},

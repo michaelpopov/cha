@@ -2,6 +2,7 @@
 
 #include "util/path_name.h"
 
+#include <iterator>
 #include <utility>
 
 namespace cha::bridge {
@@ -100,6 +101,7 @@ const std::pair<Method, std::string_view> kMethods[] = {
     {Method::openai_auth_poll, "openaiAuth.poll"},
     {Method::openai_auth_disconnect, "openaiAuth.disconnect"},
 };
+static_assert(std::size(kMethods) == static_cast<std::size_t>(Method::count));
 
 bool has_only_keys(
     const nlohmann::json& json,
@@ -136,6 +138,11 @@ bool is_control_method(Method method) noexcept {
 
 bool requires_context_epoch(Method method) noexcept {
     return method != Method::bridge_info && method != Method::app_bootstrap;
+}
+
+bool changes_context(Method method) noexcept {
+    return method == Method::vault_switch || method == Method::vault_merge
+        || method == Method::vault_update;
 }
 
 std::string_view method_name(Method method) noexcept {

@@ -29,11 +29,11 @@ namespace {
 
 using namespace std::chrono_literals;
 
-WebSettings test_settings(
+cha::app::RuntimeSettings test_settings(
     std::size_t queue_capacity = 8,
     std::size_t command_batch_size = 8,
     std::size_t event_batch_size = 8) {
-    WebSettings settings;
+    cha::app::RuntimeSettings settings;
     settings.session_limit = 4;
     settings.command_queue_capacity = queue_capacity;
     settings.command_batch_size = command_batch_size;
@@ -76,7 +76,7 @@ private:
 class LiveSessionHost {
 public:
     LiveSessionHost(
-        WebSettings settings,
+        cha::app::RuntimeSettings settings,
         SessionOpener opener,
         LiveSessionClock clock = {},
         FullSessionId key = {"forum", "session"})
@@ -197,7 +197,7 @@ TEST(CommandReply, TimeoutAtomicallyAbandonsLateReply) {
 }
 
 TEST(LiveSession, RejectsZeroQueueAndBatchSizesBeforeStarting) {
-    WebSettings settings = test_settings(0);
+    cha::app::RuntimeSettings settings = test_settings(0);
     EXPECT_THROW(
         (void)validate_live_session_settings(settings), std::invalid_argument);
 
@@ -704,7 +704,24 @@ TEST(LiveSession, PublishesAnOpenedSessionNoticeOnTheFirstSnapshot) {
         std::string::npos);
 }
 
-TEST(LiveSession, ReloadingOutranksBrowserDisconnectedOnTheFinalSnapshot) {
+TEST(LiveSession, DefaultShutdownPublishesSessionClosed) {
+    test::TemporarySessionFile file("live_session_closed");
+    auto controls = std::make_shared<test::BackendControls>();
+    LiveSessionHost host(test_settings(), scripted_opener(file.path(), controls));
+    subscribe(*host);
+    ASSERT_TRUE(next_output(*host));
+    host->acknowledge_output();
+
+    host->request_shutdown();
+    const auto terminal = next_output(*host);
+    ASSERT_TRUE(terminal);
+    EXPECT_EQ(terminal->kind, cha::app::SessionOutputItem::Kind::snapshot);
+    ASSERT_EQ(terminal->snapshot.shutdown_reason, ShutdownReason::session_closed);
+    EXPECT_EQ(to_string(*terminal->snapshot.shutdown_reason), "session_closed");
+    EXPECT_TRUE(wait_for_finished(host.handle()));
+}
+
+TEST(LiveSession, ReloadingOutranksSessionClosedOnTheFinalSnapshot) {
     test::TemporarySessionFile file("live_session_reloading");
     auto controls = std::make_shared<test::BackendControls>();
     LiveSessionHost host(test_settings(), scripted_opener(file.path(), controls));

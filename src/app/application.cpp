@@ -44,7 +44,6 @@
 #include <utility>
 #include <vector>
 
-using cha::web::WebSettings;
 using cha::web::ErrorCode;
 using cha::web::VaultCreate;
 using cha::web::VaultDefinition;
@@ -248,15 +247,11 @@ FullSessionId fallback_session(const SessionRepository& sessions) {
 
 } // namespace
 
-cha::web::WebSettings native_settings() {
-    return {};
-}
-
 struct Application::Impl {
     explicit Impl(
         const cha::web::ApplicationCommand& selected_command,
         std::string selected_vault_password,
-        WebSettings selected_settings)
+        RuntimeSettings selected_settings)
         : command(selected_command),
           active_password(std::move(selected_vault_password)),
           settings(std::move(selected_settings)),
@@ -751,7 +746,7 @@ struct Application::Impl {
 
     cha::web::ApplicationCommand command;
     std::string active_password;
-    WebSettings settings;
+    RuntimeSettings settings;
     cha::web::CurrentVault current_vault_;
     std::unique_ptr<WorkspaceConfigStore> store;
     std::shared_ptr<SessionRepository> sessions;
@@ -910,7 +905,7 @@ Application::~Application() {
 std::unique_ptr<Application> Application::open(
     const cha::web::ApplicationCommand& command,
     std::string vault_password,
-    WebSettings settings) {
+    RuntimeSettings settings) {
     for (const std::string& warning : command.warnings) log_warn(warning);
     load_dotenv(command.config_directory / ".env");
     if (command.vault.password_protected && vault_password.empty()) {
@@ -2870,7 +2865,7 @@ const cha::web::ApplicationCommand& Application::command() const {
     return impl_->command;
 }
 
-const WebSettings& Application::settings() const {
+const RuntimeSettings& Application::settings() const {
     return impl_->settings;
 }
 

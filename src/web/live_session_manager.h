@@ -103,7 +103,7 @@ using GlobalMaintenanceResult = std::variant<
 class LiveSessionManager {
 public:
     LiveSessionManager(
-        WebSettings settings,
+        cha::app::RuntimeSettings settings,
         SessionOpener opener,
         LiveSessionClock clock = {});
     ~LiveSessionManager();
@@ -186,7 +186,7 @@ private:
     void release_global_maintenance() noexcept;
     void request_retire_locked(const FullSessionId& key);
 
-    WebSettings settings_;
+    cha::app::RuntimeSettings settings_;
     SessionOpener opener_;
     LiveSessionClock clock_;
     std::mutex select_mutex_;

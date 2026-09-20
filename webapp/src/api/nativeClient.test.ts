@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-import { isCommandResult } from './client';
+import { ChaProtocolError, isCommandResult, type SessionSnapshot } from './client';
 import { createFakeNativeBridge } from './nativeBridge';
 import { createNativeChaClient } from './nativeClient';
 import { bootstrapFixture } from '../test/fixtures';
@@ -18,6 +18,16 @@ function loadFixture(name: string): unknown {
 }
 
 describe('native CHA client', () => {
+  it('rejects a malformed snapshot before returning it to the application', async () => {
+    const snapshot = loadFixture('snapshot.json') as SessionSnapshot;
+    const bridge = createFakeNativeBridge({
+      'session.snapshot': () => ({ ...snapshot, transcript: [{}] }),
+    });
+    const client = createNativeChaClient(bridge);
+    await expect(client.getSessionSnapshot('entrance', 'welcome'))
+      .rejects.toBeInstanceOf(ChaProtocolError);
+  });
+
   it('reports maintenance before validating a partial bootstrap presentation', async () => {
     const bridge = createFakeNativeBridge({
       'bridge.info': () => loadFixture('bridge-info.json'),

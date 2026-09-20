@@ -64,7 +64,7 @@ export function useAudioDownloads(client: ChaClient, forum: string | undefined,
         if (current && valid.current && (failure instanceof ChaProtocolError
           || (failure instanceof ChaError && [
             'not_found', 'vault_changed', 'session_not_live', 'invalid_argument',
-            'application_unavailable', 'bad_request', 'forbidden_origin',
+            'application_unavailable',
           ].includes(failure.code)))) {
           initialized = true;
           setUnavailable(publicErrorMessage(failure, 'Audio status is unavailable. Try again.'));

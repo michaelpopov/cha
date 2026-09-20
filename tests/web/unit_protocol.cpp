@@ -1,6 +1,5 @@
 #include "web/json.h"
 #include "web/protocol.h"
-#include "web/web_settings.h"
 
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
@@ -612,13 +611,6 @@ TEST(WebProtocol, ParsesRouteSpecificCommandPayloads) {
     EXPECT_THROW(
         parse_empty_object({{"unexpected", true}}),
         std::invalid_argument);
-}
-
-TEST(WebSettings, DefaultsHavePositiveBatchSizes) {
-    const WebSettings settings;
-    EXPECT_GT(settings.command_batch_size, 0U);
-    EXPECT_GT(settings.event_batch_size, 0U);
-    EXPECT_TRUE(settings.monotonic_event_sequence);
 }
 
 } // namespace

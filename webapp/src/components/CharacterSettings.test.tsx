@@ -24,8 +24,11 @@ function settingsState(overrides: Partial<AppState> = {}): AppState {
     bootstrapStatus: 'ready',
     bootstrap: bootstrapFixture,
     mainView: 'character-settings',
-    inspectedCharacterId: 'guide',
-    characterSettingsAvailable: true,
+    inspectedCharacter: {
+      ...initialAppState.inspectedCharacter,
+      id: 'guide',
+      settingsWritable: true,
+    },
     ...overrides,
   };
 }
@@ -181,7 +184,7 @@ describe('character settings screen', () => {
   it('reports a failed save in place and keeps the edited values', async () => {
     const user = userEvent.setup();
     const updateCharacter = vi.fn(async () => {
-      throw new ChaError('bad_request', 'Invalid character settings.');
+      throw new ChaError('invalid_argument', 'Invalid character settings.');
     });
     renderSettings(fixtureClient({ updateCharacter }));
 

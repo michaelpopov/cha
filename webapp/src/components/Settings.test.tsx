@@ -16,9 +16,11 @@ import {
   NewVaultScreen,
   NewVoiceScreen,
   ProviderScreen,
+  ProvidersScreen,
   R2StorageScreen,
   SettingsNavigation,
   StyleScreen,
+  StylesScreen,
   VaultScreen,
   VaultsScreen,
   VoiceScreen,
@@ -92,6 +94,31 @@ const vaults: VaultDetail[] = [
 ];
 
 describe('Settings screens', () => {
+  it.each([
+    ['Vaults', VaultsScreen, 'listVaults', 'New vault'],
+    ['Providers', ProvidersScreen, 'listProviders', 'No providers configured'],
+    ['Styles', StylesScreen, 'listStyles', 'No styles configured'],
+    ['Voices', VoicesScreen, 'listVoices', 'No voices configured'],
+    ['API keys', ApiKeysScreen, 'listApiKeys', 'No model API keys saved'],
+    ['Merge', MergeVaultScreen, 'listVaults', 'No other vaults'],
+  ] as const)('retries a failed %s list load', async (_name, Screen, method, loadedText) => {
+    const load = vi.fn(async () => [])
+      .mockRejectedValueOnce(new ChaError('application_unavailable', 'Please try again.'));
+    const client = fixtureClient({ [method]: load });
+    const { rerender } = render(
+      <Screen client={client} dispatch={vi.fn()} sessionReport={null} state={initialAppState} />,
+    );
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Please try again.');
+    await userEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(await screen.findByText(loadedText)).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    rerender(
+      <Screen client={client} dispatch={vi.fn()} sessionReport={null} state={initialAppState} />,
+    );
+    expect(load).toHaveBeenCalledTimes(2);
+  });
+
   it('shows Vaults above Providers, Styles, Voices, and API Keys', async () => {
     const dispatch = vi.fn();
     render(<SettingsNavigation dispatch={dispatch} />);
@@ -392,7 +419,7 @@ describe('Settings screens', () => {
 
   it('keeps a validation failure visible so merge can be retried', async () => {
     const mergeVault = vi.fn(async () => {
-      throw new ChaError('bad_request', 'Duplicate character id “guide”.');
+      throw new ChaError('invalid_argument', 'Duplicate character id “guide”.');
     });
     render(
       <MergeVaultScreen
@@ -690,7 +717,10 @@ describe('Settings screens', () => {
         })}
         dispatch={vi.fn()}
         sessionReport={null}
-        state={{ ...initialAppState, inspectedProviderId: 'router' }}
+        state={{
+          ...initialAppState,
+          inspectedProvider: { ...initialAppState.inspectedProvider, id: 'router' },
+        }}
       />,
     );
     await userEvent.selectOptions(await screen.findByLabelText('Credentials'), 'api_key_1');
@@ -773,7 +803,10 @@ describe('Settings screens', () => {
         })}
         dispatch={vi.fn()}
         sessionReport={null}
-        state={{ ...initialAppState, inspectedProviderId: configured.id }}
+        state={{
+          ...initialAppState,
+          inspectedProvider: { ...initialAppState.inspectedProvider, id: configured.id },
+        }}
       />,
     );
 
@@ -801,7 +834,10 @@ describe('Settings screens', () => {
         })}
         dispatch={vi.fn()}
         sessionReport={null}
-        state={{ ...initialAppState, inspectedProviderId: provider.id }}
+        state={{
+          ...initialAppState,
+          inspectedProvider: { ...initialAppState.inspectedProvider, id: provider.id },
+        }}
       />,
     );
 
@@ -851,7 +887,10 @@ describe('Settings screens', () => {
         })}
         dispatch={vi.fn()}
         sessionReport={null}
-        state={{ ...initialAppState, inspectedProviderId: provider.id }}
+        state={{
+          ...initialAppState,
+          inspectedProvider: { ...initialAppState.inspectedProvider, id: provider.id },
+        }}
       />,
     );
 
@@ -901,7 +940,10 @@ describe('Settings screens', () => {
         })}
         dispatch={vi.fn()}
         sessionReport={null}
-        state={{ ...initialAppState, inspectedProviderId: oauthProvider.id }}
+        state={{
+          ...initialAppState,
+          inspectedProvider: { ...initialAppState.inspectedProvider, id: oauthProvider.id },
+        }}
       />,
     );
 
@@ -930,7 +972,10 @@ describe('Settings screens', () => {
         })}
         dispatch={vi.fn()}
         sessionReport={null}
-        state={{ ...initialAppState, inspectedProviderId: provider.id }}
+        state={{
+          ...initialAppState,
+          inspectedProvider: { ...initialAppState.inspectedProvider, id: provider.id },
+        }}
       />,
     );
 
@@ -955,9 +1000,11 @@ describe('Settings screens', () => {
     const state = {
       ...initialAppState,
       mainView: 'settings-provider' as const,
-      inspectedProviderId: provider.id,
-      inspectedProviderName: provider.display_name,
-      providerEditingAvailable: true,
+      inspectedProvider: {
+        id: provider.id,
+        name: provider.display_name,
+        writable: true,
+      },
     };
     render(
       <TopBar
@@ -1026,7 +1073,10 @@ describe('Settings screens', () => {
         client={fixtureClient({ listStyles: async () => [style] })}
         dispatch={vi.fn()}
         sessionReport={null}
-        state={{ ...initialAppState, inspectedStyleId: style.id }}
+        state={{
+          ...initialAppState,
+          inspectedStyle: { ...initialAppState.inspectedStyle, id: style.id },
+        }}
       />,
     );
 
@@ -1047,9 +1097,11 @@ describe('Settings screens', () => {
     const state = {
       ...initialAppState,
       mainView: 'settings-style' as const,
-      inspectedStyleId: style.id,
-      inspectedStyleName: style.display_name,
-      styleEditingAvailable: true,
+      inspectedStyle: {
+        id: style.id,
+        name: style.display_name,
+        writable: true,
+      },
     };
     render(
       <TopBar
@@ -1189,7 +1241,7 @@ describe('Settings screens', () => {
     const saveVoiceInputSettings = vi.fn(async (settings) => settings);
     const saveVoiceOutputSettings = vi.fn(async (settings) => {
       if (settings.url.startsWith('http:')) {
-        throw new ChaError('bad_request', 'FishAudio requires an HTTPS URL.');
+        throw new ChaError('invalid_argument', 'FishAudio requires an HTTPS URL.');
       }
       return { ...settings, url: 'https://api.fish.audio/v1/tts', model: settings.model.trim() };
     });
@@ -1275,7 +1327,10 @@ describe('Settings screens', () => {
         })}
         dispatch={vi.fn()}
         sessionReport={null}
-        state={{ ...initialAppState, inspectedVoiceId: 'brian' }}
+        state={{
+          ...initialAppState,
+          inspectedVoice: { ...initialAppState.inspectedVoice, id: 'brian' },
+        }}
       />,
     );
 
@@ -1321,7 +1376,10 @@ describe('Settings screens', () => {
         })}
         dispatch={vi.fn()}
         sessionReport={null}
-        state={{ ...initialAppState, inspectedVoiceId: 'brian' }}
+        state={{
+          ...initialAppState,
+          inspectedVoice: { ...initialAppState.inspectedVoice, id: 'brian' },
+        }}
       />,
     );
 
@@ -1366,7 +1424,10 @@ describe('Settings screens', () => {
         })}
         dispatch={vi.fn()}
         sessionReport={null}
-        state={{ ...initialAppState, inspectedVoiceId: 'brian' }}
+        state={{
+          ...initialAppState,
+          inspectedVoice: { ...initialAppState.inspectedVoice, id: 'brian' },
+        }}
       />,
     );
 
@@ -1422,9 +1483,11 @@ describe('Settings screens', () => {
         state={{
           ...initialAppState,
           mainView: 'settings-voice',
-          inspectedVoiceId: 'brian',
-          inspectedVoiceName: 'Brian',
-          voiceEditingAvailable: true,
+          inspectedVoice: {
+            id: 'brian',
+            name: 'Brian',
+            writable: true,
+          },
         }}
         title="Brian"
       />,
@@ -1460,7 +1523,10 @@ describe('Settings screens', () => {
         })}
         dispatch={dispatch}
         sessionReport={null}
-        state={{ ...initialAppState, inspectedProviderId: provider.id }}
+        state={{
+          ...initialAppState,
+          inspectedProvider: { ...initialAppState.inspectedProvider, id: provider.id },
+        }}
       />,
     );
     await userEvent.click(await screen.findByRole('button', { name: 'Delete provider' }));
@@ -1486,7 +1552,10 @@ describe('Settings screens', () => {
         })}
         dispatch={vi.fn()}
         sessionReport={null}
-        state={{ ...initialAppState, inspectedProviderId: provider.id }}
+        state={{
+          ...initialAppState,
+          inspectedProvider: { ...initialAppState.inspectedProvider, id: provider.id },
+        }}
       />,
     );
     await userEvent.click(await screen.findByRole('button', { name: 'Delete provider' }));
@@ -1508,7 +1577,10 @@ describe('Settings screens', () => {
         })}
         dispatch={dispatch}
         sessionReport={null}
-        state={{ ...initialAppState, inspectedStyleId: style.id }}
+        state={{
+          ...initialAppState,
+          inspectedStyle: { ...initialAppState.inspectedStyle, id: style.id },
+        }}
       />,
     );
     await userEvent.click(await screen.findByRole('button', { name: 'Delete style' }));
@@ -1551,8 +1623,10 @@ describe('Settings screens', () => {
         sessionReport={null}
         state={{
           ...initialAppState,
-          inspectedApiKeyId: 'api_key_1',
-          inspectedApiKeyName: 'Google',
+          inspectedApiKey: {
+            id: 'api_key_1',
+            name: 'Google',
+          },
         }}
       />,
     );
@@ -1580,8 +1654,10 @@ describe('Settings screens', () => {
         sessionReport={null}
         state={{
           ...initialAppState,
-          inspectedApiKeyId: 'api_key_1',
-          inspectedApiKeyName: 'Google',
+          inspectedApiKey: {
+            id: 'api_key_1',
+            name: 'Google',
+          },
         }}
       />,
     );
@@ -1620,8 +1696,10 @@ describe('Settings screens', () => {
         state={{
           ...initialAppState,
           mainView: 'settings-api-key',
-          inspectedApiKeyId: 'api_key_1',
-          inspectedApiKeyName: 'Google',
+          inspectedApiKey: {
+            id: 'api_key_1',
+            name: 'Google',
+          },
         }}
         title="Google"
       />,

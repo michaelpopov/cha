@@ -7,6 +7,13 @@ import type {
   VaultDetail,
 } from '../api/client';
 import type { AppendEvent } from '../api/events';
+import {
+  applyCharacterUpdate,
+  applyForumUpdate,
+  applyPersonaUpdate,
+  forumSummary,
+  rosterSummary,
+} from './entityUpdates';
 
 export type MainView =
   | 'chat'
@@ -64,6 +71,12 @@ export interface ActiveConversation {
   sessionId: string;
 }
 
+interface EditableInspection {
+  id: string | null;
+  name: string | null;
+  writable: boolean;
+}
+
 export interface AppState {
   sidebarOpen: boolean;
   mainView: MainView;
@@ -72,26 +85,20 @@ export interface AppState {
   bootstrapMessage: string | null;
   currentForumId: string | null;
   activeConversation: ActiveConversation | null;
-  inspectedCharacterId: string | null;
-  inspectedCharacterFile: string | null;
-  characterSettingsAvailable: boolean;
-  characterEditingAvailable: boolean;
-  inspectedPersonaId: string | null;
-  personaEditingAvailable: boolean;
-  inspectedForumFile: string | null;
-  forumEditingAvailable: boolean;
+  inspectedCharacter: {
+    id: string | null;
+    file: string | null;
+    settingsWritable: boolean;
+    writable: boolean;
+  };
+  inspectedPersona: { id: string | null; writable: boolean };
+  // Forum inspection describes currentForumId, also used by session browsing.
+  inspectedForum: { file: string | null; writable: boolean };
   inspectedVaultName: string | null;
-  inspectedProviderId: string | null;
-  inspectedProviderName: string | null;
-  providerEditingAvailable: boolean;
-  inspectedStyleId: string | null;
-  inspectedStyleName: string | null;
-  styleEditingAvailable: boolean;
-  inspectedVoiceId: string | null;
-  inspectedVoiceName: string | null;
-  voiceEditingAvailable: boolean;
-  inspectedApiKeyId: string | null;
-  inspectedApiKeyName: string | null;
+  inspectedProvider: EditableInspection;
+  inspectedStyle: EditableInspection;
+  inspectedVoice: EditableInspection;
+  inspectedApiKey: { id: string | null; name: string | null };
   currentDefaultCharacterId: string | null;
   sessionOperation: 'idle' | 'pending' | 'failed';
   sessionOperationMessage: string | null;
@@ -111,26 +118,14 @@ export const initialAppState: AppState = {
   bootstrapMessage: null,
   currentForumId: null,
   activeConversation: null,
-  inspectedCharacterId: null,
-  inspectedCharacterFile: null,
-  characterSettingsAvailable: false,
-  characterEditingAvailable: false,
-  inspectedPersonaId: null,
-  personaEditingAvailable: false,
-  inspectedForumFile: null,
-  forumEditingAvailable: false,
+  inspectedCharacter: { id: null, file: null, settingsWritable: false, writable: false },
+  inspectedPersona: { id: null, writable: false },
+  inspectedForum: { file: null, writable: false },
   inspectedVaultName: null,
-  inspectedProviderId: null,
-  inspectedProviderName: null,
-  providerEditingAvailable: false,
-  inspectedStyleId: null,
-  inspectedStyleName: null,
-  styleEditingAvailable: false,
-  inspectedVoiceId: null,
-  inspectedVoiceName: null,
-  voiceEditingAvailable: false,
-  inspectedApiKeyId: null,
-  inspectedApiKeyName: null,
+  inspectedProvider: { id: null, name: null, writable: false },
+  inspectedStyle: { id: null, name: null, writable: false },
+  inspectedVoice: { id: null, name: null, writable: false },
+  inspectedApiKey: { id: null, name: null },
   currentDefaultCharacterId: null,
   sessionOperation: 'idle',
   sessionOperationMessage: null,
@@ -309,8 +304,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return {
         ...state,
         mainView: 'personas',
-        inspectedPersonaId: null,
-        personaEditingAvailable: false,
+        inspectedPersona: { id: null, writable: false },
         ...idleSessionOperation(),
       };
     case 'show-new-persona':
@@ -319,17 +313,22 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return {
         ...state,
         mainView: 'persona-detail',
-        inspectedPersonaId: action.personaId,
-        personaEditingAvailable: action.personaId === state.inspectedPersonaId
-          ? state.personaEditingAvailable
-          : false,
+        inspectedPersona: {
+          id: action.personaId,
+          writable: action.personaId === state.inspectedPersona.id
+            ? state.inspectedPersona.writable
+            : false,
+        },
         ...idleSessionOperation(),
       };
     case 'persona-detail-loaded':
-      if (state.inspectedPersonaId !== action.personaId) return state;
-      return { ...state, personaEditingAvailable: action.writable };
+      if (state.inspectedPersona.id !== action.personaId) return state;
+      return {
+        ...state,
+        inspectedPersona: { ...state.inspectedPersona, writable: action.writable },
+      };
     case 'show-persona-settings':
-      return state.inspectedPersonaId
+      return state.inspectedPersona.id
         ? { ...state, mainView: 'persona-settings', ...idleSessionOperation() }
         : state;
     case 'persona-created': {
@@ -337,59 +336,18 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       const persona = action.persona;
       const personas = [
         ...state.bootstrap.personas,
-        {
-          id: persona.id,
-          display_name: persona.display_name,
-          appearance: persona.appearance,
-          ...(persona.voice === undefined ? {} : { voice: persona.voice }),
-          ...(persona.description === undefined
-            ? {} : { description: persona.description }),
-        },
+        rosterSummary(persona),
       ].sort((left, right) => left.display_name.localeCompare(right.display_name));
       return {
         ...state,
         mainView: 'persona-detail',
         bootstrap: { ...state.bootstrap, personas },
-        inspectedPersonaId: persona.id,
-        personaEditingAvailable: persona.writable,
+        inspectedPersona: { id: persona.id, writable: persona.writable },
         ...idleSessionOperation(),
       };
     }
-    case 'persona-updated': {
-      if (!state.bootstrap) return state;
-      const persona = action.persona;
-      const bootstrap = {
-        ...state.bootstrap,
-        personas: state.bootstrap.personas.map((current) => (
-          current.id === persona.id
-            ? {
-              id: persona.id,
-              display_name: persona.display_name,
-              appearance: persona.appearance,
-              ...(persona.voice === undefined ? {} : { voice: persona.voice }),
-              ...(persona.description === undefined
-                ? {} : { description: persona.description }),
-            }
-            : current
-        )),
-        forums: state.bootstrap.forums.map((forum) => (
-          forum.default_persona_id === persona.id
-            ? { ...forum, default_persona_display_name: persona.display_name }
-            : forum
-        )),
-      };
-      const sessionSnapshot = state.sessionSnapshot
-        && state.sessionSnapshot.forum.default_persona_id === persona.id
-        ? {
-          ...state.sessionSnapshot,
-          forum: {
-            ...state.sessionSnapshot.forum,
-            default_persona_display_name: persona.display_name,
-          },
-        }
-        : state.sessionSnapshot;
-      return { ...state, bootstrap, sessionSnapshot };
-    }
+    case 'persona-updated':
+      return applyPersonaUpdate(state, action.persona);
     case 'persona-deleted':
       return {
         ...state,
@@ -398,18 +356,19 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           ...state.bootstrap,
           personas: state.bootstrap.personas.filter(({ id }) => id !== action.personaId),
         } : null,
-        inspectedPersonaId: null,
-        personaEditingAvailable: false,
+        inspectedPersona: { id: null, writable: false },
         ...idleSessionOperation(),
       };
     case 'show-characters':
       return {
         ...state,
         mainView: 'characters',
-        inspectedCharacterId: null,
-        inspectedCharacterFile: null,
-        characterSettingsAvailable: false,
-        characterEditingAvailable: false,
+        inspectedCharacter: {
+          id: null,
+          file: null,
+          settingsWritable: false,
+          writable: false,
+        },
         ...idleSessionOperation(),
       };
     case 'show-new-character':
@@ -418,99 +377,65 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return {
         ...state,
         mainView: 'character-detail',
-        inspectedCharacterId: action.characterId,
-        inspectedCharacterFile: null,
-        characterSettingsAvailable: action.characterId === state.inspectedCharacterId
-          ? state.characterSettingsAvailable
-          : false,
-        characterEditingAvailable: action.characterId === state.inspectedCharacterId
-          ? state.characterEditingAvailable
-          : false,
+        inspectedCharacter: {
+          id: action.characterId,
+          file: null,
+          settingsWritable: action.characterId === state.inspectedCharacter.id
+            ? state.inspectedCharacter.settingsWritable
+            : false,
+          writable: action.characterId === state.inspectedCharacter.id
+            ? state.inspectedCharacter.writable
+            : false,
+        },
         ...idleSessionOperation(),
       };
     case 'inspect-character-file':
-      return state.inspectedCharacterId === action.characterId
-        ? { ...state, mainView: 'character-file', inspectedCharacterFile: action.filename,
-          ...idleSessionOperation() }
+      return state.inspectedCharacter.id === action.characterId
+        ? {
+          ...state,
+          mainView: 'character-file',
+          inspectedCharacter: { ...state.inspectedCharacter, file: action.filename },
+          ...idleSessionOperation(),
+        }
         : state;
     case 'show-new-character-file':
-      return state.inspectedCharacterId && state.characterEditingAvailable
+      return state.inspectedCharacter.id && state.inspectedCharacter.writable
         ? { ...state, mainView: 'new-character-file', ...idleSessionOperation() }
         : state;
     case 'character-detail-loaded':
       // A reply for a character the reader has already left must not decide
       // whether the one now on screen offers its settings.
-      if (action.characterId !== state.inspectedCharacterId) return state;
+      if (action.characterId !== state.inspectedCharacter.id) return state;
       return {
         ...state,
-        characterSettingsAvailable: action.settingsWritable,
-        characterEditingAvailable: action.writable,
+        inspectedCharacter: {
+          ...state.inspectedCharacter,
+          settingsWritable: action.settingsWritable,
+          writable: action.writable,
+        },
       };
     case 'character-created': {
       if (!state.bootstrap) return state;
       const character = action.character;
       const characters = [
         ...state.bootstrap.characters,
-        {
-          id: character.id,
-          display_name: character.display_name,
-          ...(character.description === undefined
-            ? {} : { description: character.description }),
-          appearance: character.appearance,
-          ...(character.voice === undefined ? {} : { voice: character.voice }),
-        },
+        rosterSummary(character),
       ].sort((left, right) => left.display_name.localeCompare(right.display_name));
       return {
         ...state,
         mainView: 'character-detail',
         bootstrap: { ...state.bootstrap, characters },
-        inspectedCharacterId: character.id,
-        inspectedCharacterFile: null,
-        characterSettingsAvailable: character.settings_writable,
-        characterEditingAvailable: character.writable,
+        inspectedCharacter: {
+          id: character.id,
+          file: null,
+          settingsWritable: character.settings_writable,
+          writable: character.writable,
+        },
         ...idleSessionOperation(),
       };
     }
-    case 'character-updated': {
-      if (!state.bootstrap) return state;
-      const character = action.character;
-      const summary = {
-        id: character.id,
-        display_name: character.display_name,
-        ...(character.description === undefined
-          ? {} : { description: character.description }),
-        appearance: character.appearance,
-        ...(character.voice === undefined ? {} : { voice: character.voice }),
-      };
-      const updateMembers = <T extends { id: string }>(members: T[]) => (
-        members.map((member) => member.id === character.id
-          ? { ...member, ...summary }
-          : member)
-      );
-      const bootstrap = {
-        ...state.bootstrap,
-        characters: updateMembers(state.bootstrap.characters),
-        forums: state.bootstrap.forums.map((forum) => ({
-          ...forum,
-          members: updateMembers(forum.members),
-        })),
-      };
-      const sessionSnapshot = state.sessionSnapshot ? {
-        ...state.sessionSnapshot,
-        characters: updateMembers(state.sessionSnapshot.characters),
-        forum: {
-          ...state.sessionSnapshot.forum,
-          members: updateMembers(state.sessionSnapshot.forum.members),
-        },
-        generation: state.sessionSnapshot.generation.character_id === character.id
-          ? {
-            ...state.sessionSnapshot.generation,
-            character_display_name: character.display_name,
-          }
-          : state.sessionSnapshot.generation,
-      } : null;
-      return { ...state, bootstrap, sessionSnapshot };
-    }
+    case 'character-updated':
+      return applyCharacterUpdate(state, action.character);
     case 'character-deleted':
       return {
         ...state,
@@ -521,10 +446,12 @@ export function appReducer(state: AppState, action: AppAction): AppState {
             ({ id }) => id !== action.characterId,
           ),
         } : null,
-        inspectedCharacterId: null,
-        inspectedCharacterFile: null,
-        characterSettingsAvailable: false,
-        characterEditingAvailable: false,
+        inspectedCharacter: {
+          id: null,
+          file: null,
+          settingsWritable: false,
+          writable: false,
+        },
         ...idleSessionOperation(),
       };
     case 'show-character-settings':
@@ -535,7 +462,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return { ...state, mainView: 'new-forum', ...idleSessionOperation() };
     case 'forum-created': {
       if (!state.bootstrap) return state;
-      const { forum_markdown: _markdown, markdown_files: _files, writable, ...summary } = action.forum;
+      const summary = forumSummary(action.forum);
       const forums = [...state.bootstrap.forums, summary].sort(
         (left, right) => left.display_name.localeCompare(right.display_name),
       );
@@ -544,8 +471,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         mainView: 'forum-detail',
         bootstrap: { ...state.bootstrap, forums },
         currentForumId: summary.id,
-        inspectedForumFile: null,
-        forumEditingAvailable: writable,
+        inspectedForum: { file: null, writable: action.forum.writable },
         ...idleSessionOperation(),
       };
     }
@@ -554,10 +480,12 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         ...state,
         mainView: 'sessions',
         currentForumId: action.forumId,
-        inspectedForumFile: null,
-        forumEditingAvailable: action.forumId === state.currentForumId
-          ? state.forumEditingAvailable
-          : false,
+        inspectedForum: {
+          file: null,
+          writable: action.forumId === state.currentForumId
+            ? state.inspectedForum.writable
+            : false,
+        },
         ...idleSessionOperation(),
       };
     case 'show-sessions':
@@ -565,43 +493,35 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     // The detail always describes the current forum: it is reachable only from
     // that forum's Sessions screen, so it needs no subject of its own.
     case 'show-forum-detail':
-      return { ...state, mainView: 'forum-detail', inspectedForumFile: null, ...idleSessionOperation() };
+      return {
+        ...state,
+        mainView: 'forum-detail',
+        inspectedForum: { ...state.inspectedForum, file: null },
+        ...idleSessionOperation(),
+      };
     case 'inspect-forum-file':
       return state.currentForumId === action.forumId
-        ? { ...state, mainView: 'forum-file', inspectedForumFile: action.filename,
-            ...idleSessionOperation() }
+        ? {
+          ...state,
+          mainView: 'forum-file',
+          inspectedForum: { ...state.inspectedForum, file: action.filename },
+          ...idleSessionOperation(),
+        }
         : state;
     case 'show-new-forum-file':
-      return state.currentForumId && state.forumEditingAvailable
+      return state.currentForumId && state.inspectedForum.writable
         ? { ...state, mainView: 'new-forum-file', ...idleSessionOperation() }
         : state;
     case 'show-forum-members':
       return { ...state, mainView: 'forum-members', ...idleSessionOperation() };
     case 'forum-detail-loaded':
       if (state.currentForumId !== action.forumId) return state;
-      return { ...state, forumEditingAvailable: action.writable };
-    case 'forum-updated': {
-      if (!state.bootstrap) return state;
-      const { forum_markdown: _markdown, markdown_files: _files, writable, ...summary } = action.forum;
-      const bootstrap = {
-        ...state.bootstrap,
-        forums: state.bootstrap.forums.map((forum) => (
-          forum.id === summary.id ? summary : forum
-        )),
-      };
-      const sessionSnapshot = state.sessionSnapshot?.forum.id === summary.id
-        ? {
-          ...state.sessionSnapshot,
-          forum: { ...state.sessionSnapshot.forum, ...summary },
-        }
-        : state.sessionSnapshot;
       return {
         ...state,
-        bootstrap,
-        sessionSnapshot,
-        forumEditingAvailable: writable,
+        inspectedForum: { ...state.inspectedForum, writable: action.writable },
       };
-    }
+    case 'forum-updated':
+      return applyForumUpdate(state, action.forum);
     case 'forum-deleted': {
       const activeDeleted = state.activeConversation?.forumId === action.forumId;
       return {
@@ -615,8 +535,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           ),
         } : null,
         currentForumId: null,
-        inspectedForumFile: null,
-        forumEditingAvailable: false,
+        inspectedForum: { file: null, writable: false },
         ...(activeDeleted ? {
           activeConversation: null,
           activeConversationLabel: null,
@@ -702,7 +621,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return {
         ...state,
         mainView: 'settings-providers',
-        providerEditingAvailable: false,
+        inspectedProvider: { ...state.inspectedProvider, writable: false },
         ...idleSessionOperation(),
       };
     case 'show-settings-new-provider':
@@ -711,32 +630,31 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return {
         ...state,
         mainView: 'settings-provider',
-        inspectedProviderId: action.providerId,
-        inspectedProviderName: action.providerName,
-        providerEditingAvailable: action.providerId === state.inspectedProviderId
-          ? state.providerEditingAvailable
-          : false,
+        inspectedProvider: {
+          id: action.providerId,
+          name: action.providerName,
+          writable: action.providerId === state.inspectedProvider.id
+            ? state.inspectedProvider.writable
+            : false,
+        },
         ...idleSessionOperation(),
       };
     case 'provider-detail-loaded':
-      if (action.providerId !== state.inspectedProviderId) return state;
-      return {
-        ...state,
-        inspectedProviderName: action.providerName,
-        providerEditingAvailable: action.writable,
-      };
     case 'provider-updated':
-      if (action.providerId !== state.inspectedProviderId) return state;
+      if (action.providerId !== state.inspectedProvider.id) return state;
       return {
         ...state,
-        inspectedProviderName: action.providerName,
-        providerEditingAvailable: action.writable,
+        inspectedProvider: {
+          ...state.inspectedProvider,
+          name: action.providerName,
+          writable: action.writable,
+        },
       };
     case 'show-settings-styles':
       return {
         ...state,
         mainView: 'settings-styles',
-        styleEditingAvailable: false,
+        inspectedStyle: { ...state.inspectedStyle, writable: false },
         ...idleSessionOperation(),
       };
     case 'show-settings-new-style':
@@ -745,32 +663,31 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return {
         ...state,
         mainView: 'settings-style',
-        inspectedStyleId: action.styleId,
-        inspectedStyleName: action.styleName,
-        styleEditingAvailable: action.styleId === state.inspectedStyleId
-          ? state.styleEditingAvailable
-          : false,
+        inspectedStyle: {
+          id: action.styleId,
+          name: action.styleName,
+          writable: action.styleId === state.inspectedStyle.id
+            ? state.inspectedStyle.writable
+            : false,
+        },
         ...idleSessionOperation(),
       };
     case 'style-detail-loaded':
-      if (action.styleId !== state.inspectedStyleId) return state;
-      return {
-        ...state,
-        inspectedStyleName: action.styleName,
-        styleEditingAvailable: action.writable,
-      };
     case 'style-updated':
-      if (action.styleId !== state.inspectedStyleId) return state;
+      if (action.styleId !== state.inspectedStyle.id) return state;
       return {
         ...state,
-        inspectedStyleName: action.styleName,
-        styleEditingAvailable: action.writable,
+        inspectedStyle: {
+          ...state.inspectedStyle,
+          name: action.styleName,
+          writable: action.writable,
+        },
       };
     case 'show-settings-voices':
       return {
         ...state,
         mainView: 'settings-voices',
-        voiceEditingAvailable: false,
+        inspectedVoice: { ...state.inspectedVoice, writable: false },
         ...idleSessionOperation(),
       };
     case 'show-settings-voice-input':
@@ -785,20 +702,25 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return {
         ...state,
         mainView: 'settings-voice',
-        inspectedVoiceId: action.voiceId,
-        inspectedVoiceName: action.voiceName,
-        voiceEditingAvailable: action.voiceId === state.inspectedVoiceId
-          ? state.voiceEditingAvailable
-          : false,
+        inspectedVoice: {
+          id: action.voiceId,
+          name: action.voiceName,
+          writable: action.voiceId === state.inspectedVoice.id
+            ? state.inspectedVoice.writable
+            : false,
+        },
         ...idleSessionOperation(),
       };
     case 'voice-detail-loaded':
     case 'voice-updated':
-      if (action.voiceId !== state.inspectedVoiceId) return state;
+      if (action.voiceId !== state.inspectedVoice.id) return state;
       return {
         ...state,
-        inspectedVoiceName: action.voiceName,
-        voiceEditingAvailable: action.writable,
+        inspectedVoice: {
+          ...state.inspectedVoice,
+          name: action.voiceName,
+          writable: action.writable,
+        },
       };
     case 'show-settings-api-keys':
       return { ...state, mainView: 'settings-api-keys', ...idleSessionOperation() };
@@ -808,14 +730,13 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return {
         ...state,
         mainView: 'settings-api-key',
-        inspectedApiKeyId: action.apiKeyId,
-        inspectedApiKeyName: action.apiKeyName,
+        inspectedApiKey: { id: action.apiKeyId, name: action.apiKeyName },
         ...idleSessionOperation(),
       };
     case 'api-key-detail-loaded':
     case 'api-key-updated':
-      if (action.apiKeyId !== state.inspectedApiKeyId) return state;
-      return { ...state, inspectedApiKeyName: action.apiKeyName };
+      if (action.apiKeyId !== state.inspectedApiKey.id) return state;
+      return { ...state, inspectedApiKey: { ...state.inspectedApiKey, name: action.apiKeyName } };
     case 'show-settings-r2-storage':
       return { ...state, mainView: 'settings-r2-storage', ...idleSessionOperation() };
     case 'show-chat':
@@ -839,7 +760,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         ...state,
         mainView: 'chat',
         currentForumId: action.snapshot.forum.id,
-        inspectedForumFile: null,
+        inspectedForum: { ...state.inspectedForum, file: null },
         activeConversation: {
           forumId: action.snapshot.forum.id,
           sessionId: action.snapshot.session_id,
@@ -920,22 +841,22 @@ export function navigationTitle(state: AppState): string | null {
     case 'new-persona': return 'New persona';
     case 'persona-detail':
       return state.bootstrap?.personas.find(
-        ({ id }) => id === state.inspectedPersonaId,
+        ({ id }) => id === state.inspectedPersona.id,
       )?.display_name ?? 'Persona';
     case 'persona-settings': return 'Settings';
     case 'characters': return 'Characters';
     case 'new-character': return 'New character';
     case 'character-detail':
       return state.bootstrap?.characters.find(
-        ({ id }) => id === state.inspectedCharacterId,
+        ({ id }) => id === state.inspectedCharacter.id,
       )?.display_name ?? 'Character';
     case 'character-settings': return 'Settings';
-    case 'character-file': return state.inspectedCharacterFile ?? 'File';
+    case 'character-file': return state.inspectedCharacter.file ?? 'File';
     case 'new-character-file': return 'New file';
     case 'forums': return 'Forums';
     case 'new-forum': return 'New forum';
     case 'sessions': return 'Sessions';
-    case 'forum-file': return state.inspectedForumFile ?? 'File';
+    case 'forum-file': return state.inspectedForum.file ?? 'File';
     case 'new-forum-file': return 'New file';
     case 'forum-detail':
       return state.bootstrap?.forums.find(
@@ -951,17 +872,17 @@ export function navigationTitle(state: AppState): string | null {
     case 'settings-vault': return state.inspectedVaultName ?? 'Vault';
     case 'settings-providers': return 'Providers';
     case 'settings-new-provider': return 'New provider';
-    case 'settings-provider': return state.inspectedProviderName ?? 'Provider';
+    case 'settings-provider': return state.inspectedProvider.name ?? 'Provider';
     case 'settings-styles': return 'Styles';
     case 'settings-new-style': return 'New style';
-    case 'settings-style': return state.inspectedStyleName ?? 'Style';
+    case 'settings-style': return state.inspectedStyle.name ?? 'Style';
     case 'settings-voices': return 'Voices';
     case 'settings-voice-input': return 'Voice settings';
     case 'settings-new-voice': return 'New voice';
-    case 'settings-voice': return state.inspectedVoiceName ?? 'Voice';
+    case 'settings-voice': return state.inspectedVoice.name ?? 'Voice';
     case 'settings-api-keys': return 'API Keys';
     case 'settings-new-api-key': return 'New API key';
-    case 'settings-api-key': return state.inspectedApiKeyName ?? 'API Key';
+    case 'settings-api-key': return state.inspectedApiKey.name ?? 'API Key';
     case 'settings-r2-storage': return 'R2 storage';
     case 'chat': return null;
   }

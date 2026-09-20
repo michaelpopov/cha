@@ -2,8 +2,9 @@
 
 #include "app/media_operations.h"
 #include "app/vault_operations.h"
+#include "bridge/operation_dispatch.h"
+#include "bridge/request_params.h"
 #include "session/not_found_error.h"
-#include "util/path_name.h"
 #include "web/application_config.h"
 #include "web/audio_download.h"
 #include "web/fish_audio.h"
@@ -31,46 +32,10 @@ struct SessionIdentity {
     std::string session_id;
 };
 
-std::string require_identifier(
-    const nlohmann::json& params,
-    std::string_view key) {
-    if (!params.contains(std::string(key)) || !params[std::string(key)].is_string()) {
-        throw std::invalid_argument("The request was not valid.");
-    }
-    const std::string& value =
-        params[std::string(key)].get_ref<const std::string&>();
-    if (!cha::is_url_safe_identifier(value)) {
-        throw std::invalid_argument("The request was not valid.");
-    }
-    return value;
-}
-
-void require_only_keys(
-    const nlohmann::json& params,
-    std::initializer_list<std::string_view> keys) {
-    // Zero-param methods still require an empty object, not omitted keys.
-    if (!params.is_object() || params.size() != keys.size()) {
-        throw std::invalid_argument("The request was not valid.");
-    }
-    for (std::string_view key : keys) {
-        if (!params.contains(std::string(key))) {
-            throw std::invalid_argument("The request was not valid.");
-        }
-    }
-}
-
 SessionIdentity parse_session_identity(const nlohmann::json& params) {
     require_only_keys(params, {"forum_id", "session_id"});
     return {require_identifier(params, "forum_id"),
             require_identifier(params, "session_id")};
-}
-
-std::string require_string(const nlohmann::json& params, std::string_view key) {
-    const std::string name(key);
-    if (!params.contains(name) || !params[name].is_string()) {
-        throw std::invalid_argument("The request was not valid.");
-    }
-    return params[name].get<std::string>();
 }
 
 std::string optional_string(const nlohmann::json& params, std::string_view key) {
@@ -95,11 +60,6 @@ std::optional<std::string> nullable_string(
     return value;
 }
 
-nlohmann::json without_key(nlohmann::json params, std::string_view key) {
-    params.erase(std::string(key));
-    return params;
-}
-
 std::uint64_t require_safe_id(const nlohmann::json& params, std::string_view key) {
     const std::string name(key);
     if (!params.contains(name)) {
@@ -114,19 +74,6 @@ std::uint64_t require_safe_id(const nlohmann::json& params, std::string_view key
 
 cha::web::FishAudioSynthesis parse_synthesis_fields(const nlohmann::json& params) {
     return cha::web::decode_fish_audio_synthesis(params);
-}
-
-std::string require_filename(
-    const nlohmann::json& params,
-    std::string_view key) {
-    const std::string value = require_string(params, key);
-    if (value.empty()
-        || value.find('/') != std::string::npos
-        || value.find('\\') != std::string::npos
-        || value.find('\0') != std::string::npos) {
-        throw std::invalid_argument("The request was not valid.");
-    }
-    return value;
 }
 
 nlohmann::json encode_command_result(const cha::web::CommandSubmitResult& result) {
@@ -343,8 +290,7 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
             : ReplyCapacity::ordinary;
         const auto method = found->second.method;
         const bool context_bound = requires_context_epoch(method)
-            && method != Method::vault_switch && method != Method::vault_merge
-            && method != Method::vault_update;
+            && !changes_context(method);
         connection->outstanding.erase(found);
         queue_reply(connection, std::move(message), capacity, context_bound);
     }
@@ -620,12 +566,6 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
         });
     }
 
-    template<typename T>
-    nlohmann::json encode_optional(const std::optional<T>& value) {
-        if (!value) return nlohmann::json(nullptr);
-        return nlohmann::json(*value);
-    }
-
     void pump() {
         // Take at most one item per connection. Further coalescing remains in
         // LiveSession's SessionOutput until this slot is free again.
@@ -807,173 +747,6 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                     identity.forum_id, identity.session_id, epoch);
                 break;
             }
-            case Method::character_get: {
-                require_only_keys(params, {"character_id"});
-                result = application.get_character(
-                    require_identifier(params, "character_id"), epoch);
-                break;
-            }
-            case Method::character_create: {
-                result = application.create_character(
-                    cha::web::parse_create_character_request(params), epoch);
-                break;
-            }
-            case Method::character_update: {
-                const std::string id = require_identifier(params, "character_id");
-                result = application.update_character(
-                    id,
-                    cha::web::parse_character_settings_update(
-                        without_key(params, "character_id")),
-                    epoch);
-                break;
-            }
-            case Method::character_update_definition: {
-                const std::string id = require_identifier(params, "character_id");
-                result = application.update_character_definition(
-                    id,
-                    cha::web::parse_character_definition_update(
-                        without_key(params, "character_id")),
-                    epoch);
-                break;
-            }
-            case Method::character_delete: {
-                require_only_keys(params, {"character_id"});
-                application.delete_character(
-                    require_identifier(params, "character_id"), epoch);
-                result = nlohmann::json::object();
-                break;
-            }
-            case Method::character_file_get: {
-                require_only_keys(params, {"character_id", "filename"});
-                result = application.get_character_file(
-                    require_identifier(params, "character_id"),
-                    require_filename(params, "filename"),
-                    epoch);
-                break;
-            }
-            case Method::character_file_create: {
-                require_only_keys(params, {"character_id", "filename", "content"});
-                result = application.create_character_file(
-                    require_identifier(params, "character_id"),
-                    require_filename(params, "filename"),
-                    require_string(params, "content"),
-                    epoch);
-                break;
-            }
-            case Method::character_file_update: {
-                require_only_keys(params, {"character_id", "filename", "content"});
-                result = application.update_character_file(
-                    require_identifier(params, "character_id"),
-                    require_filename(params, "filename"),
-                    require_string(params, "content"),
-                    epoch);
-                break;
-            }
-            case Method::character_file_delete: {
-                require_only_keys(params, {"character_id", "filename"});
-                application.delete_character_file(
-                    require_identifier(params, "character_id"),
-                    require_filename(params, "filename"),
-                    epoch);
-                result = nlohmann::json::object();
-                break;
-            }
-            case Method::persona_get: {
-                require_only_keys(params, {"persona_id"});
-                result = application.get_persona(
-                    require_identifier(params, "persona_id"), epoch);
-                break;
-            }
-            case Method::persona_create: {
-                result = application.create_persona(
-                    cha::web::parse_create_persona_name(params), epoch);
-                break;
-            }
-            case Method::persona_update: {
-                const std::string id = require_identifier(params, "persona_id");
-                result = application.update_persona(
-                    id,
-                    cha::web::parse_persona_update(without_key(params, "persona_id")),
-                    epoch);
-                break;
-            }
-            case Method::persona_delete: {
-                require_only_keys(params, {"persona_id"});
-                application.delete_persona(
-                    require_identifier(params, "persona_id"), epoch);
-                result = nlohmann::json::object();
-                break;
-            }
-            case Method::forum_get: {
-                require_only_keys(params, {"forum_id"});
-                result = application.get_forum(
-                    require_identifier(params, "forum_id"), epoch);
-                break;
-            }
-            case Method::forum_create: {
-                result = application.create_forum(
-                    cha::web::parse_create_forum_request(params), epoch);
-                break;
-            }
-            case Method::forum_update: {
-                const std::string id = require_identifier(params, "forum_id");
-                result = application.update_forum(
-                    id,
-                    cha::web::parse_forum_update(without_key(params, "forum_id")),
-                    epoch);
-                break;
-            }
-            case Method::forum_delete: {
-                require_only_keys(params, {"forum_id"});
-                application.delete_forum(
-                    require_identifier(params, "forum_id"), epoch);
-                result = nlohmann::json::object();
-                break;
-            }
-            case Method::forum_members_update: {
-                const std::string id = require_identifier(params, "forum_id");
-                result = application.update_forum_members(
-                    id,
-                    cha::web::parse_forum_members_update(
-                        without_key(params, "forum_id")),
-                    epoch);
-                break;
-            }
-            case Method::forum_file_get: {
-                require_only_keys(params, {"forum_id", "filename"});
-                result = application.get_forum_file(
-                    require_identifier(params, "forum_id"),
-                    require_filename(params, "filename"),
-                    epoch);
-                break;
-            }
-            case Method::forum_file_create: {
-                require_only_keys(params, {"forum_id", "filename", "content"});
-                result = application.create_forum_file(
-                    require_identifier(params, "forum_id"),
-                    require_filename(params, "filename"),
-                    require_string(params, "content"),
-                    epoch);
-                break;
-            }
-            case Method::forum_file_update: {
-                require_only_keys(params, {"forum_id", "filename", "content"});
-                result = application.update_forum_file(
-                    require_identifier(params, "forum_id"),
-                    require_filename(params, "filename"),
-                    require_string(params, "content"),
-                    epoch);
-                break;
-            }
-            case Method::forum_file_delete: {
-                require_only_keys(params, {"forum_id", "filename"});
-                application.delete_forum_file(
-                    require_identifier(params, "forum_id"),
-                    require_filename(params, "filename"),
-                    epoch);
-                result = nlohmann::json::object();
-                break;
-            }
             case Method::vault_list: {
                 require_only_keys(params, {});
                 const auto snapshot = application.vault_snapshot();
@@ -1052,31 +825,6 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                     created, snapshot.active.name, snapshot.vaults.size());
                 break;
             }
-            case Method::provider_list:
-                require_only_keys(params, {});
-                result = application.list_providers(epoch);
-                break;
-            case Method::provider_get:
-                require_only_keys(params, {"provider_id"});
-                result = application.get_provider(
-                    require_identifier(params, "provider_id"), epoch);
-                break;
-            case Method::provider_create:
-                result = application.create_provider(
-                    cha::web::parse_create_provider_request(params), epoch);
-                break;
-            case Method::provider_update: {
-                const std::string id = require_identifier(params, "provider_id");
-                result = application.update_provider(
-                    id, without_key(params, "provider_id"), epoch);
-                break;
-            }
-            case Method::provider_delete:
-                require_only_keys(params, {"provider_id"});
-                application.delete_provider(
-                    require_identifier(params, "provider_id"), epoch);
-                result = nlohmann::json::object();
-                break;
             case Method::provider_test: {
                 const std::string provider_id =
                     require_identifier(params, "provider_id");
@@ -1087,62 +835,6 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                         provider_id, without_key(params, "provider_id"), epoch));
                 return;
             }
-            case Method::style_list:
-                require_only_keys(params, {});
-                result = application.list_styles(epoch);
-                break;
-            case Method::style_create:
-                result = application.create_style(
-                    cha::web::parse_create_display_name(params), epoch);
-                break;
-            case Method::style_update: {
-                const std::string id = require_identifier(params, "style_id");
-                result = application.update_style(
-                    id,
-                    cha::web::parse_style_update(without_key(params, "style_id")),
-                    epoch);
-                break;
-            }
-            case Method::style_delete:
-                require_only_keys(params, {"style_id"});
-                application.delete_style(
-                    require_identifier(params, "style_id"), epoch);
-                result = nlohmann::json::object();
-                break;
-            case Method::voice_list:
-                require_only_keys(params, {});
-                result = application.list_voices(epoch);
-                break;
-            case Method::voice_create:
-                result = application.create_voice(
-                    cha::web::parse_create_voice_request(params), epoch);
-                break;
-            case Method::voice_update: {
-                const std::string id = require_identifier(params, "voice_id");
-                result = application.update_voice(
-                    id,
-                    cha::web::parse_voice_update(without_key(params, "voice_id")),
-                    epoch);
-                break;
-            }
-            case Method::voice_delete:
-                require_only_keys(params, {"voice_id"});
-                application.delete_voice(
-                    require_identifier(params, "voice_id"), epoch);
-                result = nlohmann::json::object();
-                break;
-            case Method::voice_input_get:
-                require_only_keys(params, {});
-                result = encode_optional(application.get_voice_input_settings(epoch));
-                break;
-            case Method::voice_input_save:
-                result = application.save_voice_input_settings(
-                    cha::web::parse_voice_input_settings(params), epoch);
-                break;
-            case Method::voice_input_runtime:
-                require_only_keys(params, {});
-                result = encode_optional(application.get_voice_input_runtime(epoch));
-                break;
             case Method::voice_input_connect: {
                 if (!params.is_object() || !params.contains("sdp")
                     || !params["sdp"].is_string()) {
@@ -1193,20 +885,6 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                 result = nlohmann::json::object();
                 break;
             }
-            case Method::voice_output_get:
-                require_only_keys(params, {});
-                result = encode_optional(
-                    application.get_voice_output_settings(epoch));
-                break;
-            case Method::voice_output_save:
-                result = application.save_voice_output_settings(
-                    cha::web::parse_voice_output_settings(params), epoch);
-                break;
-            case Method::voice_output_runtime:
-                require_only_keys(params, {});
-                result = encode_optional(
-                    application.get_voice_output_runtime(epoch));
-                break;
             case Method::speech_start: {
                 if (!params.is_object() || !params.contains("text")
                     || !params["text"].is_string()) {
@@ -1351,55 +1029,6 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                 result = nlohmann::json::object();
                 break;
             }
-            case Method::api_key_list:
-                require_only_keys(params, {});
-                result = application.list_api_keys(epoch);
-                break;
-            case Method::api_key_create:
-                result = application.create_api_key(
-                    cha::web::parse_create_api_key_request(params), epoch);
-                break;
-            case Method::api_key_rename: {
-                const std::string id = require_identifier(params, "api_key_id");
-                result = application.rename_api_key(
-                    id,
-                    cha::web::parse_rename_display_name(
-                        without_key(params, "api_key_id")),
-                    epoch);
-                break;
-            }
-            case Method::api_key_replace_value: {
-                const std::string id = require_identifier(params, "api_key_id");
-                result = application.replace_api_key_value(
-                    id,
-                    cha::web::parse_replace_secret_value(
-                        without_key(params, "api_key_id")),
-                    epoch);
-                break;
-            }
-            case Method::api_key_delete:
-                require_only_keys(params, {"api_key_id"});
-                application.delete_api_key(
-                    require_identifier(params, "api_key_id"), epoch);
-                result = nlohmann::json::object();
-                break;
-            case Method::r2_storage_get:
-                require_only_keys(params, {});
-                result = encode_optional(application.get_r2_storage(epoch));
-                break;
-            case Method::r2_storage_save:
-                result = application.save_r2_storage(
-                    cha::web::parse_save_r2_storage_request(params), epoch);
-                break;
-            case Method::r2_storage_delete:
-                require_only_keys(params, {});
-                application.delete_r2_storage(epoch);
-                result = nlohmann::json::object();
-                break;
-            case Method::openai_auth_get:
-                require_only_keys(params, {});
-                result = application.openai_auth_status(epoch);
-                break;
             case Method::openai_auth_start:
                 require_only_keys(params, {});
                 start_background(
@@ -1410,13 +1039,18 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                 start_background(
                     connection_id, id, application.poll_openai_auth(epoch));
                 return;
-            case Method::openai_auth_disconnect:
-                require_only_keys(params, {});
-                result = application.disconnect_openai_auth(epoch);
-                break;
             default:
-                fail(ErrorCode::invalid_argument, "That method is not available.");
-                return;
+                if (auto workspace_result = dispatch_workspace_operation(
+                        application, method, params, epoch)) {
+                    result = std::move(*workspace_result);
+                } else if (auto settings_result = dispatch_settings_operation(
+                               application, method, params, epoch)) {
+                    result = std::move(*settings_result);
+                } else {
+                    fail(ErrorCode::invalid_argument, "That method is not available.");
+                    return;
+                }
+                break;
             }
             std::lock_guard lock(mutex);
             auto connection = find_connection(connection_id);

@@ -20,8 +20,8 @@ namespace {
 
 using namespace std::chrono_literals;
 
-WebSettings native_manager_settings(std::size_t session_limit) {
-    WebSettings settings;
+cha::app::RuntimeSettings native_manager_settings(std::size_t session_limit) {
+    cha::app::RuntimeSettings settings;
     settings.session_limit = session_limit;
     settings.command_queue_capacity = 8;
 

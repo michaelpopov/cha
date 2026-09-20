@@ -3,7 +3,9 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-import { isCharacterDetail, isCommandResult, isSessionSnapshot } from './client';
+import {
+  isCharacterDetail, isCommandResult, isSessionSnapshot, type SessionSnapshot,
+} from './client';
 import { isAppendEvent } from './events';
 import { isNativeSessionEvent } from './nativeEvents';
 import { nativeProtocolVersion } from './nativeBridge';
@@ -63,5 +65,97 @@ describe('C++ wire fixtures', () => {
     expect(dto).toContain('NativeRequest:');
     expect(dto).toContain('MediaResource:');
     expect(dto).toContain('Bootstrap:');
+  });
+});
+
+describe('snapshot validation', () => {
+  function snapshot(): SessionSnapshot {
+    return loadFixture('snapshot.json') as SessionSnapshot;
+  }
+
+  it.each([
+    ['missing forum identity', { forum: { default_persona_id: 'guest', default_persona_display_name: 'Guest' } }],
+    ['empty session identity', { session_id: '' }],
+    ['missing session label', { session_label: undefined }],
+    ['malformed character', { characters: [{}] }],
+    ['empty default character', { default_character_id: '' }],
+    ['empty transcript entry', { transcript: [{}] }],
+    ['empty generation state', { generation: {} }],
+    ['unsafe covered entry', { covered_until: Number.MAX_SAFE_INTEGER + 1 }],
+    ['non-text notice', { notice: {} }],
+    ['unknown lifecycle', { lifecycle: 'closed' }],
+    ['unknown shutdown reason', { shutdown_reason: 'unknown' }],
+  ])('rejects %s', (_name, patch) => {
+    expect(isSessionSnapshot({ ...snapshot(), ...patch })).toBe(false);
+  });
+
+  it.each([
+    ['missing forum ID', { id: undefined }],
+    ['missing forum name', { display_name: undefined }],
+    ['empty persona ID', { default_persona_id: '' }],
+    ['missing forum members', { members: undefined }],
+    ['malformed forum member', { members: [{}] }],
+  ])('rejects %s', (_name, patch) => {
+    const value = snapshot();
+    expect(isSessionSnapshot({ ...value, forum: { ...value.forum, ...patch } })).toBe(false);
+  });
+
+  it.each([
+    ['unsafe entry ID', { id: Number.MAX_SAFE_INTEGER + 1 }],
+    ['negative entry ID', { id: -1 }],
+    ['fractional request ID', { request_id: 1.5 }],
+    ['unknown entry kind', { kind: 'system' }],
+    ['unknown entry status', { status: 'pending' }],
+    ['missing participant', { participant_id: undefined }],
+    ['missing recipient', { addressed_to: undefined }],
+    ['non-text author', { display_name: {} }],
+    ['non-text recipient', { addressed_to_name: {} }],
+    ['non-text content', { text: {} }],
+    ['missing timestamp', { created_at: undefined }],
+    ['invalid timestamp', { created_at: 'yesterday' }],
+    ['invalid audio flag', { has_cached_audio: 'yes' }],
+  ])('rejects a transcript with %s', (_name, patch) => {
+    const value = snapshot();
+    expect(isSessionSnapshot({
+      ...value, transcript: [{ ...value.transcript[0], ...patch }],
+    })).toBe(false);
+  });
+
+  it.each([
+    ['missing active flag', { active: undefined }],
+    ['unsafe request ID', { request_id: Number.MAX_SAFE_INTEGER + 1 }],
+    ['negative request ID', { request_id: -1 }],
+    ['missing character ID', { character_id: undefined }],
+    ['non-text character name', { character_display_name: {} }],
+    ['unknown phase', { phase: 'complete' }],
+    ['non-text reasoning', { reasoning_text: [] }],
+  ])('rejects generation with %s', (_name, patch) => {
+    const value = snapshot();
+    expect(isSessionSnapshot({ ...value, generation: { ...value.generation, ...patch } })).toBe(false);
+  });
+
+  it('accepts unknown timestamps, empty notice attribution, and idle generation', () => {
+    const value = snapshot();
+    value.transcript[0].created_at = null;
+    delete value.transcript[0].has_cached_audio;
+    value.transcript.push({
+      ...value.transcript[0], id: 2, kind: 'notice', participant_id: '', display_name: '',
+      addressed_to: '', addressed_to_name: '', text: '',
+    });
+    expect(isSessionSnapshot(value)).toBe(true);
+  });
+
+  it.each(['reasoning', 'answering', 'stopping'] as const)('accepts active %s generation', (phase) => {
+    const value = snapshot();
+    value.generation = {
+      active: true, request_id: 7, character_id: 'assistant',
+      character_display_name: 'Assistant', phase, reasoning_text: 'Thinking…',
+    };
+    value.transcript[0].request_id = 7;
+    value.covered_until = 1;
+    value.notice = 'Stopping soon';
+    value.lifecycle = 'stopping';
+    value.shutdown_reason = 'session_closed';
+    expect(isSessionSnapshot(value)).toBe(true);
   });
 });

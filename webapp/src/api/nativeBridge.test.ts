@@ -20,7 +20,56 @@ function loadFixture(name: string): unknown {
   return JSON.parse(readFileSync(join(wireDirectory, name), 'utf8'));
 }
 
+const methodPolicies = loadFixture('native-method-policies.json') as Record<string, {
+  requires_context_epoch: boolean;
+  changes_context: boolean;
+}>;
+
 describe('native bridge', () => {
+  it.each(Object.entries(methodPolicies))(
+    'applies the shared reply epoch requirement for %s',
+    async (method, policy) => {
+      const bridge = createEnvelopeNativeBridge({ connectionId: 'current', post: () => {} });
+      bridge.setContextEpoch(7);
+      const resolved = vi.fn();
+      const pending = bridge.invoke(method).then(resolved);
+      const reply = { connection_id: 'current', id: 1, ok: true, result: 'completed' };
+      bridge.receive({ connection_id: 'current', delivery_id: 1, messages: [
+        { ...reply, context_epoch: 6 },
+      ] });
+      await Promise.resolve();
+      expect(resolved).toHaveBeenCalledTimes(policy.requires_context_epoch ? 0 : 1);
+      bridge.receive({ connection_id: 'current', delivery_id: 2, messages: [
+        { ...reply, context_epoch: 7 },
+      ] });
+      await pending;
+      expect(resolved).toHaveBeenCalledExactlyOnceWith('completed');
+      bridge.dispose();
+    },
+  );
+
+  it.each(Object.entries(methodPolicies))(
+    'honors the shared context policy for %s',
+    async (method, policy) => {
+      const bridge = createEnvelopeNativeBridge({ connectionId: 'current', post: () => {} });
+      bridge.setContextEpoch(7);
+      const pending = bridge.invoke(method);
+      const completed = policy.requires_context_epoch && !policy.changes_context
+        ? expect(pending).rejects.toMatchObject({ code: 'vault_changed' })
+        : expect(pending).resolves.toEqual('completed');
+
+      bridge.receive({ connection_id: 'current', delivery_id: 1, messages: [
+        { connection_id: 'current', event: 'app.contextChanged', context_epoch: 8, state: 'running' },
+        { connection_id: 'current', id: 1, context_epoch: 8, ok: true, result: 'completed' },
+      ] });
+      try {
+        await completed;
+      } finally {
+        bridge.dispose();
+      }
+    },
+  );
+
   it('does not post an invocation that was already aborted', async () => {
     const posts: unknown[] = [];
     const bridge = createEnvelopeNativeBridge({

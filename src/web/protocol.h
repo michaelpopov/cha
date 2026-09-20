@@ -21,7 +21,7 @@ namespace cha::web {
 
 enum class SessionLifecycle { starting, running, stopping };
 enum class ShutdownReason {
-    browser_disconnected,
+    session_closed,
     reloading,
     session_failed,
     session_deleted,
@@ -29,14 +29,12 @@ enum class ShutdownReason {
     retired,
 };
 enum class ErrorCode {
-    not_found, bad_request, body_too_large, prompt_too_large, forbidden_origin,
+    not_found, body_too_large, prompt_too_large,
     internal_error, speech_busy, vault_changed, session_stopping,
     session_limit_reached, session_open_timeout, server_stopping,
     session_not_live, command_timeout,
     command_queue_full, vault_password_required,
     source_vault_password_required,
-    // Native-first codes. HTTP adapters currently map unknown codes to 500;
-    // invalid_argument and application_unavailable are also mapped explicitly.
     invalid_argument, operation_cancelled, application_unavailable,
 };
 

@@ -1166,7 +1166,7 @@ describe('live chat', () => {
     const user = userEvent.setup();
     const events = drivableEvents();
     const submitInput = vi.fn()
-      .mockRejectedValueOnce(new ChaError('bad_request', 'The prompt was not accepted.'))
+      .mockRejectedValueOnce(new ChaError('invalid_argument', 'The prompt was not accepted.'))
       .mockResolvedValueOnce({ clear_input: true });
     render(
       <App
@@ -1194,7 +1194,7 @@ describe('live chat', () => {
     const user = userEvent.setup();
     const events = drivableEvents();
     const submitInput = vi.fn()
-      .mockRejectedValueOnce(new ChaError('bad_request', 'The prompt was not accepted.'))
+      .mockRejectedValueOnce(new ChaError('invalid_argument', 'The prompt was not accepted.'))
       .mockResolvedValue({ clear_input: true });
     const setDefaultCharacter = vi.fn(async () => ({ clear_input: false }));
     const snapshot: SessionSnapshot = {
@@ -1698,7 +1698,10 @@ describe('live chat', () => {
     expect(scrollIntoView).toHaveBeenCalled();
   });
 
-  it('explains a session whose end arrives over a healthy stream', async () => {
+  it.each([
+    { reason: 'server_stopping', message: 'CHA is shutting down' },
+    { reason: 'session_closed', message: 'This session has closed. Its conversation is saved.' },
+  ] as const)('explains $reason over a healthy stream', async ({ reason, message }) => {
     const events = drivableEvents();
     render(<App client={fixtureClient()} connectSessionEvents={events.connect} />);
     await attachInitial(events, transcriptSnapshot());
@@ -1707,10 +1710,10 @@ describe('live chat', () => {
       ...transcriptSnapshot(),
       generation: snapshotFixture.generation,
       lifecycle: 'stopping',
-      shutdown_reason: 'server_stopping',
+      shutdown_reason: reason,
     }));
 
-    expect(screen.getByRole('alert')).toHaveTextContent('CHA is shutting down');
+    expect(screen.getByRole('alert')).toHaveTextContent(message);
     expect(screen.getByRole('textbox', { name: 'Message' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Return to Welcome' })).toBeInTheDocument();
     // The conversation it already has stays readable rather than going blank.

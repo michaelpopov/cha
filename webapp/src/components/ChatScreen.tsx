@@ -266,8 +266,8 @@ function endedMessage(snapshot: SessionSnapshot): string {
       return 'This session was deleted.';
     case 'reloading':
       return 'Applying settings…';
-    case 'browser_disconnected':
-      return 'This session was released because the browser disconnected.';
+    case 'session_closed':
+      return 'This session has closed. Its conversation is saved.';
     default:
       return 'This session is closing. Its conversation is saved.';
   }

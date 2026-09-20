@@ -30,8 +30,8 @@ namespace {
 
 using namespace std::chrono_literals;
 
-WebSettings manager_settings(std::size_t session_limit) {
-    WebSettings settings;
+cha::app::RuntimeSettings manager_settings(std::size_t session_limit) {
+    cha::app::RuntimeSettings settings;
     settings.session_limit = session_limit;
     settings.command_queue_capacity = 8;
     return settings;
@@ -690,7 +690,7 @@ TEST(LiveSessionManager, ReopensSameKeyAfterTheOldOwnerHasBeenJoined) {
 
 TEST(LiveSessionManager, DeletionReservationStopsTheActorAndBlocksOpenAndReattach) {
     SessionFiles files;
-    WebSettings settings = manager_settings(2);
+    cha::app::RuntimeSettings settings = manager_settings(2);
     settings.delete_deadline = 1s;
     LiveSessionManager manager(settings, test_opener(files));
     const FullSessionId key{"forum", "reserved"};

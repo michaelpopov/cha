@@ -684,9 +684,7 @@ private:
             runtime_ = cha_runtime_create(
                 config.c_str(),
                 resource_path.c_str(),
-                "",
                 password.c_str(),
-                0,
                 &password_error,
                 &bridge_error);
             if (runtime_ != nullptr) break;
@@ -696,9 +694,6 @@ private:
                 instance_, window_, selected_vault_name, wide_from_utf8(message));
             if (!entered) throw LaunchCancelled();
             password = *entered;
-        }
-        if (cha_runtime_port(runtime_) != 0) {
-            throw std::runtime_error("CHA started an application listener");
         }
         if (dev_origin_) {
             runtime_origin_ = *dev_origin_;

@@ -6,14 +6,11 @@ private let applicationName = "CHA"
 
 private enum LauncherError: LocalizedError {
     case incompleteApplication
-    case cannotStart
 
     var errorDescription: String? {
         switch self {
         case .incompleteApplication:
             return "This copy of CHA is incomplete. Replace it with a fresh copy and try again."
-        case .cannotStart:
-            return "CHA couldn't open. Close CHA if it is already running, then try again."
         }
     }
 }
@@ -307,25 +304,17 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
             var passwordError: Int32 = 0
             let created = supportDirectory.path.withCString { configPath in
                 resources.path.withCString { resourcePath in
-                    "".withCString { token in
-                        password.withCString { passwordValue in
-                            cha_runtime_create(
-                                configPath,
-                                resourcePath,
-                                token,
-                                passwordValue,
-                                0,
-                                &passwordError,
-                                &bridgeError)
-                        }
+                    password.withCString { passwordValue in
+                        cha_runtime_create(
+                            configPath,
+                            resourcePath,
+                            passwordValue,
+                            &passwordError,
+                            &bridgeError)
                     }
                 }
             }
             if let created {
-                if cha_runtime_port(created) != 0 {
-                    cha_runtime_destroy(created)
-                    throw LauncherError.cannotStart
-                }
                 runtimeURL = URL(string: "\(chaAssetOrigin)/")
                 runtime = created
                 updateDatabaseMenuItems()
