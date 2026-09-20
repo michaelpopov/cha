@@ -411,12 +411,12 @@ export function ChatScreen({
     return () => { current = false; };
   }, [client]);
 
-  // A different conversation starts at its own end rather than inheriting where
-  // the reader had left the previous one.
+  // A different conversation starts with a fresh composer at its own end.
   useEffect(() => {
     followingLatest.current = true;
     setSendToAll(false);
     setTurnToDelete(null);
+    updateDraft('');
   }, [conversationKey]);
 
   // A recording belongs to the conversation in which it started.
@@ -917,14 +917,10 @@ export function ChatScreen({
             <span className="cha-chat-kicker">
               {snapshot?.session_label ?? state.activeConversationLabel ?? 'Chat'}
             </span>
-            <p>Start the conversation below.</p>
           </div>
         )}
         {coveredEntries.length > 0 && (
           <section aria-label="Covered conversation" className="cha-covered">
-            <div className="cha-covered-header">
-              <span>Covered conversation</span>
-            </div>
             {coveredEntries.map(({ entry, dividerBefore }) => (
               <Fragment key={entry.id}>
                 {dividerBefore && <hr className="cha-repeated-prompt-divider" />}

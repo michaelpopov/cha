@@ -26,8 +26,9 @@ import {
   type TextToSpeechVoice,
   useTextToSpeechConfiguration,
 } from '../textToSpeech';
-import { sessionOperationState, type AppAction, type AppState } from '../state/view';
+import { type AppAction, type AppState } from '../state/view';
 import { Markdown } from './Markdown';
+import { DetailActions, EditableTitle } from './DetailActions';
 import { TransliteratingInput } from './TransliterationMode';
 import { voiceClasses } from './characterAppearance';
 import {
@@ -39,16 +40,9 @@ import {
   StopIcon,
 } from './Icons';
 
-interface DiscoveryScreenProps {
+interface NavigationScreenProps {
   state: AppState;
   dispatch: Dispatch<AppAction>;
-}
-
-// Opening a session can be started from anywhere — a Recent entry, a session
-// row, a new name — so every navigation screen shows the outcome in place
-// rather than replacing itself. The node is built once by the router above.
-interface NavigationScreenProps extends DiscoveryScreenProps {
-  sessionReport: ReactNode;
 }
 
 // Personas, characters, and character files use the same navigation rows.
@@ -113,14 +107,12 @@ interface RosterDetailScreenProps<Value> {
   ariaLabel: string;
   backLabel: string;
   copy: RosterDetailCopy;
+  fallbackTitle?: string;
   // Stable across renders, so reading one entry does not restart itself.
   load(subjectId: string): Promise<Value>;
   onLoaded?(value: Value, subjectId: string): void;
-  render(value: Value): ReactNode;
+  render(value: Value, update: (value: Value) => void): ReactNode;
   onBack(): void;
-  reloadVersion?: number;
-  report?: ReactNode;
-  sessionReport: ReactNode;
   subjectId: string | null;
   // Facts the roster already knows, shown above the content and while it is
   // still loading. A persona or character has none; a forum names its cast.
@@ -132,13 +124,11 @@ function RosterDetailScreen<Value>({
   ariaLabel,
   backLabel,
   copy,
+  fallbackTitle,
   load,
   onLoaded,
   onBack,
-  reloadVersion = 0,
-  report,
   render,
-  sessionReport,
   subjectId,
   subtitle,
   toolbarAction,
@@ -166,7 +156,7 @@ function RosterDetailScreen<Value>({
     return () => {
       current = false;
     };
-  }, [copy.failed, load, onLoaded, reloadVersion, requestVersion, subjectId]);
+  }, [copy.failed, load, onLoaded, requestVersion, subjectId]);
 
   return (
     <section className="cha-screen cha-navigation" aria-label={ariaLabel}>
@@ -177,9 +167,10 @@ function RosterDetailScreen<Value>({
         </button>
         {toolbarAction}
       </div>
-      {sessionReport}
-      {report}
       {subtitle}
+      {value === null && fallbackTitle && (
+        <div className="cha-detail-actions"><h1>{fallbackTitle}</h1></div>
+      )}
       {!subjectId && <p className="cha-state-message">{copy.absent}</p>}
       {subjectId && value === null && !error && (
         <p className="cha-state-message" role="status">{copy.loading}</p>
@@ -196,7 +187,7 @@ function RosterDetailScreen<Value>({
           </button>
         </div>
       )}
-      {value !== null && render(value)}
+      {value !== null && render(value, setValue)}
     </section>
   );
 }
@@ -209,13 +200,11 @@ function rosterMarkdown(markdown: string, empty: string): ReactNode {
 
 interface RosterDetailProps extends NavigationScreenProps {
   client: ChaClient;
-  reloadVersion?: number;
 }
 
-export function PersonasScreen({ state, dispatch, sessionReport }: NavigationScreenProps) {
+export function PersonasScreen({ state, dispatch }: NavigationScreenProps) {
   return (
     <section className="cha-screen cha-navigation" aria-label="Personas navigation">
-      {sessionReport}
       <div className="cha-roster">
         <button
           className="cha-list-action"
@@ -225,7 +214,6 @@ export function PersonasScreen({ state, dispatch, sessionReport }: NavigationScr
           <span className="cha-list-icon"><PlusIcon /></span>
           <span className="cha-list-copy">
             <span className="cha-primary-line">New persona</span>
-            <span className="cha-secondary-line">Enter a name to begin</span>
           </span>
           <ChevronRightIcon className="cha-chevron" />
         </button>
@@ -245,7 +233,6 @@ export function PersonasScreen({ state, dispatch, sessionReport }: NavigationScr
 export function NewPersonaScreen({
   dispatch,
   client,
-  sessionReport,
 }: RosterDetailProps) {
   const [name, setName] = useState('');
   const [saving, setSaving] = useState(false);
@@ -276,7 +263,6 @@ export function NewPersonaScreen({
         <ChevronLeftIcon />
         <span>Personas</span>
       </button>
-      {sessionReport}
       <form className="cha-new-persona" onSubmit={(event) => void submit(event)}>
         <TransliteratingInput
           autoComplete="off"
@@ -313,58 +299,70 @@ export function NewPersonaScreen({
   );
 }
 
-export function PersonaDetailScreen({
-  state,
-  dispatch,
-  client,
-  reloadVersion = 0,
-  sessionReport,
-}: RosterDetailProps) {
-  const load = useCallback(
-    (personaId: string) => client.getPersona(personaId).then((detail) => {
-      dispatch({
-        type: 'persona-detail-loaded',
-        personaId,
-        writable: detail.writable,
-      });
-      return detail.persona_markdown;
-    }),
-    [client, dispatch],
-  );
+export function PersonaDetailScreen({ state, dispatch, client }: RosterDetailProps) {
+  const id = state.inspectedPersona.id;
+  const load = useCallback((id: string) => client.getPersona(id), [client]);
+  const onLoaded = useCallback((detail: PersonaDetail, personaId: string) => {
+    dispatch({ type: 'persona-detail-loaded', personaId, writable: detail.writable });
+  }, [dispatch]);
 
   return (
     <RosterDetailScreen
+      key={id}
       ariaLabel="Persona detail navigation"
       backLabel="Personas"
+      fallbackTitle={state.bootstrap?.personas.find((persona) => persona.id === id)?.display_name}
       copy={{
         absent: 'No persona is selected.',
         loading: 'Loading persona…',
         failed: 'Persona detail could not be loaded.',
       }}
       load={load}
-      render={(markdown) => rosterMarkdown(markdown, 'This persona has no PERSONA.md description.')}
+      onLoaded={onLoaded}
       onBack={() => dispatch({ type: 'show-personas' })}
-      reloadVersion={reloadVersion}
-      sessionReport={sessionReport}
-      subjectId={state.inspectedPersona.id}
+      subjectId={id}
       toolbarAction={state.inspectedPersona.writable ? (
-        <button
-          className="cha-detail-link"
-          onClick={() => dispatch({ type: 'show-persona-settings' })}
-          type="button"
-        >
-          <span>Settings</span>
-          <ChevronRightIcon />
+        <button className="cha-detail-link" onClick={() => dispatch({ type: 'show-persona-settings' })} type="button">
+          <span>Settings</span><ChevronRightIcon />
         </button>
       ) : undefined}
+      render={(detail, update) => {
+        async function saveMarkdown(persona_markdown: string) {
+          const saved = await client.updatePersona(detail.id, { persona_markdown });
+          update(saved);
+          dispatch({ type: 'persona-updated', persona: saved });
+        }
+        return <>
+          <div className="cha-detail-actions">
+            <EditableTitle
+              available={detail.writable} id={detail.id} name={detail.display_name} subject="Persona"
+              onSave={async (display_name) => {
+                const saved = await client.updatePersona(detail.id, { display_name });
+                update(saved);
+                dispatch({ type: 'persona-updated', persona: saved });
+              }}
+            />
+            {detail.writable && <DetailActions
+              name={detail.display_name} subject="Persona"
+              deleteMessage={`Delete “${detail.display_name}”? This permanently removes its profile. This cannot be undone.`}
+              onDelete={async () => {
+                await client.deletePersona(detail.id);
+                dispatch({ type: 'persona-deleted', personaId: detail.id });
+              }}
+              editor={{ title: 'Edit persona profile', value: detail.persona_markdown,
+                uploadLabel: 'Replace persona description from file', onSave: saveMarkdown }}
+            />}
+          </div>
+          {rosterMarkdown(detail.persona_markdown, 'This persona has no PERSONA.md description.')}
+        </>;
+      }}
     />
   );
 }
 
-export function CharactersScreen({ state, dispatch, sessionReport }: NavigationScreenProps) {
+export function CharactersScreen({ state, dispatch }: NavigationScreenProps) {
   return (
     <section className="cha-screen cha-navigation" aria-label="Characters navigation">
-      {sessionReport}
       <div className="cha-roster">
         <button
           className="cha-list-action"
@@ -374,7 +372,6 @@ export function CharactersScreen({ state, dispatch, sessionReport }: NavigationS
           <span className="cha-list-icon"><PlusIcon /></span>
           <span className="cha-list-copy">
             <span className="cha-primary-line">New character</span>
-            <span className="cha-secondary-line">Enter a name to begin</span>
           </span>
           <ChevronRightIcon className="cha-chevron" />
         </button>
@@ -394,7 +391,6 @@ export function CharactersScreen({ state, dispatch, sessionReport }: NavigationS
 export function NewCharacterScreen({
   dispatch,
   client,
-  sessionReport,
 }: RosterDetailProps) {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -430,7 +426,6 @@ export function NewCharacterScreen({
         <ChevronLeftIcon />
         <span>Characters</span>
       </button>
-      {sessionReport}
       <form className="cha-new-character" onSubmit={(event) => void submit(event)}>
         <TransliteratingInput
           autoComplete="off"
@@ -482,8 +477,6 @@ export function CharacterDetailScreen({
   state,
   dispatch,
   client,
-  reloadVersion = 0,
-  sessionReport,
 }: RosterDetailProps) {
   const characterId = state.inspectedCharacter.id;
   const load = useCallback((id: string) => client.getCharacter(id), [client]);
@@ -498,8 +491,10 @@ export function CharacterDetailScreen({
 
   return (
     <RosterDetailScreen
+      key={characterId}
       ariaLabel="Character detail navigation"
       backLabel="Characters"
+      fallbackTitle={state.bootstrap?.characters.find(({ id }) => id === characterId)?.display_name}
       copy={{
         absent: 'No character is selected.',
         loading: 'Loading character…',
@@ -508,8 +503,6 @@ export function CharacterDetailScreen({
       load={load}
       onLoaded={onLoaded}
       onBack={() => dispatch({ type: 'show-characters' })}
-      reloadVersion={reloadVersion}
-      sessionReport={sessionReport}
       subjectId={characterId}
       toolbarAction={state.inspectedCharacter.settingsWritable ? (
         <button
@@ -521,14 +514,32 @@ export function CharacterDetailScreen({
           <ChevronRightIcon />
         </button>
       ) : undefined}
-      render={(detail) => (
+      render={(detail, update) => <>
+        <div className="cha-detail-actions">
+          <EditableTitle
+            available={detail.writable} id={detail.id} name={detail.display_name} subject="Character"
+            onSave={async (display_name) => {
+              const saved = await client.updateCharacterDefinition(detail.id, { display_name });
+              update(saved);
+              dispatch({ type: 'character-updated', character: saved });
+            }}
+          />
+          {detail.writable && <DetailActions
+            name={detail.display_name} subject="Character"
+            deleteMessage={`Delete “${detail.display_name}”? This permanently removes its definition and settings. Existing chat transcripts are kept. This cannot be undone.`}
+            onDelete={async () => {
+              await client.deleteCharacter(detail.id);
+              dispatch({ type: 'character-deleted', characterId: detail.id });
+            }}
+          />}
+        </div>
         <MarkdownFileList
           filenames={detail.markdown_files}
           writable={detail.writable}
           onNew={() => dispatch({ type: 'show-new-character-file' })}
           onSelect={(filename) => dispatch({ type: 'inspect-character-file', characterId: characterId!, filename })}
         />
-      )}
+      </>}
     />
   );
 }
@@ -537,12 +548,10 @@ export function CharacterFileScreen({
   state,
   dispatch,
   client,
-  reloadVersion = 0,
-  sessionReport,
 }: RosterDetailProps) {
   const filename = state.inspectedCharacter.file;
   const load = useCallback((characterId: string) => (
-    client.getCharacterFile(characterId, filename!).then((file) => file.content)
+    client.getCharacterFile(characterId, filename!)
   ), [client, filename]);
   const characterId = state.inspectedCharacter.id;
   const characterName = state.bootstrap?.characters.find(
@@ -550,6 +559,7 @@ export function CharacterFileScreen({
   )?.display_name;
   return (
     <RosterDetailScreen
+      key={`${characterId}/${filename}`}
       ariaLabel="Character file navigation"
       backLabel={characterName ?? 'Character'}
       copy={{
@@ -558,10 +568,26 @@ export function CharacterFileScreen({
         failed: 'Character file could not be loaded.',
       }}
       load={load}
-      render={(markdown) => rosterMarkdown(markdown, 'This file is empty.')}
+      render={(file, update) => <>
+        {file.writable && <div className="cha-detail-actions">
+          <DetailActions
+            name={filename!} subject="File"
+            deleteMessage={`Delete “${filename}”? This permanently removes this Markdown file. This cannot be undone.`}
+            onDelete={async () => {
+              await client.deleteCharacterFile(characterId!, filename!);
+              dispatch({ type: 'inspect-character', characterId: characterId! });
+            }}
+            editor={{ title: 'Edit character file', value: file.content,
+              uploadLabel: 'Replace character file content from file',
+              onSave: async (content) => {
+                update(await client.updateCharacterFile(characterId!, filename!, content));
+              },
+            }}
+          />
+        </div>}
+        {rosterMarkdown(file.content, 'This file is empty.')}
+      </>}
       onBack={() => dispatch({ type: 'inspect-character', characterId: characterId! })}
-      reloadVersion={reloadVersion}
-      sessionReport={sessionReport}
       subjectId={filename ? characterId : null}
     />
   );
@@ -587,7 +613,6 @@ function NewMarkdownFileScreen({
   state,
   dispatch,
   client,
-  sessionReport,
 }: RosterDetailProps & { kind: 'character' | 'forum' }) {
   const [filename, setFilename] = useState('');
   const [content, setContent] = useState('');
@@ -639,7 +664,6 @@ function NewMarkdownFileScreen({
         <ChevronLeftIcon />
         <span>{subjectName ?? (kind === 'character' ? 'Character' : 'Forum')}</span>
       </button>
-      {sessionReport}
       <form className="cha-settings-form" onSubmit={(event) => void submit(event)}>
         <label>
           Filename
@@ -815,7 +839,6 @@ export function PersonaSettingsScreen({
   state,
   dispatch,
   client,
-  sessionReport,
 }: RosterDetailProps) {
   const personaId = state.inspectedPersona.id;
   const persona = state.bootstrap?.personas.find(({ id }) => id === personaId);
@@ -888,7 +911,6 @@ export function PersonaSettingsScreen({
         <ChevronLeftIcon />
         <span>{persona?.display_name ?? 'Persona'}</span>
       </button>
-      {sessionReport}
       {!personaId && <p className="cha-state-message">No persona is selected.</p>}
       {personaId && detail === null && !error && (
         <p className="cha-state-message" role="status">Loading persona settings…</p>
@@ -972,7 +994,6 @@ export function CharacterSettingsScreen({
   state,
   dispatch,
   client,
-  sessionReport,
 }: RosterDetailProps) {
   const characterId = state.inspectedCharacter.id;
   const character = state.bootstrap?.characters.find(({ id }) => id === characterId);
@@ -1068,7 +1089,6 @@ export function CharacterSettingsScreen({
         <ChevronLeftIcon />
         <span>{character?.display_name ?? 'Character'}</span>
       </button>
-      {sessionReport}
       {!characterId && <p className="cha-state-message">No character is selected.</p>}
       {characterId && detail === null && !error && (
         <p className="cha-state-message" role="status">Loading character settings…</p>
@@ -1215,10 +1235,9 @@ export function forumRosterDescription(forum: ForumSummary): string {
   return forum.description ?? forumMemberNames(forum);
 }
 
-export function ForumsScreen({ state, dispatch, sessionReport }: NavigationScreenProps) {
+export function ForumsScreen({ state, dispatch }: NavigationScreenProps) {
   return (
     <section className="cha-screen cha-navigation" aria-label="Forums navigation">
-      {sessionReport}
       <div className="cha-roster">
         <button
           className="cha-list-action"
@@ -1228,7 +1247,6 @@ export function ForumsScreen({ state, dispatch, sessionReport }: NavigationScree
           <span className="cha-list-icon"><PlusIcon /></span>
           <span className="cha-list-copy">
             <span className="cha-primary-line">New forum</span>
-            <span className="cha-secondary-line">Enter a name to begin</span>
           </span>
           <ChevronRightIcon className="cha-chevron" />
         </button>
@@ -1249,7 +1267,6 @@ export function NewForumScreen({
   state,
   dispatch,
   client,
-  sessionReport,
 }: RosterDetailProps) {
   const personas = state.bootstrap?.personas ?? [];
   const [name, setName] = useState('');
@@ -1285,7 +1302,6 @@ export function NewForumScreen({
         <ChevronLeftIcon />
         <span>Forums</span>
       </button>
-      {sessionReport}
       <form className="cha-new-forum" onSubmit={(event) => void submit(event)}>
         <TransliteratingInput
           autoComplete="off"
@@ -1350,9 +1366,8 @@ export function ForumDetailScreen({
   state,
   dispatch,
   client,
-  reloadVersion = 0,
-  sessionReport,
-}: RosterDetailProps) {
+  onDelete,
+}: RosterDetailProps & { onDelete(forumId: string): Promise<void> }) {
   const load = useCallback((forumId: string) => client.getForum(forumId), [client]);
   const onLoaded = useCallback((detail: ForumDetail, forumId: string) => {
     dispatch({ type: 'forum-detail-loaded', forumId, writable: detail.writable });
@@ -1360,8 +1375,10 @@ export function ForumDetailScreen({
   const forum = state.bootstrap?.forums.find(({ id }) => id === state.currentForumId);
   return (
     <RosterDetailScreen
+      key={state.currentForumId}
       ariaLabel="Forum detail navigation"
       backLabel="Sessions"
+      fallbackTitle={forum?.display_name}
       copy={{
         absent: 'No forum is selected.',
         loading: 'Loading forum…',
@@ -1369,17 +1386,30 @@ export function ForumDetailScreen({
       }}
       load={load}
       onLoaded={onLoaded}
-      render={(detail) => (
+      render={(detail, update) => <>
+        <div className="cha-detail-actions">
+          <EditableTitle
+            available={detail.writable} id={detail.id} name={detail.display_name} subject="Forum"
+            onSave={async (display_name) => {
+              const saved = await client.updateForum(detail.id, { display_name });
+              update(saved);
+              dispatch({ type: 'forum-updated', forum: saved });
+            }}
+          />
+          {detail.writable && <DetailActions
+            name={detail.display_name} subject="Forum"
+            deleteMessage={`Delete “${detail.display_name}”? This permanently removes the forum and all of its sessions. This cannot be undone.`}
+            onDelete={() => onDelete(detail.id)}
+          />}
+        </div>
         <MarkdownFileList
           filenames={detail.markdown_files}
           writable={detail.writable}
           onNew={() => dispatch({ type: 'show-new-forum-file' })}
           onSelect={(filename) => dispatch({ type: 'inspect-forum-file', forumId: state.currentForumId!, filename })}
         />
-      )}
+      </>}
       onBack={() => dispatch({ type: 'show-sessions' })}
-      reloadVersion={reloadVersion}
-      sessionReport={sessionReport}
       subjectId={state.currentForumId}
       subtitle={forum && <ForumCast forum={forum} />}
       toolbarAction={state.inspectedForum.writable ? (
@@ -1397,15 +1427,17 @@ export function ForumDetailScreen({
 }
 
 export function ForumFileScreen({
-  state, dispatch, client, reloadVersion = 0, sessionReport,
+  state, dispatch, client,
 }: RosterDetailProps) {
+  const forumId = state.currentForumId;
   const filename = state.inspectedForum.file;
   const load = useCallback((forumId: string) => (
-    client.getForumFile(forumId, filename!).then((file) => file.content)
+    client.getForumFile(forumId, filename!)
   ), [client, filename]);
   const forumName = state.bootstrap?.forums.find(({ id }) => id === state.currentForumId)?.display_name;
   return (
     <RosterDetailScreen
+      key={`${forumId}/${filename}`}
       ariaLabel="Forum file navigation"
       backLabel={forumName ?? 'Forum'}
       copy={{
@@ -1414,10 +1446,26 @@ export function ForumFileScreen({
         failed: 'Forum file could not be loaded.',
       }}
       load={load}
-      render={(markdown) => rosterMarkdown(markdown, 'This file is empty.')}
+      render={(file, update) => <>
+        {file.writable && <div className="cha-detail-actions">
+          <DetailActions
+            name={filename!} subject="File"
+            deleteMessage={`Delete “${filename}”? This permanently removes this Markdown file. This cannot be undone.`}
+            onDelete={async () => {
+              await client.deleteForumFile(forumId!, filename!);
+              dispatch({ type: 'show-forum-detail' });
+            }}
+            editor={{ title: 'Edit forum file', value: file.content,
+              uploadLabel: 'Replace forum file content from file',
+              onSave: async (content) => {
+                update(await client.updateForumFile(forumId!, filename!, content));
+              },
+            }}
+          />
+        </div>}
+        {rosterMarkdown(file.content, 'This file is empty.')}
+      </>}
       onBack={() => dispatch({ type: 'show-forum-detail' })}
-      reloadVersion={reloadVersion}
-      sessionReport={sessionReport}
       subjectId={filename ? state.currentForumId : null}
     />
   );
@@ -1427,7 +1475,6 @@ export function ForumMembersScreen({
   state,
   dispatch,
   client,
-  sessionReport,
 }: RosterDetailProps) {
   const forumId = state.currentForumId;
   const forum = state.bootstrap?.forums.find(({ id }) => id === forumId);
@@ -1491,7 +1538,6 @@ export function ForumMembersScreen({
         <ChevronLeftIcon />
         <span>{forum?.display_name ?? 'Forum'}</span>
       </button>
-      {sessionReport}
       {!forum && <p className="cha-state-message">No forum is selected.</p>}
       {forum && (
         <form className="cha-forum-members" onSubmit={(event) => void save(event)}>
@@ -1545,45 +1591,6 @@ interface SessionsScreenProps extends NavigationScreenProps {
   onOpenSession(forumId: string, sessionId: string): Promise<boolean>;
 }
 
-// Opening or creating a session is reported by the screen the user is looking
-// at, so the list stays on screen and a half-typed session name is not thrown
-// away. Chat is the exception: there the operation is the whole screen.
-export function SessionOperationReport({
-  state,
-  onRetrySession,
-  onReturnToWelcome,
-}: {
-  state: AppState;
-  onRetrySession(): void;
-  onReturnToWelcome(): void;
-}) {
-  const { pending, failure } = sessionOperationState(state);
-  if (pending) {
-    return (
-      <p className="cha-state-message" role="status">
-        {state.sessionOperationMessage ?? 'Opening session…'}
-      </p>
-    );
-  }
-  if (!failure) return null;
-  return (
-    <div className="cha-state-message cha-error-message" role="alert">
-      <p>{failure}</p>
-      {state.sessionOperationRetryable && (
-        <div className="cha-state-actions">
-          <button className="cha-button cha-button-ghost" onClick={onRetrySession} type="button">
-            Retry
-          </button>
-          <button className="cha-button cha-button-ghost" onClick={onReturnToWelcome} type="button">
-            Return to Welcome
-          </button>
-        </div>
-      )}
-    </div>
-  );
-}
-
-
 export function formatSessionTime(updatedAt: number, now = Date.now()): string {
   const elapsed = Math.max(0, Math.floor(now / 1000) - updatedAt);
   if (elapsed < 60) return 'Now';
@@ -1606,7 +1613,6 @@ export function SessionsScreen({
   client,
   catalogRevision,
   onOpenSession,
-  sessionReport,
 }: SessionsScreenProps) {
   const [sessions, setSessions] = useState<SessionListing[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -1662,7 +1668,6 @@ export function SessionsScreen({
         </button>
       )}
       {!forumId && <p className="cha-state-message">No forum is selected.</p>}
-      {sessionReport}
       {forumId && !sessions && !error && (
         <p className="cha-state-message" role="status">Loading sessions…</p>
       )}
@@ -1696,7 +1701,6 @@ export function SessionsScreen({
               <span className="cha-list-icon"><PlusIcon /></span>
               <span className="cha-list-copy">
                 <span className="cha-primary-line">New session</span>
-                <span className="cha-secondary-line">Enter a name to begin</span>
               </span>
               <ChevronRightIcon className="cha-chevron" />
             </button>
@@ -1736,15 +1740,13 @@ export function NewSessionScreen({
   state,
   dispatch,
   onCreateSession,
-  sessionReport,
 }: NewSessionScreenProps) {
   const [name, setName] = useState('');
   const trimmedName = name.trim();
-  const { pending: sessionPending, failure: sessionFailure } = sessionOperationState(state);
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!state.currentForumId || !trimmedName || sessionPending) return;
+    if (!state.currentForumId || !trimmedName) return;
     void onCreateSession(state.currentForumId, trimmedName);
   }
 
@@ -1758,13 +1760,11 @@ export function NewSessionScreen({
         <ChevronLeftIcon />
         <span>Sessions</span>
       </button>
-      {sessionReport}
       <form className="cha-new-session" onSubmit={submit}>
         <TransliteratingInput
           autoComplete="off"
           autoFocus
           className="cha-form-control"
-          disabled={sessionPending}
           id="cha-session-name"
           label="Session name"
           onValueChange={setName}
@@ -1782,7 +1782,7 @@ export function NewSessionScreen({
           </button>
           <button
             className="cha-button cha-button-primary"
-            disabled={!trimmedName || sessionPending || state.sessionOperationRetryable}
+            disabled={!trimmedName}
             type="submit"
           >
             Start session

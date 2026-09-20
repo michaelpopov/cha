@@ -744,6 +744,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     case 'session-operation-started':
       return {
         ...state,
+        mainView: 'chat',
         sessionOperation: 'pending',
         sessionOperationMessage: action.message,
         sessionOperationRetryable: false,
@@ -751,6 +752,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     case 'session-operation-failed':
       return {
         ...state,
+        mainView: 'chat',
         sessionOperation: 'failed',
         sessionOperationMessage: action.message,
         sessionOperationRetryable: action.retryable ?? false,
@@ -823,33 +825,13 @@ export function appReducer(state: AppState, action: AppAction): AppState {
   }
 }
 
-// Pending disables the actions that would start a second operation; a failure
-// carries the message the responsible view reports.
-export function sessionOperationState(state: AppState): {
-  pending: boolean;
-  failure: string | null;
-} {
-  return {
-    pending: state.sessionOperation === 'pending',
-    failure: state.sessionOperation === 'failed' ? state.sessionOperationMessage : null,
-  };
-}
-
 export function navigationTitle(state: AppState): string | null {
   switch (state.mainView) {
     case 'personas': return 'Personas';
     case 'new-persona': return 'New persona';
-    case 'persona-detail':
-      return state.bootstrap?.personas.find(
-        ({ id }) => id === state.inspectedPersona.id,
-      )?.display_name ?? 'Persona';
     case 'persona-settings': return 'Settings';
     case 'characters': return 'Characters';
     case 'new-character': return 'New character';
-    case 'character-detail':
-      return state.bootstrap?.characters.find(
-        ({ id }) => id === state.inspectedCharacter.id,
-      )?.display_name ?? 'Character';
     case 'character-settings': return 'Settings';
     case 'character-file': return state.inspectedCharacter.file ?? 'File';
     case 'new-character-file': return 'New file';
@@ -858,10 +840,6 @@ export function navigationTitle(state: AppState): string | null {
     case 'sessions': return 'Sessions';
     case 'forum-file': return state.inspectedForum.file ?? 'File';
     case 'new-forum-file': return 'New file';
-    case 'forum-detail':
-      return state.bootstrap?.forums.find(
-        ({ id }) => id === state.currentForumId,
-      )?.display_name ?? 'Forum';
     case 'forum-members': return 'Members';
     case 'new-session': return 'New session';
     case 'settings': return 'Settings';
@@ -869,21 +847,24 @@ export function navigationTitle(state: AppState): string | null {
     case 'settings-new-vault': return 'New vault';
     case 'settings-download-vault': return 'Download vault';
     case 'settings-merge-vault': return 'Merge vault';
-    case 'settings-vault': return state.inspectedVaultName ?? 'Vault';
     case 'settings-providers': return 'Providers';
     case 'settings-new-provider': return 'New provider';
-    case 'settings-provider': return state.inspectedProvider.name ?? 'Provider';
     case 'settings-styles': return 'Styles';
     case 'settings-new-style': return 'New style';
-    case 'settings-style': return state.inspectedStyle.name ?? 'Style';
     case 'settings-voices': return 'Voices';
     case 'settings-voice-input': return 'Voice settings';
     case 'settings-new-voice': return 'New voice';
-    case 'settings-voice': return state.inspectedVoice.name ?? 'Voice';
     case 'settings-api-keys': return 'API Keys';
     case 'settings-new-api-key': return 'New API key';
-    case 'settings-api-key': return state.inspectedApiKey.name ?? 'API Key';
     case 'settings-r2-storage': return 'R2 storage';
+    case 'persona-detail':
+    case 'character-detail':
+    case 'forum-detail':
+    case 'settings-vault':
+    case 'settings-provider':
+    case 'settings-style':
+    case 'settings-voice':
+    case 'settings-api-key':
     case 'chat': return null;
   }
 }

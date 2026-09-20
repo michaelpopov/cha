@@ -25,7 +25,6 @@ function renderConnection(client = fixtureClient()) {
   return render(
     <OpenAiConnectionScreen
       client={client}
-      sessionReport={null}
       state={initialAppState}
     />,
   );

@@ -6,7 +6,6 @@ import {
   parseAppRoute,
   reloadApplication,
   sessionRoute,
-  usesHashRoutes,
   writeAppRoute,
 } from './route';
 
@@ -36,53 +35,29 @@ describe('application routes', () => {
     expect(() => sessionRoute('not/safe', 'planning')).toThrow(TypeError);
   });
 
-  it('uses hash routes on packaged and development origins', () => {
-    expect(usesHashRoutes({ protocol: 'http:' })).toBe(true);
-    expect(usesHashRoutes({ protocol: 'https:' })).toBe(true);
-    expect(usesHashRoutes({ protocol: 'cha:' })).toBe(true);
+  it('reads hash routes and keeps the shell path and query when building a link', () => {
     expect(appHref('/s/lobby/planning/', {
-      protocol: 'http:', pathname: '/', search: '',
-    })).toBe('/#/s/lobby/planning/');
-    expect(appHref('/s/lobby/planning/', {
-      protocol: 'cha:', pathname: '/', search: '',
-    })).toBe('/#/s/lobby/planning/');
-    expect(currentAppRoute({
-      protocol: 'http:', pathname: '/', hash: '#/s/lobby/planning/',
-    })).toEqual({ kind: 'session', forumId: 'lobby', sessionId: 'planning' });
-    expect(currentAppRoute({
-      protocol: 'cha:', pathname: '/', hash: '#/s/lobby/planning/',
-    })).toEqual({ kind: 'session', forumId: 'lobby', sessionId: 'planning' });
-    expect(currentAppRoute({
-      protocol: 'https:', pathname: '/', hash: '#/',
-    })).toEqual({ kind: 'root' });
+      pathname: '/shell', search: '?theme=dark',
+    })).toBe('/shell?theme=dark#/s/lobby/planning/');
+    expect(currentAppRoute({ hash: '#/s/lobby/planning/' })).toEqual({
+      kind: 'session', forumId: 'lobby', sessionId: 'planning',
+    });
+    expect(currentAppRoute({ hash: '#/' })).toEqual({ kind: 'root' });
+    expect(currentAppRoute({ hash: '' })).toEqual({ kind: 'root' });
   });
 
   it('writes fragment history without changing the document path', () => {
     window.history.replaceState(null, '', '/shell');
     writeAppRoute('/s/lobby/planning/', 'replace', {
-      protocol: 'cha:', pathname: '/shell', search: '',
+      pathname: '/shell', search: '',
     });
     expect(window.location.pathname).toBe('/shell');
     expect(window.location.hash).toBe('#/s/lobby/planning/');
   });
 
-  it('reloads the document instead of assigning a fragment', () => {
-    const http = {
-      protocol: 'http:' as const,
-      assign: vi.fn(),
-      reload: vi.fn(),
-    };
-    reloadApplication(http);
-    expect(http.reload).toHaveBeenCalledOnce();
-    expect(http.assign).not.toHaveBeenCalled();
-
-    const native = {
-      protocol: 'cha:' as const,
-      assign: vi.fn(),
-      reload: vi.fn(),
-    };
-    reloadApplication(native);
-    expect(native.reload).toHaveBeenCalledOnce();
-    expect(native.assign).not.toHaveBeenCalled();
+  it('reloads the document', () => {
+    const location = { reload: vi.fn() };
+    reloadApplication(location);
+    expect(location.reload).toHaveBeenCalledOnce();
   });
 });

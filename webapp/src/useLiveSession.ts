@@ -5,7 +5,6 @@ import type { SessionEventConnection, SessionEventHandlers } from './api/events'
 import {
   currentAppRoute,
   sessionRoute,
-  usesHashRoutes,
   writeAppRoute,
 } from './state/route';
 import { consumeVoiceSettingsRestore } from './state/voiceSettingsReload';
@@ -436,6 +435,7 @@ export function useLiveSession(
     const target = `${forumId}/new/${label}`;
     if (pendingTarget.current === target) return false;
     pendingTarget.current = target;
+    retryTarget.current = null;
     const epoch = beginNavigation();
     dispatch({ type: 'session-operation-started', message: 'Creating session…' });
     try {
@@ -463,7 +463,7 @@ export function useLiveSession(
         const retryable = isRetryableSessionOpen(failure);
         dispatch({
           type: 'session-operation-failed',
-          retryable,
+          retryable: retryable && retryTarget.current !== null,
           message: limited
             ? 'Another session has not closed yet. Try again.'
             : publicErrorMessage(failure, 'The session could not be created.'),
@@ -563,7 +563,7 @@ export function useLiveSession(
       }
     };
     window.addEventListener('popstate', visitHistoryRoute);
-    if (usesHashRoutes()) window.addEventListener('hashchange', visitHistoryRoute);
+    window.addEventListener('hashchange', visitHistoryRoute);
     return () => {
       window.removeEventListener('popstate', visitHistoryRoute);
       window.removeEventListener('hashchange', visitHistoryRoute);

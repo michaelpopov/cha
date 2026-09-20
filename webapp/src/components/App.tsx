@@ -45,7 +45,6 @@ import {
   PersonaDetailScreen,
   PersonaSettingsScreen,
   PersonasScreen,
-  SessionOperationReport,
   SessionsScreen,
 } from './Screens';
 import { Sidebar } from './Sidebar';
@@ -77,16 +76,10 @@ interface ScreenProps extends ChatActions {
   state: AppState;
   dispatch: Dispatch<AppAction>;
   client: ChaClient;
+  onDeleteForum(forumId: string): Promise<void>;
   onCreateSession(forumId: string, label: string): Promise<boolean>;
   onOpenSession(forumId: string, sessionId: string): Promise<boolean>;
-  onRetrySession(): void;
   catalogRevision: number;
-  characterRevision: number;
-  forumRevision: number;
-  personaRevision: number;
-  providerRevision: number;
-  styleRevision: number;
-  voiceRevision: number;
 }
 
 function Screen({
@@ -94,9 +87,9 @@ function Screen({
   state,
   dispatch,
   client,
+  onDeleteForum,
   onCreateSession,
   onOpenSession,
-  onRetrySession,
   onCoverConversation,
   onDeleteTurn,
   onRetryStream,
@@ -106,24 +99,7 @@ function Screen({
   onSubmitInput,
   onUncoverConversation,
   catalogRevision,
-  characterRevision,
-  forumRevision,
-  personaRevision,
-  providerRevision,
-  styleRevision,
-  voiceRevision,
 }: ScreenProps) {
-  // A session can be opened from the sidebar while any navigation screen is
-  // showing, so each one carries the report rather than only the two screens
-  // that start an open themselves.
-  const sessionReport = (
-    <SessionOperationReport
-      onRetrySession={onRetrySession}
-      onReturnToWelcome={onReturnToWelcome}
-      state={state}
-    />
-  );
-
   switch (state.mainView) {
     case 'chat': return (
       <ChatScreen
@@ -142,13 +118,12 @@ function Screen({
       />
     );
     case 'personas': return (
-      <PersonasScreen state={state} dispatch={dispatch} sessionReport={sessionReport} />
+      <PersonasScreen state={state} dispatch={dispatch} />
     );
     case 'new-persona': return (
       <NewPersonaScreen
         client={client}
         dispatch={dispatch}
-        sessionReport={sessionReport}
         state={state}
       />
     );
@@ -156,8 +131,6 @@ function Screen({
       <PersonaDetailScreen
         client={client}
         dispatch={dispatch}
-        reloadVersion={personaRevision}
-        sessionReport={sessionReport}
         state={state}
       />
     );
@@ -165,18 +138,16 @@ function Screen({
       <PersonaSettingsScreen
         client={client}
         dispatch={dispatch}
-        sessionReport={sessionReport}
         state={state}
       />
     );
     case 'characters': return (
-      <CharactersScreen state={state} dispatch={dispatch} sessionReport={sessionReport} />
+      <CharactersScreen state={state} dispatch={dispatch} />
     );
     case 'new-character': return (
       <NewCharacterScreen
         client={client}
         dispatch={dispatch}
-        sessionReport={sessionReport}
         state={state}
       />
     );
@@ -184,8 +155,6 @@ function Screen({
       <CharacterDetailScreen
         client={client}
         dispatch={dispatch}
-        reloadVersion={characterRevision}
-        sessionReport={sessionReport}
         state={state}
       />
     );
@@ -193,8 +162,6 @@ function Screen({
       <CharacterFileScreen
         client={client}
         dispatch={dispatch}
-        reloadVersion={characterRevision}
-        sessionReport={sessionReport}
         state={state}
       />
     );
@@ -202,7 +169,6 @@ function Screen({
       <NewCharacterFileScreen
         client={client}
         dispatch={dispatch}
-        sessionReport={sessionReport}
         state={state}
       />
     );
@@ -210,18 +176,16 @@ function Screen({
       <CharacterSettingsScreen
         client={client}
         dispatch={dispatch}
-        sessionReport={sessionReport}
         state={state}
       />
     );
     case 'forums': return (
-      <ForumsScreen state={state} dispatch={dispatch} sessionReport={sessionReport} />
+      <ForumsScreen state={state} dispatch={dispatch} />
     );
     case 'new-forum': return (
       <NewForumScreen
         client={client}
         dispatch={dispatch}
-        sessionReport={sessionReport}
         state={state}
       />
     );
@@ -231,16 +195,14 @@ function Screen({
         client={client}
         dispatch={dispatch}
         onOpenSession={onOpenSession}
-        sessionReport={sessionReport}
         state={state}
       />
     );
     case 'forum-detail': return (
       <ForumDetailScreen
+        onDelete={onDeleteForum}
         client={client}
         dispatch={dispatch}
-        reloadVersion={forumRevision}
-        sessionReport={sessionReport}
         state={state}
       />
     );
@@ -248,8 +210,6 @@ function Screen({
       <ForumFileScreen
         client={client}
         dispatch={dispatch}
-        reloadVersion={forumRevision}
-        sessionReport={sessionReport}
         state={state}
       />
     );
@@ -257,7 +217,6 @@ function Screen({
       <NewForumFileScreen
         client={client}
         dispatch={dispatch}
-        sessionReport={sessionReport}
         state={state}
       />
     );
@@ -265,7 +224,6 @@ function Screen({
       <ForumMembersScreen
         client={client}
         dispatch={dispatch}
-        sessionReport={sessionReport}
         state={state}
       />
     );
@@ -273,7 +231,6 @@ function Screen({
       <NewSessionScreen
         dispatch={dispatch}
         onCreateSession={onCreateSession}
-        sessionReport={sessionReport}
         state={state}
       />
     );
@@ -281,84 +238,77 @@ function Screen({
       <OpenAiConnectionScreen
         client={client}
         dispatch={dispatch}
-        sessionReport={sessionReport}
         state={state}
       />
     );
     case 'settings-vaults': return (
-      <VaultsScreen client={client} dispatch={dispatch} sessionReport={sessionReport} state={state} />
+      <VaultsScreen client={client} dispatch={dispatch} state={state} />
     );
     case 'settings-new-vault': return (
-      <NewVaultScreen client={client} dispatch={dispatch} sessionReport={sessionReport} state={state} />
+      <NewVaultScreen client={client} dispatch={dispatch} state={state} />
     );
     case 'settings-download-vault': return (
-      <DownloadVaultScreen client={client} dispatch={dispatch} sessionReport={sessionReport} state={state} />
+      <DownloadVaultScreen client={client} dispatch={dispatch} state={state} />
     );
     case 'settings-merge-vault': return (
-      <MergeVaultScreen client={client} dispatch={dispatch} sessionReport={sessionReport} state={state} />
+      <MergeVaultScreen client={client} dispatch={dispatch} state={state} />
     );
     case 'settings-vault': return (
-      <VaultScreen client={client} dispatch={dispatch} sessionReport={sessionReport} state={state} />
+      <VaultScreen client={client} dispatch={dispatch} state={state} />
     );
     case 'settings-providers': return (
-      <ProvidersScreen client={client} dispatch={dispatch} sessionReport={sessionReport} state={state} />
+      <ProvidersScreen client={client} dispatch={dispatch} state={state} />
     );
     case 'settings-new-provider': return (
-      <NewProviderScreen client={client} dispatch={dispatch} sessionReport={sessionReport} state={state} />
+      <NewProviderScreen client={client} dispatch={dispatch} state={state} />
     );
     case 'settings-provider': return (
       <ProviderScreen
         client={client}
         dispatch={dispatch}
-        reloadVersion={providerRevision}
-        sessionReport={sessionReport}
         state={state}
       />
     );
     case 'settings-styles': return (
-      <StylesScreen client={client} dispatch={dispatch} sessionReport={sessionReport} state={state} />
+      <StylesScreen client={client} dispatch={dispatch} state={state} />
     );
     case 'settings-new-style': return (
-      <NewStyleScreen client={client} dispatch={dispatch} sessionReport={sessionReport} state={state} />
+      <NewStyleScreen client={client} dispatch={dispatch} state={state} />
     );
     case 'settings-style': return (
       <StyleScreen
         client={client}
         dispatch={dispatch}
-        reloadVersion={styleRevision}
-        sessionReport={sessionReport}
         state={state}
       />
     );
     case 'settings-voices': return (
-      <VoicesScreen client={client} dispatch={dispatch} sessionReport={sessionReport} state={state} />
+      <VoicesScreen client={client} dispatch={dispatch} state={state} />
     );
     case 'settings-voice-input': return (
-      <VoiceSettingsScreen client={client} dispatch={dispatch} sessionReport={sessionReport} state={state} />
+      <VoiceSettingsScreen client={client} dispatch={dispatch} state={state} />
     );
     case 'settings-new-voice': return (
-      <NewVoiceScreen client={client} dispatch={dispatch} sessionReport={sessionReport} state={state} />
+      <NewVoiceScreen client={client} dispatch={dispatch} state={state} />
     );
     case 'settings-voice': return (
       <VoiceScreen
         client={client}
         dispatch={dispatch}
-        reloadVersion={voiceRevision}
-        sessionReport={sessionReport}
         state={state}
       />
     );
     case 'settings-api-keys': return (
-      <ApiKeysScreen client={client} dispatch={dispatch} sessionReport={sessionReport} state={state} />
+      <ApiKeysScreen client={client} dispatch={dispatch} state={state} />
     );
     case 'settings-new-api-key': return (
-      <NewApiKeyScreen client={client} dispatch={dispatch} sessionReport={sessionReport} state={state} />
+      <NewApiKeyScreen client={client} dispatch={dispatch} state={state} />
     );
     case 'settings-api-key': return (
-      <ApiKeyScreen client={client} dispatch={dispatch} sessionReport={sessionReport} state={state} />
+      <ApiKeyScreen client={client} dispatch={dispatch} state={state} />
     );
     case 'settings-r2-storage': return (
-      <R2StorageScreen client={client} dispatch={dispatch} sessionReport={sessionReport} state={state} />
+      <R2StorageScreen client={client} dispatch={dispatch} state={state} />
     );
   }
 }
@@ -382,10 +332,7 @@ function BootstrapState({ state, onRetry }: { state: AppState; onRetry(): void }
   );
 }
 
-// Shown only when the operation concerns the whole application — a deep link or
-// a history entry the browser is restoring. An operation started from a
-// navigation screen reports itself on that screen instead, so the session list
-// or the half-typed session name survives the failure.
+// Opening a session replaces chat; navigating elsewhere dismisses this state.
 function SessionOperationState({
   state,
   onRetry,
@@ -420,9 +367,6 @@ function SessionOperationState({
   );
 }
 
-// Every navigation supersedes an open still in flight, so a slow one cannot
-// land afterwards and pull the user into a conversation they have left. These
-// actions change no view and must therefore supersede nothing.
 function defaultReload() {
   reloadApplication();
 }
@@ -443,12 +387,6 @@ export function App({
   const [state, dispatch] = useReducer(appReducer, initialAppState);
   const [bootstrapAttempt, setBootstrapAttempt] = useState(0);
   const [catalogRevision, setCatalogRevision] = useState(0);
-  const [characterRevision, setCharacterRevision] = useState(0);
-  const [forumRevision, setForumRevision] = useState(0);
-  const [personaRevision, setPersonaRevision] = useState(0);
-  const [providerRevision, setProviderRevision] = useState(0);
-  const [styleRevision, setStyleRevision] = useState(0);
-  const [voiceRevision, setVoiceRevision] = useState(0);
   const request = useRef<{ client: ChaClient; promise: Promise<Bootstrap> } | null>(null);
   const playbackPositions = useRef(new Map<string, Map<number, number>>());
   const pendingMutations = useRef(new Set<string>());
@@ -664,16 +602,6 @@ export function App({
   }, [clearLiveSession, client, navigate, refreshBootstrap, runMutation,
     state.activeConversation]);
 
-  const deletePersona = useCallback(async (personaId: string) => {
-    await client.deletePersona(personaId);
-    navigate({ type: 'persona-deleted', personaId });
-  }, [client, navigate]);
-
-  const deleteCharacter = useCallback(async (characterId: string) => {
-    await client.deleteCharacter(characterId);
-    navigate({ type: 'character-deleted', characterId });
-  }, [client, navigate]);
-
   const deleteForum = useCallback(async (forumId: string) => {
     await client.deleteForum(forumId);
     if (state.activeConversation?.forumId === forumId) {
@@ -706,23 +634,7 @@ export function App({
             state={state}
           />
           <main className="cha-main" data-view={state.mainView}>
-            <TopBar
-              client={client}
-              dispatch={navigate}
-              onDeleteCharacter={deleteCharacter}
-              onDeleteForum={deleteForum}
-              onDeletePersona={deletePersona}
-              onCharacterDefinitionUpdated={() => (
-                setCharacterRevision((revision) => revision + 1)
-              )}
-              onForumDefinitionUpdated={() => setForumRevision((revision) => revision + 1)}
-              onPersonaDefinitionUpdated={() => setPersonaRevision((revision) => revision + 1)}
-              onProviderUpdated={() => setProviderRevision((revision) => revision + 1)}
-              onStyleUpdated={() => setStyleRevision((revision) => revision + 1)}
-              onVoiceUpdated={() => setVoiceRevision((revision) => revision + 1)}
-              state={state}
-              title={title}
-            />
+            <TopBar dispatch={navigate} state={state} title={title} />
             {!ready && <BootstrapState onRetry={retryBootstrap} state={state} />}
             {ready && wholeApplication && (
               <SessionOperationState
@@ -735,20 +647,14 @@ export function App({
               <Screen
                 playbackPositions={playbackPositions.current}
                 catalogRevision={catalogRevision}
-                characterRevision={characterRevision}
-                forumRevision={forumRevision}
-                personaRevision={personaRevision}
-                providerRevision={providerRevision}
-                styleRevision={styleRevision}
-                voiceRevision={voiceRevision}
                 client={client}
                 dispatch={navigate}
                 onCoverConversation={coverConversation}
                 onDeleteTurn={deleteTurn}
+                onDeleteForum={deleteForum}
                 onCreateSession={createConversation}
                 onOpenSession={openConversation}
                 onRetryStream={retryStream}
-                onRetrySession={retrySessionOpen}
                 onReturnToWelcome={returnToWelcome}
                 onSetDefaultCharacter={setDefaultCharacter}
                 onStopGeneration={stopGeneration}

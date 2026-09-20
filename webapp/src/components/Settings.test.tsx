@@ -27,7 +27,6 @@ import {
   VoiceSettingsScreen,
   VoicesScreen,
 } from './Settings';
-import { TopBar } from './TopBar';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -106,7 +105,7 @@ describe('Settings screens', () => {
       .mockRejectedValueOnce(new ChaError('application_unavailable', 'Please try again.'));
     const client = fixtureClient({ [method]: load });
     const { rerender } = render(
-      <Screen client={client} dispatch={vi.fn()} sessionReport={null} state={initialAppState} />,
+      <Screen client={client} dispatch={vi.fn()} state={initialAppState} />,
     );
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Please try again.');
@@ -114,7 +113,7 @@ describe('Settings screens', () => {
     expect(await screen.findByText(loadedText)).toBeInTheDocument();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     rerender(
-      <Screen client={client} dispatch={vi.fn()} sessionReport={null} state={initialAppState} />,
+      <Screen client={client} dispatch={vi.fn()} state={initialAppState} />,
     );
     expect(load).toHaveBeenCalledTimes(2);
   });
@@ -138,7 +137,6 @@ describe('Settings screens', () => {
       <VaultsScreen
         client={fixtureClient({ listVaults: async () => vaults })}
         dispatch={dispatch}
-        sessionReport={null}
         state={initialAppState}
       />,
     );
@@ -185,7 +183,6 @@ describe('Settings screens', () => {
           downloadR2Vault,
         })}
         dispatch={dispatch}
-        sessionReport={null}
         state={initialAppState}
       />,
     );
@@ -232,7 +229,6 @@ describe('Settings screens', () => {
       <MergeVaultScreen
         client={fixtureClient({ listVaults: async () => vaults, mergeVault })}
         dispatch={dispatch}
-        sessionReport={null}
         state={state}
       />,
     );
@@ -268,7 +264,6 @@ describe('Settings screens', () => {
           }),
         })}
         dispatch={vi.fn()}
-        sessionReport={null}
         state={initialAppState}
       />,
     );
@@ -303,7 +298,6 @@ describe('Settings screens', () => {
       <MergeVaultScreen
         client={fixtureClient({ listVaults: async () => vaults, mergeVault, getVoiceInputSettings })}
         dispatch={vi.fn()}
-        sessionReport={null}
         state={initialAppState}
       />,
     );
@@ -322,7 +316,6 @@ describe('Settings screens', () => {
       <MergeVaultScreen
         client={fixtureClient({ listVaults: async () => [vaults[0]] })}
         dispatch={vi.fn()}
-        sessionReport={null}
         state={initialAppState}
       />,
     );
@@ -341,7 +334,6 @@ describe('Settings screens', () => {
       <MergeVaultScreen
         client={fixtureClient({ listVaults: async () => vaults, mergeVault })}
         dispatch={vi.fn()}
-        sessionReport={null}
         state={initialAppState}
       />,
     );
@@ -367,7 +359,6 @@ describe('Settings screens', () => {
       <MergeVaultScreen
         client={fixtureClient({ listVaults: async () => vaults, mergeVault })}
         dispatch={vi.fn()}
-        sessionReport={null}
         state={initialAppState}
       />,
     );
@@ -403,7 +394,6 @@ describe('Settings screens', () => {
       <MergeVaultScreen
         client={fixtureClient({ listVaults: async () => vaults, mergeVault })}
         dispatch={vi.fn()}
-        sessionReport={null}
         state={initialAppState}
       />,
     );
@@ -425,7 +415,6 @@ describe('Settings screens', () => {
       <MergeVaultScreen
         client={fixtureClient({ listVaults: async () => vaults, mergeVault })}
         dispatch={vi.fn()}
-        sessionReport={null}
         state={initialAppState}
       />,
     );
@@ -455,7 +444,6 @@ describe('Settings screens', () => {
       <NewVaultScreen
         client={fixtureClient({ listVaults: async () => vaults, createVault })}
         dispatch={dispatch}
-        sessionReport={null}
         state={initialAppState}
       />,
     );
@@ -493,7 +481,6 @@ describe('Settings screens', () => {
       <NewVaultScreen
         client={fixtureClient({ listVaults: async () => vaults, createVault })}
         dispatch={dispatch}
-        sessionReport={null}
         state={initialAppState}
       />,
     );
@@ -525,7 +512,6 @@ describe('Settings screens', () => {
       <NewVaultScreen
         client={fixtureClient({ listVaults: async () => vaults, createVault })}
         dispatch={vi.fn()}
-        sessionReport={null}
         state={initialAppState}
       />,
     );
@@ -552,7 +538,6 @@ describe('Settings screens', () => {
       <VaultScreen
         client={fixtureClient({ listVaults: async () => vaults, updateVault })}
         dispatch={vi.fn()}
-        sessionReport={null}
         state={{ ...initialAppState, inspectedVaultName: 'Projects' }}
       />,
     );
@@ -575,7 +560,6 @@ describe('Settings screens', () => {
           deleteVault,
         })}
         dispatch={dispatch}
-        sessionReport={null}
         state={{ ...initialAppState, inspectedVaultName: 'Projects' }}
       />,
     );
@@ -607,7 +591,6 @@ describe('Settings screens', () => {
       <NewApiKeyScreen
         client={fixtureClient({ createApiKey })}
         dispatch={dispatch}
-        sessionReport={null}
         state={initialAppState}
       />,
     );
@@ -632,7 +615,6 @@ describe('Settings screens', () => {
       <R2StorageScreen
         client={fixtureClient({ getR2Storage: async () => null, saveR2Storage })}
         dispatch={vi.fn()}
-        sessionReport={null}
         state={initialAppState}
       />,
     );
@@ -678,7 +660,6 @@ describe('Settings screens', () => {
           deleteR2Storage,
         })}
         dispatch={dispatch}
-        sessionReport={null}
         state={initialAppState}
       />,
     );
@@ -716,7 +697,6 @@ describe('Settings screens', () => {
           updateProvider,
         })}
         dispatch={vi.fn()}
-        sessionReport={null}
         state={{
           ...initialAppState,
           inspectedProvider: { ...initialAppState.inspectedProvider, id: 'router' },
@@ -741,7 +721,6 @@ describe('Settings screens', () => {
       <NewProviderScreen
         client={fixtureClient({ createProvider })}
         dispatch={dispatch}
-        sessionReport={null}
         state={initialAppState}
       />,
     );
@@ -772,7 +751,6 @@ describe('Settings screens', () => {
           }],
         })}
         dispatch={vi.fn()}
-        sessionReport={null}
         state={initialAppState}
       />,
     );
@@ -802,7 +780,6 @@ describe('Settings screens', () => {
           updateProvider,
         })}
         dispatch={vi.fn()}
-        sessionReport={null}
         state={{
           ...initialAppState,
           inspectedProvider: { ...initialAppState.inspectedProvider, id: configured.id },
@@ -833,7 +810,6 @@ describe('Settings screens', () => {
           updateProvider,
         })}
         dispatch={vi.fn()}
-        sessionReport={null}
         state={{
           ...initialAppState,
           inspectedProvider: { ...initialAppState.inspectedProvider, id: provider.id },
@@ -886,7 +862,6 @@ describe('Settings screens', () => {
           updateProvider,
         })}
         dispatch={vi.fn()}
-        sessionReport={null}
         state={{
           ...initialAppState,
           inspectedProvider: { ...initialAppState.inspectedProvider, id: provider.id },
@@ -939,7 +914,6 @@ describe('Settings screens', () => {
           updateProvider,
         })}
         dispatch={vi.fn()}
-        sessionReport={null}
         state={{
           ...initialAppState,
           inspectedProvider: { ...initialAppState.inspectedProvider, id: oauthProvider.id },
@@ -971,7 +945,6 @@ describe('Settings screens', () => {
           updateProvider,
         })}
         dispatch={vi.fn()}
-        sessionReport={null}
         state={{
           ...initialAppState,
           inspectedProvider: { ...initialAppState.inspectedProvider, id: provider.id },
@@ -995,8 +968,8 @@ describe('Settings screens', () => {
     const updateProvider = vi.fn(async (_id, update) => ({
       id: provider.id, used_by: provider.used_by, writable: true, ...update,
     }));
+    const getProvider = vi.fn(async () => provider);
     const dispatch = vi.fn();
-    const onProviderUpdated = vi.fn();
     const state = {
       ...initialAppState,
       mainView: 'settings-provider' as const,
@@ -1007,27 +980,17 @@ describe('Settings screens', () => {
       },
     };
     render(
-      <TopBar
+      <ProviderScreen
         client={fixtureClient({
-          getProvider: async () => provider,
+          getProvider,
           updateProvider,
         })}
         dispatch={dispatch}
-        onDeleteCharacter={vi.fn()}
-        onDeleteForum={vi.fn()}
-        onDeletePersona={vi.fn()}
-        onCharacterDefinitionUpdated={vi.fn()}
-        onForumDefinitionUpdated={vi.fn()}
-        onPersonaDefinitionUpdated={vi.fn()}
-        onProviderUpdated={onProviderUpdated}
-        onStyleUpdated={vi.fn()}
-        onVoiceUpdated={vi.fn()}
         state={state}
-        title={provider.display_name}
       />,
     );
 
-    await userEvent.click(screen.getByRole('button', { name: 'Rename OpenRouter' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Rename OpenRouter' }));
     const name = screen.getByLabelText('Provider name');
     await userEvent.clear(name);
     await userEvent.type(name, 'Router');
@@ -1042,7 +1005,7 @@ describe('Settings screens', () => {
       providerName: 'Router',
       writable: true,
     });
-    expect(onProviderUpdated).toHaveBeenCalledOnce();
+    expect(getProvider).toHaveBeenCalledOnce();
   });
 
   it('creates a style and opens its settings', async () => {
@@ -1054,7 +1017,6 @@ describe('Settings screens', () => {
       <NewStyleScreen
         client={fixtureClient({ createStyle })}
         dispatch={dispatch}
-        sessionReport={null}
         state={initialAppState}
       />,
     );
@@ -1072,7 +1034,6 @@ describe('Settings screens', () => {
       <StyleScreen
         client={fixtureClient({ listStyles: async () => [style] })}
         dispatch={vi.fn()}
-        sessionReport={null}
         state={{
           ...initialAppState,
           inspectedStyle: { ...initialAppState.inspectedStyle, id: style.id },
@@ -1088,12 +1049,15 @@ describe('Settings screens', () => {
     expect(screen.getByText('Guide')).toBeInTheDocument();
   });
 
-  it('renames a style from the shared editable title', async () => {
+  it('renames a style without reloading or discarding unsaved settings', async () => {
     const updateStyle = vi.fn(async (_id, update) => ({
       id: style.id, used_by: style.used_by, writable: true, ...update,
     }));
+    let finish!: (styles: StyleDetail[]) => void;
+    const listStyles = vi.fn(() => new Promise<StyleDetail[]>((resolve) => {
+      finish = resolve;
+    }));
     const dispatch = vi.fn();
-    const onStyleUpdated = vi.fn();
     const state = {
       ...initialAppState,
       mainView: 'settings-style' as const,
@@ -1104,26 +1068,21 @@ describe('Settings screens', () => {
       },
     };
     render(
-      <TopBar
+      <StyleScreen
         client={fixtureClient({
-          listStyles: async () => [style],
+          listStyles,
           updateStyle,
         })}
         dispatch={dispatch}
-        onDeleteCharacter={vi.fn()}
-        onDeleteForum={vi.fn()}
-        onDeletePersona={vi.fn()}
-        onCharacterDefinitionUpdated={vi.fn()}
-        onForumDefinitionUpdated={vi.fn()}
-        onPersonaDefinitionUpdated={vi.fn()}
-        onProviderUpdated={vi.fn()}
-        onStyleUpdated={onStyleUpdated}
-        onVoiceUpdated={vi.fn()}
         state={state}
-        title={style.display_name}
       />,
     );
 
+    expect(screen.getByRole('heading', { name: 'Editorial' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Rename Editorial' })).not.toBeInTheDocument();
+    await act(async () => { finish([style]); });
+
+    await userEvent.selectOptions(await screen.findByLabelText('Font'), 'mono');
     await userEvent.click(screen.getByRole('button', { name: 'Rename Editorial' }));
     const name = screen.getByLabelText('Style name');
     await userEvent.clear(name);
@@ -1131,7 +1090,7 @@ describe('Settings screens', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Save style name' }));
 
     expect(updateStyle).toHaveBeenCalledWith(style.id, expect.objectContaining({
-      display_name: 'Narrative',
+      display_name: 'Narrative', font: 'serif',
     }));
     expect(dispatch).toHaveBeenCalledWith({
       type: 'style-updated',
@@ -1139,7 +1098,13 @@ describe('Settings screens', () => {
       styleName: 'Narrative',
       writable: true,
     });
-    expect(onStyleUpdated).toHaveBeenCalledOnce();
+    expect(listStyles).toHaveBeenCalledOnce();
+    expect(screen.getByLabelText('Font')).toHaveValue('mono');
+    expect(screen.getByRole('button', { name: 'Save style' })).toBeEnabled();
+    await userEvent.click(screen.getByRole('button', { name: 'Save style' }));
+    expect(updateStyle).toHaveBeenLastCalledWith(style.id, expect.objectContaining({
+      display_name: 'Narrative', font: 'mono',
+    }));
   });
 
   it('lists each voice by its name and description only', async () => {
@@ -1148,7 +1113,6 @@ describe('Settings screens', () => {
       <VoicesScreen
         client={fixtureClient({ listVoices: async () => [voiceDetailFixture] })}
         dispatch={dispatch}
-        sessionReport={null}
         state={initialAppState}
       />,
     );
@@ -1197,7 +1161,6 @@ describe('Settings screens', () => {
           saveVoiceOutputSettings,
         })}
         dispatch={vi.fn()}
-        sessionReport={null}
         state={initialAppState}
       />,
     );
@@ -1259,7 +1222,7 @@ describe('Settings screens', () => {
         }),
         saveVoiceInputSettings, saveVoiceOutputSettings,
       })}
-      dispatch={vi.fn()} sessionReport={null} state={initialAppState}
+      dispatch={vi.fn()} state={initialAppState}
     />);
     const endpoint = await screen.findByLabelText('Output URL endpoint');
     await userEvent.clear(endpoint);
@@ -1291,7 +1254,6 @@ describe('Settings screens', () => {
       <NewVoiceScreen
         client={fixtureClient({ createVoice })}
         dispatch={dispatch}
-        sessionReport={null}
         state={initialAppState}
       />,
     );
@@ -1326,7 +1288,6 @@ describe('Settings screens', () => {
           updateVoice,
         })}
         dispatch={vi.fn()}
-        sessionReport={null}
         state={{
           ...initialAppState,
           inspectedVoice: { ...initialAppState.inspectedVoice, id: 'brian' },
@@ -1375,7 +1336,6 @@ describe('Settings screens', () => {
           updateVoice,
         })}
         dispatch={vi.fn()}
-        sessionReport={null}
         state={{
           ...initialAppState,
           inspectedVoice: { ...initialAppState.inspectedVoice, id: 'brian' },
@@ -1423,7 +1383,6 @@ describe('Settings screens', () => {
           }),
         })}
         dispatch={vi.fn()}
-        sessionReport={null}
         state={{
           ...initialAppState,
           inspectedVoice: { ...initialAppState.inspectedVoice, id: 'brian' },
@@ -1462,24 +1421,15 @@ describe('Settings screens', () => {
       ...voiceDetailFixture,
       ...update,
     }));
+    const listVoices = vi.fn(async () => [voiceDetailFixture]);
     const dispatch = vi.fn();
-    const onVoiceUpdated = vi.fn();
     render(
-      <TopBar
+      <VoiceScreen
         client={fixtureClient({
-          listVoices: async () => [voiceDetailFixture],
+          listVoices,
           updateVoice,
         })}
         dispatch={dispatch}
-        onDeleteCharacter={vi.fn()}
-        onDeleteForum={vi.fn()}
-        onDeletePersona={vi.fn()}
-        onCharacterDefinitionUpdated={vi.fn()}
-        onForumDefinitionUpdated={vi.fn()}
-        onPersonaDefinitionUpdated={vi.fn()}
-        onProviderUpdated={vi.fn()}
-        onStyleUpdated={vi.fn()}
-        onVoiceUpdated={onVoiceUpdated}
         state={{
           ...initialAppState,
           mainView: 'settings-voice',
@@ -1489,11 +1439,10 @@ describe('Settings screens', () => {
             writable: true,
           },
         }}
-        title="Brian"
       />,
     );
 
-    await userEvent.click(screen.getByRole('button', { name: 'Rename Brian' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Rename Brian' }));
     const name = screen.getByLabelText('Voice name');
     await userEvent.clear(name);
     await userEvent.type(name, 'George');
@@ -1508,7 +1457,7 @@ describe('Settings screens', () => {
       voiceName: 'George',
       writable: true,
     });
-    expect(onVoiceUpdated).toHaveBeenCalledOnce();
+    expect(listVoices).toHaveBeenCalledOnce();
   });
 
   it('deletes an unused provider from its settings screen', async () => {
@@ -1522,7 +1471,6 @@ describe('Settings screens', () => {
           deleteProvider,
         })}
         dispatch={dispatch}
-        sessionReport={null}
         state={{
           ...initialAppState,
           inspectedProvider: { ...initialAppState.inspectedProvider, id: provider.id },
@@ -1551,7 +1499,6 @@ describe('Settings screens', () => {
           deleteProvider,
         })}
         dispatch={vi.fn()}
-        sessionReport={null}
         state={{
           ...initialAppState,
           inspectedProvider: { ...initialAppState.inspectedProvider, id: provider.id },
@@ -1576,7 +1523,6 @@ describe('Settings screens', () => {
           deleteStyle,
         })}
         dispatch={dispatch}
-        sessionReport={null}
         state={{
           ...initialAppState,
           inspectedStyle: { ...initialAppState.inspectedStyle, id: style.id },
@@ -1599,7 +1545,6 @@ describe('Settings screens', () => {
           id: 'api_key_1', display_name: 'Google', has_value: true, used_by: ['Gemini'],
         }] })}
         dispatch={dispatch}
-        sessionReport={null}
         state={initialAppState}
       />,
     );
@@ -1620,7 +1565,6 @@ describe('Settings screens', () => {
           deleteApiKey,
         })}
         dispatch={dispatch}
-        sessionReport={null}
         state={{
           ...initialAppState,
           inspectedApiKey: {
@@ -1651,7 +1595,6 @@ describe('Settings screens', () => {
           replaceApiKeyValue,
         })}
         dispatch={vi.fn()}
-        sessionReport={null}
         state={{
           ...initialAppState,
           inspectedApiKey: {
@@ -1681,18 +1624,11 @@ describe('Settings screens', () => {
     }));
     const dispatch = vi.fn();
     render(
-      <TopBar
-        client={fixtureClient({ renameApiKey })}
+      <ApiKeyScreen
+        client={fixtureClient({ renameApiKey, listApiKeys: async () => [{
+          id: 'api_key_1', display_name: 'Google', has_value: true, used_by: [],
+        }] })}
         dispatch={dispatch}
-        onDeleteCharacter={vi.fn()}
-        onDeleteForum={vi.fn()}
-        onDeletePersona={vi.fn()}
-        onCharacterDefinitionUpdated={vi.fn()}
-        onForumDefinitionUpdated={vi.fn()}
-        onPersonaDefinitionUpdated={vi.fn()}
-        onProviderUpdated={vi.fn()}
-        onStyleUpdated={vi.fn()}
-        onVoiceUpdated={vi.fn()}
         state={{
           ...initialAppState,
           mainView: 'settings-api-key',
@@ -1701,11 +1637,10 @@ describe('Settings screens', () => {
             name: 'Google',
           },
         }}
-        title="Google"
       />,
     );
 
-    await userEvent.click(screen.getByRole('button', { name: 'Rename Google' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Rename Google' }));
     const name = screen.getByLabelText('API key name');
     await userEvent.clear(name);
     await userEvent.type(name, 'Gemini');

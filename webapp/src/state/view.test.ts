@@ -178,7 +178,7 @@ describe('application navigation reducer', () => {
     let state = readyState();
     state = appReducer(state, { type: 'inspect-character', characterId: 'guide' });
     expect(state.inspectedCharacter.settingsWritable).toBe(false);
-    expect(navigationTitle(state)).toBe('Guide');
+    expect(navigationTitle(state)).toBeNull();
 
     state = appReducer(state, {
       type: 'character-detail-loaded', characterId: 'guide', settingsWritable: true, writable: true,
@@ -314,7 +314,7 @@ describe('application navigation reducer', () => {
       type: 'inspect-provider', providerId: 'first', providerName: 'First provider',
     });
     expect(state.inspectedProvider.writable).toBe(true);
-    expect(navigationTitle(state)).toBe('First provider');
+    expect(navigationTitle(state)).toBeNull();
     state = appReducer(state, {
       type: 'inspect-provider', providerId: 'second', providerName: 'Second',
     });

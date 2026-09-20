@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ChaError, type AudioDownloadAcceptance, type AudioDownloadBatchAcceptance, type AudioDownloadBatchRequest, type ChaClient, type MediaResource, type SessionSnapshot } from '../api/client';
 import type { SessionEventHandlers } from '../api/events';
+import { initialAppState } from '../state/view';
 import {
   bootstrapFixture,
   fixtureClient,
@@ -19,7 +20,7 @@ import {
 } from '../textToSpeech';
 import { VoiceInputSession } from '../voiceInput';
 import { App } from './App';
-import { formatEntryTime } from './ChatScreen';
+import { ChatScreen, formatEntryTime } from './ChatScreen';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -1461,6 +1462,44 @@ describe('live chat', () => {
     expect(input).toHaveValue('Second message');
   });
 
+  it('resets the draft on a conversation change even when the chat stays mounted', async () => {
+    const user = userEvent.setup();
+    const props = {
+      client: fixtureClient(),
+      playbackPositions: new Map<string, Map<number, number>>(),
+      dispatch: vi.fn(),
+      onCoverConversation: vi.fn(),
+      onDeleteTurn: vi.fn(),
+      onRetryStream: vi.fn(),
+      onReturnToWelcome: vi.fn(),
+      onSetDefaultCharacter: vi.fn(),
+      onStopGeneration: vi.fn(),
+      onSubmitInput: vi.fn(async () => ({ clear_input: true })),
+      onUncoverConversation: vi.fn(),
+    };
+    const chat = (snapshot: SessionSnapshot) => <ChatScreen {...props} state={{
+      ...initialAppState,
+      bootstrap: bootstrapFixture,
+      sessionSnapshot: snapshot,
+      streamStatus: 'connected',
+      currentDefaultCharacterId: snapshot.default_character_id,
+    }} />;
+    const { rerender } = render(chat(snapshotFixture));
+    const input = screen.getByRole('textbox', { name: 'Message' });
+    await user.type(input, 'Only for Welcome');
+
+    rerender(chat({ ...snapshotFixture, session_label: 'Renamed' }));
+    expect(input).toHaveValue('Only for Welcome');
+
+    rerender(chat({ ...snapshotFixture, session_id: 'another-session' }));
+    expect(screen.getByRole('textbox', { name: 'Message' })).toBe(input);
+    expect(input).toHaveValue('');
+    expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
+    await user.type(input, 'New message');
+    await user.click(screen.getByRole('button', { name: 'Send message' }));
+    expect(props.onSubmitInput).toHaveBeenCalledExactlyOnceWith('New message');
+  });
+
   it('opens a new conversation with an empty composer', async () => {
     const user = userEvent.setup();
     const events = drivableEvents();
@@ -1988,7 +2027,8 @@ describe('live session capacity', () => {
     await user.click(screen.getByRole('button', { name: 'Start session' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Another session has not closed yet');
-    expect(screen.getByRole('button', { name: 'Start session' })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: 'Start session' })).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Session unavailable' })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Retry' }));
 
     await waitFor(() => expect(events.connections.some(({ key }) => key === 'lobby/created')).toBe(true));

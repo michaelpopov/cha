@@ -39,7 +39,6 @@ function renderSettings(client = fixtureClient()) {
     <CharacterSettingsScreen
       client={client}
       dispatch={dispatch}
-      sessionReport={null}
       state={settingsState()}
     />,
   );

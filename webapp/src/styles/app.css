@@ -318,11 +318,8 @@ select:disabled {
   text-align: center;
 }
 
-.cha-topbar.has-actions .cha-topbar-title {
-  padding-inline: 6rem;
-}
-
-.cha-topbar-title h1 {
+.cha-topbar-title h1,
+.cha-detail-actions h1 {
   margin: 0;
   overflow: hidden;
   font-size: 1.08rem;
@@ -428,18 +425,22 @@ select:disabled {
   width: 2.65rem;
 }
 
-.cha-topbar-actions {
-  position: absolute;
-  z-index: 4;
-  top: 50%;
-  right: max(1rem, calc((100% - var(--cha-column)) / 2 + 1.2rem));
+.cha-detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+
+.cha-detail-action-buttons {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 0.4rem;
-  transform: translateY(-50%);
 }
 
-.cha-definition-topbar-action {
+.cha-definition-upload {
   position: relative;
 }
 
@@ -871,11 +872,6 @@ select:disabled {
   border: 1px solid var(--border);
   border-radius: 0.7rem;
   background: var(--covered-surface);
-}
-
-.cha-covered-header {
-  color: var(--muted-foreground);
-  font-size: 0.72rem;
 }
 
 .cha-chat-welcome {
@@ -1744,10 +1740,6 @@ select:disabled {
 
   .cha-navigation {
     padding-inline: 1rem;
-  }
-
-  .cha-topbar-actions {
-    right: 1rem;
   }
 
   .cha-chat {
