@@ -13,7 +13,7 @@
 #include "util/environment.h"
 #include "util/logging.h"
 #include "util/text.h"
-#include "web/current_vault.h"
+#include "app/current_vault.h"
 #include "web/session_markdown.h"
 #include "web/session_mirror.h"
 #include "web/session_projection.h"

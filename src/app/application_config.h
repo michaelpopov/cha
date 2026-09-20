@@ -34,10 +34,6 @@ struct ConfigurationDirectory {
     std::optional<std::filesystem::path> mirror_base;
     std::optional<std::filesystem::path> modify_base;
     std::vector<VaultDefinition> vaults;
-    std::string host;
-    // Native loads leave this 0: there is no listener. HTTP missing [web]
-    // defaults to 8086; an explicit HTTP [web] port is validated 0–65535.
-    int port{};
     std::filesystem::path log_file;
     std::string log_level;
     std::vector<std::string> warnings;
@@ -49,13 +45,6 @@ struct ApplicationCommand {
     std::optional<std::filesystem::path> modify_base;
     std::vector<VaultDefinition> vaults;
     VaultDefinition vault;
-    std::optional<std::filesystem::path> import_directory;
-    std::optional<std::filesystem::path> export_directory;
-    bool upload{};
-    bool download{};
-    std::filesystem::path root;
-    std::string host;
-    int port{};
     std::filesystem::path log_file;
     std::string log_level;
     std::vector<std::string> warnings;
@@ -90,12 +79,8 @@ ApplicationCommand parse_application_command(
     int argc,
     const char* const* argv);
 
-inline constexpr const char web_usage[] =
+inline constexpr const char command_usage[] =
     "Usage:\n"
-    "  CHA --config=CONFIG_DIR\n"
-    "  CHA --config=CONFIG_DIR --vault=NAME --import SOURCE_DIRECTORY\n"
-    "  CHA --config=CONFIG_DIR --vault=NAME --export DESTINATION_DIRECTORY\n"
-    "  CHA --config=CONFIG_DIR --vault=NAME --upload\n"
-    "  CHA --config=CONFIG_DIR --vault=NAME --download";
+    "  CHA --config=CONFIG_DIR";
 
 } // namespace cha

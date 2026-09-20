@@ -1,10 +1,10 @@
-#include "web/r2_database_transfer.h"
+#include "services/r2_database_transfer.h"
 
 #include "session/session_lease.h"
 #include "session/workspace_session_database.h"
 #include "support/mock_http_server.h"
 #include "support/test_workspace.h"
-#include "web/application_config.h"
+#include "app/application_config.h"
 
 #include <gtest/gtest.h>
 

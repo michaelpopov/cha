@@ -1,4 +1,4 @@
-#include "web/application_config.h"
+#include "app/application_config.h"
 
 #include "session/sqlite_storage.h"
 #include "session/workspace_session_database.h"
@@ -26,12 +26,6 @@ namespace {
 
 struct ParsedOptions {
     std::optional<std::filesystem::path> config;
-    std::optional<std::string> vault;
-    std::optional<std::filesystem::path> import_directory;
-    std::optional<std::filesystem::path> export_directory;
-    bool upload{};
-    bool download{};
-    std::optional<std::filesystem::path> root;
 };
 
 struct LoadedVault {
@@ -40,7 +34,7 @@ struct LoadedVault {
 };
 
 std::runtime_error argument_error(std::string message) {
-    return std::runtime_error(std::move(message) + "\n" + web_usage);
+    return std::runtime_error(std::move(message) + "\n" + command_usage);
 }
 
 std::filesystem::path normalize_cli_path(
@@ -65,50 +59,14 @@ void assign_unique_path(
     destination = normalize_cli_path(option, value);
 }
 
-void assign_unique_flag(
-    bool& destination,
-    std::string_view option,
-    bool has_value) {
-    if (has_value) {
-        throw argument_error(
-            "Option '" + std::string(option) + "' does not take a value.");
-    }
-    if (destination) {
-        throw argument_error(
-            "Option '" + std::string(option) + "' was provided more than once.");
-    }
-    destination = true;
-}
-
-void assign_unique_vault(
-    std::optional<std::string>& destination,
-    std::string_view value) {
-    if (destination) {
-        throw argument_error("Option '--vault' was provided more than once.");
-    }
-    if (value.empty()) {
-        throw argument_error("Option '--vault' requires a non-empty name.");
-    }
-    destination = std::string(value);
-}
-
 ParsedOptions parse_arguments(int argc, const char* const* argv) {
     ParsedOptions result;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument(argv[index]);
         const std::size_t equals = argument.find('=');
         const std::string_view option = argument.substr(0, equals);
-        if (option != "--config" && option != "--vault" && option != "--import"
-            && option != "--export" && option != "--root"
-            && option != "--upload" && option != "--download") {
+        if (option != "--config") {
             throw argument_error("Unknown option '" + std::string(option) + "'.");
-        }
-
-        if (option == "--upload" || option == "--download") {
-            bool& flag = option == "--upload" ? result.upload : result.download;
-            assign_unique_flag(
-                flag, option, equals != std::string_view::npos);
-            continue;
         }
 
         std::string_view value;
@@ -122,17 +80,7 @@ ParsedOptions parse_arguments(int argc, const char* const* argv) {
             value = argv[index];
         }
 
-        if (option == "--config") {
-            assign_unique_path(result.config, option, value);
-        } else if (option == "--vault") {
-            assign_unique_vault(result.vault, value);
-        } else if (option == "--import") {
-            assign_unique_path(result.import_directory, option, value);
-        } else if (option == "--export") {
-            assign_unique_path(result.export_directory, option, value);
-        } else if (option == "--root") {
-            assign_unique_path(result.root, option, value);
-        }
+        assign_unique_path(result.config, option, value);
     }
     return result;
 }
@@ -402,14 +350,6 @@ void validate_vault_registry(
     }
 }
 
-void reject_runtime_option_in_offline_mode(
-    std::string_view option,
-    std::string_view offline) {
-    throw argument_error(
-        "Option '" + std::string(option) + "' is a runtime option and cannot "
-        "be used with " + std::string(offline) + ".");
-}
-
 void bootstrap_configuration_directory(
     const std::filesystem::path& directory) {
     const std::filesystem::path root =
@@ -562,8 +502,6 @@ ConfigurationDirectory load_configuration_directory(
         app, root, app_file, "mirror", app_kind);
     const std::optional<std::filesystem::path> modify_base = optional_app_path(
         app, root, app_file, "modify", app_kind);
-    std::string host = "127.0.0.1";
-    int port = 0;
     std::vector<std::string> warnings;
     ignore_obsolete_web_section(app, app_file, warnings);
     const toml::table& logging =
@@ -629,8 +567,6 @@ ConfigurationDirectory load_configuration_directory(
         .mirror_base = mirror_base,
         .modify_base = modify_base,
         .vaults = std::move(vaults),
-        .host = host,
-        .port = port,
         .log_file = resolve_config_path(
             root, app_file, "logging.file", log_file, app_kind),
         .log_level = log_level,
@@ -645,84 +581,30 @@ ApplicationCommand parse_application_command(
     if (!options.config) {
         throw argument_error("Missing --config=CONFIG_DIR.");
     }
-    const int offline_count = static_cast<int>(options.import_directory.has_value())
-        + static_cast<int>(options.export_directory.has_value())
-        + static_cast<int>(options.upload)
-        + static_cast<int>(options.download);
-    if (offline_count > 1) {
-        throw argument_error(
-            "--import, --export, --upload, and --download are mutually exclusive.");
-    }
-
     if (!std::filesystem::is_directory(*options.config)) {
         throw argument_error(
             "Option '--config' requires an existing directory.");
     }
 
-    const bool offline = offline_count != 0;
-    if (offline) {
-        const std::string_view offline_option = options.import_directory
-            ? "--import"
-            : options.export_directory ? "--export"
-            : options.upload ? "--upload"
-            : "--download";
-        if (!options.vault) {
-            throw argument_error(
-                "Option '--vault' is required with "
-                + std::string(offline_option) + ".");
-        }
-        if (options.root) {
-            reject_runtime_option_in_offline_mode("--root", offline_option);
-        }
-    } else if (options.vault) {
-        throw argument_error(
-            "Option '--vault' requires --import, --export, --upload, or --download.");
-    }
-
-    if (!offline) bootstrap_configuration_directory(*options.config);
+    bootstrap_configuration_directory(*options.config);
     const ConfigurationDirectory settings =
         load_configuration_directory(*options.config);
-    if (options.import_directory
-        && path_is_under(*options.import_directory, settings.directory)) {
-        throw argument_error(
-            "Configuration directory '" + utf8_path(settings.directory)
-            + "' must be outside the imported workspace.");
+
+    const VaultDefinition* selected =
+        find_vault(settings.vaults, settings.startup_vault);
+    if (selected == nullptr) {
+        throw std::runtime_error(
+            "Application config '"
+            + utf8_path(settings.directory / "app.toml")
+            + "' field 'vault' does not name a discovered vault.");
     }
 
-    const VaultDefinition* selected = nullptr;
-    if (offline) {
-        selected = find_vault(settings.vaults, *options.vault);
-        if (selected == nullptr) {
-            throw argument_error(
-                "Unknown vault '" + *options.vault + "'.");
-        }
-    } else {
-        selected = find_vault(settings.vaults, settings.startup_vault);
-        if (selected == nullptr) {
-            throw std::runtime_error(
-                "Application config '"
-                + utf8_path(settings.directory / "app.toml")
-                + "' field 'vault' does not name a discovered vault.");
-        }
-    }
-
-    const std::filesystem::path root = offline
-        ? std::filesystem::path{}
-        : options.root.value_or(
-              std::filesystem::absolute(executable_directory()).lexically_normal());
     return {
         .config_directory = settings.directory,
         .mirror_base = settings.mirror_base,
         .modify_base = settings.modify_base,
         .vaults = settings.vaults,
         .vault = *selected,
-        .import_directory = options.import_directory,
-        .export_directory = options.export_directory,
-        .upload = options.upload,
-        .download = options.download,
-        .root = root,
-        .host = settings.host,
-        .port = settings.port,
         .log_file = settings.log_file,
         .log_level = settings.log_level,
         .warnings = settings.warnings,

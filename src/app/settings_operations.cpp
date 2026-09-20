@@ -4,7 +4,7 @@
 #include "app/workspace_operations.h"
 #include "providers/api_key_store.h"
 #include "providers/provider_client.h"
-#include "web/json.h"
+#include "web/request_parser.h"
 #include "web/live_session_manager.h"
 #include "workspace/workspace_config_store.h"
 

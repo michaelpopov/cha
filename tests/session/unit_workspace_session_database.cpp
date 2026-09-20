@@ -116,8 +116,8 @@ void expect_seeded_session_rows(Database& database) {
     EXPECT_FALSE(entries.step());
 }
 
-std::string v1_import_command() {
-    return "CHA --config=CONFIG_DIR --vault=NAME --import WORKSPACE";
+std::string v1_import_instruction() {
+    return "Import the workspace configuration";
 }
 
 TEST(WorkspaceSessionDatabase, CreatesValidEmptyDatabaseAndEnablesWal) {
@@ -492,7 +492,7 @@ TEST(WorkspaceSessionDatabase, RuntimeInstructsImportForValidV1) {
     } catch (const std::runtime_error& error) {
         const std::string message = error.what();
         EXPECT_NE(message.find("schema-1"), std::string::npos) << message;
-        EXPECT_NE(message.find(v1_import_command()), std::string::npos)
+        EXPECT_NE(message.find(v1_import_instruction()), std::string::npos)
             << message;
         EXPECT_EQ(message.find("unsupported schema"), std::string::npos)
             << message;
@@ -530,7 +530,7 @@ TEST(WorkspaceSessionDatabase, DistinguishesFutureSchemaFromV1ImportInstruction)
         const std::string message = error.what();
         EXPECT_NE(message.find("unsupported schema"), std::string::npos)
             << message;
-        EXPECT_EQ(message.find(v1_import_command()), std::string::npos)
+        EXPECT_EQ(message.find(v1_import_instruction()), std::string::npos)
             << message;
     }
 }

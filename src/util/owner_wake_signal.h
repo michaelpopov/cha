@@ -9,7 +9,7 @@
 
 namespace cha {
 
-// A portable, coalescing wake source consumed by one session owner loop.
+// A portable, coalescing wake source consumed by one owner loop.
 class OwnerWakeSignal final : public WakeNotifier {
 public:
     void wake() noexcept override;

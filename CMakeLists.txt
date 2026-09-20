@@ -239,6 +239,7 @@ add_library(cha_lib STATIC
     src/util/curl.cpp
     src/util/private_filesystem.cpp
     src/util/logging.cpp
+    src/util/owner_wake_signal.cpp
     src/util/path_name.cpp
     src/util/public_name.cpp
     src/util/text.cpp
@@ -267,8 +268,9 @@ add_library(cha_lib STATIC
     src/session/session_storage_layout.cpp
     src/session/sqlite_storage.cpp
     src/session/workspace_session_database.cpp
-    src/web/application_config.cpp
-    src/web/r2_database_transfer.cpp
+    src/app/application_config.cpp
+    src/services/fish_audio.cpp
+    src/services/r2_database_transfer.cpp
     src/workspace/workspace.cpp
     src/workspace/workspace_config_store.cpp
     src/workspace/session_open.cpp
@@ -281,21 +283,16 @@ add_library(cha_lib STATIC
     src/app/session_output.cpp
     src/app/media_resources.cpp
     src/app/media_operations.cpp
-    src/web/fish_audio.cpp
-    src/web/audio_download.cpp
+    src/app/audio_download.cpp
     src/web/command_queue.cpp
-    src/web/json.cpp
+    src/web/request_parser.cpp
     src/web/protocol.cpp
     src/web/session_markdown.cpp
     src/web/session_mirror.cpp
     src/web/session_projection.cpp
     src/web/live_session.cpp
     src/web/live_session_manager.cpp
-    src/web/text_command.cpp
     src/web/text_input.cpp
-    src/web/text_mention.cpp
-    src/web/text_multicast.cpp
-    src/web/owner_wake_signal.cpp
     src/bridge/bridge_protocol.cpp
     src/bridge/bridge_router.cpp
     src/bridge/settings_dispatch.cpp
@@ -469,10 +466,10 @@ if(BUILD_TESTING)
         tests/app/unit_vault_maintenance.cpp
         tests/app/unit_session_output.cpp
         tests/app/unit_session_retirement.cpp
-        tests/web/unit_fish_audio.cpp
-        tests/web/unit_audio_download.cpp
-        tests/web/unit_application_config.cpp
-        tests/web/unit_r2_database_transfer.cpp
+        tests/services/unit_fish_audio.cpp
+        tests/app/unit_audio_download.cpp
+        tests/app/unit_application_config.cpp
+        tests/services/unit_r2_database_transfer.cpp
         tests/web/unit_protocol.cpp
         tests/web/unit_wire_fixtures.cpp
         tests/web/unit_session_markdown.cpp

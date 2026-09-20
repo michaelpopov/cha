@@ -14,6 +14,7 @@ agents, sessions, or UI policy.
 | `logging.*` | Synchronous rotating diagnostic-file logging. |
 | `concurrent_queue.h` | Portable typed thread-safe queue with reserved final delivery. |
 | `wake_notifier.h` | Narrow producer-to-owner wake interface. |
+| `owner_wake_signal.*` | Portable coalescing wake source for one owner loop. |
 
 `require_path_component()` protects workspace-controlled path components.
 Forum and session IDs use the stricter URL-safe identifier rule. Prompt

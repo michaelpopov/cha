@@ -2,7 +2,7 @@
 
 #include "app/application.h"
 #include "bridge/request_params.h"
-#include "web/json.h"
+#include "web/request_parser.h"
 
 namespace cha::bridge {
 namespace {

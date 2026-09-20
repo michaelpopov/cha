@@ -1,6 +1,6 @@
 #pragma once
 
-#include "web/application_config.h"
+#include "app/application_config.h"
 
 #include <filesystem>
 #include <optional>

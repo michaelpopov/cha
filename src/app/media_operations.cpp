@@ -6,7 +6,7 @@
 #include "util/curl.h"
 #include "util/logging.h"
 #include "util/text.h"
-#include "web/fish_audio.h"
+#include "services/fish_audio.h"
 #include "workspace/workspace.h"
 
 #include <curl/curl.h>

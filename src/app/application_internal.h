@@ -8,7 +8,7 @@
 #include "providers/openai_oauth.h"
 #include "providers/providers.h"
 #include "session/session_repository.h"
-#include "web/current_vault.h"
+#include "app/current_vault.h"
 #include "web/session_mirror.h"
 
 #include <atomic>

@@ -1,7 +1,7 @@
 #pragma once
 
 #include "session/session_repository.h"
-#include "web/fish_audio.h"
+#include "services/fish_audio.h"
 #include "workspace/workspace.h"
 #include <array>
 #include <atomic>

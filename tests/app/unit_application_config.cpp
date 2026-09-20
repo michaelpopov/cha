@@ -1,4 +1,4 @@
-#include "web/application_config.h"
+#include "app/application_config.h"
 
 #include "session/sqlite_storage.h"
 #include "session/workspace_session_database.h"
@@ -37,10 +37,7 @@ protected:
                + std::to_string(
                    std::chrono::steady_clock::now().time_since_epoch().count()));
         config_ = root_ / "config";
-        import_ = root_ / "import";
-        export_ = root_ / "export";
         std::filesystem::create_directories(config_);
-        std::filesystem::create_directories(import_);
         write_app();
         write_vault("personal.toml", "Personal", "../data/workspace.sqlite3");
     }
@@ -102,8 +99,6 @@ protected:
 
     std::filesystem::path root_;
     std::filesystem::path config_;
-    std::filesystem::path import_;
-    std::filesystem::path export_;
 };
 
 TEST_F(ApplicationConfigTest, LoadsValidExternalConfigurations) {
@@ -111,20 +106,17 @@ TEST_F(ApplicationConfigTest, LoadsValidExternalConfigurations) {
         bool equals_option;
         std::filesystem::path database;
         std::filesystem::path log;
-        const char* host;
-        int port;
         const char* level;
     };
     const Case cases[]{
-        {true, root_ / "data/workspace.sqlite3", config_ / "logs/cha.log", "127.0.0.1", 8080, "info"},
-        {false, root_ / "absolute.sqlite3", root_ / "absolute.log", "0.0.0.0", 9000, "debug"},
-        {false, root_ / "data/workspace.sqlite3", config_ / "logs/cha.log", "127.0.0.1", 0, "info"},
+        {true, root_ / "data/workspace.sqlite3", config_ / "logs/cha.log", "info"},
+        {false, root_ / "absolute.sqlite3", root_ / "absolute.log", "debug"},
+        {false, root_ / "data/workspace.sqlite3", config_ / "logs/cha.log", "info"},
     };
     for (const auto& item : cases) {
-        SCOPED_TRACE(item.port);
-        write_app("vault = \"Personal\"\n[web]\nhost = \"" + std::string(item.host)
-                  + "\"\nport = " + std::to_string(item.port)
-                  + "\n[logging]\nfile = " + (item.log == root_ / "absolute.log" ? toml_path(item.log) : std::string("\"logs/cha.log\""))
+        SCOPED_TRACE(item.level);
+        write_app("vault = \"Personal\"\n[logging]\nfile = "
+                  + (item.log == root_ / "absolute.log" ? toml_path(item.log) : std::string("\"logs/cha.log\""))
                   + "\nlevel = \"" + item.level + "\"\n");
         if (item.database == root_ / "absolute.sqlite3") {
             write_named_vault("personal.toml", "Personal", item.database);
@@ -132,8 +124,8 @@ TEST_F(ApplicationConfigTest, LoadsValidExternalConfigurations) {
             write_vault("personal.toml", "Personal", "../data/workspace.sqlite3");
         }
         const ApplicationCommand command = item.equals_option
-            ? load({"chaweb", "--config=" + config_.string(), "--root", root_.string()})
-            : load({"chaweb", "--config", config_.string(), "--root", root_.string()});
+            ? load({"chaweb", "--config=" + config_.string()})
+            : load({"chaweb", "--config", config_.string()});
 
         EXPECT_EQ(
             command.config_directory,
@@ -142,9 +134,6 @@ TEST_F(ApplicationConfigTest, LoadsValidExternalConfigurations) {
         EXPECT_EQ(
             command.vault.data,
             std::filesystem::weakly_canonical(item.database));
-        EXPECT_EQ(command.root, std::filesystem::weakly_canonical(root_));
-        EXPECT_EQ(command.host, "127.0.0.1");
-        EXPECT_EQ(command.port, 0);
         EXPECT_EQ(
             command.log_file,
             std::filesystem::weakly_canonical(item.log));
@@ -152,10 +141,6 @@ TEST_F(ApplicationConfigTest, LoadsValidExternalConfigurations) {
         EXPECT_FALSE(command.mirror_base);
         EXPECT_FALSE(command.modify_base);
         EXPECT_FALSE(command.vault.modify);
-        EXPECT_FALSE(command.import_directory);
-        EXPECT_FALSE(command.export_directory);
-        EXPECT_FALSE(command.upload);
-        EXPECT_FALSE(command.download);
     }
 }
 
@@ -191,7 +176,7 @@ TEST_F(ApplicationConfigTest, BootstrapsAnEmptyConfigurationDirectory) {
     std::filesystem::create_directory(config_);
 
     const ApplicationCommand command = load({
-        "chaweb", "--config=" + config_.string(), "--root", root_.string()});
+        "chaweb", "--config=" + config_.string()});
 
     EXPECT_EQ(command.vault.name, "Default");
     EXPECT_EQ(command.vaults.size(), 1U);
@@ -213,8 +198,6 @@ TEST_F(ApplicationConfigTest, BootstrapsAnEmptyConfigurationDirectory) {
     EXPECT_EQ(
         command.mirror_base,
         std::filesystem::weakly_canonical(config_ / "mirror"));
-    EXPECT_EQ(command.host, "127.0.0.1");
-    EXPECT_EQ(command.port, 0);
     EXPECT_TRUE(std::filesystem::is_regular_file(config_ / "app.toml"));
     EXPECT_TRUE(std::filesystem::is_regular_file(config_ / "default.toml"));
 
@@ -237,7 +220,7 @@ TEST_F(ApplicationConfigTest, BootstrapsAnEmptyConfigurationDirectory) {
     EXPECT_NO_THROW((void)WorkspaceConfigStore::open(command.vault.data));
 }
 
-TEST_F(ApplicationConfigTest, DoesNotBootstrapANonemptyOrOfflineDirectory) {
+TEST_F(ApplicationConfigTest, DoesNotBootstrapANonemptyDirectory) {
     std::filesystem::remove_all(config_);
     std::filesystem::create_directory(config_);
     std::ofstream(config_ / "keep.txt") << "keep\n";
@@ -248,14 +231,6 @@ TEST_F(ApplicationConfigTest, DoesNotBootstrapANonemptyOrOfflineDirectory) {
         << nonempty;
     EXPECT_FALSE(std::filesystem::exists(config_ / "default.toml"));
     EXPECT_FALSE(std::filesystem::exists(config_ / "default.sqlite3"));
-
-    std::filesystem::remove(config_ / "keep.txt");
-    const std::string offline = error_text({
-        "chaweb", "--config=" + config_.string(), "--vault=Default",
-        "--import", import_.string()});
-    EXPECT_NE(offline.find("Failed to read application config"), std::string::npos)
-        << offline;
-    EXPECT_TRUE(std::filesystem::is_empty(config_));
 }
 
 TEST_F(ApplicationConfigTest, DerivesVaultPathsFromAppBasePaths) {
@@ -310,73 +285,10 @@ TEST_F(ApplicationConfigTest, RejectsAnEmptyMirrorPath) {
         std::string::npos);
 }
 
-TEST_F(ApplicationConfigTest, ImportAndExportUseConfiguredDatabase) {
-    const ApplicationCommand imported = load({
-        "chaweb", "--config=" + config_.string(),
-        "--vault=Personal", "--import", import_.string()});
-    EXPECT_EQ(
-        imported.import_directory,
-        std::filesystem::weakly_canonical(std::filesystem::absolute(import_)));
-    EXPECT_EQ(imported.vault.name, "Personal");
-    EXPECT_TRUE(imported.root.empty());
 
-    const ApplicationCommand exported = load({
-        "chaweb", "--config=" + config_.string(),
-        "--vault", "Personal", "--export=" + export_.string()});
-    EXPECT_EQ(
-        exported.export_directory,
-        std::filesystem::weakly_canonical(std::filesystem::absolute(export_)));
 
-    const std::string both = error_text({
-        "chaweb", "--config=" + config_.string(),
-        "--vault=Personal",
-        "--import", import_.string(), "--export", export_.string()});
-    EXPECT_NE(both.find("mutually exclusive"), std::string::npos);
-}
 
-TEST_F(ApplicationConfigTest, UploadAndDownloadAreOfflineFlags) {
-    const ApplicationCommand uploaded = load({
-        "chaweb", "--config=" + config_.string(),
-        "--vault=Personal", "--upload"});
-    EXPECT_TRUE(uploaded.upload);
-    EXPECT_FALSE(uploaded.download);
-    EXPECT_TRUE(uploaded.root.empty());
-
-    const ApplicationCommand downloaded = load({
-        "chaweb", "--download", "--vault=Personal",
-        "--config=" + config_.string()});
-    EXPECT_FALSE(downloaded.upload);
-    EXPECT_TRUE(downloaded.download);
-    EXPECT_TRUE(downloaded.root.empty());
-
-    EXPECT_NE(
-        error_text({
-            "chaweb", "--config=" + config_.string(),
-            "--vault=Personal", "--upload", "--download"})
-            .find("mutually exclusive"),
-        std::string::npos);
-    EXPECT_NE(
-        error_text({
-            "chaweb", "--config=" + config_.string(),
-            "--vault=Personal", "--upload", "--export", export_.string()})
-            .find("mutually exclusive"),
-        std::string::npos);
-}
-
-TEST_F(ApplicationConfigTest, ImportRequiresTheConfigurationDirectoryToBeExternal) {
-    const std::filesystem::path inside = import_ / "cha-config";
-    std::filesystem::create_directories(inside);
-    std::filesystem::copy_file(config_ / "app.toml", inside / "app.toml");
-    std::filesystem::copy_file(
-        config_ / "personal.toml", inside / "personal.toml");
-    const std::string error = error_text({
-        "chaweb", "--config=" + inside.string(),
-        "--vault=Personal", "--import", import_.string()});
-    EXPECT_NE(error.find("outside the imported workspace"), std::string::npos)
-        << error;
-}
-
-TEST_F(ApplicationConfigTest, RejectsMissingDuplicateAndRuntimeOfflineOptions) {
+TEST_F(ApplicationConfigTest, RejectsMissingDuplicateAndUnknownOptions) {
     EXPECT_NE(
         error_text({"chaweb"}).find("Missing --config"), std::string::npos);
     EXPECT_NE(
@@ -394,28 +306,7 @@ TEST_F(ApplicationConfigTest, RejectsMissingDuplicateAndRuntimeOfflineOptions) {
         error_text({"chaweb", "--host", "127.0.0.1"}).find("Unknown option"),
         std::string::npos);
     EXPECT_NE(
-        error_text({
-            "chaweb", "--config=" + config_.string(),
-            "--vault=Personal",
-            "--import", import_.string(), "--root", root_.string()})
-            .find("runtime option"),
-        std::string::npos);
-    EXPECT_NE(
-        error_text({
-            "chaweb", "--config=" + config_.string(),
-            "--vault=Personal", "--download", "--root", root_.string()})
-            .find("runtime option"),
-        std::string::npos);
-    EXPECT_NE(
-        error_text({
-            "chaweb", "--config=" + config_.string(), "--upload=value"})
-            .find("does not take a value"),
-        std::string::npos);
-    EXPECT_NE(
-        error_text({
-            "chaweb", "--config=" + config_.string(),
-            "--vault=Personal", "--upload", "--upload"})
-            .find("more than once"),
+        error_text({"chaweb", "--vault", "Personal"}).find("Unknown option"),
         std::string::npos);
     EXPECT_NE(
         error_text({
@@ -443,9 +334,7 @@ TEST_F(ApplicationConfigTest, IgnoresMissingAndObsoleteWebSection) {
     write_app(
         "vault = \"Personal\"\n"
         "[logging]\nfile = \"x\"\nlevel = \"off\"\n");
-    const auto missing = load({"chaweb", "--config=" + config_.string()});
-    EXPECT_EQ(missing.port, 0);
-    EXPECT_EQ(missing.host, "127.0.0.1");
+    EXPECT_NO_THROW(load({"chaweb", "--config=" + config_.string()}));
 
     write_app(
         "vault = \"Personal\"\n"
@@ -454,14 +343,12 @@ TEST_F(ApplicationConfigTest, IgnoresMissingAndObsoleteWebSection) {
     const auto loaded = load_configuration_directory(config_);
     ASSERT_FALSE(loaded.warnings.empty());
     EXPECT_NE(loaded.warnings.front().find("[web]"), std::string::npos);
-    EXPECT_EQ(loaded.port, 0);
 
     write_app(
         "vault = \"Personal\"\n"
         "web = 1\n"
         "[logging]\nfile = \"x\"\nlevel = \"off\"\n");
     const auto scalar = load({"chaweb", "--config=" + config_.string()});
-    EXPECT_EQ(scalar.port, 0);
     ASSERT_FALSE(scalar.warnings.empty());
 }
 
@@ -657,55 +544,16 @@ TEST_F(ApplicationConfigTest, IgnoresAndWarnsAboutUnusedVaultFields) {
     EXPECT_TRUE(warned_obsolete);
 }
 
-TEST_F(ApplicationConfigTest, RejectsUnknownStartupAndConsoleSelections) {
+TEST_F(ApplicationConfigTest, RejectsUnknownStartupVault) {
     write_app(
         "vault = \"Missing\"\n"
-        "[web]\nhost = \"127.0.0.1\"\nport = 8080\n"
         "[logging]\nfile = \"logs/cha.log\"\nlevel = \"info\"\n");
     EXPECT_NE(
         error_text({"chaweb", "--config", config_.string()})
             .find("does not name a discovered vault"),
         std::string::npos);
-
-    write_app();
-    EXPECT_NE(
-        error_text({
-            "chaweb", "--config", config_.string(), "--import",
-            import_.string()}).find("required with --import"),
-        std::string::npos);
-    EXPECT_NE(
-        error_text({
-            "chaweb", "--config", config_.string(), "--vault=Personal"})
-            .find("--import, --export, --upload, or --download"),
-        std::string::npos);
-    EXPECT_NE(
-        error_text({
-            "chaweb", "--config", config_.string(),
-            "--vault=Missing", "--upload"}).find("Unknown vault"),
-        std::string::npos);
-    EXPECT_NE(
-        error_text({
-            "chaweb", "--config", config_.string(),
-            "--vault=", "--upload"}).find("non-empty name"),
-        std::string::npos);
 }
 
-TEST_F(ApplicationConfigTest, ConsoleSelectionDoesNotRewriteAppToml) {
-    std::ifstream original(config_ / "app.toml");
-    const std::string contents{
-        std::istreambuf_iterator<char>(original),
-        std::istreambuf_iterator<char>()};
-    write_vault("projects.toml", "Projects", "projects.sqlite3");
-    const ApplicationCommand command = load({
-        "chaweb", "--config", config_.string(),
-        "--vault=projects", "--upload"});
-    EXPECT_EQ(command.vault.name, "Projects");
-    std::ifstream after(config_ / "app.toml");
-    const std::string rewritten{
-        std::istreambuf_iterator<char>(after),
-        std::istreambuf_iterator<char>()};
-    EXPECT_EQ(rewritten, contents);
-}
 
 TEST_F(ApplicationConfigTest, ResolvesSymlinkedConfigParents) {
     const std::filesystem::path real_parent = root_ / "real";

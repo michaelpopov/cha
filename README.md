@@ -211,24 +211,20 @@ materialized workspace.
 
 ### Command line and configuration maintenance
 
-Offline import, export, upload, and download remain available on the
-application command line:
+The application takes one command-line option:
 
 ```text
 CHA --config=CONFIG_DIR
-CHA --config=CONFIG_DIR --vault=NAME --import DIRECTORY
-CHA --config=CONFIG_DIR --vault=NAME --export DIRECTORY
-CHA --config=CONFIG_DIR --vault=NAME --upload
-CHA --config=CONFIG_DIR --vault=NAME --download
 ```
 
-`--config` is mandatory and names the configuration directory. Ordinary launch
-opens the vault selected by `app.toml`. `--vault` is required for import,
-export, upload, and download, and names the vault those commands act on. That
-vault's `data` setting names the SQLite file containing sessions and workspace
-metadata. Normal startup requires a valid schema-v2 database; a missing
-database is created only by a successful import. For import, the configuration
-directory must be outside the workspace source directory.
+`--config` is mandatory and names the configuration directory. Launch opens the
+vault selected by `app.toml`. Import, export, upload, and download are
+maintenance operations performed inside the running application and act on the
+active vault; import and export additionally require that vault's `modify`
+directory to be configured. The vault's `data` setting names the SQLite file
+containing sessions and workspace metadata. Normal startup requires a valid
+schema-v2 database; a missing database is created only by a successful
+import.
 
 Import stores every regular workspace `.toml` and `.md` file, but explicitly
 excludes `.env`, legacy root `app.toml`, and `workspace.toml`.
@@ -239,15 +235,14 @@ therefore be in this set:
 one SQLite transaction replaces the complete small table, with no generation,
 type, control, or revision metadata.
 
-Import, export, upload, and download are mutually exclusive offline operations.
-Stop CHA first; any of these commands fails immediately while runtime holds the
-database lease. To edit configuration:
+Each of these operations runs as global vault maintenance: the application
+closes admission, releases every live controller and its journal connection,
+performs the storage operation, then reopens admission under a new context
+epoch. To edit configuration:
 
-1. Stop CHA.
-2. Export to a missing or empty private directory.
-3. Edit that directory.
-4. Import it back into the same database.
-5. Restart CHA normally.
+1. Export to the vault's `modify` directory.
+2. Edit that directory.
+3. Import it back into the same database.
 
 The source or exported directory is never consulted by normal runtime. CHA
 materializes committed rows into one owner-private temporary tree. Supported
@@ -276,10 +271,10 @@ The bucket URL may optionally end with `/`.
 
 R2 uses two object keys derived from the configured database filename. For
 example, `data = "/var/lib/cha/workspace.sqlite3"` uses `workspace.sqlite3`
-and `workspace.sqlite3.toml` in the configured bucket. `--upload` validates the
+and `workspace.sqlite3.toml` in the configured bucket. Upload validates the
 schema-v2 database and its vault definition, then overwrites the vault object
 followed by the database object. R2 cannot atomically replace the pair; retry a
-failed upload before downloading. `--download` fetches and validates both files
+failed upload before downloading. Download fetches and validates both files
 before replacing either, and keeps their previous versions with `.bac`
 appended. Buckets written by an older database-only upload require a current
 upload before they can be downloaded. R2 requests use its S3-compatible API
@@ -314,7 +309,7 @@ installation:
    contains regular `.sqlite3` files, first use the archived migration-capable
    build on a disposable copy, verify the unified v1 database, and finish legacy
    cleanup there. The new import intentionally refuses both incomplete states.
-3. Create one configuration directory. Put `vault`, `[web]`, and `[logging]`
+3. Create one configuration directory. Put `vault` and `[logging]`
    in `app.toml`, and put `vault_name` plus `data` in a vault TOML file.
 4. Run the import and inspect its file-count summary:
 

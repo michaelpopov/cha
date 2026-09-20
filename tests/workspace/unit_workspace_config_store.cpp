@@ -951,7 +951,9 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, RejectsMissingV1AndForeignDatabases) {
     } catch (const std::runtime_error& error) {
         const std::string message = error.what();
         EXPECT_NE(message.find("does not exist"), std::string::npos) << message;
-        EXPECT_NE(message.find("--import"), std::string::npos) << message;
+        EXPECT_NE(
+            message.find("Import the workspace configuration"),
+            std::string::npos) << message;
     }
 
     make_v1_database(database());
@@ -961,7 +963,9 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, RejectsMissingV1AndForeignDatabases) {
     } catch (const std::runtime_error& error) {
         const std::string message = error.what();
         EXPECT_NE(message.find("schema-1"), std::string::npos) << message;
-        EXPECT_NE(message.find("--import"), std::string::npos) << message;
+        EXPECT_NE(
+            message.find("Import the workspace configuration"),
+            std::string::npos) << message;
     }
     remove_database_bundle(database());
 

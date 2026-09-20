@@ -5,8 +5,8 @@
 #include "chat/session_identity.h"
 #include "session/controller_update.h"
 #include "session/opened_session.h"
+#include "util/wake_notifier.h"
 #include "web/command_queue.h"
-#include "web/owner_wake_signal.h"
 #include "web/protocol.h"
 #include "web/session_projection.h"
 

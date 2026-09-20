@@ -1,4 +1,4 @@
-#include "web/r2_database_transfer.h"
+#include "services/r2_database_transfer.h"
 
 #include "session/session_lease.h"
 #include "session/workspace_session_database.h"
@@ -8,7 +8,7 @@
 #include "util/private_filesystem.h"
 #include "util/text.h"
 #include "util/toml_file.h"
-#include "web/application_config.h"
+#include "app/application_config.h"
 
 #include <curl/curl.h>
 

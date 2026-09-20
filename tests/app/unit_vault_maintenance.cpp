@@ -4,7 +4,7 @@
 #include "support/test_workspace.h"
 #include "util/environment.h"
 #include "util/toml_file.h"
-#include "web/current_vault.h"
+#include "app/current_vault.h"
 #include "workspace/builtins.h"
 #include "workspace/workspace_config_store.h"
 

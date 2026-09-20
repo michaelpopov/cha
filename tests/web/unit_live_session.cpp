@@ -1,5 +1,7 @@
 #include "web/live_session.h"
 
+#include "util/owner_wake_signal.h"
+
 #include "web/live_session_manager.h"
 
 #include "support/test_backends.h"

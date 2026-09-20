@@ -5,10 +5,10 @@
 #include "bridge/operation_dispatch.h"
 #include "bridge/request_params.h"
 #include "session/not_found_error.h"
-#include "web/application_config.h"
-#include "web/audio_download.h"
-#include "web/fish_audio.h"
-#include "web/json.h"
+#include "app/application_config.h"
+#include "app/audio_download.h"
+#include "services/fish_audio.h"
+#include "web/request_parser.h"
 #include "web/live_session.h"
 
 #include <algorithm>

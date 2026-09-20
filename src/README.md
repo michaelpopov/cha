@@ -9,7 +9,7 @@ through the common bridge. There is no application HTTP listener.
 ```text
 cha_macos / cha_windows -> cha_lib
 
-cha_lib -> app / bridge / web / workspace / providers / characters / chat / session / util
+cha_lib -> app / bridge / web / services / workspace / providers / characters / chat / session / util
 cha_lib -> curl / sqlite / libuv / threads / toml++ / spdlog / nlohmann-json
 ```
 
@@ -38,6 +38,7 @@ diagnostic logging remains available until teardown finishes.
 | `app/` | Application composition root and domain operations. |
 | `bridge/` | Native request envelopes and the operation dispatcher. |
 | `web/` | Chat-input grammar, API DTOs, live-session registry, and projection. |
+| `services/` | Direct integrations with external services such as Fish Audio and R2. |
 | `workspace/` | The loaded workspace model, built-ins, and the one controller-opening operation. |
 | `session/` | Session storage, databases and leases, controller state, persistence, and character resolution. |
 | `providers/` | Provider transport, request execution, cancellation, protocol decoding, and event delivery. |

@@ -104,8 +104,8 @@ bool is_valid_v1_identity(Database& database) {
 [[noreturn]] void throw_schema_v1_requires_import(std::string_view path) {
     throw std::runtime_error(
         "Workspace session database '" + std::string(path)
-        + "' is a valid CHA schema-1 database. Stop CHA and run:\n"
-        "CHA --config=CONFIG_DIR --vault=NAME --import WORKSPACE");
+        + "' is a valid CHA schema-1 database. Import the workspace "
+          "configuration into this vault to upgrade it to schema 2.");
 }
 
 void remove_database_files_noexcept(

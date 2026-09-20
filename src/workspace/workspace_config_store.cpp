@@ -458,8 +458,8 @@ private:
     if (state == WorkspaceDatabaseState::missing) {
         fail_path(
             "Workspace session database '" + utf8_path(database)
-            + "' does not exist. Stop CHA and run:\n"
-              "CHA --config=CONFIG_DIR --vault=NAME --import WORKSPACE");
+            + "' does not exist. Import the workspace configuration into "
+              "this vault to create it.");
     }
     fail_database_state(database, state);
 }
@@ -600,8 +600,8 @@ std::string busy_message(const std::filesystem::path& database) {
     case WorkspaceDatabaseState::valid_v1:
         fail_path(
             "Workspace session database '" + utf8_path(database)
-            + "' is a valid CHA schema-1 database. Stop CHA and run:\n"
-              "CHA --config=CONFIG_DIR --vault=NAME --import WORKSPACE");
+            + "' is a valid CHA schema-1 database. Import the workspace "
+              "configuration into this vault to upgrade it to schema 2.");
     case WorkspaceDatabaseState::wrong_application_id:
     case WorkspaceDatabaseState::unsupported_version:
         fail_path(

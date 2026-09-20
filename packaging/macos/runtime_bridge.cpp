@@ -4,7 +4,7 @@
 #include "bridge/bridge_router.h"
 #include "util/logging.h"
 #include "util/path_name.h"
-#include "web/application_config.h"
+#include "app/application_config.h"
 #include "workspace/workspace_config_store.h"
 
 #include <nlohmann/json.hpp>
@@ -92,12 +92,9 @@ void set_current_error(char** error) noexcept {
     }
 }
 
-ApplicationCommand runtime_command(
-    const char* config_path,
-    const char* resource_path) {
-    const char* arguments[] = {
-        "CHA", "--root", resource_path, "--config", config_path};
-    return parse_application_command(5, arguments);
+ApplicationCommand runtime_command(const char* config_path) {
+    const char* arguments[] = {"CHA", "--config", config_path};
+    return parse_application_command(3, arguments);
 }
 
 void stop_pump(ChaRuntime* runtime) {
@@ -254,8 +251,7 @@ ChaRuntime* cha_runtime_create(
 
     std::unique_ptr<ChaRuntime> runtime;
     try {
-        ApplicationCommand command = runtime_command(
-            config_path, resource_path);
+        ApplicationCommand command = runtime_command(config_path);
         runtime = std::make_unique<ChaRuntime>();
         cha::initialize_diagnostic_logging(
             command.log_file, command.log_level);
@@ -303,8 +299,7 @@ int32_t cha_runtime_requires_password(
         return -1;
     }
     try {
-        const ApplicationCommand command = runtime_command(
-            config_path, resource_path);
+        const ApplicationCommand command = runtime_command(config_path);
         set_string(vault_name, command.vault.name.c_str());
         if (vault_name && !*vault_name) throw std::bad_alloc();
         return command.vault.password_protected ? 1 : 0;
