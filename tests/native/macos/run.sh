@@ -67,7 +67,7 @@ expect=${1:-pass}
 shift $(( $# > 0 ? 1 : 0 ))
 vault=""
 case "$expect" in
-    flow|reload|renderer-fail|stall|quit)
+    flow|reload|renderer-fail|stall|quit|parity)
         vault=${CHA_NATIVE_TEST_CONFIG:-}
         if [ -z "$vault" ]; then
             vault=$(mktemp -d "${TMPDIR:-/tmp}/cha-native-vault.XXXXXX")
@@ -80,6 +80,7 @@ case "$expect" in
         fi
         ;;
 esac
+export CHA_NATIVE_PARITY_SCRIPT="$repository/tests/native/parity.js"
 if [ -n "$vault" ]; then
     exec "$contents/MacOS/ChaNativeTestHost" --assets "$assets" --expect "$expect" --config "$vault" "$@"
 fi

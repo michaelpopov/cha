@@ -1521,20 +1521,14 @@ private:
     }
 
     bool is_application_uri(std::wstring_view uri) const {
-        const auto matches_origin = [&](std::wstring_view origin) {
-            if (uri == origin) return true;
-            const std::wstring prefix = std::wstring(origin) + L"/";
-            if (starts_with_case_insensitive(uri, prefix)) return true;
-            const std::wstring blob_prefix = L"blob:" + prefix;
-            return starts_with_case_insensitive(uri, blob_prefix);
+        const auto document = without_fragment(uri);
+        const auto matches_shell = [&](std::wstring_view origin) {
+            return document == origin
+                || document == std::wstring(origin) + L"/"
+                || document == std::wstring(origin) + L"/index.html";
         };
-        if (matches_origin(runtime_origin_)) return true;
-        if (dev_origin_ && matches_origin(kFeasibilityOrigin)) return true;
-        if (feasibility_) {
-            const std::wstring blob_origin = L"blob:" + std::wstring(kFeasibilityOrigin);
-            return starts_with_case_insensitive(uri, blob_origin);
-        }
-        return false;
+        return matches_shell(runtime_origin_)
+            || (dev_origin_ && matches_shell(kFeasibilityOrigin));
     }
 
     static void open_https(std::wstring_view uri) {

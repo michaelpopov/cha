@@ -528,12 +528,7 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
             return
         }
         if isApplicationURL(url) {
-            if navigationAction.targetFrame?.isMainFrame == true
-                && !isSameDocumentHashChange(from: webView.url, to: url)
-                && nativeBridge != nil
-                && navigationAction.navigationType != .other {
-                nativeBridge?.prepareDocumentReplacement()
-            }
+            nativeBridge?.willNavigate(navigationAction, in: webView)
             decisionHandler(.allow)
             return
         }

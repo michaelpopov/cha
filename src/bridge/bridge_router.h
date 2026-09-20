@@ -44,11 +44,14 @@ public:
         std::string_view json);
 
     void run_tasks();
+    void run_control_tasks();
+    void run_ordinary_tasks();
     void expire_timeouts();
     void pump_output();
     [[nodiscard]] std::optional<nlohmann::json> take_delivery(
         std::string_view connection_id);
     bool wait_for_work(std::chrono::milliseconds timeout);
+    bool wait_for_ordinary_work(std::chrono::milliseconds timeout);
     void shutdown();
 
 private:

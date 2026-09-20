@@ -161,7 +161,7 @@ private:
         bool presentation_changed);
     void publish_current_snapshot();
     void mirror_if_changed();
-    void log_generation_transitions(const SessionSnapshot& current);
+    void log_generation_transitions(const ControllerView& current);
     void publish_final(ShutdownReason reason);
     void log_fatal_once() noexcept;
     void log_event(std::string_view event) const noexcept;

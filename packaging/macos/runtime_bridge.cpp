@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdlib>
 #include <cstring>
 #include <exception>
@@ -61,6 +62,11 @@ struct ChaRuntime {
 
     std::atomic<bool> pump_stop{false};
     std::thread pump;
+    std::thread ordinary_worker;
+    std::mutex workers_mutex;
+    std::condition_variable workers_changed;
+    bool pump_finished{true};
+    bool ordinary_finished{true};
 };
 
 namespace {
@@ -104,6 +110,35 @@ void stop_pump(ChaRuntime* runtime) {
 
 void join_pump(ChaRuntime* runtime) {
     if (runtime && runtime->pump.joinable()) runtime->pump.join();
+    if (runtime && runtime->ordinary_worker.joinable()) runtime->ordinary_worker.join();
+}
+
+bool join_workers_until(
+    ChaRuntime* runtime, std::chrono::steady_clock::time_point deadline) {
+    std::unique_lock lock(runtime->workers_mutex);
+    if (!runtime->workers_changed.wait_until(lock, deadline, [&] {
+            return runtime->pump_finished && runtime->ordinary_finished;
+        })) return false;
+    lock.unlock();
+    join_pump(runtime);
+    return true;
+}
+
+void run_ordinary_worker(ChaRuntime* runtime) {
+    using namespace std::chrono_literals;
+    while (!runtime->pump_stop.load()) {
+        runtime->router->wait_for_ordinary_work(50ms);
+        if (runtime->pump_stop.load()) break;
+        try {
+            runtime->router->run_ordinary_tasks();
+        } catch (...) {
+        }
+    }
+    {
+        std::lock_guard lock(runtime->workers_mutex);
+        runtime->ordinary_finished = true;
+    }
+    runtime->workers_changed.notify_all();
 }
 
 void run_pump(ChaRuntime* runtime) {
@@ -113,7 +148,7 @@ void run_pump(ChaRuntime* runtime) {
         runtime->router->wait_for_work(50ms);
         if (runtime->pump_stop.load()) break;
         try {
-            runtime->router->run_tasks();
+            runtime->router->run_control_tasks();
             runtime->router->expire_timeouts();
             runtime->router->pump_output();
         } catch (...) {
@@ -141,6 +176,11 @@ void run_pump(ChaRuntime* runtime) {
             }
         }
     }
+    {
+        std::lock_guard lock(runtime->workers_mutex);
+        runtime->pump_finished = true;
+    }
+    runtime->workers_changed.notify_all();
 }
 
 int32_t transfer(
@@ -239,7 +279,10 @@ ChaRuntime* cha_runtime_create(
             *runtime->native_application, std::move(options));
         runtime->native = true;
         runtime->port = 0;
+        runtime->pump_finished = false;
         runtime->pump = std::thread(run_pump, runtime.get());
+        runtime->ordinary_finished = false;
+        runtime->ordinary_worker = std::thread(run_ordinary_worker, runtime.get());
         return runtime.release();
     } catch (const cha::web::VaultPasswordError&) {
         if (password_error) *password_error = 1;
@@ -291,19 +334,13 @@ void cha_runtime_destroy(ChaRuntime* runtime) {
         runtime->delivery_callback = nullptr;
         runtime->delivery_context = nullptr;
     }
-    stop_pump(runtime);
-    join_pump(runtime);
-    if (runtime->native_application && !runtime->join_attempted) {
-        try {
-            runtime->join_attempted = true;
-            runtime->native_application->request_shutdown();
-            runtime->joined = runtime->native_application->join_shutdown(
-                std::chrono::milliseconds{10000});
-        } catch (...) {
-            (void)runtime->native_application.release();
-            if (runtime->logging) cha::shutdown_diagnostic_logging();
-            return;
-        }
+    // A missed deadline requires the host's controlled process exit. Keep all
+    // worker dependencies alive; never detach or destroy beneath a live task.
+    try {
+        cha_runtime_request_shutdown(runtime);
+        if (!cha_runtime_join_shutdown(runtime, 10000)) return;
+    } catch (...) {
+        return;
     }
     runtime->router.reset();
     runtime->native_application.reset();
@@ -571,13 +608,17 @@ void cha_runtime_request_shutdown(ChaRuntime* runtime) {
 
 int32_t cha_runtime_join_shutdown(ChaRuntime* runtime, int32_t grace_ms) {
     if (!runtime) return 1;
-    join_pump(runtime);
-    if (!runtime->native_application) return 1;
     if (!runtime->join_attempted) {
         runtime->join_attempted = true;
         const auto grace = std::chrono::milliseconds{
             grace_ms > 0 ? grace_ms : 10000};
-        runtime->joined = runtime->native_application->join_shutdown(grace);
+        const auto deadline = std::chrono::steady_clock::now() + grace;
+        if (!join_workers_until(runtime, deadline)) return 0;
+        const auto remaining = std::max(std::chrono::milliseconds{0},
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                deadline - std::chrono::steady_clock::now()));
+        runtime->joined = !runtime->native_application
+            || runtime->native_application->join_shutdown(remaining);
     }
     return runtime->joined ? 1 : 0;
 }

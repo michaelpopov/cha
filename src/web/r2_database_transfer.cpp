@@ -487,9 +487,33 @@ std::string decode_percent_encoding(std::string_view value) {
     return result;
 }
 
+// Poll cancellation even when the remote endpoint sends no response bytes.
+CURLcode perform_transfer(CURL* curl, const std::function<bool()>& cancelled) {
+    const std::unique_ptr<CURLM, decltype(&curl_multi_cleanup)> multi(
+        curl_multi_init(), curl_multi_cleanup);
+    if (!multi) throw std::runtime_error("Failed to initialize R2 transfer");
+    const auto require = [](CURLMcode result) {
+        if (result != CURLM_OK) throw std::runtime_error(curl_multi_strerror(result));
+    };
+    require(curl_multi_add_handle(multi.get(), curl));
+    const auto remove = [&](CURL* handle) { curl_multi_remove_handle(multi.get(), handle); };
+    const std::unique_ptr<CURL, decltype(remove)> attached(curl, remove);
+    int running = 1;
+    while (running) {
+        if (cancelled && cancelled()) return CURLE_ABORTED_BY_CALLBACK;
+        require(curl_multi_perform(multi.get(), &running));
+        if (running) require(curl_multi_poll(multi.get(), nullptr, 0, 100, nullptr));
+    }
+    int remaining{};
+    const CURLMsg* result = curl_multi_info_read(multi.get(), &remaining);
+    return result && result->msg == CURLMSG_DONE
+        ? result->data.result : CURLE_RECV_ERROR;
+}
+
 std::string list_objects(
     const R2StorageKey& storage,
-    std::string_view continuation_token) {
+    std::string_view continuation_token,
+    const std::function<bool()>& cancelled) {
     std::string query;
     if (!continuation_token.empty()) {
         query = "continuation-token="
@@ -512,7 +536,7 @@ std::string list_objects(
     require_curl(
         curl_easy_setopt(curl.get(), CURLOPT_WRITEDATA, &response),
         "Failed to configure R2 object listing destination");
-    const CURLcode result = curl_easy_perform(curl.get());
+    const CURLcode result = perform_transfer(curl.get(), cancelled);
     if (result != CURLE_OK) fail_transfer("list", result, error);
     require_status(curl, "list");
     return response;
@@ -662,7 +686,8 @@ std::uintmax_t upload_file(
     const std::filesystem::path& path,
     std::string_view object_name,
     std::string_view content_type,
-    const R2StorageKey& storage) {
+    const R2StorageKey& storage,
+    const std::function<bool()>& cancelled) {
     const R2Settings settings = load_r2_settings(object_name, storage);
     const std::string payload_hash = sha256_file_hex(path);
     const std::uintmax_t byte_count = std::filesystem::file_size(path);
@@ -699,7 +724,7 @@ std::uintmax_t upload_file(
         curl_easy_setopt(curl.get(), CURLOPT_WRITEFUNCTION, discard_response),
         "Failed to configure R2 upload response");
 
-    const CURLcode result = curl_easy_perform(curl.get());
+    const CURLcode result = perform_transfer(curl.get(), cancelled);
     if (result != CURLE_OK) fail_transfer("upload", result, error);
     require_status(curl, "upload");
     return byte_count;
@@ -709,6 +734,7 @@ std::uintmax_t download_file(
     const std::filesystem::path& destination,
     std::string_view object_name,
     const R2StorageKey& storage,
+    const std::function<bool()>& cancelled,
     std::string_view not_found_message = {}) {
     const R2Settings settings = load_r2_settings(object_name, storage);
     create_private_file(destination, {});
@@ -733,7 +759,7 @@ std::uintmax_t download_file(
         curl_easy_setopt(curl.get(), CURLOPT_WRITEDATA, &output),
         "Failed to configure R2 download destination");
 
-    const CURLcode result = curl_easy_perform(curl.get());
+    const CURLcode result = perform_transfer(curl.get(), cancelled);
     output.close();
     if (result != CURLE_OK) fail_transfer("download", result, error);
     if (!output) {
@@ -774,7 +800,8 @@ R2DatabaseTransfer upload_database_to_r2(
     const std::filesystem::path& vault_definition_path,
     const R2StorageKey& storage,
     R2DatabaseLease lease_mode,
-    std::string_view database_password) {
+    std::string_view database_password,
+    const std::function<bool()>& cancelled) {
     const std::filesystem::path database = normalize_database_path(database_path);
     const std::filesystem::path vault =
         std::filesystem::absolute(vault_definition_path).lexically_normal();
@@ -794,9 +821,9 @@ R2DatabaseTransfer upload_database_to_r2(
 
     const std::string database_name = utf8_path(database.filename());
     const std::uintmax_t vault_bytes = upload_file(
-        vault, database_name + ".toml", "application/toml", storage);
+        vault, database_name + ".toml", "application/toml", storage, cancelled);
     const std::uintmax_t database_bytes = upload_file(
-        database, database_name, "application/vnd.sqlite3", storage);
+        database, database_name, "application/vnd.sqlite3", storage, cancelled);
     return {.byte_count = vault_bytes + database_bytes};
 }
 
@@ -805,7 +832,8 @@ R2DatabaseTransfer download_database_from_r2(
     const std::filesystem::path& vault_definition_path,
     const R2StorageKey& storage,
     R2DatabaseLease lease_mode,
-    std::string_view database_password) {
+    std::string_view database_password,
+    const std::function<bool()>& cancelled) {
     const std::filesystem::path database = normalize_database_path(database_path);
     const std::filesystem::path vault =
         std::filesystem::absolute(vault_definition_path).lexically_normal();
@@ -825,13 +853,13 @@ R2DatabaseTransfer download_database_from_r2(
     TemporaryPath vault_temporary(unique_sibling(vault, "download"));
     const std::string vault_object = database_name + ".toml";
     const std::uintmax_t vault_bytes = download_file(
-        vault_temporary.get(), vault_object, storage,
+        vault_temporary.get(), vault_object, storage, cancelled,
         "R2 vault definition object '" + vault_object
             + "' was not found. The bucket may contain a legacy "
               "database-only upload; upload with the current CHA version "
               "before downloading.");
     const std::uintmax_t database_bytes = download_file(
-        database_temporary.get(), database_name, storage);
+        database_temporary.get(), database_name, storage, cancelled);
     if (inspect_workspace_session_database(
             database_temporary.get(), database_password)
         != WorkspaceDatabaseState::valid_v2) {
@@ -855,12 +883,13 @@ R2DatabaseTransfer download_database_from_r2(
 }
 
 std::vector<std::string> list_r2_database_names(
-    const R2StorageKey& storage) {
+    const R2StorageKey& storage,
+    const std::function<bool()>& cancelled) {
     constexpr std::string_view suffix = ".sqlite3";
     std::vector<std::string> names;
     std::string continuation_token;
     while (true) {
-        const std::string response = list_objects(storage, continuation_token);
+        const std::string response = list_objects(storage, continuation_token, cancelled);
         std::size_t offset{};
         while (true) {
             const std::size_t key_start = response.find("<Key>", offset);
@@ -898,7 +927,8 @@ R2DatabaseTransfer download_new_database_from_r2(
     const std::filesystem::path& database_path,
     const std::filesystem::path& vault_definition_path,
     std::string_view database_name,
-    const R2StorageKey& storage) {
+    const R2StorageKey& storage,
+    const std::function<bool()>& cancelled) {
     constexpr std::string_view suffix = ".sqlite3";
     if (database_name.size() <= suffix.size()
         || !database_name.ends_with(suffix)
@@ -924,13 +954,13 @@ R2DatabaseTransfer download_new_database_from_r2(
     bool downloaded_vault = true;
     try {
         vault_bytes = download_file(
-            vault_temporary.get(), vault_object, storage,
+            vault_temporary.get(), vault_object, storage, cancelled,
             "R2 vault definition object '" + vault_object + "' was not found");
     } catch (const R2ObjectNotFoundError&) {
         downloaded_vault = false;
     }
     const std::uintmax_t database_bytes = download_file(
-        database_temporary.get(), database_name, storage);
+        database_temporary.get(), database_name, storage, cancelled);
     std::optional<VaultDefinition> downloaded_definition;
     if (downloaded_vault) {
         downloaded_definition = load_vault_definition_file(

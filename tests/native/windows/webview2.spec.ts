@@ -1,7 +1,7 @@
 import { expect, test, type Browser, type Page } from '@playwright/test';
 import { chromium } from '@playwright/test';
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -190,6 +190,31 @@ test.describe('WebView2 native host', () => {
     await waitForApplication(page);
     const finalBootstrap = await invoke(page, 'app.bootstrap', {}, 0);
     expect(finalBootstrap.bootstrap.vault_name).toBe(originalVault);
+  });
+
+  test('retains session, file, navigation and vault behavior', async () => {
+    test.setTimeout(60000);
+    await waitForApplication(page);
+    const source = readFileSync(join(__dirname, '..', 'parity.js'), 'utf8');
+    const result = await page.evaluate(source + '\nnativeParity();');
+    expect(result).toMatchObject({ok: true});
+    await page.reload();
+    await waitForApplication(page);
+  });
+
+  test('blocks Blob documents from replacing the privileged shell', async () => {
+    await waitForApplication(page);
+    const connection = await page.evaluate(() => (window as any).__CHA_NATIVE_CONNECTION_ID__);
+    await page.evaluate(() => {
+      const blob = new Blob(['<script>window.__BLOB_DOCUMENT__ = true;</script>'], {type: 'text/html'});
+      const url = URL.createObjectURL(blob);
+      location.assign(url);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    });
+    await page.waitForTimeout(500);
+    expect(page.url()).toMatch(/^https:\/\/app\.cha\.local\//);
+    expect(await page.evaluate(() => (window as any).__CHA_NATIVE_CONNECTION_ID__)).toBe(connection);
+    expect(await page.evaluate(() => (window as any).__BLOB_DOCUMENT__)).toBeUndefined();
   });
 
   test('exits the assertion as failed when asked', async () => {

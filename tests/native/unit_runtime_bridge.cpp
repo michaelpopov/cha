@@ -1,5 +1,6 @@
 #include "runtime_bridge.h"
 
+#include "support/mock_http_server.h"
 #include "support/test_workspace.h"
 
 #include <gtest/gtest.h>
@@ -7,6 +8,7 @@
 
 #include <chrono>
 #include <condition_variable>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -124,19 +126,22 @@ protected:
             connection_, id, epoch == 0 ? epoch_ : epoch, method, std::move(params));
         cha_runtime_handle_message(
             runtime_, connection_.c_str(), body.dump().c_str());
-        auto batch = wait_batch(*captured_);
-        EXPECT_FALSE(batch.is_null() || batch.empty()) << method;
-        if (batch.is_null() || batch.empty()) return {};
         nlohmann::json reply;
-        for (const auto& message : batch.at("messages")) {
-            if (message.contains("id") && message["id"] == id) reply = message;
+        const auto deadline = std::chrono::steady_clock::now() + 2s;
+        while (reply.empty() && std::chrono::steady_clock::now() < deadline) {
+            auto batch = wait_batch(*captured_, 100ms);
+            if (batch.is_null() || batch.empty()) continue;
+            for (const auto& message : batch.at("messages")) {
+                if (message.contains("id") && message["id"] == id) reply = message;
+            }
+            const auto ack = nlohmann::json{
+                {"connection_id", connection_},
+                {"delivery_id", batch.at("delivery_id")},
+            };
+            cha_runtime_handle_message(
+                runtime_, connection_.c_str(), ack.dump().c_str());
         }
-        const auto ack = nlohmann::json{
-            {"connection_id", connection_},
-            {"delivery_id", batch.at("delivery_id")},
-        };
-        cha_runtime_handle_message(
-            runtime_, connection_.c_str(), ack.dump().c_str());
+        EXPECT_FALSE(reply.empty()) << method;
         return reply;
     }
 
@@ -149,6 +154,47 @@ protected:
     std::uint64_t epoch_{0};
     std::uint64_t next_id_{1};
 };
+
+#if GTEST_HAS_DEATH_TEST
+TEST(NativeRuntimeDeathTest, ShutdownDeadlineIncludesBlockedDelivery) {
+    // A blocked host callback must not turn grace_ms into an unbounded join.
+    // Deliberately leave the worker blocked; production exits the process on
+    // this path, retaining its dependencies rather than detaching the thread.
+    EXPECT_EXIT(([] {
+        cha::test::TestWorkspace workspace;
+        const auto config = make_config(workspace);
+        char* error = nullptr;
+        int32_t password_error{};
+        auto* runtime = cha_runtime_create(config.c_str(), workspace.root().c_str(),
+            "", "", 0, &password_error, &error);
+        if (!runtime) std::_Exit(2);
+        struct Blocked {
+            std::mutex mutex;
+            std::condition_variable changed;
+            bool entered{};
+        } blocked;
+        cha_runtime_set_delivery_callback(runtime, [](void* context, const char*, const char*) {
+            auto& blocked = *static_cast<Blocked*>(context);
+            std::unique_lock lock(blocked.mutex);
+            blocked.entered = true;
+            blocked.changed.notify_all();
+            blocked.changed.wait(lock, [] { return false; });
+        }, &blocked);
+        char* connection = cha_runtime_open_connection(runtime, &error);
+        if (!connection) std::_Exit(3);
+        const auto message = request(connection, 1, 0, "bridge.info").dump();
+        cha_runtime_handle_message(runtime, connection, message.c_str());
+        {
+            std::unique_lock lock(blocked.mutex);
+            if (!blocked.changed.wait_for(lock, 2s, [&] { return blocked.entered; })) std::_Exit(4);
+        }
+        cha_runtime_request_shutdown(runtime);
+        const auto start = std::chrono::steady_clock::now();
+        const auto joined = cha_runtime_join_shutdown(runtime, 20);
+        std::_Exit(joined == 0 && std::chrono::steady_clock::now() - start < 500ms ? 0 : 1);
+    }()), ::testing::ExitedWithCode(0), "");
+}
+#endif
 
 TEST_F(NativeRuntimeTest, RejectsHttpModeInsteadOfStartingAListener) {
     char* error = nullptr;
@@ -235,6 +281,38 @@ TEST_F(NativeRuntimeTest, StartsWithoutAListenerAndRunsFirstFlow) {
         {{"forum_id", "lobby"}, {"session_id", session_id}});
     ASSERT_TRUE(snapshot["ok"]);
     EXPECT_EQ(snapshot["result"]["session_id"], session_id);
+}
+
+TEST_F(NativeRuntimeTest, StopAndShutdownProgressDuringAStalledR2Download) {
+    cha::MockHttpServer server({"HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\n"}, true);
+    epoch_ = call("app.bootstrap")["result"]["context_epoch"];
+    const auto created = call("session.create", {{"forum_id", "lobby"}, {"label", "Stop"}});
+    const auto identity = nlohmann::json{{"forum_id", "lobby"},
+        {"session_id", created["result"]["id"]}};
+    ASSERT_TRUE(call("session.open", identity)["ok"]);
+    ASSERT_TRUE(call("r2Storage.save", {
+        {"display_name", "Backups"},
+        {"url", "http://127.0.0.1:" + std::to_string(server.port()) + "/bucket"},
+        {"access_key_id", "access"}, {"secret_key", "secret"}})["ok"]);
+    server.start();
+    const auto download = request(connection_, next_id_++, epoch_,
+        "vault.r2.download", {{"name", "remote"}});
+    cha_runtime_handle_message(runtime_, connection_.c_str(), download.dump().c_str());
+    const bool started = server.wait_for_requests(1, 2s);
+    EXPECT_TRUE(started);
+    if (started) {
+        const auto start = std::chrono::steady_clock::now();
+        const auto stopped = call("session.stop", identity);
+        EXPECT_TRUE(stopped.value("ok", false)) << stopped.dump();
+        EXPECT_LT(std::chrono::steady_clock::now() - start, 1s);
+        const auto closed = call("session.close", identity);
+        EXPECT_TRUE(closed.value("ok", false)) << closed.dump();
+    }
+    cha_runtime_request_shutdown(runtime_);
+    const auto start = std::chrono::steady_clock::now();
+    EXPECT_EQ(cha_runtime_join_shutdown(runtime_, 1000), 1);
+    EXPECT_LT(std::chrono::steady_clock::now() - start, 1500ms);
+    server.join();
 }
 
 TEST_F(NativeRuntimeTest, CloseAndHandleDoNotPropagateExceptions) {

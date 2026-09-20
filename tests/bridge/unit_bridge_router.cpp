@@ -1,5 +1,6 @@
 #include "app/application.h"
 #include "bridge/bridge_router.h"
+#include "session/session_lease.h"
 #include "support/mock_http_server.h"
 #include "support/test_workspace.h"
 #include "web/command_queue.h"
@@ -853,6 +854,56 @@ TEST_F(BridgeRouterTest, ShutdownDoesNotWaitForRendererAck) {
                 {"delivery_id", pending->at("delivery_id")},
             }.dump());
     }
+}
+
+TEST_F(BridgeRouterTest, QueuedOldContextReplyIsInvalidatedBeforeDelivery) {
+    bootstrap_epoch();
+    ASSERT_TRUE(call("vault.create", {{"display_name", "Other"},
+        {"copy_from", nullptr}, {"password", nullptr}})["ok"]);
+    const auto id = next_id_++;
+    router_->handle_request(connection_,
+        request_json(connection_, id, epoch_, "provider.list").dump());
+    router_->run_tasks(); // The result is ready, but the renderer has not taken it.
+    const auto switched = application_->switch_vault("Other", {}, epoch_);
+    const auto batch = router_->take_delivery(connection_);
+    ASSERT_TRUE(batch);
+    ASSERT_FALSE(batch->at("messages").empty());
+    EXPECT_EQ(batch->at("messages").front()["event"], "app.contextChanged");
+    EXPECT_EQ(batch->at("messages").front()["context_epoch"], switched.context_epoch);
+    const auto reply = reply_with_id(*batch, id);
+    EXPECT_FALSE(reply["ok"]);
+    EXPECT_EQ(reply["error"]["code"], "vault_changed");
+    ack_delivery(*router_, connection_, *batch);
+}
+
+TEST_F(BridgeRouterTest, BusyVaultLeasePreservesTheCurrentContextAndSession) {
+    bootstrap_epoch();
+    const auto target = application_->create_vault({.display_name = "Busy"}, epoch_);
+    const auto busy = cha::SessionLease::acquire(target.data, "test lease");
+    const auto session = call("session.create", {{"forum_id", "lobby"}, {"label", "Kept"}});
+    const auto identity = nlohmann::json{{"forum_id", "lobby"},
+        {"session_id", session["result"]["id"]}};
+    ASSERT_TRUE(call("session.open", identity)["ok"]);
+    EXPECT_FALSE(call("vault.switch", {{"vault_name", "Busy"}, {"password", nullptr}})["ok"]);
+    EXPECT_FALSE(call("vault.merge", {{"source_vault", "Busy"}, {"password", nullptr}})["ok"]);
+    EXPECT_EQ(application_->context_epoch(), epoch_);
+    EXPECT_TRUE(call("session.snapshot", identity)["ok"]);
+}
+
+TEST_F(BridgeRouterTest, FailedMergeRecoveryKeepsShellAvailableAndRejectsDomainWork) {
+    bootstrap_epoch();
+    (void)application_->create_vault({.display_name = "Source"}, epoch_);
+    cha::force_next_forum_sync_failure();
+    const auto failed = call("vault.merge", {{"source_vault", "Source"}, {"password", nullptr}});
+    ASSERT_FALSE(failed["ok"]);
+    EXPECT_EQ(failed["error"]["code"], "application_unavailable");
+    EXPECT_TRUE(call("bridge.info")["ok"]);
+    const auto boot = call("app.bootstrap");
+    ASSERT_TRUE(boot["ok"]);
+    EXPECT_EQ(boot["result"]["state"], "unavailable");
+    const auto denied = call("session.create", {{"forum_id", "lobby"}, {"label", "Blocked"}});
+    EXPECT_FALSE(denied["ok"]);
+    EXPECT_EQ(denied["error"]["code"], "application_unavailable");
 }
 
 TEST_F(BridgeRouterTest, SnapshotCaptureAndSerializeStayBounded) {

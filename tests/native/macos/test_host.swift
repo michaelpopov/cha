@@ -8,6 +8,8 @@ private enum ProbeExpectation: String {
     case fail
     case timeout
     case audio
+    case media
+    case parity
     case flow
     case reload
     case rendererFail = "renderer-fail"
@@ -18,7 +20,7 @@ private enum ProbeExpectation: String {
 private struct HostOptions {
     var assets: URL
     var expectation = ProbeExpectation.pass
-    var timeoutMs = 20000
+    var timeoutMs = 45000
     var config: URL?
     var devOrigin: URL?
 }
@@ -31,7 +33,7 @@ private enum HostError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .usage:
-            return "usage: cha_macos_native_test_host --assets <dir> [--config <dir>] [--dev-origin http://127.0.0.1:5173] [--expect pass|fail|timeout|audio|flow|reload|renderer-fail|stall|quit] [--timeout-ms N]"
+            return "usage: cha_macos_native_test_host --assets <dir> [--config <dir>] [--dev-origin http://127.0.0.1:5173] [--expect pass|fail|timeout|audio|media|parity|flow|reload|renderer-fail|stall|quit] [--timeout-ms N]"
         case .probeFailed(let detail):
             return detail
         case .timedOut:
@@ -44,7 +46,7 @@ private func parseOptions() throws -> HostOptions {
     let arguments = Array(CommandLine.arguments.dropFirst())
     var assets: URL?
     var expectation = ProbeExpectation.pass
-    var timeoutMs = 20000
+    var timeoutMs = 45000
     var config: URL?
     var devOrigin: URL?
     var index = 0
@@ -93,7 +95,7 @@ private func parseOptions() throws -> HostOptions {
 
 private func isProbe(_ expectation: ProbeExpectation) -> Bool {
     switch expectation {
-    case .pass, .fail, .timeout, .audio: return true
+    case .pass, .fail, .timeout, .audio, .media: return true
     default: return false
     }
 }
@@ -114,6 +116,7 @@ private final class NativeTestHost: NSObject, WKNavigationDelegate, WKUIDelegate
     private var flowPhase = 0
     private var initialFlowStarted = false
     private var rendererFailures = 0
+    private var lastFlowConnection: String?
 
     init(options: HostOptions) {
         self.options = options
@@ -181,9 +184,7 @@ private final class NativeTestHost: NSObject, WKNavigationDelegate, WKUIDelegate
     }
 
     func start() {
-        if let origin = options.devOrigin {
-            FileHandle.standardError.write(
-                Data("loader=dev-origin \(origin.absoluteString)\n".utf8))
+        if options.devOrigin != nil || options.expectation == .audio || options.expectation == .media {
             let window = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 1040, height: 760),
                 styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -196,6 +197,10 @@ private final class NativeTestHost: NSObject, WKNavigationDelegate, WKUIDelegate
             NSApp.setActivationPolicy(.regular)
             NSApp.activate(ignoringOtherApps: true)
             self.window = window
+        }
+        if let origin = options.devOrigin {
+            FileHandle.standardError.write(
+                Data("loader=dev-origin \(origin.absoluteString)\n".utf8))
             webView.load(URLRequest(url: origin))
             return
         }
@@ -221,6 +226,19 @@ private final class NativeTestHost: NSObject, WKNavigationDelegate, WKUIDelegate
             evaluate(passProbeSource)
         case .audio:
             evaluate(audioProbeSource)
+        case .media:
+            evaluate(audioProbeSource.replacingOccurrences(
+                of: "const requireCapture = true;", with: "const requireCapture = false;"))
+        case .parity:
+            do {
+                guard let path = ProcessInfo.processInfo.environment["CHA_NATIVE_PARITY_SCRIPT"] else {
+                    throw HostError.usage
+                }
+                let script = try String(contentsOfFile: path, encoding: .utf8)
+                evaluate(script + "\nreturn await nativeParity();")
+            } catch {
+                finish(error: error)
+            }
         case .flow, .reload, .rendererFail, .stall, .quit:
             if flowPhase == 0 {
                 guard !initialFlowStarted else { return }
@@ -271,12 +289,7 @@ private final class NativeTestHost: NSObject, WKNavigationDelegate, WKUIDelegate
             decisionHandler(.cancel)
             return
         }
-        if navigationAction.targetFrame?.isMainFrame == true
-            && !isSameDocumentHashChange(from: webView.url, to: url)
-            && nativeBridge != nil
-            && navigationAction.navigationType == .reload {
-            nativeBridge?.prepareDocumentReplacement()
-        }
+        nativeBridge?.willNavigate(navigationAction, in: webView)
         decisionHandler(.allow)
     }
 
@@ -296,7 +309,8 @@ private final class NativeTestHost: NSObject, WKNavigationDelegate, WKUIDelegate
         type: WKMediaCaptureType,
         decisionHandler: @escaping (WKPermissionDecision) -> Void
     ) {
-        if type == .microphone, frame.isMainFrame, trustedMediaOrigin(origin) {
+        if options.expectation != .media,
+           type == .microphone, frame.isMainFrame, trustedMediaOrigin(origin) {
             decisionHandler(.grant)
         } else {
             decisionHandler(.deny)
@@ -365,11 +379,20 @@ private final class NativeTestHost: NSObject, WKNavigationDelegate, WKUIDelegate
             finish(error: HostError.probeFailed("probe returned no report"))
             return
         }
+        if options.expectation == .reload {
+            guard nativeBridge?.connectionId != lastFlowConnection else {
+                finish(error: HostError.probeFailed("document replacement reused its connection"))
+                return
+            }
+            lastFlowConnection = nativeBridge?.connectionId
+        }
         switch options.expectation {
         case .reload where flowPhase == 0:
             flowPhase = 1
-            nativeBridge?.prepareDocumentReplacement()
             webView.reload()
+        case .reload where flowPhase == 1:
+            flowPhase = 2
+            webView.load(URLRequest(url: URL(string: "\(chaAssetOrigin)/")!))
         case .rendererFail where flowPhase == 0:
             flowPhase = 1
             terminateOwnWebContent()
@@ -734,6 +757,7 @@ return await (async function() {
 private let audioProbeSource = """
 return await (async function() {
   try {
+  const requireCapture = true;
   const report = {ok: false, origin: location.origin};
   const audio = await fetch('/probe/audio', {cache: 'no-store'});
   if (!audio.ok) {
@@ -794,12 +818,17 @@ return await (async function() {
   try {
     const stream = await Promise.race([
       navigator.mediaDevices.getUserMedia({audio: true}),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('mic-timeout')), 2500)),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('mic-timeout')), requireCapture ? 30000 : 4000)),
     ]);
     const tracks = stream.getAudioTracks();
     report.microphone = tracks.length > 0 && tracks[0].readyState === 'live' ? 'captured' : 'silent';
     tracks.forEach((track) => track.stop());
   } catch (error) {
+    if (!requireCapture && error && error.name === 'NotAllowedError') {
+      report.microphone = 'permission-denied';
+      report.ok = true;
+      return report;
+    }
     report.microphone = 'denied-or-unavailable';
     report.reason = 'microphone capture failed: ' + String(error && error.message ? error.message : error);
     return report;

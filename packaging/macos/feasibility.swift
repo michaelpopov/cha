@@ -281,10 +281,7 @@ final class ChaProbeReceiver: NSObject, WKScriptMessageHandler {
 func makeFeasibilityWebViewConfiguration(assetRoot: URL) -> (
     WKWebViewConfiguration, ChaAssetSchemeHandler, ChaProbeReceiver
 ) {
-    let configuration = WKWebViewConfiguration()
-    configuration.mediaTypesRequiringUserActionForPlayback = []
-    let handler = ChaAssetSchemeHandler(root: assetRoot)
-    configuration.setURLSchemeHandler(handler, forURLScheme: chaAssetScheme)
+    let (configuration, handler) = makeNativeWebViewConfiguration(assetRoot: assetRoot)
     let receiver = ChaProbeReceiver()
     let bootstrap = WKUserScript(
         source: """

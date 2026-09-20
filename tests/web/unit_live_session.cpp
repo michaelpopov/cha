@@ -563,6 +563,47 @@ TEST(LiveSession, PublishesExactAppendsAndSnapshotsForStructuralUpdates) {
     controls->finish();
 }
 
+TEST(LiveSession, StalledRendererDefersSnapshotCaptureUntilItRequestsDelivery) {
+    test::TemporarySessionFile file("live_session_dirty_projection");
+    auto controls = std::make_shared<test::BackendControls>();
+    std::atomic_int captures{};
+    auto opener = scripted_opener(file.path(), controls);
+    LiveSessionHost host(test_settings(),
+        [opener, &captures](const auto& identity, auto notifier) {
+            auto opened = opener(identity, notifier);
+            opened.cached_audio_entries = [&captures] {
+                ++captures;
+                return std::set<EntryId>{};
+            };
+            return opened;
+        });
+    subscribe(*host);
+    auto initial = next_output(*host);
+    ASSERT_TRUE(initial);
+    const auto initial_captures = captures.load();
+    ASSERT_TRUE(std::holds_alternative<CommandResult>(
+        host->submit(RawCommand{"Question"}, 2s)));
+    ASSERT_TRUE(controls->wait_until_running());
+    for (int i = 0; i < 100; ++i) controls->emit_answer("word ");
+    ASSERT_TRUE(std::holds_alternative<CommandResult>(host->submit(StopCommand{}, 2s)));
+    const auto stopped = std::chrono::steady_clock::now() + 2s;
+    while (!host->idle_for_retirement() && std::chrono::steady_clock::now() < stopped) {
+        std::this_thread::sleep_for(1ms);
+    }
+    ASSERT_TRUE(host->idle_for_retirement());
+    ASSERT_TRUE(std::holds_alternative<SessionLabelResult>(
+        host->submit(RenameSessionCommand{"Settled"}, 2s)));
+    EXPECT_EQ(captures.load(), initial_captures);
+    EXPECT_FALSE(host->take_output());
+    host->acknowledge_output();
+    const auto repaired = next_output(*host);
+    ASSERT_TRUE(repaired);
+    EXPECT_EQ(repaired->kind, cha::app::SessionOutputItem::Kind::snapshot);
+    EXPECT_EQ(repaired->seq, 1U);
+    EXPECT_FALSE(repaired->snapshot.generation.active);
+    EXPECT_EQ(captures.load(), initial_captures + 1);
+}
+
 TEST(LiveSession, IncompatibleAppendTargetRepairsBrowserStateWithASnapshot) {
     test::TemporarySessionFile file("live_session_target_change");
     auto controls = std::make_shared<test::BackendControls>();

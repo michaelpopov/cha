@@ -127,6 +127,56 @@ TEST(ApplicationMedia, SynthesizesSpeechIntoARevocableResource) {
     server.join();
 }
 
+TEST(ApplicationMedia, LateCancellationRevokesACompletedSpeechResource) {
+    MockHttpServer server({http_response("audio/mpeg", "AUDIO")});
+    server.start();
+    test::TestWorkspace workspace;
+    const std::filesystem::path database =
+        test::import_test_database(workspace.root());
+    auto application = Application::open(make_command(workspace, database));
+    const auto key = application->create_api_key(
+        {.display_name = "Fish", .value = "fish-secret"});
+    const auto voice = application->create_voice({
+        .display_name = "Narrator",
+        .description = "Test",
+        .elevenlabs_voice_id = "voice-ref",
+    });
+    (void)application->save_voice_output_settings({
+        .url = "https://api.fish.audio/v1/tts",
+        .model = "s2.1-pro",
+        .api_key = key.id,
+        .output_format = "mp3",
+        .default_voice = voice.display_name,
+    });
+    application->set_speech_url_override(
+        "http://127.0.0.1:" + std::to_string(server.port()) + "/v1/tts");
+
+    const auto reply = application->start_speech(
+        "view-1", 7, "Hello",
+        {.reference_id = "voice-ref"}, 1);
+    const auto result = wait_reply(reply);
+    EXPECT_EQ(result["url"], "/media/" + result["resource_id"].get<std::string>());
+    EXPECT_EQ(result["mime_type"], "audio/mpeg");
+    EXPECT_EQ(result["byte_length"], 5);
+
+    const auto body = application->read_resource(
+        "view-1", result["resource_id"].get<std::string>());
+    ASSERT_TRUE(body);
+    EXPECT_EQ(body->body, "AUDIO");
+    EXPECT_FALSE(application->read_resource(
+        "view-2", result["resource_id"].get<std::string>()));
+
+    // Join/reap the completed worker before cancellation, without closing its document.
+    std::this_thread::sleep_for(20ms);
+    application->cancel_speech("view-1", 7, 1);
+    EXPECT_FALSE(application->read_resource(
+        "view-1", result["resource_id"].get<std::string>()));
+
+    application->request_shutdown();
+    (void)application->join_shutdown(2s);
+    server.join();
+}
+
 TEST(ApplicationMedia, CancelledSpeechDoesNotRegisterAResource) {
     MockHttpServer server({http_response("audio/mpeg", "AUDIO")});
     test::TestWorkspace workspace;

@@ -54,14 +54,14 @@ describe('native bridge', () => {
     bridge.receive({
       connection_id: 'view-9',
       delivery_id: 1,
-      messages: [{ event: 'app.contextChanged' }],
+      messages: [{ event: 'app.contextChanged', connection_id: 'view-9', context_epoch: 3 }],
     });
     expect(onContextChanged).toHaveBeenCalledOnce();
     expect(onSession).not.toHaveBeenCalled();
     bridge.receive({
       connection_id: 'view-9',
       delivery_id: 2,
-      messages: [{ event: 'session.snapshot' }],
+      messages: [{ event: 'session.snapshot', connection_id: 'view-9', context_epoch: 3 }],
     });
     expect(onSession).toHaveBeenCalledOnce();
   });
@@ -72,7 +72,7 @@ describe('native bridge', () => {
       connectionId: 'view-9',
       post: (message) => posts.push(message),
     });
-
+    bridge.setContextEpoch(3);
     const pending = bridge.invoke('session.submit', { forum_id: 'history' });
     expect(posts).toHaveLength(1);
     expect(posts[0]).toMatchObject({
@@ -107,7 +107,7 @@ describe('native bridge', () => {
       messages: [{ ...reply, id: posted.id }],
     });
     await expect(pending).resolves.toEqual({ clear_input: true, notice: 'Saved' });
-    expect(bridge.acks).toContainEqual({ connection_id: 'view-9', delivery_id: 2 });
+    expect(posts).toContainEqual({ connection_id: 'view-9', delivery_id: 2 });
 
     const leftover = bridge.invoke('session.stop', {});
     bridge.dispose();
@@ -152,5 +152,43 @@ describe('native bridge', () => {
     });
     await expect(bridge.invoke('session.submit', {}))
       .rejects.toMatchObject({ code: 'session_not_live' });
+  });
+
+  it('ignores foreign documents and stale epochs without resolving or losing a live request', async () => {
+    const post = vi.fn();
+    const bridge = createEnvelopeNativeBridge({ connectionId: 'current', post });
+    bridge.setContextEpoch(7);
+    const resolved = vi.fn();
+    const pending = bridge.invoke('session.submit').then(resolved);
+    const reply = { connection_id: 'current', context_epoch: 7, id: 1, ok: true, result: 'current' };
+    bridge.receive({ connection_id: 'old', delivery_id: 1, messages: [reply] });
+    bridge.receive({ connection_id: 'current', delivery_id: 2,
+      messages: [{ ...reply, connection_id: 'old' }] });
+    bridge.receive({ connection_id: 'current', delivery_id: 3,
+      messages: [{ ...reply, context_epoch: 6 }] });
+    await Promise.resolve();
+    expect(resolved).not.toHaveBeenCalled();
+    expect(post).toHaveBeenCalledWith({ connection_id: 'old', delivery_id: 1 });
+    bridge.receive({ connection_id: 'current', delivery_id: 4, messages: [reply] });
+    await pending;
+    expect(resolved).toHaveBeenCalledWith('current');
+  });
+
+  it('rejects old-context work but preserves the initiating maintenance result', async () => {
+    const bridge = createEnvelopeNativeBridge({ connectionId: 'current', post: () => {} });
+    bridge.setContextEpoch(7);
+    const old = bridge.invoke('provider.list');
+    const changed = expect(old).rejects.toMatchObject({ code: 'vault_changed' });
+    const maintenance = bridge.invoke('vault.switch');
+    bridge.receive({ connection_id: 'current', delivery_id: 1, messages: [
+      { connection_id: 'current', event: 'app.contextChanged', context_epoch: 8, state: 'running' },
+      { connection_id: 'current', id: 1, context_epoch: 7, ok: true, result: ['old'] },
+      { connection_id: 'current', id: 2, context_epoch: 8, ok: true, result: { context_epoch: 8 } },
+    ] });
+    await changed;
+    await expect(maintenance).resolves.toEqual({ context_epoch: 8 });
+    bridge.setContextEpoch(7);
+    expect(bridge.contextEpoch()).toBe(8);
+    expect(bridge).not.toHaveProperty('acks');
   });
 });

@@ -60,12 +60,12 @@ bool run_guarded(Operation&& operation) noexcept {
 }
 
 std::string_view generation_terminal_status(
-    const SessionSnapshot& snapshot,
+    const ControllerView& snapshot,
     const std::optional<std::uint64_t>& request_id) {
     if (!request_id) return "unknown";
     bool has_prompt = false;
-    for (auto entry = snapshot.transcript.rbegin();
-         entry != snapshot.transcript.rend(); ++entry) {
+    for (auto entry = snapshot.transcript.entries.rbegin();
+         entry != snapshot.transcript.entries.rend(); ++entry) {
         if (entry->request_id != request_id) continue;
         if (entry->kind == EntryKind::human) {
             has_prompt = true;
@@ -112,7 +112,6 @@ LiveSession::LiveSession(
       }),
       notifier_(std::make_shared<OwnerWakeSignal>()),
       output_(std::make_shared<cha::app::SessionOutput>(
-          cha::app::SequencePolicy::monotonic,
           settings_.pending_append_byte_limit)),
       commands_(settings_.command_queue_capacity) {
     if (!opener_) throw std::invalid_argument("Live session needs a session opener");
@@ -201,11 +200,14 @@ bool LiveSession::idle_for_retirement() {
 }
 
 std::shared_ptr<const cha::app::SessionOutputItem> LiveSession::take_output() {
-    return output_->take();
+    auto item = output_->take();
+    if (output_->snapshot_needed()) notifier_->wake();
+    return item;
 }
 
 void LiveSession::acknowledge_output() noexcept {
     output_->acknowledge();
+    notifier_->wake();
 }
 
 void LiveSession::request_shutdown(ShutdownReason reason) {
@@ -214,7 +216,6 @@ void LiveSession::request_shutdown(ShutdownReason reason) {
         stopping_ = true;
         shutdown_reason_ = keep_higher_priority_reason(shutdown_reason_, reason);
     }
-    output_->interrupt_wait();
     notifier_->wake();
 }
 
@@ -399,6 +400,9 @@ void LiveSession::owner_loop() {
             }
             const bool presentation_changed = apply_notice(events.update.notice);
             publish_update(std::move(events.update.state), presentation_changed);
+            if (output_->snapshot_needed()) {
+                output_->publish_snapshot(make_snapshot());
+            }
             mirror_if_changed();
             if (events.update.session_ended) {
                 (void)mark_stopping(ShutdownReason::browser_disconnected);
@@ -608,9 +612,9 @@ void LiveSession::publish_update(
 }
 
 void LiveSession::publish_current_snapshot() {
-    SessionSnapshot current = make_snapshot();
-    log_generation_transitions(current);
-    output_->publish_snapshot(std::move(current));
+    log_generation_transitions(controller_->view());
+    output_->require_snapshot();
+    if (output_->snapshot_needed()) output_->publish_snapshot(make_snapshot());
 }
 
 void LiveSession::mirror_if_changed() {
@@ -626,7 +630,7 @@ void LiveSession::mirror_if_changed() {
     mirrored_label_ = label_;
 }
 
-void LiveSession::log_generation_transitions(const SessionSnapshot& current) {
+void LiveSession::log_generation_transitions(const ControllerView& current) {
     const bool was_active = logged_generation_active_;
     const bool is_active = current.generation.active;
     const bool request_changed = was_active && is_active

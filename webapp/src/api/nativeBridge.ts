@@ -76,11 +76,21 @@ export function isNativeReply(value: unknown): value is {
 }
 
 type Pending = {
+  method: string;
+  epoch: number;
   resolve: (value: unknown) => void;
   reject: (error: unknown) => void;
 };
 
 type EventHandler = (payload: unknown) => void;
+
+function changesContext(method: string): boolean {
+  return method === 'vault.switch' || method === 'vault.merge' || method === 'vault.update';
+}
+
+function needsContext(method: string): boolean {
+  return method !== 'bridge.info' && method !== 'app.bootstrap';
+}
 
 export function dispatchDeliveryBatch(
   batch: unknown,
@@ -112,7 +122,6 @@ export function createEnvelopeNativeBridge(options: {
   onContextEpoch?(epoch: number): void;
 }): NativeBridge & {
   receive(batch: unknown): void;
-  acks: Array<{ connection_id: string; delivery_id: number }>;
 } {
   let epoch = 0;
   let nextId = 1;
@@ -120,7 +129,6 @@ export function createEnvelopeNativeBridge(options: {
   let receiverFailed = false;
   const pending = new Map<number, Pending>();
   const listeners = new Map<string, Set<EventHandler>>();
-  const acks: Array<{ connection_id: string; delivery_id: number }> = [];
 
   const emit = (event: string, payload: unknown) => {
     listeners.get(event)?.forEach((handler) => handler(payload));
@@ -131,10 +139,29 @@ export function createEnvelopeNativeBridge(options: {
     pending.clear();
   };
 
+  const setContextEpoch = (value: number) => {
+    if (!Number.isSafeInteger(value) || value < epoch) return;
+    epoch = value;
+    options.onContextEpoch?.(value);
+    for (const [id, request] of pending) {
+      if (needsContext(request.method) && !changesContext(request.method)
+          && request.epoch !== epoch) {
+        pending.delete(id);
+        request.reject(new ChaError(0, 'vault_changed', 'The active vault changed.'));
+      }
+    }
+  };
+
   const handleMessage = (message: unknown) => {
+    if (!isRecord(message) || message.connection_id !== options.connectionId) return;
     if (isNativeReply(message)) {
       const request = pending.get(message.id);
       if (!request) return;
+      if (needsContext(request.method)) {
+        if (changesContext(request.method)) {
+          if (message.context_epoch < request.epoch) return;
+        } else if (message.context_epoch !== request.epoch || request.epoch !== epoch) return;
+      }
       pending.delete(message.id);
       if (message.ok) {
         request.resolve(message.result);
@@ -148,6 +175,13 @@ export function createEnvelopeNativeBridge(options: {
       return;
     }
     if (isRecord(message) && typeof message.event === 'string') {
+      if (message.event === 'app.contextChanged') {
+        if (!Number.isSafeInteger(message.context_epoch)
+            || (message.context_epoch as number) < epoch) return;
+        setContextEpoch(message.context_epoch as number);
+      } else if (message.event === 'app.connectionInvalidated') {
+        rejectAll(new ChaProtocolError());
+      } else if (message.event !== 'receiver-error' && message.context_epoch !== epoch) return;
       emit(message.event as string, message);
       if (message.event === 'session.snapshot' || message.event === 'session.append') {
         emit('session', message);
@@ -159,9 +193,12 @@ export function createEnvelopeNativeBridge(options: {
     if (disposed) return;
     dispatchDeliveryBatch(
       batch,
-      handleMessage,
+      (message) => {
+        if (isNativeDeliveryBatch(batch) && batch.connection_id === options.connectionId) {
+          handleMessage(message);
+        }
+      },
       (connectionId, deliveryId) => {
-        acks.push({ connection_id: connectionId, delivery_id: deliveryId });
         options.onAck?.(connectionId, deliveryId);
         options.post({ connection_id: connectionId, delivery_id: deliveryId });
       },
@@ -173,12 +210,8 @@ export function createEnvelopeNativeBridge(options: {
   };
 
   return {
-    acks,
     receive,
-    setContextEpoch(value: number) {
-      epoch = value;
-      options.onContextEpoch?.(value);
-    },
+    setContextEpoch,
     contextEpoch() {
       return epoch;
     },
@@ -221,6 +254,8 @@ export function createEnvelopeNativeBridge(options: {
         };
         invokeOptions?.signal?.addEventListener('abort', abort, { once: true });
         pending.set(id, {
+          method,
+          epoch,
           resolve: (value) => {
             invokeOptions?.signal?.removeEventListener('abort', abort);
             resolve(value as T);
@@ -269,8 +304,11 @@ export function createFakeNativeBridge(
   acks: Array<{ connection_id: string; delivery_id: number }>;
 } {
   const posts: unknown[] = [];
+  const acks: Array<{ connection_id: string; delivery_id: number }> = [];
+  let nextDelivery = 1;
   const envelope = createEnvelopeNativeBridge({
     connectionId: 'view-9',
+    onAck(connection_id, delivery_id) { acks.push({ connection_id, delivery_id }); },
     post(message) {
       posts.push(message);
       if (!isRecord(message) || typeof message.method !== 'string') return;
@@ -279,7 +317,7 @@ export function createFakeNativeBridge(
       void Promise.resolve(handler(message.params)).then((result) => {
         envelope.receive({
           connection_id: 'view-9',
-          delivery_id: envelope.acks.length + 1,
+          delivery_id: nextDelivery++,
           messages: [{
             connection_id: 'view-9',
             id: message.id,
@@ -294,7 +332,7 @@ export function createFakeNativeBridge(
           : { code: 'internal_error', message: 'The request could not be completed.' };
         envelope.receive({
           connection_id: 'view-9',
-          delivery_id: envelope.acks.length + 1,
+          delivery_id: nextDelivery++,
           messages: [{
             connection_id: 'view-9',
             id: message.id,
@@ -306,7 +344,7 @@ export function createFakeNativeBridge(
       });
     },
   });
-  return Object.assign(envelope, { posts });
+  return Object.assign(envelope, { posts, acks });
 }
 
 declare global {

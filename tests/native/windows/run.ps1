@@ -70,7 +70,7 @@ try {
         Write-Host 'FAIL intentional assertion failure'
         exit 1
     }
-    $result = Invoke-WebView2Probe 'runs the packaged application through the real native runtime'
+    $result = Invoke-WebView2Probe 'runs the packaged application|retains session|blocks Blob documents'
     if ($result.Code -ne 0) { exit $result.Code }
 } finally {
     Pop-Location

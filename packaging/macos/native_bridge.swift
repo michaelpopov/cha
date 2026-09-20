@@ -65,11 +65,12 @@ func makeNativeWebViewConfiguration(assetRoot: URL) -> (
 }
 
 func isSameDocumentHashChange(from current: URL?, to next: URL?) -> Bool {
-    guard let current, let next else { return false }
-    return current.scheme?.caseInsensitiveCompare(next.scheme ?? "") == .orderedSame
-        && current.host?.caseInsensitiveCompare(next.host ?? "") == .orderedSame
-        && current.path == next.path
-        && current.fragment != next.fragment
+    guard let current, let next, current.fragment != next.fragment,
+          var from = URLComponents(url: current, resolvingAgainstBaseURL: false),
+          var to = URLComponents(url: next, resolvingAgainstBaseURL: false) else { return false }
+    from.fragment = nil
+    to.fragment = nil
+    return from == to
 }
 
 final class ChaNativeDeliveryBox: @unchecked Sendable {
@@ -196,6 +197,13 @@ final class ChaNativeBridgeReceiver: NSObject, WKScriptMessageHandler {
         controller.removeAllUserScripts()
         controller.addUserScript(nativeBootstrapUserScript(connectionId: id))
         return id
+    }
+
+    func willNavigate(_ navigation: WKNavigationAction, in view: WKWebView) {
+        if navigation.targetFrame?.isMainFrame == true
+            && !isSameDocumentHashChange(from: view.url, to: navigation.request.url) {
+            prepareDocumentReplacement()
+        }
     }
 
     func userContentController(

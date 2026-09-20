@@ -791,11 +791,14 @@ struct Application::Impl {
         return pending;
     }
 
-    void forget_pending(const std::shared_ptr<PendingMedia>& pending) {
+    void forget_pending(
+        const std::shared_ptr<PendingMedia>& pending,
+        bool keep_resource = false) {
         std::lock_guard lock(media_mutex);
         const auto found = pending_media.find(
             {pending->connection_id, pending->request_id});
-        if (found != pending_media.end() && found->second == pending) {
+        if (found != pending_media.end() && found->second == pending
+            && (!keep_resource || pending->resource_id.empty())) {
             pending_media.erase(found);
         }
     }
@@ -805,7 +808,9 @@ struct Application::Impl {
         std::shared_ptr<PendingMedia> pending;
 
         ~PendingMediaCleanup() {
-            owner->forget_pending(pending);
+            // A completed speech reply can still be queued in the bridge.
+            // Keep its cancellation association until release or cancellation.
+            owner->forget_pending(pending, true);
         }
     };
 
@@ -1067,14 +1072,12 @@ Application::submit_async(
     cha::web::WebCommand command,
     std::uint64_t epoch) {
     const FullSessionId key{std::string(forum_id), std::string(session_id)};
-    std::optional<ErrorCode> denied;
-    cha::web::LiveSessionHandle session;
-    {
-        const std::lock_guard lifecycle(impl_->lifecycle_mutex);
-        denied = impl_->admit_locked(epoch);
-        if (!denied) session = impl_->live_sessions->lookup(key);
-    }
-    if (denied) return *denied;
+    if (epoch == 0) epoch = context_epoch();
+    if (const auto denied = check_context(epoch)) return *denied;
+    // The manager checks the epoch and maintenance gate with the lookup.
+    // Stop must not wait for a transfer holding the application lifecycle lock.
+    auto session = impl_->live_sessions->lookup(key, epoch);
+    if (const auto denied = check_context(epoch)) return *denied;
     if (!session) return ErrorCode::session_not_live;
     return session->enqueue(std::move(command));
 }
@@ -1143,12 +1146,10 @@ void Application::close_session(
     std::string_view forum_id,
     std::string_view session_id,
     std::uint64_t epoch) {
-    {
-        const std::lock_guard lifecycle(impl_->lifecycle_mutex);
-        if (impl_->admit_locked(epoch)) return;
-    }
+    if (epoch == 0) epoch = context_epoch();
+    if (check_context(epoch)) return;
     impl_->live_sessions->close_session(
-        {std::string(forum_id), std::string(session_id)});
+        {std::string(forum_id), std::string(session_id)}, epoch);
 }
 
 std::optional<cha::web::ErrorCode> Application::delete_session(
@@ -1774,9 +1775,12 @@ std::shared_ptr<OperationReply> Application::start_speech(
                             return;
                         }
                     }
-                    reply->complete(media_resource_json(
+                    if (!reply->complete(media_resource_json(
                         id, transfer.audio.content_type,
-                        transfer.audio.audio.size()));
+                        transfer.audio.audio.size()))) {
+                        owner->cancel_pending(
+                            pending->connection_id, pending->request_id);
+                    }
                 } catch (const ApplicationError& error) {
                     reply->fail(error.code, error.what());
                 } catch (const std::invalid_argument& error) {
@@ -1800,8 +1804,7 @@ void Application::cancel_speech(
     std::string_view connection_id,
     std::uint64_t request_id,
     std::uint64_t epoch) {
-    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
-    impl_->require_admitted(epoch);
+    if (const auto denied = check_context(epoch)) throw ApplicationError(*denied);
     impl_->cancel_pending(connection_id, request_id);
 }
 
@@ -1809,8 +1812,14 @@ void Application::release_resource(
     std::string_view connection_id,
     std::string_view resource_id,
     std::uint64_t epoch) {
-    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
-    impl_->require_admitted(epoch);
+    if (const auto denied = check_context(epoch)) throw ApplicationError(*denied);
+    {
+        std::lock_guard lock(impl_->media_mutex);
+        std::erase_if(impl_->pending_media, [&](const auto& item) {
+            return item.second->connection_id == connection_id
+                && item.second->resource_id == resource_id;
+        });
+    }
     impl_->media_resources.release(connection_id, resource_id);
 }
 
@@ -2005,8 +2014,7 @@ void Application::cancel_voice_input(
     std::string_view connection_id,
     std::uint64_t request_id,
     std::uint64_t epoch) {
-    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
-    impl_->require_admitted(epoch);
+    if (const auto denied = check_context(epoch)) throw ApplicationError(*denied);
     impl_->cancel_pending(connection_id, request_id);
 }
 
@@ -2495,7 +2503,8 @@ std::vector<std::string> Application::list_r2_vaults(std::uint64_t epoch) const 
         }
     }
 
-    std::vector<std::string> names = cha::web::list_r2_database_names(key);
+    std::vector<std::string> names = cha::web::list_r2_database_names(
+        key, [this] { return impl_->stopping_flag.load(); });
     std::erase_if(names, [&](const std::string& name) {
         const std::string database_name = name + ".sqlite3";
         return std::ranges::any_of(
@@ -2533,7 +2542,8 @@ VaultDefinition Application::download_r2_vault(
 
     try {
         (void)cha::web::download_new_database_from_r2(
-            candidate.data, candidate.source, database_name, *r2);
+            candidate.data, candidate.source, database_name, *r2,
+            [this] { return impl_->stopping_flag.load(); });
         candidate = load_vault_definition_file(
             impl_->command.config_directory, candidate.source);
         vault::assign_vault_paths(candidate, impl_->command);
@@ -2750,7 +2760,7 @@ cha::web::R2DatabaseTransfer Application::upload_database() {
             vault.source,
             *r2,
             cha::web::R2DatabaseLease::already_held,
-            impl_->active_password);
+            impl_->active_password, [this] { return impl_->stopping_flag.load(); });
     }, false);
 }
 
@@ -2769,7 +2779,7 @@ cha::web::R2DatabaseTransfer Application::download_database() {
                     vault.source,
                     *r2,
                     cha::web::R2DatabaseLease::already_held,
-                    impl_->active_password);
+                    impl_->active_password, [this] { return impl_->stopping_flag.load(); });
             downloaded_vault = load_vault_definition_file(
                 impl_->command.config_directory, vault.source);
             vault::assign_vault_paths(*downloaded_vault, impl_->command);

@@ -5,30 +5,28 @@
 namespace cha::app {
 
 SessionOutput::SessionOutput(
-    SequencePolicy policy,
     std::size_t pending_append_byte_limit)
-    : policy_(policy),
-      pending_append_byte_limit_(pending_append_byte_limit) {}
+    : pending_append_byte_limit_(pending_append_byte_limit) {}
 
 void SessionOutput::attach() {
     std::lock_guard lock(mutex_);
     attached_ = true;
     closed_ = false;
-    interrupt_ = false;
+    dirty_ = false;
+    requested_ = true;
     ++generation_;
     in_flight_.reset();
     pending_.reset();
     target_.reset();
     next_sequence_ = 0;
-    changed_.notify_all();
 }
 
 void SessionOutput::detach() noexcept {
     std::lock_guard lock(mutex_);
     attached_ = false;
+    dirty_ = false;
     in_flight_.reset();
     pending_.reset();
-    changed_.notify_all();
 }
 
 bool SessionOutput::attached() const {
@@ -45,40 +43,46 @@ void SessionOutput::publish_snapshot(cha::web::SessionSnapshot snapshot) {
     std::lock_guard lock(mutex_);
     if (!attached_ || closed_) return;
     publish_snapshot_locked(std::move(snapshot));
-    changed_.notify_all();
+}
+
+void SessionOutput::require_snapshot() {
+    std::lock_guard lock(mutex_);
+    if (!attached_ || closed_) return;
+    if (pending_ || dirty_) ++collapsed_payloads_;
+    pending_.reset();
+    dirty_ = true;
+}
+
+bool SessionOutput::snapshot_needed() const {
+    std::lock_guard lock(mutex_);
+    return attached_ && !closed_ && dirty_ && requested_ && !in_flight_;
 }
 
 cha::web::AppendPublishResult SessionOutput::publish_append(
     cha::TextAppend append) {
     std::lock_guard lock(mutex_);
-    if (!attached_ || closed_) {
+    if (!attached_ || closed_ || dirty_) {
         return cha::web::AppendPublishResult::Accepted;
     }
     const auto result = publish_append_locked(std::move(append));
-    if (result == cha::web::AppendPublishResult::Accepted) changed_.notify_all();
     return result;
 }
 
 std::shared_ptr<const SessionOutputItem> SessionOutput::take() {
     std::lock_guard lock(mutex_);
-    if (in_flight_ || !pending_) return {};
+    if (in_flight_) return {};
+    requested_ = true;
+    if (!pending_) return {};
     auto committed = std::move(pending_);
-    if (policy_ == SequencePolicy::reset_on_snapshot
-        && committed->kind == SessionOutputItem::Kind::snapshot) {
-        next_sequence_ = 0;
-        committed->seq = 0;
-    } else {
-        committed->seq = next_sequence_++;
-    }
+    committed->seq = next_sequence_++;
     in_flight_ = std::move(committed);
-    changed_.notify_all();
+    requested_ = false;
     return in_flight_;
 }
 
 void SessionOutput::acknowledge() noexcept {
     std::lock_guard lock(mutex_);
     in_flight_.reset();
-    changed_.notify_all();
 }
 
 bool SessionOutput::has_in_flight() const {
@@ -88,36 +92,12 @@ bool SessionOutput::has_in_flight() const {
 
 bool SessionOutput::has_pending() const {
     std::lock_guard lock(mutex_);
-    return static_cast<bool>(pending_);
+    return pending_ || dirty_;
 }
 
 bool SessionOutput::idle() const {
     std::lock_guard lock(mutex_);
-    return !in_flight_ && !pending_;
-}
-
-void SessionOutput::wait_for_work(std::chrono::milliseconds timeout) {
-    std::unique_lock lock(mutex_);
-    changed_.wait_for(lock, timeout, [this] {
-        return closed_ || interrupt_ || pending_ || !attached_;
-    });
-}
-
-bool SessionOutput::wait_until_consumed(std::chrono::milliseconds deadline) {
-    std::unique_lock lock(mutex_);
-    const auto consumed = [this] {
-        return closed_ || (!in_flight_ && !pending_);
-    };
-    (void)changed_.wait_for(lock, deadline, [this, &consumed] {
-        return interrupt_ || consumed();
-    });
-    return consumed();
-}
-
-void SessionOutput::interrupt_wait() noexcept {
-    std::lock_guard lock(mutex_);
-    interrupt_ = true;
-    changed_.notify_all();
+    return !in_flight_ && !pending_ && !dirty_;
 }
 
 std::size_t SessionOutput::collapsed_payloads() const {
@@ -139,7 +119,6 @@ void SessionOutput::close() noexcept {
     std::lock_guard lock(mutex_);
     closed_ = true;
     attached_ = false;
-    changed_.notify_all();
 }
 
 bool SessionOutput::closed() const {
@@ -148,6 +127,8 @@ bool SessionOutput::closed() const {
 }
 
 void SessionOutput::publish_snapshot_locked(cha::web::SessionSnapshot snapshot) {
+    dirty_ = false;
+    requested_ = false;
     if (pending_) ++collapsed_payloads_;
     const auto selection = cha::web::snapshot_append_selection(snapshot);
     target_ = selection

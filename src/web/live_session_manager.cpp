@@ -249,16 +249,14 @@ std::uint64_t LiveSessionManager::bump_context_epoch() {
     return context_epoch_;
 }
 
-void LiveSessionManager::close_session(const FullSessionId& key) {
-    LiveSessionHandle actor;
-    {
-        std::lock_guard select_lock(select_mutex_);
-        std::lock_guard lock(mutex_);
-        if (selected_ && *selected_ == key) selected_.reset();
-        const auto found = sessions_.find(key);
-        if (found != sessions_.end()) actor = found->second;
+void LiveSessionManager::close_session(const FullSessionId& key, std::uint64_t epoch) {
+    std::lock_guard lock(mutex_);
+    if (global_maintenance_ || (epoch != 0 && epoch != context_epoch_)) return;
+    if (selected_ && *selected_ == key) selected_.reset();
+    const auto found = sessions_.find(key);
+    if (found != sessions_.end()) {
+        found->second->request_shutdown(ShutdownReason::retired);
     }
-    if (actor) actor->request_shutdown(ShutdownReason::retired);
 }
 
 void LiveSessionManager::request_retire_locked(const FullSessionId& key) {
@@ -355,6 +353,11 @@ LiveSessionOpenResult LiveSessionManager::select(
         if (maintenance_.contains(key)) {
             return LiveSessionOpenFailure::stopping;
         }
+        const auto found = sessions_.find(key);
+        if (found == sessions_.end()
+            || found->second->lifecycle() != LiveSessionState::running) {
+            return LiveSessionOpenFailure::stopping;
+        }
         const auto previous = selected_;
         selected_ = key;
         if (previous && *previous != key) request_retire_locked(*previous);
@@ -392,14 +395,17 @@ std::optional<LiveSessionOpenResult> LiveSessionManager::try_reattach(
     return result;
 }
 
-LiveSessionHandle LiveSessionManager::lookup(const FullSessionId& key) {
+LiveSessionHandle LiveSessionManager::lookup(
+    const FullSessionId& key, std::uint64_t epoch) {
     RetiredSessions retired;
     LiveSessionHandle result;
     {
         std::lock_guard lock(mutex_);
         retired = sweep_locked();
         const auto found = sessions_.find(key);
-        if (!global_maintenance_ && found != sessions_.end()
+        if (!stopping_ && !global_maintenance_
+            && (epoch == 0 || epoch == context_epoch_)
+            && found != sessions_.end()
             && found->second->lifecycle() == LiveSessionState::running) {
             result = found->second;
         }

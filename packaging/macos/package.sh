@@ -225,6 +225,9 @@ if CHA_DEV_ORIGIN="http://127.0.0.1:5173" "$contents/MacOS/CHA" --feasibility \
 fi
 
 echo "==> Exercising assembled assets through the native test host"
+CHA_NATIVE_ASSETS="$resources/web" \
+CHA_RUNTIME_LIB="$contents/Frameworks/libChaRuntime.dylib" \
+    "$repository/tests/native/macos/run.sh" media --timeout-ms 20000
 prepare="$repository/build/ninja/cha_prepare_test_vault"
 if [ ! -x "$prepare" ]; then
     cmake --preset ninja
@@ -233,11 +236,15 @@ fi
 CHA_NATIVE_ASSETS="$resources/web" \
 CHA_RUNTIME_LIB="$contents/Frameworks/libChaRuntime.dylib" \
 CHA_PREPARE_TEST_VAULT="$prepare" \
+    "$repository/tests/native/macos/run.sh" parity --timeout-ms 60000
+CHA_NATIVE_ASSETS="$resources/web" \
+CHA_RUNTIME_LIB="$contents/Frameworks/libChaRuntime.dylib" \
+CHA_PREPARE_TEST_VAULT="$prepare" \
     "$repository/tests/native/macos/run.sh" flow --timeout-ms 25000
 CHA_NATIVE_ASSETS="$resources/web" \
 CHA_RUNTIME_LIB="$contents/Frameworks/libChaRuntime.dylib" \
 CHA_PREPARE_TEST_VAULT="$prepare" \
-    "$repository/tests/native/macos/run.sh" reload --timeout-ms 30000
+    "$repository/tests/native/macos/run.sh" reload --timeout-ms 60000
 CHA_NATIVE_ASSETS="$resources/web" \
 CHA_RUNTIME_LIB="$contents/Frameworks/libChaRuntime.dylib" \
 CHA_PREPARE_TEST_VAULT="$prepare" \

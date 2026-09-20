@@ -2,25 +2,14 @@
 
 #include "web/protocol.h"
 
-#include <chrono>
 #include <cstddef>
 #include <cstdint>
-#include <condition_variable>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
 
 namespace cha::app {
-
-enum class SequencePolicy {
-    // HTTP SSE: a snapshot resets append numbering. Snapshots themselves are
-    // unnumbered on that wire.
-    reset_on_snapshot,
-    // Native: the initial snapshot is sequence zero; later snapshots and
-    // appends share one increasing sequence.
-    monotonic,
-};
 
 struct SessionOutputItem {
     enum class Kind { snapshot, append } kind{Kind::snapshot};
@@ -36,7 +25,6 @@ struct SessionOutputItem {
 class SessionOutput {
 public:
     explicit SessionOutput(
-        SequencePolicy policy = SequencePolicy::reset_on_snapshot,
         std::size_t pending_append_byte_limit = 65536);
 
     void attach();
@@ -45,6 +33,10 @@ public:
     [[nodiscard]] std::uint64_t generation() const;
 
     void publish_snapshot(cha::web::SessionSnapshot snapshot);
+    // Discard an obsolete pending payload without copying the transcript.
+    // The owner materializes it once the in-flight delivery is acknowledged.
+    void require_snapshot();
+    [[nodiscard]] bool snapshot_needed() const;
     [[nodiscard]] cha::web::AppendPublishResult publish_append(
         cha::TextAppend append);
 
@@ -53,9 +45,6 @@ public:
     [[nodiscard]] bool has_in_flight() const;
     [[nodiscard]] bool has_pending() const;
     [[nodiscard]] bool idle() const;
-    void wait_for_work(std::chrono::milliseconds timeout);
-    [[nodiscard]] bool wait_until_consumed(std::chrono::milliseconds deadline);
-    void interrupt_wait() noexcept;
 
     [[nodiscard]] std::size_t collapsed_payloads() const;
     void clear_collapsed() noexcept;
@@ -71,13 +60,12 @@ private:
     [[nodiscard]] cha::web::AppendPublishResult publish_append_locked(
         cha::TextAppend append);
 
-    SequencePolicy policy_;
     std::size_t pending_append_byte_limit_;
     mutable std::mutex mutex_;
-    std::condition_variable changed_;
     bool attached_{};
     bool closed_{};
-    bool interrupt_{};
+    bool dirty_{};
+    bool requested_{};
     std::uint64_t generation_{};
     std::shared_ptr<const SessionOutputItem> in_flight_;
     std::shared_ptr<SessionOutputItem> pending_;

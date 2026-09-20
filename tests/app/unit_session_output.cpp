@@ -26,7 +26,7 @@ SessionSnapshot streaming_snapshot(std::string text = "a") {
 }
 
 TEST(SessionOutput, MonotonicSequenceDoesNotResetOnLaterSnapshot) {
-    SessionOutput output(SequencePolicy::monotonic);
+    SessionOutput output;
     output.attach();
     output.publish_snapshot(streaming_snapshot("a"));
     auto first = output.take();
@@ -51,34 +51,37 @@ TEST(SessionOutput, MonotonicSequenceDoesNotResetOnLaterSnapshot) {
     EXPECT_EQ(second->seq, 2U);
 }
 
-TEST(SessionOutput, ResetOnSnapshotKeepsSseAppendNumbering) {
-    SessionOutput output(SequencePolicy::reset_on_snapshot);
+TEST(SessionOutput, DirtyProjectionWaitsForConsumerDemandAndAcknowledgement) {
+    SessionOutput output;
     output.attach();
     output.publish_snapshot(streaming_snapshot("a"));
-    (void)output.take();
-    output.acknowledge();
-
-    EXPECT_EQ(
-        output.publish_append({EntryTextTarget{42}, "b"}),
-        cha::web::AppendPublishResult::Accepted);
-    auto first = output.take();
+    const auto first = output.take();
     ASSERT_TRUE(first);
-    EXPECT_EQ(first->seq, 0U);
+    output.require_snapshot();
+    for (int i = 0; i < 1000; ++i) {
+        EXPECT_EQ(output.publish_append({EntryTextTarget{42}, "b"}),
+                  cha::web::AppendPublishResult::Accepted);
+        EXPECT_FALSE(output.snapshot_needed());
+    }
+    EXPECT_FALSE(output.take());
     output.acknowledge();
-
-    output.publish_snapshot(streaming_snapshot("ab"));
-    (void)output.take();
-    output.acknowledge();
-    EXPECT_EQ(
-        output.publish_append({EntryTextTarget{42}, "c"}),
-        cha::web::AppendPublishResult::Accepted);
-    auto following = output.take();
-    ASSERT_TRUE(following);
-    EXPECT_EQ(following->seq, 0U);
+    EXPECT_FALSE(output.snapshot_needed());
+    EXPECT_FALSE(output.take());
+    EXPECT_TRUE(output.snapshot_needed());
+    output.publish_snapshot(streaming_snapshot("latest"));
+    output.require_snapshot(); // A pending projection becomes obsolete.
+    EXPECT_FALSE(output.snapshot_needed());
+    EXPECT_FALSE(output.take());
+    EXPECT_TRUE(output.snapshot_needed());
+    output.publish_snapshot(streaming_snapshot("newest"));
+    const auto replacement = output.take();
+    ASSERT_TRUE(replacement);
+    EXPECT_EQ(replacement->seq, 1U);
+    EXPECT_EQ(replacement->snapshot.transcript[0].text, "newest");
 }
 
 TEST(SessionOutput, MergesCompatibleAppendsAndBoundsPendingBytes) {
-    SessionOutput output(SequencePolicy::monotonic, 4);
+    SessionOutput output(4);
     output.attach();
     output.publish_snapshot(streaming_snapshot("a"));
     (void)output.take();
@@ -107,7 +110,7 @@ TEST(SessionOutput, MergesCompatibleAppendsAndBoundsPendingBytes) {
 }
 
 TEST(SessionOutput, CloseKeepsTerminalPending) {
-    SessionOutput output(SequencePolicy::monotonic);
+    SessionOutput output;
     output.attach();
     output.publish_snapshot(streaming_snapshot("final"));
     output.close();
@@ -117,7 +120,7 @@ TEST(SessionOutput, CloseKeepsTerminalPending) {
 }
 
 TEST(SessionOutput, OneInFlightUntilAcknowledged) {
-    SessionOutput output(SequencePolicy::monotonic);
+    SessionOutput output;
     output.attach();
     output.publish_snapshot(streaming_snapshot("a"));
     auto first = output.take();
@@ -133,7 +136,7 @@ TEST(SessionOutput, OneInFlightUntilAcknowledged) {
 }
 
 TEST(SessionOutput, ReplacedPendingPayloadsDoNotConsumeSequenceNumbers) {
-    SessionOutput output(SequencePolicy::monotonic);
+    SessionOutput output;
     output.attach();
     output.publish_snapshot(streaming_snapshot("a"));
     auto first = output.take();

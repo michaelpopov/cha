@@ -120,7 +120,7 @@ public:
         FullSessionId key,
         std::chrono::milliseconds deadline);
     [[nodiscard]] std::optional<FullSessionId> selected() const;
-    void close_session(const FullSessionId& key);
+    void close_session(const FullSessionId& key, std::uint64_t epoch = 0);
     [[nodiscard]] std::uint64_t context_epoch() const;
     // Invalidates subscriptions and old-context work. The application gate
     // publishes the returned epoch after a safe reopen.
@@ -129,7 +129,8 @@ public:
     // empty result means the caller must validate storage before open().
     [[nodiscard]] std::optional<LiveSessionOpenResult> try_reattach(
         const FullSessionId& key);
-    [[nodiscard]] LiveSessionHandle lookup(const FullSessionId& key);
+    [[nodiscard]] LiveSessionHandle lookup(
+        const FullSessionId& key, std::uint64_t epoch = 0);
     // A point-in-time view for lobby listings and health. Starting and
     // stopping actors count against the bound but only running actors are
     // returned as reattachable sessions.

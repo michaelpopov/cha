@@ -209,6 +209,7 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
     struct PendingReply {
         nlohmann::json message;
         ReplyCapacity capacity{ReplyCapacity::unadmitted};
+        bool context_bound{};
     };
 
     struct InFlight {
@@ -324,9 +325,10 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
     void queue_reply(
         const std::shared_ptr<Connection>& connection,
         nlohmann::json message,
-        ReplyCapacity capacity) {
+        ReplyCapacity capacity,
+        bool context_bound = false) {
         connection->pending_replies.push_back(
-            {std::move(message), capacity});
+            {std::move(message), capacity, context_bound});
         notify();
     }
 
@@ -339,8 +341,12 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
         const ReplyCapacity capacity = found->second.control
             ? ReplyCapacity::control
             : ReplyCapacity::ordinary;
+        const auto method = found->second.method;
+        const bool context_bound = requires_context_epoch(method)
+            && method != Method::vault_switch && method != Method::vault_merge
+            && method != Method::vault_update;
         connection->outstanding.erase(found);
-        queue_reply(connection, std::move(message), capacity);
+        queue_reply(connection, std::move(message), capacity, context_bound);
     }
 
     void fail_request(
@@ -600,10 +606,16 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
         {
             std::lock_guard lock(mutex);
             auto connection = find_connection(connection_id);
-            if (!connection) return;
-            const auto found = connection->outstanding.find(id);
-            if (found == connection->outstanding.end()) return;
-            found->second.operation = reply;
+            if (connection && connection->outstanding.contains(id)) {
+                connection->outstanding.at(id).operation = reply;
+            } else {
+                reply->abandon();
+                try {
+                    application.cancel_speech(connection_id, id, 0);
+                } catch (const cha::app::ApplicationError&) {
+                }
+                return;
+            }
         }
         auto weak = std::weak_ptr<Impl>(shared_from_this());
         reply->set_ready_callback([weak, connection_id, id] {
@@ -994,6 +1006,7 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                 update.password = optional_string(params, "password");
                 const auto updated =
                     application.update_vault(name, std::move(update), epoch);
+                epoch = application.context_epoch();
                 const auto snapshot = application.vault_snapshot();
                 result = cha::app::vault::vault_detail_json(
                     updated, snapshot.active.name, snapshot.vaults.size());
@@ -1808,6 +1821,11 @@ void BridgeRouter::handle_ack(
 }
 
 void BridgeRouter::run_tasks() {
+    run_control_tasks();
+    run_ordinary_tasks();
+}
+
+void BridgeRouter::run_control_tasks() {
     for (;;) {
         std::function<void()> task;
         {
@@ -1815,12 +1833,22 @@ void BridgeRouter::run_tasks() {
             if (!impl_->control_tasks.empty()) {
                 task = std::move(impl_->control_tasks.front());
                 impl_->control_tasks.pop_front();
-            } else if (!impl_->ordinary_tasks.empty()) {
-                task = std::move(impl_->ordinary_tasks.front());
-                impl_->ordinary_tasks.pop_front();
             } else {
                 return;
             }
+        }
+        task();
+    }
+}
+
+void BridgeRouter::run_ordinary_tasks() {
+    for (;;) {
+        std::function<void()> task;
+        {
+            std::lock_guard lock(impl_->mutex);
+            if (impl_->ordinary_tasks.empty()) return;
+            task = std::move(impl_->ordinary_tasks.front());
+            impl_->ordinary_tasks.pop_front();
         }
         task();
     }
@@ -1845,6 +1873,14 @@ void BridgeRouter::expire_timeouts() {
             if (found->second.reply) found->second.reply->abandon();
             if (found->second.operation) found->second.operation->abandon();
             const auto epoch = found->second.context_epoch;
+            if (found->second.method == Method::speech_start
+                || found->second.method == Method::voice_input_connect) {
+                try {
+                    impl_->application.cancel_speech(connection->id, request_id, epoch);
+                } catch (const cha::app::ApplicationError&) {
+                    // Context invalidation already revokes these resources.
+                }
+            }
             impl_->fail_request(
                 connection, request_id, epoch, ErrorCode::command_timeout);
         }
@@ -1868,6 +1904,11 @@ std::optional<nlohmann::json> BridgeRouter::take_delivery(
     }
     std::vector<nlohmann::json> messages;
     Impl::InFlight in_flight;
+    // Invalidate frontend requests before any results from the replaced vault.
+    if (connection->pending_context) {
+        messages.push_back(std::move(*connection->pending_context));
+        connection->pending_context.reset();
+    }
     while (!connection->pending_replies.empty()) {
         auto reply = std::move(connection->pending_replies.front());
         connection->pending_replies.pop_front();
@@ -1882,21 +1923,30 @@ std::optional<nlohmann::json> BridgeRouter::take_delivery(
             ++in_flight.unadmitted_replies;
             break;
         }
+        if (reply.context_bound) {
+            const auto epoch = reply.message.at("context_epoch").get<std::uint64_t>();
+            if (const auto error = impl_->application.check_context(epoch)) {
+                reply.message = impl_->error_reply(
+                    connection->id, reply.message.at("id").get<std::uint64_t>(),
+                    epoch, *error);
+            }
+        }
         messages.push_back(std::move(reply.message));
-    }
-    if (connection->pending_context) {
-        messages.push_back(std::move(*connection->pending_context));
-        connection->pending_context.reset();
     }
     if (connection->pending_invalidation) {
         messages.push_back(std::move(*connection->pending_invalidation));
         connection->pending_invalidation.reset();
     }
     if (connection->pending_session) {
-        messages.push_back(std::move(*connection->pending_session));
+        if (!impl_->application.check_context(
+                connection->pending_session->at("context_epoch").get<std::uint64_t>())) {
+            messages.push_back(std::move(*connection->pending_session));
+            in_flight.has_session_event = true;
+            if (connection->active) in_flight.session = connection->active->session;
+        } else if (connection->active && connection->active->session) {
+            connection->active->session->acknowledge_output();
+        }
         connection->pending_session.reset();
-        in_flight.has_session_event = true;
-        if (connection->active) in_flight.session = connection->active->session;
     }
     if (messages.empty()) return std::nullopt;
     in_flight.delivery_id = connection->next_delivery_id++;
@@ -1909,7 +1959,7 @@ bool BridgeRouter::wait_for_work(std::chrono::milliseconds timeout) {
     std::unique_lock lock(impl_->mutex);
     return impl_->work.wait_for(lock, timeout, [&] {
         if (impl_->stopping) return true;
-        if (!impl_->ordinary_tasks.empty() || !impl_->control_tasks.empty()) {
+        if (!impl_->control_tasks.empty()) {
             return true;
         }
         for (const auto& [id, connection] : impl_->connections) {
@@ -1922,6 +1972,13 @@ bool BridgeRouter::wait_for_work(std::chrono::milliseconds timeout) {
             }
         }
         return false;
+    });
+}
+
+bool BridgeRouter::wait_for_ordinary_work(std::chrono::milliseconds timeout) {
+    std::unique_lock lock(impl_->mutex);
+    return impl_->work.wait_for(lock, timeout, [&] {
+        return impl_->stopping || !impl_->ordinary_tasks.empty();
     });
 }
 
