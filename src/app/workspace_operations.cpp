@@ -26,12 +26,6 @@ using cha::web::ErrorCode;
     throw ApplicationError(code, std::move(message));
 }
 
-std::shared_ptr<const Workspace> require_workspace() {
-    auto workspace = getws();
-    if (!workspace) throw std::runtime_error("Workspace is not loaded");
-    return workspace;
-}
-
 void apply_edit(
     cha::web::LiveSessionManager& live_sessions,
     const WorkspaceConfigEditResult& edited) {
@@ -64,7 +58,7 @@ cha::web::MarkdownFile edit_markdown_file(
     std::string filename,
     std::optional<std::string> content,
     bool create) {
-    const auto workspace = published_workspace();
+    const auto workspace = store.snapshot();
     if (character) {
         if (workspace->find_character(id) == nullptr
             || !workspace->character_is_writable(id)) {
@@ -117,10 +111,6 @@ cha::web::MarkdownFile edit_markdown_file(
 }
 
 } // namespace
-
-std::shared_ptr<const Workspace> published_workspace() {
-    return require_workspace();
-}
 
 bool is_welcome_session(
     std::string_view forum_id,
@@ -299,13 +289,14 @@ void invalidate_affected_sessions(
     }
 }
 
-cha::web::CharacterDetail get_character(std::string_view id) {
-    const auto workspace = published_workspace();
-    const WorkspaceCharacter* character = workspace->find_character(id);
+cha::web::CharacterDetail get_character(
+    const Workspace& workspace,
+    std::string_view id) {
+    const WorkspaceCharacter* character = workspace.find_character(id);
     if (character == nullptr) {
         fail(ErrorCode::not_found, "That character was not found.");
     }
-    return character_detail(*workspace, *character);
+    return character_detail(workspace, *character);
 }
 
 cha::web::CharacterDetail create_character(
@@ -319,7 +310,7 @@ cha::web::CharacterDetail create_character(
         } catch (const std::invalid_argument&) {
             fail(ErrorCode::invalid_argument, "Invalid character.");
         }
-        const auto current = published_workspace();
+        const auto current = store.snapshot();
         const WorkspaceCharacter* created = current->find_character(id);
         if (created == nullptr) {
             fail(ErrorCode::internal_error, "The character could not be created.");
@@ -333,7 +324,7 @@ cha::web::CharacterDetail update_character_settings(
     cha::web::LiveSessionManager& live_sessions,
     std::string_view id,
     const cha::web::CharacterSettingsUpdate& update) {
-    const auto workspace = published_workspace();
+    const auto workspace = store.snapshot();
     const WorkspaceCharacter* character = workspace->find_character(id);
     if (character == nullptr
         || !workspace->character_settings_are_writable(id)) {
@@ -367,7 +358,7 @@ cha::web::CharacterDetail update_character_settings(
         } catch (const std::invalid_argument&) {
             fail(ErrorCode::invalid_argument, "Invalid character settings.");
         }
-        const auto current = published_workspace();
+        const auto current = store.snapshot();
         const WorkspaceCharacter* updated = current->find_character(id);
         if (updated == nullptr) {
             fail(ErrorCode::not_found, "That character was not found.");
@@ -381,7 +372,7 @@ cha::web::CharacterDetail update_character_definition(
     cha::web::LiveSessionManager& live_sessions,
     std::string_view id,
     const cha::web::CharacterDefinitionUpdate& update) {
-    const auto workspace = published_workspace();
+    const auto workspace = store.snapshot();
     const WorkspaceCharacter* character = workspace->find_character(id);
     if (character == nullptr || !workspace->character_is_writable(id)) {
         fail(ErrorCode::not_found, "That character was not found.");
@@ -406,7 +397,7 @@ cha::web::CharacterDetail update_character_definition(
         } catch (const std::invalid_argument&) {
             fail(ErrorCode::invalid_argument, "Invalid character.");
         }
-        const auto current = published_workspace();
+        const auto current = store.snapshot();
         const WorkspaceCharacter* updated = current->find_character(id);
         if (updated == nullptr) {
             fail(ErrorCode::not_found, "That character was not found.");
@@ -416,7 +407,7 @@ cha::web::CharacterDetail update_character_definition(
 }
 
 void delete_character(WorkspaceConfigStore& store, std::string_view id) {
-    const auto workspace = published_workspace();
+    const auto workspace = store.snapshot();
     if (workspace->find_character(id) == nullptr
         || !workspace->character_is_writable(id)) {
         fail(ErrorCode::not_found, "That character was not found.");
@@ -434,15 +425,15 @@ void delete_character(WorkspaceConfigStore& store, std::string_view id) {
 }
 
 cha::web::MarkdownFile get_character_file(
+    const Workspace& workspace,
     std::string_view id,
     std::string_view filename) {
-    const auto workspace = published_workspace();
-    const WorkspaceCharacter* character = workspace->find_character(id);
+    const WorkspaceCharacter* character = workspace.find_character(id);
     if (character == nullptr) {
         fail(ErrorCode::not_found, "That character file was not found.");
     }
     const auto file = character->markdown_files.find(std::string(filename));
-    const bool writable = workspace->character_is_writable(id);
+    const bool writable = workspace.character_is_writable(id);
     if (file == character->markdown_files.end()) {
         if (!writable && character->markdown_files.empty()
             && filename == "CHARACTER.md") {
@@ -486,13 +477,14 @@ void delete_character_file(
         std::nullopt, false);
 }
 
-cha::web::PersonaDetail get_persona(std::string_view id) {
-    const auto workspace = published_workspace();
-    const WorkspacePersona* persona = workspace->find_persona(id);
+cha::web::PersonaDetail get_persona(
+    const Workspace& workspace,
+    std::string_view id) {
+    const WorkspacePersona* persona = workspace.find_persona(id);
     if (persona == nullptr) {
         fail(ErrorCode::not_found, "That persona was not found.");
     }
-    return persona_detail(*workspace, *persona);
+    return persona_detail(workspace, *persona);
 }
 
 cha::web::PersonaDetail create_persona(
@@ -505,7 +497,7 @@ cha::web::PersonaDetail create_persona(
         } catch (const std::invalid_argument&) {
             fail(ErrorCode::invalid_argument, "Invalid persona.");
         }
-        const auto current = published_workspace();
+        const auto current = store.snapshot();
         const WorkspacePersona* created = current->find_persona(id);
         if (created == nullptr) {
             fail(ErrorCode::internal_error, "The persona could not be created.");
@@ -519,7 +511,7 @@ cha::web::PersonaDetail update_persona(
     cha::web::LiveSessionManager& live_sessions,
     std::string_view id,
     const cha::web::PersonaUpdate& update) {
-    const auto workspace = published_workspace();
+    const auto workspace = store.snapshot();
     const WorkspacePersona* persona = workspace->find_persona(id);
     if (persona == nullptr || !workspace->persona_is_writable(id)) {
         fail(ErrorCode::not_found, "That persona was not found.");
@@ -553,7 +545,7 @@ cha::web::PersonaDetail update_persona(
         } catch (const std::invalid_argument&) {
             fail(ErrorCode::invalid_argument, "Invalid persona.");
         }
-        const auto current = published_workspace();
+        const auto current = store.snapshot();
         const WorkspacePersona* updated = current->find_persona(id);
         if (updated == nullptr) {
             fail(ErrorCode::not_found, "That persona was not found.");
@@ -563,7 +555,7 @@ cha::web::PersonaDetail update_persona(
 }
 
 void delete_persona(WorkspaceConfigStore& store, std::string_view id) {
-    const auto workspace = published_workspace();
+    const auto workspace = store.snapshot();
     if (workspace->find_persona(id) == nullptr
         || !workspace->persona_is_writable(id)) {
         fail(ErrorCode::not_found, "That persona was not found.");
@@ -580,13 +572,14 @@ void delete_persona(WorkspaceConfigStore& store, std::string_view id) {
     });
 }
 
-cha::web::ForumDetail get_forum(std::string_view id) {
-    const auto workspace = published_workspace();
-    const WorkspaceForum* forum = workspace->find_forum(id);
+cha::web::ForumDetail get_forum(
+    const Workspace& workspace,
+    std::string_view id) {
+    const WorkspaceForum* forum = workspace.find_forum(id);
     if (forum == nullptr) {
         fail(ErrorCode::not_found, "That forum was not found.");
     }
-    return forum_detail(*workspace, *forum);
+    return forum_detail(workspace, *forum);
 }
 
 cha::web::ForumDetail create_forum(
@@ -600,7 +593,7 @@ cha::web::ForumDetail create_forum(
         } catch (const std::invalid_argument&) {
             fail(ErrorCode::invalid_argument, "Invalid forum.");
         }
-        const auto current = published_workspace();
+        const auto current = store.snapshot();
         const WorkspaceForum* created = current->find_forum(id);
         if (created == nullptr) {
             fail(ErrorCode::internal_error, "The forum could not be created.");
@@ -614,7 +607,7 @@ cha::web::ForumDetail update_forum(
     cha::web::LiveSessionManager& live_sessions,
     std::string_view id,
     const cha::web::ForumUpdate& update) {
-    const auto workspace = published_workspace();
+    const auto workspace = store.snapshot();
     const WorkspaceForum* forum = workspace->find_forum(id);
     if (forum == nullptr || !workspace->forum_is_writable(id)) {
         fail(ErrorCode::not_found, "That forum was not found.");
@@ -635,7 +628,7 @@ cha::web::ForumDetail update_forum(
         } catch (const std::invalid_argument&) {
             fail(ErrorCode::invalid_argument, "Invalid forum.");
         }
-        const auto current = published_workspace();
+        const auto current = store.snapshot();
         const WorkspaceForum* updated = current->find_forum(id);
         if (updated == nullptr) {
             fail(ErrorCode::not_found, "That forum was not found.");
@@ -648,7 +641,7 @@ void delete_forum(
     WorkspaceConfigStore& store,
     cha::web::LiveSessionManager& live_sessions,
     std::string_view id) {
-    const auto workspace = published_workspace();
+    const auto workspace = store.snapshot();
     if (workspace->find_forum(id) == nullptr
         || !workspace->forum_is_writable(id)) {
         fail(ErrorCode::not_found, "That forum was not found.");
@@ -664,7 +657,7 @@ cha::web::ForumDetail update_forum_members(
     cha::web::LiveSessionManager& live_sessions,
     std::string_view id,
     const cha::web::ForumMembersUpdate& update) {
-    const auto workspace = published_workspace();
+    const auto workspace = store.snapshot();
     const WorkspaceForum* forum = workspace->find_forum(id);
     if (forum == nullptr || !workspace->forum_is_writable(id)) {
         fail(ErrorCode::not_found, "That forum was not found.");
@@ -681,7 +674,7 @@ cha::web::ForumDetail update_forum_members(
                 "Select a configured persona and at least one configured "
                 "character.");
         }
-        const auto current = published_workspace();
+        const auto current = store.snapshot();
         const WorkspaceForum* updated = current->find_forum(id);
         if (updated == nullptr) {
             fail(ErrorCode::not_found, "That forum was not found.");
@@ -691,15 +684,15 @@ cha::web::ForumDetail update_forum_members(
 }
 
 cha::web::MarkdownFile get_forum_file(
+    const Workspace& workspace,
     std::string_view id,
     std::string_view filename) {
-    const auto workspace = published_workspace();
-    const WorkspaceForum* forum = workspace->find_forum(id);
+    const WorkspaceForum* forum = workspace.find_forum(id);
     if (forum == nullptr) {
         fail(ErrorCode::not_found, "That forum file was not found.");
     }
     const auto file = forum->markdown_files.find(std::string(filename));
-    const bool writable = workspace->forum_is_writable(id);
+    const bool writable = workspace.forum_is_writable(id);
     if (file == forum->markdown_files.end()) {
         if (!writable && forum->markdown_files.empty()
             && filename == "FORUM.md") {

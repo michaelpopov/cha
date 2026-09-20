@@ -1899,7 +1899,7 @@ TEST(SessionController, HonorsNonFirstInitialDefaultWithoutReorderingForumRoster
         {"forum", "session"});
 
     EXPECT_EQ(controller->view().default_character_id, "ismael-id");
-    const WorkspaceForum* const forum = getws()->find_forum("forum");
+    const WorkspaceForum* const forum = controller->workspace()->find_forum("forum");
     ASSERT_NE(forum, nullptr);
     ASSERT_EQ(forum->members.size(), 2U);
     EXPECT_EQ(forum->members[0].character_id, "guide-id");

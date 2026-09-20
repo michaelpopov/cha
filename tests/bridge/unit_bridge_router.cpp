@@ -667,6 +667,39 @@ TEST_F(BridgeRouterTest, RequestIdsMustIncreaseWithinAConnection) {
     ack_delivery(*router_, connection_, *delivery);
 }
 
+TEST_F(BridgeRouterTest, ZeroAndStaleRequestsCannotMutateAfterVaultSwitch) {
+    const auto old_epoch = bootstrap_epoch();
+    const auto created = application_->create_vault(cha::web::VaultCreate{
+        .display_name = "Copied",
+        .copy_from = "Test",
+        .password = {},
+    }, old_epoch);
+    const auto switched = application_->switch_vault(created.name, {}, old_epoch);
+    auto notification = wait_delivery(*router_, connection_);
+    ASSERT_TRUE(notification);
+    ack_delivery(*router_, connection_, *notification);
+    const auto before = application_->list_sessions(
+        "lobby", switched.context_epoch).size();
+
+    for (const auto invalid_epoch : {std::uint64_t{0}, old_epoch}) {
+        SCOPED_TRACE(invalid_epoch);
+        epoch_ = invalid_epoch;
+        const auto reply = call(
+            "session.create", {{"forum_id", "lobby"}, {"label", "Rejected"}});
+        EXPECT_FALSE(reply.at("ok"));
+        EXPECT_EQ(reply.at("error").at("code"),
+            invalid_epoch == 0 ? "invalid_argument" : "vault_changed");
+    }
+    EXPECT_EQ(application_->list_sessions(
+        "lobby", switched.context_epoch).size(), before);
+
+    epoch_ = switched.context_epoch;
+    EXPECT_TRUE(call(
+        "session.create", {{"forum_id", "lobby"}, {"label", "Accepted"}}).at("ok"));
+    EXPECT_EQ(application_->list_sessions(
+        "lobby", switched.context_epoch).size(), before + 1);
+}
+
 TEST_F(BridgeRouterTest, ContextNotificationsCoalesceBehindInFlightDelivery) {
     bootstrap_epoch();
     const auto created = application_->create_vault(cha::web::VaultCreate{

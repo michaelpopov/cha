@@ -610,10 +610,7 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                 connection->outstanding.at(id).operation = reply;
             } else {
                 reply->abandon();
-                try {
-                    application.cancel_speech(connection_id, id, 0);
-                } catch (const cha::app::ApplicationError&) {
-                }
+                application.release_request_resources(connection_id, id);
                 return;
             }
         }

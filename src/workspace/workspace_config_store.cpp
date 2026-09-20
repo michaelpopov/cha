@@ -1050,6 +1050,19 @@ struct WorkspaceConfigStore::Impl {
     std::unique_ptr<Database> database;
     std::optional<RuntimePrivateRoot> tree;
     mutable std::mutex mutex;
+    mutable std::mutex snapshot_mutex;
+    std::shared_ptr<const Workspace> published_workspace;
+
+    std::shared_ptr<const Workspace> snapshot() const {
+        const std::lock_guard lock(snapshot_mutex);
+        return published_workspace;
+    }
+
+    void publish(Workspace workspace) {
+        auto published = std::make_shared<const Workspace>(std::move(workspace));
+        const std::lock_guard lock(snapshot_mutex);
+        published_workspace = std::move(published);
+    }
 
     void rematerialize_workspace() {
         if (consume_runtime_fault(WorkspaceConfigFault::restore)) {
@@ -1084,7 +1097,7 @@ struct WorkspaceConfigStore::Impl {
         Writer&& writer,
         std::string_view deleted_forum_id = {}) {
         const std::lock_guard lock(mutex);
-        const std::shared_ptr<const Workspace> published = getws();
+        const std::shared_ptr<const Workspace> published = snapshot();
         if (!published || published->root() != tree->workspace()) {
             fail_path(
                 "Runtime configuration store has no matching loaded workspace");
@@ -1142,7 +1155,7 @@ struct WorkspaceConfigStore::Impl {
             if (consume_runtime_fault(WorkspaceConfigFault::publication)) {
                 fail_path("Forced workspace publication failure");
             }
-            loadws(std::move(candidate));
+            publish(std::move(candidate));
         } catch (...) {
             failure = std::current_exception();
         }
@@ -1246,7 +1259,7 @@ void WorkspaceConfigStore::MaintenanceGuard::reopen() {
         secure_workspace_session_database_files(store.database_path);
 
         store.rematerialize_workspace();
-        loadws(Workspace::load(store.tree->workspace()));
+        store.publish(Workspace::load(store.tree->workspace()));
         impl_->closed = false;
     } catch (const std::exception& error) {
         // Nothing here is recoverable in place: the handle is gone and the
@@ -1295,9 +1308,13 @@ std::unique_ptr<WorkspaceConfigStore> WorkspaceConfigStore::open(
     validate_config_rows(rows);
     materialize_config_files(impl->tree->workspace(), rows);
 
-    loadws(Workspace::load(impl->tree->workspace()));
+    impl->publish(Workspace::load(impl->tree->workspace()));
     return std::unique_ptr<WorkspaceConfigStore>(
         new WorkspaceConfigStore(std::move(impl)));
+}
+
+std::shared_ptr<const Workspace> WorkspaceConfigStore::snapshot() const {
+    return impl_->snapshot();
 }
 
 const std::filesystem::path& WorkspaceConfigStore::private_root()

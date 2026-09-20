@@ -17,6 +17,7 @@
 
 namespace cha {
 
+class Workspace;
 struct VoiceSettings;
 struct WorkspaceVoiceInput;
 struct WorkspaceVoiceOutput;
@@ -64,7 +65,7 @@ struct WorkspaceConfigEditResult {
 };
 
 // Normal-runtime owner: database lease, SQLite handle, one private temporary
-// root with workspace/ and welcome/ children, and the configuration mutex.
+// root with workspace/ and welcome/ children, and the published workspace snapshot.
 class WorkspaceConfigStore {
 public:
     class MaintenanceGuard {
@@ -106,6 +107,8 @@ public:
     WorkspaceConfigStore& operator=(const WorkspaceConfigStore&) = delete;
     WorkspaceConfigStore(WorkspaceConfigStore&&) = delete;
     WorkspaceConfigStore& operator=(WorkspaceConfigStore&&) = delete;
+
+    [[nodiscard]] std::shared_ptr<const Workspace> snapshot() const;
 
     [[nodiscard]] const std::filesystem::path& private_root() const noexcept;
     [[nodiscard]] const std::filesystem::path& workspace_path() const noexcept;

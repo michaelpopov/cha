@@ -143,12 +143,6 @@ ProviderClientFactory shared_openai_provider_factory(
     };
 }
 
-std::shared_ptr<const Workspace> current_workspace() {
-    std::shared_ptr<const Workspace> workspace = getws();
-    if (!workspace) throw std::runtime_error("Workspace is not loaded");
-    return workspace;
-}
-
 cha::web::CharacterSummary character_summary(
     const Workspace& workspace,
     const WorkspaceCharacter& character) {
@@ -281,6 +275,7 @@ struct Application::Impl {
             {std::string(entrance_id), std::string(welcome_id)},
             std::string(welcome_name)};
         sessions = std::make_shared<SessionRepository>(
+            [this] { return store->snapshot(); },
             store->database_path(),
             store->workspace_path(),
             store->welcome_path(),
@@ -374,7 +369,7 @@ struct Application::Impl {
         if (current_state != ApplicationState::running) {
             return ErrorCode::application_unavailable;
         }
-        if (epoch != 0 && epoch != published_epoch.load()) {
+        if (epoch == 0 || epoch != published_epoch.load()) {
             return ErrorCode::vault_changed;
         }
         return std::nullopt;
@@ -520,7 +515,7 @@ struct Application::Impl {
         const SessionRepository::MaintenanceGuard& repository) {
         try {
             database.reopen();
-            repository.synchronize_forums(*current_workspace());
+            repository.synchronize_forums(*store->snapshot());
         } catch (...) {
             unusable = true;
             throw;
@@ -962,7 +957,7 @@ ApplicationBootstrap Application::bootstrap() {
     result.presentation.vault_name = vault.name;
     result.presentation.vaults = names;
     if (result.state != ApplicationState::running) return result;
-    const auto workspace = current_workspace();
+    const auto workspace = impl_->store->snapshot();
     FullSessionId initial = fallback_session(*impl_->sessions);
     if (const auto selected = impl_->live_sessions->selected()) {
         try {
@@ -1072,7 +1067,6 @@ Application::submit_async(
     cha::web::WebCommand command,
     std::uint64_t epoch) {
     const FullSessionId key{std::string(forum_id), std::string(session_id)};
-    if (epoch == 0) epoch = context_epoch();
     if (const auto denied = check_context(epoch)) return *denied;
     // The manager checks the epoch and maintenance gate with the lookup.
     // Stop must not wait for a transfer holding the application lifecycle lock.
@@ -1146,7 +1140,6 @@ void Application::close_session(
     std::string_view forum_id,
     std::string_view session_id,
     std::uint64_t epoch) {
-    if (epoch == 0) epoch = context_epoch();
     if (check_context(epoch)) return;
     impl_->live_sessions->close_session(
         {std::string(forum_id), std::string(session_id)}, epoch);
@@ -1278,7 +1271,7 @@ cha::web::CharacterDetail Application::get_character(
     std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
-    return workspace::get_character(character_id);
+    return workspace::get_character(*impl_->store->snapshot(), character_id);
 }
 
 cha::web::CharacterDetail Application::create_character(
@@ -1324,7 +1317,8 @@ cha::web::MarkdownFile Application::get_character_file(
     std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
-    return workspace::get_character_file(character_id, filename);
+    return workspace::get_character_file(
+        *impl_->store->snapshot(), character_id, filename);
 }
 
 cha::web::MarkdownFile Application::create_character_file(
@@ -1366,7 +1360,7 @@ cha::web::PersonaDetail Application::get_persona(
     std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
-    return workspace::get_persona(persona_id);
+    return workspace::get_persona(*impl_->store->snapshot(), persona_id);
 }
 
 cha::web::PersonaDetail Application::create_persona(
@@ -1400,7 +1394,7 @@ cha::web::ForumDetail Application::get_forum(
     std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
-    return workspace::get_forum(forum_id);
+    return workspace::get_forum(*impl_->store->snapshot(), forum_id);
 }
 
 cha::web::ForumDetail Application::create_forum(
@@ -1446,7 +1440,7 @@ cha::web::MarkdownFile Application::get_forum_file(
     std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
-    return workspace::get_forum_file(forum_id, filename);
+    return workspace::get_forum_file(*impl_->store->snapshot(), forum_id, filename);
 }
 
 cha::web::MarkdownFile Application::create_forum_file(
@@ -1487,7 +1481,7 @@ std::vector<cha::web::ProviderSummary> Application::list_providers(
     std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
-    return settings::list_providers();
+    return settings::list_providers(*impl_->store->snapshot());
 }
 
 cha::web::ProviderDetail Application::get_provider(
@@ -1495,7 +1489,8 @@ cha::web::ProviderDetail Application::get_provider(
     std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
-    return settings::get_provider(provider_id, *impl_->api_keys);
+    return settings::get_provider(
+        *impl_->store->snapshot(), provider_id, *impl_->api_keys);
 }
 
 cha::web::ProviderDetail Application::create_provider(
@@ -1535,19 +1530,23 @@ std::shared_ptr<OperationReply> Application::test_provider(
     auto reply = std::make_shared<OperationReply>();
     OpenAiOAuth* oauth = nullptr;
     ApiKeyStore* keys = nullptr;
+    std::shared_ptr<const Workspace> workspace;
     std::string id(provider_id);
     {
         const std::lock_guard lifecycle(impl_->lifecycle_mutex);
         impl_->require_admitted(epoch);
-        (void)settings::get_provider(id, *impl_->api_keys);
+        workspace = impl_->store->snapshot();
+        (void)settings::get_provider(*workspace, id, *impl_->api_keys);
         oauth = impl_->openai_auth.get();
         keys = impl_->api_keys.get();
     }
     if (!impl_->launch_background(
-            [reply, id = std::move(id), body = std::move(body), oauth, keys](
+            [reply, id = std::move(id), body = std::move(body), oauth, keys,
+             workspace = std::move(workspace)](
                 std::atomic_bool& cancel) {
                 try {
-                    settings::test_provider(id, body, *oauth, *keys, cancel);
+                    settings::test_provider(
+                        *workspace, id, body, *oauth, *keys, cancel);
                     if (cancel.load()) {
                         reply->fail(
                             ErrorCode::operation_cancelled,
@@ -1575,7 +1574,7 @@ std::vector<cha::web::StyleDetail> Application::list_styles(
     std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
-    return settings::list_styles();
+    return settings::list_styles(*impl_->store->snapshot());
 }
 
 cha::web::StyleDetail Application::create_style(
@@ -1606,7 +1605,7 @@ std::vector<cha::web::VoiceDetail> Application::list_voices(
     std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
-    return settings::list_voices();
+    return settings::list_voices(*impl_->store->snapshot());
 }
 
 cha::web::VoiceDetail Application::create_voice(
@@ -1637,7 +1636,7 @@ std::optional<cha::web::VoiceInputSettings>
 Application::get_voice_input_settings(std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
-    return settings::get_voice_input_settings();
+    return settings::get_voice_input_settings(*impl_->store->snapshot());
 }
 
 cha::web::VoiceInputSettings Application::save_voice_input_settings(
@@ -1653,14 +1652,15 @@ std::optional<cha::web::VoiceInputRuntime>
 Application::get_voice_input_runtime(std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
-    return settings::get_voice_input_runtime(*impl_->api_keys, true);
+    return settings::get_voice_input_runtime(
+        *impl_->store->snapshot(), *impl_->api_keys, true);
 }
 
 std::optional<cha::web::VoiceOutputSettings>
 Application::get_voice_output_settings(std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
-    return settings::get_voice_output_settings();
+    return settings::get_voice_output_settings(*impl_->store->snapshot());
 }
 
 cha::web::VoiceOutputSettings Application::save_voice_output_settings(
@@ -1676,7 +1676,8 @@ std::optional<cha::web::VoiceOutputRuntime>
 Application::get_voice_output_runtime(std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
-    return settings::get_voice_output_runtime(*impl_->api_keys, true);
+    return settings::get_voice_output_runtime(
+        *impl_->store->snapshot(), *impl_->api_keys, true);
 }
 
 std::shared_ptr<OperationReply> Application::start_speech(
@@ -1693,7 +1694,7 @@ std::shared_ptr<OperationReply> Application::start_speech(
     {
         const std::lock_guard lifecycle(impl_->lifecycle_mutex);
         impl_->require_admitted(epoch);
-        const auto workspace = getws();
+        const auto workspace = impl_->store->snapshot();
         if (!workspace || !workspace->voice_output()
             || !impl_->api_keys->find(workspace->voice_output()->api_key_id)) {
             throw ApplicationError(
@@ -1951,9 +1952,10 @@ std::shared_ptr<OperationReply> Application::connect_voice_input(
     {
         const std::lock_guard lifecycle(impl_->lifecycle_mutex);
         impl_->require_admitted(epoch);
-        const auto secret = settings::voice_input_secret(*impl_->api_keys, true);
+        const auto secret = settings::voice_input_secret(
+            *impl_->store->snapshot(), *impl_->api_keys, true);
         const auto runtime = settings::get_voice_input_runtime(
-            *impl_->api_keys, true);
+            *impl_->store->snapshot(), *impl_->api_keys, true);
         if (!secret || !runtime) {
             throw ApplicationError(
                 ErrorCode::not_found, "Voice input is not configured.");
@@ -2023,9 +2025,17 @@ std::optional<ResourceBytes> Application::read_resource(
     std::string_view resource_id) const {
     const std::unique_lock lifecycle(
         impl_->lifecycle_mutex, std::try_to_lock);
-    if (!lifecycle.owns_lock() || impl_->admit_locked(0)) return std::nullopt;
+    if (!lifecycle.owns_lock()) return std::nullopt;
+    const auto epoch = impl_->published_epoch.load();
+    if (impl_->admit_locked(epoch)) return std::nullopt;
     return impl_->media_resources.read(
-        connection_id, resource_id, impl_->published_epoch.load());
+        connection_id, resource_id, epoch);
+}
+
+void Application::release_request_resources(
+    std::string_view connection_id,
+    std::uint64_t request_id) {
+    impl_->cancel_pending(connection_id, request_id);
 }
 
 void Application::release_connection_resources(std::string_view connection_id) {
@@ -2040,7 +2050,7 @@ std::vector<cha::web::ApiKeyDetail> Application::list_api_keys(
     std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
-    return settings::list_api_keys(*impl_->api_keys);
+    return settings::list_api_keys(*impl_->store->snapshot(), *impl_->api_keys);
 }
 
 cha::web::ApiKeyDetail Application::create_api_key(
@@ -2048,7 +2058,8 @@ cha::web::ApiKeyDetail Application::create_api_key(
     std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
-    return settings::create_api_key(*impl_->api_keys, create);
+    return settings::create_api_key(
+        *impl_->store->snapshot(), *impl_->api_keys, create);
 }
 
 cha::web::ApiKeyDetail Application::rename_api_key(
@@ -2057,7 +2068,8 @@ cha::web::ApiKeyDetail Application::rename_api_key(
     std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
-    return settings::rename_api_key(*impl_->api_keys, api_key_id, display_name);
+    return settings::rename_api_key(
+        *impl_->store->snapshot(), *impl_->api_keys, api_key_id, display_name);
 }
 
 cha::web::ApiKeyDetail Application::replace_api_key_value(
@@ -2066,7 +2078,8 @@ cha::web::ApiKeyDetail Application::replace_api_key_value(
     std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
-    return settings::replace_api_key_value(*impl_->api_keys, api_key_id, value);
+    return settings::replace_api_key_value(
+        *impl_->store->snapshot(), *impl_->api_keys, api_key_id, value);
 }
 
 void Application::delete_api_key(
@@ -2196,7 +2209,7 @@ std::optional<cha::web::ErrorCode> Application::check_context(
     if (state != ApplicationState::running) {
         return ErrorCode::application_unavailable;
     }
-    if (epoch != 0 && epoch != impl_->published_epoch.load()) {
+    if (epoch == 0 || epoch != impl_->published_epoch.load()) {
         return ErrorCode::vault_changed;
     }
     return std::nullopt;
@@ -2711,7 +2724,7 @@ MaintenanceResult Application::merge_vault(
             {
                 SessionRepository::MaintenanceGuard repository =
                     impl_->sessions->reserve_maintenance();
-                repository.synchronize_forums(*current_workspace());
+                repository.synchronize_forums(*impl_->store->snapshot());
             }
             impl_->rebuild_mirror(
                 cha::web::session_mirror_root(impl_->current_vault_.get()));
@@ -2909,24 +2922,8 @@ std::string Application::active_password() const {
     return impl_->active_password;
 }
 
-std::string& Application::mutable_active_password() {
-    return impl_->active_password;
-}
-
 void Application::set_active_password(std::string password) {
     impl_->active_password = std::move(password);
-}
-
-std::timed_mutex& Application::lifecycle_mutex() {
-    return impl_->lifecycle_mutex;
-}
-
-bool Application::unusable() const {
-    return impl_->unusable;
-}
-
-bool& Application::mutable_unusable() {
-    return impl_->unusable;
 }
 
 void Application::mark_unusable() {

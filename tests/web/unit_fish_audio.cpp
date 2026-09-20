@@ -404,7 +404,8 @@ TEST(FishAudio, EntrySpeechTextOmitsEmptyAndMetadataOnlyEntries) {
             "'  [2026-09-16T12:00:00.123Z] ([source](https://example.com))', 0)");
     }
     const auto config = WorkspaceConfigStore::open(path);
-    const SessionRepository sessions(path, config->workspace_path(), config->welcome_path(),
+    const SessionRepository sessions(
+            [&config] { return config->snapshot(); }, path, config->workspace_path(), config->welcome_path(),
         {{"temporary-forum", "temporary-session"}, "Welcome"});
     const auto empty = sessions.lookup_entry_audio({"lobby", "audio"}, 1);
     ASSERT_TRUE(empty);

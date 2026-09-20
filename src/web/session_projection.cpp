@@ -43,16 +43,15 @@ std::optional<SpeechVoice> resolve_speech_voice(
 }
 
 SessionSnapshot to_snapshot(
+    const Workspace& workspace,
     const FullSessionId& identity,
     std::string_view label,
     const ControllerView& controller,
     const WebPresentationState& presentation) {
-    const std::shared_ptr<const Workspace> workspace = getws();
-    if (!workspace) throw std::runtime_error("Workspace is not loaded");
     const WorkspaceForum* const workspace_forum =
-        workspace->find_forum(identity.forum_id);
+        workspace.find_forum(identity.forum_id);
     const WorkspacePersona* const workspace_persona =
-        workspace->find_persona(controller.default_persona_id);
+        workspace.find_persona(controller.default_persona_id);
     if (workspace_forum == nullptr || workspace_persona == nullptr) {
         throw std::runtime_error(
             "Session configuration is absent from the current workspace");
@@ -93,7 +92,7 @@ SessionSnapshot to_snapshot(
     snapshot.characters.reserve(workspace_forum->members.size());
     for (const WorkspaceForumMember& member : workspace_forum->members) {
         const WorkspaceCharacter* const character =
-            workspace->find_character(member.character_id);
+            workspace.find_character(member.character_id);
         if (character == nullptr) {
             throw std::logic_error("Forum member has no workspace character");
         }
@@ -102,7 +101,7 @@ SessionSnapshot to_snapshot(
             .display_name = character->character.display_name,
             .description = character->character.description,
             .appearance = character->character.appearance,
-            .voice = resolve_speech_voice(*workspace, *character),
+            .voice = resolve_speech_voice(workspace, *character),
         });
     }
     snapshot.forum.members = snapshot.characters;

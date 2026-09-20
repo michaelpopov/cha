@@ -93,11 +93,12 @@ struct TwoVaults {
 TEST(ApplicationVault, SwitchAwayAndBackRestoresStoredSessions) {
     TwoVaults pair;
     auto application = Application::open(pair.command);
-    const auto created = application->create_session("lobby", "Stored on A");
+    const auto created = application->create_session(
+        "lobby", "Stored on A", application->context_epoch());
     EXPECT_EQ(application->current_vault().get().name, "A");
 
     const auto first = application->context_epoch();
-    const auto switched = application->switch_vault("B");
+    const auto switched = application->switch_vault("B", {}, application->context_epoch());
     EXPECT_EQ(application->current_vault().get().name, "B");
     EXPECT_GT(switched.context_epoch, first);
     EXPECT_EQ(switched.state, ApplicationState::running);
@@ -110,7 +111,7 @@ TEST(ApplicationVault, SwitchAwayAndBackRestoresStoredSessions) {
     }
     EXPECT_FALSE(saw_stored_on_b);
 
-    const auto back = application->switch_vault("A");
+    const auto back = application->switch_vault("A", {}, application->context_epoch());
     EXPECT_EQ(application->current_vault().get().name, "A");
     EXPECT_GT(back.context_epoch, switched.context_epoch);
     const auto boot_a = application->bootstrap();
@@ -136,16 +137,16 @@ TEST(ApplicationVault, SwitchMigratesR2EnvironmentWithoutHoldingTheStoreLock) {
     ASSERT_TRUE(application->capabilities().can_transfer_r2);
     const auto first = application->context_epoch();
 
-    const auto switched = application->switch_vault("B");
+    const auto switched = application->switch_vault("B", {}, application->context_epoch());
 
     EXPECT_EQ(switched.state, ApplicationState::running);
     EXPECT_GT(switched.context_epoch, first);
-    const auto migrated = application->get_r2_storage();
+    const auto migrated = application->get_r2_storage(application->context_epoch());
     ASSERT_TRUE(migrated);
     EXPECT_EQ(migrated->url, "https://r2.example.invalid/bucket");
     EXPECT_EQ(migrated->access_key_id, "test-access");
     EXPECT_TRUE(application->capabilities().can_transfer_r2);
-    const auto back = application->switch_vault("A");
+    const auto back = application->switch_vault("A", {}, application->context_epoch());
     EXPECT_EQ(back.state, ApplicationState::running);
     EXPECT_GT(back.context_epoch, switched.context_epoch);
 }
@@ -156,27 +157,36 @@ TEST(ApplicationVault, SwitchMigratesLegacyKeysWithoutHoldingTheStoreLock) {
     std::ofstream(pair.command.config_directory / "api-keys.json")
         << R"({"version":1,"keys":{"api_key_1":{"display_name":"Legacy","value":"test-key"}}})";
 
-    const auto switched = application->switch_vault("B");
+    const auto switched = application->switch_vault("B", {}, application->context_epoch());
 
     EXPECT_EQ(switched.state, ApplicationState::running);
-    const auto keys = application->list_api_keys();
+    const auto keys = application->list_api_keys(application->context_epoch());
     ASSERT_EQ(keys.size(), 1U);
     EXPECT_EQ(keys.front().display_name, "Legacy");
     EXPECT_TRUE(keys.front().has_value);
-    EXPECT_EQ(application->switch_vault("A").state, ApplicationState::running);
+    EXPECT_EQ(application->switch_vault("A", {}, application->context_epoch()).state,
+        ApplicationState::running);
 }
 
-TEST(ApplicationVault, StaleCreateDoesNotRunAgainstTheSwitchedVault) {
+TEST(ApplicationVault, ZeroAndStaleEpochsCannotCreateInTheSwitchedVault) {
     TwoVaults pair;
     auto application = Application::open(pair.command);
     const auto epoch = application->context_epoch();
-    (void)application->switch_vault("B");
-    try {
-        (void)application->create_session("lobby", "Stale", epoch);
-        FAIL() << "stale create should fail";
-    } catch (const ApplicationError& error) {
-        EXPECT_EQ(error.code, ErrorCode::vault_changed);
+    (void)application->switch_vault("B", {}, application->context_epoch());
+    const auto before = application->list_sessions(
+        "lobby", application->context_epoch()).size();
+    for (const auto invalid_epoch : {std::uint64_t{0}, epoch}) {
+        SCOPED_TRACE(invalid_epoch);
+        EXPECT_EQ(application->check_context(invalid_epoch), ErrorCode::vault_changed);
+        try {
+            (void)application->create_session("lobby", "Rejected", invalid_epoch);
+            FAIL() << "create with an invalid epoch should fail";
+        } catch (const ApplicationError& error) {
+            EXPECT_EQ(error.code, ErrorCode::vault_changed);
+        }
     }
+    EXPECT_EQ(application->list_sessions(
+        "lobby", application->context_epoch()).size(), before);
     const auto created = application->create_session(
         "lobby", "On B", application->context_epoch());
     EXPECT_FALSE(created.id.empty());
@@ -185,21 +195,37 @@ TEST(ApplicationVault, StaleCreateDoesNotRunAgainstTheSwitchedVault) {
 TEST(ApplicationVault, OverlappingSessionIdsStayOnTheirVault) {
     TwoVaults pair;
     auto application = Application::open(pair.command);
-    const auto on_a = application->create_session("lobby", "Same label");
+    const auto on_a = application->create_session(
+        "lobby", "Same label", application->context_epoch());
     ASSERT_TRUE(std::holds_alternative<cha::web::OpenSessionSuccess>(
-        application->open_session("lobby", on_a.id)));
+        application->open_session("lobby", on_a.id, application->context_epoch())));
     const auto epoch_a = application->context_epoch();
-    (void)application->switch_vault("B");
-    const auto on_b = application->create_session("lobby", "Same label");
+    (void)application->switch_vault("B", {}, application->context_epoch());
+    const auto on_b = application->create_session(
+        "lobby", "Same label", application->context_epoch());
     ASSERT_TRUE(std::holds_alternative<cha::web::OpenSessionSuccess>(
-        application->open_session("lobby", on_b.id)));
+        application->open_session("lobby", on_b.id, application->context_epoch())));
 
-    const auto stale_open = application->open_session(
-        "lobby", on_a.id, epoch_a);
-    ASSERT_TRUE(std::holds_alternative<ErrorCode>(stale_open));
-    EXPECT_EQ(std::get<ErrorCode>(stale_open), ErrorCode::vault_changed);
+    for (const auto invalid_epoch : {std::uint64_t{0}, epoch_a}) {
+        SCOPED_TRACE(invalid_epoch);
+        const auto rejected_open = application->open_session(
+            "lobby", on_b.id, invalid_epoch);
+        ASSERT_TRUE(std::holds_alternative<ErrorCode>(rejected_open));
+        EXPECT_EQ(std::get<ErrorCode>(rejected_open), ErrorCode::vault_changed);
 
-    (void)application->switch_vault("A");
+        const auto rejected_submit = application->submit_async(
+            "lobby", on_b.id, cha::web::StopCommand{}, invalid_epoch);
+        ASSERT_TRUE(std::holds_alternative<ErrorCode>(rejected_submit));
+        EXPECT_EQ(std::get<ErrorCode>(rejected_submit), ErrorCode::vault_changed);
+
+        EXPECT_EQ(application->delete_session("lobby", on_b.id, invalid_epoch),
+            ErrorCode::vault_changed);
+        application->close_session("lobby", on_b.id, invalid_epoch);
+        EXPECT_TRUE(std::holds_alternative<cha::web::SessionSnapshot>(
+            application->snapshot("lobby", on_b.id, application->context_epoch())));
+    }
+
+    (void)application->switch_vault("A", {}, application->context_epoch());
     const auto boot = application->bootstrap();
     bool saw_a = false;
     for (const auto& recent : boot.presentation.recent_sessions) {
@@ -211,17 +237,19 @@ TEST(ApplicationVault, OverlappingSessionIdsStayOnTheirVault) {
 TEST(ApplicationVault, MergeUsesMaintenanceAndRetiresLiveSessions) {
     TwoVaults pair;
     auto application = Application::open(pair.command);
-    const auto created = application->create_session("lobby", "Before merge");
+    const auto created = application->create_session(
+        "lobby", "Before merge", application->context_epoch());
     ASSERT_TRUE(std::holds_alternative<cha::web::OpenSessionSuccess>(
-        application->open_session("lobby", created.id)));
+        application->open_session("lobby", created.id, application->context_epoch())));
     const auto old_epoch = application->context_epoch();
 
-    const auto merged = application->merge_vault("B");
+    const auto merged = application->merge_vault("B", {}, application->context_epoch());
 
     EXPECT_EQ(merged.state, ApplicationState::running);
     EXPECT_GT(merged.context_epoch, old_epoch);
     EXPECT_EQ(application->current_vault().get().name, "A");
-    EXPECT_EQ(application->get_persona("beta").summary.display_name, "Beta");
+    EXPECT_EQ(application->get_persona("beta", application->context_epoch()).summary.display_name,
+        "Beta");
     EXPECT_EQ(application->check_context(old_epoch), ErrorCode::vault_changed);
     const auto snapshot = application->snapshot(
         "lobby", created.id, merged.context_epoch);
@@ -236,7 +264,7 @@ TEST(ApplicationVault, MergeSynchronizationFailureMarksApplicationUnavailable) {
     force_next_forum_sync_failure();
 
     EXPECT_THROW(
-        (void)application->merge_vault("B"),
+        (void)application->merge_vault("B", {}, application->context_epoch()),
         WorkspaceRestartRequiredError);
 
     EXPECT_EQ(application->state(), ApplicationState::unavailable);
@@ -258,7 +286,7 @@ TEST(ApplicationVault, ProtectionSetupFailureRestoresRunningContext) {
 
     EXPECT_THROW(
         (void)application->update_vault(
-            "A", {.display_name = "A", .password = "secret"}),
+            "A", {.display_name = "A", .password = "secret"}, application->context_epoch()),
         std::runtime_error);
 
     EXPECT_TRUE(resumed);
@@ -284,12 +312,12 @@ TEST(ApplicationVault, CreateListAndSameVaultSwitch) {
         .display_name = "Copied",
         .copy_from = "A",
         .password = {},
-    });
+    }, application->context_epoch());
     EXPECT_EQ(created.name, "Copied");
     const auto snapshot = application->vault_snapshot();
     EXPECT_GE(snapshot.vaults.size(), 3U);
     const auto epoch = application->context_epoch();
-    const auto same = application->switch_vault("a");
+    const auto same = application->switch_vault("a", {}, application->context_epoch());
     EXPECT_EQ(same.context_epoch, epoch);
     EXPECT_EQ(application->current_vault().get().name, "A");
 }
@@ -300,7 +328,7 @@ TEST(ApplicationVault, SaveFileRejectsStaleEpochAndReplacesAtomically) {
     const auto destination = pair.workspace_a.root() / "saved.txt";
     std::ofstream(destination) << "keep-me";
     const auto epoch = application->context_epoch();
-    (void)application->switch_vault("B");
+    (void)application->switch_vault("B", {}, application->context_epoch());
     EXPECT_THROW(
         application->save_file(epoch, destination, "new"),
         ApplicationError);
@@ -330,7 +358,7 @@ TEST(ApplicationVault, ContextChangedCoalescesAndReportsTheNewEpoch) {
     EXPECT_TRUE(notices.empty());
 
     const auto first = application->context_epoch();
-    const auto switched = application->switch_vault("B");
+    const auto switched = application->switch_vault("B", {}, application->context_epoch());
     ASSERT_EQ(notices.size(), 1U);
     EXPECT_EQ(notices.front().first, switched.context_epoch);
     EXPECT_NE(notices.front().first, first);
@@ -340,11 +368,11 @@ TEST(ApplicationVault, ContextChangedCoalescesAndReportsTheNewEpoch) {
     application->set_context_changed(record);
     EXPECT_EQ(notices.size(), count);
 
-    const auto same = application->switch_vault("B");
+    const auto same = application->switch_vault("B", {}, application->context_epoch());
     EXPECT_EQ(same.context_epoch, switched.context_epoch);
     EXPECT_EQ(notices.size(), count);
 
-    const auto back = application->switch_vault("A");
+    const auto back = application->switch_vault("A", {}, application->context_epoch());
     ASSERT_EQ(notices.size(), count + 1);
     EXPECT_EQ(notices.back().first, back.context_epoch);
     EXPECT_GT(back.context_epoch, switched.context_epoch);
@@ -437,7 +465,7 @@ TEST(ApplicationVault, MaintenanceCompletionDoesNotUndoShutdown) {
     });
 
     auto switching = std::async(std::launch::async, [&] {
-        return application->switch_vault("B");
+        return application->switch_vault("B", {}, application->context_epoch());
     });
     bool reached_pause = false;
     {
@@ -471,7 +499,7 @@ TEST(ApplicationVault, StaleVaultMutationFailsVaultChanged) {
     TwoVaults pair;
     auto application = Application::open(pair.command);
     const auto epoch = application->context_epoch();
-    (void)application->switch_vault("B");
+    (void)application->switch_vault("B", {}, application->context_epoch());
     try {
         (void)application->create_vault(
             VaultCreate{.display_name = "Stale"}, epoch);
@@ -492,11 +520,11 @@ TEST(ApplicationVault, CapabilitiesFollowModifyAndR2OnTheActiveVault) {
     EXPECT_TRUE(caps.can_modify);
     EXPECT_TRUE(application->bootstrap().capabilities.can_modify);
 
-    (void)application->switch_vault("B");
+    (void)application->switch_vault("B", {}, application->context_epoch());
     EXPECT_FALSE(application->capabilities().can_modify);
     EXPECT_FALSE(application->bootstrap().capabilities.can_modify);
 
-    (void)application->switch_vault("A");
+    (void)application->switch_vault("A", {}, application->context_epoch());
     EXPECT_TRUE(application->capabilities().can_modify);
 }
 

@@ -16,7 +16,7 @@
 
 namespace cha::test {
 
-// Publishes a small real Workspace, then constructs the controller through the
+// Builds a small real Workspace, then constructs the controller through the
 // same Workspace path as production. Only provider behavior and failure hooks
 // are injected.
 class TestController {
@@ -32,16 +32,16 @@ public:
         ProviderThreadLauncher thread_launcher = {},
         SessionController::ActivationHook before_activation = {},
         std::vector<TestWorkspaceStyle> styles = {},
-        FullSessionId identity = {},
-        bool reuse_current_workspace = false)
+        FullSessionId identity = {})
         : notifier_(std::move(notifier)),
-          workspace_(publish_test_workspace(
+          workspace_(make_controller_workspace(
               definitions, personas,
               definitions.empty() ? std::string_view{}
                                   : std::string_view(definitions.front().character.id),
               database_path,
-              std::move(identity), styles, reuse_current_workspace)),
+              std::move(identity), styles)),
           controller_(SessionController::from_workspace_for_testing(
+              [snapshot = workspace_.snapshot] { return snapshot; },
               std::move(default_character_id), workspace_.default_persona_id,
               std::move(database_path),
               std::make_shared<Providers>(
@@ -66,7 +66,7 @@ public:
 
 private:
     std::shared_ptr<WakeNotifier> notifier_;
-    PublishedTestWorkspace workspace_;
+    TestControllerWorkspace workspace_;
     std::unique_ptr<SessionController> controller_;
 };
 
@@ -151,8 +151,7 @@ inline TestController from_test_backends(
     SessionRestore restored = {},
     SessionController::ActivationHook before_activation = {},
     std::optional<ParticipantId> initial_default_character_id = std::nullopt,
-    FullSessionId identity = {},
-    bool reuse_current_workspace = false) {
+    FullSessionId identity = {}) {
     std::vector<CharacterDefinition> definitions;
     definitions.reserve(backends.size());
     for (const std::unique_ptr<DescribedModelBackend>& backend : backends) {
@@ -196,8 +195,7 @@ inline TestController from_test_backends(
         {},
         std::move(before_activation),
         {},
-        std::move(identity),
-        reuse_current_workspace);
+        std::move(identity));
 }
 
 inline TestController from_test_backends(
@@ -208,8 +206,7 @@ inline TestController from_test_backends(
     SessionRestore restored = {},
     SessionController::ActivationHook before_activation = {},
     std::optional<ParticipantId> initial_default_character_id = std::nullopt,
-    FullSessionId identity = {},
-    bool reuse_current_workspace = false) {
+    FullSessionId identity = {}) {
     return from_test_backends(
         std::move(backends),
         std::move(personas),
@@ -218,8 +215,7 @@ inline TestController from_test_backends(
         std::move(restored),
         std::move(before_activation),
         std::move(initial_default_character_id),
-        std::move(identity),
-        reuse_current_workspace);
+        std::move(identity));
 }
 
 inline TestController from_test_backends(
@@ -229,8 +225,7 @@ inline TestController from_test_backends(
     SessionRestore restored = {},
     SessionController::ActivationHook before_activation = {},
     std::optional<ParticipantId> initial_default_character_id = std::nullopt,
-    FullSessionId identity = {},
-    bool reuse_current_workspace = false) {
+    FullSessionId identity = {}) {
     return from_test_backends(
         std::move(backends),
         operator_roster(),
@@ -239,8 +234,7 @@ inline TestController from_test_backends(
         std::move(restored),
         std::move(before_activation),
         std::move(initial_default_character_id),
-        std::move(identity),
-        reuse_current_workspace);
+        std::move(identity));
 }
 
 } // namespace cha::test

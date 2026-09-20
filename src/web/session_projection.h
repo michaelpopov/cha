@@ -39,6 +39,7 @@ struct WebPresentationState {
 // returned value stays valid after the controller mutates or is destroyed, so
 // callers must invoke this synchronously on the controller's owner thread.
 [[nodiscard]] SessionSnapshot to_snapshot(
+    const Workspace& workspace,
     const FullSessionId& identity,
     std::string_view label,
     const ControllerView& controller,

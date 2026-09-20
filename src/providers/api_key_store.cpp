@@ -52,14 +52,8 @@ R2StorageInfo info(const R2StorageKey& key) {
     };
 }
 
-std::shared_ptr<const Workspace> workspace() {
-    std::shared_ptr<const Workspace> result = getws();
-    if (!result) throw std::runtime_error("No active workspace");
-    return result;
-}
-
-ApiKeyInfo published_api_key(std::string_view id) {
-    const std::shared_ptr<const Workspace> current = workspace();
+ApiKeyInfo published_api_key(const WorkspaceConfigStore& config, std::string_view id) {
+    const std::shared_ptr<const Workspace> current = config.snapshot();
     const SavedApiKey* const key = current->find_api_key(id);
     if (key == nullptr) {
         throw std::runtime_error(
@@ -68,8 +62,8 @@ ApiKeyInfo published_api_key(std::string_view id) {
     return info(*key);
 }
 
-R2StorageInfo published_r2_storage() {
-    const std::shared_ptr<const Workspace> current = workspace();
+R2StorageInfo published_r2_storage(const WorkspaceConfigStore& config) {
+    const std::shared_ptr<const Workspace> current = config.snapshot();
     const std::optional<R2StorageKey>& key = current->r2_storage();
     if (!key) {
         throw std::runtime_error("R2 storage credentials were not published");
@@ -156,7 +150,7 @@ ApiKeyStore::ApiKeyStore(
 }
 
 std::vector<ApiKeyInfo> ApiKeyStore::list() const {
-    const std::shared_ptr<const Workspace> current = workspace();
+    const std::shared_ptr<const Workspace> current = config_->snapshot();
     std::vector<ApiKeyInfo> result;
     result.reserve(current->api_keys().size());
     for (const SavedApiKey& key : current->api_keys()) {
@@ -166,14 +160,14 @@ std::vector<ApiKeyInfo> ApiKeyStore::list() const {
 }
 
 std::optional<ApiKeyInfo> ApiKeyStore::find(std::string_view id) const {
-    const std::shared_ptr<const Workspace> current = workspace();
+    const std::shared_ptr<const Workspace> current = config_->snapshot();
     const SavedApiKey* key = current->find_api_key(id);
     return key == nullptr ? std::nullopt : std::optional<ApiKeyInfo>(info(*key));
 }
 
 std::optional<ApiKeyInfo> ApiKeyStore::find_by_name(
     std::string_view display_name) const {
-    const std::shared_ptr<const Workspace> current = workspace();
+    const std::shared_ptr<const Workspace> current = config_->snapshot();
     const SavedApiKey* result = nullptr;
     for (const SavedApiKey& key : current->api_keys()) {
         if (key.display_name != display_name) continue;
@@ -185,7 +179,7 @@ std::optional<ApiKeyInfo> ApiKeyStore::find_by_name(
 }
 
 std::string ApiKeyStore::value(std::string_view id) const {
-    const std::shared_ptr<const Workspace> current = workspace();
+    const std::shared_ptr<const Workspace> current = config_->snapshot();
     const SavedApiKey* key = current->find_api_key(id);
     if (key == nullptr) {
         throw std::runtime_error(
@@ -195,7 +189,7 @@ std::string ApiKeyStore::value(std::string_view id) const {
 }
 
 std::string ApiKeyStore::value_by_name(std::string_view display_name) const {
-    const std::shared_ptr<const Workspace> current = workspace();
+    const std::shared_ptr<const Workspace> current = config_->snapshot();
     const SavedApiKey* result = nullptr;
     for (const SavedApiKey& key : current->api_keys()) {
         if (key.display_name != display_name) continue;
@@ -213,12 +207,12 @@ std::string ApiKeyStore::value_by_name(std::string_view display_name) const {
 }
 
 std::optional<R2StorageKey> ApiKeyStore::r2() const {
-    const std::shared_ptr<const Workspace> current = workspace();
+    const std::shared_ptr<const Workspace> current = config_->snapshot();
     return current->r2_storage();
 }
 
 std::optional<R2StorageInfo> ApiKeyStore::r2_info() const {
-    const std::shared_ptr<const Workspace> current = workspace();
+    const std::shared_ptr<const Workspace> current = config_->snapshot();
     const std::optional<R2StorageKey>& key = current->r2_storage();
     return key ? std::optional<R2StorageInfo>(info(*key)) : std::nullopt;
 }
@@ -227,7 +221,7 @@ ApiKeyInfo ApiKeyStore::create(
     std::string_view display_name,
     std::string_view value) {
     const std::lock_guard lock(mutex_);
-    const std::shared_ptr<const Workspace> current = workspace();
+    const std::shared_ptr<const Workspace> current = config_->snapshot();
     const std::uint64_t assigned_id = current->next_api_key_id();
     if (assigned_id
         >= static_cast<std::uint64_t>(
@@ -236,34 +230,34 @@ ApiKeyInfo ApiKeyStore::create(
     }
     const std::string id = "api_key_" + std::to_string(assigned_id);
     config_->apply_api_key_create(id, display_name, value);
-    return published_api_key(id);
+    return published_api_key(*config_, id);
 }
 
 ApiKeyInfo ApiKeyStore::rename(
     std::string_view id,
     std::string_view display_name) {
     const std::lock_guard lock(mutex_);
-    const std::shared_ptr<const Workspace> current = workspace();
+    const std::shared_ptr<const Workspace> current = config_->snapshot();
     const SavedApiKey* key = current->find_api_key(id);
     if (key == nullptr) throw std::out_of_range("Unknown API key");
     config_->apply_api_key_update(id, display_name, key->value);
-    return published_api_key(id);
+    return published_api_key(*config_, id);
 }
 
 ApiKeyInfo ApiKeyStore::replace(
     std::string_view id,
     std::string_view value) {
     const std::lock_guard lock(mutex_);
-    const std::shared_ptr<const Workspace> current = workspace();
+    const std::shared_ptr<const Workspace> current = config_->snapshot();
     const SavedApiKey* key = current->find_api_key(id);
     if (key == nullptr) throw std::out_of_range("Unknown API key");
     config_->apply_api_key_update(id, key->display_name, value);
-    return published_api_key(id);
+    return published_api_key(*config_, id);
 }
 
 void ApiKeyStore::remove(std::string_view id) {
     const std::lock_guard lock(mutex_);
-    const std::shared_ptr<const Workspace> current = workspace();
+    const std::shared_ptr<const Workspace> current = config_->snapshot();
     if (current->find_api_key(id) == nullptr) {
         throw std::out_of_range("Unknown API key");
     }
@@ -276,7 +270,7 @@ R2StorageInfo ApiKeyStore::save_r2(
     std::string_view access_key_id,
     std::optional<std::string_view> secret_key) {
     const std::lock_guard lock(mutex_);
-    const std::shared_ptr<const Workspace> current = workspace();
+    const std::shared_ptr<const Workspace> current = config_->snapshot();
     const std::optional<R2StorageKey>& saved = current->r2_storage();
     if (!saved && !secret_key) {
         throw std::invalid_argument("R2 secret key is required");
@@ -308,12 +302,12 @@ R2StorageInfo ApiKeyStore::save_r2(
     } else {
         config_->apply_r2_storage_create(key);
     }
-    return published_r2_storage();
+    return published_r2_storage(*config_);
 }
 
 void ApiKeyStore::remove_r2() {
     const std::lock_guard lock(mutex_);
-    const std::shared_ptr<const Workspace> current = workspace();
+    const std::shared_ptr<const Workspace> current = config_->snapshot();
     if (!current->r2_storage()) {
         throw std::out_of_range("R2 storage credentials are not configured");
     }
@@ -326,7 +320,7 @@ void ApiKeyStore::migrate_vault() {
 }
 
 void ApiKeyStore::migrate() {
-    const std::shared_ptr<const Workspace> current = workspace();
+    const std::shared_ptr<const Workspace> current = config_->snapshot();
     if (!current->api_keys().empty() || current->r2_storage()) return;
 
     LegacyKeys legacy = read_legacy_keys(legacy_path_);

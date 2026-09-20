@@ -244,6 +244,9 @@ std::variant<ParsedRequest, ParseFailure> parse_request(
             cha::web::ErrorCode::invalid_argument,
             "That method is not available."};
     }
+    if (requires_context_epoch(*method) && *epoch == 0) {
+        return invalid("A nonzero context epoch is required.", id);
+    }
     nlohmann::json params = nlohmann::json::object();
     if (json.contains("params")) {
         if (!json["params"].is_object()) {

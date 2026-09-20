@@ -191,14 +191,13 @@ void TestWorkspace::add_forum(
         << "# Provider selection is per character.\n";
 }
 
-PublishedTestWorkspace publish_test_workspace(
+TestControllerWorkspace make_controller_workspace(
     const std::vector<CharacterDefinition>& definitions,
     const PersonaRoster& personas,
     std::string_view default_character_id,
     const std::filesystem::path& database_path,
     FullSessionId identity,
-    const std::vector<TestWorkspaceStyle>& styles,
-    bool reuse_current) {
+    const std::vector<TestWorkspaceStyle>& styles) {
     if ((identity.forum_id.empty() || identity.session_id.empty())
         && std::filesystem::is_regular_file(database_path)) {
         const SessionDatabaseMetadata metadata =
@@ -208,37 +207,6 @@ PublishedTestWorkspace publish_test_workspace(
     }
     if (identity.forum_id.empty()) identity.forum_id = "test-forum";
     if (identity.session_id.empty()) identity.session_id = "test-session";
-
-    if (reuse_current) {
-        const std::shared_ptr<const Workspace> current = getws();
-        const WorkspaceForum* const forum = current == nullptr
-            ? nullptr : current->find_forum(identity.forum_id);
-        bool usable = forum != nullptr;
-        for (const CharacterDefinition& definition : definitions) {
-            const WorkspaceForumMember* const member = current == nullptr
-                ? nullptr
-                : current->find_forum_member(
-                    identity.forum_id, definition.character.id);
-            const WorkspaceCharacter* const character = current == nullptr
-                ? nullptr : current->find_character(definition.character.id);
-            usable = usable && member != nullptr && character != nullptr
-                && character->character.display_name
-                    == definition.character.display_name;
-        }
-        for (const Persona& persona : personas) {
-            const WorkspacePersona* const configured = current == nullptr
-                ? nullptr : current->find_persona(persona.id);
-            usable = usable && configured != nullptr
-                && configured->display_name == persona.display_name;
-        }
-        if (usable) {
-            return {
-                .identity = std::move(identity),
-                .default_persona_id = personas.empty()
-                    ? std::string(workspace_guest_id) : personas.front().id,
-            };
-        }
-    }
 
     TestWorkspace workspace;
     std::error_code ignored;
@@ -348,8 +316,8 @@ PublishedTestWorkspace publish_test_workspace(
         << "default_persona = " << quoted(default_persona_id) << '\n';
     std::ofstream(forum / "FORUM.md");
 
-    loadws(root);
     return {
+        .snapshot = std::make_shared<const Workspace>(Workspace::load(root)),
         .identity = std::move(identity),
         .default_persona_id = default_persona_id,
     };

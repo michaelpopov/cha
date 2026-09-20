@@ -87,7 +87,7 @@ protected:
         welcome_ = fixture_.root() / "welcome";
         create_private_directory(welcome_);
         initialize_workspace_session_database_runtime(database_path());
-        loadws(fixture_.root());
+        workspace_ = std::make_shared<const Workspace>(Workspace::load(fixture_.root()));
     }
 
     std::filesystem::path database_path() const {
@@ -95,8 +95,9 @@ protected:
     }
 
     SessionRepository make_repository() const {
-        loadws(fixture_.root());
+        workspace_ = std::make_shared<const Workspace>(Workspace::load(fixture_.root()));
         return SessionRepository(
+            [this] { return workspace_; },
             database_path(),
             fixture_.root(),
             welcome_,
@@ -131,6 +132,7 @@ protected:
         return result;
     }
 
+    mutable std::shared_ptr<const Workspace> workspace_;
     test::TestWorkspace fixture_;
     std::filesystem::path welcome_;
 };
@@ -164,7 +166,8 @@ TEST_F(SessionRepositoryTest, EntryAudioPersistsAndIsScopedToItsSession) {
     }
     const auto restarted_welcome = fixture_.root() / "restarted-welcome";
     create_private_directory(restarted_welcome);
-    const SessionRepository reopened(database_path(), fixture_.root(), restarted_welcome,
+    const SessionRepository reopened(
+            [this] { return workspace_; }, database_path(), fixture_.root(), restarted_welcome,
         {temporary_identity(), "Welcome"});
     const auto first = reopened.lookup_entry_audio(first_id, 1);
     const auto second = reopened.lookup_entry_audio(second_id, 1);
@@ -219,7 +222,7 @@ TEST_F(SessionRepositoryTest, EntryAudioDoesNotCrossVaultsOrAttachToReplacedText
     {
         auto maintenance = repository.reserve_maintenance();
         maintenance.retarget(target);
-        maintenance.synchronize_forums(*getws());
+        maintenance.synchronize_forums(*workspace_);
     }
     repository.save_entry_audio(*original, {"wrong-vault", "audio/mpeg"});
     const auto switched = repository.lookup_entry_audio(prepared.identity, 1);
@@ -231,7 +234,7 @@ TEST_F(SessionRepositoryTest, EntryAudioDoesNotCrossVaultsOrAttachToReplacedText
         storage::SqliteDatabase database(target, storage::SqliteDatabase::Mode::read_write);
         database.execute("UPDATE entries SET text = 'Restored text'");
         database.execute("DROP TABLE entry_audio");
-        maintenance.synchronize_forums(*getws());
+        maintenance.synchronize_forums(*workspace_);
     }
     repository.save_entry_audio(*switched, {"stale-text", "audio/mpeg"});
     const auto restored = repository.lookup_entry_audio(prepared.identity, 1);
@@ -363,7 +366,7 @@ TEST_F(SessionRepositoryTest, CreatesOneWorkspaceDatabaseAndPreparesByKey) {
 TEST_F(SessionRepositoryTest, CreatesInNewlyPublishedUnsynchronizedForum) {
     const SessionRepository repository = make_repository();
     fixture_.add_forum("second", "Second", "guide");
-    loadws(fixture_.root());
+    workspace_ = std::make_shared<const Workspace>(Workspace::load(fixture_.root()));
     ASSERT_EQ(scalar(repository.database_path(),
         "SELECT COUNT(*) FROM forums WHERE forum_id = 'second'"), 0);
 
@@ -423,6 +426,7 @@ TEST_F(SessionRepositoryTest, DeletesArchivedRowsOnStartup) {
         fixture_.root() / "restarted-welcome";
     create_private_directory(restarted_welcome);
     const SessionRepository repository(
+            [this] { return workspace_; },
         database_path(),
         fixture_.root(),
         restarted_welcome,
@@ -608,7 +612,7 @@ TEST_F(SessionRepositoryTest, SynchronizesForumsWithoutDeletingOldRows) {
     std::filesystem::rename(forum, aside);
     Workspace without = Workspace::load(fixture_.root());
     repository.synchronize_forums(without);
-    loadws(std::move(without));
+    workspace_ = std::make_shared<const Workspace>(std::move(without));
     EXPECT_THROW((void)repository.list("second"), ForumNotFoundError);
     EXPECT_TRUE(std::ranges::none_of(
         repository.recent(),
@@ -619,7 +623,7 @@ TEST_F(SessionRepositoryTest, SynchronizesForumsWithoutDeletingOldRows) {
     std::filesystem::rename(aside, forum);
     Workspace restored = Workspace::load(fixture_.root());
     repository.synchronize_forums(restored);
-    loadws(std::move(restored));
+    workspace_ = std::make_shared<const Workspace>(std::move(restored));
     ASSERT_EQ(repository.list("second").size(), 1U);
     EXPECT_EQ(repository.list("second").front().identity, stored.identity);
     EXPECT_TRUE(std::ranges::any_of(
@@ -723,9 +727,10 @@ TEST_F(SessionRepositoryTest, RetargetReadsTheNewDatabaseWithoutChangingTheWorks
     create_private_directory(other_welcome);
     const std::filesystem::path other_database =
         test::import_test_database(other.root(), other.root() / "b.sqlite3");
-    loadws(other.root());
+    const auto other_workspace = std::make_shared<const Workspace>(Workspace::load(other.root()));
     {
         SessionRepository other_repository(
+            [other_workspace] { return other_workspace; },
             other_database,
             other.root(),
             other_welcome,
@@ -733,7 +738,7 @@ TEST_F(SessionRepositoryTest, RetargetReadsTheNewDatabaseWithoutChangingTheWorks
              "Welcome"});
         (void)other_repository.create("lobby", "On B");
     }
-    loadws(fixture_.root());
+    workspace_ = std::make_shared<const Workspace>(Workspace::load(fixture_.root()));
 
     const std::filesystem::path original = repository.database_path();
     {

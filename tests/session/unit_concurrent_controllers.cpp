@@ -139,6 +139,7 @@ struct SessionGraph {
     explicit SessionGraph(const std::filesystem::path& root)
         : store_(open_store(root)),
           repository(
+              [this] { return store_->snapshot(); },
               store_->database_path(),
               store_->workspace_path(),
               store_->welcome_path(),
@@ -290,7 +291,7 @@ TEST(WorkspaceConcurrency, SharesTheModelWhileRepositoryCreatesCollidingSessions
     std::thread lister([&] {
         try {
             while (creating.load(std::memory_order_acquire)) {
-                const std::shared_ptr<const Workspace> workspace = getws();
+                const std::shared_ptr<const Workspace> workspace = graph.config().snapshot();
                 const WorkspaceForum* const forum = workspace->find_forum("forum");
                 if (forum == nullptr) {
                     observed_forum_list_mismatch.store(

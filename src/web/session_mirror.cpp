@@ -109,7 +109,7 @@ void SessionMirror::rebuild(
 
     require_directory_or_create(*root);
 
-    const std::shared_ptr<const Workspace> workspace = getws();
+    const std::shared_ptr<const Workspace> workspace = repository.workspace();
     if (!workspace) throw std::runtime_error("Workspace is not loaded");
 
     std::set<std::filesystem::path> used_forums;

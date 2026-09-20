@@ -136,13 +136,23 @@ std::filesystem::path SessionRepository::database_path() const {
     return database_path_;
 }
 
+std::shared_ptr<const Workspace> SessionRepository::workspace() const {
+    auto result = read_workspace_();
+    if (!result || result->root() != workspace_root_) {
+        throw std::runtime_error("Session repository has no matching loaded workspace");
+    }
+    return result;
+}
+
 SessionRepository::SessionRepository(
+    WorkspaceReader read_workspace,
     std::filesystem::path database_path,
     std::filesystem::path workspace_root,
     std::filesystem::path welcome_directory,
     TemporarySessionSeed temporary,
     std::string database_password)
-    : workspace_root_(std::move(workspace_root)),
+    : read_workspace_(std::move(read_workspace)),
+      workspace_root_(std::move(workspace_root)),
       database_path_(std::move(database_path)),
       database_password_(std::move(database_password)),
       temporary_identity_(std::move(temporary.identity)),
@@ -199,11 +209,7 @@ void SessionRepository::require_persistent_forum(
         throw ForumNotFoundError(
             "Forum '" + std::string(forum_id) + "' does not store sessions");
     }
-    const std::shared_ptr<const Workspace> workspace = getws();
-    if (!workspace || workspace->root() != workspace_root_) {
-        throw std::runtime_error(
-            "Session repository has no matching loaded workspace");
-    }
+    const std::shared_ptr<const Workspace> workspace = this->workspace();
     if (workspace->find_forum(forum_id) == nullptr) {
         throw ForumNotFoundError(
             "Forum '" + std::string(forum_id) + "' does not exist");
@@ -212,11 +218,7 @@ void SessionRepository::require_persistent_forum(
 
 void SessionRepository::synchronize_forums() const {
     const std::shared_lock operation(operation_mutex_);
-    const std::shared_ptr<const Workspace> workspace = getws();
-    if (!workspace || workspace->root() != workspace_root_) {
-        throw std::runtime_error(
-            "Session repository has no matching loaded workspace");
-    }
+    const std::shared_ptr<const Workspace> workspace = this->workspace();
     synchronize_forums_unlocked(*workspace);
 }
 
@@ -278,11 +280,7 @@ std::vector<StoredSession> SessionRepository::list(
 
 std::vector<StoredSession> SessionRepository::recent() const {
     const std::shared_lock operation(operation_mutex_);
-    const std::shared_ptr<const Workspace> workspace = getws();
-    if (!workspace || workspace->root() != workspace_root_) {
-        throw std::runtime_error(
-            "Session repository has no matching loaded workspace");
-    }
+    const std::shared_ptr<const Workspace> workspace = this->workspace();
     std::set<std::string, std::less<>> current_forums;
     for (const WorkspaceForum& forum : workspace->forums()) {
         if (forum.id == temporary_identity_.forum_id) continue;

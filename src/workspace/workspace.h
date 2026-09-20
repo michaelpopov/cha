@@ -4,8 +4,9 @@
 #include "chat/persona.h"
 #include "providers/credentials.h"
 
-#include <filesystem>
 #include <cstdint>
+#include <filesystem>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -340,8 +341,7 @@ private:
         voice_config_paths_;
 };
 
-[[nodiscard]] std::shared_ptr<const Workspace> getws();
-void loadws(const std::filesystem::path& root);
-void loadws(Workspace workspace);
+// Returns the owner’s latest snapshot. Retain it while using references into it.
+using WorkspaceReader = std::function<std::shared_ptr<const Workspace>()>;
 
 } // namespace cha

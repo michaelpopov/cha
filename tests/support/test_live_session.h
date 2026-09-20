@@ -247,8 +247,7 @@ inline OpenedSession open_scripted_session(
         load_session_state(database_path),
         std::move(before_activation),
         std::nullopt,
-        identity,
-        true)).release();
+        identity)).release();
     return {
         .label = "Test session " + identity.session_id,
         .controller = std::move(controller),
@@ -285,8 +284,7 @@ inline OpenedSession open_restored_session(
         std::move(restored),
         {},
         std::nullopt,
-        identity,
-        true)).release();
+        identity)).release();
     return {
         .label = "Test session " + identity.session_id,
         .controller = std::move(controller),
@@ -322,11 +320,12 @@ inline OpenedSession open_test_session(
     auto providers = std::make_shared<Providers>();
     const std::vector<CharacterDefinition> definitions{
         unreachable_definition()};
-    const PublishedTestWorkspace workspace = publish_test_workspace(
-        definitions, reader_roster(), "guide", database_path, identity, {}, true);
+    const TestControllerWorkspace workspace = make_controller_workspace(
+        definitions, reader_roster(), "guide", database_path, identity);
     return {
         .label = "Test session " + identity.session_id,
         .controller = SessionController::from_workspace_for_testing(
+            [snapshot = workspace.snapshot] { return snapshot; },
             "guide",
             "reader",
             database_path,

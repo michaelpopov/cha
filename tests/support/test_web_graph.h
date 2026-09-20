@@ -25,6 +25,7 @@ public:
           providers(std::make_shared<Providers>()) {
         store = WorkspaceConfigStore::open(import_test_database(root_));
         repository = std::make_shared<const SessionRepository>(
+            [config = store.get()] { return config->snapshot(); },
             store->database_path(),
             store->workspace_path(),
             store->welcome_path(),

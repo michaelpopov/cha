@@ -1068,17 +1068,14 @@ TEST(Workspace, WritesAssistantSettingsWithoutMakingItsDefinitionWritable) {
     EXPECT_FALSE(reloaded.character_is_writable(workspace_assistant_id));
 }
 
-TEST(Workspace, LoadwsPublishesOnlyACompleteWorkspace) {
+TEST(Workspace, LoadingAnInvalidWorkspaceDoesNotChangeAnExistingSnapshot) {
     test::TestWorkspace valid;
-    loadws(valid.root());
-    const std::shared_ptr<const Workspace> published = getws();
-    ASSERT_NE(published, nullptr);
-    EXPECT_EQ(published->root(), valid.root());
-
+    const Workspace published = Workspace::load(valid.root());
     test::TestWorkspace invalid;
     invalid.write_character_config("display_name =\n");
-    EXPECT_THROW(loadws(invalid.root()), std::runtime_error);
-    EXPECT_EQ(getws(), published);
+    EXPECT_THROW((void)Workspace::load(invalid.root()), std::runtime_error);
+    EXPECT_EQ(published.root(), valid.root());
+    EXPECT_NE(published.find_character("guide"), nullptr);
 }
 
 TEST(Workspace, ValidatesVoiceInputBeforeWritingAndIgnoresInvalidSavedConfig) {

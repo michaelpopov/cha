@@ -911,8 +911,8 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, OpensOneOwnerOnlyRootWithChildren) {
         EXPECT_TRUE(
             std::filesystem::is_directory(
                 workspace_child / "system" / "providers"));
-        EXPECT_NE(getws()->find_character("guide"), nullptr);
-        const std::shared_ptr<const Workspace> published = getws();
+        EXPECT_NE(store->snapshot()->find_character("guide"), nullptr);
+        const std::shared_ptr<const Workspace> published = store->snapshot();
         expect_session_root_identity(published, workspace_child);
     }
     EXPECT_FALSE(std::filesystem::exists(root));
@@ -946,7 +946,7 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, ClosesSqliteButKeepsLeaseForMaintenance)
     }
 
     EXPECT_EQ(store->workspace_path(), workspace_path);
-    expect_session_root_identity(getws(), workspace_path);
+    expect_session_root_identity(store->snapshot(), workspace_path);
     EXPECT_THROW(
         (void)WorkspaceConfigStore::open(database()), SessionBusyError);
 }
@@ -955,7 +955,7 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, InheritedEnvironmentValuesWinAtStartup) 
     ASSERT_TRUE(set_environment_variable(dotenv_variable, "from-process"));
     const auto store = open_store();
     EXPECT_STREQ(std::getenv(dotenv_variable), "from-process");
-    EXPECT_NE(getws()->find_character("guide"), nullptr);
+    EXPECT_NE(store->snapshot()->find_character("guide"), nullptr);
 }
 
 TEST_F(RuntimeWorkspaceConfigStoreTest, RejectsMissingV1AndForeignDatabases) {
@@ -1013,7 +1013,7 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, SuccessfulEditUpdatesFilesDatabaseAndWor
             character_result.affected_forum_ids.end(),
             "lobby"),
         character_result.affected_forum_ids.end());
-    const std::shared_ptr<const Workspace> after_character = getws();
+    const std::shared_ptr<const Workspace> after_character = store->snapshot();
     EXPECT_EQ(after_character->find_character("guide")->provider_id, "second");
     EXPECT_EQ(after_character->find_character("guide")->style_id, "mono");
     EXPECT_EQ(
@@ -1032,14 +1032,14 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, SuccessfulEditUpdatesFilesDatabaseAndWor
     const WorkspaceConfigEditResult forum_result =
         store->apply_forum_default_character("lobby", "writer");
     EXPECT_EQ(forum_result.affected_forum_ids, std::vector<std::string>{"lobby"});
-    EXPECT_EQ(getws()->find_forum("lobby")->default_character_id, "writer");
+    EXPECT_EQ(store->snapshot()->find_forum("lobby")->default_character_id, "writer");
 
     const std::vector<std::string> member_ids{"guide", "writer"};
     const WorkspaceConfigEditResult persona_result =
         store->apply_forum_members_and_persona(
             "lobby", member_ids, "reader");
     EXPECT_EQ(persona_result.affected_forum_ids, std::vector<std::string>{"lobby"});
-    EXPECT_EQ(getws()->find_forum("lobby")->default_persona_id, "reader");
+    EXPECT_EQ(store->snapshot()->find_forum("lobby")->default_persona_id, "reader");
     EXPECT_NE(file_bytes(forum).find("reader"), std::string::npos);
     EXPECT_EQ(
         std::getenv(dotenv_variable) == nullptr
@@ -1101,13 +1101,13 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, CharacterFileEditsPersistOnlyTheSelected
     EXPECT_EQ(created.affected_forum_ids, std::vector<std::string>{"lobby"});
     EXPECT_EQ(changed_config_names(before, config_contents(database())),
         (std::set<std::string>{"characters/guide/NOTES.md"}));
-    EXPECT_EQ(getws()->find_character("guide")->markdown_files.at("NOTES.md"), "$$(unused.md)\n");
-    const auto snapshot = getws();
+    EXPECT_EQ(store->snapshot()->find_character("guide")->markdown_files.at("NOTES.md"), "$$(unused.md)\n");
+    const auto snapshot = store->snapshot();
     store->apply_character_file("guide", "NOTES.md", std::string_view{"Updated notes\n"});
     EXPECT_EQ(snapshot->find_character("guide")->markdown_files.at("NOTES.md"), "$$(unused.md)\n");
     store->apply_character_file("guide", "NOTES.md", std::nullopt);
     EXPECT_EQ(config_contents(database()), before);
-    EXPECT_FALSE(getws()->find_character("guide")->markdown_files.contains("NOTES.md"));
+    EXPECT_FALSE(store->snapshot()->find_character("guide")->markdown_files.contains("NOTES.md"));
 }
 
 TEST_F(RuntimeWorkspaceConfigStoreTest, ForumFilesPersistExpandAndRollBackInvalidChanges) {
@@ -1115,14 +1115,14 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, ForumFilesPersistExpandAndRollBackInvali
         "$${character.display_name} in $${forum.display_name}.\n");
     (void)import_workspace_configuration(source(), database());
     const auto store = open_store();
-    const auto snapshot = getws();
+    const auto snapshot = store->snapshot();
     const auto created = store->apply_forum_file(
         "lobby", "HOUSE-RULES.md", std::string_view{"Local rules.\n"}, true);
     EXPECT_EQ(created.affected_forum_ids, std::vector<std::string>{"lobby"});
     EXPECT_FALSE(snapshot->find_forum("lobby")->markdown_files.contains("HOUSE-RULES.md"));
     store->apply_forum_file("lobby", "FORUM.md",
         std::string_view{"$${FORUM_DEFINITION}\n$$(HOUSE-RULES.md)"});
-    EXPECT_NE(getws()->find_forum_member("lobby", "guide")->system_prompt.find("Guide in The Lobby."), std::string::npos);
+    EXPECT_NE(store->snapshot()->find_forum_member("lobby", "guide")->system_prompt.find("Guide in The Lobby."), std::string::npos);
     const auto before = config_contents(database());
     EXPECT_THROW(store->apply_forum_file("lobby", "FORUM.md", std::nullopt), std::invalid_argument);
     EXPECT_THROW(store->apply_forum_file("lobby", "HOUSE-RULES.md", std::nullopt), WorkspaceConfigValidationError);
@@ -1131,10 +1131,10 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, ForumFilesPersistExpandAndRollBackInvali
     EXPECT_THROW(store->apply_forum_file("lobby", "HOUSE-RULES.md", "Duplicate", true), std::invalid_argument);
     EXPECT_EQ(config_contents(database()), before);
     store->apply_forum_file("lobby", "NOTES.md", std::string_view{"$$(unused.md)"}, true);
-    EXPECT_EQ(getws()->find_forum("lobby")->markdown_files.at("NOTES.md"), "$$(unused.md)");
+    EXPECT_EQ(store->snapshot()->find_forum("lobby")->markdown_files.at("NOTES.md"), "$$(unused.md)");
     store->apply_forum_file("lobby", "FORUM.md", std::string_view{"Plain text"});
     store->apply_forum_file("lobby", "HOUSE-RULES.md", std::nullopt);
-    EXPECT_FALSE(getws()->find_forum("lobby")->markdown_files.contains("HOUSE-RULES.md"));
+    EXPECT_FALSE(store->snapshot()->find_forum("lobby")->markdown_files.contains("HOUSE-RULES.md"));
     EXPECT_EQ(config_contents(database()).at("forums/lobby/FORUM.md"), "Plain text");
 }
 
@@ -1280,7 +1280,7 @@ TEST_F(
         std::runtime_error);
 
     EXPECT_EQ(config_contents(database()), before);
-    EXPECT_EQ(getws()->find_api_key("api_key_1"), nullptr);
+    EXPECT_EQ(store->snapshot()->find_api_key("api_key_1"), nullptr);
     EXPECT_FALSE(std::filesystem::exists(
         store->workspace_path() / "system" / "keys" / "api_key_1"));
 }
@@ -1309,7 +1309,7 @@ TEST_F(
         std::runtime_error);
 
     EXPECT_EQ(config_contents(database()), before);
-    EXPECT_NE(getws()->find_character("unused"), nullptr);
+    EXPECT_NE(store->snapshot()->find_character("unused"), nullptr);
     EXPECT_EQ(
         file_bytes(
             store->workspace_path() / "characters" / "unused"
@@ -1324,7 +1324,7 @@ TEST_F(
     store->apply_character_settings(
         "guide", "second", std::string_view{"mono"},
         std::nullopt, std::string_view{"high"}, WebSearchMode::automatic);
-    const std::shared_ptr<const Workspace> published = getws();
+    const std::shared_ptr<const Workspace> published = store->snapshot();
     const auto committed_rows = config_contents(database());
     const std::filesystem::path character =
         store->workspace_path() / "characters" / "guide" / "character.toml";
@@ -1347,10 +1347,10 @@ TEST_F(
 
     EXPECT_EQ(config_contents(database()), committed_rows);
     EXPECT_EQ(file_bytes(character), materialized);
-    EXPECT_EQ(getws().get(), published.get());
+    EXPECT_EQ(store->snapshot().get(), published.get());
 
     store->apply_character_settings("guide", "test", std::nullopt);
-    EXPECT_EQ(getws()->find_character("guide")->provider_id, "test");
+    EXPECT_EQ(store->snapshot()->find_character("guide")->provider_id, "test");
 }
 
 TEST_F(
@@ -1378,7 +1378,7 @@ TEST_F(
     EXPECT_EQ(table_row_count(database(), "sessions"), 0);
     EXPECT_EQ(table_row_count(database(), "turns"), 0);
     EXPECT_EQ(table_row_count(database(), "entries"), 0);
-    EXPECT_EQ(getws()->find_forum("lobby"), nullptr);
+    EXPECT_EQ(store->snapshot()->find_forum("lobby"), nullptr);
 }
 
 TEST_F(
@@ -1405,7 +1405,7 @@ TEST_F(
     EXPECT_EQ(table_row_count(database(), "sessions"), 2);
     EXPECT_EQ(table_row_count(database(), "turns"), 1);
     EXPECT_EQ(table_row_count(database(), "entries"), 2);
-    EXPECT_NE(getws()->find_forum("lobby"), nullptr);
+    EXPECT_NE(store->snapshot()->find_forum("lobby"), nullptr);
     EXPECT_TRUE(std::filesystem::exists(
         store->workspace_path() / "forums" / "lobby" / "config.toml"));
 }
@@ -1437,7 +1437,7 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, PersistsTheVoiceLifecycle) {
     const std::string voice_id = store->create_voice(
         "Brian", "Deep, resonant, comforting", "brian-id");
     EXPECT_EQ(voice_id, "voice_1");
-    const WorkspaceVoice* voice = getws()->find_voice(voice_id);
+    const WorkspaceVoice* voice = store->snapshot()->find_voice(voice_id);
     ASSERT_NE(voice, nullptr);
     EXPECT_EQ(voice->description, "Deep, resonant, comforting");
     EXPECT_NE(
@@ -1451,7 +1451,7 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, PersistsTheVoiceLifecycle) {
         voice_id, "George", "Warm, captivating storyteller", "george-id",
         VoiceSettings{.speed = 0.9});
     EXPECT_EQ(updated.affected_forum_ids, std::vector<std::string>{"lobby"});
-    voice = getws()->find_voice(voice_id);
+    voice = store->snapshot()->find_voice(voice_id);
     ASSERT_NE(voice, nullptr);
     EXPECT_EQ(voice->label, "George");
     EXPECT_EQ(voice->settings.speed, 0.9);
@@ -1459,7 +1459,7 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, PersistsTheVoiceLifecycle) {
     store->apply_character_settings(
         "guide", "test", std::nullopt, std::nullopt);
     store->apply_voice_delete(voice_id);
-    EXPECT_EQ(getws()->find_voice(voice_id), nullptr);
+    EXPECT_EQ(store->snapshot()->find_voice(voice_id), nullptr);
 }
 
 TEST_F(RuntimeWorkspaceConfigStoreTest, PersistsVoiceOutputSettings) {
@@ -1474,11 +1474,11 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, PersistsVoiceOutputSettings) {
         .default_voice = "Default Reader",
     });
 
-    ASSERT_TRUE(getws()->voice_output());
-    EXPECT_EQ(getws()->voice_output()->model, "s2.1-pro");
-    EXPECT_EQ(getws()->voice_output()->api_key_id, "api_key_8");
-    EXPECT_EQ(getws()->voice_output()->output_format, "mp3");
-    EXPECT_EQ(getws()->voice_output()->default_voice, "Default Reader");
+    ASSERT_TRUE(store->snapshot()->voice_output());
+    EXPECT_EQ(store->snapshot()->voice_output()->model, "s2.1-pro");
+    EXPECT_EQ(store->snapshot()->voice_output()->api_key_id, "api_key_8");
+    EXPECT_EQ(store->snapshot()->voice_output()->output_format, "mp3");
+    EXPECT_EQ(store->snapshot()->voice_output()->default_voice, "Default Reader");
     const std::string stored = stored_config(
         database(), "system/voice-output/config.toml");
     EXPECT_NE(stored.find("api.fish.audio"), std::string::npos);
@@ -1493,8 +1493,8 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, PersistsVoiceOutputSettings) {
         "",
         "eleven-default",
         {});
-    ASSERT_TRUE(getws()->voice_output());
-    EXPECT_EQ(getws()->voice_output()->default_voice, "Renamed Reader");
+    ASSERT_TRUE(store->snapshot()->voice_output());
+    EXPECT_EQ(store->snapshot()->voice_output()->default_voice, "Renamed Reader");
     EXPECT_THROW(
         store->apply_voice_delete(voice_id),
         std::invalid_argument);
@@ -1502,7 +1502,7 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, PersistsVoiceOutputSettings) {
 
 TEST_F(RuntimeWorkspaceConfigStoreTest, RejectsInvalidUnusedProviderUpdates) {
     const auto store = open_store();
-    const auto published = getws();
+    const auto published = store->snapshot();
     const auto before = config_contents(database());
     const auto path = store->workspace_path()
         / "system" / "providers" / "second" / "config.toml";
@@ -1519,9 +1519,9 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, RejectsInvalidUnusedProviderUpdates) {
             std::invalid_argument);
         EXPECT_EQ(config_contents(database()), before);
         EXPECT_EQ(file_bytes(path), file_before);
-        EXPECT_EQ(getws(), published);
-        ASSERT_NE(getws()->find_provider("second"), nullptr);
-        EXPECT_EQ(getws()->find_provider("second")->config.model, original.model);
+        EXPECT_EQ(store->snapshot(), published);
+        ASSERT_NE(store->snapshot()->find_provider("second"), nullptr);
+        EXPECT_EQ(store->snapshot()->find_provider("second")->config.model, original.model);
     }
 }
 
@@ -1554,7 +1554,7 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, ConcurrentCreatesAllocateDistinctIds) {
     EXPECT_EQ(
         (std::set<std::string>{first_id, second_id}),
         (std::set<std::string>{"persona_1", "persona_2"}));
-    const auto published = getws();
+    const auto published = store->snapshot();
     const WorkspacePersona* first_persona = published->find_persona(first_id);
     const WorkspacePersona* second_persona = published->find_persona(second_id);
     ASSERT_NE(first_persona, nullptr);
@@ -1576,14 +1576,14 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, CreationSkipsOccupiedPersonaContainer) {
     (void)import_workspace_configuration(source(), database());
     const auto before = config_contents(database());
     const auto store = open_store();
-    ASSERT_EQ(getws()->find_persona("persona_1"), nullptr);
+    ASSERT_EQ(store->snapshot()->find_persona("persona_1"), nullptr);
     ASSERT_TRUE(std::filesystem::exists(
         store->workspace_path() / "personas" / "persona_1"));
 
     const std::string id = store->create_persona("New Reader");
 
     EXPECT_EQ(id, "persona_2");
-    const auto published = getws();
+    const auto published = store->snapshot();
     const WorkspacePersona* created = published->find_persona(id);
     const WorkspacePersona* nested = published->find_persona("nested");
     ASSERT_NE(created, nullptr);
@@ -1610,7 +1610,7 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, SerializesTwoEditsAndEditReadInteraction
     std::atomic<bool> stop{false};
     std::thread reader([&] {
         while (!stop.load()) {
-            const std::shared_ptr<const Workspace> workspace = getws();
+            const std::shared_ptr<const Workspace> workspace = store->snapshot();
             expect_session_root_identity(workspace, workspace_root);
             EXPECT_NE(workspace->find_provider("test"), nullptr);
         }
@@ -1627,7 +1627,7 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, SerializesTwoEditsAndEditReadInteraction
     stop.store(true);
     reader.join();
 
-    const std::shared_ptr<const Workspace> published = getws();
+    const std::shared_ptr<const Workspace> published = store->snapshot();
     EXPECT_EQ(published->find_character("guide")->provider_id, "second");
     EXPECT_EQ(published->find_forum("lobby")->default_persona_id, "reader");
     EXPECT_NE(
@@ -1645,8 +1645,8 @@ void expect_restored_old_configuration(
     const std::filesystem::path workspace = store.workspace_path();
     expect_session_root_identity(published, workspace);
     EXPECT_EQ(published->find_character("guide")->provider_id, "test");
-    EXPECT_EQ(getws()->find_character("guide")->provider_id, "test");
-    EXPECT_EQ(getws()->root(), workspace);
+    EXPECT_EQ(store.snapshot()->find_character("guide")->provider_id, "test");
+    EXPECT_EQ(store.snapshot()->root(), workspace);
     EXPECT_EQ(
         stored_config(database, "characters/guide/character.toml")
             .find("second"),
@@ -1665,7 +1665,7 @@ TEST_F(
     RuntimeWorkspaceConfigStoreTest,
     CandidateValidationFailureRestoresTheStableDirectory) {
     const auto store = open_store();
-    const std::shared_ptr<const Workspace> published = getws();
+    const std::shared_ptr<const Workspace> published = store->snapshot();
     const std::filesystem::path workspace = store->workspace_path();
 #ifndef _WIN32
     struct stat before {};
@@ -1679,7 +1679,7 @@ TEST_F(
         while (!stop.load()) {
             expect_session_root_identity(published, workspace);
             EXPECT_EQ(published->find_character("guide")->provider_id, "test");
-            const std::shared_ptr<const Workspace> current = getws();
+            const std::shared_ptr<const Workspace> current = store->snapshot();
             expect_session_root_identity(current, workspace);
         }
     });
@@ -1696,7 +1696,7 @@ TEST_F(
 
 TEST_F(RuntimeWorkspaceConfigStoreTest, ForcedPreCommitFailuresRestoreOldContents) {
     const auto store = open_store();
-    const std::shared_ptr<const Workspace> published = getws();
+    const std::shared_ptr<const Workspace> published = store->snapshot();
     const std::filesystem::path workspace = store->workspace_path();
     const WorkspaceConfigFault faults[]{
         WorkspaceConfigFault::collect_rows,
@@ -1760,14 +1760,14 @@ TEST_F(
             store->workspace_path() / "characters" / "guide"
             / "CHARACTER.md"),
         original_markdown);
-    EXPECT_EQ(getws()->find_character("guide")->character.display_name, "Guide");
+    EXPECT_EQ(store->snapshot()->find_character("guide")->character.display_name, "Guide");
 }
 
 TEST_F(
     RuntimeWorkspaceConfigStoreTest,
     RestorationFailureRequiresRestartAndLeavesCommittedStateOld) {
     const auto store = open_store();
-    const std::shared_ptr<const Workspace> published = getws();
+    const std::shared_ptr<const Workspace> published = store->snapshot();
     const std::filesystem::path workspace = store->workspace_path();
 #ifndef _WIN32
     struct stat before {};
@@ -1791,7 +1791,7 @@ TEST_F(
     expect_same_directory(workspace, before);
 #endif
     EXPECT_EQ(published->find_character("guide")->provider_id, "test");
-    EXPECT_EQ(getws().get(), published.get());
+    EXPECT_EQ(store->snapshot().get(), published.get());
     EXPECT_EQ(
         stored_config(database(), "characters/guide/character.toml")
             .find("second"),
@@ -1803,7 +1803,7 @@ TEST_F(
     PostCommitPublicationFailureRequiresRestartAndSurvivesReopen) {
     {
         const auto store = open_store();
-        const std::shared_ptr<const Workspace> published = getws();
+        const std::shared_ptr<const Workspace> published = store->snapshot();
         force_next_workspace_config_fault(WorkspaceConfigFault::publication);
         try {
             (void)store->apply_character_settings(
@@ -1816,7 +1816,7 @@ TEST_F(
                 << message;
         }
         EXPECT_EQ(published->find_character("guide")->provider_id, "test");
-        EXPECT_EQ(getws().get(), published.get());
+        EXPECT_EQ(store->snapshot().get(), published.get());
         EXPECT_NE(
             stored_config(database(), "characters/guide/character.toml")
                 .find("second"),
@@ -1830,7 +1830,7 @@ TEST_F(
     }
 
     const auto restarted = open_store();
-    EXPECT_EQ(getws()->find_character("guide")->provider_id, "second");
+    EXPECT_EQ(restarted->snapshot()->find_character("guide")->provider_id, "second");
     EXPECT_NE(
         file_bytes(
             restarted->workspace_path() / "characters" / "guide"
@@ -1849,7 +1849,7 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, RetargetReopensTheNewDatabaseInTheSameTr
     const auto store = open_store();
     const std::filesystem::path workspace = store->workspace_path();
     const std::filesystem::path welcome = store->welcome_path();
-    EXPECT_EQ(getws()->find_persona("beta"), nullptr);
+    EXPECT_EQ(store->snapshot()->find_persona("beta"), nullptr);
 
     const std::filesystem::path target = std::filesystem::weakly_canonical(
         std::filesystem::absolute(other_database));
@@ -1867,7 +1867,7 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, RetargetReopensTheNewDatabaseInTheSameTr
         store->database_path(),
         std::filesystem::weakly_canonical(
             std::filesystem::absolute(other_database)));
-    ASSERT_NE(getws()->find_persona("beta"), nullptr);
+    ASSERT_NE(store->snapshot()->find_persona("beta"), nullptr);
     EXPECT_THROW(
         (void)WorkspaceConfigStore::open(other_database), SessionBusyError);
 #ifndef _WIN32
@@ -1913,13 +1913,13 @@ TEST_F(
     const auto store = open_store();
     merge_from(*store, source_database);
 
-    EXPECT_EQ(getws()->root(), store->workspace_path());
-    ASSERT_NE(getws()->find_persona("beta"), nullptr);
+    EXPECT_EQ(store->snapshot()->root(), store->workspace_path());
+    ASSERT_NE(store->snapshot()->find_persona("beta"), nullptr);
     EXPECT_EQ(
         stored_config(database(), "characters/guide/CHARACTER.md"),
         "Source guide instructions\n");
-    EXPECT_NE(getws()->find_character("writer"), nullptr);
-    EXPECT_NE(getws()->find_character("yoda"), nullptr);
+    EXPECT_NE(store->snapshot()->find_character("writer"), nullptr);
+    EXPECT_NE(store->snapshot()->find_character("yoda"), nullptr);
     EXPECT_EQ(
         stored_config(
             database(), "forums/lobby/members/guide/CHARACTER.md"),
@@ -1932,8 +1932,8 @@ TEST_F(
         stored_config(
             database(), "forums/lobby/members/writer/character.toml")
             .empty());
-    EXPECT_NE(getws()->find_forum("stoics"), nullptr);
-    EXPECT_NE(getws()->find_forum("lobby"), nullptr);
+    EXPECT_NE(store->snapshot()->find_forum("stoics"), nullptr);
+    EXPECT_NE(store->snapshot()->find_forum("lobby"), nullptr);
     {
         Database handle(database(), Database::Mode::read_only);
         expect_seeded_session_rows(handle);
@@ -1950,12 +1950,12 @@ TEST_F(
         handle.execute("DELETE FROM config WHERE name LIKE 'forums/stoics/%'");
     }
     merge_from(*store, source_database);
-    EXPECT_NE(getws()->find_persona("beta"), nullptr);
-    EXPECT_NE(getws()->find_forum("stoics"), nullptr);
+    EXPECT_NE(store->snapshot()->find_persona("beta"), nullptr);
+    EXPECT_NE(store->snapshot()->find_forum("stoics"), nullptr);
     EXPECT_EQ(
         stored_config(database(), "characters/guide/CHARACTER.md"),
         "Source guide instructions\n");
-    EXPECT_NE(getws()->find_character("writer"), nullptr);
+    EXPECT_NE(store->snapshot()->find_character("writer"), nullptr);
     {
         Database handle(database(), Database::Mode::read_only);
         expect_seeded_session_rows(handle);
@@ -1967,7 +1967,7 @@ TEST_F(
     MergeRejectsCandidateConflictsBeforeCommit) {
     const auto before = config_contents(database());
     const auto store = open_store();
-    const std::shared_ptr<const Workspace> published = getws();
+    const std::shared_ptr<const Workspace> published = store->snapshot();
 
     {
         test::TestWorkspace source_workspace;
@@ -2022,7 +2022,7 @@ TEST_F(
     }
 
     EXPECT_EQ(config_contents(database()), before);
-    EXPECT_EQ(getws().get(), published.get());
+    EXPECT_EQ(store->snapshot().get(), published.get());
 }
 
 TEST_F(
@@ -2034,7 +2034,7 @@ TEST_F(
     (void)import_workspace_configuration(source(), database());
     const auto before = config_contents(database());
     const auto store = open_store();
-    const std::shared_ptr<const Workspace> published = getws();
+    const std::shared_ptr<const Workspace> published = store->snapshot();
 
     test::TestWorkspace source_workspace;
     const std::filesystem::path source_database =
@@ -2047,7 +2047,7 @@ TEST_F(
     }
     EXPECT_THROW(merge_from(*store, source_database), std::runtime_error);
     EXPECT_EQ(config_contents(database()), before);
-    EXPECT_EQ(getws().get(), published.get());
+    EXPECT_EQ(store->snapshot().get(), published.get());
 }
 
 TEST_F(
@@ -2055,7 +2055,7 @@ TEST_F(
     MergeRejectsMalformedSourceProvidersAndStyles) {
     const auto before = config_contents(database());
     const auto store = open_store();
-    const std::shared_ptr<const Workspace> published = getws();
+    const std::shared_ptr<const Workspace> published = store->snapshot();
 
     {
         test::TestWorkspace source_workspace;
@@ -2075,7 +2075,7 @@ TEST_F(
     }
 
     EXPECT_EQ(config_contents(database()), before);
-    EXPECT_EQ(getws().get(), published.get());
+    EXPECT_EQ(store->snapshot().get(), published.get());
 }
 
 TEST_F(
@@ -2101,9 +2101,9 @@ TEST_F(
     EXPECT_EQ(
         stored_config(database(), "system/styles/broken/config.toml"),
         "font = \"nope\"\n");
-    EXPECT_NE(getws()->find_persona("beta"), nullptr);
-    EXPECT_EQ(getws()->find_provider("broken"), nullptr);
-    EXPECT_EQ(getws()->find_style("broken"), nullptr);
+    EXPECT_NE(store->snapshot()->find_persona("beta"), nullptr);
+    EXPECT_EQ(store->snapshot()->find_provider("broken"), nullptr);
+    EXPECT_EQ(store->snapshot()->find_style("broken"), nullptr);
 }
 
 TEST_F(RuntimeWorkspaceConfigStoreTest, MergeNormalizesSavedKeyNextId) {
@@ -2127,9 +2127,9 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, MergeNormalizesSavedKeyNextId) {
     EXPECT_EQ(
         stored_config(database(), "system/keys/config.toml"),
         "next_id = 5\n");
-    EXPECT_NE(getws()->find_api_key("api_key_1"), nullptr);
-    EXPECT_NE(getws()->find_api_key("api_key_3"), nullptr);
-    EXPECT_EQ(getws()->next_api_key_id(), 5U);
+    EXPECT_NE(store->snapshot()->find_api_key("api_key_1"), nullptr);
+    EXPECT_NE(store->snapshot()->find_api_key("api_key_3"), nullptr);
+    EXPECT_EQ(store->snapshot()->next_api_key_id(), 5U);
 }
 
 TEST_F(
@@ -2137,7 +2137,7 @@ TEST_F(
     MergeRejectsMalformedCountersAndKeyIdExhaustion) {
     const auto before = config_contents(database());
     const auto store = open_store();
-    const std::shared_ptr<const Workspace> published = getws();
+    const std::shared_ptr<const Workspace> published = store->snapshot();
 
     {
         test::TestWorkspace source_workspace;
@@ -2169,7 +2169,7 @@ TEST_F(
     }
 
     EXPECT_EQ(config_contents(database()), before);
-    EXPECT_EQ(getws().get(), published.get());
+    EXPECT_EQ(store->snapshot().get(), published.get());
 }
 
 TEST_F(
@@ -2189,13 +2189,13 @@ TEST_F(
     const std::filesystem::path source_database =
         import_source_database(source_workspace);
     const auto store = open_store();
-    ASSERT_TRUE(getws()->r2_storage());
-    EXPECT_EQ(getws()->r2_storage()->id, "api_key_1");
+    ASSERT_TRUE(store->snapshot()->r2_storage());
+    EXPECT_EQ(store->snapshot()->r2_storage()->id, "api_key_1");
 
     merge_from(*store, source_database);
 
-    ASSERT_TRUE(getws()->r2_storage());
-    EXPECT_EQ(getws()->r2_storage()->id, "api_key_2");
+    ASSERT_TRUE(store->snapshot()->r2_storage());
+    EXPECT_EQ(store->snapshot()->r2_storage()->id, "api_key_2");
     EXPECT_TRUE(
         stored_config(database(), "system/keys/api_key_1/config.toml").empty());
     EXPECT_EQ(
@@ -2221,9 +2221,9 @@ TEST_F(
     const auto store = open_store();
     merge_from(*store, source_database);
 
-    ASSERT_TRUE(getws()->r2_storage());
-    EXPECT_EQ(getws()->r2_storage()->id, "api_key_1");
-    EXPECT_NE(getws()->find_persona("beta"), nullptr);
+    ASSERT_TRUE(store->snapshot()->r2_storage());
+    EXPECT_EQ(store->snapshot()->r2_storage()->id, "api_key_1");
+    EXPECT_NE(store->snapshot()->find_persona("beta"), nullptr);
 }
 
 TEST_F(
@@ -2246,9 +2246,9 @@ TEST_F(
     const auto store = open_store();
     merge_from(*store, source_database);
 
-    EXPECT_FALSE(getws()->r2_storage());
-    ASSERT_NE(getws()->find_api_key("api_key_1"), nullptr);
-    EXPECT_EQ(getws()->find_api_key("api_key_1")->value, "secret");
+    EXPECT_FALSE(store->snapshot()->r2_storage());
+    ASSERT_NE(store->snapshot()->find_api_key("api_key_1"), nullptr);
+    EXPECT_EQ(store->snapshot()->find_api_key("api_key_1")->value, "secret");
 }
 
 TEST_F(
@@ -2256,7 +2256,7 @@ TEST_F(
     MergeRejectsWrongPasswordInvalidSchemaInactiveLeaseAndSelfPath) {
     const auto before = config_contents(database());
     const auto store = open_store();
-    const std::shared_ptr<const Workspace> published = getws();
+    const std::shared_ptr<const Workspace> published = store->snapshot();
 
     {
         test::TestWorkspace source_workspace;
@@ -2300,7 +2300,7 @@ TEST_F(
     }
 
     EXPECT_EQ(config_contents(database()), before);
-    EXPECT_EQ(getws().get(), published.get());
+    EXPECT_EQ(store->snapshot().get(), published.get());
 }
 
 TEST_F(
@@ -2312,18 +2312,18 @@ TEST_F(
     const auto store = open_store();
     merge_from(*store, source_database);
     const auto rowids_before = config_rowids(database());
-    const std::shared_ptr<const Workspace> published = getws();
+    const std::shared_ptr<const Workspace> published = store->snapshot();
 
     force_next_workspace_config_fault(WorkspaceConfigFault::sqlite_begin);
     merge_from(*store, source_database);
     EXPECT_EQ(config_rowids(database()), rowids_before);
-    EXPECT_NE(getws().get(), published.get());
-    EXPECT_EQ(getws()->root(), store->workspace_path());
+    EXPECT_NE(store->snapshot().get(), published.get());
+    EXPECT_EQ(store->snapshot()->root(), store->workspace_path());
 
     EXPECT_THROW(
         (void)store->apply_character_settings("guide", "second", std::nullopt),
         std::runtime_error);
-    EXPECT_EQ(getws()->find_character("guide")->provider_id, "test");
+    EXPECT_EQ(store->snapshot()->find_character("guide")->provider_id, "test");
 }
 
 TEST_F(
@@ -2334,7 +2334,7 @@ TEST_F(
     const std::filesystem::path source_database =
         import_source_database(source_workspace);
     const auto store = open_store();
-    const std::shared_ptr<const Workspace> published = getws();
+    const std::shared_ptr<const Workspace> published = store->snapshot();
     const auto before = config_contents(database());
     const std::filesystem::path workspace = store->workspace_path();
     const WorkspaceConfigFault faults[]{
@@ -2355,9 +2355,9 @@ TEST_F(
         expect_same_directory(workspace, before_stat);
 #endif
         EXPECT_EQ(config_contents(database()), before);
-        EXPECT_EQ(getws().get(), published.get());
-        EXPECT_EQ(getws()->find_persona("beta"), nullptr);
-        EXPECT_EQ(getws()->root(), workspace);
+        EXPECT_EQ(store->snapshot().get(), published.get());
+        EXPECT_EQ(store->snapshot()->find_persona("beta"), nullptr);
+        EXPECT_EQ(store->snapshot()->root(), workspace);
     }
 }
 
@@ -2378,7 +2378,7 @@ TEST_F(
     const std::filesystem::path source_database =
         import_source_database(source_workspace);
     const auto store = open_store();
-    const std::shared_ptr<const Workspace> published = getws();
+    const std::shared_ptr<const Workspace> published = store->snapshot();
     const auto before = config_contents(database());
     force_next_workspace_config_fault(WorkspaceConfigFault::restore);
     try {
@@ -2392,7 +2392,7 @@ TEST_F(
             << message;
     }
     EXPECT_EQ(config_contents(database()), before);
-    EXPECT_EQ(getws().get(), published.get());
+    EXPECT_EQ(store->snapshot().get(), published.get());
 }
 
 TEST_F(
@@ -2404,7 +2404,7 @@ TEST_F(
         import_source_database(source_workspace);
     {
         const auto store = open_store();
-        const std::shared_ptr<const Workspace> published = getws();
+        const std::shared_ptr<const Workspace> published = store->snapshot();
         force_next_workspace_config_fault(WorkspaceConfigFault::publication);
         try {
             merge_from(*store, source_database);
@@ -2415,17 +2415,17 @@ TEST_F(
             EXPECT_NE(message.find("Restart is required"), std::string::npos)
                 << message;
         }
-        EXPECT_EQ(getws().get(), published.get());
+        EXPECT_EQ(store->snapshot().get(), published.get());
         EXPECT_EQ(published->find_persona("beta"), nullptr);
         EXPECT_NE(
             stored_config(database(), "personas/beta/persona.toml").find("Beta"),
             std::string::npos);
-        EXPECT_EQ(getws()->root(), store->workspace_path());
+        EXPECT_EQ(store->snapshot()->root(), store->workspace_path());
     }
 
     const auto restarted = open_store();
-    EXPECT_NE(getws()->find_persona("beta"), nullptr);
-    EXPECT_EQ(getws()->root(), restarted->workspace_path());
+    EXPECT_NE(restarted->snapshot()->find_persona("beta"), nullptr);
+    EXPECT_EQ(restarted->snapshot()->root(), restarted->workspace_path());
 }
 
 void expect_package_seed_subscription(const ModelBackendConfig& config) {
@@ -2471,7 +2471,7 @@ TEST(WorkspaceConfigStore, ImportsPackageSeedWithoutApiKey) {
     }
 
     const auto store = WorkspaceConfigStore::open(database);
-    const auto workspace = getws();
+    const auto workspace = store->snapshot();
     ASSERT_NE(workspace, nullptr);
 
     const WorkspaceProvider* const chatgpt = workspace->find_provider("chatgpt");

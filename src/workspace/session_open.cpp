@@ -12,23 +12,13 @@
 #include <stdexcept>
 
 namespace cha {
-namespace {
-
-std::shared_ptr<const Workspace> current_workspace() {
-    std::shared_ptr<const Workspace> workspace = getws();
-    if (!workspace) throw std::runtime_error("Workspace is not loaded");
-    return workspace;
-}
-
-} // namespace
-
 OpenedSession open_session(
     const SessionRepository& sessions,
     const FullSessionId& identity,
     Providers& providers,
     std::shared_ptr<WakeNotifier> notifier,
     WorkspaceConfigStore& config) {
-    const std::shared_ptr<const Workspace> workspace = current_workspace();
+    const std::shared_ptr<const Workspace> workspace = config.snapshot();
     const WorkspaceForum* const forum = workspace->find_forum(identity.forum_id);
     if (forum == nullptr) {
         throw ForumNotFoundError("Forum '" + identity.forum_id + "' does not exist");
@@ -38,6 +28,7 @@ OpenedSession open_session(
     return {
         .label = prepared.label,
         .controller = SessionController::from_workspace(
+            [&config] { return config.snapshot(); },
             forum->default_character_id,
             forum->default_persona_id,
             prepared.database_path,

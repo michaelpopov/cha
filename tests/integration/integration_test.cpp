@@ -413,8 +413,8 @@ LobbySetup lobby_setup() {
     };
 }
 
-std::string current_system_prompt(std::string_view character_id) {
-    const std::shared_ptr<const Workspace> workspace = getws();
+std::string current_system_prompt(const SessionController& controller, std::string_view character_id) {
+    const std::shared_ptr<const Workspace> workspace = controller.workspace();
     const WorkspaceForumMember* const member =
         workspace == nullptr
         ? nullptr : workspace->find_forum_member("lobby", character_id);
@@ -623,7 +623,7 @@ TEST(CoverIntegration, OmitsCoveredTurnsFromTheSerializedNextRequest) {
             lobby.personas,
             session.path,
             notifier());
-        system_prompt = current_system_prompt("Cheburashka");
+        system_prompt = current_system_prompt(*controller, "Cheburashka");
         (void)controller->submit_prompt(lobby.author_id, "Visible question");
         run_until_idle(*controller);
         EXPECT_TRUE(has_state_update(controller->cover_conversation()));
@@ -673,11 +673,11 @@ TEST(MultiCharacterIntegration, RoutesEachPromptToItsOwnCharacterOverItsOwnTrans
             lobby.personas,
             session.path,
             notifier());
-        cheburashka_prompt = current_system_prompt("Cheburashka");
-        ismael_prompt = current_system_prompt("Ismael");
+        cheburashka_prompt = current_system_prompt(*controller, "Cheburashka");
+        ismael_prompt = current_system_prompt(*controller, "Ismael");
         ASSERT_NE(cheburashka_prompt, ismael_prompt);
         ASSERT_EQ(
-            getws()->find_forum("lobby")->members.front().character_id,
+            controller->workspace()->find_forum("lobby")->members.front().character_id,
             "Cheburashka");
 
         // No mention: the first character directory in name order answers.
@@ -755,8 +755,8 @@ TEST(MultiCharacterIntegration, MulticastSendsIndependentBodiesAndRestoresHistor
         auto controller = test::from_test_workspace(
             std::move(definitions), lobby.personas, session.path,
             notifier());
-        cheburashka_prompt = current_system_prompt("Cheburashka");
-        ismael_prompt = current_system_prompt("Ismael");
+        cheburashka_prompt = current_system_prompt(*controller, "Cheburashka");
+        ismael_prompt = current_system_prompt(*controller, "Ismael");
         const ControllerUpdate multicast = controller->start_multicast(
             lobby.author_id, "What time is it?", {});
         ASSERT_TRUE(multicast.input_consumed);
@@ -834,9 +834,9 @@ TEST(MultiCharacterIntegration, ReopensTheSessionWhenTheForumKeepsOnlyOneCharact
         session.path,
         notifier(),
         std::move(restored));
-    ismael_prompt = current_system_prompt("Ismael");
-    ASSERT_NE(getws()->find_forum("lobby"), nullptr);
-    EXPECT_EQ(getws()->find_forum("lobby")->members.size(), 1U);
+    ismael_prompt = current_system_prompt(*reopened, "Ismael");
+    ASSERT_NE(reopened->workspace()->find_forum("lobby"), nullptr);
+    EXPECT_EQ(reopened->workspace()->find_forum("lobby")->members.size(), 1U);
     EXPECT_EQ(
         reopened->submit_prompt(
             lobby.author_id, "are you there?", "Cheburashka").notice,

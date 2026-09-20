@@ -87,6 +87,29 @@ TEST(BridgeProtocol, ParsesSubmitEnvelopeAndRejectsMalformedRequests) {
     EXPECT_EQ(size_error->code, cha::web::ErrorCode::body_too_large);
 }
 
+TEST(BridgeProtocol, ZeroEpochIsOnlyAcceptedForHandshakeRequests) {
+    for (const auto method : {
+             "bridge.info", "app.bootstrap", "session.create",
+             "speech.cancel", "vault.switch"}) {
+        SCOPED_TRACE(method);
+        const auto parsed = parse_request(nlohmann::json{
+            {"connection_id", "view-9"},
+            {"id", 1},
+            {"context_epoch", 0},
+            {"method", method},
+        }.dump(), 65536);
+        if (std::string_view(method) == "bridge.info"
+            || std::string_view(method) == "app.bootstrap") {
+            EXPECT_TRUE(std::holds_alternative<ParsedRequest>(parsed));
+        } else {
+            const auto* failure = std::get_if<ParseFailure>(&parsed);
+            ASSERT_TRUE(failure);
+            EXPECT_EQ(failure->id, 1U);
+            EXPECT_EQ(failure->code, cha::web::ErrorCode::invalid_argument);
+        }
+    }
+}
+
 TEST(BridgeProtocol, SerializesInfoRepliesEventsAndAcksAgainstFixtures) {
     EXPECT_EQ(bridge_info_result("test"), load_fixture("bridge-info.json"));
     EXPECT_EQ(

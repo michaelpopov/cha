@@ -175,6 +175,7 @@ std::string format_duplicate_character_notice(std::string_view display_name) {
 } // namespace
 
 std::unique_ptr<SessionController> SessionController::from_workspace(
+    WorkspaceReader read_workspace,
     CharacterId initial_default_character_id,
     std::string initial_default_persona_id,
     std::filesystem::path database_path,
@@ -185,6 +186,7 @@ std::unique_ptr<SessionController> SessionController::from_workspace(
     SessionRestore restored,
     FullSessionId identity) {
     return std::unique_ptr<SessionController>(new SessionController(
+        std::move(read_workspace),
         std::move(initial_default_character_id),
         std::move(initial_default_persona_id), std::move(database_path),
         session_key, std::move(database_password), providers,
@@ -192,6 +194,7 @@ std::unique_ptr<SessionController> SessionController::from_workspace(
 }
 
 std::unique_ptr<SessionController> SessionController::from_workspace_for_testing(
+    WorkspaceReader read_workspace,
     ParticipantId initial_default_character_id,
     std::string initial_default_persona_id,
     std::filesystem::path database_path,
@@ -204,6 +207,7 @@ std::unique_ptr<SessionController> SessionController::from_workspace_for_testing
     if (!providers) throw std::invalid_argument("Session controller requires providers");
     Providers& provider = *providers;
     return std::unique_ptr<SessionController>(new SessionController(
+        std::move(read_workspace),
         std::move(initial_default_character_id),
         std::move(initial_default_persona_id),
         std::move(database_path), session_key, {}, provider,
@@ -213,6 +217,7 @@ std::unique_ptr<SessionController> SessionController::from_workspace_for_testing
 }
 
 SessionController::SessionController(
+    WorkspaceReader read_workspace,
     ParticipantId initial_default_character_id,
     std::string initial_default_persona_id,
     std::filesystem::path path,
@@ -224,7 +229,8 @@ SessionController::SessionController(
     ActivationHook before_activation,
     FullSessionId identity,
     std::shared_ptr<Providers> providers_owner)
-    : journal_(std::move(path), session_key, database_password),
+    : read_workspace_(std::move(read_workspace)),
+      journal_(std::move(path), session_key, database_password),
       providers_owner_(std::move(providers_owner)),
       providers_(providers),
       notifier_(std::move(notifier)),
@@ -280,7 +286,7 @@ void SessionController::initialize(
 }
 
 std::shared_ptr<const Workspace> SessionController::workspace() const {
-    std::shared_ptr<const Workspace> result = getws();
+    std::shared_ptr<const Workspace> result = read_workspace_();
     if (!result) throw std::runtime_error("Workspace is not loaded");
     if (result->find_forum(identity_.forum_id) == nullptr) {
         throw std::runtime_error(

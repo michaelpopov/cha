@@ -1,5 +1,7 @@
 #pragma once
 
+#include "workspace/workspace.h"
+
 #include "characters/character.h"
 #include "providers/providers.h"
 #include "chat/persona.h"
@@ -39,6 +41,7 @@ public:
     using ActivationHook = std::function<void(std::size_t)>;
 
     [[nodiscard]] static std::unique_ptr<SessionController> from_workspace(
+        WorkspaceReader read_workspace,
         CharacterId initial_default_character_id,
         std::string initial_default_persona_id,
         std::filesystem::path database_path,
@@ -52,6 +55,7 @@ public:
     // Tests use the same Workspace data path, but may own an injected provider
     // executor and use an activation fault hook.
     [[nodiscard]] static std::unique_ptr<SessionController> from_workspace_for_testing(
+        WorkspaceReader read_workspace,
         CharacterId initial_default_character_id,
         std::string initial_default_persona_id,
         std::filesystem::path database_path,
@@ -64,6 +68,8 @@ public:
     ~SessionController();
     SessionController(const SessionController&) = delete;
     SessionController& operator=(const SessionController&) = delete;
+
+    [[nodiscard]] std::shared_ptr<const Workspace> workspace() const;
 
     // --- Session state (read-only) --------------------------------------------
     [[nodiscard]] bool is_generating() const noexcept;
@@ -118,6 +124,7 @@ private:
     };
 
     SessionController(
+        WorkspaceReader read_workspace,
         CharacterId initial_default_character_id,
         std::string initial_default_persona_id,
         std::filesystem::path database_path,
@@ -133,7 +140,6 @@ private:
     void initialize(SessionRestore restored, std::string_view initial_persona_id);
     [[nodiscard]] SharedCharacterDefinition definition_for(
         std::string_view id) const;
-    [[nodiscard]] std::shared_ptr<const Workspace> workspace() const;
     [[nodiscard]] SharedPersonaRoster current_personas() const;
     [[nodiscard]] ControllerGenerationView generation_view() const noexcept;
     ControllerUpdate busy_notice() const;
@@ -177,6 +183,7 @@ private:
     TranscriptEntry response_entry(EntryStatus status) const;
     bool matches(RequestId request_id) const;
 
+    WorkspaceReader read_workspace_;
     Transcript transcript_;
     SessionJournal journal_;
     // Production borrows its process-owned executor. Test-backed controllers

@@ -34,7 +34,8 @@ protected:
         config->create_voice("Reader", "", "voice");
         config->apply_voice_output_update({.url = "https://api.fish.audio/v1/tts", .model = "s2.1-pro",
             .api_key_id = api.id, .output_format = "mp3", .default_voice = "Reader"});
-        sessions = std::make_unique<SessionRepository>(path, config->workspace_path(), config->welcome_path(),
+        sessions = std::make_unique<SessionRepository>(
+            [this] { return config->snapshot(); }, path, config->workspace_path(), config->welcome_path(),
             TemporarySessionSeed{{"temporary", "welcome"}, "Welcome"});
         session = sessions->create("lobby", "Audio").identity;
         const auto prepared = sessions->prepare(session);
@@ -171,7 +172,7 @@ TEST_F(AudioDownloads, RetryWaitDoesNotConsumeQueueWakeup) {
 
 TEST_F(AudioDownloads, OpusAudioWithParametersIsSavedWithoutRetry) {
     config->apply_voice_output_update({.url = "https://api.fish.audio/v1/tts", .model = "s2.1-pro",
-        .api_key_id = getws()->voice_output()->api_key_id, .output_format = "opus", .default_voice = "Reader"});
+        .api_key_id = config->snapshot()->voice_output()->api_key_id, .output_format = "opus", .default_voice = "Reader"});
     std::atomic_int attempts{};
     auto downloads = make([&](const auto&, const auto&, const auto& request, const auto&) -> std::optional<EntryAudio> {
         ++attempts;
@@ -192,7 +193,7 @@ TEST_F(AudioDownloads, DeletedKeyReportsNotConfiguredButCachedAudioStillWorks) {
         ++transfers;
         return EntryAudio{"audio", "audio/mpeg"};
     });
-    keys->remove(getws()->voice_output()->api_key_id);
+    keys->remove(config->snapshot()->voice_output()->api_key_id);
     try {
         downloads->submit(session, 1, input());
         FAIL() << "An uncached entry needs a configured API key";

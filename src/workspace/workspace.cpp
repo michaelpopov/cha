@@ -21,7 +21,6 @@
 #include <cstdlib>
 #include <fstream>
 #include <limits>
-#include <mutex>
 #include <ranges>
 #include <sstream>
 #include <stdexcept>
@@ -38,9 +37,6 @@ std::string_view embedded_new_character_template();
 namespace {
 
 using Json = nlohmann::ordered_json;
-
-std::mutex workspace_mutex;
-std::shared_ptr<const Workspace> current_workspace;
 
 std::string_view trim_handle_punctuation(std::string_view handle) {
     while (!handle.empty()
@@ -2899,21 +2895,6 @@ void Workspace::write_forum_default_persona(
     rewrite_toml_file(config->second, [&](toml::table& table) {
         table.insert_or_assign("default_persona", std::string(persona_id));
     });
-}
-
-std::shared_ptr<const Workspace> getws() {
-    std::lock_guard lock(workspace_mutex);
-    return current_workspace;
-}
-
-void loadws(const std::filesystem::path& root) {
-    loadws(Workspace::load(root));
-}
-
-void loadws(Workspace workspace) {
-    auto loaded = std::make_shared<const Workspace>(std::move(workspace));
-    std::lock_guard lock(workspace_mutex);
-    current_workspace = std::move(loaded);
 }
 
 } // namespace cha

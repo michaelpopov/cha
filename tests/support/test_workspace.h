@@ -4,6 +4,8 @@
 #include "chat/persona.h"
 #include "chat/session_identity.h"
 
+#include "workspace/workspace.h"
+
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -47,14 +49,12 @@ struct TestWorkspaceStyle {
     CharacterAppearance appearance;
 };
 
-struct PublishedTestWorkspace {
+struct TestControllerWorkspace {
+    std::shared_ptr<const Workspace> snapshot;
     FullSessionId identity;
     std::string default_persona_id;
 };
 
-// Writes and publishes one complete, real Workspace for a controller test.
-// CharacterDefinition is only convenient fixture input; SessionController
-// never receives it and reads the resulting values through getws().
 // Imports `source` into `<source>/workspace.sqlite3` and returns that path.
 [[nodiscard]] std::filesystem::path import_test_database(
     const std::filesystem::path& source);
@@ -63,13 +63,12 @@ struct PublishedTestWorkspace {
     const std::filesystem::path& source,
     const std::filesystem::path& database);
 
-PublishedTestWorkspace publish_test_workspace(
+TestControllerWorkspace make_controller_workspace(
     const std::vector<CharacterDefinition>& definitions,
     const PersonaRoster& personas,
     std::string_view default_character_id,
     const std::filesystem::path& database_path,
     FullSessionId identity = {},
-    const std::vector<TestWorkspaceStyle>& styles = {},
-    bool reuse_current = false);
+    const std::vector<TestWorkspaceStyle>& styles = {});
 
 } // namespace cha::test

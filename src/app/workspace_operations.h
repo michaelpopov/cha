@@ -22,7 +22,6 @@ struct LiveSessionManagerSnapshot;
 
 namespace cha::app::workspace {
 
-[[nodiscard]] std::shared_ptr<const Workspace> published_workspace();
 [[nodiscard]] bool is_welcome_session(
     std::string_view forum_id,
     std::string_view session_id) noexcept;
@@ -58,7 +57,9 @@ void invalidate_affected_sessions(
     cha::web::LiveSessionManager& live_sessions,
     std::span<const std::string> forum_ids);
 
-[[nodiscard]] cha::web::CharacterDetail get_character(std::string_view id);
+[[nodiscard]] cha::web::CharacterDetail get_character(
+    const Workspace& workspace,
+    std::string_view id);
 [[nodiscard]] cha::web::CharacterDetail create_character(
     WorkspaceConfigStore& store,
     std::string_view display_name,
@@ -75,6 +76,7 @@ void invalidate_affected_sessions(
     const cha::web::CharacterDefinitionUpdate& update);
 void delete_character(WorkspaceConfigStore& store, std::string_view id);
 [[nodiscard]] cha::web::MarkdownFile get_character_file(
+    const Workspace& workspace,
     std::string_view id,
     std::string_view filename);
 [[nodiscard]] cha::web::MarkdownFile create_character_file(
@@ -95,7 +97,9 @@ void delete_character_file(
     std::string_view id,
     std::string filename);
 
-[[nodiscard]] cha::web::PersonaDetail get_persona(std::string_view id);
+[[nodiscard]] cha::web::PersonaDetail get_persona(
+    const Workspace& workspace,
+    std::string_view id);
 [[nodiscard]] cha::web::PersonaDetail create_persona(
     WorkspaceConfigStore& store,
     std::string_view display_name);
@@ -106,7 +110,9 @@ void delete_character_file(
     const cha::web::PersonaUpdate& update);
 void delete_persona(WorkspaceConfigStore& store, std::string_view id);
 
-[[nodiscard]] cha::web::ForumDetail get_forum(std::string_view id);
+[[nodiscard]] cha::web::ForumDetail get_forum(
+    const Workspace& workspace,
+    std::string_view id);
 [[nodiscard]] cha::web::ForumDetail create_forum(
     WorkspaceConfigStore& store,
     std::string_view display_name,
@@ -126,6 +132,7 @@ void delete_forum(
     std::string_view id,
     const cha::web::ForumMembersUpdate& update);
 [[nodiscard]] cha::web::MarkdownFile get_forum_file(
+    const Workspace& workspace,
     std::string_view id,
     std::string_view filename);
 [[nodiscard]] cha::web::MarkdownFile create_forum_file(

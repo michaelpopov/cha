@@ -1,5 +1,7 @@
 #pragma once
 
+#include "workspace/workspace.h"
+
 #include "chat/session_identity.h"
 #include "session/session_database.h"
 #include "session/stored_session.h"
@@ -77,6 +79,7 @@ public:
     };
 
     SessionRepository(
+        WorkspaceReader read_workspace,
         std::filesystem::path database_path,
         std::filesystem::path workspace_root,
         std::filesystem::path welcome_directory,
@@ -117,6 +120,7 @@ public:
     void synchronize_forums(const Workspace& workspace) const;
 
     [[nodiscard]] std::filesystem::path database_path() const;
+    [[nodiscard]] std::shared_ptr<const Workspace> workspace() const;
 
 private:
     [[nodiscard]] const std::filesystem::path& session_database_path(
@@ -124,6 +128,7 @@ private:
     void require_persistent_forum(std::string_view forum_id) const;
     void synchronize_forums_unlocked(const Workspace& workspace) const;
 
+    WorkspaceReader read_workspace_;
     mutable std::shared_mutex operation_mutex_;
     std::filesystem::path workspace_root_;
     std::filesystem::path database_path_;

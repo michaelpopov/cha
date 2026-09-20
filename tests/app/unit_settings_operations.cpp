@@ -76,39 +76,40 @@ TEST(ApplicationSettings, ListsAndUpdatesProvidersWithoutSecrets) {
     const std::filesystem::path database =
         test::import_test_database(workspace.root());
     auto application = Application::open(make_command(workspace, database));
+    const auto epoch = application->context_epoch();
 
-    const auto listed = application->list_providers();
+    const auto listed = application->list_providers(epoch);
     ASSERT_FALSE(listed.empty());
     EXPECT_EQ(listed.front().id, "test");
 
     const auto created_key = application->create_api_key(
-        {.display_name = "Router key", .value = "private-router-secret"});
+        {.display_name = "Router key", .value = "private-router-secret"}, epoch);
     EXPECT_FALSE(created_key.id.empty());
     EXPECT_TRUE(created_key.has_value);
     EXPECT_EQ(created_key.display_name, "Router key");
 
-    const auto listed_keys = application->list_api_keys();
+    const auto listed_keys = application->list_api_keys(epoch);
     ASSERT_FALSE(listed_keys.empty());
     EXPECT_EQ(nlohmann::json(listed_keys).dump().find("private-router-secret"),
         std::string::npos);
 
-    auto provider = application->get_provider("test");
+    auto provider = application->get_provider("test", epoch);
     EXPECT_EQ(provider.model, "fake");
     nlohmann::json body = provider_body(provider);
     body["api_key"] = created_key.id;
-    const auto updated = application->update_provider("test", body);
+    const auto updated = application->update_provider("test", body, epoch);
     EXPECT_EQ(updated.api_key, created_key.id);
     EXPECT_EQ(nlohmann::json(updated).dump().find("private-router-secret"),
         std::string::npos);
 
     EXPECT_THROW(
-        application->delete_provider("test"),
+        application->delete_provider("test", epoch),
         ApplicationError);
 
     const auto copied = application->create_provider(
-        {.display_name = "Copy", .copy_from = "test"});
+        {.display_name = "Copy", .copy_from = "test"}, epoch);
     EXPECT_EQ(copied.display_name, "Copy");
-    application->delete_provider(copied.id);
+    application->delete_provider(copied.id, epoch);
 }
 
 TEST(ApplicationSettings, TestsProvidersOnBackgroundWork) {
@@ -116,7 +117,8 @@ TEST(ApplicationSettings, TestsProvidersOnBackgroundWork) {
     const std::filesystem::path database =
         test::import_test_database(workspace.root());
     auto application = Application::open(make_command(workspace, database));
-    auto provider = application->get_provider("test");
+    const auto epoch = application->context_epoch();
+    auto provider = application->get_provider("test", epoch);
     nlohmann::json body = provider_body(provider);
     const std::string stream =
         "data: {\"type\":\"response.output_text.delta\",\"delta\":\"OK\"}\n\n"
@@ -133,9 +135,9 @@ TEST(ApplicationSettings, TestsProvidersOnBackgroundWork) {
     body["timeout_s"] = 0;
     body["idle_timeout_s"] = 0;
     EXPECT_THROW(
-        (void)application->update_provider("test", body), ApplicationError);
+        (void)application->update_provider("test", body, epoch), ApplicationError);
 
-    auto reply = application->test_provider("test", body);
+    auto reply = application->test_provider("test", body, epoch);
     const auto deadline = std::chrono::steady_clock::now() + 5s;
     std::optional<OperationReply::Result> result;
     while (std::chrono::steady_clock::now() < deadline) {
@@ -146,7 +148,7 @@ TEST(ApplicationSettings, TestsProvidersOnBackgroundWork) {
     ASSERT_TRUE(result);
     ASSERT_TRUE(std::holds_alternative<nlohmann::json>(*result));
     model_server.join();
-    EXPECT_EQ(application->get_provider("test").model, "fake");
+    EXPECT_EQ(application->get_provider("test", epoch).model, "fake");
 }
 
 TEST(ApplicationSettings, ShutdownDeadlineBoundsUncooperativeReplyCallback) {
@@ -154,7 +156,8 @@ TEST(ApplicationSettings, ShutdownDeadlineBoundsUncooperativeReplyCallback) {
     const std::filesystem::path database =
         test::import_test_database(workspace.root());
     auto application = Application::open(make_command(workspace, database));
-    auto provider = application->get_provider("test");
+    const auto epoch = application->context_epoch();
+    auto provider = application->get_provider("test", epoch);
     nlohmann::json body = provider_body(provider);
     const std::string stream =
         "data: {\"type\":\"response.output_text.delta\",\"delta\":\"OK\"}\n\n"
@@ -170,7 +173,7 @@ TEST(ApplicationSettings, ShutdownDeadlineBoundsUncooperativeReplyCallback) {
     body["timeout_s"] = 0;
     body["idle_timeout_s"] = 0;
 
-    auto reply = application->test_provider("test", body);
+    auto reply = application->test_provider("test", body, epoch);
     std::mutex mutex;
     std::condition_variable changed;
     bool callback_started = false;
@@ -213,29 +216,30 @@ TEST(ApplicationSettings, MigratesAppearanceKeysR2AndNonsecretRuntime) {
     const std::filesystem::path database =
         test::import_test_database(workspace.root());
     auto application = Application::open(make_command(workspace, database));
+    const auto epoch = application->context_epoch();
 
-    const auto created_style = application->create_style("Quiet");
+    const auto created_style = application->create_style("Quiet", epoch);
     EXPECT_EQ(created_style.display_name, "Quiet");
-    application->delete_style(created_style.id);
+    application->delete_style(created_style.id, epoch);
 
     const auto created_voice = application->create_voice({
         .display_name = "Narrator",
         .description = "A test voice",
         .elevenlabs_voice_id = "voice_ref",
-    });
+    }, epoch);
     EXPECT_EQ(created_voice.elevenlabs_voice_id, "voice_ref");
-    application->delete_voice(created_voice.id);
+    application->delete_voice(created_voice.id, epoch);
 
     const auto key = application->create_api_key(
-        {.display_name = "Voice", .value = "private-voice-secret"});
+        {.display_name = "Voice", .value = "private-voice-secret"}, epoch);
     (void)application->save_voice_input_settings({
         .url = "https://api.openai.com/v1/realtime",
         .model = "gpt-4o-transcribe",
         .api_key = key.id,
         .delay = "low",
         .prompt = "",
-    });
-    const auto runtime = application->get_voice_input_runtime();
+    }, epoch);
+    const auto runtime = application->get_voice_input_runtime(epoch);
     ASSERT_TRUE(runtime);
     EXPECT_EQ(runtime->model, "gpt-4o-transcribe");
     EXPECT_EQ(nlohmann::json(*runtime).dump().find("private-voice-secret"),
@@ -248,16 +252,16 @@ TEST(ApplicationSettings, MigratesAppearanceKeysR2AndNonsecretRuntime) {
         .url = "https://account.example/bucket",
         .access_key_id = "access-one",
         .secret_key = std::string("private-secret"),
-    });
+    }, epoch);
     EXPECT_TRUE(r2.has_secret_key);
     EXPECT_EQ(nlohmann::json(r2).dump().find("private-secret"), std::string::npos);
     EXPECT_TRUE(application->capabilities().can_transfer_r2);
     EXPECT_TRUE(application->bootstrap().capabilities.can_transfer_r2);
-    application->delete_r2_storage();
-    EXPECT_FALSE(application->get_r2_storage());
+    application->delete_r2_storage(epoch);
+    EXPECT_FALSE(application->get_r2_storage(epoch));
     EXPECT_FALSE(application->capabilities().can_transfer_r2);
 
-    const auto auth = application->openai_auth_status();
+    const auto auth = application->openai_auth_status(epoch);
     EXPECT_EQ(auth.status, "signed_out");
 }
 

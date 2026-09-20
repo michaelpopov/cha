@@ -21,10 +21,6 @@ using cha::web::ErrorCode;
     throw ApplicationError(code, std::move(message));
 }
 
-std::shared_ptr<const Workspace> require_workspace() {
-    return workspace::published_workspace();
-}
-
 template<typename Fn>
 auto with_settings_edit(Fn&& fn) {
     try {
@@ -290,24 +286,24 @@ cha::web::OpenAiAuth openai_auth_from(const OpenAiOAuthSnapshot& snapshot) {
     return result;
 }
 
-std::vector<cha::web::ProviderSummary> list_providers() {
-    const auto workspace = require_workspace();
+std::vector<cha::web::ProviderSummary> list_providers(
+    const Workspace& workspace) {
     std::vector<cha::web::ProviderSummary> result;
-    for (const WorkspaceProvider& provider : workspace->providers()) {
+    for (const WorkspaceProvider& provider : workspace.providers()) {
         result.push_back(provider_summary(provider));
     }
     return result;
 }
 
 cha::web::ProviderDetail get_provider(
+    const Workspace& workspace,
     std::string_view id,
     const ApiKeyStore& api_keys) {
-    const auto workspace = require_workspace();
-    const WorkspaceProvider& provider = require_provider(*workspace, id, false);
+    const WorkspaceProvider& provider = require_provider(workspace, id, false);
     return provider_detail(
         provider,
-        workspace->provider_is_writable(id),
-        characters_using_provider(*workspace, id),
+        workspace.provider_is_writable(id),
+        characters_using_provider(workspace, id),
         api_keys);
 }
 
@@ -322,7 +318,7 @@ cha::web::ProviderDetail create_provider(
         } catch (const std::invalid_argument&) {
             fail(ErrorCode::invalid_argument, "Invalid provider.");
         }
-        const auto current = require_workspace();
+        const auto current = store.snapshot();
         const WorkspaceProvider* created = current->find_provider(id);
         if (created == nullptr) {
             fail(ErrorCode::internal_error, "The provider could not be created.");
@@ -341,7 +337,7 @@ cha::web::ProviderDetail update_provider(
     const ApiKeyStore& api_keys,
     std::string_view id,
     const nlohmann::json& body) {
-    const auto workspace = require_workspace();
+    const auto workspace = store.snapshot();
     const WorkspaceProvider& provider = require_provider(*workspace, id, true);
     cha::web::ProviderUpdate update;
     try {
@@ -359,7 +355,7 @@ cha::web::ProviderDetail update_provider(
         } catch (const std::invalid_argument&) {
             fail(ErrorCode::invalid_argument, "Invalid provider settings.");
         }
-        const auto current = require_workspace();
+        const auto current = store.snapshot();
         const WorkspaceProvider* updated = current->find_provider(id);
         if (updated == nullptr) {
             fail(ErrorCode::internal_error, "The provider could not be updated.");
@@ -373,7 +369,7 @@ cha::web::ProviderDetail update_provider(
 }
 
 void delete_provider(WorkspaceConfigStore& store, std::string_view id) {
-    const auto workspace = require_workspace();
+    const auto workspace = store.snapshot();
     require_provider(*workspace, id, true);
     if (!characters_using_provider(*workspace, id).empty()) {
         fail(
@@ -393,13 +389,13 @@ void delete_provider(WorkspaceConfigStore& store, std::string_view id) {
 }
 
 void test_provider(
+    const Workspace& workspace,
     std::string_view id,
     const nlohmann::json& body,
     OpenAiOAuth& openai_auth,
     ApiKeyStore& api_keys,
     const std::atomic_bool& cancellation) {
-    const auto workspace = require_workspace();
-    const WorkspaceProvider& provider = require_provider(*workspace, id, false);
+    const WorkspaceProvider& provider = require_provider(workspace, id, false);
     cha::web::ProviderUpdate candidate;
     try {
         candidate = cha::web::parse_provider_update(
@@ -456,14 +452,14 @@ void test_provider(
     }
 }
 
-std::vector<cha::web::StyleDetail> list_styles() {
-    const auto workspace = require_workspace();
+std::vector<cha::web::StyleDetail> list_styles(
+    const Workspace& workspace) {
     std::vector<cha::web::StyleDetail> result;
-    for (const WorkspaceStyle& style : workspace->styles()) {
+    for (const WorkspaceStyle& style : workspace.styles()) {
         result.push_back(style_detail(
             style,
-            workspace->style_is_writable(style.id),
-            characters_using_style(*workspace, style.id)));
+            workspace.style_is_writable(style.id),
+            characters_using_style(workspace, style.id)));
     }
     return result;
 }
@@ -478,7 +474,7 @@ cha::web::StyleDetail create_style(
         } catch (const std::invalid_argument&) {
             fail(ErrorCode::invalid_argument, "Invalid style.");
         }
-        const auto current = require_workspace();
+        const auto current = store.snapshot();
         const WorkspaceStyle* created = current->find_style(id);
         if (created == nullptr) {
             fail(ErrorCode::internal_error, "The style could not be created.");
@@ -495,7 +491,7 @@ cha::web::StyleDetail update_style(
     cha::web::LiveSessionManager& live_sessions,
     std::string_view id,
     const cha::web::StyleUpdate& update) {
-    require_style(*require_workspace(), id, true);
+    require_style(*store.snapshot(), id, true);
     return with_settings_edit([&] {
         try {
             const WorkspaceConfigEditResult edited = store.apply_style_update(
@@ -505,7 +501,7 @@ cha::web::StyleDetail update_style(
         } catch (const std::invalid_argument&) {
             fail(ErrorCode::invalid_argument, "Invalid style settings.");
         }
-        const auto current = require_workspace();
+        const auto current = store.snapshot();
         const WorkspaceStyle* updated = current->find_style(id);
         if (updated == nullptr) {
             fail(ErrorCode::internal_error, "The style could not be updated.");
@@ -518,7 +514,7 @@ cha::web::StyleDetail update_style(
 }
 
 void delete_style(WorkspaceConfigStore& store, std::string_view id) {
-    const auto workspace = require_workspace();
+    const auto workspace = store.snapshot();
     require_style(*workspace, id, true);
     if (!characters_using_style(*workspace, id).empty()) {
         fail(
@@ -537,14 +533,14 @@ void delete_style(WorkspaceConfigStore& store, std::string_view id) {
     });
 }
 
-std::vector<cha::web::VoiceDetail> list_voices() {
-    const auto workspace = require_workspace();
+std::vector<cha::web::VoiceDetail> list_voices(
+    const Workspace& workspace) {
     std::vector<cha::web::VoiceDetail> result;
-    for (const WorkspaceVoice& voice : workspace->voices()) {
+    for (const WorkspaceVoice& voice : workspace.voices()) {
         result.push_back(voice_detail(
             voice,
-            workspace->voice_is_writable(voice.id),
-            characters_using_voice(*workspace, voice.id)));
+            workspace.voice_is_writable(voice.id),
+            characters_using_voice(workspace, voice.id)));
     }
     return result;
 }
@@ -562,7 +558,7 @@ cha::web::VoiceDetail create_voice(
         } catch (const std::invalid_argument&) {
             fail(ErrorCode::invalid_argument, "Invalid voice.");
         }
-        const auto current = require_workspace();
+        const auto current = store.snapshot();
         const WorkspaceVoice* created = current->find_voice(id);
         if (created == nullptr) {
             fail(ErrorCode::internal_error, "The voice could not be created.");
@@ -579,7 +575,7 @@ cha::web::VoiceDetail update_voice(
     cha::web::LiveSessionManager& live_sessions,
     std::string_view id,
     const cha::web::VoiceUpdate& update) {
-    require_voice(*require_workspace(), id, true);
+    require_voice(*store.snapshot(), id, true);
     return with_settings_edit([&] {
         try {
             const WorkspaceConfigEditResult edited = store.apply_voice_update(
@@ -593,7 +589,7 @@ cha::web::VoiceDetail update_voice(
         } catch (const std::invalid_argument&) {
             fail(ErrorCode::invalid_argument, "Invalid voice settings.");
         }
-        const auto current = require_workspace();
+        const auto current = store.snapshot();
         const WorkspaceVoice* updated = current->find_voice(id);
         if (updated == nullptr) {
             fail(ErrorCode::internal_error, "The voice could not be updated.");
@@ -606,7 +602,7 @@ cha::web::VoiceDetail update_voice(
 }
 
 void delete_voice(WorkspaceConfigStore& store, std::string_view id) {
-    const auto workspace = require_workspace();
+    const auto workspace = store.snapshot();
     require_voice(*workspace, id, true);
     if (!characters_using_voice(*workspace, id).empty()) {
         fail(ErrorCode::invalid_argument, "This voice is still in use.");
@@ -621,10 +617,10 @@ void delete_voice(WorkspaceConfigStore& store, std::string_view id) {
     });
 }
 
-std::optional<cha::web::VoiceInputSettings> get_voice_input_settings() {
-    const auto workspace = require_workspace();
-    if (!workspace->voice_input()) return std::nullopt;
-    return voice_input_settings(*workspace->voice_input());
+std::optional<cha::web::VoiceInputSettings> get_voice_input_settings(
+    const Workspace& workspace) {
+    if (!workspace.voice_input()) return std::nullopt;
+    return voice_input_settings(*workspace.voice_input());
 }
 
 cha::web::VoiceInputSettings save_voice_input_settings(
@@ -652,14 +648,14 @@ cha::web::VoiceInputSettings save_voice_input_settings(
 }
 
 std::optional<cha::web::VoiceInputRuntime> get_voice_input_runtime(
+    const Workspace& workspace,
     const ApiKeyStore& api_keys,
     bool voice_enabled) {
-    const auto workspace = require_workspace();
-    if (!voice_enabled || !workspace->voice_input()
-        || !api_keys.find(workspace->voice_input()->api_key_id)) {
+    if (!voice_enabled || !workspace.voice_input()
+        || !api_keys.find(workspace.voice_input()->api_key_id)) {
         return std::nullopt;
     }
-    const WorkspaceVoiceInput& settings = *workspace->voice_input();
+    const WorkspaceVoiceInput& settings = *workspace.voice_input();
     return cha::web::VoiceInputRuntime{
         .url = settings.url,
         .model = settings.model,
@@ -669,27 +665,27 @@ std::optional<cha::web::VoiceInputRuntime> get_voice_input_runtime(
 }
 
 std::optional<std::string> voice_input_secret(
+    const Workspace& workspace,
     const ApiKeyStore& api_keys,
     bool voice_enabled) {
-    const auto workspace = require_workspace();
-    if (!voice_enabled || !workspace->voice_input()
-        || !api_keys.find(workspace->voice_input()->api_key_id)) {
+    if (!voice_enabled || !workspace.voice_input()
+        || !api_keys.find(workspace.voice_input()->api_key_id)) {
         return std::nullopt;
     }
-    return api_keys.value(workspace->voice_input()->api_key_id);
+    return api_keys.value(workspace.voice_input()->api_key_id);
 }
 
-std::optional<cha::web::VoiceOutputSettings> get_voice_output_settings() {
-    const auto workspace = require_workspace();
-    if (!workspace->voice_output()) return std::nullopt;
-    return voice_output_settings(*workspace->voice_output());
+std::optional<cha::web::VoiceOutputSettings> get_voice_output_settings(
+    const Workspace& workspace) {
+    if (!workspace.voice_output()) return std::nullopt;
+    return voice_output_settings(*workspace.voice_output());
 }
 
 cha::web::VoiceOutputSettings save_voice_output_settings(
     WorkspaceConfigStore& store,
     const ApiKeyStore& api_keys,
     const cha::web::VoiceOutputSettings& update) {
-    const auto workspace = require_workspace();
+    const auto workspace = store.snapshot();
     if (!api_keys.find(update.api_key)
         || !workspace->find_voice_by_name(update.default_voice)) {
         fail(ErrorCode::invalid_argument, "Invalid voice output settings.");
@@ -707,18 +703,18 @@ cha::web::VoiceOutputSettings save_voice_output_settings(
         } catch (const std::invalid_argument& error) {
             fail(ErrorCode::invalid_argument, error.what());
         }
-        return voice_output_settings(*require_workspace()->voice_output());
+        return voice_output_settings(*store.snapshot()->voice_output());
     });
 }
 
 std::optional<cha::web::VoiceOutputRuntime> get_voice_output_runtime(
+    const Workspace& workspace,
     const ApiKeyStore& api_keys,
     bool voice_enabled) {
-    const auto workspace = require_workspace();
     const WorkspaceVoiceOutput* const output =
-        workspace->voice_output() ? &*workspace->voice_output() : nullptr;
+        workspace.voice_output() ? &*workspace.voice_output() : nullptr;
     const WorkspaceVoice* const default_voice = output
-        ? workspace->find_voice_by_name(output->default_voice) : nullptr;
+        ? workspace.find_voice_by_name(output->default_voice) : nullptr;
     if (!voice_enabled || !output || !default_voice
         || !api_keys.find(output->api_key_id)) {
         return std::nullopt;
@@ -731,23 +727,25 @@ std::optional<cha::web::VoiceOutputRuntime> get_voice_output_runtime(
     };
 }
 
-std::vector<cha::web::ApiKeyDetail> list_api_keys(const ApiKeyStore& api_keys) {
-    const auto workspace = require_workspace();
+std::vector<cha::web::ApiKeyDetail> list_api_keys(
+    const Workspace& workspace,
+    const ApiKeyStore& api_keys) {
     std::vector<cha::web::ApiKeyDetail> result;
     for (const ApiKeyInfo& key : api_keys.list()) {
-        result.push_back(api_key_detail(key, *workspace));
+        result.push_back(api_key_detail(key, workspace));
     }
     return result;
 }
 
 cha::web::ApiKeyDetail create_api_key(
+    const Workspace& workspace,
     ApiKeyStore& api_keys,
     const cha::web::CreateApiKeyRequest& create) {
     return with_settings_edit([&] {
         try {
             return api_key_detail(
                 api_keys.create(create.display_name, create.value),
-                *require_workspace());
+                workspace);
         } catch (const std::invalid_argument&) {
             fail(ErrorCode::invalid_argument, "Invalid API key.");
         }
@@ -755,13 +753,14 @@ cha::web::ApiKeyDetail create_api_key(
 }
 
 cha::web::ApiKeyDetail rename_api_key(
+    const Workspace& workspace,
     ApiKeyStore& api_keys,
     std::string_view id,
     std::string_view display_name) {
     return with_settings_edit([&] {
         try {
             return api_key_detail(
-                api_keys.rename(id, display_name), *require_workspace());
+                api_keys.rename(id, display_name), workspace);
         } catch (const std::out_of_range&) {
             fail(ErrorCode::not_found, "That API key was not found.");
         } catch (const std::invalid_argument&) {
@@ -771,13 +770,14 @@ cha::web::ApiKeyDetail rename_api_key(
 }
 
 cha::web::ApiKeyDetail replace_api_key_value(
+    const Workspace& workspace,
     ApiKeyStore& api_keys,
     std::string_view id,
     std::string_view value) {
     return with_settings_edit([&] {
         try {
             return api_key_detail(
-                api_keys.replace(id, value), *require_workspace());
+                api_keys.replace(id, value), workspace);
         } catch (const std::out_of_range&) {
             fail(ErrorCode::not_found, "That API key was not found.");
         } catch (const std::invalid_argument&) {

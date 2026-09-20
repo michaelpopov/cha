@@ -60,7 +60,7 @@ BackingState populated_state() {
     };
 }
 
-void publish_projection_workspace() {
+std::shared_ptr<const Workspace> projection_workspace() {
     const auto definition = [](std::string id, std::string name, std::string description) {
         return CharacterDefinition{
             .character = {
@@ -76,7 +76,7 @@ void publish_projection_workspace() {
             }},
         };
     };
-    (void)test::publish_test_workspace(
+    return test::make_controller_workspace(
         {
             definition("reviewer", "Reviewer", "Checks details"),
             definition("guide", "guide", "Explains things"),
@@ -84,13 +84,13 @@ void publish_projection_workspace() {
         {{.id = "reviewer_persona", .display_name = "Reviewer persona"}},
         "guide",
         {},
-        {"forum", "session"});
+        {"forum", "session"}).snapshot;
 }
 
 const FullSessionId test_identity{"forum", "session"};
 
 TEST(SessionProjection, CopiesABorrowedControllerViewIntoTheProtocolDto) {
-    publish_projection_workspace();
+    const auto workspace = projection_workspace();
     const WebPresentationState presentation{
         .notice = "Current notice",
         .lifecycle = SessionLifecycle::stopping,
@@ -127,7 +127,7 @@ TEST(SessionProjection, CopiesABorrowedControllerViewIntoTheProtocolDto) {
     {
         BackingState state = populated_state();
         state.covered_until = 2;
-        snapshot = to_snapshot(test_identity, "Label", state.view(), presentation);
+        snapshot = to_snapshot(*workspace, test_identity, "Label", state.view(), presentation);
         EXPECT_EQ(snapshot, expected);
 
         state.default_character_id = "gone";
@@ -151,12 +151,12 @@ TEST(SessionProjection, IncludesTheCharactersResolvedSpeechVoice) {
         "display_name = \"Guide\"\n"
         "provider = \"test\"\n"
         "voice = \"warm-narrator\"\n");
-    loadws(fixture.root());
+    const auto workspace = std::make_shared<const Workspace>(Workspace::load(fixture.root()));
     BackingState state;
     state.default_character_id = "guide";
     state.default_persona_id = "reader";
 
-    const SessionSnapshot snapshot = to_snapshot(
+    const SessionSnapshot snapshot = to_snapshot(*workspace,
         {"lobby", "session"}, "Label", state.view(), {});
 
     ASSERT_EQ(snapshot.characters.size(), 1U);
@@ -174,7 +174,7 @@ TEST(SessionProjection, IncludesTheCharactersResolvedSpeechVoice) {
 }
 
 TEST(SessionProjection, RemovesSourceReferencesFromHistoricalEntries) {
-    publish_projection_workspace();
+    const auto workspace = projection_workspace();
     BackingState state = populated_state();
     state.transcript[0].text =
         "Keep human link **([example.com](https://example.com/source))**";
@@ -183,7 +183,7 @@ TEST(SessionProjection, RemovesSourceReferencesFromHistoricalEntries) {
         "3600-h/3600-h?utm_source=openai))";
 
     const SessionSnapshot snapshot =
-        to_snapshot(test_identity, "Label", state.view(), {});
+        to_snapshot(*workspace, test_identity, "Label", state.view(), {});
 
     EXPECT_EQ(snapshot.transcript[0].text, state.transcript[0].text);
     EXPECT_EQ(snapshot.transcript[1].text, "Quote ");
@@ -191,8 +191,8 @@ TEST(SessionProjection, RemovesSourceReferencesFromHistoricalEntries) {
 }
 
 TEST(SessionProjection, ProjectsWorkspaceDataWithEmptySessionState) {
-    publish_projection_workspace();
-    const SessionSnapshot snapshot = to_snapshot(
+    const auto workspace = projection_workspace();
+    const SessionSnapshot snapshot = to_snapshot(*workspace,
         test_identity,
         "Label",
         ControllerView{.default_persona_id = "reviewer_persona"},

@@ -551,6 +551,7 @@ SessionSnapshot LiveSession::make_snapshot() {
     // The borrowed view lives only for this expression; to_snapshot() copies
     // everything it needs into the returned owning value.
     SessionSnapshot snapshot = to_snapshot(
+        *controller_->workspace(),
         identity_, label_, controller_->view(),
         presentation(SessionLifecycle::running));
     if (cached_audio_entries_) {

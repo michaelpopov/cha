@@ -99,7 +99,7 @@ AudioAcceptance AudioDownloadManager::submit(const FullSessionId& session, Entry
 std::shared_ptr<AudioDownloadManager::Job> AudioDownloadManager::prepare_job(
     const EntryAudioLookup& entry, const FishAudioSynthesis& synthesis) {
     auto job = std::make_shared<Job>();
-    const auto workspace = getws();
+    const auto workspace = sessions_.workspace();
     if (!workspace || !workspace->voice_output()) {
         throw AudioDownloadError(404, "not_found", "Voice output is not configured.");
     }

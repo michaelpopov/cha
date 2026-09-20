@@ -61,6 +61,7 @@ protected:
         store_.reset();
         store_ = WorkspaceConfigStore::open(database_);
         sessions_ = std::make_unique<SessionRepository>(
+            [this] { return store_->snapshot(); },
             store_->database_path(),
             store_->workspace_path(),
             store_->welcome_path(),
@@ -97,7 +98,7 @@ TEST_F(SessionOpenTest, OpensStoredSessionFromThePublishedWorkspace) {
     EXPECT_EQ(opened.label, "Stored");
     EXPECT_EQ(opened.controller->view().default_character_id, "guide");
     EXPECT_EQ(opened.controller->view().default_persona_id, workspace_guest_id);
-    ASSERT_NE(getws()->find_forum("lobby"), nullptr);
+    ASSERT_NE(store_->snapshot()->find_forum("lobby"), nullptr);
 }
 
 TEST_F(SessionOpenTest, OpensWelcomeThroughTheSamePath) {
@@ -130,7 +131,7 @@ TEST_F(SessionOpenTest, DefaultCharacterWriteSurvivesRestartAndExport) {
         EXPECT_NE(after_character.find("writer"), std::string::npos);
     }
 
-    const std::shared_ptr<const Workspace> workspace = getws();
+    const std::shared_ptr<const Workspace> workspace = store_->snapshot();
     ASSERT_NE(workspace->find_forum("lobby"), nullptr);
     EXPECT_EQ(workspace->find_forum("lobby")->default_character_id, "writer");
 
@@ -141,8 +142,8 @@ TEST_F(SessionOpenTest, DefaultCharacterWriteSurvivesRestartAndExport) {
     sessions_.reset();
     store_.reset();
     open_runtime();
-    ASSERT_NE(getws()->find_forum("lobby"), nullptr);
-    EXPECT_EQ(getws()->find_forum("lobby")->default_character_id, "writer");
+    ASSERT_NE(store_->snapshot()->find_forum("lobby"), nullptr);
+    EXPECT_EQ(store_->snapshot()->find_forum("lobby")->default_character_id, "writer");
     EXPECT_EQ(sessions_->prepare(stored.identity).label, "Stored");
 
     sessions_.reset();
@@ -164,9 +165,9 @@ TEST_F(SessionOpenTest, SourceDirectoryEditsDoNotAffectOpening) {
         "display_name = \"Renamed\"\nprovider = \"test\"\n");
 
     OpenedSession unchanged = open(first.identity);
-    ASSERT_NE(getws()->find_character("guide"), nullptr);
+    ASSERT_NE(store_->snapshot()->find_character("guide"), nullptr);
     EXPECT_EQ(
-        getws()->find_character("guide")->character.display_name,
+        store_->snapshot()->find_character("guide")->character.display_name,
         "Guide");
 
     unchanged.controller.reset();
@@ -175,9 +176,9 @@ TEST_F(SessionOpenTest, SourceDirectoryEditsDoNotAffectOpening) {
     reimport_fixture();
     const StoredSession second = sessions_->create("lobby", "Second");
     OpenedSession reloaded = open(second.identity);
-    ASSERT_NE(getws()->find_character("guide"), nullptr);
+    ASSERT_NE(store_->snapshot()->find_character("guide"), nullptr);
     EXPECT_EQ(
-        getws()->find_character("guide")->character.display_name,
+        store_->snapshot()->find_character("guide")->character.display_name,
         "Renamed");
 }
 
