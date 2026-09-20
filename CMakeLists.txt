@@ -325,6 +325,8 @@ cha_enable_warnings(cha_core)
 
 add_library(cha_app STATIC
     src/app/application.cpp
+    src/app/background_jobs.cpp
+    src/app/pending_media_registry.cpp
     src/app/vault_operations.cpp
     src/app/workspace_operations.cpp
     src/app/settings_operations.cpp
@@ -480,6 +482,8 @@ if(BUILD_TESTING)
     add_executable(
         cha_app_tests
         tests/app/unit_application.cpp
+        tests/app/unit_background_jobs.cpp
+        tests/app/unit_pending_media_registry.cpp
         tests/app/unit_media_resources.cpp
         tests/app/unit_media_operations.cpp
         tests/app/unit_settings_operations.cpp

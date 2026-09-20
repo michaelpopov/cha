@@ -317,8 +317,8 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
             if (outstanding.operation) outstanding.operation->abandon();
             if (outstanding.method == Method::session_subscribe
                 && outstanding.reply) {
-                auto session = application.live_sessions().lookup(
-                    {outstanding.forum_id, outstanding.session_id});
+                auto session = application.subscription_handle(
+                    outstanding.forum_id, outstanding.session_id);
                 if (session) {
                     (void)session->enqueue(cha::web::UnsubscribeCommand{
                         connection->id,
@@ -432,8 +432,8 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                 : nullptr;
             LiveSessionHandle subscribed_session;
             if (subscribed) {
-                subscribed_session = application.live_sessions().lookup(
-                    {outstanding.forum_id, outstanding.session_id});
+                subscribed_session = application.subscription_handle(
+                    outstanding.forum_id, outstanding.session_id);
             }
             LiveSessionHandle stale_subscription;
             {

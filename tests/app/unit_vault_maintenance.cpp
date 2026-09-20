@@ -441,6 +441,67 @@ TEST(ApplicationVault, ContextCheckDoesNotWaitForMaintenanceLifecycleLock) {
     EXPECT_EQ(switching.get().state, ApplicationState::running);
 }
 
+TEST(ApplicationVault, SubscriptionCompletionCanLookupWhileMaintenanceDrainsItsActor) {
+    TwoVaults pair;
+    pair.workspace_a.add_character("writer", "Writer");
+    const auto member = pair.workspace_a.root() / "forums/lobby/members/writer";
+    std::filesystem::create_directories(member);
+    std::ofstream(member / "character.toml") << "# member\n";
+    (void)test::import_test_database(pair.workspace_a.root(), pair.database_a);
+    pair.command.test_shutdown_grace_ms = 1500;
+    auto application = Application::open(pair.command);
+    const auto epoch = application->context_epoch();
+    const auto created = application->create_session("lobby", "Callback race", epoch);
+    ASSERT_TRUE(std::holds_alternative<cha::web::OpenSessionSuccess>(
+        application->open_session("lobby", created.id, epoch)));
+
+    // Block persistence of the preceding owner command so the subscribe callback
+    // is installed before the owner can complete it, rather than on this thread.
+    std::optional<WorkspaceConfigStore::MaintenanceGuard> edit_lock(
+        application->store().reserve_maintenance());
+    const auto changing = application->submit_async(
+        "lobby", created.id, cha::web::SetDefaultCharacterCommand{"writer"}, epoch);
+    ASSERT_TRUE(std::holds_alternative<std::shared_ptr<cha::web::CommandReply>>(changing));
+    const auto subscribing = application->submit_async(
+        "lobby", created.id, cha::web::SubscribeCommand{"view", epoch, "sub"}, epoch);
+    ASSERT_TRUE(std::holds_alternative<std::shared_ptr<cha::web::CommandReply>>(subscribing));
+    const auto reply = std::get<std::shared_ptr<cha::web::CommandReply>>(subscribing);
+    std::promise<void> entered;
+    std::promise<void> release;
+    std::promise<void> looked_up;
+    auto entered_future = entered.get_future();
+    auto release_future = release.get_future().share();
+    auto looked_up_future = looked_up.get_future();
+    reply->set_ready_callback([&] {
+        entered.set_value();
+        release_future.wait();
+        (void)application->subscription_handle("lobby", created.id);
+        looked_up.set_value();
+    });
+    edit_lock.reset();
+    const auto callback_status = entered_future.wait_for(2s);
+
+    auto switching = std::async(std::launch::async, [&] {
+        return application->switch_vault("B", {}, epoch);
+    });
+    const auto deadline = std::chrono::steady_clock::now() + 1s;
+    while (application->state() != ApplicationState::maintenance
+           && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::yield();
+    }
+    const auto state_during_callback = application->state();
+    release.set_value();
+    const auto lookup_status = looked_up_future.wait_for(500ms);
+    EXPECT_NO_THROW(EXPECT_EQ(switching.get().state, ApplicationState::running));
+    application->request_shutdown();
+    EXPECT_TRUE(application->join_shutdown(2s));
+    EXPECT_EQ(callback_status, std::future_status::ready);
+    EXPECT_EQ(state_during_callback, ApplicationState::maintenance);
+    EXPECT_EQ(lookup_status, std::future_status::ready);
+    ASSERT_TRUE(reply->peek());
+    EXPECT_TRUE(std::holds_alternative<cha::web::SubscribeResult>(*reply->peek()));
+}
+
 TEST(ApplicationVault, MaintenanceCompletionDoesNotUndoShutdown) {
     TwoVaults pair;
     auto application = Application::open(pair.command);

@@ -27,15 +27,11 @@
 #include <nlohmann/json.hpp>
 
 namespace cha {
-class SessionRepository;
-class Providers;
 class ApiKeyStore;
-class OpenAiOAuth;
 }
 
 namespace cha::web {
 class CurrentVault;
-class SessionMirror;
 
 struct VaultCreate {
     std::string display_name;
@@ -486,24 +482,22 @@ public:
     [[nodiscard]] bool join_shutdown(
         std::chrono::milliseconds grace = std::chrono::milliseconds{10000});
 
-    [[nodiscard]] cha::web::ApplicationCommand& command();
-    [[nodiscard]] const cha::web::ApplicationCommand& command() const;
     [[nodiscard]] const RuntimeSettings& settings() const;
+    // Subscription completion and teardown must work with an expired context.
+    // Uses only the manager lock: actor callbacks must never wait on the
+    // application lifecycle lock while maintenance is draining those actors.
+    // May return empty during maintenance/shutdown. Retain the handle while used.
+    [[nodiscard]] cha::web::LiveSessionHandle subscription_handle(
+        std::string_view forum_id, std::string_view session_id);
+
+    // Test seams — not part of the application boundary.
+    [[nodiscard]] std::size_t live_session_count() const;
     [[nodiscard]] cha::web::CurrentVault& current_vault();
     [[nodiscard]] const cha::web::CurrentVault& current_vault() const;
     [[nodiscard]] cha::WorkspaceConfigStore& store();
-    [[nodiscard]] std::shared_ptr<cha::SessionRepository> sessions();
-    [[nodiscard]] cha::web::LiveSessionManager& live_sessions();
-    [[nodiscard]] cha::web::AudioDownloadManager& audio_downloads();
-    [[nodiscard]] cha::web::FishAudioProxy& speech_proxy();
-    [[nodiscard]] cha::Providers& providers();
     [[nodiscard]] cha::ApiKeyStore& api_keys();
-    [[nodiscard]] cha::OpenAiOAuth& openai_auth();
-    [[nodiscard]] std::shared_ptr<cha::web::SessionMirror> mirror();
     [[nodiscard]] std::string active_password() const;
-    void set_active_password(std::string password);
     void mark_unusable();
-    [[nodiscard]] bool stopping() const;
 
 private:
     struct Impl;

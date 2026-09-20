@@ -204,7 +204,7 @@ TEST(Application, SubscribeInstallsInitialSnapshotAtSequenceZero) {
         "lobby", created.id, SubscribeCommand{"view-1", 1, "sub-1"}, epoch);
     ASSERT_TRUE(std::holds_alternative<SubscribeResult>(subscribed));
 
-    auto session = application->live_sessions().lookup({"lobby", created.id});
+    auto session = application->subscription_handle("lobby", created.id);
     ASSERT_TRUE(session);
     const auto item = next_output(*session);
     ASSERT_TRUE(item);
@@ -232,7 +232,7 @@ TEST(Application, AppearanceEditsRefreshTheSubscriptionWithoutCancellingGenerati
     const auto created = application->create_session("lobby", "Appearance", epoch);
     ASSERT_TRUE(std::holds_alternative<cha::web::OpenSessionSuccess>(
         application->open_session("lobby", created.id, epoch)));
-    auto session = application->live_sessions().lookup({"lobby", created.id});
+    auto session = application->subscription_handle("lobby", created.id);
     ASSERT_TRUE(session);
     ASSERT_TRUE(std::holds_alternative<SubscribeResult>(application->subscribe(
         "lobby", created.id, SubscribeCommand{"view-1", epoch, "sub-1"}, epoch)));
@@ -257,7 +257,7 @@ TEST(Application, AppearanceEditsRefreshTheSubscriptionWithoutCancellingGenerati
             EXPECT_TRUE(item->snapshot.generation.active);
             EXPECT_EQ(item->snapshot.generation.request_id, request_id);
         }
-        EXPECT_EQ(application->live_sessions().lookup({"lobby", created.id}), session);
+        EXPECT_EQ(application->subscription_handle("lobby", created.id), session);
         session->acknowledge_output();
         return item;
     };
@@ -313,7 +313,7 @@ TEST(Application, FatalConfigurationEditsCloseAdmissionAndStopLiveSessions) {
         const auto created = application->create_session("lobby", "Failure", epoch);
         ASSERT_TRUE(std::holds_alternative<cha::web::OpenSessionSuccess>(
             application->open_session("lobby", created.id, epoch)));
-        auto session = application->live_sessions().lookup({"lobby", created.id});
+        auto session = application->subscription_handle("lobby", created.id);
         ASSERT_TRUE(session);
         force_next_workspace_config_fault(WorkspaceConfigFault::publication);
         try {
@@ -389,7 +389,7 @@ TEST(Application, CloseLeavesTerminalSnapshot) {
     ASSERT_TRUE(std::holds_alternative<SubscribeResult>(
         application->subscribe(
             "lobby", created.id, SubscribeCommand{"view-1", 1, "sub-1"}, epoch)));
-    auto session = application->live_sessions().lookup({"lobby", created.id});
+    auto session = application->subscription_handle("lobby", created.id);
     ASSERT_TRUE(session);
     (void)next_output(*session);
     session->acknowledge_output();

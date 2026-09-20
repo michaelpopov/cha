@@ -298,7 +298,7 @@ TEST_F(BridgeRouterTest, ListsRenamesExportsAndEditsWorkspaceOverTheBridge) {
 
 TEST_F(BridgeRouterTest, RejectsMalformedUnknownStaleDuplicateAndUnavailableMethods) {
     bootstrap_epoch();
-    const auto before = application_->live_sessions().snapshot().live_session_count;
+    const auto before = application_->live_session_count();
 
     router_->handle_request(connection_, "{\"not\":\"a request\"}");
     auto batch = wait_delivery(*router_, connection_, 200ms);
@@ -364,7 +364,7 @@ TEST_F(BridgeRouterTest, RejectsMalformedUnknownStaleDuplicateAndUnavailableMeth
     EXPECT_EQ(reply["error"]["code"], "invalid_argument");
 
     EXPECT_EQ(
-        application_->live_sessions().snapshot().live_session_count, before);
+        application_->live_session_count(), before);
 }
 
 TEST_F(BridgeRouterTest, TimesOutAdmittedWorkWithoutExecutingALateMutation) {
@@ -599,7 +599,7 @@ TEST_F(BridgeRouterTest, UnsubscribeCleansSubscribeAlreadySentToOwner) {
     ASSERT_FALSE(unsubscribe_reply.empty());
     EXPECT_TRUE(unsubscribe_reply["ok"]);
 
-    auto session = application_->live_sessions().lookup({"lobby", session_id});
+    auto session = application_->subscription_handle("lobby", session_id);
     ASSERT_TRUE(session);
     const auto detached = std::chrono::steady_clock::now() + 2s;
     while (session->output()->attached()
@@ -607,6 +607,33 @@ TEST_F(BridgeRouterTest, UnsubscribeCleansSubscribeAlreadySentToOwner) {
         std::this_thread::sleep_for(1ms);
     }
     EXPECT_FALSE(session->output()->attached());
+}
+
+TEST_F(BridgeRouterTest, ClosingConnectionReleasesAPendingOrCompletedSubscription) {
+    bootstrap_epoch();
+    auto created = call(
+        "session.create", {{"forum_id", "lobby"}, {"label", "Closing"}});
+    ASSERT_TRUE(created["ok"]);
+    const std::string session_id = created["result"]["id"];
+    ASSERT_TRUE(call("session.open",
+        {{"forum_id", "lobby"}, {"session_id", session_id}})["ok"]);
+    const auto session = application_->subscription_handle("lobby", session_id);
+    ASSERT_TRUE(session);
+
+    router_->handle_request(connection_, request_json(
+        connection_, next_id_++, epoch_, "session.subscribe",
+        {{"forum_id", "lobby"}, {"session_id", session_id},
+         {"subscription_id", "sub-closing"}}).dump());
+    router_->run_tasks();
+    // Completion may already have installed ActiveSubscription or may still
+    // be queued on the owner; both paths must enqueue matching cleanup.
+    router_->close_connection(connection_);
+
+    // An owner command after cleanup makes the detached assertion deterministic.
+    EXPECT_TRUE(std::holds_alternative<cha::web::SessionSnapshot>(
+        session->snapshot(2s)));
+    EXPECT_FALSE(session->output()->attached());
+    EXPECT_FALSE(router_->take_delivery(connection_));
 }
 
 TEST_F(BridgeRouterTest, RetainsReplyUntilAckAndIgnoresLateAck) {
