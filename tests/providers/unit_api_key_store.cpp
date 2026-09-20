@@ -1,8 +1,10 @@
 #include "providers/api_key_store.h"
+#include "session/sqlite_storage.h"
 #include "support/test_workspace.h"
 #include "util/environment.h"
-#include "util/toml_file.h"
 #include "workspace/workspace_config_store.h"
+
+#include <toml++/toml.hpp>
 
 #include <gtest/gtest.h>
 
@@ -98,11 +100,10 @@ TEST_F(ApiKeyStoreTest, CreatesUpdatesReloadsAndRemovesASecret) {
 
 #ifndef _WIN32
     struct stat info {};
-    const std::filesystem::path stored = config->workspace_path()
-        / "system" / "keys" / created.id / "config.toml";
-    ASSERT_EQ(::stat(stored.c_str(), &info), 0);
+    ASSERT_EQ(::stat(database.c_str(), &info), 0);
     EXPECT_EQ(info.st_mode & 0777, static_cast<mode_t>(0600));
 #endif
+    EXPECT_FALSE(std::filesystem::exists(config->workspace_path()));
 
     reopened.remove(created.id);
     EXPECT_TRUE(reopened.list().empty());
@@ -173,12 +174,15 @@ TEST_F(ApiKeyStoreTest, MigratesTheLegacyFileWithoutReusingIds) {
         std::istreambuf_iterator<char>(legacy_input),
         std::istreambuf_iterator<char>()};
     EXPECT_EQ(legacy_bytes, legacy);
-    const std::filesystem::path migrated = config->workspace_path()
-        / "system" / "keys" / "api_key_7" / "config.toml";
-    const toml::table migrated_config =
-        read_toml_file(migrated, "migrated key");
-    EXPECT_EQ(migrated_config["type"].value<std::string>(), "models");
-    EXPECT_EQ(migrated_config["value"].value<std::string>(), "secret");
+    {
+        storage::SqliteDatabase handle(database, storage::SqliteDatabase::Mode::read_only);
+        auto row = handle.prepare(
+            "SELECT content FROM config WHERE name = 'system/keys/api_key_7/config.toml'");
+        ASSERT_TRUE(row.step());
+        const toml::table migrated_config = toml::parse(row.text(0));
+        EXPECT_EQ(migrated_config["type"].value<std::string>(), "models");
+        EXPECT_EQ(migrated_config["value"].value<std::string>(), "secret");
+    }
     store.remove("api_key_7");
     EXPECT_EQ(store.create("New", "new-secret").id, "api_key_8");
 }

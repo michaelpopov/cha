@@ -11,6 +11,8 @@
 
 namespace cha {
 
+class TextSource;
+
 using TemplateScope = std::map<std::string, std::string, std::less<>>;
 
 struct TemplateLimits {
@@ -28,6 +30,7 @@ struct TemplateOptions {
     TemplateScope reserved;       // dotted names, cannot be shadowed
     TemplateScope initial_scope;  // shadowable by directory scopes
     TemplateLimits limits;
+    const TextSource* source{};
 };
 
 // Converts one TOML table to a template scope. Values in the selected table

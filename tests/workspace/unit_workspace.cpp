@@ -1,4 +1,5 @@
 #include "workspace/workspace.h"
+#include "workspace/workspace_config_editor.h"
 
 #include "characters/model_context.h"
 #include "support/test_workspace.h"
@@ -18,6 +19,38 @@
 
 namespace cha {
 namespace {
+
+// These serialization tests reload directory fixtures. Runtime edits themselves
+// only change the candidate map; apply that map to disk here for the next load.
+template<typename Edit>
+void edit_fixture(const Workspace& workspace, Edit&& edit) {
+    TextFiles files;
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(workspace.root())) {
+        if (!entry.is_regular_file() || entry.is_symlink()) continue;
+        const auto content = TextSource{}.read(entry.path());
+        files.emplace(entry.path().lexically_relative(workspace.root()).generic_string(), *content);
+    }
+    const auto before = files;
+    WorkspaceConfigEditor editor(workspace, files);
+    edit(editor);
+    for (const auto& [name, content] : before) {
+        if (files.contains(name)) continue;
+        const auto path = workspace.root() / name;
+        std::filesystem::remove(path);
+        auto parent = path.parent_path();
+        while (parent.parent_path() != workspace.root()
+               && std::filesystem::is_empty(parent)) {
+            std::filesystem::remove(parent);
+            parent = parent.parent_path();
+        }
+    }
+    for (const auto& [name, content] : files) {
+        if (const auto old = before.find(name); old != before.end() && old->second == content) continue;
+        const auto path = workspace.root() / name;
+        std::filesystem::create_directories(path.parent_path());
+        std::ofstream(path, std::ios::binary) << content;
+    }
+}
 
 std::string file_bytes(const std::filesystem::path& path) {
     std::ifstream input(path, std::ios::binary);
@@ -166,11 +199,15 @@ TEST(Workspace, LoadsAMinimalVoice) {
     EXPECT_EQ(voice->elevenlabs_voice_id, "plain-voice-id");
     EXPECT_EQ(voice->settings, VoiceSettings{});
 
-    workspace.write_voice(
-        "plain-reader", "Plain reader", "", "plain-voice-id",
-        VoiceSettings{.speed = 0.9});
-    workspace.create_voice(
-        "another-reader", "Another reader", "", "another-voice-id");
+    edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) {
+        editor.write_voice(
+            "plain-reader", "Plain reader", "", "plain-voice-id",
+            VoiceSettings{.speed = 0.9});
+    });
+    edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) {
+        editor.create_voice(
+            "another-reader", "Another reader", "", "another-voice-id");
+    });
     const Workspace reloaded = Workspace::load(fixture.root());
     ASSERT_NE(reloaded.find_voice("plain-reader"), nullptr);
     EXPECT_TRUE(reloaded.find_voice("plain-reader")->description.empty());
@@ -220,8 +257,10 @@ TEST(Workspace, IgnoresObsoleteVoiceSettingsAndDropsThemOnSave) {
     ASSERT_NE(voice, nullptr);
     EXPECT_EQ(voice->elevenlabs_voice_id, "fish-reference");
     EXPECT_EQ(voice->settings.speed, 0.95);
-    workspace.write_voice("reader", voice->label, voice->description,
-        voice->elevenlabs_voice_id, voice->settings);
+    edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) {
+        editor.write_voice("reader", voice->label, voice->description,
+            voice->elevenlabs_voice_id, voice->settings);
+    });
     const auto saved = file_bytes(fixture.root() / "system" / "voices" / "reader" / "config.toml");
     for (const auto obsolete : {"stability", "similarity_boost", "style", "use_speaker_boost"}) {
         EXPECT_EQ(saved.find(obsolete), std::string::npos);
@@ -243,10 +282,12 @@ TEST(Workspace, IgnoresElevenLabsOutputConfigurationAndRejectsSavingIt) {
     const auto before = file_bytes(path);
     const Workspace workspace = Workspace::load(fixture.root());
     EXPECT_FALSE(workspace.voice_output());
-    EXPECT_THROW(workspace.write_voice_output({
-        .url = "https://api.elevenlabs.io/v1/text-to-speech",
-        .model = "eleven_multilingual_v2", .api_key_id = "api_key_2",
-        .output_format = "mp3_44100_128", .default_voice = "Reader",
+    EXPECT_THROW(edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) {
+        editor.write_voice_output({
+            .url = "https://api.elevenlabs.io/v1/text-to-speech",
+            .model = "eleven_multilingual_v2", .api_key_id = "api_key_2",
+            .output_format = "mp3_44100_128", .default_voice = "Reader",
+        });
     }), std::invalid_argument);
     EXPECT_EQ(file_bytes(path), before);
 }
@@ -256,8 +297,10 @@ TEST(Workspace, CreatesUpdatesAssignsAndDeletesVoices) {
     std::filesystem::create_directories(
         fixture.root() / "system" / "voices");
     const Workspace initial = Workspace::load(fixture.root());
-    initial.create_voice(
-        "voice_1", "Brian", "Deep, resonant, comforting", "brian-id");
+    edit_fixture(initial, [&](WorkspaceConfigEditor& editor) {
+        editor.create_voice(
+            "voice_1", "Brian", "Deep, resonant, comforting", "brian-id");
+    });
     EXPECT_EQ(initial.find_voice("voice_1"), nullptr);
 
     const Workspace created = Workspace::load(fixture.root());
@@ -267,11 +310,13 @@ TEST(Workspace, CreatesUpdatesAssignsAndDeletesVoices) {
     EXPECT_EQ(voice->description, "Deep, resonant, comforting");
     EXPECT_TRUE(created.voice_is_writable("voice_1"));
 
-    created.write_voice(
-        "voice_1", "George", "Warm, captivating storyteller", "george-id",
-        VoiceSettings{
-            .speed = 0.9,
-        });
+    edit_fixture(created, [&](WorkspaceConfigEditor& editor) {
+        editor.write_voice(
+            "voice_1", "George", "Warm, captivating storyteller", "george-id",
+            VoiceSettings{
+                .speed = 0.9,
+            });
+    });
     const Workspace updated = Workspace::load(fixture.root());
     voice = updated.find_voice("voice_1");
     ASSERT_NE(voice, nullptr);
@@ -279,16 +324,24 @@ TEST(Workspace, CreatesUpdatesAssignsAndDeletesVoices) {
     EXPECT_EQ(voice->elevenlabs_voice_id, "george-id");
     EXPECT_EQ(voice->settings.speed, 0.9);
 
-    updated.write_character_settings(
-        "guide", "test", std::nullopt, std::string_view{"voice_1"});
+    edit_fixture(updated, [&](WorkspaceConfigEditor& editor) {
+        editor.write_character_settings(
+            "guide", "test", std::nullopt, std::string_view{"voice_1"});
+    });
     const Workspace assigned = Workspace::load(fixture.root());
     EXPECT_EQ(assigned.find_character("guide")->voice_id, "voice_1");
-    EXPECT_THROW(assigned.delete_voice("voice_1"), std::invalid_argument);
+    EXPECT_THROW(edit_fixture(assigned, [&](WorkspaceConfigEditor& editor) {
+        editor.delete_voice("voice_1");
+    }), std::invalid_argument);
 
-    assigned.write_character_settings(
-        "guide", "test", std::nullopt, std::nullopt);
+    edit_fixture(assigned, [&](WorkspaceConfigEditor& editor) {
+        editor.write_character_settings(
+            "guide", "test", std::nullopt, std::nullopt);
+    });
     const Workspace cleared = Workspace::load(fixture.root());
-    cleared.delete_voice("voice_1");
+    edit_fixture(cleared, [&](WorkspaceConfigEditor& editor) {
+        editor.delete_voice("voice_1");
+    });
     EXPECT_EQ(
         Workspace::load(fixture.root()).find_voice("voice_1"), nullptr);
 }
@@ -504,7 +557,9 @@ TEST(Workspace, LoadsAndWritesOpenRouterTargets) {
         provider->config.openrouter_targets,
         (std::vector<std::string>{"CoreWeave", "Crusoe"}));
 
-    workspace.write_provider("router", provider->label, provider->config);
+    edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) {
+        editor.write_provider("router", provider->label, provider->config);
+    });
     const Workspace reloaded = Workspace::load(fixture.root());
     ASSERT_NE(reloaded.find_provider("router"), nullptr);
     EXPECT_EQ(
@@ -683,7 +738,9 @@ TEST(Workspace, NewCharacterPreservesAnExistingSharedVoice) {
         << "Customized shared voice.\n";
 
     const Workspace workspace = Workspace::load(fixture.root());
-    workspace.create_character("newcomer", "Newcomer", "A new character.");
+    edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) {
+        editor.create_character("newcomer", "Newcomer", "A new character.");
+    });
 
     EXPECT_EQ(file_bytes(shared_voice), "Customized shared voice.\n");
     EXPECT_EQ(
@@ -770,17 +827,27 @@ TEST(Workspace, CharacterFileEditsRequireAnExactListedFilename) {
     std::ofstream(fixture.root() / "forums" / "lobby" / "NOTES.md") << "Forum notes\n";
     const Workspace workspace = Workspace::load(fixture.root());
     const auto original = file_bytes(directory / "CHARACTER.md");
-    EXPECT_THROW(workspace.write_character_file("guide", "profile.md", "Changed"), std::out_of_range);
-    EXPECT_THROW(workspace.write_character_file("guide", "character.md", std::nullopt), std::out_of_range);
-    EXPECT_THROW(workspace.write_character_file("guide", "CHARACTER.md", std::nullopt), std::invalid_argument);
+    EXPECT_THROW(edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) {
+        editor.write_character_file("guide", "profile.md", "Changed");
+    }), std::out_of_range);
+    EXPECT_THROW(edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) {
+        editor.write_character_file("guide", "character.md", std::nullopt);
+    }), std::out_of_range);
+    EXPECT_THROW(edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) {
+        editor.write_character_file("guide", "CHARACTER.md", std::nullopt);
+    }), std::invalid_argument);
     EXPECT_EQ(file_bytes(directory / "PROFILE.md"), "Original profile\n");
     EXPECT_EQ(file_bytes(directory / "CHARACTER.md"), original);
     // A listed file can disappear after the immutable workspace snapshot was loaded.
     std::filesystem::remove(directory / "PROFILE.md");
-    EXPECT_THROW(workspace.write_character_file("guide", "PROFILE.md", "Changed"), std::out_of_range);
+    EXPECT_THROW(edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) {
+        editor.write_character_file("guide", "PROFILE.md", "Changed");
+    }), std::out_of_range);
     const auto forum_file = fixture.root() / "forums" / "lobby" / "NOTES.md";
     std::filesystem::remove(forum_file);
-    EXPECT_THROW(workspace.write_forum_file("lobby", "NOTES.md", "Changed"), std::out_of_range);
+    EXPECT_THROW(edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) {
+        editor.write_forum_file("lobby", "NOTES.md", "Changed");
+    }), std::out_of_range);
     EXPECT_FALSE(std::filesystem::exists(directory / "PROFILE.md"));
     EXPECT_FALSE(std::filesystem::exists(forum_file));
 }
@@ -824,7 +891,9 @@ TEST(Workspace, ForumDefinitionExpandsSharedAndLocalFilesForEachMember) {
     const auto directory = forums / "lobby";
     const Workspace plain = Workspace::load(fixture.root());
     EXPECT_FALSE(std::filesystem::exists(forums / "forum-definition.md"));
-    plain.create_forum("newcomer", "Newcomer", "reader");
+    edit_fixture(plain, [&](WorkspaceConfigEditor& editor) {
+        editor.create_forum("newcomer", "Newcomer", "reader");
+    });
     EXPECT_FALSE(std::filesystem::exists(forums / "forum-definition.md"));
     EXPECT_EQ(file_bytes(forums / "newcomer" / "FORUM.md"), "");
 
@@ -929,7 +998,9 @@ TEST(Workspace, CreatesAProviderByCopyingExistingSettings) {
         "cache_retention = \"long\"\n");
 
     const Workspace workspace = Workspace::load(fixture.root());
-    workspace.create_provider("copied", "Copied provider", "source");
+    edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) {
+        editor.create_provider("copied", "Copied provider", "source");
+    });
 
     const Workspace reloaded = Workspace::load(fixture.root());
     const WorkspaceProvider* const copied = reloaded.find_provider("copied");
@@ -951,7 +1022,9 @@ TEST(Workspace, CreatesAProviderByCopyingExistingSettings) {
     EXPECT_EQ(copied->config.cache_retention, CacheRetention::long_);
 
     EXPECT_THROW(
-        workspace.create_provider("bad_copy", "Bad copy", "missing"),
+        edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) {
+            editor.create_provider("bad_copy", "Bad copy", "missing");
+        }),
         std::invalid_argument);
     EXPECT_FALSE(std::filesystem::exists(
         fixture.root() / "system" / "providers" / "bad_copy"));
@@ -968,11 +1041,17 @@ TEST(Workspace, WritesConfigurationWithoutChangingTheLoadedInstance) {
         fixture.root() / "forums" / "lobby" / "members" / "writer");
 
     const Workspace workspace = Workspace::load(fixture.root());
-    workspace.write_character_settings(
-        "guide", "second", std::string_view{"mono"},
-        std::nullopt, std::string_view{"xhigh"}, WebSearchMode::required);
-    workspace.write_forum_default_character("lobby", "writer");
-    workspace.write_forum_default_persona("lobby", "reader");
+    edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) {
+        editor.write_character_settings(
+            "guide", "second", std::string_view{"mono"},
+            std::nullopt, std::string_view{"xhigh"}, WebSearchMode::required);
+    });
+    edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) {
+        editor.write_forum_default_character("lobby", "writer");
+    });
+    edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) {
+        editor.write_forum_default_persona("lobby", "reader");
+    });
 
     EXPECT_EQ(workspace.find_character("guide")->provider_id, "test");
     EXPECT_EQ(
@@ -1003,16 +1082,22 @@ TEST(Workspace, RejectsInvalidWritesWithoutChangingTheConfigFile) {
     const std::string before = file_bytes(character);
 
     EXPECT_THROW(
-        workspace.write_character_settings("guide", "missing", std::nullopt),
+        edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) {
+            editor.write_character_settings("guide", "missing", std::nullopt);
+        }),
         std::invalid_argument);
     EXPECT_THROW(
-        workspace.write_character_settings(
-            "guide", "test", std::string_view{"missing"}),
+        edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) {
+            editor.write_character_settings(
+                "guide", "test", std::string_view{"missing"});
+        }),
         std::invalid_argument);
     EXPECT_THROW(
-        workspace.write_character_settings(
-            "guide", "test", std::nullopt, std::nullopt,
-            std::string_view{"extreme"}),
+        edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) {
+            editor.write_character_settings(
+                "guide", "test", std::nullopt, std::nullopt,
+                std::string_view{"extreme"});
+        }),
         std::invalid_argument);
     EXPECT_EQ(file_bytes(character), before);
 
@@ -1023,21 +1108,29 @@ TEST(Workspace, RejectsInvalidWritesWithoutChangingTheConfigFile) {
     ModelBackendConfig config = original;
     config.port = 0;
     EXPECT_THROW(
-        workspace.write_provider("test", "Test", config), std::invalid_argument);
+        edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) {
+            editor.write_provider("test", "Test", config);
+        }), std::invalid_argument);
     config = original;
     config.api_key_id = "api_key_1";
     config.api_key_env = "Legacy Key";
     EXPECT_THROW(
-        workspace.write_provider("test", "Test", config), std::invalid_argument);
+        edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) {
+            editor.write_provider("test", "Test", config);
+        }), std::invalid_argument);
     config = original;
     config.host.clear();
     EXPECT_THROW(
-        workspace.write_provider("test", "Test", config), std::invalid_argument);
+        edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) {
+            editor.write_provider("test", "Test", config);
+        }), std::invalid_argument);
     EXPECT_EQ(file_bytes(provider), provider_before);
     config = original;
     config.model.clear();
     EXPECT_THROW(
-        workspace.write_provider("test", "Test", config), std::invalid_argument);
+        edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) {
+            editor.write_provider("test", "Test", config);
+        }), std::invalid_argument);
     EXPECT_EQ(file_bytes(provider), provider_before);
 
     EXPECT_TRUE(workspace.character_is_writable("guide"));
@@ -1052,9 +1145,11 @@ TEST(Workspace, WritesAssistantSettingsWithoutMakingItsDefinitionWritable) {
     fixture.write_style("mono", "font = \"mono\"\n");
     const Workspace workspace = Workspace::load(fixture.root());
 
-    workspace.write_character_settings(
-        workspace_assistant_id, "test", std::string_view{"mono"},
-        std::nullopt, std::string_view{"high"}, WebSearchMode::off);
+    edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) {
+        editor.write_character_settings(
+            workspace_assistant_id, "test", std::string_view{"mono"},
+            std::nullopt, std::string_view{"high"}, WebSearchMode::off);
+    });
 
     const Workspace reloaded = Workspace::load(fixture.root());
     const WorkspaceCharacter* const assistant =
@@ -1081,32 +1176,38 @@ TEST(Workspace, LoadingAnInvalidWorkspaceDoesNotChangeAnExistingSnapshot) {
 TEST(Workspace, ValidatesVoiceInputBeforeWritingAndIgnoresInvalidSavedConfig) {
     test::TestWorkspace fixture;
     const Workspace workspace = Workspace::load(fixture.root());
-    workspace.write_voice_input({
-        .url = "https://api.openai.com/v1/realtime/calls",
-        .model = "gpt-live-transcribe",
-        .api_key_id = "api_key_1",
-        .delay = "high",
-        .prompt = "Technical discussion.",
+    edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) {
+        editor.write_voice_input({
+            .url = "https://api.openai.com/v1/realtime/calls",
+            .model = "gpt-live-transcribe",
+            .api_key_id = "api_key_1",
+            .delay = "high",
+            .prompt = "Technical discussion.",
+        });
     });
     const std::filesystem::path path =
         fixture.root() / "system" / "voice-input" / "config.toml";
     const std::string before = file_bytes(path);
 
     EXPECT_THROW(
-        workspace.write_voice_input({
-            .url = "not-a-url",
-            .model = "gpt-live-transcribe",
-            .api_key_id = "api_key_1",
+        edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) {
+            editor.write_voice_input({
+                .url = "not-a-url",
+                .model = "gpt-live-transcribe",
+                .api_key_id = "api_key_1",
+            });
         }),
         std::invalid_argument);
     EXPECT_EQ(file_bytes(path), before);
 
     EXPECT_THROW(
-        workspace.write_voice_input({
-            .url = "https://api.openai.com/v1/realtime/calls",
-            .model = "gpt-live-transcribe",
-            .api_key_id = "api_key_1",
-            .delay = "maximum",
+        edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) {
+            editor.write_voice_input({
+                .url = "https://api.openai.com/v1/realtime/calls",
+                .model = "gpt-live-transcribe",
+                .api_key_id = "api_key_1",
+                .delay = "maximum",
+            });
         }),
         std::invalid_argument);
     EXPECT_EQ(file_bytes(path), before);
@@ -1129,9 +1230,11 @@ TEST(Workspace, ValidatesVoiceInputBeforeWritingAndIgnoresInvalidSavedConfig) {
 TEST(Workspace, NormalizesFishAudioConfigurationOnWriteAndLoad) {
     test::TestWorkspace fixture;
     const Workspace workspace = Workspace::load(fixture.root());
-    workspace.write_voice_output({
-        .url = "HTTPS://API.FISH.AUDIO:443", .model = " custom/model ",
-        .api_key_id = "api_key_2", .output_format = "mp3", .default_voice = "Reader",
+    edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) {
+        editor.write_voice_output({
+            .url = "HTTPS://API.FISH.AUDIO:443", .model = " custom/model ",
+            .api_key_id = "api_key_2", .output_format = "mp3", .default_voice = "Reader",
+        });
     });
     auto reloaded = Workspace::load(fixture.root());
     ASSERT_TRUE(reloaded.voice_output());
@@ -1146,9 +1249,11 @@ TEST(Workspace, NormalizesFishAudioConfigurationOnWriteAndLoad) {
     EXPECT_EQ(reloaded.voice_output()->url, "https://api.fish.audio/v1/tts");
     EXPECT_EQ(reloaded.voice_output()->model, "s2.1-pro");
     const std::string before = file_bytes(path);
-    EXPECT_THROW(workspace.write_voice_output({
-        .url = "http://api.fish.audio/v1/tts", .model = "s2.1-pro",
-        .api_key_id = "api_key_2", .output_format = "mp3", .default_voice = "Reader",
+    EXPECT_THROW(edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) {
+        editor.write_voice_output({
+            .url = "http://api.fish.audio/v1/tts", .model = "s2.1-pro",
+            .api_key_id = "api_key_2", .output_format = "mp3", .default_voice = "Reader",
+        });
     }), std::invalid_argument);
     EXPECT_EQ(file_bytes(path), before);
 }
@@ -1160,12 +1265,14 @@ TEST(Workspace, PersistsAndValidatesVoiceOutputSettings) {
         "display_name = \"Default Reader\"\n"
         "elevenlabs_voice_id = \"eleven-default\"\n");
     const Workspace workspace = Workspace::load(fixture.root());
-    workspace.write_voice_output({
-        .url = "https://api.fish.audio/v1/tts",
-        .model = "s2.1-pro",
-        .api_key_id = "api_key_2",
-        .output_format = "mp3_44100_128",
-        .default_voice = "Default Reader",
+    edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) {
+        editor.write_voice_output({
+            .url = "https://api.fish.audio/v1/tts",
+            .model = "s2.1-pro",
+            .api_key_id = "api_key_2",
+            .output_format = "mp3_44100_128",
+            .default_voice = "Default Reader",
+        });
     });
     const std::filesystem::path path =
         fixture.root() / "system" / "voice-output" / "config.toml";
@@ -1183,12 +1290,14 @@ TEST(Workspace, PersistsAndValidatesVoiceOutputSettings) {
         "eleven-default");
 
     EXPECT_THROW(
-        workspace.write_voice_output({
-            .url = "not-a-url",
-            .model = "s2.1-pro",
-            .api_key_id = "api_key_2",
-            .output_format = "mp3_44100_128",
-            .default_voice = "Default Reader",
+        edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) {
+            editor.write_voice_output({
+                .url = "not-a-url",
+                .model = "s2.1-pro",
+                .api_key_id = "api_key_2",
+                .output_format = "mp3_44100_128",
+                .default_voice = "Default Reader",
+            });
         }),
         std::invalid_argument);
     EXPECT_EQ(file_bytes(path), before);
@@ -1218,14 +1327,18 @@ TEST(Workspace, NormalizesLegacyVoiceOutputFormatsAndRejectsUnsupportedSaves) {
         EXPECT_EQ(loaded.voice_output()->output_format, format);
         auto settings = *loaded.voice_output();
         settings.output_format = legacy;
-        workspace.write_voice_output(settings);
+        edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) {
+            editor.write_voice_output(settings);
+        });
         EXPECT_NE(file_bytes(path).find(std::string("output_format = '") + format + "'"), std::string::npos);
     }
     const auto before = file_bytes(path);
     auto settings = *Workspace::load(fixture.root()).voice_output();
     for (const auto invalid : {"pcm_44100", "flac", "", "mp3_bad", "opus_48000_"}) {
         settings.output_format = invalid;
-        EXPECT_THROW(workspace.write_voice_output(settings), std::invalid_argument);
+        EXPECT_THROW(edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) {
+            editor.write_voice_output(settings);
+        }), std::invalid_argument);
         EXPECT_EQ(file_bytes(path), before);
     }
     std::ofstream(path) << "url = \"https://api.fish.audio/v1/tts\"\n"
@@ -1478,9 +1591,11 @@ TEST(Workspace, RejectsOpenAiSubscriptionWebSearchOverrides) {
             "display_name = \"Guide\"\nprovider = \"chatgpt\"\n");
         const Workspace workspace = Workspace::load(fixture.root());
         EXPECT_THROW(
-            workspace.write_character_settings(
-                "guide", "chatgpt", std::nullopt, std::nullopt, std::nullopt,
-                WebSearchMode::automatic),
+            edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) {
+                editor.write_character_settings(
+                    "guide", "chatgpt", std::nullopt, std::nullopt, std::nullopt,
+                    WebSearchMode::automatic);
+            }),
             std::invalid_argument);
     }
 }

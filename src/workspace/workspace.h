@@ -1,5 +1,7 @@
 #pragma once
 
+#include "util/text_source.h"
+
 #include "characters/character.h"
 #include "chat/persona.h"
 #include "providers/credentials.h"
@@ -121,6 +123,7 @@ struct HandleResolution {
 class Workspace final {
 public:
     static Workspace load(std::filesystem::path root);
+    static Workspace load(std::filesystem::path root, const TextFiles& files);
 
     [[nodiscard]] const std::filesystem::path& root() const noexcept {
         return root_;
@@ -206,108 +209,10 @@ public:
     [[nodiscard]] bool voice_is_writable(
         std::string_view id) const noexcept;
 
-    // These methods edit the materialized files without changing this loaded snapshot.
-    void write_provider(
-        std::string_view provider_id,
-        std::string_view display_name,
-        const ModelBackendConfig& config) const;
-    void create_provider(
-        std::string_view provider_id,
-        std::string_view display_name,
-        std::string_view copy_from = {}) const;
-    void delete_provider(std::string_view provider_id) const;
-    void write_style(
-        std::string_view style_id,
-        std::string_view display_name,
-        const CharacterAppearance& appearance) const;
-    void create_style(
-        std::string_view style_id,
-        std::string_view display_name) const;
-    void delete_style(std::string_view style_id) const;
-    void write_voice(
-        std::string_view voice_id,
-        std::string_view display_name,
-        std::string_view description,
-        std::string_view elevenlabs_voice_id,
-        const VoiceSettings& settings) const;
-    void create_voice(
-        std::string_view voice_id,
-        std::string_view display_name,
-        std::string_view description,
-        std::string_view elevenlabs_voice_id) const;
-    void delete_voice(std::string_view voice_id) const;
-    void write_voice_input(const WorkspaceVoiceInput& settings) const;
-    void write_voice_output(const WorkspaceVoiceOutput& settings) const;
-    void create_api_key(
-        std::string_view id,
-        std::string_view display_name,
-        std::string_view value) const;
-    void write_api_key(
-        std::string_view id,
-        std::string_view display_name,
-        std::string_view value) const;
-    void delete_api_key(std::string_view id) const;
-    void create_r2_storage(const R2StorageKey& key) const;
-    void write_r2_storage(const R2StorageKey& key) const;
-    void delete_r2_storage() const;
-    void write_next_api_key_id(std::uint64_t next_id) const;
-
-    void write_character_settings(
-        std::string_view character_id,
-        std::string_view provider_id,
-        std::optional<std::string_view> style_id,
-        std::optional<std::string_view> voice_id = std::nullopt,
-        std::optional<std::string_view> reasoning_effort = std::nullopt,
-        std::optional<WebSearchMode> web_search = std::nullopt) const;
-    void write_character_definition(
-        std::string_view character_id,
-        std::string_view display_name,
-        std::optional<std::string_view> markdown = std::nullopt) const;
-    void delete_character(std::string_view character_id) const;
-    void write_character_file(
-        std::string_view character_id,
-        std::string_view filename,
-        std::optional<std::string_view> content,
-        bool create = false) const;
-    void write_persona(
-        std::string_view persona_id,
-        std::string_view display_name,
-        std::string_view markdown,
-        std::optional<std::string_view> style_id,
-        std::optional<std::string_view> voice_id) const;
-    void delete_persona(std::string_view persona_id) const;
-    void create_persona(
-        std::string_view persona_id,
-        std::string_view display_name) const;
-    void create_character(
-        std::string_view character_id,
-        std::string_view display_name,
-        std::string_view description) const;
-    void create_forum(
-        std::string_view forum_id,
-        std::string_view display_name,
-        std::string_view persona_id) const;
-    void write_forum(
-        std::string_view forum_id,
-        std::string_view display_name,
-        std::string_view markdown) const;
-    void write_forum_file(
-        std::string_view forum_id,
-        std::string_view filename,
-        std::optional<std::string_view> content,
-        bool create = false) const;
-    void delete_forum(std::string_view forum_id) const;
-    void write_forum_members(
-        std::string_view forum_id,
-        std::span<const std::string> character_ids) const;
-    void write_forum_default_character(
-        std::string_view forum_id,
-        std::string_view character_id) const;
-    void write_forum_default_persona(
-        std::string_view forum_id,
-        std::string_view persona_id) const;
 
 private:
+    friend class WorkspaceConfigEditor;
+    static Workspace load(std::filesystem::path root, const TextSource& source);
     std::filesystem::path root_;
     std::vector<WorkspaceProvider> providers_;
     std::vector<WorkspaceStyle> styles_;

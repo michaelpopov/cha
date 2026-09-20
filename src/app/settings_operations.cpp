@@ -496,7 +496,7 @@ cha::web::StyleDetail update_style(
         try {
             const WorkspaceConfigEditResult edited = store.apply_style_update(
                 id, update.display_name, update.appearance);
-            workspace::invalidate_affected_sessions(
+            workspace::refresh_affected_sessions(
                 live_sessions, edited.affected_forum_ids);
         } catch (const std::invalid_argument&) {
             fail(ErrorCode::invalid_argument, "Invalid style settings.");
@@ -584,7 +584,7 @@ cha::web::VoiceDetail update_voice(
                 update.description,
                 update.elevenlabs_voice_id,
                 VoiceSettings{.speed = update.settings.speed});
-            workspace::invalidate_affected_sessions(
+            workspace::refresh_affected_sessions(
                 live_sessions, edited.affected_forum_ids);
         } catch (const std::invalid_argument&) {
             fail(ErrorCode::invalid_argument, "Invalid voice settings.");

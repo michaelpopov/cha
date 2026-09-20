@@ -309,6 +309,16 @@ struct Application::Impl {
         running = true;
         notified_epoch = live_sessions->context_epoch();
         published_epoch.store(notified_epoch);
+        store->set_restart_required_handler([this] { mark_unusable(); });
+    }
+
+    void mark_unusable() {
+        unusable.store(true);
+        state.store(ApplicationState::unavailable);
+        live_sessions->begin_shutdown();
+        cancel_all_pending_media();
+        speech_proxy.stop();
+        audio_downloads->request_stop();
     }
 
     void publish_vault_names() {
@@ -879,7 +889,7 @@ struct Application::Impl {
     std::atomic_bool stopping_flag{};
     bool running{};
     bool stopped{};
-    bool unusable{};
+    std::atomic_bool unusable{};
     std::atomic_bool preserve_on_destroy{};
     std::atomic<ApplicationState> state{ApplicationState::running};
     std::atomic_uint64_t published_epoch{1};
@@ -2922,8 +2932,7 @@ void Application::set_active_password(std::string password) {
 }
 
 void Application::mark_unusable() {
-    impl_->unusable = true;
-    impl_->state.store(ApplicationState::unavailable);
+    impl_->mark_unusable();
 }
 
 bool Application::stopping() const {

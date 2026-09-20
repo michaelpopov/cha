@@ -56,6 +56,9 @@ namespace cha::app::workspace {
 void invalidate_affected_sessions(
     cha::web::LiveSessionManager& live_sessions,
     std::span<const std::string> forum_ids);
+void refresh_affected_sessions(
+    cha::web::LiveSessionManager& live_sessions,
+    std::span<const std::string> forum_ids);
 
 [[nodiscard]] cha::web::CharacterDetail get_character(
     const Workspace& workspace,

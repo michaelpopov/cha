@@ -11,6 +11,9 @@ import {
   type SessionSnapshot,
 } from '../api/client';
 import type { SessionEventHandlers } from '../api/events';
+import { createEnvelopeNativeBridge } from '../api/nativeBridge';
+import { createNativeSessionEvents } from '../api/nativeEvents';
+import type { NativeRequest } from '../api/client';
 import {
   bootstrapFixture,
   characterDetailFixture,
@@ -1874,21 +1877,14 @@ async function openGuideSettingsFromPlanning(
   return planning;
 }
 
-it('reopens a live conversation after a settings save without leaving the settings screen', async () => {
+it('refreshes appearance on the existing subscription without leaving settings', async () => {
   const user = userEvent.setup();
   const events = drivableSessionEvents();
   const previous = planningVoiceSnapshot(serifItalicVoice);
   const next = planningVoiceSnapshot(monoLargeVoice);
-  let lobbySnapshots = 0;
-  const getSessionSnapshot = vi.fn(async (forumId: string) => {
-    if (forumId !== 'lobby') return snapshotFixture;
-    lobbySnapshots += 1;
-    if (lobbySnapshots === 1) return previous;
-    if (lobbySnapshots === 2) {
-      throw new ChaError('session_not_live', 'Session is not live.');
-    }
-    return next;
-  });
+  const getSessionSnapshot = vi.fn(async (forumId: string) => (
+    forumId === 'lobby' ? previous : snapshotFixture
+  ));
   const openSession = vi.fn(async (forumId: string, sessionId: string) => ({
     forum_id: forumId,
     session_id: sessionId,
@@ -1914,21 +1910,9 @@ it('reopens a live conversation after a settings save without leaving the settin
     web_search: null,
   }));
 
-  act(() => events.handlers[planning].onSnapshot({
-    ...previous,
-    lifecycle: 'stopping',
-    shutdown_reason: 'reloading',
-  }));
-  expect(screen.getByRole('heading', { name: 'Settings' })).toBeInTheDocument();
-  act(() => events.handlers[planning].onError({ kind: 'stream_failure' }));
-
-  await waitFor(() => expect(
-    events.connections.filter(({ key }) => key === 'lobby/planning'),
-  ).toHaveLength(2));
-  const reattached = events.connections.findIndex((connection, index) => (
-    index > planning && connection.key === 'lobby/planning'
-  ));
-  act(() => events.handlers[reattached].onSnapshot(next));
+  act(() => events.handlers[planning].onSnapshot(next));
+  expect(events.connections.filter(({ key }) => key === 'lobby/planning')).toHaveLength(1);
+  expect(events.connections[planning].close).not.toHaveBeenCalled();
 
   expect(document.querySelector('main')).toHaveAttribute('data-view', 'character-settings');
   expect(openSession.mock.calls.filter(([, sessionId]) => sessionId === 'planning')).toHaveLength(1);
@@ -1937,6 +1921,74 @@ it('reopens a live conversation after a settings save without leaving the settin
   expect(screen.getByText('A considered answer')).toHaveClass(
     'cha-message-text', 'cha-font-mono', 'cha-scale-large',
   );
+});
+
+it('reopens from a native reload snapshot and retries until the old owner stops', async () => {
+  const requests: NativeRequest[] = [];
+  const bridge = createEnvelopeNativeBridge({
+    connectionId: 'view-test',
+    post: (message) => {
+      if ('method' in (message as object)) requests.push(message as NativeRequest);
+    },
+  });
+  bridge.setContextEpoch(1);
+  const connect = createNativeSessionEvents(bridge, {
+    connectionId: 'view-test', contextEpoch: () => bridge.contextEpoch(),
+  });
+  const subscriptions = () => requests.filter((request) => (
+    request.method === 'session.subscribe' && request.params?.session_id === 'planning'
+  ));
+  let delivery = 0;
+  const publish = (snapshot: SessionSnapshot, seq: number) => {
+    const request = subscriptions().at(-1)!;
+    bridge.receive({
+      connection_id: 'view-test', delivery_id: ++delivery,
+      messages: [{
+        connection_id: 'view-test', context_epoch: 1,
+        subscription_id: request.params!.subscription_id,
+        event: 'session.snapshot', forum_id: 'lobby', session_id: 'planning',
+        seq, payload: snapshot,
+      }],
+    });
+  };
+  let opens = 0;
+  const openSession = vi.fn(async (forumId: string, sessionId: string) => {
+    if (sessionId === 'planning' && ++opens === 2) {
+      throw new ChaError('session_stopping', 'Still stopping');
+    }
+    return { forum_id: forumId, session_id: sessionId };
+  });
+  const view = render(<App
+    client={storedPlanningClient({ openSession })}
+    connectSessionEvents={connect}
+    retryDelays={[0]}
+  />);
+  await openPlanningFromTheLobby();
+  await waitFor(() => expect(subscriptions()).toHaveLength(1));
+  act(() => publish(lobbySnapshot(), 0));
+  fireEvent.click(screen.getByRole('button', { name: 'Characters' }));
+  act(() => publish({
+    ...lobbySnapshot(), lifecycle: 'stopping', shutdown_reason: 'reloading',
+  }, 1));
+
+  await waitFor(() => expect(subscriptions()).toHaveLength(2));
+  expect(opens).toBe(3);
+  expect(document.querySelector('main')).toHaveAttribute('data-view', 'characters');
+  // Another save can stop the replacement before its successful attach has
+  // finished settling. Its terminal event must supersede that recovery too.
+  act(() => {
+    publish(lobbySnapshot(), 0);
+    publish({ ...lobbySnapshot(), lifecycle: 'stopping', shutdown_reason: 'reloading' }, 1);
+  });
+  await waitFor(() => expect(subscriptions()).toHaveLength(3));
+  expect(opens).toBe(4);
+  act(() => publish(lobbySnapshot(), 0));
+  fireEvent.click(screen.getByRole('button', { name: /^Planning/ }));
+  expect(screen.queryByText('Applying settings…')).not.toBeInTheDocument();
+  expect(screen.queryByText(/Reconnecting live updates/)).not.toBeInTheDocument();
+  expect(screen.getByLabelText('Current chat context')).toHaveTextContent('The Lobby');
+  view.unmount();
+  bridge.dispose();
 });
 
 it('clears the conversation route before reloading after a vault switch', async () => {

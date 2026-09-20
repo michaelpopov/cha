@@ -105,6 +105,7 @@ public:
     [[nodiscard]] std::shared_ptr<const cha::app::SessionOutputItem>
     take_output();
     void acknowledge_output() noexcept;
+    void refresh_presentation();
     [[nodiscard]] std::shared_ptr<cha::app::SessionOutput> output() const {
         return output_;
     }

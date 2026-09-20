@@ -748,17 +748,6 @@ std::int64_t table_row_count(
     return statement.integer(0);
 }
 
-#ifndef _WIN32
-void expect_same_directory(
-    const std::filesystem::path& path,
-    const struct stat& before) {
-    struct stat after {};
-    ASSERT_EQ(::stat(path.c_str(), &after), 0);
-    EXPECT_EQ(before.st_dev, after.st_dev);
-    EXPECT_EQ(before.st_ino, after.st_ino);
-}
-#endif
-
 void expect_session_root_identity(
     const std::shared_ptr<const Workspace>& workspace,
     const std::filesystem::path& workspace_root) {
@@ -865,7 +854,7 @@ void write_key_next_id(
         "next_id = " + std::to_string(next_id) + "\n");
 }
 
-TEST_F(RuntimeWorkspaceConfigStoreTest, OpensOneOwnerOnlyRootWithChildren) {
+TEST_F(RuntimeWorkspaceConfigStoreTest, OpensPrivateSessionStorageWithoutMaterializingConfiguration) {
     std::error_code error;
     std::filesystem::remove_all(source(), error);
     ASSERT_FALSE(error);
@@ -881,7 +870,7 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, OpensOneOwnerOnlyRootWithChildren) {
         welcome_child = store->welcome_path();
         EXPECT_EQ(workspace_child, root / "workspace");
         EXPECT_EQ(welcome_child, root / "welcome");
-        EXPECT_TRUE(std::filesystem::is_directory(workspace_child));
+        EXPECT_FALSE(std::filesystem::exists(workspace_child));
         EXPECT_TRUE(std::filesystem::is_directory(welcome_child));
         std::size_t children = 0;
         for (const std::filesystem::directory_entry& entry :
@@ -889,10 +878,9 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, OpensOneOwnerOnlyRootWithChildren) {
             (void)entry;
             ++children;
         }
-        EXPECT_EQ(children, 2U);
+        EXPECT_EQ(children, 1U);
 #ifndef _WIN32
         EXPECT_EQ(posix_mode(root), static_cast<mode_t>(0700));
-        EXPECT_EQ(posix_mode(workspace_child), static_cast<mode_t>(0700));
         EXPECT_EQ(posix_mode(welcome_child), static_cast<mode_t>(0700));
         const std::filesystem::path wal = database();
         std::filesystem::path wal_file = wal;
@@ -908,9 +896,6 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, OpensOneOwnerOnlyRootWithChildren) {
 #endif
         EXPECT_EQ(std::getenv(dotenv_variable), nullptr);
         EXPECT_FALSE(std::filesystem::exists(workspace_child / ".env"));
-        EXPECT_TRUE(
-            std::filesystem::is_directory(
-                workspace_child / "system" / "providers"));
         EXPECT_NE(store->snapshot()->find_character("guide"), nullptr);
         const std::shared_ptr<const Workspace> published = store->snapshot();
         expect_session_root_identity(published, workspace_child);
@@ -993,12 +978,10 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, RejectsMissingV1AndForeignDatabases) {
         (void)WorkspaceConfigStore::open(database()), std::runtime_error);
 }
 
-TEST_F(RuntimeWorkspaceConfigStoreTest, SuccessfulEditUpdatesFilesDatabaseAndWorkspace) {
+TEST_F(RuntimeWorkspaceConfigStoreTest, SuccessfulEditUpdatesDatabaseAndWorkspaceWithoutWritingFiles) {
     const auto store = open_store();
-    const std::filesystem::path character =
-        store->workspace_path() / "characters" / "guide" / "character.toml";
-    const std::filesystem::path forum =
-        store->workspace_path() / "forums" / "lobby" / "config.toml";
+    const std::string character = "characters/guide/character.toml";
+    const std::string forum = "forums/lobby/config.toml";
     const std::string dotenv_before =
         std::getenv(dotenv_variable) == nullptr
             ? std::string()
@@ -1022,9 +1005,9 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, SuccessfulEditUpdatesFilesDatabaseAndWor
     EXPECT_EQ(
         after_character->find_character("guide")->web_search,
         WebSearchMode::automatic);
-    EXPECT_NE(file_bytes(character).find("second"), std::string::npos);
-    EXPECT_NE(file_bytes(character).find("reasoning_effort"), std::string::npos);
-    EXPECT_NE(file_bytes(character).find("web_search"), std::string::npos);
+    EXPECT_NE(stored_config(database(), character).find("second"), std::string::npos);
+    EXPECT_NE(stored_config(database(), character).find("reasoning_effort"), std::string::npos);
+    EXPECT_NE(stored_config(database(), character).find("web_search"), std::string::npos);
     EXPECT_NE(
         stored_config(database(), "characters/guide/character.toml").find("second"),
         std::string::npos);
@@ -1040,7 +1023,7 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, SuccessfulEditUpdatesFilesDatabaseAndWor
             "lobby", member_ids, "reader");
     EXPECT_EQ(persona_result.affected_forum_ids, std::vector<std::string>{"lobby"});
     EXPECT_EQ(store->snapshot()->find_forum("lobby")->default_persona_id, "reader");
-    EXPECT_NE(file_bytes(forum).find("reader"), std::string::npos);
+    EXPECT_NE(stored_config(database(), forum).find("reader"), std::string::npos);
     EXPECT_EQ(
         std::getenv(dotenv_variable) == nullptr
             ? std::string()
@@ -1311,24 +1294,21 @@ TEST_F(
     EXPECT_EQ(config_contents(database()), before);
     EXPECT_NE(store->snapshot()->find_character("unused"), nullptr);
     EXPECT_EQ(
-        file_bytes(
-            store->workspace_path() / "characters" / "unused"
-            / "CHARACTER.md"),
+        stored_config(database(), "characters/unused/CHARACTER.md"),
         "Unused instructions\n");
 }
 
 TEST_F(
     RuntimeWorkspaceConfigStoreTest,
-    EmptyEditPublicationFailureRestoresWithoutRequiringRestart) {
+    EmptyEditPublicationFailureLeavesStateUnchanged) {
     const auto store = open_store();
     store->apply_character_settings(
         "guide", "second", std::string_view{"mono"},
         std::nullopt, std::string_view{"high"}, WebSearchMode::automatic);
     const std::shared_ptr<const Workspace> published = store->snapshot();
     const auto committed_rows = config_contents(database());
-    const std::filesystem::path character =
-        store->workspace_path() / "characters" / "guide" / "character.toml";
-    const std::string materialized = file_bytes(character);
+    const std::string character = "characters/guide/character.toml";
+    const std::string config_before = stored_config(database(), character);
 
     force_next_workspace_config_fault(WorkspaceConfigFault::publication);
     try {
@@ -1346,7 +1326,7 @@ TEST_F(
     }
 
     EXPECT_EQ(config_contents(database()), committed_rows);
-    EXPECT_EQ(file_bytes(character), materialized);
+    EXPECT_EQ(stored_config(database(), character), config_before);
     EXPECT_EQ(store->snapshot().get(), published.get());
 
     store->apply_character_settings("guide", "test", std::nullopt);
@@ -1406,13 +1386,12 @@ TEST_F(
     EXPECT_EQ(table_row_count(database(), "turns"), 1);
     EXPECT_EQ(table_row_count(database(), "entries"), 2);
     EXPECT_NE(store->snapshot()->find_forum("lobby"), nullptr);
-    EXPECT_TRUE(std::filesystem::exists(
-        store->workspace_path() / "forums" / "lobby" / "config.toml"));
+    EXPECT_TRUE(config_contents(database()).contains("forums/lobby/config.toml"));
 }
 
 TEST_F(
     RuntimeWorkspaceConfigStoreTest,
-    MaterializedWorkspaceCollectsBackToIdenticalRowsWithPlaceholder) {
+    ExportCollectsBackToIdenticalRowsWithPlaceholder) {
     std::filesystem::remove(
         source() / "forums" / "lobby" / "members" / "writer"
             / "character.toml");
@@ -1426,8 +1405,9 @@ TEST_F(
     std::filesystem::create_directories(export_);
     const std::filesystem::path collected_database =
         export_ / "collected.sqlite3";
-    (void)import_workspace_configuration(
-        store->workspace_path(), collected_database);
+    const auto exported = export_ / "configuration";
+    (void)export_workspace_configuration(database(), exported, WorkspaceConfigLease::already_held);
+    (void)import_workspace_configuration(exported, collected_database);
 
     EXPECT_EQ(config_contents(collected_database), expected);
 }
@@ -1504,9 +1484,8 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, RejectsInvalidUnusedProviderUpdates) {
     const auto store = open_store();
     const auto published = store->snapshot();
     const auto before = config_contents(database());
-    const auto path = store->workspace_path()
-        / "system" / "providers" / "second" / "config.toml";
-    const std::string file_before = file_bytes(path);
+    const std::string path = "system/providers/second/config.toml";
+    const std::string file_before = stored_config(database(), path);
     const ModelBackendConfig original = published->find_provider("second")->config;
     for (const std::string_view invalid : {"host", "model", "timeout"}) {
         SCOPED_TRACE(invalid);
@@ -1518,7 +1497,7 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, RejectsInvalidUnusedProviderUpdates) {
             store->apply_provider_update("second", "Second", config),
             std::invalid_argument);
         EXPECT_EQ(config_contents(database()), before);
-        EXPECT_EQ(file_bytes(path), file_before);
+        EXPECT_EQ(stored_config(database(), path), file_before);
         EXPECT_EQ(store->snapshot(), published);
         ASSERT_NE(store->snapshot()->find_provider("second"), nullptr);
         EXPECT_EQ(store->snapshot()->find_provider("second")->config.model, original.model);
@@ -1577,8 +1556,7 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, CreationSkipsOccupiedPersonaContainer) {
     const auto before = config_contents(database());
     const auto store = open_store();
     ASSERT_EQ(store->snapshot()->find_persona("persona_1"), nullptr);
-    ASSERT_TRUE(std::filesystem::exists(
-        store->workspace_path() / "personas" / "persona_1"));
+    ASSERT_TRUE(before.contains("personas/persona_1/nested/persona.toml"));
 
     const std::string id = store->create_persona("New Reader");
 
@@ -1638,7 +1616,7 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, SerializesTwoEditsAndEditReadInteraction
         std::string::npos);
 }
 
-void expect_restored_old_configuration(
+void expect_unchanged_configuration(
     const std::filesystem::path& database,
     WorkspaceConfigStore& store,
     const std::shared_ptr<const Workspace>& published) {
@@ -1651,29 +1629,19 @@ void expect_restored_old_configuration(
         stored_config(database, "characters/guide/character.toml")
             .find("second"),
         std::string::npos);
-    EXPECT_EQ(
-        file_bytes(workspace / "characters" / "guide" / "character.toml")
-            .find("second"),
-        std::string::npos);
     EXPECT_NE(
-        file_bytes(workspace / "characters" / "guide" / "character.toml")
+        stored_config(database, "characters/guide/character.toml")
             .find("provider = \"test\""),
         std::string::npos);
 }
 
 TEST_F(
     RuntimeWorkspaceConfigStoreTest,
-    CandidateValidationFailureRestoresTheStableDirectory) {
+    CandidateValidationFailurePreservesPublishedSnapshot) {
     const auto store = open_store();
     const std::shared_ptr<const Workspace> published = store->snapshot();
     const std::filesystem::path workspace = store->workspace_path();
-#ifndef _WIN32
-    struct stat before {};
-    ASSERT_EQ(::stat(workspace.c_str(), &before), 0);
-#endif
-    write_bytes(
-        workspace / "system" / "providers" / "test" / "config.toml",
-        "not toml\n");
+    const auto rows_before = config_contents(database());
     std::atomic<bool> stop{false};
     std::thread reader([&] {
         while (!stop.load()) {
@@ -1684,41 +1652,32 @@ TEST_F(
         }
     });
     EXPECT_THROW(
-        (void)store->apply_character_settings("guide", "second", std::nullopt),
+        (void)store->apply_character_file("guide", "CHARACTER.md", "$$(missing.md)"),
         std::runtime_error);
     stop.store(true);
     reader.join();
-#ifndef _WIN32
-    expect_same_directory(workspace, before);
-#endif
-    expect_restored_old_configuration(database(), *store, published);
+    expect_unchanged_configuration(database(), *store, published);
+    EXPECT_EQ(config_contents(database()), rows_before);
+    EXPECT_EQ(store->snapshot(), published);
 }
 
-TEST_F(RuntimeWorkspaceConfigStoreTest, ForcedPreCommitFailuresRestoreOldContents) {
+TEST_F(RuntimeWorkspaceConfigStoreTest, ForcedPreCommitFailuresLeaveStateUnchanged) {
     const auto store = open_store();
     const std::shared_ptr<const Workspace> published = store->snapshot();
-    const std::filesystem::path workspace = store->workspace_path();
     const WorkspaceConfigFault faults[]{
-        WorkspaceConfigFault::collect_rows,
+        WorkspaceConfigFault::validation,
         WorkspaceConfigFault::sqlite_begin,
         WorkspaceConfigFault::sqlite_write,
         WorkspaceConfigFault::sqlite_commit,
     };
     for (const WorkspaceConfigFault fault : faults) {
-#ifndef _WIN32
-        struct stat before {};
-        ASSERT_EQ(::stat(workspace.c_str(), &before), 0);
-#endif
         force_next_workspace_config_fault(fault);
         EXPECT_THROW(
             (void)store->apply_character_settings(
                 "guide", "second", std::nullopt),
             std::runtime_error)
             << static_cast<int>(fault);
-#ifndef _WIN32
-        expect_same_directory(workspace, before);
-#endif
-        expect_restored_old_configuration(database(), *store, published);
+        expect_unchanged_configuration(database(), *store, published);
     }
 }
 
@@ -1750,52 +1709,28 @@ TEST_F(
     EXPECT_EQ(
         stored_config(database(), "characters/guide/CHARACTER.md"),
         original_markdown);
-    EXPECT_EQ(
-        file_bytes(
-            store->workspace_path() / "characters" / "guide"
-            / "character.toml"),
-        original_config);
-    EXPECT_EQ(
-        file_bytes(
-            store->workspace_path() / "characters" / "guide"
-            / "CHARACTER.md"),
-        original_markdown);
     EXPECT_EQ(store->snapshot()->find_character("guide")->character.display_name, "Guide");
 }
 
-TEST_F(
-    RuntimeWorkspaceConfigStoreTest,
-    RestorationFailureRequiresRestartAndLeavesCommittedStateOld) {
+TEST_F(RuntimeWorkspaceConfigStoreTest, RuntimeEditsNeverReadOrWriteConfigurationFiles) {
     const auto store = open_store();
-    const std::shared_ptr<const Workspace> published = store->snapshot();
-    const std::filesystem::path workspace = store->workspace_path();
-#ifndef _WIN32
-    struct stat before {};
-    ASSERT_EQ(::stat(workspace.c_str(), &before), 0);
-#endif
-    write_bytes(
-        workspace / "system" / "providers" / "test" / "config.toml",
-        "not toml\n");
-    force_next_workspace_config_fault(WorkspaceConfigFault::restore);
-    try {
-        (void)store->apply_character_settings("guide", "second", std::nullopt);
-        FAIL() << "expected restart-required restoration failure";
-    } catch (const WorkspaceRestartRequiredError& error) {
-        const std::string message = error.what();
-        EXPECT_NE(message.find("Failed to restore"), std::string::npos)
-            << message;
-        EXPECT_NE(message.find("Restart is required"), std::string::npos)
-            << message;
-    }
-#ifndef _WIN32
-    expect_same_directory(workspace, before);
-#endif
-    EXPECT_EQ(published->find_character("guide")->provider_id, "test");
-    EXPECT_EQ(store->snapshot().get(), published.get());
-    EXPECT_EQ(
-        stored_config(database(), "characters/guide/character.toml")
-            .find("second"),
-        std::string::npos);
+    const auto old_snapshot = store->snapshot();
+    const auto workspace = store->workspace_path();
+    // A stale or corrupted physical tree cannot affect the authoritative rows.
+    write_bytes(workspace / "system/providers/test/config.toml", "not toml\n");
+    store->apply_character_settings("guide", "second", std::nullopt);
+    EXPECT_EQ(store->snapshot()->find_character("guide")->provider_id, "second");
+    EXPECT_EQ(old_snapshot->find_character("guide")->provider_id, "test");
+    EXPECT_EQ(file_bytes(workspace / "system/providers/test/config.toml"), "not toml\n");
+    EXPECT_FALSE(std::filesystem::exists(workspace / "characters"));
+    std::filesystem::remove_all(workspace);
+    store->apply_character_settings("guide", "test", std::nullopt);
+    EXPECT_FALSE(std::filesystem::exists(workspace));
+    auto maintenance = store->reserve_maintenance();
+    maintenance.close();
+    maintenance.reopen();
+    EXPECT_EQ(store->snapshot()->find_character("guide")->provider_id, "test");
+    EXPECT_FALSE(std::filesystem::exists(workspace));
 }
 
 TEST_F(
@@ -1821,20 +1756,12 @@ TEST_F(
             stored_config(database(), "characters/guide/character.toml")
                 .find("second"),
             std::string::npos);
-        EXPECT_NE(
-            file_bytes(
-                store->workspace_path() / "characters" / "guide"
-                / "character.toml")
-                .find("second"),
-            std::string::npos);
     }
 
     const auto restarted = open_store();
     EXPECT_EQ(restarted->snapshot()->find_character("guide")->provider_id, "second");
     EXPECT_NE(
-        file_bytes(
-            restarted->workspace_path() / "characters" / "guide"
-            / "character.toml")
+        stored_config(database(), "characters/guide/character.toml")
             .find("second"),
         std::string::npos);
 }
@@ -2328,7 +2255,7 @@ TEST_F(
 
 TEST_F(
     RuntimeWorkspaceConfigStoreTest,
-    MergeSqliteFailuresRestoreDestinationTree) {
+    MergeSqliteFailuresLeaveDestinationUnchanged) {
     test::TestWorkspace source_workspace;
     source_workspace.add_persona("beta", "Beta");
     const std::filesystem::path source_database =
@@ -2338,22 +2265,15 @@ TEST_F(
     const auto before = config_contents(database());
     const std::filesystem::path workspace = store->workspace_path();
     const WorkspaceConfigFault faults[]{
-        WorkspaceConfigFault::collect_rows,
+        WorkspaceConfigFault::validation,
         WorkspaceConfigFault::sqlite_begin,
         WorkspaceConfigFault::sqlite_write,
         WorkspaceConfigFault::sqlite_commit,
     };
     for (const WorkspaceConfigFault fault : faults) {
-#ifndef _WIN32
-        struct stat before_stat {};
-        ASSERT_EQ(::stat(workspace.c_str(), &before_stat), 0);
-#endif
         force_next_workspace_config_fault(fault);
         EXPECT_THROW(merge_from(*store, source_database), std::runtime_error)
             << static_cast<int>(fault);
-#ifndef _WIN32
-        expect_same_directory(workspace, before_stat);
-#endif
         EXPECT_EQ(config_contents(database()), before);
         EXPECT_EQ(store->snapshot().get(), published.get());
         EXPECT_EQ(store->snapshot()->find_persona("beta"), nullptr);
@@ -2363,7 +2283,7 @@ TEST_F(
 
 TEST_F(
     RuntimeWorkspaceConfigStoreTest,
-    MergeRestorationFailureRequiresRestartWithoutPublishing) {
+    InvalidMergedCandidateCanBeDiscardedWithoutRestart) {
     test::TestWorkspace source_workspace;
     std::filesystem::remove_all(
         source_workspace.root() / "characters" / "guide");
@@ -2380,19 +2300,10 @@ TEST_F(
     const auto store = open_store();
     const std::shared_ptr<const Workspace> published = store->snapshot();
     const auto before = config_contents(database());
-    force_next_workspace_config_fault(WorkspaceConfigFault::restore);
-    try {
-        merge_from(*store, source_database);
-        FAIL() << "expected restart-required restoration failure";
-    } catch (const WorkspaceRestartRequiredError& error) {
-        const std::string message = error.what();
-        EXPECT_NE(message.find("Failed to restore"), std::string::npos)
-            << message;
-        EXPECT_NE(message.find("Restart is required"), std::string::npos)
-            << message;
-    }
+    EXPECT_THROW(merge_from(*store, source_database), WorkspaceConfigValidationError);
     EXPECT_EQ(config_contents(database()), before);
     EXPECT_EQ(store->snapshot().get(), published.get());
+    EXPECT_NO_THROW(store->apply_character_settings("guide", "second", std::nullopt));
 }
 
 TEST_F(

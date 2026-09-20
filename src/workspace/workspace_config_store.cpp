@@ -7,6 +7,7 @@
 #include "util/path_name.h"
 #include "util/private_filesystem.h"
 #include "workspace/workspace.h"
+#include "workspace/workspace_config_editor.h"
 
 #include <toml++/toml.hpp>
 
@@ -384,51 +385,7 @@ void materialize_config_files(
     }
 }
 
-class TemporaryPrivateRoot {
-public:
-    TemporaryPrivateRoot() {
-        const std::filesystem::path parent =
-            std::filesystem::temp_directory_path();
-        root_ = parent
-            / ("cha-import-"
-               + std::to_string(
-                   std::chrono::steady_clock::now().time_since_epoch().count())
-               + "-"
-               + std::to_string(++next_validation_serial));
-        create_private_directory(root_);
-        try {
-            create_private_directory(root_ / "workspace");
-        } catch (...) {
-            std::error_code ignored;
-            std::filesystem::remove_all(root_, ignored);
-            throw;
-        }
-    }
-
-    TemporaryPrivateRoot(const TemporaryPrivateRoot&) = delete;
-    TemporaryPrivateRoot& operator=(const TemporaryPrivateRoot&) = delete;
-
-    ~TemporaryPrivateRoot() {
-        std::error_code ignored;
-        std::filesystem::remove_all(root_, ignored);
-    }
-
-    [[nodiscard]] const std::filesystem::path& root() const noexcept {
-        return root_;
-    }
-    [[nodiscard]] std::filesystem::path workspace() const {
-        return root_ / "workspace";
-    }
-
-private:
-    std::filesystem::path root_;
-};
-
-// Previous processes may leave an orphaned cha-runtime-* tree in the system
-// temporary directory. It is a copy of already-committed configuration plus a
-// non-durable Welcome database. Runtime never reuses an orphan; each startup
-// creates a fresh root and ordinary temporary-directory cleanup can remove the
-// leftover tree.
+// Only ephemeral session storage lives here; configuration stays in SQLite.
 class RuntimePrivateRoot {
 public:
     RuntimePrivateRoot() {
@@ -446,7 +403,6 @@ public:
                 create_private_directory(root_);
                 workspace_ = root_ / "workspace";
                 welcome_ = root_ / "welcome";
-                create_private_directory(workspace_);
                 try {
                     create_private_directory(welcome_);
                 } catch (...) {
@@ -495,35 +451,6 @@ private:
     const std::filesystem::path& database,
     WorkspaceDatabaseState state);
 
-void remove_directory_contents(const std::filesystem::path& directory) {
-    std::error_code error;
-    std::filesystem::directory_iterator iterator(
-        directory,
-        std::filesystem::directory_options::none,
-        error);
-    if (error) {
-        fail_path(
-            "Failed to read '" + utf8_path(directory) + "': " + error.message());
-    }
-    std::vector<std::filesystem::path> children;
-    const std::filesystem::directory_iterator end;
-    for (; iterator != end; iterator.increment(error)) {
-        if (error) {
-            fail_path(
-                "Failed to read '" + utf8_path(directory) + "': "
-                + error.message());
-        }
-        children.push_back(iterator->path());
-    }
-    for (const std::filesystem::path& child : children) {
-        std::filesystem::remove_all(child, error);
-        if (error) {
-            fail_path(
-                "Failed to remove '" + utf8_path(child) + "': "
-                + error.message());
-        }
-    }
-}
 
 [[noreturn]] void fail_runtime_database_state(
     const std::filesystem::path& database,
@@ -689,11 +616,12 @@ std::string busy_message(const std::filesystem::path& database) {
         + "' is not a valid CHA database");
 }
 
-void validate_materialized_source(
+void validate_configuration(
     const std::vector<ConfigFile>& rows) {
-    TemporaryPrivateRoot root;
-    materialize_config_files(root.workspace(), rows);
-    (void)Workspace::load(root.workspace());
+    validate_config_rows(rows);
+    TextFiles files;
+    for (const auto& row : rows) files.emplace(row.name, row.content);
+    (void)Workspace::load("/workspace", files);
 }
 
 struct PrunedImport {
@@ -960,7 +888,7 @@ WorkspaceConfigTransfer import_workspace_configuration(
     }
 
     PrunedImport pruned = prune_imported_rows(collect_config_rows(source));
-    validate_materialized_source(pruned.rows);
+    validate_configuration(pruned.rows);
 
     secure_workspace_session_database_files(database);
     commit_imported_rows(
@@ -1052,6 +980,21 @@ struct WorkspaceConfigStore::Impl {
     mutable std::mutex mutex;
     mutable std::mutex snapshot_mutex;
     std::shared_ptr<const Workspace> published_workspace;
+    bool restart_required{};
+    std::function<void()> on_restart_required;
+
+    [[noreturn]] void require_restart(std::string message) {
+        restart_required = true;
+        if (on_restart_required) {
+            try {
+                on_restart_required();
+            } catch (...) {
+                // Preserve the configuration failure even if stopping other
+                // resources fails. Admission must already have been closed.
+            }
+        }
+        throw WorkspaceRestartRequiredError(std::move(message));
+    }
 
     std::shared_ptr<const Workspace> snapshot() const {
         const std::lock_guard lock(snapshot_mutex);
@@ -1064,32 +1007,12 @@ struct WorkspaceConfigStore::Impl {
         published_workspace = std::move(published);
     }
 
-    void rematerialize_workspace() {
-        if (consume_runtime_fault(WorkspaceConfigFault::restore)) {
-            fail_path("Forced restoration failure");
-        }
-        remove_directory_contents(tree->workspace());
-        const std::vector<ConfigFile> rows =
-            read_workspace_config_files(*database);
-        materialize_config_files(tree->workspace(), rows);
-    }
-
-    [[noreturn]] void restore_after_pre_commit_failure(
-        std::exception_ptr failure) {
-        try {
-            rematerialize_workspace();
-        } catch (const std::exception& restore_error) {
-            std::string original = "Configuration edit failed";
-            try {
-                std::rethrow_exception(std::move(failure));
-            } catch (const std::exception& error) {
-                original = error.what();
-            }
-            throw WorkspaceRestartRequiredError(
-                original + ". Failed to restore the materialized workspace: "
-                + restore_error.what() + ". Restart is required");
-        }
-        std::rethrow_exception(std::move(failure));
+    void load_committed_workspace() {
+        const auto rows = read_workspace_config_files(*database);
+        validate_config_rows(rows);
+        TextFiles files;
+        for (const auto& row : rows) files.emplace(row.name, row.content);
+        publish(Workspace::load(tree->workspace(), files));
     }
 
     template<typename Writer>
@@ -1097,32 +1020,40 @@ struct WorkspaceConfigStore::Impl {
         Writer&& writer,
         std::string_view deleted_forum_id = {}) {
         const std::lock_guard lock(mutex);
+        if (restart_required) {
+            throw WorkspaceRestartRequiredError("Configuration is unavailable. Restart is required");
+        }
         const std::shared_ptr<const Workspace> published = snapshot();
         if (!published || published->root() != tree->workspace()) {
             fail_path(
                 "Runtime configuration store has no matching loaded workspace");
         }
 
-        std::exception_ptr failure;
-        bool database_committed = false;
-        std::vector<std::string> affected_forum_ids;
-        try {
-            affected_forum_ids = writer(*published);
-            Workspace candidate = [&] {
-                try {
-                    return Workspace::load(tree->workspace());
-                } catch (const std::runtime_error& error) {
-                    throw WorkspaceConfigValidationError(error.what());
-                }
-            }();
-            if (consume_runtime_fault(WorkspaceConfigFault::collect_rows)) {
-                fail_path("Forced configuration row-collection failure");
+        const auto committed_rows = read_workspace_config_files(*database);
+        TextFiles files;
+        for (const auto& row : committed_rows) files.emplace(row.name, row.content);
+        WorkspaceConfigEditor editor(*published, files);
+        auto affected_forum_ids = writer(*published, editor);
+        std::vector<ConfigFile> rows;
+        for (const auto& [name, content] : files) rows.push_back({name, content});
+        validate_config_rows(rows);
+        auto candidate = [&] {
+            try {
+                return std::make_shared<const Workspace>(Workspace::load(tree->workspace(), files));
+            } catch (const std::runtime_error& error) {
+                throw WorkspaceConfigValidationError(error.what());
             }
-            std::vector<ConfigFile> rows =
-                collect_config_rows(tree->workspace());
-            validate_config_rows(rows);
-            const std::vector<ConfigFile> committed_rows =
-                read_workspace_config_files(*database);
+        }();
+        if (consume_runtime_fault(WorkspaceConfigFault::validation)) {
+            fail_path("Forced configuration validation failure");
+        }
+
+        // Allocate and validate before committing. A rejected candidate has no
+        // side effects to restore. Hold the publication lock across commit so
+        // the only remaining real operation is a noexcept pointer swap.
+        std::unique_lock publication_lock(snapshot_mutex);
+        bool database_committed = false;
+        try {
             const bool config_changed = committed_rows != rows;
             if (config_changed || !deleted_forum_id.empty()) {
                 if (consume_runtime_fault(WorkspaceConfigFault::sqlite_begin)) {
@@ -1155,24 +1086,13 @@ struct WorkspaceConfigStore::Impl {
             if (consume_runtime_fault(WorkspaceConfigFault::publication)) {
                 fail_path("Forced workspace publication failure");
             }
-            publish(std::move(candidate));
-        } catch (...) {
-            failure = std::current_exception();
-        }
-
-        if (failure && !database_committed) {
-            restore_after_pre_commit_failure(std::move(failure));
-        }
-        if (failure) {
-            try {
-                std::rethrow_exception(std::move(failure));
-            } catch (const std::exception& error) {
-                throw WorkspaceRestartRequiredError(
-                    std::string(
-                        "Configuration was committed but could not be "
-                        "published: ")
-                    + error.what() + ". Restart is required");
-            }
+            published_workspace.swap(candidate);
+        } catch (const std::exception& error) {
+            publication_lock.unlock();
+            if (!database_committed) throw;
+            require_restart(
+                "Configuration was committed but could not be published: "
+                + std::string(error.what()) + ". Restart is required");
         }
         return {.affected_forum_ids = std::move(affected_forum_ids)};
     }
@@ -1258,13 +1178,10 @@ void WorkspaceConfigStore::MaintenanceGuard::reopen() {
         store.database->execute("PRAGMA journal_mode = WAL");
         secure_workspace_session_database_files(store.database_path);
 
-        store.rematerialize_workspace();
-        store.publish(Workspace::load(store.tree->workspace()));
+        store.load_committed_workspace();
         impl_->closed = false;
     } catch (const std::exception& error) {
-        // Nothing here is recoverable in place: the handle is gone and the
-        // materialized tree may be half rebuilt, so the store stays closed and
-        // the caller must bring the process down rather than keep serving.
+        // Leave the store closed; the application handles maintenance recovery.
         store.database.reset();
         throw WorkspaceRestartRequiredError(
             "Failed to reopen the workspace database: "
@@ -1303,18 +1220,18 @@ std::unique_ptr<WorkspaceConfigStore> WorkspaceConfigStore::open(
     secure_workspace_session_database_files(impl->database_path);
 
     impl->tree.emplace();
-    const std::vector<ConfigFile> rows =
-        read_workspace_config_files(*impl->database);
-    validate_config_rows(rows);
-    materialize_config_files(impl->tree->workspace(), rows);
-
-    impl->publish(Workspace::load(impl->tree->workspace()));
+    impl->load_committed_workspace();
     return std::unique_ptr<WorkspaceConfigStore>(
         new WorkspaceConfigStore(std::move(impl)));
 }
 
 std::shared_ptr<const Workspace> WorkspaceConfigStore::snapshot() const {
     return impl_->snapshot();
+}
+
+void WorkspaceConfigStore::set_restart_required_handler(std::function<void()> handler) {
+    const std::lock_guard lock(impl_->mutex);
+    impl_->on_restart_required = std::move(handler);
 }
 
 const std::filesystem::path& WorkspaceConfigStore::private_root()
@@ -1350,10 +1267,10 @@ WorkspaceConfigEditResult WorkspaceConfigStore::apply_character_settings(
     std::optional<std::string_view> voice_id,
     std::optional<std::string_view> reasoning_effort,
     std::optional<WebSearchMode> web_search) {
-    return impl_->edit([&](const Workspace& workspace) {
+    return impl_->edit([&](const Workspace& workspace, WorkspaceConfigEditor& editor) {
         std::vector<std::string> affected =
             forums_using_character(workspace, character_id);
-        workspace.write_character_settings(
+        editor.write_character_settings(
             character_id, provider_id, style_id, voice_id,
             reasoning_effort, web_search);
         return affected;
@@ -1364,10 +1281,10 @@ WorkspaceConfigEditResult WorkspaceConfigStore::apply_character_definition(
     std::string_view character_id,
     std::string_view display_name,
     std::optional<std::string_view> markdown) {
-    return impl_->edit([&](const Workspace& workspace) {
+    return impl_->edit([&](const Workspace& workspace, WorkspaceConfigEditor& editor) {
         std::vector<std::string> affected =
             forums_using_character(workspace, character_id);
-        workspace.write_character_definition(
+        editor.write_character_definition(
             character_id, display_name, markdown);
         return affected;
     });
@@ -1378,17 +1295,17 @@ WorkspaceConfigEditResult WorkspaceConfigStore::apply_character_file(
     std::string_view filename,
     std::optional<std::string_view> content,
     bool create) {
-    return impl_->edit([&](const Workspace& workspace) {
+    return impl_->edit([&](const Workspace& workspace, WorkspaceConfigEditor& editor) {
         auto affected = forums_using_character(workspace, character_id);
-        workspace.write_character_file(character_id, filename, content, create);
+        editor.write_character_file(character_id, filename, content, create);
         return affected;
     });
 }
 
 WorkspaceConfigEditResult WorkspaceConfigStore::apply_character_delete(
     std::string_view character_id) {
-    return impl_->edit([&](const Workspace& workspace) {
-        workspace.delete_character(character_id);
+    return impl_->edit([&](const Workspace&, WorkspaceConfigEditor& editor) {
+        editor.delete_character(character_id);
         return std::vector<std::string>{};
     });
 }
@@ -1399,10 +1316,10 @@ WorkspaceConfigEditResult WorkspaceConfigStore::apply_persona_update(
     std::string_view markdown,
     std::optional<std::string_view> style_id,
     std::optional<std::string_view> voice_id) {
-    return impl_->edit([&](const Workspace& workspace) {
+    return impl_->edit([&](const Workspace& workspace, WorkspaceConfigEditor& editor) {
         std::vector<std::string> affected =
             forums_using_persona(workspace, persona_id);
-        workspace.write_persona(
+        editor.write_persona(
             persona_id, display_name, markdown, style_id, voice_id);
         return affected;
     });
@@ -1411,18 +1328,18 @@ WorkspaceConfigEditResult WorkspaceConfigStore::apply_persona_update(
 std::string WorkspaceConfigStore::create_persona(
     std::string_view display_name) {
     std::string persona_id;
-    (void)impl_->edit([&](const Workspace& workspace) {
+    (void)impl_->edit([&](const Workspace& workspace, WorkspaceConfigEditor& editor) {
         for (std::size_t suffix = 1;; ++suffix) {
             const std::string candidate = "persona_" + std::to_string(suffix);
             const std::filesystem::path directory =
                 workspace.root() / "personas" / candidate;
             if (workspace.find_persona(candidate) == nullptr
-                && !std::filesystem::exists(directory)) {
+                && !editor.exists(directory)) {
                 persona_id = candidate;
                 break;
             }
         }
-        workspace.create_persona(persona_id, display_name);
+        editor.create_persona(persona_id, display_name);
         return std::vector<std::string>{};
     });
     return persona_id;
@@ -1430,8 +1347,8 @@ std::string WorkspaceConfigStore::create_persona(
 
 WorkspaceConfigEditResult WorkspaceConfigStore::apply_persona_delete(
     std::string_view persona_id) {
-    return impl_->edit([&](const Workspace& workspace) {
-        workspace.delete_persona(persona_id);
+    return impl_->edit([&](const Workspace&, WorkspaceConfigEditor& editor) {
+        editor.delete_persona(persona_id);
         return std::vector<std::string>{};
     });
 }
@@ -1440,19 +1357,19 @@ std::string WorkspaceConfigStore::create_character(
     std::string_view display_name,
     std::string_view description) {
     std::string character_id;
-    (void)impl_->edit([&](const Workspace& workspace) {
+    (void)impl_->edit([&](const Workspace& workspace, WorkspaceConfigEditor& editor) {
         for (std::size_t suffix = 1;; ++suffix) {
             const std::string candidate = "character_" + std::to_string(suffix);
             const std::filesystem::path directory =
                 workspace.root() / "characters" / candidate;
             if (workspace.find_character(candidate) == nullptr
                 && workspace.find_persona(candidate) == nullptr
-                && !std::filesystem::exists(directory)) {
+                && !editor.exists(directory)) {
                 character_id = candidate;
                 break;
             }
         }
-        workspace.create_character(character_id, display_name, description);
+        editor.create_character(character_id, display_name, description);
         return std::vector<std::string>{};
     });
     return character_id;
@@ -1462,18 +1379,18 @@ std::string WorkspaceConfigStore::create_forum(
     std::string_view display_name,
     std::string_view persona_id) {
     std::string forum_id;
-    (void)impl_->edit([&](const Workspace& workspace) {
+    (void)impl_->edit([&](const Workspace& workspace, WorkspaceConfigEditor& editor) {
         for (std::size_t suffix = 1;; ++suffix) {
             const std::string candidate = "forum_" + std::to_string(suffix);
             const std::filesystem::path directory =
                 workspace.root() / "forums" / candidate;
             if (workspace.find_forum(candidate) == nullptr
-                && !std::filesystem::exists(directory)) {
+                && !editor.exists(directory)) {
                 forum_id = candidate;
                 break;
             }
         }
-        workspace.create_forum(forum_id, display_name, persona_id);
+        editor.create_forum(forum_id, display_name, persona_id);
         return std::vector<std::string>{};
     });
     return forum_id;
@@ -1483,16 +1400,16 @@ WorkspaceConfigEditResult WorkspaceConfigStore::apply_forum_update(
     std::string_view forum_id,
     std::string_view display_name,
     std::string_view markdown) {
-    return impl_->edit([&](const Workspace& workspace) {
-        workspace.write_forum(forum_id, display_name, markdown);
+    return impl_->edit([&](const Workspace&, WorkspaceConfigEditor& editor) {
+        editor.write_forum(forum_id, display_name, markdown);
         return std::vector<std::string>{std::string(forum_id)};
     });
 }
 
 WorkspaceConfigEditResult WorkspaceConfigStore::apply_forum_delete(
     std::string_view forum_id) {
-    return impl_->edit([&](const Workspace& workspace) {
-        workspace.delete_forum(forum_id);
+    return impl_->edit([&](const Workspace&, WorkspaceConfigEditor& editor) {
+        editor.delete_forum(forum_id);
         return std::vector<std::string>{std::string(forum_id)};
     }, forum_id);
 }
@@ -1502,8 +1419,8 @@ WorkspaceConfigEditResult WorkspaceConfigStore::apply_forum_file(
     std::string_view filename,
     std::optional<std::string_view> content,
     bool create) {
-    return impl_->edit([&](const Workspace& workspace) {
-        workspace.write_forum_file(forum_id, filename, content, create);
+    return impl_->edit([&](const Workspace&, WorkspaceConfigEditor& editor) {
+        editor.write_forum_file(forum_id, filename, content, create);
         return std::vector<std::string>{std::string(forum_id)};
     });
 }
@@ -1512,12 +1429,12 @@ WorkspaceConfigEditResult WorkspaceConfigStore::apply_forum_members_and_persona(
     std::string_view forum_id,
     std::span<const std::string> character_ids,
     std::string_view persona_id) {
-    return impl_->edit([&](const Workspace& workspace) {
+    return impl_->edit([&](const Workspace& workspace, WorkspaceConfigEditor& editor) {
         if (workspace.find_persona(persona_id) == nullptr) {
             throw std::invalid_argument("Invalid persona");
         }
-        workspace.write_forum_members(forum_id, character_ids);
-        workspace.write_forum_default_persona(forum_id, persona_id);
+        editor.write_forum_members(forum_id, character_ids);
+        editor.write_forum_default_persona(forum_id, persona_id);
         return std::vector<std::string>{std::string(forum_id)};
     });
 }
@@ -1525,8 +1442,8 @@ WorkspaceConfigEditResult WorkspaceConfigStore::apply_forum_members_and_persona(
 WorkspaceConfigEditResult WorkspaceConfigStore::apply_forum_default_character(
     std::string_view forum_id,
     std::string_view character_id) {
-    return impl_->edit([&](const Workspace& workspace) {
-        workspace.write_forum_default_character(forum_id, character_id);
+    return impl_->edit([&](const Workspace&, WorkspaceConfigEditor& editor) {
+        editor.write_forum_default_character(forum_id, character_id);
         return std::vector<std::string>{std::string(forum_id)};
     });
 }
@@ -1535,10 +1452,10 @@ WorkspaceConfigEditResult WorkspaceConfigStore::apply_provider_update(
     std::string_view provider_id,
     std::string_view display_name,
     const ModelBackendConfig& config) {
-    return impl_->edit([&](const Workspace& workspace) {
+    return impl_->edit([&](const Workspace& workspace, WorkspaceConfigEditor& editor) {
         std::vector<std::string> affected =
             forums_using_provider(workspace, provider_id);
-        workspace.write_provider(provider_id, display_name, config);
+        editor.write_provider(provider_id, display_name, config);
         return affected;
     });
 }
@@ -1547,18 +1464,18 @@ std::string WorkspaceConfigStore::create_provider(
     std::string_view display_name,
     std::string_view copy_from) {
     std::string provider_id;
-    (void)impl_->edit([&](const Workspace& workspace) {
+    (void)impl_->edit([&](const Workspace& workspace, WorkspaceConfigEditor& editor) {
         for (std::size_t suffix = 1;; ++suffix) {
             const std::string candidate = "provider_" + std::to_string(suffix);
             const std::filesystem::path directory =
                 workspace.root() / "system" / "providers" / candidate;
             if (workspace.find_provider(candidate) == nullptr
-                && !std::filesystem::exists(directory)) {
+                && !editor.exists(directory)) {
                 provider_id = candidate;
                 break;
             }
         }
-        workspace.create_provider(provider_id, display_name, copy_from);
+        editor.create_provider(provider_id, display_name, copy_from);
         return std::vector<std::string>{};
     });
     return provider_id;
@@ -1566,8 +1483,8 @@ std::string WorkspaceConfigStore::create_provider(
 
 WorkspaceConfigEditResult WorkspaceConfigStore::apply_provider_delete(
     std::string_view provider_id) {
-    return impl_->edit([&](const Workspace& workspace) {
-        workspace.delete_provider(provider_id);
+    return impl_->edit([&](const Workspace&, WorkspaceConfigEditor& editor) {
+        editor.delete_provider(provider_id);
         return std::vector<std::string>{};
     });
 }
@@ -1576,10 +1493,10 @@ WorkspaceConfigEditResult WorkspaceConfigStore::apply_style_update(
     std::string_view style_id,
     std::string_view display_name,
     const CharacterAppearance& appearance) {
-    return impl_->edit([&](const Workspace& workspace) {
+    return impl_->edit([&](const Workspace& workspace, WorkspaceConfigEditor& editor) {
         std::vector<std::string> affected =
             forums_using_style(workspace, style_id);
-        workspace.write_style(style_id, display_name, appearance);
+        editor.write_style(style_id, display_name, appearance);
         return affected;
     });
 }
@@ -1587,18 +1504,18 @@ WorkspaceConfigEditResult WorkspaceConfigStore::apply_style_update(
 std::string WorkspaceConfigStore::create_style(
     std::string_view display_name) {
     std::string style_id;
-    (void)impl_->edit([&](const Workspace& workspace) {
+    (void)impl_->edit([&](const Workspace& workspace, WorkspaceConfigEditor& editor) {
         for (std::size_t suffix = 1;; ++suffix) {
             const std::string candidate = "style_" + std::to_string(suffix);
             const std::filesystem::path directory =
                 workspace.root() / "system" / "styles" / candidate;
             if (workspace.find_style(candidate) == nullptr
-                && !std::filesystem::exists(directory)) {
+                && !editor.exists(directory)) {
                 style_id = candidate;
                 break;
             }
         }
-        workspace.create_style(style_id, display_name);
+        editor.create_style(style_id, display_name);
         return std::vector<std::string>{};
     });
     return style_id;
@@ -1606,8 +1523,8 @@ std::string WorkspaceConfigStore::create_style(
 
 WorkspaceConfigEditResult WorkspaceConfigStore::apply_style_delete(
     std::string_view style_id) {
-    return impl_->edit([&](const Workspace& workspace) {
-        workspace.delete_style(style_id);
+    return impl_->edit([&](const Workspace&, WorkspaceConfigEditor& editor) {
+        editor.delete_style(style_id);
         return std::vector<std::string>{};
     });
 }
@@ -1618,18 +1535,18 @@ WorkspaceConfigEditResult WorkspaceConfigStore::apply_voice_update(
     std::string_view description,
     std::string_view elevenlabs_voice_id,
     const VoiceSettings& settings) {
-    return impl_->edit([&](const Workspace& workspace) {
+    return impl_->edit([&](const Workspace& workspace, WorkspaceConfigEditor& editor) {
         std::vector<std::string> affected =
             forums_using_voice(workspace, voice_id);
         const WorkspaceVoice* const previous = workspace.find_voice(voice_id);
         const bool default_voice = previous && workspace.voice_output()
             && workspace.voice_output()->default_voice == previous->label;
-        workspace.write_voice(
+        editor.write_voice(
             voice_id, display_name, description, elevenlabs_voice_id, settings);
         if (default_voice) {
             WorkspaceVoiceOutput output = *workspace.voice_output();
             output.default_voice = std::string(display_name);
-            workspace.write_voice_output(output);
+            editor.write_voice_output(output);
         }
         return affected;
     });
@@ -1640,18 +1557,18 @@ std::string WorkspaceConfigStore::create_voice(
     std::string_view description,
     std::string_view elevenlabs_voice_id) {
     std::string voice_id;
-    (void)impl_->edit([&](const Workspace& workspace) {
+    (void)impl_->edit([&](const Workspace& workspace, WorkspaceConfigEditor& editor) {
         for (std::size_t suffix = 1;; ++suffix) {
             const std::string candidate = "voice_" + std::to_string(suffix);
             const std::filesystem::path directory =
                 workspace.root() / "system" / "voices" / candidate;
             if (workspace.find_voice(candidate) == nullptr
-                && !std::filesystem::exists(directory)) {
+                && !editor.exists(directory)) {
                 voice_id = candidate;
                 break;
             }
         }
-        workspace.create_voice(
+        editor.create_voice(
             voice_id, display_name, description, elevenlabs_voice_id);
         return std::vector<std::string>{};
     });
@@ -1660,24 +1577,24 @@ std::string WorkspaceConfigStore::create_voice(
 
 WorkspaceConfigEditResult WorkspaceConfigStore::apply_voice_delete(
     std::string_view voice_id) {
-    return impl_->edit([&](const Workspace& workspace) {
-        workspace.delete_voice(voice_id);
+    return impl_->edit([&](const Workspace&, WorkspaceConfigEditor& editor) {
+        editor.delete_voice(voice_id);
         return std::vector<std::string>{};
     });
 }
 
 void WorkspaceConfigStore::apply_voice_input_update(
     const WorkspaceVoiceInput& settings) {
-    (void)impl_->edit([&](const Workspace& workspace) {
-        workspace.write_voice_input(settings);
+    (void)impl_->edit([&](const Workspace&, WorkspaceConfigEditor& editor) {
+        editor.write_voice_input(settings);
         return std::vector<std::string>{};
     });
 }
 
 void WorkspaceConfigStore::apply_voice_output_update(
     const WorkspaceVoiceOutput& settings) {
-    (void)impl_->edit([&](const Workspace& workspace) {
-        workspace.write_voice_output(settings);
+    (void)impl_->edit([&](const Workspace&, WorkspaceConfigEditor& editor) {
+        editor.write_voice_output(settings);
         return std::vector<std::string>{};
     });
 }
@@ -1686,8 +1603,8 @@ void WorkspaceConfigStore::apply_api_key_create(
     std::string_view id,
     std::string_view display_name,
     std::string_view value) {
-    (void)impl_->edit([&](const Workspace& workspace) {
-        workspace.create_api_key(id, display_name, value);
+    (void)impl_->edit([&](const Workspace&, WorkspaceConfigEditor& editor) {
+        editor.create_api_key(id, display_name, value);
         return std::vector<std::string>{};
     });
 }
@@ -1696,38 +1613,38 @@ void WorkspaceConfigStore::apply_api_key_update(
     std::string_view id,
     std::string_view display_name,
     std::string_view value) {
-    (void)impl_->edit([&](const Workspace& workspace) {
-        workspace.write_api_key(id, display_name, value);
+    (void)impl_->edit([&](const Workspace&, WorkspaceConfigEditor& editor) {
+        editor.write_api_key(id, display_name, value);
         return std::vector<std::string>{};
     });
 }
 
 void WorkspaceConfigStore::apply_api_key_delete(std::string_view id) {
-    (void)impl_->edit([&](const Workspace& workspace) {
-        workspace.delete_api_key(id);
+    (void)impl_->edit([&](const Workspace&, WorkspaceConfigEditor& editor) {
+        editor.delete_api_key(id);
         return std::vector<std::string>{};
     });
 }
 
 void WorkspaceConfigStore::apply_r2_storage_create(
     const R2StorageKey& key) {
-    (void)impl_->edit([&](const Workspace& workspace) {
-        workspace.create_r2_storage(key);
+    (void)impl_->edit([&](const Workspace&, WorkspaceConfigEditor& editor) {
+        editor.create_r2_storage(key);
         return std::vector<std::string>{};
     });
 }
 
 void WorkspaceConfigStore::apply_r2_storage_update(
     const R2StorageKey& key) {
-    (void)impl_->edit([&](const Workspace& workspace) {
-        workspace.write_r2_storage(key);
+    (void)impl_->edit([&](const Workspace&, WorkspaceConfigEditor& editor) {
+        editor.write_r2_storage(key);
         return std::vector<std::string>{};
     });
 }
 
 void WorkspaceConfigStore::apply_r2_storage_delete() {
-    (void)impl_->edit([](const Workspace& workspace) {
-        workspace.delete_r2_storage();
+    (void)impl_->edit([](const Workspace&, WorkspaceConfigEditor& editor) {
+        editor.delete_r2_storage();
         return std::vector<std::string>{};
     });
 }
@@ -1736,12 +1653,12 @@ void WorkspaceConfigStore::apply_key_migration(
     std::span<const SavedApiKey> api_keys,
     const std::optional<R2StorageKey>& r2_storage,
     std::uint64_t next_id) {
-    (void)impl_->edit([&](const Workspace& workspace) {
+    (void)impl_->edit([&](const Workspace&, WorkspaceConfigEditor& editor) {
         for (const SavedApiKey& key : api_keys) {
-            workspace.create_api_key(key.id, key.display_name, key.value);
+            editor.create_api_key(key.id, key.display_name, key.value);
         }
-        if (r2_storage) workspace.create_r2_storage(*r2_storage);
-        workspace.write_next_api_key_id(next_id);
+        if (r2_storage) editor.create_r2_storage(*r2_storage);
+        editor.write_next_api_key_id(next_id);
         return std::vector<std::string>{};
     });
 }
@@ -1776,9 +1693,9 @@ void WorkspaceConfigStore::merge(
     }
 
     Workspace source_workspace = [&] {
-        TemporaryPrivateRoot root;
-        materialize_config_files(root.workspace(), source_rows);
-        return Workspace::load(root.workspace());
+        TextFiles files;
+        for (const auto& row : source_rows) files.emplace(row.name, row.content);
+        return Workspace::load(source, files);
     }();
     for (const ConfigFile& row : source_rows) {
         if (const std::string_view id =
@@ -1797,12 +1714,8 @@ void WorkspaceConfigStore::merge(
         }
     }
 
-    (void)impl_->edit([&](const Workspace& published) {
-        std::map<std::string, std::string> candidate;
-        for (const ConfigFile& row :
-             read_workspace_config_files(*impl_->database)) {
-            candidate.emplace(row.name, row.content);
-        }
+    (void)impl_->edit([&](const Workspace& published, WorkspaceConfigEditor& editor) {
+        TextFiles& candidate = editor.files();
 
         // S's R2 singleton replaces D's even when the saved-key IDs differ.
         if (source_workspace.r2_storage() && published.r2_storage()) {
@@ -1828,13 +1741,6 @@ void WorkspaceConfigStore::merge(
         candidate["system/keys/config.toml"] =
             "next_id = " + std::to_string(next_id) + "\n";
 
-        std::vector<ConfigFile> rows;
-        rows.reserve(candidate.size());
-        for (auto& [name, content] : candidate) {
-            rows.push_back({std::move(name), std::move(content)});
-        }
-        remove_directory_contents(impl_->tree->workspace());
-        materialize_config_files(impl_->tree->workspace(), rows);
         return std::vector<std::string>{};
     });
 }

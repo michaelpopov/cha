@@ -1,6 +1,7 @@
 #include "util/text_template.h"
 
 #include "util/text.h"
+#include "util/text_source.h"
 #include "util/path_name.h"
 
 #include <toml++/toml.hpp>
@@ -120,19 +121,9 @@ std::string format_include_chain(
     throw std::runtime_error(std::move(message));
 }
 
-// Returns nullopt when the file cannot be opened or read. Callers that already
-// checked existence (includes) only hit this on permission/IO failures.
-std::optional<std::string> read_file_bytes(const std::filesystem::path& path) {
-    std::ifstream file(path, std::ios::binary);
-    if (!file) {
-        return std::nullopt;
-    }
-    std::ostringstream contents;
-    contents << file.rdbuf();
-    if (!file.good() && !file.eof()) {
-        return std::nullopt;
-    }
-    return contents.str();
+const TextSource& source(const TemplateOptions& options) {
+    static const TextSource disk;
+    return options.source ? *options.source : disk;
 }
 
 std::string render_toml_scalar(
@@ -211,15 +202,16 @@ TemplateScope scope_from_toml(
 TemplateScope read_scope_table(
     const std::filesystem::path& file,
     std::string_view table_name,
-    std::string_view file_label) {
-    std::ifstream stream(file, std::ios::binary);
-    if (!stream) {
+    std::string_view file_label,
+    const TextSource& input = TextSource{}) {
+    const auto text = input.read(file);
+    if (!text) {
         throw std::runtime_error(
             "cannot parse '" + std::string(file_label) + "': cannot open file");
     }
     toml::table table;
     try {
-        table = toml::parse(stream, std::string(file_label));
+        table = toml::parse(*text, std::string(file_label));
     } catch (const toml::parse_error& error) {
         throw std::runtime_error(
             "cannot parse '" + std::string(file_label) + "': "
@@ -239,7 +231,7 @@ const TemplateScope& directory_scope(
     const std::filesystem::path& directory) {
     std::error_code error;
     const std::filesystem::path canonical =
-        std::filesystem::weakly_canonical(directory, error);
+        source(state.options).canonical(directory, error);
     const std::filesystem::path memo_key = error ? directory : canonical;
     const std::string key = utf8_path(memo_key);
     if (const auto found = state.scope_memo.find(key);
@@ -252,7 +244,7 @@ const TemplateScope& directory_scope(
         directory / state.options.scope_file_name;
     std::error_code status_error;
     const std::filesystem::file_status scope_status =
-        std::filesystem::status(scope_file, status_error);
+        source(state.options).status(scope_file, status_error);
     if (status_error
         && status_error != std::errc::no_such_file_or_directory) {
         throw_expansion_error(
@@ -264,7 +256,7 @@ const TemplateScope& directory_scope(
     if (!status_error && std::filesystem::exists(scope_status)) {
         std::error_code scope_error;
         const std::filesystem::path scope_canonical =
-            std::filesystem::weakly_canonical(scope_file, scope_error);
+            source(state.options).canonical(scope_file, scope_error);
         if (scope_error) {
             throw_expansion_error(
                 state,
@@ -284,7 +276,7 @@ const TemplateScope& directory_scope(
             display_path(scope_canonical, state.diagnostic_root);
         try {
             loaded = read_scope_table(
-                scope_canonical, state.options.scope_table_name, label);
+                scope_canonical, state.options.scope_table_name, label, source(state.options));
         } catch (const std::runtime_error& read_error) {
             throw_expansion_error(state, read_error.what());
         }
@@ -343,7 +335,7 @@ std::filesystem::path resolve_include_path(
     std::error_code error;
     const std::filesystem::path joined = current_directory / relative;
     const std::filesystem::path canonical =
-        std::filesystem::weakly_canonical(joined, error);
+        source(state.options).canonical(joined, error);
     if (error) {
         // Prefer the author-written relative path over an absolute join.
         throw_expansion_error(
@@ -355,7 +347,7 @@ std::filesystem::path resolve_include_path(
     }
     std::error_code status_error;
     const std::filesystem::file_status status =
-        std::filesystem::status(canonical, status_error);
+        source(state.options).status(canonical, status_error);
     if (status_error || !std::filesystem::exists(status)) {
         throw_expansion_error(
             state,
@@ -491,7 +483,7 @@ void expand_text(
                 // scopes, cycle checks and limits as ordinary includes.
                 if (shared_include) {
                     std::error_code error;
-                    state.root_canonical = std::filesystem::weakly_canonical(
+                    state.root_canonical = source(state.options).canonical(
                         shared_directory, error);
                     if (error) {
                         throw_expansion_error(state, "cannot resolve " + std::string(body) + " directory");
@@ -529,7 +521,7 @@ void expand_path(
     std::string& output) {
     std::error_code error;
     const std::filesystem::path canonical =
-        std::filesystem::weakly_canonical(path, error);
+        source(state.options).canonical(path, error);
     if (error) {
         throw_expansion_error(
             state,
@@ -570,7 +562,7 @@ void expand_path(
     state.stack.push_back({canonical, 1, 1});
 
     try {
-        const std::optional<std::string> text = read_file_bytes(canonical);
+        const std::optional<std::string> text = source(state.options).read(canonical);
         if (!text) {
             throw_expansion_error(
                 state,
@@ -619,7 +611,7 @@ std::string expand_template_file(
     const TemplateOptions& options) {
     std::error_code error;
     const std::filesystem::path root_canonical =
-        std::filesystem::weakly_canonical(options.containment_root, error);
+        source(options).canonical(options.containment_root, error);
     if (error) {
         throw std::runtime_error("cannot resolve containment root");
     }

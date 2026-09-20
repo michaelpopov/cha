@@ -243,6 +243,7 @@ add_library(cha_core STATIC
     src/util/public_name.cpp
     src/util/text.cpp
     src/util/text_template.cpp
+    src/util/text_source.cpp
     src/util/toml_file.cpp
     src/chat/character.cpp
     src/chat/transcript.cpp

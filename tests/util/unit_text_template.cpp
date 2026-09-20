@@ -1,4 +1,5 @@
 #include "util/text_template.h"
+#include "util/text_source.h"
 #include "util/path_name.h"
 
 #include <gtest/gtest.h>
@@ -60,6 +61,55 @@ std::string expand_in(
     TemplateOptions options = {}) {
     options.containment_root = root;
     return expand_template_file(path, options);
+}
+
+TEST(TextTemplate, StoredFilesExpandIncludesAndScopesWithoutReadingDisk) {
+    const TempDir root("stored");
+    const auto file = root.path() / "characters/guide/CHARACTER.md";
+    write_file(file, "Stale physical file");
+    TextFiles files{
+        {"characters/guide/CHARACTER.md", "$$(snippets/part.md)|$${CHARACTER_VOICE}"},
+        {"characters/guide/config.toml", "[prompt]\nname = 'base'\n"},
+        {"characters/guide/snippets/config.toml", "[prompt]\nname = 'nested'\n"},
+        {"characters/guide/snippets/part.md", "$${name}:$${character.display_name}"},
+        {"characters/character-voice.md", "voice $${name}"},
+    };
+    const TextSource source(root.path(), files);
+    TemplateOptions options{
+        .containment_root = root.path() / "characters",
+        .character_voice_directory = root.path() / "characters",
+        .reserved = {{"character.display_name", "Guide"}},
+        .source = &source,
+    };
+    EXPECT_EQ(expand_template_file(file, options), "nested:Guide|voice base");
+    files.erase("characters/guide/CHARACTER.md");
+    EXPECT_THROW((void)expand_template_file(file, options), std::runtime_error);
+}
+
+TEST(TextTemplate, StoredFilesPreserveContainmentCycleAndSizeChecks) {
+    const TempDir root("stored_limits");
+    TextFiles files{{"inside/a.md", ""}, {"outside.md", "Outside"}};
+    const TextSource source(root.path(), files);
+    TemplateOptions options{
+        .containment_root = root.path() / "inside",
+        .source = &source,
+    };
+    const auto file = root.path() / "inside/a.md";
+    for (const auto& [body, error] : std::initializer_list<std::pair<std::string, std::string>>{
+             {"$$(../outside.md)", "escapes"},
+             {"$$(sub/../a.md)", "cycle"},
+             {"$$(missing.md)", "cannot read"}}) {
+        files["inside/a.md"] = body;
+        try {
+            (void)expand_template_file(file, options);
+            FAIL() << "Expected rejection of " << body;
+        } catch (const std::runtime_error& exception) {
+            EXPECT_NE(std::string(exception.what()).find(error), std::string::npos);
+        }
+    }
+    files["inside/a.md"] = "long";
+    options.limits.max_output_bytes = 2;
+    EXPECT_THROW((void)expand_template_file(file, options), std::runtime_error);
 }
 
 TEST(TextTemplate, PassesLiteralsAndPlainDollarsThrough) {

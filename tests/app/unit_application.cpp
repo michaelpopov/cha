@@ -2,6 +2,7 @@
 #include "providers/api_key_store.h"
 
 #include "support/test_workspace.h"
+#include "support/mock_http_server.h"
 #include "web/live_session.h"
 #include "workspace/builtins.h"
 
@@ -210,6 +211,170 @@ TEST(Application, SubscribeInstallsInitialSnapshotAtSequenceZero) {
     EXPECT_EQ(item->kind, SessionOutputItem::Kind::snapshot);
     EXPECT_EQ(item->seq, 0U);
     session->acknowledge_output();
+}
+
+TEST(Application, AppearanceEditsRefreshTheSubscriptionWithoutCancellingGeneration) {
+    test::TestWorkspace workspace;
+    MockHttpServer server({http_response(
+        "application/json", R"({"choices":[{"message":{"content":"Finished"}}]})")});
+    workspace.write_provider("test",
+        "host = \"127.0.0.1\"\nport = " + std::to_string(server.port())
+        + "\nhttps = false\nmode = \"net\"\nmodel = \"fake\"\n"
+          "api = \"chat_completions\"\nstream = false\ntimeout_s = 20\n");
+    workspace.write_style("serif", "font = \"serif\"\n");
+    std::ofstream(workspace.root() / "forums/lobby/config.toml", std::ios::app)
+        << "default_persona = \"reader\"\n";
+    auto application = Application::open(make_command(
+        workspace, test::import_test_database(workspace.root())));
+    const auto epoch = application->context_epoch();
+    const auto voice = application->create_voice(
+        {.display_name = "Narrator", .elevenlabs_voice_id = "voice-one"}, epoch);
+    const auto created = application->create_session("lobby", "Appearance", epoch);
+    ASSERT_TRUE(std::holds_alternative<cha::web::OpenSessionSuccess>(
+        application->open_session("lobby", created.id, epoch)));
+    auto session = application->live_sessions().lookup({"lobby", created.id});
+    ASSERT_TRUE(session);
+    ASSERT_TRUE(std::holds_alternative<SubscribeResult>(application->subscribe(
+        "lobby", created.id, SubscribeCommand{"view-1", epoch, "sub-1"}, epoch)));
+    ASSERT_TRUE(next_output(*session));
+    session->acknowledge_output();
+    ASSERT_TRUE(std::holds_alternative<CommandResult>(application->submit(
+        "lobby", created.id, RawCommand{"Hello"}, epoch)));
+    const auto generating = next_output(*session);
+    ASSERT_TRUE(generating);
+    ASSERT_TRUE(generating->snapshot.generation.active);
+    const auto request_id = generating->snapshot.generation.request_id;
+    session->acknowledge_output();
+
+    // The server has not started answering yet, so each edit must preserve the
+    // same request and deliver its new presentation over the same subscription.
+    const auto check_refresh = [&] {
+        auto item = next_output(*session);
+        EXPECT_TRUE(item);
+        if (item) {
+            EXPECT_EQ(item->kind, SessionOutputItem::Kind::snapshot);
+            EXPECT_EQ(item->snapshot.lifecycle, cha::web::SessionLifecycle::running);
+            EXPECT_TRUE(item->snapshot.generation.active);
+            EXPECT_EQ(item->snapshot.generation.request_id, request_id);
+        }
+        EXPECT_EQ(application->live_sessions().lookup({"lobby", created.id}), session);
+        session->acknowledge_output();
+        return item;
+    };
+    (void)application->update_character("guide",
+        {.provider = "test", .style = "serif", .voice = voice.id}, epoch);
+    auto refreshed = check_refresh();
+    ASSERT_TRUE(refreshed);
+    EXPECT_EQ(refreshed->snapshot.characters.front().appearance.font, CharacterFont::serif);
+    ASSERT_TRUE(refreshed->snapshot.characters.front().voice);
+    EXPECT_EQ(refreshed->snapshot.characters.front().voice->elevenlabs_voice_id, "voice-one");
+
+    (void)application->update_style("serif",
+        {.display_name = "Serif", .appearance = {.font = CharacterFont::mono}}, epoch);
+    refreshed = check_refresh();
+    ASSERT_TRUE(refreshed);
+    EXPECT_EQ(refreshed->snapshot.characters.front().appearance.font, CharacterFont::mono);
+
+    (void)application->update_voice(voice.id,
+        {.display_name = "Narrator", .elevenlabs_voice_id = "voice-two"}, epoch);
+    refreshed = check_refresh();
+    ASSERT_TRUE(refreshed);
+    ASSERT_TRUE(refreshed->snapshot.characters.front().voice);
+    EXPECT_EQ(refreshed->snapshot.characters.front().voice->elevenlabs_voice_id, "voice-two");
+
+    (void)application->update_persona("reader",
+        {.style = std::optional<std::string>("serif")}, epoch);
+    ASSERT_TRUE(check_refresh());
+
+    server.start();
+    server.join();
+    SessionSnapshot final;
+    const auto deadline = std::chrono::steady_clock::now() + 2s;
+    do {
+        const auto result = application->snapshot("lobby", created.id, epoch);
+        ASSERT_TRUE(std::holds_alternative<SessionSnapshot>(result));
+        final = std::get<SessionSnapshot>(result);
+        if (!final.generation.active) break;
+        std::this_thread::sleep_for(1ms);
+    } while (std::chrono::steady_clock::now() < deadline);
+    EXPECT_FALSE(final.generation.active);
+    ASSERT_FALSE(final.transcript.empty());
+    EXPECT_EQ(final.transcript.back().text, "Finished");
+    EXPECT_EQ(final.transcript.back().status, EntryStatus::complete);
+}
+
+TEST(Application, FatalConfigurationEditsCloseAdmissionAndStopLiveSessions) {
+    for (const bool settings_edit : {false, true}) {
+        SCOPED_TRACE(settings_edit);
+        test::TestWorkspace workspace;
+        const auto database = test::import_test_database(workspace.root());
+        auto application = Application::open(make_command(workspace, database));
+        const auto epoch = application->context_epoch();
+        const auto created = application->create_session("lobby", "Failure", epoch);
+        ASSERT_TRUE(std::holds_alternative<cha::web::OpenSessionSuccess>(
+            application->open_session("lobby", created.id, epoch)));
+        auto session = application->live_sessions().lookup({"lobby", created.id});
+        ASSERT_TRUE(session);
+        force_next_workspace_config_fault(WorkspaceConfigFault::publication);
+        try {
+            if (settings_edit) (void)application->create_style("Committed style", epoch);
+            else (void)application->update_character_definition(
+                "guide", {.display_name = "Committed guide"}, epoch);
+            FAIL() << "Expected restart-required publication failure";
+        } catch (const ApplicationError& error) {
+            EXPECT_EQ(error.code, ErrorCode::application_unavailable);
+        }
+        EXPECT_EQ(application->state(), ApplicationState::unavailable);
+        EXPECT_FALSE(application->running());
+        EXPECT_EQ(application->bootstrap().state, ApplicationState::unavailable);
+        EXPECT_EQ(application->check_context(epoch), ErrorCode::application_unavailable);
+        EXPECT_THROW((void)application->create_session("lobby", "Rejected", epoch), ApplicationError);
+        const auto submitted = application->submit_async("lobby", created.id, RawCommand{"Rejected"}, epoch);
+        ASSERT_TRUE(std::holds_alternative<ErrorCode>(submitted));
+        EXPECT_EQ(std::get<ErrorCode>(submitted), ErrorCode::application_unavailable);
+        EXPECT_THROW((void)application->store().create_style("Rejected"), WorkspaceRestartRequiredError);
+        EXPECT_TRUE(application->join_shutdown(2s));
+        EXPECT_EQ(session->lifecycle(), cha::web::LiveSessionState::finished);
+        session.reset();
+        application.reset();
+        auto reopened = Application::open(make_command(workspace, database));
+        EXPECT_TRUE(reopened->running());
+        if (!settings_edit) EXPECT_EQ(reopened->get_character("guide", reopened->context_epoch()).summary.display_name,
+            "Committed guide");
+    }
+}
+
+TEST(Application, RejectedConfigurationLeavesApplicationAvailable) {
+    test::TestWorkspace workspace;
+    auto application = Application::open(make_command(
+        workspace, test::import_test_database(workspace.root())));
+    const auto epoch = application->context_epoch();
+    EXPECT_THROW((void)application->update_character_definition(
+        "guide", {.display_name = "Rejected", .character_markdown = "$$(missing.md)"},
+        epoch), ApplicationError);
+    EXPECT_TRUE(application->running());
+    EXPECT_EQ(application->get_character("guide", epoch).summary.display_name, "Guide");
+    EXPECT_NO_THROW((void)application->update_character_definition(
+        "guide", {.display_name = "Accepted"}, epoch));
+}
+
+TEST(Application, OwnerThreadConfigurationFailureClosesAdmission) {
+    test::TestWorkspace workspace;
+    workspace.add_character("other", "Other");
+    std::filesystem::create_directories(workspace.root() / "forums/lobby/members/other");
+    std::ofstream(workspace.root() / "forums/lobby/members/other/character.toml") << "# member\n";
+    auto application = Application::open(make_command(
+        workspace, test::import_test_database(workspace.root())));
+    const auto epoch = application->context_epoch();
+    const auto created = application->create_session("lobby", "Owner failure", epoch);
+    ASSERT_TRUE(std::holds_alternative<cha::web::OpenSessionSuccess>(
+        application->open_session("lobby", created.id, epoch)));
+    force_next_workspace_config_fault(WorkspaceConfigFault::publication);
+    (void)application->submit("lobby", created.id,
+        cha::web::SetDefaultCharacterCommand{"other"}, epoch);
+    EXPECT_EQ(application->state(), ApplicationState::unavailable);
+    EXPECT_EQ(application->check_context(epoch), ErrorCode::application_unavailable);
+    EXPECT_TRUE(application->join_shutdown(2s));
 }
 
 TEST(Application, CloseLeavesTerminalSnapshot) {

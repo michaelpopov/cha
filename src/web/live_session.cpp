@@ -211,6 +211,11 @@ void LiveSession::acknowledge_output() noexcept {
     notifier_->wake();
 }
 
+void LiveSession::refresh_presentation() {
+    output_->require_snapshot();
+    notifier_->wake();
+}
+
 void LiveSession::request_shutdown(ShutdownReason reason) {
     {
         std::lock_guard lock(lifecycle_mutex_);

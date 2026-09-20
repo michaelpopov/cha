@@ -7,6 +7,7 @@
 
 #include <cstddef>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <span>
@@ -32,7 +33,7 @@ enum class WorkspaceConfigLease {
 };
 
 // Directory-to-database conversion. By default the store acquires the CHA
-// lease, validates a byte-identical materialization of the rows it will commit,
+// lease, validates the rows it will commit,
 // and never starts HTTP or provider threads. A running application may instead
 // keep its existing lease while its database handles are closed.
 WorkspaceConfigTransfer import_workspace_configuration(
@@ -48,7 +49,7 @@ WorkspaceConfigTransfer export_workspace_configuration(
     std::string_view database_password = {});
 
 // Reported when a runtime edit committed to SQLite but in-memory publication
-// failed, or when pre-commit restoration of the materialized tree failed.
+// failed.
 // The process must restart; the next startup publishes the committed rows.
 class WorkspaceRestartRequiredError : public std::runtime_error {
 public:
@@ -65,7 +66,7 @@ struct WorkspaceConfigEditResult {
 };
 
 // Normal-runtime owner: database lease, SQLite handle, one private temporary
-// root with workspace/ and welcome/ children, and the published workspace snapshot.
+// root for ephemeral session storage, and the published workspace snapshot.
 class WorkspaceConfigStore {
 public:
     class MaintenanceGuard {
@@ -77,7 +78,7 @@ public:
         MaintenanceGuard& operator=(const MaintenanceGuard&) = delete;
 
         // Releases the SQLite handle while keeping the process lease, store,
-        // and materialized runtime tree alive. reopen() validates and publishes
+        // and session storage alive. reopen() validates and publishes
         // whichever database is present at the same path; it throws
         // WorkspaceRestartRequiredError if that fails, leaving the store closed
         // and the process unable to serve.
@@ -110,7 +111,13 @@ public:
 
     [[nodiscard]] std::shared_ptr<const Workspace> snapshot() const;
 
+    // Install before starting session owners. Called under the edit lock on an
+    // unrecoverable runtime edit; the handler must not reenter the store.
+    void set_restart_required_handler(std::function<void()> handler);
+
     [[nodiscard]] const std::filesystem::path& private_root() const noexcept;
+    // Logical root for snapshot/session identity and configuration diagnostics.
+    // No configuration directory is created here.
     [[nodiscard]] const std::filesystem::path& workspace_path() const noexcept;
     [[nodiscard]] const std::filesystem::path& welcome_path() const noexcept;
     [[nodiscard]] std::filesystem::path database_path() const;
@@ -225,14 +232,13 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-// Test-only seam for simulated collection, SQLite, and publication failures.
+// Test-only seam for simulated validation, SQLite, and publication failures.
 enum class WorkspaceConfigFault {
     none,
-    collect_rows,
+    validation,
     sqlite_begin,
     sqlite_write,
     sqlite_commit,
-    restore,
     publication,
 };
 

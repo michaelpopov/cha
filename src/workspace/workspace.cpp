@@ -1,14 +1,13 @@
 #include "workspace/workspace.h"
+#include "workspace/workspace_config_editor.h"
 
 #include "characters/model_context.h"
 #include "providers/voice_output_config.h"
 #include "util/path_name.h"
 #include "util/logging.h"
-#include "util/private_filesystem.h"
 #include "util/public_name.h"
 #include "util/text.h"
 #include "util/text_template.h"
-#include "util/toml_file.h"
 #include "workspace/builtins.h"
 
 #include <nlohmann/json.hpp>
@@ -19,7 +18,6 @@
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
-#include <fstream>
 #include <limits>
 #include <ranges>
 #include <sstream>
@@ -70,65 +68,20 @@ bool is_reserved_id(std::string_view id) {
 }
 
 std::string read_text(
+    const TextSource& source,
     const std::filesystem::path& path,
     std::string_view description) {
-    std::ifstream input(path, std::ios::binary);
-    if (!input) {
+    const auto content = source.read(path);
+    if (!content) {
         throw std::runtime_error(
-            "Failed to read " + std::string(description) + " '"
-            + utf8_path(path) + "'");
+            "Failed to read " + std::string(description) + " '" + utf8_path(path) + "'");
     }
-    std::ostringstream contents;
-    contents << input.rdbuf();
-    if (!input.good() && !input.eof()) {
-        throw std::runtime_error(
-            "Failed to read " + std::string(description) + " '"
-            + utf8_path(path) + "'");
-    }
-    return std::move(contents).str();
+    return *content;
 }
 
-void write_markdown_file(
-    const std::filesystem::path& config_path,
-    const std::map<std::string, std::string, std::less<>>& markdown_files,
-    std::string_view filename,
-    std::optional<std::string_view> content,
-    bool create,
-    std::string_view required_filename,
-    std::string_view subject) {
-    try {
-        require_path_component(filename, config_path);
-    } catch (const std::runtime_error&) {
-        throw std::invalid_argument("Invalid Markdown filename");
-    }
-    const auto name = path_from_utf8(filename);
-    if (name.extension() != ".md") {
-        throw std::invalid_argument("Invalid Markdown filename");
-    }
-    if (!create && !markdown_files.contains(filename)) {
-        throw std::out_of_range("Unknown " + std::string(subject) + " file");
-    }
-    const auto path = config_path.parent_path() / name;
-    if (std::filesystem::is_symlink(path)) {
-        throw std::invalid_argument("Invalid " + std::string(subject) + " file");
-    }
-    const bool exists = std::filesystem::is_regular_file(path);
-    if (create && std::filesystem::exists(path)) {
-        throw std::invalid_argument("File already exists");
-    }
-    if (!create && !exists) throw std::out_of_range("Unknown " + std::string(subject) + " file");
-    if (content) {
-        create_private_file(path, *content);
-    } else {
-        if (filename == required_filename) {
-            throw std::invalid_argument(std::string(required_filename) + " is required");
-        }
-        std::filesystem::remove(path);
-    }
-}
-
-toml::table read_toml(const std::filesystem::path& path, std::string_view kind) {
-    return read_toml_file(path, kind);
+toml::table read_toml(
+    const TextSource& source, const std::filesystem::path& path, std::string_view kind) {
+    return toml::parse(read_text(source, path, kind), utf8_path(path));
 }
 
 template<typename Value>
@@ -235,37 +188,37 @@ Enum choice(
 }
 
 std::vector<std::filesystem::path> direct_subdirectories(
+    const TextSource& source,
     const std::filesystem::path& directory) {
-    if (!std::filesystem::is_directory(directory)) {
+    if (!source.in_memory() && !source.is_directory(directory)) {
         throw std::runtime_error(
             "Required directory '" + utf8_path(directory) + "' does not exist");
     }
     std::vector<std::filesystem::path> result;
-    for (const std::filesystem::directory_entry& entry :
-         std::filesystem::directory_iterator(directory)) {
-        if (entry.is_directory()) result.push_back(entry.path());
+    for (const auto& entry : source.entries(directory)) {
+        if (source.is_directory(entry)) result.push_back(entry);
     }
     std::ranges::sort(result);
     return result;
 }
 
 std::vector<std::filesystem::path> recursive_definition_directories(
+    const TextSource& source,
     const std::filesystem::path& directory,
     std::string_view config_name,
     std::string_view text_name) {
-    if (!std::filesystem::is_directory(directory)) {
+    if (!source.in_memory() && !source.is_directory(directory)) {
         throw std::runtime_error(
             "Required directory '" + utf8_path(directory) + "' does not exist");
     }
     std::vector<std::filesystem::path> result;
-    for (const std::filesystem::directory_entry& entry :
-         std::filesystem::recursive_directory_iterator(directory)) {
-        if (!entry.is_directory()) continue;
+    for (const auto& entry : source.entries(directory, true)) {
+        if (!source.is_directory(entry)) continue;
         const bool has_config =
-            std::filesystem::exists(entry.path() / std::string(config_name));
+            source.exists(entry / std::string(config_name));
         const bool has_text =
-            std::filesystem::exists(entry.path() / std::string(text_name));
-        if (has_config || has_text) result.push_back(entry.path());
+            source.exists(entry / std::string(text_name));
+        if (has_config || has_text) result.push_back(entry);
     }
     std::ranges::sort(result);
     return result;
@@ -283,11 +236,13 @@ std::string option_label(std::string_view id) {
     return label;
 }
 
-WorkspaceProvider load_provider(const std::filesystem::path& directory) {
+WorkspaceProvider load_provider(
+    const TextSource& source,
+    const std::filesystem::path& directory) {
     const std::string id = utf8_path(directory.filename());
     require_path_component(id, directory.parent_path());
     const std::filesystem::path path = directory / "config.toml";
-    const toml::table table = read_toml(path, "provider config");
+    const toml::table table = read_toml(source, path, "provider config");
     static constexpr std::string_view fields[]{
         "display_name", "host", "port", "base_path", "mode", "model", "stream",
         "temperature", "max_tokens", "timeout_s", "idle_timeout_s",
@@ -372,8 +327,10 @@ bool valid_voice_input_delay(std::string_view delay) {
         || delay == "xhigh";
 }
 
-WorkspaceVoiceInput load_voice_input(const std::filesystem::path& path) {
-    const toml::table table = read_toml(path, "voice input config");
+WorkspaceVoiceInput load_voice_input(
+    const TextSource& source,
+    const std::filesystem::path& path) {
+    const toml::table table = read_toml(source, path, "voice input config");
     static constexpr std::string_view fields[]{
         "url", "model", "api_key", "delay", "prompt"};
     reject_unknown_fields(table, path, fields, "Voice input config");
@@ -401,8 +358,10 @@ WorkspaceVoiceInput load_voice_input(const std::filesystem::path& path) {
     return result;
 }
 
-WorkspaceVoiceOutput load_voice_output(const std::filesystem::path& path) {
-    const toml::table table = read_toml(path, "voice output config");
+WorkspaceVoiceOutput load_voice_output(
+    const TextSource& source,
+    const std::filesystem::path& path) {
+    const toml::table table = read_toml(source, path, "voice output config");
     static constexpr std::string_view fields[]{
         "url", "model", "api_key", "output_format", "default_voice"};
     reject_unknown_fields(table, path, fields, "Voice output config");
@@ -463,12 +422,14 @@ std::uint64_t saved_key_suffix(
 
 using LoadedKey = std::variant<SavedApiKey, R2StorageKey>;
 
-LoadedKey load_saved_key(const std::filesystem::path& directory) {
+LoadedKey load_saved_key(
+    const TextSource& source,
+    const std::filesystem::path& directory) {
     const std::string id = utf8_path(directory.filename());
     require_path_component(id, directory.parent_path());
     const std::filesystem::path path = directory / "config.toml";
     (void)saved_key_suffix(id, path);
-    const toml::table table = read_toml(path, "key config");
+    const toml::table table = read_toml(source, path, "key config");
     const std::string type = required_string(table, path, "type");
     const std::string display_name =
         required_string(table, path, "display_name");
@@ -538,11 +499,13 @@ toml::table key_collection_table(std::uint64_t next_id) {
     return table;
 }
 
-WorkspaceStyle load_style(const std::filesystem::path& directory) {
+WorkspaceStyle load_style(
+    const TextSource& source,
+    const std::filesystem::path& directory) {
     const std::string id = utf8_path(directory.filename());
     require_path_component(id, directory.parent_path());
     const std::filesystem::path path = directory / "config.toml";
-    const toml::table table = read_toml(path, "style config");
+    const toml::table table = read_toml(source, path, "style config");
     static constexpr std::string_view fields[]{
         "display_name", "font", "style", "weight", "size", "text_color"};
     reject_unknown_fields(table, path, fields, "Style config");
@@ -605,11 +568,13 @@ std::optional<double> optional_bounded_number(
     return value;
 }
 
-WorkspaceVoice load_voice(const std::filesystem::path& directory) {
+WorkspaceVoice load_voice(
+    const TextSource& source,
+    const std::filesystem::path& directory) {
     const std::string id = utf8_path(directory.filename());
     require_path_component(id, directory.parent_path());
     const std::filesystem::path path = directory / "config.toml";
-    const toml::table table = read_toml(path, "voice config");
+    const toml::table table = read_toml(source, path, "voice config");
     static constexpr std::string_view fields[]{
         "display_name", "description", "elevenlabs_voice_id", "stability",
         "similarity_boost", "style", "use_speaker_boost", "speed"};
@@ -665,13 +630,15 @@ bool is_reserved_participant(std::string_view name) {
         reserved, [&](std::string_view value) { return folded == value; });
 }
 
-WorkspacePersona load_persona(const std::filesystem::path& directory) {
+WorkspacePersona load_persona(
+    const TextSource& source,
+    const std::filesystem::path& directory) {
     const std::string id = utf8_path(directory.filename());
     if (!is_persona_id(id) || is_reserved_participant(id)) {
         throw std::runtime_error("Invalid or reserved persona ID '" + id + "'");
     }
     const std::filesystem::path config_path = directory / "persona.toml";
-    const toml::table table = read_toml(config_path, "persona config");
+    const toml::table table = read_toml(source, config_path, "persona config");
     static constexpr std::string_view fields[]{
         "display_name", "description", "style", "voice"};
     reject_unknown_fields(table, config_path, fields, "Persona config");
@@ -692,13 +659,13 @@ WorkspacePersona load_persona(const std::filesystem::path& directory) {
     if (voice_id) require_path_component(*voice_id, config_path);
     const std::filesystem::path prompt_path = directory / "PERSONA.md";
     std::string prompt;
-    if (std::filesystem::exists(prompt_path)) {
-        if (!std::filesystem::is_regular_file(prompt_path)) {
+    if (source.exists(prompt_path)) {
+        if (!source.is_regular_file(prompt_path)) {
             throw std::runtime_error(
                 "Persona prompt '" + utf8_path(prompt_path)
                 + "' is not a regular file");
         }
-        prompt = read_text(prompt_path, "persona prompt");
+        prompt = read_text(source, prompt_path, "persona prompt");
     }
     return {
         .id = id,
@@ -776,11 +743,12 @@ bool valid_character_reasoning_effort(std::string_view value) {
 }
 
 CharacterConfig load_character_config(
+    const TextSource& source,
     const std::filesystem::path& path,
     bool definition,
     bool allow_reserved_name = false,
     bool require_provider = false) {
-    const toml::table table = read_toml(path, "character config");
+    const toml::table table = read_toml(source, path, "character config");
     static constexpr std::string_view definition_fields[]{
         "display_name", "description", "provider", "style", "voice",
         "reasoning_effort", "web_search", "tags", "prompt"};
@@ -947,9 +915,10 @@ struct LoadedForumConfig {
 };
 
 LoadedForumConfig load_forum_config(
+    const TextSource& source,
     const std::filesystem::path& path,
     std::span<const std::string> member_ids) {
-    const toml::table table = read_toml(path, "forum config");
+    const toml::table table = read_toml(source, path, "forum config");
     static constexpr std::string_view fields[]{
         "display_name", "description", "default_character", "default_agent",
         "default_persona"};
@@ -1012,14 +981,16 @@ struct LoadedKeys {
     std::optional<R2StorageKey> r2_storage;
 };
 
-LoadedKeys load_keys(const std::filesystem::path& root) {
+LoadedKeys load_keys(
+    const TextSource& source,
+    const std::filesystem::path& root) {
     LoadedKeys result;
     const std::filesystem::path keys_directory =
         root / "system" / "keys";
-    if (std::filesystem::is_directory(keys_directory)) {
+    if (source.is_directory(keys_directory)) {
         for (const std::filesystem::path& directory :
-             direct_subdirectories(keys_directory)) {
-            LoadedKey loaded = load_saved_key(directory);
+             direct_subdirectories(source, keys_directory)) {
+            LoadedKey loaded = load_saved_key(source, directory);
             if (auto* api_key = std::get_if<SavedApiKey>(&loaded)) {
                 result.api_keys.push_back(std::move(*api_key));
                 continue;
@@ -1039,6 +1010,7 @@ LoadedKeys load_keys(const std::filesystem::path& root) {
 }
 
 std::uint64_t load_next_api_key_id(
+    const TextSource& source,
     const std::filesystem::path& root,
     std::span<const SavedApiKey> api_keys,
     const std::optional<R2StorageKey>& r2_storage) {
@@ -1061,8 +1033,8 @@ std::uint64_t load_next_api_key_id(
     }
     std::uint64_t next_id = highest_key_id + 1;
     const std::filesystem::path keys_config = keys_directory / "config.toml";
-    if (std::filesystem::is_regular_file(keys_config)) {
-        const toml::table table = read_toml(keys_config, "key collection config");
+    if (source.is_regular_file(keys_config)) {
+        const toml::table table = read_toml(source, keys_config, "key collection config");
         static constexpr std::string_view fields[]{"next_id"};
         reject_unknown_fields(table, keys_config, fields, "Key collection config");
         const std::optional<std::int64_t> configured =
@@ -1085,14 +1057,16 @@ struct LoadedProviders {
     std::unordered_map<std::string, std::string> errors;
 };
 
-LoadedProviders load_providers(const std::filesystem::path& root) {
+LoadedProviders load_providers(
+    const TextSource& source,
+    const std::filesystem::path& root) {
     LoadedProviders result;
     const std::filesystem::path providers_directory =
         root / "system" / "providers";
     for (const std::filesystem::path& directory :
-         direct_subdirectories(providers_directory)) {
+         direct_subdirectories(source, providers_directory)) {
         try {
-            WorkspaceProvider provider = load_provider(directory);
+            WorkspaceProvider provider = load_provider(source, directory);
             result.config_paths.emplace(
                 provider.id, directory / "config.toml");
             result.providers.push_back(std::move(provider));
@@ -1117,15 +1091,17 @@ struct LoadedStyles {
     std::unordered_map<std::string, std::filesystem::path> config_paths;
 };
 
-LoadedStyles load_styles(const std::filesystem::path& root) {
+LoadedStyles load_styles(
+    const TextSource& source,
+    const std::filesystem::path& root) {
     LoadedStyles result;
     const std::filesystem::path styles_directory =
         root / "system" / "styles";
-    if (std::filesystem::is_directory(styles_directory)) {
+    if (source.is_directory(styles_directory)) {
         for (const std::filesystem::path& directory :
-             direct_subdirectories(styles_directory)) {
+             direct_subdirectories(source, styles_directory)) {
             try {
-                WorkspaceStyle style = load_style(directory);
+                WorkspaceStyle style = load_style(source, directory);
                 result.config_paths.emplace(
                     style.id, directory / "config.toml");
                 result.styles.push_back(std::move(style));
@@ -1149,14 +1125,16 @@ struct LoadedVoices {
     std::unordered_map<std::string, std::filesystem::path> config_paths;
 };
 
-LoadedVoices load_voices(const std::filesystem::path& root) {
+LoadedVoices load_voices(
+    const TextSource& source,
+    const std::filesystem::path& root) {
     LoadedVoices result;
     const std::filesystem::path voices_directory =
         root / "system" / "voices";
-    if (std::filesystem::is_directory(voices_directory)) {
+    if (source.is_directory(voices_directory)) {
         for (const std::filesystem::path& directory :
-             direct_subdirectories(voices_directory)) {
-            WorkspaceVoice voice = load_voice(directory);
+             direct_subdirectories(source, voices_directory)) {
+            WorkspaceVoice voice = load_voice(source, directory);
             result.config_paths.emplace(
                 voice.id, directory / "config.toml");
             result.voices.push_back(std::move(voice));
@@ -1171,13 +1149,14 @@ LoadedVoices load_voices(const std::filesystem::path& root) {
 }
 
 std::optional<WorkspaceVoiceInput> load_voice_input_settings(
+    const TextSource& source,
     const std::filesystem::path& root) {
     std::optional<WorkspaceVoiceInput> result;
     const std::filesystem::path voice_input_path =
         root / "system" / "voice-input" / "config.toml";
-    if (std::filesystem::is_regular_file(voice_input_path)) {
+    if (source.is_regular_file(voice_input_path)) {
         try {
-            result = load_voice_input(voice_input_path);
+            result = load_voice_input(source, voice_input_path);
         } catch (const std::exception& error) {
             log_warn(
                 "Voice input configuration is ignored: "
@@ -1188,13 +1167,14 @@ std::optional<WorkspaceVoiceInput> load_voice_input_settings(
 }
 
 std::optional<WorkspaceVoiceOutput> load_voice_output_settings(
+    const TextSource& source,
     const std::filesystem::path& root) {
     std::optional<WorkspaceVoiceOutput> result;
     const std::filesystem::path voice_output_path =
         root / "system" / "voice-output" / "config.toml";
-    if (std::filesystem::is_regular_file(voice_output_path)) {
+    if (source.is_regular_file(voice_output_path)) {
         try {
-            result = load_voice_output(voice_output_path);
+            result = load_voice_output(source, voice_output_path);
         } catch (const std::exception& error) {
             log_warn(
                 "Voice output configuration is ignored: "
@@ -1209,12 +1189,14 @@ struct LoadedPersonas {
     std::unordered_map<std::string, std::filesystem::path> directories;
 };
 
-LoadedPersonas load_personas(const Workspace& workspace) {
+LoadedPersonas load_personas(
+    const TextSource& source,
+    const Workspace& workspace) {
     LoadedPersonas result;
     const std::filesystem::path personas_directory = workspace.root() / "personas";
-    for (const std::filesystem::path& directory : recursive_definition_directories(
+    for (const std::filesystem::path& directory : recursive_definition_directories(source,
              personas_directory, "persona.toml", "PERSONA.md")) {
-        WorkspacePersona persona = load_persona(directory);
+        WorkspacePersona persona = load_persona(source, directory);
         if (persona.style_id) {
             const WorkspaceStyle* style = workspace.find_style(*persona.style_id);
             if (style == nullptr) {
@@ -1300,23 +1282,24 @@ struct LoadedCharacters {
 };
 
 LoadedCharacters load_characters(
+    const TextSource& source,
     const Workspace& workspace,
     const std::unordered_map<std::string, std::string>& provider_errors) {
     LoadedCharacters result;
     const std::filesystem::path characters_directory =
         workspace.root() / "characters";
-    for (const std::filesystem::path& directory : recursive_definition_directories(
+    for (const std::filesystem::path& directory : recursive_definition_directories(source,
              characters_directory, "character.toml", "CHARACTER.md")) {
         const std::string id = utf8_path(directory.filename());
         validate_workspace_character_id(id);
         const std::filesystem::path config_path = directory / "character.toml";
         const std::filesystem::path prompt_path = directory / "CHARACTER.md";
-        if (!std::filesystem::is_regular_file(config_path)
-            || !std::filesystem::is_regular_file(prompt_path)) {
+        if (!source.is_regular_file(config_path)
+            || !source.is_regular_file(prompt_path)) {
             throw std::runtime_error(
                 "Character '" + id + "' requires character.toml and CHARACTER.md");
         }
-        const CharacterConfig config = load_character_config(config_path, true);
+        const CharacterConfig config = load_character_config(source, config_path, true);
         const CharacterAppearance appearance = resolve_character_references(
             config, "Character '" + id + "'", workspace, provider_errors);
         if (!result.directories.emplace(id, directory).second) {
@@ -1334,20 +1317,21 @@ LoadedCharacters load_characters(
                 {"forum.display_name", ""},
             },
             .initial_scope = config.prompt_variables,
+            .source = &source,
         };
         const std::string prompt_template =
-            read_text(prompt_path, "character prompt");
+            read_text(source, prompt_path, "character prompt");
         const std::string editable_markdown =
             prompt_template == embedded_new_character_template()
-            ? read_text(directory / "PROFILE.md", "character profile")
+            ? read_text(source, directory / "PROFILE.md", "character profile")
             : prompt_template;
         std::map<std::string, std::string, std::less<>> markdown_files;
-        for (const auto& entry : std::filesystem::directory_iterator(directory)) {
-            if (entry.is_regular_file() && !entry.is_symlink()
-                && entry.path().extension() == ".md") {
-                const auto filename = utf8_path(entry.path().filename());
+        for (const auto& entry : source.entries(directory)) {
+            if (source.is_regular_file(entry) && !source.is_symlink(entry)
+                && entry.extension() == ".md") {
+                const auto filename = utf8_path(entry.filename());
                 markdown_files.emplace(filename, filename == "CHARACTER.md"
-                    ? prompt_template : read_text(entry.path(), "character file"));
+                    ? prompt_template : read_text(source, entry, "character file"));
             }
         }
         result.characters.push_back({
@@ -1375,12 +1359,13 @@ LoadedCharacters load_characters(
 }
 
 WorkspaceCharacter load_assistant(
+    const TextSource& source,
     const Workspace& workspace,
     const std::unordered_map<std::string, std::string>& provider_errors) {
     const std::filesystem::path assistant_path =
         workspace.root() / "system" / "assistant" / "character.toml";
     const CharacterConfig assistant =
-        load_character_config(assistant_path, true, true, true);
+        load_character_config(source, assistant_path, true, true, true);
     const CharacterAppearance assistant_appearance = resolve_character_references(
         assistant, "Assistant", workspace, provider_errors);
     return {
@@ -1431,6 +1416,7 @@ struct LoadedForums {
 };
 
 LoadedForums load_forums(
+    const TextSource& source,
     const Workspace& workspace,
     const std::unordered_map<std::string, std::filesystem::path>& character_directories) {
     LoadedForums result;
@@ -1438,7 +1424,7 @@ LoadedForums load_forums(
     const std::filesystem::path forums_directory = workspace.root() / "forums";
     std::unordered_set<std::string> forum_names;
     for (const std::filesystem::path& directory :
-         direct_subdirectories(forums_directory)) {
+         direct_subdirectories(source, forums_directory)) {
         const std::string id = utf8_path(directory.filename());
         require_url_safe_identifier(id, forums_directory);
         if (is_reserved_id(id)) {
@@ -1447,7 +1433,7 @@ LoadedForums load_forums(
         const std::filesystem::path members_directory = directory / "members";
         std::vector<std::string> member_ids;
         for (const std::filesystem::path& member_directory :
-             direct_subdirectories(members_directory)) {
+             direct_subdirectories(source, members_directory)) {
             const std::string member_id = utf8_path(member_directory.filename());
             if (member_id != workspace_assistant_id) {
                 validate_workspace_character_id(member_id);
@@ -1469,7 +1455,7 @@ LoadedForums load_forums(
         }
         std::ranges::sort(member_ids);
         const LoadedForumConfig config =
-            load_forum_config(directory / "config.toml", member_ids);
+            load_forum_config(source, directory / "config.toml", member_ids);
         if (fold_ascii(config.display_name) == "entrance") {
             throw std::runtime_error(
                 "Forum name '" + config.display_name + "' is reserved");
@@ -1486,7 +1472,7 @@ LoadedForums load_forums(
                 + config.default_persona_id + "'");
         }
         const std::filesystem::path forum_prompt_path = directory / "FORUM.md";
-        if (!std::filesystem::is_regular_file(forum_prompt_path)) {
+        if (!source.is_regular_file(forum_prompt_path)) {
             throw std::runtime_error("Forum '" + id + "' requires FORUM.md");
         }
         WorkspaceForum forum{
@@ -1495,14 +1481,14 @@ LoadedForums load_forums(
             .description = config.description,
             .default_character_id = config.default_character_id,
             .default_persona_id = config.default_persona_id,
-            .prompt_template = read_text(forum_prompt_path, "forum prompt"),
+            .prompt_template = read_text(source, forum_prompt_path, "forum prompt"),
         };
-        for (const auto& entry : std::filesystem::directory_iterator(directory)) {
-            if (entry.is_regular_file() && !entry.is_symlink()
-                && entry.path().extension() == ".md") {
-                const auto filename = utf8_path(entry.path().filename());
+        for (const auto& entry : source.entries(directory)) {
+            if (source.is_regular_file(entry) && !source.is_symlink(entry)
+                && entry.extension() == ".md") {
+                const auto filename = utf8_path(entry.filename());
                 forum.markdown_files.emplace(filename, filename == "FORUM.md"
-                    ? forum.prompt_template : read_text(entry.path(), "forum file"));
+                    ? forum.prompt_template : read_text(source, entry, "forum file"));
             }
         }
         result.config_paths.emplace(
@@ -1510,12 +1496,12 @@ LoadedForums load_forums(
         const std::filesystem::path defaults_path =
             members_directory / "character_defaults.toml";
         WorkspacePromptVariables defaults;
-        if (std::filesystem::exists(defaults_path)) {
-            if (!std::filesystem::is_regular_file(defaults_path)) {
+        if (source.exists(defaults_path)) {
+            if (!source.is_regular_file(defaults_path)) {
                 throw std::runtime_error(
                     "Forum '" + id + "' character defaults are not a regular file");
             }
-            defaults = load_character_config(defaults_path, false).prompt_variables;
+            defaults = load_character_config(source, defaults_path, false).prompt_variables;
         }
         for (const std::string& member_id : member_ids) {
             const WorkspaceCharacter& character =
@@ -1526,26 +1512,26 @@ LoadedForums load_forums(
                 member_directory / "character.toml";
             WorkspacePromptVariables variables = character.prompt_variables;
             overlay(variables, defaults);
-            if (std::filesystem::exists(member_config_path)) {
-                if (!std::filesystem::is_regular_file(member_config_path)) {
+            if (source.exists(member_config_path)) {
+                if (!source.is_regular_file(member_config_path)) {
                     throw std::runtime_error(
                         "Forum member config '" + utf8_path(member_config_path)
                         + "' is not a regular file");
                 }
                 overlay(
                     variables,
-                    load_character_config(member_config_path, false).prompt_variables);
+                    load_character_config(source, member_config_path, false).prompt_variables);
             }
             const std::filesystem::path override_path = member_directory / "CHARACTER.md";
             std::optional<std::string> prompt_override;
             std::string character_prompt;
-            if (std::filesystem::exists(override_path)) {
-                if (!std::filesystem::is_regular_file(override_path)) {
+            if (source.exists(override_path)) {
+                if (!source.is_regular_file(override_path)) {
                     throw std::runtime_error(
                         "Forum member prompt '" + utf8_path(override_path)
                         + "' is not a regular file");
                 }
-                prompt_override = read_text(override_path, "forum member prompt");
+                prompt_override = read_text(source, override_path, "forum member prompt");
             }
             TemplateOptions options{
                 .containment_root = prompt_override ? directory : characters_directory,
@@ -1558,6 +1544,7 @@ LoadedForums load_forums(
                     {"forum.display_name", config.display_name},
                 },
                 .initial_scope = variables,
+                .source = &source,
             };
             if (prompt_override) {
                 character_prompt = expand_template_file(override_path, options);
@@ -1623,7 +1610,16 @@ WorkspaceForum build_entrance(const Workspace& workspace) {
 } // namespace
 
 Workspace Workspace::load(std::filesystem::path root) {
-    if (!std::filesystem::is_directory(root)) {
+    return load(std::move(root), TextSource{});
+}
+
+Workspace Workspace::load(std::filesystem::path root, const TextFiles& files) {
+    const TextSource source(root, files);
+    return load(std::move(root), source);
+}
+
+Workspace Workspace::load(std::filesystem::path root, const TextSource& source) {
+    if (!source.is_directory(root)) {
         throw std::runtime_error(
             "Workspace '" + utf8_path(root) + "' is not a directory");
     }
@@ -1632,52 +1628,52 @@ Workspace Workspace::load(std::filesystem::path root) {
     workspace.root_ = std::move(root);
 
     // Keys have no catalog dependencies; retain the existing loading order.
-    LoadedKeys keys = load_keys(workspace.root_);
+    LoadedKeys keys = load_keys(source, workspace.root_);
     workspace.api_keys_ = std::move(keys.api_keys);
     workspace.r2_storage_ = std::move(keys.r2_storage);
     build_index(
         std::span<const SavedApiKey>(workspace.api_keys_),
         workspace.api_key_index_, "API key");
-    workspace.next_api_key_id_ = load_next_api_key_id(
+    workspace.next_api_key_id_ = load_next_api_key_id(source,
         workspace.root_, workspace.api_keys_, workspace.r2_storage_);
 
     // Reference resolution needs the provider, style and voice indexes.
-    LoadedProviders providers = load_providers(workspace.root_);
+    LoadedProviders providers = load_providers(source, workspace.root_);
     workspace.providers_ = std::move(providers.providers);
     workspace.provider_config_paths_ = std::move(providers.config_paths);
     build_index(
         std::span<const WorkspaceProvider>(workspace.providers_),
         workspace.provider_index_, "Provider");
 
-    LoadedStyles styles = load_styles(workspace.root_);
+    LoadedStyles styles = load_styles(source, workspace.root_);
     workspace.styles_ = std::move(styles.styles);
     workspace.style_config_paths_ = std::move(styles.config_paths);
     build_index(
         std::span<const WorkspaceStyle>(workspace.styles_),
         workspace.style_index_, "Style");
 
-    LoadedVoices voices = load_voices(workspace.root_);
+    LoadedVoices voices = load_voices(source, workspace.root_);
     workspace.voices_ = std::move(voices.voices);
     workspace.voice_config_paths_ = std::move(voices.config_paths);
     build_index(
         std::span<const WorkspaceVoice>(workspace.voices_),
         workspace.voice_index_, "Voice");
 
-    workspace.voice_input_ = load_voice_input_settings(workspace.root_);
-    workspace.voice_output_ = load_voice_output_settings(workspace.root_);
+    workspace.voice_input_ = load_voice_input_settings(source, workspace.root_);
+    workspace.voice_output_ = load_voice_output_settings(source, workspace.root_);
 
     // Guest is already included and sorted by the persona phase.
-    LoadedPersonas personas = load_personas(workspace);
+    LoadedPersonas personas = load_personas(source, workspace);
     workspace.personas_ = std::move(personas.personas);
     workspace.persona_directories_ = std::move(personas.directories);
     build_index(
         std::span<const WorkspacePersona>(workspace.personas_),
         workspace.persona_index_, "Persona");
 
-    LoadedCharacters characters = load_characters(workspace, providers.errors);
+    LoadedCharacters characters = load_characters(source, workspace, providers.errors);
     workspace.characters_ = std::move(characters.characters);
     workspace.character_config_paths_ = std::move(characters.config_paths);
-    workspace.characters_.push_back(load_assistant(workspace, providers.errors));
+    workspace.characters_.push_back(load_assistant(source, workspace, providers.errors));
     std::ranges::sort(
         workspace.characters_, {},
         [](const WorkspaceCharacter& character) {
@@ -1693,7 +1689,7 @@ Workspace Workspace::load(std::filesystem::path root) {
 
     // Collision checks and forums require both participant indexes.
     validate_participants(workspace);
-    LoadedForums forums = load_forums(workspace, characters.directories);
+    LoadedForums forums = load_forums(source, workspace, characters.directories);
     workspace.forums_ = std::move(forums.forums);
     workspace.forum_config_paths_ = std::move(forums.config_paths);
 
@@ -1915,12 +1911,72 @@ bool Workspace::voice_is_writable(std::string_view id) const noexcept {
     return voice_config_paths_.contains(std::string(id));
 }
 
-void Workspace::write_provider(
+void WorkspaceConfigEditor::write_file(
+    const std::filesystem::path& path, std::string_view content) {
+    files_[source_.name(path)] = content;
+}
+
+void WorkspaceConfigEditor::write_toml(
+    const std::filesystem::path& path, const toml::table& table) {
+    std::ostringstream output;
+    output << table << '\n';
+    write_file(path, output.str());
+}
+
+void WorkspaceConfigEditor::rewrite_toml(
+    const std::filesystem::path& path, const std::function<void(toml::table&)>& edit) {
+    toml::table table = read_toml(source_, path, "config file");
+    edit(table);
+    write_toml(path, table);
+}
+
+void WorkspaceConfigEditor::remove_directory(const std::filesystem::path& path) {
+    const std::string prefix = source_.name(path) + "/";
+    std::erase_if(files_, [&](const auto& file) { return file.first.starts_with(prefix); });
+}
+
+void WorkspaceConfigEditor::write_markdown_file(
+    const std::filesystem::path& config_path,
+    const std::map<std::string, std::string, std::less<>>& markdown_files,
+    std::string_view filename,
+    std::optional<std::string_view> content,
+    bool create,
+    std::string_view required_filename,
+    std::string_view subject) {
+    try {
+        require_path_component(filename, config_path);
+    } catch (const std::runtime_error&) {
+        throw std::invalid_argument("Invalid Markdown filename");
+    }
+    const auto name = path_from_utf8(filename);
+    if (name.extension() != ".md") {
+        throw std::invalid_argument("Invalid Markdown filename");
+    }
+    if (!create && !markdown_files.contains(filename)) {
+        throw std::out_of_range("Unknown " + std::string(subject) + " file");
+    }
+    const auto path = config_path.parent_path() / name;
+    const bool exists = source_.is_regular_file(path);
+    if (create && source_.exists(path)) {
+        throw std::invalid_argument("File already exists");
+    }
+    if (!create && !exists) throw std::out_of_range("Unknown " + std::string(subject) + " file");
+    if (content) {
+        write_file(path, *content);
+    } else {
+        if (filename == required_filename) {
+            throw std::invalid_argument(std::string(required_filename) + " is required");
+        }
+        files_.erase(source_.name(path));
+    }
+}
+
+void WorkspaceConfigEditor::write_provider(
     std::string_view provider_id,
     std::string_view display_name,
-    const ModelBackendConfig& provider) const {
-    const auto path = provider_config_paths_.find(std::string(provider_id));
-    if (path == provider_config_paths_.end()) {
+    const ModelBackendConfig& provider) {
+    const auto path = workspace_.provider_config_paths_.find(std::string(provider_id));
+    if (path == workspace_.provider_config_paths_.end()) {
         throw std::runtime_error(
             "Provider '" + std::string(provider_id)
             + "' has no writable configuration");
@@ -1965,21 +2021,21 @@ void Workspace::write_provider(
         }
         table.insert("openrouter_targets", std::move(targets));
     }
-    write_toml_file(path->second, table);
+    write_toml(path->second, table);
     // Validate the saved file directly; workspace loading can omit invalid providers.
     try {
-        (void)load_provider(path->second.parent_path());
+        (void)load_provider(source_, path->second.parent_path());
     } catch (const std::runtime_error&) {
         throw std::invalid_argument("Invalid provider settings");
     }
 }
 
-void Workspace::create_provider(
+void WorkspaceConfigEditor::create_provider(
     std::string_view provider_id,
     std::string_view display_name,
-    std::string_view copy_from) const {
+    std::string_view copy_from) {
     const std::filesystem::path directory =
-        root_ / "system" / "providers" / std::string(provider_id);
+        workspace_.root_ / "system" / "providers" / std::string(provider_id);
     const std::filesystem::path path = directory / "config.toml";
     try {
         require_path_component(provider_id, directory.parent_path());
@@ -1987,8 +2043,8 @@ void Workspace::create_provider(
     } catch (const std::runtime_error&) {
         throw std::invalid_argument("Invalid provider");
     }
-    if (find_provider(provider_id) != nullptr
-        || std::filesystem::exists(directory)) {
+    if (workspace_.find_provider(provider_id) != nullptr
+        || source_.exists(directory)) {
         throw std::invalid_argument("Duplicate provider");
     }
 
@@ -2009,45 +2065,39 @@ void Workspace::create_provider(
         table.insert("web_search", "off");
         table.insert("cache_retention", "short");
     } else {
-        const auto source = provider_config_paths_.find(std::string(copy_from));
-        if (source == provider_config_paths_.end()) {
+        const auto source = workspace_.provider_config_paths_.find(std::string(copy_from));
+        if (source == workspace_.provider_config_paths_.end()) {
             throw std::invalid_argument("Unknown provider to copy");
         }
-        table = read_toml(source->second, "provider config");
+        table = read_toml(source_, source->second, "provider config");
         table.insert_or_assign("display_name", std::string(display_name));
     }
-    create_private_directory(directory);
-    write_toml_file(path, table);
-    (void)load_provider(directory);
+
+    write_toml(path, table);
+    (void)load_provider(source_, directory);
 }
 
-void Workspace::delete_provider(std::string_view provider_id) const {
-    const auto path = provider_config_paths_.find(std::string(provider_id));
-    if (path == provider_config_paths_.end()) {
+void WorkspaceConfigEditor::delete_provider(std::string_view provider_id) {
+    const auto path = workspace_.provider_config_paths_.find(std::string(provider_id));
+    if (path == workspace_.provider_config_paths_.end()) {
         throw std::runtime_error(
             "Provider '" + std::string(provider_id)
             + "' has no writable configuration");
     }
-    for (const WorkspaceCharacter& character : characters_) {
+    for (const WorkspaceCharacter& character : workspace_.characters_) {
         if (character.provider_id && *character.provider_id == provider_id) {
             throw std::invalid_argument("Provider is in use");
         }
     }
-    std::error_code error;
-    std::filesystem::remove_all(path->second.parent_path(), error);
-    if (error) {
-        throw std::runtime_error(
-            "Failed to remove provider '" + std::string(provider_id)
-            + "': " + error.message());
-    }
+    remove_directory(path->second.parent_path());
 }
 
-void Workspace::write_style(
+void WorkspaceConfigEditor::write_style(
     std::string_view style_id,
     std::string_view display_name,
-    const CharacterAppearance& appearance) const {
-    const auto path = style_config_paths_.find(std::string(style_id));
-    if (path == style_config_paths_.end()) {
+    const CharacterAppearance& appearance) {
+    const auto path = workspace_.style_config_paths_.find(std::string(style_id));
+    if (path == workspace_.style_config_paths_.end()) {
         throw std::runtime_error(
             "Style '" + std::string(style_id)
             + "' has no writable configuration");
@@ -2064,19 +2114,19 @@ void Workspace::write_style(
     table.insert("weight", to_string(appearance.weight));
     table.insert("size", to_string(appearance.size));
     table.insert("text_color", to_string(appearance.text_color));
-    write_toml_file(path->second, table);
+    write_toml(path->second, table);
     try {
-        (void)load_style(path->second.parent_path());
+        (void)load_style(source_, path->second.parent_path());
     } catch (const std::runtime_error&) {
         throw std::invalid_argument("Invalid style settings");
     }
 }
 
-void Workspace::create_style(
+void WorkspaceConfigEditor::create_style(
     std::string_view style_id,
-    std::string_view display_name) const {
+    std::string_view display_name) {
     const std::filesystem::path directory =
-        root_ / "system" / "styles" / std::string(style_id);
+        workspace_.root_ / "system" / "styles" / std::string(style_id);
     const std::filesystem::path path = directory / "config.toml";
     try {
         require_path_component(style_id, directory.parent_path());
@@ -2084,11 +2134,10 @@ void Workspace::create_style(
     } catch (const std::runtime_error&) {
         throw std::invalid_argument("Invalid style");
     }
-    if (find_style(style_id) != nullptr || std::filesystem::exists(directory)) {
+    if (workspace_.find_style(style_id) != nullptr || source_.exists(directory)) {
         throw std::invalid_argument("Duplicate style");
     }
 
-    create_private_directory(directory);
     toml::table table;
     table.insert("display_name", std::string(display_name));
     table.insert("font", "sans");
@@ -2096,44 +2145,38 @@ void Workspace::create_style(
     table.insert("weight", "normal");
     table.insert("size", "normal");
     table.insert("text_color", "normal");
-    write_toml_file(path, table);
-    (void)load_style(directory);
+    write_toml(path, table);
+    (void)load_style(source_, directory);
 }
 
-void Workspace::delete_style(std::string_view style_id) const {
-    const auto path = style_config_paths_.find(std::string(style_id));
-    if (path == style_config_paths_.end()) {
+void WorkspaceConfigEditor::delete_style(std::string_view style_id) {
+    const auto path = workspace_.style_config_paths_.find(std::string(style_id));
+    if (path == workspace_.style_config_paths_.end()) {
         throw std::runtime_error(
             "Style '" + std::string(style_id)
             + "' has no writable configuration");
     }
-    for (const WorkspaceCharacter& character : characters_) {
+    for (const WorkspaceCharacter& character : workspace_.characters_) {
         if (character.style_id && *character.style_id == style_id) {
             throw std::invalid_argument("Style is in use");
         }
     }
-    for (const WorkspacePersona& persona : personas_) {
+    for (const WorkspacePersona& persona : workspace_.personas_) {
         if (persona.style_id && *persona.style_id == style_id) {
             throw std::invalid_argument("Style is in use");
         }
     }
-    std::error_code error;
-    std::filesystem::remove_all(path->second.parent_path(), error);
-    if (error) {
-        throw std::runtime_error(
-            "Failed to remove style '" + std::string(style_id)
-            + "': " + error.message());
-    }
+    remove_directory(path->second.parent_path());
 }
 
-void Workspace::write_voice(
+void WorkspaceConfigEditor::write_voice(
     std::string_view voice_id,
     std::string_view display_name,
     std::string_view description,
     std::string_view elevenlabs_voice_id,
-    const VoiceSettings& settings) const {
-    const auto path = voice_config_paths_.find(std::string(voice_id));
-    if (path == voice_config_paths_.end()) {
+    const VoiceSettings& settings) {
+    const auto path = workspace_.voice_config_paths_.find(std::string(voice_id));
+    if (path == workspace_.voice_config_paths_.end()) {
         throw std::runtime_error(
             "Voice '" + std::string(voice_id)
             + "' has no writable configuration");
@@ -2153,21 +2196,21 @@ void Workspace::write_voice(
     }
     table.insert("elevenlabs_voice_id", std::string(elevenlabs_voice_id));
     if (settings.speed) table.insert("speed", *settings.speed);
-    write_toml_file(path->second, table);
+    write_toml(path->second, table);
     try {
-        (void)load_voice(path->second.parent_path());
+        (void)load_voice(source_, path->second.parent_path());
     } catch (const std::runtime_error&) {
         throw std::invalid_argument("Invalid voice settings");
     }
 }
 
-void Workspace::create_voice(
+void WorkspaceConfigEditor::create_voice(
     std::string_view voice_id,
     std::string_view display_name,
     std::string_view description,
-    std::string_view elevenlabs_voice_id) const {
+    std::string_view elevenlabs_voice_id) {
     const std::filesystem::path directory =
-        root_ / "system" / "voices" / std::string(voice_id);
+        workspace_.root_ / "system" / "voices" / std::string(voice_id);
     const std::filesystem::path path = directory / "config.toml";
     try {
         require_path_component(voice_id, directory.parent_path());
@@ -2176,54 +2219,48 @@ void Workspace::create_voice(
     } catch (const std::runtime_error&) {
         throw std::invalid_argument("Invalid voice");
     }
-    if (elevenlabs_voice_id.empty() || find_voice(voice_id) != nullptr
-        || std::filesystem::exists(directory)) {
+    if (elevenlabs_voice_id.empty() || workspace_.find_voice(voice_id) != nullptr
+        || source_.exists(directory)) {
         throw std::invalid_argument("Invalid voice");
     }
-    create_private_directory(directory);
+
     toml::table table;
     table.insert("display_name", std::string(display_name));
     if (!description.empty()) {
         table.insert("description", std::string(description));
     }
     table.insert("elevenlabs_voice_id", std::string(elevenlabs_voice_id));
-    write_toml_file(path, table);
-    (void)load_voice(directory);
+    write_toml(path, table);
+    (void)load_voice(source_, directory);
 }
 
-void Workspace::delete_voice(std::string_view voice_id) const {
-    const auto path = voice_config_paths_.find(std::string(voice_id));
-    if (path == voice_config_paths_.end()) {
+void WorkspaceConfigEditor::delete_voice(std::string_view voice_id) {
+    const auto path = workspace_.voice_config_paths_.find(std::string(voice_id));
+    if (path == workspace_.voice_config_paths_.end()) {
         throw std::runtime_error(
             "Voice '" + std::string(voice_id)
             + "' has no writable configuration");
     }
-    for (const WorkspaceCharacter& character : characters_) {
+    for (const WorkspaceCharacter& character : workspace_.characters_) {
         if (character.voice_id && *character.voice_id == voice_id) {
             throw std::invalid_argument("Voice is in use");
         }
     }
-    for (const WorkspacePersona& persona : personas_) {
+    for (const WorkspacePersona& persona : workspace_.personas_) {
         if (persona.voice_id && *persona.voice_id == voice_id) {
             throw std::invalid_argument("Voice is in use");
         }
     }
-    const WorkspaceVoice* const voice = find_voice(voice_id);
-    if (voice_output_ && voice
-        && voice_output_->default_voice == voice->label) {
+    const WorkspaceVoice* const voice = workspace_.find_voice(voice_id);
+    if (workspace_.voice_output_ && voice
+        && workspace_.voice_output_->default_voice == voice->label) {
         throw std::invalid_argument("Voice is in use");
     }
-    std::error_code error;
-    std::filesystem::remove_all(path->second.parent_path(), error);
-    if (error) {
-        throw std::runtime_error(
-            "Failed to remove voice '" + std::string(voice_id)
-            + "': " + error.message());
-    }
+    remove_directory(path->second.parent_path());
 }
 
-void Workspace::write_voice_input(const WorkspaceVoiceInput& settings) const {
-    const std::filesystem::path directory = root_ / "system" / "voice-input";
+void WorkspaceConfigEditor::write_voice_input(const WorkspaceVoiceInput& settings) {
+    const std::filesystem::path directory = workspace_.root_ / "system" / "voice-input";
     const std::filesystem::path path = directory / "config.toml";
     if (settings.url.empty() || settings.model.empty()
         || settings.api_key_id.empty()
@@ -2231,33 +2268,23 @@ void Workspace::write_voice_input(const WorkspaceVoiceInput& settings) const {
         || !valid_voice_input_delay(settings.delay)) {
         throw std::invalid_argument("Invalid voice input settings");
     }
-    if (std::filesystem::exists(directory)) {
-        require_directory(directory);
-    } else {
-        create_private_directory(directory);
-    }
     toml::table table;
     table.insert("url", settings.url);
     table.insert("model", settings.model);
     table.insert("api_key", settings.api_key_id);
     table.insert("delay", settings.delay);
     table.insert("prompt", settings.prompt);
-    write_toml_file(path, table);
+    write_toml(path, table);
 }
 
-void Workspace::write_voice_output(const WorkspaceVoiceOutput& settings) const {
+void WorkspaceConfigEditor::write_voice_output(const WorkspaceVoiceOutput& settings) {
     const std::string url = parse_voice_output_endpoint(settings.url);
     const std::string model = normalize_voice_output_model(settings.model);
     const std::string format = normalize_voice_output_format(settings.output_format);
-    const std::filesystem::path directory = root_ / "system" / "voice-output";
+    const std::filesystem::path directory = workspace_.root_ / "system" / "voice-output";
     const std::filesystem::path path = directory / "config.toml";
     if (settings.api_key_id.empty() || settings.default_voice.empty()) {
         throw std::invalid_argument("Invalid voice output settings");
-    }
-    if (std::filesystem::exists(directory)) {
-        require_directory(directory);
-    } else {
-        create_private_directory(directory);
     }
     toml::table table;
     table.insert("url", url);
@@ -2265,15 +2292,15 @@ void Workspace::write_voice_output(const WorkspaceVoiceOutput& settings) const {
     table.insert("api_key", settings.api_key_id);
     table.insert("output_format", format);
     table.insert("default_voice", settings.default_voice);
-    write_toml_file(path, table);
+    write_toml(path, table);
 }
 
-void Workspace::create_api_key(
+void WorkspaceConfigEditor::create_api_key(
     std::string_view id,
     std::string_view display_name,
-    std::string_view value) const {
+    std::string_view value) {
     const std::filesystem::path directory =
-        root_ / "system" / "keys" / std::string(id);
+        workspace_.root_ / "system" / "keys" / std::string(id);
     const std::filesystem::path path = directory / "config.toml";
     try {
         require_path_component(id, directory.parent_path());
@@ -2283,27 +2310,26 @@ void Workspace::create_api_key(
     } catch (const std::runtime_error&) {
         throw std::invalid_argument("Invalid API key");
     }
-    if (find_api_key(id) != nullptr
-        || (r2_storage_ && r2_storage_->id == id)
-        || std::filesystem::exists(directory)) {
+    if (workspace_.find_api_key(id) != nullptr
+        || (workspace_.r2_storage_ && workspace_.r2_storage_->id == id)
+        || source_.exists(directory)) {
         throw std::invalid_argument("Duplicate API key");
     }
-    create_private_directory(directory);
-    write_toml_file(path, api_key_table(display_name, value));
-    tighten_private_file(path);
+
+    write_toml(path, api_key_table(display_name, value));
     write_next_api_key_id(saved_key_suffix(id, path) + 1);
-    (void)load_saved_key(directory);
+    (void)load_saved_key(source_, directory);
 }
 
-void Workspace::write_api_key(
+void WorkspaceConfigEditor::write_api_key(
     std::string_view id,
     std::string_view display_name,
-    std::string_view value) const {
-    if (find_api_key(id) == nullptr) {
+    std::string_view value) {
+    if (workspace_.find_api_key(id) == nullptr) {
         throw std::out_of_range("Unknown API key");
     }
     const std::filesystem::path directory =
-        root_ / "system" / "keys" / std::string(id);
+        workspace_.root_ / "system" / "keys" / std::string(id);
     const std::filesystem::path path = directory / "config.toml";
     try {
         validate_saved_key_text(display_name, 100, "display_name", path);
@@ -2311,29 +2337,22 @@ void Workspace::write_api_key(
     } catch (const std::runtime_error&) {
         throw std::invalid_argument("Invalid API key");
     }
-    write_toml_file(path, api_key_table(display_name, value));
-    tighten_private_file(path);
-    (void)load_saved_key(directory);
+    write_toml(path, api_key_table(display_name, value));
+    (void)load_saved_key(source_, directory);
 }
 
-void Workspace::delete_api_key(std::string_view id) const {
-    if (find_api_key(id) == nullptr) {
+void WorkspaceConfigEditor::delete_api_key(std::string_view id) {
+    if (workspace_.find_api_key(id) == nullptr) {
         throw std::out_of_range("Unknown API key");
     }
     const std::filesystem::path directory =
-        root_ / "system" / "keys" / std::string(id);
-    std::error_code error;
-    std::filesystem::remove_all(directory, error);
-    if (error) {
-        throw std::runtime_error(
-            "Failed to remove API key '" + std::string(id)
-            + "': " + error.message());
-    }
+        workspace_.root_ / "system" / "keys" / std::string(id);
+    remove_directory(directory);
 }
 
-void Workspace::create_r2_storage(const R2StorageKey& key) const {
+void WorkspaceConfigEditor::create_r2_storage(const R2StorageKey& key) {
     const std::filesystem::path directory =
-        root_ / "system" / "keys" / key.id;
+        workspace_.root_ / "system" / "keys" / key.id;
     const std::filesystem::path path = directory / "config.toml";
     try {
         require_path_component(key.id, directory.parent_path());
@@ -2347,23 +2366,22 @@ void Workspace::create_r2_storage(const R2StorageKey& key) const {
     } catch (const std::runtime_error&) {
         throw std::invalid_argument("Invalid R2 key");
     }
-    if (r2_storage_ || find_api_key(key.id) != nullptr
-        || std::filesystem::exists(directory)) {
+    if (workspace_.r2_storage_ || workspace_.find_api_key(key.id) != nullptr
+        || source_.exists(directory)) {
         throw std::invalid_argument("Duplicate R2 key");
     }
-    create_private_directory(directory);
-    write_toml_file(path, r2_storage_table(key));
-    tighten_private_file(path);
+
+    write_toml(path, r2_storage_table(key));
     write_next_api_key_id(saved_key_suffix(key.id, path) + 1);
-    (void)load_saved_key(directory);
+    (void)load_saved_key(source_, directory);
 }
 
-void Workspace::write_r2_storage(const R2StorageKey& key) const {
-    if (!r2_storage_ || r2_storage_->id != key.id) {
+void WorkspaceConfigEditor::write_r2_storage(const R2StorageKey& key) {
+    if (!workspace_.r2_storage_ || workspace_.r2_storage_->id != key.id) {
         throw std::out_of_range("Unknown R2 key");
     }
     const std::filesystem::path directory =
-        root_ / "system" / "keys" / key.id;
+        workspace_.root_ / "system" / "keys" / key.id;
     const std::filesystem::path path = directory / "config.toml";
     try {
         validate_saved_key_text(key.display_name, 100, "display_name", path);
@@ -2375,37 +2393,29 @@ void Workspace::write_r2_storage(const R2StorageKey& key) const {
     } catch (const std::runtime_error&) {
         throw std::invalid_argument("Invalid R2 key");
     }
-    write_toml_file(path, r2_storage_table(key));
-    tighten_private_file(path);
-    (void)load_saved_key(directory);
+    write_toml(path, r2_storage_table(key));
+    (void)load_saved_key(source_, directory);
 }
 
-void Workspace::delete_r2_storage() const {
-    if (!r2_storage_) throw std::out_of_range("Unknown R2 key");
+void WorkspaceConfigEditor::delete_r2_storage() {
+    if (!workspace_.r2_storage_) throw std::out_of_range("Unknown R2 key");
     const std::filesystem::path directory =
-        root_ / "system" / "keys" / r2_storage_->id;
-    std::error_code error;
-    std::filesystem::remove_all(directory, error);
-    if (error) {
-        throw std::runtime_error(
-            "Failed to remove R2 key '" + r2_storage_->id
-            + "': " + error.message());
-    }
+        workspace_.root_ / "system" / "keys" / workspace_.r2_storage_->id;
+    remove_directory(directory);
 }
 
-void Workspace::write_next_api_key_id(std::uint64_t next_id) const {
+void WorkspaceConfigEditor::write_next_api_key_id(std::uint64_t next_id) {
     const std::filesystem::path path =
-        root_ / "system" / "keys" / "config.toml";
-    write_toml_file(path, key_collection_table(next_id));
-    tighten_private_file(path);
+        workspace_.root_ / "system" / "keys" / "config.toml";
+    write_toml(path, key_collection_table(next_id));
 }
 
-void Workspace::write_character_definition(
+void WorkspaceConfigEditor::write_character_definition(
     std::string_view character_id,
     std::string_view display_name,
-    std::optional<std::string_view> markdown) const {
-    const auto config = character_config_paths_.find(std::string(character_id));
-    if (config == character_config_paths_.end()) {
+    std::optional<std::string_view> markdown) {
+    const auto config = workspace_.character_config_paths_.find(std::string(character_id));
+    if (config == workspace_.character_config_paths_.end()) {
         throw std::runtime_error(
             "Character '" + std::string(character_id)
             + "' has no writable configuration");
@@ -2418,51 +2428,51 @@ void Workspace::write_character_definition(
     if (is_reserved_participant(display_name)) {
         throw std::invalid_argument("Reserved character name");
     }
-    for (const WorkspaceCharacter& character : characters_) {
+    for (const WorkspaceCharacter& character : workspace_.characters_) {
         if (character.character.id != character_id
             && ascii_iequals(character.character.display_name, display_name)) {
             throw std::invalid_argument("Duplicate character name");
         }
     }
-    for (const WorkspacePersona& persona : personas_) {
+    for (const WorkspacePersona& persona : workspace_.personas_) {
         if (ascii_iequals(persona.display_name, display_name)) {
             throw std::invalid_argument("Character name conflicts with a persona");
         }
     }
-    rewrite_toml_file(config->second, [&](toml::table& table) {
+    rewrite_toml(config->second, [&](toml::table& table) {
         table.insert_or_assign("display_name", std::string(display_name));
     });
     if (markdown) {
-        const WorkspaceCharacter* character = find_character(character_id);
+        const WorkspaceCharacter* character = workspace_.find_character(character_id);
         const std::filesystem::path filename = character != nullptr
                 && character->prompt_template == embedded_new_character_template()
             ? "PROFILE.md" : "CHARACTER.md";
-        create_private_file(config->second.parent_path() / filename, *markdown);
+        write_file(config->second.parent_path() / filename, *markdown);
     }
 }
 
-void Workspace::write_character_file(
+void WorkspaceConfigEditor::write_character_file(
     std::string_view character_id,
     std::string_view filename,
     std::optional<std::string_view> content,
-    bool create) const {
-    const auto config = character_config_paths_.find(std::string(character_id));
-    const auto* character = find_character(character_id);
-    if (config == character_config_paths_.end() || !character) {
+    bool create) {
+    const auto config = workspace_.character_config_paths_.find(std::string(character_id));
+    const auto* character = workspace_.find_character(character_id);
+    if (config == workspace_.character_config_paths_.end() || !character) {
         throw std::out_of_range("Unknown writable character");
     }
     write_markdown_file(config->second, character->markdown_files,
         filename, content, create, "CHARACTER.md", "character");
 }
 
-void Workspace::delete_character(std::string_view character_id) const {
-    const auto path = character_config_paths_.find(std::string(character_id));
-    if (path == character_config_paths_.end()) {
+void WorkspaceConfigEditor::delete_character(std::string_view character_id) {
+    const auto path = workspace_.character_config_paths_.find(std::string(character_id));
+    if (path == workspace_.character_config_paths_.end()) {
         throw std::runtime_error(
             "Character '" + std::string(character_id)
             + "' has no writable configuration");
     }
-    for (const WorkspaceForum& forum : forums_) {
+    for (const WorkspaceForum& forum : workspace_.forums_) {
         const bool used = std::ranges::any_of(
             forum.members,
             [&](const WorkspaceForumMember& member) {
@@ -2470,23 +2480,17 @@ void Workspace::delete_character(std::string_view character_id) const {
             });
         if (used) throw std::invalid_argument("Character is in use");
     }
-    std::error_code error;
-    std::filesystem::remove_all(path->second.parent_path(), error);
-    if (error) {
-        throw std::runtime_error(
-            "Failed to remove character '" + std::string(character_id)
-            + "': " + error.message());
-    }
+    remove_directory(path->second.parent_path());
 }
 
-void Workspace::write_persona(
+void WorkspaceConfigEditor::write_persona(
     std::string_view persona_id,
     std::string_view display_name,
     std::string_view markdown,
     std::optional<std::string_view> style_id,
-    std::optional<std::string_view> voice_id) const {
-    const auto directory = persona_directories_.find(std::string(persona_id));
-    if (directory == persona_directories_.end()) {
+    std::optional<std::string_view> voice_id) {
+    const auto directory = workspace_.persona_directories_.find(std::string(persona_id));
+    if (directory == workspace_.persona_directories_.end()) {
         throw std::runtime_error(
             "Persona '" + std::string(persona_id)
             + "' has no writable configuration");
@@ -2500,65 +2504,59 @@ void Workspace::write_persona(
     if (is_reserved_participant(display_name)) {
         throw std::invalid_argument("Reserved persona name");
     }
-    for (const WorkspacePersona& persona : personas_) {
+    for (const WorkspacePersona& persona : workspace_.personas_) {
         if (persona.id != persona_id
             && ascii_iequals(persona.display_name, display_name)) {
             throw std::invalid_argument("Duplicate persona name");
         }
     }
-    for (const WorkspaceCharacter& character : characters_) {
+    for (const WorkspaceCharacter& character : workspace_.characters_) {
         if (ascii_iequals(character.character.display_name, display_name)) {
             throw std::invalid_argument("Persona name conflicts with a character");
         }
     }
-    if (style_id && find_style(*style_id) == nullptr) {
+    if (style_id && workspace_.find_style(*style_id) == nullptr) {
         throw std::invalid_argument(
             "Style '" + std::string(*style_id) + "' does not exist");
     }
-    if (voice_id && find_voice(*voice_id) == nullptr) {
+    if (voice_id && workspace_.find_voice(*voice_id) == nullptr) {
         throw std::invalid_argument(
             "Voice '" + std::string(*voice_id) + "' does not exist");
     }
-    rewrite_toml_file(config_path, [&](toml::table& table) {
+    rewrite_toml(config_path, [&](toml::table& table) {
         table.insert_or_assign("display_name", std::string(display_name));
         if (style_id) table.insert_or_assign("style", std::string(*style_id));
         else table.erase("style");
         if (voice_id) table.insert_or_assign("voice", std::string(*voice_id));
         else table.erase("voice");
     });
-    create_private_file(directory->second / "PERSONA.md", markdown);
+    write_file(directory->second / "PERSONA.md", markdown);
 }
 
-void Workspace::delete_persona(std::string_view persona_id) const {
-    const auto directory = persona_directories_.find(std::string(persona_id));
-    if (directory == persona_directories_.end()) {
+void WorkspaceConfigEditor::delete_persona(std::string_view persona_id) {
+    const auto directory = workspace_.persona_directories_.find(std::string(persona_id));
+    if (directory == workspace_.persona_directories_.end()) {
         throw std::runtime_error(
             "Persona '" + std::string(persona_id)
             + "' has no writable configuration");
     }
-    for (const WorkspaceForum& forum : forums_) {
+    for (const WorkspaceForum& forum : workspace_.forums_) {
         if (forum.default_persona_id == persona_id) {
             throw std::invalid_argument("Persona is in use");
         }
     }
-    std::error_code error;
-    std::filesystem::remove_all(directory->second, error);
-    if (error) {
-        throw std::runtime_error(
-            "Failed to remove persona '" + std::string(persona_id)
-            + "': " + error.message());
-    }
+    remove_directory(directory->second);
 }
 
-void Workspace::create_persona(
+void WorkspaceConfigEditor::create_persona(
     std::string_view persona_id,
-    std::string_view display_name) const {
+    std::string_view display_name) {
     if (!is_persona_id(persona_id) || is_reserved_participant(persona_id)
-        || find_persona(persona_id) != nullptr) {
+        || workspace_.find_persona(persona_id) != nullptr) {
         throw std::invalid_argument("Invalid persona ID");
     }
     const std::filesystem::path directory =
-        root_ / "personas" / std::string(persona_id);
+        workspace_.root_ / "personas" / std::string(persona_id);
     const std::filesystem::path config_path = directory / "persona.toml";
     try {
         validate_public_name(display_name, "Persona name", config_path, true);
@@ -2568,39 +2566,38 @@ void Workspace::create_persona(
     if (is_reserved_participant(display_name)) {
         throw std::invalid_argument("Reserved persona name");
     }
-    for (const WorkspacePersona& persona : personas_) {
+    for (const WorkspacePersona& persona : workspace_.personas_) {
         if (ascii_iequals(persona.display_name, display_name)) {
             throw std::invalid_argument("Duplicate persona name");
         }
     }
-    for (const WorkspaceCharacter& character : characters_) {
+    for (const WorkspaceCharacter& character : workspace_.characters_) {
         if (ascii_iequals(character.character.display_name, display_name)) {
             throw std::invalid_argument("Persona name conflicts with a character");
         }
     }
 
-    create_private_directory(directory);
     toml::table config;
     config.insert("display_name", std::string(display_name));
-    write_toml_file(config_path, config);
-    create_private_file(directory / "PERSONA.md", "");
+    write_toml(config_path, config);
+    write_file(directory / "PERSONA.md", "");
 }
 
-void Workspace::create_character(
+void WorkspaceConfigEditor::create_character(
     std::string_view character_id,
     std::string_view display_name,
-    std::string_view description) const {
+    std::string_view description) {
     try {
         validate_workspace_character_id(character_id);
     } catch (const std::runtime_error&) {
         throw std::invalid_argument("Invalid character ID");
     }
-    if (find_character(character_id) != nullptr
-        || find_persona(character_id) != nullptr) {
+    if (workspace_.find_character(character_id) != nullptr
+        || workspace_.find_persona(character_id) != nullptr) {
         throw std::invalid_argument("Duplicate character ID");
     }
     const std::filesystem::path directory =
-        root_ / "characters" / std::string(character_id);
+        workspace_.root_ / "characters" / std::string(character_id);
     const std::filesystem::path config_path = directory / "character.toml";
     try {
         validate_public_name(display_name, "Character name", config_path, true);
@@ -2611,112 +2608,103 @@ void Workspace::create_character(
     if (is_reserved_participant(display_name)) {
         throw std::invalid_argument("Reserved character name");
     }
-    for (const WorkspaceCharacter& character : characters_) {
+    for (const WorkspaceCharacter& character : workspace_.characters_) {
         if (ascii_iequals(character.character.display_name, display_name)) {
             throw std::invalid_argument("Duplicate character name");
         }
     }
-    for (const WorkspacePersona& persona : personas_) {
+    for (const WorkspacePersona& persona : workspace_.personas_) {
         if (ascii_iequals(persona.display_name, display_name)) {
             throw std::invalid_argument("Character name conflicts with a persona");
         }
     }
 
-    create_private_directory(directory);
     toml::table config;
     config.insert("display_name", std::string(display_name));
     config.insert("description", std::string(description));
-    write_toml_file(config_path, config);
+    write_toml(config_path, config);
     const std::filesystem::path shared_voice =
-        root_ / "characters" / "character-voice.md";
-    if (!std::filesystem::exists(shared_voice)) {
-        create_private_file(shared_voice, embedded_character_voice());
+        workspace_.root_ / "characters" / "character-voice.md";
+    if (!source_.exists(shared_voice)) {
+        write_file(shared_voice, embedded_character_voice());
     }
-    create_private_file(
+    write_file(
         directory / "CHARACTER.md", embedded_new_character_template());
-    create_private_file(directory / "PROFILE.md", "");
+    write_file(directory / "PROFILE.md", "");
 }
 
-void Workspace::create_forum(
+void WorkspaceConfigEditor::create_forum(
     std::string_view forum_id,
     std::string_view display_name,
-    std::string_view persona_id) const {
+    std::string_view persona_id) {
     const std::filesystem::path directory =
-        root_ / "forums" / std::string(forum_id);
+        workspace_.root_ / "forums" / std::string(forum_id);
     const std::filesystem::path config_path = directory / "config.toml";
     try {
-        require_url_safe_identifier(forum_id, root_ / "forums");
+        require_url_safe_identifier(forum_id, workspace_.root_ / "forums");
         validate_public_name(display_name, "Forum name", config_path);
     } catch (const std::runtime_error&) {
         throw std::invalid_argument("Invalid forum");
     }
-    if (is_reserved_id(forum_id) || find_forum(forum_id) != nullptr
+    if (is_reserved_id(forum_id) || workspace_.find_forum(forum_id) != nullptr
         || ascii_iequals(display_name, "Entrance")
-        || find_persona(persona_id) == nullptr) {
+        || workspace_.find_persona(persona_id) == nullptr) {
         throw std::invalid_argument("Invalid forum");
     }
-    for (const WorkspaceForum& forum : forums_) {
+    for (const WorkspaceForum& forum : workspace_.forums_) {
         if (ascii_iequals(forum.display_name, display_name)) {
             throw std::invalid_argument("Duplicate forum name");
         }
     }
 
-    create_private_directory(directory);
     toml::table config;
     config.insert("display_name", std::string(display_name));
     config.insert("default_persona", std::string(persona_id));
-    write_toml_file(config_path, config);
-    create_private_file(directory / "FORUM.md", "");
+    write_toml(config_path, config);
+    write_file(directory / "FORUM.md", "");
     const std::filesystem::path member =
         directory / "members" / std::string(workspace_assistant_id);
-    create_private_directory(directory / "members");
-    create_private_directory(member);
-    create_private_file(member / "character.toml", "# Forum member\n");
+
+    write_file(member / "character.toml", "# Forum member\n");
 }
 
-void Workspace::delete_forum(std::string_view forum_id) const {
-    const auto path = forum_config_paths_.find(std::string(forum_id));
-    if (path == forum_config_paths_.end()) {
+void WorkspaceConfigEditor::delete_forum(std::string_view forum_id) {
+    const auto path = workspace_.forum_config_paths_.find(std::string(forum_id));
+    if (path == workspace_.forum_config_paths_.end()) {
         throw std::runtime_error(
             "Forum '" + std::string(forum_id)
             + "' has no writable configuration");
     }
-    std::error_code error;
-    std::filesystem::remove_all(path->second.parent_path(), error);
-    if (error) {
-        throw std::runtime_error(
-            "Failed to remove forum '" + std::string(forum_id)
-            + "': " + error.message());
-    }
+    remove_directory(path->second.parent_path());
 }
 
-void Workspace::write_character_settings(
+void WorkspaceConfigEditor::write_character_settings(
     std::string_view character_id,
     std::string_view provider_id,
     std::optional<std::string_view> style_id,
     std::optional<std::string_view> voice_id,
     std::optional<std::string_view> reasoning_effort,
-    std::optional<WebSearchMode> web_search) const {
-    const auto configured = character_config_paths_.find(std::string(character_id));
-    if (configured == character_config_paths_.end()
+    std::optional<WebSearchMode> web_search) {
+    const auto configured = workspace_.character_config_paths_.find(std::string(character_id));
+    if (configured == workspace_.character_config_paths_.end()
         && character_id != workspace_assistant_id) {
         throw std::runtime_error(
             "Character '" + std::string(character_id)
             + "' has no writable configuration");
     }
     const std::filesystem::path config = character_id == workspace_assistant_id
-        ? root_ / "system" / "assistant" / "character.toml"
+        ? workspace_.root_ / "system" / "assistant" / "character.toml"
         : configured->second;
-    const WorkspaceProvider* const provider = find_provider(provider_id);
+    const WorkspaceProvider* const provider = workspace_.find_provider(provider_id);
     if (provider == nullptr) {
         throw std::invalid_argument(
             "Provider '" + std::string(provider_id) + "' does not exist");
     }
-    if (style_id && find_style(*style_id) == nullptr) {
+    if (style_id && workspace_.find_style(*style_id) == nullptr) {
         throw std::invalid_argument(
             "Style '" + std::string(*style_id) + "' does not exist");
     }
-    if (voice_id && find_voice(*voice_id) == nullptr) {
+    if (voice_id && workspace_.find_voice(*voice_id) == nullptr) {
         throw std::invalid_argument(
             "Voice '" + std::string(*voice_id) + "' does not exist");
     }
@@ -2730,7 +2718,7 @@ void Workspace::write_character_settings(
         throw std::invalid_argument(
             "The selected provider does not support web search");
     }
-    rewrite_toml_file(config, [&](toml::table& table) {
+    rewrite_toml(config, [&](toml::table& table) {
         table.insert_or_assign("provider", std::string(provider_id));
         if (style_id) table.insert_or_assign("style", std::string(*style_id));
         else table.erase("style");
@@ -2750,12 +2738,12 @@ void Workspace::write_character_settings(
     });
 }
 
-void Workspace::write_forum_default_character(
+void WorkspaceConfigEditor::write_forum_default_character(
     std::string_view forum_id,
-    std::string_view character_id) const {
-    const auto config = forum_config_paths_.find(std::string(forum_id));
-    const WorkspaceForum* forum = find_forum(forum_id);
-    if (config == forum_config_paths_.end() || forum == nullptr) {
+    std::string_view character_id) {
+    const auto config = workspace_.forum_config_paths_.find(std::string(forum_id));
+    const WorkspaceForum* forum = workspace_.find_forum(forum_id);
+    if (config == workspace_.forum_config_paths_.end() || forum == nullptr) {
         throw std::runtime_error(
             "Forum '" + std::string(forum_id)
             + "' has no writable configuration");
@@ -2769,18 +2757,18 @@ void Workspace::write_forum_default_character(
             "Character '" + std::string(character_id)
             + "' is not a member of forum '" + std::string(forum_id) + "'");
     }
-    rewrite_toml_file(config->second, [&](toml::table& table) {
+    rewrite_toml(config->second, [&](toml::table& table) {
         table.erase("default_agent");
         table.insert_or_assign("default_character", std::string(character_id));
     });
 }
 
-void Workspace::write_forum(
+void WorkspaceConfigEditor::write_forum(
     std::string_view forum_id,
     std::string_view display_name,
-    std::string_view markdown) const {
-    const auto config = forum_config_paths_.find(std::string(forum_id));
-    if (config == forum_config_paths_.end() || find_forum(forum_id) == nullptr) {
+    std::string_view markdown) {
+    const auto config = workspace_.forum_config_paths_.find(std::string(forum_id));
+    if (config == workspace_.forum_config_paths_.end() || workspace_.find_forum(forum_id) == nullptr) {
         throw std::runtime_error(
             "Forum '" + std::string(forum_id)
             + "' has no writable configuration");
@@ -2793,38 +2781,38 @@ void Workspace::write_forum(
     if (ascii_iequals(display_name, "Entrance")) {
         throw std::invalid_argument("Reserved forum name");
     }
-    for (const WorkspaceForum& forum : forums_) {
+    for (const WorkspaceForum& forum : workspace_.forums_) {
         if (forum.id != forum_id
             && ascii_iequals(forum.display_name, display_name)) {
             throw std::invalid_argument("Duplicate forum name");
         }
     }
-    rewrite_toml_file(config->second, [&](toml::table& table) {
+    rewrite_toml(config->second, [&](toml::table& table) {
         table.insert_or_assign("display_name", std::string(display_name));
     });
-    create_private_file(config->second.parent_path() / "FORUM.md", markdown);
+    write_file(config->second.parent_path() / "FORUM.md", markdown);
 }
 
-void Workspace::write_forum_file(
+void WorkspaceConfigEditor::write_forum_file(
     std::string_view forum_id,
     std::string_view filename,
     std::optional<std::string_view> content,
-    bool create) const {
-    const auto config = forum_config_paths_.find(std::string(forum_id));
-    const auto* forum = find_forum(forum_id);
-    if (config == forum_config_paths_.end() || !forum) {
+    bool create) {
+    const auto config = workspace_.forum_config_paths_.find(std::string(forum_id));
+    const auto* forum = workspace_.find_forum(forum_id);
+    if (config == workspace_.forum_config_paths_.end() || !forum) {
         throw std::out_of_range("Unknown writable forum");
     }
     write_markdown_file(config->second, forum->markdown_files,
         filename, content, create, "FORUM.md", "forum");
 }
 
-void Workspace::write_forum_members(
+void WorkspaceConfigEditor::write_forum_members(
     std::string_view forum_id,
-    std::span<const std::string> character_ids) const {
-    const auto config = forum_config_paths_.find(std::string(forum_id));
-    const WorkspaceForum* forum = find_forum(forum_id);
-    if (config == forum_config_paths_.end() || forum == nullptr) {
+    std::span<const std::string> character_ids) {
+    const auto config = workspace_.forum_config_paths_.find(std::string(forum_id));
+    const WorkspaceForum* forum = workspace_.find_forum(forum_id);
+    if (config == workspace_.forum_config_paths_.end() || forum == nullptr) {
         throw std::runtime_error(
             "Forum '" + std::string(forum_id)
             + "' has no writable configuration");
@@ -2839,7 +2827,7 @@ void Workspace::write_forum_members(
         throw std::invalid_argument("Duplicate forum member");
     }
     for (const std::string& character_id : selected) {
-        const WorkspaceCharacter* character = find_character(character_id);
+        const WorkspaceCharacter* character = workspace_.find_character(character_id);
         if (character == nullptr
             || (is_reserved_id(character_id)
                 && character_id != workspace_assistant_id)
@@ -2853,46 +2841,40 @@ void Workspace::write_forum_members(
         if (std::ranges::binary_search(selected, member.character_id)) continue;
         const std::filesystem::path directory =
             members / path_from_utf8(member.character_id);
-        std::error_code error;
-        std::filesystem::remove_all(directory, error);
-        if (error) {
-            throw std::runtime_error(
-                "Failed to remove forum member '" + member.character_id
-                + "': " + error.message());
-        }
+        remove_directory(directory);
     }
     for (const std::string& character_id : selected) {
-        if (find_forum_member(forum_id, character_id) != nullptr) continue;
+        if (workspace_.find_forum_member(forum_id, character_id) != nullptr) continue;
         const std::filesystem::path directory =
             members / path_from_utf8(character_id);
-        create_private_directory(directory);
-        create_private_file(directory / "character.toml", "# Forum member\n");
+
+        write_file(directory / "character.toml", "# Forum member\n");
     }
 
     const std::string& default_character = std::ranges::binary_search(
         selected, forum->default_character_id)
         ? forum->default_character_id
         : selected.front();
-    rewrite_toml_file(config->second, [&](toml::table& table) {
+    rewrite_toml(config->second, [&](toml::table& table) {
         table.erase("default_agent");
         table.insert_or_assign("default_character", default_character);
     });
 }
 
-void Workspace::write_forum_default_persona(
+void WorkspaceConfigEditor::write_forum_default_persona(
     std::string_view forum_id,
-    std::string_view persona_id) const {
-    const auto config = forum_config_paths_.find(std::string(forum_id));
-    if (config == forum_config_paths_.end() || find_forum(forum_id) == nullptr) {
+    std::string_view persona_id) {
+    const auto config = workspace_.forum_config_paths_.find(std::string(forum_id));
+    if (config == workspace_.forum_config_paths_.end() || workspace_.find_forum(forum_id) == nullptr) {
         throw std::runtime_error(
             "Forum '" + std::string(forum_id)
             + "' has no writable configuration");
     }
-    if (find_persona(persona_id) == nullptr) {
+    if (workspace_.find_persona(persona_id) == nullptr) {
         throw std::invalid_argument(
             "Persona '" + std::string(persona_id) + "' does not exist");
     }
-    rewrite_toml_file(config->second, [&](toml::table& table) {
+    rewrite_toml(config->second, [&](toml::table& table) {
         table.insert_or_assign("default_persona", std::string(persona_id));
     });
 }

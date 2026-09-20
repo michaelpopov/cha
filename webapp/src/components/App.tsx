@@ -547,6 +547,7 @@ export function App({
     forumId: string,
     sessionId: string,
     generation: number,
+    reopen?: boolean,
   ) => void>(() => undefined);
   const initialRouteHandled = useRef(false);
   // Bumped by every navigation intent. An open that finishes after the epoch
@@ -687,6 +688,12 @@ export function App({
         onSnapshot: (snapshot) => {
           if (!events || connection.current?.events !== events) return;
           dispatch({ type: 'session-snapshot', snapshot });
+          if (snapshot.lifecycle !== 'running' && snapshot.shutdown_reason === 'reloading') {
+            detachStream(events);
+            recoveryStarter.current(forumId, sessionId, generation, true);
+            onSettled?.(false);
+            return;
+          }
           dispatch({ type: 'stream-state', status: 'connected' });
           onSettled?.(true);
         },
@@ -753,17 +760,35 @@ export function App({
     forumId: string,
     sessionId: string,
     generation: number,
+    reopen = false,
   ) => {
-    // A replacement already running for this live session owns recovery; a
-    // stale generation belongs to a conversation the user has left.
-    if (liveGeneration.current !== generation || recovery.current) return;
+    // A reload supersedes a pending reattach, including one whose first
+    // snapshot and terminal snapshot arrived in the same delivery turn.
+    if (liveGeneration.current !== generation || (recovery.current && !reopen)) return;
+    if (reopen) cancelRetryTimer();
     const run: RecoveryRun = { forumId, sessionId, generation };
     recovery.current = run;
     const cancelled = () => recovery.current !== run
       || liveGeneration.current !== generation;
-    dispatch({ type: 'stream-state', status: 'reconnecting', message: reconnectingMessage });
+    dispatch({
+      type: 'stream-state', status: 'reconnecting',
+      message: reopen ? 'Applying settings…' : reconnectingMessage,
+    });
 
-    void attachStream(forumId, sessionId, generation).then((connected) => {
+    void (async () => {
+      for (let attempt = 0; !cancelled(); attempt += 1) {
+        try {
+          if (reopen) await client.openSession(forumId, sessionId);
+          if (cancelled()) return false;
+          return await attachStream(forumId, sessionId, generation);
+        } catch (failure: unknown) {
+          if (!isRetryableSessionOpen(failure)) return false;
+        }
+        if (cancelled() || attempt >= retryDelays.length) return false;
+        if (!await waitForRetry(retryDelays[attempt], generation)) return false;
+      }
+      return false;
+    })().then((connected) => {
       if (cancelled()) return;
       recovery.current = null;
       if (!connected) {
@@ -774,11 +799,10 @@ export function App({
         });
       }
     });
-  }, [attachStream]);
+  }, [attachStream, cancelRetryTimer, client, retryDelays, waitForRetry]);
 
-  // A stream error is the only caller, and a stream cannot exist before the
-  // effects of the commit that created it have run, so publishing the current
-  // starter here is early enough and keeps the render itself free of writes.
+  // Publish the starter before stream callbacks can run, keeping render free
+  // of writes to refs.
   useEffect(() => {
     recoveryStarter.current = beginRecovery;
   }, [beginRecovery]);
@@ -955,8 +979,9 @@ export function App({
     connection.current?.events.close();
     connection.current = null;
     recovery.current = null;
-    beginRecovery(active.forumId, active.sessionId, liveGeneration.current);
-  }, [beginRecovery, cancelRetryTimer, state.activeConversation]);
+    beginRecovery(active.forumId, active.sessionId, liveGeneration.current,
+      state.sessionSnapshot?.shutdown_reason === 'reloading');
+  }, [beginRecovery, cancelRetryTimer, state.activeConversation, state.sessionSnapshot]);
 
   // Keyed by conversation as well as action: the server gives a mutation up to
   // its command deadline, and a request left behind in one conversation must
