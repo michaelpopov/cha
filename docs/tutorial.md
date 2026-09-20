@@ -1,284 +1,174 @@
 # Learning the CHA C++ codebase
 
-This guide is a systematic route through CHA's native C++ code. Its purpose is
-not merely to list files, but to build a working mental model: which objects
-exist, who owns them, which thread may touch them, when data becomes durable,
-and how one browser prompt turns into streamed model output.
-
-The guide focuses on the native implementation. The browser under `webapp/`
-appears mainly at the protocol boundary, plus one short presentation section
-covering transcript filtering and composer behavior.
+This guide follows a conversation from the native desktop window through the
+application, session owner, provider worker, and database. It also explains how
+workspace edits and vault changes reach the React interface.
 
 ## 1. How to use this guide
 
-Read the code in passes. Do not try to understand every implementation detail
-on the first pass.
+Read the public headers before their implementations. Start with the object and
+build maps below, then follow the domain, storage, and generation sections.
+Sections 12–18 connect those pieces to the native bridge and lifecycle. Use the
+tests in section 19 to check an assumption before changing code.
 
-1. Read sections 2–5 to learn the vocabulary, dependency direction, startup,
-   and ownership model.
-2. Follow the focused reading path in sections 6–12. Keep the source open and
-   find each named type or function as it appears here.
-3. Trace the complete workflows in section 13 without diving into helpers.
-4. Use sections 14–18 to consolidate concurrency, persistence, failure, and
-   shutdown behavior.
-5. Complete the exercises in section 21. If you can explain each answer in
-   terms of concrete objects and transitions, you understand the architecture
-   well enough to change it deliberately.
-
-The subsystem `README.md` files are reference manuals. This document connects
-them into a learning sequence:
-
-- [Native architecture](../src/README.md)
-- [Utility contracts](../src/util/README.md)
-- [Chat model](../src/chat/README.md)
-- [Character definitions and model context](../src/characters/README.md)
-- [Provider execution](../src/providers/README.md)
-- [Session layer](../src/session/README.md)
-- [Workspace composition](../src/workspace/README.md)
-- [Web runtime](../src/web/README.md)
-
-When this tutorial and a subsystem reference differ, inspect the current
-headers and tests. They are the executable contract.
+The [maintainer guide](MaintainerGuide.md) covers workspace files and operational
+recipes. [Editing workspace entities](editing.md) covers adding an editing flow.
+Current headers and tests are authoritative when an older subsystem README
+still describes the former HTTP application.
 
 ## 2. The application in one page
 
-CHA is a C++20 web server for conversations with OpenAI-compatible model
-servers. The executable is `chaweb`. It serves a browser shell, exposes a JSON
-HTTP API, and streams session changes with server-sent events (SSE).
+CHA is a native desktop application with a C++20 backend and a React interface
+inside WKWebView on macOS or WebView2 on Windows. The host and backend run in
+one process. Packaged assets and media use native resource handling; application
+commands and session events use a message bridge. There is no application HTTP
+listener. Provider requests, OAuth, R2, and speech services still use outbound
+network connections, including SSE decoding for streaming model responses.
 
-The most useful high-level model is:
+```text
+React interface (webapp/)
+    -> native host message adapter
+    -> BridgeRouter
+    -> Application
+         -> WorkspaceConfigStore -> immutable Workspace snapshot
+         -> SessionRepository -> vault SQLite database
+         -> LiveSessionManager -> LiveSession owner thread
+                                    -> SessionController -> SessionJournal
+                                    -> Providers -> ProviderRequest workers
+         -> media jobs and resources
 
-- The process-owned `WorkspaceConfigStore` holds the selected database lease,
-  secures the database and sidecars, materializes committed configuration into
-  one private root, and atomically publishes the immutable `Workspace`.
-- `ApplicationRuntime` owns that store, the small `CurrentVault` value, and the
-  active database password when needed. Its lifecycle mutex serializes vault
-  switches with Import, Export, Upload, and Download.
-- The independent process-owned `SessionRepository` receives explicit database,
-  materialized-workspace, and Welcome paths. It owns none of those outer
-  resources and lists, creates, validates, archives, and restores sessions.
-- When `app.toml` sets a `mirror` base, the process-owned `SessionMirror`
-  projects persistent sessions into the active vault's derived directory as
-  continuously refreshed Markdown files, unless the vault is password-protected.
-- `LiveSessionManager` owns the process's live-session registry.
-- One `LiveSession` is an actor with one permanent owner thread for one open
-  session.
-- One `SessionController` owns the live transcript, persistence journal, and
-  ordered generation state for that session.
-- The process-owned `Providers` supervisor starts one independent request
-  worker per target. The controller exposes their events in deterministic
-  foreground order.
-- `ProviderClient` owns provider HTTP mechanics. The Chat Completions and
-  Responses API modules own their request encoding and response decoding
-  without knowing about curl or HTTP.
-- `SseMailbox` transfers presentation updates from the session owner thread to
-  the HTTP thread writing the browser's event stream.
-
-```mermaid
-flowchart LR
-    Browser["Browser client"]
-    Routes["HTTP routes"]
-    Runtime["ApplicationRuntime / CurrentVault"]
-    Manager["LiveSessionManager"]
-    Actor["LiveSession owner thread"]
-    Controller["SessionController"]
-    Workspace["Published immutable Workspace"]
-    Store["WorkspaceConfigStore / lease / private root"]
-    Repository["SessionRepository"]
-    Mirror["SessionMirror / Markdown files"]
-    Journal["SessionJournal / SQLite"]
-    Providers["Process Providers supervisor"]
-    Request["ProviderRequest"]
-    Worker["Detached request worker"]
-    Provider["ProviderClient"]
-    Mailbox["SseMailbox"]
-
-    Browser -->|"JSON commands"| Routes
-    Routes -->|"vault switch"| Runtime
-    Runtime --> Store
-    Runtime --> Repository
-    Runtime --> Mirror
-    Runtime --> Manager
-    Routes -->|"getws() reads"| Workspace
-    Routes --> Repository
-    Store -->|"materializes and publishes"| Workspace
-    Store -->|"supplies explicit paths"| Repository
-    Repository -->|"startup history"| Mirror
-    Routes -->|"queued WebCommand"| Actor
-    Manager -->|"owns and locates"| Actor
-    Actor -->|"only caller"| Controller
-    Controller -->|"getws() lookups"| Workspace
-    Controller --> Journal
-    Actor -->|"transcript revision / rename"| Mirror
-    Controller -->|"retains while presenting"| Request
-    Providers -->|"supervises while active"| Request
-    Request --> Worker
-    Worker --> Provider
-    Request -->|"GenerationEvent queue + wake"| Actor
-    Actor --> Mailbox
-    Mailbox -->|"SSE snapshot or append"| Browser
+LiveSession -> SessionOutput -> BridgeRouter delivery -> React projection
 ```
 
-There are four kinds of long-lived information:
+`Application` is the composition root and lifecycle boundary. It owns the
+configuration store, session repository, live-session manager, provider
+supervisor, keys, OAuth, mirroring, and media services. Operations needing the
+active vault take the caller's explicit, nonzero context epoch. A stale epoch
+cannot silently target the newly selected vault.
 
-- Process configuration lives in one external directory. `app.toml` contains
-  the startup-vault selection, mirror/modify bases, web listener, and diagnostic
-  log settings; every other `.toml` file defines a vault's database path and
-  protection flag. `chaweb` reads the directory before opening the database.
-  These files are never materialized into the workspace or stored in SQLite.
+`WorkspaceConfigStore` owns the published workspace for that application.
+`snapshot()` returns a `shared_ptr<const Workspace>`; readers hold it while
+using references into the snapshot. Settings and workspace operations receive
+the workspace explicitly. There is no process-global current workspace.
 
-- Discovery — the roster, descriptions, and Markdown the browser lists — is
-  materialized from committed database rows, read once per `Workspace`,
-  validated as a whole, and shared immutably until a narrow committed mutation
-  publishes a replacement, including after an in-process macOS Import or
-  Download operation.
-- Sessions read eagerly owned configuration from the published `Workspace`.
-  Import and export directories are consulted only during an explicit
-  maintenance operation.
-- Conversation state is dynamic. A live controller owns an in-memory view and
-  writes durable turn transitions into its own rows of the active vault's
-  workspace database.
+A live session has one permanent owner thread. Only that thread calls its
+`SessionController`; other threads submit commands or enqueue generation
+results. Controllers retain stable IDs and consult their injected workspace
+source. Each provider request owns the resolved configuration and history with
+which it started.
 
-This split explains why creating a session appears immediately. The console
-configuration workflow still requires stop/export/edit/import/restart; CHA.app
-performs Import and Export through its Database menu without restarting.
+There are three distinct kinds of stored data:
+
+- External configuration selects vaults, database paths, mirror/modify bases,
+  and logging. It also contains the process-wide OAuth credential file.
+- The selected vault database holds authoritative workspace configuration,
+  saved API/R2 keys, persistent sessions, and cached audio.
+- A private temporary tree materializes configuration for loading and holds
+  the temporary Welcome database. Export directories and Markdown mirrors are
+  projections, not runtime sources of truth.
 
 ## 3. Build graph and dependency direction
 
-Start with [CMakeLists.txt](../CMakeLists.txt). The native build has four
-important production targets:
+[CMakeLists.txt](../CMakeLists.txt) defines the current targets:
 
 | Target | Role |
 | --- | --- |
-| `cha_core` | `util`, `chat`, `characters`, `providers`, `session`, and `workspace` |
-| `cha_web` | HTTP, SSE, actor runtime, routing, and protocol; links `cha_core` |
-| `chaweb_app` | Small command-line entry point in `src/web_main.cpp`; links `cha_web` |
-| `cha_macos_runtime` | macOS only: `libChaRuntime.dylib`, a C shim over `cha_web` that CHA.app links so the runtime lives in the launcher's own process |
-
-The executable file is named `chaweb` even though the CMake target is
-`chaweb_app`. Both entry points are thin: `web/application_runtime.*` is the
-composition root they share, so the command line and CHA.app run identical
-code and differ only in the listener port and the private access token.
-
-The intended dependency direction is:
+| `cha_core` | Domain model, providers, storage, workspace, plus application-config parsing and R2 transfer |
+| `cha_app` | `Application`, operations, live sessions, presentation, mirroring, and audio; links `cha_core` |
+| `cha_bridge` | Message protocol, routing, and operation dispatch; links `cha_app` |
+| `cha_macos_runtime` | macOS shared library exposing the C runtime ABI to the Swift host |
+| `cha_windows_app` | Windows native host and runtime integration |
 
 ```text
-chaweb_app        -> cha_web -> cha_core
-cha_macos_runtime -> cha_web -> cha_core
-
-workspace -> session -> providers -> characters -> chat
-                \-----------> characters
-
-util is used where needed without depending on the domain layers.
+macOS host -> cha_macos_runtime -> cha_bridge -> cha_app -> cha_core
+Windows host -------------------> cha_bridge -> cha_app -> cha_core
 ```
 
-That diagram is intentionally approximate inside `cha_core`; the important
-rules are simpler:
+The directory `src/web/` and namespace `cha::web` retain historical names.
+They contain shared application support, not an HTTP server. In particular,
+`application_config.cpp` and `r2_database_transfer.cpp` belong to `cha_core`;
+the remaining production sources there belong to `cha_app`. Use CMake to
+resolve target membership rather than guessing from that directory name.
 
-- `chat` contains presentation-neutral domain vocabulary.
-- `util` contains domain-neutral mechanisms.
-- `characters` owns character configuration and model-context projection.
-- `providers` owns request execution, provider transport, and protocol
-  decoding, but not sessions or HTTP routing.
-- `session` coordinates transcripts, persistence, and generation, but not web
-  routes.
-- `workspace` loads the workspace and wires a session from workspace data.
-- `web` adapts HTTP/SSE to the workspace and session APIs.
-- Only `web_main.cpp` assembles the complete process.
-
-If a proposed change makes `chat` include a web header, or makes `session`
-depend on `httplib`, it is crossing an important boundary.
+Core session behavior does not depend on the native host, JSON routing, or
+React. The bridge adapts messages to application operations; platform hosts
+own WebView integration and platform UI work.
 
 ### Build and test commands
 
-```sh
-cmake --preset ninja
-cmake --build --preset ninja
-ctest --test-dir build/ninja -j8 --output-on-failure
-```
-
-There are also `asan-ubsan` and `tsan` CMake presets. Browser checks and the
-credential-dependent provider integration test are separate from the core C++
-unit suite; see the root [README](../README.md).
-
-Run the complete browser checks from `webapp/`:
+From the repository root:
 
 ```sh
-npm run check
-npm run build
+make build
+make test
+make web-check
+make web-stage
 ```
 
-The current native build generates the SQLCipher 4.19 amalgamation during CMake
-configuration and links it with OpenSSL on every platform. OpenSSL also supplies
-the prompt-cache SHA-256 implementation independently of curl's TLS backend.
+`make web-check` checks generated DTO types, TypeScript, and frontend tests.
+`make web-stage` builds and stages frontend assets. For a focused C++ run:
+
+```sh
+ctest --test-dir build/ninja -R '^Application' --output-on-failure
+```
+
+The CMake presets also include `asan-ubsan` and `tsan`. The credential-dependent
+provider integration executable is separate from the ordinary unit suite.
+See the root [README](../README.md) and [Makefile](../Makefile) for platform
+prerequisites and packaging commands.
+
+On macOS, `make run-native-dev CONFIG=/absolute/path/to/existing-config-directory`
+opens the native development host with Vite assets. Vite serves frontend files;
+it does not replace the native application API. An ordinary browser tab cannot
+supply the injected native bridge.
 
 ## 4. Repository map
 
-| Location | What to learn there |
+| Location | Responsibility |
 | --- | --- |
-| [src/web_main.cpp](../src/web_main.cpp) | Process composition and destruction order |
+| [src/app](../src/app) | Composition, lifecycle, context admission, workspace/settings/media/vault operations |
+| [src/bridge](../src/bridge) | Native envelopes, flow control, subscriptions, dispatch |
 | [src/chat](../src/chat) | IDs, personas, character metadata, transcript vocabulary |
-| [src/util](../src/util) | Queues, template expansion, logging, path/text helpers |
-| [src/characters](../src/characters) | Character configuration, definitions, and model context |
-| [src/providers](../src/providers) | Request workers, provider transport, and response decoding |
-| [src/session](../src/session) | Controller, transcript orchestration, workspace session database, journal, lease, repository |
-| [src/workspace](../src/workspace) | Configuration store, workspace loading, built-ins, and session construction |
-| [src/web](../src/web) | Native protocol, routes, actor, Markdown mirror, mailbox, lifecycle, shutdown |
-| [webapp/src](../webapp/src) | Browser state, transcript presentation, composer, and API client |
-| [tests](../tests) | Behavioral examples grouped by the same subsystem boundaries |
-| [cha-config](../cha-config) | Tracked development configuration directory used by local runs |
-| [packaging/linux/cha-config.example](../packaging/linux/cha-config.example) | External process-configuration example |
-| [packaging/linux/import-seed](../packaging/linux/import-seed) | A configuration source tree to compare against the loaders and import filter |
-| [packaging/macos](../packaging/macos) | Swift launcher, C bridge, smoke test, and macOS packaging script |
-
-Headers in this project are unusually valuable: most ownership and thread
-contracts are written next to the types. Read a subsystem's public headers
-before its `.cpp` files.
+| [src/util](../src/util) | Queues, templates, logging, filesystem and text helpers |
+| [src/characters](../src/characters) | Character configuration and model-context projection |
+| [src/providers](../src/providers) | Request workers, outbound transport, protocol decoding |
+| [src/session](../src/session) | Controller, journal, database, lease, repository |
+| [src/workspace](../src/workspace) | Configuration store, workspace loading, built-ins, session construction |
+| [src/web](../src/web) | Shared configuration, live-session, DTO, text-input, audio and mirror support |
+| [webapp/src](../webapp/src) | React state, screens, native client, event projection |
+| [resources/dto.yaml](../resources/dto.yaml) | DTO schema used to generate TypeScript types |
+| [packaging/shared/import-seed](../packaging/shared/import-seed) | Example workspace configuration tree |
+| [packaging/macos](../packaging/macos) | Swift host, shared C ABI, macOS packaging |
+| [packaging/windows](../packaging/windows) | WebView2 host and Windows packaging |
+| [tests](../tests) | Unit, wire-fixture, integration, and native-host tests |
 
 ## 5. The four concepts that unlock the code
 
 ### 5.1 Stable identity is not display text
 
-`ForumId`, `CharacterId`, and `SessionId` are string aliases declared in
-[chat/ids.h](../src/chat/ids.h). A participant also has a stable ID and a
-display name. IDs are used for storage, URLs, lookup, and model attribution;
-display names are used in the interface and prompt text.
-
-The code deliberately stores both. Renaming a display label should not silently
-change the identity of old entries. When reading a field named `character_id`,
-`participant_id`, or `addressed_to`, do not mentally replace it with the visible
-name beside it.
+IDs identify stored entities and bridge parameters. Names are presentation and
+prompt text. A display-name edit must not change an entity ID or rewrite the
+attribution saved in an old transcript entry.
 
 ### 5.2 There is one mutable owner per live session
 
-The core session model is not generally thread-safe, and it does not need to
-be. `LiveSession::owner_main()` is the sole caller of its `SessionController`.
-HTTP workers enqueue commands; generation workers enqueue events; the owner
-thread drains both and performs all mutations.
-
-This is actor-style confinement implemented with ordinary C++ objects, a
-thread, queues, and wakeups—not an actor framework.
+`LiveSession::owner_main()` constructs and owns the controller. Application
+callers enqueue commands; provider workers enqueue events. The owner drains
+both. Thread confinement keeps the controller free of internal locking.
 
 ### 5.3 Workers receive copies, views stay local
 
-`TranscriptView` and `ControllerView` borrow owner-thread storage and are valid
-only for immediate synchronous projection. In contrast, `ModelHistory` owns a
-point-in-time copy and can be shared immutably with generation workers.
+`TranscriptView` and `ControllerView` borrow owner-thread storage for immediate
+projection. `ModelHistory` owns a point-in-time copy suitable for a worker.
+Never retain a view into a transcript that may mutate.
 
-The distinction prevents two common errors:
+### 5.4 Snapshots are authoritative
 
-- retaining a `std::span` into a transcript that will mutate;
-- allowing a worker to observe a transcript halfway through a state change.
-
-### 5.4 State is published as a snapshot unless append safety is proven
-
-A controller update is either no state change, a required full snapshot, or a
-text append to a precise entry/reasoning target. The append is an optimization,
-not an alternate source of truth. If the actor or mailbox cannot prove that the
-browser has the correct base and target, it publishes a new snapshot.
-
-This lets the mutable controller remain authoritative while keeping token
-streaming efficient.
+An append describes text growth at an exact transcript entry or reasoning
+request. Structural changes need a snapshot. When coalescing cannot preserve a
+valid append, publication falls back to a full snapshot. Delivery acknowledgments
+bound outstanding work; the UI validates sequence and target before applying
+an append.
 
 ## 6. First reading pass: domain vocabulary
 
@@ -294,7 +184,7 @@ The important split in character data is:
   [characters/character.h](../src/characters/character.h), combines public metadata with
   private backend configuration and a completed system prompt.
 
-Routes may expose metadata. They must not expose the full definition, which can
+Application discovery operations may expose metadata. They must not expose the full definition, which can
 contain provider configuration and private prompt material.
 
 ### 6.1 The transcript is the shared conversation language
@@ -373,7 +263,7 @@ cancellation, or failure even on its exception path.
 
 [util/wake_notifier.h](../src/util/wake_notifier.h) is the tiny seam by which a
 generation worker tells the session actor, “new events may be available.” The
-web implementation is `OwnerWakeSignal`. Waking does not carry state; queues
+live-session implementation is `OwnerWakeSignal`. Waking does not carry state; queues
 remain the source of work.
 
 ### 7.3 Configuration helpers
@@ -384,7 +274,7 @@ The other utilities support important boundaries:
   inherited values. Production uses it only as a legacy migration source for
   R2 credentials; model and R2 keys normally come from the active vault, while
   OpenAI OAuth remains process-wide.
-- `path_name.*` and `utf8_path.*` keep filesystem and URL identifiers explicit.
+- `path_name.*` and `utf8_path.*` keep filesystem paths and identifiers explicit.
 - `public_name.*` centralizes visible-name validation.
 - `text_template.*` expands `$$(relative/file)` includes and `$${variable}`
   substitutions with containment and cycle/resource limits.
@@ -393,231 +283,111 @@ The other utilities support important boundaries:
 Checkpoint: locate one caller of each utility and state whether it is a domain
 policy or a reusable mechanism.
 
-### 7.4 Public process modes
+### 7.4 Configuration and native startup
 
-The public command parser accepts exactly these customer-facing forms:
+The native host supplies a configuration directory and asset root to
+`cha_runtime_create()`. The shared configuration parser bootstraps an empty
+configuration directory with a Default vault; a nonempty directory must already
+contain valid configuration. There is no shipped `chaweb` server executable.
+Some command-parser maintenance options remain in the code, but the supported
+desktop maintenance workflow uses the Database menu.
 
-```text
-chaweb --config=CONFIG_DIR [--root PATH]
-chaweb --config=CONFIG_DIR --vault=NAME --import DIRECTORY
-chaweb --config=CONFIG_DIR --vault=NAME --export DIRECTORY
-chaweb --config=CONFIG_DIR --vault=NAME --upload
-chaweb --config=CONFIG_DIR --vault=NAME --download
-```
-
-Every mode requires the configuration directory. The parser accepts both
-`--config=CONFIG_DIR` and `--config CONFIG_DIR`; `--root` is a runtime-only
-application-asset root. `--vault` is required for the four offline modes, which
-are mutually exclusive. Upload and download use the R2 key stored in the
-selected vault. The configured database filename becomes the database object
-key, with a companion `<filename>.toml` vault-definition object.
-
-The Linux package includes `start-cha.sh`, which supplies `--root`, starts
-`chaweb` in the background, and uses `../cha-config` by default. A nonempty
-`CHA_CONFIG` overrides that default for the launcher only; the executable
-itself still requires `--config`. Absolute override paths are used directly,
-while relative paths resolve from the directory containing `start-cha.sh`:
-
-```sh
-CHA_CONFIG=/etc/cha/cha-config ./start-cha.sh
-```
-
-`app.toml` selects the startup vault and holds web and logging settings. Each
-other `.toml` file is one vault:
+`app.toml` selects the startup vault and supplies optional directory bases and
+logging settings:
 
 ```toml
-# app.toml
 vault = "Personal"
-mirror = "/home/user/cha-mirror"
-modify = "/home/user/cha-modify"
-
-[web]
-host = "0.0.0.0"
-port = 8086
+mirror = "mirror"
+modify = "modify"
 
 [logging]
 file = "logs/cha.log"
 level = "info"
 ```
 
+Each other vault TOML file has its own name and database path:
+
 ```toml
-# personal.toml
 vault_name = "Personal"
-data = "/var/lib/cha/workspace.sqlite3"
+data = "personal.sqlite3"
 protected = false
 ```
 
-`mirror` and `modify` are optional base directories in `app.toml`. They may be
-relative to the configuration directory. CHA appends each vault's display name,
-so the example vault uses `/home/user/cha-mirror/Personal` and
-`/home/user/cha-modify/Personal`. An existing modify directory must be empty or
-contain a valid CHA workspace. `data` and `logging.file` may also be relative to
-the configuration directory. A derived `modify` directory may not contain the
-configuration directory or database, because Export replaces it. Console
-Import additionally requires the configuration directory to be outside the
-source workspace, preventing process config files from becoming imported
-metadata rows. Console Import and Export acquire the same non-blocking database
-lease as runtime, so they remain deliberately offline. Old per-vault fields are
-ignored with warnings; they do not block otherwise valid configuration.
+Relative paths resolve from the configuration directory. Mirror and modify
+paths append the vault display name: the example uses `mirror/Personal` and
+`modify/Personal`. Obsolete `[web]` listener settings and old per-vault
+mirror/modify fields are ignored with warnings. Actor bounds and deadlines
+live in [RuntimeSettings](../src/app/runtime_settings.h), separate from this
+external configuration.
 
-The vault registry is discovered at startup. Direct edits to its TOML files
-require a restart, while Settings → Vaults mutates the in-memory registry and
-the corresponding file together. Server mode uses the selection in `app.toml`;
-the offline modes use `--vault` and never change the saved selection.
+Vault-backed keys are included as plaintext in workspace exports. OAuth
+credentials remain in `openai-auth.json` outside the vault database. A protected
+vault uses SQLCipher; its password is supplied at launch or switch and retained
+only in memory. Protected vaults are not mirrored. Enabling protection does not
+delete previously written Markdown files.
 
-The macOS `.tar.gz` archive contains only `CHA.app`; it does not include the
-Linux import seed or a configuration example. CHA.app keeps its active config
-at `~/Library/Application Support/CHA/`. In server mode, an empty configuration
-directory is bootstrapped by the C++ application with `app.toml`, `default.toml`,
-`default.sqlite3`, and private `mirror/` and `modify/` base directories. The
-`Default` vault has no saved sessions and starts with the built-in Assistant
-configured for ChatGPT OAuth. Bootstrap does not run for a nonempty directory
-or for offline commands.
-
-A new database is created only after a source has been collected and validated
-successfully. Normal runtime and export require schema v2. Schema v1 is the
-unified sessions-only database; only import can add the `config` table and
-advance it to v2 while preserving session rows.
-
-Provider, style, model-key, and R2-key TOML are durable rows in each vault's
-SQLite database. Those keys are vault-specific and round-trip through workspace
-export as plaintext. ChatGPT OAuth credentials remain process-wide in
-`openai-auth.json`. Workspace import ignores a source `.env`; legacy
-configuration-directory `api-keys.json` and `.env` credentials are imported
-into each empty vault when it is first opened, but the legacy files are left in
-place.
-
-A vault definition may contain `protected = true`. Its database is encrypted
-by SQLCipher and every database owner receives the active password explicitly.
-The password itself is never persisted: native launchers and the console collect
-it before opening the startup vault, while the browser supplies it only for a
-vault switch. Protecting an existing vault copies it into a newly encrypted
-database and atomically replaces the original; the UI deliberately offers no
-password change or removal path.
-
-The database, journal/WAL/SHM sidecars, lock, private root, workspace exports,
-and credential files use owner-only access (POSIX `0600` files and `0700`
-private directories, with private Windows DACLs). Copying a live WAL database
-naively is unsafe.
-
-Mirroring deliberately creates a second, plaintext representation of session
-content outside SQLite. Password-protected vaults are never mirrored, even
-when a mirror base is configured. Enabling protection stops future mirror
-writes but does not delete existing Markdown copies; remove those separately
-if they contain private content. Explicit conversation downloads and workspace
-exports remain plaintext. Mirrored Markdown files are written atomically with
-owner-only access (`0600` on POSIX), and newly created forum directories are
-private (`0700`), but CHA does not tighten the configured root or an existing
-forum directory. The operator therefore chooses and secures that location.
+See the [maintainer guide](MaintainerGuide.md) for path constraints, migration
+inputs, backup considerations, and import/export recipes.
 
 ## 8. Third reading pass: startup and the immutable workspace
 
-Read [web_main.cpp](../src/web_main.cpp) once from top to bottom. It is the
-composition root, so most lines construct or connect an owner.
+Read [application.h](../src/app/application.h),
+[application.cpp](../src/app/application.cpp), and the shared
+[runtime bridge](../packaging/macos/runtime_bridge.cpp).
 
-Startup proceeds in this order:
+Startup connects these owners:
 
-1. `parse_application_command()` requires `--config`. In server mode it first
-   bootstraps an empty configuration directory. It then reads `app.toml`,
-   discovers and validates the vault files, resolves `data`, logging, and
-   mirror/modify base paths from the configuration directory, derives each
-   vault's working directories, selects the startup or command-line vault, and
-   separates runtime from the four offline modes.
-2. `WorkspaceConfigStore::open()` acquires the database companion-file lease,
-   rejects anything except valid schema v2, secures the database/sidecars, and
-   enables WAL.
-3. The store creates one private root with `workspace/` and `welcome/`,
-   materializes every `config` row under `workspace/`, and validates/publishes
-   a complete `Workspace`. `ApplicationRuntime` separately opens the
-   vault-backed API-key store and the process-wide OAuth store. A protected
-   database is opened with the password collected by the launcher or console.
-4. File logging is initialized from the already parsed external settings, and
-   the HTTP server later binds the configured `[web]` host and port. Neither
-   setting belongs to `Workspace` or to a database row.
-5. `SessionRepository` receives the store's explicit database, materialized,
-   and Welcome paths, synchronizes configured forum IDs, and creates the
-   process-local Welcome database. It does not own the lease or private root.
-6. If `mirror` is configured and the vault is unprotected, `SessionMirror`
-   creates or validates the root,
-   creates any missing display-named forum directories, and writes every
-   active persistent session through the existing Markdown formatter. A
-   failure is logged and leaves mirroring disabled; Entrance/Welcome is
-   excluded.
-7. The process-owned `Providers` supervisor is constructed.
-8. `LiveSessionManager` is given an opener lambda that calls `open_session()`
-   and installs the mirror callback on the resulting `OpenedSession`.
-9. The HTTP server, asset handler, lobby routes, vault-switch route, and session
-   routes are installed.
-10. The socket is bound, the server begins listening, and shutdown coordination
-   waits for a process signal.
-11. Shutdown stops new work and tears down live actors, then
-    `Providers::shutdown()` waits for request workers before logging stops.
+1. The host locates configuration and assets and obtains a password if needed.
+2. `Application::open()` opens `WorkspaceConfigStore`, which holds the database
+   lease, materializes committed rows, and loads its immutable workspace.
+3. Vault-backed keys and process-wide OAuth support supply provider credentials.
+4. `SessionRepository` receives explicit database/private paths, password, and
+   a workspace-source callback. It creates the temporary Welcome database.
+5. Optional mirroring is initialized; a mirror failure is logged without
+   preventing use of the vault.
+6. `LiveSessionManager` receives an opener bound to this application's store,
+   repository, and provider supervisor. Audio services use the same repository.
+7. The runtime creates `BridgeRouter` and its processing threads. The native
+   host creates a document connection and installs the frontend bridge.
+8. The frontend checks `bridge.info`, then obtains bootstrap state, capabilities,
+   roster, and context epoch through `app.bootstrap`.
 
-Step 5 depends on step 3: the repository reads the published `Workspace` to
-decide which forum rows belong in the database. Local declaration order and
-function scopes matter too: destructors run in reverse order, log users must be
-destroyed before logging itself, and live sessions and the repository must be
-destroyed before the configuration store releases its database handle, private
-root, and lease.
+The host owns the runtime. The application owns the database-related services;
+live actors must release their journals before the store releases its lease
+and temporary tree.
 
 ### 8.1 What `Workspace::load()` builds
 
-Read [workspace/workspace.h](../src/workspace/workspace.h), then the helpers and
-`Workspace::load()` in
-[workspace/workspace.cpp](../src/workspace/workspace.cpp).
+[workspace.h](../src/workspace/workspace.h) and
+[workspace.cpp](../src/workspace/workspace.cpp) define a fully loaded,
+validated configuration snapshot. The loader reads personas, characters,
+forums, providers, styles, voices, prompts, and references, then adds built-in
+Guest, Assistant, and Entrance data. It resolves all forum members, including
+forums that have not been opened.
 
-The loader treats the workspace as one configuration unit. Production gives it
-the private materialized directory as its physical root:
-
-- It requires `characters/`, `forums/`, and `personas/` in the expected form.
-- It validates character IDs and public-name uniqueness.
-- It loads persona metadata and optional `PERSONA.md` prompts.
-- It validates every forum's members, default character, and default persona,
-  the last of which becomes the starting author for sessions in that forum.
-- It validates every forum member's character, provider, and style references.
-- It builds indexes and fully resolved forum-member prompt values.
-- It adds the built-in Guest persona, Assistant character, and Entrance forum.
-
-All forums are resolved when a workspace is loaded, including unused ones.
-This turns an invalid member override or prompt into a deterministic load error
-rather than a delayed failure when someone opens that forum.
-
-The public methods expose information from one published workspace. Production
-sessions keep their identity and runtime state, then query the current
-workspace when they need forum, persona, character, provider, or style data.
-Provider requests alone own the exact resolved input they are already running.
-Normal readers use eagerly owned values and do not reopen materialized files
-after load.
-
-There is no copied forum-roster object. A candidate is simply a temporary
-`Workspace`. Once fully loaded and durably committed, `loadws()` atomically
-makes it current. Callers use one `getws()` result for the duration of an
-operation, so references into that immutable snapshot remain valid even if a
-narrow settings write publishes its replacement.
+Normal readers use eagerly owned values, not the original import directory.
+A settings edit creates a new candidate workspace. Previously returned
+snapshots remain valid until their readers release them.
 
 ### 8.2 Database authority and publication
 
-Read `getws()` and `loadws()` in
-[workspace/workspace.cpp](../src/workspace/workspace.cpp). A caller holds the
-returned `shared_ptr` while it reads references from the workspace.
+[WorkspaceConfigStore](../src/workspace/workspace_config_store.h) owns the
+published `shared_ptr<const Workspace>`. Hold one `snapshot()` result for an
+operation and pass `const Workspace&` into the settings/workspace helpers that
+need it. Repositories and controllers receive a workspace-source callback tied
+to their application; constructing a test workspace does not publish global
+process state.
 
-The schema-v2 `config` table contains exactly `name` and `content`. Import
-collects regular workspace `.toml` and `.md` files, ignores a root `.env`,
-follows no symlinks, and stores no other types. Legacy root `app.toml` and
-`workspace.toml` are explicitly excluded and prohibited as database config
-names. The unified external config is also outside the import tree. A template
-include must itself be stored, so `snippet.txt` is not available after
-materialization while `snippet.md` can be. Import validates a byte-identical
-private materialization before it commits the complete row set.
+The schema-v2 `config` table stores `name` and `content`. Import collects
+regular `.toml` and `.md` workspace files without following symlinks. It excludes
+root process-configuration files and `.env`. Template includes must therefore
+be part of the accepted row set.
 
-Normal requests never read the import or export directory. The narrow browser
-edits are character provider/style, forum default character, and the combined
-forum members/persona update. `WorkspaceConfigStore` serializes each one, edits
-its private tree, loads a complete candidate, replaces all configuration rows
-in one SQLite transaction, and publishes after commit. There is no generation,
-type, control, or revision column. Other edits use
-stop/export/edit/import/restart in console mode, or the in-process
-Export/Edit/Import workflow in CHA.app.
+An ordinary configuration mutation edits the private tree, loads a complete
+candidate, collects rows, commits them in one SQLite transaction, and only then
+publishes the candidate. Failure before commit retains the old workspace.
+Runtime entity editors and explicit Database Import use this storage boundary;
+editing an exported directory alone changes nothing in the running application.
 
 ### 8.3 Provider selection
 
@@ -649,7 +419,7 @@ stable provider ID. The user can review and test the result before assigning it
 to a character.
 
 Credentials is an explicit choice. A normal provider refers to a secret in the
-active vault's `ApiKeyStore`; the value never enters a browser response but is
+active vault's `ApiKeyStore`; the value never enters a frontend response but is
 included as plaintext in workspace exports. `OpenAI OAuth` selects
 `openai_subscription` authentication
 and therefore requires the Responses API and the exact
@@ -662,8 +432,8 @@ fails when that provider is used. A resolvable legacy name appears as the
 matching saved key in the editor and is written as the normal opaque `api_key`
 ID when the provider is saved.
 
-The provider `Test` action also stays narrow. The browser sends the current
-candidate as the same `ProviderUpdate` used by Save, and `SettingsRoutes` calls
+The provider `Test` action also stays narrow. The frontend sends the current
+candidate as the same `ProviderUpdate` used by Save, and the application calls
 `ProviderClient` directly with one synthetic empty-history request asking for
 `OK`. It does not persist the candidate, reload live sessions, start a live
 session, create a transcript, or involve the `Providers` supervisor. The probe
@@ -682,7 +452,7 @@ and idle timeouts, and treats a completed provider response as success.
 
 `FORUM.md` has two audiences. It is the forum prompt above, and
 `Workspace` also reads it verbatim and serves it through
-`/api/v1/forums/{forum}` as the forum's description. Write it for readers as
+`forum.get` as the forum's description. Write it for readers as
 well as for the characters. This differs from `CHARACTER.md`, which publishes
 only its `<character_profile>` section: a forum publishes the whole file. The
 raw template source is served, so `$${character.display_name}` and `$$(...)`
@@ -694,191 +464,75 @@ The generated workspace guide is combined with public workspace inventory
 data. The Entrance/Welcome session is a normal session at the controller level;
 its specialness is in how the application constructs and stores it.
 
-Checkpoint: starting with `packaging/linux/import-seed/forums/stoics`, identify the files that
+Checkpoint: starting with `packaging/shared/import-seed/forums/stoics`, identify the files that
 contribute to one member's final definition and the order in which values win.
 
 ## 9. Fourth reading pass: session storage and opening
 
-Read these in order:
+Read [session_repository.h](../src/session/session_repository.h),
+[session_database.h](../src/session/session_database.h),
+[workspace_session_database.h](../src/session/workspace_session_database.h),
+and [session_open.cpp](../src/workspace/session_open.cpp).
 
-1. [chat/session_identity.h](../src/chat/session_identity.h)
-2. [session/stored_session.h](../src/session/stored_session.h)
-3. [session/workspace_session_database.h](../src/session/workspace_session_database.h)
-4. [session/session_lease.h](../src/session/session_lease.h)
-5. [session/session_storage_layout.h](../src/session/session_storage_layout.h)
-6. [workspace/workspace_config_store.h](../src/workspace/workspace_config_store.h)
-7. [session/session_database.h](../src/session/session_database.h)
-8. [session/session_repository.h](../src/session/session_repository.h)
-9. [workspace/session_open.cpp](../src/workspace/session_open.cpp)
+### 9.1 Public identity and storage identity
 
-Every persistent session lives in the SQLite file selected by the external
-config's `data` setting, named `workspace.sqlite3` in these examples, beside
-`workspace.sqlite3.cha-lock`. There is no per-session database file or lock.
+`(forum_id, session_id)` is the durable public identity carried by the bridge.
+Session IDs are unique within a forum. `session_key` is the internal SQLite
+integer used to scope every journal and restore query. Request IDs and entry
+IDs repeat across sessions, so omitting `session_key` from a query is a data
+isolation defect.
 
-### 9.1 Two identities: public pair and internal key
+`StoredSession` describes a listing. `PreparedSession` is validated construction
+input: identity, label, database path/password, internal key, and restored
+transcript/counters. A listing can become stale; `prepare()` must validate again
+when an actor opens the session.
 
-`(forum_id, session_id)` is the durable public identity. It appears in URLs,
-protocol values, and `FullSessionId`. Session IDs are timestamp-derived and
-unique only within a forum, so the database enforces
-`UNIQUE (forum_key, session_id)` rather than uniqueness on `session_id` alone.
+### 9.2 Lease, connections, and transactions
 
-`session_key` is an internal SQLite integer. It never appears in a URL or a
-protocol message, and every restore and journal statement is scoped by it.
-Omitting `session_key` from a statement is a cross-session data isolation
-defect, because request IDs and entry IDs are session-local and repeat across
-sessions.
+`WorkspaceConfigStore` holds a non-blocking lease on the database's companion
+`.cha-lock` file. The file remains stable while database files are replaced or
+WAL sidecars come and go. Its existence alone does not mean the database is
+busy; the held operating-system lock does.
 
-### 9.2 Observation versus authority
+The repository uses short-lived connections. Each live actor owns a journal
+connection confined to its owner thread. Connections enable foreign keys;
+write transactions use `BEGIN IMMEDIATE`. Reading under a deferred transaction
+and later upgrading it can fail with `SQLITE_BUSY_SNAPSHOT` even with a busy
+timeout. Read-only restoration uses a consistent read snapshot.
 
-`StoredSession` is listing data: public identity, label, and an integer
-`updated_at`. It reports what one query observed; it does not promise the
-session can still be opened.
+Normal runtime requires schema v2. The import implementation still contains
+schema-v1 upgrade and legacy per-session-database detection. These storage
+helpers do not imply that the removed command-line executable is available;
+plan any old-database migration separately before attempting a native launch.
 
-`PreparedSession` is authoritative for construction because it contains:
+### 9.3 Listing, deletion, and Welcome
 
-- validated identity and label;
-- the selected database path;
-- the database password (empty for Welcome or an unprotected vault);
-- the resolved `session_key`;
-- restored transcript/counter state.
+Listing is an indexed database query, filtered by the current workspace's
+forums. Creation validates the forum and inserts a session transactionally.
+Session deletion archives its row; archived sessions disappear from ordinary
+lists and cannot reuse their public identity. Repository maintenance may purge
+archived rows.
 
-`SessionRepository::prepare()` resolves the public identity to a `session_key`,
-validates the database identity and that one session's contents, and restores
-it inside a single read transaction. A persistent session selects the unified
-database; Welcome selects its private temporary one. Preparation takes no
-per-session operating-system lock: `LiveSessionManager` prevents two actors
-from owning one identity inside the process, and the top-level store's database
-lease excludes other processes.
+Forum synchronization only inserts missing forum rows. Explicit configuration
+import also prunes sessions for removed forums. A forum removal is therefore
+not a reversible way to hide its conversations. Review forum IDs before an
+import; see the maintainer guide's normalization rules.
 
-### 9.3 Database leases and the cutover guard
+Welcome uses a private temporary database with the same journal and restore
+machinery as persistent sessions. It disappears with the application's private
+runtime tree. Markdown mirroring excludes it.
 
-`WorkspaceConfigStore` acquires `workspace.sqlite3.cha-lock` before opening the
-database and holds it through normal runtime. The four console maintenance
-modes acquire the same lease for their full operation; CHA.app keeps its
-already-held lease while closing database handles for maintenance. A vault
-switch acquires the target lease before disturbing or releasing the active
-database. Acquisition is non-blocking, so competing operations fail before
-database use. A companion file is used rather than the database bytes because
-it exists before the database is created, does not interfere with SQLite's own
-byte-range locking, and stays stable while WAL sidecars come and go. An empty
-companion left behind after exit is harmless; the held kernel lock, not the
-file, is what means "busy".
+### 9.4 Constructing the controller
 
-Only import performs the permanent manual-cutover preflight, before it modifies
-the target:
+`open_session()` takes the repository, identity, provider supervisor, wake
+notifier, and configuration store explicitly. It holds a store snapshot while
+finding the forum, prepares stored history, and constructs a controller with
+the store's workspace-source callback. It also supplies callbacks for default
+character persistence and cached-audio lookup.
 
-| `workspace.sqlite3` | Legacy `forums/*/sessions/*.sqlite3` | Import behavior |
-| --- | --- | --- |
-| Missing | Absent | Create v2 only after successful validation |
-| Valid v1 | Absent | Upgrade to v2 and preserve every session |
-| Valid v2 | Absent | Replace only the complete configuration rows |
-| Missing | Present | Fail: the archived per-session migration build was never run |
-| Present | Present | Fail: migration cleanup is incomplete |
-
-For the normal schema-v1 cutover, first stop the running application and back
-up both the database and metadata tree. Put the external configuration outside
-that tree, point its `data` setting at the existing `workspace.sqlite3`, then
-run the import and restart with the same configuration:
-
-```console
-$ chaweb --config=/srv/cha/cha-config --vault=Personal --import /srv/cha/workspace
-$ chaweb --config=/srv/cha/cha-config
-```
-
-The first command upgrades a valid v1 database in place, preserving its
-sessions while importing the directory metadata. The second command is normal
-server mode; it reads application settings from the configuration directory
-and all workspace content from SQLite. The metadata tree may remain as a
-backup, but runtime no longer reads it.
-
-`has_legacy_session_databases()` in
-[session_storage_layout.cpp](../src/session/session_storage_layout.cpp) is a
-permanent path-only scan for regular `.sqlite3` files directly under each
-`forums/*/sessions/` and `forums/*/sessions/deleted/`. It never opens, reads,
-imports, moves, or deletes one. This build contains no legacy reader: the first
-message directs the operator to an archived migration-capable build, while the
-second directs them to verify the unified database and finish cleanup.
-
-### 9.4 Connections and transactions
-
-The repository owns no SQLite connection. Every catalog or maintenance
-operation opens a short-lived connection and closes it before returning, which
-is why its methods stay `const` behind `shared_ptr<const SessionRepository>`.
-Each live actor owns one long-lived journal connection confined to its owner
-thread. No handle is ever shared between threads.
-
-Every connection enables `foreign_keys` and a five-second `busy_timeout`, and
-write-capable connections set `synchronous = FULL`. The workspace database runs
-in WAL, so history readers proceed while a journal connection writes. The
-`SqliteDatabase` wrapper applies `sqlite3_key()` immediately after opening when
-its password argument is nonempty, before any schema inspection or pragma that
-needs to read the database.
-
-Every write-capable transaction begins with `BEGIN IMMEDIATE` — that is all
-`SqliteTransaction` does. Reading first under a deferred `BEGIN` and upgrading
-later is unsafe with several actors: another writer can invalidate the reader's
-WAL snapshot, and the upgrade then fails with `SQLITE_BUSY_SNAPSHOT`, which
-`busy_timeout` does not retry. Read-only paths use the separate deferred
-`ReadSnapshot` helper in
-[session_database.cpp](../src/session/session_database.cpp).
-
-### 9.5 Listing, creation, and deletion
-
-Listing a forum and building Workspace Recent are indexed queries over
-`sessions` joined with `forums`, filtered to the forums the currently published
-`Workspace` still configures. Nothing scans the filesystem, and a newly created
-session appears immediately.
-
-Creation validates the forum against the published `Workspace`, ensures that
-forum has a row, and inserts one `sessions` row with its initial counters — all
-in one transaction. A timestamp ID collision surfaces as
-`SQLITE_CONSTRAINT_UNIQUE`; the retry loop confirms the conflict really is that
-session's own `(forum_key, session_id)` before trying the next suffix, so any
-other unique violation stays a storage error.
-
-Deletion is archival, not a file move: one `UPDATE` sets `archived_at`, and the
-turns and entries stay exactly where they are. An archived row keeps its unique
-identity, so its session ID can never be reused, and it is excluded from list,
-open, rename, and history queries.
-
-When Markdown mirroring is enabled, archival intentionally leaves the last
-mirrored file in place. `SessionMirror` also retains that path allocation for
-the rest of the process, so a newly created session cannot take the archived
-file's name during that run. The mirror is an additive readable projection,
-not an archive catalog or a source from which sessions are restored.
-
-Forum synchronization is `INSERT OR IGNORE`, never a delete. Removing a forum
-from an imported configuration makes its sessions unreachable through ordinary
-APIs but leaves them durable; importing configuration that restores the forum
-makes them visible again.
-
-### 9.6 Welcome uses the same machinery
-
-Welcome is process-local and never persistent. `WorkspaceConfigStore` creates
-the private root and `welcome/` child; `SessionRepository` creates one database
-there with the same application ID, schema version, and schema as the unified
-database, holding exactly one forum row and one session row at `session_key` 1.
-That is why `SessionJournal` and every restore query take the same code path
-for Welcome as for a persistent session — there is no second storage
-implementation to keep in sync. The top-level store removes the whole private
-root during teardown.
-
-### 9.7 `open_session()` is the bridge
-
-`workspace/session_open.cpp` performs a short but crucial composition:
-
-1. acquire the current `Workspace` and find the immutable forum;
-2. prepare the stored session;
-3. retain the session label for the live web actor;
-4. construct a workspace-backed `SessionController`, transferring the database
-   path, `session_key`, restore state, configured default IDs, wake notifier,
-   and a reference to the configuration store for the two forum-default writes.
-
-The workspace layer knows both the static workspace and dynamic repository;
-neither needs to know about HTTP.
-
-Checkpoint: explain why route code calls `validate()` before starting an actor,
-but the actor's `open_session()` must still call `prepare()`.
+The application installs the mirror callback and gives this opener to the
+live-session manager. Only the actor's owner thread constructs and uses the
+controller and journal.
 
 ## 10. Fifth reading pass: the generation pipeline
 
@@ -1008,7 +662,7 @@ four groups:
 
 1. construction, restoration, and `view()`;
 2. prompt resolution and `start_generation()`;
-3. command methods such as clear, hide, multicast, default character, and stop;
+3. command methods such as cover, uncover, delete turn, multicast, and stop;
 4. generation-event `apply()` overloads and shutdown.
 
 ### 11.1 What the controller owns
@@ -1035,7 +689,7 @@ submission, multicast, and default-character changes use the same rules.
 style IDs and overlays the selected appearance when metadata is copied for a
 request or presentation. The smaller `generation_status.h`,
 `controller_view.h`, and `opened_session.h` headers are
-boundary value types: they let application and web code observe or transfer
+boundary value types: they let application and bridge code observe or transfer
 session state without gaining access to controller internals.
 
 ### 11.2 Starting a prompt
@@ -1119,655 +773,225 @@ ended) and a presentation-state effect:
 
 Merging is conservative. A structural change dominates an append, and
 incompatible appends become a snapshot. This type lets the session layer
-describe what changed without depending on SSE.
+describe what changed without depending on bridge delivery.
 
 Checkpoint: for first answer chunk, second answer chunk, completion, and
 provider failure, state the transcript mutation, journal operation, and update
 classification.
 
-## 12. Seventh reading pass: web actor and protocol
-
-Read the web layer in this order:
-
-1. [web/protocol.h](../src/web/protocol.h)
-2. [web/session_projection.cpp](../src/web/session_projection.cpp)
-3. [web/command_queue.h](../src/web/command_queue.h)
-4. [web/sse_mailbox.h](../src/web/sse_mailbox.h)
-5. [web/live_session.h](../src/web/live_session.h)
-6. [web/live_session.cpp](../src/web/live_session.cpp)
-7. [web/live_session_manager.cpp](../src/web/live_session_manager.cpp)
-8. [web/lobby_routes.cpp](../src/web/lobby_routes.cpp)
-9. [web/session_routes.cpp](../src/web/session_routes.cpp)
-10. [web/session_markdown.cpp](../src/web/session_markdown.cpp)
-11. [web/session_mirror.cpp](../src/web/session_mirror.cpp)
-12. [web/application_runtime.cpp](../src/web/application_runtime.cpp)
-
-### 12.1 Protocol values are owning DTOs
-
-`ControllerView` borrows controller storage. `to_snapshot()` immediately copies
-it into an owning `SessionSnapshot` suitable for JSON or cross-thread
-publication. The protocol also defines `AppendEvent`, command results, errors,
-bootstrap data, and lifecycle/shutdown values.
-
-This projection is the seam where core state becomes web presentation. Core
-types do not acquire JSON annotations just because the browser needs them.
-
-### 12.2 Command ingress
-
-An HTTP handler obtains a `shared_ptr<LiveSession>` from the manager and calls
-`submit()`; it never calls the controller.
-
-`CommandQueue` has two lanes:
-
-- bounded commands with `CommandReply` objects, so load cannot grow queued
-  mutations without limit;
-- unbounded, lossless owner notifications for SSE disconnect cleanup.
-
-`submit()` enqueues under the lifecycle boundary, wakes the owner if necessary,
-and waits only for the caller's deadline. A timeout abandons the reply but does
-not undo a command that may already be executing. That is why the HTTP error
-says the outcome is unknown.
-
-### 12.3 Text parsing is a web adapter
-
-The browser sends `RawCommand { text }`; the author is not the browser's to
-choose, so `LiveSession` supplies the session's current persona ID. The actor passes it to
-`handle_text_input()` in [web/text_input.cpp](../src/web/text_input.cpp).
-Parsing is divided among:
-
-- `text_mention.*` for leading character mentions;
-- `text_command.*` for slash commands;
-- `text_multicast.*` for `/mcast` syntax;
-- `text_input.*` for dispatch to typed controller methods.
-
-The parser belongs in `web` because it adapts one input protocol. The
-controller exposes typed actions and remains usable without slash-command
-syntax. Only `/mcast` remains a raw command. Character selection, stopping
-generation, covering or uncovering model context, and deleting a completed turn
-use typed Web UI actions instead.
-
-### 12.4 The owner loop
-
-`LiveSession::owner_loop()` repeatedly:
-
-1. drains a bounded batch of commands/notifications;
-2. checks for shutdown;
-3. drains a bounded batch of foreground generation events;
-4. applies notice state and publishes an append or snapshot;
-5. refreshes the Markdown mirror if its transcript revision or label changed;
-6. checks browser-disconnect/idle deadlines;
-7. continues immediately if a batch was full, otherwise waits for a wake or
-   deadline.
-
-Bounding both drains prevents an endless command stream from starving model
-events and prevents a hot model stream from starving typed actions such as
-Stop.
-
-### 12.5 SSE mailbox
-
-`SseMailbox` is the one cross-thread presentation channel from owner to HTTP
-stream writer. It holds at most one in-flight payload and one replaceable
-pending payload.
-
-Snapshots replace stale pending state. Compatible appends can be combined only
-when their sequence base and text target are exact. A pending snapshot plus a
-later append is not assumed compatible; the mailbox rejects the append and the
-owner projects a current snapshot instead.
-
-The result is bounded memory under a slow browser. Intermediate presentation
-updates may collapse, but the latest complete state is recoverable. A newly
-connected SSE stream always begins with a snapshot.
-
-A live session holds one browser SSE connection: the most recent one. CHA has
-a single reader who may carry a conversation from desktop to laptop to tablet,
-so a new connection takes the session over at once rather than waiting for the
-previous device's stream to end, and the stream it displaces is closed with a
-final `superseded` record. Connection
-state also drives the actor's idle/orphan deadline; generation receives the
-longer protection appropriate to active work.
-
-### 12.6 Manager and routes
-
-`LiveSessionManager` is the liveness authority and join authority. Its map is
-keyed by `FullSessionId`.
-
-- Concurrent opens of the same identity share one starting actor and result.
-- A running actor is reattached rather than duplicated.
-- Waiting for startup happens outside the manager mutex.
-- Finished actors are removed under the mutex and joined outside it.
-- A caller timing out while an actor starts does not cancel shared startup.
-
-Lobby routes provide health, public discovery and the narrow character settings
-write, plus stored-session listing, creation, download, rename, deletion, and
-open. Session routes operate only on a live actor:
-
-```text
-GET  /health
-GET  /api/v1/bootstrap
-GET  /api/v1/characters/{character}
-PATCH /api/v1/characters/{character}
-GET  /api/v1/personas/{persona}
-GET  /api/v1/forums/{forum}
-GET  /api/v1/forums/{forum}/sessions
-POST /api/v1/forums/{forum}/sessions
-GET  /api/v1/forums/{forum}/sessions/{session}/download
-PATCH /api/v1/forums/{forum}/sessions/{session}
-DELETE /api/v1/forums/{forum}/sessions/{session}
-POST /api/v1/forums/{forum}/sessions/{session}/open
-
-GET  /s/{forum}/{session}/
-GET  /s/{forum}/{session}/api/v1/session
-GET  /s/{forum}/{session}/api/v1/events
-POST /s/{forum}/{session}/api/v1/input
-POST /s/{forum}/{session}/api/v1/actions/stop
-POST /s/{forum}/{session}/api/v1/actions/cover
-POST /s/{forum}/{session}/api/v1/actions/uncover
-POST /s/{forum}/{session}/api/v1/actions/delete-turn
-POST /s/{forum}/{session}/api/v1/actions/default-character
-```
-
-`SettingsRoutes` owns provider, style, voice, and saved-key configuration separately
-from live session routes. Vault routes are installed by `ApplicationRuntime`
-because they mutate its process-wide registry. The provider probe receives a
-complete candidate in the request body but does not commit it:
-
-```text
-GET    /api/v1/providers
-POST   /api/v1/providers
-GET    /api/v1/providers/{provider_id}
-PATCH  /api/v1/providers/{provider_id}
-DELETE /api/v1/providers/{provider_id}
-POST   /api/v1/providers/{provider_id}/test
-
-GET    /api/v1/voices
-POST   /api/v1/voices
-PATCH  /api/v1/voices/{voice_id}
-DELETE /api/v1/voices/{voice_id}
-GET    /api/v1/voice-input
-PUT    /api/v1/voice-input
-GET    /api/v1/voice-input/runtime
-GET    /api/v1/voice-output
-PUT    /api/v1/voice-output
-GET    /api/v1/voice-output/runtime
-POST   /api/v1/voice-output/audio
-
-GET    /api/v1/vaults
-POST   /api/v1/vaults
-PATCH  /api/v1/vaults
-DELETE /api/v1/vaults
-POST   /api/v1/vault/switch
-GET    /api/v1/r2-vaults
-POST   /api/v1/r2-vaults
-
-GET    /api/v1/api-keys
-POST   /api/v1/api-keys
-PATCH  /api/v1/api-keys/{api_key_id}
-PUT    /api/v1/api-keys/{api_key_id}/value
-DELETE /api/v1/api-keys/{api_key_id}
-GET    /api/v1/r2-storage
-PUT    /api/v1/r2-storage
-DELETE /api/v1/r2-storage
-```
-
-Entry audio routes work for stored sessions without opening a live actor:
-
-```text
-POST   /api/v1/forums/{forum}/sessions/{session}/entries/{entry_id}/audio-download
-POST   /api/v1/forums/{forum}/sessions/{session}/audio-downloads
-GET    /api/v1/forums/{forum}/sessions/{session}/audio-downloads
-GET    /api/v1/forums/{forum}/sessions/{session}/entries/{entry_id}/audio
-DELETE /api/v1/forums/{forum}/sessions/{session}/audio-cache
-```
-
-Download submissions carry `vault_name`, `reference_id`, and optional `settings`
-containing `speed`; the batch shape is `{vault_name, entries}`, with an
-`entry_id` on each entry. Text comes from the stored transcript, not the caller.
-A single submission returns 200 if already cached or 202 with `queued`/`running`
-state; a batch returns 202 with per-entry acceptance results. Status and audio
-reads require the `vault_name` query parameter and reject a stale vault with
-409 `vault_changed`. Status reports `cached_entry_ids` and queued, running, or
-failed downloads. Clearing accepts an empty JSON object and returns 204.
-
-The uncached `/api/v1/voice-output/audio` proxy is for previews, accepts `text`,
-`reference_id`, and optional `settings`, and rejects the old `entry` shape.
-Output runtime discovery supplies endpoint, model, format, and default reference
-ID without exposing the saved API key. Synthesis and entry-audio access require
-native mode; stored voice settings can be edited in browser-only mode.
-
-`default-agent` remains a compatibility alias for `default-character`; new
-code uses character vocabulary.
-
-The route files should mostly validate HTTP input, map errors/statuses, look up
-an actor, and serialize protocol values. Session behavior belongs below them.
-
-Checkpoint: explain why a `LiveSessionHandle` may safely outlive the manager's
-map entry after the owner thread has finished.
-
-### 12.7 Web support modules
-
-After the main actor path makes sense, scan the smaller adapters:
-
-| Files | Responsibility |
-| --- | --- |
-| `application_config.*` | Bootstrap an empty server configuration, parse `app.toml` and the vault registry, derive per-vault mirror/modify paths, mark protected vaults, and select the process mode and runtime asset root |
-| `application_runtime.*`, `current_vault.h` | Compose one running application, hold and edit the vault registry, retain the active database password in memory, and serialize vault switching with in-process database maintenance |
-| `asset_handler.*` | Serve the browser shell and staged static assets without owning session behavior |
-| `http_server.*` | Apply server-wide request, Host/Origin, timeout, and size policy |
-| `http_response.*`, `json.*`, `route_support.*` | Consistent JSON parsing, response bodies, route components, and mutation validation |
-| `browser_connection_state.*` | Hand the session to the newest browser stream and calculate disconnect/idle deadlines |
-| `session_markdown.*`, `session_mirror.*` | Render portable transcripts and maintain the optional filesystem projection |
-| `owner_wake_signal.*` | Coalesce cross-thread wakeups for the actor loop |
-| `sse_stream.*` | Serialize mailbox payloads and heartbeats into `httplib::DataSink` |
-| `server_shutdown.*` | Bridge process signals to coordinated, bounded manager shutdown |
-| `r2_database_transfer.*` | List, upload, and download vault databases and companion definitions over the S3 API |
-| `fish_audio.*` | Build FishAudio requests, forward uncached previews, validate downloaded audio, and derive speech text from stored entries |
-| `audio_download.*` | Own background audio jobs, batch admission, retries, status, cached reads, and per-session cancellation |
-
-These modules keep `LiveSession` and the route files from accumulating generic
-HTTP, filesystem, and signal-handling details.
-
-Audio downloads are also fenced during maintenance. `AudioMaintenance` pauses
-admission before the configuration and repository reservations. Import,
-Download, and vault switching cancel jobs; Export and Upload preserve them.
-Repository operations wait behind its maintenance mutex, and admission resumes
-after a successful reopen.
-
-Database maintenance while the server is running needs every writer to let go
-of it at once, so `ApplicationRuntime` takes three reservations in order before
-Import, Export, Upload, or Download:
-
-1. `LiveSessionManager::reserve_global_maintenance()` stops admitting sessions,
-   asks every live actor to release its journal connection, and waits for all
-   of them under one deadline.
-2. `WorkspaceConfigStore::reserve_maintenance()` holds the configuration mutex,
-   so no configuration edit is inside a SQLite transaction when the checkpoint
-   runs, and then releases the store's own handle.
-3. `SessionRepository::reserve_maintenance()` fences repository operations and
-   checkpoints the WAL back into the database file.
-
-With the existing lease still held, Import replaces configuration rows from
-the derived `modify` directory, Export replaces that directory, and
-Upload/Download transfer the database plus its companion vault definition
-through R2. Upload writes the definition first and database second; R2 cannot
-replace the pair atomically. Download validates both temporary files before
-keeping the old local pair with `.bac` suffixes and publishing replacements.
-Each reservation restores what it took when destroyed, in reverse order, after
-the operation finishes and the database has reopened. Import and Download
-publish the reloaded workspace to the browser. If reopen fails, the store
-cannot serve again. The runtime marks itself unusable, stops the HTTP server,
-and reports `WorkspaceRestartRequiredError` rather than continuing without a
-handle.
-
-Vault switching reuses the live-session, store, and repository reservations;
-it does not construct a second runtime or introduce another transaction layer.
-The complete cutover is traced in section 13.7.
-
-The Swift Database menu asks the C bridge which operations are available.
-Import and Export are enabled only when a `modify` base was present in
-`app.toml`. Upload and Download are enabled only when the active vault contains
-an R2 storage key. All four items are disabled while any database operation is
-in progress.
-
-### 12.8 Markdown download and continuous mirroring
-
-The download route and filesystem mirror share
-`session_markdown()`. The filename supplies the visible session title; the file
-keeps that label in a hidden `<!-- CHA session: ... -->` comment instead of
-rendering a duplicate heading. The first known entry time appears once as the
-session start time. Each message begins on the same line as a monospace speaker
-badge and middle dot, for example `` `Reader` · Review this``. Blank paragraph
-gaps inside one message become Markdown hard line breaks, while a blank line
-still separates messages. The formatter omits transient cover markers and
-suppresses repeated multicast prompts. The HTTP route obtains an owner-thread
-snapshot for a live session or restores stored history for a closed one;
-`SessionMirror` writes the same bytes directly to disk.
-
-`session_mirror_root()` in `application_runtime.cpp` returns no root for a
-protected vault and logs a warning when its configured mirror is ignored. This policy
-applies at startup and after vault updates, switches, merges, and downloads.
-Rebuilding with no root clears the mirror's in-memory path allocations and
-makes subsequent route and actor callbacks no-ops. Protecting the active vault
-disables its mirror while database maintenance still fences session operations,
-before actors resume. Previously written files remain on disk.
-
-At startup `SessionMirror` reads the published forum display names and active
-sessions from `SessionRepository`. It creates one directory per persistent
-forum and one `.md` file per active session. Entrance/Welcome has no entry in
-the mirror's forum map, so later updates for it are silent no-ops. Paths use
-display text rather than IDs. The sanitizer replaces controls and
-`* " \\ / < > : | ? # ^ [ ]`, trims trailing dots/spaces, and collision
-allocation produces `Name.md`, `Name (1).md`, and so on. A mutex serializes
-startup-independent updates from route threads and different session-owner
-threads.
-
-New-session and closed-session rename routes call the mirror directly. An open
-session receives a synchronous callback through `OpenedSession`; the callback
-accepts only a call-scoped transcript span and never retains it.
-`LiveSession::mirror_if_changed()` holds the last mirrored transcript revision
-and label. Transcript changes remain pending while generation is active, then
-completion, cancellation, or failure writes the terminal state. A label change
-is handled even during generation so the old file is renamed promptly; the
-final response causes another write if transcript content subsequently changes.
-Unrelated snapshot state, such as a default-character selection, does not
-rewrite the file.
-
-Initial synchronization can throw, but the runtime logs the failure and keeps
-the vault running with mirroring disabled. `SessionMirror::update()`
-catches filesystem errors and logs a warning: a failed secondary projection
-must not turn an already committed session transition into a failed chat
-operation. Writes use `create_private_file()`, which rejects symlink or
-non-regular targets and atomically replaces a regular file.
-
-### 12.9 Browser transcript and composer
-
-The browser's presentation behavior is concentrated in
-[webapp/src/components/ChatScreen.tsx](../webapp/src/components/ChatScreen.tsx), with
-layout rules in [webapp/src/styles/app.css](../webapp/src/styles/app.css).
-`visibleTranscriptEntries()` suppresses the duplicate human prompts stored for
-multicast, but marks the next visible response so the renderer inserts an
-unlabelled horizontal divider. Readers can therefore see where one response
-ends and the next response to the same prompt begins without seeing the whole
-prompt again.
-
-The snapshot's `covered_until` field is the browser's only cover boundary.
-Entries before it appear in a shaded `Covered conversation` section. Complete
-and cancelled character responses with timestamps expose a cover control beside
-the optional voice output control; selecting it posts the response ID as
-`through_entry_id`. Only the response at the active boundary changes to an
-uncover control, so the action stays in place without creating duplicate
-controls.
-
-Saved character responses also expose a red delete control. It opens the
-in-page `ConfirmDialog` rather than `window.confirm`, because the macOS
-`WKWebView` shell does not implement JavaScript confirmation panels. Confirming
-posts the response entry ID as `response_entry_id`; the controller and journal
-then remove the response and its matching prompt and publish a fresh snapshot.
-The control is unavailable during generation and does not appear for Self-notes,
-failed turns, or cancelled turns that never recorded response text.
-
-The horizontal line above the composer is also its resize handle. Dragging it
-up or down changes the textarea's height while the transcript consumes the
-remaining flexible space. Automatic growth remains the minimum, and both
-automatic and manual growth stop at 80% of the chat area's height. The handle
-also accepts Up/Down keys, while Home or a double-click returns to automatic
-sizing.
-
-The composer sends on Enter and inserts a new line on Ctrl+Enter, leaving Enter
-alone during IME composition. The send button uses the same form
-submission path. The `Rus` toggle enables Latin-to-Russian transliteration in
-the draft through the shared transliteration helper.
-
-### 12.10 Voice output and persistent audio
-
-FishAudio is the only speech-output provider. Vault settings in
-`system/voice-output/config.toml` select an HTTPS endpoint on `api.fish.audio`,
-model, saved API-key ID, output format (`mp3`, `wav`, or `opus`), and default
-voice display name. Individual voices still use the compatibility field
-`elevenlabs_voice_id` for their FishAudio reference ID; only `speed` is sent as
-`prosody.speed`. Unsupported legacy voice settings are ignored with a warning.
-Invalid saved output configuration is ignored rather than preventing startup.
-
-`AudioDownloadManager` owns three workers and an in-memory queue independent of
-HTTP request and browser lifetimes. Admission captures output settings, key,
-reference ID, and entry identity. Duplicate submissions share an existing job,
-and a batch is validated completely before any new work is admitted. Workers
-retry transport failures up to four attempts, validate a nonempty `audio/*`
-result, and store it through `SessionRepository::save_entry_audio()`. Before
-synthesis and commit, repository checks prevent a deleted or changed entry or
-replaced database from acquiring stale audio. Storage failures are terminal.
-
-`entry_audio` stores an audio BLOB and content type under
-`(session_key, entry_id)`, with cascading deletion from `entries`. Cache identity
-does not include text, model, voice, or synthesis settings. Existing clips stay
-unchanged when voice settings change. Saved-session audio survives application
-restarts and is included in full database transfers; Welcome audio uses the
-temporary database. Jobs and failed-job state do not survive a process restart.
-The session menu's Clear audio cache cancels jobs and deletes that session's
-clips without altering transcript text.
-
-`webapp/src/audioDownloads.ts` submits jobs and polls while work is pending.
-The transcript exposes `has_cached_audio`, and status reads refresh it without
-waiting for an SSE update. Completed human messages and character responses
-have speaker controls; human messages use their persona's voice, responses use
-their character's voice, and missing assignments use the output default.
-Selecting uncached audio submits a job and plays the cached result when ready.
-`TextToSpeechSession` retrieves saved audio and retains stopped playback
-positions in browser memory until completion or reload.
-
-The speaker toggle before `Rus` batches all uncached, nonempty completed entries
-in the displayed transcript, including covered entries and excluding repeated
-multicast prompts. It submits later completed entries while enabled. Turning it
-off or leaving the session stops future submissions but leaves accepted jobs
-running. Character and voice previews instead call the uncached proxy and create
-a fresh sample each time; that proxy admits at most four simultaneous requests
-and returns 503 `speech_busy` instead of blocking request workers.
+## 12. Seventh reading pass: application and native bridge
+
+Read these boundaries in order:
+
+1. [Application](../src/app/application.h)
+2. [Application operations](../src/app/workspace_operations.h) and
+   [settings operations](../src/app/settings_operations.h)
+3. [Bridge protocol](../src/bridge/bridge_protocol.h)
+4. [Bridge router](../src/bridge/bridge_router.cpp)
+5. [Workspace dispatch](../src/bridge/workspace_dispatch.cpp) and
+   [settings dispatch](../src/bridge/settings_dispatch.cpp)
+6. [Session output](../src/app/session_output.h)
+7. [Live session](../src/web/live_session.cpp)
+8. [Frontend native bridge](../webapp/src/api/nativeBridge.ts) and
+   [event projection](../webapp/src/api/nativeEvents.ts)
+
+### 12.1 Application admission and context
+
+`Application` serializes lifecycle-sensitive operations and delegates domain
+work to workspace, settings, vault, and media operations. Context-bound methods
+require an explicit epoch. Zero and stale epochs are rejected; zero is not a
+request to use whichever vault is current.
+
+`admit_locked()` is the shared decision, `require_admitted()` converts denial to
+an exception for throwing methods, and `check_context()` exposes the same
+check to other paths. They are different result forms, not different policies.
+The underlying lifecycle mutex, active password, and unusable flag are private.
+
+Application state is `running`, `maintenance`, `stopping`, or `unavailable`.
+Bootstrap publishes the current epoch and capabilities. A context transition
+invalidates pending work associated with the previous vault. Native file saves
+also revalidate the captured epoch after a platform save dialog returns.
+
+### 12.2 Request and delivery ownership
+
+The host creates a connection identity for a particular native document. JSON
+that merely names a connection does not create one. Requests carry that
+identity, a request ID, context epoch, method, and parameters. The router checks
+the trusted host identity and envelope before dispatching.
+
+`BridgeRouter` owns connections, request accounting, deadlines, reply queues,
+subscriptions, delivery IDs, and acknowledgments. Ordinary work and control
+work have separate admission capacity. Slow generation or provider testing
+must not consume the path needed to stop or clean up work.
+
+Synchronous workspace and settings operations live in noun-specific dispatcher
+files. Each dispatcher returns an optional JSON result: no value means it did
+not handle the method, while a JSON null is a handled empty result. Session,
+media, and lifecycle work that needs asynchronous router state stays in the
+router. Shared parameter parsing lives in `request_params.h`.
+
+Only one delivery batch per connection is outstanding until acknowledged. A
+reply timeout abandons observation of the result; it does not roll back a
+mutation already running. Connection teardown releases subscriptions and
+connection-owned resources.
+
+### 12.3 Actor commands and output
+
+`CommandQueue` is a bounded queue of owning commands and replies. The
+application enqueues work; the live-session owner drains bounded batches of
+commands and provider events, so one source cannot starve the other.
+`OperationReply` and `CommandReply` support asynchronous completion and ignore
+late completion after abandonment.
+
+`ControllerView` borrows storage. `to_snapshot()` copies it immediately into an
+owning `SessionSnapshot`. `SessionOutput` coalesces pending output and uses a
+full snapshot when it cannot retain a correct append. No HTTP thread, SSE
+mailbox, heartbeat, or browser takeover is involved.
+
+The frontend projection checks connection, epoch, subscription, and session
+identity before processing an event. A snapshot establishes state and the next
+sequence. An append must match both that sequence and an existing target.
+Duplicates are ignored; invalid current-scope data or a sequence gap fails the
+projection and invokes recovery through a new subscription/snapshot. Late events
+from a previous scope cannot corrupt the current session.
+
+Closing the displayed session requests retirement when idle. It need not stop
+an accepted generation immediately. Explicit Stop cancels generation; explicit
+session shutdown uses `session_closed`. Document and application teardown have
+their own cleanup paths.
+
+### 12.4 Text input
+
+The frontend submits raw text; `LiveSession` supplies the current persona ID.
+`text_mention.*`, `text_command.*`, `text_multicast.*`, and `text_input.*` resolve
+mentions and `/mcast` into typed controller actions. Stop, cover/uncover,
+default-character selection, and deleting a turn use typed operations.
+
+This keeps text syntax outside the controller. The controller accepts domain
+intent regardless of how a screen or text parser obtained it.
+
+### 12.5 DTOs and validation
+
+[resources/dto.yaml](../resources/dto.yaml) declares the DTO shapes used by
+`schema.d.ts`. It is used for type generation, not as an HTTP route catalog.
+Run `npm run api-types` in `webapp/` after changing it and keep generated output
+in sync.
+
+`bridge.info` checks the exact protocol version before bootstrap. It is a
+mismatch check, not compatibility negotiation. It is useful during development
+when Vite assets and a previously built runtime can differ.
+
+TypeScript types do not validate JSON. The frontend retains runtime guards at
+the bridge/result and event boundaries, shares repeated roster/appearance/forum
+checks, and validates snapshot fields before rendering or append projection.
+Avoid adding duplicate guards for unused shapes or regenerating a second
+schema by hand. Guards accept supported values such as idle generation IDs and
+nullable timestamps; additive response properties are allowed.
+
+The C++ and TypeScript method policies are still declared separately. The
+[method-policy fixture](../tests/fixtures/wire/native-method-policies.json)
+and tests check control classification, epoch requirements, and context changes
+across the boundary. A new method must update both policies and their fixture.
+
+### 12.6 Frontend state and loading
+
+[state/view.ts](../webapp/src/state/view.ts) keeps per-entity inspection records,
+with shared shapes where appropriate. Remembered selections, the currently
+browsed forum, and the active conversation have different lifetimes. Do not
+collapse them into one global selection merely to reduce field count.
+
+[state/entityUpdates.ts](../webapp/src/state/entityUpdates.ts) centralizes the
+summary and visible-reference updates after entity edits. A persona rename can
+update forum summaries and the current session's forum summary without
+rewriting names recorded in historical transcript entries. Character settings
+writability is separate from editing the character's definition, including for
+built-in Assistant.
+
+[useLoad.ts](../webapp/src/useLoad.ts) handles simple list loads: data, load error,
+retry, and suppression of stale completion after a client change or unmount.
+Pass a stable loader function. Screens retain mutation errors separately, and
+complex detail/edit/subscription effects retain their specific behavior.
+
+### 12.7 Markdown, audio, and native resources
+
+`session_markdown()` renders both explicit session exports and continuous
+mirrors. It omits transient cover markers and duplicate multicast prompts.
+Live-session export gets an owner-thread snapshot; closed-session export
+restores stored history. The native host selects a destination, then writes
+through the context-checked runtime save operation off the UI thread.
+
+`SessionMirror` writes private, atomic Markdown files under display-named forum
+and session paths. It updates after terminal transcript changes or renames.
+Failures are logged without undoing durable chat state. It is disabled for
+protected vaults and excludes Welcome. Existing files, including archived
+conversation copies, may remain after their source stops appearing in CHA.
+
+`AudioDownloadManager` runs background synthesis jobs independently of screen
+selection. Admission captures the relevant settings and entry identity;
+repository checks prevent a deleted/changed entry or replaced database from
+receiving stale audio. Cached clips are stored in `entry_audio` and survive
+restart for persistent sessions. Job queues do not survive restart.
+
+The frontend polls accepted jobs through `audioDownloads.ts`. Retrying an
+operation must distinguish retryable transport/service failures from terminal
+errors. Clearing the audio cache cancels session jobs and removes clips without
+changing transcript text. Uncached voice previews use separate native speech
+operations with bounded admission.
+
+Media resources are scoped to the native connection and context. The hosts
+serve native resource handles to the WebView; the frontend releases handles
+when done. Model and speech credentials stay in native code rather than being
+returned to the frontend.
 
 ## 13. End-to-end workflow traces
 
-Use these traces as navigation exercises. Open each function in sequence.
+### 13.1 Opening and submitting to a session
 
-### 13.1 Creating and opening a stored session
+1. The frontend creates or lists sessions through the typed native client.
+2. `session.open` passes the captured epoch to `Application`.
+3. The manager reuses or constructs an actor for the full session identity.
+4. The actor prepares stored history and constructs its controller.
+5. A subscription delivers an initial snapshot.
+6. `session.submit` queues text for the owner thread.
+7. The controller commits the foreground prompt, starts provider requests, and
+   applies their events in order.
+8. Owning snapshots/appends cross `SessionOutput`, router delivery, and the
+   native adapter; the frontend acknowledges and projects them.
+9. Terminal generation state is committed and the optional mirror is refreshed.
 
-1. `LobbyRoutes::install()` handles session creation.
-2. `SessionRepository::create()` validates the forum against the published
-   `Workspace` and inserts one `sessions` row with a timestamp-derived ID and
-   initial counters, in one `BEGIN IMMEDIATE` transaction.
-3. If mirroring is enabled, the route immediately adds the empty session's
-   display-named Markdown file.
-4. The browser later posts to the open route.
-5. The route first tries to reattach, then calls `validate()`, then calls
-   `LiveSessionManager::open()`.
-6. The manager inserts a starting actor before starting its owner thread.
-7. `LiveSession::owner_main()` calls the supplied opener.
-8. `open_session()` reads the current forum defaults and obtains a
-   `PreparedSession` carrying the database path, password, and `session_key`.
-9. `SessionController` opens its journal connection, restores transcript state,
-   and repairs any interrupted started turn.
-10. The actor records its initial revision/label baseline, commits `running`,
-    publishes a snapshot, and enters its loop.
+### 13.2 Editing an entity
 
-The pre-route `validate()` improves error mapping but does not grant ownership.
-`LiveSessionManager` is what prevents two actors from owning one identity, and
-the load in `prepare()` remains authoritative for what the controller is built
-from.
+The screen submits a typed operation with its context epoch. `Application`
+checks admission and passes explicit dependencies to the operation helper.
+`WorkspaceConfigStore` validates and commits the candidate before publishing it.
+The operation returns canonical data; the reducer updates summaries, inspection
+state, and current visible references. Existing provider requests keep the
+inputs captured when they started.
 
-### 13.2 One ordinary prompt
+### 13.3 Switching or maintaining a vault
 
-1. `SessionRoutes` parses JSON into `RawCommand` and enqueues it.
-2. `LiveSession::execute()` calls `handle_text_input()` on the owner thread.
-3. Text parsing selects `SessionController::submit_prompt()`.
-4. The controller resolves the current persona and target, copies
-   `ModelHistory`, persists the started turn, adds the prompt, installs active
-   state, and asks `Providers` to start one request.
-5. The actor publishes a snapshot showing the prompt and active generation.
-6. The request worker creates a fresh `ProviderClient` and calls `prepare()` to
-   project/model-encode context.
-7. It calls `perform()`, whose decoder emits reasoning or answer deltas.
-8. The request queues each delta and wakes the owner.
-9. The actor drains the event; the controller updates reasoning or transcript.
-10. Structural changes become snapshots; proven text growth becomes appends.
-11. The SSE writer serializes the mailbox payload to the browser.
-12. The terminal event makes the controller persist completion, cancellation,
-    or failure and publish final state.
-13. `mirror_if_changed()` observes the accumulated transcript revision and
-    writes the terminal Markdown state.
+Vault switching validates the target and acquires its lease before disturbing
+the current database. Application maintenance fences new work, coordinates
+media, drains live sessions, reserves the configuration store and repository,
+and releases handles needed for database work. The active lease remains held
+during maintenance of that database.
 
-### 13.3 Multicast
+Import replaces configuration from the derived modify directory; Export writes
+that directory. Upload and Download transfer the database and companion vault
+TOML through R2. Download validates staged files before replacing the local
+pair, keeping `.bac` backups. Upload cannot atomically replace both remote
+objects and must be retried after a partial failure.
 
-1. `/mcast` syntax resolves an ordered, duplicate-free target list.
-2. The controller captures one shared history for all children.
-3. The controller makes the first foreground prompt durable, then starts one
-   independent request per target. The first can begin slightly before the
-   final request is admitted.
-4. Workers perform concurrently and buffer per-request events.
-5. Only request 0 mutates live state.
-6. On its terminal event, request 1 becomes foreground and its prompt is then
-   persisted/added; already-buffered output can be drained immediately.
-7. The process repeats in requested target order.
+After a successful cutover, owners are reopened, capabilities are refreshed,
+and context publication invalidates old work. The frontend refreshes or reloads
+for the new context. A pre-commit validation failure leaves the old vault usable.
+Failure to restore a usable database marks the application unavailable and
+requires restart; it must not resume with missing storage.
 
-The transcript therefore reads as a deterministic sequence of individual
-turns, not interleaved token streams.
-
-### 13.4 Stop
-
-1. The stop route enqueues `StopCommand`.
-2. The owner calls `SessionController::request_stop()`.
-3. The controller sets every request's atomic cancellation flag and releases
-   all non-foreground handles.
-4. `ProviderClient` observes cancellation in curl's progress callback; a fake
-   backend is expected to observe the same flag.
-5. The command returns “Stopping generation...” without joining workers.
-6. Terminal events are drained later. The active turn is persisted as cancelled
-   with or without partial answer text.
-7. Once the foreground terminal is handled, the controller releases its final
-   request and the UI receives terminal state. Cancelled background workers may
-   still be unregistering from `Providers`.
-
-### 13.5 Changing a character's provider or style
-
-From the browser:
-
-1. Open Characters, select a workspace character, and follow the top-right
-   chevron into Settings. Assistant has no chevron because its system config is
-   not writable from the browser.
-2. Choose a required provider and an optional style. No style erases only the
-   style key. The sample line uses the selected style's appearance.
-3. Save writes both values. The screen warns that sessions using the character
-   will restart and that an answer being generated is lost.
-
-On the server:
-
-4. `PATCH /api/v1/characters/{id}` validates the names through the current
-   `Workspace`. `WorkspaceConfigStore` edits the private materialization, loads
-   a complete candidate, replaces all configuration rows transactionally,
-   publishes after commit, and asks sessions in every forum containing the
-   character to shut down with `reloading`.
-5. The stream drops. The browser's existing recovery ladder probes, sees
-   `session_not_live`, opens again, and reattaches. It reports `session-snapshot`,
-   so the settings screen stays in view. The chat shows "Applying character
-   settings…" and no Retry buttons.
-6. The reopened session reads the newly published provider and style.
-
-Do not add an explicit `openConversation()` for `reloading`: that dispatch
-would force the main view back to Chat.
-
-### 13.6 Switching vaults
-
-The switch changes which local database the existing runtime uses. It does not
-move or copy data:
-
-1. `Sidebar` calls `ApiClient::switchVault()`, which posts the selected name and
-   a nullable password to `/api/v1/vault/switch`. A protected target first
-   returns `vault_password_required`; the sidebar opens `PasswordDialog` and
-   retries with the entered password.
-2. The route calls `ApplicationRuntime::switch_vault()` under the runtime
-   lifecycle mutex. An unknown name fails, and selecting the current vault is a
-   no-op.
-3. The runtime acquires the target database's `SessionLease`, applies its
-   SQLCipher password when required, and validates its schema before disturbing
-   the current vault. A busy target, bad password, or invalid database leaves
-   the old vault running.
-4. `LiveSessionManager::reserve_global_maintenance()` stops admission, closes
-   live sessions, and waits for their journal connections to drain. A timeout
-   releases maintenance and leaves the old vault running, so the switch can be
-   retried.
-5. With the store and repository maintenance guards held, the repository
-   checkpoints the old database, the store closes it, and each object changes
-   its database path to the target. The store reopens the target and the
-   repository synchronizes its forums from the newly published `Workspace`.
-6. `CurrentVault` records the target. `SessionMirror::rebuild()` clears the old
-   path allocation and projects sessions from the target into its configured
-   mirror only when the target is unprotected. A protected target disables
-   mirroring; switching back to an unprotected vault enables its configured
-   mirror again. A rebuild failure is logged and leaves mirroring inactive without
-   undoing the database switch.
-7. `rewrite_toml_file()` atomically updates the `vault` value in `app.toml`. A
-   save failure is logged without undoing the switch; the running process uses
-   the target, while the next launch uses the previously saved selection.
-8. Maintenance is released and the route returns `204`. The initiating browser
-   page reloads `/`, reads `vault_name` and `vaults` from bootstrap, and opens
-   Welcome in the selected vault.
-
-The store, repository, mirror, manager, HTTP listener, and port are the same
-objects before and after the switch. Only their database-dependent state
-changes. Other browser tabs receive no broadcast; their old live sessions have
-closed, and those tabs may need a manual reload.
-
-The browser also sets `document.title` to `CHA: <Vault name>`. CHA.app observes
-the web view title and applies it to the native main window, temporarily
-overriding it only while a Database menu operation is in progress.
-
-There is one fatal edge after step 5 starts. If the target cannot be reopened
-after the database paths change, `CurrentVault` and `app.toml` still name the
-old vault, but the store and repository cannot safely serve it. The runtime
-marks itself unusable and stops the HTTP server. The application must restart.
-
-### 13.7 Creating, editing, and removing vaults
-
-Settings → Vaults calls the collection route without switching databases:
-
-1. Create validates a new display name that is also a safe path component,
-   derives `<display-name>.sqlite3` in the configuration directory, and derives
-   mirror/modify paths from the optional `app.toml` bases. With no copy source,
-   it creates a database containing the active workspace configuration but no
-   sessions. With a source, SQLCipher's backup path copies the complete source
-   database, including sessions, and can encrypt or decrypt the destination.
-   A protected source can be copied only while active, because only that
-   password is held. It then adds a generated `vault-N.toml` definition to the
-   runtime registry. The active vault is unchanged.
-2. Update can rename a vault and can enable password protection once. The
-   database path is intentionally read-only. Rename is exposed through the
-   editable top-bar title, moves existing derived mirror/modify directories,
-   and updates `app.toml` when the vault is active. Protecting checkpoints and
-   replaces the database with a SQLCipher-encrypted copy and disables mirroring;
-   existing Markdown copies remain. There is no UI to decrypt it or change the
-   password. Unused mirror paths do not block updates to protected vaults.
-3. Delete removes only an inactive vault's definition. It rejects the active
-   vault and the last remaining vault, and keeps the database and related
-   directories so removing a registry entry does not destroy user data.
-
-4. Download vault lists root-level `.sqlite3` objects from the R2 key stored in
-   the active vault, excludes local database filenames, and installs a selected
-   object as a new inactive local vault. A companion definition is used when
-   present; legacy database-only objects derive their display name from the
-   filename. Protected objects are rejected because this flow does not collect
-   their password.
-
-A derived modify path may be absent, missing, empty, or an already valid CHA
-workspace; this prevents Export from replacing an unrelated nonempty directory.
-
-### 13.8 Merging configuration into the active vault
-
-1. Settings → Vaults → Merge into active vault selects an inactive source and
-   confirms the overwrite. `POST /api/v1/vault/merge` takes exactly
-   `{"source_vault":"B","password":null}` and returns `204` on success.
-   A protected source requires its password; `source_vault_password_required`
-   opens the password dialog for a retry. The source password is not retained.
-2. The runtime lifecycle mutex serializes the merge with switching and database
-   maintenance. Unknown sources, self-merges, busy source leases, and invalid
-   databases fail before changing the destination.
-3. `WorkspaceConfigStore::merge()` overlays source configuration files by their
-   stored paths. Matching paths take the source contents; destination-only
-   paths remain. This includes personas, characters, forums, providers, styles,
-   and saved keys. A source R2 record replaces the destination R2 record even
-   when their key IDs differ. The saved-key counter becomes the larger counter
-   from the two validated workspaces. Source sessions are not copied, and the
-   source database and active vault selection stay unchanged.
-4. The store validates the combined workspace before committing it and publishes
-   it after commit. Identical configuration requires no destination write.
-   Repository synchronization reads existing forum IDs and writes only missing
-   persistent forums, so it also avoids a write when none are missing.
-5. After success, live sessions receive a reload shutdown request, and the
-   mirror is rebuilt only for an unprotected destination. The browser refreshes
-   bootstrap discovery without automatically reloading the page. If voice
-   endpoint origins change, or cannot be read, it offers Reload so the page's
-   connection policy can pick up the merged settings. Voice-settings or
-   discovery refresh failures do not turn a successful merge into a failure.
-
-A validation failure restores the previous workspace and leaves live sessions
-running. Failure to restore, publish after commit, or synchronize repository
-forums requires a restart and stops the HTTP server. Mirror rebuild failures
-are warnings and do not undo a successful merge.
+Settings → Vaults can also create, rename, protect, remove definitions, download
+an inactive vault, and merge configuration. Merge overlays configuration and
+keys, not source sessions, and validates the combined workspace before commit.
+See the maintainer guide for each operation's file and backup behavior.
 
 ## 14. State machines to keep in your head
 
@@ -1807,40 +1031,35 @@ bounded, and the manager may reap the old actor.
 ```text
 controller mutation
     -> no update
-    -> exact append -> mailbox accepts -> AppendEvent
-                    -> mailbox rejects -> current SnapshotEvent
-    -> structural change -------------> current SnapshotEvent
+    -> exact append -> bounded output -> acknowledged delivery -> projection
+    -> structural change or unsafe append -> current snapshot
 ```
 
-Treat snapshots as truth and appends as a verified compression of truth.
+Snapshot/event sequence is session presentation state. Delivery ID is native
+transport acknowledgment state. Context epoch identifies the application vault
+context. They solve different problems and must not be used interchangeably.
 
 ## 15. Concurrency and ownership map
 
-| Object | Lifetime/owner | Thread rule |
+| Object | Owner/lifetime | Thread rule |
 | --- | --- | --- |
-| `Workspace` | Atomically published immutable snapshot; replaced snapshots live until their readers release them | Concurrent reads; callers hold one `getws()` shared pointer per operation |
-| `WorkspaceConfigStore` | Process; owns database lease/handle, password, private root, materialized workspace, Welcome path, and cleanup | Configuration mutex serializes runtime workspace edits; publish follows commit |
-| `ApplicationRuntime` / `CurrentVault` | Process; owns the runtime objects, active vault definition, and active password | Lifecycle mutex serializes switching and database maintenance; `CurrentVault` has a small mutex for readers |
-| `SessionRepository` | Process, independent session-storage owner; receives explicit outer paths and password and owns none of them | Concurrent const operations use short-lived connections; its maintenance guard fences operations during a vault switch |
-| `LiveSessionManager` | Process web runtime | Internal mutex protects registry/lifecycle coordination |
-| `LiveSession` | Manager entry plus transient route handles | Owner thread mutates session; lifecycle methods synchronize |
-| `SessionController` | One `LiveSession` | Owner thread only |
-| `Transcript` / `SessionJournal` | One controller | Owner thread only; one SQLite connection per actor, never shared |
-| `Providers` registry | Process | Mutex protects admission and active requests; shutdown waits for transport quiescence |
-| `ProviderRequest` | Session handle plus provider registry/worker | Worker produces queued events; owner consumes; cancellation is atomic |
-| `CommandQueue` | One actor | HTTP producers, actor consumer |
-| `SseMailbox` | One actor/stream pair | Actor producer, HTTP SSE consumer |
+| `Workspace` | Store-published immutable snapshot | Hold `snapshot()` while borrowing references |
+| `WorkspaceConfigStore` | Application | Serializes edits; publishes after commit |
+| `Application` | Native runtime | Lifecycle admission fences context-sensitive work |
+| `SessionRepository` | Application | Short-lived database connections; maintenance fences operations |
+| `LiveSessionManager` | Application | Protects registry and actor lifecycle |
+| `LiveSession` | Manager plus admitted callers | Permanent owner thread mutates the controller |
+| `SessionController`, `Transcript`, `SessionJournal` | One actor | Owner thread only |
+| `Providers` | Application | Supervises request workers and their shutdown |
+| `ProviderRequest` | Supervisor, worker, controller handle | Worker produces events; owner consumes; cancellation is synchronized |
+| `SessionOutput` | Actor/subscription | Owning data crosses threads; bounded/coalesced publication |
+| `BridgeRouter` | Runtime | Coordinates request tasks, subscriptions, and delivery acknowledgment |
+| Native WebView | Platform host | Platform UI access stays on its UI thread |
 
-The application has three relevant thread roles:
-
-1. HTTP library threads parse requests, wait on command replies, and write SSE.
-2. One owner thread per live session performs all core state transitions.
-3. One detached worker per active provider request performs blocking provider
-   work and may briefly outlive its creating session.
-
-When debugging a race, first classify every access by those roles. Most state
-should belong entirely to one row of this table; shared mechanisms are small and
-explicit.
+The C ABI's delivery callback runs on the runtime pump thread. Its JSON pointer
+is valid only during that call. A host posting delivery to its UI thread must
+copy the bytes first. Resource reads and native save operations must also obey
+their connection/context lifetime contracts.
 
 ## 16. Persistence model
 
@@ -1850,7 +1069,7 @@ restore and journal SQL are in
 [session/session_database.cpp](../src/session/session_database.cpp). Read the
 schema first, then validation/restore, then `SessionJournal` methods.
 
-Schema v2 has five `STRICT` tables:
+Schema v2 uses these `STRICT` tables:
 
 | Table | Purpose |
 | --- | --- |
@@ -1859,6 +1078,7 @@ Schema v2 has five `STRICT` tables:
 | `sessions` | `session_key`, owning forum, public session ID, label, `updated_at`, `archived_at`, history epoch, and next ID counters |
 | `turns` | Request ID, epoch, and started/completed/cancelled/failed state |
 | `entries` | Typed prompt/response/error records linked to turns |
+| `entry_audio` | Cached audio bytes and content type for a session entry |
 
 The counters and history epoch are columns on the session row rather than a
 separate singleton table: they are session state, so a one-to-one table would
@@ -1883,7 +1103,8 @@ What is durable:
 - completed and partially cancelled character answers;
 - generation error entries;
 - turn state and ID counters;
-- history epoch, label, `updated_at`, and `archived_at`.
+- history epoch, label, `updated_at`, and `archived_at`;
+- cached audio bytes and content type for saved entries.
 
 What is deliberately not durable:
 
@@ -1905,352 +1126,154 @@ not durable identity.
 
 ## 17. Error boundaries
 
-Errors are handled at the narrowest layer that can give them meaning:
+Provider failures are ordinary turn outcomes and become transcript errors.
+Persistence failure is session-fatal: continuing would let the transcript
+claim state the journal did not commit. Configuration validation failure leaves
+the previous candidate active; a failure to reopen storage after maintenance
+can make the entire application unavailable.
 
-- Import validates before database modification. A failed new import leaves no
-  database, a failed v1 upgrade leaves valid v1, and a failed v2 replacement
-  leaves the previous complete configuration. Export never changes the
-  database. Console Export requires a missing or empty destination; macOS
-  Export deliberately replaces the configured `modify` directory.
-- External application-config errors fail before runtime opens the configured
-  database; those files are never part of workspace publication.
-- A vault target that is unknown, busy, invalid, or cannot drain live sessions
-  leaves the old vault active. A reopen failure after paths change is fatal to
-  the runtime and stops its HTTP server.
-- Mirror rebuild and `app.toml` persistence happen after a successful vault
-  cutover. Their failures are logged without rolling back the open target;
-  persistence failure means the next launch uses the previously saved vault.
-- A missing mirror root is created. An unusable root or failed initial
-  synchronization is logged and leaves mirroring disabled. Settings rejects
-  non-directory mirror paths for unprotected vaults; protected vaults ignore
-  their unused mirror paths with a warning. Later mirror-update failures are
-  also warnings because SQLite has already committed the authoritative change.
-- A runtime configuration failure before commit rematerializes the old rows and
-  leaves durable and published state old. The rare failure after commit reports
-  restart-required; the next startup publishes the newly committed rows.
-- Loaders throw contextual configuration errors; `web_main` treats startup
-  failure as process failure.
-- Provider response code classifies malformed model output as protocol error.
-- `ProviderClient` classifies transport/HTTP failure and cancellation.
-- `ProviderRequest` workers convert exceptions/results into one terminal
-  generation event.
-- `SessionController` turns a generation failure into a failed durable turn and
-  transcript error.
-- A journal failure escapes the controller and is contained as a fatal live
-  session failure.
-- `LiveSession` maps storage not-found on startup and contains session-local
-  failures during the owner loop.
-- Routes map known application outcomes to JSON error codes and HTTP statuses.
-- `std::bad_alloc` is generally not disguised as successful local cleanup; key
-  actor boundaries terminate instead.
+Bridge parse and admission errors use the native error envelope. Request-size
+limits still matter, so `body_too_large` remains a live error code. The removed
+HTTP `bad_request` and `forbidden_origin` codes are not part of the current
+contract. Stale context reports `vault_changed`; stopped/unusable application
+state reports `application_unavailable`.
 
-Avoid broad `catch (...)` additions without identifying the state boundary they
-protect. A catch that lets processing continue after a journal mutation failed
-can be worse than allowing the actor to terminate.
+A timeout limits how long a caller waits. It does not prove the requested work
+was never performed. Do not automatically repeat non-idempotent mutations just
+because their reply was abandoned.
+
+Frontend runtime validation rejects malformed data before it enters state.
+That validation complements generated DTO types and fixture tests; it does not
+negotiate support for arbitrary older runtimes.
 
 ## 18. Shutdown and destruction
 
-Shutdown is part of the design, not cleanup after the design.
+The native host requests shutdown, then joins runtime owners off the platform
+UI thread with one bounded grace interval. It must not destroy a runtime whose
+owners still access it. The C ABI exposes `cha_runtime_request_shutdown()` and
+`cha_runtime_join_shutdown()` for this separation.
 
-`ApplicationRuntime::shutdown()` delegates to `ServerShutdownCoordinator`,
-passing its HTTP-stop callback to keep listener handling in one place.
-At process level, the shutdown coordinator stops HTTP acceptance, asks the
-manager to stop all actors, and gives the entire process one grace deadline.
-The deadline is shared, not reset for every session. If owners cannot finish in
-time, the process takes the immediate-exit path rather than running destructors
-that could block indefinitely.
+Shutdown stops admission, closes bridge connections/subscriptions, cancels
+background work, and stops live actors. An actor resolves or rejects queued
+commands, shuts down its controller, releases its journal, and only then
+publishes `finished`. No final SSE drain is required.
 
-Within a `LiveSession`, teardown:
+Controller shutdown cancels requests and closes the current durable turn. It
+does not wait for provider transport on the actor thread. Shared request/wake
+state keeps late worker completion from borrowing destroyed controller storage.
+The application coordinates provider and media shutdown within the shutdown
+budget. The host's bounded failure path handles owners that cannot finish;
+normal destruction must not introduce an unbounded UI-thread wait.
 
-1. marks the actor stopping and publishes a final snapshot when possible;
-2. performs a bounded final SSE drain unless the shutdown reason skips it;
-3. closes the mailbox;
-4. resolves/rejects queued command replies;
-5. calls `SessionController::shutdown()`;
-6. destroys the controller, releasing request handles and its journal
-   connection;
-7. publishes `finished` so the manager may join and erase the actor.
-
-Within the controller, shutdown cancels all requests, synchronously closes the
-currently durable turn as cancelled, and releases its handles without waiting
-for provider I/O. Each request owns a shared wake notifier, so a late wake does
-not borrow a destroyed session object.
-
-After all live sessions have stopped, the composition root calls
-`Providers::shutdown()`. It closes admission, cancels a snapshot of active
-requests, and waits for every request to unregister and finish its final
-diagnostic after transport resources are gone. Diagnostic logging is shut down
-only after that wait.
-
-When changing member declaration order, constructor order, or scopes in
-`web_main.cpp`, re-evaluate this destruction chain.
+When changing runtime member order or callbacks, recheck that actors,
+repositories, and workers stop using storage before the configuration store
+releases its lease and private root. A late reply callback must not extend the
+advertised shutdown deadline.
 
 ## 19. Tests as executable documentation
 
-The tests mirror production boundaries. Use them after reading a type's header
-and before reading all of its implementation.
-
-| Area | Best starting tests |
+| Area | Tests |
 | --- | --- |
-| Transcript invariants | [tests/chat/unit_transcript.cpp](../tests/chat/unit_transcript.cpp) |
-| Workspace loading and config validation | [tests/application/unit_workspace.cpp](../tests/application/unit_workspace.cpp) |
-| External process config and command modes | [tests/web/unit_application_config.cpp](../tests/web/unit_application_config.cpp) |
-| Context rules | [tests/agents/unit_model_context.cpp](../tests/agents/unit_model_context.cpp) |
-| Provider request lifecycle | [tests/providers/unit_providers.cpp](../tests/providers/unit_providers.cpp) |
-| Provider protocols | [tests/providers/unit_chat_completions_api.cpp](../tests/providers/unit_chat_completions_api.cpp), [unit_responses_api.cpp](../tests/providers/unit_responses_api.cpp) |
-| Provider HTTP integration | [tests/providers/unit_provider_client.cpp](../tests/providers/unit_provider_client.cpp) |
-| Controller transitions | [tests/session/unit_session_controller.cpp](../tests/session/unit_session_controller.cpp) |
-| Workspace schema, validation, cutover guard | [tests/session/unit_workspace_session_database.cpp](../tests/session/unit_workspace_session_database.cpp) |
-| Configuration import/export, materialization, edits, and failure atomicity | [tests/application/unit_workspace_config_store.cpp](../tests/application/unit_workspace_config_store.cpp) |
-| Repository storage operations | [tests/session/unit_session_repository.cpp](../tests/session/unit_session_repository.cpp) |
-| Database lease | [tests/session/unit_session_lease.cpp](../tests/session/unit_session_lease.cpp) |
-| Workspace publication | [tests/application/unit_workspace.cpp](../tests/application/unit_workspace.cpp) |
-| Actor behavior | [tests/web/unit_live_session.cpp](../tests/web/unit_live_session.cpp) |
-| Markdown rendering and mirroring | [tests/web/unit_session_markdown.cpp](../tests/web/unit_session_markdown.cpp), [unit_session_mirror.cpp](../tests/web/unit_session_mirror.cpp) |
-| Registry races/lifecycle | [tests/web/unit_live_session_manager.cpp](../tests/web/unit_live_session_manager.cpp) |
-| Snapshot/append collapse | [tests/web/unit_sse_mailbox.cpp](../tests/web/unit_sse_mailbox.cpp) |
-| Route protocol | [tests/web/unit_lobby_routes.cpp](../tests/web/unit_lobby_routes.cpp), [unit_session_routes.cpp](../tests/web/unit_session_routes.cpp) |
-| Composition root, private cookie, in-process transfers, vault merging, and protected-vault mirror policy | [tests/web/unit_application_runtime.cpp](../tests/web/unit_application_runtime.cpp) |
-| Whole-process behavior | [tests/web/process_web_server.cpp](../tests/web/process_web_server.cpp) |
-| Browser transcript, composer, vault selector, and settings | [webapp/src/components/LiveChat.test.tsx](../webapp/src/components/LiveChat.test.tsx), [App.test.tsx](../webapp/src/components/App.test.tsx), [Settings.test.tsx](../webapp/src/components/Settings.test.tsx) |
+| Transcript and controller invariants | `tests/chat/`, `tests/session/` |
+| Workspace ownership, edits, import/export | `tests/workspace/` |
+| Application admission, settings, vaults, media, shutdown | `tests/app/` |
+| Protocol, actor, audio, mirror, configuration support | `tests/web/` |
+| Native envelopes, method policy, routing and flow control | `tests/bridge/` |
+| Shared C ABI and real native hosts | `tests/native/` |
+| C++-produced wire values and method policies | `tests/fixtures/wire/` |
+| Client validation, projection, reducers, loading, screens | Tests beside sources in `webapp/src/` |
 
-Useful test support types include fake model backends, deterministic notifiers,
-temporary workspace builders, controller fixtures, live-session graphs, and a
-mock provider HTTP server under [tests/support](../tests/support).
+CTest registers the `cha_tests`, `cha_app_tests`, `cha_bridge_tests`, and
+`cha_native_runtime_tests` executables. `tests/web/` is a historical directory
+name, not a suite for a running HTTP server. Workspace tests now live under
+`tests/workspace/`, separate from application tests.
 
-The CMake executables also reveal test scope:
+For a contract change, read both the C++ producer tests and TypeScript consumer
+tests. Positive wire fixtures prove acceptance of emitted data; malformed-value
+tests prove that unsafe data is rejected before rendering. Method-policy tests
+detect drift even when both languages still compile.
 
-- `cha_tests` covers utilities and the non-web core.
-- `cha_web_tests` covers deterministic web components and routes.
-- `cha_web_stress_tests` exercises concurrent live-session load.
-- `cha_web_process_tests` starts the real `chaweb` process on supported
-  platforms.
-- `itest` uses a configured live provider and is not part of ordinary offline
-  unit verification.
+On macOS, after building the runtime and frontend assets, the native parity
+probe exercises the shared interface in a real WKWebView:
 
-### A productive test-reading method
+```sh
+tests/native/macos/run.sh parity --timeout-ms 60000
+```
 
-For one behavior, read in this order:
-
-1. test name and setup;
-2. public call being exercised;
-3. asserted state and side effects;
-4. implementation of that one call;
-5. nearby negative tests that reveal the invariant.
-
-This is faster than reading a 900-line implementation sequentially with no
-question in mind.
+Native dialogs, resource handlers, reload, renderer failure, and shutdown need
+native-host checks; DOM tests alone cannot prove platform integration. Use the
+Windows host checks when changing WebView2 behavior.
 
 ## 20. How to approach changes safely
 
-### Adding a controller command
+For a workspace editor, follow [editing.md](editing.md). For any new native
+operation, keep these pieces synchronized:
 
-1. Decide whether it is a typed core action or only web text syntax.
-2. Add/adjust the `SessionController` method and `ControllerUpdate` behavior.
-3. Add focused controller tests, including busy-state behavior.
-4. Add parser syntax in `web/text_*` if needed.
-5. Dispatch it from `handle_text_input()` or a typed `WebCommand`.
-6. Verify command result, notice, snapshot/append classification, and input
-   clearing in web tests.
+1. Method enum/name and control/context policy in the bridge.
+2. Application operation with explicit context admission and dependencies.
+3. Relevant dispatcher, or asynchronous router path when it owns completion.
+4. DTO schema and generated TypeScript types.
+5. Typed client mapping and the checks the consumer actually needs.
+6. Wire/policy fixtures and focused behavior tests.
 
-### Adding transcript data
+There is no single generated operation registry today. Do not assume updating
+the DTO schema also adds dispatch or a frontend method.
 
-Trace all consumers before editing the struct:
+For controller changes, first decide the journal transition and whether the
+presentation effect is structural or safely appendable. For provider changes,
+keep HTTP mechanics in `ProviderClient` and response meaning in the protocol
+decoder. For lifecycle changes, trace the actor, reply, resource, and database
+owners through cancellation and teardown.
 
-```text
-factory/validation
-    -> Transcript
-    -> workspace session schema + read/write validation
-    -> model_context projection
-    -> ControllerView / SessionSnapshot
-    -> protocol JSON
-    -> tests and browser contract
-```
-
-Not every new field belongs in every consumer, but the decision should be
-explicit.
-
-### Adding provider response behavior
-
-- Put curl/HTTP/cancellation in `ProviderClient`.
-- Put Chat Completions encoding/decoding in `chat_completions_api.*` and
-  Responses encoding/decoding in `responses_api.*`.
-- Emit only generic generation deltas/results across the backend seam.
-- Test response chunk boundaries independently from HTTP.
-- Add a provider-client test only when transport integration matters.
-
-### Changing session lifetime
-
-Audit the manager map lifetime, actor raw-`this` thread capture, route
-`shared_ptr` handles, owner state transitions, controller and journal
-destruction, and bounded process shutdown together. These contracts are coupled
-even though they live in several files.
+Run checks appropriate to the changed boundary. A pure screen edit does not
+need a new concurrency framework; a shutdown change needs more than a screen
+snapshot. Keep changes small enough that their invariants remain readable.
 
 ## 21. Learning exercises
 
-Work through these in order. Write the answer with symbol names, not only prose.
+1. Trace one visible token from provider decoding through `GenerationEvent`,
+   controller update, session output, native delivery, and React rendering.
+2. Explain which objects retain the old workspace after a settings commit and
+   why references into it remain valid.
+3. Submit a request with an old context epoch and locate the admission error.
+4. Explain the difference between a missing event sequence and an unacknowledged
+   delivery batch.
+5. Restore a database with a started turn and trace its repair.
+6. Rename a persona and find every current summary that changes, then explain
+   why saved transcript attribution does not change.
+7. Follow an abandoned reply and prove that later completion cannot invoke a
+   stale screen callback or block shutdown forever.
 
-### Exercise 1: draw the object graph
+## 22. A practical reading plan
 
-Starting at `main()`, draw who owns `Workspace`, `SessionRepository`,
-`LiveSessionManager`, `Providers`, routes, a `LiveSession`, its controller,
-journal, active requests, request-local backends, and mailbox. Mark
-`shared_ptr`, `unique_ptr`, value, and borrowed references.
-
-### Exercise 2: follow one visible token
-
-Set a breakpoint or add temporary tracing at:
-
-- provider decoder delta emission;
-- the delta callback in `ProviderRequest::execute()`;
-- `SessionController::apply(GenerationEventDelta)`;
-- `LiveSession::publish_update()`;
-- `SseMailbox::publish_append()`;
-- `SseStreamWriter::write()`.
-
-Explain why the first answer token follows a snapshot path while a later token
-usually follows an append path.
-
-### Exercise 3: reconstruct after a crash
-
-Create a session, submit a prompt, and inspect the database-related code as if
-the process stopped immediately after `start_turn()`. Follow
-`build_restore()`, `InterruptedTurn`, and `SessionController::initialize()` to
-explain the next startup transcript.
-
-### Exercise 4: compare single-target and multicast
-
-Trace `submit_prompt()` and `start_multicast()` until they converge. Identify
-the one history copy, request IDs, target order, each request's admission point,
-and the moment each target becomes durable.
-
-### Exercise 5: prove owner-thread confinement
-
-Find every production call to a mutating `SessionController` method. Verify that
-it originates in `LiveSession` owner code, not directly in an HTTP callback or
-generation worker.
-
-### Exercise 6: force the snapshot fallback
-
-Read the `ControllerUpdate` and `SseMailbox` tests that combine incompatible
-appends or a pending snapshot and append. Explain what browser corruption could
-occur if the code sent the append anyway.
-
-### Exercise 7: trace a public name
-
-Choose one character in `packaging/linux/import-seed/`. Follow its directory ID, public display
-name, forum membership, `CharacterMetadata`, backend definition, transcript
-participant identity, model-context role, snapshot JSON, and mention
-resolution.
-
-### Exercise 8: classify failures
-
-For malformed provider JSON, HTTP 500, a missing session row, a database lease
-already held by another process, a vault-switch drain timeout, a fatal reopen,
-an SQLite write failure, a command timeout, and a disconnected SSE stream,
-identify:
-
-- the first layer that detects it;
-- whether it is a turn, session, request, or process failure;
-- whether a durable record is written;
-- what the browser can observe.
-
-## 22. A practical two-week reading plan
-
-Use this as a suggested pace, not a process requirement.
-
-| Day | Focus | Concrete result |
-| --- | --- | --- |
-| 1 | Build graph, `web_main`, root/native READMEs | Draw the process object graph |
-| 2 | `chat` and transcript tests | Write transcript invariants from memory |
-| 3 | `util` queue/template tests | Explain shutdown semantics of each mechanism |
-| 4 | workspace model and sample workspace | Trace one effective character definition |
-| 5 | repository, workspace database, lease | Explain observation vs prepared authority |
-| 6 | database schema and restore | Trace complete, cancelled, failed, interrupted turns |
-| 7 | model context | Hand-project a sample transcript into model messages |
-| 8 | provider supervisor/requests | Diagram admission, foreground order, cancellation |
-| 9 | provider response/client | Separate semantic decode from transport outcomes |
-| 10 | controller | Trace prompt and every terminal outcome |
-| 11 | protocol/projection/parsers | Map typed core actions to web DTOs |
-| 12 | actor/manager | Explain thread confinement and lifecycle races |
-| 13 | mailbox/routes/runtime/shutdown | Trace browser delivery, a vault switch, and teardown |
-| 14 | tests and exercises | Make one small change with tests and update this guide |
+Start with domain headers and one transcript test. Continue through workspace
+loading and store publication, then repository preparation and journal
+transactions. Next, follow one prompt through the controller and provider
+worker. Finish with application admission, bridge delivery, frontend projection,
+and native-host lifecycle. At each boundary, read one success test and one
+failure or cancellation test before adding code.
 
 ## 23. Glossary
 
-**Actor:** One `LiveSession` plus its permanent owner thread and queues. It serializes all
-session state changes.
-
-**Active response:** The controller's foreground request currently allowed to affect transcript,
-journal, and presentation.
-
-**Backend:** A request-local `ModelBackend`. Production creates a fresh
-`ProviderClient` per request; tests can inject fresh facades over shared
-observation state.
-
-**Active generation:** The controller's ordered request handles and one
-deterministic foreground index for a prompt or multicast.
-
-**Archived session:** A session whose row carries `archived_at`. It stays durable with all its
-turns and entries, but is excluded from listing, opening, rename, and history.
-
-**Controller view:** A short-lived borrowed view of controller state, consumed synchronously to make
-an owning web snapshot.
-
-**History epoch:** A compatibility field in the version-2 database schema.
-Older CHA builds advanced it when clearing a transcript; current builds retain
-it only to restore those databases correctly.
-
-**Lease:** Cross-process exclusive ownership of the unified database. Normal
-runtime holds it through `WorkspaceConfigStore`; console maintenance modes
-acquire the same lease, while CHA.app retains its runtime lease during
-in-process maintenance and acquires a switch target before cutover.
-
-**Vault:** A named database plus a small external definition containing its
-path and protection flag. Its mirror and modification directories are derived
-from application-wide bases. One process has one active vault at a time; a
-switch reuses the existing runtime objects with the selected path and password.
-
-**Model history:** An owning immutable transcript snapshot shared with workers for context
-projection.
-
-**Session mirror:** The optional, non-authoritative display-named Markdown
-projection of persistent sessions under the active vault's directory derived
-from the `app.toml` mirror base. Password-protected vaults are excluded; enabling
-protection leaves existing files on disk but stops future writes.
-
-**Notice:** Presentation state associated with command/session feedback. It is not model
-history or durable transcript state.
-
-**Prepared session:** A session validated and restored into a database path,
-database password, and `session_key`, ready to transfer into a controller.
-
-**Session key:** The internal SQLite integer identifying one session's rows. It never appears in a
-URL or protocol value; every restore and journal statement is scoped by it.
-
-**Snapshot:** An owning complete web presentation of current controller and actor state.
-
-**Text append:** A compact update proven to extend one exact reasoning or transcript target on a
-known snapshot base.
-
-**Turn:** A request-correlated durable state machine beginning with one human prompt and
-ending completed, cancelled, or failed.
+| Term | Meaning |
+| --- | --- |
+| Vault | Named database selected by external configuration |
+| Workspace | Immutable, validated configuration snapshot owned by a store |
+| Context epoch | Application context identity captured when work is requested |
+| Full session identity | Public `(forum_id, session_id)` pair |
+| Session key | Internal SQLite identity scoping journal rows |
+| Actor | Live session with one permanent owner thread |
+| Controller | Owner-thread conversation and generation state machine |
+| Snapshot | Complete owning presentation state |
+| Append | Text growth for a verified existing target |
+| Subscription | Document/context/session-scoped event observation |
+| Delivery ID | Identifier acknowledged by the frontend to release a transport batch |
+| Resource handle | Native-owned media exposed to one connection/context |
+| Mirror | Optional Markdown projection, never authoritative storage |
 
 ## 24. Final mental checklist
 
-Before saying you understand a code path, answer these questions:
-
-1. What is the stable identity, and what is only a display name?
-2. Which object owns the state?
-3. Which thread may mutate it?
-4. Is the value borrowed, copied, shared immutably, or moved?
-5. What is the durable commit point?
-6. What invariant prevents partial or ambiguous state?
-7. Does the browser need a snapshot, or is an exact append safe?
-8. How is cancellation observed?
-9. Which layer classifies a failure, and is it recoverable at that layer?
-10. In what order must the objects be destroyed?
-
-Those questions capture the design logic repeated throughout CHA. Once their
-answers are automatic, the project stops looking like a collection of files and
-starts looking like one coherent system.
+Before changing a path, identify its mutable owner, thread, captured context,
+workspace snapshot, durable commit, and published result. Follow failure,
+cancellation, and teardown through the same objects. If those answers are
+clear, the code usually needs a local change rather than another abstraction.

@@ -1,3 +1,8 @@
+ARCHIVED REVIEW — predates the native bridge and subsequent frontend refactors.
+These observations describe the implementation at the time of review. They are
+not a list of verified current defects. See tutorial.md and editing.md for the
+current architecture and editing workflow.
+
 Real issues, ranked
 
 These are the places that diverge from good practice, or will hurt you later. None of them means the app is unsafe to run.

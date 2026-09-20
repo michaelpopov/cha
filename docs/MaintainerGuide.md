@@ -12,9 +12,9 @@ session that has been asked to perform changes such as:
 - add a model provider and assign characters to it;
 - add a visual style and assign it to characters.
 
-The complete example currently available on this machine is
-`~/var/modify/`. The smaller repository-owned example shipped with the Linux
-package is `packaging/linux/import-seed/`.
+An exported workspace is the starting point for filesystem edits. The smaller
+repository-owned example is `packaging/shared/import-seed/`; it is not the
+active vault's configuration.
 
 ## 1. Operating rules for an automated maintainer
 
@@ -29,8 +29,8 @@ Follow these rules before changing anything:
    It does **not** authorize importing it into the production database.
 4. Do not edit the SQLite database directly. Do not edit a temporary
    `cha-runtime-*` materialization.
-5. Do not modify `packaging/linux/import-seed/` unless the user explicitly
-   asks to change the product's initial packaged workspace.
+5. Do not modify `packaging/shared/import-seed/` unless the user explicitly
+   asks to change the repository's example workspace.
 6. Use the smallest set of files that expresses the requested change. Do not
    add schemas, generators, registries, or abstractions for ordinary content
    maintenance.
@@ -38,17 +38,12 @@ Follow these rules before changing anything:
    are loaded together, so an error in an otherwise unused forum can prevent
    CHA from starting.
 8. Import into the real database only when explicitly requested, after
-   identifying the exact configuration directory, stopping CHA, and reviewing the
-   destructive effects described in [Import and export](#12-import-and-export).
+   identifying the exact configuration directory and active vault, and reviewing
+   the destructive effects described in [Import and export](#12-import-and-export).
 
-For commands concerning the example on this machine, use this exact root:
-
-```text
-/home/mpopov/var/modify
-```
-
-Do not spell it through an unresolved `$HOME` in destructive or import
-commands. Resolve the path first.
+Resolve the user's export and database paths before writing or importing. Do
+not assume a machine-specific example path or the current working directory is
+the requested workspace.
 
 ## 2. Configuration sources and runtime state
 
@@ -57,7 +52,7 @@ CHA configuration can appear in several places. They have different roles.
 | Location | Role | Edit directly? |
 | --- | --- | --- |
 | An exported directory such as `~/var/modify/` | Human-editable workspace bundle | Yes |
-| `packaging/linux/import-seed/` | Initial configuration shipped in a Linux package | Only when explicitly requested |
+| `packaging/shared/import-seed/` | Example workspace configuration in the repository | Only when explicitly requested |
 | The SQLite file named by the active vault's `data` field | Authoritative runtime configuration and sessions | Never by hand |
 | A `cha-runtime-*` directory under the system temporary directory | Private materialization of committed SQLite rows | Never |
 | `system/keys/` rows in each vault database | Model and R2 keys saved through Settings | Only through Settings → API Keys |
@@ -86,18 +81,14 @@ the UI. Do not replace a user's existing edit directory merely to refresh it
 without first preserving or reviewing its contents.
 
 The external application configuration is a directory, not part of a workspace
-import. `app.toml` selects the startup vault and holds web and logging
-settings. Each other `.toml` file is one vault:
+import. `app.toml` selects the startup vault and holds mirror/modify bases and
+logging settings. Each other `.toml` file is one vault:
 
 ```toml
 # app.toml
 vault = "Personal"
 mirror = "mirror"
 modify = "modify"
-
-[web]
-host = "127.0.0.1"
-port = 8086
 
 [logging]
 file = "/absolute/path/cha.log"
@@ -121,9 +112,14 @@ single path components because they become directory and default database
 names. Obsolete extra fields in vault TOML, including old per-vault `mirror`
 and `modify` values, are ignored with warnings instead of blocking startup.
 
-The configuration directory must be outside a directory passed to `--import`.
+CHA runs inside its native desktop host and has no application HTTP listener.
+An obsolete `[web]` table is ignored with a warning, including unused invalid
+listener values. Runtime actor limits and deadlines are internal
+`cha::app::RuntimeSettings`, not listener configuration.
+
+The configuration directory must be outside the workspace import directory.
 There is no automatic migration from a single `cha.toml`; create the directory,
-split selection, mirror/modify bases, web, and logging into `app.toml`, put the
+split selection, mirror/modify bases, and logging into `app.toml`, put the
 data path and display name in a vault file, adjust paths, and move
 `openai-auth.json` into the directory. Legacy `api-keys.json` and `.env` files
 may supply credentials to each empty vault the first time it is opened. They
@@ -170,26 +166,27 @@ password, which is not retained.
 
 The combined workspace is validated before commit. Validation failure keeps
 the old configuration and live sessions; success closes live sessions and
-refreshes browser discovery. If voice endpoint origins change or cannot be
-read, select Reload when offered to apply the merged voice settings. A failed
-voice-settings or discovery refresh does not undo the merge. Identical
+refreshes the interface for the new application context. If voice endpoint
+origins change or cannot be read, select Reload when offered to apply the merged
+voice settings. A failed voice-settings or discovery refresh does not undo the merge. Identical
 configuration and already synchronized forums require no destination write.
 Failure to restore or publish the workspace, or synchronize forums after
-commit, stops the server and requires a restart. Mirror rebuild failures are
+commit, makes the application unavailable and requires a restart. Mirror rebuild failures are
 logged without undoing the merge.
 
-Selecting a vault in the browser changes the vault for the whole running
-process, including Import, Export, Upload, and Download. A successful switch
-closes live sessions, opens the selected database, and reloads the initiating
-page at Welcome. Other open tabs may need to be reloaded manually.
+Selecting a vault changes the vault for the whole running application, including
+Import, Export, Upload, and Download. A successful switch closes live sessions,
+opens the selected database, and reloads the native interface at Welcome.
+Context epochs prevent requests captured before the switch from acting on the
+new vault.
 
 Protected vault databases use SQLCipher. The password is never stored: the
 vault TOML contains only `protected = true`, and opening the vault requires the
-password. The macOS and Windows applications prompt at launch; `chaweb` prompts
-on standard input before server or offline work; and browser switching opens a
-password dialog. An incorrect password is indistinguishable from a damaged
-encrypted database at the storage boundary. There is no recovery path for a
-lost password. Workspace exports contain plaintext configuration, while R2
+password. The macOS and Windows applications prompt at launch, and switching
+to a protected vault opens a password dialog. An incorrect password is
+indistinguishable from a damaged encrypted database at the storage boundary.
+There is no recovery path for a lost password. Workspace exports contain
+plaintext configuration, while R2
 upload copies the encrypted database bytes.
 
 Password-protected vaults are never mirrored to local Markdown files. A
@@ -207,23 +204,22 @@ Failures have deliberately small, explicit outcomes:
 | --- | --- |
 | The target is unknown, busy, or invalid | The old vault remains active. |
 | Live sessions do not drain before the timeout | The old vault remains active and the switch can be retried. |
-| The target cannot be reopened after the database path changes | The HTTP server stops because its database state is unusable. Quit and restart CHA; `app.toml` still selects the old vault. |
+| The target cannot be reopened after the database path changes | The application becomes unavailable because its database state is unusable. Quit and restart CHA; `app.toml` still selects the old vault. |
 | The target mirror cannot be rebuilt | The switch succeeds with mirroring inactive. |
 | The new selection cannot be saved to `app.toml` | The switch succeeds for the running process. The next launch uses the previously saved vault. |
 
 The macOS application stores this directory at
-`~/Library/Application Support/CHA`. In normal server mode, an empty
+`~/Library/Application Support/CHA`. During native startup, an empty
 configuration directory is bootstrapped with `app.toml`, `default.toml`,
 `default.sqlite3`, and relative `mirror` and `modify` bases, with both base
 directories created privately. The resulting vault is named `Default`; it has
 no saved sessions and contains the built-in Assistant with a ChatGPT OAuth
-provider. Bootstrap does not run for offline commands or for a nonempty
-directory. When the workspace loads, the macOS main window title is
-`CHA: <Vault name>`.
+provider. A nonempty configuration directory is not bootstrapped. When the
+workspace loads, the macOS main window title is `CHA: <Vault name>`.
 
 ### R2 database transfer
 
-The active vault's R2 record under `system/keys/` enables native and console
+The active vault's R2 record under `system/keys/` enables Database menu
 Upload/Download. Upload validates the vault definition and schema-v2 database,
 then writes `<database-filename>.toml` followed by `<database-filename>` at the
 bucket root. Because R2 cannot replace the pair atomically, retry any failed
@@ -636,7 +632,7 @@ Do not leave knowingly malformed unused provider directories behind.
 
 ### Provider editor
 
-The browser editor intentionally exposes only settings that distinguish one
+The provider editor intentionally exposes only settings that distinguish one
 normal provider from another:
 
 - the provider name, edited with the pencil beside the title;
@@ -657,13 +653,13 @@ provider replaces any legacy `api_key_env` selection with the explicit
 Credentials choice.
 
 `Test` exercises the candidate currently shown in the form, including unsaved
-changes. It does not write configuration or reload live sessions. The route
-accepts the same `ProviderUpdate` body as Save and sends one small,
-empty-history request asking the selected model to reply with `OK`. It forces
-network mode, disables web search, and uses fixed 10-second overall and idle
+changes. It does not write configuration or reload live sessions. The native
+`provider.test` operation accepts the same `ProviderUpdate` data as Save and
+sends one small, empty-history request asking the selected model to reply with
+`OK`. It forces network mode, disables web search, and uses fixed 10-second overall and idle
 timeouts. It calls `ProviderClient` directly and creates no session or
-transcript. A successful non-error response returns HTTP 204; provider and
-authentication failures are reported as a bad request. The probe can consume a
+transcript. The bridge returns success or a typed operation error; provider and
+authentication failures are shown in the form. The probe can consume a
 small amount of provider usage.
 
 `Delete provider` succeeds only when no character or built-in Assistant uses
@@ -707,7 +703,7 @@ api_key = "api_key_2"
 Create keys under Settings → API Keys before selecting them in a provider.
 The `api_key` value is an opaque local ID, not the secret. Secrets are stored in
 the vault database as owner-private `system/keys/api_key_N/config.toml` rows and
-are never returned to the browser. They are included as plaintext in workspace
+are never returned to the frontend. They are included as plaintext in workspace
 exports and imports, so treat every export as secret material. A missing
 referenced key does not prevent workspace loading, but requests and `Test` fail
 when they try to use it.
@@ -850,7 +846,7 @@ To add a style, create its config, assign it in one or more global
 ### Voices
 
 Voices live at `system/voices/<voice-id>/config.toml`. Add or edit them in the
-web interface's voice settings, or export, edit, validate, and reimport the workspace.
+application's voice settings, or export, edit, validate, and reimport the workspace.
 
 A minimal definition is:
 
@@ -900,8 +896,8 @@ default_voice = "Warm Narrator"   # voice display name, not directory ID
 An invalid saved output configuration, including an old ElevenLabs endpoint,
 is ignored with a warning instead of preventing the workspace from loading.
 Replace its endpoint, model, key, and reference IDs with FishAudio settings to
-restore synthesis. Voice output is available in the packaged native application;
-ordinary browser-only server mode does not expose it.
+restore synthesis. Speech requests and credential access run in native code;
+the interface receives a resource handle for playback.
 
 Assign the stable directory ID in a global character definition:
 
@@ -914,7 +910,7 @@ overrides do not. A missing assignment retains the application fallback voice
 and does not hide the playback button. An unknown voice reference or invalid
 voice definition makes workspace validation fail.
 
-To add or tune a voice without the web UI:
+To add or tune a voice through exported files:
 
 1. Export the vault's workspace configuration.
 2. Create or edit `system/voices/<voice-id>/config.toml`.
@@ -934,18 +930,18 @@ Audio is stored in SQLite's `entry_audio` table as one audio BLOB and MIME type
 per `(session_key, entry_id)`. Saved-session clips survive page reloads and
 application restarts and travel with complete database copies and R2 backups.
 Welcome uses its temporary session database, so its audio is not durable across
-application restarts. There is no browser-wide 256 MiB cache or request-body
-cache key. Cached clips can be played without a working synthesis configuration.
+application restarts. Cached clips can be played without a working synthesis
+configuration; playback obtains a native resource handle for the stored bytes.
 
 Selecting a completed human message or character response's speaker control
 submits a short download request if audio is missing. `AudioDownloadManager`
 owns the queue and three worker threads; repeated requests for the same entry
 share the existing job. It captures output settings, the key, and voice at
 acceptance, derives text from the stored entry, and retries transport failures
-up to four attempts. Storage failures are terminal. The browser polls status
+up to four attempts. Storage failures are terminal. The frontend polls status
 while jobs are pending and plays the selected clip when it becomes available.
 Failed entries expose a retry control. Stopping playback preserves its position
-in browser memory; replay resumes there until the clip finishes or the page reloads.
+in document memory; replay resumes there until the clip finishes or the page reloads.
 
 The speaker toggle before `Rus` enables automatic conversation caching. It
 submits one batch for uncached, nonempty completed human messages and character
@@ -954,7 +950,7 @@ duplicate multicast prompts. Later completed entries are submitted while the
 toggle remains enabled. A batch is fully validated before new jobs are admitted.
 
 Disabling the toggle stops future submissions. Changing sessions also turns it
-off, but accepted jobs continue independently of the screen or browser connection.
+off, but accepted jobs continue independently of the displayed screen or document connection.
 Jobs and failure state are in memory and do not resume after an application
 restart. Vault switching, configuration import, and database replacement cancel
 jobs so stale results cannot enter another vault. Other maintenance pauses
@@ -963,9 +959,9 @@ admission while repository access is fenced.
 Recent → session menu → Clear audio cache cancels that session's queued and
 running jobs and removes its stored clips without changing the transcript.
 Deleting transcript entries removes their audio through the table's cascading
-foreign key. Character and voice previews use the separate uncached FishAudio
-proxy, which keeps the key on the server and admits at most four requests at
-once. They generate a fresh sample each time.
+foreign key. Character and voice previews use a separate uncached native
+FishAudio operation, which retains the key in native code and admits at most
+four requests at once. They generate a fresh sample each time.
 
 ### Built-in Assistant
 
@@ -1163,35 +1159,35 @@ provider. Do not add `provider` to forum member configs.
 
 ### Safe disposable validation
 
-There is no standalone `--validate` mode. Validate by importing into a new
-temporary database, never by using the production database as a validator.
-From the repository root:
+Validate an edited workspace in a separate vault before importing it into the
+vault whose conversations matter. The old `chaweb --import`/`--export` executable
+is no longer built; use the native application's Database menu.
 
-```sh
-cmake --preset ninja
-cmake --build --preset ninja --target chaweb_app
+1. In Settings → Vaults, create a uniquely named validation vault. Leave the
+   copy source unset so it receives configuration without copying conversations.
+2. Switch to that vault and verify its name in the application. Its database
+   must be distinct from the production database.
+3. Choose Database → Export. This creates or refreshes the validation vault's
+   derived modify directory, `<modify-base>/<validation-vault-name>`.
+4. Replace the contents of that disposable directory with a copy of the edited
+   workspace. Copy the contents, not an extra enclosing directory, and leave
+   the original edit bundle untouched.
+5. Choose Database → Import. Read any validation error before changing the
+   production vault. Do not send prompts or request speech for this check.
+6. After success, choose Database → Export again and inspect the normalized
+   result. Compare the forum IDs and accepted files with the intended changes.
+7. Switch back to the original vault. Removing the inactive validation vault
+   removes only its definition; its database and derived directories remain
+   for explicit cleanup after their paths and contents have been checked.
 
-VALIDATION_ROOT="$(mktemp -d)"
-cp -R packaging/linux/cha-config.example "$VALIDATION_ROOT/cha-config"
-./build/ninja/chaweb \
-  --config="$VALIDATION_ROOT/cha-config" \
-  --vault=Personal \
-  --import /absolute/path/to/workspace
-./build/ninja/chaweb \
-  --config="$VALIDATION_ROOT/cha-config" \
-  --vault=Personal \
-  --export "$VALIDATION_ROOT/exported"
-find "$VALIDATION_ROOT/exported" -type f -print | sort
-```
+Import and Export require a `modify` base in `app.toml`. If it is absent, add a
+suitable base and restart before this workflow. A successful import proves the
+TOML, IDs, references, templates, provider constraints, and required files can
+form a complete `Workspace`. It does not prove provider credentials or endpoint
+availability; those have a separate Test action.
 
-This performs no provider network requests. A successful import proves that
-the TOML, IDs, references, templates, provider constraints, and required files
-can form a complete `Workspace`. The export shows the exact accepted
-configuration rows. Leave cleanup of the temporary directory until its path
-and contents have been verified.
-
-If validating `~/var/modify`, use the resolved path
-`/home/mpopov/var/modify`.
+The validation vault and its export can contain copied credentials. Treat them
+with the same care as the source workspace.
 
 ### Import's normalization and pruning behavior
 
@@ -1218,46 +1214,35 @@ sessions for surviving forum IDs.
 
 ### Export from and import into the real database
 
-The external config used by the real process is required for both commands.
-The application must be stopped because runtime, import, and export compete for
-the same non-blocking database lease.
+Use the Database menu while the intended vault is active. Import and Export
+are enabled when `app.toml` supplies a `modify` base, and use the directory
+formed by appending the active vault's display name. Export replaces that
+directory; it must be missing, empty, or a valid CHA workspace. Preserve any
+unimported edits before exporting again.
 
-Export requires a destination that is missing or empty:
+1. Verify the active vault and resolve its database and derived modify paths.
+2. Preserve a recoverable database backup using the user's backup practice. If
+   making a filesystem copy, close CHA first and account for SQLite sidecars;
+   reopen the same vault afterwards. External configuration and OAuth files
+   are outside workspace export and need their own backup when relevant.
+3. Choose Database → Export, then edit the exported files.
+4. Review removed or renamed forum IDs and validate the edited bundle in a
+   disposable vault as described above.
+5. Return to the intended vault and choose Database → Import within the user's
+   authorized scope. This replaces configuration, preserving sessions only for
+   surviving forum IDs.
+6. Let the interface refresh, then check one affected forum and use provider
+   Test if a connection changed.
 
-```sh
-/absolute/path/chaweb \
-  --config=/absolute/path/cha-config \
-  --vault=Personal \
-  --export /absolute/path/empty-export-directory
-```
+The runtime retains its database lease and coordinates session, configuration,
+repository, and media owners during maintenance. A successful native import
+reopens and publishes the workspace in process; it does not require a manual
+stop/import/restart sequence. If storage cannot be reopened, the application
+becomes unavailable and must be restarted.
 
-After editing and disposable validation, import only when explicitly approved:
-
-```sh
-/absolute/path/chaweb \
-  --config=/absolute/path/cha-config \
-  --vault=Personal \
-  --import /absolute/path/edited-workspace
-```
-
-Then restart CHA with the same external config. Import may create a missing
-database, upgrade a supported schema-1 database, or replace configuration in a
-schema-2 database. It preserves sessions only for forum IDs that survive.
-
-Before a production import:
-
-1. identify and stop the exact CHA process;
-2. identify the exact configuration directory and resolve the target vault's
-   `data` path;
-3. make an offline, recoverable backup of the database and relevant external
-   secret files, including `<config-directory>/openai-auth.json` and any legacy
-   `api-keys.json` or `.env`, according to the user's backup practice;
-4. review forum IDs for removals or renames;
-5. run disposable validation;
-6. import;
-7. restart and smoke-test one affected forum and provider.
-
-Do not copy a live SQLite file casually; CHA uses WAL and sidecar files.
+Workspace export contains configuration only, not conversations or cached audio.
+Use a full database backup or Database → Upload for those. Never copy a live
+SQLite database file without accounting for its WAL and sidecars.
 
 ### Files deliberately outside workspace export
 
@@ -1312,12 +1297,12 @@ asks for connectivity verification.
 | unsupported web search | API/auth/host combination cannot use requested search mode |
 | invalid `openai_subscription` settings | OAuth provider differs from one of the mandatory invariants |
 | `Sign in to ChatGPT before using this provider.` | OAuth provider is configured but Settings has no connected account |
-| `Password required to open this vault` | The selected vault has `protected = true`; enter its SQLCipher password in the launcher, console, or browser switch dialog |
+| `Password required to open this vault` | The selected vault has `protected = true`; enter its SQLCipher password in the launcher or vault-switch dialog |
 | `The vault password is incorrect, or its database is damaged` | The supplied password cannot open the protected database; retry carefully, then restore a known-good backup if the password is correct |
 | `Protected vaults cannot be downloaded from R2 without a password` | Settings → Vaults → Download vault cannot add encrypted remote vaults; register the vault locally and use the password-aware Database Download path instead |
 | import/export reports database busy | A CHA runtime or another maintenance operation holds the database lease |
 | editing exported files changes nothing | Runtime reads committed SQLite configuration; the edited bundle has not been imported |
-| vault switch reports that restart is required, or the page becomes unavailable during a switch | Reopening the selected database failed and the server stopped; quit and restart CHA |
+| vault switch reports that restart is required, or the page becomes unavailable during a switch | Reopening the selected database failed and the application became unavailable; quit and restart CHA |
 | startup reports that the selected vault is unknown after a vault file was deleted | `app.toml` still selects the deleted vault; select an existing vault in that file |
 
 ## 15. Source-of-truth implementation files
@@ -1337,21 +1322,25 @@ guide:
   semantics;
 - `src/providers/api_key_store.cpp` and `.h`: vault-backed model and R2 key lifecycle;
 - `src/providers/openai_oauth.cpp`: OAuth credential lifecycle;
-- `src/web/settings_routes.cpp`: provider, style, and key mutations plus the
-  direct provider test probe;
+- `src/app/settings_operations.cpp` and `src/app/application.cpp`: provider,
+  style, key, and voice settings operations plus asynchronous provider testing;
 - `src/web/application_config.cpp`: application and vault configuration
-  discovery, validation, and command-line selection;
-- `src/web/application_runtime.cpp`: vault creation/update/deletion and active
-  switching, vault-backed keys and external OAuth credentials, and runtime
-  maintenance operations;
+  discovery, validation, and empty-directory bootstrap;
+- `src/app/application.cpp` and `src/app/vault_operations.cpp`: application
+  ownership, context admission, vault lifecycle, and database maintenance;
+- `src/bridge/settings_dispatch.cpp` and `src/bridge/workspace_dispatch.cpp`:
+  native operation dispatch;
 - `packaging/macos/main.swift`: native runtime ownership, database menu
   behavior, and window-title synchronization;
-- `packaging/linux/import-seed/`: minimal package seed;
-- `tests/application/unit_workspace.cpp` and
-  `tests/application/unit_workspace_config_store.cpp`: executable examples of
+- `packaging/shared/import-seed/`: example workspace seed;
+- `tests/workspace/unit_workspace.cpp` and
+  `tests/workspace/unit_workspace_config_store.cpp`: executable examples of
   accepted and rejected configurations;
-- `tests/web/unit_application_runtime.cpp`: runtime maintenance and vault
-  switching behavior, including failure outcomes.
+- `tests/app/unit_application.cpp` and `tests/app/unit_vault_maintenance.cpp`:
+  runtime maintenance and vault switching, including failure outcomes.
+
+For the ownership and native message flow, see [the codebase tutorial](tutorial.md).
+For adding an editor, see [editing workspace entities](editing.md).
 
 The directory `~/var/modify/` is a useful content example, but the source and
 tests above are authoritative when the example and code disagree.

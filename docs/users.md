@@ -1,8 +1,13 @@
 # Users and shared forum sessions
 
-Status: proposed implementation plan, updated for the unified database.
+Status: archived, unimplemented proposal from the HTTP application design.
 
-This feature assumes the current storage design in [design.md](design.md): the
+This document is retained as historical design discussion. Its login, cookie,
+HTTP-route, SSE, and multiuser assumptions do not describe the native desktop
+application. It is not an implementation checklist. See [the current codebase
+tutorial](tutorial.md) for application ownership, bridge messaging, and storage.
+
+The original proposal follows. It assumed unified database storage: the
 logical workspace files below are configuration rows imported into the one CHA
 database, not a durable directory read by normal runtime. Operator changes use
 stop/export/edit/import/restart unless they are one of the existing narrow
