@@ -616,8 +616,10 @@ if(APPLE)
 endif()
 if(WIN32)
     set(CHA_WINDOWS_ICON "${CMAKE_CURRENT_BINARY_DIR}/generated/CHA.ico")
-    set(CHA_WINDOWS_MANIFEST
-        "${CMAKE_CURRENT_SOURCE_DIR}/packaging/windows/CHA.manifest")
+    # Listed as a source, CMake merges the manifest into the executable under
+    # both the Ninja and Visual Studio generators. A raw /MANIFESTINPUT link
+    # flag works only under the latter.
+    set(CHA_WINDOWS_MANIFEST packaging/windows/CHA.manifest)
     configure_file(
         packaging/windows/CHA.rc.in
         ${CMAKE_CURRENT_BINARY_DIR}/generated/CHA.rc
@@ -635,7 +637,8 @@ if(WIN32)
         packaging/windows/main.cpp
         packaging/macos/runtime_bridge.cpp
         ${CMAKE_CURRENT_BINARY_DIR}/generated/CHA.rc
-        ${CHA_WINDOWS_ICON})
+        ${CHA_WINDOWS_ICON}
+        ${CHA_WINDOWS_MANIFEST})
     target_include_directories(
         cha_windows_app PRIVATE packaging/macos)
     # The host calls the wide Win32 entry points exclusively; without UNICODE
@@ -653,8 +656,6 @@ if(WIN32)
             shell32
             shlwapi
             user32)
-    target_link_options(
-        cha_windows_app PRIVATE "/MANIFESTINPUT:${CHA_WINDOWS_MANIFEST}")
     set_target_properties(cha_windows_app PROPERTIES OUTPUT_NAME CHA)
     cha_enable_warnings(cha_windows_app)
 
@@ -663,7 +664,8 @@ if(WIN32)
         packaging/windows/main.cpp
         packaging/macos/runtime_bridge.cpp
         ${CMAKE_CURRENT_BINARY_DIR}/generated/CHA.rc
-        ${CHA_WINDOWS_ICON})
+        ${CHA_WINDOWS_ICON}
+        ${CHA_WINDOWS_MANIFEST})
     target_include_directories(
         cha_windows_test_app PRIVATE packaging/macos)
     target_compile_definitions(
@@ -678,8 +680,6 @@ if(WIN32)
             shell32
             shlwapi
             user32)
-    target_link_options(
-        cha_windows_test_app PRIVATE "/MANIFESTINPUT:${CHA_WINDOWS_MANIFEST}")
     set_target_properties(cha_windows_test_app PROPERTIES OUTPUT_NAME CHATest)
     cha_enable_warnings(cha_windows_test_app)
 endif()

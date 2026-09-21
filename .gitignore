@@ -16,6 +16,7 @@
 /webapp/dist/
 /webapp/test-results/
 /webapp/playwright-report/
+/tests/native/windows/test-results/
 
 # Reproducible customer application directories
 /packages/

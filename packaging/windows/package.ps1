@@ -160,9 +160,12 @@ try {
     Copy-Item -LiteralPath (Join-Path $nativeBuild 'Release\CHATest.exe') -Destination $testApplication
     Copy-Item -LiteralPath (Join-Path $application 'web') -Destination $testApplication -Recurse
     $smokeRoot = Join-Path $temporary 'smoke-data'
-    Invoke-Native (Join-Path $testApplication 'CHATest.exe') @(
-        '--smoke-test', $smokeRoot
-    ) $repository
+    # CHATest.exe is a GUI program: PowerShell waits for it and records its
+    # exit code only when its output is piped.
+    & (Join-Path $testApplication 'CHATest.exe') --smoke-test $smokeRoot | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "The native application smoke test failed with exit code $LASTEXITCODE."
+    }
 
     Write-Host '==> Exercising the assembled application through WebView2 and the native runtime'
     Invoke-Native 'powershell.exe' @(

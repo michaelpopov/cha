@@ -521,7 +521,7 @@ TEST(LiveSessionManager, WaitersHaveIndependentDeadlines) {
     manager.begin_shutdown();
 }
 
-TEST(LiveSessionManager, StoppingActorRejectsOpenConsumesCapacityAndLateHandleStops) {
+TEST(LiveSessionManager, StoppingActorIsNeverServedAndLateHandleStops) {
     SessionFiles files;
     WedgedOwners wedged(files);
     LiveSessionManager manager(manager_settings(1), wedged.opener());
@@ -539,15 +539,18 @@ TEST(LiveSessionManager, StoppingActorRejectsOpenConsumesCapacityAndLateHandleSt
     }
     ASSERT_EQ(session->lifecycle(), LiveSessionState::stopping);
 
-    EXPECT_EQ(failure_of(manager.open(key, 10ms)), LiveSessionOpenFailure::stopping);
-    EXPECT_EQ(
-        failure_of(manager.open({"f", "other"}, 10ms)),
-        LiveSessionOpenFailure::open_timeout);
+    // The woken runtime thread may already be blocked finalizing the wedged
+    // actor, so these opens either see it stopping or wait and time out.
+    // Neither may be served while it stops.
+    EXPECT_FALSE(std::holds_alternative<LiveSessionReady>(manager.open(key, 10ms)));
+    EXPECT_FALSE(
+        std::holds_alternative<LiveSessionReady>(manager.open({"f", "other"}, 10ms)));
 
     wedged.release();
     ASSERT_TRUE(wait_for_finished(session));
-    manager.sweep();
-    EXPECT_FALSE(manager.lookup(key));
+    // A timed-out open still runs once the runtime is free, so the key may be
+    // live again, but never through the stopped actor.
+    EXPECT_NE(manager.lookup(key), session);
     // The map no longer owns the actor, but this in-flight request handle keeps
     // it alive and sees the already-stopped session.
     EXPECT_EQ(

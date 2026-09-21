@@ -1826,7 +1826,8 @@ private:
                 L"CHA cannot continue",
                 MB_OK | MB_ICONERROR);
         }
-        close_now();
+        // Waits for a running database operation, which uses the runtime.
+        request_close();
     }
 
     void show_notice(
