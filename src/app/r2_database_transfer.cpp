@@ -820,8 +820,15 @@ R2DatabaseTransfer upload_database_to_r2(
     (void)require_matching_vault(database, vault);
 
     const std::string database_name = utf8_path(database.filename());
+    // This machine's absolute path means nothing elsewhere; a bare file name
+    // resolves beside the definition, so a manually copied pair still opens.
+    toml::table portable = read_toml_file(vault, "vault definition");
+    portable.insert_or_assign("data", database_name);
+    TemporaryPath vault_upload(unique_sibling(vault, "upload"));
+    write_toml_file(vault_upload.get(), portable);
     const std::uintmax_t vault_bytes = upload_file(
-        vault, database_name + ".toml", "application/toml", storage, cancelled);
+        vault_upload.get(), database_name + ".toml", "application/toml",
+        storage, cancelled);
     const std::uintmax_t database_bytes = upload_file(
         database, database_name, "application/vnd.sqlite3", storage, cancelled);
     return {.byte_count = vault_bytes + database_bytes};

@@ -10,6 +10,7 @@
 #include "providers/fish_audio.h"
 #include "runtime/request_parser.h"
 #include "runtime/live_session.h"
+#include "util/logging.h"
 
 #include <algorithm>
 #include <condition_variable>
@@ -1102,11 +1103,16 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
             fail(ErrorCode::invalid_argument, error.what());
         } catch (const WorkspaceRestartRequiredError& error) {
             fail(ErrorCode::application_unavailable, error.what());
-        } catch (const std::runtime_error&) {
+        } catch (const std::runtime_error& error) {
+            // The reply stays generic; the log keeps the reason.
+            log_error(
+                "Request " + std::string(method_name(method)) + " failed: "
+                + error.what());
             fail(application.state() == app::ApplicationState::running
                 ? ErrorCode::internal_error
                 : ErrorCode::application_unavailable);
         } catch (...) {
+            log_error("Request " + std::string(method_name(method)) + " failed");
             fail(ErrorCode::internal_error);
         }
     }

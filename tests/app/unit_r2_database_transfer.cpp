@@ -7,6 +7,7 @@
 #include "app/application_config.h"
 
 #include <gtest/gtest.h>
+#include <toml++/toml.hpp>
 
 #include <filesystem>
 #include <fstream>
@@ -60,7 +61,7 @@ TEST(R2DatabaseTransfer, UploadsDatabaseAndVaultDefinitionWithSignedPuts) {
             workspace.root(), workspace.root() / "workspace copy.sqlite3");
     const std::filesystem::path vault = write_vault(database);
     const std::string expected_database = file_bytes(database);
-    const std::string expected_vault = file_bytes(vault);
+    const std::string local_vault = file_bytes(vault);
     MockHttpServer server({
         http_response("application/xml", ""),
         http_response("application/xml", ""),
@@ -72,14 +73,21 @@ TEST(R2DatabaseTransfer, UploadsDatabaseAndVaultDefinitionWithSignedPuts) {
         upload_database_to_r2(database, vault, key);
     server.join();
 
-    EXPECT_EQ(
-        result.byte_count, expected_database.size() + expected_vault.size());
     ASSERT_EQ(server.requests().size(), 2U);
     const std::string& vault_request = server.requests()[0];
     const std::string& database_request = server.requests()[1];
+    EXPECT_EQ(
+        result.byte_count,
+        expected_database.size() + request_body(vault_request).size());
     EXPECT_TRUE(vault_request.starts_with(
         "PUT /cha-backups/workspace%20copy.sqlite3.toml HTTP/1.1"));
-    EXPECT_EQ(request_body(vault_request), expected_vault);
+    // The uploaded definition names its database by file name alone, so it
+    // opens wherever it is copied beside the database; the local one keeps
+    // its path.
+    const toml::table uploaded = toml::parse(request_body(vault_request));
+    EXPECT_EQ(uploaded["vault_name"].value<std::string>(), "Test");
+    EXPECT_EQ(uploaded["data"].value<std::string>(), "workspace copy.sqlite3");
+    EXPECT_EQ(file_bytes(vault), local_vault);
     EXPECT_TRUE(database_request.starts_with(
         "PUT /cha-backups/workspace%20copy.sqlite3 HTTP/1.1"));
     EXPECT_NE(
