@@ -143,12 +143,14 @@ std::string fish_audio_http_error_message(long status) {
 FishAudioTransfer FishAudioProxy::synthesize(
     const WorkspaceVoiceOutput& output, const std::string& key,
     const FishAudioRequest& request, const std::function<bool()>& cancelled) {
-    if (!slots_.try_acquire()) {
-        return {.busy = true};
-    }
+    // counting_semaphore::try_acquire may fail spuriously under contention.
+    auto available = slots_.load();
+    do {
+        if (available == 0) return {.busy = true};
+    } while (!slots_.compare_exchange_weak(available, available - 1));
     struct ReleaseSlot {
-        std::counting_semaphore<fish_audio_concurrency>& slots;
-        ~ReleaseSlot() { slots.release(); }
+        std::atomic_size_t& slots;
+        ~ReleaseSlot() { slots++; }
     } release{slots_};
     auto result = transfer_fish_audio(
         output, key, request, [&] { return stopped_ || cancelled(); });

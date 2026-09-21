@@ -7,7 +7,6 @@
 #include <exception>
 #include <functional>
 #include <optional>
-#include <semaphore>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -59,6 +58,6 @@ public:
 
 private:
     std::atomic_bool stopped_{false};
-    std::counting_semaphore<fish_audio_concurrency> slots_{fish_audio_concurrency};
+    std::atomic_size_t slots_{fish_audio_concurrency};
 };
 }
