@@ -9,6 +9,7 @@ const cdpPort = Number(process.env.CHA_WEBVIEW2_CDP_PORT ?? '9222');
 const executable = process.env.CHA_WEBVIEW2_EXECUTABLE;
 const assets = process.env.CHA_NATIVE_ASSETS;
 const prepareVault = process.env.CHA_PREPARE_TEST_VAULT;
+const devOrigin = process.env.CHA_NATIVE_DEV_ORIGIN;
 
 let userData = '';
 
@@ -32,6 +33,7 @@ async function launchHost(): Promise<{ child: ChildProcess; browser: Browser }> 
       '--assets', assets,
       '--cdp-port', String(cdpPort),
       '--user-data', userData,
+      ...(devOrigin ? ['--dev-origin', devOrigin] : []),
     ],
     { stdio: 'ignore' },
   );
@@ -112,23 +114,30 @@ test.describe('WebView2 native host', () => {
   });
 
   test.afterAll(async () => {
+    await browser?.close().catch(() => undefined);
     if (host && host.exitCode === null) {
       const exited = new Promise<void>((resolve) => host!.once('exit', () => resolve()));
       host.kill();
       await Promise.race([
         exited,
-        new Promise<void>((resolve) => setTimeout(resolve, 2_000)),
+        new Promise<void>((resolve) => setTimeout(resolve, 5_000)),
       ]);
     }
-    await browser?.close().catch(() => undefined);
     if (userData) {
-      rmSync(userData, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+      // WebView2's browser subprocesses can outlive the host and keep the
+      // profile locked. This is a system temp directory, so leaving it behind
+      // must not fail the run or mask the failure that actually matters.
+      try {
+        rmSync(userData, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
+      } catch {
+        // Left for the system temp cleaner.
+      }
     }
   });
 
   test('runs the packaged application through the real native runtime', async () => {
     await waitForApplication(page);
-    expect(await page.evaluate(() => window.location.origin)).toBe('https://app.cha.local');
+    expect(await page.evaluate(() => window.location.origin)).toBe(devOrigin ?? 'cha://app');
     expect(await page.evaluate(() => window.isSecureContext)).toBe(true);
 
     const composer = page.locator('textarea[aria-label="Message"]');
@@ -193,6 +202,7 @@ test.describe('WebView2 native host', () => {
   });
 
   test('enforces CSP and retains session, file, navigation and vault behavior', async () => {
+    test.skip(!!devOrigin, 'The packaged host supplies the production CSP.');
     test.setTimeout(60000);
     await waitForApplication(page);
     const source = readFileSync(join(__dirname, '..', 'parity.js'), 'utf8');
@@ -204,6 +214,7 @@ test.describe('WebView2 native host', () => {
 
   test('blocks Blob documents from replacing the privileged shell', async () => {
     await waitForApplication(page);
+    const initialUrl = page.url();
     const connection = await page.evaluate(() => (window as any).__CHA_NATIVE_CONNECTION_ID__);
     await page.evaluate(() => {
       const blob = new Blob(['<script>window.__BLOB_DOCUMENT__ = true;</script>'], {type: 'text/html'});
@@ -212,7 +223,7 @@ test.describe('WebView2 native host', () => {
       setTimeout(() => URL.revokeObjectURL(url), 1000);
     });
     await page.waitForTimeout(500);
-    expect(page.url()).toMatch(/^https:\/\/app\.cha\.local\//);
+    expect(page.url()).toBe(initialUrl);
     expect(await page.evaluate(() => (window as any).__CHA_NATIVE_CONNECTION_ID__)).toBe(connection);
     expect(await page.evaluate(() => (window as any).__BLOB_DOCUMENT__)).toBeUndefined();
   });
@@ -221,5 +232,14 @@ test.describe('WebView2 native host', () => {
     await waitForApplication(page);
     const ok = await page.evaluate(() => 1 === 0);
     expect(ok).toBe(true);
+  });
+
+  test('routes media requests to the native host', async () => {
+    await waitForApplication(page);
+    const result = await page.evaluate(async () => {
+      const response = await fetch('/media/r999999999999', { cache: 'no-store' });
+      return { status: response.status, body: await response.text() };
+    });
+    expect(result).toEqual({ status: 404, body: 'not found' });
   });
 });

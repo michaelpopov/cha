@@ -1,0 +1,2 @@
+# Generated API types are compared byte-for-byte by openapi-typescript --check.
+webapp/src/api/schema.d.ts text eol=lf

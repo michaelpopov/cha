@@ -2,7 +2,8 @@ param(
     [string]$Expect = 'pass',
     [string]$Executable = $env:CHA_WEBVIEW2_EXECUTABLE,
     [string]$Assets = $env:CHA_NATIVE_ASSETS,
-    [string]$PrepareVault = $env:CHA_PREPARE_TEST_VAULT
+    [string]$PrepareVault = $env:CHA_PREPARE_TEST_VAULT,
+    [switch]$Development
 )
 
 $ErrorActionPreference = 'Stop'
@@ -43,6 +44,7 @@ if (-not $PrepareVault) {
 $env:CHA_WEBVIEW2_EXECUTABLE = $Executable
 $env:CHA_NATIVE_ASSETS = $Assets
 $env:CHA_PREPARE_TEST_VAULT = $PrepareVault
+$env:CHA_NATIVE_DEV_ORIGIN = $(if ($Development) { 'http://127.0.0.1:5173' } else { $null })
 $env:CHA_WEBVIEW2_CDP_PORT = $(if ($env:CHA_WEBVIEW2_CDP_PORT) { $env:CHA_WEBVIEW2_CDP_PORT } else { '9222' })
 $webapp = Join-Path $repository 'webapp'
 $env:NODE_PATH = Join-Path $webapp 'node_modules'
@@ -50,9 +52,16 @@ $env:NODE_PATH = Join-Path $webapp 'node_modules'
 function Invoke-WebView2Probe {
     param([Parameter(Mandatory = $true)] [string]$Grep)
 
-    $output = & npx --prefix $webapp playwright test --config playwright.config.ts --grep $Grep 2>&1 | Out-String
+    $previousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $output = & npx --prefix $webapp playwright test --config playwright.config.ts --grep $Grep 2>&1 | Out-String
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
     Write-Host $output
-    return @{ Code = $LASTEXITCODE; Output = $output }
+    return @{ Code = $exitCode; Output = $output }
 }
 
 Push-Location (Join-Path $repository 'tests\native\windows')
@@ -70,7 +79,7 @@ try {
         Write-Host 'FAIL intentional assertion failure'
         exit 1
     }
-    $result = Invoke-WebView2Probe 'runs the packaged application|retains session|blocks Blob documents'
+    $result = Invoke-WebView2Probe 'runs the packaged application|retains session|blocks Blob documents|routes media requests'
     if ($result.Code -ne 0) { exit $result.Code }
 } finally {
     Pop-Location

@@ -142,7 +142,6 @@ try {
     if ($runtimeArtifacts) {
         throw "A development runtime leaked into the application: $($runtimeArtifacts[0].FullName)"
     }
-
     if ($CertificateThumbprint) {
         $signTool = Get-Command 'signtool.exe' -ErrorAction SilentlyContinue
         if (-not $signTool) {
@@ -161,11 +160,9 @@ try {
     Copy-Item -LiteralPath (Join-Path $nativeBuild 'Release\CHATest.exe') -Destination $testApplication
     Copy-Item -LiteralPath (Join-Path $application 'web') -Destination $testApplication -Recurse
     $smokeRoot = Join-Path $temporary 'smoke-data'
-    $smokeArguments = @('--smoke-test', ('"{0}"' -f $smokeRoot))
-    $smoke = Start-Process -FilePath (Join-Path $testApplication 'CHATest.exe') -ArgumentList $smokeArguments -PassThru -Wait -WindowStyle Hidden
-    if ($smoke.ExitCode -ne 0) {
-        throw "The native application smoke test failed with exit code $($smoke.ExitCode)."
-    }
+    Invoke-Native (Join-Path $testApplication 'CHATest.exe') @(
+        '--smoke-test', $smokeRoot
+    ) $repository
 
     Write-Host '==> Exercising the assembled application through WebView2 and the native runtime'
     Invoke-Native 'powershell.exe' @(

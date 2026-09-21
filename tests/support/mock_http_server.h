@@ -280,7 +280,8 @@ private:
     static void wait_for_client_close(Socket client) {
         PollDescriptor descriptor{
             client,
-            static_cast<short>(read_event | POLLHUP | POLLERR),
+            // Hangup and error are output flags; WSAPoll rejects them as input.
+            read_event,
             0,
         };
         if (wait_for_socket(descriptor) != 1) {

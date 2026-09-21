@@ -303,6 +303,7 @@ TEST(ApplicationVault, SaveFileRejectsStaleEpochAndReplacesAtomically) {
         (std::istreambuf_iterator<char>(existing)),
         std::istreambuf_iterator<char>());
     EXPECT_EQ(kept, "keep-me");
+    existing.close();
 
     application->save_file(
         application->context_epoch(), destination, "replaced");

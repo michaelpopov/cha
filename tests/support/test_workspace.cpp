@@ -138,7 +138,7 @@ void TestWorkspace::write_voice(
     const std::filesystem::path directory =
         root_ / "system" / "voices" / std::string(name);
     std::filesystem::create_directories(directory);
-    std::ofstream(directory / "config.toml") << contents;
+    std::ofstream(directory / "config.toml", std::ios::binary) << contents;
 }
 
 void TestWorkspace::write_character_config(std::string_view contents) const {

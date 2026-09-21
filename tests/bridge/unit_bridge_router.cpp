@@ -210,7 +210,7 @@ TEST_F(BridgeRouterTest, BootstrapIncludesVersionAndCapabilities) {
     const auto reply = reply_with_id(*batch, next_id_ - 1);
     ASSERT_TRUE(reply["ok"]);
     const auto& result = reply["result"];
-    EXPECT_EQ(result["application_version"], kApplicationVersion);
+    EXPECT_EQ(result["application_version"].get<std::string>(), kApplicationVersion);
     ASSERT_TRUE(result["capabilities"].is_object());
     EXPECT_EQ(result["capabilities"]["can_modify"], expected.can_modify);
     EXPECT_EQ(

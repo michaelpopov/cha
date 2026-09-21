@@ -821,7 +821,7 @@ TEST(Workspace, TemplateIncludesResolveUnderThePhysicalRoot) {
 TEST(Workspace, CharacterFileEditsRequireAnExactListedFilename) {
     test::TestWorkspace fixture;
     const auto directory = fixture.root() / "characters" / "guide";
-    std::ofstream(directory / "PROFILE.md") << "Original profile\n";
+    std::ofstream(directory / "PROFILE.md", std::ios::binary) << "Original profile\n";
     std::ofstream(fixture.root() / "forums" / "lobby" / "NOTES.md") << "Forum notes\n";
     const Workspace workspace = Workspace::load(fixture.root());
     const auto original = file_bytes(directory / "CHARACTER.md");
@@ -853,16 +853,16 @@ TEST(Workspace, CharacterFileEditsRequireAnExactListedFilename) {
 TEST(Workspace, CharacterVoiceMatchesLegacyIncludesAfterMovingTheCharacter) {
     test::TestWorkspace fixture;
     const auto characters = fixture.root() / "characters";
-    std::ofstream(characters / "character-voice.md")
+    std::ofstream(characters / "character-voice.md", std::ios::binary)
         << "Portray $${character.display_name} in $${forum.display_name}.\n";
-    std::ofstream(characters / "guide" / "PROFILE.md") << "Guide profile.\n";
-    std::ofstream(characters / "guide" / "CHARACTER.md")
+    std::ofstream(characters / "guide" / "PROFILE.md", std::ios::binary) << "Guide profile.\n";
+    std::ofstream(characters / "guide" / "CHARACTER.md", std::ios::binary)
         << "$$(../character-voice.md)\n<character_profile>\n"
            "$$(PROFILE.md)</character_profile>\n";
     const Workspace legacy = Workspace::load(fixture.root());
     const std::string expected = legacy.find_forum_member("lobby", "guide")->character_prompt;
 
-    std::ofstream(characters / "guide" / "CHARACTER.md")
+    std::ofstream(characters / "guide" / "CHARACTER.md", std::ios::binary)
         << "$${CHARACTER_VOICE}\n<character_profile>\n"
            "$$(PROFILE.md)</character_profile>\n";
     std::filesystem::create_directories(characters / "group" / "nested");
@@ -874,8 +874,8 @@ TEST(Workspace, CharacterVoiceMatchesLegacyIncludesAfterMovingTheCharacter) {
 
     // Forum member templates can use the same shared file and their own includes.
     const auto member = fixture.root() / "forums" / "lobby" / "members" / "guide";
-    std::ofstream(member / "PROFILE.md") << "Override profile.\n";
-    std::ofstream(member / "CHARACTER.md")
+    std::ofstream(member / "PROFILE.md", std::ios::binary) << "Override profile.\n";
+    std::ofstream(member / "CHARACTER.md", std::ios::binary)
         << "$${CHARACTER_VOICE}\n$$(PROFILE.md)";
     const Workspace overridden = Workspace::load(fixture.root());
     EXPECT_EQ(
@@ -903,7 +903,7 @@ TEST(Workspace, ForumDefinitionExpandsSharedAndLocalFilesForEachMember) {
         << "Voice of $${character.display_name}.\n";
     std::ofstream(directory / "HOUSE-RULES.md") << "Local rules.\n";
     std::ofstream(directory / "NOTES.md") << "$$(unused.md)";
-    std::ofstream(directory / "FORUM.md")
+    std::ofstream(directory / "FORUM.md", std::ios::binary)
         << "$${FORUM_DEFINITION}\n$${CHARACTER_VOICE}\n$$(HOUSE-RULES.md)";
     fixture.add_character("writer", "Writer");
     std::filesystem::create_directories(directory / "members" / "writer");

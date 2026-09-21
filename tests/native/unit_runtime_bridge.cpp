@@ -2,6 +2,7 @@
 
 #include "support/mock_http_server.h"
 #include "support/test_workspace.h"
+#include "util/path_name.h"
 
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
@@ -41,7 +42,7 @@ std::filesystem::path make_config(const cha::test::TestWorkspace& workspace) {
     std::ofstream(config / "app.toml")
         << "vault = \"Test\"\n[logging]\nfile = \"runtime.log\"\nlevel = \"off\"\n";
     std::ofstream(config / "test.toml")
-        << "vault_name = \"Test\"\ndata = " << std::quoted(database.string())
+        << "vault_name = \"Test\"\ndata = " << std::quoted(cha::utf8_path(database))
         << "\n";
     return config;
 }
@@ -84,8 +85,8 @@ protected:
         char* error = nullptr;
         int32_t password_error = 0;
         runtime_ = cha_runtime_create(
-            config_.c_str(),
-            resources_.c_str(),
+            cha::utf8_path(config_).c_str(),
+            cha::utf8_path(resources_).c_str(),
             "",
             &password_error,
             &error);
@@ -161,7 +162,8 @@ TEST(NativeRuntimeDeathTest, ShutdownDeadlineIncludesBlockedDelivery) {
         const auto config = make_config(workspace);
         char* error = nullptr;
         int32_t password_error{};
-        auto* runtime = cha_runtime_create(config.c_str(), workspace.root().c_str(),
+        auto* runtime = cha_runtime_create(
+            cha::utf8_path(config).c_str(), cha::utf8_path(workspace.root()).c_str(),
             "", &password_error, &error);
         if (!runtime) std::_Exit(2);
         struct Blocked {
@@ -358,8 +360,8 @@ TEST_F(NativeRuntimeTest, VaultSwitchPersistsAcrossRestart) {
     char* error = nullptr;
     int32_t password_error = 0;
     runtime_ = cha_runtime_create(
-        config_.c_str(),
-        resources_.c_str(),
+        cha::utf8_path(config_).c_str(),
+        cha::utf8_path(resources_).c_str(),
         "",
         &password_error,
         &error);
@@ -390,7 +392,7 @@ TEST_F(NativeRuntimeTest, SaveFileUsesTemporaryReplaceAndHonorsEpoch) {
         cha_runtime_save_file(
             runtime_,
             epoch_,
-            destination.c_str(),
+            cha::utf8_path(destination).c_str(),
             payload.c_str(),
             payload.size(),
             &error),
@@ -407,7 +409,7 @@ TEST_F(NativeRuntimeTest, SaveFileUsesTemporaryReplaceAndHonorsEpoch) {
         cha_runtime_save_file(
             runtime_,
             epoch_,
-            empty_destination.c_str(),
+            cha::utf8_path(empty_destination).c_str(),
             nullptr,
             0,
             &error),
@@ -423,7 +425,7 @@ TEST_F(NativeRuntimeTest, SaveFileUsesTemporaryReplaceAndHonorsEpoch) {
         cha_runtime_save_file(
             runtime_,
             epoch_ + 99,
-            destination.c_str(),
+            cha::utf8_path(destination).c_str(),
             "stale",
             5,
             &error),
@@ -454,7 +456,7 @@ TEST_F(NativeRuntimeTest, ExportSessionWritesMarkdownThroughSaveFile) {
             epoch_,
             "lobby",
             session_id.c_str(),
-            destination.c_str(),
+            cha::utf8_path(destination).c_str(),
             &error),
         1);
     cha_string_free(error);

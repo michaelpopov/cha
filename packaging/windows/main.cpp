@@ -11,6 +11,7 @@
 #include <wrl.h>
 
 #include <WebView2.h>
+#include <WebView2EnvironmentOptions.h>
 
 #include <nlohmann/json.hpp>
 #include <shlwapi.h>
@@ -33,6 +34,7 @@
 
 using Microsoft::WRL::Callback;
 using Microsoft::WRL::ComPtr;
+using Microsoft::WRL::Make;
 
 namespace {
 
@@ -397,8 +399,13 @@ std::wstring native_bootstrap_script(std::string_view connection_id) {
         L"});}";
 }
 
-constexpr wchar_t kAssetHost[] = L"app.cha.local";
-constexpr wchar_t kAssetOrigin[] = L"https://app.cha.local";
+// Keep this aligned with the macOS host in packaging/macos/feasibility.swift.
+// One registered scheme serves the packaged files and the runtime's media
+// bytes, so both arrive on a single origin and 'self' covers them in the CSP.
+constexpr wchar_t kAssetScheme[] = L"cha";
+constexpr wchar_t kAssetOrigin[] = L"cha://app";
+// Served per document; carries that document's connection identifier.
+constexpr wchar_t kBootstrapPath[] = L"/__cha-bootstrap.js";
 constexpr char kNativeContentSecurityPolicy[] =
     "default-src 'none'; script-src 'self'; style-src 'self'; "
     "img-src 'self' data:; font-src 'self'; media-src 'self' blob:; connect-src 'self'; "
@@ -589,8 +596,7 @@ private:
             16,
             16,
             0));
-        window_class.hCursor = ::LoadCursorW(
-            nullptr, MAKEINTRESOURCEW(32512));
+        window_class.hCursor = ::LoadCursorW(nullptr, IDC_ARROW);
         window_class.hbrBackground =
             reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
         window_class.lpszClassName = kWindowClass;
@@ -726,22 +732,44 @@ private:
     }
 
     void start_webview() {
-#if defined(CHA_NATIVE_INSTRUMENTATION)
-        if (cdp_port_) {
-            const std::wstring arguments =
-                L"--remote-debugging-port=" + std::to_wstring(*cdp_port_);
-            ::SetEnvironmentVariableW(
-                L"WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", arguments.c_str());
-        }
-#else
+        // Browser arguments come from the options below, never from the
+        // environment, so a hostile environment cannot inject them.
         ::SetEnvironmentVariableW(L"WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", nullptr);
+#if !defined(CHA_NATIVE_INSTRUMENTATION)
         ::SetEnvironmentVariableW(L"CHA_DEV_ORIGIN", nullptr);
 #endif
+        const auto options = Make<CoreWebView2EnvironmentOptions>();
+        const auto scheme =
+            Make<CoreWebView2CustomSchemeRegistration>(kAssetScheme);
+        if (!options || !scheme) {
+            throw std::runtime_error("Failed to initialize WebView2");
+        }
+        // Secure so the application is a secure context and may ask for the
+        // microphone; an authority so cha://app/... carries a real host and
+        // the pages share one origin.
+        scheme->put_TreatAsSecure(TRUE);
+        scheme->put_HasAuthorityComponent(TRUE);
+        LPCWSTR allowed[] = {kAssetOrigin};
+        scheme->SetAllowedOrigins(ARRAYSIZE(allowed), allowed);
+        ICoreWebView2CustomSchemeRegistration* registrations[] = {scheme.Get()};
+        HRESULT result = options->SetCustomSchemeRegistrations(
+            ARRAYSIZE(registrations), registrations);
+#if defined(CHA_NATIVE_INSTRUMENTATION)
+        if (SUCCEEDED(result) && cdp_port_) {
+            const std::wstring arguments =
+                L"--remote-debugging-port=" + std::to_wstring(*cdp_port_);
+            result = options->put_AdditionalBrowserArguments(arguments.c_str());
+        }
+#endif
+        if (FAILED(result)) {
+            throw std::runtime_error(cha::utf8_from_wide(
+                hresult_message(result, L"Failed to initialize WebView2")));
+        }
         const std::shared_ptr<WindowsApplication> self = shared_from_this();
-        const HRESULT result = ::CreateCoreWebView2EnvironmentWithOptions(
+        result = ::CreateCoreWebView2EnvironmentWithOptions(
             nullptr,
             webview_directory_.c_str(),
-            nullptr,
+            options.Get(),
             Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(
                 [self](HRESULT status, ICoreWebView2Environment* environment) {
                     return self->environment_created(status, environment);
@@ -827,6 +855,9 @@ private:
                     const bool hash_only = !current.empty()
                         && without_fragment(uri) == without_fragment(current)
                         && uri != current;
+                    // A hash change keeps the document, so it keeps its
+                    // connection. Anything else replaces the document and so
+                    // needs a fresh one, which the shell will hand it.
                     if (!hash_only) {
                         replace_document_connection();
                     }
@@ -964,11 +995,37 @@ private:
         return args->put_Response(response.Get());
     }
 
+    // Puts the bootstrap ahead of the application bundle. The bundle is a
+    // deferred module script, so this classic script always runs first.
+    static std::string with_bootstrap_script(const std::string& html) {
+        constexpr std::string_view head = "</head>";
+        const std::string tag = std::string("<script src=\"")
+            + cha::utf8_from_wide(kBootstrapPath) + "\"></script>";
+        const auto at = html.find(head);
+        if (at == std::string::npos) return tag + html;
+        return html.substr(0, at) + tag + html.substr(at);
+    }
+
+    // Keep this aligned with mimeType(for:) in packaging/macos/feasibility.swift.
+    static std::wstring asset_content_type(const std::filesystem::path& file) {
+        const std::wstring extension = file.extension().wstring();
+        if (extension == L".html") return L"text/html; charset=utf-8";
+        if (extension == L".css") return L"text/css; charset=utf-8";
+        if (extension == L".js") return L"text/javascript; charset=utf-8";
+        if (extension == L".svg") return L"image/svg+xml";
+        if (extension == L".png") return L"image/png";
+        if (extension == L".woff2") return L"font/woff2";
+        if (extension == L".json" || extension == L".map") {
+            return L"application/json";
+        }
+        if (extension == L".wav") return L"audio/wav";
+        return L"application/octet-stream";
+    }
+
     HRESULT handle_media_resource(
         ICoreWebView2WebResourceRequestedEventArgs* args,
-        const std::wstring& uri) {
-        const std::wstring prefix = L"https://app.cha.local/media/";
-        const std::string id = cha::utf8_from_wide(uri.substr(prefix.size()));
+        std::wstring_view resource_id) {
+        const std::string id = cha::utf8_from_wide(resource_id);
         const auto not_found = [&] {
             return respond_with_bytes(
                 args, 404, L"Not Found",
@@ -1013,44 +1070,112 @@ private:
         wchar_t* raw_uri = nullptr;
         if (FAILED(request->get_Uri(&raw_uri))) return S_OK;
         const std::wstring uri = take_com_string(raw_uri);
-        if (uri.rfind(L"https://app.cha.local/media/", 0) == 0) {
-            return handle_media_resource(args, uri);
+        const std::wstring origin(kAssetOrigin);
+        if (uri.rfind(origin + L"/media/", 0) == 0) {
+            return handle_media_resource(args, uri.substr(origin.size() + 7));
         }
-        const bool shell = uri == L"https://app.cha.local/"
-            || uri == L"https://app.cha.local/index.html";
-        if (!shell) return S_OK;
-        const std::filesystem::path index = *assets_ / L"index.html";
-        std::ifstream input(index, std::ios::binary);
-        if (!input) {
+        if (dev_origin_ && uri.rfind(*dev_origin_ + L"/media/", 0) == 0) {
+            return handle_media_resource(args, uri.substr(dev_origin_->size() + 7));
+        }
+        const auto not_found = [&] {
             return respond_with_bytes(
                 args, 404, L"Not Found",
                 L"Content-Type: text/plain; charset=utf-8\nCache-Control: no-store",
                 "not found");
+        };
+        if (uri == origin + kBootstrapPath
+            || (dev_origin_ && uri == *dev_origin_ + kBootstrapPath)) {
+            if (connection_id_.empty()) return not_found();
+            return respond_with_bytes(
+                args, 200, L"OK",
+                L"Content-Type: text/javascript; charset=utf-8\nCache-Control: no-store",
+                cha::utf8_from_wide(native_bootstrap_script(connection_id_)));
         }
+        if (uri.rfind(origin + L"/", 0) != 0) return not_found();
+        std::wstring relative = uri.substr(origin.size() + 1);
+        if (const auto query = relative.find_first_of(L"?#");
+            query != std::wstring::npos) {
+            relative.erase(query);
+        }
+        const bool shell = relative.empty() || relative == L"index.html";
+        if (shell) relative = L"index.html";
+        const auto file = resolve_asset(relative);
+        if (!file) return not_found();
+        return respond_with_asset(args, *file, shell);
+    }
+
+    // Resolves a request path inside the asset directory, or nothing if it
+    // would escape. Rooted and drive-qualified paths matter here because
+    // std::filesystem::path concatenation drops the left operand when the
+    // right one is rooted, so "/C:/secrets" would otherwise be served
+    // verbatim. The containment check also covers symlinks and junctions.
+    std::optional<std::filesystem::path> resolve_asset(
+        const std::wstring& relative) const {
+        if (relative.empty()) return std::nullopt;
+        // No colon can appear in a packaged asset name, and rejecting it stops
+        // both drive letters and NTFS alternate data streams.
+        if (relative.find(L':') != std::wstring::npos) return std::nullopt;
+        if (relative.find(L'\\') != std::wstring::npos) return std::nullopt;
+        const std::filesystem::path candidate(relative);
+        if (candidate.has_root_name() || candidate.has_root_directory()) {
+            return std::nullopt;
+        }
+        for (const auto& part : candidate) {
+            if (part == L".." || part == L".") return std::nullopt;
+        }
+        std::error_code error;
+        const auto root = std::filesystem::weakly_canonical(*assets_, error);
+        if (error) return std::nullopt;
+        const auto resolved =
+            std::filesystem::weakly_canonical(root / candidate, error);
+        if (error) return std::nullopt;
+        const auto inside = resolved.lexically_relative(root);
+        if (inside.empty() || *inside.begin() == L"..") return std::nullopt;
+        return resolved;
+    }
+
+    HRESULT respond_with_asset(
+        ICoreWebView2WebResourceRequestedEventArgs* args,
+        const std::filesystem::path& file,
+        bool shell) {
+        const auto not_found = [&] {
+            return respond_with_bytes(
+                args, 404, L"Not Found",
+                L"Content-Type: text/plain; charset=utf-8\nCache-Control: no-store",
+                "not found");
+        };
+        std::ifstream input(file, std::ios::binary);
+        if (!input) return not_found();
         const std::string body{
             std::istreambuf_iterator<char>(input),
             std::istreambuf_iterator<char>()};
-        const std::wstring headers =
-            L"Content-Type: text/html; charset=utf-8\nCache-Control: no-cache\n"
-            L"Content-Security-Policy: "
-            + wide_from_utf8(kNativeContentSecurityPolicy);
-        return respond_with_bytes(args, 200, L"OK", headers, body);
+        std::wstring headers = L"Content-Type: " + asset_content_type(file)
+            + (shell
+                ? L"\nCache-Control: no-cache\nContent-Security-Policy: "
+                    + wide_from_utf8(kNativeContentSecurityPolicy)
+                : L"\nCache-Control: public, max-age=31536000, immutable");
+        return respond_with_bytes(
+            args, 200, L"OK", headers,
+            shell ? with_bootstrap_script(body) : body);
     }
 
     HRESULT install_native_origin() {
         if (!assets_) return E_INVALIDARG;
-        ComPtr<ICoreWebView2_3> webview3;
-        HRESULT result = webview_.As(&webview3);
-        if (FAILED(result)) return result;
-        result = webview3->SetVirtualHostNameToFolderMapping(
-            kAssetHost,
-            assets_->c_str(),
-            COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_DENY);
-        if (FAILED(result)) return result;
-        result = webview_->AddWebResourceRequestedFilter(
-            L"https://app.cha.local/*",
+        HRESULT result = webview_->AddWebResourceRequestedFilter(
+            (std::wstring(kAssetOrigin) + L"/*").c_str(),
             COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL);
         if (FAILED(result)) return result;
+        if (dev_origin_) {
+            // Vite serves frontend assets; bootstrap and media belong to the host.
+            result = webview_->AddWebResourceRequestedFilter(
+                (*dev_origin_ + kBootstrapPath).c_str(),
+                COREWEBVIEW2_WEB_RESOURCE_CONTEXT_SCRIPT);
+            if (FAILED(result)) return result;
+            result = webview_->AddWebResourceRequestedFilter(
+                (*dev_origin_ + L"/media/*").c_str(),
+                COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL);
+            if (FAILED(result)) return result;
+        }
         EventRegistrationToken ignored{};
         const std::shared_ptr<WindowsApplication> self = shared_from_this();
         result = webview_->add_WebResourceRequested(
@@ -1066,20 +1191,20 @@ private:
                     return self->handle_native_message(args);
                 }).Get(),
             &ignored);
-        if (FAILED(result)) return result;
-        return replace_document_connection();
+        return result;
     }
 
+    // AddScriptToExecuteOnDocumentCreated is asynchronous, so a script
+    // registered as a navigation starts can miss the document it was meant
+    // for. The shell is served from here instead, so the bootstrap is served
+    // as an ordinary classic script whose contents are generated per document.
+    // It is fetched before the deferred module bundle runs, so the connection
+    // identifier is in place before the application starts.
     HRESULT replace_document_connection() {
         if (runtime_ == nullptr) return E_UNEXPECTED;
         if (!connection_id_.empty()) {
             cha_runtime_close_connection(runtime_, connection_id_.c_str());
             connection_id_.clear();
-        }
-        if (!native_script_id_.empty() && webview_) {
-            webview_->RemoveScriptToExecuteOnDocumentCreated(
-                native_script_id_.c_str());
-            native_script_id_.clear();
         }
         char* error = nullptr;
         char* opened = cha_runtime_open_connection(runtime_, &error);
@@ -1089,15 +1214,7 @@ private:
         }
         connection_id_ = opened;
         cha_string_free(opened);
-        const std::wstring script = native_bootstrap_script(connection_id_);
-        const std::shared_ptr<WindowsApplication> self = shared_from_this();
-        return webview_->AddScriptToExecuteOnDocumentCreated(
-            script.c_str(),
-            Callback<ICoreWebView2AddScriptToExecuteOnDocumentCreatedCompletedHandler>(
-                [self](HRESULT, LPCWSTR id) {
-                    if (id != nullptr) self->native_script_id_ = id;
-                    return S_OK;
-                }).Get());
+        return S_OK;
     }
 
     HRESULT handle_native_message(
@@ -1319,7 +1436,6 @@ private:
     void handle_renderer_failure() {
         if (closing_) return;
         renderer_failures_ += 1;
-        replace_document_connection();
         if (renderer_failures_ >= 3) {
             post_fatal_error(
                 L"CHA's browser process stopped repeatedly. Quit and open CHA again.");
@@ -1328,6 +1444,8 @@ private:
         navigate_home();
     }
 
+    // The connection is replaced by the NavigationStarting handler, which is
+    // the single owner of document identity; navigating is all that is needed.
     void navigate_home() {
         if (closing_) return;
         initial_navigation_pending_ = true;
@@ -1739,7 +1857,6 @@ private:
     std::thread shutdown_thread_;
     bool smoke_test_{};
     std::string connection_id_;
-    std::wstring native_script_id_;
     int renderer_failures_{};
     bool initial_navigation_pending_{};
     bool save_operation_in_progress_{};

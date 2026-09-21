@@ -12,7 +12,16 @@ set(CHA_PACKAGE_VERSION "development" CACHE STRING
 find_package(Threads REQUIRED)
 find_package(CURL QUIET)
 if(WIN32)
+    # Static OpenSSL so the application carries no OpenSSL DLLs. Which copy to
+    # pick depends on the CRT this build uses: mixing the two puts a separate
+    # heap on either side of the static library boundary. The packaged build
+    # asks for the static CRT; a plain local build gets the dynamic default.
     set(OPENSSL_USE_STATIC_LIBS TRUE)
+    if(CMAKE_MSVC_RUNTIME_LIBRARY MATCHES "^MultiThreaded(Debug)?$")
+        set(OPENSSL_MSVC_STATIC_RT TRUE)
+    else()
+        set(OPENSSL_MSVC_STATIC_RT FALSE)
+    endif()
 endif()
 find_package(OpenSSL REQUIRED)
 
@@ -159,11 +168,12 @@ file(MAKE_DIRECTORY "${sqlcipher_amalgamation_DIR}")
 if(NOT EXISTS "${sqlcipher_amalgamation_DIR}/sqlite3.c")
     if(WIN32)
         find_program(CHA_NMAKE_EXECUTABLE nmake REQUIRED)
+        file(TO_NATIVE_PATH "${sqlcipher_source_SOURCE_DIR}" sqlcipher_source_native)
         execute_process(
             COMMAND
                 "${CHA_NMAKE_EXECUTABLE}"
                 /f "${sqlcipher_source_SOURCE_DIR}/Makefile.msc"
-                TOP="${sqlcipher_source_SOURCE_DIR}"
+                "TOP=${sqlcipher_source_native}"
                 NO_TCL=1
                 sqlite3.c
             WORKING_DIRECTORY "${sqlcipher_amalgamation_DIR}"
@@ -628,6 +638,11 @@ if(WIN32)
         ${CHA_WINDOWS_ICON})
     target_include_directories(
         cha_windows_app PRIVATE packaging/macos)
+    # The host calls the wide Win32 entry points exclusively; without UNICODE
+    # the resource-id macros (IDC_ARROW and friends) expand to their narrow
+    # form and will not convert to LPCWSTR.
+    target_compile_definitions(
+        cha_windows_app PRIVATE UNICODE _UNICODE)
     target_link_libraries(
         cha_windows_app
         PRIVATE
@@ -652,7 +667,7 @@ if(WIN32)
     target_include_directories(
         cha_windows_test_app PRIVATE packaging/macos)
     target_compile_definitions(
-        cha_windows_test_app PRIVATE CHA_NATIVE_INSTRUMENTATION)
+        cha_windows_test_app PRIVATE CHA_NATIVE_INSTRUMENTATION UNICODE _UNICODE)
     target_link_libraries(
         cha_windows_test_app
         PRIVATE
