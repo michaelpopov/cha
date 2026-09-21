@@ -1,9 +1,0 @@
-host = "openrouter.ai"
-port = 443
-base_path = "/api"
-https = true
-mode = "net"
-model = "mistralai/mistral-large"
-stream = true
-api = "chat_completions"
-web_search = "off"

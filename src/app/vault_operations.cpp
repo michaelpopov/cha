@@ -1,7 +1,7 @@
 #include "app/vault_operations.h"
 
 #include "app/application_internal.h"
-#include "session/workspace_session_database.h"
+#include "storage/workspace_session_database.h"
 #include "util/logging.h"
 #include "util/path_name.h"
 #include "util/private_filesystem.h"

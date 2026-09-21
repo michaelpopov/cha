@@ -1,6 +1,6 @@
-#include "web/live_session_manager.h"
+#include "runtime/live_session_manager.h"
 
-#include "session/not_found_error.h"
+#include "storage/not_found_error.h"
 #include "support/test_live_session.h"
 #include "workspace/builtins.h"
 
@@ -22,8 +22,8 @@ namespace {
 
 using namespace std::chrono_literals;
 
-app::RuntimeSettings native_manager_settings(std::size_t session_limit) {
-    app::RuntimeSettings settings;
+RuntimeSettings native_manager_settings(std::size_t session_limit) {
+    RuntimeSettings settings;
     settings.session_limit = session_limit;
     settings.command_queue_capacity = 8;
 

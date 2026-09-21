@@ -234,7 +234,6 @@ add_library(cha_lib STATIC
     ${CMAKE_CURRENT_BINARY_DIR}/generated/application_guide.cpp
     ${CMAKE_CURRENT_BINARY_DIR}/generated/character_voice.cpp
     ${CMAKE_CURRENT_BINARY_DIR}/generated/new_character_template.cpp
-    src/util/environment.cpp
     src/util/crypto.cpp
     src/util/curl.cpp
     src/util/private_filesystem.cpp
@@ -261,38 +260,38 @@ add_library(cha_lib STATIC
     src/characters/character_config.cpp
     src/session/controller_update.cpp
     src/session/session_controller.cpp
-    src/session/session_database.cpp
-    src/session/session_label.cpp
-    src/session/session_lease.cpp
-    src/session/session_repository.cpp
-    src/session/session_storage_layout.cpp
-    src/session/sqlite_storage.cpp
-    src/session/workspace_session_database.cpp
+    src/storage/session_database.cpp
+    src/storage/session_label.cpp
+    src/storage/session_lease.cpp
+    src/storage/session_repository.cpp
+    src/storage/session_storage_layout.cpp
+    src/storage/sqlite_storage.cpp
+    src/storage/workspace_session_database.cpp
     src/app/application_config.cpp
-    src/services/fish_audio.cpp
-    src/services/r2_database_transfer.cpp
+    src/providers/fish_audio.cpp
+    src/app/r2_database_transfer.cpp
     src/workspace/workspace.cpp
     src/workspace/workspace_config_store.cpp
-    src/workspace/session_open.cpp
+    src/session/session_open.cpp
     src/app/application.cpp
     src/app/background_jobs.cpp
-    src/app/pending_media_registry.cpp
     src/app/vault_operations.cpp
     src/app/workspace_operations.cpp
     src/app/settings_operations.cpp
-    src/app/session_output.cpp
-    src/app/media_resources.cpp
+    src/runtime/session_output.cpp
+    src/media/audio_download.cpp
     src/app/media_operations.cpp
-    src/app/audio_download.cpp
-    src/web/command_queue.cpp
-    src/web/request_parser.cpp
-    src/web/protocol.cpp
-    src/web/session_markdown.cpp
-    src/web/session_mirror.cpp
-    src/web/session_projection.cpp
-    src/web/live_session.cpp
-    src/web/live_session_manager.cpp
-    src/web/text_input.cpp
+    src/media/media_resources.cpp
+    src/media/pending_media_registry.cpp
+    src/runtime/command_queue.cpp
+    src/runtime/request_parser.cpp
+    src/runtime/protocol.cpp
+    src/session/session_markdown.cpp
+    src/session/session_mirror.cpp
+    src/runtime/session_projection.cpp
+    src/runtime/live_session.cpp
+    src/runtime/live_session_manager.cpp
+    src/runtime/text_input.cpp
     src/bridge/bridge_protocol.cpp
     src/bridge/bridge_router.cpp
     src/bridge/settings_dispatch.cpp
@@ -388,7 +387,6 @@ if(BUILD_TESTING)
     FetchContent_MakeAvailable(cpp_httplib)
 
     set(CHA_TEST_SOURCES
-        tests/util/unit_environment.cpp
         tests/util/unit_private_filesystem.cpp
         tests/util/unit_logging.cpp
         tests/util/unit_concurrent_queue.cpp
@@ -407,13 +405,13 @@ if(BUILD_TESTING)
         tests/providers/unit_sse_framer.cpp
         tests/session/unit_concurrent_controllers.cpp
         tests/session/unit_session_controller.cpp
-        tests/session/unit_session_lease.cpp
-        tests/session/unit_session_repository.cpp
-        tests/session/unit_workspace_session_database.cpp
+        tests/storage/unit_session_lease.cpp
+        tests/storage/unit_session_repository.cpp
+        tests/storage/unit_workspace_session_database.cpp
         tests/session/unit_controller_update.cpp
         tests/workspace/unit_workspace.cpp
         tests/workspace/unit_workspace_config_store.cpp
-        tests/workspace/unit_session_open.cpp
+        tests/session/unit_session_open.cpp
         tests/workspace/unit_builtins.cpp
         tests/support/test_workspace.cpp
     )
@@ -459,28 +457,28 @@ if(BUILD_TESTING)
         cha_app_tests
         tests/app/unit_application.cpp
         tests/app/unit_background_jobs.cpp
-        tests/app/unit_pending_media_registry.cpp
-        tests/app/unit_media_resources.cpp
+        tests/media/unit_pending_media_registry.cpp
+        tests/media/unit_media_resources.cpp
         tests/app/unit_media_operations.cpp
         tests/app/unit_settings_operations.cpp
         tests/app/unit_vault_maintenance.cpp
-        tests/app/unit_session_output.cpp
+        tests/runtime/unit_session_output.cpp
         tests/app/unit_session_retirement.cpp
-        tests/services/unit_fish_audio.cpp
-        tests/app/unit_audio_download.cpp
+        tests/providers/unit_fish_audio.cpp
+        tests/media/unit_audio_download.cpp
         tests/app/unit_application_config.cpp
-        tests/services/unit_r2_database_transfer.cpp
-        tests/web/unit_protocol.cpp
-        tests/web/unit_wire_fixtures.cpp
-        tests/web/unit_session_markdown.cpp
-        tests/web/unit_session_mirror.cpp
-        tests/web/unit_session_projection.cpp
-        tests/web/unit_live_session_manager.cpp
-        tests/web/unit_text_command.cpp
-        tests/web/unit_text_input.cpp
-        tests/web/unit_text_mention.cpp
-        tests/web/unit_text_multicast.cpp
-        tests/web/unit_live_session.cpp
+        tests/app/unit_r2_database_transfer.cpp
+        tests/runtime/unit_protocol.cpp
+        tests/runtime/unit_wire_fixtures.cpp
+        tests/session/unit_session_markdown.cpp
+        tests/session/unit_session_mirror.cpp
+        tests/runtime/unit_session_projection.cpp
+        tests/runtime/unit_live_session_manager.cpp
+        tests/runtime/unit_text_command.cpp
+        tests/runtime/unit_text_input.cpp
+        tests/runtime/unit_text_mention.cpp
+        tests/runtime/unit_text_multicast.cpp
+        tests/runtime/unit_live_session.cpp
         tests/support/test_workspace.cpp)
     target_link_libraries(
         cha_app_tests
@@ -584,12 +582,6 @@ if(BUILD_TESTING)
     endforeach()
 
     include(GoogleTest)
-    foreach(cha_unit_test_target IN ITEMS
-            cha_tests cha_app_tests cha_bridge_tests cha_native_runtime_tests)
-        target_sources(
-            ${cha_unit_test_target}
-            PRIVATE tests/support/unit_test_environment.cpp)
-    endforeach()
     gtest_discover_tests(cha_tests)
     gtest_discover_tests(cha_app_tests PROPERTIES TIMEOUT 60)
     gtest_discover_tests(cha_bridge_tests)

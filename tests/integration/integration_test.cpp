@@ -3,16 +3,15 @@
 #include "providers/providers.h"
 #include "session/session_controller.h"
 #include "characters/character_config.h"
-#include "util/environment.h"
 #include "support/mock_http_server.h"
-#include "session/session_database.h"
+#include "storage/session_database.h"
 #include "workspace/workspace.h"
 #include "workspace/workspace_config_store.h"
 #include "support/test_notifier.h"
 #include "support/test_controller.h"
 #include "support/test_session_database.h"
 #include "support/test_workspace.h"
-#include "services/r2_database_transfer.h"
+#include "app/r2_database_transfer.h"
 
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
@@ -130,7 +129,6 @@ constexpr auto integration_chat_timeout = std::chrono::seconds(60);
 
 CharacterDefinition integration_definition(bool stream) {
     const std::filesystem::path workspace_directory{CHA_WORKSPACE_DIRECTORY};
-    load_dotenv(workspace_directory / ".env");
     const Workspace workspace = Workspace::load(workspace_directory);
     if (workspace.find_forum_member("lobby", "Ismael") == nullptr) {
         throw std::runtime_error("Checked-in workspace has no Ismael lobby member");

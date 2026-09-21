@@ -7,18 +7,17 @@
 #include "providers/api_key_store.h"
 #include "providers/provider_client.h"
 #include "providers/providers.h"
-#include "session/not_found_error.h"
-#include "session/session_label.h"
-#include "session/session_repository.h"
-#include "util/environment.h"
+#include "storage/not_found_error.h"
+#include "storage/session_label.h"
+#include "storage/session_repository.h"
 #include "util/logging.h"
 #include "util/text.h"
 #include "app/current_vault.h"
-#include "web/session_markdown.h"
-#include "web/session_mirror.h"
-#include "web/session_projection.h"
+#include "session/session_markdown.h"
+#include "session/session_mirror.h"
+#include "runtime/session_projection.h"
 #include "workspace/builtins.h"
-#include "workspace/session_open.h"
+#include "session/session_open.h"
 #include "workspace/workspace.h"
 #include "workspace/workspace_config_store.h"
 
@@ -275,7 +274,7 @@ Application::Impl::Impl(
     live_sessions = std::make_unique<LiveSessionManager>(
         settings, opener);
     audio_downloads = std::make_unique<AudioDownloadManager>(
-        *sessions, current_vault_, true);
+        *sessions, [this] { return current_vault_.get().name; }, true);
     publish_capabilities_locked();
     running = true;
     notified_epoch = live_sessions->context_epoch();
@@ -386,7 +385,6 @@ std::unique_ptr<Application> Application::open(
     std::string vault_password,
     RuntimeSettings settings) {
     for (const std::string& warning : command.warnings) log_warn(warning);
-    load_dotenv(command.config_directory / ".env");
     if (command.vault.password_protected && vault_password.empty()) {
         throw VaultPasswordError(
             "Password required to open this vault");

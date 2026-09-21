@@ -4,8 +4,8 @@
 #include "app/workspace_operations.h"
 #include "providers/api_key_store.h"
 #include "providers/provider_client.h"
-#include "web/request_parser.h"
-#include "web/live_session_manager.h"
+#include "runtime/request_parser.h"
+#include "runtime/live_session_manager.h"
 #include "workspace/workspace_config_store.h"
 
 #include <memory>

@@ -1,9 +1,9 @@
 #include "app/application.h"
 #include "bridge/bridge_router.h"
-#include "session/session_lease.h"
+#include "storage/session_lease.h"
 #include "support/mock_http_server.h"
 #include "support/test_workspace.h"
-#include "web/command_queue.h"
+#include "runtime/command_queue.h"
 #include "workspace/builtins.h"
 
 #include <gtest/gtest.h>

@@ -8,7 +8,7 @@
 #include "session/controller_update.h"
 #include "session/controller_view.h"
 #include "session/generation_status.h"
-#include "session/session_database.h"
+#include "storage/session_database.h"
 #include "chat/session_identity.h"
 #include "chat/transcript.h"
 #include "util/wake_notifier.h"

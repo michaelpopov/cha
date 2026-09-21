@@ -13,8 +13,9 @@ tests in section 19 to check an assumption before changing code.
 
 The [maintainer guide](MaintainerGuide.md) covers workspace files and operational
 recipes. [Editing workspace entities](editing.md) covers adding an editing flow.
-Current headers and tests are authoritative when an older subsystem README
-still describes the former HTTP application.
+The README in each `src/` directory summarizes that directory's current
+responsibility and dependencies; headers and tests remain authoritative for
+detailed behavior.
 
 ## 2. The application in one page
 
@@ -85,9 +86,8 @@ macOS host -> cha_macos_runtime -> cha_lib
 Windows host -------------------> cha_lib
 ```
 
-The directory `src/web/` retains its historical name; its shared support types
-now live in namespace `cha`. It contains application support, not an HTTP
-server.
+The directory `src/runtime/` holds the live-session runtime, the chat-input
+grammar, and the wire DTOs. Its types live in namespace `cha`.
 
 Core session behavior does not depend on the native host, JSON routing, or
 React. The bridge adapts messages to application operations; platform hosts
@@ -131,9 +131,11 @@ supply the injected native bridge.
 | [src/util](../src/util) | Queues, templates, logging, filesystem and text helpers |
 | [src/characters](../src/characters) | Character configuration and model-context projection |
 | [src/providers](../src/providers) | Request workers, outbound transport, protocol decoding |
-| [src/session](../src/session) | Controller, journal, database, lease, repository |
-| [src/workspace](../src/workspace) | Configuration store, workspace loading, built-ins, session construction |
-| [src/web](../src/web) | Shared configuration, live-session, DTO, text-input, audio and mirror support |
+| [src/session](../src/session) | Controller state, controller opening, Markdown formatting, mirroring |
+| [src/storage](../src/storage) | SQLite access, journal, database, lease, repository |
+| [src/media](../src/media) | Audio downloads, transient media resources, cleanup |
+| [src/workspace](../src/workspace) | Configuration store, workspace loading, built-ins |
+| [src/runtime](../src/runtime) | Live-session runtime, DTOs, text-input grammar, projection |
 | [webapp/src](../webapp/src) | React state, screens, native client, event projection |
 | [resources/dto.yaml](../resources/dto.yaml) | DTO schema used to generate TypeScript types |
 | [packaging/shared/import-seed](../packaging/shared/import-seed) | Example workspace configuration tree |
@@ -273,11 +275,7 @@ queues remain the source of work.
 
 The other utilities support important boundaries:
 
-- `environment.*` parses the application-level `.env` without overriding
-  inherited values. Production uses it only as a legacy migration source for
-  R2 credentials; model and R2 keys normally come from the active vault, while
-  OpenAI OAuth remains process-wide.
-- `path_name.*` and `utf8_path.*` keep filesystem paths and identifiers explicit.
+- `path_name.*` keeps UTF-8 filesystem paths and identifiers explicit.
 - `public_name.*` centralizes visible-name validation.
 - `text_template.*` expands `$$(relative/file)` includes and `$${variable}`
   substitutions with containment and cycle/resource limits.
@@ -320,7 +318,7 @@ Relative paths resolve from the configuration directory. Mirror and modify
 paths append the vault display name: the example uses `mirror/Personal` and
 `modify/Personal`. Obsolete `[web]` listener settings and old per-vault
 mirror/modify fields are ignored with warnings. Session runtime bounds and
-deadlines live in [RuntimeSettings](../src/app/runtime_settings.h), separate
+deadlines live in [RuntimeSettings](../src/runtime/runtime_settings.h), separate
 from this external configuration.
 
 Vault-backed keys are included as plaintext in workspace exports. OAuth
@@ -383,9 +381,9 @@ to their application; constructing a test workspace does not publish global
 process state.
 
 The schema-v2 `config` table stores `name` and `content`. Import collects
-regular `.toml` and `.md` workspace files without following symlinks. It excludes
-root process-configuration files and `.env`. Template includes must therefore
-be part of the accepted row set.
+regular `.toml` and `.md` workspace files without following symlinks. It
+excludes root process-configuration files and every other extension. Template
+includes must therefore be part of the accepted row set.
 
 An ordinary configuration mutation edits the private tree, loads a complete
 candidate, collects rows, commits them in one SQLite transaction, and only then
@@ -473,10 +471,10 @@ contribute to one member's final definition and the order in which values win.
 
 ## 9. Fourth reading pass: session storage and opening
 
-Read [session_repository.h](../src/session/session_repository.h),
-[session_database.h](../src/session/session_database.h),
-[workspace_session_database.h](../src/session/workspace_session_database.h),
-and [session_open.cpp](../src/workspace/session_open.cpp).
+Read [session_repository.h](../src/storage/session_repository.h),
+[session_database.h](../src/storage/session_database.h),
+[workspace_session_database.h](../src/storage/workspace_session_database.h),
+and [session_open.cpp](../src/session/session_open.cpp).
 
 ### 9.1 Public identity and storage identity
 
@@ -795,9 +793,9 @@ Read these boundaries in order:
 4. [Bridge router](../src/bridge/bridge_router.cpp)
 5. [Workspace dispatch](../src/bridge/workspace_dispatch.cpp) and
    [settings dispatch](../src/bridge/settings_dispatch.cpp)
-6. [Session output](../src/app/session_output.h)
-7. [Session runtime and manager](../src/web/live_session_manager.cpp) and
-   [live session endpoint](../src/web/live_session.cpp)
+6. [Session output](../src/runtime/session_output.h)
+7. [Session runtime and manager](../src/runtime/live_session_manager.cpp) and
+   [live session endpoint](../src/runtime/live_session.cpp)
 8. [Frontend native bridge](../webapp/src/api/nativeBridge.ts) and
    [event projection](../webapp/src/api/nativeEvents.ts)
 
@@ -1133,9 +1131,9 @@ their connection/context lifetime contracts.
 ## 16. Persistence model
 
 The one authoritative schema and its validators are in
-[session/workspace_session_database.cpp](../src/session/workspace_session_database.cpp);
+[storage/workspace_session_database.cpp](../src/storage/workspace_session_database.cpp);
 restore and journal SQL are in
-[session/session_database.cpp](../src/session/session_database.cpp). Read the
+[storage/session_database.cpp](../src/storage/session_database.cpp). Read the
 schema first, then validation/restore, then `SessionJournal` methods.
 
 Schema v2 uses these `STRICT` tables:
@@ -1250,15 +1248,14 @@ advertised shutdown deadline.
 | Transcript and controller invariants | `tests/chat/`, `tests/session/` |
 | Workspace ownership, edits, import/export | `tests/workspace/` |
 | Application admission, settings, vaults, media, shutdown | `tests/app/` |
-| Protocol, session runtime, audio, mirror, configuration support | `tests/web/` |
+| Protocol, session runtime, projection, chat-input grammar | `tests/runtime/` |
 | Native envelopes, method policy, routing and flow control | `tests/bridge/` |
 | Shared C ABI and real native hosts | `tests/native/` |
 | C++-produced wire values and method policies | `tests/fixtures/wire/` |
 | Client validation, projection, reducers, loading, screens | Tests beside sources in `webapp/src/` |
 
 CTest registers the `cha_tests`, `cha_app_tests`, `cha_bridge_tests`, and
-`cha_native_runtime_tests` executables. `tests/web/` is a historical directory
-name, not a suite for a running HTTP server. Workspace tests now live under
+`cha_native_runtime_tests` executables. Workspace tests live under
 `tests/workspace/`, separate from application tests.
 
 For a contract change, read both the C++ producer tests and TypeScript consumer
@@ -1267,8 +1264,8 @@ tests prove that unsafe data is rejected before rendering. Method-policy tests
 detect drift even when both languages still compile.
 
 For shared-runtime behavior, start with
-[unit_live_session_manager.cpp](../tests/web/unit_live_session_manager.cpp),
-[unit_live_session.cpp](../tests/web/unit_live_session.cpp), and
+[unit_live_session_manager.cpp](../tests/runtime/unit_live_session_manager.cpp),
+[unit_live_session.cpp](../tests/runtime/unit_live_session.cpp), and
 [unit_vault_maintenance.cpp](../tests/app/unit_vault_maintenance.cpp). They cover
 selection and background retirement, full-queue maintenance deadlines and
 nonblocking timeout recovery, stale queued work, shutdown admission, and reason

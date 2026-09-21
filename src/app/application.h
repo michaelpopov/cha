@@ -1,14 +1,14 @@
 #pragma once
 
-#include "app/media_resources.h"
-#include "app/runtime_settings.h"
+#include "media/media_resources.h"
+#include "runtime/runtime_settings.h"
 #include "app/application_config.h"
-#include "app/audio_download.h"
-#include "web/command_queue.h"
-#include "services/fish_audio.h"
-#include "web/live_session_manager.h"
-#include "web/protocol.h"
-#include "services/r2_database_transfer.h"
+#include "media/audio_download.h"
+#include "runtime/command_queue.h"
+#include "providers/fish_audio.h"
+#include "runtime/live_session_manager.h"
+#include "runtime/protocol.h"
+#include "app/r2_database_transfer.h"
 #include "workspace/workspace_config_store.h"
 
 #include <chrono>

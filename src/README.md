@@ -9,7 +9,7 @@ through the common bridge. There is no application HTTP listener.
 ```text
 cha_macos / cha_windows -> cha_lib
 
-cha_lib -> app / bridge / web / services / workspace / providers / characters / chat / session / util
+cha_lib -> app / bridge / runtime / media / workspace / session / storage / providers / characters / chat / util
 cha_lib -> curl / sqlite / libuv / threads / toml++ / spdlog / nlohmann-json
 ```
 
@@ -35,16 +35,17 @@ diagnostic logging remains available until teardown finishes.
 
 | Directory | Responsibility |
 | --- | --- |
-| `app/` | Application composition root and domain operations. |
+| `app/` | Application composition root, domain operations, configuration, and R2 database transfer. |
+| `media/` | Audio downloads, transient media resources, and cleanup. |
 | `bridge/` | Native request envelopes and the operation dispatcher. |
-| `web/` | Chat-input grammar, API DTOs, live-session registry, and projection. |
-| `services/` | Direct integrations with external services such as Fish Audio and R2. |
-| `workspace/` | The loaded workspace model, built-ins, and the one controller-opening operation. |
-| `session/` | Session storage, databases and leases, controller state, persistence, and character resolution. |
-| `providers/` | Provider transport, request execution, cancellation, protocol decoding, and event delivery. |
+| `runtime/` | Live-session runtime, chat-input grammar, wire DTOs, and projection. |
+| `workspace/` | The loaded workspace model and built-ins. |
+| `session/` | Session controller state, controller opening, Markdown formatting, and best-effort mirroring. |
+| `storage/` | SQLite access, session persistence, repositories, and database leases. |
+| `providers/` | Provider transport, request execution, cancellation, protocol decoding, event delivery, and speech synthesis. |
 | `characters/` | Request-owned character/provider values, identity validation, and model context. |
 | `chat/` | Stable domain IDs plus presentation-neutral transcript records, validation, and live mutation. |
-| `util/` | Domain-neutral text, path, environment, logging, queue, and thread helpers. |
+| `util/` | Domain-neutral text, path, logging, queue, and thread helpers. |
 | `../webapp/` | React browser application and its browser tests. |
 
 Dependencies point downward through those responsibilities. Core layers never
@@ -114,9 +115,13 @@ under `../tests/native/`.
 ## Detailed contracts
 
 - [Workspace layer](workspace/README.md)
+- [Application layer](app/README.md)
+- [Native bridge](bridge/README.md)
+- [Media](media/README.md)
 - [Provider execution](providers/README.md)
 - [Character definitions and model context](characters/README.md)
 - [Sessions and persistence](session/README.md)
+- [Storage](storage/README.md)
 - [Shared chat model](chat/README.md)
-- [Native protocol and live sessions](web/README.md)
+- [Live-session runtime and protocol](runtime/README.md)
 - [Utilities](util/README.md)

@@ -1,6 +1,6 @@
 #include "support/test_workspace.h"
 
-#include "session/session_database.h"
+#include "storage/session_database.h"
 #include "workspace/workspace.h"
 #include "workspace/workspace_config_store.h"
 

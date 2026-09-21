@@ -1,8 +1,7 @@
-#include "session/session_lease.h"
-#include "session/sqlite_storage.h"
-#include "session/workspace_session_database.h"
+#include "storage/session_lease.h"
+#include "storage/sqlite_storage.h"
+#include "storage/workspace_session_database.h"
 #include "support/test_workspace.h"
-#include "util/environment.h"
 #include "util/path_name.h"
 #include "util/private_filesystem.h"
 #include "workspace/workspace.h"
@@ -14,7 +13,6 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
-#include <cstdlib>
 #include <exception>
 #include <filesystem>
 #include <fstream>
@@ -40,27 +38,6 @@ namespace {
 
 using Database = storage::SqliteDatabase;
 using Statement = storage::SqliteStatement;
-
-class ScopedEnvironmentVariable {
-public:
-    explicit ScopedEnvironmentVariable(std::string name) : name_(std::move(name)) {
-        if (const char* value = std::getenv(name_.c_str())) {
-            previous_value_ = value;
-        }
-    }
-
-    ~ScopedEnvironmentVariable() {
-        if (previous_value_) {
-            (void)set_environment_variable(name_, *previous_value_);
-        } else {
-            (void)unset_environment_variable(name_);
-        }
-    }
-
-private:
-    std::string name_;
-    std::optional<std::string> previous_value_;
-};
 
 std::string file_bytes(const std::filesystem::path& path) {
     std::ifstream input(path, std::ios::binary);
@@ -433,10 +410,7 @@ TEST_F(WorkspaceConfigStoreTest, RejectsMatchingSymlinksAndSkipsSymlinkedDirecto
     EXPECT_GE(count, 8U);
 }
 
-TEST_F(WorkspaceConfigStoreTest, IgnoresDotenvInsteadOfStoringOrLoadingIt) {
-    constexpr char variable[] = "CHA_IMPORT_STORE_IGNORED_CREDENTIAL_A1B2";
-    ScopedEnvironmentVariable guard(variable);
-    ASSERT_TRUE(unset_environment_variable(variable));
+TEST_F(WorkspaceConfigStoreTest, IgnoresDotenvInsteadOfStoringIt) {
     workspace_.write_provider(
         "secured",
         "host = \"example.test\"\n"
@@ -452,9 +426,7 @@ TEST_F(WorkspaceConfigStoreTest, IgnoresDotenvInsteadOfStoringOrLoadingIt) {
              "not a valid entry\n"}) {
         SCOPED_TRACE(dotenv);
         write_bytes(source() / ".env", dotenv);
-        EXPECT_EQ(std::getenv(variable), nullptr);
         EXPECT_NO_THROW((void)import_from_source());
-        EXPECT_EQ(std::getenv(variable), nullptr);
         EXPECT_EQ(
             inspect_workspace_session_database(database()),
             WorkspaceDatabaseState::valid_v2);
@@ -760,10 +732,7 @@ void expect_session_root_identity(
 
 class RuntimeWorkspaceConfigStoreTest : public testing::Test {
 protected:
-    static constexpr char dotenv_variable[] = "CHA_RUNTIME_STORE_DOTENV_B4A1";
-
     void SetUp() override {
-        ASSERT_TRUE(unset_environment_variable(dotenv_variable));
         workspace_.write_provider(
             "second",
             "host = \"test\"\nport = 2\nmode = \"test\"\nmodel = \"second\"\n");
@@ -804,7 +773,6 @@ protected:
         return WorkspaceConfigStore::open(database());
     }
 
-    ScopedEnvironmentVariable dotenv_guard_{dotenv_variable};
     test::TestWorkspace workspace_;
     std::filesystem::path export_;
 };
@@ -894,7 +862,6 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, OpensPrivateSessionStorageWithoutMateria
             EXPECT_EQ(posix_mode(shm_file), static_cast<mode_t>(0600));
         }
 #endif
-        EXPECT_EQ(std::getenv(dotenv_variable), nullptr);
         EXPECT_FALSE(std::filesystem::exists(workspace_child / ".env"));
         EXPECT_NE(store->snapshot()->find_character("guide"), nullptr);
         const std::shared_ptr<const Workspace> published = store->snapshot();
@@ -934,13 +901,6 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, ClosesSqliteButKeepsLeaseForMaintenance)
     expect_session_root_identity(store->snapshot(), workspace_path);
     EXPECT_THROW(
         (void)WorkspaceConfigStore::open(database()), SessionBusyError);
-}
-
-TEST_F(RuntimeWorkspaceConfigStoreTest, InheritedEnvironmentValuesWinAtStartup) {
-    ASSERT_TRUE(set_environment_variable(dotenv_variable, "from-process"));
-    const auto store = open_store();
-    EXPECT_STREQ(std::getenv(dotenv_variable), "from-process");
-    EXPECT_NE(store->snapshot()->find_character("guide"), nullptr);
 }
 
 TEST_F(RuntimeWorkspaceConfigStoreTest, RejectsMissingV1AndForeignDatabases) {
@@ -986,10 +946,6 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, SuccessfulEditUpdatesDatabaseAndWorkspac
     const auto store = open_store();
     const std::string character = "characters/guide/character.toml";
     const std::string forum = "forums/lobby/config.toml";
-    const std::string dotenv_before =
-        std::getenv(dotenv_variable) == nullptr
-            ? std::string()
-            : std::getenv(dotenv_variable);
     const WorkspaceConfigEditResult character_result =
         store->apply_character_settings(
             "guide", "second", std::string_view{"mono"},
@@ -1028,11 +984,6 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, SuccessfulEditUpdatesDatabaseAndWorkspac
     EXPECT_EQ(persona_result.affected_forum_ids, std::vector<std::string>{"lobby"});
     EXPECT_EQ(store->snapshot()->find_forum("lobby")->default_persona_id, "reader");
     EXPECT_NE(stored_config(database(), forum).find("reader"), std::string::npos);
-    EXPECT_EQ(
-        std::getenv(dotenv_variable) == nullptr
-            ? std::string()
-            : std::getenv(dotenv_variable),
-        dotenv_before);
 }
 
 TEST_F(

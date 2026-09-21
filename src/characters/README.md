@@ -21,4 +21,4 @@ Tests for workspace parsing and resolution live in
 `tests/agents/unit_model_context.cpp`.
 
 This directory may depend on `chat/` and `util/`. It must not depend on
-`providers/`, `session/`, `workspace/`, or `web/`.
+`providers/`, `session/`, `workspace/`, or `runtime/`.

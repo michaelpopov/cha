@@ -3,13 +3,13 @@
 // Private runtime shared by the application, vault, and media implementations.
 #include "app/application.h"
 #include "app/background_jobs.h"
-#include "app/pending_media_registry.h"
+#include "media/pending_media_registry.h"
 #include "providers/api_key_store.h"
 #include "providers/openai_oauth.h"
 #include "providers/providers.h"
-#include "session/session_repository.h"
+#include "storage/session_repository.h"
 #include "app/current_vault.h"
-#include "web/session_mirror.h"
+#include "session/session_mirror.h"
 
 #include <atomic>
 

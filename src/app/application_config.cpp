@@ -1,7 +1,7 @@
 #include "app/application_config.h"
 
-#include "session/sqlite_storage.h"
-#include "session/workspace_session_database.h"
+#include "storage/sqlite_storage.h"
+#include "storage/workspace_session_database.h"
 #include "util/logging.h"
 #include "util/path_name.h"
 #include "util/private_filesystem.h"

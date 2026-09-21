@@ -4,12 +4,12 @@
 #include "app/vault_operations.h"
 #include "bridge/operation_dispatch.h"
 #include "bridge/request_params.h"
-#include "session/not_found_error.h"
+#include "storage/not_found_error.h"
 #include "app/application_config.h"
-#include "app/audio_download.h"
-#include "services/fish_audio.h"
-#include "web/request_parser.h"
-#include "web/live_session.h"
+#include "media/audio_download.h"
+#include "providers/fish_audio.h"
+#include "runtime/request_parser.h"
+#include "runtime/live_session.h"
 
 #include <algorithm>
 #include <condition_variable>

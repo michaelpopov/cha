@@ -3,14 +3,14 @@
 #include "app/application.h"
 #include "util/logging.h"
 #include "util/text.h"
-#include "web/live_session.h"
-#include "web/live_session_manager.h"
-#include "web/protocol.h"
-#include "web/session_projection.h"
+#include "runtime/live_session.h"
+#include "runtime/live_session_manager.h"
+#include "runtime/protocol.h"
+#include "runtime/session_projection.h"
 #include "workspace/builtins.h"
 #include "workspace/workspace.h"
 #include "workspace/workspace_config_store.h"
-#include "session/session_repository.h"
+#include "storage/session_repository.h"
 
 #include <algorithm>
 #include <memory>

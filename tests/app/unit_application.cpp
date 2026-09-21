@@ -3,7 +3,7 @@
 
 #include "support/test_workspace.h"
 #include "support/mock_http_server.h"
-#include "web/live_session.h"
+#include "runtime/live_session.h"
 #include "workspace/builtins.h"
 
 #include <gtest/gtest.h>

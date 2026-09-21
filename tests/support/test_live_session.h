@@ -5,7 +5,7 @@
 #include "chat/persona.h"
 #include "session/opened_session.h"
 #include "session/session_controller.h"
-#include "session/session_database.h"
+#include "storage/session_database.h"
 #include "chat/session_identity.h"
 #include "support/test_backends.h"
 #include "support/test_controller.h"

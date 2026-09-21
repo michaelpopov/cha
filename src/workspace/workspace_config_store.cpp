@@ -1,9 +1,9 @@
 #include "workspace/workspace_config_store.h"
 
-#include "session/session_lease.h"
-#include "session/session_storage_layout.h"
-#include "session/sqlite_storage.h"
-#include "session/workspace_session_database.h"
+#include "storage/session_lease.h"
+#include "storage/session_storage_layout.h"
+#include "storage/sqlite_storage.h"
+#include "storage/workspace_session_database.h"
 #include "util/path_name.h"
 #include "util/private_filesystem.h"
 #include "workspace/workspace.h"

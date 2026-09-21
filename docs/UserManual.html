@@ -1056,8 +1056,8 @@
           list. Their secret values stay in the active vault database and are not
           returned to the interface. They are vault-specific and are included as
           plaintext when you export workspace configuration, so protect every
-          export. CHA never reads model API keys from <code>.env</code> or process
-          environment variables during normal use. If a provider refers to a key
+          export. CHA never reads credentials from <code>.env</code> or process
+          environment variables. If a provider refers to a key
           that no longer exists, that provider fails when tested or used.
         </p>
 
@@ -1105,8 +1105,9 @@
         <p>
           The distribution archive contains only <code>CHA.app</code>. The
           application creates and uses <code>~/Library/Application Support/CHA</code>.
-          A fresh installation begins with the first five files and folders;
-          the remaining credential files below appear only when used or migrated:
+          A fresh installation begins with the first five files and folders.
+          The OAuth file appears after connecting OpenAI; the final file is only
+          a supported legacy model-key migration source:
         </p>
         <pre><code>~/Library/Application Support/CHA/app.toml
 ~/Library/Application Support/CHA/default.toml
@@ -1114,8 +1115,7 @@
 ~/Library/Application Support/CHA/mirror/
 ~/Library/Application Support/CHA/modify/
 ~/Library/Application Support/CHA/openai-auth.json   (after connecting OpenAI)
-~/Library/Application Support/CHA/api-keys.json  (legacy migration only)
-~/Library/Application Support/CHA/.env           (legacy migration only)</code></pre>
+~/Library/Application Support/CHA/api-keys.json  (legacy migration only)</code></pre>
         <p>
           In Finder, choose <strong>Go &gt; Go to Folder…</strong>, enter
           <code>~/Library/Application Support/CHA</code>, and select

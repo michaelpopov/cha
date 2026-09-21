@@ -1,4 +1,4 @@
-#include "session/session_lease.h"
+#include "storage/session_lease.h"
 #include "support/lease_test_protocol.h"
 
 #include <cerrno>

@@ -1,6 +1,6 @@
 #include "session/session_controller.h"
 
-#include "session/session_label.h"
+#include "storage/session_label.h"
 #include "util/crypto.h"
 #include "util/logging.h"
 #include "util/text.h"

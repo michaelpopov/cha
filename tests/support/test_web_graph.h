@@ -1,13 +1,13 @@
 #pragma once
 
 #include "workspace/builtins.h"
-#include "workspace/session_open.h"
+#include "session/session_open.h"
 #include "workspace/workspace.h"
 #include "workspace/workspace_config_store.h"
 #include "providers/providers.h"
-#include "session/session_repository.h"
+#include "storage/session_repository.h"
 #include "support/test_workspace.h"
-#include "web/live_session.h"
+#include "runtime/live_session.h"
 
 #include <filesystem>
 #include <memory>

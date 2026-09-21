@@ -1,12 +1,12 @@
 #include "app/media_operations.h"
 
 #include "app/application_internal.h"
-#include "app/media_resources.h"
+#include "media/media_resources.h"
 #include "app/settings_operations.h"
 #include "util/curl.h"
 #include "util/logging.h"
 #include "util/text.h"
-#include "services/fish_audio.h"
+#include "providers/fish_audio.h"
 #include "workspace/workspace.h"
 
 #include <curl/curl.h>

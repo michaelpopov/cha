@@ -8,7 +8,6 @@
 #include <nlohmann/json.hpp>
 
 #include <charconv>
-#include <cstdlib>
 #include <fstream>
 #include <limits>
 #include <stdexcept>
@@ -133,11 +132,6 @@ LegacyKeys read_legacy_keys(
         throw std::runtime_error(
             "API key file '" + utf8_path(path) + "' is invalid");
     }
-}
-
-const char* nonempty_environment(const char* name) {
-    const char* value = std::getenv(name);
-    return value != nullptr && *value != '\0' ? value : nullptr;
 }
 
 } // namespace
@@ -325,27 +319,9 @@ void ApiKeyStore::migrate() {
 
     LegacyKeys legacy = read_legacy_keys(legacy_path_);
 
-    std::optional<R2StorageKey> r2_storage;
-    const char* url = nonempty_environment("CHA_R2_URL");
-    const char* access_key = nonempty_environment("CHA_R2_ACCESS_KEY_ID");
-    const char* secret_key = nonempty_environment("CHA_R2_SECRET_ACCESS_KEY");
-    if (url != nullptr && access_key != nullptr && secret_key != nullptr) {
-        if (legacy.next_id
-            >= static_cast<std::uint64_t>(
-                std::numeric_limits<std::int64_t>::max())) {
-            throw std::runtime_error("API key ID space exhausted");
-        }
-        r2_storage = R2StorageKey{
-            .id = "api_key_" + std::to_string(legacy.next_id++),
-            .display_name = "R2",
-            .url = url,
-            .access_key_id = access_key,
-            .secret_key = secret_key,
-        };
-    }
-    if (!legacy.keys.empty() || r2_storage) {
+    if (!legacy.keys.empty()) {
         config_->apply_key_migration(
-            legacy.keys, r2_storage, legacy.next_id);
+            legacy.keys, std::nullopt, legacy.next_id);
     }
 }
 

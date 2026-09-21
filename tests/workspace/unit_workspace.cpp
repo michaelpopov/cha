@@ -3,12 +3,10 @@
 
 #include "characters/model_context.h"
 #include "support/test_workspace.h"
-#include "util/environment.h"
 #include "util/logging.h"
 
 #include <gtest/gtest.h>
 
-#include <cstdlib>
 #include <fstream>
 #include <initializer_list>
 #include <iterator>
@@ -948,29 +946,6 @@ TEST(Workspace, LoadsLegacyProviderCredentialNamesWithoutUsingTheEnvironment) {
     ASSERT_NE(provider, nullptr);
     EXPECT_TRUE(provider->config.api_key_id.empty());
     EXPECT_EQ(provider->config.api_key_env, "OPENAI_API_KEY");
-}
-
-TEST(Workspace, OverlayCleansUpWhenProviderValidationThrows) {
-    test::TestWorkspace fixture;
-    constexpr char inserted[] = "CHA_WORKSPACE_TEST_OVERLAY_TEMP_2C8B";
-    ASSERT_TRUE(unset_environment_variable(inserted));
-    fixture.write_provider(
-        "secured",
-        "host = \"example.test\"\n"
-        "port = 0\n"
-        "mode = \"net\"\n"
-        "model = \"secured\"\n");
-    fixture.write_character_config(
-        "display_name = \"Guide\"\nprovider = \"secured\"\n");
-
-    try {
-        ScopedEnvironmentOverlay overlay({{inserted, "temporary"}});
-        EXPECT_STREQ(std::getenv(inserted), "temporary");
-        (void)Workspace::load(fixture.root());
-        FAIL() << "Expected provider validation to fail";
-    } catch (const std::runtime_error&) {
-    }
-    EXPECT_EQ(std::getenv(inserted), nullptr);
 }
 
 TEST(Workspace, CreatesAProviderByCopyingExistingSettings) {

@@ -5,7 +5,8 @@ let chaAssetScheme = "cha"
 let chaAssetHost = "app"
 let chaAssetOrigin = "cha://app"
 
-// Keep this aligned with src/web/asset_handler.cpp. Native loaders must apply
+// Keep this aligned with the Windows host's policy in packaging/windows/main.cpp.
+// Native loaders must apply
 // CSP before page scripts run; copying index.html does not keep the HTTP header.
 let chaNativeContentSecurityPolicy =
     "default-src 'none'; script-src 'self'; style-src 'self'; "

@@ -57,7 +57,7 @@ CHA configuration can appear in several places. They have different roles.
 | A `cha-runtime-*` directory under the system temporary directory | Private materialization of committed SQLite rows | Never |
 | `system/keys/` rows in each vault database | Model and R2 keys saved through Settings | Only through Settings → API Keys |
 | `<config-directory>/openai-auth.json` | OpenAI subscription OAuth credentials | Only through Settings → OpenAI |
-| `<config-directory>/api-keys.json` and `.env` | Legacy key migration sources | Carefully; each empty vault may import them |
+| `<config-directory>/api-keys.json` | Legacy model-key migration source | Carefully; each empty vault may import it |
 
 Normal runtime reads configuration from SQLite. It does not continue reading
 the directory that was imported. Therefore editing `~/var/modify/` alone does
@@ -115,16 +115,16 @@ and `modify` values, are ignored with warnings instead of blocking startup.
 CHA runs inside its native desktop host and has no application HTTP listener.
 An obsolete `[web]` table is ignored with a warning, including unused invalid
 listener values. Session runtime limits and deadlines are internal
-`cha::app::RuntimeSettings`, not listener configuration.
+`cha::RuntimeSettings`, not listener configuration.
 
 The configuration directory must be outside the workspace import directory.
 There is no automatic migration from a single `cha.toml`; create the directory,
 split selection, mirror/modify bases, and logging into `app.toml`, put the
 data path and display name in a vault file, adjust paths, and move
-`openai-auth.json` into the directory. Legacy `api-keys.json` and `.env` files
-may supply credentials to each empty vault the first time it is opened. They
-are left unchanged, so remove or secure them manually after migration if future
-empty vaults should not import them.
+`openai-auth.json` into the directory. A legacy `api-keys.json` file may supply
+model credentials to each empty vault the first time it is opened. It is left
+unchanged, so remove or secure it after migration if future empty vaults should
+not import it.
 Export revalidates a nonempty modify directory and refuses to replace it unless
 it is a valid CHA workspace.
 
@@ -727,13 +727,10 @@ but that provider's requests and `Test` fail. When the name resolves, the
 provider editor shows the matching saved key and writes the normal opaque
 `api_key` ID when saved.
 
-A root `.env` in an import source is ignored and is never stored or exported.
-For migration only, an empty vault imports a legacy configuration-directory
-`api-keys.json` plus R2 credentials from `CHA_R2_URL`,
-`CHA_R2_ACCESS_KEY_ID`, and `CHA_R2_SECRET_ACCESS_KEY` in the inherited
-environment or configuration-directory `.env`. The sources are left unchanged,
-so the migration repeats for every subsequently opened empty vault unless they
-are removed manually.
+For migration only, an empty vault imports model keys from a legacy
+configuration-directory `api-keys.json`. The source is left unchanged, so the
+migration repeats for every subsequently opened empty vault unless the file is
+removed manually. R2 credentials must be saved through Settings → API Keys.
 
 ### OpenAI subscription OAuth provider
 
@@ -1259,7 +1256,6 @@ SQLite database file without accounting for its WAL and sidecars.
 These are not workspace configuration rows and are not exported:
 
 - the configuration directory (`app.toml` and vault files);
-- a source `.env` (ignored) and legacy configuration-directory `.env`;
 - legacy `<config-directory>/api-keys.json` migration input;
 - `<config-directory>/openai-auth.json` OAuth credentials;
 - SQLite databases, journals, WAL/SHM sidecars, and `.cha-lock` files;
@@ -1334,7 +1330,7 @@ guide:
 - `src/providers/openai_oauth.cpp`: OAuth credential lifecycle;
 - `src/app/settings_operations.cpp` and `src/app/application.cpp`: provider,
   style, key, and voice settings operations plus asynchronous provider testing;
-- `src/web/application_config.cpp`: application and vault configuration
+- `src/app/application_config.cpp`: application and vault configuration
   discovery, validation, and empty-directory bootstrap;
 - `src/app/application.cpp` and `src/app/vault_operations.cpp`: application
   ownership, context admission, vault lifecycle, and database maintenance;

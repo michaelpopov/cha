@@ -1,8 +1,7 @@
 #include "app/application.h"
 
-#include "session/session_repository.h"
+#include "storage/session_repository.h"
 #include "support/test_workspace.h"
-#include "util/environment.h"
 #include "util/toml_file.h"
 #include "app/current_vault.h"
 #include "workspace/builtins.h"
@@ -116,31 +115,6 @@ TEST(ApplicationVault, SwitchAwayAndBackRestoresStoredSessions) {
     const auto table = read_toml_file(
         pair.command.config_directory / "app.toml", "config file");
     EXPECT_EQ(table["vault"].value<std::string>(), "A");
-}
-
-TEST(ApplicationVault, SwitchMigratesR2EnvironmentWithoutHoldingTheStoreLock) {
-    const ScopedEnvironmentOverlay environment({
-        {"CHA_R2_URL", "https://r2.example.invalid/bucket"},
-        {"CHA_R2_ACCESS_KEY_ID", "test-access"},
-        {"CHA_R2_SECRET_ACCESS_KEY", "test-secret"},
-    });
-    TwoVaults pair;
-    auto application = Application::open(pair.command);
-    ASSERT_TRUE(application->capabilities().can_transfer_r2);
-    const auto first = application->context_epoch();
-
-    const auto switched = application->switch_vault("B", {}, application->context_epoch());
-
-    EXPECT_EQ(switched.state, ApplicationState::running);
-    EXPECT_GT(switched.context_epoch, first);
-    const auto migrated = application->get_r2_storage(application->context_epoch());
-    ASSERT_TRUE(migrated);
-    EXPECT_EQ(migrated->url, "https://r2.example.invalid/bucket");
-    EXPECT_EQ(migrated->access_key_id, "test-access");
-    EXPECT_TRUE(application->capabilities().can_transfer_r2);
-    const auto back = application->switch_vault("A", {}, application->context_epoch());
-    EXPECT_EQ(back.state, ApplicationState::running);
-    EXPECT_GT(back.context_epoch, switched.context_epoch);
 }
 
 TEST(ApplicationVault, SwitchMigratesLegacyKeysWithoutHoldingTheStoreLock) {

@@ -1,18 +1,9 @@
 # Session layer
 
-`session/` owns transcript behavior and schema, durable journals, character
-selection, prompt construction, and the presentation order of generation
-output. It has no HTTP or browser dependency.
-
-All persistent sessions share the SQLite file selected by the external
-application config's `data` setting.
-Public `(forum_id, session_id)` identities resolve to internal `session_key` values;
-every restore and journal statement is scoped by that key. The top-level
-configuration store owns the database lease and private root. The repository
-receives explicit database, materialized-workspace, and Welcome paths and owns
-none of them; it uses short-lived connections. Each live controller owns its
-own long-lived journal connection, and write transactions begin with `BEGIN
-IMMEDIATE`.
+`session/` owns controller behavior, character selection, prompt construction,
+the presentation order of generation output, Markdown formatting, and the
+best-effort filesystem mirror. Durable storage lives in `storage/`. This layer
+has no HTTP or browser dependency.
 
 ## Controller ownership
 
@@ -48,11 +39,18 @@ durable turn using existing partial-response rules.
 | Source | Responsibility |
 | --- | --- |
 | `session_controller.*` | Controller commands, durable turn transitions, request-handle presentation, and shutdown. |
-| `workspace_session_database.*` | Workspace schema, validation, WAL initialization, and checkpointing. |
-| `session_database.*` | Session-key-scoped restore and journal operations. |
-| `session_repository.*` | SQL-backed listing, creation, rename, deletion, history, and preparation. |
-| `session_storage_layout.*` | Import-only, path-based detection of legacy per-session databases. |
-| `session_lease.*` | Portable companion-file lease used by the top-level store and offline transfers. |
+| `controller_update.*` / `controller_view.h` | Presentation-neutral controller updates and borrowed views. |
+| `generation_status.h` | Presentation-neutral generation phase and progress values. |
+| `opened_session.h` | Owning result returned after controller construction. |
+| `session_open.*` | Combines workspace state, prepared storage, providers, and notifier into a controller. |
+| `session_markdown.*` | Markdown rendering and export filenames. |
+| `session_mirror.*` | Best-effort projection of stored sessions into Markdown files. |
 
 The controller view is borrowed and owner-thread-only. Workers never receive a
 `TranscriptView`; provider input always owns its `ModelHistory` snapshot.
+
+This directory may depend on `characters/`, `chat/`, `providers/`, `storage/`,
+`workspace/`, and `util/`. It does not depend on `app/`, `bridge/`, `media/`,
+or `runtime/`.
+
+Tests live in `tests/session/`.

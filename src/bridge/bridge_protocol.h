@@ -1,6 +1,6 @@
 #pragma once
 
-#include "web/protocol.h"
+#include "runtime/protocol.h"
 
 #include <cstddef>
 #include <cstdint>

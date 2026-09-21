@@ -1,0 +1,519 @@
+#include "runtime/protocol.h"
+
+#include <nlohmann/json.hpp>
+
+#include <initializer_list>
+#include <stdexcept>
+#include <type_traits>
+#include <utility>
+
+namespace cha {
+namespace {
+
+template<typename Enum>
+std::string_view enum_name(
+    Enum value,
+    std::initializer_list<std::pair<Enum, std::string_view>> names) {
+    for (const auto& [candidate, name] : names) {
+        if (candidate == value) {
+            return name;
+        }
+    }
+    throw std::invalid_argument("Invalid web protocol enum value");
+}
+
+template<typename T>
+void put_optional(
+    nlohmann::json& json,
+    std::string_view name,
+    const std::optional<T>& value) {
+    if (value) {
+        json[std::string(name)] = *value;
+    }
+}
+
+nlohmann::json transcript_entry_json(const TranscriptEntry& value) {
+    nlohmann::json json = {
+        {"id", value.id},
+        {"kind", to_string(value.kind)},
+        {"participant_id", value.participant_id},
+        {"display_name", value.display_name},
+        {"addressed_to", value.addressed_to},
+        {"addressed_to_name", value.addressed_to_name},
+        {"text", value.text},
+        {"status", to_string(value.status)},
+    };
+    put_optional(json, "request_id", value.request_id);
+    json["created_at"] = value.created_at != 0
+        ? nlohmann::json(value.created_at)
+        : nlohmann::json(nullptr);
+    return json;
+}
+
+nlohmann::json generation_json(const GenerationStatus& value) {
+    nlohmann::json json = {
+        {"active", value.active},
+        {"character_id", value.character_id},
+        {"character_display_name", value.character_display_name},
+        {"phase", to_string(value.phase)},
+        {"reasoning_text", value.reasoning_text},
+    };
+    put_optional(json, "request_id", value.request_id);
+    return json;
+}
+
+nlohmann::json appearance_json(const CharacterAppearance& value) {
+    return {
+        {"font", to_string(value.font)},
+        {"style", to_string(value.style)},
+        {"weight", to_string(value.weight)},
+        {"size", to_string(value.size)},
+        {"text_color", to_string(value.text_color)},
+    };
+}
+
+nlohmann::json speech_voice_json(const SpeechVoice& value) {
+    nlohmann::json settings = nlohmann::json::object();
+    put_optional(settings, "speed", value.settings.speed);
+    return {
+        {"id", value.id},
+        {"display_name", value.display_name},
+        {"elevenlabs_voice_id", value.elevenlabs_voice_id},
+        {"settings", std::move(settings)},
+    };
+}
+
+nlohmann::json append_target_json(const TextTarget& value) {
+    return std::visit([](const auto& target) {
+        using Target = std::decay_t<decltype(target)>;
+        if constexpr (std::is_same_v<Target, EntryTextTarget>) {
+            return nlohmann::json{
+                {"kind", "entry"},
+                {"entry_id", target.entry_id},
+            };
+        } else {
+            return nlohmann::json{
+                {"kind", "reasoning"},
+                {"request_id", target.request_id},
+            };
+        }
+    }, value);
+}
+
+} // namespace
+
+std::string_view to_string(EntryKind value) {
+    return enum_name(
+        value,
+        {
+            {EntryKind::human, "human"},
+            {EntryKind::character, "character"},
+            {EntryKind::notice, "notice"},
+            {EntryKind::error, "error"},
+        });
+}
+
+std::string_view to_string(EntryStatus value) {
+    return enum_name(
+        value,
+        {
+            {EntryStatus::complete, "complete"},
+            {EntryStatus::streaming, "streaming"},
+            {EntryStatus::cancelled, "cancelled"},
+            {EntryStatus::failed, "failed"},
+        });
+}
+
+std::string_view to_string(ResponsePhase value) {
+    return enum_name(
+        value,
+        {
+            {ResponsePhase::waiting, "waiting"},
+            {ResponsePhase::reasoning, "reasoning"},
+            {ResponsePhase::answering, "answering"},
+            {ResponsePhase::stopping, "stopping"},
+        });
+}
+
+std::string_view to_string(SessionLifecycle value) {
+    return enum_name(
+        value,
+        {
+            {SessionLifecycle::starting, "starting"},
+            {SessionLifecycle::running, "running"},
+            {SessionLifecycle::stopping, "stopping"},
+        });
+}
+
+std::string_view to_string(ShutdownReason value) {
+    return enum_name(
+        value,
+        {
+            {ShutdownReason::session_closed, "session_closed"},
+            {ShutdownReason::reloading, "reloading"},
+            {ShutdownReason::session_failed, "session_failed"},
+            {ShutdownReason::session_deleted, "session_deleted"},
+            {ShutdownReason::server_stopping, "server_stopping"},
+            {ShutdownReason::retired, "retired"},
+        });
+}
+
+std::string_view to_string(ErrorCode value) {
+    return enum_name(
+        value,
+        {
+            {ErrorCode::not_found, "not_found"},
+            {ErrorCode::body_too_large, "body_too_large"},
+            {ErrorCode::prompt_too_large, "prompt_too_large"},
+            {ErrorCode::internal_error, "internal_error"},
+            {ErrorCode::speech_busy, "speech_busy"},
+            {ErrorCode::vault_changed, "vault_changed"},
+            {ErrorCode::session_stopping, "session_stopping"},
+            {ErrorCode::session_limit_reached, "session_limit_reached"},
+            {ErrorCode::session_open_timeout, "session_open_timeout"},
+            {ErrorCode::server_stopping, "server_stopping"},
+            {ErrorCode::session_not_live, "session_not_live"},
+            {ErrorCode::command_timeout, "command_timeout"},
+            {ErrorCode::command_queue_full, "command_queue_full"},
+            {ErrorCode::vault_password_required, "vault_password_required"},
+            {ErrorCode::source_vault_password_required,
+             "source_vault_password_required"},
+            {ErrorCode::invalid_argument, "invalid_argument"},
+            {ErrorCode::operation_cancelled, "operation_cancelled"},
+            {ErrorCode::application_unavailable, "application_unavailable"},
+        });
+}
+
+std::optional<SnapshotAppendSelection> snapshot_append_selection(
+    const SessionSnapshot& snapshot) {
+    for (std::size_t index = 0; index != snapshot.transcript.size(); ++index) {
+        const TranscriptEntry& entry = snapshot.transcript[index];
+        if (entry.status == EntryStatus::streaming) {
+            return SnapshotAppendSelection{
+                EntryTextTarget{entry.id}, index};
+        }
+    }
+    if (snapshot.generation.active && snapshot.generation.request_id
+        && snapshot.generation.phase == ResponsePhase::reasoning) {
+        return SnapshotAppendSelection{
+            ReasoningTextTarget{*snapshot.generation.request_id},
+            std::nullopt};
+    }
+    return std::nullopt;
+}
+
+void to_json(nlohmann::json& json, const ForumSummary& value) {
+    json = {
+        {"id", value.id},
+        {"display_name", value.display_name},
+        {"default_character_id", value.default_character_id},
+        {"default_persona_id", value.default_persona_id},
+        {"default_persona_display_name", value.default_persona_display_name},
+        {"members", value.members},
+    };
+    put_optional(json, "description", value.description);
+}
+
+void to_json(nlohmann::json& json, const PersonaSummary& value) {
+    json = {
+        {"id", value.id},
+        {"display_name", value.display_name},
+        {"appearance", appearance_json(value.appearance)},
+    };
+    put_optional(json, "description", value.description);
+    if (value.voice) json["voice"] = speech_voice_json(*value.voice);
+}
+
+void to_json(nlohmann::json& json, const SessionListing& value) {
+    json = {
+        {"id", value.id},
+        {"label", value.label},
+        {"live", value.live},
+        {"updated_at", value.updated_at},
+    };
+}
+
+void to_json(nlohmann::json& json, const CharacterSummary& value) {
+    json = {
+        {"id", value.id},
+        {"display_name", value.display_name},
+        {"appearance", appearance_json(value.appearance)},
+    };
+    put_optional(json, "description", value.description);
+    if (value.voice) json["voice"] = speech_voice_json(*value.voice);
+}
+
+void to_json(nlohmann::json& json, const SessionSnapshot& value) {
+    nlohmann::json transcript = nlohmann::json::array();
+    for (const TranscriptEntry& entry : value.transcript) {
+        auto json_entry = transcript_entry_json(entry);
+        json_entry["has_cached_audio"] = value.cached_audio_entries.contains(entry.id);
+        transcript.push_back(std::move(json_entry));
+    }
+    json = {
+        {"forum", value.forum},
+        {"session_id", value.session_id},
+        {"session_label", value.session_label},
+        {"characters", value.characters},
+        {"default_character_id", value.default_character_id},
+        {"transcript", std::move(transcript)},
+        {"generation", generation_json(value.generation)},
+        {"lifecycle", to_string(value.lifecycle)},
+    };
+    put_optional(json, "covered_until", value.covered_until);
+    put_optional(json, "notice", value.notice);
+    if (value.shutdown_reason) {
+        json["shutdown_reason"] = to_string(*value.shutdown_reason);
+    }
+}
+
+void to_json(nlohmann::json& json, const CommandResult& value) {
+    json = {{"clear_input", value.clear_input}};
+    put_optional(json, "notice", value.session.notice);
+}
+
+void to_json(nlohmann::json& json, const CreateSessionSuccess& value) {
+    json = {
+        {"id", value.id},
+        {"label", value.label},
+    };
+}
+
+void to_json(nlohmann::json& json, const SessionLabelResult& value) {
+    json = {{"id", value.id}, {"label", value.label}};
+}
+
+void to_json(nlohmann::json& json, const OpenSessionSuccess& value) {
+    json = {{"forum_id", value.forum_id}, {"session_id", value.session_id}};
+}
+
+void to_json(nlohmann::json& json, const RecentSession& value) {
+    json = {{"forum_id", value.forum_id}, {"session_id", value.session_id},
+            {"session_label", value.session_label}, {"updated_at", value.updated_at}};
+}
+
+void to_json(nlohmann::json& json, const Bootstrap& value) {
+    json = {{"vault_name", value.vault_name},
+            {"vaults", value.vaults},
+            {"initial_forum_id", value.initial_forum_id},
+            {"initial_session_id", value.initial_session_id}, {"personas", value.personas},
+            {"characters", value.characters}, {"forums", value.forums},
+            {"recent_sessions", value.recent_sessions}};
+}
+
+void to_json(nlohmann::json& json, const ProviderOption& value) {
+    json = {{"id", value.id}, {"label", value.label}};
+}
+
+void to_json(nlohmann::json& json, const StyleOption& value) {
+    json = {
+        {"id", value.id},
+        {"label", value.label},
+        {"appearance", appearance_json(value.appearance)},
+    };
+}
+
+void to_json(nlohmann::json& json, const VoiceOption& value) {
+    json = {{"id", value.id}, {"label", value.label}};
+}
+
+void to_json(nlohmann::json& json, const CharacterDetail& value) {
+    json = nlohmann::json(value.summary);
+    json["character_markdown"] = value.character_markdown;
+    json["editable_markdown"] = value.editable_markdown;
+    json["markdown_files"] = value.markdown_files;
+    json["provider"] = value.provider ? nlohmann::json(*value.provider) : nlohmann::json(nullptr);
+    json["style"] = value.style ? nlohmann::json(*value.style) : nlohmann::json(nullptr);
+    json["voice_id"] = value.voice
+        ? nlohmann::json(*value.voice) : nlohmann::json(nullptr);
+    json["reasoning_effort"] = value.reasoning_effort
+        ? nlohmann::json(*value.reasoning_effort) : nlohmann::json(nullptr);
+    json["web_search"] = value.web_search
+        ? nlohmann::json(to_string(*value.web_search)) : nlohmann::json(nullptr);
+    json["available_providers"] = value.available_providers;
+    json["available_styles"] = value.available_styles;
+    json["available_voices"] = value.available_voices;
+    json["settings_writable"] = value.settings_writable;
+    json["writable"] = value.writable;
+}
+
+void to_json(nlohmann::json& json, const PersonaDetail& value) {
+    json = nlohmann::json(value.summary);
+    json["persona_markdown"] = value.persona_markdown;
+    json["style"] = value.style
+        ? nlohmann::json(*value.style) : nlohmann::json(nullptr);
+    json["voice_id"] = value.voice
+        ? nlohmann::json(*value.voice) : nlohmann::json(nullptr);
+    json["available_styles"] = value.available_styles;
+    json["available_voices"] = value.available_voices;
+    json["writable"] = value.writable;
+}
+
+void to_json(nlohmann::json& json, const ForumDetail& value) {
+    json = nlohmann::json(value.summary);
+    json["forum_markdown"] = value.forum_markdown;
+    json["markdown_files"] = value.markdown_files;
+    json["writable"] = value.writable;
+}
+
+void to_json(nlohmann::json& json, const MarkdownFile& value) {
+    json = {
+        {"filename", value.filename},
+        {"content", value.content},
+        {"writable", value.writable},
+    };
+}
+
+void to_json(nlohmann::json& json, const SessionExport& value) {
+    json = {{"markdown", value.markdown}};
+}
+
+void to_json(nlohmann::json& json, const ProviderSummary& value) {
+    json = {
+        {"id", value.id},
+        {"display_name", value.display_name},
+        {"model", value.model},
+        {"host", value.host},
+    };
+}
+
+void to_json(nlohmann::json& json, const ProviderDetail& value) {
+    json = {
+        {"id", value.id},
+        {"display_name", value.display_name},
+        {"host", value.host},
+        {"port", value.port},
+        {"base_path", value.base_path},
+        {"mode", value.mode},
+        {"model", value.model},
+        {"stream", value.stream},
+        {"temperature", value.temperature
+            ? nlohmann::json(*value.temperature) : nlohmann::json(nullptr)},
+        {"max_tokens", value.max_tokens
+            ? nlohmann::json(*value.max_tokens) : nlohmann::json(nullptr)},
+        {"timeout_s", value.timeout_s},
+        {"idle_timeout_s", value.idle_timeout_s},
+        {"api_key", value.api_key
+            ? nlohmann::json(*value.api_key) : nlohmann::json(nullptr)},
+        {"reasoning_effort", value.reasoning_effort},
+        {"reasoning_format", value.reasoning_format},
+        {"https", value.https},
+        {"api", value.api},
+        {"auth", value.auth},
+        {"web_search", value.web_search},
+        {"cache_retention", value.cache_retention},
+        {"openrouter_targets", value.openrouter_targets},
+        {"writable", value.writable},
+        {"used_by", value.used_by},
+    };
+}
+
+void to_json(nlohmann::json& json, const StyleDetail& value) {
+    json = appearance_json(value.appearance);
+    json["id"] = value.id;
+    json["display_name"] = value.display_name;
+    json["writable"] = value.writable;
+    json["used_by"] = value.used_by;
+}
+
+void to_json(nlohmann::json& json, const VoiceDetail& value) {
+    json = {
+        {"id", value.id},
+        {"display_name", value.display_name},
+        {"description", value.description},
+        {"elevenlabs_voice_id", value.elevenlabs_voice_id},
+        {"speed", value.speed ? nlohmann::json(*value.speed) : nlohmann::json(nullptr)},
+        {"writable", value.writable},
+        {"used_by", value.used_by},
+    };
+}
+
+void to_json(nlohmann::json& json, const VoiceInputSettings& value) {
+    json = {
+        {"url", value.url},
+        {"model", value.model},
+        {"api_key", value.api_key},
+        {"delay", value.delay},
+        {"prompt", value.prompt},
+    };
+}
+
+void to_json(nlohmann::json& json, const VoiceInputRuntime& value) {
+    json = {
+        {"url", value.url},
+        {"model", value.model},
+        {"delay", value.delay},
+        {"prompt", value.prompt},
+    };
+}
+
+void to_json(nlohmann::json& json, const VoiceOutputSettings& value) {
+    json = {
+        {"url", value.url},
+        {"model", value.model},
+        {"api_key", value.api_key},
+        {"output_format", value.output_format},
+        {"default_voice", value.default_voice},
+    };
+}
+
+void to_json(nlohmann::json& json, const VoiceOutputRuntime& value) {
+    json = {
+        {"url", value.url},
+        {"model", value.model},
+        {"output_format", value.output_format},
+        {"default_voice_id", value.default_voice_id},
+    };
+}
+
+void to_json(nlohmann::json& json, const ApiKeyDetail& value) {
+    json = {
+        {"id", value.id},
+        {"display_name", value.display_name},
+        {"has_value", value.has_value},
+        {"used_by", value.used_by},
+    };
+}
+
+void to_json(nlohmann::json& json, const R2StorageDetail& value) {
+    json = {
+        {"id", value.id},
+        {"display_name", value.display_name},
+        {"url", value.url},
+        {"access_key_id", value.access_key_id},
+        {"has_secret_key", value.has_secret_key},
+    };
+}
+
+void to_json(nlohmann::json& json, const OpenAiAuth& value) {
+    json = {{"status", value.status}};
+    put_optional(json, "user_code", value.user_code);
+    put_optional(json, "verification_url", value.verification_url);
+    put_optional(json, "attempt_expires_at", value.attempt_expires_at);
+    put_optional(json, "next_poll_delay_ms", value.next_poll_delay_ms);
+    put_optional(json, "error", value.error);
+}
+
+void to_json(nlohmann::json& json, const Error& value) {
+    json = {
+        {"error",
+         {
+             {"code", to_string(value.code)},
+             {"message", value.message},
+         }},
+    };
+}
+
+void to_json(nlohmann::json& json, const SnapshotEvent& value) {
+    json = value.snapshot;
+}
+
+void to_json(nlohmann::json& json, const AppendEvent& value) {
+    json = {
+        {"target", append_target_json(value.target)},
+        {"text", value.text},
+        {"seq", value.seq},
+    };
+}
+
+} // namespace cha

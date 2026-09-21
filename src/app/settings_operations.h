@@ -2,7 +2,7 @@
 
 #include "providers/credentials.h"
 #include "providers/openai_oauth.h"
-#include "web/protocol.h"
+#include "runtime/protocol.h"
 #include "workspace/workspace.h"
 
 #include <atomic>

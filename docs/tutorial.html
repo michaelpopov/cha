@@ -470,8 +470,9 @@ Sections 12–18 connect those pieces to the native bridge and lifecycle. Use th
 tests in section 19 to check an assumption before changing code.</p>
 <p>The <a href="MaintainerGuide.md">maintainer guide</a> covers workspace files and operational
 recipes. <a href="editing.md">Editing workspace entities</a> covers adding an editing flow.
-Current headers and tests are authoritative when an older subsystem README
-still describes the former HTTP application.</p>
+The README in each <code>src/</code> directory summarizes that directory&#39;s current
+responsibility and dependencies; headers and tests remain authoritative for
+detailed behavior.</p>
 <h2 id="2-the-application-in-one-page">2. The application in one page</h2>
 <p>CHA is a native desktop application with a C++20 backend and a React interface
 inside WKWebView on macOS or WebView2 on Windows. The host and backend run in
@@ -544,9 +545,8 @@ projections, not runtime sources of truth.</li>
 <pre><code class="language-text">macOS host -&gt; cha_macos_runtime -&gt; cha_lib
 Windows host -------------------&gt; cha_lib
 </code></pre>
-<p>The directory <code>src/web/</code> retains its historical name; its shared support types
-now live in namespace <code>cha</code>. It contains application support, not an HTTP
-server.</p>
+<p>The directory <code>src/runtime/</code> holds the live-session runtime, the chat-input
+grammar, and the wire DTOs. Its types live in namespace <code>cha</code>.</p>
 <p>Core session behavior does not depend on the native host, JSON routing, or
 React. The bridge adapts messages to application operations; platform hosts
 own WebView integration and platform UI work.</p>
@@ -603,15 +603,23 @@ supply the injected native bridge.</p>
 </tr>
 <tr>
 <td><a href="../src/session">src/session</a></td>
-<td>Controller, journal, database, lease, repository</td>
+<td>Controller state, controller opening, Markdown formatting, mirroring</td>
+</tr>
+<tr>
+<td><a href="../src/storage">src/storage</a></td>
+<td>SQLite access, journal, database, lease, repository</td>
+</tr>
+<tr>
+<td><a href="../src/media">src/media</a></td>
+<td>Audio downloads, transient media resources, cleanup</td>
 </tr>
 <tr>
 <td><a href="../src/workspace">src/workspace</a></td>
-<td>Configuration store, workspace loading, built-ins, session construction</td>
+<td>Configuration store, workspace loading, built-ins</td>
 </tr>
 <tr>
-<td><a href="../src/web">src/web</a></td>
-<td>Shared configuration, live-session, DTO, text-input, audio and mirror support</td>
+<td><a href="../src/runtime">src/runtime</a></td>
+<td>Live-session runtime, DTOs, text-input grammar, projection</td>
 </tr>
 <tr>
 <td><a href="../webapp/src">webapp/src</a></td>
@@ -768,11 +776,7 @@ queues remain the source of work.</p>
 <h3 id="73-configuration-helpers">7.3 Configuration helpers</h3>
 <p>The other utilities support important boundaries:</p>
 <ul>
-<li><code>environment.*</code> parses the application-level <code>.env</code> without overriding
-inherited values. Production uses it only as a legacy migration source for
-R2 credentials; model and R2 keys normally come from the active vault, while
-OpenAI OAuth remains process-wide.</li>
-<li><code>path_name.*</code> and <code>utf8_path.*</code> keep filesystem paths and identifiers explicit.</li>
+<li><code>path_name.*</code> keeps UTF-8 filesystem paths and identifiers explicit.</li>
 <li><code>public_name.*</code> centralizes visible-name validation.</li>
 <li><code>text_template.*</code> expands <code>$$(relative/file)</code> includes and <code>$${variable}</code>
 substitutions with containment and cycle/resource limits.</li>
@@ -806,7 +810,7 @@ protected = false
 paths append the vault display name: the example uses <code>mirror/Personal</code> and
 <code>modify/Personal</code>. Obsolete <code>[web]</code> listener settings and old per-vault
 mirror/modify fields are ignored with warnings. Session runtime bounds and
-deadlines live in <a href="../src/app/runtime_settings.h">RuntimeSettings</a>, separate
+deadlines live in <a href="../src/runtime/runtime_settings.h">RuntimeSettings</a>, separate
 from this external configuration.</p>
 <p>Vault-backed keys are included as plaintext in workspace exports. OAuth
 credentials remain in <code>openai-auth.json</code> outside the vault database. A protected
@@ -858,9 +862,9 @@ need it. Repositories and controllers receive a workspace-source callback tied
 to their application; constructing a test workspace does not publish global
 process state.</p>
 <p>The schema-v2 <code>config</code> table stores <code>name</code> and <code>content</code>. Import collects
-regular <code>.toml</code> and <code>.md</code> workspace files without following symlinks. It excludes
-root process-configuration files and <code>.env</code>. Template includes must therefore
-be part of the accepted row set.</p>
+regular <code>.toml</code> and <code>.md</code> workspace files without following symlinks. It
+excludes root process-configuration files and every other extension. Template
+includes must therefore be part of the accepted row set.</p>
 <p>An ordinary configuration mutation edits the private tree, loads a complete
 candidate, collects rows, commits them in one SQLite transaction, and only then
 publishes the candidate. Failure before commit retains the old workspace.
@@ -934,10 +938,10 @@ its specialness is in how the application constructs and stores it.</p>
 <p>Checkpoint: starting with <code>packaging/shared/import-seed/forums/stoics</code>, identify the files that
 contribute to one member&#39;s final definition and the order in which values win.</p>
 <h2 id="9-fourth-reading-pass-session-storage-and-opening">9. Fourth reading pass: session storage and opening</h2>
-<p>Read <a href="../src/session/session_repository.h">session_repository.h</a>,
-<a href="../src/session/session_database.h">session_database.h</a>,
-<a href="../src/session/workspace_session_database.h">workspace_session_database.h</a>,
-and <a href="../src/workspace/session_open.cpp">session_open.cpp</a>.</p>
+<p>Read <a href="../src/storage/session_repository.h">session_repository.h</a>,
+<a href="../src/storage/session_database.h">session_database.h</a>,
+<a href="../src/storage/workspace_session_database.h">workspace_session_database.h</a>,
+and <a href="../src/session/session_open.cpp">session_open.cpp</a>.</p>
 <h3 id="91-public-identity-and-storage-identity">9.1 Public identity and storage identity</h3>
 <p><code>(forum_id, session_id)</code> is the durable public identity carried by the bridge.
 Session IDs are unique within a forum. <code>session_key</code> is the internal SQLite
@@ -1203,9 +1207,9 @@ classification.</p>
 <li><a href="../src/bridge/bridge_router.cpp">Bridge router</a></li>
 <li><a href="../src/bridge/workspace_dispatch.cpp">Workspace dispatch</a> and
 <a href="../src/bridge/settings_dispatch.cpp">settings dispatch</a></li>
-<li><a href="../src/app/session_output.h">Session output</a></li>
-<li><a href="../src/web/live_session_manager.cpp">Session runtime and manager</a> and
-<a href="../src/web/live_session.cpp">live session endpoint</a></li>
+<li><a href="../src/runtime/session_output.h">Session output</a></li>
+<li><a href="../src/runtime/live_session_manager.cpp">Session runtime and manager</a> and
+<a href="../src/runtime/live_session.cpp">live session endpoint</a></li>
 <li><a href="../webapp/src/api/nativeBridge.ts">Frontend native bridge</a> and
 <a href="../webapp/src/api/nativeEvents.ts">event projection</a></li>
 </ol>
@@ -1533,9 +1537,9 @@ copy the bytes first. Resource reads and native save operations must also obey
 their connection/context lifetime contracts.</p>
 <h2 id="16-persistence-model">16. Persistence model</h2>
 <p>The one authoritative schema and its validators are in
-<a href="../src/session/workspace_session_database.cpp">session/workspace_session_database.cpp</a>;
+<a href="../src/storage/workspace_session_database.cpp">storage/workspace_session_database.cpp</a>;
 restore and journal SQL are in
-<a href="../src/session/session_database.cpp">session/session_database.cpp</a>. Read the
+<a href="../src/storage/session_database.cpp">storage/session_database.cpp</a>. Read the
 schema first, then validation/restore, then <code>SessionJournal</code> methods.</p>
 <p>Schema v2 uses these <code>STRICT</code> tables:</p>
 <table>
@@ -1670,8 +1674,8 @@ advertised shutdown deadline.</p>
 <td><code>tests/app/</code></td>
 </tr>
 <tr>
-<td>Protocol, session runtime, audio, mirror, configuration support</td>
-<td><code>tests/web/</code></td>
+<td>Protocol, session runtime, projection, chat-input grammar</td>
+<td><code>tests/runtime/</code></td>
 </tr>
 <tr>
 <td>Native envelopes, method policy, routing and flow control</td>
@@ -1691,16 +1695,15 @@ advertised shutdown deadline.</p>
 </tr>
 </tbody></table>
 <p>CTest registers the <code>cha_tests</code>, <code>cha_app_tests</code>, <code>cha_bridge_tests</code>, and
-<code>cha_native_runtime_tests</code> executables. <code>tests/web/</code> is a historical directory
-name, not a suite for a running HTTP server. Workspace tests now live under
+<code>cha_native_runtime_tests</code> executables. Workspace tests live under
 <code>tests/workspace/</code>, separate from application tests.</p>
 <p>For a contract change, read both the C++ producer tests and TypeScript consumer
 tests. Positive wire fixtures prove acceptance of emitted data; malformed-value
 tests prove that unsafe data is rejected before rendering. Method-policy tests
 detect drift even when both languages still compile.</p>
 <p>For shared-runtime behavior, start with
-<a href="../tests/web/unit_live_session_manager.cpp">unit_live_session_manager.cpp</a>,
-<a href="../tests/web/unit_live_session.cpp">unit_live_session.cpp</a>, and
+<a href="../tests/runtime/unit_live_session_manager.cpp">unit_live_session_manager.cpp</a>,
+<a href="../tests/runtime/unit_live_session.cpp">unit_live_session.cpp</a>, and
 <a href="../tests/app/unit_vault_maintenance.cpp">unit_vault_maintenance.cpp</a>. They cover
 selection and background retirement, full-queue maintenance deadlines and
 nonblocking timeout recovery, stale queued work, shutdown admission, and reason

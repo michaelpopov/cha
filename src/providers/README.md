@@ -1,9 +1,9 @@
 # Provider execution
 
-`providers/` owns request-local provider transport, protocol decoding,
-cancellation, event delivery, and process-level supervision. It consumes
-immutable character and model-context input from `characters/` and never borrows a
-session or browser object.
+`providers/` owns model and speech provider integration: credentials,
+request-local transport, protocol decoding, cancellation, event delivery, and
+process-level supervision. Model generation consumes immutable character and
+model-context input and never borrows a live session or browser object.
 
 ## Ownership
 
@@ -40,6 +40,10 @@ call repeatedly.
 | `chat_completions_api.*` | Chat Completions request encoding and response decoding. |
 | `responses_api.*` | Responses API request encoding and response decoding. |
 | `sse_framer.*` | Protocol-neutral server-sent event framing. |
+| `openai_oauth.*` | OpenAI subscription login, refresh, persistence, and cancellation. |
+| `api_key_store.*` / `credentials.h` | Vault-backed model and R2 credential values and lifecycle. |
+| `voice_output_config.*` | FishAudio output endpoint and format validation. |
+| `fish_audio.*` | FishAudio request decoding, transport, admission, and audio validation. |
 
 ## Diagnostics
 
@@ -56,5 +60,6 @@ isolation, registry and notifier lifetime, and transport destruction ordering.
 The other tests in `tests/providers/` cover curl request/response behavior and
 provider protocol decoding without model discovery.
 
-This directory may depend on `characters/`, `chat/`, and `util/`.
-It must not depend on `session/`, `workspace/`, `web/`, or executable wiring.
+This directory may depend on `characters/`, `chat/`, `storage/`, `workspace/`,
+and `util/`. It must not depend on `app/`, `bridge/`, `runtime/`, or live
+session implementation.

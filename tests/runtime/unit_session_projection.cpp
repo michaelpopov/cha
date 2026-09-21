@@ -1,0 +1,212 @@
+#include "runtime/session_projection.h"
+#include "support/test_workspace.h"
+#include "workspace/workspace.h"
+
+#include <gtest/gtest.h>
+
+#include <optional>
+#include <string>
+#include <vector>
+
+namespace cha {
+namespace {
+
+// Backing storage a borrowed ControllerView points into. Tests mutate or
+// destroy it after projection to prove the snapshot retained no borrow.
+struct BackingState {
+    std::string default_character_id;
+    std::string default_persona_id{"persona"};
+    std::vector<TranscriptEntry> transcript;
+    std::optional<EntryId> covered_until;
+    std::string character_id;
+    std::string character_display_name;
+    std::string reasoning_text;
+
+    [[nodiscard]] ControllerView view() const {
+        return {
+            .default_character_id = default_character_id,
+            .default_persona_id = default_persona_id,
+            .transcript = {
+                .entries = transcript,
+                .revision = 42,
+                .open_entry_id = 2,
+                .covered_until = covered_until,
+            },
+            .generation = {
+                .active = true,
+                .request_id = 7,
+                .character_id = character_id,
+                .character_display_name = character_display_name,
+                .phase = ResponsePhase::reasoning,
+                .reasoning_text = reasoning_text,
+            },
+        };
+    }
+};
+
+BackingState populated_state() {
+    return {
+        .default_character_id = "reviewer",
+        .default_persona_id = "reviewer_persona",
+        .transcript = {
+            {1, EntryKind::human, "persona", "Persona", "guide", "Guide", "Question", EntryStatus::complete, 7},
+            {2, EntryKind::character, "guide", "Guide", {}, {}, "Partial", EntryStatus::streaming, 7},
+            {3, EntryKind::notice, {}, "System", {}, {}, "Notice", EntryStatus::cancelled, std::nullopt},
+            {4, EntryKind::error, "reviewer", "Error", {}, {}, "Failure", EntryStatus::failed, 8},
+        },
+        .character_id = "guide",
+        .character_display_name = "Guide",
+        .reasoning_text = "Thinking",
+    };
+}
+
+std::shared_ptr<const Workspace> projection_workspace() {
+    const auto definition = [](std::string id, std::string name, std::string description) {
+        return CharacterDefinition{
+            .character = {
+                .id = std::move(id),
+                .display_name = std::move(name),
+                .description = std::move(description),
+            },
+            .provider = {.id = "test", .config = {
+                .host = "127.0.0.1",
+                .port = 1,
+                .model = "test-model",
+                .web_search = WebSearchMode::off,
+            }},
+        };
+    };
+    return test::make_controller_workspace(
+        {
+            definition("reviewer", "Reviewer", "Checks details"),
+            definition("guide", "guide", "Explains things"),
+        },
+        {{.id = "reviewer_persona", .display_name = "Reviewer persona"}},
+        "guide",
+        {},
+        {"forum", "session"}).snapshot;
+}
+
+const FullSessionId test_identity{"forum", "session"};
+
+TEST(SessionProjection, CopiesABorrowedControllerViewIntoTheProtocolDto) {
+    const auto workspace = projection_workspace();
+    const WebPresentationState presentation{
+        .notice = "Current notice",
+        .lifecycle = SessionLifecycle::stopping,
+        .shutdown_reason = ShutdownReason::server_stopping,
+    };
+
+    const SessionSnapshot expected{
+        // Session snapshots do not carry the forum description. Discovery is
+        // where it is read.
+        .forum = {"forum", "Test forum", std::nullopt, "guide", "reviewer_persona", "Reviewer persona", {
+            {"guide", "guide", "Explains things"},
+            {"reviewer", "Reviewer", "Checks details"},
+        }},
+        .session_id = "session",
+        .session_label = "Label",
+        .characters = {
+            {"guide", "guide", "Explains things"},
+            {"reviewer", "Reviewer", "Checks details"},
+        },
+        .default_character_id = "reviewer",
+        .transcript = {
+            {1, EntryKind::human, "persona", "Persona", "guide", "Guide", "Question", EntryStatus::complete, 7},
+            {2, EntryKind::character, "guide", "Guide", {}, {}, "Partial", EntryStatus::streaming, 7},
+            {3, EntryKind::notice, {}, "System", {}, {}, "Notice", EntryStatus::cancelled, std::nullopt},
+            {4, EntryKind::error, "reviewer", "Error", {}, {}, "Failure", EntryStatus::failed, 8},
+        },
+        .covered_until = 2,
+        .generation = {true, 7, "guide", "Guide", ResponsePhase::reasoning, "Thinking"},
+        .notice = "Current notice",
+        .lifecycle = SessionLifecycle::stopping,
+        .shutdown_reason = ShutdownReason::server_stopping,
+    };
+    SessionSnapshot snapshot;
+    {
+        BackingState state = populated_state();
+        state.covered_until = 2;
+        snapshot = to_snapshot(*workspace, test_identity, "Label", state.view(), presentation);
+        EXPECT_EQ(snapshot, expected);
+
+        state.default_character_id = "gone";
+        state.transcript.clear();
+        state.character_display_name = "gone";
+        state.reasoning_text = "gone";
+        state.covered_until.reset();
+    }
+    EXPECT_EQ(snapshot, expected);
+}
+
+TEST(SessionProjection, IncludesTheCharactersResolvedSpeechVoice) {
+    test::TestWorkspace fixture;
+    fixture.write_voice(
+        "warm-narrator",
+        "display_name = \"Warm Narrator\"\n"
+        "elevenlabs_voice_id = \"eleven-voice-123\"\n"
+        "stability = 0.45\n"
+        "speed = 0.95\n");
+    fixture.write_character_config(
+        "display_name = \"Guide\"\n"
+        "provider = \"test\"\n"
+        "voice = \"warm-narrator\"\n");
+    const auto workspace = std::make_shared<const Workspace>(Workspace::load(fixture.root()));
+    BackingState state;
+    state.default_character_id = "guide";
+    state.default_persona_id = "reader";
+
+    const SessionSnapshot snapshot = to_snapshot(*workspace,
+        {"lobby", "session"}, "Label", state.view(), {});
+
+    ASSERT_EQ(snapshot.characters.size(), 1U);
+    ASSERT_TRUE(snapshot.characters.front().voice);
+    EXPECT_EQ(snapshot.characters.front().voice, (SpeechVoice{
+        .id = "warm-narrator",
+        .display_name = "Warm Narrator",
+        .elevenlabs_voice_id = "eleven-voice-123",
+        .settings = {
+            .speed = 0.95,
+        },
+    }));
+    ASSERT_EQ(snapshot.forum.members.size(), 1U);
+    EXPECT_EQ(snapshot.forum.members.front().voice, snapshot.characters.front().voice);
+}
+
+TEST(SessionProjection, RemovesSourceReferencesFromHistoricalEntries) {
+    const auto workspace = projection_workspace();
+    BackingState state = populated_state();
+    state.transcript[0].text =
+        "Keep human link **([example.com](https://example.com/source))**";
+    state.transcript[1].text =
+        "Quote ([gutenberg.org](https://www.gutenberg.org/files/3600/"
+        "3600-h/3600-h?utm_source=openai))";
+
+    const SessionSnapshot snapshot =
+        to_snapshot(*workspace, test_identity, "Label", state.view(), {});
+
+    EXPECT_EQ(snapshot.transcript[0].text, state.transcript[0].text);
+    EXPECT_EQ(snapshot.transcript[1].text, "Quote ");
+    EXPECT_NE(state.transcript[1].text.find("gutenberg.org"), std::string::npos);
+}
+
+TEST(SessionProjection, ProjectsWorkspaceDataWithEmptySessionState) {
+    const auto workspace = projection_workspace();
+    const SessionSnapshot snapshot = to_snapshot(*workspace,
+        test_identity,
+        "Label",
+        ControllerView{.default_persona_id = "reviewer_persona"},
+        {.lifecycle = SessionLifecycle::running});
+
+    EXPECT_EQ(snapshot.characters.size(), 2U);
+    EXPECT_EQ(snapshot.forum.members.size(), 2U);
+    EXPECT_TRUE(snapshot.transcript.empty());
+    EXPECT_TRUE(snapshot.default_character_id.empty());
+    EXPECT_FALSE(snapshot.generation.active);
+    EXPECT_FALSE(snapshot.notice);
+    EXPECT_EQ(snapshot.lifecycle, SessionLifecycle::running);
+    EXPECT_EQ(snapshot.session_id, "session");
+}
+
+} // namespace
+} // namespace cha

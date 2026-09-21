@@ -1,6 +1,6 @@
 #include "bridge/bridge_protocol.h"
 
-#include "web/protocol.h"
+#include "runtime/protocol.h"
 
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>

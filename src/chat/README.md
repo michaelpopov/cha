@@ -12,9 +12,9 @@ project.
 
 | Source | Responsibility |
 | --- | --- |
-| `ids.h` | `ForumId`, `CharacterId`, and `SessionId` aliases used across workspace, generation, session, and web boundaries. |
-| `session_identity.h` | The stable forum/session identity shared across provider, session, workspace, and web boundaries. |
-| `character.*` | Discovery-safe `CharacterMetadata`, including the closed appearance vocabulary used by frontends. |
+| `ids.h` | Stable numeric entry and request identifiers. |
+| `session_identity.h` | Stable forum/session identity shared across storage, session, runtime, and application boundaries. |
+| `character_metadata.*` | Discovery-safe character metadata, including the closed appearance vocabulary used by frontends. |
 | `persona.h` | `Persona` and the immutable/shared roster forms used for human authorship and prompt context. |
 | `transcript.h` | Entry and request IDs, `EntryKind`, `EntryStatus`, `TranscriptEntry`, factories, validators, the non-owning `TranscriptView`, `ModelHistory`, the reserved null-target `-` handle/name constants, and the `Transcript` container. |
 | `transcript.cpp` | Factory construction, validation rules, and live-state mutation and read operations. |
@@ -161,7 +161,7 @@ can persist a terminal result without exposing transcript internals.
 
 - **Depends on:** nothing in the project.
 - **Depended on by:** `characters/` and `providers/` (request preparation and execution),
-  `session/` (coordination and persistence), `web/` (rendering).
+  `storage/` (persistence), `session/` (coordination), and `runtime/` (rendering).
 
 Persistence and presentation choices stay outside this directory. The model may
 expose what those consumers need, but it must never import SQLite, provider

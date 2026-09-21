@@ -3,7 +3,7 @@
 #include "characters/character_config.h"
 #include "chat/character_metadata.h"
 #include "providers/credentials.h"
-#include "session/session_lease.h"
+#include "storage/session_lease.h"
 
 #include <cstddef>
 #include <filesystem>

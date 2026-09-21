@@ -6,7 +6,6 @@
 #include "providers/openai_oauth.h"
 #include "support/mock_http_server.h"
 #include "support/test_transcript.h"
-#include "util/environment.h"
 #include "util/logging.h"
 #include "util/private_filesystem.h"
 
@@ -35,25 +34,6 @@ namespace cha {
 namespace {
 
 using Json = nlohmann::json;
-
-class ScopedEnvironmentVariable {
-public:
-    explicit ScopedEnvironmentVariable(std::string name) : name_(std::move(name)) {
-        if (const char* value = std::getenv(name_.c_str())) previous_ = value;
-    }
-
-    ~ScopedEnvironmentVariable() {
-        if (previous_) {
-            (void)set_environment_variable(name_, *previous_);
-        } else {
-            (void)unset_environment_variable(name_);
-        }
-    }
-
-private:
-    std::string name_;
-    std::optional<std::string> previous_;
-};
 
 GenerationRequest client_request(
     Transcript& transcript,
@@ -1212,9 +1192,7 @@ TEST(ProviderClient, MissingSavedApiKeyFailsWhenTheProviderIsUsed) {
     }
 }
 
-TEST(ProviderClient, UsesASavedApiKeyWithoutReadingTheEnvironment) {
-    ScopedEnvironmentVariable environment("OPENAI_API_KEY");
-    ASSERT_TRUE(set_environment_variable("OPENAI_API_KEY", "environment-secret"));
+TEST(ProviderClient, UsesASavedApiKey) {
     const std::filesystem::path directory = std::filesystem::temp_directory_path()
         / ("cha_provider_saved_key_" + std::to_string(
             std::chrono::steady_clock::now().time_since_epoch().count()));
@@ -1260,17 +1238,9 @@ TEST(ProviderClient, UsesASavedApiKeyWithoutReadingTheEnvironment) {
             requests.front().headers,
             "Authorization: Bearer saved-secret"),
         requests.front().headers.end());
-    EXPECT_EQ(
-        std::ranges::find(
-            requests.front().headers,
-            "Authorization: Bearer environment-secret"),
-        requests.front().headers.end());
 }
 
-TEST(ProviderClient, ResolvesALegacyEnvironmentNameOnlyFromSavedApiKeys) {
-    ScopedEnvironmentVariable environment("OPEN_ROUTER_API_KEY");
-    ASSERT_TRUE(set_environment_variable(
-        "OPEN_ROUTER_API_KEY", "environment-secret"));
+TEST(ProviderClient, ResolvesLegacyCredentialNameFromSavedApiKeys) {
     const std::filesystem::path directory = std::filesystem::temp_directory_path()
         / ("cha_provider_named_key_" + std::to_string(
             std::chrono::steady_clock::now().time_since_epoch().count()));
@@ -1316,17 +1286,9 @@ TEST(ProviderClient, ResolvesALegacyEnvironmentNameOnlyFromSavedApiKeys) {
             requests.front().headers,
             "Authorization: Bearer saved-secret"),
         requests.front().headers.end());
-    EXPECT_EQ(
-        std::ranges::find(
-            requests.front().headers,
-            "Authorization: Bearer environment-secret"),
-        requests.front().headers.end());
 }
 
-TEST(ProviderClient, MissingLegacyNamedKeyDoesNotFallBackToTheEnvironment) {
-    ScopedEnvironmentVariable environment("OPEN_ROUTER_API_KEY");
-    ASSERT_TRUE(set_environment_variable(
-        "OPEN_ROUTER_API_KEY", "environment-secret"));
+TEST(ProviderClient, MissingLegacyNamedKeyFails) {
     const std::filesystem::path directory = std::filesystem::temp_directory_path()
         / ("cha_provider_missing_named_key_" + std::to_string(
             std::chrono::steady_clock::now().time_since_epoch().count()));
@@ -1349,9 +1311,7 @@ TEST(ProviderClient, MissingLegacyNamedKeyDoesNotFallBackToTheEnvironment) {
         std::runtime_error);
 }
 
-TEST(ProviderClient, DoesNotUseAProcessEnvironmentKeyAsFallback) {
-    ScopedEnvironmentVariable environment("OPENAI_API_KEY");
-    ASSERT_TRUE(set_environment_variable("OPENAI_API_KEY", "environment-secret"));
+TEST(ProviderClient, UnauthenticatedProviderOmitsAuthorization) {
     CharacterDefinition definition = network_definition(443, false);
     std::vector<ProviderHttpRequest> requests;
     ProviderClient client(
