@@ -175,6 +175,15 @@ void create_config_table(Database& database) {
     database.execute(config_table_sql);
 }
 
+void add_token_usage_columns(Database& database) {
+    database.execute(
+        "ALTER TABLE entries ADD COLUMN input_tokens INTEGER "
+        "CHECK (input_tokens IS NULL OR input_tokens >= 0)");
+    database.execute(
+        "ALTER TABLE entries ADD COLUMN output_tokens INTEGER "
+        "CHECK (output_tokens IS NULL OR output_tokens >= 0)");
+}
+
 void validate_required_session_objects(Database& database) {
     for (const auto& [type, name] : required_session_objects) {
         if (!has_schema_object(
@@ -417,6 +426,8 @@ void create_workspace_session_schema(Database& database) {
             text TEXT NOT NULL,
             status INTEGER NOT NULL CHECK (status IN (0, 2, 3)),
             created_at INTEGER NOT NULL DEFAULT 0,
+            input_tokens INTEGER CHECK (input_tokens IS NULL OR input_tokens >= 0),
+            output_tokens INTEGER CHECK (output_tokens IS NULL OR output_tokens >= 0),
             PRIMARY KEY (session_key, entry_id),
             FOREIGN KEY (session_key, request_id)
                 REFERENCES turns(session_key, request_id),
@@ -468,6 +479,31 @@ void validate_workspace_session_contents(Database& database) {
     validate_required_config_object(database);
     validate_integrity(database);
     validate_session_row_invariants(database);
+}
+
+void ensure_entry_token_usage_columns(Database& database) {
+    bool has_input_tokens = false;
+    bool has_output_tokens = false;
+    Statement columns = database.prepare("PRAGMA table_info(entries)");
+    while (columns.step()) {
+        const std::string name = columns.text(1);
+        has_input_tokens |= name == "input_tokens";
+        has_output_tokens |= name == "output_tokens";
+    }
+    if (has_input_tokens && has_output_tokens) return;
+
+    storage::SqliteTransaction transaction(database);
+    if (!has_input_tokens) {
+        database.execute(
+            "ALTER TABLE entries ADD COLUMN input_tokens INTEGER "
+            "CHECK (input_tokens IS NULL OR input_tokens >= 0)");
+    }
+    if (!has_output_tokens) {
+        database.execute(
+            "ALTER TABLE entries ADD COLUMN output_tokens INTEGER "
+            "CHECK (output_tokens IS NULL OR output_tokens >= 0)");
+    }
+    transaction.commit();
 }
 
 WorkspaceDatabaseState inspect_workspace_session_database(
@@ -603,6 +639,7 @@ void upgrade_workspace_session_database_from_v1(
 
     storage::SqliteTransaction transaction(database);
     create_config_table(database);
+    add_token_usage_columns(database);
     insert_config_rows(database, rows);
     database.execute(
         "PRAGMA user_version = "
@@ -761,7 +798,7 @@ void initialize_workspace_session_database_runtime(
     const std::filesystem::path& path,
     std::string_view password) {
     secure_workspace_database_files(path);
-    // Tests and helpers may still create a missing disposable database at v2.
+    // Tests and helpers may still create a missing disposable database.
     // Normal runtime never calls this on a missing path; a valid v1 database
     // is never upgraded or deleted here.
     if (!std::filesystem::exists(path)) {

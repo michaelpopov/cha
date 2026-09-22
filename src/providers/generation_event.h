@@ -2,6 +2,8 @@
 
 #include "chat/transcript.h"
 
+#include <cstdint>
+#include <optional>
 #include <string>
 #include <variant>
 
@@ -27,10 +29,14 @@ struct GenerationEventDelta {
 
 struct GenerationCompleted {
     RequestId request_id{};
+    std::optional<std::uint64_t> input_tokens;
+    std::optional<std::uint64_t> output_tokens;
 };
 
 struct GenerationCancelled {
     RequestId request_id{};
+    std::optional<std::uint64_t> input_tokens;
+    std::optional<std::uint64_t> output_tokens;
 };
 
 struct GenerationFailed {

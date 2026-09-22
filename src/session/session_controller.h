@@ -121,6 +121,8 @@ private:
         // The stamp of the live streaming entry, captured when it opens so the
         // record later handed to the journal carries the same created_at.
         std::int64_t response_created_at{};
+        std::optional<std::uint64_t> input_tokens;
+        std::optional<std::uint64_t> output_tokens;
     };
 
     SessionController(

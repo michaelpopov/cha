@@ -78,6 +78,31 @@ std::uint64_t unsigned_id(std::int64_t value, std::string_view name) {
     return static_cast<std::uint64_t>(value);
 }
 
+std::optional<std::int64_t> sqlite_token_count(
+    const std::optional<std::uint64_t>& value,
+    std::string_view name) {
+    if (!value) return std::nullopt;
+    if (*value > static_cast<std::uint64_t>(
+            std::numeric_limits<std::int64_t>::max())) {
+        throw std::invalid_argument(
+            std::string(name) + " is outside SQLite's integer range");
+    }
+    return static_cast<std::int64_t>(*value);
+}
+
+std::optional<std::uint64_t> read_token_count(
+    Statement& statement,
+    int column,
+    std::string_view name) {
+    if (statement.is_null(column)) return std::nullopt;
+    const std::int64_t value = statement.integer(column);
+    if (value < 0) {
+        throw std::runtime_error(
+            "Session database contains a negative " + std::string(name));
+    }
+    return static_cast<std::uint64_t>(value);
+}
+
 void require_session_key(SessionKey session_key) {
     if (session_key <= 0) {
         throw std::invalid_argument("Session key must be positive");
@@ -302,8 +327,8 @@ void insert_entry(
     Statement statement = database.prepare(
         "INSERT INTO entries (session_key, entry_id, epoch, request_id, kind, "
         "participant_id, display_name, addressed_to, addressed_to_name, text, "
-        "status, created_at) VALUES "
-        "(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+        "status, created_at, input_tokens, output_tokens) VALUES "
+        "(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
         session_key,
         sqlite_id(entry.id, "Transcript entry ID"),
         epoch,
@@ -315,7 +340,9 @@ void insert_entry(
         std::string_view(entry.addressed_to_name),
         std::string_view(entry.text),
         static_cast<std::int64_t>(entry.status),
-        entry.created_at);
+        entry.created_at,
+        sqlite_token_count(entry.input_tokens, "Input token count"),
+        sqlite_token_count(entry.output_tokens, "Output token count"));
     statement.run();
 }
 
@@ -334,6 +361,8 @@ TranscriptEntry read_entry(Statement& statement) {
     if (!statement.is_null(1)) {
         entry.request_id = unsigned_id(statement.integer(1), "request ID");
     }
+    entry.input_tokens = read_token_count(statement, 10, "input token count");
+    entry.output_tokens = read_token_count(statement, 11, "output token count");
     try {
         require_storable_transcript_entry(entry);
     } catch (const std::invalid_argument& error) {
@@ -351,7 +380,8 @@ std::vector<TranscriptEntry> read_current_entries(
     std::vector<TranscriptEntry> result;
     Statement entries = database.prepare(
         "SELECT entry_id, request_id, kind, participant_id, display_name, "
-        "addressed_to, addressed_to_name, text, status, created_at "
+        "addressed_to, addressed_to_name, text, status, created_at, "
+        "input_tokens, output_tokens "
         "FROM entries WHERE session_key = ?1 AND epoch = ?2 "
         "ORDER BY entry_id",
         session_key, epoch);

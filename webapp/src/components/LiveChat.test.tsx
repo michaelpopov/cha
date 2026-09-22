@@ -179,6 +179,30 @@ describe('live chat', () => {
     expect(articles[1].querySelector('.cha-message-time')).toBeNull();
   });
 
+  it('shows each response context usage below that response', async () => {
+    const events = drivableEvents();
+    render(<App client={fixtureClient()} connectSessionEvents={events.connect} />);
+    await attachInitial(events, {
+      ...snapshotFixture,
+      transcript: [
+        {
+          id: 1, kind: 'character', participant_id: 'assistant', display_name: 'Assistant',
+          addressed_to: '', addressed_to_name: '', text: 'First answer', status: 'complete',
+          created_at: 1_700_000_000, input_tokens: 1_200, output_tokens: 300,
+        },
+        {
+          id: 2, kind: 'character', participant_id: 'assistant', display_name: 'Assistant',
+          addressed_to: '', addressed_to_name: '', text: 'Second answer', status: 'complete',
+          created_at: 1_700_000_001, input_tokens: 50_000, output_tokens: 4_000,
+        },
+      ],
+    });
+
+    const totals = Array.from(document.querySelectorAll('.cha-message-tokens'));
+    expect(totals.map((item) => item.textContent)).toEqual(['2K', '54K']);
+    expect(totals[1].getAttribute('title')).toBe('54,000 context tokens');
+  });
+
   it('offers text to speech for stored prompts and completed model responses', async () => {
     const play = vi.spyOn(TextToSpeechSession.prototype, 'play').mockResolvedValue();
     const stop = vi.spyOn(TextToSpeechSession.prototype, 'stop');

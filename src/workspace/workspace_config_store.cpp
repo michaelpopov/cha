@@ -1174,6 +1174,7 @@ void WorkspaceConfigStore::MaintenanceGuard::reopen() {
             Database::Mode::read_write,
             store.database_password);
         validate_workspace_session_database_identity(*store.database);
+        ensure_entry_token_usage_columns(*store.database);
         validate_workspace_session_contents(*store.database);
         store.database->execute("PRAGMA journal_mode = WAL");
         secure_workspace_session_database_files(store.database_path);
@@ -1215,6 +1216,7 @@ std::unique_ptr<WorkspaceConfigStore> WorkspaceConfigStore::open(
         Database::Mode::read_write,
         impl->database_password);
     validate_workspace_session_database_identity(*impl->database);
+    ensure_entry_token_usage_columns(*impl->database);
     validate_workspace_session_contents(*impl->database);
     impl->database->execute("PRAGMA journal_mode = WAL");
     secure_workspace_session_database_files(impl->database_path);

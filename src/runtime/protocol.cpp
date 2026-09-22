@@ -47,6 +47,12 @@ nlohmann::json transcript_entry_json(const TranscriptEntry& value) {
     json["created_at"] = value.created_at != 0
         ? nlohmann::json(value.created_at)
         : nlohmann::json(nullptr);
+    json["input_tokens"] = value.input_tokens
+        ? nlohmann::json(*value.input_tokens)
+        : nlohmann::json(nullptr);
+    json["output_tokens"] = value.output_tokens
+        ? nlohmann::json(*value.output_tokens)
+        : nlohmann::json(nullptr);
     return json;
 }
 

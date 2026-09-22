@@ -46,6 +46,8 @@ void make_v1_database(const std::filesystem::path& path) {
     create_empty_workspace_session_database(path);
     Database database(path, Database::Mode::read_write);
     database.execute("DROP TABLE config");
+    database.execute("ALTER TABLE entries DROP COLUMN output_tokens");
+    database.execute("ALTER TABLE entries DROP COLUMN input_tokens");
     database.execute(
         "PRAGMA user_version = "
         + std::to_string(workspace_session_database_version_v1));
@@ -190,6 +192,8 @@ TEST(WorkspaceSessionDatabase, ProtectsExistingDatabaseAndPreservesRows) {
         database.execute(
             "INSERT INTO config (name, content) VALUES "
             "('personas/test/persona.toml', 'name = \"preserved\"')");
+        database.execute("ALTER TABLE entries DROP COLUMN output_tokens");
+        database.execute("ALTER TABLE entries DROP COLUMN input_tokens");
     }
     for (const std::string_view suffix : {"-journal", "-wal", "-shm"}) {
         std::ofstream sidecar(path.string() + std::string(suffix));

@@ -5,7 +5,7 @@
 #include "providers/generation_event.h"
 
 #include <atomic>
-#include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <optional>
 #include <string>
@@ -24,10 +24,10 @@ enum class GenerationOutcome {
 // Token counts reported by a provider for one completed generation. A provider
 // may omit any count, especially when a request did not finish normally.
 struct GenerationTokenUsage {
-    std::optional<std::size_t> input_tokens;
-    std::optional<std::size_t> output_tokens;
-    std::optional<std::size_t> cache_read_tokens;
-    std::optional<std::size_t> cache_write_tokens;
+    std::optional<std::uint64_t> input_tokens;
+    std::optional<std::uint64_t> output_tokens;
+    std::optional<std::uint64_t> cache_read_tokens;
+    std::optional<std::uint64_t> cache_write_tokens;
 };
 
 // How one call to ModelBackend::perform() ended. The message explains the failure outcomes

@@ -537,7 +537,11 @@ TEST(SessionController, OwnsACompleteIdentifiedTypedTurn) {
         journal.cancel_turn(16, std::nullopt);
     }
     auto backend = std::make_unique<ScriptedBackend>(
-        GenerationResult{},
+        GenerationResult{
+            GenerationOutcome::completed,
+            {},
+            {.input_tokens = 1'200, .output_tokens = 300},
+        },
         std::vector<std::string>{"Hello", " there"});
     ScriptedBackend* backend_view = backend.get();
     auto controller = test::from_test_backends(
@@ -580,6 +584,8 @@ TEST(SessionController, OwnsACompleteIdentifiedTypedTurn) {
     EXPECT_EQ(response.display_name, "Guide");
     EXPECT_EQ(response.text, "Hello there");
     EXPECT_EQ(response.status, EntryStatus::complete);
+    EXPECT_EQ(response.input_tokens, 1'200U);
+    EXPECT_EQ(response.output_tokens, 300U);
     EXPECT_EQ(captured_history->entries, (std::vector<TranscriptEntry>{earlier}));
     EXPECT_EQ(load_transcript_entries(temporary.path), entries);
 }

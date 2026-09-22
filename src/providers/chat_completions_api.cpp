@@ -4,9 +4,7 @@
 
 #include <nlohmann/json.hpp>
 
-#include <cstddef>
 #include <cstdint>
-#include <limits>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -18,18 +16,14 @@ namespace {
 
 using Json = nlohmann::json;
 
-std::optional<std::size_t> token_count(
+std::optional<std::uint64_t> token_count(
     const Json& usage,
     std::string_view field) {
     const auto value = usage.find(field);
     if (value == usage.end() || !value->is_number_unsigned()) {
         return std::nullopt;
     }
-    const auto count = value->get<std::uint64_t>();
-    if (count > std::numeric_limits<std::size_t>::max()) {
-        return std::nullopt;
-    }
-    return static_cast<std::size_t>(count);
+    return value->get<std::uint64_t>();
 }
 
 GenerationTokenUsage chat_token_usage(const Json& response) {
@@ -37,8 +31,8 @@ GenerationTokenUsage chat_token_usage(const Json& response) {
     if (usage == response.end() || !usage->is_object()) {
         return {};
     }
-    std::optional<std::size_t> cache_read_tokens;
-    std::optional<std::size_t> cache_write_tokens;
+    std::optional<std::uint64_t> cache_read_tokens;
+    std::optional<std::uint64_t> cache_write_tokens;
     const auto details = usage->find("prompt_tokens_details");
     if (details != usage->end() && details->is_object()) {
         cache_read_tokens = token_count(*details, "cached_tokens");

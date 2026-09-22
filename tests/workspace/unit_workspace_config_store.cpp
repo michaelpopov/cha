@@ -77,6 +77,8 @@ void make_v1_database(const std::filesystem::path& path) {
     create_empty_workspace_session_database(path);
     Database database(path, Database::Mode::read_write);
     database.execute("DROP TABLE config");
+    database.execute("ALTER TABLE entries DROP COLUMN output_tokens");
+    database.execute("ALTER TABLE entries DROP COLUMN input_tokens");
     database.execute(
         "PRAGMA user_version = "
         + std::to_string(workspace_session_database_version_v1));
@@ -870,6 +872,29 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, OpensPrivateSessionStorageWithoutMateria
     EXPECT_FALSE(std::filesystem::exists(root));
     EXPECT_FALSE(std::filesystem::exists(workspace_child));
     EXPECT_FALSE(std::filesystem::exists(welcome_child));
+}
+
+TEST_F(RuntimeWorkspaceConfigStoreTest, OpensAndAddsMissingTokenUsageColumns) {
+    {
+        Database handle(database(), Database::Mode::read_write);
+        handle.execute("ALTER TABLE entries DROP COLUMN output_tokens");
+        handle.execute("ALTER TABLE entries DROP COLUMN input_tokens");
+    }
+
+    const auto store = open_store();
+    Database handle(database(), Database::Mode::read_only);
+    EXPECT_EQ(
+        handle.pragma_integer("user_version"),
+        workspace_session_database_version);
+    Statement columns = handle.prepare("PRAGMA table_info(entries)");
+    bool found_input_tokens = false;
+    bool found_output_tokens = false;
+    while (columns.step()) {
+        found_input_tokens |= columns.text(1) == "input_tokens";
+        found_output_tokens |= columns.text(1) == "output_tokens";
+    }
+    EXPECT_TRUE(found_input_tokens);
+    EXPECT_TRUE(found_output_tokens);
 }
 
 TEST_F(RuntimeWorkspaceConfigStoreTest, HoldsTheLeaseAgainstRuntimeImportAndExport) {
@@ -1789,6 +1814,8 @@ TEST_F(
     {
         Database handle(source_database, Database::Mode::read_write);
         seed_session_rows(handle);
+        handle.execute("ALTER TABLE entries DROP COLUMN output_tokens");
+        handle.execute("ALTER TABLE entries DROP COLUMN input_tokens");
     }
     const auto source_before = config_contents(source_database);
 

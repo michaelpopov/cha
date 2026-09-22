@@ -1228,8 +1228,16 @@ components:
         request_id:
           $ref: "#/components/schemas/UnsignedInteger"
         created_at:
-          description: Unix seconds when the entry was created; null when unknown (rows stored before schema version 3).
+          description: Unix seconds when the entry was created; null when unknown.
           type: [integer, "null"]
+        input_tokens:
+          description: Provider-reported input tokens for this response; null when unavailable.
+          type: [integer, "null"]
+          minimum: 0
+        output_tokens:
+          description: Provider-reported output tokens for this response; null when unavailable.
+          type: [integer, "null"]
+          minimum: 0
         has_cached_audio:
           description: Whether saved audio is available for this entry.
           type: boolean

@@ -855,6 +855,8 @@ void SessionController::apply(const GenerationCompleted& event, ControllerUpdate
         finish_generation_run(update);
         return;
     }
+    active_->input_tokens = event.input_tokens;
+    active_->output_tokens = event.output_tokens;
     const TranscriptEntry response =
         response_entry(EntryStatus::complete);
     persist(
@@ -878,6 +880,8 @@ void SessionController::apply(const GenerationCancelled& event, ControllerUpdate
     }
     flush_pending_answer_text(update);
     if (active_->phase == ResponsePhase::answering) {
+        active_->input_tokens = event.input_tokens;
+        active_->output_tokens = event.output_tokens;
         const TranscriptEntry response =
             response_entry(EntryStatus::cancelled);
         persist(
@@ -996,7 +1000,11 @@ void SessionController::fail_active_response(
 }
 
 void SessionController::finish_response_entry(EntryStatus status) {
-    transcript_.finish_entry(active_->response_entry_id, status);
+    transcript_.finish_entry(
+        active_->response_entry_id,
+        status,
+        active_->input_tokens,
+        active_->output_tokens);
 }
 
 TranscriptEntry SessionController::response_entry(EntryStatus status) const {
@@ -1016,6 +1024,8 @@ TranscriptEntry SessionController::response_entry(EntryStatus status) const {
     if (active_->response_created_at != 0) {
         entry.created_at = active_->response_created_at;
     }
+    entry.input_tokens = active_->input_tokens;
+    entry.output_tokens = active_->output_tokens;
     return entry;
 }
 

@@ -383,8 +383,10 @@ TEST(SessionDatabase, RoundTripsMetadataAndTypedEntries) {
     create_test_database(path);
     auto journal = std::make_unique<SessionJournal>(path);
     const TranscriptEntry prompt = human(1, "Hello", 1);
-    const TranscriptEntry answer = make_character_entry(
+    TranscriptEntry answer = make_character_entry(
         2, "reviewer-id", "Reviewer", "Hello back", EntryStatus::complete, 1);
+    answer.input_tokens = 1'200;
+    answer.output_tokens = 300;
     ASSERT_NE(prompt.created_at, 0);
     ASSERT_NE(answer.created_at, 0);
     journal->start_turn(1, prompt);

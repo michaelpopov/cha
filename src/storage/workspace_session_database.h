@@ -40,6 +40,8 @@ void set_workspace_session_database_identity(
 void validate_workspace_session_database_identity(
     storage::SqliteDatabase& database);
 void validate_workspace_session_contents(storage::SqliteDatabase& database);
+// Adds nullable usage columns to databases created by older schema-2 builds.
+void ensure_entry_token_usage_columns(storage::SqliteDatabase& database);
 
 [[nodiscard]] WorkspaceDatabaseState inspect_workspace_session_database(
     const std::filesystem::path& path,

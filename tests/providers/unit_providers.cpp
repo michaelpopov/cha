@@ -197,6 +197,10 @@ TEST(Providers, StartsEveryRequestImmediatelyWithIndependentBackendsAndQueues) {
 
 TEST(Providers, PublishesOrderedDeltasThenExactlyOneTerminal) {
     auto state = std::make_shared<BackendState>();
+    state->result.usage = {
+        .input_tokens = 1'200,
+        .output_tokens = 300,
+    };
     state->deltas = {
         {GenerationDeltaKind::reasoning, "Think"},
         {GenerationDeltaKind::answer, "Answer"},
@@ -209,7 +213,10 @@ TEST(Providers, PublishesOrderedDeltasThenExactlyOneTerminal) {
     ASSERT_EQ(events.size(), 3U);
     EXPECT_EQ(std::get<GenerationEventDelta>(events[0]).text, "Think");
     EXPECT_EQ(std::get<GenerationEventDelta>(events[1]).text, "Answer");
-    EXPECT_TRUE(std::holds_alternative<GenerationCompleted>(events[2]));
+    const GenerationCompleted completed =
+        std::get<GenerationCompleted>(events[2]);
+    EXPECT_EQ(completed.input_tokens, 1'200U);
+    EXPECT_EQ(completed.output_tokens, 300U);
     GenerationEvent extra = GenerationCompleted{};
     EXPECT_EQ(request->try_receive(extra), ChannelReadStatus::closed);
     providers.shutdown();

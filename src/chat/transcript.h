@@ -76,6 +76,8 @@ struct TranscriptEntry {
     EntryStatus status{EntryStatus::complete};
     std::optional<RequestId> request_id;
     std::int64_t created_at{};
+    std::optional<std::uint64_t> input_tokens;
+    std::optional<std::uint64_t> output_tokens;
 
     bool operator==(const TranscriptEntry&) const = default;
 };
@@ -149,7 +151,11 @@ public:
     void add_entry(TranscriptEntry entry);
     void begin_entry(TranscriptEntry entry);
     void append_answer(EntryId entry_id, std::string_view text);
-    void finish_entry(EntryId entry_id, EntryStatus status);
+    void finish_entry(
+        EntryId entry_id,
+        EntryStatus status,
+        std::optional<std::uint64_t> input_tokens = std::nullopt,
+        std::optional<std::uint64_t> output_tokens = std::nullopt);
     void discard_entry(EntryId entry_id);
     void replace_entries(std::vector<TranscriptEntry> entries);
     [[nodiscard]] bool can_delete_turn(EntryId response_entry_id) const;

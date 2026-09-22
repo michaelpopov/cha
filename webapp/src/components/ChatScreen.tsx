@@ -161,6 +161,11 @@ function TranscriptMessage({
   onDelete?: (entry: SessionSnapshot['transcript'][number]) => void;
 }) {
   const canRead = canReadEntry(entry);
+  const contextTokens = entry.kind === 'character'
+    && entry.input_tokens != null
+    && entry.output_tokens != null
+    ? entry.input_tokens + entry.output_tokens
+    : null;
   const canCover = entry.kind === 'character'
     && (entry.status === 'complete' || entry.status === 'cancelled')
     && entry.created_at !== null;
@@ -200,15 +205,25 @@ function TranscriptMessage({
       </div>
       {entry.status === 'cancelled' && <div className="cha-entry-status">Stopped</div>}
       {entry.status === 'failed' && <div className="cha-entry-status">Failed</div>}
-      {entry.created_at !== null && (
+      {(entry.created_at !== null || contextTokens !== null) && (
         <div className="cha-message-meta">
-          <time
-            className="cha-message-time"
-            dateTime={new Date(entry.created_at * 1000).toISOString()}
-            title={new Date(entry.created_at * 1000).toLocaleString()}
-          >
-            {formatEntryTime(entry.created_at)}
-          </time>
+          {entry.created_at !== null && (
+            <time
+              className="cha-message-time"
+              dateTime={new Date(entry.created_at * 1000).toISOString()}
+              title={new Date(entry.created_at * 1000).toLocaleString()}
+            >
+              {formatEntryTime(entry.created_at)}
+            </time>
+          )}
+          {contextTokens !== null && (
+            <span
+              className="cha-message-tokens"
+              title={`${contextTokens.toLocaleString()} context tokens`}
+            >
+              {formatTokenUsage(contextTokens)}
+            </span>
+          )}
           {canRead && speechAvailable && (
             <button
               aria-label={speechLabel}
@@ -1158,4 +1173,8 @@ export function formatEntryTime(createdAt: number, now = Date.now()): string {
     ...(date.getFullYear() === current.getFullYear() ? {} : { year: 'numeric' as const }),
   });
   return `${day}, ${time}`;
+}
+
+export function formatTokenUsage(tokens: number): string {
+  return tokens < 1000 ? tokens.toLocaleString() : `${Math.round(tokens / 1000)}K`;
 }

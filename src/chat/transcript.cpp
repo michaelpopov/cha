@@ -137,6 +137,11 @@ void validate_transcript_entry(const TranscriptEntry& entry) {
         && entry.text.empty()) {
         throw std::invalid_argument("A cancelled character entry requires answer content");
     }
+    if (entry.kind != EntryKind::character
+        && (entry.input_tokens || entry.output_tokens)) {
+        throw std::invalid_argument(
+            "Only character entries may carry token usage");
+    }
 }
 
 void require_terminal_transcript_entry(const TranscriptEntry& entry) {
@@ -185,7 +190,11 @@ void Transcript::append_answer(EntryId entry_id, std::string_view text) {
     ++revision_;
 }
 
-void Transcript::finish_entry(EntryId entry_id, EntryStatus status) {
+void Transcript::finish_entry(
+    EntryId entry_id,
+    EntryStatus status,
+    std::optional<std::uint64_t> input_tokens,
+    std::optional<std::uint64_t> output_tokens) {
     if (!open_entry_id_ || *open_entry_id_ != entry_id) {
         throw std::logic_error("The requested transcript entry is not streaming");
     }
@@ -201,6 +210,8 @@ void Transcript::finish_entry(EntryId entry_id, EntryStatus status) {
     }
 
     entries_.back().status = status;
+    entries_.back().input_tokens = input_tokens;
+    entries_.back().output_tokens = output_tokens;
     open_entry_id_.reset();
     ++revision_;
 }

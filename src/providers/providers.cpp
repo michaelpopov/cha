@@ -140,10 +140,18 @@ void ProviderRequest::execute(
 
         if (result.outcome == GenerationOutcome::completed) {
             log_info("Provider request completed: " + fields);
-            close_with(GenerationCompleted{request_id});
+            close_with(GenerationCompleted{
+                request_id,
+                result.usage.input_tokens,
+                result.usage.output_tokens,
+            });
         } else if (result.outcome == GenerationOutcome::cancelled) {
             log_info("Provider request cancelled: " + fields);
-            close_with(GenerationCancelled{request_id});
+            close_with(GenerationCancelled{
+                request_id,
+                result.usage.input_tokens,
+                result.usage.output_tokens,
+            });
         } else {
             log_error("Provider request failed: " + fields);
             fail(result.message);

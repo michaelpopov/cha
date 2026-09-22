@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { formatEntryTime } from './ChatScreen';
+import { formatEntryTime, formatTokenUsage } from './ChatScreen';
 
 // Local-time constructor values: an entry from this morning and one from
 // last year, both relative to a local noon.
@@ -27,4 +27,12 @@ describe('entry time', () => {
     }
   });
 
+});
+
+describe('token usage', () => {
+  it('shows exact small totals and rounded whole thousands', () => {
+    expect(formatTokenUsage(842)).toBe('842');
+    expect(formatTokenUsage(1_000)).toBe('1K');
+    expect(formatTokenUsage(55_600)).toBe('56K');
+  });
 });

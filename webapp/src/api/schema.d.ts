@@ -502,8 +502,12 @@ export interface components {
             /** @enum {string} */
             status: "complete" | "streaming" | "cancelled" | "failed";
             request_id?: components["schemas"]["UnsignedInteger"];
-            /** @description Unix seconds when the entry was created; null when unknown (rows stored before schema version 3). */
+            /** @description Unix seconds when the entry was created; null when unknown. */
             created_at: number | null;
+            /** @description Provider-reported input tokens for this response; null when unavailable. */
+            input_tokens?: number | null;
+            /** @description Provider-reported output tokens for this response; null when unavailable. */
+            output_tokens?: number | null;
             /** @description Whether saved audio is available for this entry. */
             has_cached_audio?: boolean;
         };
