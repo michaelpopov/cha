@@ -181,6 +181,15 @@ export function TrashIcon(props: IconProps) {
   );
 }
 
+export function CopyIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect height="13" rx="2" width="11" x="8" y="8" {...stroke} />
+      <path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h3" {...stroke} />
+    </Icon>
+  );
+}
+
 export function PlusIcon(props: IconProps) {
   return (
     <Icon {...props}>

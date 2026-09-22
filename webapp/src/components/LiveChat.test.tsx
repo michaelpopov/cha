@@ -203,6 +203,35 @@ describe('live chat', () => {
     expect(totals[1].getAttribute('title')).toBe('54,000 context tokens');
   });
 
+  it('copies requests and visible response text to the clipboard', async () => {
+    const writeText = vi.fn(async () => undefined);
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+    const events = drivableEvents();
+    render(<App client={fixtureClient()} connectSessionEvents={events.connect} />);
+    await attachInitial(events, {
+      ...snapshotFixture,
+      transcript: [
+        {
+          id: 1, kind: 'human', participant_id: 'guest', display_name: 'Guest',
+          addressed_to: 'assistant', addressed_to_name: 'Assistant',
+          text: 'Question', status: 'complete', created_at: 1_700_000_000,
+        },
+        {
+          id: 2, kind: 'character', participant_id: 'assistant', display_name: 'Assistant',
+          addressed_to: '', addressed_to_name: '',
+          text: '[2026-01-02T03:04:05Z] Answer', status: 'complete', created_at: 1_700_000_001,
+        },
+      ],
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Copy your prompt' }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('Question'));
+    fireEvent.click(screen.getByRole('button', { name: "Copy Assistant's response" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('Answer'));
+    expect(await screen.findAllByRole('button', { name: 'Copied to clipboard' }))
+      .toHaveLength(2);
+  });
+
   it('offers text to speech for stored prompts and completed model responses', async () => {
     const play = vi.spyOn(TextToSpeechSession.prototype, 'play').mockResolvedValue();
     const stop = vi.spyOn(TextToSpeechSession.prototype, 'stop');

@@ -37,6 +37,8 @@ import {
 } from '../voiceInput';
 import { ConfirmDialog } from './ConfirmDialog';
 import {
+  CheckIcon,
+  CopyIcon,
   EyeIcon,
   EyeOffIcon,
   MicrophoneIcon,
@@ -160,7 +162,11 @@ function TranscriptMessage({
   onUncover?: () => void;
   onDelete?: (entry: SessionSnapshot['transcript'][number]) => void;
 }) {
+  const [copied, setCopied] = useState(false);
+  const displayedText = visibleEntryText(entry.kind, entry.text);
   const canRead = canReadEntry(entry);
+  const canCopy = (entry.kind === 'human' || entry.kind === 'character')
+    && displayedText.length > 0;
   const contextTokens = entry.kind === 'character'
     && entry.input_tokens != null
     && entry.output_tokens != null
@@ -201,11 +207,11 @@ function TranscriptMessage({
           entry.kind === 'human' || entry.kind === 'character' ? appearance : undefined,
         )}`}
       >
-        {visibleEntryText(entry.kind, entry.text)}
+        {displayedText}
       </div>
       {entry.status === 'cancelled' && <div className="cha-entry-status">Stopped</div>}
       {entry.status === 'failed' && <div className="cha-entry-status">Failed</div>}
-      {(entry.created_at !== null || contextTokens !== null) && (
+      {(entry.created_at !== null || contextTokens !== null || canCopy) && (
         <div className="cha-message-meta">
           {entry.created_at !== null && (
             <time
@@ -223,6 +229,22 @@ function TranscriptMessage({
             >
               {formatTokenUsage(contextTokens)}
             </span>
+          )}
+          {canCopy && (
+            <button
+              aria-label={copied ? 'Copied to clipboard' : `Copy ${spokenItem}`}
+              className={`cha-message-action${copied ? ' is-active' : ''}`}
+              onClick={() => {
+                void navigator.clipboard.writeText(displayedText).then(() => {
+                  setCopied(true);
+                  window.setTimeout(() => setCopied(false), 1500);
+                }).catch(() => setCopied(false));
+              }}
+              title={copied ? 'Copied' : 'Copy to clipboard'}
+              type="button"
+            >
+              {copied ? <CheckIcon /> : <CopyIcon />}
+            </button>
           )}
           {canRead && speechAvailable && (
             <button
