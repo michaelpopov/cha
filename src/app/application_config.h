@@ -23,6 +23,7 @@ struct VaultDefinition {
     std::string name;
     std::filesystem::path data;
     bool password_protected{};
+    std::optional<std::string> r2_etag;
     std::optional<std::filesystem::path> mirror;
     std::optional<std::filesystem::path> modify;
     std::filesystem::path source;

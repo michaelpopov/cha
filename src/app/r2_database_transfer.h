@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -14,6 +15,18 @@ namespace cha {
 
 struct R2DatabaseTransfer {
     std::uintmax_t byte_count{};
+    std::string etag;
+};
+
+enum class R2EtagStatus {
+    missing,
+    match,
+    mismatch,
+};
+
+struct R2UploadCheck {
+    std::optional<std::string> etag;
+    R2EtagStatus status{R2EtagStatus::missing};
 };
 
 class R2HttpStatusError : public std::runtime_error {
@@ -36,13 +49,19 @@ R2DatabaseTransfer upload_database_to_r2(
     const R2StorageKey& storage,
     R2DatabaseLease lease = R2DatabaseLease::acquire,
     std::string_view database_password = {},
-    const std::function<bool()>& cancelled = {});
+    const std::function<bool()>& cancelled = {},
+    std::string_view expected_etag = {});
 R2DatabaseTransfer download_database_from_r2(
     const std::filesystem::path& database_path,
     const std::filesystem::path& vault_definition_path,
     const R2StorageKey& storage,
     R2DatabaseLease lease = R2DatabaseLease::acquire,
     std::string_view database_password = {},
+    const std::function<bool()>& cancelled = {});
+
+std::optional<std::string> get_r2_database_etag(
+    std::string_view database_name,
+    const R2StorageKey& storage,
     const std::function<bool()>& cancelled = {});
 
 // Lists root-level SQLite database objects and downloads one into a new local

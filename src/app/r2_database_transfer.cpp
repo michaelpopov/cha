@@ -18,10 +18,12 @@
 #include <chrono>
 #include <cctype>
 #include <ctime>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <limits>
 #include <optional>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -49,6 +51,11 @@ struct R2Settings {
 struct SigningTime {
     std::string timestamp;
     std::string date;
+};
+
+struct R2ResponseHeaders {
+    std::string etag;
+    std::exception_ptr error;
 };
 
 class R2ObjectNotFoundError : public R2HttpStatusError {
@@ -394,6 +401,61 @@ std::size_t discard_response(
     return size * count;
 }
 
+std::string parse_etag_header(std::string_view value) {
+    value = trim_view(value);
+    if (value.size() >= 2 && value.front() == '"' && value.back() == '"') {
+        value.remove_prefix(1);
+        value.remove_suffix(1);
+    }
+    if (value.empty()) return {};
+    for (const unsigned char character : value) {
+        if (character < 0x21 || character == '"' || character == 0x7f) {
+            return {};
+        }
+    }
+    return std::string(value);
+}
+
+std::size_t capture_response_header(
+    char* source,
+    std::size_t size,
+    std::size_t count,
+    void* context) {
+    const std::size_t bytes = size * count;
+    auto& response = *static_cast<R2ResponseHeaders*>(context);
+    try {
+        const std::string_view line(source, bytes);
+        const std::size_t separator = line.find(':');
+        if (separator != std::string_view::npos
+            && ascii_iequals(line.substr(0, separator), "etag")) {
+            response.etag = parse_etag_header(line.substr(separator + 1));
+        }
+    } catch (...) {
+        response.error = std::current_exception();
+        return 0;
+    }
+    return bytes;
+}
+
+void capture_response_headers(
+    CurlHandle& curl,
+    R2ResponseHeaders& response) {
+    require_curl(
+        curl_easy_setopt(
+            curl.get(), CURLOPT_HEADERFUNCTION, capture_response_header),
+        "Failed to configure R2 response headers");
+    require_curl(
+        curl_easy_setopt(curl.get(), CURLOPT_HEADERDATA, &response),
+        "Failed to configure R2 response header destination");
+}
+
+std::string quoted_etag(std::string_view etag) {
+    if (parse_etag_header(etag) != etag) {
+        throw std::invalid_argument("Invalid R2 ETag");
+    }
+    return "\"" + std::string(etag) + "\"";
+}
+
 std::size_t write_file(
     char* source,
     std::size_t size,
@@ -682,12 +744,13 @@ void publish_downloads(
     tighten_private_file(vault);
 }
 
-std::uintmax_t upload_file(
+R2DatabaseTransfer upload_file(
     const std::filesystem::path& path,
     std::string_view object_name,
     std::string_view content_type,
     const R2StorageKey& storage,
-    const std::function<bool()>& cancelled) {
+    const std::function<bool()>& cancelled,
+    std::string_view expected_etag = {}) {
     const R2Settings settings = load_r2_settings(object_name, storage);
     const std::string payload_hash = sha256_file_hex(path);
     const std::uintmax_t byte_count = std::filesystem::file_size(path);
@@ -703,8 +766,13 @@ std::uintmax_t upload_file(
 
     CurlHandle curl;
     CurlHeaders headers;
+    R2ResponseHeaders response;
     std::array<char, CURL_ERROR_SIZE> error{};
     configure_request(curl, headers, settings, "PUT", payload_hash, error);
+    capture_response_headers(curl, response);
+    if (!expected_etag.empty()) {
+        headers.append("If-Match: " + quoted_etag(expected_etag));
+    }
     headers.append("Content-Type: " + std::string(content_type));
     require_curl(
         curl_easy_setopt(curl.get(), CURLOPT_UPLOAD, 1L),
@@ -725,12 +793,24 @@ std::uintmax_t upload_file(
         "Failed to configure R2 upload response");
 
     const CURLcode result = perform_transfer(curl.get(), cancelled);
+    if (response.error) std::rethrow_exception(response.error);
     if (result != CURLE_OK) fail_transfer("upload", result, error);
+    if (!expected_etag.empty()) {
+        long status{};
+        require_curl(
+            curl_easy_getinfo(curl.get(), CURLINFO_RESPONSE_CODE, &status),
+            "Failed to read R2 response status");
+        if (status == 412) {
+            throw R2HttpStatusError(
+                "The R2 vault changed since the check. "
+                "Click Upload again to review it.");
+        }
+    }
     require_status(curl, "upload");
-    return byte_count;
+    return {.byte_count = byte_count, .etag = std::move(response.etag)};
 }
 
-std::uintmax_t download_file(
+R2DatabaseTransfer download_file(
     const std::filesystem::path& destination,
     std::string_view object_name,
     const R2StorageKey& storage,
@@ -747,8 +827,10 @@ std::uintmax_t download_file(
     const std::string payload_hash = sha256_hex({});
     CurlHandle curl;
     CurlHeaders headers;
+    R2ResponseHeaders response;
     std::array<char, CURL_ERROR_SIZE> error{};
     configure_request(curl, headers, settings, "GET", payload_hash, error);
+    capture_response_headers(curl, response);
     require_curl(
         curl_easy_setopt(curl.get(), CURLOPT_HTTPGET, 1L),
         "Failed to configure R2 download");
@@ -761,6 +843,7 @@ std::uintmax_t download_file(
 
     const CURLcode result = perform_transfer(curl.get(), cancelled);
     output.close();
+    if (response.error) std::rethrow_exception(response.error);
     if (result != CURLE_OK) fail_transfer("download", result, error);
     if (!output) {
         throw std::runtime_error(
@@ -769,7 +852,10 @@ std::uintmax_t download_file(
     }
     require_status(curl, "download", not_found_message);
     tighten_private_file(destination);
-    return std::filesystem::file_size(destination);
+    return {
+        .byte_count = std::filesystem::file_size(destination),
+        .etag = std::move(response.etag),
+    };
 }
 
 VaultDefinition require_matching_vault(
@@ -795,13 +881,47 @@ std::string busy_message(const std::filesystem::path& database) {
 
 } // namespace
 
+std::optional<std::string> get_r2_database_etag(
+    std::string_view database_name,
+    const R2StorageKey& storage,
+    const std::function<bool()>& cancelled) {
+    const R2Settings settings = load_r2_settings(database_name, storage);
+    const std::string payload_hash = sha256_hex({});
+    CurlHandle curl;
+    CurlHeaders headers;
+    R2ResponseHeaders response;
+    std::array<char, CURL_ERROR_SIZE> error{};
+    configure_request(curl, headers, settings, "HEAD", payload_hash, error);
+    capture_response_headers(curl, response);
+    require_curl(
+        curl_easy_setopt(curl.get(), CURLOPT_NOBODY, 1L),
+        "Failed to configure R2 metadata request");
+    require_curl(
+        curl_easy_setopt(curl.get(), CURLOPT_WRITEFUNCTION, discard_response),
+        "Failed to configure R2 metadata response");
+
+    const CURLcode result = perform_transfer(curl.get(), cancelled);
+    if (response.error) std::rethrow_exception(response.error);
+    if (result != CURLE_OK) fail_transfer("metadata request", result, error);
+    try {
+        require_status(curl, "metadata request", "R2 database was not found");
+    } catch (const R2ObjectNotFoundError&) {
+        return std::nullopt;
+    }
+    if (response.etag.empty()) {
+        throw std::runtime_error("R2 metadata response did not include an ETag");
+    }
+    return response.etag;
+}
+
 R2DatabaseTransfer upload_database_to_r2(
     const std::filesystem::path& database_path,
     const std::filesystem::path& vault_definition_path,
     const R2StorageKey& storage,
     R2DatabaseLease lease_mode,
     std::string_view database_password,
-    const std::function<bool()>& cancelled) {
+    const std::function<bool()>& cancelled,
+    std::string_view expected_etag) {
     const std::filesystem::path database = normalize_database_path(database_path);
     const std::filesystem::path vault =
         std::filesystem::absolute(vault_definition_path).lexically_normal();
@@ -824,14 +944,29 @@ R2DatabaseTransfer upload_database_to_r2(
     // resolves beside the definition, so a manually copied pair still opens.
     toml::table portable = read_toml_file(vault, "vault definition");
     portable.insert_or_assign("data", database_name);
+    const R2DatabaseTransfer database_upload = upload_file(
+        database, database_name, "application/vnd.sqlite3", storage, cancelled,
+        expected_etag);
+    if (database_upload.etag.empty()) {
+        throw std::runtime_error("R2 upload response did not include an ETag");
+    }
+    // The database is already in R2, even if the companion upload fails.
+    toml::table local = read_toml_file(vault, "vault definition");
+    local.insert_or_assign("r2_etag", database_upload.etag);
+    std::ostringstream local_contents;
+    local_contents << local << '\n';
+    create_private_file(vault, local_contents.str());
+    portable.insert_or_assign("r2_etag", database_upload.etag);
     TemporaryPath vault_upload(unique_sibling(vault, "upload"));
     write_toml_file(vault_upload.get(), portable);
-    const std::uintmax_t vault_bytes = upload_file(
+    const R2DatabaseTransfer vault_upload_result = upload_file(
         vault_upload.get(), database_name + ".toml", "application/toml",
         storage, cancelled);
-    const std::uintmax_t database_bytes = upload_file(
-        database, database_name, "application/vnd.sqlite3", storage, cancelled);
-    return {.byte_count = vault_bytes + database_bytes};
+    return {
+        .byte_count = database_upload.byte_count
+            + vault_upload_result.byte_count,
+        .etag = database_upload.etag,
+    };
 }
 
 R2DatabaseTransfer download_database_from_r2(
@@ -859,12 +994,12 @@ R2DatabaseTransfer download_database_from_r2(
     TemporaryPath database_temporary(unique_sibling(database, "download"));
     TemporaryPath vault_temporary(unique_sibling(vault, "download"));
     const std::string vault_object = database_name + ".toml";
-    const std::uintmax_t vault_bytes = download_file(
+    const R2DatabaseTransfer vault_download = download_file(
         vault_temporary.get(), vault_object, storage, cancelled,
         "R2 vault definition was not found. The bucket may contain a legacy "
               "database-only upload; upload with the current CHA version "
               "before downloading.");
-    const std::uintmax_t database_bytes = download_file(
+    const R2DatabaseTransfer database_download = download_file(
         database_temporary.get(), database_name, storage, cancelled);
     if (inspect_workspace_session_database(
             database_temporary.get(), database_password)
@@ -880,12 +1015,20 @@ R2DatabaseTransfer download_database_from_r2(
     }
     rewrite_toml_file(vault_temporary.get(), [&](toml::table& table) {
         table.insert_or_assign("data", utf8_path(database));
+        if (!database_download.etag.empty()) {
+            table.insert_or_assign("r2_etag", database_download.etag);
+        } else {
+            table.erase("r2_etag");
+        }
     });
 
     remove_sidecars(database_temporary.get());
     publish_downloads(
         database_temporary, vault_temporary, database, vault);
-    return {.byte_count = vault_bytes + database_bytes};
+    return {
+        .byte_count = vault_download.byte_count + database_download.byte_count,
+        .etag = database_download.etag,
+    };
 }
 
 std::vector<std::string> list_r2_database_names(
@@ -961,11 +1104,12 @@ R2DatabaseTransfer download_new_database_from_r2(
     try {
         vault_bytes = download_file(
             vault_temporary.get(), vault_object, storage, cancelled,
-            "R2 vault definition object '" + vault_object + "' was not found");
+            "R2 vault definition object '" + vault_object + "' was not found")
+            .byte_count;
     } catch (const R2ObjectNotFoundError&) {
         downloaded_vault = false;
     }
-    const std::uintmax_t database_bytes = download_file(
+    const R2DatabaseTransfer database_download = download_file(
         database_temporary.get(), database_name, storage, cancelled);
     std::optional<VaultDefinition> downloaded_definition;
     if (downloaded_vault) {
@@ -973,6 +1117,11 @@ R2DatabaseTransfer download_new_database_from_r2(
             vault.parent_path(), vault_temporary.get());
         rewrite_toml_file(vault_temporary.get(), [&](toml::table& table) {
             table.insert_or_assign("data", utf8_path(database));
+            if (!database_download.etag.empty()) {
+                table.insert_or_assign("r2_etag", database_download.etag);
+            } else {
+                table.erase("r2_etag");
+            }
         });
     } else {
         toml::table table;
@@ -981,6 +1130,9 @@ R2DatabaseTransfer download_new_database_from_r2(
             std::string(database_name.substr(
                 0, database_name.size() - suffix.size())));
         table.insert("data", utf8_path(database));
+        if (!database_download.etag.empty()) {
+            table.insert("r2_etag", database_download.etag);
+        }
         write_toml_file(vault_temporary.get(), table);
     }
     if (downloaded_definition
@@ -995,7 +1147,10 @@ R2DatabaseTransfer download_new_database_from_r2(
     remove_sidecars(database_temporary.get());
     publish_downloads(
         database_temporary, vault_temporary, database, vault);
-    return {.byte_count = vault_bytes + database_bytes};
+    return {
+        .byte_count = vault_bytes + database_download.byte_count,
+        .etag = database_download.etag,
+    };
 }
 
 } // namespace cha

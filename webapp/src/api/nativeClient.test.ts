@@ -102,18 +102,44 @@ describe('native CHA client', () => {
   it('runs active-vault maintenance through native methods', async () => {
     const bridge = createFakeNativeBridge({
       'vault.upload': () => ({ byte_count: 12, context_epoch: 4 }),
+      'vault.upload.check': () => ({ etag: 'remote-etag', status: 'match', context_epoch: 3 }),
       'vault.download': () => ({ byte_count: 34, context_epoch: 5 }),
       'vault.import': () => ({ file_count: 2, context_epoch: 6 }),
       'vault.export': () => ({ file_count: 3, context_epoch: 7 }),
     });
     const client = createNativeChaClient(bridge);
 
-    await expect(client.uploadVault()).resolves.toBe(12);
+    bridge.setContextEpoch(3);
+    await expect(client.checkVaultUpload()).resolves.toEqual({
+      etag: 'remote-etag', status: 'match', context_epoch: 3,
+    });
+    await expect(client.uploadVault(await client.checkVaultUpload())).resolves.toBe(12);
     await expect(client.downloadVault()).resolves.toBe(34);
     await expect(client.importVault()).resolves.toBe(2);
     await expect(client.exportVault()).resolves.toBe(3);
     expect(bridge.contextEpoch()).toBe(7);
   });
+
+  it.each(['match', 'mismatch', 'missing'] as const)(
+    'rejects a stale %s upload check before sending any upload request',
+    async (status) => {
+      const bridge = createFakeNativeBridge({
+        'vault.upload.check': () => ({
+          etag: status === 'missing' ? null : 'remote-etag',
+          status,
+          context_epoch: 3,
+        }),
+        'vault.upload': () => ({ byte_count: 12, context_epoch: 5 }),
+      });
+      const client = createNativeChaClient(bridge);
+      bridge.setContextEpoch(3);
+      const check = await client.checkVaultUpload();
+      bridge.setContextEpoch(4);
+
+      await expect(client.uploadVault(check)).rejects.toMatchObject({ code: 'vault_changed' });
+      expect(bridge.posts).not.toContainEqual(expect.objectContaining({ method: 'vault.upload' }));
+    },
+  );
 
   it('lists sessions and loads character details through native methods', async () => {
     const character = loadFixture('character-detail.json');

@@ -915,11 +915,39 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                 break;
             }
             case Method::vault_upload: {
-                require_only_keys(params, {});
+                require_only_keys(params, {"etag"});
+                if (!params.contains("etag")) {
+                    throw std::invalid_argument("The request was not valid.");
+                }
                 const auto transferred = run_maintenance(
-                    [&] { return application.upload_database(epoch); });
+                    [&] {
+                        return application.upload_database(
+                            nullable_string(params, "etag"), epoch);
+                    });
                 result = {
                     {"byte_count", transferred.byte_count},
+                    {"context_epoch", epoch},
+                };
+                break;
+            }
+            case Method::vault_upload_check: {
+                require_only_keys(params, {});
+                R2UploadCheck check;
+                try {
+                    check = application.check_database_upload(epoch);
+                } catch (const R2HttpStatusError& error) {
+                    log_error(
+                        "Request " + std::string(method_name(method)) + " failed: "
+                        + error.what());
+                    throw app::ApplicationError(
+                        ErrorCode::invalid_argument, error.what());
+                }
+                result = {
+                    {"etag", check.etag
+                        ? nlohmann::json(*check.etag) : nlohmann::json(nullptr)},
+                    {"status", check.status == R2EtagStatus::match ? "match"
+                        : check.status == R2EtagStatus::mismatch ? "mismatch"
+                        : "missing"},
                     {"context_epoch", epoch},
                 };
                 break;

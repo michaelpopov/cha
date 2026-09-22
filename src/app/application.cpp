@@ -1446,8 +1446,15 @@ MaintenanceResult Application::merge_vault(
         source_name, std::move(password), epoch);
 }
 
-R2DatabaseTransfer Application::upload_database(std::uint64_t epoch) {
-    return impl_->vault_maintenance.upload_database(epoch);
+R2UploadCheck Application::check_database_upload(std::uint64_t epoch) const {
+    return impl_->vault_maintenance.check_database_upload(epoch);
+}
+
+R2DatabaseTransfer Application::upload_database(
+    std::optional<std::string> expected_etag,
+    std::uint64_t epoch) {
+    return impl_->vault_maintenance.upload_database(
+        std::move(expected_etag), epoch);
 }
 
 R2DatabaseTransfer Application::download_database(std::uint64_t epoch) {

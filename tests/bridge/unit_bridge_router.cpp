@@ -17,11 +17,17 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <tuple>
 
 namespace cha::bridge {
 namespace {
 
 using namespace std::chrono_literals;
+
+std::string etag_response(std::string_view etag) {
+    return "HTTP/1.1 200 OK\r\nETag: \"" + std::string(etag)
+        + "\"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+}
 
 ApplicationCommand make_command(
     const test::TestWorkspace& workspace,
@@ -950,7 +956,7 @@ TEST_F(BridgeRouterTest, MaintenanceRequestsIgnoreTheOrdinaryCommandDeadline) {
 
     const std::vector<std::pair<std::string, nlohmann::json>> requests{
         {"vault.merge", nlohmann::json::object()},
-        {"vault.upload", nlohmann::json::object()},
+        {"vault.upload", {{"etag", "expected-etag"}}},
         {"vault.download", nlohmann::json::object()},
         {"vault.import", nlohmann::json::object()},
         {"vault.export", nlohmann::json::object()},
@@ -980,26 +986,30 @@ TEST_F(BridgeRouterTest, MaintenanceRequestsIgnoreTheOrdinaryCommandDeadline) {
 TEST_F(BridgeRouterTest, MaintenanceMethodsRejectParameters) {
     bootstrap_epoch();
     for (const std::string_view method : {
-             "vault.upload", "vault.download", "vault.import", "vault.export"}) {
+             "vault.download", "vault.import", "vault.export"}) {
         SCOPED_TRACE(method);
         const auto reply = call(method, {{"unexpected", true}});
         ASSERT_FALSE(reply["ok"]);
         EXPECT_EQ(reply["error"]["code"], "invalid_argument");
     }
+    const auto upload = call(
+        "vault.upload", {{"etag", "expected"}, {"unexpected", true}});
+    ASSERT_FALSE(upload["ok"]);
+    EXPECT_EQ(upload["error"]["code"], "invalid_argument");
 }
 
 TEST_F(BridgeRouterTest, MaintenanceFailuresKeepTheirReasonAndRecoveredEpoch) {
     bootstrap_epoch();
-    const std::vector<std::pair<std::string, std::string>> requests{
-        {"vault.upload", "The active vault has no R2 key"},
-        {"vault.download", "The active vault has no R2 key"},
-        {"vault.import", "Application config requires 'modify' for Import"},
-        {"vault.export", "Application config requires 'modify' for Export"},
+    const std::vector<std::tuple<std::string, nlohmann::json, std::string>> requests{
+        {"vault.upload", {{"etag", "expected-etag"}}, "The active vault has no R2 key"},
+        {"vault.download", nlohmann::json::object(), "The active vault has no R2 key"},
+        {"vault.import", nlohmann::json::object(), "Application config requires 'modify' for Import"},
+        {"vault.export", nlohmann::json::object(), "Application config requires 'modify' for Export"},
     };
-    for (const auto& [method, message] : requests) {
+    for (const auto& [method, params, message] : requests) {
         SCOPED_TRACE(method);
         const auto old_epoch = epoch_;
-        const auto reply = call(method);
+        const auto reply = call(method, params);
         ASSERT_FALSE(reply["ok"]);
         EXPECT_EQ(reply["error"]["code"], "invalid_argument");
         EXPECT_EQ(reply["error"]["message"], message);
@@ -1021,13 +1031,70 @@ TEST_F(BridgeRouterTest, MaintenanceHttpStatusKeepsSafeReason) {
         .secret_key = std::string("secret"),
     }, epoch_);
     server.start();
-    const auto reply = call("vault.upload");
+    const auto reply = call("vault.upload", {{"etag", nullptr}});
     server.join();
     ASSERT_FALSE(reply["ok"]);
     EXPECT_EQ(reply["error"]["code"], "invalid_argument");
     EXPECT_EQ(reply["error"]["message"],
         "R2 upload failed with HTTP status 403");
     EXPECT_GT(reply["context_epoch"].get<std::uint64_t>(), epoch_);
+}
+
+TEST_F(BridgeRouterTest, UploadCheckHttpStatusKeepsSafeReason) {
+    bootstrap_epoch();
+    MockHttpServer server({
+        etag_response("uploaded-etag"),
+        etag_response("vault-etag"),
+        "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n"
+        "Connection: close\r\n\r\n",
+    });
+    (void)application_->save_r2_storage({
+        .display_name = "Backups",
+        .url = "http://127.0.0.1:" + std::to_string(server.port()) + "/bucket/",
+        .access_key_id = "access",
+        .secret_key = std::string("secret"),
+    }, epoch_);
+    server.start();
+    const auto uploaded = call("vault.upload", {{"etag", nullptr}});
+    ASSERT_TRUE(uploaded["ok"]);
+    epoch_ = uploaded["result"]["context_epoch"].get<std::uint64_t>();
+    const auto reply = call("vault.upload.check");
+    server.join();
+
+    ASSERT_FALSE(reply["ok"]);
+    EXPECT_EQ(reply["error"]["code"], "invalid_argument");
+    EXPECT_EQ(reply["error"]["message"],
+        "R2 metadata request failed with HTTP status 403");
+    EXPECT_EQ(reply["context_epoch"], epoch_);
+    EXPECT_EQ(application_->context_epoch(), epoch_);
+    ASSERT_EQ(server.requests().size(), 3U);
+    EXPECT_TRUE(server.requests().back().starts_with("HEAD "));
+}
+
+TEST_F(BridgeRouterTest, MaintenanceUploadConflictExplainsHowToRetry) {
+    bootstrap_epoch();
+    MockHttpServer server({
+        "HTTP/1.1 412 Precondition Failed\r\nContent-Length: 0\r\n"
+        "Connection: close\r\n\r\n",
+    });
+    (void)application_->save_r2_storage({
+        .display_name = "Backups",
+        .url = "http://127.0.0.1:" + std::to_string(server.port()) + "/bucket/",
+        .access_key_id = "access",
+        .secret_key = std::string("secret"),
+    }, epoch_);
+    server.start();
+    const auto reply = call("vault.upload", {{"etag", "previous-etag"}});
+    server.join();
+
+    ASSERT_FALSE(reply["ok"]);
+    EXPECT_EQ(reply["error"]["code"], "invalid_argument");
+    EXPECT_EQ(reply["error"]["message"],
+        "The R2 vault changed since the check. Click Upload again to review it.");
+    EXPECT_GT(reply["context_epoch"].get<std::uint64_t>(), epoch_);
+    ASSERT_EQ(server.requests().size(), 1U);
+    EXPECT_NE(server.requests()[0].find("If-Match: \"previous-etag\""),
+        std::string::npos);
 }
 
 TEST_F(BridgeRouterTest, MaintenanceFilesystemFailureHidesPrivatePath) {
@@ -1146,8 +1213,11 @@ TEST_F(BridgeRouterTest, MaintenanceResultsReturnCountsAndNewEpochs) {
     check_result(call("vault.import"), "file_count");
 
     MockHttpServer upload_server({
-        http_response("application/xml", ""),
-        http_response("application/xml", ""),
+        etag_response("uploaded-etag"),
+        etag_response("vault-etag"),
+        etag_response("uploaded-etag"),
+        etag_response("changed-etag"),
+        "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
     });
     (void)application_->save_r2_storage({
         .display_name = "Backups",
@@ -1155,8 +1225,26 @@ TEST_F(BridgeRouterTest, MaintenanceResultsReturnCountsAndNewEpochs) {
         .access_key_id = "access",
         .secret_key = std::string("secret"),
     }, epoch_);
+    const auto missing_check = call("vault.upload.check");
+    ASSERT_TRUE(missing_check["ok"]);
+    EXPECT_EQ(missing_check["result"]["etag"], nullptr);
+    EXPECT_EQ(missing_check["result"]["status"], "missing");
+    EXPECT_EQ(missing_check["result"]["context_epoch"], epoch_);
     upload_server.start();
-    check_result(call("vault.upload"), "byte_count");
+    check_result(call("vault.upload", {{"etag", nullptr}}), "byte_count");
+    const auto upload_check = call("vault.upload.check");
+    ASSERT_TRUE(upload_check["ok"]);
+    EXPECT_EQ(upload_check["result"]["etag"], "uploaded-etag");
+    EXPECT_EQ(upload_check["result"]["status"], "match");
+    EXPECT_EQ(upload_check["result"]["context_epoch"], epoch_);
+    const auto changed_check = call("vault.upload.check");
+    ASSERT_TRUE(changed_check["ok"]);
+    EXPECT_EQ(changed_check["result"]["etag"], "changed-etag");
+    EXPECT_EQ(changed_check["result"]["status"], "mismatch");
+    const auto deleted_check = call("vault.upload.check");
+    ASSERT_TRUE(deleted_check["ok"]);
+    EXPECT_EQ(deleted_check["result"]["etag"], nullptr);
+    EXPECT_EQ(deleted_check["result"]["status"], "mismatch");
     upload_server.join();
 
     test::TestWorkspace remote_workspace;
@@ -1171,7 +1259,9 @@ TEST_F(BridgeRouterTest, MaintenanceResultsReturnCountsAndNewEpochs) {
         "data = \"/remote/" + database_.filename().string() + "\"\n";
     MockHttpServer download_server({
         http_response("application/toml", remote_vault),
-        http_response("application/vnd.sqlite3", remote_bytes),
+        "HTTP/1.1 200 OK\r\nETag: \"remote-etag\"\r\nContent-Length: "
+            + std::to_string(remote_bytes.size())
+            + "\r\nConnection: close\r\n\r\n" + remote_bytes,
     });
     (void)application_->save_r2_storage({
         .display_name = "Backups",
@@ -1182,6 +1272,7 @@ TEST_F(BridgeRouterTest, MaintenanceResultsReturnCountsAndNewEpochs) {
     download_server.start();
     check_result(call("vault.download"), "byte_count");
     download_server.join();
+    EXPECT_EQ(application_->vault_snapshot().active.r2_etag, "remote-etag");
 }
 
 TEST_F(BridgeRouterTest, QueuedOldContextReplyIsInvalidatedBeforeDelivery) {

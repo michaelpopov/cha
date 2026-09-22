@@ -76,7 +76,10 @@ struct Application::Impl {
             std::string_view source_name,
             std::string password,
             std::uint64_t epoch);
-        R2DatabaseTransfer upload_database(std::uint64_t epoch);
+        R2UploadCheck check_database_upload(std::uint64_t epoch) const;
+        R2DatabaseTransfer upload_database(
+            std::optional<std::string> expected_etag,
+            std::uint64_t epoch);
         R2DatabaseTransfer download_database(std::uint64_t epoch);
         WorkspaceConfigTransfer import_configuration(std::uint64_t epoch);
         WorkspaceConfigTransfer export_configuration(std::uint64_t epoch);

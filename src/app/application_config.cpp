@@ -116,7 +116,7 @@ void warn_unknown_vault_fields(
     for (const auto& [key, value] : table) {
         (void)value;
         if (key.str() == "vault_name" || key.str() == "data"
-            || key.str() == "protected") continue;
+            || key.str() == "protected" || key.str() == "r2_etag") continue;
         warnings.push_back(
             "Vault definition '" + utf8_path(source) + "' field '"
             + std::string(key.str()) + "' is unused and was ignored.");
@@ -254,6 +254,16 @@ LoadedVault load_vault_definition(
                 + "' requires a boolean 'protected'.");
         }
         loaded.definition.password_protected = *value;
+    }
+    if (root.contains("r2_etag")) {
+        const std::optional<std::string> value =
+            root["r2_etag"].value<std::string>();
+        if (!value || value->empty()) {
+            throw std::runtime_error(
+                std::string(kind) + " '" + utf8_path(source)
+                + "' requires a non-empty string 'r2_etag'.");
+        }
+        loaded.definition.r2_etag = *value;
     }
     return loaded;
 }

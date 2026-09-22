@@ -70,6 +70,7 @@ enum class Method {
     vault_switch,
     vault_merge,
     vault_upload,
+    vault_upload_check,
     vault_download,
     vault_import,
     vault_export,

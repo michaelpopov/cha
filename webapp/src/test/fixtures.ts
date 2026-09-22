@@ -347,6 +347,7 @@ export function fixtureClient(overrides: Partial<ChaClient> = {}): ChaClient {
     switchVault: async () => undefined,
     mergeVault: async () => undefined,
     uploadVault: async () => 0,
+    checkVaultUpload: async () => ({ etag: 'fixture-etag', status: 'match', context_epoch: 1 }),
     downloadVault: async () => 0,
     importVault: async () => 0,
     exportVault: async () => 0,

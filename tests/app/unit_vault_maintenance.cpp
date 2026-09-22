@@ -172,7 +172,10 @@ TEST(ApplicationVault, MaintenanceRejectsAStaleVaultEpochUnderTheLifecycleLock) 
             EXPECT_EQ(error.code, ErrorCode::vault_changed);
         }
     };
-    expect_stale([&] { (void)application->upload_database(stale_epoch); });
+    expect_stale([&] {
+        (void)application->upload_database("expected-etag", stale_epoch);
+    });
+    expect_stale([&] { (void)application->check_database_upload(stale_epoch); });
     expect_stale([&] { (void)application->download_database(stale_epoch); });
     expect_stale([&] { (void)application->import_configuration(stale_epoch); });
     expect_stale([&] { (void)application->export_configuration(stale_epoch); });

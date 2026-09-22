@@ -56,6 +56,7 @@ const std::pair<Method, std::string_view> kMethods[] = {
     {Method::vault_switch, "vault.switch"},
     {Method::vault_merge, "vault.merge"},
     {Method::vault_upload, "vault.upload"},
+    {Method::vault_upload_check, "vault.upload.check"},
     {Method::vault_download, "vault.download"},
     {Method::vault_import, "vault.import"},
     {Method::vault_export, "vault.export"},

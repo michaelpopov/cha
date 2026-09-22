@@ -52,6 +52,7 @@ toml::table vault_definition_table(const VaultDefinition& vault) {
     table.insert("vault_name", vault.name);
     table.insert("data", utf8_path(vault.data));
     table.insert("protected", vault.password_protected);
+    if (vault.r2_etag) table.insert("r2_etag", *vault.r2_etag);
     return table;
 }
 
@@ -924,19 +925,67 @@ MaintenanceResult Application::Impl::VaultMaintenance::merge_vault(
 }
 
 R2DatabaseTransfer Application::Impl::VaultMaintenance::upload_database(
+    std::optional<std::string> expected_etag,
     std::uint64_t epoch) {
-    return maintain_database(epoch, [this] {
+    return maintain_database(epoch, [this, &expected_etag] {
         const std::optional<R2StorageKey> r2 = app.api_keys->r2();
         if (!r2) throw ApplicationError(
             ErrorCode::invalid_argument, "The active vault has no R2 key");
         const VaultDefinition vault = app.current_vault_.get();
-        return upload_database_to_r2(
+        R2DatabaseTransfer transferred = upload_database_to_r2(
             vault.data,
             vault.source,
             *r2,
             R2DatabaseLease::already_held,
-            app.active_password, [this] { return app.stopping_flag.load(); });
+            app.active_password, [this] { return app.stopping_flag.load(); },
+            expected_etag.value_or(""));
+        VaultDefinition uploaded = vault;
+        uploaded.r2_etag = transferred.etag;
+        const auto configured = std::find_if(
+            app.command.vaults.begin(), app.command.vaults.end(),
+            [&](const VaultDefinition& candidate) {
+                return candidate.source == vault.source;
+            });
+        if (configured == app.command.vaults.end()) {
+            throw std::runtime_error(
+                "The uploaded active vault is not in the vault registry");
+        }
+        *configured = uploaded;
+        app.command.vault = uploaded;
+        publish_vault(uploaded);
+        return transferred;
     }, false);
+}
+
+R2UploadCheck
+Application::Impl::VaultMaintenance::check_database_upload(
+    std::uint64_t epoch) const {
+    R2StorageKey storage;
+    VaultDefinition vault;
+    {
+        const std::lock_guard lifecycle(app.lifecycle_mutex);
+        app.require_admitted(epoch);
+        const std::optional<R2StorageKey> configured = app.api_keys->r2();
+        if (!configured) {
+            throw ApplicationError(
+                ErrorCode::invalid_argument, "The active vault has no R2 key");
+        }
+        storage = *configured;
+        vault = app.current_vault_.get();
+    }
+    if (!vault.r2_etag) return {};
+    const std::optional<std::string> etag = get_r2_database_etag(
+        utf8_path(vault.data.filename()), storage,
+        [this] { return app.stopping_flag.load(); });
+    {
+        const std::lock_guard lifecycle(app.lifecycle_mutex);
+        app.require_admitted(epoch);
+    }
+    return {
+        .etag = etag,
+        .status = vault.r2_etag == etag ? R2EtagStatus::match
+            : R2EtagStatus::mismatch,
+    };
 }
 
 R2DatabaseTransfer Application::Impl::VaultMaintenance::download_database(
@@ -957,7 +1006,8 @@ R2DatabaseTransfer Application::Impl::VaultMaintenance::download_database(
                     vault.source,
                     *r2,
                     R2DatabaseLease::already_held,
-                    app.active_password, [this] { return app.stopping_flag.load(); });
+                    app.active_password,
+                    [this] { return app.stopping_flag.load(); });
             downloaded_vault = load_vault_definition_file(
                 app.command.config_directory, vault.source);
             vault::assign_vault_paths(*downloaded_vault, app.command);

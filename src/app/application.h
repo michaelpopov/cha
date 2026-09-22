@@ -453,7 +453,11 @@ public:
     [[nodiscard]] VaultDefinition download_r2_vault(
         std::string_view name,
         std::uint64_t epoch);
-    [[nodiscard]] R2DatabaseTransfer upload_database(std::uint64_t epoch);
+    [[nodiscard]] R2UploadCheck check_database_upload(
+        std::uint64_t epoch) const;
+    [[nodiscard]] R2DatabaseTransfer upload_database(
+        std::optional<std::string> expected_etag,
+        std::uint64_t epoch);
     [[nodiscard]] R2DatabaseTransfer download_database(std::uint64_t epoch);
     [[nodiscard]] WorkspaceConfigTransfer import_configuration(std::uint64_t epoch);
     [[nodiscard]] WorkspaceConfigTransfer export_configuration(std::uint64_t epoch);

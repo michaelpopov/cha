@@ -8,6 +8,7 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -403,6 +404,24 @@ TEST_F(ApplicationConfigTest, LoadsAndValidatesProtectedVaultFlag) {
     EXPECT_THROW(
         (void)load_configuration_directory(config_),
         std::runtime_error);
+}
+
+TEST_F(ApplicationConfigTest, LoadsR2EtagWithoutAnUnusedFieldWarning) {
+    write_vault(
+        "personal.toml",
+        "Personal",
+        "../data/workspace.sqlite3",
+        "r2_etag = \"uploaded-etag\"\n");
+
+    const ConfigurationDirectory loaded =
+        load_configuration_directory(config_);
+    ASSERT_EQ(loaded.vaults.size(), 1U);
+    EXPECT_EQ(loaded.vaults.front().r2_etag, "uploaded-etag");
+    EXPECT_TRUE(std::ranges::none_of(
+        loaded.warnings,
+        [](const std::string& warning) {
+            return warning.find("r2_etag") != std::string::npos;
+        }));
 }
 
 TEST_F(ApplicationConfigTest, AcceptsUnicodeAndEntranceVaultNames) {

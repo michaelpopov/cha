@@ -59,6 +59,11 @@ export type ApiKeyDetail = components['schemas']['ApiKeyDetail'];
 export type CreateApiKeyRequest = components['schemas']['CreateApiKeyRequest'];
 export type R2StorageDetail = components['schemas']['R2StorageDetail'];
 export type SaveR2StorageRequest = components['schemas']['SaveR2StorageRequest'];
+export type VaultUploadCheck = {
+  etag: string | null;
+  status: 'match' | 'mismatch' | 'missing';
+  context_epoch: number;
+};
 export type ErrorCode = components['schemas']['ErrorResponse']['error']['code'];
 export type MediaResource = components['schemas']['MediaResource'];
 export type BridgeInfo = components['schemas']['BridgeInfo'];
@@ -211,7 +216,8 @@ export interface ChaClient {
   ): Promise<string>;
   switchVault(vaultName: string, password?: string): Promise<void>;
   mergeVault(sourceVault: string, password?: string): Promise<void>;
-  uploadVault(): Promise<number>;
+  checkVaultUpload(): Promise<VaultUploadCheck>;
+  uploadVault(check: VaultUploadCheck): Promise<number>;
   downloadVault(): Promise<number>;
   importVault(): Promise<number>;
   exportVault(): Promise<number>;

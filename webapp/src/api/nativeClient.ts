@@ -45,6 +45,7 @@ import {
   type StyleDetail,
   type StyleUpdate,
   type VaultDetail,
+  type VaultUploadCheck,
   type VaultUpdate,
   type VoiceDetail,
   type NativeVoiceInputRuntime,
@@ -125,6 +126,18 @@ function isMaintenanceResult(value: unknown): value is {
     && (value.context_epoch as number) >= 1;
 }
 
+function isVaultUploadCheck(value: unknown): value is VaultUploadCheck {
+  return isRecord(value)
+    && Number.isSafeInteger(value.context_epoch)
+    && (value.context_epoch as number) >= 1
+    && (value.etag === null
+      || (typeof value.etag === 'string' && value.etag.length > 0))
+    && (value.status === 'match' || value.status === 'mismatch'
+      || value.status === 'missing')
+    && (value.status !== 'missing' || value.etag === null)
+    && (value.status !== 'match' || value.etag !== null);
+}
+
 export async function connectNativeBridge(bridge: NativeBridge): Promise<void> {
   const info = await bridge.invoke('bridge.info', {});
   if (!isBridgeInfo(info)) throw new ChaProtocolError();
@@ -141,8 +154,12 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient {
     return result;
   };
 
-  const transferVault = async (method: string, field: 'byte_count' | 'file_count') => {
-    const result = await bridge.invoke(method, {});
+  const transferVault = async (
+    method: string,
+    field: 'byte_count' | 'file_count',
+    params: unknown = {},
+  ) => {
+    const result = await bridge.invoke(method, params);
     if (!isRecord(result)
         || !Number.isSafeInteger(result[field]) || (result[field] as number) < 0
         || !Number.isSafeInteger(result.context_epoch)
@@ -609,7 +626,15 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient {
       );
       bridge.setContextEpoch(result.context_epoch);
     },
-    uploadVault: () => transferVault('vault.upload', 'byte_count'),
+    checkVaultUpload: () => call(
+      'vault.upload.check', {}, isVaultUploadCheck,
+    ),
+    uploadVault: async (check) => {
+      if (check.context_epoch !== bridge.contextEpoch()) {
+        throw new ChaError('vault_changed', 'The active vault changed. Check the upload again.');
+      }
+      return transferVault('vault.upload', 'byte_count', { etag: check.etag });
+    },
     downloadVault: () => transferVault('vault.download', 'byte_count'),
     importVault: () => transferVault('vault.import', 'file_count'),
     exportVault: () => transferVault('vault.export', 'file_count'),

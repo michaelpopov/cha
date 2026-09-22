@@ -560,6 +560,9 @@ describe('Settings screens', () => {
 
   it('shows merge and maintenance operations only for the active vault', async () => {
     const uploadVault = vi.fn(async () => 12_345_678);
+    const checkVaultUpload = vi.fn(async () => ({
+      etag: 'known-etag', status: 'match' as const, context_epoch: 1,
+    }));
     const downloadVault = vi.fn(async () => 34);
     const importVault = vi.fn(async () => 2);
     const exportVault = vi.fn(async () => 3);
@@ -569,6 +572,7 @@ describe('Settings screens', () => {
         client={fixtureClient({
           listVaults: async () => vaults,
           uploadVault,
+          checkVaultUpload,
           downloadVault,
           importVault,
           exportVault,
@@ -582,7 +586,10 @@ describe('Settings screens', () => {
     expect(dispatch).toHaveBeenCalledWith({ type: 'show-settings-merge-vault' });
 
     await userEvent.click(screen.getByRole('button', { name: 'Upload' }));
-    expect(uploadVault).toHaveBeenCalledOnce();
+    expect(checkVaultUpload).toHaveBeenCalledOnce();
+    expect(uploadVault).toHaveBeenCalledWith({
+      etag: 'known-etag', status: 'match', context_epoch: 1,
+    });
     expect(await screen.findByRole('status')).toHaveTextContent('Uploaded 12.3 MB.');
 
     await userEvent.click(screen.getByRole('button', { name: 'Export' }));
@@ -593,7 +600,8 @@ describe('Settings screens', () => {
     let dialog = within(await screen.findByRole('dialog'));
     expect(dialog.getByText(/save the current database beside itself/i)).toBeInTheDocument();
     await userEvent.click(dialog.getByRole('button', { name: 'Download' }));
-    expect(downloadVault).toHaveBeenCalledOnce();
+    expect(checkVaultUpload).toHaveBeenCalledOnce();
+    expect(downloadVault).toHaveBeenCalledWith();
     expect(await screen.findByRole('status')).toHaveTextContent('Downloaded 34 bytes.');
 
     await userEvent.click(screen.getByRole('button', { name: 'Import' }));
@@ -622,6 +630,59 @@ describe('Settings screens', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Upload' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('R2 rejected the upload.');
     expect(screen.getByRole('button', { name: 'Upload' })).toBeEnabled();
+  });
+
+  it('uploads immediately when the R2 ETag matches', async () => {
+    const uploadVault = vi.fn(async () => 34);
+    render(
+      <VaultScreen
+        client={fixtureClient({
+          listVaults: async () => vaults,
+          checkVaultUpload: async () => ({
+            etag: 'matching-etag', status: 'match', context_epoch: 1,
+          }),
+          uploadVault,
+        })}
+        dispatch={vi.fn()}
+        state={activeVaultState()}
+      />,
+    );
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Upload' }));
+    await waitFor(() => expect(uploadVault).toHaveBeenCalledWith({
+      etag: 'matching-etag', status: 'match', context_epoch: 1,
+    }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it.each([
+    { status: 'mismatch' as const, etag: 'changed-etag', message: /does not match the version recorded locally/i },
+    { status: 'mismatch' as const, etag: null, message: /no longer exists\. Upload it again\?/i },
+    { status: 'missing' as const, etag: null, message: /no R2 version is recorded/i },
+  ])('confirms upload when the recorded R2 ETag is $status', async ({ status, etag, message }) => {
+    const uploadVault = vi.fn(async () => 34);
+    render(
+      <VaultScreen
+        client={fixtureClient({
+          listVaults: async () => vaults,
+          checkVaultUpload: async () => ({ etag, status, context_epoch: 1 }),
+          uploadVault,
+        })}
+        dispatch={vi.fn()}
+        state={activeVaultState()}
+      />,
+    );
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Upload' }));
+    let dialog = within(await screen.findByRole('dialog'));
+    expect(dialog.getByText(message)).toBeInTheDocument();
+    expect(uploadVault).not.toHaveBeenCalled();
+    await userEvent.click(dialog.getByRole('button', { name: 'Cancel' }));
+    expect(uploadVault).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole('button', { name: 'Upload' }));
+    dialog = within(await screen.findByRole('dialog'));
+    await userEvent.click(dialog.getByRole('button', { name: 'Upload' }));
+    expect(uploadVault).toHaveBeenCalledWith({ etag, status, context_epoch: 1 });
   });
 
   it('shows an Import validation reason on the vault page', async () => {

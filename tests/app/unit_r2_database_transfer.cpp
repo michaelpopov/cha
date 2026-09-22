@@ -44,6 +44,16 @@ R2StorageKey storage(std::string url) {
     };
 }
 
+std::string etag_response(
+    std::string_view content_type,
+    const std::string& body,
+    std::string_view etag) {
+    return "HTTP/1.1 200 OK\r\nContent-Type: "
+        + std::string(content_type) + "\r\nETag: \"" + std::string(etag)
+        + "\"\r\nContent-Length: " + std::to_string(body.size())
+        + "\r\nConnection: close\r\n\r\n" + body;
+}
+
 std::filesystem::path write_vault(
     const std::filesystem::path& database,
     std::string_view name = "Test") {
@@ -60,22 +70,28 @@ TEST(R2DatabaseTransfer, UploadsDatabaseAndVaultDefinitionWithSignedPuts) {
         test::import_test_database(
             workspace.root(), workspace.root() / "workspace copy.sqlite3");
     const std::filesystem::path vault = write_vault(database);
+#ifndef _WIN32
+    std::filesystem::permissions(vault, std::filesystem::perms::owner_read
+        | std::filesystem::perms::owner_write);
+#endif
     const std::string expected_database = file_bytes(database);
     const std::string local_vault = file_bytes(vault);
     MockHttpServer server({
-        http_response("application/xml", ""),
-        http_response("application/xml", ""),
+        etag_response("application/xml", "", "database-etag"),
+        etag_response("application/xml", "", "vault-etag"),
     });
     const R2StorageKey key = storage(mock_url(server.port()));
     server.start();
 
     const R2DatabaseTransfer result =
-        upload_database_to_r2(database, vault, key);
+        upload_database_to_r2(
+            database, vault, key, R2DatabaseLease::acquire, {}, {},
+            "previous-etag");
     server.join();
 
     ASSERT_EQ(server.requests().size(), 2U);
-    const std::string& vault_request = server.requests()[0];
-    const std::string& database_request = server.requests()[1];
+    const std::string& database_request = server.requests()[0];
+    const std::string& vault_request = server.requests()[1];
     EXPECT_EQ(
         result.byte_count,
         expected_database.size() + request_body(vault_request).size());
@@ -87,7 +103,21 @@ TEST(R2DatabaseTransfer, UploadsDatabaseAndVaultDefinitionWithSignedPuts) {
     const toml::table uploaded = toml::parse(request_body(vault_request));
     EXPECT_EQ(uploaded["vault_name"].value<std::string>(), "Test");
     EXPECT_EQ(uploaded["data"].value<std::string>(), "workspace copy.sqlite3");
-    EXPECT_EQ(file_bytes(vault), local_vault);
+    EXPECT_EQ(uploaded["r2_etag"].value<std::string>(), "database-etag");
+    EXPECT_NE(file_bytes(vault), local_vault);
+    EXPECT_EQ(
+        toml::parse(file_bytes(vault))["r2_etag"].value<std::string>(),
+        "database-etag");
+    EXPECT_EQ(result.etag, "database-etag");
+#ifndef _WIN32
+    EXPECT_EQ(std::filesystem::status(vault).permissions()
+        & std::filesystem::perms::all,
+        std::filesystem::perms::owner_read | std::filesystem::perms::owner_write);
+#endif
+    EXPECT_NE(
+        database_request.find("If-Match: \"previous-etag\""),
+        std::string::npos);
+    EXPECT_EQ(vault_request.find("If-Match:"), std::string::npos);
     EXPECT_TRUE(database_request.starts_with(
         "PUT /cha-backups/workspace%20copy.sqlite3 HTTP/1.1"));
     EXPECT_NE(
@@ -142,6 +172,90 @@ TEST(R2DatabaseTransfer, ListsRootSqliteDatabasesAcrossPages) {
         std::string::npos);
 }
 
+TEST(R2DatabaseTransfer, ChangedRemoteUploadLeavesStoredEtagAndCompanionUntouched) {
+    test::TestWorkspace workspace;
+    const auto database = test::import_test_database(workspace.root());
+    const auto vault = write_vault(database);
+    std::ofstream(vault, std::ios::app) << "r2_etag = \"previous-etag\"\n";
+    const std::string original_vault = file_bytes(vault);
+    MockHttpServer server({
+        "HTTP/1.1 412 Precondition Failed\r\nContent-Length: 0\r\n"
+        "Connection: close\r\n\r\n",
+    });
+    const R2StorageKey key = storage(mock_url(server.port()));
+    server.start();
+
+    EXPECT_THROW(
+        (void)upload_database_to_r2(
+            database, vault, key, R2DatabaseLease::acquire, {}, {},
+            "previous-etag"),
+        R2HttpStatusError);
+    server.join();
+
+    EXPECT_EQ(file_bytes(vault), original_vault);
+    ASSERT_EQ(server.requests().size(), 1U);
+    EXPECT_TRUE(server.requests()[0].starts_with(
+        "PUT /cha-backups/workspace.sqlite3 HTTP/1.1"));
+    EXPECT_NE(server.requests()[0].find("If-Match: \"previous-etag\""),
+        std::string::npos);
+}
+
+TEST(R2DatabaseTransfer, ReadsDatabaseEtagWithHead) {
+    MockHttpServer server({
+        "HTTP/1.1 200 OK\r\neTaG:\t \"present-etag\" \t\r\n"
+        "Content-Length: 0\r\nConnection: close\r\n\r\n",
+    });
+    const R2StorageKey key = storage(mock_url(server.port()));
+    server.start();
+
+    EXPECT_EQ(
+        get_r2_database_etag("workspace.sqlite3", key),
+        "present-etag");
+    server.join();
+
+    ASSERT_EQ(server.requests().size(), 1U);
+    EXPECT_TRUE(server.requests()[0].starts_with(
+        "HEAD /cha-backups/workspace.sqlite3 HTTP/1.1"));
+}
+
+TEST(R2DatabaseTransfer, SavesDatabaseEtagWhenCompanionUploadFails) {
+    for (const bool previously_uploaded : {false, true}) {
+        SCOPED_TRACE(previously_uploaded);
+        test::TestWorkspace workspace;
+        const auto database = test::import_test_database(workspace.root());
+        const auto vault = write_vault(database);
+        if (previously_uploaded) {
+            std::ofstream(vault, std::ios::app) << "r2_etag = \"previous-etag\"\n";
+        }
+        MockHttpServer server({
+            etag_response("application/xml", "", "new-database-etag"),
+            "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n"
+            "Connection: close\r\n\r\n",
+        });
+        const R2StorageKey key = storage(mock_url(server.port()));
+        server.start();
+
+        EXPECT_THROW(
+            (void)upload_database_to_r2(
+                database, vault, key, R2DatabaseLease::acquire, {}, {},
+                previously_uploaded ? "previous-etag" : ""),
+            R2HttpStatusError);
+        server.join();
+
+        const VaultDefinition saved = load_vault_definition_file(workspace.root(), vault);
+        EXPECT_EQ(saved.r2_etag, "new-database-etag");
+        EXPECT_EQ(saved.data, std::filesystem::weakly_canonical(database));
+        ASSERT_EQ(server.requests().size(), 2U);
+        EXPECT_TRUE(server.requests()[1].starts_with(
+            "PUT /cha-backups/workspace.sqlite3.toml HTTP/1.1"));
+#ifndef _WIN32
+        EXPECT_EQ(std::filesystem::status(vault).permissions()
+            & std::filesystem::perms::all,
+            std::filesystem::perms::owner_read | std::filesystem::perms::owner_write);
+#endif
+    }
+}
+
 TEST(R2DatabaseTransfer, DownloadsANewDatabaseWithoutReplacingAnything) {
     test::TestWorkspace remote_workspace;
     remote_workspace.add_persona("remote", "Remote Persona");
@@ -154,13 +268,14 @@ TEST(R2DatabaseTransfer, DownloadsANewDatabaseWithoutReplacingAnything) {
         remote_workspace.root() / "vault-2.toml";
     const std::string remote_vault =
         "vault_name = \"Remote Archive\"\n"
-        "data = \"/another/computer/archive.sqlite3\"\n";
+        "data = \"/another/computer/archive.sqlite3\"\n"
+        "r2_etag = \"stale-companion-etag\"\n";
     std::filesystem::path stale_wal = destination;
     stale_wal += "-wal";
     write_bytes(stale_wal, "stale");
     MockHttpServer server({
         http_response("application/toml", remote_vault),
-        http_response("application/vnd.sqlite3", remote_bytes),
+        etag_response("application/vnd.sqlite3", remote_bytes, "downloaded-etag"),
     });
     const R2StorageKey key = storage(mock_url(server.port()));
     server.start();
@@ -174,6 +289,8 @@ TEST(R2DatabaseTransfer, DownloadsANewDatabaseWithoutReplacingAnything) {
     const VaultDefinition downloaded = load_vault_definition_file(
         remote_workspace.root(), vault);
     EXPECT_EQ(downloaded.name, "Remote Archive");
+    EXPECT_EQ(downloaded.r2_etag, "downloaded-etag");
+    EXPECT_EQ(result.etag, "downloaded-etag");
     EXPECT_EQ(downloaded.data, std::filesystem::weakly_canonical(destination));
     EXPECT_EQ(
         inspect_workspace_session_database(destination),
@@ -187,6 +304,7 @@ TEST(R2DatabaseTransfer, DownloadsANewDatabaseWithoutReplacingAnything) {
         "GET /cha-backups/archive.sqlite3.toml HTTP/1.1"));
     EXPECT_TRUE(server.requests()[1].starts_with(
         "GET /cha-backups/archive.sqlite3 HTTP/1.1"));
+    EXPECT_EQ(server.requests()[1].find("If-Match:"), std::string::npos);
 }
 
 TEST(R2DatabaseTransfer, RejectsProtectedDownloadsWithoutPublishingThem) {
@@ -226,7 +344,7 @@ TEST(R2DatabaseTransfer, CreatesALocalDefinitionWhenR2HasOnlyTheDatabase) {
     MockHttpServer server({
         "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n"
         "Connection: close\r\n\r\n",
-        http_response("application/vnd.sqlite3", remote_bytes),
+        etag_response("application/vnd.sqlite3", remote_bytes, "legacy-etag"),
     });
     const R2StorageKey key = storage(mock_url(server.port()));
     server.start();
@@ -240,6 +358,7 @@ TEST(R2DatabaseTransfer, CreatesALocalDefinitionWhenR2HasOnlyTheDatabase) {
     const VaultDefinition downloaded = load_vault_definition_file(
         workspace.root(), vault);
     EXPECT_EQ(downloaded.name, "philosophy");
+    EXPECT_EQ(downloaded.r2_etag, "legacy-etag");
     EXPECT_EQ(downloaded.data, std::filesystem::weakly_canonical(destination));
     ASSERT_EQ(server.requests().size(), 2U);
     EXPECT_TRUE(server.requests()[0].starts_with(
@@ -257,12 +376,14 @@ TEST(R2DatabaseTransfer, DownloadsBothFilesAndReplacesOlderBackups) {
     const std::filesystem::path remote =
         test::import_test_database(remote_workspace.root());
     const std::filesystem::path vault = write_vault(local);
+    std::ofstream(vault, std::ios::app) << "r2_etag = \"local-etag\"\n";
     const std::string local_bytes = file_bytes(local);
     const std::string local_vault = file_bytes(vault);
     const std::string remote_bytes = file_bytes(remote);
     const std::string remote_vault =
         "vault_name = \"Test\"\n"
-        "data = \"/another/computer/workspace.sqlite3\"\n";
+        "data = \"/another/computer/workspace.sqlite3\"\n"
+        "r2_etag = \"stale-companion-etag\"\n";
     std::filesystem::path database_backup = local;
     database_backup += ".bac";
     std::filesystem::path vault_backup = vault;
@@ -272,7 +393,7 @@ TEST(R2DatabaseTransfer, DownloadsBothFilesAndReplacesOlderBackups) {
 
     MockHttpServer server({
         http_response("application/toml", remote_vault),
-        http_response("application/vnd.sqlite3", remote_bytes),
+        etag_response("application/vnd.sqlite3", remote_bytes, "remote-etag"),
     });
     const R2StorageKey key = storage(mock_url(server.port()));
     server.start();
@@ -287,6 +408,7 @@ TEST(R2DatabaseTransfer, DownloadsBothFilesAndReplacesOlderBackups) {
         local_workspace.root(), vault);
     EXPECT_EQ(downloaded.name, "Test");
     EXPECT_EQ(downloaded.data, std::filesystem::weakly_canonical(local));
+    EXPECT_EQ(downloaded.r2_etag, "remote-etag");
     EXPECT_EQ(file_bytes(database_backup), local_bytes);
     EXPECT_EQ(file_bytes(vault_backup), local_vault);
     EXPECT_EQ(
@@ -297,6 +419,7 @@ TEST(R2DatabaseTransfer, DownloadsBothFilesAndReplacesOlderBackups) {
         "GET /cha-backups/workspace.sqlite3.toml HTTP/1.1"));
     EXPECT_TRUE(server.requests()[1].starts_with(
         "GET /cha-backups/workspace.sqlite3 HTTP/1.1"));
+    EXPECT_EQ(server.requests()[1].find("If-Match:"), std::string::npos);
 }
 
 TEST(R2DatabaseTransfer, InvalidDownloadLeavesBothFilesAndBackupsUntouched) {

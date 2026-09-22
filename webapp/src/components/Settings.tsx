@@ -23,6 +23,7 @@ import {
   type VoiceOutputSettings,
   type VoiceUpdate,
   type VaultDetail,
+  type VaultUploadCheck,
 } from '../api/client';
 import {
   nativeSpeechFromClient,
@@ -502,13 +503,16 @@ export function VaultScreen({ client, dispatch, state }: SettingsScreenProps) {
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [confirming, setConfirming] = useState(false);
-  const [confirmingOperation, setConfirmingOperation] = useState<'download' | 'import' | null>(null);
+  const [confirmingOperation, setConfirmingOperation] = useState<'upload' | 'download' | 'import' | null>(null);
+  const [uploadCheck, setUploadCheck] = useState<VaultUploadCheck | null>(null);
+  const remoteVaultMissing = uploadCheck?.status === 'mismatch' && uploadCheck.etag === null;
+  const [checkingUpload, setCheckingUpload] = useState(false);
   const [pendingOperation, setPendingOperation] = useState<'upload' | 'download' | 'import' | 'export' | null>(null);
   const [operationComplete, setOperationComplete] = useState<string | null>(null);
   const [operationError, setOperationError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
-  const busy = pendingOperation !== null || saving || deleting;
+  const busy = pendingOperation !== null || checkingUpload || saving || deleting;
   const canTransferR2 = state.bootstrap?.capabilities?.can_transfer_r2 === true;
   const canModify = state.bootstrap?.capabilities?.can_modify === true;
 
@@ -573,15 +577,19 @@ export function VaultScreen({ client, dispatch, state }: SettingsScreenProps) {
     }
   }
 
-  async function runOperation(operation: 'upload' | 'download' | 'import' | 'export') {
+  async function runOperation(
+    operation: 'upload' | 'download' | 'import' | 'export',
+    check: VaultUploadCheck | null = null,
+  ) {
     setConfirmingOperation(null);
     if (!detail?.active || busy) return;
+    if (operation === 'upload' && !check) return;
     setPendingOperation(operation);
     setOperationComplete(null);
     setOperationError(null);
     try {
       const actions = {
-        upload: { run: () => client.uploadVault(), past: 'Uploaded', bytes: true },
+        upload: { run: () => client.uploadVault(check!), past: 'Uploaded', bytes: true },
         download: { run: () => client.downloadVault(), past: 'Downloaded', bytes: true },
         import: { run: () => client.importVault(), past: 'Imported', bytes: false },
         export: { run: () => client.exportVault(), past: 'Exported', bytes: false },
@@ -594,6 +602,27 @@ export function VaultScreen({ client, dispatch, state }: SettingsScreenProps) {
       setOperationError(publicErrorMessage(failure, `${label} failed.`));
     } finally {
       setPendingOperation(null);
+    }
+  }
+
+  async function requestUpload() {
+    if (!detail?.active || busy) return;
+    setCheckingUpload(true);
+    setOperationComplete(null);
+    setOperationError(null);
+    try {
+      const check = await client.checkVaultUpload();
+      setUploadCheck(check);
+      if (check.status === 'match') {
+        setCheckingUpload(false);
+        await runOperation('upload', check);
+        return;
+      }
+      setConfirmingOperation('upload');
+    } catch (failure: unknown) {
+      setOperationError(publicErrorMessage(failure, 'Upload check failed.'));
+    } finally {
+      setCheckingUpload(false);
     }
   }
 
@@ -644,8 +673,9 @@ export function VaultScreen({ client, dispatch, state }: SettingsScreenProps) {
                 description={!canTransferR2 ? 'R2 storage is not configured' : undefined}
                 disabled={!canTransferR2 || busy}
                 icon={<FileUpIcon />}
-                label={pendingOperation === 'upload' ? 'Uploading…' : 'Upload'}
-                onClick={() => void runOperation('upload')}
+                label={checkingUpload ? 'Checking…'
+                  : pendingOperation === 'upload' ? 'Uploading…' : 'Upload'}
+                onClick={() => void requestUpload()}
                 trailingIcon={null}
               />
               <SettingsRow
@@ -689,6 +719,19 @@ export function VaultScreen({ client, dispatch, state }: SettingsScreenProps) {
           onCancel={() => setConfirming(false)}
           onConfirm={() => void remove()}
           title="Delete vault?"
+        />
+      )}
+      {confirmingOperation === 'upload' && (
+        <ConfirmDialog
+          confirmLabel="Upload"
+          message={remoteVaultMissing
+            ? `The R2 copy of “${detail?.display_name ?? 'this vault'}” no longer exists. Upload it again?`
+            : uploadCheck?.status === 'mismatch'
+            ? `The R2 version of “${detail?.display_name ?? 'this vault'}” does not match the version recorded locally. Upload and overwrite the R2 vault?`
+            : `No R2 version is recorded for “${detail?.display_name ?? 'this vault'}”. Upload and overwrite any existing R2 vault?`}
+          onCancel={() => setConfirmingOperation(null)}
+          onConfirm={() => void runOperation('upload', uploadCheck)}
+          title={remoteVaultMissing ? 'Upload the vault again?' : 'Overwrite the R2 vault?'}
         />
       )}
       {confirmingOperation === 'download' && (

@@ -244,7 +244,8 @@ private:
             const std::size_t length_start =
                 request.find("Content-Length:");
             if (length_start == std::string::npos) {
-                if (request.starts_with("GET ")) {
+                if (request.starts_with("GET ")
+                    || request.starts_with("HEAD ")) {
                     return request;
                 }
                 throw std::runtime_error(
