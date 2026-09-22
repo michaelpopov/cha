@@ -158,6 +158,27 @@ TEST(ApplicationVault, ZeroAndStaleEpochsCannotCreateInTheSwitchedVault) {
     EXPECT_FALSE(created.id.empty());
 }
 
+TEST(ApplicationVault, MaintenanceRejectsAStaleVaultEpochUnderTheLifecycleLock) {
+    TwoVaults pair;
+    auto application = Application::open(pair.command);
+    const auto stale_epoch = application->context_epoch();
+    (void)application->switch_vault("B", {}, stale_epoch);
+
+    auto expect_stale = [&](auto operation) {
+        try {
+            operation();
+            FAIL() << "maintenance with a stale epoch should fail";
+        } catch (const ApplicationError& error) {
+            EXPECT_EQ(error.code, ErrorCode::vault_changed);
+        }
+    };
+    expect_stale([&] { (void)application->upload_database(stale_epoch); });
+    expect_stale([&] { (void)application->download_database(stale_epoch); });
+    expect_stale([&] { (void)application->import_configuration(stale_epoch); });
+    expect_stale([&] { (void)application->export_configuration(stale_epoch); });
+    EXPECT_EQ(application->current_vault().get().name, "B");
+}
+
 TEST(ApplicationVault, OverlappingSessionIdsStayOnTheirVault) {
     TwoVaults pair;
     auto application = Application::open(pair.command);
@@ -516,6 +537,10 @@ TEST(ApplicationVault, MaintenanceCompletionDoesNotUndoShutdown) {
     }
     EXPECT_TRUE(reached_pause);
     application->request_shutdown();
+    auto maintenance = std::async(std::launch::async, [&] {
+        application->wait_for_maintenance();
+    });
+    EXPECT_EQ(maintenance.wait_for(50ms), std::future_status::timeout);
     const auto started = std::chrono::steady_clock::now();
     EXPECT_FALSE(application->join_shutdown(50ms));
     EXPECT_LT(std::chrono::steady_clock::now() - started, 500ms);
@@ -525,6 +550,8 @@ TEST(ApplicationVault, MaintenanceCompletionDoesNotUndoShutdown) {
     }
     changed.notify_all();
 
+    EXPECT_EQ(maintenance.wait_for(2s), std::future_status::ready);
+    maintenance.get();
     const auto switched = switching.get();
     EXPECT_EQ(switched.state, ApplicationState::unavailable);
     EXPECT_EQ(application->state(), ApplicationState::unavailable);

@@ -21,40 +21,10 @@ private struct RuntimeBridgeError: LocalizedError {
     var errorDescription: String? { message }
 }
 
-// The runtime is process-owned and its C++ boundary serializes shutdown and
-// database maintenance. This wrapper makes that explicit when work moves off
-// the AppKit main actor.
+// The runtime is process-owned. This wrapper makes that explicit when shutdown
+// work moves off the AppKit main actor.
 private struct RuntimeHandle: @unchecked Sendable {
     let pointer: OpaquePointer
-}
-
-private enum DatabaseOperation {
-    case importConfiguration
-    case exportConfiguration
-    case upload
-    case download
-
-    var progressTitle: String {
-        switch self {
-        case .importConfiguration: return "Importing"
-        case .exportConfiguration: return "Exporting"
-        case .upload: return "Uploading"
-        case .download: return "Downloading"
-        }
-    }
-
-    var title: String {
-        switch self {
-        case .importConfiguration: return "Import"
-        case .exportConfiguration: return "Export"
-        case .upload: return "Upload"
-        case .download: return "Download"
-        }
-    }
-
-    var reloadsApplication: Bool {
-        self == .importConfiguration || self == .download
-    }
 }
 
 private struct DownloadDestination {
@@ -64,7 +34,7 @@ private struct DownloadDestination {
 
 @MainActor
 private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
-    NSMenuDelegate, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
+    WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
     private let fileManager = FileManager.default
     private var window: NSWindow!
     private var webView: WKWebView!
@@ -72,15 +42,9 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
     private var webViewTitleObservation: NSKeyValueObservation?
     private var runtime: OpaquePointer?
     private var runtimeURL: URL?
-    private var importMenuItem: NSMenuItem!
-    private var exportMenuItem: NSMenuItem!
-    private var uploadMenuItem: NSMenuItem!
-    private var downloadMenuItem: NSMenuItem!
     private var downloadDestinations: [ObjectIdentifier: DownloadDestination] = [:]
     private let nativeFileOperations = DispatchGroup()
     private var savePanel: NSSavePanel?
-    private var databaseOperationInProgress = false
-    private var terminationPending = false
     private var quitting = false
     private var rendererFailures = 0
     private let rendererFailureLimit = 3
@@ -110,16 +74,11 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
         true
     }
 
-    // A database operation runs off the main thread against the runtime pointer.
-    // Quitting waits for that work to finish, then joins owners off the UI thread.
     func applicationShouldTerminate(
         _ sender: NSApplication) -> NSApplication.TerminateReply {
-        if databaseOperationInProgress {
-            terminationPending = true
-            return .terminateLater
-        }
         guard runtime != nil, !quitting else { return .terminateNow }
         quitting = true
+        window.title = "Closing CHA…"
         shutdownRuntimeThen {
             NSApp.reply(toApplicationShouldTerminate: true)
         }
@@ -150,37 +109,6 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
             keyEquivalent: "q")
         applicationItem.submenu = applicationMenu
         mainMenu.addItem(applicationItem)
-
-        let databaseItem = NSMenuItem()
-        let databaseMenu = NSMenu(title: "Database")
-        // Without this AppKit recomputes the items from their target/action and
-        // the greying-out during an operation never shows.
-        databaseMenu.autoenablesItems = false
-        importMenuItem = databaseMenu.addItem(
-            withTitle: "Import…",
-            action: #selector(importConfiguration(_:)),
-            keyEquivalent: "")
-        importMenuItem.target = self
-        exportMenuItem = databaseMenu.addItem(
-            withTitle: "Export",
-            action: #selector(exportConfiguration(_:)),
-            keyEquivalent: "")
-        exportMenuItem.target = self
-        databaseMenu.addItem(.separator())
-        uploadMenuItem = databaseMenu.addItem(
-            withTitle: "Upload",
-            action: #selector(uploadDatabase(_:)),
-            keyEquivalent: "")
-        uploadMenuItem.target = self
-        downloadMenuItem = databaseMenu.addItem(
-            withTitle: "Download…",
-            action: #selector(downloadDatabase(_:)),
-            keyEquivalent: "")
-        downloadMenuItem.target = self
-        updateDatabaseMenuItems()
-        databaseMenu.delegate = self
-        databaseItem.submenu = databaseMenu
-        mainMenu.addItem(databaseItem)
 
         let editItem = NSMenuItem()
         let editMenu = NSMenu(title: "Edit")
@@ -317,7 +245,6 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
             if let created {
                 runtimeURL = URL(string: "\(chaAssetOrigin)/")
                 runtime = created
-                updateDatabaseMenuItems()
                 return true
             }
             let error = takeBridgeError(bridgeError)
@@ -371,136 +298,14 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
         }
     }
 
-    @objc private func uploadDatabase(_ sender: Any?) {
-        performDatabaseOperation(.upload)
-    }
-
-    @objc private func downloadDatabase(_ sender: Any?) {
-        let alert = NSAlert()
-        alert.alertStyle = .warning
-        alert.messageText = "Replace the local database?"
-        alert.informativeText =
-            "CHA will save the current database beside itself with a .bac suffix, then use the database downloaded from R2."
-        alert.addButton(withTitle: "Download")
-        alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        performDatabaseOperation(.download)
-    }
-
-    @objc private func importConfiguration(_ sender: Any?) {
-        let alert = NSAlert()
-        alert.alertStyle = .warning
-        alert.messageText = "Import workspace configuration?"
-        alert.informativeText =
-            "CHA will replace its workspace configuration with the contents of the directory named by “modify” in the active vault's configuration."
-        alert.addButton(withTitle: "Import")
-        alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        performDatabaseOperation(.importConfiguration)
-    }
-
-    @objc private func exportConfiguration(_ sender: Any?) {
-        performDatabaseOperation(.exportConfiguration)
-    }
-
-    private func performDatabaseOperation(_ operation: DatabaseOperation) {
-        guard !databaseOperationInProgress, let runtime else { return }
-        let runtimeHandle = RuntimeHandle(pointer: runtime)
-        databaseOperationInProgress = true
-        updateDatabaseMenuItems()
-        window.title = "\(applicationName) — \(operation.progressTitle)…"
-
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            var count: UInt64 = 0
-            var bridgeError: UnsafeMutablePointer<CChar>?
-            let succeeded: Int32
-            switch operation {
-            case .importConfiguration:
-                succeeded = cha_runtime_import_configuration(
-                    runtimeHandle.pointer, &count, &bridgeError)
-            case .exportConfiguration:
-                succeeded = cha_runtime_export_configuration(
-                    runtimeHandle.pointer, &count, &bridgeError)
-            case .upload:
-                succeeded = cha_runtime_upload(
-                    runtimeHandle.pointer, &count, &bridgeError)
-            case .download:
-                succeeded = cha_runtime_download(
-                    runtimeHandle.pointer, &count, &bridgeError)
-            }
-            let errorMessage = bridgeError.map { String(cString: $0) }
-            cha_string_free(bridgeError)
-
-            DispatchQueue.main.async {
-                guard let self else { return }
-                self.databaseOperationInProgress = false
-                self.updateDatabaseMenuItems()
-                if self.terminationPending {
-                    self.terminationPending = false
-                    if self.applicationShouldTerminate(NSApp) == .terminateNow {
-                        NSApp.reply(toApplicationShouldTerminate: true)
-                    }
-                    return
-                }
-                guard !self.quitting else { return }
-                self.updateWindowTitle()
-
-                if succeeded < 0 {
-                    return self.showFatalError(RuntimeBridgeError(
-                        message: errorMessage
-                            ?? "CHA can no longer reach its database."))
-                }
-                guard succeeded != 0 else {
-                    self.showNotice(
-                        "\(operation.title) failed",
-                        detail: errorMessage ?? "CHA encountered an unknown error.")
-                    return
-                }
-                if operation.reloadsApplication, let runtimeURL = self.runtimeURL {
-                    self.webView.load(URLRequest(url: runtimeURL))
-                }
-                let detail: String
-                switch operation {
-                case .importConfiguration:
-                    detail = "Imported \(count) files."
-                case .exportConfiguration:
-                    detail = "Exported \(count) files."
-                case .upload, .download:
-                    let size = ByteCountFormatter.string(
-                        fromByteCount: Int64(count), countStyle: .file)
-                    detail = "Transferred \(size)."
-                }
-                self.showNotice(
-                    "\(operation.title) complete",
-                    detail: detail)
-            }
-        }
-    }
-
     private func updateWindowTitle() {
-        guard !databaseOperationInProgress else { return }
+        guard !quitting else { return }
         let title = webView?.title?.trimmingCharacters(in: .whitespacesAndNewlines)
         if let title, !title.isEmpty {
             window.title = title
         } else {
             window.title = applicationName
         }
-    }
-
-    func menuNeedsUpdate(_: NSMenu) {
-        updateDatabaseMenuItems()
-    }
-
-    private func updateDatabaseMenuItems() {
-        let canModify = runtime.map { cha_runtime_can_modify($0) != 0 } ?? false
-        let canTransferR2 = runtime.map {
-            cha_runtime_can_transfer_r2($0) != 0
-        } ?? false
-        let idle = !databaseOperationInProgress
-        importMenuItem.isEnabled = idle && canModify
-        exportMenuItem.isEnabled = idle && canModify
-        uploadMenuItem.isEnabled = idle && canTransferR2
-        downloadMenuItem.isEnabled = idle && canTransferR2
     }
 
     func webView(

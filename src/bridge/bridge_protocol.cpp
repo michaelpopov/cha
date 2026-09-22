@@ -55,6 +55,10 @@ const std::pair<Method, std::string_view> kMethods[] = {
     {Method::vault_delete, "vault.delete"},
     {Method::vault_switch, "vault.switch"},
     {Method::vault_merge, "vault.merge"},
+    {Method::vault_upload, "vault.upload"},
+    {Method::vault_download, "vault.download"},
+    {Method::vault_import, "vault.import"},
+    {Method::vault_export, "vault.export"},
     {Method::vault_r2_list, "vault.r2.list"},
     {Method::vault_r2_download, "vault.r2.download"},
     {Method::provider_list, "provider.list"},
@@ -142,7 +146,9 @@ bool requires_context_epoch(Method method) noexcept {
 
 bool changes_context(Method method) noexcept {
     return method == Method::vault_switch || method == Method::vault_merge
-        || method == Method::vault_update;
+        || method == Method::vault_update || method == Method::vault_upload
+        || method == Method::vault_download || method == Method::vault_import
+        || method == Method::vault_export;
 }
 
 std::string_view method_name(Method method) noexcept {
@@ -370,13 +376,16 @@ nlohmann::json delivery_batch(
 nlohmann::json context_changed_event(
     std::string_view connection_id,
     std::uint64_t context_epoch,
-    std::string_view state) {
-    return {
+    std::string_view state,
+    std::optional<std::uint64_t> causing_request_id) {
+    nlohmann::json event = {
         {"connection_id", connection_id},
         {"event", "app.contextChanged"},
         {"context_epoch", context_epoch},
         {"state", state},
     };
+    if (causing_request_id) event["causing_request_id"] = *causing_request_id;
+    return event;
 }
 
 nlohmann::json connection_invalidated_event(

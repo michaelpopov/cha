@@ -51,9 +51,9 @@ struct SigningTime {
     std::string date;
 };
 
-class R2ObjectNotFoundError : public std::runtime_error {
+class R2ObjectNotFoundError : public R2HttpStatusError {
 public:
-    using std::runtime_error::runtime_error;
+    using R2HttpStatusError::R2HttpStatusError;
 };
 
 class TemporaryPath {
@@ -367,7 +367,7 @@ void require_status(
         if (status == 404 && !not_found_message.empty()) {
             throw R2ObjectNotFoundError(std::string(not_found_message));
         }
-        throw std::runtime_error(
+        throw R2HttpStatusError(
             "R2 " + std::string(operation) + " failed with HTTP status "
             + std::to_string(status));
     }
@@ -861,8 +861,7 @@ R2DatabaseTransfer download_database_from_r2(
     const std::string vault_object = database_name + ".toml";
     const std::uintmax_t vault_bytes = download_file(
         vault_temporary.get(), vault_object, storage, cancelled,
-        "R2 vault definition object '" + vault_object
-            + "' was not found. The bucket may contain a legacy "
+        "R2 vault definition was not found. The bucket may contain a legacy "
               "database-only upload; upload with the current CHA version "
               "before downloading.");
     const std::uintmax_t database_bytes = download_file(

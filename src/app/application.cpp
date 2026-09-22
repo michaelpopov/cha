@@ -1365,6 +1365,10 @@ void Application::request_shutdown() {
     impl_->live_sessions->begin_shutdown();
 }
 
+void Application::wait_for_maintenance() const {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+}
+
 bool Application::join_shutdown(std::chrono::milliseconds grace) {
     const auto deadline = std::chrono::steady_clock::now() + grace;
     if (!impl_->background_jobs.join_until(deadline)) {
@@ -1442,20 +1446,20 @@ MaintenanceResult Application::merge_vault(
         source_name, std::move(password), epoch);
 }
 
-R2DatabaseTransfer Application::upload_database() {
-    return impl_->vault_maintenance.upload_database();
+R2DatabaseTransfer Application::upload_database(std::uint64_t epoch) {
+    return impl_->vault_maintenance.upload_database(epoch);
 }
 
-R2DatabaseTransfer Application::download_database() {
-    return impl_->vault_maintenance.download_database();
+R2DatabaseTransfer Application::download_database(std::uint64_t epoch) {
+    return impl_->vault_maintenance.download_database(epoch);
 }
 
-WorkspaceConfigTransfer Application::import_configuration() {
-    return impl_->vault_maintenance.import_configuration();
+WorkspaceConfigTransfer Application::import_configuration(std::uint64_t epoch) {
+    return impl_->vault_maintenance.import_configuration(epoch);
 }
 
-WorkspaceConfigTransfer Application::export_configuration() {
-    return impl_->vault_maintenance.export_configuration();
+WorkspaceConfigTransfer Application::export_configuration(std::uint64_t epoch) {
+    return impl_->vault_maintenance.export_configuration(epoch);
 }
 
 void Application::save_file(

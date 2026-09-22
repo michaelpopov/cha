@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <iterator>
 #include <optional>
 #include <string>
 #include <thread>
@@ -747,7 +748,33 @@ TEST_F(BridgeRouterTest, ContextNotificationsCoalesceBehindInFlightDelivery) {
     const auto& message = notification->at("messages").front();
     EXPECT_EQ(message["event"], "app.contextChanged");
     EXPECT_EQ(message["context_epoch"], restored.context_epoch);
+    EXPECT_FALSE(message.contains("causing_request_id"));
     ack_delivery(*router_, connection_, *notification);
+}
+
+TEST_F(BridgeRouterTest, ContextNotificationNamesOnlyTheOriginatingRequest) {
+    bootstrap_epoch();
+    const auto created = application_->create_vault({.display_name = "Other"}, epoch_);
+    const std::string observer = router_->open_connection();
+    const auto request_id = next_id_++;
+    router_->handle_request(
+        connection_,
+        request_json(connection_, request_id, epoch_, "vault.switch",
+            {{"vault_name", created.name}, {"password", nullptr}}).dump());
+
+    const auto initiating_batch = wait_delivery(*router_, connection_);
+    ASSERT_TRUE(initiating_batch);
+    const auto& initiating_event = initiating_batch->at("messages").front();
+    EXPECT_EQ(initiating_event["event"], "app.contextChanged");
+    EXPECT_EQ(initiating_event["causing_request_id"], request_id);
+    ack_delivery(*router_, connection_, *initiating_batch);
+
+    const auto observer_batch = wait_delivery(*router_, observer);
+    ASSERT_TRUE(observer_batch);
+    const auto& observer_event = observer_batch->at("messages").front();
+    EXPECT_EQ(observer_event["event"], "app.contextChanged");
+    EXPECT_FALSE(observer_event.contains("causing_request_id"));
+    ack_delivery(*router_, observer, *observer_batch);
 }
 
 TEST_F(BridgeRouterTest, CompletedReplyHoldsAdmissionUntilDeliveryAck) {
@@ -911,6 +938,252 @@ TEST_F(BridgeRouterTest, ShutdownDoesNotWaitForRendererAck) {
     }
 }
 
+TEST_F(BridgeRouterTest, MaintenanceRequestsIgnoreTheOrdinaryCommandDeadline) {
+    router_ = std::make_unique<BridgeRouter>(
+        *application_,
+        BridgeRouter::Options{
+            .platform = "test",
+            .command_deadline = 0ms,
+        });
+    connection_ = router_->open_connection();
+    bootstrap_epoch();
+
+    const std::vector<std::pair<std::string, nlohmann::json>> requests{
+        {"vault.merge", nlohmann::json::object()},
+        {"vault.upload", nlohmann::json::object()},
+        {"vault.download", nlohmann::json::object()},
+        {"vault.import", nlohmann::json::object()},
+        {"vault.export", nlohmann::json::object()},
+        {"vault.r2.download", {{"name", "remote"}}},
+    };
+    for (const auto& [method, params] : requests) {
+        const auto id = next_id_++;
+        router_->handle_request(
+            connection_,
+            request_json(connection_, id, epoch_, method, params).dump());
+        router_->expire_timeouts();
+        const auto batch = wait_delivery(*router_, connection_);
+        ASSERT_TRUE(batch) << method;
+        const auto reply = reply_with_id(*batch, id);
+        ASSERT_FALSE(reply.empty()) << method;
+        EXPECT_NE(reply.value("error", nlohmann::json::object()).value(
+            "code", ""), "command_timeout") << method;
+        for (const auto& message : batch->at("messages")) {
+            if (message.value("event", "") == "app.contextChanged") {
+                epoch_ = message.at("context_epoch").get<std::uint64_t>();
+            }
+        }
+        ack_delivery(*router_, connection_, *batch);
+    }
+}
+
+TEST_F(BridgeRouterTest, MaintenanceMethodsRejectParameters) {
+    bootstrap_epoch();
+    for (const std::string_view method : {
+             "vault.upload", "vault.download", "vault.import", "vault.export"}) {
+        SCOPED_TRACE(method);
+        const auto reply = call(method, {{"unexpected", true}});
+        ASSERT_FALSE(reply["ok"]);
+        EXPECT_EQ(reply["error"]["code"], "invalid_argument");
+    }
+}
+
+TEST_F(BridgeRouterTest, MaintenanceFailuresKeepTheirReasonAndRecoveredEpoch) {
+    bootstrap_epoch();
+    const std::vector<std::pair<std::string, std::string>> requests{
+        {"vault.upload", "The active vault has no R2 key"},
+        {"vault.download", "The active vault has no R2 key"},
+        {"vault.import", "Application config requires 'modify' for Import"},
+        {"vault.export", "Application config requires 'modify' for Export"},
+    };
+    for (const auto& [method, message] : requests) {
+        SCOPED_TRACE(method);
+        const auto old_epoch = epoch_;
+        const auto reply = call(method);
+        ASSERT_FALSE(reply["ok"]);
+        EXPECT_EQ(reply["error"]["code"], "invalid_argument");
+        EXPECT_EQ(reply["error"]["message"], message);
+        epoch_ = reply["context_epoch"].get<std::uint64_t>();
+        EXPECT_GT(epoch_, old_epoch);
+    }
+}
+
+TEST_F(BridgeRouterTest, MaintenanceHttpStatusKeepsSafeReason) {
+    bootstrap_epoch();
+    MockHttpServer server({
+        "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n"
+        "Connection: close\r\n\r\n",
+    });
+    (void)application_->save_r2_storage({
+        .display_name = "Backups",
+        .url = "http://127.0.0.1:" + std::to_string(server.port()) + "/bucket/",
+        .access_key_id = "access",
+        .secret_key = std::string("secret"),
+    }, epoch_);
+    server.start();
+    const auto reply = call("vault.upload");
+    server.join();
+    ASSERT_FALSE(reply["ok"]);
+    EXPECT_EQ(reply["error"]["code"], "invalid_argument");
+    EXPECT_EQ(reply["error"]["message"],
+        "R2 upload failed with HTTP status 403");
+    EXPECT_GT(reply["context_epoch"].get<std::uint64_t>(), epoch_);
+}
+
+TEST_F(BridgeRouterTest, MaintenanceFilesystemFailureHidesPrivatePath) {
+    router_->shutdown();
+    application_->request_shutdown();
+    ASSERT_TRUE(application_->join_shutdown(2s));
+    router_.reset();
+    application_.reset();
+
+    auto command = make_command(workspace_, database_);
+    const auto modify = workspace_.root() / "modify";
+    command.vault.modify = modify;
+    command.vaults.front().modify = modify;
+    application_ = app::Application::open(std::move(command));
+    router_ = std::make_unique<BridgeRouter>(*application_);
+    connection_ = router_->open_connection();
+    bootstrap_epoch();
+
+    std::filesystem::create_directories(modify);
+    std::ofstream(modify / "private-note.txt") << "not a CHA workspace";
+    const auto reply = call("vault.export");
+    ASSERT_FALSE(reply["ok"]);
+    EXPECT_EQ(reply["error"]["code"], "internal_error");
+    EXPECT_EQ(reply["error"]["message"], "The request could not be completed.");
+    EXPECT_EQ(reply["error"]["message"].get<std::string>().find(
+        workspace_.root().string()), std::string::npos);
+    EXPECT_GT(reply["context_epoch"].get<std::uint64_t>(), epoch_);
+}
+
+TEST_F(BridgeRouterTest, ImportShowsSafeFileValidationReason) {
+    router_->shutdown();
+    application_->request_shutdown();
+    ASSERT_TRUE(application_->join_shutdown(2s));
+    router_.reset();
+    application_.reset();
+
+    auto command = make_command(workspace_, database_);
+    const auto modify = workspace_.root() / "modify";
+    command.vault.modify = modify;
+    command.vaults.front().modify = modify;
+    application_ = app::Application::open(std::move(command));
+    router_ = std::make_unique<BridgeRouter>(*application_);
+    connection_ = router_->open_connection();
+    bootstrap_epoch();
+
+    const auto exported = call("vault.export");
+    ASSERT_TRUE(exported["ok"]);
+    epoch_ = exported["result"]["context_epoch"].get<std::uint64_t>();
+    std::ofstream(modify / "system/providers/test/config.toml")
+        << "host = 42\nport = 1\nmode = \"test\"\nmodel = \"fake\"\n";
+
+    const auto failed = call("vault.import");
+    ASSERT_FALSE(failed["ok"]);
+    EXPECT_EQ(failed["error"]["code"], "invalid_argument");
+    const std::string message = failed["error"]["message"];
+    EXPECT_NE(message.find("system/providers/test/config.toml"), std::string::npos);
+    EXPECT_EQ(message.find("workspace/system"), std::string::npos);
+    EXPECT_NE(message.find("host"), std::string::npos);
+    EXPECT_EQ(message.find("/workspace"), std::string::npos);
+    EXPECT_EQ(message.find(workspace_.root().string()), std::string::npos);
+    EXPECT_GT(failed["context_epoch"].get<std::uint64_t>(), epoch_);
+
+    epoch_ = failed["context_epoch"].get<std::uint64_t>();
+    std::ofstream(modify / "system/providers/test/config.toml") << "not toml\n";
+    const auto malformed = call("vault.import");
+    ASSERT_FALSE(malformed["ok"]);
+    EXPECT_EQ(malformed["error"]["code"], "invalid_argument");
+    const std::string syntax = malformed["error"]["message"];
+    EXPECT_NE(syntax.find("invalid provider 'test'"), std::string::npos);
+    EXPECT_NE(syntax.find("parsing"), std::string::npos);
+    EXPECT_EQ(syntax.find("/workspace"), std::string::npos);
+    EXPECT_EQ(syntax.find(workspace_.root().string()), std::string::npos);
+
+    epoch_ = malformed["context_epoch"].get<std::uint64_t>();
+    std::filesystem::copy_file(
+        workspace_.root() / "system/providers/test/config.toml",
+        modify / "system/providers/test/config.toml",
+        std::filesystem::copy_options::overwrite_existing);
+    std::filesystem::remove(modify / "characters/guide/CHARACTER.md");
+    const auto missing = call("vault.import");
+    ASSERT_FALSE(missing["ok"]);
+    EXPECT_EQ(missing["error"]["code"], "invalid_argument");
+    const std::string required = missing["error"]["message"];
+    EXPECT_NE(required.find("Character 'guide' requires character.toml and CHARACTER.md"),
+        std::string::npos);
+    EXPECT_EQ(required.find(workspace_.root().string()), std::string::npos);
+}
+
+TEST_F(BridgeRouterTest, MaintenanceResultsReturnCountsAndNewEpochs) {
+    router_->shutdown();
+    application_->request_shutdown();
+    ASSERT_TRUE(application_->join_shutdown(2s));
+    router_.reset();
+    application_.reset();
+
+    auto command = make_command(workspace_, database_);
+    const auto modify = workspace_.root() / "modify";
+    command.vault.modify = modify;
+    command.vaults.front().modify = modify;
+    application_ = app::Application::open(std::move(command));
+    router_ = std::make_unique<BridgeRouter>(*application_);
+    connection_ = router_->open_connection();
+    bootstrap_epoch();
+
+    auto check_result = [&](const nlohmann::json& reply, std::string_view field) {
+        ASSERT_TRUE(reply["ok"]);
+        ASSERT_TRUE(reply["result"].contains(field));
+        EXPECT_TRUE(reply["result"][field].is_number_unsigned());
+        const auto next_epoch = reply["result"]["context_epoch"].get<std::uint64_t>();
+        EXPECT_EQ(reply["context_epoch"], next_epoch);
+        EXPECT_GT(next_epoch, epoch_);
+        epoch_ = next_epoch;
+    };
+
+    check_result(call("vault.export"), "file_count");
+    check_result(call("vault.import"), "file_count");
+
+    MockHttpServer upload_server({
+        http_response("application/xml", ""),
+        http_response("application/xml", ""),
+    });
+    (void)application_->save_r2_storage({
+        .display_name = "Backups",
+        .url = "http://127.0.0.1:" + std::to_string(upload_server.port()) + "/bucket/",
+        .access_key_id = "access",
+        .secret_key = std::string("secret"),
+    }, epoch_);
+    upload_server.start();
+    check_result(call("vault.upload"), "byte_count");
+    upload_server.join();
+
+    test::TestWorkspace remote_workspace;
+    remote_workspace.add_persona("remote", "Remote");
+    const auto remote_database = test::import_test_database(remote_workspace.root());
+    std::ifstream remote_input(remote_database, std::ios::binary);
+    const std::string remote_bytes{
+        std::istreambuf_iterator<char>(remote_input),
+        std::istreambuf_iterator<char>()};
+    const std::string remote_vault =
+        "vault_name = \"Test\"\n"
+        "data = \"/remote/" + database_.filename().string() + "\"\n";
+    MockHttpServer download_server({
+        http_response("application/toml", remote_vault),
+        http_response("application/vnd.sqlite3", remote_bytes),
+    });
+    (void)application_->save_r2_storage({
+        .display_name = "Backups",
+        .url = "http://127.0.0.1:" + std::to_string(download_server.port()) + "/bucket/",
+        .access_key_id = "access",
+        .secret_key = std::string("secret"),
+    }, epoch_);
+    download_server.start();
+    check_result(call("vault.download"), "byte_count");
+    download_server.join();
+}
+
 TEST_F(BridgeRouterTest, QueuedOldContextReplyIsInvalidatedBeforeDelivery) {
     bootstrap_epoch();
     ASSERT_TRUE(call("vault.create", {{"display_name", "Other"},
@@ -952,6 +1225,7 @@ TEST_F(BridgeRouterTest, FailedMergeRecoveryKeepsShellAvailableAndRejectsDomainW
     const auto failed = call("vault.merge", {{"source_vault", "Source"}, {"password", nullptr}});
     ASSERT_FALSE(failed["ok"]);
     EXPECT_EQ(failed["error"]["code"], "application_unavailable");
+    EXPECT_EQ(failed["error"]["message"], "The application is unavailable.");
     EXPECT_TRUE(call("bridge.info")["ok"]);
     const auto boot = call("app.bootstrap");
     ASSERT_TRUE(boot["ok"]);

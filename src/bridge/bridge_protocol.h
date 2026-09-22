@@ -69,6 +69,10 @@ enum class Method {
     vault_delete,
     vault_switch,
     vault_merge,
+    vault_upload,
+    vault_download,
+    vault_import,
+    vault_export,
     vault_r2_list,
     vault_r2_download,
     provider_list,
@@ -179,7 +183,8 @@ struct DeliveryAck {
 [[nodiscard]] nlohmann::json context_changed_event(
     std::string_view connection_id,
     std::uint64_t context_epoch,
-    std::string_view state);
+    std::string_view state,
+    std::optional<std::uint64_t> causing_request_id = std::nullopt);
 [[nodiscard]] nlohmann::json connection_invalidated_event(
     std::string_view connection_id);
 

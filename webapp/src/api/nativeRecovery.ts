@@ -10,7 +10,11 @@ export function installNativeRecoveryHandlers(
     resetRoute();
     reload();
   };
-  native.on('app.contextChanged', resetAndReload);
+  native.on<{ causing_request_id?: number; state?: string }>('app.contextChanged', (event) => {
+    if (!Number.isSafeInteger(event.causing_request_id) || event.state !== 'running') {
+      resetAndReload();
+    }
+  });
   native.on('app.connectionInvalidated', resetAndReload);
   native.on('receiver-error', reload);
 }

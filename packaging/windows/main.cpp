@@ -44,11 +44,6 @@ constexpr wchar_t kApplicationId[] = L"com.michaelpopov.cha";
 constexpr int kApplicationIcon = 101;
 
 constexpr UINT kFileExit = 1001;
-constexpr UINT kDatabaseImport = 1101;
-constexpr UINT kDatabaseExport = 1102;
-constexpr UINT kDatabaseUpload = 1103;
-constexpr UINT kDatabaseDownload = 1104;
-constexpr UINT kOperationComplete = WM_APP + 1;
 constexpr UINT kFatalError = WM_APP + 2;
 constexpr UINT kDeliveryReady = WM_APP + 3;
 constexpr UINT kShutdownDone = WM_APP + 4;
@@ -296,45 +291,6 @@ std::optional<std::string> prompt_for_vault_password(
     return cha::utf8_from_wide(state.password);
 }
 
-enum class DatabaseOperation {
-    import_configuration,
-    export_configuration,
-    upload,
-    download,
-};
-
-std::wstring operation_title(DatabaseOperation operation) {
-    switch (operation) {
-    case DatabaseOperation::import_configuration: return L"Import";
-    case DatabaseOperation::export_configuration: return L"Export";
-    case DatabaseOperation::upload: return L"Upload";
-    case DatabaseOperation::download: return L"Download";
-    }
-    return L"Database operation";
-}
-
-std::wstring operation_progress_title(DatabaseOperation operation) {
-    switch (operation) {
-    case DatabaseOperation::import_configuration: return L"Importing";
-    case DatabaseOperation::export_configuration: return L"Exporting";
-    case DatabaseOperation::upload: return L"Uploading";
-    case DatabaseOperation::download: return L"Downloading";
-    }
-    return L"Working";
-}
-
-bool operation_reloads_application(DatabaseOperation operation) {
-    return operation == DatabaseOperation::import_configuration
-        || operation == DatabaseOperation::download;
-}
-
-struct OperationResult {
-    DatabaseOperation operation{};
-    int32_t status{};
-    std::uint64_t count{};
-    std::string error;
-};
-
 struct NativeSaveResult {
     std::string connection_id;
     std::string id;
@@ -467,7 +423,6 @@ class WindowsApplication final
 public:
     ~WindowsApplication() {
         if (save_thread_.joinable()) save_thread_.join();
-        if (operation_thread_.joinable()) operation_thread_.join();
         if (shutdown_thread_.joinable()) shutdown_thread_.join();
         shutdown_runtime();
         if (window_ != nullptr && ::IsWindow(window_)) {
@@ -538,20 +493,11 @@ private:
                     COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
             }
             return 0;
-        case WM_INITMENUPOPUP:
-            if (reinterpret_cast<HMENU>(wparam) == database_menu_) {
-                update_database_menu_items();
-            }
-            return 0;
         case WM_COMMAND:
             handle_command(LOWORD(wparam));
             return 0;
         case WM_CLOSE:
             request_close();
-            return 0;
-        case kOperationComplete:
-            finish_database_operation(
-                reinterpret_cast<OperationResult*>(lparam));
             return 0;
         case kFatalError:
             show_fatal_error(
@@ -606,23 +552,11 @@ private:
 
         HMENU main_menu = ::CreateMenu();
         HMENU file_menu = ::CreatePopupMenu();
-        database_menu_ = ::CreatePopupMenu();
-        if (main_menu == nullptr || file_menu == nullptr
-            || database_menu_ == nullptr) {
+        if (main_menu == nullptr || file_menu == nullptr) {
             throw std::runtime_error("Failed to create the CHA menus");
         }
         ::AppendMenuW(file_menu, MF_STRING, kFileExit, L"E&xit");
         ::AppendMenuW(main_menu, MF_POPUP, reinterpret_cast<UINT_PTR>(file_menu), L"&File");
-        ::AppendMenuW(database_menu_, MF_STRING, kDatabaseImport, L"&Import...");
-        ::AppendMenuW(database_menu_, MF_STRING, kDatabaseExport, L"&Export");
-        ::AppendMenuW(database_menu_, MF_SEPARATOR, 0, nullptr);
-        ::AppendMenuW(database_menu_, MF_STRING, kDatabaseUpload, L"&Upload");
-        ::AppendMenuW(database_menu_, MF_STRING, kDatabaseDownload, L"&Download...");
-        ::AppendMenuW(
-            main_menu,
-            MF_POPUP,
-            reinterpret_cast<UINT_PTR>(database_menu_),
-            L"&Database");
 
         RECT rectangle{0, 0, 1040, 760};
         ::AdjustWindowRectEx(&rectangle, WS_OVERLAPPEDWINDOW, TRUE, 0);
@@ -709,7 +643,6 @@ private:
             runtime_url_ = std::wstring(kAssetOrigin) + L"/";
         }
         cha_runtime_set_delivery_callback(runtime_, native_delivery, this);
-        update_database_menu_items();
     }
 
     static void native_delivery(
@@ -915,7 +848,7 @@ private:
         webview_->add_DocumentTitleChanged(
             Callback<ICoreWebView2DocumentTitleChangedEventHandler>(
                 [this](ICoreWebView2* sender, IUnknown*) {
-                    if (database_operation_in_progress_) return S_OK;
+                    if (closing_) return S_OK;
                     wchar_t* raw_title = nullptr;
                     if (SUCCEEDED(sender->get_DocumentTitle(&raw_title))) {
                         std::wstring title = take_com_string(raw_title);
@@ -1548,154 +1481,9 @@ private:
         case kFileExit:
             request_close();
             break;
-        case kDatabaseImport:
-            if (::MessageBoxW(
-                    window_,
-                    L"CHA will replace its workspace configuration with the contents of the directory named by 'modify' in the active vault's configuration.",
-                    L"Import workspace configuration?",
-                    MB_ICONWARNING | MB_OKCANCEL) == IDOK) {
-                perform_database_operation(
-                    DatabaseOperation::import_configuration);
-            }
-            break;
-        case kDatabaseExport:
-            perform_database_operation(DatabaseOperation::export_configuration);
-            break;
-        case kDatabaseUpload:
-            perform_database_operation(DatabaseOperation::upload);
-            break;
-        case kDatabaseDownload:
-            if (::MessageBoxW(
-                    window_,
-                    L"CHA will save the current database beside itself with a .bac suffix, then use the database downloaded from R2.",
-                    L"Replace the local database?",
-                    MB_ICONWARNING | MB_OKCANCEL) == IDOK) {
-                perform_database_operation(DatabaseOperation::download);
-            }
-            break;
         default:
             break;
         }
-    }
-
-    void perform_database_operation(DatabaseOperation operation) {
-        if (database_operation_in_progress_ || runtime_ == nullptr) return;
-        database_operation_in_progress_ = true;
-        update_database_menu_items();
-        const std::wstring progress = std::wstring(kApplicationName) + L" - "
-            + operation_progress_title(operation) + L"...";
-        ::SetWindowTextW(window_, progress.c_str());
-
-        operation_thread_ = std::thread([this, operation] {
-            auto result = std::make_unique<OperationResult>();
-            result->operation = operation;
-            char* bridge_error = nullptr;
-            switch (operation) {
-            case DatabaseOperation::import_configuration:
-                result->status = cha_runtime_import_configuration(
-                    runtime_, &result->count, &bridge_error);
-                break;
-            case DatabaseOperation::export_configuration:
-                result->status = cha_runtime_export_configuration(
-                    runtime_, &result->count, &bridge_error);
-                break;
-            case DatabaseOperation::upload:
-                result->status = cha_runtime_upload(
-                    runtime_, &result->count, &bridge_error);
-                break;
-            case DatabaseOperation::download:
-                result->status = cha_runtime_download(
-                    runtime_, &result->count, &bridge_error);
-                break;
-            }
-            if (bridge_error != nullptr) {
-                result->error = take_bridge_error(bridge_error);
-            }
-            OperationResult* const posted = result.release();
-            if (!::PostMessageW(
-                    window_,
-                    kOperationComplete,
-                    0,
-                    reinterpret_cast<LPARAM>(posted))) {
-                delete posted;
-            }
-        });
-    }
-
-    void finish_database_operation(OperationResult* raw_result) {
-        const std::unique_ptr<OperationResult> result(raw_result);
-        if (operation_thread_.joinable()) operation_thread_.join();
-        database_operation_in_progress_ = false;
-        update_database_menu_items();
-        if (close_pending_) {
-            close_now();
-            return;
-        }
-        if (!result) return;
-        if (result->status < 0) {
-            post_fatal_error(result->error.empty()
-                ? L"CHA can no longer reach its database."
-                : wide_from_utf8(result->error));
-            return;
-        }
-        if (result->status == 0) {
-            show_notice(
-                operation_title(result->operation) + L" failed",
-                result->error.empty()
-                    ? L"CHA encountered an unknown error."
-                    : wide_from_utf8(result->error));
-            update_document_title();
-            return;
-        }
-        if (operation_reloads_application(result->operation)) {
-            webview_->Navigate(runtime_url_.c_str());
-        }
-        const bool files = result->operation
-                == DatabaseOperation::import_configuration
-            || result->operation == DatabaseOperation::export_configuration;
-        const std::wstring unit = files ? L" files." : L" bytes.";
-        show_notice(
-            operation_title(result->operation) + L" complete",
-            (files
-                    ? (result->operation == DatabaseOperation::import_configuration
-                           ? L"Imported "
-                           : L"Exported ")
-                    : L"Transferred ")
-                + std::to_wstring(result->count) + unit);
-        update_document_title();
-    }
-
-    void update_document_title() {
-        if (!webview_) {
-            ::SetWindowTextW(window_, kApplicationName);
-            return;
-        }
-        wchar_t* raw_title = nullptr;
-        if (FAILED(webview_->get_DocumentTitle(&raw_title))) return;
-        std::wstring title = take_com_string(raw_title);
-        if (title.empty()) title = kApplicationName;
-        ::SetWindowTextW(window_, title.c_str());
-    }
-
-    void update_database_menu_items() {
-        if (database_menu_ == nullptr) return;
-        const bool idle = !database_operation_in_progress_;
-        const bool can_modify = runtime_ != nullptr
-            && cha_runtime_can_modify(runtime_) != 0;
-        const bool can_transfer = runtime_ != nullptr
-            && cha_runtime_can_transfer_r2(runtime_) != 0;
-        enable_menu_item(kDatabaseImport, idle && can_modify);
-        enable_menu_item(kDatabaseExport, idle && can_modify);
-        enable_menu_item(kDatabaseUpload, idle && can_transfer);
-        enable_menu_item(kDatabaseDownload, idle && can_transfer);
-        if (window_ != nullptr) ::DrawMenuBar(window_);
-    }
-
-    void enable_menu_item(UINT command, bool enabled) const {
-        ::EnableMenuItem(
-            database_menu_,
-            command,
-            MF_BYCOMMAND | (enabled ? MF_ENABLED : MF_GRAYED));
     }
 
     void resize_contents() {
@@ -1707,17 +1495,13 @@ private:
 
     void request_close() {
         if (closing_) return;
-        if (database_operation_in_progress_) {
-            close_pending_ = true;
-            ::SetWindowTextW(window_, L"CHA - Finishing database operation...");
-            return;
-        }
         begin_shutdown();
     }
 
     void begin_shutdown() {
         if (closing_) return;
         closing_ = true;
+        if (window_ != nullptr) ::SetWindowTextW(window_, L"Closing CHA\u2026");
         if (save_dialog_) {
             save_dialog_->Close(HRESULT_FROM_WIN32(ERROR_CANCELLED));
             save_dialog_.Reset();
@@ -1826,7 +1610,6 @@ private:
                 L"CHA cannot continue",
                 MB_OK | MB_ICONERROR);
         }
-        // Waits for a running database operation, which uses the runtime.
         request_close();
     }
 
@@ -1839,7 +1622,6 @@ private:
 
     HINSTANCE instance_{};
     HWND window_{};
-    HMENU database_menu_{};
     ChaRuntime* runtime_{};
     std::filesystem::path data_root_;
     std::filesystem::path config_directory_;
@@ -1854,15 +1636,12 @@ private:
     ComPtr<ICoreWebView2> webview_;
     ComPtr<IFileSaveDialog> save_dialog_;
     std::thread save_thread_;
-    std::thread operation_thread_;
     std::thread shutdown_thread_;
     bool smoke_test_{};
     std::string connection_id_;
     int renderer_failures_{};
     bool initial_navigation_pending_{};
     bool save_operation_in_progress_{};
-    bool database_operation_in_progress_{};
-    bool close_pending_{};
     bool closing_{};
     bool fatal_error_posted_{};
     int exit_code_{};

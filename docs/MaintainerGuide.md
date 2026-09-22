@@ -154,7 +154,7 @@ no companion `.toml` is named from its database filename. A protected R2 vault
 cannot currently be added through this screen because the download flow has no
 password entry.
 
-Settings → Vaults → Merge into active vault overlays configuration from an
+Settings → Vaults → the active vault → Merge overlays configuration from an
 inactive source into the active vault after confirmation. Source files replace
 destination files at matching stored paths; destination-only files remain.
 Personas, characters, forums, providers, styles, and saved model/R2 keys are
@@ -229,11 +229,11 @@ workspace loads, the macOS main window title is `CHA: <Vault name>`.
 
 ### R2 database transfer
 
-The active vault's R2 record under `system/keys/` enables Database menu
-Upload/Download. Upload validates the vault definition and schema-v2 database,
-then writes `<database-filename>.toml` followed by `<database-filename>` at the
-bucket root. Because R2 cannot replace the pair atomically, retry any failed
-upload before relying on Download.
+The active vault's R2 record under `system/keys/` enables Upload and Download
+under Settings → Vaults → the active vault. Upload validates the vault
+definition and schema-v2 database, then writes `<database-filename>.toml`
+followed by `<database-filename>` at the bucket root. Because R2 cannot replace
+the pair atomically, retry any failed upload before relying on Download.
 
 Download stages and validates both objects before changing local state. It
 keeps the previous definition and database beside them with `.bac` suffixes;
@@ -1168,20 +1168,21 @@ provider. Do not add `provider` to forum member configs.
 
 Validate an edited workspace in a separate vault before importing it into the
 vault whose conversations matter. The old `chaweb --import`/`--export` executable
-is no longer built; use the native application's Database menu.
+is no longer built; use Settings → Vaults → the active vault.
 
 1. In Settings → Vaults, create a uniquely named validation vault. Leave the
    copy source unset so it receives configuration without copying conversations.
 2. Switch to that vault and verify its name in the application. Its database
    must be distinct from the production database.
-3. Choose Database → Export. This creates or refreshes the validation vault's
-   derived modify directory, `<modify-base>/<validation-vault-name>`.
+3. Choose Export in the validation vault's settings. This creates or refreshes
+   its derived modify directory, `<modify-base>/<validation-vault-name>`.
 4. Replace the contents of that disposable directory with a copy of the edited
    workspace. Copy the contents, not an extra enclosing directory, and leave
    the original edit bundle untouched.
-5. Choose Database → Import. Read any validation error before changing the
-   production vault. Do not send prompts or request speech for this check.
-6. After success, choose Database → Export again and inspect the normalized
+5. Choose Import in the validation vault's settings. Read any validation error
+   before changing the production vault. Do not send prompts or request speech
+   for this check.
+6. After success, choose Export again and inspect the normalized
    result. Compare the forum IDs and accepted files with the intended changes.
 7. Switch back to the original vault. Removing the inactive validation vault
    removes only its definition; its database and derived directories remain
@@ -1221,7 +1222,7 @@ sessions for surviving forum IDs.
 
 ### Export from and import into the real database
 
-Use the Database menu while the intended vault is active. Import and Export
+Open Settings → Vaults → the intended active vault. Import and Export
 are enabled when `app.toml` supplies a `modify` base, and use the directory
 formed by appending the active vault's display name. Export replaces that
 directory; it must be missing, empty, or a valid CHA workspace. Preserve any
@@ -1232,10 +1233,10 @@ unimported edits before exporting again.
    making a filesystem copy, close CHA first and account for SQLite sidecars;
    reopen the same vault afterwards. External configuration and OAuth files
    are outside workspace export and need their own backup when relevant.
-3. Choose Database → Export, then edit the exported files.
+3. Choose Export, then edit the exported files.
 4. Review removed or renamed forum IDs and validate the edited bundle in a
    disposable vault as described above.
-5. Return to the intended vault and choose Database → Import within the user's
+5. Return to the intended vault and choose Import within the user's
    authorized scope. This replaces configuration, preserving sessions only for
    surviving forum IDs.
 6. Let the interface refresh, then check one affected forum and use provider
@@ -1248,8 +1249,8 @@ stop/import/restart sequence. If storage cannot be reopened, the application
 becomes unavailable and must be restarted.
 
 Workspace export contains configuration only, not conversations or cached audio.
-Use a full database backup or Database → Upload for those. Never copy a live
-SQLite database file without accounting for its WAL and sidecars.
+Use a full database backup or the active vault's Upload action for those. Never
+copy a live SQLite database file without accounting for its WAL and sidecars.
 
 ### Files deliberately outside workspace export
 
@@ -1305,7 +1306,7 @@ asks for connectivity verification.
 | `Sign in to ChatGPT before using this provider.` | OAuth provider is configured but Settings has no connected account |
 | `Password required to open this vault` | The selected vault has `protected = true`; enter its SQLCipher password in the launcher or vault-switch dialog |
 | `The vault password is incorrect, or its database is damaged` | The supplied password cannot open the protected database; retry carefully, then restore a known-good backup if the password is correct |
-| `Protected vaults cannot be downloaded from R2 without a password` | Settings → Vaults → Download vault cannot add encrypted remote vaults; register the vault locally and use the password-aware Database Download path instead |
+| `Protected vaults cannot be downloaded from R2 without a password` | Settings → Vaults → Download vault cannot add encrypted remote vaults; register the vault locally and use Download under Settings → Vaults → the active vault instead |
 | import/export reports database busy | A CHA runtime or another maintenance operation holds the database lease |
 | editing exported files changes nothing | Runtime reads committed SQLite configuration; the edited bundle has not been imported |
 | vault switch reports that restart is required, or the page becomes unavailable during a switch | Reopening the selected database failed and the application became unavailable; quit and restart CHA |
@@ -1336,8 +1337,8 @@ guide:
   ownership, context admission, vault lifecycle, and database maintenance;
 - `src/bridge/settings_dispatch.cpp` and `src/bridge/workspace_dispatch.cpp`:
   native operation dispatch;
-- `packaging/macos/main.swift`: native runtime ownership, database menu
-  behavior, and window-title synchronization;
+- `packaging/macos/main.swift`: native runtime ownership and window-title
+  synchronization;
 - `packaging/shared/import-seed/`: example workspace seed;
 - `tests/workspace/unit_workspace.cpp` and
   `tests/workspace/unit_workspace_config_store.cpp`: executable examples of

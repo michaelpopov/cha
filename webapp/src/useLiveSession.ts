@@ -111,7 +111,7 @@ export function useLiveSession(
   // Bumped by every navigation intent. An open that finishes after the epoch
   // moved on belongs to a conversation the user has already left.
   const navigation = useRef(0);
-  const pendingTarget = useRef<string | null>(null);
+  const pendingTarget = useRef<{ key: string } | null>(null);
   const retryTarget = useRef<SessionTarget | null>(null);
   const connection = useRef<AttachedStream | null>(null);
   const recovery = useRef<RecoveryRun | null>(null);
@@ -183,6 +183,11 @@ export function useLiveSession(
     resetLiveSession();
     retryTarget.current = null;
   }, [resetLiveSession]);
+
+  const clearVaultContext = useCallback(() => {
+    clearLiveSession();
+    pendingTarget.current = null;
+  }, [clearLiveSession]);
 
   // `onSettled` belongs to a replacement attempt, which needs to know whether
   // this stream reached its first snapshot. Without one, a failure starts one.
@@ -397,8 +402,9 @@ export function useLiveSession(
       dispatch({ type: 'show-chat' });
       return true;
     }
-    if (pendingTarget.current === target) return false;
-    pendingTarget.current = target;
+    if (pendingTarget.current?.key === target) return false;
+    const pending = { key: target };
+    pendingTarget.current = pending;
     const epoch = beginNavigation();
     dispatch({ type: 'session-operation-started', message: 'Opening session…' });
     try {
@@ -427,14 +433,15 @@ export function useLiveSession(
       }
       return false;
     } finally {
-      if (pendingTarget.current === target) pendingTarget.current = null;
+      if (pendingTarget.current === pending) pendingTarget.current = null;
     }
   }, [beginNavigation, dispatch, performOpen]);
 
   const createConversation = useCallback(async (forumId: string, label: string) => {
     const target = `${forumId}/new/${label}`;
-    if (pendingTarget.current === target) return false;
-    pendingTarget.current = target;
+    if (pendingTarget.current?.key === target) return false;
+    const pending = { key: target };
+    pendingTarget.current = pending;
     retryTarget.current = null;
     const epoch = beginNavigation();
     dispatch({ type: 'session-operation-started', message: 'Creating session…' });
@@ -471,7 +478,7 @@ export function useLiveSession(
       }
       return false;
     } finally {
-      if (pendingTarget.current === target) pendingTarget.current = null;
+      if (pendingTarget.current === pending) pendingTarget.current = null;
     }
   }, [beginNavigation, client, dispatch, performOpen, refreshBootstrap]);
 
@@ -581,5 +588,6 @@ export function useLiveSession(
     retrySessionOpen,
     retryStream,
     clearLiveSession,
+    clearVaultContext,
   };
 }

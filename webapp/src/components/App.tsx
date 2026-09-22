@@ -12,6 +12,7 @@ import {
   type Bootstrap,
   type ChaClient,
 } from '../api/client';
+import type { NativeBridge } from '../api/nativeBridge';
 import { validateBootstrap } from '../state/bootstrap';
 import { saveMarkdownDownload } from '../download';
 import { reloadApplication, writeAppRoute } from '../state/route';
@@ -373,6 +374,7 @@ function defaultReload() {
 
 interface AppProps {
   client: ChaClient;
+  contextEvents?: Pick<NativeBridge, 'on'>;
   connectSessionEvents?: SessionEventsConnector;
   retryDelays?: readonly number[];
   reload?: () => void;
@@ -380,6 +382,7 @@ interface AppProps {
 
 export function App({
   client,
+  contextEvents,
   connectSessionEvents,
   retryDelays,
   reload = defaultReload,
@@ -459,11 +462,54 @@ export function App({
     retrySessionOpen,
     retryStream,
     clearLiveSession,
+    clearVaultContext,
   } = useLiveSession(client, state, dispatch, {
     connectSessionEvents,
     retryDelays,
     refreshBootstrap,
   });
+
+  useEffect(() => {
+    if (!contextEvents) return;
+    let current = true;
+    let generation = 0;
+    const unsubscribe = contextEvents.on<{
+      causing_request_id?: number;
+      state?: string;
+    }>('app.contextChanged', (event) => {
+      if (!Number.isSafeInteger(event.causing_request_id) || event.state !== 'running') return;
+      const started = ++generation;
+      clearVaultContext();
+      playbackPositions.current.clear();
+      navigate({ type: 'vault-context-reset' });
+      void (async () => {
+        try {
+          const bootstrap = validateBootstrap(await client.getBootstrap());
+          if (current && started === generation) {
+            dispatch({
+              type: 'vault-context-refreshed',
+              bootstrap,
+            });
+          }
+        } catch (failure: unknown) {
+          if (current && started === generation) {
+            dispatch({
+              type: 'bootstrap-failed',
+              incompatible: false,
+              message: publicErrorMessage(
+                failure, 'CHA could not refresh the active vault. Try again.',
+              ),
+            });
+          }
+        }
+      })();
+    });
+    return () => {
+      current = false;
+      generation += 1;
+      unsubscribe();
+    };
+  }, [clearVaultContext, client, contextEvents, navigate]);
 
   const returnToWelcome = useCallback(() => {
     clearLiveSession();

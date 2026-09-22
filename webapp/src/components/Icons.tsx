@@ -242,6 +242,15 @@ export function FileUpIcon(props: IconProps) {
   );
 }
 
+export function FileDownIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9Z" {...stroke} />
+      <path d="M14 3v6h6M12 12v6M9.5 15.5 12 18l2.5-2.5" {...stroke} />
+    </Icon>
+  );
+}
+
 export function DownloadIcon(props: IconProps) {
   return (
     <Icon {...props}>

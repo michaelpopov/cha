@@ -389,13 +389,17 @@ void Application::Impl::VaultMaintenance::protect_active_database(
 }
 
 template<typename Operation>
-auto Application::Impl::VaultMaintenance::maintain_database(Operation operation, bool cancel_audio) {
+auto Application::Impl::VaultMaintenance::maintain_database(
+    std::uint64_t epoch,
+    Operation operation,
+    bool cancel_audio) {
     PendingContextNotice notice;
     using Result = decltype(operation());
     std::optional<Result> result;
     std::exception_ptr error;
     try {
         const std::lock_guard lifecycle(app.lifecycle_mutex);
+        app.require_admitted(epoch);
         if (!drain_for_maintenance(notice, cancel_audio)) {
             throw std::runtime_error(
                 "Could not pause active sessions for database maintenance");
@@ -919,10 +923,12 @@ MaintenanceResult Application::Impl::VaultMaintenance::merge_vault(
     return result;
 }
 
-R2DatabaseTransfer Application::Impl::VaultMaintenance::upload_database() {
-    return maintain_database([this] {
+R2DatabaseTransfer Application::Impl::VaultMaintenance::upload_database(
+    std::uint64_t epoch) {
+    return maintain_database(epoch, [this] {
         const std::optional<R2StorageKey> r2 = app.api_keys->r2();
-        if (!r2) throw std::runtime_error("The active vault has no R2 key");
+        if (!r2) throw ApplicationError(
+            ErrorCode::invalid_argument, "The active vault has no R2 key");
         const VaultDefinition vault = app.current_vault_.get();
         return upload_database_to_r2(
             vault.data,
@@ -933,13 +939,16 @@ R2DatabaseTransfer Application::Impl::VaultMaintenance::upload_database() {
     }, false);
 }
 
-R2DatabaseTransfer Application::Impl::VaultMaintenance::download_database() {
+R2DatabaseTransfer Application::Impl::VaultMaintenance::download_database(
+    std::uint64_t epoch) {
     std::optional<VaultDefinition> downloaded_vault;
     const R2DatabaseTransfer result = maintain_database(
+        epoch,
         [this, &downloaded_vault] {
             const std::optional<R2StorageKey> r2 = app.api_keys->r2();
             if (!r2) {
-                throw std::runtime_error("The active vault has no R2 key");
+                throw ApplicationError(
+                    ErrorCode::invalid_argument, "The active vault has no R2 key");
             }
             const VaultDefinition vault = app.current_vault_.get();
             const R2DatabaseTransfer transferred =
@@ -973,11 +982,13 @@ R2DatabaseTransfer Application::Impl::VaultMaintenance::download_database() {
     return result;
 }
 
-WorkspaceConfigTransfer Application::Impl::VaultMaintenance::import_configuration() {
-    return maintain_database([this] {
+WorkspaceConfigTransfer Application::Impl::VaultMaintenance::import_configuration(
+    std::uint64_t epoch) {
+    return maintain_database(epoch, [this] {
         const VaultDefinition vault = app.current_vault_.get();
         if (!vault.modify) {
-            throw std::runtime_error(
+            throw ApplicationError(
+                ErrorCode::invalid_argument,
                 "Application config requires 'modify' for Import");
         }
         return import_workspace_configuration(
@@ -988,11 +999,13 @@ WorkspaceConfigTransfer Application::Impl::VaultMaintenance::import_configuratio
     });
 }
 
-WorkspaceConfigTransfer Application::Impl::VaultMaintenance::export_configuration() {
-    return maintain_database([this] {
+WorkspaceConfigTransfer Application::Impl::VaultMaintenance::export_configuration(
+    std::uint64_t epoch) {
+    return maintain_database(epoch, [this] {
         const VaultDefinition vault = app.current_vault_.get();
         if (!vault.modify) {
-            throw std::runtime_error(
+            throw ApplicationError(
+                ErrorCode::invalid_argument,
                 "Application config requires 'modify' for Export");
         }
         vault::clear_existing_export(*vault.modify);

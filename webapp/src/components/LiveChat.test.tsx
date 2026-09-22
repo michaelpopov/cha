@@ -282,9 +282,11 @@ describe('live chat', () => {
       return audio;
     }));
     const events = drivableEvents();
-    render(<App client={fixtureClient({
+    const client = fixtureClient({
       getVoiceOutputRuntime: async () => voiceOutputRuntimeFixture,
-    })} connectSessionEvents={events.connect} />);
+    });
+    const getAudioDownloads = vi.spyOn(client, 'getAudioDownloads');
+    render(<App client={client} connectSessionEvents={events.connect} />);
     await attachInitial(events, {
       ...snapshotFixture,
       transcript: [
@@ -296,6 +298,7 @@ describe('live chat', () => {
           status: 'complete', created_at: 1_700_000_001 },
       ],
     });
+    await waitFor(() => expect(getAudioDownloads).toHaveBeenCalled());
     fireEvent.click(screen.getByRole('button', { name: "Generate audio for Assistant's response" }));
     await screen.findByRole('button', { name: "Stop reading Assistant's response" });
     audios[0].currentTime = 18.25;

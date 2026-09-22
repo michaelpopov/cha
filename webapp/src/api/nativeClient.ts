@@ -141,6 +141,18 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient {
     return result;
   };
 
+  const transferVault = async (method: string, field: 'byte_count' | 'file_count') => {
+    const result = await bridge.invoke(method, {});
+    if (!isRecord(result)
+        || !Number.isSafeInteger(result[field]) || (result[field] as number) < 0
+        || !Number.isSafeInteger(result.context_epoch)
+        || (result.context_epoch as number) < 1) {
+      throw new ChaProtocolError();
+    }
+    bridge.setContextEpoch(result.context_epoch as number);
+    return result[field] as number;
+  };
+
   return {
     getBootstrap: async () => {
       await connectNativeBridge(bridge);
@@ -155,7 +167,7 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient {
         throw new ChaError('application_unavailable', message);
       }
       bridge.setContextEpoch(result.context_epoch);
-      return validateBootstrap(result.bootstrap);
+      return { ...validateBootstrap(result.bootstrap), capabilities: result.capabilities };
     },
     createSession: (forumId, label) => call(
       'session.create',
@@ -597,5 +609,9 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient {
       );
       bridge.setContextEpoch(result.context_epoch);
     },
+    uploadVault: () => transferVault('vault.upload', 'byte_count'),
+    downloadVault: () => transferVault('vault.download', 'byte_count'),
+    importVault: () => transferVault('vault.import', 'file_count'),
+    exportVault: () => transferVault('vault.export', 'file_count'),
   };
 }

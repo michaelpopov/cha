@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -13,6 +14,11 @@ namespace cha {
 
 struct R2DatabaseTransfer {
     std::uintmax_t byte_count{};
+};
+
+class R2HttpStatusError : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
 };
 
 enum class R2DatabaseLease {

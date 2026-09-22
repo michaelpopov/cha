@@ -8,7 +8,9 @@ export type AudioDownloadRequest = components['schemas']['AudioDownloadRequest']
 export type AudioDownloadAcceptance = components['schemas']['AudioDownloadAcceptance'];
 export type AudioDownloadStatus = components['schemas']['AudioDownloadStatus'];
 
-export type Bootstrap = components['schemas']['Bootstrap'];
+export type Bootstrap = components['schemas']['Bootstrap'] & {
+  capabilities?: { can_modify: boolean; can_transfer_r2: boolean };
+};
 export type CharacterDetail = components['schemas']['CharacterDetail'];
 export type MarkdownFile = components['schemas']['MarkdownFile'];
 export type CreateCharacterRequest = components['schemas']['CreateCharacterRequest'];
@@ -209,6 +211,10 @@ export interface ChaClient {
   ): Promise<string>;
   switchVault(vaultName: string, password?: string): Promise<void>;
   mergeVault(sourceVault: string, password?: string): Promise<void>;
+  uploadVault(): Promise<number>;
+  downloadVault(): Promise<number>;
+  importVault(): Promise<number>;
+  exportVault(): Promise<number>;
 }
 
 export function isAudioAcceptance(value: unknown): value is AudioDownloadAcceptance {

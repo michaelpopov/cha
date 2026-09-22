@@ -1,4 +1,4 @@
-import { act, render, screen, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -92,6 +92,17 @@ const vaults: VaultDetail[] = [
   },
 ];
 
+function activeVaultState(canTransferR2 = true, canModify = true): AppState {
+  return {
+    ...initialAppState,
+    inspectedVaultName: 'Personal',
+    bootstrap: {
+      ...bootstrapFixture,
+      capabilities: { can_transfer_r2: canTransferR2, can_modify: canModify },
+    },
+  };
+}
+
 describe('Settings screens', () => {
   it.each([
     ['Vaults', VaultsScreen, 'listVaults', 'New vault'],
@@ -131,7 +142,7 @@ describe('Settings screens', () => {
     expect(dispatch).toHaveBeenCalledWith({ type: 'show-settings-api-keys' });
   });
 
-  it('shows vault status privately and opens download and merge', async () => {
+  it('shows vault status privately and keeps active-vault operations out of the list', async () => {
     const dispatch = vi.fn();
     render(
       <VaultsScreen
@@ -147,15 +158,12 @@ describe('Settings screens', () => {
     expect(screen.queryByText('/data/personal.sqlite3')).not.toBeInTheDocument();
     expect(screen.queryByText('/data/projects.sqlite3')).not.toBeInTheDocument();
 
-    const merge = screen.getByRole('button', { name: /Merge into active vault/ });
     const operations = screen.getAllByRole('button');
     expect(operations.map((button) => button.textContent)).toEqual(expect.arrayContaining([
       expect.stringMatching(/New vault/),
       expect.stringMatching(/Download vault/),
-      expect.stringMatching(/Merge into active vault/),
     ]));
-    await userEvent.click(merge);
-    expect(dispatch).toHaveBeenCalledWith({ type: 'show-settings-merge-vault' });
+    expect(screen.queryByRole('button', { name: 'Merge' })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: /Download vault/ }));
     expect(dispatch).toHaveBeenCalledWith({ type: 'show-settings-download-vault' });
   });
@@ -550,6 +558,131 @@ describe('Settings screens', () => {
     });
   });
 
+  it('shows merge and maintenance operations only for the active vault', async () => {
+    const uploadVault = vi.fn(async () => 12_345_678);
+    const downloadVault = vi.fn(async () => 34);
+    const importVault = vi.fn(async () => 2);
+    const exportVault = vi.fn(async () => 3);
+    const dispatch = vi.fn();
+    render(
+      <VaultScreen
+        client={fixtureClient({
+          listVaults: async () => vaults,
+          uploadVault,
+          downloadVault,
+          importVault,
+          exportVault,
+        })}
+        dispatch={dispatch}
+        state={activeVaultState()}
+      />,
+    );
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Merge' }));
+    expect(dispatch).toHaveBeenCalledWith({ type: 'show-settings-merge-vault' });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Upload' }));
+    expect(uploadVault).toHaveBeenCalledOnce();
+    expect(await screen.findByRole('status')).toHaveTextContent('Uploaded 12.3 MB.');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Export' }));
+    expect(exportVault).toHaveBeenCalledOnce();
+    expect(await screen.findByRole('status')).toHaveTextContent('Exported 3 files.');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Download' }));
+    let dialog = within(await screen.findByRole('dialog'));
+    expect(dialog.getByText(/save the current database beside itself/i)).toBeInTheDocument();
+    await userEvent.click(dialog.getByRole('button', { name: 'Download' }));
+    expect(downloadVault).toHaveBeenCalledOnce();
+    expect(await screen.findByRole('status')).toHaveTextContent('Downloaded 34 bytes.');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Import' }));
+    dialog = within(await screen.findByRole('dialog'));
+    expect(dialog.getByText(/replace this vault’s workspace configuration/i)).toBeInTheDocument();
+    await userEvent.click(dialog.getByRole('button', { name: 'Import' }));
+    expect(importVault).toHaveBeenCalledOnce();
+    expect(await screen.findByRole('status')).toHaveTextContent('Imported 2 files.');
+  });
+
+  it('shows maintenance failures without leaving the active vault page', async () => {
+    render(
+      <VaultScreen
+        client={fixtureClient({
+          listVaults: async () => vaults,
+          uploadVault: async () => {
+            throw new ChaError('invalid_argument', 'R2 rejected the upload.');
+          },
+        })}
+        dispatch={vi.fn()}
+        state={activeVaultState()}
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Upload' })).toBeEnabled());
+    await userEvent.click(screen.getByRole('button', { name: 'Upload' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('R2 rejected the upload.');
+    expect(screen.getByRole('button', { name: 'Upload' })).toBeEnabled();
+  });
+
+  it('shows an Import validation reason on the vault page', async () => {
+    const reason = "Character 'guide' requires character.toml and CHARACTER.md";
+    render(
+      <VaultScreen
+        client={fixtureClient({
+          listVaults: async () => vaults,
+          importVault: async () => { throw new ChaError('invalid_argument', reason); },
+        })}
+        dispatch={vi.fn()}
+        state={activeVaultState()}
+      />,
+    );
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Import' }));
+    await userEvent.click(within(await screen.findByRole('dialog')).getByRole(
+      'button', { name: 'Import' },
+    ));
+    expect(await screen.findByRole('alert')).toHaveTextContent(reason);
+  });
+
+  it('disables maintenance operations whose vault configuration is missing', async () => {
+    render(
+      <VaultScreen
+        client={fixtureClient({
+          listVaults: async () => vaults,
+        })}
+        dispatch={vi.fn()}
+        state={activeVaultState(false, false)}
+      />,
+    );
+
+    expect((await screen.findByText('Upload')).closest('button')).toBeDisabled();
+    expect(screen.getByText('Download').closest('button')).toBeDisabled();
+    expect(screen.getByText('Import').closest('button')).toBeDisabled();
+    expect(screen.getByText('Export').closest('button')).toBeDisabled();
+    expect(screen.getAllByText('R2 storage is not configured')).toHaveLength(2);
+    expect(screen.getAllByText('Modify directory is not configured')).toHaveLength(2);
+  });
+
+  it('uses bootstrap capabilities without loading R2 credential details', async () => {
+    const getR2Storage = vi.fn(async () => {
+      throw new ChaError('application_unavailable', 'R2 settings are unavailable.');
+    });
+    render(
+      <VaultScreen
+        client={fixtureClient({
+          listVaults: async () => vaults,
+          getR2Storage,
+        })}
+        dispatch={vi.fn()}
+        state={activeVaultState()}
+      />,
+    );
+
+    expect(await screen.findByRole('button', { name: 'Upload' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Download' })).toBeEnabled();
+    expect(getR2Storage).not.toHaveBeenCalled();
+  });
+
   it('removes an inactive vault without exposing its name or path fields', async () => {
     const deleteVault = vi.fn(async () => undefined);
     const dispatch = vi.fn();
@@ -565,6 +698,11 @@ describe('Settings screens', () => {
     );
 
     await screen.findByLabelText('Protected vault');
+    expect(screen.queryByRole('button', { name: 'Merge' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Upload' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Download' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Import' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Export' })).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Display name')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Database path')).not.toBeInTheDocument();
     expect(screen.queryByText('Vault details')).not.toBeInTheDocument();
@@ -638,6 +776,7 @@ describe('Settings screens', () => {
   });
 
   it('updates R2 metadata without replacing its secret and can remove it', async () => {
+    let canTransferR2 = false;
     const detail = {
       id: 'api_key_4',
       display_name: 'Backups',
@@ -645,11 +784,10 @@ describe('Settings screens', () => {
       access_key_id: 'access-id',
       has_secret_key: true,
     };
-    const saveR2Storage = vi.fn(async (request) => ({
-      ...detail,
-      ...request,
-      has_secret_key: true,
-    }));
+    const saveR2Storage = vi.fn(async (request) => {
+      canTransferR2 = true;
+      return { ...detail, ...request, has_secret_key: true };
+    });
     const deleteR2Storage = vi.fn(async () => undefined);
     const dispatch = vi.fn();
     render(
@@ -657,7 +795,14 @@ describe('Settings screens', () => {
         client={fixtureClient({
           getR2Storage: async () => detail,
           saveR2Storage,
-          deleteR2Storage,
+          deleteR2Storage: async () => {
+            await deleteR2Storage();
+            canTransferR2 = false;
+          },
+          getBootstrap: async () => ({
+            ...bootstrapFixture,
+            capabilities: { can_modify: true, can_transfer_r2: canTransferR2 },
+          }),
         })}
         dispatch={dispatch}
         state={initialAppState}
@@ -674,12 +819,24 @@ describe('Settings screens', () => {
       access_key_id: 'access-id',
       secret_key: null,
     });
+    expect(dispatch).toHaveBeenCalledWith({
+      type: 'bootstrap-refreshed',
+      bootstrap: expect.objectContaining({
+        capabilities: { can_modify: true, can_transfer_r2: true },
+      }),
+    });
 
     await userEvent.click(screen.getByRole('button', { name: 'Remove R2 credentials' }));
     await userEvent.click(within(screen.getByRole('dialog')).getByRole(
       'button', { name: 'Remove R2 credentials' },
     ));
     expect(deleteR2Storage).toHaveBeenCalledOnce();
+    expect(dispatch).toHaveBeenCalledWith({
+      type: 'bootstrap-refreshed',
+      bootstrap: expect.objectContaining({
+        capabilities: { can_modify: true, can_transfer_r2: false },
+      }),
+    });
     expect(dispatch).toHaveBeenCalledWith({ type: 'show-settings-api-keys' });
   });
 

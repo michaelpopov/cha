@@ -291,7 +291,7 @@ The native host supplies a configuration directory and asset root to
 configuration directory with a Default vault; a nonempty directory must already
 contain valid configuration. There is no shipped `chaweb` server executable.
 Some command-parser maintenance options remain in the code, but the supported
-desktop maintenance workflow uses the Database menu.
+desktop maintenance workflow uses Settings → Vaults → the active vault.
 
 `app.toml` selects the startup vault and supplies optional directory bases and
 logging settings:

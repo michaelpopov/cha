@@ -226,18 +226,42 @@ describe('native bridge', () => {
   it('rejects old-context work but preserves the initiating maintenance result', async () => {
     const bridge = createEnvelopeNativeBridge({ connectionId: 'current', post: () => {} });
     bridge.setContextEpoch(7);
+    const contextChanged = vi.fn();
+    bridge.on('app.contextChanged', contextChanged);
     const old = bridge.invoke('provider.list');
     const changed = expect(old).rejects.toMatchObject({ code: 'vault_changed' });
     const maintenance = bridge.invoke('vault.switch');
     bridge.receive({ connection_id: 'current', delivery_id: 1, messages: [
-      { connection_id: 'current', event: 'app.contextChanged', context_epoch: 8, state: 'running' },
+      { connection_id: 'current', event: 'app.contextChanged', context_epoch: 8, state: 'running', causing_request_id: 2 },
       { connection_id: 'current', id: 1, context_epoch: 7, ok: true, result: ['old'] },
       { connection_id: 'current', id: 2, context_epoch: 8, ok: true, result: { context_epoch: 8 } },
     ] });
     await changed;
     await expect(maintenance).resolves.toEqual({ context_epoch: 8 });
+    expect(contextChanged).toHaveBeenCalledWith(expect.objectContaining({
+      causing_request_id: 2,
+    }));
     bridge.setContextEpoch(7);
     expect(bridge.contextEpoch()).toBe(8);
     expect(bridge).not.toHaveProperty('acks');
+  });
+
+  it('does not claim an unrelated vault event while maintenance is pending', async () => {
+    const bridge = createEnvelopeNativeBridge({ connectionId: 'current', post: () => {} });
+    bridge.setContextEpoch(7);
+    const contextChanged = vi.fn();
+    bridge.on('app.contextChanged', contextChanged);
+    const pending = bridge.invoke('vault.upload');
+    const event = {
+      connection_id: 'current', event: 'app.contextChanged',
+      context_epoch: 8, state: 'running',
+    };
+    bridge.receive({ connection_id: 'current', delivery_id: 1, messages: [
+      event,
+      { connection_id: 'current', id: 1, context_epoch: 8, ok: true,
+        result: { byte_count: 1, context_epoch: 8 } },
+    ] });
+    await pending;
+    expect(contextChanged).toHaveBeenCalledWith(event);
   });
 });

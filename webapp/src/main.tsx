@@ -22,6 +22,7 @@ installNativeRecoveryHandlers(native);
 const app = (
   <App
     client={createNativeChaClient(native)}
+    contextEvents={native}
     connectSessionEvents={createNativeSessionEvents(native, {
       connectionId: window.__CHA_NATIVE_CONNECTION_ID__ ?? 'view-1',
       contextEpoch: () => native.contextEpoch(),

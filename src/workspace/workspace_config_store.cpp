@@ -618,10 +618,42 @@ std::string busy_message(const std::filesystem::path& database) {
 
 void validate_configuration(
     const std::vector<ConfigFile>& rows) {
-    validate_config_rows(rows);
-    TextFiles files;
-    for (const auto& row : rows) files.emplace(row.name, row.content);
-    (void)Workspace::load("/workspace", files);
+    const auto validation_error = [](std::string message) {
+        constexpr std::string_view virtual_root = "/workspace";
+        std::size_t position{};
+        while ((position = message.find(virtual_root, position))
+            != std::string::npos) {
+            const std::size_t end = position + virtual_root.size();
+            if (end < message.size() && message[end] == '/') {
+                message.erase(position, virtual_root.size() + 1);
+            } else {
+                message.replace(position, virtual_root.size(), "workspace");
+                position += std::string_view("workspace").size();
+            }
+        }
+        return WorkspaceConfigValidationError(std::move(message));
+    };
+    try {
+        validate_config_rows(rows);
+        TextFiles files;
+        for (const auto& row : rows) files.emplace(row.name, row.content);
+        // Validation reads these in-memory rows, never the real modify path.
+        (void)Workspace::load("/workspace", files);
+    } catch (const toml::parse_error& error) {
+        std::string message = error.source().path
+            ? "Config file '" + *error.source().path + "': "
+            : "Invalid TOML: ";
+        message += error.description();
+        message += " (line " + std::to_string(error.source().begin.line)
+            + ", column " + std::to_string(error.source().begin.column) + ")";
+        throw validation_error(std::move(message));
+    } catch (const std::filesystem::filesystem_error&) {
+        throw;
+    } catch (const std::runtime_error& error) {
+        throw validation_error(error.what());
+    } catch (const std::invalid_argument& error) {
+        throw validation_error(error.what());
+    }
 }
 
 struct PrunedImport {

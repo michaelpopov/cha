@@ -69,6 +69,7 @@ describe('native CHA client', () => {
     const client = createNativeChaClient(bridge);
     await expect(client.getBootstrap()).resolves.toMatchObject({
       initial_session_id: 'welcome',
+      capabilities: { can_modify: true, can_transfer_r2: false },
     });
     expect(bridge.contextEpoch()).toBe(3);
     await expect(client.submitInput('history', 'session-1', { text: 'Hello' }))
@@ -96,6 +97,22 @@ describe('native CHA client', () => {
     await expect(client.listVaults()).resolves.toEqual([vault]);
     await expect(client.switchVault('Projects')).resolves.toBeUndefined();
     expect(bridge.contextEpoch()).toBe(4);
+  });
+
+  it('runs active-vault maintenance through native methods', async () => {
+    const bridge = createFakeNativeBridge({
+      'vault.upload': () => ({ byte_count: 12, context_epoch: 4 }),
+      'vault.download': () => ({ byte_count: 34, context_epoch: 5 }),
+      'vault.import': () => ({ file_count: 2, context_epoch: 6 }),
+      'vault.export': () => ({ file_count: 3, context_epoch: 7 }),
+    });
+    const client = createNativeChaClient(bridge);
+
+    await expect(client.uploadVault()).resolves.toBe(12);
+    await expect(client.downloadVault()).resolves.toBe(34);
+    await expect(client.importVault()).resolves.toBe(2);
+    await expect(client.exportVault()).resolves.toBe(3);
+    expect(bridge.contextEpoch()).toBe(7);
   });
 
   it('lists sessions and loads character details through native methods', async () => {

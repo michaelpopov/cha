@@ -76,10 +76,10 @@ struct Application::Impl {
             std::string_view source_name,
             std::string password,
             std::uint64_t epoch);
-        R2DatabaseTransfer upload_database();
-        R2DatabaseTransfer download_database();
-        WorkspaceConfigTransfer import_configuration();
-        WorkspaceConfigTransfer export_configuration();
+        R2DatabaseTransfer upload_database(std::uint64_t epoch);
+        R2DatabaseTransfer download_database(std::uint64_t epoch);
+        WorkspaceConfigTransfer import_configuration(std::uint64_t epoch);
+        WorkspaceConfigTransfer export_configuration(std::uint64_t epoch);
 
         void publish_vault_names();
     private:
@@ -105,7 +105,10 @@ struct Application::Impl {
             std::string password,
             PendingContextNotice& notice);
         template<typename Operation>
-        auto maintain_database(Operation operation, bool cancel_audio = true);
+        auto maintain_database(
+            std::uint64_t epoch,
+            Operation operation,
+            bool cancel_audio = true);
 
         Impl& app;
         std::optional<LiveSessionGlobalMaintenance> global_maintenance;

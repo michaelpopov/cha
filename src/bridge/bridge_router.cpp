@@ -1,6 +1,7 @@
 #include "bridge/bridge_router.h"
 
 #include "app/media_operations.h"
+#include "app/r2_database_transfer.h"
 #include "app/vault_operations.h"
 #include "bridge/operation_dispatch.h"
 #include "bridge/request_params.h"
@@ -74,6 +75,20 @@ FishAudioSynthesis parse_synthesis_fields(const nlohmann::json& params) {
     return decode_fish_audio_synthesis(params);
 }
 
+bool deadline_exempt(Method method) noexcept {
+    switch (method) {
+    case Method::vault_merge:
+    case Method::vault_upload:
+    case Method::vault_download:
+    case Method::vault_import:
+    case Method::vault_export:
+    case Method::vault_r2_download:
+        return true;
+    default:
+        return false;
+    }
+}
+
 nlohmann::json encode_command_result(const CommandSubmitResult& result) {
     if (const auto* error = std::get_if<ErrorCode>(&result)) {
         throw *error;
@@ -128,6 +143,30 @@ nlohmann::json encode_output_item(
 } // namespace
 
 struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
+    struct RequestCause {
+        const Impl* router;
+        std::string_view connection_id;
+        std::uint64_t id;
+        Method method;
+    };
+
+    static std::optional<RequestCause>& current_request() {
+        static thread_local std::optional<RequestCause> request;
+        return request;
+    }
+
+    struct RequestCauseScope {
+        std::optional<RequestCause> previous;
+
+        RequestCauseScope(
+            const Impl* router, std::string_view connection_id,
+            std::uint64_t id, Method method)
+            : previous(std::exchange(
+                current_request(), RequestCause{router, connection_id, id, method})) {}
+
+        ~RequestCauseScope() { current_request() = previous; }
+    };
+
     struct Outstanding {
         Method method{Method::bridge_info};
         bool control{};
@@ -215,11 +254,17 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
         notified_epoch = epoch;
         notified_state = state;
         const auto name = app::application_state_name(state);
+        const auto cause = current_request();
         for (auto& [id, connection] : connections) {
             (void)id;
             if (connection->invalid) continue;
             connection->pending_context =
-                context_changed_event(connection->id, epoch, name);
+                context_changed_event(
+                    connection->id, epoch, name,
+                    cause && cause->router == this
+                        && cause->connection_id == connection->id
+                        && changes_context(cause->method)
+                        ? std::optional{cause->id} : std::nullopt);
         }
         notify();
     }
@@ -659,6 +704,7 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
         std::uint64_t epoch,
         Method method,
         nlohmann::json params) {
+        const RequestCauseScope request_cause(this, connection_id, id, method);
         auto fail = [&](ErrorCode code, std::string_view message = {}) {
             std::lock_guard lock(mutex);
             auto connection = find_connection(connection_id);
@@ -682,6 +728,40 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                 }
             }
             nlohmann::json result = nlohmann::json::object();
+            auto run_maintenance = [&](auto operation) {
+                try {
+                    auto transferred = operation();
+                    epoch = application.context_epoch();
+                    return transferred;
+                } catch (const WorkspaceConfigValidationError& error) {
+                    epoch = application.context_epoch();
+                    log_error(
+                        "Request " + std::string(method_name(method)) + " failed: "
+                        + error.what());
+                    throw app::ApplicationError(
+                        ErrorCode::invalid_argument, error.what());
+                } catch (const R2HttpStatusError& error) {
+                    epoch = application.context_epoch();
+                    log_error(
+                        "Request " + std::string(method_name(method)) + " failed: "
+                        + error.what());
+                    throw app::ApplicationError(
+                        ErrorCode::invalid_argument, error.what());
+                } catch (const std::invalid_argument& error) {
+                    epoch = application.context_epoch();
+                    log_error(
+                        "Request " + std::string(method_name(method)) + " failed: "
+                        + error.what());
+                    throw app::ApplicationError(
+                        application.state() == app::ApplicationState::running
+                            ? ErrorCode::internal_error
+                            : ErrorCode::application_unavailable,
+                        "The request could not be completed.");
+                } catch (...) {
+                    epoch = application.context_epoch();
+                    throw;
+                }
+            };
             switch (method) {
             case Method::bridge_info:
                 require_only_keys(params, {});
@@ -831,6 +911,46 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                 result = {
                     {"state", app::application_state_name(merged.state)},
                     {"context_epoch", merged.context_epoch},
+                };
+                break;
+            }
+            case Method::vault_upload: {
+                require_only_keys(params, {});
+                const auto transferred = run_maintenance(
+                    [&] { return application.upload_database(epoch); });
+                result = {
+                    {"byte_count", transferred.byte_count},
+                    {"context_epoch", epoch},
+                };
+                break;
+            }
+            case Method::vault_download: {
+                require_only_keys(params, {});
+                const auto transferred = run_maintenance(
+                    [&] { return application.download_database(epoch); });
+                result = {
+                    {"byte_count", transferred.byte_count},
+                    {"context_epoch", epoch},
+                };
+                break;
+            }
+            case Method::vault_import: {
+                require_only_keys(params, {});
+                const auto transferred = run_maintenance(
+                    [&] { return application.import_configuration(epoch); });
+                result = {
+                    {"file_count", transferred.file_count},
+                    {"context_epoch", epoch},
+                };
+                break;
+            }
+            case Method::vault_export: {
+                require_only_keys(params, {});
+                const auto transferred = run_maintenance(
+                    [&] { return application.export_configuration(epoch); });
+                result = {
+                    {"file_count", transferred.file_count},
+                    {"context_epoch", epoch},
                 };
                 break;
             }
@@ -1102,7 +1222,10 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
         } catch (const std::invalid_argument& error) {
             fail(ErrorCode::invalid_argument, error.what());
         } catch (const WorkspaceRestartRequiredError& error) {
-            fail(ErrorCode::application_unavailable, error.what());
+            log_error(
+                "Request " + std::string(method_name(method)) + " failed: "
+                + error.what());
+            fail(ErrorCode::application_unavailable);
         } catch (const std::runtime_error& error) {
             // The reply stays generic; the log keeps the reason.
             log_error(
@@ -1339,8 +1462,9 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
         Outstanding outstanding;
         outstanding.method = request.method;
         outstanding.control = control;
-        outstanding.deadline = now()
-            + options.command_deadline.value_or(
+        outstanding.deadline = deadline_exempt(request.method)
+            ? std::chrono::steady_clock::time_point::max()
+            : now() + options.command_deadline.value_or(
                 application.settings().command_deadline);
         outstanding.context_epoch = request.context_epoch;
         if (request.method == Method::session_subscribe

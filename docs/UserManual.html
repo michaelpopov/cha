@@ -951,7 +951,7 @@
 
         <h3>Merge another vault into the active vault</h3>
         <ol class="steps">
-          <li>Open Settings → Vaults and select <strong>Merge into active vault</strong>.</li>
+          <li>Open Settings → Vaults → the active vault and select <strong>Merge</strong>.</li>
           <li>Choose a source vault and select <strong>Merge</strong>.</li>
           <li>Confirm the overwrite and enter the source vault's password if asked.</li>
         </ol>
@@ -1095,8 +1095,8 @@
       <section id="database-maintenance">
         <h2>11. Backing up and editing CHA data</h2>
         <p class="lead">
-          The <strong>Database</strong> menu can export or import workspace
-          configuration and can upload or download the complete database. These
+          Settings → Vaults → the active vault offers Export and Import for workspace
+          configuration, plus Upload and Download for the complete database. These
           operations run inside the current CHA process; the application does
           not restart or launch a separate console program.
         </p>
@@ -1141,13 +1141,13 @@
         <ol class="steps">
           <li>Wait for any current AI reply to finish.</li>
           <li>
-            Choose <strong>Database &gt; Export</strong>. CHA replaces an existing
+            Choose <strong>Export</strong> in the active vault's settings. CHA replaces an existing
             valid CHA workspace at the configured <code>modify</code> path, or
             creates the directory, and writes the current workspace
             configuration there.
           </li>
           <li>Edit the exported <code>.toml</code> or <code>.md</code> files.</li>
-          <li>Choose <strong>Database &gt; Import…</strong> and confirm the change.</li>
+          <li>Choose <strong>Import</strong> in the active vault's settings and confirm the change.</li>
           <li>Wait for CHA to validate, store, and display the imported workspace.</li>
         </ol>
         <div class="warning">
@@ -1172,13 +1172,13 @@
         </p>
         <ul>
           <li>
-            <strong>Database &gt; Upload</strong> validates and uploads the current
+            <strong>Upload</strong> in the active vault's settings validates and uploads the current
             vault definition and database. The bucket receives two objects:
             the database filename and that filename followed by
             <code>.toml</code>.
           </li>
           <li>
-            <strong>Database &gt; Download…</strong> asks for confirmation, saves
+            <strong>Download</strong> in the active vault's settings asks for confirmation, saves
             the current database and vault definition beside themselves with
             <code>.bac</code> suffixes, downloads and validates both R2 objects,
             and refreshes CHA. Neither local file changes if validation fails.
@@ -1194,7 +1194,7 @@
         </div>
         <div class="note">
           <p>
-            All four Database menu items are temporarily disabled while one
+            The four maintenance actions are temporarily disabled while one
             database operation is running.
           </p>
         </div>
@@ -1244,7 +1244,7 @@ Then choose one small act and do it completely.</code></pre>
             those files yourself when you no longer need them.
           </li>
           <li>
-            If you use Database Upload, the complete database is copied to the
+            If you use Upload in the active vault's settings, the complete database is copied to the
             configured R2 bucket. An ordinary vault depends on that account's
             access controls; a protected vault remains encrypted in R2.
           </li>
@@ -1324,7 +1324,7 @@ Then choose one small act and do it completely.</code></pre>
               </tr>
               <tr>
                 <td>A protected vault cannot be downloaded from the Vaults screen.</td>
-                <td>That screen cannot ask for a remote vault's password. Register or create the vault locally, then use the password-aware Database → Download operation for that active vault.</td>
+                <td>That screen cannot ask for a remote vault's password. Register or create the vault locally, then use Download in Settings → Vaults → the active vault.</td>
               </tr>
             </tbody>
           </table>

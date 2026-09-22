@@ -1490,7 +1490,8 @@ it('does not abandon an in-flight session open when merge refreshes bootstrap', 
 
   await user.click(await screen.findByLabelText('Settings'));
   await user.click(await screen.findByRole('button', { name: /Vaults/ }));
-  await user.click(await screen.findByRole('button', { name: /Merge into active vault/ }));
+  await user.click(await screen.findByRole('button', { name: /Personal/ }));
+  await user.click(await screen.findByRole('button', { name: 'Merge' }));
   await user.selectOptions(await screen.findByLabelText('Source vault'), 'Projects');
   await user.click(screen.getByRole('button', { name: 'Merge' }));
   await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Merge' }));
@@ -1506,6 +1507,140 @@ it('does not abandon an in-flight session open when merge refreshes bootstrap', 
     .toHaveTextContent('The Lobby'));
   expect(events.connections.filter(({ key }) => key === 'lobby/planning'))
     .toEqual([expect.objectContaining({ key: 'lobby/planning' })]);
+});
+
+it('clears a live chat and reopens its current vault snapshot after Settings download', async () => {
+  const requests: NativeRequest[] = [];
+  const bridge = createEnvelopeNativeBridge({
+    connectionId: 'view-test',
+    post: (message) => {
+      if ('method' in (message as object)) requests.push(message as NativeRequest);
+    },
+  });
+  bridge.setContextEpoch(1);
+  const events = drivableSessionEvents();
+  const bootstrap = {
+    ...bootstrapFixture,
+    capabilities: { can_modify: true, can_transfer_r2: true },
+  };
+  let replaced = false;
+  const getBootstrap = vi.fn(async () => replaced
+    ? { ...bootstrap, vault_name: 'personal', vaults: ['personal', 'Projects'] }
+    : bootstrap);
+  const getSessionSnapshot = vi.fn(async () => ({
+    ...snapshotFixture,
+    session_label: replaced ? 'Fresh vault' : 'Old vault',
+  }));
+  const client = fixtureClient({
+    getBootstrap,
+    getSessionSnapshot,
+    listVaults: async () => [{
+      display_name: replaced ? 'personal' : 'Personal', protected: false,
+      data_path: '/data/personal.sqlite3', mirror_path: null,
+      modify_path: '/work/personal', active: true, can_delete: false,
+    }],
+    downloadVault: async () => (await bridge.invoke<{ byte_count: number }>(
+      'vault.download', {},
+    )).byte_count,
+  });
+  render(<App client={client} contextEvents={bridge} connectSessionEvents={events.connect} />);
+
+  await waitFor(() => expect(events.connections).toHaveLength(1));
+  act(() => events.handlers[0].onSnapshot({
+    ...snapshotFixture, session_label: 'Old vault',
+  }));
+  expect(getSessionSnapshot).toHaveBeenCalledOnce();
+  expect(screen.getByText('Old vault')).toBeInTheDocument();
+
+  await userEvent.click(screen.getByLabelText('Settings'));
+  await userEvent.click(await screen.findByRole('button', { name: /Vaults/ }));
+  await userEvent.click(await screen.findByRole('button', { name: /Personal/ }));
+  await userEvent.click(await screen.findByRole('button', { name: 'Download' }));
+  await userEvent.click(within(await screen.findByRole('dialog')).getByRole(
+    'button', { name: 'Download' },
+  ));
+  await waitFor(() => expect(requests.some(({ method }) => method === 'vault.download')).toBe(true));
+  const request = requests.find(({ method }) => method === 'vault.download')!;
+  replaced = true;
+  act(() => bridge.receive({
+    connection_id: 'view-test', delivery_id: 1,
+    messages: [
+      { connection_id: 'view-test', event: 'app.contextChanged', context_epoch: 2,
+        state: 'running', causing_request_id: request.id },
+      { connection_id: 'view-test', id: request.id, context_epoch: 2, ok: true,
+        result: { byte_count: 34, context_epoch: 2 } },
+    ],
+  }));
+
+  await waitFor(() => expect(events.connections[0].close).toHaveBeenCalledOnce());
+  await waitFor(() => expect(getBootstrap.mock.calls.length).toBeGreaterThan(1));
+  expect(await screen.findByRole('status')).toHaveTextContent('Downloaded 34 bytes.');
+  await waitFor(() => expect(screen.getByRole('region', { name: 'Vault settings' }))
+    .toHaveTextContent('personal'));
+  await userEvent.click(screen.getByRole('button', { name: /^Welcome/ }));
+  await waitFor(() => expect(getSessionSnapshot).toHaveBeenCalledTimes(2));
+  await waitFor(() => expect(events.connections).toHaveLength(2));
+  expect(screen.getByText('Fresh vault')).toBeInTheDocument();
+  expect(screen.queryByText('Old vault')).not.toBeInTheDocument();
+  bridge.dispose();
+});
+
+it('offers bootstrap retry when discovery refresh fails after Settings download', async () => {
+  const requests: NativeRequest[] = [];
+  const bridge = createEnvelopeNativeBridge({
+    connectionId: 'refresh-test',
+    post: (message) => {
+      if ('method' in (message as object)) requests.push(message as NativeRequest);
+    },
+  });
+  bridge.setContextEpoch(1);
+  const bootstrap = {
+    ...bootstrapFixture,
+    capabilities: { can_modify: true, can_transfer_r2: true },
+  };
+  const getBootstrap = vi.fn()
+    .mockResolvedValueOnce(bootstrap)
+    .mockRejectedValueOnce(new ChaError('application_unavailable', 'Discovery failed.'))
+    .mockResolvedValue(bootstrap);
+  const client = fixtureClient({
+    getBootstrap,
+    listVaults: async () => [{
+      display_name: 'Personal', protected: false,
+      data_path: '/data/personal.sqlite3', mirror_path: null,
+      modify_path: '/work/personal', active: true, can_delete: false,
+    }],
+    downloadVault: async () => (await bridge.invoke<{ byte_count: number }>(
+      'vault.download', {},
+    )).byte_count,
+  });
+  render(<App client={client} contextEvents={bridge} connectSessionEvents={inertSessionEvents} />);
+
+  await userEvent.click(await screen.findByLabelText('Settings'));
+  await userEvent.click(await screen.findByRole('button', { name: /Vaults/ }));
+  await userEvent.click(await screen.findByRole('button', { name: /Personal/ }));
+  await userEvent.click(await screen.findByRole('button', { name: 'Download' }));
+  await userEvent.click(within(await screen.findByRole('dialog')).getByRole(
+    'button', { name: 'Download' },
+  ));
+  await waitFor(() => expect(requests.some(({ method }) => method === 'vault.download')).toBe(true));
+  const request = requests.find(({ method }) => method === 'vault.download')!;
+  act(() => bridge.receive({
+    connection_id: 'refresh-test', delivery_id: 1,
+    messages: [
+      { connection_id: 'refresh-test', event: 'app.contextChanged', context_epoch: 2,
+        state: 'running', causing_request_id: request.id },
+      { connection_id: 'refresh-test', id: request.id, context_epoch: 2, ok: true,
+        result: { byte_count: 34, context_epoch: 2 } },
+    ],
+  }));
+
+  expect(await screen.findByText('Application API unavailable')).toBeInTheDocument();
+  expect(screen.getByText('Discovery failed.')).toBeInTheDocument();
+  await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+  await waitFor(() => expect(getBootstrap).toHaveBeenCalledTimes(3));
+  expect(screen.queryByText('Application API unavailable')).not.toBeInTheDocument();
+  expect(await screen.findByRole('button', { name: /^Welcome/ })).toBeInTheDocument();
+  bridge.dispose();
 });
 
 it('lets a second navigation supersede an open that is still in flight', async () => {

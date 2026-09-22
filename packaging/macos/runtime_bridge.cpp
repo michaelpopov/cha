@@ -178,34 +178,6 @@ void run_pump(ChaRuntime* runtime) {
     runtime->workers_changed.notify_all();
 }
 
-int32_t transfer(
-    ChaRuntime* runtime,
-    uint64_t* byte_count,
-    char** error,
-    bool download) {
-    clear_error(error);
-    if (!runtime || !byte_count) {
-        set_string(error, "That database operation is not available.");
-        return 0;
-    }
-    try {
-        if (!runtime->native_application) {
-            throw std::runtime_error("CHA runtime is not available");
-        }
-        const cha::R2DatabaseTransfer result = download
-            ? runtime->native_application->download_database()
-            : runtime->native_application->upload_database();
-        *byte_count = result.byte_count;
-        return 1;
-    } catch (const cha::WorkspaceRestartRequiredError& fatal) {
-        set_string(error, fatal.what());
-        return -1;
-    } catch (...) {
-        set_current_error(error);
-        return 0;
-    }
-}
-
 int32_t transfer_configuration(
     ChaRuntime* runtime,
     uint64_t* file_count,
@@ -220,9 +192,10 @@ int32_t transfer_configuration(
         if (!runtime->native_application) {
             throw std::runtime_error("CHA runtime is not available");
         }
+        const auto epoch = runtime->native_application->context_epoch();
         const WorkspaceConfigTransfer result = importing
-            ? runtime->native_application->import_configuration()
-            : runtime->native_application->export_configuration();
+            ? runtime->native_application->import_configuration(epoch)
+            : runtime->native_application->export_configuration(epoch);
         *file_count = result.file_count;
         return 1;
     } catch (const cha::WorkspaceRestartRequiredError& fatal) {
@@ -350,20 +323,6 @@ int32_t cha_runtime_can_transfer_r2(const ChaRuntime* runtime) {
     } catch (...) {
     }
     return 0;
-}
-
-int32_t cha_runtime_upload(
-    ChaRuntime* runtime,
-    uint64_t* byte_count,
-    char** error) {
-    return transfer(runtime, byte_count, error, false);
-}
-
-int32_t cha_runtime_download(
-    ChaRuntime* runtime,
-    uint64_t* byte_count,
-    char** error) {
-    return transfer(runtime, byte_count, error, true);
 }
 
 int32_t cha_runtime_import_configuration(
@@ -584,6 +543,9 @@ int32_t cha_runtime_join_shutdown(ChaRuntime* runtime, int32_t grace_ms) {
     if (!runtime) return 1;
     if (!runtime->join_attempted) {
         runtime->join_attempted = true;
+        if (runtime->native_application) {
+            runtime->native_application->wait_for_maintenance();
+        }
         const auto grace = std::chrono::milliseconds{
             grace_ms > 0 ? grace_ms : 10000};
         const auto deadline = std::chrono::steady_clock::now() + grace;

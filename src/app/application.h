@@ -453,10 +453,10 @@ public:
     [[nodiscard]] VaultDefinition download_r2_vault(
         std::string_view name,
         std::uint64_t epoch);
-    [[nodiscard]] R2DatabaseTransfer upload_database();
-    [[nodiscard]] R2DatabaseTransfer download_database();
-    [[nodiscard]] WorkspaceConfigTransfer import_configuration();
-    [[nodiscard]] WorkspaceConfigTransfer export_configuration();
+    [[nodiscard]] R2DatabaseTransfer upload_database(std::uint64_t epoch);
+    [[nodiscard]] R2DatabaseTransfer download_database(std::uint64_t epoch);
+    [[nodiscard]] WorkspaceConfigTransfer import_configuration(std::uint64_t epoch);
+    [[nodiscard]] WorkspaceConfigTransfer export_configuration(std::uint64_t epoch);
     void save_file(
         std::uint64_t epoch,
         const std::filesystem::path& destination,
@@ -476,6 +476,9 @@ public:
     void set_context_changed(ContextChanged callback);
 
     void request_shutdown();
+    // Native joins wait for an in-flight maintenance section before starting
+    // their bounded shutdown grace period.
+    void wait_for_maintenance() const;
     [[nodiscard]] bool join_shutdown(
         std::chrono::milliseconds grace = std::chrono::milliseconds{10000});
 

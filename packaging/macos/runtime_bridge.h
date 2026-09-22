@@ -41,14 +41,6 @@ int32_t cha_runtime_can_transfer_r2(const ChaRuntime* runtime);
 // Return 1 on success and 0 on a failure the caller can retry. -1 means the
 // workspace database could not be reopened afterwards: this process can no
 // longer serve and must quit.
-int32_t cha_runtime_upload(
-    ChaRuntime* runtime,
-    uint64_t* byte_count,
-    char** error);
-int32_t cha_runtime_download(
-    ChaRuntime* runtime,
-    uint64_t* byte_count,
-    char** error);
 int32_t cha_runtime_import_configuration(
     ChaRuntime* runtime,
     uint64_t* file_count,

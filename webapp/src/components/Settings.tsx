@@ -47,6 +47,8 @@ import {
   DownloadIcon,
   EyeIcon,
   EyeOffIcon,
+  FileDownIcon,
+  FileUpIcon,
   KeyIcon,
   PlusIcon,
   SpeakerIcon,
@@ -66,6 +68,17 @@ const loadProviders = (client: ChaClient) => client.listProviders();
 const loadStyles = (client: ChaClient) => client.listStyles();
 const loadVoices = (client: ChaClient) => client.listVoices();
 const loadApiKeys = (client: ChaClient) => client.listApiKeys();
+
+function formatBytes(bytes: number): string {
+  const units = ['bytes', 'KB', 'MB', 'GB', 'TB', 'PB'];
+  let size = bytes;
+  let unit = 0;
+  while (size >= 1000 && unit < units.length - 1) {
+    size /= 1000;
+    unit += 1;
+  }
+  return `${size.toLocaleString(undefined, { maximumFractionDigits: unit ? 1 : 0 })} ${units[unit]}`;
+}
 
 function BackToSettings({ dispatch }: { dispatch: Dispatch<AppAction> }) {
   return (
@@ -98,7 +111,9 @@ function SettingsRow({
         <span className="cha-primary-line">{label}</span>
         {description && <span className="cha-secondary-line">{description}</span>}
       </span>
-      {trailingIcon ?? <ChevronRightIcon className="cha-chevron" />}
+      {trailingIcon === undefined
+        ? <ChevronRightIcon className="cha-chevron" />
+        : trailingIcon}
     </button>
   );
 }
@@ -200,11 +215,6 @@ export function VaultsScreen({ client, dispatch }: SettingsScreenProps) {
             label="Download vault"
             onClick={() => dispatch({ type: 'show-settings-download-vault' })}
           />
-          <SettingsRow
-            icon={<DatabaseIcon />}
-            label="Merge into active vault"
-            onClick={() => dispatch({ type: 'show-settings-merge-vault' })}
-          />
           {vaults.map((vault) => (
             <SettingsRow
               description={vault.active ? 'Active' : undefined}
@@ -295,7 +305,7 @@ async function voiceInputOrigin(client: ChaClient): Promise<string> {
   return input ? new URL(input.url).origin : '';
 }
 
-export function MergeVaultScreen({ client, dispatch }: SettingsScreenProps) {
+export function MergeVaultScreen({ client, dispatch, state }: SettingsScreenProps) {
   const { data: vaults, error: loadError, retry } = useLoad(
     client, loadVaults, 'Vaults could not be loaded.',
   );
@@ -360,7 +370,13 @@ export function MergeVaultScreen({ client, dispatch }: SettingsScreenProps) {
 
   return (
     <section className="cha-screen cha-navigation" aria-label="Merge vault settings">
-      <button className="cha-back-row" onClick={() => dispatch({ type: 'show-settings-vaults' })} type="button"><ChevronLeftIcon /><span>Vaults</span></button>
+      <button
+        className="cha-back-row"
+        onClick={() => dispatch(state.inspectedVaultName
+          ? { type: 'inspect-vault', vaultName: state.inspectedVaultName }
+          : { type: 'show-settings-vaults' })}
+        type="button"
+      ><ChevronLeftIcon /><span>{state.inspectedVaultName ?? 'Vaults'}</span></button>
       {!ready && !loadError && <p className="cha-state-message" role="status">Loading vaults…</p>}
       {loadError && !ready && <LoadFailure message={loadError} retry={retry} />}
       {ready && sources.length === 0 && <p className="cha-empty-list">No other vaults</p>}
@@ -486,8 +502,15 @@ export function VaultScreen({ client, dispatch, state }: SettingsScreenProps) {
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [confirmingOperation, setConfirmingOperation] = useState<'download' | 'import' | null>(null);
+  const [pendingOperation, setPendingOperation] = useState<'upload' | 'download' | 'import' | 'export' | null>(null);
+  const [operationComplete, setOperationComplete] = useState<string | null>(null);
+  const [operationError, setOperationError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
+  const busy = pendingOperation !== null || saving || deleting;
+  const canTransferR2 = state.bootstrap?.capabilities?.can_transfer_r2 === true;
+  const canModify = state.bootstrap?.capabilities?.can_modify === true;
 
   useEffect(() => {
     let current = true;
@@ -550,6 +573,30 @@ export function VaultScreen({ client, dispatch, state }: SettingsScreenProps) {
     }
   }
 
+  async function runOperation(operation: 'upload' | 'download' | 'import' | 'export') {
+    setConfirmingOperation(null);
+    if (!detail?.active || busy) return;
+    setPendingOperation(operation);
+    setOperationComplete(null);
+    setOperationError(null);
+    try {
+      const actions = {
+        upload: { run: () => client.uploadVault(), past: 'Uploaded', bytes: true },
+        download: { run: () => client.downloadVault(), past: 'Downloaded', bytes: true },
+        import: { run: () => client.importVault(), past: 'Imported', bytes: false },
+        export: { run: () => client.exportVault(), past: 'Exported', bytes: false },
+      };
+      const { run, past, bytes } = actions[operation];
+      const count = await run();
+      setOperationComplete(`${past} ${bytes ? formatBytes(count) : `${count.toLocaleString()} files`}.`);
+    } catch (failure: unknown) {
+      const label = operation[0].toUpperCase() + operation.slice(1);
+      setOperationError(publicErrorMessage(failure, `${label} failed.`));
+    } finally {
+      setPendingOperation(null);
+    }
+  }
+
   function reset() {
     setEnableProtection(false);
     setPassword('');
@@ -585,6 +632,50 @@ export function VaultScreen({ client, dispatch, state }: SettingsScreenProps) {
             {!detail.protected && enableProtection && <VaultPasswordInput autoFocus id="cha-vault-password" onChange={(value) => { setPassword(value); setError(null); }} value={password} />}
           </fieldset>
           {detail.active && <p className="cha-settings-note">This vault is active.</p>}
+          {detail.active && (
+            <div className="cha-list">
+              <SettingsRow
+                disabled={busy}
+                icon={<DatabaseIcon />}
+                label="Merge"
+                onClick={() => dispatch({ type: 'show-settings-merge-vault' })}
+              />
+              <SettingsRow
+                description={!canTransferR2 ? 'R2 storage is not configured' : undefined}
+                disabled={!canTransferR2 || busy}
+                icon={<FileUpIcon />}
+                label={pendingOperation === 'upload' ? 'Uploading…' : 'Upload'}
+                onClick={() => void runOperation('upload')}
+                trailingIcon={null}
+              />
+              <SettingsRow
+                description={!canTransferR2 ? 'R2 storage is not configured' : undefined}
+                disabled={!canTransferR2 || busy}
+                icon={<DownloadIcon />}
+                label={pendingOperation === 'download' ? 'Downloading…' : 'Download'}
+                onClick={() => setConfirmingOperation('download')}
+                trailingIcon={null}
+              />
+              <SettingsRow
+                description={!canModify ? 'Modify directory is not configured' : undefined}
+                disabled={!canModify || busy}
+                icon={<FileDownIcon />}
+                label={pendingOperation === 'import' ? 'Importing…' : 'Import'}
+                onClick={() => setConfirmingOperation('import')}
+                trailingIcon={null}
+              />
+              <SettingsRow
+                description={!canModify ? 'Modify directory is not configured' : undefined}
+                disabled={!canModify || busy}
+                icon={<FileUpIcon />}
+                label={pendingOperation === 'export' ? 'Exporting…' : 'Export'}
+                onClick={() => void runOperation('export')}
+                trailingIcon={null}
+              />
+            </div>
+          )}
+          {operationComplete && <p className="cha-state-message" role="status">{operationComplete}</p>}
+          {operationError && <p className="cha-error-message" role="alert">{operationError}</p>}
           {!detail.can_delete && <p className="cha-settings-note">{vaultCount === 1 ? 'The last vault cannot be deleted.' : 'Switch to another vault before deleting this one.'}</p>}
           {error && <p className="cha-error-message" role="alert">{error}</p>}
           {!detail.protected && enableProtection && <div className="cha-settings-form-actions"><button className="cha-button cha-button-ghost" disabled={saving || deleting} onClick={reset} type="button">Cancel</button><button className="cha-button cha-button-primary" disabled={!password || saving || deleting} type="submit">{saving ? 'Protecting…' : 'Protect vault'}</button></div>}
@@ -598,6 +689,24 @@ export function VaultScreen({ client, dispatch, state }: SettingsScreenProps) {
           onCancel={() => setConfirming(false)}
           onConfirm={() => void remove()}
           title="Delete vault?"
+        />
+      )}
+      {confirmingOperation === 'download' && (
+        <ConfirmDialog
+          confirmLabel="Download"
+          message={`Download “${detail?.display_name ?? 'this vault'}” from R2 and replace its local database? CHA will save the current database beside itself with a .bac suffix.`}
+          onCancel={() => setConfirmingOperation(null)}
+          onConfirm={() => void runOperation('download')}
+          title="Replace the local database?"
+        />
+      )}
+      {confirmingOperation === 'import' && (
+        <ConfirmDialog
+          confirmLabel="Import"
+          message="Replace this vault’s workspace configuration with the contents of its modify directory?"
+          onCancel={() => setConfirmingOperation(null)}
+          onConfirm={() => void runOperation('import')}
+          title="Import workspace configuration?"
         />
       )}
     </section>
@@ -1670,6 +1779,17 @@ export function R2StorageScreen({ client, dispatch }: SettingsScreenProps) {
   const [error, setError] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
 
+  async function refreshCapabilities() {
+    try {
+      dispatch({
+        type: 'bootstrap-refreshed',
+        bootstrap: validateBootstrap(await client.getBootstrap()),
+      });
+    } catch {
+      // The credential change succeeded. A later bootstrap will refresh controls.
+    }
+  }
+
   useEffect(() => {
     let current = true;
     setDetail(undefined);
@@ -1717,6 +1837,7 @@ export function R2StorageScreen({ client, dispatch }: SettingsScreenProps) {
       });
       setDetail(saved);
       setDraft(r2Draft(saved));
+      await refreshCapabilities();
     } catch (failure: unknown) {
       setError(publicErrorMessage(failure, 'R2 storage credentials could not be saved.'));
     } finally {
@@ -1731,6 +1852,7 @@ export function R2StorageScreen({ client, dispatch }: SettingsScreenProps) {
     setError(null);
     try {
       await client.deleteR2Storage();
+      await refreshCapabilities();
       dispatch({ type: 'show-settings-api-keys' });
     } catch (failure: unknown) {
       setError(publicErrorMessage(failure, 'R2 storage credentials could not be removed.'));

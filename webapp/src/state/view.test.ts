@@ -174,6 +174,37 @@ describe('application navigation reducer', () => {
     expect(state.mainView).toBe('chat');
   });
 
+  it('clears an old vault snapshot while keeping Settings open, then adopts fresh discovery', () => {
+    const inSettings = {
+      ...readyState(),
+      mainView: 'settings-vault' as const,
+      sessionSnapshot: snapshotFixture,
+    };
+    const cleared = appReducer(inSettings, { type: 'vault-context-reset' });
+    expect(cleared.mainView).toBe('settings-vault');
+    expect(cleared.sessionSnapshot).toBeNull();
+    expect(cleared.activeConversation).toBeNull();
+
+    const refreshed = { ...bootstrapFixture, initial_session_id: 'replacement' };
+    const restored = appReducer(cleared, {
+      type: 'vault-context-refreshed', bootstrap: refreshed,
+    });
+    expect(restored.mainView).toBe('settings-vault');
+    expect(restored.activeConversation).toEqual({
+      forumId: 'entrance', sessionId: 'replacement',
+    });
+
+    const opened = appReducer(cleared, {
+      type: 'conversation-opened',
+      snapshot: { ...snapshotFixture, session_id: 'chosen' },
+    });
+    const preserved = appReducer(opened, {
+      type: 'vault-context-refreshed', bootstrap: refreshed,
+    });
+    expect(preserved.activeConversation?.sessionId).toBe('chosen');
+    expect(preserved.sessionSnapshot?.session_id).toBe('chosen');
+  });
+
   it('tracks character-settings availability only for the inspected character', () => {
     let state = readyState();
     state = appReducer(state, { type: 'inspect-character', characterId: 'guide' });

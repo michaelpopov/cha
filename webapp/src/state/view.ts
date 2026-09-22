@@ -142,6 +142,8 @@ export type AppAction =
   | { type: 'bootstrap-loaded'; bootstrap: Bootstrap }
   | { type: 'bootstrap-failed'; message: string; incompatible: boolean }
   | { type: 'bootstrap-refreshed'; bootstrap: Bootstrap }
+  | { type: 'vault-context-reset' }
+  | { type: 'vault-context-refreshed'; bootstrap: Bootstrap }
   | { type: 'toggle-sidebar' }
   | { type: 'show-personas' }
   | { type: 'show-new-persona' }
@@ -298,6 +300,30 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       };
     case 'bootstrap-refreshed':
       return { ...state, bootstrap: action.bootstrap };
+    case 'vault-context-reset':
+      return {
+        ...state,
+        activeConversation: null,
+        activeConversationLabel: null,
+        currentForumId: null,
+        currentDefaultCharacterId: null,
+        sessionSnapshot: null,
+        streamStatus: 'idle',
+        streamMessage: null,
+        ...idleSessionOperation(),
+      };
+    case 'vault-context-refreshed': {
+      const updated = state.sessionSnapshot
+        ? state : showInitialConversation(state, action.bootstrap);
+      return {
+        ...updated,
+        mainView: state.mainView,
+        bootstrap: action.bootstrap,
+        inspectedVaultName: state.mainView === 'settings-vault'
+          && state.inspectedVaultName === state.bootstrap?.vault_name
+          ? action.bootstrap.vault_name : state.inspectedVaultName,
+      };
+    }
     case 'toggle-sidebar':
       return { ...state, sidebarOpen: !state.sidebarOpen };
     case 'show-personas':
