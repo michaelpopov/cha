@@ -689,7 +689,7 @@ export function ChatScreen({
     if (typeof transcriptEnd.current?.scrollIntoView === 'function') {
       transcriptEnd.current.scrollIntoView({ block: 'end' });
     }
-  }, [conversationKey, generation?.reasoning_text, snapshot?.transcript]);
+  }, [conversationKey, generation?.active, generation?.phase, snapshot?.transcript]);
 
   function maximumComposerHeight(fallback = Number.POSITIVE_INFINITY) {
     const chatHeight = chatArea.current?.clientHeight ?? 0;
@@ -949,7 +949,7 @@ export function ChatScreen({
         className="cha-transcript"
         onScroll={noteReadingPosition}
       >
-        {(!snapshot || (snapshot.transcript.length === 0 && !generation?.reasoning_text)) && (
+        {(!snapshot || (snapshot.transcript.length === 0 && !generationActive)) && (
           <div className="cha-chat-welcome">
             <span className="cha-chat-kicker">
               {snapshot?.session_label ?? state.activeConversationLabel ?? 'Chat'}
@@ -1011,19 +1011,18 @@ export function ChatScreen({
             />
           </Fragment>
         ))}
-        {generation?.active && (
+        {generation?.active && generation.phase !== 'answering' && (
           <div className="cha-generation">
-            {/* Only the phase is announced. Marking the region live would make
-                a screen reader re-read the whole reasoning text per token. */}
-            <div className="cha-speaker" aria-live="polite">
-              {generation.phase === 'reasoning' && `${generation.character_display_name} is reasoning…`}
-              {generation.phase === 'answering' && `${generation.character_display_name} is answering…`}
-              {generation.phase === 'stopping' && `Stopping ${generation.character_display_name}…`}
-              {generation.phase === 'waiting' && `Waiting for ${generation.character_display_name}…`}
+            <div className="cha-generation-status cha-speaker" aria-live="polite">
+              {generation.phase === 'stopping' ? `Stopping ${generation.character_display_name}…` : (
+                <>
+                  <span className="cha-generation-indicator" aria-hidden="true" />
+                  {generation.character_display_name
+                    ? `${generation.character_display_name} is preparing a response…`
+                    : 'Preparing a response…'}
+                </>
+              )}
             </div>
-            {generation.reasoning_text && (
-              <div className="cha-reasoning-text">{generation.reasoning_text}</div>
-            )}
           </div>
         )}
         {snapshot?.notice && <p className="cha-session-notice">{snapshot.notice}</p>}

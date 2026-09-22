@@ -33,8 +33,9 @@ function drivableSessionEvents() {
 function harness(overrides: Partial<ChaClient> = {}) {
   const events = drivableSessionEvents();
   const client = fixtureClient(overrides);
+  const reducer = vi.fn(appReducer);
   const view = renderHook(() => {
-    const [state, dispatch] = useReducer(appReducer, initialAppState);
+    const [state, dispatch] = useReducer(reducer, initialAppState);
     return {
       state,
       live: useLiveSession(client, state, dispatch, {
@@ -43,7 +44,7 @@ function harness(overrides: Partial<ChaClient> = {}) {
       }),
     };
   });
-  return { events, view };
+  return { events, view, reducer };
 }
 
 // Holds openSession open so a test can navigate while the open is in flight.
@@ -112,6 +113,43 @@ it('reports the stream connected once its first snapshot arrives', async () => {
   });
   expect(view.result.current.state.streamStatus).toBe('connected');
 });
+
+it(
+  'ignores reasoning appends without rendering and still appends answer text',
+  async () => {
+    const { events, view, reducer } = harness();
+    await act(async () => {
+      await view.result.current.live.openConversation('entrance', 'welcome');
+    });
+    act(() => events.handlers[0].onSnapshot({
+      ...snapshotFixture,
+      transcript: [{
+        id: 4, kind: 'character', participant_id: 'assistant', display_name: 'Assistant',
+        addressed_to: '', addressed_to_name: '', text: 'Hello', status: 'streaming',
+        request_id: 7, created_at: null,
+      }],
+      generation: {
+        ...snapshotFixture.generation,
+        active: true, request_id: 7, phase: 'answering', reasoning_text: 'Snapshot reasoning',
+      },
+    }));
+
+    const before = view.result.current;
+    reducer.mockClear();
+    act(() => events.handlers[0].onAppend({
+      target: { kind: 'reasoning', request_id: 7 }, text: ' hidden deliberation', seq: 0,
+    }));
+    expect(reducer).not.toHaveBeenCalled();
+    expect(view.result.current).toBe(before);
+    expect(view.result.current.state.sessionSnapshot?.generation.reasoning_text)
+      .toBe('Snapshot reasoning');
+
+    act(() => events.handlers[0].onAppend({
+      target: { kind: 'entry', entry_id: 4 }, text: ' there', seq: 1,
+    }));
+    expect(view.result.current.state.sessionSnapshot?.transcript[0].text).toBe('Hello there');
+  },
+);
 
 it('replaces the stream after it fails, without a second replacement', async () => {
   const { events, view } = harness();

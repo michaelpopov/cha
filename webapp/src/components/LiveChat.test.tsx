@@ -130,24 +130,56 @@ describe('live chat', () => {
     expect(openSession.mock.calls.filter(([, id]) => id === 'welcome')).toHaveLength(2);
   });
 
-  it('renders snapshot state and applies entry and reasoning append events', async () => {
+  it('shows preparation until the answer starts and never renders reasoning', async () => {
     const events = drivableEvents();
     const snapshot = transcriptSnapshot();
     render(<App client={fixtureClient()} connectSessionEvents={events.connect} />);
-    await attachInitial(events, snapshot);
+    await attachInitial(events, {
+      ...snapshot,
+      transcript: [],
+      generation: {
+        ...snapshot.generation, phase: 'waiting', reasoning_text: '', character_display_name: '',
+      },
+    });
 
-    expect(screen.getByText('Still here')).toBeInTheDocument();
-    expect(screen.getByText('Checking')).toBeInTheDocument();
+    expect(within(screen.getByLabelText('Conversation transcript')).queryByText('Welcome'))
+      .not.toBeInTheDocument();
+    expect(screen.getByText('Preparing a response…')).toHaveAttribute('aria-live', 'polite');
     expect(screen.getByRole('button', { name: 'Stop generation' })).toBeEnabled();
 
-    act(() => events.handlers[0].onAppend({
-      target: { kind: 'entry', entry_id: 4 }, text: ' with you', seq: 0,
+    act(() => events.handlers[0].onSnapshot({
+      ...snapshot,
+      transcript: [],
+      generation: { ...snapshot.generation, phase: 'waiting', reasoning_text: '' },
     }));
-    act(() => events.handlers[0].onAppend({
-      target: { kind: 'reasoning', request_id: 7 }, text: ' again', seq: 1,
+    expect(screen.getByText('Assistant is preparing a response…')).toBeInTheDocument();
+
+    act(() => events.handlers[0].onSnapshot({ ...snapshot, transcript: [] }));
+    expect(screen.getByText('Assistant is preparing a response…')).toBeInTheDocument();
+    expect(screen.getByLabelText('Conversation transcript')).not.toHaveTextContent('Checking');
+
+    act(() => events.handlers[0].onSnapshot({
+      ...snapshot,
+      generation: { ...snapshot.generation, phase: 'answering' },
     }));
-    expect(screen.getByText('Still here with you')).toBeInTheDocument();
-    expect(screen.getByText('Checking again')).toBeInTheDocument();
+    expect(screen.queryByText(/preparing a response…/i)).not.toBeInTheDocument();
+    expect(screen.getByText('Still here')).toBeInTheDocument();
+
+    act(() => events.handlers[0].onSnapshot({
+      ...snapshot,
+      generation: { ...snapshot.generation, phase: 'stopping' },
+    }));
+    expect(screen.getByText('Stopping Assistant…')).toBeInTheDocument();
+    expect(screen.queryByText(/preparing a response…/i)).not.toBeInTheDocument();
+
+    act(() => events.handlers[0].onSnapshot({
+      ...snapshot,
+      generation: snapshotFixture.generation,
+      transcript: [{ ...snapshot.transcript[0], status: 'complete' }],
+    }));
+    expect(screen.queryByText(/preparing a response…/i)).not.toBeInTheDocument();
+    expect(screen.queryByText('Stopping Assistant…')).not.toBeInTheDocument();
+    expect(screen.getByText('Still here')).toBeInTheDocument();
   });
 
   it('shows the creation time under timestamped entries and nothing for unknown times', async () => {

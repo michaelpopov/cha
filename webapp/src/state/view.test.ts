@@ -75,7 +75,7 @@ describe('application navigation reducer', () => {
     expect(state.activeConversation).toEqual({ forumId: 'lobby', sessionId: 'planning' });
   });
 
-  it('replaces snapshots and appends entry and reasoning stream targets', () => {
+  it('replaces snapshots and appends entry text', () => {
     const streamingSnapshot = {
       ...snapshotFixture,
       transcript: [{
@@ -90,14 +90,6 @@ describe('application navigation reducer', () => {
         request_id: 7,
         created_at: null,
       }],
-      generation: {
-        active: true,
-        request_id: 7,
-        character_id: 'assistant',
-        character_display_name: 'Assistant',
-        phase: 'reasoning' as const,
-        reasoning_text: 'Think',
-      },
     };
     let state = readyState();
     state = appReducer(state, { type: 'conversation-opened', snapshot: streamingSnapshot });
@@ -107,15 +99,7 @@ describe('application navigation reducer', () => {
       sessionId: 'welcome',
       event: { target: { kind: 'entry', entry_id: 4 }, text: ' there', seq: 0 },
     });
-    state = appReducer(state, {
-      type: 'session-append',
-      forumId: 'entrance',
-      sessionId: 'welcome',
-      event: { target: { kind: 'reasoning', request_id: 7 }, text: ' carefully', seq: 1 },
-    });
-
     expect(state.sessionSnapshot?.transcript[0].text).toBe('Hello there');
-    expect(state.sessionSnapshot?.generation.reasoning_text).toBe('Think carefully');
 
     const replacement = { ...streamingSnapshot, transcript: [], generation: snapshotFixture.generation };
     state = appReducer(state, { type: 'session-snapshot', snapshot: replacement });

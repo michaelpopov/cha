@@ -256,25 +256,15 @@ function appendSessionEvent(
   event: AppendEvent,
 ): SessionSnapshot {
   const target = event.target;
-  if (target.kind === 'entry') {
-    const entryIndex = snapshot.transcript.findIndex(({ id }) => id === target.entry_id);
-    if (entryIndex < 0) return snapshot;
-    const transcript = [...snapshot.transcript];
-    transcript[entryIndex] = {
-      ...transcript[entryIndex],
-      text: transcript[entryIndex].text + event.text,
-    };
-    return { ...snapshot, transcript };
-  }
-
-  if (snapshot.generation.request_id !== target.request_id) return snapshot;
-  return {
-    ...snapshot,
-    generation: {
-      ...snapshot.generation,
-      reasoning_text: snapshot.generation.reasoning_text + event.text,
-    },
+  if (target.kind !== 'entry') return snapshot;
+  const entryIndex = snapshot.transcript.findIndex(({ id }) => id === target.entry_id);
+  if (entryIndex < 0) return snapshot;
+  const transcript = [...snapshot.transcript];
+  transcript[entryIndex] = {
+    ...transcript[entryIndex],
+    text: transcript[entryIndex].text + event.text,
   };
+  return { ...snapshot, transcript };
 }
 
 export function appReducer(state: AppState, action: AppAction): AppState {
