@@ -54,6 +54,7 @@ function needsSpace(previous: string, next: string): boolean {
 // newline is kept. Later xAI additions concatenate the prepared piece.
 export function appendPreparedTranscription(current: string, prepared: string): string {
   if (!prepared) return current;
+  if (!current) return prepared.replace(/^[ \t]+/, '');
   const previous = current.length > 0 ? current[current.length - 1] ?? '' : '';
   return needsSpace(previous, prepared) ? `${current} ${prepared}` : current + prepared;
 }

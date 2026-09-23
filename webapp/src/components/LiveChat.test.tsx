@@ -1252,6 +1252,23 @@ describe('live chat', () => {
     expect(response).not.toHaveTextContent('[2026-08-18T22:11:46.123Z]');
   });
 
+  it('hides leading blank lines in a response but keeps its paragraph breaks', async () => {
+    const events = drivableEvents();
+    render(<App client={fixtureClient()} connectSessionEvents={events.connect} />);
+    await attachInitial(events, {
+      ...snapshotFixture,
+      transcript: [{
+        id: 1, kind: 'character', participant_id: 'assistant', display_name: 'Assistant',
+        addressed_to: '', addressed_to_name: '',
+        text: '\n  \r\nFirst paragraph\n\nSecond paragraph',
+        status: 'complete', created_at: 1_787_120_306,
+      }],
+    });
+
+    expect(document.querySelector('.cha-message-text')?.textContent)
+      .toBe('First paragraph\n\nSecond paragraph');
+  });
+
   it('submits with the forum persona, clears accepted input, and preserves a failed draft', async () => {
     const user = userEvent.setup();
     const events = drivableEvents();
@@ -1390,6 +1407,7 @@ describe('live chat', () => {
             model: 'gpt-live-transcribe',
             delay: 'high',
             prompt: 'Software design discussion.',
+            send_phrase: 'over to you',
           }),
         })}
         connectSessionEvents={events.connect}
@@ -1424,6 +1442,193 @@ describe('live chat', () => {
 
   });
 
+  it('sends an OpenAI dictation when it ends with Over to you', async () => {
+    vi.spyOn(VoiceInputSession, 'supported').mockReturnValue(true);
+    let appendVoice = (_text: string) => {};
+    const stop = vi.fn(async () => {});
+    vi.spyOn(VoiceInputSession, 'start').mockImplementation(
+      async (_configuration, onTranscription) => {
+        appendVoice = onTranscription;
+        return { stop, cancel: vi.fn() };
+      },
+    );
+    const events = drivableEvents();
+    const submitInput = vi.fn(async () => ({ clear_input: true }));
+    render(<App client={fixtureClient({
+      submitInput,
+      getVoiceInputRuntime: async () => ({
+        provider: 'openai',
+        url: 'https://api.openai.com/v1/realtime/calls',
+        model: 'gpt-live-transcribe',
+        delay: 'low',
+        prompt: '',
+        send_phrase: 'over to you',
+      }),
+    })} connectSessionEvents={events.connect} />);
+    await attachInitial(events);
+    const input = screen.getByRole('textbox', { name: 'Message' });
+    fireEvent.click(screen.getByRole('button', { name: 'Start voice input' }));
+    await screen.findByRole('button', { name: 'Stop voice input' });
+    act(() => {
+      appendVoice('Explain this. Over');
+      appendVoice(' to');
+    });
+    expect(submitInput).not.toHaveBeenCalled();
+    act(() => appendVoice(' you'));
+    await waitFor(() => expect(submitInput).toHaveBeenCalledWith(
+      'entrance', 'welcome', { text: 'Explain this.' },
+    ), { timeout: 2500 });
+    expect(stop).not.toHaveBeenCalled();
+    expect(input).toHaveValue('');
+    expect(screen.getByRole('button', { name: 'Stop voice input' })).toBeEnabled();
+
+    act(() => appendVoice('Next question. Over to you'));
+    await waitFor(() => expect(submitInput).toHaveBeenLastCalledWith(
+      'entrance', 'welcome', { text: 'Next question.' },
+    ), { timeout: 2500 });
+    expect(stop).not.toHaveBeenCalled();
+
+    act(() => appendVoice('Hello comma how are you question mark over to you'));
+    await waitFor(() => expect(submitInput).toHaveBeenLastCalledWith(
+      'entrance', 'welcome', { text: 'Hello, how are you?' },
+    ), { timeout: 2500 });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Stop voice input' }));
+    await screen.findByRole('button', { name: 'Start voice input' });
+    expect(stop).toHaveBeenCalledOnce();
+
+    fireEvent.change(input, { target: { value: 'Write over to you' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    await waitFor(() => expect(submitInput).toHaveBeenLastCalledWith(
+      'entrance', 'welcome', { text: 'Write over to you' },
+    ));
+  });
+
+  it('waits for generation to end before sending a spoken command', async () => {
+    vi.spyOn(VoiceInputSession, 'supported').mockReturnValue(true);
+    let appendVoice = (_text: string) => {};
+    const stop = vi.fn(async () => {});
+    vi.spyOn(VoiceInputSession, 'start').mockImplementation(
+      async (_configuration, onTranscription) => {
+        appendVoice = onTranscription;
+        return { stop, cancel: vi.fn() };
+      },
+    );
+    const events = drivableEvents();
+    const submitInput = vi.fn(async () => ({ clear_input: true }));
+    render(<App client={fixtureClient({
+      submitInput,
+      getVoiceInputRuntime: async () => ({
+        provider: 'openai',
+        url: 'https://api.openai.com/v1/realtime/calls',
+        model: 'gpt-live-transcribe',
+        delay: 'low',
+        prompt: '',
+        send_phrase: 'over to you',
+      }),
+    })} connectSessionEvents={events.connect} />);
+    await attachInitial(events, transcriptSnapshot());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start voice input' }));
+    await screen.findByRole('button', { name: 'Stop voice input' });
+    act(() => appendVoice('Next question. Over to you'));
+    expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue(
+      'Next question. Over to you',
+    );
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 1100)); });
+    expect(submitInput).not.toHaveBeenCalled();
+    expect(stop).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Stop voice input' })).toBeEnabled();
+
+    act(() => events.handlers[0].onSnapshot(snapshotFixture));
+    await waitFor(() => expect(submitInput).toHaveBeenCalledWith(
+      'entrance', 'welcome', { text: 'Next question.' },
+    ), { timeout: 2500 });
+    expect(stop).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Stop voice input' })).toBeEnabled();
+  });
+
+  it('keeps new dictation while a spoken command is being sent', async () => {
+    vi.spyOn(VoiceInputSession, 'supported').mockReturnValue(true);
+    let appendVoice = (_text: string) => {};
+    const stop = vi.fn(async () => {});
+    vi.spyOn(VoiceInputSession, 'start').mockImplementation(
+      async (_configuration, onTranscription) => {
+        appendVoice = onTranscription;
+        return { stop, cancel: vi.fn() };
+      },
+    );
+    let completeSend: ((result: { clear_input: boolean }) => void) | undefined;
+    const submitInput = vi.fn(() => new Promise<{ clear_input: boolean }>((resolve) => {
+      completeSend = resolve;
+    }));
+    const events = drivableEvents();
+    render(<App client={fixtureClient({
+      submitInput,
+      getVoiceInputRuntime: async () => ({
+        provider: 'openai',
+        url: 'https://api.openai.com/v1/realtime/calls',
+        model: 'gpt-live-transcribe',
+        delay: 'low',
+        prompt: '',
+        send_phrase: 'over to you',
+      }),
+    })} connectSessionEvents={events.connect} />);
+    await attachInitial(events);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start voice input' }));
+    await screen.findByRole('button', { name: 'Stop voice input' });
+    act(() => appendVoice('First question over to you'));
+    await waitFor(() => expect(submitInput).toHaveBeenCalledWith(
+      'entrance', 'welcome', { text: 'First question' },
+    ), { timeout: 2500 });
+    const input = screen.getByRole('textbox', { name: 'Message' });
+    expect(input).toHaveValue('First question');
+
+    act(() => appendVoice(' Second question'));
+    expect(input).toHaveValue('First question Second question');
+    await act(async () => completeSend?.({ clear_input: true }));
+    expect(input).toHaveValue('Second question');
+    expect(stop).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Stop voice input' })).toBeEnabled();
+  });
+
+  it('removes the spoken command from a manual Send during recording', async () => {
+    vi.spyOn(VoiceInputSession, 'supported').mockReturnValue(true);
+    let appendVoice = (_text: string) => {};
+    const stop = vi.fn(async () => { appendVoice(' over to you.'); });
+    vi.spyOn(VoiceInputSession, 'start').mockImplementation(
+      async (_configuration, onTranscription) => {
+        appendVoice = onTranscription;
+        return { stop, cancel: vi.fn() };
+      },
+    );
+    const events = drivableEvents();
+    const submitInput = vi.fn(async () => ({ clear_input: true }));
+    render(<App client={fixtureClient({
+      submitInput,
+      getVoiceInputRuntime: async () => ({
+        provider: 'openai',
+        url: 'https://api.openai.com/v1/realtime/calls',
+        model: 'gpt-live-transcribe',
+        delay: 'low',
+        prompt: '',
+        send_phrase: 'over to you',
+      }),
+    })} connectSessionEvents={events.connect} />);
+    await attachInitial(events);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start voice input' }));
+    await screen.findByRole('button', { name: 'Stop voice input' });
+    act(() => appendVoice('Explain this'));
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    await waitFor(() => expect(submitInput).toHaveBeenCalledWith(
+      'entrance', 'welcome', { text: 'Explain this' },
+    ));
+    expect(stop).toHaveBeenCalledOnce();
+    expect(submitInput).toHaveBeenCalledTimes(1);
+  });
+
   it('uses Russian voice input when composer transliteration is enabled', async () => {
     vi.spyOn(VoiceInputSession, 'supported').mockReturnValue(true);
     const voiceSession = {
@@ -1440,6 +1645,7 @@ describe('live chat', () => {
         model: 'gpt-live-transcribe',
         delay: 'xhigh',
         prompt: 'Russian technical discussion.',
+        send_phrase: 'over to you',
       }),
     })} connectSessionEvents={events.connect} />);
     await attachInitial(events);
@@ -1472,6 +1678,7 @@ describe('live chat', () => {
             model: 'cached-model',
             delay: 'low',
             prompt: 'cached',
+            send_phrase: 'over to you',
           };
         }
         return {
@@ -1480,6 +1687,7 @@ describe('live chat', () => {
           model: 'grok-voice-transcribe-2.0',
           delay: 'high',
           prompt: 'fresh',
+          send_phrase: 'over to you',
         };
       },
     })} connectSessionEvents={events.connect} />);
@@ -1516,6 +1724,7 @@ describe('live chat', () => {
             model: 'cached-xai',
             delay: 'low',
             prompt: 'cached',
+            send_phrase: 'over to you',
           };
         }
         return {
@@ -1524,6 +1733,7 @@ describe('live chat', () => {
           model: 'gpt-live-transcribe',
           delay: 'medium',
           prompt: 'fresh openai',
+          send_phrase: 'over to you',
         };
       },
     })} connectSessionEvents={events.connect} />);
@@ -1555,6 +1765,7 @@ describe('live chat', () => {
             model: 'gpt-live-transcribe',
             delay: 'low',
             prompt: '',
+            send_phrase: 'over to you',
           });
         }
         return Promise.reject(new Error('runtime failed'));
@@ -1583,6 +1794,7 @@ describe('live chat', () => {
           model: 'gpt-live-transcribe',
           delay: 'low',
           prompt: '',
+          send_phrase: 'over to you',
         } : null);
       },
     })} connectSessionEvents={events.connect} />);
@@ -1602,6 +1814,7 @@ describe('live chat', () => {
       model: string;
       delay: 'low';
       prompt: string;
+      send_phrase: string;
     }) => void) | undefined;
     let calls = 0;
     const events = drivableEvents();
@@ -1615,6 +1828,7 @@ describe('live chat', () => {
             model: 'gpt-live-transcribe',
             delay: 'low' as const,
             prompt: '',
+            send_phrase: 'over to you',
           });
         }
         return new Promise((resolve) => { release = resolve; });
@@ -1632,6 +1846,7 @@ describe('live chat', () => {
         model: 'grok-voice-transcribe-2.0',
         delay: 'low',
         prompt: '',
+        send_phrase: 'over to you',
       });
     });
     expect(startVoiceInput).not.toHaveBeenCalled();
@@ -1653,6 +1868,7 @@ describe('live chat', () => {
             model: 'gpt-live-transcribe',
             delay: 'low' as const,
             prompt: '',
+            send_phrase: 'over to you',
           });
         }
         return new Promise((resolve) => {
@@ -1662,6 +1878,7 @@ describe('live chat', () => {
             model: 'gpt-live-transcribe',
             delay: 'low',
             prompt: '',
+            send_phrase: 'over to you',
           });
         });
       },
@@ -1690,6 +1907,7 @@ describe('live chat', () => {
           model: 'grok-voice-transcribe-2.0',
           delay: 'low',
           prompt: '',
+          send_phrase: 'over to you',
         };
       },
     })} connectSessionEvents={events.connect} />);
@@ -1717,6 +1935,7 @@ describe('live chat', () => {
             model: 'gpt-live-transcribe',
             delay: 'low' as const,
             prompt: '',
+            send_phrase: 'over to you',
           });
         }
         return new Promise((resolve) => {
@@ -1726,6 +1945,7 @@ describe('live chat', () => {
             model: 'grok-voice-transcribe-2.0',
             delay: 'low',
             prompt: '',
+            send_phrase: 'over to you',
           });
         });
       },

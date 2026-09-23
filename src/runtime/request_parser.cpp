@@ -454,7 +454,7 @@ VoiceUpdate parse_voice_update(const nlohmann::json& json) {
 }
 
 VoiceInputSettings parse_voice_input_settings(const nlohmann::json& json) {
-    if (!json.is_object() || json.size() != 6) {
+    if (!json.is_object() || json.size() != 7) {
         throw std::invalid_argument("Invalid voice input settings");
     }
     VoiceInputSettings settings{
@@ -464,6 +464,7 @@ VoiceInputSettings parse_voice_input_settings(const nlohmann::json& json) {
         .api_key = required_field<std::string>(json, "api_key"),
         .delay = required_field<std::string>(json, "delay"),
         .prompt = required_field<std::string>(json, "prompt"),
+        .send_phrase = required_field<std::string>(json, "send_phrase"),
     };
     if (settings.provider != "openai" && settings.provider != "xai") {
         throw std::invalid_argument("Invalid voice input settings");

@@ -1330,6 +1330,7 @@ describe('Settings screens', () => {
             api_key: 'api_key_1',
             delay: 'medium',
             prompt: 'Software design discussion.',
+            send_phrase: 'over to you',
           }),
           listApiKeys: async () => [{
             id: 'api_key_1',
@@ -1364,6 +1365,7 @@ describe('Settings screens', () => {
     expect(screen.getByLabelText('Input API key name')).toHaveDisplayValue('OpenAI');
     expect(screen.getByLabelText('Input delay')).toHaveDisplayValue('Medium');
     expect(screen.getByLabelText('Input prompt')).toHaveValue('Software design discussion.');
+    expect(screen.getByLabelText('Hands-free send phrase')).toHaveValue('over to you');
     expect(screen.getByLabelText('Output API key name')).toHaveDisplayValue('FishAudio');
     expect(screen.getByLabelText('Default voice')).toHaveDisplayValue('Brian');
     const model = screen.getByLabelText('Input model name');
@@ -1372,6 +1374,8 @@ describe('Settings screens', () => {
     await userEvent.selectOptions(screen.getByLabelText('Input delay'), 'xhigh');
     await userEvent.clear(screen.getByLabelText('Input prompt'));
     await userEvent.type(screen.getByLabelText('Input prompt'), 'Names and technical terms.');
+    await userEvent.clear(screen.getByLabelText('Hands-free send phrase'));
+    await userEvent.type(screen.getByLabelText('Hands-free send phrase'), 'your turn');
     await userEvent.click(screen.getByRole('button', { name: 'Save voice input' }));
 
     expect(saveVoiceInputSettings).toHaveBeenCalledWith({
@@ -1381,6 +1385,7 @@ describe('Settings screens', () => {
       api_key: 'api_key_1',
       delay: 'xhigh',
       prompt: 'Names and technical terms.',
+      send_phrase: 'your turn',
     });
     expect(saveVoiceOutputSettings).not.toHaveBeenCalled();
     expect(await screen.findByText('Voice input saved.')).toBeInTheDocument();
@@ -1414,7 +1419,7 @@ describe('Settings screens', () => {
         getVoiceInputSettings: async () => ({
           provider: 'openai',
           url: 'https://api.openai.com/v1/realtime/calls', model: 'gpt-live-transcribe',
-          api_key: 'key', delay: 'low', prompt: '',
+          api_key: 'key', delay: 'low', prompt: '', send_phrase: 'over to you',
         }),
         getVoiceOutputSettings: async () => ({
           url: 'https://api.fish.audio/v1/tts', model: 's2.1-pro-free',
@@ -1465,6 +1470,7 @@ describe('Settings screens', () => {
           api_key: 'openai-key',
           delay: 'medium',
           prompt: 'Keep this prompt.',
+          send_phrase: 'over to you',
         }),
         getVoiceOutputSettings: async () => null,
         saveVoiceInputSettings,
@@ -1496,6 +1502,7 @@ describe('Settings screens', () => {
       api_key: 'xai-key',
       delay: 'medium',
       prompt: 'Keep this prompt.',
+      send_phrase: 'over to you',
     });
     expect(await screen.findByText('Voice input saved.')).toBeInTheDocument();
 
@@ -1557,6 +1564,7 @@ describe('Settings screens', () => {
       api_key: 'xai-key',
       delay: 'low',
       prompt: '',
+      send_phrase: 'over to you',
     });
     expect(saveVoiceOutputSettings).not.toHaveBeenCalled();
     expect(await screen.findByText('Voice input saved.')).toBeInTheDocument();
@@ -1586,6 +1594,7 @@ describe('Settings screens', () => {
       api_key: 'xai-key',
       delay: 'low',
       prompt: '',
+      send_phrase: 'over to you',
     });
     expect(saveVoiceOutputSettings).not.toHaveBeenCalled();
   });

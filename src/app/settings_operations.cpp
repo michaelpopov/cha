@@ -148,6 +148,7 @@ VoiceInputSettings voice_input_settings(
         .api_key = settings.api_key_id,
         .delay = settings.delay,
         .prompt = settings.prompt,
+        .send_phrase = settings.send_phrase,
     };
 }
 
@@ -636,6 +637,7 @@ VoiceInputSettings save_voice_input_settings(
         .api_key_id = update.api_key,
         .delay = update.delay,
         .prompt = update.prompt,
+        .send_phrase = update.send_phrase,
     };
     normalize_unused_voice_input_delay(settings.provider, settings.delay);
     return with_settings_edit([&] {
@@ -668,6 +670,7 @@ std::optional<VoiceInputRuntime> get_voice_input_runtime(
         .model = settings.model,
         .delay = settings.delay,
         .prompt = settings.prompt,
+        .send_phrase = settings.send_phrase,
     };
 }
 

@@ -67,6 +67,7 @@ struct WorkspaceVoiceInput {
     std::string api_key_id;
     std::string delay{"low"};
     std::string prompt;
+    std::string send_phrase{"over to you"};
 };
 
 // xAI stores delay for old files and does not send it. An invalid value becomes low.

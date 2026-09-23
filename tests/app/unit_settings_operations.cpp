@@ -302,10 +302,12 @@ TEST(ApplicationSettings, SavesXaiVoiceInputWithoutVoiceOutput) {
         .api_key = key.id,
         .delay = "obsolete-delay-value",
         .prompt = "unused",
+        .send_phrase = "your turn",
     }, epoch);
     EXPECT_EQ(saved.provider, "xai");
     EXPECT_EQ(saved.delay, "low");
     EXPECT_EQ(saved.prompt, "unused");
+    EXPECT_EQ(saved.send_phrase, "your turn");
     EXPECT_FALSE(application->get_voice_output_settings(epoch));
 
     application->request_shutdown();
@@ -320,9 +322,11 @@ TEST(ApplicationSettings, SavesXaiVoiceInputWithoutVoiceOutput) {
     EXPECT_EQ(loaded->model, "grok-voice-transcribe-2.0");
     EXPECT_EQ(loaded->delay, "low");
     EXPECT_EQ(loaded->prompt, "unused");
+    EXPECT_EQ(loaded->send_phrase, "your turn");
     EXPECT_FALSE(reopened->get_voice_output_settings(reopened->context_epoch()));
     const auto runtime = reopened->get_voice_input_runtime(reopened->context_epoch());
     ASSERT_TRUE(runtime);
+    EXPECT_EQ(runtime->send_phrase, "your turn");
     EXPECT_EQ(runtime->provider, "xai");
     EXPECT_FALSE(nlohmann::json(*runtime).contains("api_key"));
 

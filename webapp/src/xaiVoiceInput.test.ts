@@ -174,6 +174,8 @@ describe('dictation piece formatting', () => {
   });
 
   it('keeps a prepared newline when appending to a draft', () => {
+    expect(appendPreparedTranscription('', ' next')).toBe('next');
+    expect(appendPreparedTranscription('', '\n')).toBe('\n');
     expect(appendPreparedTranscription('Draft', 'Hello')).toBe('Draft Hello');
     expect(appendPreparedTranscription('Draft ', 'Hello')).toBe('Draft Hello');
     expect(appendPreparedTranscription('Draft', '\n')).toBe('Draft\n');

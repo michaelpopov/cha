@@ -294,6 +294,7 @@ export interface components {
             /** @enum {string} */
             delay: "low" | "medium" | "high" | "xhigh";
             prompt: string;
+            send_phrase: string;
         };
         VoiceInputRuntime: {
             /** @enum {string} */
@@ -303,6 +304,7 @@ export interface components {
             /** @enum {string} */
             delay: "low" | "medium" | "high" | "xhigh";
             prompt: string;
+            send_phrase: string;
         };
         XaiVoiceStartResult: {
             session_id: string;

@@ -445,7 +445,8 @@ export function isVoiceInputSettings(value: unknown): value is VoiceInputSetting
     && typeof value.model === 'string' && value.model.length > 0
     && typeof value.api_key === 'string' && value.api_key.length > 0
     && isVoiceInputDelay(value.delay)
-    && typeof value.prompt === 'string';
+    && typeof value.prompt === 'string'
+    && typeof value.send_phrase === 'string';
 }
 
 export function isXaiVoiceStartResult(value: unknown): value is XaiVoiceStartResult {
@@ -473,6 +474,7 @@ export function isNativeVoiceInputRuntime(value: unknown): value is NativeVoiceI
     && typeof value.model === 'string' && value.model.length > 0
     && isVoiceInputDelay(value.delay)
     && typeof value.prompt === 'string'
+    && typeof value.send_phrase === 'string'
     && !('api_key' in value);
 }
 

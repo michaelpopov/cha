@@ -106,6 +106,20 @@ function xaiBridgeFromClient(client: ChaClient): VoiceInputXaiBridge {
 // first time it scrolled itself.
 const followSlack = 24;
 const allCharactersTarget = '*';
+function withoutVoiceSendPhrase(text: string, phrase: string): string | null {
+  const spokenPhrase = phrase.trim().replace(/[,.!?;:…]+$/, '').trim();
+  if (!spokenPhrase) return null;
+  const escaped = spokenPhrase.split(/\s+/)
+    .map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('\\s+');
+  const pattern = new RegExp(`(?:^|[\\s,;:]+)${escaped}([,.!?;:…]*)\\s*$`, 'i');
+  const match = text.match(pattern);
+  if (!match) return null;
+  const prompt = text.replace(pattern, '').trimEnd();
+  return match[1]?.includes('?') && prompt && !/[.!?…]$/.test(prompt)
+    ? `${prompt}?` : prompt;
+}
+
 function multicastSubmission(text: string): string {
   if (text.startsWith('/')) return text;
   const firstText = text.search(/\S/);
@@ -121,7 +135,9 @@ function multicastSubmission(text: string): string {
 const echoedTimestampPrefix = /^\s*\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\]\s*/;
 
 function visibleEntryText(kind: string, text: string): string {
-  return kind === 'character' ? text.replace(echoedTimestampPrefix, '') : text;
+  return kind === 'character'
+    ? text.replace(echoedTimestampPrefix, '').replace(/^(?:[ \t]*\r?\n)+/, '')
+    : text;
 }
 
 type VisibleTranscriptEntry = {
@@ -361,9 +377,11 @@ export function ChatScreen({
   const [voiceInputState, setVoiceInputState] = useState<
     'idle' | 'starting' | 'recording' | 'finishing'
   >('idle');
+  const [voiceSendPending, setVoiceSendPending] = useState(false);
   const [voiceConfiguration, setVoiceConfiguration] =
     useState<VoiceInputConfiguration | null>(null);
   const voiceInputSession = useRef<VoiceInputTransport | null>(null);
+  const voiceSendPhrase = useRef('over to you');
   const voiceInputStartup = useRef<AbortController | null>(null);
   const voiceInputAttempt = useRef(0);
   const voiceLanguage = useRef<'en' | 'ru'>('en');
@@ -477,6 +495,7 @@ export function ChatScreen({
     followingLatest.current = true;
     setSendToAll(false);
     setTurnToDelete(null);
+    setVoiceSendPending(false);
     updateDraft('');
   }, [conversationKey]);
 
@@ -487,6 +506,7 @@ export function ChatScreen({
     voiceInputAttempt.current += 1;
     voiceInputStartup.current?.abort();
     voiceInputStartup.current = null;
+    setVoiceSendPending(false);
     setVoiceInputState('idle');
   }, [conversationKey, sessionAvailable, state.bootstrap?.vault_name]);
 
@@ -790,31 +810,58 @@ export function ChatScreen({
       + (event.key === 'ArrowUp' ? 24 : -24));
   }
 
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function send(voiceCommand = false) {
     if (generationActive || !canSend) return;
+    const wasRecording = voiceInputSession.current !== null;
+    setVoiceSendPending(false);
     setPendingAction('send');
     setActionError(null);
     try {
-      if (!await finishVoiceInput()) return;
-      const submitted = draftRef.current;
+      // A spoken command leaves the microphone on for the next prompt.
+      if (!voiceCommand && !await finishVoiceInput()) return;
+      const withoutCommand = voiceCommand || wasRecording
+        ? withoutVoiceSendPhrase(draftRef.current, voiceSendPhrase.current) : null;
+      if (voiceCommand && withoutCommand === null) return;
+      const submitted = withoutCommand ?? draftRef.current;
+      if (withoutCommand !== null) {
+        updateDraft(submitted.trim() ? submitted : '');
+      }
       if (!submitted.trim()) return;
       const result = await onSubmitInput(
         sendToAll ? multicastSubmission(submitted) : submitted,
       );
-      // Typing may continue while the send is in flight; only the text that was
-      // actually sent is cleared.
       if (result.clear_input) {
+        // Speech or typing may continue during the send. Clear only its prefix.
         const current = draftRef.current;
-        updateDraft(current === submitted ? '' : current);
+        updateDraft(current.startsWith(submitted)
+          ? current.slice(submitted.length).replace(/^[ \t]+/, '') : current);
+      } else {
+        setVoiceSendPending(false);
       }
     } catch (failure: unknown) {
-      // A failed send deliberately leaves the draft untouched.
+      setVoiceSendPending(false);
       setActionError(actionMessage(failure));
     } finally {
       setPendingAction(null);
     }
   }
+
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    void send();
+  }
+
+  useEffect(() => {
+    if (!voiceSendPending) return;
+    if (withoutVoiceSendPhrase(draft, voiceSendPhrase.current) === null) {
+      setVoiceSendPending(false);
+      return;
+    }
+    // Wait until generation ends before sending a spoken command.
+    if (!canSend || generationActive) return;
+    const timer = setTimeout(() => void send(true), 1000);
+    return () => clearTimeout(timer);
+  }, [voiceSendPending, draft, canSend, generationActive, sendToAll]);
 
   // Enter is the quick way to send. Ctrl+Enter inserts a line explicitly: it
   // is not a consistently native textarea shortcut, so relying on the browser
@@ -905,6 +952,7 @@ export function ChatScreen({
     voiceInputStartup.current = startup;
     let receivedVoiceDelta = false;
     let voicePreview = '';
+    setVoiceSendPending(false);
     setVoiceInputState('starting');
     setActionError(null);
     let runtime: NativeVoiceInputRuntime | null;
@@ -924,6 +972,7 @@ export function ChatScreen({
       setActionError('Voice input is unavailable.');
       return;
     }
+    voiceSendPhrase.current = runtime.send_phrase;
     const configuration: VoiceInputConfiguration = {
       provider: runtime.provider,
       model: runtime.model,
@@ -947,20 +996,27 @@ export function ChatScreen({
               const next = appendPreparedTranscription(base, text);
               voicePreview = next.slice(base.length);
               updateDraft(next);
+              if (!text && withoutVoiceSendPhrase(next, voiceSendPhrase.current) !== null) {
+                setVoiceSendPending(true);
+              }
             }
             return;
           }
           if (!text) return;
-          updateDraft(receivedVoiceDelta
-            ? draftRef.current + text
+          const current = draftRef.current;
+          updateDraft(receivedVoiceDelta && current ? current + text
             : configuration.provider === 'xai'
-              ? appendPreparedTranscription(draftRef.current, text)
-              : appendTranscription(draftRef.current, text));
+              ? appendPreparedTranscription(current, text)
+              : appendTranscription(current, text));
+          if (withoutVoiceSendPhrase(draftRef.current, voiceSendPhrase.current) !== null) {
+            setVoiceSendPending(true);
+          }
           receivedVoiceDelta = true;
         },
         (failure) => {
           if (voiceInputAttempt.current !== attempt) return;
           voiceInputSession.current = null;
+          setVoiceSendPending(false);
           setVoiceInputState('idle');
           setActionError(voiceInputMessage(failure));
         },

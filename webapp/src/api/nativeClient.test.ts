@@ -211,6 +211,7 @@ describe('native CHA client', () => {
         model: 'gpt-4o-transcribe',
         delay: 'low',
         prompt: '',
+        send_phrase: 'over to you',
       }),
     });
     const client = createNativeChaClient(bridge);
@@ -227,6 +228,7 @@ describe('native CHA client', () => {
       model: 'gpt-4o-transcribe',
       delay: 'low',
       prompt: '',
+      send_phrase: 'over to you',
     });
   });
 

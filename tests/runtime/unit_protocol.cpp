@@ -545,8 +545,10 @@ TEST(WebProtocol, ParsesRouteSpecificCommandPayloads) {
         {"api_key", "api_key_1"},
         {"delay", "low"},
         {"prompt", ""},
+        {"send_phrase", "your turn"},
     });
     EXPECT_EQ(voice.provider, "xai");
+    EXPECT_EQ(voice.send_phrase, "your turn");
     EXPECT_EQ(
         nlohmann::json(voice)["provider"], "xai");
     EXPECT_THROW(

@@ -1427,6 +1427,7 @@ const defaultVoiceInput: VoiceInputSettings = {
   api_key: '',
   delay: 'low',
   prompt: '',
+  send_phrase: 'over to you',
 };
 
 const voiceInputAuthority = /^[A-Za-z0-9.\-:[\]]+$/;
@@ -1513,7 +1514,8 @@ export function VoiceSettingsScreen({ client, dispatch }: SettingsScreenProps) {
     || input.model !== inputBaseline.model
     || input.api_key !== inputBaseline.api_key
     || input.delay !== inputBaseline.delay
-    || input.prompt !== inputBaseline.prompt;
+    || input.prompt !== inputBaseline.prompt
+    || input.send_phrase !== inputBaseline.send_phrase;
   const outputDirty = output.url !== outputBaseline.url
     || output.model !== outputBaseline.model
     || output.api_key !== outputBaseline.api_key
@@ -1560,6 +1562,7 @@ export function VoiceSettingsScreen({ client, dispatch }: SettingsScreenProps) {
         api_key: input.api_key,
         delay: input.delay,
         prompt: input.prompt,
+        send_phrase: input.send_phrase.trim(),
       });
       setSavedInput(updatedInput);
       setInput(updatedInput);
@@ -1609,6 +1612,7 @@ export function VoiceSettingsScreen({ client, dispatch }: SettingsScreenProps) {
             <label>Input URL endpoint<input className="cha-form-control" onChange={(event) => setInput({ ...input, url: event.target.value })} value={input.url} /></label>
             <label>Input model name<input className="cha-form-control" onChange={(event) => setInput({ ...input, model: event.target.value })} value={input.model} /></label>
             <label>Input API key name<select className="cha-form-control" onChange={(event) => setInput({ ...input, api_key: event.target.value })} value={input.api_key}><option value="">Select an API key</option>{keys.map((key) => <option key={key.id} value={key.id}>{key.display_name}</option>)}</select></label>
+            <label>Hands-free send phrase<input className="cha-form-control" onChange={(event) => setInput({ ...input, send_phrase: event.target.value })} value={input.send_phrase} /></label>
             {input.provider === 'openai' && (
               <>
                 <label>Input delay<select className="cha-form-control" onChange={(event) => setInput({ ...input, delay: event.target.value as VoiceInputSettings['delay'] })} value={input.delay}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="xhigh">Extra high</option></select></label>

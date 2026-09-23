@@ -413,6 +413,7 @@ struct VoiceInputSettings {
     std::string api_key;
     std::string delay;
     std::string prompt;
+    std::string send_phrase{"over to you"};
 };
 
 // Native runtime omits stored secrets. The browser does not receive the API key.
@@ -422,6 +423,7 @@ struct VoiceInputRuntime {
     std::string model;
     std::string delay;
     std::string prompt;
+    std::string send_phrase{"over to you"};
 };
 
 struct VoiceOutputSettings {

@@ -348,7 +348,7 @@ WorkspaceVoiceInput load_voice_input(
     const std::filesystem::path& path) {
     const toml::table table = read_toml(source, path, "voice input config");
     static constexpr std::string_view fields[]{
-        "provider", "url", "model", "api_key", "delay", "prompt"};
+        "provider", "url", "model", "api_key", "delay", "prompt", "send_phrase"};
     reject_unknown_fields(table, path, fields, "Voice input config");
     WorkspaceVoiceInput result{
         .provider = optional_value<std::string>(
@@ -363,6 +363,9 @@ WorkspaceVoiceInput load_voice_input(
         .prompt = optional_value<std::string>(
                       table, path, "prompt", "a string")
                       .value_or(""),
+        .send_phrase = optional_value<std::string>(
+                           table, path, "send_phrase", "a string")
+                           .value_or("over to you"),
     };
     if (!known_voice_input_provider(result.provider)) {
         throw std::runtime_error(
@@ -2318,6 +2321,7 @@ void WorkspaceConfigEditor::write_voice_input(const WorkspaceVoiceInput& setting
     table.insert("api_key", settings.api_key_id);
     table.insert("delay", delay);
     table.insert("prompt", settings.prompt);
+    table.insert("send_phrase", settings.send_phrase);
     write_toml(path, table);
 }
 

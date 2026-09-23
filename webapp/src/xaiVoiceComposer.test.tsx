@@ -77,6 +77,7 @@ const runtime = {
   model: 'grok-voice-transcribe-2.0',
   delay: 'low' as const,
   prompt: '',
+  send_phrase: 'over to you',
 };
 
 function installCapture(): { stopTrack: ReturnType<typeof vi.fn> } {
@@ -131,11 +132,11 @@ function renderChat(
   };
 }
 
-async function emit(piecesForAudio: string[][], stopPieces: string[] = []) {
+async function emit(piecesForAudio: string[][], stopPieces: string[] = [], sendPhrase = 'over to you') {
   const languages: string[][] = [];
   let releaseStop: ((value: { session_id: string; pieces: string[] }) => void) | undefined;
   const client = fixtureClient({
-    getVoiceInputRuntime: async () => runtime,
+    getVoiceInputRuntime: async () => ({ ...runtime, send_phrase: sendPhrase }),
     startXaiVoiceInput: async (sessionId, spoken) => {
       languages.push(spoken);
       return { session_id: sessionId, stop_budget_ms: 20000 };
@@ -160,16 +161,185 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-async function dictate(piecesForAudio: string[][], stopPieces: string[] = []) {
+async function dictate(piecesForAudio: string[][], stopPieces: string[] = [], sendPhrase = 'over to you') {
   installCapture();
-  const harness = await emit(piecesForAudio, stopPieces);
-  renderChat(harness.client);
+  const harness = await emit(piecesForAudio, stopPieces, sendPhrase);
+  const view = renderChat(harness.client);
   fireEvent.click(await screen.findByRole('button', { name: 'Start voice input' }));
   await screen.findByRole('button', { name: 'Stop voice input' });
-  return harness;
+  return { ...harness, view };
 }
 
 describe('xAI composer', () => {
+  it('uses the configured send phrase instead of the default', async () => {
+    const harness = await dictate([
+      ['Check the logs, over to you'],
+      [' your turn'],
+    ], [], 'your turn.');
+    const input = screen.getByRole('textbox', { name: 'Message' });
+    FakeWorklet.latest?.emit(Int16Array.from([1]));
+    await waitFor(() => expect(input).toHaveValue('Check the logs, over to you'));
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 1100)); });
+    expect(harness.view.props.onSubmitInput).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Stop voice input' })).toBeEnabled();
+
+    FakeWorklet.latest?.emit(Int16Array.from([2]));
+    await waitFor(() => expect(harness.view.props.onSubmitInput).toHaveBeenCalledWith(
+      'Check the logs, over to you',
+    ), {
+      timeout: 2500,
+    });
+    expect(harness.releaseStop()).toBeUndefined();
+    expect(screen.getByRole('button', { name: 'Stop voice input' })).toBeEnabled();
+  });
+
+  it('does not auto-send when the phrase is empty', async () => {
+    const harness = await dictate([['Plan over to you']], [], '');
+    FakeWorklet.latest?.emit(Int16Array.from([1]));
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue(
+      'Plan over to you',
+    ));
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 1100)); });
+    expect(harness.view.props.onSubmitInput).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Stop voice input' })).toBeEnabled();
+  });
+
+  it('sends when finalized dictation ends with the spoken command', async () => {
+    installCapture();
+    const replies = [
+      { pieces: [], preview: 'Check the logs, over to you' },
+      { pieces: ['Check the logs,', ' over', ' to you.'], preview: '' },
+    ];
+    const client = fixtureClient({
+      getVoiceInputRuntime: async () => runtime,
+      sendXaiVoiceAudio: async (sessionId) => ({
+        session_id: sessionId, ...replies.shift()!,
+      }),
+    });
+    const view = renderChat(client);
+    const input = screen.getByRole('textbox', { name: 'Message' });
+    fireEvent.click(await screen.findByRole('button', { name: 'Start voice input' }));
+    await screen.findByRole('button', { name: 'Stop voice input' });
+
+    FakeWorklet.latest?.emit(Int16Array.from([1]));
+    await waitFor(() => expect(input).toHaveValue('Check the logs, over to you'));
+    expect(view.props.onSubmitInput).not.toHaveBeenCalled();
+    FakeWorklet.latest?.emit(Int16Array.from([2]));
+    await waitFor(() => expect(view.props.onSubmitInput).toHaveBeenCalledWith('Check the logs'), {
+      timeout: 2500,
+    });
+    expect(view.props.onSubmitInput).toHaveBeenCalledTimes(1);
+    expect(input).toHaveValue('');
+    expect(screen.getByRole('button', { name: 'Stop voice input' })).toBeEnabled();
+  });
+
+  it('keeps the question mark after removing the spoken command', async () => {
+    const harness = await dictate([['How can I fix it over to you?']]);
+    FakeWorklet.latest?.emit(Int16Array.from([1]));
+    await waitFor(() => expect(harness.view.props.onSubmitInput).toHaveBeenCalledWith(
+      'How can I fix it?',
+    ), { timeout: 2500 });
+    expect(harness.releaseStop()).toBeUndefined();
+  });
+
+  it('sends when the command arrives in the final stop reply', async () => {
+    const harness = await dictate([['Plan']], [' over to you!']);
+    FakeWorklet.latest?.emit(Int16Array.from([1]));
+    const input = screen.getByRole('textbox', { name: 'Message' });
+    await waitFor(() => expect(input).toHaveValue('Plan'));
+    fireEvent.click(screen.getByRole('button', { name: 'Stop voice input' }));
+    await waitFor(() => expect(harness.releaseStop()).toBeTypeOf('function'), {
+      timeout: 2500,
+    });
+    await act(async () => { harness.releaseStop()?.({ session_id: 'unused', pieces: [] }); });
+    await waitFor(() => expect(harness.view.props.onSubmitInput).toHaveBeenCalledWith('Plan'), {
+      timeout: 2500,
+    });
+  });
+
+  it('does not send an empty prompt when only the command is spoken', async () => {
+    const harness = await dictate([['Over to you.']]);
+    FakeWorklet.latest?.emit(Int16Array.from([1]));
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue(''), {
+      timeout: 2500,
+    });
+    expect(screen.getByRole('button', { name: 'Stop voice input' })).toBeEnabled();
+    expect(harness.releaseStop()).toBeUndefined();
+    expect(harness.view.props.onSubmitInput).not.toHaveBeenCalled();
+  });
+
+  it('dictates two prompts through one microphone session', async () => {
+    const harness = await dictate([
+      ['First question over to you'],
+      [' Second question over to you'],
+    ]);
+    const input = screen.getByRole('textbox', { name: 'Message' });
+    FakeWorklet.latest?.emit(Int16Array.from([1]));
+    await waitFor(() => expect(harness.view.props.onSubmitInput).toHaveBeenCalledWith(
+      'First question',
+    ), { timeout: 2500 });
+    expect(input).toHaveValue('');
+    expect(screen.getByRole('button', { name: 'Stop voice input' })).toBeEnabled();
+    expect(FakeContext.latest?.closed).toBe(false);
+
+    FakeWorklet.latest?.emit(Int16Array.from([2]));
+    await waitFor(() => expect(harness.view.props.onSubmitInput).toHaveBeenCalledWith(
+      'Second question',
+    ), { timeout: 2500 });
+    expect(harness.view.props.onSubmitInput).toHaveBeenCalledTimes(2);
+    expect(harness.releaseStop()).toBeUndefined();
+    expect(input).toHaveValue('');
+    expect(screen.getByRole('button', { name: 'Stop voice input' })).toBeEnabled();
+  });
+
+  it('keeps recording when more words follow the phrase', async () => {
+    const harness = await dictate([
+      ['I will hand it over to you'],
+      [' and then you decide'],
+    ]);
+    const input = screen.getByRole('textbox', { name: 'Message' });
+    FakeWorklet.latest?.emit(Int16Array.from([1]));
+    await waitFor(() => expect(input).toHaveValue('I will hand it over to you'));
+    FakeWorklet.latest?.emit(Int16Array.from([2]));
+    await waitFor(() => expect(input).toHaveValue('I will hand it over to you and then you decide'));
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 1100)); });
+
+    expect(harness.view.props.onSubmitInput).not.toHaveBeenCalled();
+    expect(harness.releaseStop()).toBeUndefined();
+    expect(screen.getByRole('button', { name: 'Stop voice input' })).toBeEnabled();
+  });
+
+  it('sends after an unconfirmed preview is removed', async () => {
+    installCapture();
+    const replies = [
+      { pieces: ['Check the logs over to you'], preview: '' },
+      { pieces: [], preview: ' um' },
+      { pieces: [], preview: '' },
+    ];
+    const view = renderChat(fixtureClient({
+      getVoiceInputRuntime: async () => runtime,
+      sendXaiVoiceAudio: async (sessionId) => ({
+        session_id: sessionId, ...replies.shift()!,
+      }),
+    }));
+    const input = screen.getByRole('textbox', { name: 'Message' });
+    fireEvent.click(await screen.findByRole('button', { name: 'Start voice input' }));
+    await screen.findByRole('button', { name: 'Stop voice input' });
+
+    FakeWorklet.latest?.emit(Int16Array.from([1]));
+    await waitFor(() => expect(input).toHaveValue('Check the logs over to you'));
+    FakeWorklet.latest?.emit(Int16Array.from([2]));
+    await waitFor(() => expect(input).toHaveValue('Check the logs over to you um'));
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 1100)); });
+    expect(view.props.onSubmitInput).not.toHaveBeenCalled();
+
+    FakeWorklet.latest?.emit(Int16Array.from([3]));
+    await waitFor(() => expect(input).toHaveValue('Check the logs over to you'));
+    await waitFor(() => expect(view.props.onSubmitInput).toHaveBeenCalledWith(
+      'Check the logs',
+    ), { timeout: 2500 });
+  });
+
   it('shows interim words and replaces them when xAI revises the transcript', async () => {
     installCapture();
     const replies = [

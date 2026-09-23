@@ -442,6 +442,7 @@ void to_json(nlohmann::json& json, const VoiceInputSettings& value) {
         {"api_key", value.api_key},
         {"delay", value.delay},
         {"prompt", value.prompt},
+        {"send_phrase", value.send_phrase},
     };
 }
 
@@ -452,6 +453,7 @@ void to_json(nlohmann::json& json, const VoiceInputRuntime& value) {
         {"model", value.model},
         {"delay", value.delay},
         {"prompt", value.prompt},
+        {"send_phrase", value.send_phrase},
     };
 }
 

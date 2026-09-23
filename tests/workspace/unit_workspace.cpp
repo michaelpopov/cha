@@ -1294,6 +1294,7 @@ TEST(Workspace, SelectsVoiceInputUrlsAndNormalizesUnusedXaiDelay) {
     EXPECT_EQ(normalized.voice_input()->provider, "xai");
     EXPECT_EQ(normalized.voice_input()->delay, "low");
     EXPECT_EQ(normalized.voice_input()->prompt, "keep");
+    EXPECT_EQ(normalized.voice_input()->send_phrase, "over to you");
     shutdown_diagnostic_logging();
     const std::string warnings = file_bytes(log_file);
     EXPECT_NE(warnings.find(std::string(openai_voice_input_url_message)), std::string::npos);

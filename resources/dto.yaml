@@ -663,7 +663,7 @@ components:
     VoiceInputSettings:
       type: object
       additionalProperties: false
-      required: [provider, url, model, api_key, delay, prompt]
+      required: [provider, url, model, api_key, delay, prompt, send_phrase]
       properties:
         provider:
           type: string
@@ -681,11 +681,13 @@ components:
           enum: [low, medium, high, xhigh]
         prompt:
           type: string
+        send_phrase:
+          type: string
 
     VoiceInputRuntime:
       type: object
       additionalProperties: false
-      required: [provider, url, model, delay, prompt]
+      required: [provider, url, model, delay, prompt, send_phrase]
       properties:
         provider:
           type: string
@@ -700,6 +702,8 @@ components:
           type: string
           enum: [low, medium, high, xhigh]
         prompt:
+          type: string
+        send_phrase:
           type: string
 
     XaiVoiceStartResult:
