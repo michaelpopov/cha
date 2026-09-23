@@ -22,6 +22,12 @@
 namespace {
 using namespace std::chrono_literals;
 
+#ifdef __APPLE__
+TEST(NativeRuntime, SupportsSecureWebSockets) {
+    EXPECT_EQ(cha_runtime_supports_secure_websockets(), 1);
+}
+#endif
+
 struct CapturedDeliveries {
     std::mutex mutex;
     std::condition_variable ready;

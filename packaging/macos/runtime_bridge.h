@@ -38,6 +38,9 @@ int32_t cha_runtime_requires_password(
 void cha_runtime_destroy(ChaRuntime* runtime);
 int32_t cha_runtime_can_modify(const ChaRuntime* runtime);
 int32_t cha_runtime_can_transfer_r2(const ChaRuntime* runtime);
+// Checks the libcurl linked into this runtime, after initializing it.
+// Returns 1 when secure WebSocket transfers are supported, otherwise 0.
+int32_t cha_runtime_supports_secure_websockets(void);
 // Return 1 on success and 0 on a failure the caller can retry. -1 means the
 // workspace database could not be reopened afterwards: this process can no
 // longer serve and must quit.

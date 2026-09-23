@@ -2,6 +2,7 @@
 
 #include "app/application.h"
 #include "bridge/bridge_router.h"
+#include "util/curl.h"
 #include "util/logging.h"
 #include "util/path_name.h"
 #include "app/application_config.h"
@@ -301,6 +302,19 @@ void cha_runtime_destroy(ChaRuntime* runtime) {
     runtime->native_application.reset();
     if (runtime->logging) cha::shutdown_diagnostic_logging();
     delete runtime;
+}
+
+int32_t cha_runtime_supports_secure_websockets(void) {
+    try {
+        const cha::CurlHandle curl;
+        const auto* info = curl_version_info(CURLVERSION_NOW);
+        if (!info || !info->protocols) return 0;
+        for (const char* const* protocol = info->protocols; *protocol; ++protocol) {
+            if (std::string_view(*protocol) == "wss") return 1;
+        }
+    } catch (...) {
+    }
+    return 0;
 }
 
 int32_t cha_runtime_can_modify(const ChaRuntime* runtime) {

@@ -52,6 +52,11 @@ static int write_file(const char* path, const char* contents) {
 
 int main(int argc, const char* argv[]) {
     if (argc != 3) return 2;
+    if (!cha_runtime_supports_secure_websockets()) {
+        fprintf(stderr,
+            "embedded runtime smoke test failed: libcurl has no wss support\n");
+        return 1;
+    }
     if (unsetenv("CHA_R2_URL") != 0
         || unsetenv("CHA_R2_ACCESS_KEY_ID") != 0
         || unsetenv("CHA_R2_SECRET_ACCESS_KEY") != 0

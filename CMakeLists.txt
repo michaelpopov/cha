@@ -10,7 +10,11 @@ set(CHA_PACKAGE_VERSION "development" CACHE STRING
     "Version reported by the native application")
 
 find_package(Threads REQUIRED)
-find_package(CURL QUIET)
+# Apple's SDK libcurl exports the WebSocket API but cannot perform ws/wss
+# transfers. Use our bundled curl for both development and packaged macOS builds.
+if(NOT APPLE)
+    find_package(CURL QUIET)
+endif()
 if(WIN32)
     # Static OpenSSL so the application carries no OpenSSL DLLs. Which copy to
     # pick depends on the CRT this build uses: mixing the two puts a separate
@@ -58,18 +62,27 @@ include(FetchContent)
 # Windows builds must not require a separately copied libcurl DLL.
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 
-if(NOT CURL_FOUND)
+if(APPLE OR NOT CURL_FOUND)
     set(BUILD_CURL_EXE OFF CACHE BOOL "" FORCE)
     set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
     set(BUILD_LIBCURL_DOCS OFF CACHE BOOL "" FORCE)
     set(BUILD_MISC_DOCS OFF CACHE BOOL "" FORCE)
     set(ENABLE_CURL_MANUAL OFF CACHE BOOL "" FORCE)
     set(HTTP_ONLY ON CACHE BOOL "" FORCE)
+    set(CURL_DISABLE_WEBSOCKETS OFF CACHE BOOL "" FORCE)
     set(CURL_USE_LIBPSL OFF CACHE BOOL "" FORCE)
     if(WIN32)
         set(CURL_USE_SCHANNEL ON CACHE BOOL "" FORCE)
     elseif(APPLE)
+        # This backend is supported by our pinned curl 8.14.1; upgrading to
+        # 8.15 or later requires choosing another TLS backend.
         set(CURL_USE_SECTRANSP ON CACHE BOOL "" FORCE)
+        set(CURL_USE_OPENSSL OFF CACHE BOOL "" FORCE)
+        # Do not pick up a Homebrew nghttp2 dylib in the portable app bundle.
+        set(USE_NGHTTP2 OFF CACHE BOOL "" FORCE)
+        # curl 8.14.1's symbol check detects pipe2 in newer SDKs even when
+        # deploying to macOS versions before its introduction in macOS 27.
+        set(HAVE_PIPE2 0 CACHE INTERNAL "Use curl's portable pipe fallback" FORCE)
     else()
         set(CURL_USE_OPENSSL ON CACHE BOOL "" FORCE)
     endif()
