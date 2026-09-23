@@ -1,3 +1,4 @@
+import type { XaiVoicePieces, XaiVoiceStartResult } from './api/client';
 import { OpenAiVoiceInputSession } from './openAiVoiceInput';
 import { startXaiVoiceInput } from './xaiVoiceInput';
 
@@ -20,15 +21,8 @@ export interface VoiceInputTransport {
   cancel(): void;
 }
 
-export interface VoiceInputXaiStartResult {
-  session_id: string;
-  stop_budget_ms: number;
-}
-
-export interface VoiceInputXaiPieces {
-  session_id: string;
-  pieces: string[];
-}
+export type VoiceInputXaiStartResult = XaiVoiceStartResult;
+export type VoiceInputXaiPieces = XaiVoicePieces;
 
 export interface VoiceInputXaiBridge {
   start(

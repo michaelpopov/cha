@@ -30,12 +30,13 @@ class FakePort extends EventTarget {
   }
 }
 
-class FakeWorklet {
+class FakeWorklet extends EventTarget {
   static latest: FakeWorklet | null = null;
 
   readonly port = new FakePort();
 
   constructor(_context: unknown, readonly name: string) {
+    super();
     FakeWorklet.latest = this;
   }
 
@@ -105,14 +106,15 @@ const xaiConfiguration = {
   prompt: 'Do not send this prompt.',
 };
 
-function installCapture(): { stopTrack: ReturnType<typeof vi.fn> } {
+function installCapture() {
   const stopTrack = vi.fn();
+  const track = Object.assign(new EventTarget(), { kind: 'audio', readyState: 'live', stop: stopTrack });
   Object.defineProperty(navigator, 'mediaDevices', {
     configurable: true,
     value: {
       getUserMedia: vi.fn(async () => ({
-        getAudioTracks: () => [{ stop: stopTrack }],
-        getTracks: () => [{ stop: stopTrack }],
+        getAudioTracks: () => [track],
+        getTracks: () => [track],
       })),
     },
   });
@@ -121,11 +123,20 @@ function installCapture(): { stopTrack: ReturnType<typeof vi.fn> } {
   vi.stubGlobal('RTCPeerConnection', class {
     constructor() { throw new Error('OpenAI WebRTC should not start'); }
   });
-  return { stopTrack };
+  return { stopTrack, track };
 }
 
 function pieces(sessionId: string, text: string[]): VoiceInputXaiPieces {
   return { session_id: sessionId, pieces: text };
+}
+
+function readyBridge(stopBudgetMs = 20000): VoiceInputXaiBridge {
+  return {
+    start: vi.fn(async (id: string) => ({ session_id: id, stop_budget_ms: stopBudgetMs })),
+    audio: vi.fn(async (id: string) => pieces(id, [])),
+    stop: vi.fn(async (id: string) => pieces(id, ['Final words'])),
+    cancel: vi.fn(async () => {}),
+  };
 }
 
 afterEach(() => {
@@ -173,6 +184,85 @@ describe('dictation piece formatting', () => {
 });
 
 describe('xAI voice capture', () => {
+  it.each(['processorerror', 'ended'])('releases capture after %s', async (event) => {
+    const { stopTrack, track } = installCapture();
+    const failed = vi.fn();
+    const bridge = readyBridge();
+    const session = await VoiceInputSession.start(
+      xaiConfiguration, vi.fn(), failed, vi.fn(), bridge,
+    );
+    const worklet = FakeWorklet.latest!;
+    const target = event === 'ended' ? track : worklet;
+    target.dispatchEvent(new Event(event));
+    expect(failed).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ message: 'Voice input audio capture failed.' }),
+    );
+    expect(stopTrack).toHaveBeenCalledOnce();
+    expect(FakeContext.latest?.closed).toBe(true);
+    expect(bridge.cancel).toHaveBeenCalledOnce();
+    target.dispatchEvent(new Event(event));
+    worklet.emit(new Int16Array(1600));
+    expect(failed).toHaveBeenCalledOnce();
+    expect(bridge.audio).not.toHaveBeenCalled();
+    await expect(session.stop()).rejects.toThrow('Voice input audio capture failed.');
+  });
+
+  it('waits for audio cleanup after delivering the final words', async () => {
+    installCapture();
+    const transcript = vi.fn();
+    const failed = vi.fn();
+    const bridge = readyBridge();
+    const session = await VoiceInputSession.start(
+      xaiConfiguration, transcript, failed, vi.fn(), bridge,
+    );
+    let closeDone!: () => void;
+    const close = vi.spyOn(FakeContext.latest!, 'close').mockImplementation(
+      () => new Promise<void>((resolve) => { closeDone = resolve; }),
+    );
+    let settled = false;
+    const stopping = session.stop().then(() => { settled = true; });
+    await vi.waitFor(() => expect(close).toHaveBeenCalledOnce());
+    expect(transcript).toHaveBeenCalledWith('Final words');
+    expect(settled).toBe(false);
+    closeDone();
+    await stopping;
+    await session.stop();
+    expect(close).toHaveBeenCalledOnce();
+    FakeWorklet.latest!.dispatchEvent(new Event('processorerror'));
+    expect(failed).not.toHaveBeenCalled();
+    expect(bridge.cancel).not.toHaveBeenCalled();
+  });
+
+  it.each(['cancel', 'timeout'])('settles %s while audio cleanup is pending', async (action) => {
+    vi.useFakeTimers();
+    installCapture();
+    const failed = vi.fn();
+    const bridge = readyBridge(100);
+    const session = await VoiceInputSession.start(
+      xaiConfiguration, vi.fn(), failed, vi.fn(), bridge,
+    );
+    let closeDone!: () => void;
+    const close = vi.spyOn(FakeContext.latest!, 'close').mockImplementation(
+      () => new Promise<void>((resolve) => { closeDone = resolve; }),
+    );
+    const stopping = session.stop();
+    const result = stopping.catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(close).toHaveBeenCalledOnce();
+    if (action === 'cancel') {
+      session.cancel();
+      await expect(result).resolves.toBeUndefined();
+      expect(failed).not.toHaveBeenCalled();
+    } else {
+      await vi.advanceTimersByTimeAsync(100);
+      await expect(result).resolves.toMatchObject({ message: 'Voice input timed out.' });
+      expect(failed).toHaveBeenCalledOnce();
+    }
+    expect(bridge.cancel).toHaveBeenCalledOnce();
+    expect(close).toHaveBeenCalledOnce();
+    closeDone();
+  });
+
   it('starts capture after native readiness and forwards languages', async () => {
     installCapture();
     const OpenAiStart = vi.spyOn(OpenAiVoiceInputSession, 'start');

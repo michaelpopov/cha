@@ -106,6 +106,8 @@ struct Script {
     std::string authorization;
     bool connected = false;
     bool closed = false;
+    bool repeat_ignored_events = false;
+    std::size_t ignored_events = 0;
     std::atomic_bool stall_send{false};
 };
 
@@ -165,11 +167,19 @@ public:
     std::optional<media::XaiIncoming> recv(std::chrono::milliseconds wait) override {
         std::unique_lock lock(script_->mu);
         if (!script_->cv.wait_for(lock, wait, [&] {
-                return !script_->incoming.empty() || script_->closed;
+                return !script_->incoming.empty() || script_->closed
+                    || script_->repeat_ignored_events;
             })) {
             return std::nullopt;
         }
-        if (script_->incoming.empty()) return media::XaiIncoming{.closed = true};
+        if (script_->incoming.empty()) {
+            if (script_->repeat_ignored_events && !script_->closed) {
+                ++script_->ignored_events;
+                script_->cv.notify_all();
+                return media::XaiIncoming{.payload = R"({"type":"keepalive"})"};
+            }
+            return media::XaiIncoming{.closed = true};
+        }
         auto message = std::move(script_->incoming.front());
         script_->incoming.pop_front();
         return message;
@@ -660,6 +670,87 @@ TEST(XaiVoice, StaleEpochDoesNotCancelOnBadAudio) {
     const auto audio = owned.application->send_xai_voice_audio(
         "view-1", 3, "dictation-1", "AAE=", epoch, 30000ms);
     EXPECT_EQ(wait_reply(audio)["pieces"], nlohmann::json::array());
+}
+
+TEST(XaiVoice, IncomingEventsDoNotStarveAudioOrCancellation) {
+    for (const bool shutdown : {false, true}) {
+        OwnedApp owned;
+        save_xai(*owned.application, "ws://127.0.0.1:9/v1/stt");
+        const auto script = install_script(*owned.application);
+        script->repeat_ignored_events = true;
+        push_event(*script, created_event());
+        const auto epoch = owned.application->context_epoch();
+        (void)wait_reply(owned.application->start_xai_voice_input(
+            "view-1", 1, "dictation-1", {"en"}, epoch, 30000ms));
+        {
+            std::unique_lock lock(script->mu);
+            EXPECT_TRUE(script->cv.wait_for(lock, 1s, [&] {
+                return script->ignored_events >= 32;
+            }));
+        }
+        const auto audio = owned.application->send_xai_voice_audio(
+            "view-1", 2, "dictation-1", "AAE=", epoch, 30000ms);
+        EXPECT_NO_THROW((void)wait_reply(audio, 1s));
+        if (shutdown) owned.application->request_shutdown();
+        else owned.application->cancel_xai_voice_input("view-1", "dictation-1", epoch);
+        {
+            std::unique_lock lock(script->mu);
+            const bool closed = script->cv.wait_for(lock, 500ms, [&] {
+                return script->closed;
+            });
+            // Let even a regressed worker exit before destroying the app.
+            script->repeat_ignored_events = false;
+            script->cv.notify_all();
+            EXPECT_TRUE(closed);
+        }
+    }
+}
+
+TEST(XaiVoice, IncomingEventsDoNotStarveTheStopDeadline) {
+    OwnedApp owned;
+    save_xai(*owned.application, "ws://127.0.0.1:9/v1/stt");
+    const auto script = install_script(*owned.application);
+    script->repeat_ignored_events = true;
+    push_event(*script, created_event());
+    const auto epoch = owned.application->context_epoch();
+    (void)wait_reply(owned.application->start_xai_voice_input(
+        "view-1", 1, "dictation-1", {"en"}, epoch, 30000ms));
+    const auto stopped = owned.application->stop_xai_voice_input(
+        "view-1", 2, "dictation-1", 50, epoch, 30000ms);
+    try {
+        (void)wait_reply(stopped, 1s);
+        ADD_FAILURE() << "stop must time out without transcript.done";
+    } catch (const ApplicationError& error) {
+        EXPECT_EQ(error.code, ErrorCode::command_timeout);
+    } catch (const std::exception& error) {
+        ADD_FAILURE() << error.what();
+    }
+    {
+        std::lock_guard lock(script->mu);
+        script->repeat_ignored_events = false;
+        script->cv.notify_all();
+    }
+    wait_closed(*script);
+    EXPECT_EQ(script->text, std::vector<std::string>{"{\"type\":\"audio.done\"}"});
+}
+
+TEST(XaiCurlSocket, RepliesOnceToAPingSplitAcrossReads) {
+    XaiFakeServer server({
+        .messages = {created_event().dump()},
+        .after_audio_done = {R"({"type":"transcript.done"})"},
+        .send_ping = true,
+        .split_ping = true,
+    });
+    server.start();
+    OwnedApp owned;
+    save_xai(*owned.application, "ws://127.0.0.1:" + std::to_string(server.port()));
+    const auto epoch = owned.application->context_epoch();
+    (void)wait_reply(owned.application->start_xai_voice_input(
+        "view-1", 1, "dictation-1", {"en"}, epoch, 30000ms));
+    (void)wait_reply(owned.application->stop_xai_voice_input(
+        "view-1", 2, "dictation-1", 20000, epoch, 30000ms));
+    server.join();
+    EXPECT_EQ(server.pong_messages(), std::vector<std::string>{"ping"});
 }
 
 TEST(XaiCurlSocket, HandshakesSendsOrderedAudioAndReassemblesFrames) {

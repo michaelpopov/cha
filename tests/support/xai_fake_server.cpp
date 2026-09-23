@@ -264,7 +264,15 @@ struct XaiFakeServer::Impl {
             "Connection: Upgrade\r\n"
             "Sec-WebSocket-Accept: " + xai_fake_websocket_accept(key) + "\r\n\r\n";
         send_all(client, response);
-        if (options.send_ping) send_frame(client, 0x9, "ping", true);
+        if (options.send_ping) {
+            if (options.split_ping) {
+                send_all(client, "\x89\x04pi");
+                std::this_thread::sleep_for(std::chrono::milliseconds(150));
+                send_all(client, "ng");
+            } else {
+                send_frame(client, 0x9, "ping", true);
+            }
+        }
         for (std::size_t index = 0; index < options.messages.size(); ++index) {
             const bool split = options.fragment_first && index == 0
                 && options.messages[index].size() > 1;
@@ -294,7 +302,7 @@ struct XaiFakeServer::Impl {
             }
             if (frame->opcode == 0xA) {
                 std::lock_guard lock(mu);
-                pong = true;
+                pongs.push_back(frame->payload);
                 continue;
             }
             if (frame->opcode == 0x2 || (frame->opcode == 0x0 && binary_open)) {
@@ -484,7 +492,7 @@ struct XaiFakeServer::Impl {
     std::vector<std::string> events;
     std::string binary_partial;
     bool binary_open = false;
-    bool pong = false;
+    std::vector<std::string> pongs;
 #ifdef _WIN32
     bool sockets_ready = false;
 #endif
@@ -523,7 +531,12 @@ std::vector<std::string> XaiFakeServer::events() const {
 
 bool XaiFakeServer::saw_pong() const {
     std::lock_guard lock(impl_->mu);
-    return impl_->pong;
+    return !impl_->pongs.empty();
+}
+
+std::vector<std::string> XaiFakeServer::pong_messages() const {
+    std::lock_guard lock(impl_->mu);
+    return impl_->pongs;
 }
 
 int run_xai_fixture_server(int argc, char** argv) {

@@ -15,6 +15,7 @@ struct XaiFakeServerOptions {
     bool fragment_first = false;
     bool byte_writes = false;
     bool send_ping = false;
+    bool split_ping = false;
     bool close_after_messages = false;
     int http_status = 101;
     int port = 0;
@@ -37,6 +38,7 @@ public:
     [[nodiscard]] std::vector<std::string> text_messages() const;
     [[nodiscard]] std::vector<std::string> events() const;
     [[nodiscard]] bool saw_pong() const;
+    [[nodiscard]] std::vector<std::string> pong_messages() const;
 
 private:
     struct Impl;

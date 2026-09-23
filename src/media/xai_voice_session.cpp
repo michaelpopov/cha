@@ -208,9 +208,11 @@ void run_worker(
         }
         return update;
     };
+    // Yield to audio, stop, and deadline checks even when events keep arriving.
     // Stop at transcript.done. A close after it is not a failure.
     const auto drain = [&] {
-        while (!got_done) {
+        for (int count = 0; count < 16 && !got_done; ++count) {
+            throw_stopped();
             auto message = socket->recv(std::chrono::milliseconds::zero());
             if (!message) return;
             (void)handle(*message);

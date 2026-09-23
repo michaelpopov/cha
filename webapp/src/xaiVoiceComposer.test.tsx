@@ -16,12 +16,13 @@ class FakePort extends EventTarget {
   }
 }
 
-class FakeWorklet {
+class FakeWorklet extends EventTarget {
   static latest: FakeWorklet | null = null;
 
   readonly port = new FakePort();
 
   constructor(_context: unknown, _name: string) {
+    super();
     FakeWorklet.latest = this;
   }
 
@@ -80,12 +81,13 @@ const runtime = {
 
 function installCapture(): { stopTrack: ReturnType<typeof vi.fn> } {
   const stopTrack = vi.fn();
+  const track = Object.assign(new EventTarget(), { kind: 'audio', readyState: 'live', stop: stopTrack });
   Object.defineProperty(navigator, 'mediaDevices', {
     configurable: true,
     value: {
       getUserMedia: vi.fn(async () => ({
-        getAudioTracks: () => [{ kind: 'audio', readyState: 'live', stop: stopTrack }],
-        getTracks: () => [{ kind: 'audio', readyState: 'live', stop: stopTrack }],
+        getAudioTracks: () => [track],
+        getTracks: () => [track],
       })),
     },
   });

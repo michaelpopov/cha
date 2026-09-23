@@ -7,7 +7,6 @@
 #include <curl/curl.h>
 
 #include <chrono>
-#include <deque>
 #include <memory>
 #include <utility>
 
@@ -208,22 +207,22 @@ public:
     }
 
     std::optional<XaiIncoming> recv(std::chrono::milliseconds wait) override {
-        if (!inbox_.empty()) {
+        if (incoming_) {
             flush_idle_pong();
-            XaiIncoming message = std::move(inbox_.front());
-            inbox_.pop_front();
-            return message;
+            return std::exchange(incoming_, std::nullopt);
         }
         if (!attached_) return std::nullopt;
         const auto deadline = clock::now() + wait;
         for (;;) {
             if (pump_readable()) {
                 flush_idle_pong();
-                if (!inbox_.empty()) {
-                    XaiIncoming message = std::move(inbox_.front());
-                    inbox_.pop_front();
-                    return message;
+                if (incoming_) {
+                    return std::exchange(incoming_, std::nullopt);
                 }
+                if (clock::now() >= deadline) return std::nullopt;
+                // curl can still hold buffered data even if the socket is no
+                // longer readable. Try it before waiting on the socket.
+                continue;
             }
             if (clock::now() >= deadline) return std::nullopt;
             wait_for_socket(wait_budget_ms(deadline), false);
@@ -245,7 +244,8 @@ public:
         headers_.reset();
         fragment_.clear();
         fragment_open_ = false;
-        inbox_.clear();
+        incoming_.reset();
+        ping_payload_.clear();
         pong_payload_.clear();
         pong_sent_ = 0;
         pong_waiting_ = false;
@@ -254,22 +254,21 @@ public:
 
 private:
     bool pump_readable() {
-        if (!attached_) return false;
-        bool produced = false;
-        for (;;) {
-            char buffer[4096];
-            std::size_t received = 0;
-            const curl_ws_frame* meta = nullptr;
-            const CURLcode result = curl_ws_recv(
-                curl_.get(), buffer, sizeof(buffer), &received, &meta);
-            if (result == CURLE_AGAIN) return produced;
-            if (result != CURLE_OK || !meta) {
-                inbox_.push_back(XaiIncoming{.closed = true});
-                return true;
-            }
+        // Read one chunk per pass and keep at most one complete message.
+        // The worker must regain control even if the provider never goes idle.
+        if (!attached_ || incoming_) return false;
+        char buffer[4096];
+        std::size_t received = 0;
+        const curl_ws_frame* meta = nullptr;
+        const CURLcode result = curl_ws_recv(
+            curl_.get(), buffer, sizeof(buffer), &received, &meta);
+        if (result == CURLE_AGAIN) return false;
+        if (result != CURLE_OK || !meta) {
+            incoming_ = XaiIncoming{.closed = true};
+        } else {
             consume(*meta, std::string_view(buffer, received));
-            produced = true;
         }
+        return true;
     }
 
     void flush_idle_pong() {
@@ -279,20 +278,24 @@ private:
 
     void consume(const curl_ws_frame& meta, std::string_view chunk) {
         if (meta.flags & CURLWS_PING) {
+            if (meta.offset == 0) ping_payload_.clear();
+            ping_payload_.append(chunk);
+            if (meta.bytesleft > 0) return;
             // Answer one ping at a time. The payload of a pending pong must
             // not change, because curl may already hold part of it.
             if (!pong_waiting_) {
-                pong_payload_.assign(chunk);
+                pong_payload_ = std::move(ping_payload_);
                 pong_sent_ = 0;
                 pong_waiting_ = true;
             }
+            ping_payload_.clear();
             return;
         }
         if (meta.flags & CURLWS_PONG) return;
         if (meta.flags & CURLWS_CLOSE) {
             fragment_.clear();
             fragment_open_ = false;
-            inbox_.push_back(XaiIncoming{.closed = true});
+            incoming_ = XaiIncoming{.closed = true};
             return;
         }
         const bool data = (meta.flags & (CURLWS_TEXT | CURLWS_BINARY)) != 0;
@@ -313,7 +316,7 @@ private:
         message.payload = std::move(fragment_);
         fragment_.clear();
         fragment_open_ = false;
-        inbox_.push_back(std::move(message));
+        incoming_ = std::move(message);
     }
 
     void try_pong(
@@ -374,7 +377,8 @@ private:
     std::string fragment_;
     bool fragment_open_ = false;
     bool fragment_binary_ = false;
-    std::deque<XaiIncoming> inbox_;
+    std::optional<XaiIncoming> incoming_;
+    std::string ping_payload_;
     std::string pong_payload_;
     std::size_t pong_sent_ = 0;
     bool pong_waiting_ = false;

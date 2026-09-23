@@ -42,7 +42,7 @@ class XaiVoiceInputSession implements VoiceInputTransport {
   private stopping = false;
   private cancelled = false;
   private failed = false;
-  private released = false;
+  private releasePromise: Promise<void> | null = null;
   private captureStopped = false;
   private failure: unknown = null;
   private timedOut = false;
@@ -62,10 +62,17 @@ class XaiVoiceInputSession implements VoiceInputTransport {
     private readonly xaiBridge: VoiceInputXaiBridge,
   ) {
     this.worklet.port.addEventListener('message', this.onWorkletMessage);
+    this.worklet.addEventListener('processorerror', this.onCaptureFailure);
+    for (const track of this.stream.getTracks()) {
+      track.addEventListener('ended', this.onCaptureFailure);
+    }
     this.worklet.port.start();
   }
 
   attachMicrophone(): void {
+    if (this.stream.getTracks().some((track) => track.readyState === 'ended')) {
+      throw new Error('Voice input audio capture failed.');
+    }
     this.source = this.context.createMediaStreamSource(this.stream);
     this.source.connect(this.worklet);
   }
@@ -107,6 +114,10 @@ class XaiVoiceInputSession implements VoiceInputTransport {
       return;
     }
     this.acceptBatch(data.samples, data.type === 'flush-batch');
+  };
+
+  private readonly onCaptureFailure = (): void => {
+    if (!this.captureStopped) this.fail(new Error('Voice input audio capture failed.'));
   };
 
   // Nineteen completed batches may wait, including the in-flight request.
@@ -196,16 +207,24 @@ class XaiVoiceInputSession implements VoiceInputTransport {
     const reply = await this.xaiBridge.stop(this.sessionId, remaining, this.live.signal);
     if (this.cancelled || this.failed) return;
     if (reply.session_id === this.sessionId) this.deliver(reply.pieces);
+    await this.release();
   }
 
   private async finish(): Promise<void> {
     const started = Date.now();
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let onAbort = () => {};
+    const aborted = new Promise<never>((_resolve, reject) => {
+      onAbort = () => reject(abortError());
+      this.live.signal.addEventListener('abort', onAbort, { once: true });
+      if (this.live.signal.aborted) onAbort();
+    });
     const work = this.flushDrainAndStop(started);
     void work.catch(() => undefined);
     try {
       await Promise.race([
         work,
+        aborted,
         new Promise<never>((_resolve, reject) => {
           timer = setTimeout(() => {
             this.timedOut = true;
@@ -219,9 +238,10 @@ class XaiVoiceInputSession implements VoiceInputTransport {
     } catch (failure) {
       if (this.cancelled) return;
       if (!this.failed) this.fail(failure);
-      throw failure;
+      throw this.failure ?? failure;
     } finally {
       if (timer !== undefined) clearTimeout(timer);
+      this.live.signal.removeEventListener('abort', onAbort);
       this.release();
     }
   }
@@ -244,13 +264,20 @@ class XaiVoiceInputSession implements VoiceInputTransport {
     this.onFailure(failure);
   }
 
-  private release(): void {
-    if (this.released) return;
-    this.released = true;
+  private release(): Promise<void> {
+    if (this.releasePromise) return this.releasePromise;
     this.captureStopped = true;
     this.worklet.port.removeEventListener('message', this.onWorkletMessage);
+    this.worklet.removeEventListener('processorerror', this.onCaptureFailure);
+    for (const track of this.stream.getTracks()) {
+      track.removeEventListener('ended', this.onCaptureFailure);
+    }
     stopTracks(this.stream);
-    void this.context.close().catch(() => undefined);
+    this.releasePromise = this.context.close();
+    // Cancel and failure initiate cleanup without waiting; graceful stop awaits
+    // this same promise inside its timeout budget.
+    void this.releasePromise.catch(() => undefined);
+    return this.releasePromise;
   }
 }
 
