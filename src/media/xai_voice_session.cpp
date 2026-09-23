@@ -208,8 +208,11 @@ void run_worker(
         }
         return update;
     };
+    // Stop at transcript.done. A close after it is not a failure.
     const auto drain = [&] {
-        while (auto message = socket->recv(std::chrono::milliseconds::zero())) {
+        while (!got_done) {
+            auto message = socket->recv(std::chrono::milliseconds::zero());
+            if (!message) return;
             (void)handle(*message);
         }
     };

@@ -226,6 +226,26 @@ nlohmann::json final_event(std::string text, double start, double end) {
     };
 }
 
+nlohmann::json load_fixture_json(const std::string& path) {
+    std::ifstream input(path);
+    if (!input) throw std::runtime_error("Missing " + path);
+    nlohmann::json value;
+    input >> value;
+    return value;
+}
+
+std::vector<nlohmann::json> load_fixture_events(const std::string& path) {
+    std::ifstream input(path);
+    if (!input) throw std::runtime_error("Missing " + path);
+    std::vector<nlohmann::json> events;
+    std::string line;
+    while (std::getline(input, line)) {
+        if (line.empty()) continue;
+        events.push_back(nlohmann::json::parse(line).at("event"));
+    }
+    return events;
+}
+
 
 TEST(XaiVoice, KeepsTheKeyOnTheNativeSocketAndFormatsTheRequest) {
     OwnedApp owned;
@@ -555,6 +575,36 @@ TEST(XaiVoice, ShutdownFailsAPendingStop) {
     wait_closed(*script);
 }
 
+TEST(XaiVoice, CloseAfterDoneKeepsTheFinalWords) {
+    OwnedApp owned;
+    auto script = install_script(*owned.application);
+    save_xai(*owned.application, "ws://127.0.0.1:9/v1/stt");
+    const auto epoch = owned.application->context_epoch();
+    push_event(*script, created_event());
+    (void)wait_reply(owned.application->start_xai_voice_input(
+        "view-1", 1, "dictation-1", {"en"}, epoch, 30000ms));
+    const auto stopped = owned.application->stop_xai_voice_input(
+        "view-1", 2, "dictation-1", 20000, epoch, 30000ms);
+    {
+        std::unique_lock lock(script->mu);
+        ASSERT_TRUE(script->cv.wait_for(lock, 2s, [&] {
+            return !script->text.empty();
+        }));
+        // The final word, transcript.done, and the close arrive together.
+        script->incoming.push_back(media::XaiIncoming{
+            .payload = final_event("Last", 0.1, 0.4).dump()});
+        script->incoming.push_back(media::XaiIncoming{
+            .payload = nlohmann::json{
+                {"type", "transcript.done"},
+                {"text", ""},
+                {"words", nlohmann::json::array()},
+            }.dump()});
+        script->incoming.push_back(media::XaiIncoming{.closed = true});
+    }
+    script->cv.notify_all();
+    EXPECT_EQ(wait_reply(stopped)["pieces"], nlohmann::json::array({"Last"}));
+}
+
 TEST(XaiVoice, RejectsBadAudioWithoutSendingIt) {
     OwnedApp owned;
     auto script = install_script(*owned.application);
@@ -655,6 +705,52 @@ TEST(XaiCurlSocket, HandshakesSendsOrderedAudioAndReassemblesFrames) {
     ASSERT_GE(events.size(), 2U);
     EXPECT_EQ(events[0], "b:3200");
     EXPECT_EQ(events[1], "t:{\"type\":\"audio.done\"}");
+}
+
+// Recorded provider events in their recorded order. In this recording the
+// final words arrive after audio.done. The fake server then closes the socket.
+TEST(XaiCurlSocket, ReplaysARecordedStopThroughTheNativePath) {
+    const std::string directory = CHA_XAI_FIXTURE_DIRECTORY;
+    const auto events = load_fixture_events(directory + "/stop-during-speech.jsonl");
+    ASSERT_GE(events.size(), 2U);
+    ASSERT_EQ(events.front()["type"], "transcript.created");
+    XaiFakeServerOptions options;
+    options.messages.push_back(events.front().dump());
+    for (std::size_t index = 1; index < events.size(); ++index) {
+        options.after_audio_done.push_back(events[index].dump());
+    }
+    XaiFakeServer server(std::move(options));
+    server.start();
+    OwnedApp owned;
+    save_xai(
+        *owned.application,
+        "ws://127.0.0.1:" + std::to_string(server.port()) + "/v1/stt");
+    const auto epoch = owned.application->context_epoch();
+    (void)wait_reply(owned.application->start_xai_voice_input(
+        "view-1", 1, "dictation-1", {"en"}, epoch, 30000ms), 3s);
+    const auto audio = owned.application->send_xai_voice_audio(
+        "view-1", 2, "dictation-1",
+        xai_fake_base64(std::vector<unsigned char>(3200, 0)), epoch, 30000ms);
+    EXPECT_EQ(wait_reply(audio, 3s)["pieces"], nlohmann::json::array());
+    const auto pieces = wait_reply(owned.application->stop_xai_voice_input(
+        "view-1", 3, "dictation-1", 20000, epoch, 30000ms), 3s)["pieces"];
+
+    const auto expected =
+        load_fixture_json(directory + "/expected.json").at("stop-during-speech");
+    nlohmann::json want = nlohmann::json::array();
+    for (const auto& delta : expected.at("event_deltas")) {
+        if (!delta.get<std::string>().empty()) want.push_back(delta);
+    }
+    EXPECT_EQ(pieces, want);
+    std::string text;
+    for (const auto& piece : pieces) text += piece.get<std::string>();
+    EXPECT_EQ(text, expected.at("text").get<std::string>());
+
+    server.join();
+    const auto sent = server.events();
+    ASSERT_EQ(sent.size(), 2U);
+    EXPECT_EQ(sent[0], "b:3200");
+    EXPECT_EQ(sent[1], "t:{\"type\":\"audio.done\"}");
 }
 
 TEST(XaiCurlSocket, AuthenticationFailureDoesNotExposeTheKey) {
