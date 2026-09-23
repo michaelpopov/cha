@@ -12,8 +12,10 @@ set(CHA_PACKAGE_VERSION "development" CACHE STRING
 find_package(Threads REQUIRED)
 # Apple's SDK libcurl exports the WebSocket API but cannot perform ws/wss
 # transfers. Use our bundled curl for both development and packaged macOS builds.
+# Elsewhere, an older system curl lacks CURLWS_NOAUTOPONG (8.14), so the
+# bundled curl replaces it.
 if(NOT APPLE)
-    find_package(CURL QUIET)
+    find_package(CURL 8.14 QUIET)
 endif()
 if(WIN32)
     # Static OpenSSL so the application carries no OpenSSL DLLs. Which copy to

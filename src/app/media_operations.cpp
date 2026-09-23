@@ -594,35 +594,28 @@ std::shared_ptr<OperationReply> Application::start_xai_voice_input(
             ErrorCode::invalid_argument, "The request was not valid.");
     }
     validate_xai_languages(languages);
-    std::string endpoint;
-    std::string model;
-    std::string key;
-    {
-        const std::lock_guard lifecycle(impl_->lifecycle_mutex);
-        impl_->require_admitted(epoch);
-        const auto secret = settings::voice_input_secret(
-            *impl_->store->snapshot(), *impl_->api_keys, true);
-        const auto runtime = settings::get_voice_input_runtime(
-            *impl_->store->snapshot(), *impl_->api_keys, true);
-        if (!secret || !runtime) {
-            throw ApplicationError(
-                ErrorCode::not_found, "Voice input is not configured.");
-        }
-        if (runtime->provider != "xai") {
-            throw ApplicationError(
-                ErrorCode::invalid_argument, "Voice input provider is not xAI.");
-        }
-        endpoint = runtime->url;
-        model = runtime->model;
-        key = *secret;
+    // Register under the lock, so a context change cannot run between the
+    // admission check and the registry insert. start() does no network wait.
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    const auto secret = settings::voice_input_secret(
+        *impl_->store->snapshot(), *impl_->api_keys, true);
+    const auto runtime = settings::get_voice_input_runtime(
+        *impl_->store->snapshot(), *impl_->api_keys, true);
+    if (!secret || !runtime) {
+        throw ApplicationError(
+            ErrorCode::not_found, "Voice input is not configured.");
     }
-    const std::string url = media::build_xai_stt_url(endpoint, model, languages);
+    if (runtime->provider != "xai") {
+        throw ApplicationError(
+            ErrorCode::invalid_argument, "Voice input provider is not xAI.");
+    }
     return impl_->xai_voice.start(
         std::move(connection_id),
         request_id,
         std::move(session_id),
-        url,
-        "Authorization: Bearer " + key,
+        media::build_xai_stt_url(runtime->url, runtime->model, languages),
+        "Authorization: Bearer " + *secret,
         deadline);
 }
 
@@ -637,21 +630,17 @@ std::shared_ptr<OperationReply> Application::send_xai_voice_audio(
         throw ApplicationError(
             ErrorCode::invalid_argument, "The request was not valid.");
     }
+    {
+        const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+        impl_->require_admitted(epoch);
+    }
     std::vector<unsigned char> pcm;
     try {
         pcm = media::decode_pcm_base64(pcm_base64);
     } catch (const std::invalid_argument&) {
-        {
-            const std::lock_guard lifecycle(impl_->lifecycle_mutex);
-            impl_->require_admitted(epoch);
-        }
         impl_->xai_voice.cancel_live(connection_id, session_id);
         throw ApplicationError(
             ErrorCode::invalid_argument, "The request was not valid.");
-    }
-    {
-        const std::lock_guard lifecycle(impl_->lifecycle_mutex);
-        impl_->require_admitted(epoch);
     }
     return impl_->xai_voice.audio(
         std::move(connection_id),

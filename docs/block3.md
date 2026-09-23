@@ -25,3 +25,12 @@ Keep the browser's xAI unavailable-transport stub. Do not implement AudioWorklet
 Complete this boundary and stop. Commit with subject `voice input: add native xAI streaming (session 3)`. The commit body must list the concrete worker/normalizer files, all four bridge method signatures, typed-client entry points, the fake-server executable and the command that runs it, test commands/results, and any unrun platform checks. Explicitly state that browser capture remains the intentional stub for Session 4. Commit only feature/prerequisite changes, preserving unrelated user work. Session 4 must be able to continue from this commit and the repository documents without this chat.
 
 COMPLETED
+
+## Changes after the Session 3 commit
+
+The later commits changed these facts in the Session 3 commit body:
+
+- Fake server: it reads client frames for up to one hour after the handshake (not 60 seconds). When the connection ends, it prints one line for each client message: `b:<bytes>` for binary PCM and `t:<text>` for text, for example `b:3200` and `t:{"type":"audio.done"}`. Use these lines for the Session 4 packaged frame check.
+- Bad audio: a `voiceInput.xai.audio` request with invalid `pcm_base64` fails with `invalid_argument` and cancels the live dictation with that `session_id`. For an unknown `session_id` it creates no tombstone, so a later start with that id works. A request with a stale epoch fails with `vault_changed` and cancels nothing.
+- Build: non-Apple builds use a system curl only if it is 8.14 or later. Otherwise they build the bundled curl 8.14.1.
+- Validation: the macOS runtime smoke (`packaging/macos/runtime-smoke.c`) passed against the rebuilt development `libChaRuntime.dylib`, not a packaged bundle. The `Xai*` tests pass under ThreadSanitizer. Windows checks remain unrun.

@@ -156,6 +156,18 @@ public:
             throw XaiVoiceFailure(
                 ErrorCode::internal_error, std::string(xai_connection_failed));
         }
+        // curl keeps an unfinished pong frame in its send buffer and rejects
+        // a new frame until that pong is complete.
+        try_pong(deadline, cancelled);
+        if (pong_waiting_) {
+            if (cancelled()) {
+                throw XaiVoiceFailure(
+                    ErrorCode::operation_cancelled,
+                    std::string(xai_operation_cancelled));
+            }
+            throw XaiVoiceFailure(
+                ErrorCode::command_timeout, std::string(xai_timed_out));
+        }
         // A failed send leaves sending_ set, so no pong enters the unfinished
         // frame. The dictation ends and close() clears it.
         sending_ = true;
@@ -235,6 +247,7 @@ public:
         fragment_open_ = false;
         inbox_.clear();
         pong_payload_.clear();
+        pong_sent_ = 0;
         pong_waiting_ = false;
         sending_ = false;
     }
@@ -266,8 +279,13 @@ private:
 
     void consume(const curl_ws_frame& meta, std::string_view chunk) {
         if (meta.flags & CURLWS_PING) {
-            pong_payload_.assign(chunk);
-            pong_waiting_ = true;
+            // Answer one ping at a time. The payload of a pending pong must
+            // not change, because curl may already hold part of it.
+            if (!pong_waiting_) {
+                pong_payload_.assign(chunk);
+                pong_sent_ = 0;
+                pong_waiting_ = true;
+            }
             return;
         }
         if (meta.flags & CURLWS_PONG) return;
@@ -302,18 +320,20 @@ private:
         clock::time_point deadline,
         const std::function<bool()>& cancelled) {
         if (!pong_waiting_ || sending_) return;
-        std::size_t offset = 0;
+        // pong_sent_ survives an early return, so the next call continues the
+        // same frame where curl expects it.
         while (pong_waiting_) {
             if (cancelled() || clock::now() >= deadline) return;
             std::size_t sent = 0;
-            const char* data = pong_payload_.data() + offset;
-            const std::size_t left = pong_payload_.size() - offset;
+            const char* data = pong_payload_.data() + pong_sent_;
+            const std::size_t left = pong_payload_.size() - pong_sent_;
             const CURLcode result = curl_ws_send(
                 curl_.get(), data, left, &sent, 0, CURLWS_PONG);
-            if (sent > 0) offset += sent;
-            if (result == CURLE_OK && offset >= pong_payload_.size()) {
+            pong_sent_ += sent;
+            if (result == CURLE_OK && pong_sent_ >= pong_payload_.size()) {
                 pong_waiting_ = false;
                 pong_payload_.clear();
+                pong_sent_ = 0;
                 return;
             }
             if (result != CURLE_OK && result != CURLE_AGAIN) {
@@ -356,6 +376,7 @@ private:
     bool fragment_binary_ = false;
     std::deque<XaiIncoming> inbox_;
     std::string pong_payload_;
+    std::size_t pong_sent_ = 0;
     bool pong_waiting_ = false;
 };
 

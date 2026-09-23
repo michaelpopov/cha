@@ -677,6 +677,96 @@ TEST(XaiCurlSocket, AuthenticationFailureDoesNotExposeTheKey) {
     EXPECT_NE(server.request().find("Authorization: Bearer xai-secret"), std::string::npos);
 }
 
+TEST(XaiCurlSocket, StartTimesOutWithoutTranscriptCreated) {
+    XaiFakeServer server({});
+    server.start();
+    OwnedApp owned;
+    save_xai(
+        *owned.application,
+        "ws://127.0.0.1:" + std::to_string(server.port()) + "/v1/stt");
+    const auto began = std::chrono::steady_clock::now();
+    const auto started = owned.application->start_xai_voice_input(
+        "view-1", 1, "dictation-1", {"en"}, owned.application->context_epoch(), 900ms);
+    try {
+        (void)wait_reply(started, 3s);
+        FAIL() << "a start without transcript.created must time out";
+    } catch (const ApplicationError& error) {
+        EXPECT_EQ(error.code, ErrorCode::command_timeout);
+        EXPECT_EQ(error.what(), std::string(media::xai_timed_out));
+    }
+    const auto elapsed = std::chrono::steady_clock::now() - began;
+    EXPECT_GE(elapsed, 500ms);
+    EXPECT_LT(elapsed, 1500ms);
+    server.join();
+}
+
+TEST(XaiCurlSocket, CancelStopsAStartThatWaitsForTheServer) {
+    XaiFakeServer server({});
+    server.start();
+    OwnedApp owned;
+    save_xai(
+        *owned.application,
+        "ws://127.0.0.1:" + std::to_string(server.port()) + "/v1/stt");
+    const auto epoch = owned.application->context_epoch();
+    const auto started = owned.application->start_xai_voice_input(
+        "view-1", 1, "dictation-1", {"en"}, epoch, 30000ms);
+    const auto handshake = std::chrono::steady_clock::now() + 3s;
+    while (server.request().empty() && std::chrono::steady_clock::now() < handshake) {
+        std::this_thread::sleep_for(2ms);
+    }
+    ASSERT_FALSE(server.request().empty());
+    const auto began = std::chrono::steady_clock::now();
+    owned.application->cancel_xai_voice_input("view-1", "dictation-1", epoch);
+    try {
+        (void)wait_reply(started, 3s);
+        FAIL() << "a cancelled start must fail";
+    } catch (const ApplicationError& error) {
+        EXPECT_EQ(error.code, ErrorCode::operation_cancelled);
+    }
+    EXPECT_LT(std::chrono::steady_clock::now() - began, 1s);
+    server.join();
+}
+
+// Starts a dictation on the ws:// fake server and returns the error text of
+// the first audio request.
+std::string first_audio_error(XaiFakeServerOptions options) {
+    XaiFakeServer server(std::move(options));
+    server.start();
+    OwnedApp owned;
+    save_xai(
+        *owned.application,
+        "ws://127.0.0.1:" + std::to_string(server.port()) + "/v1/stt");
+    const auto epoch = owned.application->context_epoch();
+    (void)wait_reply(owned.application->start_xai_voice_input(
+        "view-1", 1, "dictation-1", {"en"}, epoch, 30000ms), 3s);
+    std::string message;
+    try {
+        (void)wait_reply(owned.application->send_xai_voice_audio(
+            "view-1", 2, "dictation-1", "AAE=", epoch, 30000ms), 3s);
+    } catch (const ApplicationError& error) {
+        message = error.what();
+    }
+    server.join();
+    return message;
+}
+
+TEST(XaiCurlSocket, ReportsMalformedMissingTimingsAndEarlyClose) {
+    EXPECT_EQ(
+        first_audio_error({.messages = {created_event().dump(), "{not json"}}),
+        std::string(media::xai_malformed_transcript));
+    nlohmann::json untimed = final_event("Hello", 0.1, 0.3);
+    untimed["words"] = nlohmann::json::array();
+    EXPECT_EQ(
+        first_audio_error({.messages = {created_event().dump(), untimed.dump()}}),
+        std::string(media::xai_missing_word_timings));
+    EXPECT_EQ(
+        first_audio_error({
+            .messages = {created_event().dump()},
+            .close_after_messages = true,
+        }),
+        std::string(media::xai_connection_closed));
+}
+
 TEST(XaiCurlSocket, AcceptKeyMatchesTheWebSocketExample) {
     EXPECT_EQ(
         xai_fake_websocket_accept("dGhlIHNhbXBsZSBub25jZQ=="),
