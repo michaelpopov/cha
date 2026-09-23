@@ -520,8 +520,8 @@ export function App({
   const switchVault = useCallback(async (vaultName: string, password?: string) => {
     await client.switchVault(vaultName, password);
     writeAppRoute('/', 'replace');
-    reload();
-  }, [client, reload]);
+    if (!contextEvents) reload();
+  }, [client, contextEvents, reload]);
 
   // Keyed by conversation as well as action: the server gives a mutation up to
   // its command deadline, and a request left behind in one conversation must

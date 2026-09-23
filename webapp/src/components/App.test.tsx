@@ -2253,3 +2253,55 @@ it('clears the conversation route before reloading after a vault switch', async 
   expect(window.location.hash).toBe('#/');
   expect(reload).toHaveBeenCalledOnce();
 });
+
+it('refreshes a switched vault without reloading the native document', async () => {
+  const requests: NativeRequest[] = [];
+  const bridge = createEnvelopeNativeBridge({
+    connectionId: 'view-test',
+    post: (message) => {
+      if ('method' in (message as object)) requests.push(message as NativeRequest);
+    },
+  });
+  bridge.setContextEpoch(1);
+  let switched = false;
+  const getBootstrap = vi.fn(async () => switched
+    ? { ...bootstrapFixture, vault_name: 'Projects' }
+    : bootstrapFixture);
+  const reload = vi.fn();
+  render(
+    <App
+      client={fixtureClient({
+        getBootstrap,
+        switchVault: async (name) => {
+          expect(name).toBe('Projects');
+          await bridge.invoke('vault.switch', { vault_name: name });
+        },
+      })}
+      contextEvents={bridge}
+      connectSessionEvents={inertSessionEvents}
+      reload={reload}
+    />,
+  );
+
+  const vault = await screen.findByLabelText('Vault');
+  window.history.replaceState(null, '', '/#/s/entrance/welcome/');
+  await userEvent.selectOptions(vault, 'Projects');
+  await waitFor(() => expect(requests.some(({ method }) => method === 'vault.switch')).toBe(true));
+  const request = requests.find(({ method }) => method === 'vault.switch')!;
+  switched = true;
+  act(() => bridge.receive({
+    connection_id: 'view-test', delivery_id: 1,
+    messages: [
+      { connection_id: 'view-test', event: 'app.contextChanged', context_epoch: 2,
+        state: 'running', causing_request_id: request.id },
+      { connection_id: 'view-test', id: request.id, context_epoch: 2, ok: true,
+        result: { state: 'running', context_epoch: 2 } },
+    ],
+  }));
+
+  await waitFor(() => expect(screen.getByLabelText('Vault')).toHaveValue('Projects'));
+  expect(window.location.hash).toBe('#/');
+  expect(reload).not.toHaveBeenCalled();
+  expect(getBootstrap.mock.calls.length).toBeGreaterThan(1);
+  bridge.dispose();
+});
