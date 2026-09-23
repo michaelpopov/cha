@@ -1,0 +1,68 @@
+{
+  "captured_date_utc": "2026-09-23",
+  "endpoint": "wss://api.x.ai/v1/stt",
+  "model": "grok-voice-transcribe-2.0",
+  "encoding": "pcm",
+  "sample_rate": 16000,
+  "channels": 1,
+  "endpointing": 400,
+  "batch_samples": 1600,
+  "captures": {
+    "chunk-overlap": {
+      "audio_seconds": 12.32425,
+      "pcm_sha256": "114eeeb6eb0a980603d92c6b24dd4b9f490024be57860cf19c8d6215e05cb6dc",
+      "language": "en",
+      "interim_results": false,
+      "events": 5,
+      "identical_repeated_word_spans": 35
+    },
+    "multiple-utterances": {
+      "audio_seconds": 24.2378125,
+      "pcm_sha256": "10c04e89230be3280044aa20fa21ddc4e842a6e7c84bfb5ebe1fceef2929888d",
+      "language": "en",
+      "interim_results": false,
+      "events": 11,
+      "identical_repeated_word_spans": 39
+    },
+    "stop-during-speech": {
+      "audio_seconds": 7.0625,
+      "pcm_sha256": "612f2c117b279a0e11a764f8d7ec703c68de6c5547c6d32fe82764a2b8b1a344",
+      "language": "en",
+      "interim_results": false,
+      "events": 4,
+      "identical_repeated_word_spans": 26
+    },
+    "silence": {
+      "audio_seconds": 2.0,
+      "pcm_sha256": "4f7988030a00d082fe445e00a2ac5dab502300ff1b80e8592dd569867b60ef74",
+      "language": "en",
+      "interim_results": false,
+      "events": 2,
+      "identical_repeated_word_spans": 0
+    },
+    "long-utterance": {
+      "audio_seconds": 35.145625,
+      "pcm_sha256": "8c354ef808ac9697d5c693567e90205990b3a85b96e86005c5f803cb3b9022d6",
+      "language": "en",
+      "interim_results": false,
+      "events": 8,
+      "identical_repeated_word_spans": 97
+    },
+    "interim-comparison": {
+      "audio_seconds": 35.145625,
+      "pcm_sha256": "8c354ef808ac9697d5c693567e90205990b3a85b96e86005c5f803cb3b9022d6",
+      "language": "en",
+      "interim_results": true,
+      "events": 39,
+      "identical_repeated_word_spans": 97
+    },
+    "russian": {
+      "audio_seconds": 8.6161875,
+      "pcm_sha256": "0d87fd372df5e4871f020107c4e098cf57dc03c063666228531f9b417787927e",
+      "language": "ru",
+      "interim_results": false,
+      "events": 4,
+      "identical_repeated_word_spans": 11
+    }
+  }
+}

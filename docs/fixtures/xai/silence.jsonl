@@ -1,0 +1,2 @@
+{"event":{"id":"<redacted-session-id>","type":"transcript.created"},"received_ms":5}
+{"event":{"duration":2.0,"text":"","type":"transcript.done","words":[]},"received_ms":1967}

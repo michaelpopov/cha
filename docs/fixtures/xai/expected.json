@@ -1,0 +1,117 @@
+{
+  "chunk-overlap": {
+    "event_deltas": [
+      "",
+      "I want to build a small application that records my ideas and keeps every word in the right order because this is very very useful and I want to try again.",
+      " Try again. Try again.",
+      "",
+      ""
+    ],
+    "text": "I want to build a small application that records my ideas and keeps every word in the right order because this is very very useful and I want to try again. Try again. Try again.",
+    "last_committed_end": 11.196
+  },
+  "multiple-utterances": {
+    "event_deltas": [
+      "",
+      "I want to build a small application that records my ideas and keeps every word in the right order because this is very very useful and I want to try again.",
+      "",
+      "",
+      " Try again. Try again.",
+      "",
+      "",
+      " Try again. Try again.",
+      "",
+      "",
+      ""
+    ],
+    "text": "I want to build a small application that records my ideas and keeps every word in the right order because this is very very useful and I want to try again. Try again. Try again. Try again. Try again.",
+    "last_committed_end": 20.093
+  },
+  "stop-during-speech": {
+    "event_deltas": [
+      "",
+      "I want to build a small application that records my ideas and keeps every word in the right order because this is very very useful and",
+      "",
+      ""
+    ],
+    "text": "I want to build a small application that records my ideas and keeps every word in the right order because this is very very useful and",
+    "last_committed_end": 7.002
+  },
+  "silence": {
+    "event_deltas": [
+      "",
+      ""
+    ],
+    "text": "",
+    "last_committed_end": -1
+  },
+  "long-utterance": {
+    "event_deltas": [
+      "",
+      "I want to build a small application that records my ideas and keeps every word in the right order because this is very very useful and I want to try again. I want to build a small application that records my ideas and keeps every word in the right order because this is very very useful and I want to try again. I want to build a small application that records my ideas and keeps every word in the right order because this is very very useful and I want to try again.",
+      "",
+      "",
+      " Try again. Try again.",
+      "",
+      "",
+      ""
+    ],
+    "text": "I want to build a small application that records my ideas and keeps every word in the right order because this is very very useful and I want to try again. I want to build a small application that records my ideas and keeps every word in the right order because this is very very useful and I want to try again. I want to build a small application that records my ideas and keeps every word in the right order because this is very very useful and I want to try again. Try again. Try again.",
+    "last_committed_end": 31.012
+  },
+  "interim-comparison": {
+    "event_deltas": [
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "I want to build a small application that records my ideas and keeps every word in the right order because this is very very useful and I want to try again. I want to build a small application that records my ideas and keeps every word in the right order because this is very very useful and I want to try again. I want to build a small application that records my ideas and keeps every word in the right order because this is very very useful and I want to try again.",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      " Try again. Try again.",
+      "",
+      "",
+      "",
+      "",
+      ""
+    ],
+    "text": "I want to build a small application that records my ideas and keeps every word in the right order because this is very very useful and I want to try again. I want to build a small application that records my ideas and keeps every word in the right order because this is very very useful and I want to try again. I want to build a small application that records my ideas and keeps every word in the right order because this is very very useful and I want to try again. Try again. Try again.",
+    "last_committed_end": 31.012
+  },
+  "russian": {
+    "event_deltas": [
+      "",
+      "Я хочу создать небольшое приложение, это очень-очень полезно, попробуй ещё раз.",
+      "",
+      ""
+    ],
+    "text": "Я хочу создать небольшое приложение, это очень-очень полезно, попробуй ещё раз.",
+    "last_committed_end": 5.518
+  }
+}
