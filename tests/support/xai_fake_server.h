@@ -44,8 +44,10 @@ private:
 };
 
 [[nodiscard]] std::string xai_fake_websocket_accept(std::string_view key);
+[[nodiscard]] std::string xai_fake_base64(const std::vector<unsigned char>& bytes);
 
-// Prints ws://127.0.0.1:<port> and replays one fixture. Returns 0 on success.
+// Prints ws://127.0.0.1:<port>, replays one fixture to one connection, then
+// prints the client messages it received. Returns 0 on success.
 int run_xai_fixture_server(int argc, char** argv);
 
 } // namespace cha

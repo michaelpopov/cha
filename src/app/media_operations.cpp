@@ -520,7 +520,7 @@ std::shared_ptr<OperationReply> Application::connect_voice_input(
         if (runtime->provider != "openai") {
             throw ApplicationError(
                 ErrorCode::invalid_argument,
-                "xAI voice input transport is not implemented");
+                "Voice input provider is not OpenAI.");
         }
         url = runtime->url;
         key = *secret;
@@ -621,7 +621,6 @@ std::shared_ptr<OperationReply> Application::start_xai_voice_input(
         std::move(connection_id),
         request_id,
         std::move(session_id),
-        epoch,
         url,
         "Authorization: Bearer " + key,
         deadline);

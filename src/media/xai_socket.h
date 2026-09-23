@@ -24,9 +24,8 @@ struct XaiIncoming {
     std::string payload;
 };
 
-enum class XaiSendResult { sent, cancelled, timed_out, failed };
-
-// One WebSocket connection. The worker is the only caller.
+// One WebSocket connection. The worker is the only caller. connect() and
+// send() throw XaiVoiceFailure.
 class XaiSocket {
 public:
     virtual ~XaiSocket() = default;
@@ -35,7 +34,7 @@ public:
         const std::string& authorization,
         std::chrono::steady_clock::time_point deadline,
         const std::function<bool()>& cancelled) = 0;
-    virtual XaiSendResult send(
+    virtual void send(
         std::string_view payload,
         bool binary,
         std::chrono::steady_clock::time_point deadline,

@@ -15,10 +15,17 @@ namespace {
 
 using clock = std::chrono::steady_clock;
 
+// The worker sees new audio and stop requests only between socket waits.
+constexpr std::chrono::milliseconds request_poll{20};
+
+struct Terminal {
+    ErrorCode code = ErrorCode::internal_error;
+    std::string message;
+};
+
 struct Session {
     std::string connection_id;
     std::string session_id;
-    std::uint64_t epoch = 0;
     std::chrono::milliseconds deadline{30000};
     std::string url;
     std::string authorization;
@@ -34,6 +41,9 @@ struct Session {
     bool start_completed = false;
     bool ready = false;
     bool finished = false;
+    // Set before the registry slot changes, so a request in between still
+    // gets the failure.
+    std::optional<Terminal> failure;
 
     struct AudioCall {
         std::vector<unsigned char> pcm;
@@ -47,11 +57,6 @@ struct Session {
         clock::time_point deadline{};
     };
     std::optional<StopCall> stop;
-};
-
-struct Terminal {
-    ErrorCode code = ErrorCode::internal_error;
-    std::string message;
 };
 
 using SessionKey = std::pair<std::string, std::string>;
@@ -142,6 +147,7 @@ void run_worker(
         {
             std::lock_guard lock(session->mu);
             session->finished = true;
+            session->failure = Terminal{code, message};
             start_completed = session->start_completed;
             start_reply = std::move(session->start_reply);
             if (session->audio) audio_reply = std::move(session->audio->reply);
@@ -157,16 +163,14 @@ void run_worker(
         }
         if (audio_reply) delivered = audio_reply->fail(code, message) || delivered;
         if (stop_reply) delivered = stop_reply->fail(code, message) || delivered;
-        if (!start_completed || delivered) finish(session, std::nullopt);
+        // Nobody asks for the result of a cancelled dictation, so keep none.
+        const bool cancelled = session->cancel.load() && !session->timed_out.load();
+        if (!start_completed || delivered || cancelled) finish(session, std::nullopt);
         else finish(session, Terminal{code, std::move(message)});
         socket->close();
     };
     const auto throw_stopped = [&] {
         if (!stopping()) return;
-        if (session->timed_out.load()) {
-            throw XaiVoiceFailure(
-                ErrorCode::command_timeout, std::string(xai_timed_out));
-        }
         throw XaiVoiceFailure(
             ErrorCode::operation_cancelled, std::string(xai_operation_cancelled));
     };
@@ -207,23 +211,6 @@ void run_worker(
     const auto drain = [&] {
         while (auto message = socket->recv(std::chrono::milliseconds::zero())) {
             (void)handle(*message);
-        }
-    };
-    const auto require_send = [&](XaiSendResult result) {
-        switch (result) {
-        case XaiSendResult::sent:
-            return;
-        case XaiSendResult::cancelled:
-            throw_stopped();
-            throw XaiVoiceFailure(
-                ErrorCode::operation_cancelled,
-                std::string(xai_operation_cancelled));
-        case XaiSendResult::timed_out:
-            throw XaiVoiceFailure(
-                ErrorCode::command_timeout, std::string(xai_timed_out));
-        case XaiSendResult::failed:
-            throw XaiVoiceFailure(
-                ErrorCode::internal_error, std::string(xai_connection_failed));
         }
     };
 
@@ -281,12 +268,12 @@ void run_worker(
             if (!pcm.empty() && !audio_done_sent) {
                 const auto send_deadline = clock::now()
                     + xai_deadline_budget(audio_deadline).audio_send;
-                require_send(socket->send(
+                socket->send(
                     std::string_view(
                         reinterpret_cast<const char*>(pcm.data()), pcm.size()),
                     true,
                     send_deadline,
-                    stopping));
+                    stopping);
                 drain();
                 auto delivered = pieces;
                 pieces.clear();
@@ -311,11 +298,11 @@ void run_worker(
                     throw XaiVoiceFailure(
                         ErrorCode::command_timeout, std::string(xai_timed_out));
                 }
-                require_send(socket->send(
+                socket->send(
                     "{\"type\":\"audio.done\"}",
                     false,
                     *stop_deadline,
-                    stopping));
+                    stopping);
                 audio_done_sent = true;
                 drain();
                 continue;
@@ -330,7 +317,7 @@ void run_worker(
                 }
                 continue;
             }
-            if (auto message = socket->recv(std::chrono::milliseconds(100))) {
+            if (auto message = socket->recv(request_poll)) {
                 (void)handle(*message);
             }
         }
@@ -350,7 +337,12 @@ void run_worker(
                 pieces_json(session->session_id, std::move(pieces)));
         }
     } catch (const XaiVoiceFailure& error) {
-        fail(error.code, error.what());
+        // A bridge deadline cancels the worker. Report it as a timeout.
+        if (error.code == ErrorCode::operation_cancelled && session->timed_out.load()) {
+            fail(ErrorCode::command_timeout, std::string(xai_timed_out));
+        } else {
+            fail(error.code, error.what());
+        }
     } catch (const XaiTranscriptError& error) {
         fail(ErrorCode::internal_error, error.what());
     } catch (const std::exception&) {
@@ -397,7 +389,6 @@ std::shared_ptr<app::OperationReply> XaiVoiceSessions::start(
     std::string connection_id,
     std::uint64_t request_id,
     std::string session_id,
-    std::uint64_t epoch,
     std::string url,
     std::string authorization,
     std::chrono::milliseconds deadline) {
@@ -405,7 +396,6 @@ std::shared_ptr<app::OperationReply> XaiVoiceSessions::start(
     auto session = std::make_shared<Session>();
     session->connection_id = connection_id;
     session->session_id = session_id;
-    session->epoch = epoch;
     session->deadline = deadline;
     session->url = std::move(url);
     session->authorization = std::move(authorization);
@@ -515,6 +505,10 @@ std::shared_ptr<app::OperationReply> XaiVoiceSessions::audio(
     }
     {
         std::lock_guard lock(session->mu);
+        if (session->failure) {
+            reply->fail(session->failure->code, session->failure->message);
+            return reply;
+        }
         if (!session->ready || session->finished || session->audio || session->stop
             || session->cancel.load()) {
             reply->fail(
@@ -558,6 +552,10 @@ std::shared_ptr<app::OperationReply> XaiVoiceSessions::stop(
     }
     {
         std::lock_guard lock(session->mu);
+        if (session->failure) {
+            reply->fail(session->failure->code, session->failure->message);
+            return reply;
+        }
         if (session->stop || session->finished) {
             reply->complete(pieces_json(session_id, {}));
             return reply;

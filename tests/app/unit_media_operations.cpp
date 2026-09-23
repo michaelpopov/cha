@@ -288,9 +288,7 @@ TEST(ApplicationMedia, RejectsXaiBeforeTheOpenAiRequest) {
         FAIL() << "xAI must not use the OpenAI connection";
     } catch (const ApplicationError& error) {
         EXPECT_EQ(error.code, ErrorCode::invalid_argument);
-        EXPECT_EQ(
-            error.what(),
-            std::string("xAI voice input transport is not implemented"));
+        EXPECT_EQ(error.what(), std::string("Voice input provider is not OpenAI."));
     }
     EXPECT_LT(std::chrono::steady_clock::now() - started, 500ms);
     EXPECT_TRUE(server.requests().empty());

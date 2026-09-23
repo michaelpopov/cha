@@ -171,6 +171,10 @@ std::string header_value(std::string_view request, std::string_view name) {
 
 } // namespace
 
+std::string xai_fake_base64(const std::vector<unsigned char>& bytes) {
+    return base64_encode(bytes.data(), bytes.size());
+}
+
 std::string xai_fake_websocket_accept(std::string_view key) {
     std::string material(key);
     material += "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
@@ -543,7 +547,8 @@ int run_xai_fixture_server(int argc, char** argv) {
     }
     XaiFakeServerOptions options;
     options.port = port;
-    options.read_timeout = std::chrono::milliseconds(60000);
+    // A manual check needs time for setup and for a dictation of minutes.
+    options.read_timeout = std::chrono::hours(1);
     std::string line;
     while (std::getline(input, line)) {
         if (line.empty()) continue;
@@ -557,6 +562,8 @@ int run_xai_fixture_server(int argc, char** argv) {
     std::cout << "ws://127.0.0.1:" << server.port() << std::endl;
     server.start();
     server.join();
+    // One line for each client message, for example b:3200 for binary PCM.
+    for (const std::string& event : server.events()) std::cout << event << '\n';
     return 0;
 }
 

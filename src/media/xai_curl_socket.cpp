@@ -147,24 +147,29 @@ public:
         // after CONNECT_ONLY makes later websocket send and receive fail.
     }
 
-    XaiSendResult send(
+    void send(
         std::string_view payload,
         bool binary,
         clock::time_point deadline,
         const std::function<bool()>& cancelled) override {
-        if (!attached_ || payload.empty()) return XaiSendResult::failed;
+        if (!attached_ || payload.empty()) {
+            throw XaiVoiceFailure(
+                ErrorCode::internal_error, std::string(xai_connection_failed));
+        }
+        // A failed send leaves sending_ set, so no pong enters the unfinished
+        // frame. The dictation ends and close() clears it.
         sending_ = true;
         const unsigned flags = binary ? CURLWS_BINARY : CURLWS_TEXT;
         std::size_t offset = 0;
-        XaiSendResult outcome = XaiSendResult::sent;
         while (offset < payload.size()) {
             if (cancelled()) {
-                outcome = XaiSendResult::cancelled;
-                break;
+                throw XaiVoiceFailure(
+                    ErrorCode::operation_cancelled,
+                    std::string(xai_operation_cancelled));
             }
             if (clock::now() >= deadline) {
-                outcome = XaiSendResult::timed_out;
-                break;
+                throw XaiVoiceFailure(
+                    ErrorCode::command_timeout, std::string(xai_timed_out));
             }
             std::size_t sent = 0;
             const CURLcode result = curl_ws_send(
@@ -174,25 +179,20 @@ public:
                 &sent,
                 0,
                 flags);
-            if (sent > 0) offset += sent;
+            offset += sent;
             pump_readable();
-            if (result == CURLE_OK && offset >= payload.size()) {
-                outcome = XaiSendResult::sent;
-                break;
-            }
             if (result == CURLE_OK && sent > 0) continue;
             if (result != CURLE_AGAIN) {
                 log_warn(
                     "xAI voice input send failed (curl "
                     + std::to_string(result) + ")");
-                outcome = XaiSendResult::failed;
-                break;
+                throw XaiVoiceFailure(
+                    ErrorCode::internal_error, std::string(xai_connection_failed));
             }
-            wait_for_socket(wait_budget_ms(deadline));
+            wait_for_socket(wait_budget_ms(deadline), true);
         }
         sending_ = false;
-        if (outcome == XaiSendResult::sent) try_pong(deadline, cancelled);
-        return outcome;
+        try_pong(deadline, cancelled);
     }
 
     std::optional<XaiIncoming> recv(std::chrono::milliseconds wait) override {
@@ -214,9 +214,7 @@ public:
                 }
             }
             if (clock::now() >= deadline) return std::nullopt;
-            const int slice = wait.count() == 0 ? 0 : wait_budget_ms(deadline);
-            if (slice == 0 && wait.count() == 0) return std::nullopt;
-            wait_for_socket(slice);
+            wait_for_socket(wait_budget_ms(deadline), false);
         }
     }
 
@@ -322,11 +320,13 @@ private:
                 pong_waiting_ = false;
                 return;
             }
-            wait_for_socket(wait_budget_ms(deadline));
+            wait_for_socket(wait_budget_ms(deadline), true);
         }
     }
 
-    void wait_for_socket(int timeout_ms) {
+    // Wait for one direction only. The socket is almost always writable, so
+    // a read wait that also asks for writable returns at once and spins.
+    void wait_for_socket(int timeout_ms, bool writable) {
         if (!attached_) return;
         curl_socket_t sock = CURL_SOCKET_BAD;
         if (curl_easy_getinfo(curl_.get(), CURLINFO_ACTIVESOCKET, &sock) != CURLE_OK
@@ -336,12 +336,12 @@ private:
 #ifdef _WIN32
         WSAPOLLFD descriptor{};
         descriptor.fd = sock;
-        descriptor.events = POLLRDNORM | POLLWRNORM;
+        descriptor.events = writable ? POLLWRNORM : POLLRDNORM;
         WSAPoll(&descriptor, 1, timeout_ms);
 #else
         pollfd descriptor{};
         descriptor.fd = static_cast<int>(sock);
-        descriptor.events = POLLIN | POLLOUT;
+        descriptor.events = writable ? POLLOUT : POLLIN;
         poll(&descriptor, 1, timeout_ms);
 #endif
     }

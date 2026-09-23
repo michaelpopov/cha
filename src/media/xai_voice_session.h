@@ -42,7 +42,6 @@ public:
         std::string connection_id,
         std::uint64_t request_id,
         std::string session_id,
-        std::uint64_t epoch,
         std::string url,
         std::string authorization,
         std::chrono::milliseconds deadline);

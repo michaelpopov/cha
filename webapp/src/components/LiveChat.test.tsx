@@ -1525,6 +1525,30 @@ describe('live chat', () => {
     expect(startVoiceInput).not.toHaveBeenCalled();
   });
 
+  it('reports unavailable voice input when the fresh read finds no settings', async () => {
+    vi.spyOn(VoiceInputSession, 'supported').mockReturnValue(true);
+    const startVoiceInput = vi.spyOn(VoiceInputSession, 'start');
+    let calls = 0;
+    const events = drivableEvents();
+    render(<App client={fixtureClient({
+      getVoiceInputRuntime: () => {
+        calls += 1;
+        return Promise.resolve(calls === 1 ? {
+          provider: 'openai',
+          url: 'https://api.openai.com/v1/realtime/calls',
+          model: 'gpt-live-transcribe',
+          delay: 'low',
+          prompt: '',
+        } : null);
+      },
+    })} connectSessionEvents={events.connect} />);
+    await attachInitial(events);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start voice input' }));
+    expect(await screen.findByText('Voice input is unavailable.')).toBeInTheDocument();
+    expect(startVoiceInput).not.toHaveBeenCalled();
+  });
+
   it('does not start capture when dictation is cancelled during the runtime read', async () => {
     vi.spyOn(VoiceInputSession, 'supported').mockReturnValue(true);
     const startVoiceInput = vi.spyOn(VoiceInputSession, 'start');

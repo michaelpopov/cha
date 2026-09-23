@@ -193,7 +193,10 @@ std::vector<unsigned char> decode_pcm_base64(std::string_view encoded) {
         for (int part = 0; part < 4; ++part) {
             const char character = encoded[index + static_cast<std::size_t>(part)];
             if (character == '=') {
-                if (part < 2) throw std::invalid_argument("The request was not valid.");
+                // Padding is valid only in the last group.
+                if (part < 2 || index + 4 != encoded.size()) {
+                    throw std::invalid_argument("The request was not valid.");
+                }
                 ++padding;
                 continue;
             }

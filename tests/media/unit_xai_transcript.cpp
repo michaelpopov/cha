@@ -142,6 +142,7 @@ TEST(XaiRequest, DecodesPcmAndRejectsBadPayloads) {
     EXPECT_THROW((void)decode_pcm_base64(""), std::invalid_argument);
     EXPECT_THROW((void)decode_pcm_base64("@@@"), std::invalid_argument);
     EXPECT_THROW((void)decode_pcm_base64("AA=="), std::invalid_argument);
+    EXPECT_THROW((void)decode_pcm_base64("AA==AAAA"), std::invalid_argument);
     std::string huge(65540, 'A');
     EXPECT_THROW((void)decode_pcm_base64(huge), std::invalid_argument);
 }

@@ -908,7 +908,7 @@ export function ChatScreen({
     if (!runtime) {
       voiceInputStartup.current = null;
       setVoiceInputState('idle');
-      setActionError(voiceInputMessage(new Error('Voice input is unavailable.')));
+      setActionError('Voice input is unavailable.');
       return;
     }
     const configuration: VoiceInputConfiguration = {

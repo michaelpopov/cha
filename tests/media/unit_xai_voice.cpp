@@ -136,17 +136,22 @@ public:
         }
     }
 
-    media::XaiSendResult send(
+    void send(
         std::string_view payload,
         bool binary,
         std::chrono::steady_clock::time_point deadline,
         const std::function<bool()>& cancelled) override {
         if (script_->stall_send.load()) {
             while (std::chrono::steady_clock::now() < deadline) {
-                if (cancelled()) return media::XaiSendResult::cancelled;
+                if (cancelled()) {
+                    throw media::XaiVoiceFailure(
+                        ErrorCode::operation_cancelled,
+                        std::string(media::xai_operation_cancelled));
+                }
                 std::this_thread::sleep_for(5ms);
             }
-            return media::XaiSendResult::timed_out;
+            throw media::XaiVoiceFailure(
+                ErrorCode::command_timeout, std::string(media::xai_timed_out));
         }
         std::lock_guard lock(script_->mu);
         if (binary) {
@@ -155,7 +160,6 @@ public:
             script_->text.emplace_back(payload);
         }
         script_->cv.notify_all();
-        return media::XaiSendResult::sent;
     }
 
     std::optional<media::XaiIncoming> recv(std::chrono::milliseconds wait) override {
@@ -222,21 +226,6 @@ nlohmann::json final_event(std::string text, double start, double end) {
     };
 }
 
-std::string encode_base64(const std::vector<unsigned char>& bytes) {
-    static constexpr char table[] =
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    std::string encoded;
-    for (std::size_t index = 0; index < bytes.size(); index += 3) {
-        const unsigned value = (static_cast<unsigned>(bytes[index]) << 16)
-            | (index + 1 < bytes.size() ? static_cast<unsigned>(bytes[index + 1]) << 8 : 0U)
-            | (index + 2 < bytes.size() ? static_cast<unsigned>(bytes[index + 2]) : 0U);
-        encoded.push_back(table[(value >> 18) & 63U]);
-        encoded.push_back(table[(value >> 12) & 63U]);
-        encoded.push_back(index + 1 < bytes.size() ? table[(value >> 6) & 63U] : '=');
-        encoded.push_back(index + 2 < bytes.size() ? table[value & 63U] : '=');
-    }
-    return encoded;
-}
 
 TEST(XaiVoice, KeepsTheKeyOnTheNativeSocketAndFormatsTheRequest) {
     OwnedApp owned;
@@ -290,7 +279,7 @@ TEST(XaiVoice, DeliversSeparatePiecesAndSendsAudioBeforeDone) {
     });
     push_event(*script, final_event("Hello", 1.0, 1.4));
     const auto second = owned.application->send_xai_voice_audio(
-        "view-1", 3, "dictation-1", encode_base64(std::vector<unsigned char>(3200, 1)),
+        "view-1", 3, "dictation-1", xai_fake_base64(std::vector<unsigned char>(3200, 1)),
         epoch, 30000ms);
     EXPECT_EQ(wait_reply(second)["pieces"], nlohmann::json::array({" Hello"}));
 
@@ -514,6 +503,58 @@ TEST(XaiVoice, ShutdownAndConnectionCloseReleaseTheWorker) {
     owned.application.reset();
 }
 
+TEST(XaiVoice, StopTimeoutClosesTheConnectionAndFailsTheStop) {
+    OwnedApp owned;
+    auto script = install_script(*owned.application);
+    save_xai(*owned.application, "ws://127.0.0.1:9/v1/stt");
+    const auto epoch = owned.application->context_epoch();
+    push_event(*script, created_event());
+    (void)wait_reply(owned.application->start_xai_voice_input(
+        "view-1", 1, "dictation-1", {"en"}, epoch, 30000ms));
+    const auto began = std::chrono::steady_clock::now();
+    const auto stopped = owned.application->stop_xai_voice_input(
+        "view-1", 2, "dictation-1", 200, epoch, 30000ms);
+    try {
+        (void)wait_reply(stopped);
+        FAIL() << "a missing transcript.done must time out";
+    } catch (const ApplicationError& error) {
+        EXPECT_EQ(error.code, ErrorCode::command_timeout);
+        EXPECT_EQ(error.what(), std::string(media::xai_timed_out));
+    }
+    EXPECT_LT(std::chrono::steady_clock::now() - began, 1s);
+    wait_closed(*script);
+    std::lock_guard lock(script->mu);
+    ASSERT_EQ(script->text.size(), 1U);
+    EXPECT_EQ(script->text[0], "{\"type\":\"audio.done\"}");
+}
+
+TEST(XaiVoice, ShutdownFailsAPendingStop) {
+    OwnedApp owned;
+    auto script = install_script(*owned.application);
+    save_xai(*owned.application, "ws://127.0.0.1:9/v1/stt");
+    const auto epoch = owned.application->context_epoch();
+    push_event(*script, created_event());
+    (void)wait_reply(owned.application->start_xai_voice_input(
+        "view-1", 1, "dictation-1", {"en"}, epoch, 30000ms));
+    const auto stopped = owned.application->stop_xai_voice_input(
+        "view-1", 2, "dictation-1", 20000, epoch, 30000ms);
+    {
+        std::unique_lock lock(script->mu);
+        ASSERT_TRUE(script->cv.wait_for(lock, 2s, [&] {
+            return !script->text.empty();
+        }));
+    }
+    owned.application->request_shutdown();
+    EXPECT_TRUE(owned.application->join_shutdown(2s));
+    try {
+        (void)wait_reply(stopped);
+        FAIL() << "shutdown must fail the pending stop";
+    } catch (const ApplicationError& error) {
+        EXPECT_EQ(error.code, ErrorCode::operation_cancelled);
+    }
+    wait_closed(*script);
+}
+
 TEST(XaiVoice, RejectsBadAudioWithoutSendingIt) {
     OwnedApp owned;
     auto script = install_script(*owned.application);
@@ -564,7 +605,7 @@ TEST(XaiCurlSocket, HandshakesSendsOrderedAudioAndReassemblesFrames) {
 
     const auto audio = owned.application->send_xai_voice_audio(
         "view-1", 2, "dictation-1",
-        encode_base64(std::vector<unsigned char>(3200, 7)), epoch, 30000ms);
+        xai_fake_base64(std::vector<unsigned char>(3200, 7)), epoch, 30000ms);
     const auto pieces = wait_reply(audio, 3s);
     EXPECT_EQ(pieces["pieces"], nlohmann::json::array({"Hello"}));
     const auto stopped = owned.application->stop_xai_voice_input(
