@@ -702,6 +702,32 @@ components:
         prompt:
           type: string
 
+    XaiVoiceStartResult:
+      type: object
+      additionalProperties: false
+      required: [session_id, stop_budget_ms]
+      properties:
+        session_id:
+          type: string
+          minLength: 1
+        stop_budget_ms:
+          type: integer
+          minimum: 0
+          maximum: 20000
+
+    XaiVoicePieces:
+      type: object
+      additionalProperties: false
+      required: [session_id, pieces]
+      properties:
+        session_id:
+          type: string
+          minLength: 1
+        pieces:
+          type: array
+          items:
+            type: string
+
     VoiceOutputSettings:
       type: object
       additionalProperties: false

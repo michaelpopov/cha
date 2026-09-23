@@ -287,6 +287,7 @@ void Application::Impl::mark_unusable() {
     state.store(ApplicationState::unavailable);
     live_sessions->begin_shutdown();
     pending_media.cancel_all();
+    xai_voice.cancel_all();
     speech_proxy.stop();
     audio_downloads->request_stop();
 }
@@ -337,6 +338,7 @@ void Application::Impl::require_admitted(std::uint64_t epoch) const {
 
 void Application::Impl::pause_resources(bool cancel) {
     pending_media.cancel_all();
+    xai_voice.cancel_all();
     media_resources.revoke_all();
     if (audio_downloads) audio_downloads->pause(cancel);
     if (resource_hooks.pause) resource_hooks.pause(cancel);
@@ -360,6 +362,7 @@ void Application::Impl::take_context_notice(PendingContextNotice& notice) {
 Application::Impl::~Impl() {
     speech_proxy.stop();
     pending_media.cancel_all();
+    xai_voice.cancel_all();
     if (audio_downloads) audio_downloads->request_stop();
     background_jobs.join();
     if (running && !stopped) {

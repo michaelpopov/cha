@@ -306,6 +306,9 @@ add_library(cha_lib STATIC
     src/app/media_operations.cpp
     src/media/media_resources.cpp
     src/media/pending_media_registry.cpp
+    src/media/xai_transcript.cpp
+    src/media/xai_curl_socket.cpp
+    src/media/xai_voice_session.cpp
     src/runtime/command_queue.cpp
     src/runtime/request_parser.cpp
     src/runtime/protocol.cpp
@@ -489,6 +492,9 @@ if(BUILD_TESTING)
         tests/app/unit_session_retirement.cpp
         tests/providers/unit_fish_audio.cpp
         tests/media/unit_audio_download.cpp
+        tests/media/unit_xai_transcript.cpp
+        tests/media/unit_xai_voice.cpp
+        tests/support/xai_fake_server.cpp
         tests/app/unit_application_config.cpp
         tests/app/unit_r2_database_transfer.cpp
         tests/runtime/unit_protocol.cpp
@@ -515,7 +521,8 @@ if(BUILD_TESTING)
     target_compile_definitions(
         cha_app_tests
         PRIVATE
-            CHA_WIRE_FIXTURE_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/wire")
+            CHA_WIRE_FIXTURE_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/wire"
+            CHA_XAI_FIXTURE_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/docs/fixtures/xai")
     if(TARGET cha_lease_test_helper)
         target_compile_definitions(
             cha_app_tests
@@ -523,6 +530,19 @@ if(BUILD_TESTING)
                 CHA_LEASE_TEST_HELPER="$<TARGET_FILE:cha_lease_test_helper>")
         add_dependencies(cha_app_tests cha_lease_test_helper)
     endif()
+    add_executable(
+        cha_xai_fake_server
+        tests/media/xai_fake_server_main.cpp
+        tests/support/xai_fake_server.cpp)
+    target_compile_features(cha_xai_fake_server PRIVATE cxx_std_20)
+    target_include_directories(
+        cha_xai_fake_server PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+    target_link_libraries(
+        cha_xai_fake_server PRIVATE nlohmann_json::nlohmann_json Threads::Threads)
+    if(WIN32)
+        target_link_libraries(cha_xai_fake_server PRIVATE ws2_32)
+    endif()
+    cha_enable_warnings(cha_xai_fake_server)
     cha_enable_warnings(cha_app_tests)
 
     add_executable(

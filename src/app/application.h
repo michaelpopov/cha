@@ -1,6 +1,7 @@
 #pragma once
 
 #include "media/media_resources.h"
+#include "media/xai_socket.h"
 #include "runtime/runtime_settings.h"
 #include "app/application_config.h"
 #include "media/audio_download.h"
@@ -389,6 +390,36 @@ public:
         std::string_view connection_id,
         std::uint64_t request_id,
         std::uint64_t epoch);
+    [[nodiscard]] std::shared_ptr<OperationReply> start_xai_voice_input(
+        std::string connection_id,
+        std::uint64_t request_id,
+        std::string session_id,
+        std::vector<std::string> languages,
+        std::uint64_t epoch,
+        std::chrono::milliseconds deadline);
+    [[nodiscard]] std::shared_ptr<OperationReply> send_xai_voice_audio(
+        std::string connection_id,
+        std::uint64_t request_id,
+        std::string session_id,
+        std::string pcm_base64,
+        std::uint64_t epoch,
+        std::chrono::milliseconds deadline);
+    [[nodiscard]] std::shared_ptr<OperationReply> stop_xai_voice_input(
+        std::string connection_id,
+        std::uint64_t request_id,
+        std::string session_id,
+        std::int64_t remaining_ms,
+        std::uint64_t epoch,
+        std::chrono::milliseconds deadline);
+    void cancel_xai_voice_input(
+        std::string_view connection_id,
+        std::string_view session_id,
+        std::uint64_t epoch);
+    void expire_xai_voice_request(
+        std::string_view connection_id,
+        std::uint64_t request_id);
+    void set_xai_socket_factory_for_tests(
+        std::function<std::unique_ptr<media::XaiSocket>()> factory);
 
     [[nodiscard]] std::optional<ResourceBytes> read_resource(
         std::string_view connection_id,

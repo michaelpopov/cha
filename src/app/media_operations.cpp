@@ -2,6 +2,8 @@
 
 #include "app/application_internal.h"
 #include "media/media_resources.h"
+#include "media/xai_transcript.h"
+#include "media/xai_voice_session.h"
 #include "app/settings_operations.h"
 #include "util/curl.h"
 #include "util/logging.h"
@@ -63,6 +65,26 @@ bool perform_transfer(CURL* curl, const char* error_buffer, const std::function<
                 ? std::string("; ") + error_buffer : std::string()));
     }
     return !cancelled();
+}
+
+bool valid_xai_session_id(std::string_view session_id) {
+    return !session_id.empty() && session_id.size() <= 64
+        && session_id.find_first_not_of(
+            "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_")
+            == std::string_view::npos;
+}
+
+void validate_xai_languages(const std::vector<std::string>& languages) {
+    if (languages.size() > 8) {
+        throw ApplicationError(
+            ErrorCode::invalid_argument, "The request was not valid.");
+    }
+    for (const std::string& language : languages) {
+        if (language.size() > 16) {
+            throw ApplicationError(
+                ErrorCode::invalid_argument, "The request was not valid.");
+        }
+    }
 }
 
 const char* job_state_string(AudioJobState state) {
@@ -560,6 +582,124 @@ void Application::cancel_voice_input(
     impl_->pending_media.cancel(connection_id, request_id);
 }
 
+std::shared_ptr<OperationReply> Application::start_xai_voice_input(
+    std::string connection_id,
+    std::uint64_t request_id,
+    std::string session_id,
+    std::vector<std::string> languages,
+    std::uint64_t epoch,
+    std::chrono::milliseconds deadline) {
+    if (!valid_xai_session_id(session_id)) {
+        throw ApplicationError(
+            ErrorCode::invalid_argument, "The request was not valid.");
+    }
+    validate_xai_languages(languages);
+    std::string endpoint;
+    std::string model;
+    std::string key;
+    {
+        const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+        impl_->require_admitted(epoch);
+        const auto secret = settings::voice_input_secret(
+            *impl_->store->snapshot(), *impl_->api_keys, true);
+        const auto runtime = settings::get_voice_input_runtime(
+            *impl_->store->snapshot(), *impl_->api_keys, true);
+        if (!secret || !runtime) {
+            throw ApplicationError(
+                ErrorCode::not_found, "Voice input is not configured.");
+        }
+        if (runtime->provider != "xai") {
+            throw ApplicationError(
+                ErrorCode::invalid_argument, "Voice input provider is not xAI.");
+        }
+        endpoint = runtime->url;
+        model = runtime->model;
+        key = *secret;
+    }
+    const std::string url = media::build_xai_stt_url(endpoint, model, languages);
+    return impl_->xai_voice.start(
+        std::move(connection_id),
+        request_id,
+        std::move(session_id),
+        epoch,
+        url,
+        "Authorization: Bearer " + key,
+        deadline);
+}
+
+std::shared_ptr<OperationReply> Application::send_xai_voice_audio(
+    std::string connection_id,
+    std::uint64_t request_id,
+    std::string session_id,
+    std::string pcm_base64,
+    std::uint64_t epoch,
+    std::chrono::milliseconds deadline) {
+    if (!valid_xai_session_id(session_id)) {
+        throw ApplicationError(
+            ErrorCode::invalid_argument, "The request was not valid.");
+    }
+    std::vector<unsigned char> pcm;
+    try {
+        pcm = media::decode_pcm_base64(pcm_base64);
+    } catch (const std::invalid_argument&) {
+        impl_->xai_voice.cancel(connection_id, session_id);
+        throw ApplicationError(
+            ErrorCode::invalid_argument, "The request was not valid.");
+    }
+    {
+        const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+        impl_->require_admitted(epoch);
+    }
+    return impl_->xai_voice.audio(
+        std::move(connection_id),
+        request_id,
+        std::move(session_id),
+        std::move(pcm),
+        deadline);
+}
+
+std::shared_ptr<OperationReply> Application::stop_xai_voice_input(
+    std::string connection_id,
+    std::uint64_t request_id,
+    std::string session_id,
+    std::int64_t remaining_ms,
+    std::uint64_t epoch,
+    std::chrono::milliseconds deadline) {
+    if (!valid_xai_session_id(session_id) || remaining_ms < 0 || remaining_ms > 600000) {
+        throw ApplicationError(
+            ErrorCode::invalid_argument, "The request was not valid.");
+    }
+    {
+        const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+        impl_->require_admitted(epoch);
+    }
+    return impl_->xai_voice.stop(
+        std::move(connection_id),
+        request_id,
+        std::move(session_id),
+        std::chrono::milliseconds(remaining_ms),
+        deadline);
+}
+
+void Application::cancel_xai_voice_input(
+    std::string_view connection_id,
+    std::string_view session_id,
+    std::uint64_t epoch) {
+    if (const auto denied = check_context(epoch)) throw ApplicationError(*denied);
+    impl_->xai_voice.cancel(connection_id, session_id);
+}
+
+void Application::expire_xai_voice_request(
+    std::string_view connection_id,
+    std::uint64_t request_id) {
+    impl_->xai_voice.expire(connection_id, request_id);
+}
+
+void Application::set_xai_socket_factory_for_tests(
+    std::function<std::unique_ptr<media::XaiSocket>()> factory) {
+    impl_->xai_voice.set_socket_factory(std::move(factory));
+}
+
 std::optional<ResourceBytes> Application::read_resource(
     std::string_view connection_id,
     std::string_view resource_id) const {
@@ -580,6 +720,7 @@ void Application::release_request_resources(
 
 void Application::release_connection_resources(std::string_view connection_id) {
     impl_->pending_media.cancel_connection(connection_id);
+    impl_->xai_voice.cancel_connection(connection_id);
 }
 
 void Application::set_speech_url_override(std::string url) {

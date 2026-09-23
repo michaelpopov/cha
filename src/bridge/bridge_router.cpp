@@ -1055,6 +1055,81 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                 result = nlohmann::json::object();
                 break;
             }
+            case Method::voice_input_xai_start: {
+                require_only_keys(params, {"session_id", "languages"});
+                if (!params["session_id"].is_string() || !params["languages"].is_array()) {
+                    throw std::invalid_argument("The request was not valid.");
+                }
+                std::vector<std::string> languages;
+                for (const auto& language : params["languages"]) {
+                    if (!language.is_string()) {
+                        throw std::invalid_argument("The request was not valid.");
+                    }
+                    languages.push_back(language.get<std::string>());
+                }
+                const auto deadline = options.command_deadline.value_or(
+                    application.settings().command_deadline);
+                start_background(
+                    connection_id,
+                    id,
+                    application.start_xai_voice_input(
+                        std::string(connection_id),
+                        id,
+                        params["session_id"].get<std::string>(),
+                        std::move(languages),
+                        epoch,
+                        deadline));
+                return;
+            }
+            case Method::voice_input_xai_audio: {
+                require_only_keys(params, {"session_id", "pcm_base64"});
+                if (!params["session_id"].is_string() || !params["pcm_base64"].is_string()) {
+                    throw std::invalid_argument("The request was not valid.");
+                }
+                const auto deadline = options.command_deadline.value_or(
+                    application.settings().command_deadline);
+                start_background(
+                    connection_id,
+                    id,
+                    application.send_xai_voice_audio(
+                        std::string(connection_id),
+                        id,
+                        params["session_id"].get<std::string>(),
+                        params["pcm_base64"].get<std::string>(),
+                        epoch,
+                        deadline));
+                return;
+            }
+            case Method::voice_input_xai_stop: {
+                require_only_keys(params, {"session_id", "remaining_ms"});
+                if (!params["session_id"].is_string()
+                    || !params["remaining_ms"].is_number_integer()) {
+                    throw std::invalid_argument("The request was not valid.");
+                }
+                const auto deadline = options.command_deadline.value_or(
+                    application.settings().command_deadline);
+                start_background(
+                    connection_id,
+                    id,
+                    application.stop_xai_voice_input(
+                        std::string(connection_id),
+                        id,
+                        params["session_id"].get<std::string>(),
+                        params["remaining_ms"].get<std::int64_t>(),
+                        epoch,
+                        deadline));
+                return;
+            }
+            case Method::voice_input_xai_cancel: {
+                require_only_keys(params, {"session_id"});
+                if (!params["session_id"].is_string()) {
+                    throw std::invalid_argument("The request was not valid.");
+                }
+                application.cancel_xai_voice_input(
+                    connection_id, params["session_id"].get<std::string>(), epoch);
+                result = nlohmann::json::object();
+                break;
+            }
             case Method::speech_start: {
                 if (!params.is_object() || !params.contains("text")
                     || !params["text"].is_string()) {
@@ -1698,6 +1773,12 @@ void BridgeRouter::expire_timeouts() {
                 } catch (const app::ApplicationError&) {
                     // Context invalidation already revokes these resources.
                 }
+            }
+            if (found->second.method == Method::voice_input_xai_start
+                || found->second.method == Method::voice_input_xai_audio
+                || found->second.method == Method::voice_input_xai_stop) {
+                impl_->application.expire_xai_voice_request(
+                    connection->id, request_id);
             }
             impl_->fail_request(
                 connection, request_id, epoch, ErrorCode::command_timeout);

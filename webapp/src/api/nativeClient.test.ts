@@ -261,4 +261,40 @@ describe('native CHA client', () => {
     await client.clearSessionAudioCache('lobby', 'planning');
     await client.releaseResource!('r1');
   });
+
+  it('calls the xAI voice methods with session id and piece boundaries', async () => {
+    const calls: Array<{ method: string; params: unknown }> = [];
+    const bridge = createFakeNativeBridge({
+      'voiceInput.xai.start': (params) => {
+        calls.push({ method: 'voiceInput.xai.start', params });
+        return { session_id: 'dictation-1', stop_budget_ms: 20000 };
+      },
+      'voiceInput.xai.audio': (params) => {
+        calls.push({ method: 'voiceInput.xai.audio', params });
+        return { session_id: 'dictation-1', pieces: ['Hello', ' world'] };
+      },
+      'voiceInput.xai.stop': (params) => {
+        calls.push({ method: 'voiceInput.xai.stop', params });
+        return { session_id: 'dictation-1', pieces: ['\n'] };
+      },
+      'voiceInput.xai.cancel': (params) => {
+        calls.push({ method: 'voiceInput.xai.cancel', params });
+        return {};
+      },
+    });
+    const client = createNativeChaClient(bridge);
+    await expect(client.startXaiVoiceInput('dictation-1', ['ru']))
+      .resolves.toEqual({ session_id: 'dictation-1', stop_budget_ms: 20000 });
+    await expect(client.sendXaiVoiceAudio('dictation-1', 'AAE='))
+      .resolves.toEqual({ session_id: 'dictation-1', pieces: ['Hello', ' world'] });
+    await expect(client.stopXaiVoiceInput('dictation-1', 1500))
+      .resolves.toEqual({ session_id: 'dictation-1', pieces: ['\n'] });
+    await client.cancelXaiVoiceInput('dictation-1');
+    expect(calls).toEqual([
+      { method: 'voiceInput.xai.start', params: { session_id: 'dictation-1', languages: ['ru'] } },
+      { method: 'voiceInput.xai.audio', params: { session_id: 'dictation-1', pcm_base64: 'AAE=' } },
+      { method: 'voiceInput.xai.stop', params: { session_id: 'dictation-1', remaining_ms: 1500 } },
+      { method: 'voiceInput.xai.cancel', params: { session_id: 'dictation-1' } },
+    ]);
+  });
 });

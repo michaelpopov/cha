@@ -21,6 +21,8 @@ import {
   isMediaResource,
   isNativeVoiceInputRuntime,
   isVoiceInputSettings,
+  isXaiVoicePieces,
+  isXaiVoiceStartResult,
   isVoiceOutputRuntime,
   isVoiceOutputSettings,
   type ApiKeyDetail,
@@ -50,6 +52,8 @@ import {
   type VoiceDetail,
   type NativeVoiceInputRuntime,
   type VoiceInputSettings,
+  type XaiVoicePieces,
+  type XaiVoiceStartResult,
   type VoiceOutputRuntime,
   type VoiceOutputSettings,
   type VoiceUpdate,
@@ -610,6 +614,33 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient {
       }
       return value.sdp;
     }),
+    startXaiVoiceInput: (sessionId, languages, signal) => bridge.invoke(
+      'voiceInput.xai.start',
+      { session_id: sessionId, languages },
+      { signal },
+    ).then((value) => {
+      if (!isXaiVoiceStartResult(value)) throw new ChaProtocolError();
+      return value;
+    }),
+    sendXaiVoiceAudio: (sessionId, pcmBase64, signal) => bridge.invoke(
+      'voiceInput.xai.audio',
+      { session_id: sessionId, pcm_base64: pcmBase64 },
+      { signal },
+    ).then((value) => {
+      if (!isXaiVoicePieces(value)) throw new ChaProtocolError();
+      return value;
+    }),
+    stopXaiVoiceInput: (sessionId, remainingMs, signal) => bridge.invoke(
+      'voiceInput.xai.stop',
+      { session_id: sessionId, remaining_ms: remainingMs },
+      { signal },
+    ).then((value) => {
+      if (!isXaiVoicePieces(value)) throw new ChaProtocolError();
+      return value;
+    }),
+    cancelXaiVoiceInput: async (sessionId) => {
+      await call('voiceInput.xai.cancel', { session_id: sessionId }, isRecord);
+    },
     switchVault: async (vaultName, password) => {
       const result = await call(
         'vault.switch',

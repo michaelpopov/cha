@@ -44,6 +44,8 @@ TEST(BridgeProtocol, ParsesSubmitEnvelopeAndRejectsMalformedRequests) {
     EXPECT_TRUE(is_control_method(Method::speech_release));
     EXPECT_TRUE(is_control_method(Method::audio_release));
     EXPECT_TRUE(is_control_method(Method::voice_input_cancel));
+    EXPECT_TRUE(is_control_method(Method::voice_input_xai_cancel));
+    EXPECT_FALSE(is_control_method(Method::voice_input_xai_start));
     EXPECT_FALSE(is_control_method(Method::speech_start));
 
     const auto unknown_method = parse_request(

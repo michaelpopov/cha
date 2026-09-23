@@ -304,6 +304,14 @@ export interface components {
             delay: "low" | "medium" | "high" | "xhigh";
             prompt: string;
         };
+        XaiVoiceStartResult: {
+            session_id: string;
+            stop_budget_ms: number;
+        };
+        XaiVoicePieces: {
+            session_id: string;
+            pieces: string[];
+        };
         VoiceOutputSettings: {
             url: string;
             model: string;

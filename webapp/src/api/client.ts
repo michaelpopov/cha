@@ -53,6 +53,8 @@ export type CreateVoiceRequest = components['schemas']['CreateVoiceRequest'];
 export type VoiceUpdate = components['schemas']['VoiceUpdate'];
 export type VoiceInputSettings = components['schemas']['VoiceInputSettings'];
 export type NativeVoiceInputRuntime = components['schemas']['VoiceInputRuntime'];
+export type XaiVoiceStartResult = components['schemas']['XaiVoiceStartResult'];
+export type XaiVoicePieces = components['schemas']['XaiVoicePieces'];
 export type VoiceOutputSettings = components['schemas']['VoiceOutputSettings'];
 export type VoiceOutputRuntime = components['schemas']['VoiceOutputRuntime'];
 export type ApiKeyDetail = components['schemas']['ApiKeyDetail'];
@@ -214,6 +216,22 @@ export interface ChaClient {
     languages: string[],
     signal?: AbortSignal,
   ): Promise<string>;
+  startXaiVoiceInput(
+    sessionId: string,
+    languages: string[],
+    signal?: AbortSignal,
+  ): Promise<XaiVoiceStartResult>;
+  sendXaiVoiceAudio(
+    sessionId: string,
+    pcmBase64: string,
+    signal?: AbortSignal,
+  ): Promise<XaiVoicePieces>;
+  stopXaiVoiceInput(
+    sessionId: string,
+    remainingMs: number,
+    signal?: AbortSignal,
+  ): Promise<XaiVoicePieces>;
+  cancelXaiVoiceInput(sessionId: string): Promise<void>;
   switchVault(vaultName: string, password?: string): Promise<void>;
   mergeVault(sourceVault: string, password?: string): Promise<void>;
   checkVaultUpload(): Promise<VaultUploadCheck>;
@@ -428,6 +446,23 @@ export function isVoiceInputSettings(value: unknown): value is VoiceInputSetting
     && typeof value.api_key === 'string' && value.api_key.length > 0
     && isVoiceInputDelay(value.delay)
     && typeof value.prompt === 'string';
+}
+
+export function isXaiVoiceStartResult(value: unknown): value is XaiVoiceStartResult {
+  return isRecord(value)
+    && typeof value.session_id === 'string'
+    && value.session_id.length > 0
+    && Number.isSafeInteger(value.stop_budget_ms)
+    && (value.stop_budget_ms as number) >= 0
+    && (value.stop_budget_ms as number) <= 20000;
+}
+
+export function isXaiVoicePieces(value: unknown): value is XaiVoicePieces {
+  return isRecord(value)
+    && typeof value.session_id === 'string'
+    && value.session_id.length > 0
+    && Array.isArray(value.pieces)
+    && value.pieces.every((piece) => typeof piece === 'string');
 }
 
 export function isNativeVoiceInputRuntime(value: unknown): value is NativeVoiceInputRuntime {

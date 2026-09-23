@@ -81,6 +81,10 @@ const std::pair<Method, std::string_view> kMethods[] = {
     {Method::voice_input_runtime, "voiceInput.runtime"},
     {Method::voice_input_connect, "voiceInput.connect"},
     {Method::voice_input_cancel, "voiceInput.cancel"},
+    {Method::voice_input_xai_start, "voiceInput.xai.start"},
+    {Method::voice_input_xai_audio, "voiceInput.xai.audio"},
+    {Method::voice_input_xai_stop, "voiceInput.xai.stop"},
+    {Method::voice_input_xai_cancel, "voiceInput.xai.cancel"},
     {Method::voice_output_get, "voiceOutput.get"},
     {Method::voice_output_save, "voiceOutput.save"},
     {Method::voice_output_runtime, "voiceOutput.runtime"},
@@ -138,7 +142,8 @@ bool is_control_method(Method method) noexcept {
         || method == Method::speech_cancel
         || method == Method::speech_release
         || method == Method::audio_release
-        || method == Method::voice_input_cancel;
+        || method == Method::voice_input_cancel
+        || method == Method::voice_input_xai_cancel;
 }
 
 bool requires_context_epoch(Method method) noexcept {
