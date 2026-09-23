@@ -7,9 +7,8 @@ invented examples. The session identifier in `transcript.created` is redacted;
 transcript text, flags, word times, event order, and elapsed receive times are
 unchanged. No key, authorization header, or personal recording is included.
 
-The implementation decision is in [block2.md](../../block2.md). Replay these
-files in tests; implementation sessions do not need credentials or another
-protocol investigation.
+Replay these files in tests; implementation sessions do not need credentials or
+another protocol investigation.
 
 ## Capture configuration
 

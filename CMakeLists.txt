@@ -524,7 +524,7 @@ if(BUILD_TESTING)
         cha_app_tests
         PRIVATE
             CHA_WIRE_FIXTURE_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/wire"
-            CHA_XAI_FIXTURE_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/docs/fixtures/xai")
+            CHA_XAI_FIXTURE_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/xai")
     if(TARGET cha_lease_test_helper)
         target_compile_definitions(
             cha_app_tests
