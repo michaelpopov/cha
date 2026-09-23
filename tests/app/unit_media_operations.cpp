@@ -237,6 +237,7 @@ TEST(ApplicationMedia, ConnectsVoiceInputWithoutExposingTheStoredKey) {
     const auto key = application->create_api_key(
         {.display_name = "Realtime", .value = "voice-secret"}, epoch);
     (void)application->save_voice_input_settings({
+        .provider = "openai",
         .url = "http://127.0.0.1:" + std::to_string(server.port()) + "/v1/realtime",
         .model = "gpt-4o-transcribe",
         .api_key = key.id,
@@ -260,6 +261,42 @@ TEST(ApplicationMedia, ConnectsVoiceInputWithoutExposingTheStoredKey) {
     application->request_shutdown();
     (void)application->join_shutdown(2s);
     server.join();
+}
+
+TEST(ApplicationMedia, RejectsXaiBeforeTheOpenAiRequest) {
+    MockHttpServer server({http_response("application/sdp", "v=0 answer")});
+    test::TestWorkspace workspace;
+    const std::filesystem::path database =
+        test::import_test_database(workspace.root());
+    auto application = Application::open(make_command(workspace, database));
+    const auto epoch = application->context_epoch();
+    const auto key = application->create_api_key(
+        {.display_name = "xAI", .value = "xai-secret"}, epoch);
+    (void)application->save_voice_input_settings({
+        .provider = "xai",
+        .url = "ws://127.0.0.1:" + std::to_string(server.port()) + "/v1/stt",
+        .model = "grok-voice-transcribe-2.0",
+        .api_key = key.id,
+        .delay = "low",
+        .prompt = "do not send",
+    }, epoch);
+
+    const auto started = std::chrono::steady_clock::now();
+    try {
+        (void)application->connect_voice_input(
+            "view-1", 4, "v=0 offer", {"en"}, epoch);
+        FAIL() << "xAI must not use the OpenAI connection";
+    } catch (const ApplicationError& error) {
+        EXPECT_EQ(error.code, ErrorCode::invalid_argument);
+        EXPECT_EQ(
+            error.what(),
+            std::string("xAI voice input transport is not implemented"));
+    }
+    EXPECT_LT(std::chrono::steady_clock::now() - started, 500ms);
+    EXPECT_TRUE(server.requests().empty());
+
+    application->request_shutdown();
+    (void)application->join_shutdown(2s);
 }
 
 TEST(ApplicationMedia, RejectsUnknownAudioSourcesAndClearsConnectionResources) {

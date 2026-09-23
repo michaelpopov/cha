@@ -33,7 +33,6 @@ import {
   useTextToSpeechConfiguration,
 } from '../textToSpeech';
 import { validateBootstrap } from '../state/bootstrap';
-import { reloadForVoiceSettings } from '../state/voiceSettingsReload';
 import type { AppAction, AppState } from '../state/view';
 import { useLoad } from '../useLoad';
 import { voiceClasses } from './characterAppearance';
@@ -317,13 +316,6 @@ export function DownloadVaultScreen({ client, dispatch }: SettingsScreenProps) {
   );
 }
 
-// Transcription connects directly from the browser, so changing its origin
-// requires reloading the page with the updated content security policy.
-async function voiceInputOrigin(client: ChaClient): Promise<string> {
-  const input = await client.getVoiceInputSettings();
-  return input ? new URL(input.url).origin : '';
-}
-
 export function MergeVaultScreen({ client, dispatch, state }: SettingsScreenProps) {
   const { data: vaults, error: loadError, retry } = useLoad(
     client, loadVaults, 'Vaults could not be loaded.',
@@ -334,7 +326,6 @@ export function MergeVaultScreen({ client, dispatch, state }: SettingsScreenProp
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const [complete, setComplete] = useState(false);
-  const [reloadNeeded, setReloadNeeded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const pendingRef = useRef(false);
 
@@ -349,7 +340,6 @@ export function MergeVaultScreen({ client, dispatch, state }: SettingsScreenProp
     setComplete(false);
     if (password) setPasswordError(null);
     try {
-      const voiceBefore = await voiceInputOrigin(client).catch(() => null);
       await client.mergeVault(source, password);
       setPasswordPrompt(false);
       setPasswordError(null);
@@ -361,12 +351,6 @@ export function MergeVaultScreen({ client, dispatch, state }: SettingsScreenProp
       } catch {
         // Discovery refresh is non-critical; merge already succeeded.
       }
-      // When the transcription origin is unknown, offering a reload is harmless.
-      const voiceChanged = await voiceInputOrigin(client).then(
-        (voiceAfter) => voiceBefore === null || voiceAfter !== voiceBefore,
-        () => true,
-      );
-      setReloadNeeded((needed) => needed || voiceChanged);
       setComplete(true);
     } catch (failure: unknown) {
       if (failure instanceof ChaError && failure.code === 'source_vault_password_required') {
@@ -412,12 +396,6 @@ export function MergeVaultScreen({ client, dispatch, state }: SettingsScreenProp
             <label>Source vault<select className="cha-form-control" onChange={(event) => setSource(event.target.value)} value={source}><option value="">Select a vault</option>{sources.map((vault) => <option key={vault.display_name} value={vault.display_name}>{vault.display_name}</option>)}</select></label>
           </fieldset>
           {complete && <p className="cha-state-message" role="status">Merge complete</p>}
-          {complete && reloadNeeded && (
-            <div className="cha-state-message">
-              <p>Reload CHA to use the merged voice settings.</p>
-              <button className="cha-button cha-button-ghost" onClick={() => window.location.reload()} type="button">Reload</button>
-            </div>
-          )}
           {error && <p className="cha-error-message" role="alert">{error}</p>}
           <div className="cha-settings-form-actions"><button className="cha-button cha-button-primary" disabled={!source || !destination || pending} type="submit">{pending ? 'Merging…' : 'Merge'}</button></div>
         </form>
@@ -1432,13 +1410,42 @@ export function VoicesScreen({ client, dispatch }: SettingsScreenProps) {
   );
 }
 
-const defaultVoiceInput: VoiceInputSettings = {
+const openAiVoiceInputDefaults = {
+  provider: 'openai' as const,
   url: 'https://api.openai.com/v1/realtime/calls',
   model: 'gpt-live-transcribe',
+};
+
+const xaiVoiceInputDefaults = {
+  provider: 'xai' as const,
+  url: 'wss://api.x.ai/v1/stt',
+  model: 'grok-voice-transcribe-2.0',
+};
+
+const defaultVoiceInput: VoiceInputSettings = {
+  ...openAiVoiceInputDefaults,
   api_key: '',
   delay: 'low',
   prompt: '',
 };
+
+const voiceInputAuthority = /^[A-Za-z0-9.\-:[\]]+$/;
+
+function voiceInputUrlError(
+  provider: VoiceInputSettings['provider'],
+  url: string,
+): string | null {
+  const requirement = provider === 'xai'
+    ? 'xAI voice input requires an absolute WS or WSS URL'
+    : 'OpenAI voice input requires an absolute HTTP or HTTPS URL';
+  const prefix = provider === 'xai'
+    ? (url.startsWith('wss://') ? 'wss://' : url.startsWith('ws://') ? 'ws://' : '')
+    : (url.startsWith('https://') ? 'https://' : url.startsWith('http://') ? 'http://' : '');
+  if (!prefix) return requirement;
+  const authority = url.slice(prefix.length).split(/[/?#]/, 1)[0] ?? '';
+  if (!authority || !voiceInputAuthority.test(authority)) return requirement;
+  return null;
+}
 
 function defaultVoiceOutput(voices: VoiceDetail[]): VoiceOutputSettings {
   return {
@@ -1459,9 +1466,13 @@ export function VoiceSettingsScreen({ client, dispatch }: SettingsScreenProps) {
   const [output, setOutput] = useState<VoiceOutputSettings>(defaultVoiceOutput([]));
   const [keys, setKeys] = useState<ApiKeyDetail[] | null>(null);
   const [voices, setVoices] = useState<VoiceDetail[] | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
+  const [savingInput, setSavingInput] = useState(false);
+  const [savingOutput, setSavingOutput] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [inputError, setInputError] = useState<string | null>(null);
+  const [outputError, setOutputError] = useState<string | null>(null);
+  const [inputMessage, setInputMessage] = useState<string | null>(null);
+  const [outputMessage, setOutputMessage] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
 
   useEffect(() => {
@@ -1470,7 +1481,7 @@ export function VoiceSettingsScreen({ client, dispatch }: SettingsScreenProps) {
     setSavedOutput(undefined);
     setKeys(null);
     setVoices(null);
-    setError(null);
+    setLoadError(null);
     void Promise.all([
       client.getVoiceInputSettings(),
       client.getVoiceOutputSettings(),
@@ -1487,7 +1498,7 @@ export function VoiceSettingsScreen({ client, dispatch }: SettingsScreenProps) {
         setVoices(loadedVoices);
       },
       (failure: unknown) => {
-        if (current) setError(publicErrorMessage(
+        if (current) setLoadError(publicErrorMessage(
           failure, 'Voice settings could not be loaded.',
         ));
       },
@@ -1497,80 +1508,129 @@ export function VoiceSettingsScreen({ client, dispatch }: SettingsScreenProps) {
 
   const inputBaseline = savedInput ?? defaultVoiceInput;
   const outputBaseline = savedOutput ?? defaultVoiceOutput(voices ?? []);
-  const dirty = input.url !== inputBaseline.url
+  const inputDirty = input.provider !== inputBaseline.provider
+    || input.url !== inputBaseline.url
     || input.model !== inputBaseline.model
     || input.api_key !== inputBaseline.api_key
     || input.delay !== inputBaseline.delay
-    || input.prompt !== inputBaseline.prompt
-    || output.url !== outputBaseline.url
+    || input.prompt !== inputBaseline.prompt;
+  const outputDirty = output.url !== outputBaseline.url
     || output.model !== outputBaseline.model
     || output.api_key !== outputBaseline.api_key
     || output.output_format !== outputBaseline.output_format
     || output.default_voice !== outputBaseline.default_voice;
+  const inputReady = Boolean(input.url.trim() && input.model.trim() && input.api_key);
+  const outputReady = Boolean(
+    output.url.trim() && output.model.trim() && output.api_key
+    && output.output_format.trim() && output.default_voice,
+  );
 
-  async function save(event: FormEvent<HTMLFormElement>) {
+  function chooseInputProvider(provider: VoiceInputSettings['provider']) {
+    const defaults = provider === 'xai' ? xaiVoiceInputDefaults : openAiVoiceInputDefaults;
+    setInput((current) => ({
+      ...current,
+      provider,
+      url: defaults.url,
+      model: defaults.model,
+      api_key: '',
+    }));
+    setInputError(null);
+    setInputMessage(null);
+  }
+
+  async function saveInput(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!input.url.trim() || !input.model.trim() || !input.api_key
-      || !output.url.trim() || !output.model.trim() || !output.api_key
-      || !output.output_format.trim() || !output.default_voice || saving) return;
-    setError(null);
-    setMessage(null);
-    setSaving(true);
+    const url = input.url.trim();
+    const model = input.model.trim();
+    if (!url || !model || !input.api_key || savingInput) return;
+    const urlError = voiceInputUrlError(input.provider, url);
+    if (urlError) {
+      setInputMessage(null);
+      setInputError(urlError);
+      return;
+    }
+    setInputError(null);
+    setInputMessage(null);
+    setSavingInput(true);
     try {
-      const [updatedInput, updatedOutput] = await Promise.all([
-        client.saveVoiceInputSettings({
-          url: input.url.trim(),
-          model: input.model.trim(),
-          api_key: input.api_key,
-          delay: input.delay,
-          prompt: input.prompt,
-        }),
-        client.saveVoiceOutputSettings({
-          url: output.url,
-          model: output.model,
-          api_key: output.api_key,
-          output_format: output.output_format.trim(),
-          default_voice: output.default_voice,
-        }),
-      ]);
-      const endpointOriginChanged = savedInput == null
-        || new URL(savedInput.url).origin !== new URL(updatedInput.url).origin;
+      const updatedInput = await client.saveVoiceInputSettings({
+        provider: input.provider,
+        url,
+        model,
+        api_key: input.api_key,
+        delay: input.delay,
+        prompt: input.prompt,
+      });
       setSavedInput(updatedInput);
       setInput(updatedInput);
+      setInputMessage('Voice input saved.');
+    } catch (failure: unknown) {
+      setInputError(publicErrorMessage(failure, 'Voice input could not be saved.'));
+    } finally {
+      setSavingInput(false);
+    }
+  }
+
+  async function saveOutput(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!output.url.trim() || !output.model.trim() || !output.api_key
+      || !output.output_format.trim() || !output.default_voice || savingOutput) return;
+    setOutputError(null);
+    setOutputMessage(null);
+    setSavingOutput(true);
+    try {
+      const updatedOutput = await client.saveVoiceOutputSettings({
+        url: output.url,
+        model: output.model,
+        api_key: output.api_key,
+        output_format: output.output_format.trim(),
+        default_voice: output.default_voice,
+      });
       setSavedOutput(updatedOutput);
       setOutput(updatedOutput);
-      setMessage('Voice settings saved.');
-      if (endpointOriginChanged) reloadForVoiceSettings();
+      setOutputMessage('Voice output saved.');
     } catch (failure: unknown) {
-      setError(publicErrorMessage(failure, 'Voice settings could not be saved.'));
+      setOutputError(publicErrorMessage(failure, 'Voice output could not be saved.'));
     } finally {
-      setSaving(false);
+      setSavingOutput(false);
     }
   }
 
   return (
     <section className="cha-screen cha-navigation" aria-label="Voice settings">
       <button className="cha-back-row" onClick={() => dispatch({ type: 'show-settings-voices' })} type="button"><ChevronLeftIcon /><span>Voices</span></button>
-      {(savedInput === undefined || savedOutput === undefined) && !error && <p className="cha-state-message" role="status">Loading voice settings…</p>}
-      {error && (savedInput === undefined || savedOutput === undefined) && <LoadFailure message={error} retry={() => setRevision((value) => value + 1)} />}
+      {(savedInput === undefined || savedOutput === undefined) && !loadError && <p className="cha-state-message" role="status">Loading voice settings…</p>}
+      {loadError && (savedInput === undefined || savedOutput === undefined) && <LoadFailure message={loadError} retry={() => setRevision((value) => value + 1)} />}
       {savedInput !== undefined && savedOutput !== undefined && keys && voices && (
-        <form className="cha-settings-form" onSubmit={(event) => void save(event)}>
-          <label>Input URL endpoint<input autoFocus className="cha-form-control" onChange={(event) => setInput({ ...input, url: event.target.value })} type="url" value={input.url} /></label>
-          <label>Input model name<input className="cha-form-control" onChange={(event) => setInput({ ...input, model: event.target.value })} value={input.model} /></label>
-          <label>Input API key name<select className="cha-form-control" onChange={(event) => setInput({ ...input, api_key: event.target.value })} value={input.api_key}><option value="">Select an API key</option>{keys.map((key) => <option key={key.id} value={key.id}>{key.display_name}</option>)}</select></label>
-          <label>Input delay<select className="cha-form-control" onChange={(event) => setInput({ ...input, delay: event.target.value as VoiceInputSettings['delay'] })} value={input.delay}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="xhigh">Extra high</option></select></label>
-          <label>Input prompt<textarea className="cha-form-control" onChange={(event) => setInput({ ...input, prompt: event.target.value })} rows={4} value={input.prompt} /></label>
-          <label>Output URL endpoint<input className="cha-form-control" onChange={(event) => setOutput({ ...output, url: event.target.value })} type="url" value={output.url} /></label>
-          <label>Output model name<input className="cha-form-control" onChange={(event) => setOutput({ ...output, model: event.target.value })} value={output.model} /></label>
-          <label>Output API key name<select className="cha-form-control" onChange={(event) => setOutput({ ...output, api_key: event.target.value })} value={output.api_key}><option value="">Select an API key</option>{keys.map((key) => <option key={key.id} value={key.id}>{key.display_name}</option>)}</select></label>
-          <label>Output format<input className="cha-form-control" onChange={(event) => setOutput({ ...output, output_format: event.target.value })} value={output.output_format} /></label>
-          <label>Default voice<select className="cha-form-control" onChange={(event) => setOutput({ ...output, default_voice: event.target.value })} value={output.default_voice}><option value="">Select a voice</option>{voices.map((voice) => <option key={voice.id} value={voice.display_name}>{voice.display_name}</option>)}</select></label>
+        <>
           {keys.length === 0 && <p className="cha-error-message" role="alert">Add an API key before configuring voice.</p>}
-          {voices.length === 0 && <p className="cha-error-message" role="alert">Add a voice before configuring voice output.</p>}
-          {message && <p className="cha-state-message" role="status">{message}</p>}
-          {error && <p className="cha-error-message" role="alert">{error}</p>}
-          <div className="cha-settings-form-actions"><button className="cha-button cha-button-ghost" disabled={!dirty || saving} onClick={() => { setInput(inputBaseline); setOutput(outputBaseline); setMessage(null); }} type="button">Reset</button><button className="cha-button cha-button-primary" disabled={!dirty || !input.url.trim() || !input.model.trim() || !input.api_key || !output.url.trim() || !output.model.trim() || !output.api_key || !output.output_format.trim() || !output.default_voice || saving} type="submit">{saving ? 'Saving…' : 'Save voice settings'}</button></div>
-        </form>
+          <form className="cha-settings-form" onSubmit={(event) => void saveInput(event)}>
+            <label>Input provider<select autoFocus className="cha-form-control" onChange={(event) => chooseInputProvider(event.target.value as VoiceInputSettings['provider'])} value={input.provider}><option value="openai">OpenAI</option><option value="xai">xAI</option></select></label>
+            <label>Input URL endpoint<input className="cha-form-control" onChange={(event) => setInput({ ...input, url: event.target.value })} value={input.url} /></label>
+            <label>Input model name<input className="cha-form-control" onChange={(event) => setInput({ ...input, model: event.target.value })} value={input.model} /></label>
+            <label>Input API key name<select className="cha-form-control" onChange={(event) => setInput({ ...input, api_key: event.target.value })} value={input.api_key}><option value="">Select an API key</option>{keys.map((key) => <option key={key.id} value={key.id}>{key.display_name}</option>)}</select></label>
+            {input.provider === 'openai' && (
+              <>
+                <label>Input delay<select className="cha-form-control" onChange={(event) => setInput({ ...input, delay: event.target.value as VoiceInputSettings['delay'] })} value={input.delay}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="xhigh">Extra high</option></select></label>
+                <label>Input prompt<textarea className="cha-form-control" onChange={(event) => setInput({ ...input, prompt: event.target.value })} rows={4} value={input.prompt} /></label>
+              </>
+            )}
+            {inputMessage && <p className="cha-state-message" role="status">{inputMessage}</p>}
+            {inputError && <p className="cha-error-message" role="alert">{inputError}</p>}
+            <div className="cha-settings-form-actions"><button className="cha-button cha-button-ghost" disabled={!inputDirty || savingInput} onClick={() => { setInput(inputBaseline); setInputMessage(null); setInputError(null); }} type="button">Reset voice input</button><button className="cha-button cha-button-primary" disabled={!inputDirty || !inputReady || savingInput} type="submit">{savingInput ? 'Saving…' : 'Save voice input'}</button></div>
+          </form>
+          <form className="cha-settings-form" onSubmit={(event) => void saveOutput(event)}>
+            <label>Output URL endpoint<input className="cha-form-control" onChange={(event) => setOutput({ ...output, url: event.target.value })} type="url" value={output.url} /></label>
+            <label>Output model name<input className="cha-form-control" onChange={(event) => setOutput({ ...output, model: event.target.value })} value={output.model} /></label>
+            <label>Output API key name<select className="cha-form-control" onChange={(event) => setOutput({ ...output, api_key: event.target.value })} value={output.api_key}><option value="">Select an API key</option>{keys.map((key) => <option key={key.id} value={key.id}>{key.display_name}</option>)}</select></label>
+            <label>Output format<input className="cha-form-control" onChange={(event) => setOutput({ ...output, output_format: event.target.value })} value={output.output_format} /></label>
+            <label>Default voice<select className="cha-form-control" onChange={(event) => setOutput({ ...output, default_voice: event.target.value })} value={output.default_voice}><option value="">Select a voice</option>{voices.map((voice) => <option key={voice.id} value={voice.display_name}>{voice.display_name}</option>)}</select></label>
+            {voices.length === 0 && <p className="cha-error-message" role="alert">Add a voice before configuring voice output.</p>}
+            {outputMessage && <p className="cha-state-message" role="status">{outputMessage}</p>}
+            {outputError && <p className="cha-error-message" role="alert">{outputError}</p>}
+            <div className="cha-settings-form-actions"><button className="cha-button cha-button-ghost" disabled={!outputDirty || savingOutput} onClick={() => { setOutput(outputBaseline); setOutputMessage(null); setOutputError(null); }} type="button">Reset voice output</button><button className="cha-button cha-button-primary" disabled={!outputDirty || !outputReady || savingOutput} type="submit">{savingOutput ? 'Saving…' : 'Save voice output'}</button></div>
+          </form>
+        </>
       )}
     </section>
   );

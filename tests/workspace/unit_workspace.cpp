@@ -1192,6 +1192,7 @@ TEST(Workspace, ValidatesVoiceInputBeforeWritingAndIgnoresInvalidSavedConfig) {
                           "api_key = \"api_key_1\"\n";
     const Workspace legacy = Workspace::load(fixture.root());
     ASSERT_TRUE(legacy.voice_input());
+    EXPECT_EQ(legacy.voice_input()->provider, "openai");
     EXPECT_EQ(legacy.voice_input()->delay, "low");
     EXPECT_TRUE(legacy.voice_input()->prompt.empty());
 
@@ -1200,6 +1201,196 @@ TEST(Workspace, ValidatesVoiceInputBeforeWritingAndIgnoresInvalidSavedConfig) {
                           "api_key = \"api_key_1\"\n";
     const Workspace reloaded = Workspace::load(fixture.root());
     EXPECT_FALSE(reloaded.voice_input());
+}
+
+TEST(Workspace, SelectsVoiceInputUrlsAndNormalizesUnusedXaiDelay) {
+    test::TestWorkspace fixture;
+    const auto directory = fixture.root() / "system" / "voice-input";
+    std::filesystem::create_directories(directory);
+    const auto path = directory / "config.toml";
+    const auto log_file = fixture.root() / "voice-input-warnings.log";
+
+    const auto write_config = [&](std::string_view body) {
+        std::ofstream(path) << body;
+    };
+    const auto load_provider = [&]() -> std::optional<std::string> {
+        const auto loaded = Workspace::load(fixture.root()).voice_input();
+        if (!loaded) return std::nullopt;
+        return loaded->provider;
+    };
+
+    write_config(
+        "url = \"https://api.openai.com/v1/realtime/calls\"\n"
+        "model = \"gpt-live-transcribe\"\n"
+        "api_key = \"api_key_1\"\n");
+    EXPECT_EQ(load_provider(), "openai");
+
+    write_config(
+        "provider = \"openai\"\n"
+        "url = \"http://127.0.0.1:9/v1/realtime\"\n"
+        "model = \"gpt-live-transcribe\"\n"
+        "api_key = \"api_key_1\"\n");
+    EXPECT_EQ(load_provider(), "openai");
+
+    write_config(
+        "provider = \"xai\"\n"
+        "url = \"wss://api.x.ai/v1/stt\"\n"
+        "model = \"grok-voice-transcribe-2.0\"\n"
+        "api_key = \"api_key_1\"\n");
+    EXPECT_EQ(load_provider(), "xai");
+
+    write_config(
+        "provider = \"xai\"\n"
+        "url = \"ws://127.0.0.1:9/v1/stt\"\n"
+        "model = \"grok-voice-transcribe-2.0\"\n"
+        "api_key = \"api_key_1\"\n");
+    EXPECT_EQ(load_provider(), "xai");
+
+    initialize_diagnostic_logging(log_file, "warn");
+    write_config(
+        "url = \"wss://api.x.ai/v1/stt\"\n"
+        "model = \"gpt-live-transcribe\"\n"
+        "api_key = \"api_key_1\"\n");
+    EXPECT_FALSE(load_provider());
+    write_config(
+        "provider = \"xai\"\n"
+        "url = \"https://api.openai.com/v1/realtime/calls\"\n"
+        "model = \"grok-voice-transcribe-2.0\"\n"
+        "api_key = \"api_key_1\"\n");
+    EXPECT_FALSE(load_provider());
+    write_config(
+        "provider = \"openai\"\n"
+        "url = \"ftp://example.com/stt\"\n"
+        "model = \"gpt-live-transcribe\"\n"
+        "api_key = \"api_key_1\"\n");
+    EXPECT_FALSE(load_provider());
+    write_config(
+        "provider = \"xai\"\n"
+        "url = \"wss://\"\n"
+        "model = \"grok-voice-transcribe-2.0\"\n"
+        "api_key = \"api_key_1\"\n");
+    EXPECT_FALSE(load_provider());
+    write_config(
+        "provider = \"openai\"\n"
+        "url = \"https://bad host/stt\"\n"
+        "model = \"gpt-live-transcribe\"\n"
+        "api_key = \"api_key_1\"\n");
+    EXPECT_FALSE(load_provider());
+    write_config(
+        "provider = \"grok\"\n"
+        "url = \"https://api.openai.com/v1/realtime/calls\"\n"
+        "model = \"gpt-live-transcribe\"\n"
+        "api_key = \"api_key_1\"\n");
+    EXPECT_FALSE(load_provider());
+    write_config(
+        "provider = \"xai\"\n"
+        "url = \"wss://api.x.ai/v1/stt\"\n"
+        "model = \"grok-voice-transcribe-2.0\"\n"
+        "api_key = \"api_key_1\"\n"
+        "delay = \"obsolete-delay-value\"\n"
+        "prompt = \"keep\"\n");
+    const Workspace normalized = Workspace::load(fixture.root());
+    ASSERT_TRUE(normalized.voice_input());
+    EXPECT_EQ(normalized.voice_input()->provider, "xai");
+    EXPECT_EQ(normalized.voice_input()->delay, "low");
+    EXPECT_EQ(normalized.voice_input()->prompt, "keep");
+    shutdown_diagnostic_logging();
+    const std::string warnings = file_bytes(log_file);
+    EXPECT_NE(warnings.find(std::string(openai_voice_input_url_message)), std::string::npos);
+    EXPECT_NE(warnings.find(std::string(xai_voice_input_url_message)), std::string::npos);
+    EXPECT_NE(warnings.find("Ignoring obsolete voice input delay for xAI; using low"),
+        std::string::npos);
+    EXPECT_EQ(warnings.find("obsolete-delay-value"), std::string::npos);
+
+    const Workspace workspace = Workspace::load(fixture.root());
+    const auto saved_before = file_bytes(path);
+    try {
+        edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) {
+            editor.write_voice_input({
+                .provider = "openai",
+                .url = "wss://api.x.ai/v1/stt",
+                .model = "gpt-live-transcribe",
+                .api_key_id = "api_key_1",
+            });
+        });
+        FAIL() << "OpenAI must reject a WebSocket URL";
+    } catch (const std::invalid_argument& error) {
+        EXPECT_EQ(error.what(), std::string(openai_voice_input_url_message));
+    }
+    EXPECT_EQ(file_bytes(path), saved_before);
+
+    try {
+        edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) {
+            editor.write_voice_input({
+                .provider = "xai",
+                .url = "https://api.openai.com/v1/realtime/calls",
+                .model = "grok-voice-transcribe-2.0",
+                .api_key_id = "api_key_1",
+            });
+        });
+        FAIL() << "xAI must reject an HTTP URL";
+    } catch (const std::invalid_argument& error) {
+        EXPECT_EQ(error.what(), std::string(xai_voice_input_url_message));
+    }
+    EXPECT_EQ(file_bytes(path), saved_before);
+
+    edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) {
+        editor.write_voice_input({
+            .provider = "xai",
+            .url = "ws://127.0.0.1:9/v1/stt",
+            .model = "grok-voice-transcribe-2.0",
+            .api_key_id = "api_key_1",
+            .delay = "obsolete-delay-value",
+            .prompt = "keep",
+        });
+    });
+    const Workspace saved = Workspace::load(fixture.root());
+    ASSERT_TRUE(saved.voice_input());
+    EXPECT_EQ(saved.voice_input()->provider, "xai");
+    EXPECT_EQ(saved.voice_input()->url, "ws://127.0.0.1:9/v1/stt");
+    EXPECT_EQ(saved.voice_input()->delay, "low");
+    EXPECT_EQ(saved.voice_input()->prompt, "keep");
+    EXPECT_EQ(file_bytes(path).find("obsolete-delay-value"), std::string::npos);
+
+    edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) {
+        editor.write_voice_input({
+            .provider = "openai",
+            .url = "https://api.openai.com/v1/realtime/calls",
+            .model = "gpt-live-transcribe",
+            .api_key_id = "api_key_1",
+        });
+    });
+    edit_fixture(Workspace::load(fixture.root()), [&](WorkspaceConfigEditor& editor) {
+        editor.write_voice_input({
+            .provider = "xai",
+            .url = "wss://api.x.ai/v1/stt",
+            .model = "grok-voice-transcribe-2.0",
+            .api_key_id = "api_key_1",
+        });
+    });
+    const Workspace defaults = Workspace::load(fixture.root());
+    ASSERT_TRUE(defaults.voice_input());
+    EXPECT_EQ(defaults.voice_input()->provider, "xai");
+    EXPECT_EQ(defaults.voice_input()->url, "wss://api.x.ai/v1/stt");
+    EXPECT_EQ(defaults.voice_input()->model, "grok-voice-transcribe-2.0");
+
+    EXPECT_THROW(edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) {
+        editor.write_voice_input({
+            .provider = "openai",
+            .url = "https://api.openai.com/v1/realtime/calls",
+            .model = "gpt-live-transcribe",
+            .api_key_id = "api_key_1",
+            .delay = "obsolete-delay-value",
+        });
+    }), std::invalid_argument);
+    EXPECT_THROW(edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) {
+        editor.write_voice_input({
+            .provider = "grok",
+            .url = "https://api.openai.com/v1/realtime/calls",
+            .model = "gpt-live-transcribe",
+            .api_key_id = "api_key_1",
+        });
+    }), std::invalid_argument);
 }
 
 TEST(Workspace, NormalizesFishAudioConfigurationOnWriteAndLoad) {

@@ -307,9 +307,19 @@ WorkspaceProvider load_provider(
     return provider;
 }
 
-bool valid_voice_input_url(std::string_view url) {
-    const std::size_t authority_start = url.starts_with("https://") ? 8
-        : url.starts_with("http://") ? 7 : 0;
+bool known_voice_input_provider(std::string_view provider) {
+    return provider == "openai" || provider == "xai";
+}
+
+bool valid_voice_input_url(std::string_view provider, std::string_view url) {
+    std::size_t authority_start = 0;
+    if (provider == "openai") {
+        if (url.starts_with("https://")) authority_start = 8;
+        else if (url.starts_with("http://")) authority_start = 7;
+    } else if (provider == "xai") {
+        if (url.starts_with("wss://")) authority_start = 6;
+        else if (url.starts_with("ws://")) authority_start = 5;
+    }
     if (authority_start == 0) return false;
     const std::size_t authority_end = url.find_first_of("/?#", authority_start);
     const std::string_view authority = url.substr(
@@ -322,6 +332,12 @@ bool valid_voice_input_url(std::string_view url) {
             == std::string_view::npos;
 }
 
+std::string_view voice_input_url_message(std::string_view provider) {
+    return provider == "xai"
+        ? xai_voice_input_url_message
+        : openai_voice_input_url_message;
+}
+
 bool valid_voice_input_delay(std::string_view delay) {
     return delay == "low" || delay == "medium" || delay == "high"
         || delay == "xhigh";
@@ -332,9 +348,12 @@ WorkspaceVoiceInput load_voice_input(
     const std::filesystem::path& path) {
     const toml::table table = read_toml(source, path, "voice input config");
     static constexpr std::string_view fields[]{
-        "url", "model", "api_key", "delay", "prompt"};
+        "provider", "url", "model", "api_key", "delay", "prompt"};
     reject_unknown_fields(table, path, fields, "Voice input config");
     WorkspaceVoiceInput result{
+        .provider = optional_value<std::string>(
+                        table, path, "provider", "a string")
+                        .value_or("openai"),
         .url = required_string(table, path, "url"),
         .model = required_string(table, path, "model"),
         .api_key_id = required_string(table, path, "api_key"),
@@ -345,12 +364,19 @@ WorkspaceVoiceInput load_voice_input(
                       table, path, "prompt", "a string")
                       .value_or(""),
     };
-    if (!valid_voice_input_url(result.url)) {
+    if (!known_voice_input_provider(result.provider)) {
         throw std::runtime_error(
             "Voice input config '" + utf8_path(path)
-            + "' requires an absolute HTTP or HTTPS URL");
+            + "' has unsupported provider '" + result.provider + "'");
     }
-    if (!valid_voice_input_delay(result.delay)) {
+    if (!valid_voice_input_url(result.provider, result.url)) {
+        throw std::runtime_error(
+            "Voice input config '" + utf8_path(path) + "': "
+            + std::string(voice_input_url_message(result.provider)));
+    }
+    if (result.provider == "xai") {
+        normalize_unused_voice_input_delay(result.provider, result.delay);
+    } else if (!valid_voice_input_delay(result.delay)) {
         throw std::runtime_error(
             "Voice input config '" + utf8_path(path)
             + "' has invalid delay");
@@ -1609,6 +1635,15 @@ WorkspaceForum build_entrance(const Workspace& workspace) {
 
 } // namespace
 
+void normalize_unused_voice_input_delay(
+    std::string_view provider,
+    std::string& delay) {
+    if (provider == "xai" && !valid_voice_input_delay(delay)) {
+        log_warn("Ignoring obsolete voice input delay for xAI; using low");
+        delay = "low";
+    }
+}
+
 Workspace Workspace::load(std::filesystem::path root) {
     return load(std::move(root), TextSource{});
 }
@@ -2262,17 +2297,26 @@ void WorkspaceConfigEditor::delete_voice(std::string_view voice_id) {
 void WorkspaceConfigEditor::write_voice_input(const WorkspaceVoiceInput& settings) {
     const std::filesystem::path directory = workspace_.root_ / "system" / "voice-input";
     const std::filesystem::path path = directory / "config.toml";
-    if (settings.url.empty() || settings.model.empty()
-        || settings.api_key_id.empty()
-        || !valid_voice_input_url(settings.url)
-        || !valid_voice_input_delay(settings.delay)) {
+    if (!known_voice_input_provider(settings.provider)
+        || settings.url.empty() || settings.model.empty()
+        || settings.api_key_id.empty()) {
+        throw std::invalid_argument("Invalid voice input settings");
+    }
+    if (!valid_voice_input_url(settings.provider, settings.url)) {
+        throw std::invalid_argument(std::string(voice_input_url_message(settings.provider)));
+    }
+    std::string delay = settings.delay;
+    if (settings.provider == "xai") {
+        normalize_unused_voice_input_delay(settings.provider, delay);
+    } else if (!valid_voice_input_delay(delay)) {
         throw std::invalid_argument("Invalid voice input settings");
     }
     toml::table table;
+    table.insert("provider", settings.provider);
     table.insert("url", settings.url);
     table.insert("model", settings.model);
     table.insert("api_key", settings.api_key_id);
-    table.insert("delay", settings.delay);
+    table.insert("delay", delay);
     table.insert("prompt", settings.prompt);
     write_toml(path, table);
 }

@@ -412,22 +412,30 @@ export function isApiKeyDetail(value: unknown): value is ApiKeyDetail {
     && value.used_by.every((name) => typeof name === 'string');
 }
 
+function isVoiceInputProvider(value: unknown): value is 'openai' | 'xai' {
+  return value === 'openai' || value === 'xai';
+}
+
+function isVoiceInputDelay(value: unknown): boolean {
+  return value === 'low' || value === 'medium' || value === 'high' || value === 'xhigh';
+}
+
 export function isVoiceInputSettings(value: unknown): value is VoiceInputSettings {
   return isRecord(value)
+    && isVoiceInputProvider(value.provider)
     && typeof value.url === 'string' && value.url.length > 0
     && typeof value.model === 'string' && value.model.length > 0
     && typeof value.api_key === 'string' && value.api_key.length > 0
-    && (value.delay === 'low' || value.delay === 'medium'
-      || value.delay === 'high' || value.delay === 'xhigh')
+    && isVoiceInputDelay(value.delay)
     && typeof value.prompt === 'string';
 }
 
 export function isNativeVoiceInputRuntime(value: unknown): value is NativeVoiceInputRuntime {
   return isRecord(value)
+    && isVoiceInputProvider(value.provider)
     && typeof value.url === 'string' && value.url.length > 0
     && typeof value.model === 'string' && value.model.length > 0
-    && (value.delay === 'low' || value.delay === 'medium'
-      || value.delay === 'high' || value.delay === 'xhigh')
+    && isVoiceInputDelay(value.delay)
     && typeof value.prompt === 'string'
     && !('api_key' in value);
 }

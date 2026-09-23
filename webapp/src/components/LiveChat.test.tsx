@@ -18,7 +18,7 @@ import {
   TextToSpeechError,
   TextToSpeechSession,
 } from '../textToSpeech';
-import { VoiceInputSession } from '../voiceInput';
+import { VoiceInputSession, type VoiceInputTransport } from '../voiceInput';
 import { App } from './App';
 import { ChatScreen, formatEntryTime } from './ChatScreen';
 
@@ -1371,7 +1371,7 @@ describe('live chat', () => {
     const voiceSession = {
       stop: vi.fn(() => stopped),
       cancel: vi.fn(),
-    } as unknown as VoiceInputSession;
+    } as unknown as VoiceInputTransport;
     const startVoiceInput = vi.spyOn(VoiceInputSession, 'start').mockImplementation(
       async (_configuration, onTranscription) => {
         appendVoice = onTranscription;
@@ -1385,6 +1385,7 @@ describe('live chat', () => {
         client={fixtureClient({
           submitInput,
           getVoiceInputRuntime: async () => ({
+            provider: 'openai',
             url: 'https://api.openai.com/v1/realtime/calls',
             model: 'gpt-live-transcribe',
             delay: 'high',
@@ -1401,6 +1402,7 @@ describe('live chat', () => {
     await screen.findByRole('button', { name: 'Stop voice input' });
     expect(startVoiceInput.mock.calls[0]?.[0].languages).toEqual(['en']);
     expect(startVoiceInput.mock.calls[0]?.[0]).toMatchObject({
+      provider: 'openai',
       delay: 'high',
       prompt: 'Software design discussion.',
     });
@@ -1427,12 +1429,13 @@ describe('live chat', () => {
     const voiceSession = {
       stop: vi.fn(async () => {}),
       cancel: vi.fn(),
-    } as unknown as VoiceInputSession;
+    } as unknown as VoiceInputTransport;
     const startVoiceInput = vi.spyOn(VoiceInputSession, 'start')
       .mockResolvedValue(voiceSession);
     const events = drivableEvents();
     render(<App client={fixtureClient({
       getVoiceInputRuntime: async () => ({
+        provider: 'openai',
         url: 'https://api.openai.com/v1/realtime/calls',
         model: 'gpt-live-transcribe',
         delay: 'xhigh',
@@ -1447,6 +1450,247 @@ describe('live chat', () => {
 
     await waitFor(() => expect(startVoiceInput).toHaveBeenCalledOnce());
     expect(startVoiceInput.mock.calls[0]?.[0].languages).toEqual(['ru']);
+  });
+
+  it('uses a fresh provider read for each dictation attempt', async () => {
+    vi.spyOn(VoiceInputSession, 'supported').mockReturnValue(true);
+    const voiceSession = {
+      stop: vi.fn(async () => {}),
+      cancel: vi.fn(),
+    } as unknown as VoiceInputTransport;
+    const startVoiceInput = vi.spyOn(VoiceInputSession, 'start')
+      .mockResolvedValue(voiceSession);
+    let calls = 0;
+    const events = drivableEvents();
+    render(<App client={fixtureClient({
+      getVoiceInputRuntime: async () => {
+        calls += 1;
+        if (calls === 1) {
+          return {
+            provider: 'openai',
+            url: 'https://api.openai.com/v1/realtime/calls',
+            model: 'cached-model',
+            delay: 'low',
+            prompt: 'cached',
+          };
+        }
+        return {
+          provider: 'xai',
+          url: 'wss://api.x.ai/v1/stt',
+          model: 'grok-voice-transcribe-2.0',
+          delay: 'high',
+          prompt: 'fresh',
+        };
+      },
+    })} connectSessionEvents={events.connect} />);
+    await attachInitial(events);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start voice input' }));
+    await waitFor(() => expect(startVoiceInput).toHaveBeenCalledOnce());
+    expect(startVoiceInput.mock.calls[0]?.[0]).toMatchObject({
+      provider: 'xai',
+      model: 'grok-voice-transcribe-2.0',
+      delay: 'high',
+      prompt: 'fresh',
+      languages: ['en'],
+    });
+  });
+
+  it('does not start dictation from the cached provider when the fresh read fails', async () => {
+    vi.spyOn(VoiceInputSession, 'supported').mockReturnValue(true);
+    const startVoiceInput = vi.spyOn(VoiceInputSession, 'start');
+    let calls = 0;
+    const events = drivableEvents();
+    render(<App client={fixtureClient({
+      getVoiceInputRuntime: () => {
+        calls += 1;
+        if (calls === 1) {
+          return Promise.resolve({
+            provider: 'openai',
+            url: 'https://api.openai.com/v1/realtime/calls',
+            model: 'gpt-live-transcribe',
+            delay: 'low',
+            prompt: '',
+          });
+        }
+        return Promise.reject(new Error('runtime failed'));
+      },
+    })} connectSessionEvents={events.connect} />);
+    await attachInitial(events);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start voice input' }));
+    expect(await screen.findByText(
+      'Voice input stopped because transcription failed. Try again.',
+    )).toBeInTheDocument();
+    expect(startVoiceInput).not.toHaveBeenCalled();
+  });
+
+  it('does not start capture when dictation is cancelled during the runtime read', async () => {
+    vi.spyOn(VoiceInputSession, 'supported').mockReturnValue(true);
+    const startVoiceInput = vi.spyOn(VoiceInputSession, 'start');
+    let release: ((value: {
+      provider: 'xai';
+      url: string;
+      model: string;
+      delay: 'low';
+      prompt: string;
+    }) => void) | undefined;
+    let calls = 0;
+    const events = drivableEvents();
+    render(<App client={fixtureClient({
+      getVoiceInputRuntime: () => {
+        calls += 1;
+        if (calls === 1) {
+          return Promise.resolve({
+            provider: 'openai' as const,
+            url: 'https://api.openai.com/v1/realtime/calls',
+            model: 'gpt-live-transcribe',
+            delay: 'low' as const,
+            prompt: '',
+          });
+        }
+        return new Promise((resolve) => { release = resolve; });
+      },
+    })} connectSessionEvents={events.connect} />);
+    await attachInitial(events);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start voice input' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel voice input setup' }));
+    expect(screen.getByRole('button', { name: 'Start voice input' })).toBeInTheDocument();
+    await act(async () => {
+      release?.({
+        provider: 'xai',
+        url: 'wss://api.x.ai/v1/stt',
+        model: 'grok-voice-transcribe-2.0',
+        delay: 'low',
+        prompt: '',
+      });
+    });
+    expect(startVoiceInput).not.toHaveBeenCalled();
+  });
+
+  it('does not start capture after leaving the composer during the runtime read', async () => {
+    vi.spyOn(VoiceInputSession, 'supported').mockReturnValue(true);
+    const startVoiceInput = vi.spyOn(VoiceInputSession, 'start');
+    let release: (() => void) | undefined;
+    let calls = 0;
+    const events = drivableEvents();
+    render(<App client={fixtureClient({
+      getVoiceInputRuntime: () => {
+        calls += 1;
+        if (calls === 1) {
+          return Promise.resolve({
+            provider: 'openai' as const,
+            url: 'https://api.openai.com/v1/realtime/calls',
+            model: 'gpt-live-transcribe',
+            delay: 'low' as const,
+            prompt: '',
+          });
+        }
+        return new Promise((resolve) => {
+          release = () => resolve({
+            provider: 'openai',
+            url: 'https://api.openai.com/v1/realtime/calls',
+            model: 'gpt-live-transcribe',
+            delay: 'low',
+            prompt: '',
+          });
+        });
+      },
+    })} connectSessionEvents={events.connect} />);
+    await attachInitial(events);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start voice input' }));
+    await screen.findByRole('button', { name: 'Cancel voice input setup' });
+    fireEvent.click(within(screen.getByLabelText('Sidebar')).getByRole('button', { name: 'Settings' }));
+    expect(await screen.findByRole('heading', { name: 'Settings' })).toBeInTheDocument();
+    await act(async () => { release?.(); });
+    expect(startVoiceInput).not.toHaveBeenCalled();
+  });
+
+  it('refreshes microphone availability when the composer returns from Settings', async () => {
+    vi.spyOn(VoiceInputSession, 'supported').mockReturnValue(true);
+    let calls = 0;
+    const events = drivableEvents();
+    render(<App client={fixtureClient({
+      getVoiceInputRuntime: async () => {
+        calls += 1;
+        if (calls === 1) return null;
+        return {
+          provider: 'xai',
+          url: 'wss://api.x.ai/v1/stt',
+          model: 'grok-voice-transcribe-2.0',
+          delay: 'low',
+          prompt: '',
+        };
+      },
+    })} connectSessionEvents={events.connect} />);
+    await attachInitial(events);
+    expect(screen.queryByRole('button', { name: 'Start voice input' })).not.toBeInTheDocument();
+
+    fireEvent.click(within(screen.getByLabelText('Sidebar')).getByRole('button', { name: 'Settings' }));
+    expect(await screen.findByRole('heading', { name: 'Settings' })).toBeInTheDocument();
+    fireEvent.click(within(screen.getByLabelText('Recent sessions')).getByRole('button', { name: /Welcome/ }));
+    expect(await screen.findByRole('button', { name: 'Start voice input' })).toBeInTheDocument();
+  });
+
+  it('drops a late runtime read when the vault changes during startup', async () => {
+    vi.spyOn(VoiceInputSession, 'supported').mockReturnValue(true);
+    const startVoiceInput = vi.spyOn(VoiceInputSession, 'start');
+    let release: (() => void) | undefined;
+    let calls = 0;
+    const client = fixtureClient({
+      getVoiceInputRuntime: () => {
+        calls += 1;
+        if (calls === 1) {
+          return Promise.resolve({
+            provider: 'openai' as const,
+            url: 'https://api.openai.com/v1/realtime/calls',
+            model: 'gpt-live-transcribe',
+            delay: 'low' as const,
+            prompt: '',
+          });
+        }
+        return new Promise((resolve) => {
+          release = () => resolve({
+            provider: 'xai',
+            url: 'wss://api.x.ai/v1/stt',
+            model: 'grok-voice-transcribe-2.0',
+            delay: 'low',
+            prompt: '',
+          });
+        });
+      },
+    });
+    const chat = (vaultName: string) => (
+      <ChatScreen
+        client={client}
+        dispatch={vi.fn()}
+        onCoverConversation={vi.fn()}
+        onDeleteTurn={vi.fn()}
+        onRetryStream={vi.fn()}
+        onReturnToWelcome={vi.fn()}
+        onSetDefaultCharacter={vi.fn()}
+        onStopGeneration={vi.fn()}
+        onSubmitInput={vi.fn(async () => ({ clear_input: true }))}
+        onUncoverConversation={vi.fn()}
+        playbackPositions={new Map()}
+        state={{
+          ...initialAppState,
+          bootstrapStatus: 'ready',
+          bootstrap: { ...bootstrapFixture, vault_name: vaultName },
+          sessionSnapshot: snapshotFixture,
+          streamStatus: 'connected',
+          currentDefaultCharacterId: snapshotFixture.default_character_id,
+        }}
+      />
+    );
+    const { rerender } = render(chat('Personal'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Start voice input' }));
+    await screen.findByRole('button', { name: 'Cancel voice input setup' });
+    rerender(chat('Projects'));
+    await act(async () => { release?.(); });
+    expect(startVoiceInput).not.toHaveBeenCalled();
   });
 
   it('sends a draft with Enter and adds a line with Ctrl+Enter', async () => {

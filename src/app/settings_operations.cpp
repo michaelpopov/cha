@@ -142,6 +142,7 @@ const WorkspaceVoice& require_voice(
 VoiceInputSettings voice_input_settings(
     const WorkspaceVoiceInput& settings) {
     return {
+        .provider = settings.provider,
         .url = settings.url,
         .model = settings.model,
         .api_key = settings.api_key_id,
@@ -629,16 +630,23 @@ VoiceInputSettings save_voice_input_settings(
         fail(ErrorCode::invalid_argument, "Invalid voice input settings.");
     }
     WorkspaceVoiceInput settings{
+        .provider = update.provider,
         .url = update.url,
         .model = update.model,
         .api_key_id = update.api_key,
         .delay = update.delay,
         .prompt = update.prompt,
     };
+    normalize_unused_voice_input_delay(settings.provider, settings.delay);
     return with_settings_edit([&] {
         try {
             store.apply_voice_input_update(settings);
-        } catch (const std::invalid_argument&) {
+        } catch (const std::invalid_argument& error) {
+            const std::string message = error.what();
+            if (message == openai_voice_input_url_message
+                || message == xai_voice_input_url_message) {
+                fail(ErrorCode::invalid_argument, message);
+            }
             fail(ErrorCode::invalid_argument, "Invalid voice input settings.");
         }
         return voice_input_settings(settings);
@@ -655,6 +663,7 @@ std::optional<VoiceInputRuntime> get_voice_input_runtime(
     }
     const WorkspaceVoiceInput& settings = *workspace.voice_input();
     return VoiceInputRuntime{
+        .provider = settings.provider,
         .url = settings.url,
         .model = settings.model,
         .delay = settings.delay,

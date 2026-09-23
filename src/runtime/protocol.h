@@ -407,6 +407,7 @@ struct CreateVoiceRequest {
 };
 
 struct VoiceInputSettings {
+    std::string provider{"openai"};
     std::string url;
     std::string model;
     std::string api_key;
@@ -414,9 +415,9 @@ struct VoiceInputSettings {
     std::string prompt;
 };
 
-// Native runtime omits stored secrets. HTTP adapters may add a credential
-// for the temporary JavaScript voice-input path.
+// Native runtime omits stored secrets. The browser does not receive the API key.
 struct VoiceInputRuntime {
+    std::string provider{"openai"};
     std::string url;
     std::string model;
     std::string delay;

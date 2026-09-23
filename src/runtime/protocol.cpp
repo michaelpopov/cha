@@ -436,6 +436,7 @@ void to_json(nlohmann::json& json, const VoiceDetail& value) {
 
 void to_json(nlohmann::json& json, const VoiceInputSettings& value) {
     json = {
+        {"provider", value.provider},
         {"url", value.url},
         {"model", value.model},
         {"api_key", value.api_key},
@@ -446,6 +447,7 @@ void to_json(nlohmann::json& json, const VoiceInputSettings& value) {
 
 void to_json(nlohmann::json& json, const VoiceInputRuntime& value) {
     json = {
+        {"provider", value.provider},
         {"url", value.url},
         {"model", value.model},
         {"delay", value.delay},

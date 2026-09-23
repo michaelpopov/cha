@@ -286,6 +286,8 @@ export interface components {
             used_by: string[];
         };
         VoiceInputSettings: {
+            /** @enum {string} */
+            provider: "openai" | "xai";
             url: string;
             model: string;
             api_key: components["schemas"]["Identifier"];
@@ -294,6 +296,8 @@ export interface components {
             prompt: string;
         };
         VoiceInputRuntime: {
+            /** @enum {string} */
+            provider: "openai" | "xai";
             url: string;
             model: string;
             /** @enum {string} */

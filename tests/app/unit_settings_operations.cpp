@@ -3,6 +3,7 @@
 #include "support/mock_http_server.h"
 #include "support/test_workspace.h"
 #include "workspace/builtins.h"
+#include "workspace/workspace.h"
 
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
@@ -254,6 +255,79 @@ TEST(ApplicationSettings, MigratesAppearanceKeysR2AndNonsecretRuntime) {
 
     const auto auth = application->openai_auth_status(epoch);
     EXPECT_EQ(auth.status, "signed_out");
+}
+
+TEST(ApplicationSettings, SavesXaiVoiceInputWithoutVoiceOutput) {
+    test::TestWorkspace workspace;
+    const std::filesystem::path database =
+        test::import_test_database(workspace.root());
+    auto application = Application::open(make_command(workspace, database));
+    const auto epoch = application->context_epoch();
+    const auto key = application->create_api_key(
+        {.display_name = "xAI", .value = "xai-secret"}, epoch);
+
+    try {
+        (void)application->save_voice_input_settings({
+            .provider = "openai",
+            .url = "wss://api.x.ai/v1/stt",
+            .model = "gpt-live-transcribe",
+            .api_key = key.id,
+            .delay = "low",
+            .prompt = "",
+        }, epoch);
+        FAIL() << "OpenAI save must report its URL requirement";
+    } catch (const ApplicationError& error) {
+        EXPECT_EQ(error.code, ErrorCode::invalid_argument);
+        EXPECT_EQ(error.what(), std::string(openai_voice_input_url_message));
+    }
+    try {
+        (void)application->save_voice_input_settings({
+            .provider = "xai",
+            .url = "https://api.openai.com/v1/realtime/calls",
+            .model = "grok-voice-transcribe-2.0",
+            .api_key = key.id,
+            .delay = "low",
+            .prompt = "",
+        }, epoch);
+        FAIL() << "xAI save must report its URL requirement";
+    } catch (const ApplicationError& error) {
+        EXPECT_EQ(error.code, ErrorCode::invalid_argument);
+        EXPECT_EQ(error.what(), std::string(xai_voice_input_url_message));
+    }
+
+    const auto saved = application->save_voice_input_settings({
+        .provider = "xai",
+        .url = "wss://api.x.ai/v1/stt",
+        .model = "grok-voice-transcribe-2.0",
+        .api_key = key.id,
+        .delay = "obsolete-delay-value",
+        .prompt = "unused",
+    }, epoch);
+    EXPECT_EQ(saved.provider, "xai");
+    EXPECT_EQ(saved.delay, "low");
+    EXPECT_EQ(saved.prompt, "unused");
+    EXPECT_FALSE(application->get_voice_output_settings(epoch));
+
+    application->request_shutdown();
+    EXPECT_TRUE(application->join_shutdown(2s));
+    application.reset();
+
+    auto reopened = Application::open(make_command(workspace, database));
+    const auto loaded = reopened->get_voice_input_settings(reopened->context_epoch());
+    ASSERT_TRUE(loaded);
+    EXPECT_EQ(loaded->provider, "xai");
+    EXPECT_EQ(loaded->url, "wss://api.x.ai/v1/stt");
+    EXPECT_EQ(loaded->model, "grok-voice-transcribe-2.0");
+    EXPECT_EQ(loaded->delay, "low");
+    EXPECT_EQ(loaded->prompt, "unused");
+    EXPECT_FALSE(reopened->get_voice_output_settings(reopened->context_epoch()));
+    const auto runtime = reopened->get_voice_input_runtime(reopened->context_epoch());
+    ASSERT_TRUE(runtime);
+    EXPECT_EQ(runtime->provider, "xai");
+    EXPECT_FALSE(nlohmann::json(*runtime).contains("api_key"));
+
+    reopened->request_shutdown();
+    EXPECT_TRUE(reopened->join_shutdown(2s));
 }
 
 } // namespace

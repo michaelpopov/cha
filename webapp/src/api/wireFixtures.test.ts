@@ -4,7 +4,12 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import {
-  isCharacterDetail, isCommandResult, isSessionSnapshot, type SessionSnapshot,
+  isCharacterDetail,
+  isCommandResult,
+  isNativeVoiceInputRuntime,
+  isSessionSnapshot,
+  isVoiceInputSettings,
+  type SessionSnapshot,
 } from './client';
 import { isAppendEvent } from './events';
 import { isNativeSessionEvent } from './nativeEvents';
@@ -46,6 +51,15 @@ describe('C++ wire fixtures', () => {
     expect(provider.api_key).toBeNull();
     const runtime = loadFixture('voice-input-runtime.json') as Record<string, unknown>;
     expect(runtime).not.toHaveProperty('api_key');
+    expect(isNativeVoiceInputRuntime(runtime)).toBe(true);
+    expect(isNativeVoiceInputRuntime({ ...runtime, provider: 'grok' })).toBe(false);
+    const { provider: _provider, ...runtimeWithoutProvider } = runtime;
+    expect(isNativeVoiceInputRuntime(runtimeWithoutProvider)).toBe(false);
+    expect(isVoiceInputSettings({
+      ...runtime,
+      api_key: 'api_key_1',
+    })).toBe(true);
+    expect(isVoiceInputSettings(runtime)).toBe(false);
     const key = loadFixture('api-key-detail.json') as { has_value: boolean };
     expect(key.has_value).toBe(true);
     const auth = loadFixture('openai-auth-status.json') as { status: string };

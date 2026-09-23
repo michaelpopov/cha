@@ -20,6 +20,7 @@ import {
   type ChaClient,
   type CharacterAppearance,
   type CommandResult,
+  type NativeVoiceInputRuntime,
   type SessionSnapshot,
 } from '../api/client';
 import { useAudioDownloads } from '../audioDownloads';
@@ -32,8 +33,11 @@ import {
 } from '../textToSpeech';
 import {
   appendTranscription,
+  unimplementedXaiBridge,
   VoiceInputSession,
+  xaiVoiceInputUnavailable,
   type VoiceInputConfiguration,
+  type VoiceInputTransport,
 } from '../voiceInput';
 import { ConfirmDialog } from './ConfirmDialog';
 import {
@@ -76,9 +80,13 @@ function actionMessage(failure: unknown): string {
 }
 
 function voiceInputMessage(failure: unknown): string {
-  return failure instanceof DOMException && failure.name === 'NotAllowedError'
-    ? 'Microphone access was denied. Allow it in System Settings and try again.'
-    : 'Voice input stopped because transcription failed. Try again.';
+  if (failure instanceof DOMException && failure.name === 'NotAllowedError') {
+    return 'Microphone access was denied. Allow it in System Settings and try again.';
+  }
+  if (failure instanceof Error && failure.message === xaiVoiceInputUnavailable) {
+    return failure.message;
+  }
+  return 'Voice input stopped because transcription failed. Try again.';
 }
 
 // How close to the end still counts as following the conversation. A few pixels
@@ -343,9 +351,11 @@ export function ChatScreen({
   >('idle');
   const [voiceConfiguration, setVoiceConfiguration] =
     useState<VoiceInputConfiguration | null>(null);
-  const voiceInputSession = useRef<VoiceInputSession | null>(null);
+  const voiceInputSession = useRef<VoiceInputTransport | null>(null);
   const voiceInputStartup = useRef<AbortController | null>(null);
   const voiceInputAttempt = useRef(0);
+  const voiceLanguage = useRef<'en' | 'ru'>('en');
+  voiceLanguage.current = transliteration.enabled ? 'ru' : 'en';
   const transcriptEnd = useRef<HTMLDivElement | null>(null);
   const textToSpeechSession = useRef<TextToSpeechSession | null>(null);
   const [speechCacheEnabled, setSpeechCacheEnabled] = useState(false);
@@ -389,7 +399,8 @@ export function ChatScreen({
   const connected = state.streamStatus === 'connected' && snapshot !== null && !ended;
   const generationActive = generation?.active === true;
   const sessionAvailable = snapshot !== null && !ended;
-  const voiceInputAvailable = voiceConfiguration !== null && VoiceInputSession.supported();
+  const voiceInputAvailable = voiceConfiguration !== null
+    && VoiceInputSession.supported(voiceConfiguration.provider);
   const textToSpeechConfiguration = useTextToSpeechConfiguration(client);
   const downloads = useAudioDownloads(client, snapshot?.forum.id, snapshot?.session_id,
     state.bootstrap?.vault_name, state.audioCacheClearCount);
@@ -438,6 +449,7 @@ export function ChatScreen({
       (configuration) => {
         if (!current) return;
         setVoiceConfiguration(configuration ? {
+          provider: configuration.provider,
           model: configuration.model,
           delay: configuration.delay,
           prompt: configuration.prompt,
@@ -446,7 +458,7 @@ export function ChatScreen({
       () => { if (current) setVoiceConfiguration(null); },
     );
     return () => { current = false; };
-  }, [client]);
+  }, [client, state.bootstrap?.vault_name]);
 
   // A different conversation starts with a fresh composer at its own end.
   useEffect(() => {
@@ -464,7 +476,7 @@ export function ChatScreen({
     voiceInputSession.current?.cancel();
     voiceInputSession.current = null;
     setVoiceInputState('idle');
-  }, [conversationKey, sessionAvailable]);
+  }, [conversationKey, sessionAvailable, state.bootstrap?.vault_name]);
 
   useEffect(() => () => {
     speechAttempt.current += 1;
@@ -882,13 +894,34 @@ export function ChatScreen({
     let receivedVoiceDelta = false;
     setVoiceInputState('starting');
     setActionError(null);
-    let session: VoiceInputSession | null = null;
+    let runtime: NativeVoiceInputRuntime | null;
+    try {
+      runtime = await client.getVoiceInputRuntime();
+    } catch (failure: unknown) {
+      if (voiceInputAttempt.current !== attempt) return;
+      voiceInputStartup.current = null;
+      setVoiceInputState('idle');
+      setActionError(voiceInputMessage(failure));
+      return;
+    }
+    if (voiceInputAttempt.current !== attempt || startup.signal.aborted) return;
+    if (!runtime) {
+      voiceInputStartup.current = null;
+      setVoiceInputState('idle');
+      setActionError(voiceInputMessage(new Error('Voice input is unavailable.')));
+      return;
+    }
+    const configuration: VoiceInputConfiguration = {
+      provider: runtime.provider,
+      model: runtime.model,
+      delay: runtime.delay,
+      prompt: runtime.prompt,
+      languages: [voiceLanguage.current],
+    };
+    let session: VoiceInputTransport | null = null;
     try {
       session = await VoiceInputSession.start(
-        {
-          ...voiceConfiguration,
-          languages: [transliteration.enabled ? 'ru' : 'en'],
-        },
+        configuration,
         (text) => {
           if (voiceInputAttempt.current !== attempt) return;
           if (!text) return;
@@ -904,6 +937,7 @@ export function ChatScreen({
           setActionError(voiceInputMessage(failure));
         },
         client.connectVoiceInput,
+        unimplementedXaiBridge,
         startup.signal,
       );
       if (voiceInputAttempt.current !== attempt) {

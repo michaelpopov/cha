@@ -266,20 +266,15 @@ describe('Settings screens', () => {
     expect(state.mainView).toBe('settings-merge-vault');
   });
 
-  it('offers a reload only when a merge changes a voice endpoint origin', async () => {
-    let inputUrl = 'https://api.openai.com/v1/realtime/calls';
+  it('does not offer a reload when a merge changes a voice endpoint', async () => {
+    const getVoiceInputSettings = vi.fn<ChaClient['getVoiceInputSettings']>();
     const mergeVault = vi.fn(async () => undefined);
     render(
       <MergeVaultScreen
         client={fixtureClient({
           listVaults: async () => vaults,
           mergeVault,
-          getVoiceInputSettings: async () => ({
-            url: inputUrl,
-            model: 'transcribe',
-            api_key: 'api_key_1',
-            delay: 'low', prompt: '',
-          }),
+          getVoiceInputSettings,
         })}
         dispatch={vi.fn()}
         state={initialAppState}
@@ -290,43 +285,12 @@ describe('Settings screens', () => {
     await confirmMerge();
     expect(await screen.findByText('Merge complete')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Reload' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Reload CHA to use the merged voice settings.')).not.toBeInTheDocument();
 
-    mergeVault.mockImplementationOnce(async () => {
-      inputUrl = 'https://voice.example/v1/text-to-speech';
-    });
     await confirmMerge();
-    expect(await screen.findByRole('button', { name: 'Reload' })).toBeInTheDocument();
-    expect(screen.getByText('Reload CHA to use the merged voice settings.')).toBeInTheDocument();
-  });
-
-  it.each(['failed read', 'invalid URL'])('merges and offers a reload when inspecting original voice settings encounters %s', async (failure) => {
-    const mergeVault = vi.fn(async () => undefined);
-    const getVoiceInputSettings = vi.fn<ChaClient['getVoiceInputSettings']>(async () => null);
-    if (failure === 'failed read') {
-      getVoiceInputSettings.mockRejectedValueOnce(new Error('Voice settings could not be loaded.'));
-    } else {
-      getVoiceInputSettings.mockImplementationOnce(async () => ({
-        url: 'https://voice.example:bad',
-        model: 'transcribe',
-        api_key: 'api_key_1',
-        delay: 'low', prompt: '',
-      }));
-    }
-    render(
-      <MergeVaultScreen
-        client={fixtureClient({ listVaults: async () => vaults, mergeVault, getVoiceInputSettings })}
-        dispatch={vi.fn()}
-        state={initialAppState}
-      />,
-    );
-
-    await userEvent.selectOptions(await screen.findByLabelText('Source vault'), 'Projects');
-    await confirmMerge();
-
     expect(await screen.findByText('Merge complete')).toBeInTheDocument();
-    expect(mergeVault).toHaveBeenCalledWith('Projects', undefined);
-    expect(screen.getByRole('button', { name: 'Reload' })).toBeInTheDocument();
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Reload' })).not.toBeInTheDocument();
+    expect(getVoiceInputSettings).not.toHaveBeenCalled();
   });
 
   it('shows an empty merge state when there is no other vault', async () => {
@@ -1360,6 +1324,7 @@ describe('Settings screens', () => {
       <VoiceSettingsScreen
         client={fixtureClient({
           getVoiceInputSettings: async () => ({
+            provider: 'openai',
             url: 'https://api.openai.com/v1/realtime/calls',
             model: 'gpt-live-transcribe',
             api_key: 'api_key_1',
@@ -1407,17 +1372,22 @@ describe('Settings screens', () => {
     await userEvent.selectOptions(screen.getByLabelText('Input delay'), 'xhigh');
     await userEvent.clear(screen.getByLabelText('Input prompt'));
     await userEvent.type(screen.getByLabelText('Input prompt'), 'Names and technical terms.');
-    await userEvent.clear(screen.getByLabelText('Output format'));
-    await userEvent.type(screen.getByLabelText('Output format'), 'opus');
-    await userEvent.click(screen.getByRole('button', { name: 'Save voice settings' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Save voice input' }));
 
     expect(saveVoiceInputSettings).toHaveBeenCalledWith({
+      provider: 'openai',
       url: 'https://api.openai.com/v1/realtime/calls',
       model: 'next-transcribe-model',
       api_key: 'api_key_1',
       delay: 'xhigh',
       prompt: 'Names and technical terms.',
     });
+    expect(saveVoiceOutputSettings).not.toHaveBeenCalled();
+    expect(await screen.findByText('Voice input saved.')).toBeInTheDocument();
+
+    await userEvent.clear(screen.getByLabelText('Output format'));
+    await userEvent.type(screen.getByLabelText('Output format'), 'opus');
+    await userEvent.click(screen.getByRole('button', { name: 'Save voice output' }));
     expect(saveVoiceOutputSettings).toHaveBeenCalledWith({
       url: 'https://api.fish.audio/v1/tts',
       model: 's2.1-pro',
@@ -1425,7 +1395,8 @@ describe('Settings screens', () => {
       output_format: 'opus',
       default_voice: 'Brian',
     });
-    expect(await screen.findByText('Voice settings saved.')).toBeInTheDocument();
+    expect(saveVoiceInputSettings).toHaveBeenCalledOnce();
+    expect(await screen.findByText('Voice output saved.')).toBeInTheDocument();
   });
 
   it('uses the server-normalized settings and server URL errors', async () => {
@@ -1441,6 +1412,7 @@ describe('Settings screens', () => {
         listVoices: async () => [voiceDetailFixture],
         listApiKeys: async () => [{ id: 'key', display_name: 'Key', has_value: true, used_by: [] }],
         getVoiceInputSettings: async () => ({
+          provider: 'openai',
           url: 'https://api.openai.com/v1/realtime/calls', model: 'gpt-live-transcribe',
           api_key: 'key', delay: 'low', prompt: '',
         }),
@@ -1460,8 +1432,9 @@ describe('Settings screens', () => {
     expect(model).toHaveValue('s2.1-pro-free');
     await userEvent.clear(model);
     await userEvent.type(model, ' custom/model ');
-    await userEvent.click(screen.getByRole('button', { name: 'Save voice settings' }));
-    expect(await screen.findByText('Voice settings saved.')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Save voice output' }));
+    expect(await screen.findByText('Voice output saved.')).toBeInTheDocument();
+    expect(saveVoiceInputSettings).not.toHaveBeenCalled();
     expect(saveVoiceOutputSettings).toHaveBeenCalledWith(expect.objectContaining({
       url: 'HTTPS://API.FISH.AUDIO:443', model: ' custom/model ',
     }));
@@ -1469,10 +1442,126 @@ describe('Settings screens', () => {
 
     await userEvent.clear(endpoint);
     await userEvent.type(endpoint, 'http://api.fish.audio');
-    await userEvent.click(screen.getByRole('button', { name: 'Save voice settings' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Save voice output' }));
     expect(await screen.findByText('FishAudio requires an HTTPS URL.')).toBeInTheDocument();
-    expect(saveVoiceInputSettings).toHaveBeenCalledTimes(2);
+    expect(saveVoiceInputSettings).not.toHaveBeenCalled();
     expect(saveVoiceOutputSettings).toHaveBeenCalledTimes(2);
+  });
+
+  it('switches provider defaults, clears the API key, and keeps hidden delay and prompt', async () => {
+    const saveVoiceInputSettings = vi.fn(async (settings) => settings);
+    render(<VoiceSettingsScreen
+      client={fixtureClient({
+        listVoices: async () => [],
+        listApiKeys: async () => [{
+          id: 'openai-key', display_name: 'OpenAI', has_value: true, used_by: [],
+        }, {
+          id: 'xai-key', display_name: 'xAI', has_value: true, used_by: [],
+        }],
+        getVoiceInputSettings: async () => ({
+          provider: 'openai',
+          url: 'https://voice.example/custom',
+          model: 'custom-model',
+          api_key: 'openai-key',
+          delay: 'medium',
+          prompt: 'Keep this prompt.',
+        }),
+        getVoiceOutputSettings: async () => null,
+        saveVoiceInputSettings,
+        saveVoiceOutputSettings: vi.fn(),
+      })}
+      dispatch={vi.fn()}
+      state={initialAppState}
+    />);
+
+    expect(await screen.findByLabelText('Input provider')).toHaveValue('openai');
+    expect(screen.getByLabelText('Input delay')).toHaveDisplayValue('Medium');
+    expect(screen.getByLabelText('Input prompt')).toHaveValue('Keep this prompt.');
+    await userEvent.selectOptions(screen.getByLabelText('Input provider'), 'xai');
+
+    expect(screen.getByLabelText('Input URL endpoint')).toHaveValue('wss://api.x.ai/v1/stt');
+    expect(screen.getByLabelText('Input model name')).toHaveValue('grok-voice-transcribe-2.0');
+    expect(screen.getByLabelText('Input API key name')).toHaveValue('');
+    expect(screen.queryByLabelText('Input delay')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Input prompt')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save voice input' })).toBeDisabled();
+    expect(screen.getByText('Add a voice before configuring voice output.')).toBeInTheDocument();
+
+    await userEvent.selectOptions(screen.getByLabelText('Input API key name'), 'xai-key');
+    await userEvent.click(screen.getByRole('button', { name: 'Save voice input' }));
+    expect(saveVoiceInputSettings).toHaveBeenCalledWith({
+      provider: 'xai',
+      url: 'wss://api.x.ai/v1/stt',
+      model: 'grok-voice-transcribe-2.0',
+      api_key: 'xai-key',
+      delay: 'medium',
+      prompt: 'Keep this prompt.',
+    });
+    expect(await screen.findByText('Voice input saved.')).toBeInTheDocument();
+
+    await userEvent.selectOptions(screen.getByLabelText('Input provider'), 'openai');
+    expect(screen.getByLabelText('Input URL endpoint')).toHaveValue(
+      'https://api.openai.com/v1/realtime/calls',
+    );
+    expect(screen.getByLabelText('Input model name')).toHaveValue('gpt-live-transcribe');
+    expect(screen.getByLabelText('Input API key name')).toHaveValue('');
+    expect(screen.getByLabelText('Input delay')).toHaveDisplayValue('Medium');
+    expect(screen.getByLabelText('Input prompt')).toHaveValue('Keep this prompt.');
+  });
+
+  it('saves xAI input without voice output and reports a cross-provider URL', async () => {
+    const saveVoiceInputSettings = vi.fn(async (settings) => settings);
+    const saveVoiceOutputSettings = vi.fn(async (settings) => settings);
+    render(<VoiceSettingsScreen
+      client={fixtureClient({
+        listVoices: async () => [],
+        listApiKeys: async () => [{
+          id: 'xai-key', display_name: 'xAI', has_value: true, used_by: [],
+        }],
+        getVoiceInputSettings: async () => null,
+        getVoiceOutputSettings: async () => null,
+        saveVoiceInputSettings,
+        saveVoiceOutputSettings,
+      })}
+      dispatch={vi.fn()}
+      state={initialAppState}
+    />);
+
+    expect(await screen.findByLabelText('Input provider')).toHaveValue('openai');
+    await userEvent.selectOptions(screen.getByLabelText('Input API key name'), 'xai-key');
+    const endpoint = screen.getByLabelText('Input URL endpoint');
+    await userEvent.clear(endpoint);
+    await userEvent.type(endpoint, 'wss://api.x.ai/v1/stt');
+    await userEvent.click(screen.getByRole('button', { name: 'Save voice input' }));
+    expect(screen.getByText(
+      'OpenAI voice input requires an absolute HTTP or HTTPS URL',
+    )).toBeInTheDocument();
+    expect(saveVoiceInputSettings).not.toHaveBeenCalled();
+
+    await userEvent.selectOptions(screen.getByLabelText('Input provider'), 'xai');
+    await userEvent.selectOptions(screen.getByLabelText('Input API key name'), 'xai-key');
+    await userEvent.clear(screen.getByLabelText('Input URL endpoint'));
+    await userEvent.type(screen.getByLabelText('Input URL endpoint'), 'https://api.x.ai/v1/stt');
+    await userEvent.click(screen.getByRole('button', { name: 'Save voice input' }));
+    expect(screen.getByText('xAI voice input requires an absolute WS or WSS URL')).toBeInTheDocument();
+    expect(saveVoiceInputSettings).not.toHaveBeenCalled();
+    expect(saveVoiceOutputSettings).not.toHaveBeenCalled();
+
+    await userEvent.clear(screen.getByLabelText('Input URL endpoint'));
+    await userEvent.type(screen.getByLabelText('Input URL endpoint'), 'ws://127.0.0.1:9/v1/stt');
+    await userEvent.click(screen.getByRole('button', { name: 'Save voice input' }));
+    expect(saveVoiceInputSettings).toHaveBeenCalledWith({
+      provider: 'xai',
+      url: 'ws://127.0.0.1:9/v1/stt',
+      model: 'grok-voice-transcribe-2.0',
+      api_key: 'xai-key',
+      delay: 'low',
+      prompt: '',
+    });
+    expect(saveVoiceOutputSettings).not.toHaveBeenCalled();
+    expect(await screen.findByText('Voice input saved.')).toBeInTheDocument();
+    expect(screen.getByLabelText('Input URL endpoint')).toHaveValue('ws://127.0.0.1:9/v1/stt');
+    expect(screen.getByRole('button', { name: 'Save voice output' })).toBeDisabled();
   });
 
   it('registers a voice and opens its editor', async () => {

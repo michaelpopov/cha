@@ -495,6 +495,11 @@ std::shared_ptr<OperationReply> Application::connect_voice_input(
             throw ApplicationError(
                 ErrorCode::not_found, "Voice input is not configured.");
         }
+        if (runtime->provider != "openai") {
+            throw ApplicationError(
+                ErrorCode::invalid_argument,
+                "xAI voice input transport is not implemented");
+        }
         url = runtime->url;
         key = *secret;
         model = runtime->model;

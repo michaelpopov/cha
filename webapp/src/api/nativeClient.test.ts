@@ -206,6 +206,7 @@ describe('native CHA client', () => {
       'r2Storage.get': () => r2,
       'openaiAuth.get': () => ({ status: 'signed_out' }),
       'voiceInput.runtime': () => ({
+        provider: 'openai',
         url: 'https://api.openai.com/v1/realtime',
         model: 'gpt-4o-transcribe',
         delay: 'low',
@@ -221,6 +222,7 @@ describe('native CHA client', () => {
     await expect(client.getR2Storage()).resolves.toEqual(r2);
     await expect(client.getOpenAiAuth()).resolves.toEqual({ status: 'signed_out' });
     await expect(client.getVoiceInputRuntime()).resolves.toEqual({
+      provider: 'openai',
       url: 'https://api.openai.com/v1/realtime',
       model: 'gpt-4o-transcribe',
       delay: 'low',

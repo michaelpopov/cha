@@ -663,8 +663,11 @@ components:
     VoiceInputSettings:
       type: object
       additionalProperties: false
-      required: [url, model, api_key, delay, prompt]
+      required: [provider, url, model, api_key, delay, prompt]
       properties:
+        provider:
+          type: string
+          enum: [openai, xai]
         url:
           type: string
           minLength: 1
@@ -682,8 +685,11 @@ components:
     VoiceInputRuntime:
       type: object
       additionalProperties: false
-      required: [url, model, delay, prompt]
+      required: [provider, url, model, delay, prompt]
       properties:
+        provider:
+          type: string
+          enum: [openai, xai]
         url:
           type: string
           minLength: 1

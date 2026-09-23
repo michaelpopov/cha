@@ -55,13 +55,24 @@ struct WorkspaceVoice {
     VoiceSettings settings;
 };
 
+inline constexpr std::string_view openai_voice_input_url_message =
+    "OpenAI voice input requires an absolute HTTP or HTTPS URL";
+inline constexpr std::string_view xai_voice_input_url_message =
+    "xAI voice input requires an absolute WS or WSS URL";
+
 struct WorkspaceVoiceInput {
+    std::string provider{"openai"};
     std::string url;
     std::string model;
     std::string api_key_id;
     std::string delay{"low"};
     std::string prompt;
 };
+
+// xAI stores delay for old files and does not send it. An invalid value becomes low.
+void normalize_unused_voice_input_delay(
+    std::string_view provider,
+    std::string& delay);
 
 struct WorkspaceVoiceOutput {
     std::string url;

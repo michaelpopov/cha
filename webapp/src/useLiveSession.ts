@@ -7,7 +7,6 @@ import {
   sessionRoute,
   writeAppRoute,
 } from './state/route';
-import { consumeVoiceSettingsRestore } from './state/voiceSettingsReload';
 import type { AppAction, AppState } from './state/view';
 
 // Owns everything a navigation can invalidate: the address bar, the epoch
@@ -502,15 +501,12 @@ export function useLiveSession(
   useEffect(() => {
     if (state.bootstrapStatus !== 'ready' || initialRouteHandled.current) return;
     initialRouteHandled.current = true;
-    const restoreVoiceSettings = consumeVoiceSettingsRestore();
     const route = currentAppRoute();
     if (route.kind === 'root') {
-      if (restoreVoiceSettings) navigate({ type: 'show-settings-voice-input' });
       setInitialRouteReady(true);
     } else if (route.kind === 'session') {
       void openConversation(route.forumId, route.sessionId, false)
         .finally(() => {
-          if (restoreVoiceSettings) navigate({ type: 'show-settings-voice-input' });
           setInitialRouteReady(true);
         });
     } else {
@@ -520,7 +516,7 @@ export function useLiveSession(
       });
       setInitialRouteReady(true);
     }
-  }, [dispatch, navigate, openConversation, state.bootstrapStatus]);
+  }, [dispatch, openConversation, state.bootstrapStatus]);
 
   // Startup and Return to Welcome both adopt the initial IDs without an open
   // request. A matching snapshot without a connection is also attachable: this

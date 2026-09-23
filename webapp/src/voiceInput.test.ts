@@ -1,8 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { OpenAiVoiceInputSession } from './openAiVoiceInput';
 import {
   appendTranscription,
+  unimplementedXaiBridge,
   VoiceInputSession,
+  xaiVoiceInputUnavailable,
 } from './voiceInput';
 
 afterEach(() => {
@@ -83,6 +86,7 @@ describe('voice input', () => {
     const received: string[] = [];
     const session = await VoiceInputSession.start(
       {
+        provider: 'openai',
         model: 'gpt-live-transcribe',
         delay: 'xhigh',
         prompt: 'A discussion about software architecture.',
@@ -91,6 +95,7 @@ describe('voice input', () => {
       (text) => received.push(text),
       () => {},
       connect,
+      unimplementedXaiBridge,
     );
 
     expect(connect).toHaveBeenCalledWith(
@@ -163,6 +168,7 @@ describe('voice input', () => {
     });
     const session = await VoiceInputSession.start(
       {
+        provider: 'openai',
         model: 'gpt-4o-transcribe',
         delay: 'low',
         prompt: '',
@@ -170,6 +176,7 @@ describe('voice input', () => {
       () => {},
       () => {},
       connect,
+      unimplementedXaiBridge,
     );
     expect(fetcher).not.toHaveBeenCalled();
     expect(connect).toHaveBeenCalledOnce();
@@ -214,10 +221,11 @@ describe('voice input', () => {
     ));
     const controller = new AbortController();
     const starting = VoiceInputSession.start(
-      { model: 'gpt-4o-transcribe', delay: 'low', prompt: '' },
+      { provider: 'openai', model: 'gpt-4o-transcribe', delay: 'low', prompt: '' },
       () => {},
       () => {},
       connect,
+      unimplementedXaiBridge,
       controller.signal,
     );
     await vi.waitFor(() => expect(connect).toHaveBeenCalledOnce());
@@ -225,5 +233,53 @@ describe('voice input', () => {
     await expect(starting).rejects.toMatchObject({ name: 'AbortError' });
     expect(stopTrack).toHaveBeenCalledOnce();
     expect(closePeer).toHaveBeenCalledOnce();
+  });
+
+  it('checks microphone support for both providers and WebRTC only for OpenAI', () => {
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia: vi.fn() },
+    });
+    vi.stubGlobal('RTCPeerConnection', class {});
+    vi.stubGlobal('AudioContext', class {});
+    vi.stubGlobal('AudioWorkletNode', class {});
+    expect(VoiceInputSession.supported('openai')).toBe(true);
+    expect(VoiceInputSession.supported('xai')).toBe(true);
+
+    vi.stubGlobal('RTCPeerConnection', undefined);
+    expect(VoiceInputSession.supported('openai')).toBe(false);
+    expect(VoiceInputSession.supported('xai')).toBe(true);
+
+    vi.stubGlobal('AudioWorkletNode', undefined);
+    expect(VoiceInputSession.supported('xai')).toBe(false);
+  });
+
+  it('rejects xAI before the OpenAI WebRTC session starts', async () => {
+    const getUserMedia = vi.fn();
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia },
+    });
+    const OpenAiStart = vi.spyOn(OpenAiVoiceInputSession, 'start');
+    vi.stubGlobal('RTCPeerConnection', class {
+      constructor() { throw new Error('OpenAI WebRTC should not start'); }
+    });
+    vi.stubGlobal('AudioContext', class {});
+    vi.stubGlobal('AudioWorkletNode', class {});
+
+    await expect(VoiceInputSession.start(
+      {
+        provider: 'xai',
+        model: 'grok-voice-transcribe-2.0',
+        delay: 'low',
+        prompt: 'Do not send this prompt.',
+      },
+      () => {},
+      () => {},
+      vi.fn(),
+      unimplementedXaiBridge,
+    )).rejects.toThrow(xaiVoiceInputUnavailable);
+    expect(OpenAiStart).not.toHaveBeenCalled();
+    expect(getUserMedia).not.toHaveBeenCalled();
   });
 });

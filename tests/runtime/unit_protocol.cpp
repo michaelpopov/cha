@@ -537,6 +537,48 @@ TEST(WebProtocol, ParsesRouteSpecificCommandPayloads) {
             {"web_search", nullptr},
         }),
         std::invalid_argument);
+
+    const VoiceInputSettings voice = parse_voice_input_settings({
+        {"provider", "xai"},
+        {"url", "wss://api.x.ai/v1/stt"},
+        {"model", "grok-voice-transcribe-2.0"},
+        {"api_key", "api_key_1"},
+        {"delay", "low"},
+        {"prompt", ""},
+    });
+    EXPECT_EQ(voice.provider, "xai");
+    EXPECT_EQ(
+        nlohmann::json(voice)["provider"], "xai");
+    EXPECT_THROW(
+        (void)parse_voice_input_settings({
+            {"url", "https://api.openai.com/v1/realtime/calls"},
+            {"model", "gpt-live-transcribe"},
+            {"api_key", "api_key_1"},
+            {"delay", "low"},
+            {"prompt", ""},
+        }),
+        std::invalid_argument);
+    EXPECT_THROW(
+        (void)parse_voice_input_settings({
+            {"provider", "grok"},
+            {"url", "https://api.openai.com/v1/realtime/calls"},
+            {"model", "gpt-live-transcribe"},
+            {"api_key", "api_key_1"},
+            {"delay", "low"},
+            {"prompt", ""},
+        }),
+        std::invalid_argument);
+    EXPECT_THROW(
+        (void)parse_voice_input_settings({
+            {"provider", "openai"},
+            {"url", "https://api.openai.com/v1/realtime/calls"},
+            {"model", "gpt-live-transcribe"},
+            {"api_key", "api_key_1"},
+            {"delay", "low"},
+            {"prompt", ""},
+            {"extra", true},
+        }),
+        std::invalid_argument);
     EXPECT_THROW(
         (void)parse_character_settings_update({
             {"provider", nullptr},
