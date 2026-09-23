@@ -11,6 +11,7 @@
 #include "support/test_controller.h"
 #include "support/test_session_database.h"
 #include "support/test_workspace.h"
+#include "app/application_config.h"
 #include "app/r2_database_transfer.h"
 
 #include <gtest/gtest.h>
@@ -127,12 +128,35 @@ using IntegrationDeadline = IntegrationClock::time_point;
 // chunk.
 constexpr auto integration_chat_timeout = std::chrono::seconds(60);
 
-CharacterDefinition integration_definition(bool stream) {
-    const std::filesystem::path workspace_directory{CHA_WORKSPACE_DIRECTORY};
-    const Workspace workspace = Workspace::load(workspace_directory);
-    if (workspace.find_forum_member("lobby", "Ismael") == nullptr) {
-        throw std::runtime_error("Checked-in workspace has no Ismael lobby member");
+void prepare_integration_lobby(const test::TestWorkspace& fixture) {
+    const auto lobby = fixture.root() / "forums" / "lobby";
+    std::filesystem::remove_all(lobby / "members" / "guide");
+    std::filesystem::remove_all(fixture.root() / "characters" / "guide");
+    for (const char* id : {"Cheburashka", "Ismael"}) {
+        fixture.add_character(id, id);
+        const auto member = lobby / "members" / id;
+        std::filesystem::create_directories(member);
+        std::ofstream(member / "character.toml") << "# forum membership\n";
     }
+    std::ofstream(lobby / "config.toml")
+        << "display_name = \"The Lobby\"\n"
+           "default_persona = \"reader\"\n";
+}
+
+CharacterDefinition integration_definition(bool stream) {
+    test::TestWorkspace fixture;
+    prepare_integration_lobby(fixture);
+    // Fixture characters all use the "test" provider; make it the live one.
+    fixture.write_provider("test",
+        "host = \"api.openai.com\"\n"
+        "port = 443\n"
+        "https = true\n"
+        "mode = \"net\"\n"
+        "model = \"gpt-5.6-terra\"\n"
+        "reasoning_effort = \"none\"\n"
+        "api = \"responses\"\n"
+        "web_search = \"off\"\n");
+    const Workspace workspace = Workspace::load(fixture.root());
     CharacterDefinition definition =
         workspace.character_definition("lobby", "Ismael");
     definition.provider.config.stream = stream;
@@ -233,6 +257,12 @@ ChatResult run_chat(bool stream) {
                 << (std::holds_alternative<GenerationFailed>(event)
                         ? std::get<GenerationFailed>(event).message
                         : "Unexpected terminal generation event");
+            if (const auto* completed = std::get_if<GenerationCompleted>(&event)) {
+                EXPECT_TRUE(completed->input_tokens.has_value());
+                EXPECT_TRUE(completed->output_tokens.has_value());
+                EXPECT_GT(completed->input_tokens.value_or(0), 0U);
+                EXPECT_GT(completed->output_tokens.value_or(0), 0U);
+            }
             break;
         }
     }
@@ -328,9 +358,9 @@ TEST(R2Integration, UploadsDownloadsAndBacksUpThePreviousDatabase) {
             fixture.path(), fixture.vault(), storage);
     const std::string expected_download = file_bytes(fixture.path());
     const std::string expected_vault = file_bytes(fixture.vault());
-    ASSERT_EQ(
-        uploaded.byte_count,
-        expected_download.size() + expected_vault.size());
+    // The remote vault uses a bare database filename; its size differs from
+    // the local definition, which keeps the absolute path.
+    ASSERT_GT(uploaded.byte_count, expected_download.size());
 
     test::TestWorkspace previous_local;
     previous_local.add_persona("r2test", "R2 test persona");
@@ -344,11 +374,67 @@ TEST(R2Integration, UploadsDownloadsAndBacksUpThePreviousDatabase) {
     std::filesystem::path backup = fixture.path();
     backup += ".bac";
 
-    EXPECT_EQ(
-        downloaded.byte_count,
-        expected_download.size() + expected_vault.size());
+    EXPECT_EQ(downloaded.byte_count, uploaded.byte_count);
     EXPECT_EQ(file_bytes(fixture.path()), expected_download);
     EXPECT_EQ(file_bytes(backup), expected_backup);
+    const VaultDefinition restored_vault = load_vault_definition_file(
+        fixture.vault().parent_path(), fixture.vault());
+    EXPECT_EQ(restored_vault.name, "R2 integration test");
+    EXPECT_EQ(restored_vault.data, std::filesystem::weakly_canonical(fixture.path()));
+    EXPECT_EQ(restored_vault.r2_etag, uploaded.etag);
+    std::filesystem::path vault_backup = fixture.vault();
+    vault_backup += ".bac";
+    EXPECT_EQ(file_bytes(vault_backup), expected_vault);
+}
+
+// Uses the same dedicated R2 object as the round-trip test above.
+TEST(R2Integration, RejectsStaleUploadWithoutReplacingRemoteDatabaseOrVault) {
+    TemporaryR2Database fixture;
+    const R2StorageKey storage = integration_r2_key();
+    const auto first = upload_database_to_r2(fixture.path(), fixture.vault(), storage);
+    ASSERT_FALSE(first.etag.empty());
+    EXPECT_EQ(get_r2_database_etag(fixture.path().filename().string(), storage), first.etag);
+
+    test::TestWorkspace newer;
+    newer.add_persona("newer", "Newer remote version");
+    (void)test::import_test_database(newer.root(), fixture.path());
+    const auto second = upload_database_to_r2(
+        fixture.path(), fixture.vault(), storage, R2DatabaseLease::acquire,
+        {}, {}, first.etag);
+    ASSERT_NE(second.etag, first.etag);
+    const std::string remote_database = file_bytes(fixture.path());
+    const std::string remote_vault = file_bytes(fixture.vault());
+
+    test::TestWorkspace stale;
+    stale.add_persona("stale", "Stale local version");
+    (void)test::import_test_database(stale.root(), fixture.path());
+    const std::string local_database = file_bytes(fixture.path());
+    ASSERT_NE(local_database, remote_database);
+    try {
+        (void)upload_database_to_r2(
+            fixture.path(), fixture.vault(), storage, R2DatabaseLease::acquire,
+            {}, {}, first.etag);
+        FAIL() << "An upload with a stale ETag must be rejected";
+    } catch (const R2HttpStatusError& error) {
+        EXPECT_STREQ(error.what(),
+            "The R2 vault changed since the check. "
+            "Click Upload again to review it.");
+    }
+    EXPECT_EQ(file_bytes(fixture.vault()), remote_vault);
+    EXPECT_EQ(get_r2_database_etag(fixture.path().filename().string(), storage), second.etag);
+
+    const auto downloaded = download_database_from_r2(
+        fixture.path(), fixture.vault(), storage);
+    EXPECT_EQ(downloaded.etag, second.etag);
+    EXPECT_EQ(downloaded.byte_count, second.byte_count);
+    EXPECT_EQ(file_bytes(fixture.path()), remote_database);
+    const auto definition = load_vault_definition_file(
+        fixture.vault().parent_path(), fixture.vault());
+    EXPECT_EQ(definition.r2_etag, second.etag);
+    EXPECT_EQ(definition.name, "R2 integration test");
+    std::filesystem::path backup = fixture.path();
+    backup += ".bac";
+    EXPECT_EQ(file_bytes(backup), local_database);
 }
 
 // Removes one temporary session database when a multi-character test leaves scope.
@@ -375,7 +461,7 @@ public:
     std::filesystem::path path;
 };
 
-// Loads the checked-in two-character lobby forum exactly as main() does.
+// Loads a temporary two-character lobby through the real workspace loader.
 struct LobbySetup {
     std::vector<CharacterDefinition> definitions;
     PersonaRoster personas;
@@ -384,10 +470,11 @@ struct LobbySetup {
 };
 
 LobbySetup lobby_setup() {
-    const std::filesystem::path root{CHA_WORKSPACE_DIRECTORY};
-    const Workspace workspace = Workspace::load(root);
+    test::TestWorkspace fixture;
+    prepare_integration_lobby(fixture);
+    const Workspace workspace = Workspace::load(fixture.root());
     const WorkspaceForum* const forum = workspace.find_forum("lobby");
-    if (forum == nullptr) throw std::runtime_error("Checked-in workspace has no lobby forum");
+    if (forum == nullptr) throw std::runtime_error("Integration workspace has no lobby forum");
     const WorkspacePersona* const configured_persona =
         workspace.find_persona(forum->default_persona_id);
     const Persona* persona = nullptr;
@@ -430,9 +517,7 @@ void point_at(CharacterDefinition& definition, int port) {
     definition.provider.config.port = port;
     definition.provider.config.https = false;
     definition.provider.config.mode = Mode::net;
-    // The local fixtures below use the Chat Completions wire format. The
-    // checked-in workspace defaults to Responses, so make the test transport
-    // choice explicit rather than relying on the workspace default.
+    // The local fixtures below use the Chat Completions wire format.
     definition.provider.config.api = ProviderApi::chat_completions;
     definition.provider.config.web_search = WebSearchMode::off;
     definition.provider.config.stream = false;

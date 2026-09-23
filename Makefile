@@ -1,4 +1,4 @@
-.PHONY: build package-macos package-windows web-check web-stage test itest run-native-dev clean-san
+.PHONY: build package-macos package-windows web-check web-stage test itest itest-local run-native-dev clean-san
 
 build:
 	cmake --preset ninja
@@ -32,14 +32,17 @@ test: build
 	ctest --test-dir build/ninja --output-on-failure
 
 ifeq ($(OS),Windows_NT)
-itest:
-	$(error itest is not supported on Windows)
+itest itest-local:
+	$(error $@ is not supported on Windows)
 
 run-native-dev:
 	$(error run-native-dev is currently supported only on macOS)
 else
 itest: build
-	cmake -E chdir workspace ../build/ninja/itest
+	./build/ninja/itest
+
+itest-local: build
+	./build/ninja/itest --gtest_filter='-Integration.*:R2Integration.*'
 
 run-native-dev: build
 	$(if $(strip $(CONFIG)),,$(error usage: make run-native-dev CONFIG=/path/to/cha-config))

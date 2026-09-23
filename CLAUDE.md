@@ -12,3 +12,7 @@ maintainability and readability. Do not overcomplicate it.
 - Prefer a plain, obvious solution over a general or clever one.
 - Do not add abstraction, configuration, or machinery for hypothetical needs.
 - When two designs both work, pick the one that is easier to read later.
+
+## Communication Style
+
+Use ASD-STE-100 Simplified Technical English when you speak to the operator.

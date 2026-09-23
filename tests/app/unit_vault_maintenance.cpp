@@ -108,10 +108,12 @@ TEST(ApplicationVault, SwitchAwayAndBackRestoresStoredSessions) {
     const auto boot_a = application->bootstrap();
     bool saw_stored_on_a = false;
     for (const auto& recent : boot_a.presentation.recent_sessions) {
-        if (recent.session_label == "Stored on A") saw_stored_on_a = true;
+        if (recent.session_label == "Stored on A") {
+            saw_stored_on_a = true;
+            EXPECT_EQ(recent.session_id, created.id);
+        }
     }
     EXPECT_TRUE(saw_stored_on_a);
-    EXPECT_EQ(created.id, created.id);
     const auto table = read_toml_file(
         pair.command.config_directory / "app.toml", "config file");
     EXPECT_EQ(table["vault"].value<std::string>(), "A");

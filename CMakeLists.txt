@@ -564,14 +564,22 @@ if(BUILD_TESTING)
 
     if(NOT WIN32)
         add_executable(
+            cha_interrupted_app_helper
+            tests/integration/interrupted_app_helper.cpp)
+        target_link_libraries(cha_interrupted_app_helper PRIVATE cha_lib)
+        cha_enable_warnings(cha_interrupted_app_helper)
+        add_executable(
             itest
             tests/integration/integration_test.cpp
+            tests/integration/application_integration_test.cpp
             tests/support/test_workspace.cpp)
         target_link_libraries(
             itest PRIVATE cha_lib GTest::gtest_main)
         target_include_directories(itest PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+        target_compile_definitions(itest PRIVATE
+            CHA_INTERRUPTED_APP_HELPER="$<TARGET_FILE:cha_interrupted_app_helper>")
+        add_dependencies(itest cha_interrupted_app_helper)
         cha_enable_warnings(itest)
-        target_compile_definitions(itest PRIVATE CHA_WORKSPACE_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/workspace")
     endif()
 
     # Every test binary carries the sanitizer suppression list. The file is
