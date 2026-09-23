@@ -8,11 +8,11 @@ The protocol and design decisions below were settled in the 2026-09-23 review, i
 
 ## Fixed division of work
 
-- **Session 3 owns native work:** preserve the existing curl fix, implement the WebSocket worker, timestamp deduplication, four bridge methods and their typed client calls, and native/fake-server tests. The normalizer stays native because it consumes provider word timestamps. Keep the browser xAI unavailable stub in place. No AudioWorklet or packaged capture work belongs in Session 3.
+- **Session 3 owns native work:** preserve the existing curl fix, implement the WebSocket worker, timestamp deduplication, four bridge methods and their typed client calls, native/fake-server tests, and the test-only fake-server executable for Session 4's packaged check. The normalizer stays native because it consumes provider word timestamps. Keep the browser xAI unavailable stub in place. No AudioWorklet or packaged capture work belongs in Session 3.
 - **Session 4 owns browser integration:** implement AudioWorklet capture, bounded audio sending, per-piece dictation-command formatting, composer integration, frontend tests, and the one packaged macOS capture/stop check. Reuse Session 3's tested native normalizer and bridge; do not build another normalizer in TypeScript.
 - **Session 5 owns remaining regression fixes:** reuse passing evidence from Sessions 3/4 and rerun affected checks only after relevant changes. Run Windows acceptance on a Windows host when available; do not require both Sessions 3 and 4 to reproduce every platform check.
 
-Each entry prompt lists its completion boundary and commit handoff. Read the preceding session's commit body and the referenced repository files. No handoff may depend only on chat. A new worktree must contain all prerequisite commits; use the same working branch while the prepared curl prerequisite remains uncommitted.
+Each entry prompt lists its completion boundary and commit handoff. Read the preceding session's commit body and the referenced repository files. No handoff may depend only on chat. A new worktree must contain all prerequisite commits, including the committed curl prerequisite 5ed0898.
 
 ## Goal
 
@@ -67,16 +67,16 @@ Reference: [official xAI speech-to-text documentation](https://docs.x.ai/develop
 - Model: the saved model, default grok-voice-transcribe-2.0.
 - Native authentication: Authorization: Bearer <resolved vault secret>. Never put the key in the URL.
 - Query parameters: model, encoding=pcm, sample_rate=16000, channels=1, interim_results=false, endpointing=400. Forward the composer's language array through voiceInput.xai.start and set language to its first nonempty entry (currently en or ru); omit it if none is supplied. This is a formatting hint, not a restriction on the language recognized. Add request-construction assertions for ['en'], ['ru'], and an empty list; never hardcode English or send the array as the query value.
-- Construct/escape the query natively. Replace existing occurrences of CHA-controlled query parameters, retain other endpoint parameters, and remove optional xAI feature parameters that would conflict with this contract (smart_turn, smart_turn_timeout, diarize, multichannel, keyterm). Do not log the full URL. Do not add a setup message or map OpenAI delay/prompt to xAI parameters.
+- Construct/escape the query natively, only from the parameters above. If the saved endpoint already contains a query string, ignore it and log a warning without the URL or query. Do not merge, retain, or filter saved query parameters. Do not log the full URL. Do not add a setup message or map OpenAI delay/prompt to xAI parameters.
 - Wait for transcript.created before sending PCM. Send raw binary WebSocket messages; base64 is used only across CHA's JSON bridge.
 - Ignore unexpected interim transcript.partial events with is_final=false. They must never affect committed text.
 - At stop, send exactly {"type":"audio.done"} as a text WebSocket message after all PCM. Wait for transcript.done before successful completion. Do not use finalize/Finalize or invent another stop message.
-- Any provider error is terminal for this dictation, even if xAI leaves its socket open. A socket close before transcript.done is failure. No automatic reconnection or audio replay.
+- Any provider error is terminal for this dictation, even if xAI leaves its socket open. A socket close before transcript.done is failure. A transcript.done that arrives before CHA sends audio.done is also failure. No automatic reconnection or audio replay.
 
 ## Native transport and curl
 
-Use libcurl's WebSocket API with CURLOPT_CONNECT_ONLY=2L; do not introduce another networking library. Use one native worker as the sole owner of each CURL handle. In all deadline formulas below, D is the effective bridge request deadline in milliseconds, including any router/runtime override; the router passes that value into native operations. Preserve TLS peer/hostname verification and disable redirects on this authenticated connection.
-The curl build correction is already implemented in this branch:
+Use libcurl's WebSocket API with CURLOPT_CONNECT_ONLY=2L; do not introduce another networking library. Use one native worker as the sole owner of each CURL handle. In all deadline formulas below, D is the effective bridge request deadline in milliseconds, including any router/runtime override. The router does not pass D to native operations today: add that argument to the xAI start, audio, and stop operations. Preserve TLS peer/hostname verification and disable redirects on this authenticated connection.
+The curl build correction is committed in this branch as 5ed0898:
 
 - Apple skips find_package(CURL) and statically links the bundled curl 8.14.1 into libChaRuntime.dylib.
 - CURL_DISABLE_WEBSOCKETS=OFF; Apple uses SecureTransport with OpenSSL and nghttp2 disabled for curl. All macOS HTTP traffic uses this bundled curl; HTTP/2 is unavailable in that build.
@@ -96,7 +96,7 @@ Preserve the same vault/API-key ownership model already used by voice settings.
 
 Use getUserMedia({audio: {channelCount: 1}}), AudioContext({sampleRate: 16000}), and an AudioWorklet module shipped as a same-origin JavaScript asset. Route microphone -> worklet -> zero-gain node -> context destination, keeping the graph active without microphone playback. Explicitly downmix the worklet input to mono, then convert clamped Float32 samples to signed PCM16 little-endian. Require context.sampleRate === 16000; report an unsupported-audio-format error if the browser cannot create that context. Do not implement a custom resampler, MediaRecorder upload path, ScriptProcessor fallback, or an Opus encoder.
 Produce 1,600-sample (100 ms) batches: 3,200 PCM bytes and 4,268 base64 characters. Send each batch once as base64 in JSON, decode once natively, then send binary PCM to xAI. Bound the full serialized request below 65,536 bytes. The final batch may contain fewer samples but must have an even nonzero byte count.
-Use worklet credits to bound its MessagePort as well as the main-thread queue: at most 19 completed batches may await native acknowledgment across the worklet port, main-thread queue, and in-flight request; the worklet may additionally hold one partial batch. Reserve that twentieth slot for the final short flush batch, which may be posted once during graceful stop even when all 19 normal credits are used. Return a credit only after its native audio reply. This bounds unsent/in-flight audio to at most two seconds, including the final flush. If the next completed batch has no credit, report overflow and stop the session; never drop audio silently. Native holds at most the one outstanding batch and replies only after it has been fully written to the WebSocket, so no second native audio queue is needed. Bound each audio send to min(2000, floor(2*D/3)) milliseconds, including socket stalls. Fail the dictation when that bound expires.
+The worklet posts each completed batch to the main thread and holds at most one partial batch. It keeps no credit state. The main thread counts the batches that wait for a native audio reply, including the one in-flight request, and removes a batch from the count only after its native audio reply. At most 19 completed batches may wait. If another completed batch arrives while 19 wait, report overflow and stop the session; never drop audio silently. During graceful stop, the final short flush batch may use one additional twentieth slot. This bounds unsent/in-flight audio to about two seconds, including the final flush. Native holds at most the one outstanding batch and replies only after it has been fully written to the WebSocket, so no second native audio queue is needed. Bound each audio send to min(2000, floor(2*D/3)) milliseconds, including socket stalls. Fail the dictation when that bound expires.
 Create the microphone stream/context during startup, but connect/start capture only after native start succeeds. Native start resolves only after transcript.created, not just the WebSocket handshake; browser start resolves after that readiness and capture setup. Cancellation during startup must also stop a getUserMedia stream that resolves late.
 On graceful stop, send a worklet flush command, receive its last partial batch and flush acknowledgment, then disconnect capture and stop microphone tracks. Accept those final worklet messages while stopping, drain all batches, and only then invoke native stop. On cancel or failure, discard pending audio and release the graph immediately.
 Load the worklet with a bundled asset URL (import captureUrl from './voiceInputCapture.worklet.js?url&no-inline', then audioWorklet.addModule(captureUrl)), not blob:, data:, a CDN, or inline code. Vite must emit a separate file served under cha://app; do not let a small module become an inline data: URL. Keep the existing CSP. In this review, a macOS WKWebView probe using CHA's asset handler, cha://app origin, and current CSP loaded a same-origin worklet and processed synthetic audio at 16 kHz. Keep this verified fixed sample rate; do not add rate negotiation or a manual resampler. Session 4 performs the actual packaged implementation and microphone permission/cleanup check once.
@@ -184,7 +184,7 @@ Inspect and preserve the existing bridge limits in src/bridge/bridge_router.h, s
 - The Swift and WebView2 hosts accept JSON strings; there is no binary bridge path.
 
 Keep at most one audio request outstanding per dictation. Wait for its reply using the existing bridge invocation/delivery-acknowledgment flow before submitting the next batch, leaving request capacity for other UI work. Do not send audio requests without waiting for replies, bypass delivery acknowledgments, or raise bridge limits.
-Use the exact 19-batch credit bound and one native in-flight batch specified above. Reply only after a batch has been fully sent; do not acknowledge mere acceptance into another queue. If a queue fills or an audio request fails, terminate dictation with a concise error, release its resources, and stop sending queued batches. Do not silently drop audio or retry into the same backlog. Keep cancellation responsive while audio is stalled, following the existing control-request conventions.
+Use the exact 19-batch main-thread bound and one native in-flight batch specified above. Reply only after a batch has been fully sent; do not acknowledge mere acceptance into another queue. If a queue fills or an audio request fails, terminate dictation with a concise error, release its resources, and stop sending queued batches. Do not silently drop audio or retry into the same backlog. Keep cancellation responsive while audio is stalled, following the existing control-request conventions.
 Use these exact new methods and JSON payloads, registered through the existing bridge protocol and native client:
 
 - voiceInput.xai.start: {session_id, languages}; returns {session_id, stop_budget_ms} after transcript.created. Bound connection/readiness startup to min(15000, floor(2*D/3)) milliseconds. The frontend creates a fresh session_id before invoking start so cancellation can target a startup attempt.
@@ -193,7 +193,7 @@ Use these exact new methods and JSON payloads, registered through the existing b
 - voiceInput.xai.cancel: {session_id}; returns {} promptly and signals worker cancellation. Classify it as a control request like existing voiceInput.cancel. Cancellation of an absent/already-finished session is a successful no-op. Explicitly invoke this method with session_id when cancelling; do not use NativeBridge.invoke cancelMethod, which sends only request_id. AbortSignal may still settle frontend invokes locally. Retain a cancellation tombstone for a queued start with that session_id until the start is rejected, so the priority control queue cannot cancel first and then allow startup to resurrect the session.
 
 Session identity is scoped to bridge connection and context epoch. Reject duplicate starts or overlapping audio calls for an active session. Accept at most one xAI dictation per connection. Resolve endpoint, model, and secret from native settings at start, not from browser-supplied credentials or a replacement endpoint. Reject an xAI start if the current native provider is no longer xai; do not silently dispatch another transport.
-Transcript delivery uses audio/stop replies, not a new event subscription or a polling request. Send silent PCM while capture is active so audio replies continue delivering transcripts during pauses. A worker error is returned by the current/next audio or stop request. Preserve a small terminal result for that session until consumed/cancelled or superseded; do not leave a worker running to remember it. Replies from a cancelled/older session must be ignored by the frontend.
+Transcript delivery uses audio/stop replies, not a new event subscription or a polling request. Send silent PCM while capture is active so audio replies continue delivering transcripts during pauses. A worker error is returned by the current/next audio or stop request. On failure, discard pieces that were not yet delivered; do not return them with the error. Text already delivered to the composer stays. Preserve a small terminal result for that session until consumed/cancelled or superseded; do not leave a worker running to remember it. Replies from a cancelled/older session must be ignored by the frontend.
 Avoid sending one bridge request that blocks for the entire dictation session.
 Design ownership and cancellation carefully:
 
@@ -265,7 +265,7 @@ Cover at least:
 - queued audio is sent before audio.done, including the final short frame
 - xAI transcript message parsing and the exact normalizer above
 - replay every fixture and compare every event addition and final text with expected.json
-- empty completion, missing/invalid timings, duplicate finals, and unexpected interim events
+- empty completion, missing/invalid timings, duplicate finals, unexpected interim events, and a transcript.done before audio.done
 - malformed messages
 - provider errors
 - cancellation
@@ -274,12 +274,12 @@ Cover at least:
 - application shutdown with an active xAI request
 - API key is resolved server-side and never included in browser-facing configuration/events
 
-Use a fake WebSocket boundary for parser/lifecycle tests and a local WebSocket server for handshake/framing tests.
+Use a fake WebSocket boundary for parser/lifecycle tests and a plain ws:// local fake server for handshake/framing tests. Reuse the loopback socket code in tests/support/mock_http_server.h where it fits. Do not build a TLS test server. Session 3 also builds the fake server as a small test-only executable that replays one fixture JSONL file on ws://127.0.0.1; Session 4 uses it for the packaged check.
 Normal tests replay the approved real fixture and fake WebSocket failures without network access. Do not make obtaining credentials, researching provider behavior, or selecting a normalization algorithm part of implementation.
 
 ## Validation by session
 
-Session 3 runs the native normalizer/bridge/fake-server tests, the macOS runtime capability check, and a local certificate-verified wss binary echo. Preserve the existing runtime-smoke and NativeRuntime.SupportsSecureWebSockets tests; a successful link alone is insufficient. Include the already-prepared curl prerequisite changes in the Session 3 commit if they remain uncommitted. Regenerate API types and run frontend type/client checks for its typed bridge additions; no packaged capture check is assigned to Session 3.
+Session 3 runs the native normalizer/bridge/fake-server tests and the macOS runtime capability check: the existing runtime-smoke and NativeRuntime.SupportsSecureWebSockets tests. A successful link alone is insufficient. There is no TLS echo test: these checks and the seven live wss captures in the fixtures prove the wss path. Regenerate API types and run frontend type/client checks for its typed bridge additions; no packaged capture check is assigned to Session 3.
 
 Session 4 runs the frontend checks:
 
@@ -289,7 +289,7 @@ npm run check
 npm run build
 ```
 
-It then builds/stages the current native runtime and production assets and runs one macOS packaged capture/stop/cancel check through the fake provider, plus microphone permission/cleanup. An older packages/CHA.app is not evidence about the new implementation. Reuse Session 3's native results unless Session 4 changes that code. Record Windows as unrun if unavailable; Session 5 owns remaining available-platform acceptance. No new live-provider test or permanent performance instrumentation is required.
+It then builds/stages the current native runtime and production assets and runs one macOS packaged capture/stop/cancel check with the real microphone and Session 3's fake-server executable, plus microphone permission/cleanup. The fake provider ignores audio content, so no synthetic audio source is needed. An older packages/CHA.app is not evidence about the new implementation. Reuse Session 3's native results unless Session 4 changes that code. Record Windows as unrun if unavailable; Session 5 owns remaining available-platform acceptance. No new live-provider test or permanent performance instrumentation is required.
 
 ## Scope control
 

@@ -147,7 +147,7 @@ Provider switching should:
 - clearly identify which API key is selected,
 - produce clear validation errors.
 
-Verify that URL validation agrees between load, save, and the UI: OpenAI accepts HTTPS (HTTP for local test servers), while xAI accepts WSS (WS for local fake servers). Reject the other provider's schemes and malformed authorities. A missing provider must still use the OpenAI rules, and errors must name the appropriate accepted schemes.
+Verify that URL validation agrees between load, save, and the UI: OpenAI accepts HTTPS (HTTP for local test servers), while xAI accepts WSS (WS for local fake servers). Reject the other provider's schemes and malformed authorities. A stored configuration without provider must still use the OpenAI rules, a save request without provider is rejected, and errors must name the appropriate accepted schemes.
 
 Avoid making users manually understand transport-level concepts such as SDP or WebSocket framing.
 
@@ -204,7 +204,7 @@ There must be no permanent worker/thread left after voice input completes.
 Inspect the xAI audio path for unbounded queues.
 
 Requirements:
-- use block 2's 19 completed-batch credits (including the one native in-flight batch) plus one reserved partial/final-flush batch,
+- use block 2's main-thread bound of 19 waiting completed batches (including the one native in-flight batch) plus one final flush batch during graceful stop,
 - if native/transport cannot keep up, behavior must be explicit,
 - do not silently accumulate arbitrary amounts of audio in JavaScript or C++ memory,
 - preserve audio frame order,
@@ -213,7 +213,7 @@ Requirements:
 - leave capacity for other UI operations within the shared limit of 16 ordinary requests; submitting another request when those slots are full invalidates the whole bridge connection,
 - finish or fail stop within its documented budget below the effective bridge deadline (30 seconds by default), including cleanup and reply-delivery margin.
 
-Follow block 2's overflow policy: fail dictation with a concise error and release resources when the bounded capture, JavaScript, or native queue fills. Do not silently drop audio, keep sending after failure, raise global bridge limits, or exempt voice requests from deadlines. Test delayed replies and stalled WebSocket sends with concurrent UI activity; audio backpressure must not flood or invalidate the shared connection. Test a shorter bridge deadline as well as the default.
+Follow block 2's overflow policy: fail dictation with a concise error and release resources when the bounded JavaScript or native queue fills. Do not silently drop audio, keep sending after failure, raise global bridge limits, or exempt voice requests from deadlines. Test delayed replies and stalled WebSocket sends with concurrent UI activity; audio backpressure must not flood or invalidate the shared connection. Test a shorter bridge deadline as well as the default.
 
 ## One manual responsiveness check
 
@@ -231,7 +231,7 @@ Check:
 - runtime curl_version_info()->protocols contains wss (and ws for local fake servers)
 - macOS uses the pinned bundled curl 8.14.1/SecureTransport build, with WebSockets enabled, nghttp2 disabled, and the pipe2 compatibility workaround intact
 - production frontend assets include the capture module and load it under the packaged cha://app origin and existing content security policy
-- the specified 16 kHz AudioContext/AudioWorklet produces ordered PCM frames through the JSON bridge in the packaged webview, using synthetic audio and a local fake provider
+- the specified 16 kHz AudioContext/AudioWorklet sends PCM frames through the JSON bridge in the packaged webview to Session 3's fake-server executable, using the real microphone
 - microphone permission, stop, cancellation, and cleanup with an actual microphone
 - no new runtime dependency accidentally introduced
 
@@ -283,7 +283,7 @@ Cover:
 
 Use the checked-in real event recordings as the network-independent transcript integration oracle. Drive a local fake WebSocket provider through the actual native request/reply path and assert final composer text, stop ordering, queue bounds, failure, and cancellation. The fake provider sends the recorded xAI events; it does not return already-normalized text in place of exercising the native parser.
 
-Use a local TLS WebSocket echo for packaged curl transport acceptance and the synthetic AudioWorklet source for capture acceptance. Do not make CI depend on xAI availability, credentials, speech-recognition accuracy, or another protocol investigation. Live contract verification was completed in the planning review and is recorded with the fixtures.
+Use the runtime capability checks for curl wss support, and Session 3's fake-server executable with the real microphone for packaged capture acceptance. Do not build a TLS echo server or a synthetic audio source. Do not make CI depend on xAI availability, credentials, speech-recognition accuracy, or another protocol investigation. Live contract verification was completed in the planning review and is recorded with the fixtures.
 
 ## Validation
 
@@ -315,20 +315,21 @@ Do not perform unrelated refactors.
 
 ## Documentation
 
-Update concise voice-input documentation to reflect the fixed implementation:
+This section is the user's explicit request to update these files in docs/, as AGENTS.md requires. Change only these files:
 
-- supported voice-input providers,
-- OpenAI vs xAI configuration,
-- API key setup,
-- provider-specific defaults,
-- any known platform limitation,
-- the single word-time cursor, explicit missing-timing error, provider-controlled finalized-text latency, and commands split between pieces remaining literal.
+- [UserManual.html](UserManual.html):
+  - In section 10, "Provider and voice settings", add a short "Configure voice input" part next to "Configure speech output". Describe the OpenAI and xAI providers, their default URL and model, API key selection, that delay and prompt apply only to OpenAI, that input saves without output settings, and the user-visible limits: finalized-text latency and commands split between pieces staying literal.
+  - In "Merge another vault into the active vault", remove the sentence that tells the user to select Reload to apply the merged voice settings.
+- [MaintainerGuide.md](MaintainerGuide.md):
+  - In "Vault management and switching", remove the sentence about changed voice endpoint origins and Reload.
+  - In the section 3 directory map, add `system/voice-input/config.toml` next to `voice-output/`.
+  - In section 9, next to the voice output configuration, add a short voice-input part: an exported `system/voice-input/config.toml` example with `provider`, the missing-provider default, the provider-specific URL schemes, the two transports, the single word-time cursor, the explicit missing-timing error, and any known platform limitation.
 
-Keep documentation proportional to the feature.
+Keep documentation proportional to the feature. Do not edit the plan files block1.md to block5.md.
 
 ## Deliverable
 
-Commit the fixes with subject `voice input: finish integration checks (session 5)` and a body containing the following summary. If no fixes are needed, do not manufacture a cleanup change or empty commit; add a concise validation record to this document and commit that. Repeat the summary in chat:
+Commit the fixes and documentation with subject `voice input: finish integration checks (session 5)` and a body containing the following summary. Do not manufacture a cleanup change. Repeat the summary in chat:
 
 1. issues found and fixed,
 2. files changed,

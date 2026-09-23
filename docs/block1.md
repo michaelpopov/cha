@@ -4,7 +4,7 @@ Follow the Keep it simple rule in AGENTS.md. If a simpler design meets a require
 
 ## Session sequence and handoff
 
-Read the documents in order: [1: configuration](block1.md), [2: shared implementation contract](block2.md), [3: native transport and bridge](block3.md), [4: capture and composer](block4.md), and [5: integration checks](block5.md). Block 2 is reference material for the implementation sessions, not an additional coding session. Implement blocks 1, 3, 4, and 5 in that order on the same working branch. Read those repository files and AGENTS.md; no previous chat summary is required. Preserve the curl prerequisite changes already prepared in the working tree. Do not start from a clean worktree that omits them.
+Read the documents in order: [1: configuration](block1.md), [2: shared implementation contract](block2.md), [3: native transport and bridge](block3.md), [4: capture and composer](block4.md), and [5: integration checks](block5.md). Block 2 is reference material for the implementation sessions, not an additional coding session. Implement blocks 1, 3, 4, and 5 in that order on the same working branch. Read those repository files and AGENTS.md; no previous chat summary is required. The curl prerequisite is already committed on this branch as 5ed0898 ("Improving curl"). Do not change it.
 
 Commit each completed session before starting the next. Its commit body must record the concrete interface/file locations, relevant tests and results, and known limitations. Session 1 must include these plan files and the checked-in xAI fixtures if they are not yet tracked. Do not include unrelated user changes. Later sessions read the preceding commit messages as well as the repository instructions; do not leave the only handoff in chat.
 
@@ -35,13 +35,13 @@ Preserve OpenAI's WebRTC transport and transcript behavior. The no-reload and fr
    - workspace/config storage for voice input
    - native/application voice-input entry points in src/app/media_operations.cpp
    - bridge/API types around connect_voice_input
-2. Add the field named provider with exactly two values: "openai" and "xai". Missing provider means "openai" in stored configuration and legacy save requests; an explicitly invalid value is rejected. Emit provider explicitly in all settings/runtime responses and newly saved configuration.
+2. Add the field named provider with exactly two values: "openai" and "xai". Missing provider means "openai" only in stored configuration files. Save requests must include provider: the bundled webapp is the only client, and this session updates it. Reject a missing provider in a save request and an invalid value anywhere. Emit provider explicitly in all settings/runtime responses and newly saved configuration.
 3. Persist this field through the complete existing settings path:
    - workspace/config representation
    - src/runtime/protocol.h settings/runtime structs and their JSON serialization
    - DTO/schema
    - resources/dto.yaml, webapp/src/api/schema.d.ts, client guards, and native client types
-   - src/runtime/request_parser.cpp: replace the existing exact-five-field check with an explicit allowed-field check accepting the original five fields plus optional provider
+   - src/runtime/request_parser.cpp: change the existing exact-five-field check to an exact-six-field check that requires provider
    - Settings UI
    - tests
 4. Existing configurations without this field must continue to work and must default to OpenAI, so this change is backward compatible.
@@ -71,7 +71,7 @@ Make URL validation provider-specific in both configuration loading and saving. 
 - OpenAI accepts absolute https:// URLs and http:// URLs for local test servers; reject ws:// and wss://.
 - xAI accepts absolute wss:// URLs and ws:// URLs for local fake servers; reject http:// and https://.
 
-Resolve the provider first, defaulting a missing provider to OpenAI, then apply the appropriate URL check. Preserve the existing authority validation and keep any UI/client URL validation consistent. Replace the load error "requires an absolute HTTP or HTTPS URL" with an error that names the selected provider and its accepted schemes; save validation must report "OpenAI voice input requires an absolute HTTP or HTTPS URL" or "xAI voice input requires an absolute WS or WSS URL" as applicable. Update the generic-error catch in save_voice_input_settings() so it does not hide this known validation error. Keep the existing authority validation; this change selects schemes by provider and does not introduce a new host allowlist.
+Resolve the provider first, defaulting a missing stored provider to OpenAI, then apply the appropriate URL check. Preserve the existing authority validation and keep any UI/client URL validation consistent. Replace the load error "requires an absolute HTTP or HTTPS URL" with an error that names the selected provider and its accepted schemes; save validation must report "OpenAI voice input requires an absolute HTTP or HTTPS URL" or "xAI voice input requires an absolute WS or WSS URL" as applicable. Update the generic-error catch in save_voice_input_settings() so it does not hide this known validation error. Keep the existing authority validation; this change selects schemes by provider and does not introduce a new host allowlist.
 Do not reload the page after voice settings saves or because a vault merge changes a voice endpoint. This decision was checked against both native hosts: CSP is fixed at connect-src 'self', the OpenAI SDP POST is native, and xAI connects natively. The Settings.tsx comment about a direct browser transcription connection is obsolete. Remove voiceInputOrigin(), its before/after merge reads, the voice-origin reload state/prompt, and the save-time origin comparison. Keep the existing successful-merge bootstrap refresh and unrelated recovery/navigation behavior. Remove the now-unused state/voiceSettingsReload.ts helper, consumeVoiceSettingsRestore() import/branches in useLiveSession.ts, and obsolete reload-specific tests. Saving stays on the current Settings screen; returning to the composer remounts it and loads current availability.
 
 6. Keep VoiceInputSession as the provider-neutral entry point in webapp/src/voiceInput.ts. Move the existing implementation, unchanged, into OpenAiVoiceInputSession in webapp/src/openAiVoiceInput.ts. Define a shared session interface with stop(): Promise<void> and cancel(): void. VoiceInputSession.start() dispatches by configuration.provider and returns that interface. Keep onTranscription(delta) and onFailure(error) callback signatures. Preserve OpenAI's nativeConnect dependency and supply xAI bridge access as a separate dependency; ChatScreen must not parse provider events.
@@ -110,7 +110,7 @@ Add/update tests for at least:
 - saving/loading provider xai
 - both load and save accept the default OpenAI HTTPS and xAI WSS endpoints, plus their HTTP/WS local test endpoints
 - both load and save reject cross-provider schemes, unsupported schemes, and missing/malformed authorities
-- missing provider still uses OpenAI URL validation; an invalid endpoint reports the provider's accepted schemes
+- stored configuration without provider still uses OpenAI URL validation; an invalid endpoint reports the provider's accepted schemes
 - DTO/schema/client validation includes provider
 - Voice Settings can switch between OpenAI and xAI
 - provider switch uses the exact defaults, clears API-key selection, and retains hidden OpenAI delay/prompt values
@@ -124,7 +124,7 @@ Add/update tests for at least:
 - saving input alone neither validates nor writes voice-output settings
 - OpenAI current path still behaves exactly as before
 - selecting xAI does not accidentally invoke the OpenAI WebRTC implementation
-- invalid provider values are rejected
+- invalid provider values are rejected on load and save; a save request without provider is rejected
 
 Run the relevant test suites and normal validation, including:
 
