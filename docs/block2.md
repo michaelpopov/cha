@@ -1,4 +1,4 @@
-This is the shared implementation contract for Sessions 2a and 2b of selectable xAI Grok Voice Transcribe support in CHA. Run [block2a.md](block2a.md) first and [block2b.md](block2b.md) second; do not attempt both as one session.
+This is the shared implementation contract for Sessions 3 and 4 of selectable xAI Grok Voice Transcribe support in CHA. Run [block3.md](block3.md) first and [block4.md](block4.md) second; do not attempt both as one session.
 
 Follow the Keep it simple rule in AGENTS.md. If a simpler design meets a requirement, use it.
 
@@ -8,9 +8,9 @@ The protocol and design decisions below were settled in the 2026-09-23 review, i
 
 ## Fixed division of work
 
-- **2a owns native work:** preserve the existing curl fix, implement the WebSocket worker, timestamp deduplication, four bridge methods and their typed client calls, and native/fake-server tests. The normalizer stays native because it consumes provider word timestamps. Keep the browser xAI unavailable stub in place. No AudioWorklet or packaged capture work belongs in 2a.
-- **2b owns browser integration:** implement AudioWorklet capture, bounded audio sending, per-piece dictation-command formatting, composer integration, frontend tests, and the one packaged macOS capture/stop check. Reuse 2a's tested native normalizer and bridge; do not build another normalizer in TypeScript.
-- **3 owns remaining regression fixes:** reuse passing evidence from 2a/2b and rerun affected checks only after relevant changes. Run Windows acceptance on a Windows host when available; do not require both 2a and 2b to reproduce every platform check.
+- **Session 3 owns native work:** preserve the existing curl fix, implement the WebSocket worker, timestamp deduplication, four bridge methods and their typed client calls, and native/fake-server tests. The normalizer stays native because it consumes provider word timestamps. Keep the browser xAI unavailable stub in place. No AudioWorklet or packaged capture work belongs in Session 3.
+- **Session 4 owns browser integration:** implement AudioWorklet capture, bounded audio sending, per-piece dictation-command formatting, composer integration, frontend tests, and the one packaged macOS capture/stop check. Reuse Session 3's tested native normalizer and bridge; do not build another normalizer in TypeScript.
+- **Session 5 owns remaining regression fixes:** reuse passing evidence from Sessions 3/4 and rerun affected checks only after relevant changes. Run Windows acceptance on a Windows host when available; do not require both Sessions 3 and 4 to reproduce every platform check.
 
 Each entry prompt lists its completion boundary and commit handoff. Read the preceding session's commit body and the referenced repository files. No handoff may depend only on chat. A new worktree must contain all prerequisite commits; use the same working branch while the prepared curl prerequisite remains uncommitted.
 
@@ -99,7 +99,7 @@ Produce 1,600-sample (100 ms) batches: 3,200 PCM bytes and 4,268 base64 characte
 Use worklet credits to bound its MessagePort as well as the main-thread queue: at most 19 completed batches may await native acknowledgment across the worklet port, main-thread queue, and in-flight request; the worklet may additionally hold one partial batch. Reserve that twentieth slot for the final short flush batch, which may be posted once during graceful stop even when all 19 normal credits are used. Return a credit only after its native audio reply. This bounds unsent/in-flight audio to at most two seconds, including the final flush. If the next completed batch has no credit, report overflow and stop the session; never drop audio silently. Native holds at most the one outstanding batch and replies only after it has been fully written to the WebSocket, so no second native audio queue is needed. Bound each audio send to min(2000, floor(2*D/3)) milliseconds, including socket stalls. Fail the dictation when that bound expires.
 Create the microphone stream/context during startup, but connect/start capture only after native start succeeds. Native start resolves only after transcript.created, not just the WebSocket handshake; browser start resolves after that readiness and capture setup. Cancellation during startup must also stop a getUserMedia stream that resolves late.
 On graceful stop, send a worklet flush command, receive its last partial batch and flush acknowledgment, then disconnect capture and stop microphone tracks. Accept those final worklet messages while stopping, drain all batches, and only then invoke native stop. On cancel or failure, discard pending audio and release the graph immediately.
-Load the worklet with a bundled asset URL (import captureUrl from './voiceInputCapture.worklet.js?url&no-inline', then audioWorklet.addModule(captureUrl)), not blob:, data:, a CDN, or inline code. Vite must emit a separate file served under cha://app; do not let a small module become an inline data: URL. Keep the existing CSP. In this review, a macOS WKWebView probe using CHA's asset handler, cha://app origin, and current CSP loaded a same-origin worklet and processed synthetic audio at 16 kHz. Keep this verified fixed sample rate; do not add rate negotiation or a manual resampler. Session 2b performs the actual packaged implementation and microphone permission/cleanup check once.
+Load the worklet with a bundled asset URL (import captureUrl from './voiceInputCapture.worklet.js?url&no-inline', then audioWorklet.addModule(captureUrl)), not blob:, data:, a CDN, or inline code. Vite must emit a separate file served under cha://app; do not let a small module become an inline data: URL. Keep the existing CSP. In this review, a macOS WKWebView probe using CHA's asset handler, cha://app origin, and current CSP loaded a same-origin worklet and processed synthetic audio at 16 kHz. Keep this verified fixed sample rate; do not add rate negotiation or a manual resampler. Session 4 performs the actual packaged implementation and microphone permission/cleanup check once.
 
 ## Fixed transcript algorithm
 
@@ -124,7 +124,7 @@ For each complete decoded event:
 Use strict word timings for this release. There is no text-only fallback and no live algorithm selection. The fixtures support this decision, not a guarantee that every future provider/model version will behave identically. Keep malformed/missing-timing behavior deterministic and do not silently switch algorithms.
 The output above is the native raw-text contract used by expected.json. Preserve each nonempty event addition as a separate piece in bridge replies; do not concatenate pieces before frontend command formatting. Timestamp deduplication stays native. The xAI browser adapter prepares each piece for the editor using the following fixed rule.
 
-## Dictation commands and editor formatting (2b)
+## Dictation commands and editor formatting (Session 4)
 
 The current appendTranscription() calls normalizeDictationCommands() only for the first composer addition. Later deltas bypass it. Fix this for xAI without changing OpenAI's existing callback behavior:
 
@@ -279,9 +279,9 @@ Normal tests replay the approved real fixture and fake WebSocket failures withou
 
 ## Validation by session
 
-Session 2a runs the native normalizer/bridge/fake-server tests, the macOS runtime capability check, and a local certificate-verified wss binary echo. Preserve the existing runtime-smoke and NativeRuntime.SupportsSecureWebSockets tests; a successful link alone is insufficient. Include the already-prepared curl prerequisite changes in the 2a commit if they remain uncommitted. Regenerate API types and run frontend type/client checks for its typed bridge additions; no packaged capture check is assigned to 2a.
+Session 3 runs the native normalizer/bridge/fake-server tests, the macOS runtime capability check, and a local certificate-verified wss binary echo. Preserve the existing runtime-smoke and NativeRuntime.SupportsSecureWebSockets tests; a successful link alone is insufficient. Include the already-prepared curl prerequisite changes in the Session 3 commit if they remain uncommitted. Regenerate API types and run frontend type/client checks for its typed bridge additions; no packaged capture check is assigned to Session 3.
 
-Session 2b runs the frontend checks:
+Session 4 runs the frontend checks:
 
 ```sh
 cd webapp
@@ -289,7 +289,7 @@ npm run check
 npm run build
 ```
 
-It then builds/stages the current native runtime and production assets and runs one macOS packaged capture/stop/cancel check through the fake provider, plus microphone permission/cleanup. An older packages/CHA.app is not evidence about the new implementation. Reuse 2a's native results unless 2b changes that code. Record Windows as unrun if unavailable; Session 3 owns remaining available-platform acceptance. No new live-provider test or permanent performance instrumentation is required.
+It then builds/stages the current native runtime and production assets and runs one macOS packaged capture/stop/cancel check through the fake provider, plus microphone permission/cleanup. An older packages/CHA.app is not evidence about the new implementation. Reuse Session 3's native results unless Session 4 changes that code. Record Windows as unrun if unavailable; Session 5 owns remaining available-platform acceptance. No new live-provider test or permanent performance instrumentation is required.
 
 ## Scope control
 
@@ -306,7 +306,7 @@ Do not:
 
 ## Deliverable
 
-At the end of 2a, the native/fake-server path and typed bridge contract are complete and committed; browser xAI remains an explicit stub. At the end of 2b, xAI is selectable and usable with the documented latency and split-command limitations. Do not leave half of 2b in 2a or reopen native protocol decisions in 2b.
+At the end of Session 3, the native/fake-server path and typed bridge contract are complete and committed; browser xAI remains an explicit stub. At the end of Session 4, xAI is selectable and usable with the documented latency and split-command limitations. Keep the two session scopes separate and do not reopen native protocol decisions in Session 4.
 
 Commit each phase with its entry prompt's subject and a body summarizing:
 
@@ -317,4 +317,4 @@ Commit each phase with its entry prompt's subject and a body summarizing:
 5. cancellation/shutdown ownership
 6. tests run and results
 7. any platform-specific libcurl/WebSocket limitations
-8. actual failed/unavailable implementation checks; do not hand unresolved protocol choices to Session 3
+8. actual failed/unavailable implementation checks; do not hand unresolved protocol choices to Session 5

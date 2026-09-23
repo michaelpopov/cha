@@ -32,7 +32,7 @@ SHA-256 hashes, language, interim setting, and event counts.
 [Expected results](expected.json) lists one expected raw native delta per
 JSONL row, final text, and final end-time cursor. Empty additions are included.
 Native bridge replies collect the nonempty additions as ordered `pieces`;
-they must not merge their boundaries. Session 2b separately applies dictation
+they must not merge their boundaries. Session 4 separately applies dictation
 commands and editor spacing to each piece. These saved expectations cover
 timestamp deduplication before that frontend formatting, not command behavior.
 The concatenated result was independently compared with the disjoint
@@ -105,6 +105,6 @@ provider events, not regenerated TTS recognition, are the regression oracle.
   received nonzero synthetic audio at 16 kHz through an AudioContext requested
   at that rate. No CSP relaxation or custom resampler was needed.
 - Windows execution and the future feature's actual packaged microphone path
-  were not exercised here. Session 2b owns macOS capture acceptance; Session 3
+  were not exercised here. Session 4 owns macOS capture acceptance; Session 5
   reuses that evidence and covers remaining available platforms. They do not
   need to select a transport or infer semantics.

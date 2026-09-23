@@ -4,13 +4,13 @@ Follow the Keep it simple rule in AGENTS.md. If a simpler design meets a require
 
 ## Session sequence and handoff
 
-Work in this order on the same working branch: Session 1, [Session 2a](block2a.md), [Session 2b](block2b.md), [Session 3](block3.md). [Block 2](block2.md) is the shared contract for 2a and 2b, not one large implementation session. Read those repository files and AGENTS.md; no previous chat summary is required. Preserve the curl prerequisite changes already prepared in the working tree. Do not start from a clean worktree that omits them.
+Read the documents in order: [1: configuration](block1.md), [2: shared implementation contract](block2.md), [3: native transport and bridge](block3.md), [4: capture and composer](block4.md), and [5: integration checks](block5.md). Block 2 is reference material for the implementation sessions, not an additional coding session. Implement blocks 1, 3, 4, and 5 in that order on the same working branch. Read those repository files and AGENTS.md; no previous chat summary is required. Preserve the curl prerequisite changes already prepared in the working tree. Do not start from a clean worktree that omits them.
 
 Commit each completed session before starting the next. Its commit body must record the concrete interface/file locations, relevant tests and results, and known limitations. Session 1 must include these plan files and the checked-in xAI fixtures if they are not yet tracked. Do not include unrelated user changes. Later sessions read the preceding commit messages as well as the repository instructions; do not leave the only handoff in chat.
 
 ## Decisions
 
-The provider defaults, URL rules, and interface below are fixed. Implement them; do not research alternatives or introduce another transport. Session 2 contains the xAI wire contract. Implementation tests are required, but protocol/design decisions are not assigned to this session.
+The provider defaults, URL rules, and interface below are fixed. Implement them; do not research alternatives or introduce another transport. Block 2 contains the xAI wire contract. Implementation tests are required, but protocol/design decisions are not assigned to this session.
 
 ## Goal
 
@@ -78,12 +78,12 @@ Do not reload the page after voice settings saves or because a vault merge chang
 
 Copy provider from getVoiceInputRuntime() into ChatScreen's VoiceInputConfiguration (that mapping currently copies only model, delay, and prompt), and pass it to supported(provider). Retain the mount-time read only for microphone-button availability, and refresh it on vault/context changes. On every new dictation attempt, enter starting state and create the existing attempt token/AbortController, then await a fresh getVoiceInputRuntime() before provider dispatch or microphone capture. Check cancellation and the attempt token immediately after that await. Use the returned provider/model/delay/prompt for the attempt and the composer's current ['ru'] or ['en'] language. Null, failed, or unsupported fresh configuration ends startup with an error; never fall back to the cached provider. Prevent late reads from starting capture after cancel or navigation. Each native start must also reject a provider mismatch with its current settings, rather than using the wrong transport if settings change during startup.
 
-VoiceInputSession.supported(provider) checks getUserMedia for both providers, RTCPeerConnection for OpenAI, and AudioContext/AudioWorkletNode for xAI. Do not require WebRTC support to enable xAI. Keep the xAI branch as an explicit unavailable-transport stub until Session 2b. Do not add a settings subscription service or a second configuration cache.
+VoiceInputSession.supported(provider) checks getUserMedia for both providers, RTCPeerConnection for OpenAI, and AudioContext/AudioWorkletNode for xAI. Do not require WebRTC support to enable xAI. Keep the xAI branch as an explicit unavailable-transport stub until Session 4. Do not add a settings subscription service or a second configuration cache.
 
-7. Retain delay and prompt in the shared settings for backward compatibility. They apply only to OpenAI. For xAI, do not send either field to the provider, do not reinterpret prompt as keyterms, and do not reject otherwise valid configuration because an unused delay is obsolete. Normalize an invalid unused xAI delay to "low" and log a warning without its value; retain the existing OpenAI delay validation. Do not add xAI-specific controls in this release. Session 2 fixes endpointing at 400 ms and disables interim results.
+7. Retain delay and prompt in the shared settings for backward compatibility. They apply only to OpenAI. For xAI, do not send either field to the provider, do not reinterpret prompt as keyterms, and do not reject otherwise valid configuration because an unused delay is obsolete. Normalize an invalid unused xAI delay to "low" and log a warning without its value; retain the existing OpenAI delay validation. Do not add xAI-specific controls in this release. Block 2 fixes endpointing at 400 ms and disables interim results.
 8. The runtime must reject or clearly report unsupported xAI execution for now rather than accidentally trying to use the OpenAI WebRTC path with an xAI URL.
 
-Until Session 2b replaces the browser stub, selecting xAI fails with "xAI voice input transport is not implemented". Also reject xAI in the native OpenAI connect operation before any HTTP request.
+Until Session 4 replaces the browser stub, selecting xAI fails with "xAI voice input transport is not implemented". Also reject xAI in the native OpenAI connect operation before any HTTP request.
 Do not silently route xAI through OpenAI code.
 
 ## Important design objective
@@ -99,7 +99,7 @@ common transcription callback/interface
 ```
 
 The editor/composer must not interpret provider events or word timestamps. Provider adapters prepare the text; the first-addition formatting choice described below does not change that separation.
-Define the callback contract for Session 2b: onTranscription(delta) emits text ready to append, including required separators. Preserve OpenAI's existing first-delta appendTranscription() and later raw concatenation. Session 2b adds the xAI adapter's per-piece dictation-command normalization and a newline-preserving first-addition helper, as specified in block 2; do not implement that xAI behavior in this session.
+Define the callback contract for Session 4: onTranscription(delta) emits text ready to append, including required separators. Preserve OpenAI's existing first-delta appendTranscription() and later raw concatenation. Session 4 adds the xAI adapter's per-piece dictation-command normalization and a newline-preserving first-addition helper, as specified in block 2; do not implement that xAI behavior in this session.
 
 ## Tests
 
@@ -144,7 +144,7 @@ Commit it with subject `voice input: prepare provider selection (session 1)` and
 - files changed
 - resulting provider/configuration model
 - how backward compatibility works
-- exact interface/extension point Sessions 2a and 2b should use to implement xAI streaming
+- exact interface/extension point Sessions 3 and 4 should use to implement xAI streaming
 - validation failures, if any; do not leave provider or transport decisions to later sessions
 
 Do not proceed into the full xAI WebSocket transport implementation in this session.
