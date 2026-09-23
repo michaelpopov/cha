@@ -5,6 +5,7 @@ export {
   appendPreparedTranscription,
   appendTranscription,
 } from './dictationText';
+export { unsupportedAudioFormat } from './xaiVoiceInput';
 
 export interface VoiceInputConfiguration {
   provider: 'openai' | 'xai';

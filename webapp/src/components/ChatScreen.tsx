@@ -34,6 +34,7 @@ import {
 import {
   appendPreparedTranscription,
   appendTranscription,
+  unsupportedAudioFormat,
   VoiceInputSession,
   type VoiceInputConfiguration,
   type VoiceInputTransport,
@@ -82,6 +83,9 @@ function actionMessage(failure: unknown): string {
 function voiceInputMessage(failure: unknown): string {
   if (failure instanceof DOMException && failure.name === 'NotAllowedError') {
     return 'Microphone access was denied. Allow it in System Settings and try again.';
+  }
+  if (failure instanceof Error && failure.message === unsupportedAudioFormat) {
+    return failure.message;
   }
   return 'Voice input stopped because transcription failed. Try again.';
 }
@@ -933,10 +937,11 @@ export function ChatScreen({
         (text) => {
           if (voiceInputAttempt.current !== attempt) return;
           if (!text) return;
-          const first = configuration.provider === 'xai'
-            ? appendPreparedTranscription(draftRef.current, text)
-            : appendTranscription(draftRef.current, text);
-          updateDraft(receivedVoiceDelta ? draftRef.current + text : first);
+          updateDraft(receivedVoiceDelta
+            ? draftRef.current + text
+            : configuration.provider === 'xai'
+              ? appendPreparedTranscription(draftRef.current, text)
+              : appendTranscription(draftRef.current, text));
           receivedVoiceDelta = true;
         },
         (failure) => {

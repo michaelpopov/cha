@@ -1,3 +1,4 @@
+import { ChaError } from './api/client';
 import { prepareDictationPiece } from './dictationText';
 import captureUrl from './voiceInputCapture.worklet.js?url&no-inline';
 import type {
@@ -8,6 +9,8 @@ import type {
 
 const captureSampleRate = 16000;
 const maxWaitingBatches = 19;
+
+export const unsupportedAudioFormat = 'The audio format is unsupported.';
 
 function abortError(): DOMException {
   return new DOMException('The operation was aborted.', 'AbortError');
@@ -35,7 +38,6 @@ class XaiVoiceInputSession implements VoiceInputTransport {
   private readonly live = new AbortController();
   private readonly pending: Int16Array[] = [];
   private source: MediaStreamAudioSourceNode | null = null;
-  private waiting = 0;
   private sending = false;
   private stopping = false;
   private cancelled = false;
@@ -111,12 +113,12 @@ class XaiVoiceInputSession implements VoiceInputTransport {
   // The final flush batch may use one extra slot.
   private acceptBatch(samples: Int16Array, flush: boolean): void {
     const limit = this.stopping && flush ? maxWaitingBatches + 1 : maxWaitingBatches;
-    if (this.waiting >= limit) {
+    const waiting = this.pending.length + (this.sending ? 1 : 0);
+    if (waiting >= limit) {
       this.fail(new Error('Voice input audio overflowed.'));
       return;
     }
-    this.waiting += 1;
-    this.pending.push(new Int16Array(samples));
+    this.pending.push(samples);
     this.sendNext();
   }
 
@@ -128,7 +130,6 @@ class XaiVoiceInputSession implements VoiceInputTransport {
     void this.xaiBridge.audio(this.sessionId, pcmBase64(samples), this.live.signal).then(
       (reply) => {
         this.sending = false;
-        this.waiting -= 1;
         if (!this.cancelled && !this.failed && reply.session_id === this.sessionId) {
           this.deliver(reply.pieces);
         }
@@ -184,9 +185,7 @@ class XaiVoiceInputSession implements VoiceInputTransport {
     if (this.source && this.context.state !== 'closed') this.source.disconnect();
     this.source = null;
     stopTracks(this.stream);
-    while ((this.sending || this.pending.length > 0) && !this.failed && !this.cancelled && !this.timedOut) {
-      await this.drain();
-    }
+    await this.drain();
     if (this.cancelled) return;
     if (this.timedOut) throw new Error('Voice input timed out.');
     if (this.failed) throw this.failure ?? new Error('Voice input failed.');
@@ -210,16 +209,17 @@ class XaiVoiceInputSession implements VoiceInputTransport {
         new Promise<never>((_resolve, reject) => {
           timer = setTimeout(() => {
             this.timedOut = true;
-            this.live.abort();
+            // Reject before the abort so the race reports the timeout, not an
+            // aborted bridge call.
             reject(new Error('Voice input timed out.'));
+            this.live.abort();
           }, Math.max(0, this.stopBudgetMs));
         }),
       ]);
     } catch (failure) {
       if (this.cancelled) return;
-      const error = this.timedOut ? new Error('Voice input timed out.') : failure;
-      if (!this.failed) this.fail(error);
-      throw error;
+      if (!this.failed) this.fail(failure);
+      throw failure;
     } finally {
       if (timer !== undefined) clearTimeout(timer);
       this.release();
@@ -261,11 +261,6 @@ export async function startXaiVoiceInput(
   xaiBridge: VoiceInputXaiBridge,
   signal?: AbortSignal,
 ): Promise<VoiceInputTransport> {
-  if (signal?.aborted) throw abortError();
-  if (typeof AudioContext === 'undefined' || typeof AudioWorkletNode === 'undefined'
-      || typeof navigator.mediaDevices?.getUserMedia !== 'function') {
-    throw new Error('Voice input is unavailable.');
-  }
   const sessionId = crypto.randomUUID();
   const setup = new AbortController();
   let stream: MediaStream | null = null;
@@ -292,7 +287,7 @@ export async function startXaiVoiceInput(
     if (setup.signal.aborted) throw abortError();
     context = new AudioContext({ sampleRate: captureSampleRate });
     if (context.sampleRate !== captureSampleRate) {
-      throw new Error('The audio format is unsupported.');
+      throw new Error(unsupportedAudioFormat);
     }
     if (context.state === 'suspended') await context.resume();
     if (setup.signal.aborted) throw abortError();
@@ -311,13 +306,14 @@ export async function startXaiVoiceInput(
       sessionId,
       configuration.languages ?? [],
       setup.signal,
-    );
+    ).catch((failure: unknown) => {
+      // Native has already ended a start that it rejected. A cancel would only
+      // leave a tombstone there until the connection closes.
+      if (failure instanceof ChaError) started = false;
+      throw failure;
+    });
     if (setup.signal.aborted) throw abortError();
-    if (ready.session_id !== sessionId
-        || !Number.isInteger(ready.stop_budget_ms)
-        || ready.stop_budget_ms < 0) {
-      throw new Error('Voice input could not start.');
-    }
+    if (ready.session_id !== sessionId) throw new Error('Voice input could not start.');
     session = new XaiVoiceInputSession(
       sessionId,
       ready.stop_budget_ms,

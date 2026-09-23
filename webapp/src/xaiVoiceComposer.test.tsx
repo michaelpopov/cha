@@ -282,4 +282,22 @@ describe('xAI composer', () => {
     await waitFor(() => expect(stopTrack).toHaveBeenCalled());
     expect(FakeContext.latest?.closed).toBe(true);
   });
+
+  it('reports an unsupported audio format', async () => {
+    const { stopTrack } = installCapture();
+    vi.stubGlobal('AudioContext', class extends FakeContext { sampleRate = 44100; });
+    const start = vi.fn();
+    renderChat(fixtureClient({
+      getVoiceInputRuntime: async () => runtime,
+      startXaiVoiceInput: start,
+    }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Start voice input' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'The audio format is unsupported.',
+    );
+    expect(screen.getByRole('button', { name: 'Start voice input' })).toBeEnabled();
+    expect(start).not.toHaveBeenCalled();
+    expect(stopTrack).toHaveBeenCalled();
+    expect(FakeContext.latest?.closed).toBe(true);
+  });
 });

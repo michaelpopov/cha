@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { ChaError, ChaProtocolError } from './api/client';
 import { OpenAiVoiceInputSession } from './openAiVoiceInput';
 import {
   appendPreparedTranscription,
@@ -272,7 +273,6 @@ describe('xAI voice capture', () => {
       stop: vi.fn(async (id: string) => pieces(id, [])),
       cancel: vi.fn(async () => {}),
     };
-    const otherUi = vi.fn(async () => 'settings-saved');
     const session = await VoiceInputSession.start(
       xaiConfiguration, () => {}, () => {}, vi.fn(), bridge,
     );
@@ -281,7 +281,6 @@ describe('xAI voice capture', () => {
     node.emit(Int16Array.from([1, 2]));
     node.emit(Int16Array.from([3, 4]));
     expect(bridge.audio).toHaveBeenCalledOnce();
-    await expect(otherUi()).resolves.toBe('settings-saved');
     pending[0]?.(pieces(sessionId, []));
     await vi.waitFor(() => expect(bridge.audio).toHaveBeenCalledTimes(2));
     expect(sent[0]?.startsWith(btoa(String.fromCharCode(1, 0, 2, 0)))).toBe(true);
@@ -619,6 +618,22 @@ describe('xAI voice capture', () => {
     expect(cancel).toHaveBeenCalledOnce();
     expect(stopTrack).toHaveBeenCalled();
     expect(FakeContext.latest?.sourceConnected).toBe(false);
+  });
+
+  it('cancels a failed start only when native may still hold it', async () => {
+    const { stopTrack } = installCapture();
+    const cancel = vi.fn(async () => {});
+    const startWith = (failure: Error) => VoiceInputSession.start(
+      xaiConfiguration, () => {}, () => {}, vi.fn(),
+      { start: vi.fn(async () => { throw failure; }), audio: vi.fn(), stop: vi.fn(), cancel },
+    );
+    await expect(startWith(new ChaError('invalid_argument', 'Rejected.')))
+      .rejects.toThrow('Rejected.');
+    expect(cancel).not.toHaveBeenCalled();
+    expect(stopTrack).toHaveBeenCalled();
+    expect(FakeContext.latest?.closed).toBe(true);
+    await expect(startWith(new ChaProtocolError())).rejects.toBeInstanceOf(ChaProtocolError);
+    expect(cancel).toHaveBeenCalledOnce();
   });
 
   it('ends the session when an audio request fails', async () => {
