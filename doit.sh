@@ -74,48 +74,57 @@ review_dir=$(mktemp -d "${TMPDIR:-/tmp}/doit.XXXXXX")
 trap 'rm -rf -- "$review_dir"' EXIT
 review_events="$review_dir/pi-review.jsonl"
 
-echo "Reviewing uncommitted changes with Pi..."
 review_prompt="Uncommitted code changes implement steps described in $block_file. Review the uncommitted code. Use git status and git diff to identify modified, staged, and untracked files, then inspect relevant files as needed. Report only actionable correctness, security, regression, or necessary-test findings. For each finding, give the file, location, problem, and required fix. Do not modify files. Do not include praise, summaries, or optional suggestions. If there are no findings, output exactly NO_FINDINGS."
-pi --mode json --no-session --tools read,bash,grep,find,ls \
-    "$review_prompt" |
-    tee "$review_events" |
-    jq --unbuffered -j '
-        if .type == "message_update"
-            and (.assistantMessageEvent.type == "thinking_delta"
-                or .assistantMessageEvent.type == "text_delta") then
-            .assistantMessageEvent.delta
-        elif .type == "tool_execution_start" then
-            "\n[Pi tool] " + .toolName + "\n"
-        elif .type == "tool_execution_end" then
-            "\n[Pi tool " + (if .isError then "failed" else "done" end) + "] " + .toolName + "\n"
-        elif .type == "agent_end" then
-            "\n"
-        else
-            empty
-        end
-    '
 
-review_output=$(jq -sr '
-    [
-        .[]
-        | select(.type == "message_end" and .message.role == "assistant")
-        | [.message.content[]? | select(.type == "text") | .text]
-        | join("")
-    ]
-    | last // ""
-' "$review_events")
-if [[ -z $review_output ]]; then
-    echo "Pi did not produce a review." >&2
-    exit 1
-fi
+for review_round in 1 2; do
+    echo "Reviewing uncommitted changes with Pi (round $review_round)..."
+    pi --mode json --no-session --tools read,bash,grep,find,ls \
+        "$review_prompt" |
+        tee "$review_events" |
+        jq --unbuffered -j '
+            if .type == "message_update"
+                and (.assistantMessageEvent.type == "thinking_delta"
+                    or .assistantMessageEvent.type == "text_delta") then
+                .assistantMessageEvent.delta
+            elif .type == "tool_execution_start" then
+                "\n[Pi tool] " + .toolName + "\n"
+            elif .type == "tool_execution_end" then
+                "\n[Pi tool " + (if .isError then "failed" else "done" end) + "] " + .toolName + "\n"
+            elif .type == "agent_end" then
+                "\n"
+            else
+                empty
+            end
+        '
 
-printf -v fix_prompt \
-    'Address the code review comments below for the uncommitted changes implementing %s. Make only the necessary fixes, run relevant tests, and leave the changes uncommitted. If the review says NO_FINDINGS, verify the current changes and do not invent work. After finishing the review work, append a line containing exactly COMPLETED to %s as the final action.\n\nCode review comments:\n%s' \
-    "$block_file" \
-    "$block_file" "$review_output"
+    review_output=$(jq -sr '
+        [
+            .[]
+            | select(.type == "message_end" and .message.role == "assistant")
+            | [.message.content[]? | select(.type == "text") | .text]
+            | join("")
+        ]
+        | last // ""
+    ' "$review_events")
+    if [[ -z $review_output ]]; then
+        echo "Pi did not produce a review." >&2
+        exit 1
+    fi
 
-echo "Applying review feedback with Grok..."
-run_grok "$fix_prompt"
+    if [[ $review_round -eq 2 && $review_output == NO_FINDINGS ]]; then
+        echo "The final review found no issues; skipping Grok fixes."
+        break
+    fi
+
+    printf -v fix_prompt \
+        'Address the code review comments below for the uncommitted changes implementing %s. Make only the necessary fixes, run relevant tests, and leave the changes uncommitted. If the review says NO_FINDINGS, verify the current changes and do not invent work.\n\nCode review comments:\n%s' \
+        "$block_file" "$review_output"
+
+    echo "Applying review feedback with Grok (round $review_round)..."
+    run_grok "$fix_prompt"
+done
+
+printf '\nCOMPLETED\n' >> "$block_file"
 
 echo "Committing block $block_number..."
 git add -A
