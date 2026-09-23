@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useReducer,
   useRef,
   useState,
@@ -67,6 +68,7 @@ import {
   StylesScreen,
   VoiceScreen,
   VoiceSettingsScreen,
+  JevSettingsScreen,
   VoicesScreen,
   VaultScreen,
   VaultsScreen,
@@ -104,6 +106,7 @@ function Screen({
   switch (state.mainView) {
     case 'chat': return (
       <ChatScreen
+        key={`${state.bootstrap?.vault_name}/${state.activeConversation?.forumId}/${state.activeConversation?.sessionId}`}
         playbackPositions={playbackPositions}
         client={client}
         dispatch={dispatch}
@@ -286,6 +289,7 @@ function Screen({
     case 'settings-voices': return (
       <VoicesScreen client={client} dispatch={dispatch} state={state} />
     );
+    case 'settings-jev': return <JevSettingsScreen client={client} dispatch={dispatch} state={state} />;
     case 'settings-voice-input': return (
       <VoiceSettingsScreen client={client} dispatch={dispatch} state={state} />
     );
@@ -393,6 +397,13 @@ export function App({
   const request = useRef<{ client: ChaClient; promise: Promise<Bootstrap> } | null>(null);
   const playbackPositions = useRef(new Map<string, Map<number, number>>());
   const pendingMutations = useRef(new Set<string>());
+  const [submissionErrors, setSubmissionErrors] = useState<{ id: number; message: string }[]>([]);
+  const nextSubmissionError = useRef(0);
+  const composerKey = `${state.bootstrap?.vault_name}/${state.activeConversation?.forumId}/${state.activeConversation?.sessionId}/${state.mainView}`;
+  const composerVisit = useRef(0);
+  useLayoutEffect(() => {
+    composerVisit.current += 1;
+  }, [composerKey]);
 
   useEffect(() => {
     const vaultName = state.bootstrap?.vault_name;
@@ -543,15 +554,27 @@ export function App({
     }
   }, []);
 
-  const submitInput = useCallback((text: string) => {
+  const submitInput = useCallback(async (text: string) => {
     const active = state.activeConversation;
-    if (!active) return Promise.reject(new Error('No live conversation is selected.'));
-    return runMutation(active, 'submit', () => client.submitInput(
-      active.forumId,
-      active.sessionId,
-      { text },
-    ));
-  }, [client, runMutation, state.activeConversation]);
+    if (!active) throw new Error('No live conversation is selected.');
+    const visit = composerVisit.current;
+    const forumName = state.sessionSnapshot?.forum.display_name
+      ?? state.bootstrap?.forums.find((forum) => forum.id === active.forumId)?.display_name
+      ?? active.forumId;
+    const sessionName = state.activeConversationLabel ?? active.sessionId;
+    try {
+      return await runMutation(active, 'submit', () => client.submitInput(active.forumId, active.sessionId, { text }));
+    } catch (failure: unknown) {
+      if (composerVisit.current !== visit) {
+        const message = publicErrorMessage(failure, 'The message could not be sent.');
+        setSubmissionErrors((errors) => [...errors, {
+          id: ++nextSubmissionError.current,
+          message: `Message to ${forumName} / ${sessionName} was not sent: ${message}`,
+        }]);
+      }
+      throw failure;
+    }
+  }, [client, runMutation, state.activeConversation, state.activeConversationLabel, state.sessionSnapshot, state.bootstrap]);
 
   const coverConversation = useCallback((throughEntryId: number) => {
     const active = state.activeConversation;
@@ -681,6 +704,10 @@ export function App({
           />
           <main className="cha-main" data-view={state.mainView}>
             <TopBar dispatch={navigate} state={state} title={title} />
+            {submissionErrors.map((error) => <div className="cha-submission-error" role="alert" key={error.id}>
+              <span>{error.message}</span>
+              <button type="button" aria-label="Dismiss message error" onClick={() => setSubmissionErrors((errors) => errors.filter(({ id }) => id !== error.id))}>Dismiss</button>
+            </div>)}
             {!ready && <BootstrapState onRetry={retryBootstrap} state={state} />}
             {ready && wholeApplication && (
               <SessionOperationState

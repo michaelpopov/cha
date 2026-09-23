@@ -25,6 +25,7 @@ import {
   VaultsScreen,
   VoiceScreen,
   VoiceSettingsScreen,
+  JevSettingsScreen,
   VoicesScreen,
 } from './Settings';
 
@@ -135,7 +136,7 @@ describe('Settings screens', () => {
 
     const destinations = screen.getAllByRole('button');
     expect(destinations.map((button) => button.textContent)).toEqual([
-      'Personas', 'Characters', 'Forums', 'Vaults', 'Providers', 'Styles', 'Voices', 'API Keys',
+      'Personas', 'Characters', 'Forums', 'Vaults', 'Providers', 'Styles', 'Recipient detection', 'Voices', 'API Keys',
     ]);
     for (const [label, type] of [
       ['Personas', 'show-personas'],
@@ -144,6 +145,7 @@ describe('Settings screens', () => {
       ['Vaults', 'show-settings-vaults'],
       ['Providers', 'show-settings-providers'],
       ['Styles', 'show-settings-styles'],
+      ['Recipient detection', 'show-settings-jev'],
       ['Voices', 'show-settings-voices'],
       ['API Keys', 'show-settings-api-keys'],
     ]) {
@@ -2002,5 +2004,46 @@ describe('Settings screens', () => {
     expect(dispatch).toHaveBeenCalledWith({
       type: 'api-key-updated', apiKeyId: 'api_key_1', apiKeyName: 'Gemini',
     });
+  });
+});
+
+describe('recipient detection settings', () => {
+  it('starts disabled with pinned defaults and saves or disables only its configuration', async () => {
+    const user = userEvent.setup();
+    const saveJevSettings = vi.fn(async (settings) => settings);
+    const disableJev = vi.fn(async () => {});
+    const deleteApiKey = vi.fn(async () => {});
+    render(<JevSettingsScreen client={fixtureClient({
+      getJevSettings: async () => null,
+      listApiKeys: async () => [{ id: 'key-1', display_name: 'OpenRouter', has_value: true, used_by: [] }],
+      saveJevSettings, disableJev, deleteApiKey,
+    })} dispatch={vi.fn()} state={initialAppState} />);
+    expect(await screen.findByLabelText('URL')).toHaveValue('https://openrouter.ai/api/alpha/decisions');
+    expect(screen.getByLabelText('Model')).toHaveValue('typesafe/jev-1.13');
+    expect(screen.getByRole('button', { name: 'Disable' })).toBeDisabled();
+    await user.selectOptions(screen.getByLabelText('API key'), 'key-1');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(saveJevSettings).toHaveBeenCalledWith({
+      url: 'https://openrouter.ai/api/alpha/decisions', model: 'typesafe/jev-1.13', api_key: 'key-1',
+    });
+    await user.click(screen.getByRole('button', { name: 'Disable' }));
+    expect(disableJev).toHaveBeenCalledOnce();
+    expect(deleteApiKey).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Disable' })).toBeDisabled();
+  });
+
+  it('keeps the working configuration enabled after a rejected edit', async () => {
+    const user = userEvent.setup();
+    render(<JevSettingsScreen client={fixtureClient({
+      getJevSettings: async () => ({ url: 'https://openrouter.ai/api/alpha/decisions', model: 'typesafe/jev-1.13', api_key: 'key-1' }),
+      listApiKeys: async () => [{ id: 'key-1', display_name: 'OpenRouter', has_value: true, used_by: [] }],
+      saveJevSettings: async () => { throw new ChaError('invalid_argument', 'Invalid URL'); },
+    })} dispatch={vi.fn()} state={initialAppState} />);
+    const url = await screen.findByLabelText('URL');
+    await user.clear(url); await user.type(url, 'ftp://host');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Invalid URL');
+    expect(screen.getByRole('button', { name: 'Disable' })).toBeEnabled();
+    expect(url).toHaveValue('ftp://host');
   });
 });

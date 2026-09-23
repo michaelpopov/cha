@@ -49,6 +49,7 @@ export type MainView =
   | 'settings-style'
   | 'settings-voices'
   | 'settings-voice-input'
+  | 'settings-jev'
   | 'settings-new-voice'
   | 'settings-voice'
   | 'settings-api-keys'
@@ -198,6 +199,7 @@ export type AppAction =
   | { type: 'style-updated'; styleId: string; styleName: string; writable: boolean }
   | { type: 'show-settings-voices' }
   | { type: 'show-settings-voice-input' }
+  | { type: 'show-settings-jev' }
   | { type: 'show-settings-new-voice' }
   | { type: 'inspect-voice'; voiceId: string; voiceName: string }
   | { type: 'voice-detail-loaded'; voiceId: string; voiceName: string; writable: boolean }
@@ -706,6 +708,8 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         inspectedVoice: { ...state.inspectedVoice, writable: false },
         ...idleSessionOperation(),
       };
+    case 'show-settings-jev':
+      return { ...state, mainView: 'settings-jev', ...idleSessionOperation() };
     case 'show-settings-voice-input':
       return {
         ...state,
@@ -868,6 +872,7 @@ export function navigationTitle(state: AppState): string | null {
     case 'settings-styles': return 'Styles';
     case 'settings-new-style': return 'New style';
     case 'settings-voices': return 'Voices';
+    case 'settings-jev': return 'Recipient detection';
     case 'settings-voice-input': return 'Voice settings';
     case 'settings-new-voice': return 'New voice';
     case 'settings-api-keys': return 'API Keys';

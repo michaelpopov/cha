@@ -90,6 +90,7 @@ bool deadline_exempt(Method method) noexcept {
 }
 
 nlohmann::json encode_command_result(const CommandSubmitResult& result) {
+    if (const auto* error = std::get_if<CommandFailure>(&result)) throw *error;
     if (const auto* error = std::get_if<ErrorCode>(&result)) {
         throw *error;
     }
@@ -532,6 +533,11 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                     subscribed->context_epoch,
                     subscribed->subscription_id});
             }
+        } catch (const CommandFailure& failure) {
+            std::lock_guard lock(mutex);
+            connection = find_connection(connection_id);
+            if (!connection) return;
+            fail_request(connection, id, outstanding.context_epoch, failure.code, failure.message);
         } catch (const ErrorCode code) {
             std::lock_guard lock(mutex);
             connection = find_connection(connection_id);
@@ -686,7 +692,7 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
             outstanding.forum_id,
             outstanding.session_id,
             std::move(command),
-            outstanding.context_epoch);
+            outstanding.context_epoch, outstanding.deadline);
         if (const auto* error = std::get_if<ErrorCode>(&outcome)) {
             fail_request(connection, id, outstanding.context_epoch, *error);
             return {};

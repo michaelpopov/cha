@@ -57,7 +57,8 @@ public:
         const FullSessionId& identity,
         std::uint64_t instance,
         WebCommand command,
-        std::uint64_t subscribe_ticket);
+        std::uint64_t subscribe_ticket,
+        std::chrono::steady_clock::time_point deadline);
     void wake() noexcept;
 
 private:
@@ -89,7 +90,8 @@ public:
         WebCommand command,
         std::chrono::milliseconds deadline);
     [[nodiscard]] std::variant<std::shared_ptr<CommandReply>, ErrorCode>
-    enqueue(WebCommand command);
+    enqueue(WebCommand command, std::chrono::steady_clock::time_point deadline =
+        std::chrono::steady_clock::time_point::max());
     [[nodiscard]] CommandSubmitResult snapshot(
         std::chrono::milliseconds deadline);
     [[nodiscard]] CommandSubmitResult subscribe(
@@ -135,6 +137,8 @@ private:
     [[nodiscard]] bool retirement_requested() const noexcept;
     [[nodiscard]] bool shutdown_requested() const noexcept;
     [[nodiscard]] ShutdownReason shutdown_reason() const noexcept;
+    void settle_submission();
+    std::chrono::steady_clock::time_point next_deadline() const;
     void fail_current(std::shared_ptr<CommandReply> reply = {});
     void finalize(ShutdownReason reason) noexcept;
 
@@ -171,6 +175,7 @@ private:
 
     // Runtime-thread only.
     std::unique_ptr<SessionController> controller_;
+    std::shared_ptr<CommandReply> deferred_submit_;
     std::function<std::set<EntryId>()> cached_audio_entries_;
     std::string label_;
     std::function<void(std::string_view)> persist_default_character_;

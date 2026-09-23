@@ -1297,7 +1297,7 @@ describe('live chat', () => {
     await waitFor(() => expect(input).toHaveValue(''));
   });
 
-  it('sends to all characters without changing the session default', async () => {
+  it('uses the backend all-characters target and preserves explicit addressing', async () => {
     const user = userEvent.setup();
     const events = drivableEvents();
     const submitInput = vi.fn()
@@ -1343,7 +1343,8 @@ describe('live chat', () => {
       .toBeInTheDocument();
 
     await user.selectOptions(chooser, '*');
-    expect(setDefaultCharacter).not.toHaveBeenCalled();
+    expect(setDefaultCharacter).toHaveBeenCalledWith('entrance', 'welcome', '*');
+    act(() => events.handlers[0].onSnapshot({ ...snapshot, default_character_id: '*' }));
     expect(chooser).toHaveValue('*');
     expect(input).toHaveAttribute('placeholder', 'Message all characters');
     expect(screen.getByLabelText('Current chat context')).toHaveTextContent('To: All characters');
@@ -1352,7 +1353,7 @@ describe('live chat', () => {
     await user.click(screen.getByRole('button', { name: 'Send message' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('not accepted');
     expect(submitInput).toHaveBeenLastCalledWith(
-      'entrance', 'welcome', { text: '/mcast Shared question' },
+      'entrance', 'welcome', { text: 'Shared question' },
     );
     expect(input).toHaveValue('Shared question');
     expect(chooser).toHaveValue('*');
@@ -1365,7 +1366,7 @@ describe('live chat', () => {
     await user.click(screen.getByRole('button', { name: 'Send message' }));
     await waitFor(() => expect(input).toHaveValue(''));
     expect(submitInput).toHaveBeenLastCalledWith(
-      'entrance', 'welcome', { text: '/mcast @@Guide is part of the question' },
+      'entrance', 'welcome', { text: '@Guide is part of the question' },
     );
 
     fireEvent.click(within(screen.getByLabelText('Sidebar')).getByRole('button', { name: 'Settings' }));
@@ -2659,4 +2660,155 @@ describe('live session capacity', () => {
     expect(createSession).toHaveBeenCalledTimes(1);
     expect(openSession.mock.calls.filter(([, id]) => id === 'created')).toHaveLength(3);
   });
+});
+
+describe('pending recipient detection', () => {
+  for (const sendFirst of [true, false]) {
+    it(`allows Stop during Send and preserves independent flags (${sendFirst ? 'send' : 'stop'} resolves first)`, async () => {
+      const user = userEvent.setup();
+      const events = drivableEvents();
+      let finishSend!: (value: { clear_input: boolean }) => void;
+      let finishStop!: (value: { clear_input: boolean }) => void;
+      const submitInput = vi.fn(() => new Promise<{ clear_input: boolean }>((resolve) => { finishSend = resolve; }));
+      const stopGeneration = vi.fn(() => new Promise<{ clear_input: boolean }>((resolve) => { finishStop = resolve; }));
+      render(<App client={fixtureClient({ submitInput, stopGeneration })} connectSessionEvents={events.connect} />);
+      await attachInitial(events);
+      const input = screen.getByRole('textbox', { name: 'Message' });
+      await user.type(input, 'Original');
+      await user.click(screen.getByRole('button', { name: 'Send message' }));
+      act(() => events.handlers[0].onSnapshot({ ...snapshotFixture,
+        generation: { ...snapshotFixture.generation, active: true, phase: 'waiting', character_id: '', character_display_name: '', request_id: undefined },
+      }));
+      expect(screen.getByRole('button', { name: 'Stop generation' })).toBeEnabled();
+      expect(screen.getByRole('combobox', { name: 'Choose message target' })).toBeDisabled();
+      await user.type(input, ' appended');
+      await user.click(screen.getByRole('button', { name: 'Stop generation' }));
+      expect(stopGeneration).toHaveBeenCalledOnce();
+      act(() => events.handlers[0].onSnapshot(snapshotFixture));
+      await act(async () => { (sendFirst ? finishSend : finishStop)({ clear_input: false }); });
+      expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
+      expect(screen.getByRole('combobox', { name: 'Choose message target' })).toBeDisabled();
+      await act(async () => { (sendFirst ? finishStop : finishSend)({ clear_input: false }); });
+      expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled();
+      expect(input).toHaveValue('Original appended');
+    });
+  }
+
+  for (const replace of [false, true]) {
+    it(`accepted detection preserves ${replace ? 'a replaced draft' : 'an appended suffix'}`, async () => {
+      const user = userEvent.setup();
+      const events = drivableEvents();
+      let finish!: (value: { clear_input: boolean }) => void;
+      render(<App client={fixtureClient({ submitInput: () => new Promise((resolve) => { finish = resolve; }) })} connectSessionEvents={events.connect} />);
+      await attachInitial(events);
+      const input = screen.getByRole('textbox', { name: 'Message' });
+      await user.type(input, 'Original');
+      await user.click(screen.getByRole('button', { name: 'Send message' }));
+      if (replace) await user.clear(input);
+      await user.type(input, ' More text');
+      await act(async () => { finish({ clear_input: true }); });
+      expect(input).toHaveValue(replace ? ' More text' : 'More text');
+    });
+  }
+
+  it('reports a departed composer failure in App and leaves the new draft intact', async () => {
+    const user = userEvent.setup();
+    const events = drivableEvents();
+    let rejectSend!: (reason: unknown) => void;
+    render(<App client={fixtureClient({ submitInput: () => new Promise((_, reject) => { rejectSend = reject; }) })} connectSessionEvents={events.connect} />);
+    await attachInitial(events);
+    await user.type(screen.getByRole('textbox', { name: 'Message' }), 'Original');
+    await user.click(screen.getByRole('button', { name: 'Send message' }));
+    fireEvent.click(within(screen.getByLabelText('Sidebar')).getByRole('button', { name: 'Settings' }));
+    await act(async () => { rejectSend(new ChaError('invalid_argument', 'Recipient was removed.')); });
+    const error = await screen.findByRole('alert');
+    expect(error).toHaveTextContent('Message to');
+    expect(error).toHaveTextContent('Recipient was removed.');
+    expect(error).toHaveTextContent('Welcome');
+    await user.click(screen.getByRole('button', { name: 'Dismiss message error' }));
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('reports an old send failure after leaving and returning to the same conversation', async () => {
+    const user = userEvent.setup();
+    const events = drivableEvents();
+    let rejectSend!: (reason: unknown) => void;
+    render(<App client={fixtureClient({ submitInput: () => new Promise((_, reject) => { rejectSend = reject; }) })} connectSessionEvents={events.connect} />);
+    await attachInitial(events);
+    await user.type(screen.getByRole('textbox', { name: 'Message' }), 'Original');
+    await user.click(screen.getByRole('button', { name: 'Send message' }));
+    await user.click(within(screen.getByLabelText('Sidebar')).getByRole('button', { name: 'Settings' }));
+    await user.click(within(screen.getByLabelText('Recent sessions')).getByRole('button', { name: /Welcome/ }));
+    const input = await screen.findByRole('textbox', { name: 'Message' });
+    await user.type(input, 'New draft');
+    await act(async () => { rejectSend(new ChaError('invalid_argument', 'Recipient was removed.')); });
+    expect(screen.getByRole('alert')).toHaveTextContent('Message to');
+    expect(screen.getByRole('alert')).toHaveTextContent('Recipient was removed.');
+    expect(input).toHaveValue('New draft');
+  });
+
+  it('does not submit after voice finalization if the composer was left', async () => {
+    vi.spyOn(VoiceInputSession, 'supported').mockReturnValue(true);
+    let finishRecording!: () => void;
+    const stopped = new Promise<void>((resolve) => { finishRecording = resolve; });
+    const voiceSession = { stop: vi.fn(() => stopped), cancel: vi.fn() };
+    vi.spyOn(VoiceInputSession, 'start').mockResolvedValue(voiceSession);
+    const events = drivableEvents();
+    const submitInput = vi.fn(async () => ({ clear_input: true }));
+    render(<App client={fixtureClient({
+      submitInput,
+      getVoiceInputRuntime: async () => ({
+        provider: 'openai', url: 'https://api.openai.com/v1/realtime/calls',
+        model: 'gpt-live-transcribe', delay: 'low', prompt: '', send_phrase: 'over to you',
+      }),
+    })} connectSessionEvents={events.connect} />);
+    await attachInitial(events);
+    fireEvent.click(await screen.findByRole('button', { name: 'Start voice input' }));
+    await screen.findByRole('button', { name: 'Stop voice input' });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Message' }), { target: { value: 'Original' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    expect(voiceSession.stop).toHaveBeenCalledOnce();
+    fireEvent.click(within(screen.getByLabelText('Sidebar')).getByRole('button', { name: 'Settings' }));
+    await act(async () => finishRecording());
+    expect(submitInput).not.toHaveBeenCalled();
+  });
+});
+
+describe('submission ownership after navigation', () => {
+  for (const fails of [false, true]) {
+    it(`a late ${fails ? 'failure' : 'success'} leaves the next conversation's draft and pending send alone`, async () => {
+      const user = userEvent.setup();
+      const events = drivableEvents();
+      let finishOriginal!: (value: { clear_input: boolean }) => void;
+      let failOriginal!: (reason: unknown) => void;
+      let finishCurrent!: (value: { clear_input: boolean }) => void;
+      const planning: SessionSnapshot = { ...snapshotFixture, forum: bootstrapFixture.forums[1], session_id: 'planning', session_label: 'Planning', characters: [bootstrapFixture.characters[1]], default_character_id: 'guide' };
+      const submitInput = vi.fn((_forum: string, session: string) => new Promise<{ clear_input: boolean }>((resolve, reject) => {
+        if (session === 'welcome') { finishOriginal = resolve; failOriginal = reject; }
+        else finishCurrent = resolve;
+      }));
+      render(<App client={fixtureClient({ submitInput, getSessionSnapshot: async (forum) => forum === 'lobby' ? planning : snapshotFixture })} connectSessionEvents={events.connect} />);
+      await attachInitial(events);
+      await user.type(screen.getByRole('textbox', { name: 'Message' }), 'Original');
+      await user.click(screen.getByRole('button', { name: 'Send message' }));
+      await user.click(within(screen.getByLabelText('Recent sessions')).getByRole('button', { name: /^Planning/ }));
+      await waitFor(() => expect(events.connections[1]?.key).toBe('lobby/planning'));
+      act(() => events.handlers[1].onSnapshot(planning));
+      const input = await screen.findByRole('textbox', { name: 'Message' });
+      await user.type(input, 'Current draft');
+      await user.click(screen.getByRole('button', { name: 'Send message' }));
+      await act(async () => {
+        if (fails) failOriginal(new ChaError('invalid_argument', 'Recipient was removed.'));
+        else finishOriginal({ clear_input: true });
+      });
+      expect(input).toHaveValue('Current draft');
+      expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
+      if (fails) {
+        expect(screen.getByRole('alert')).toHaveTextContent('Welcome');
+        expect(screen.getByRole('alert')).toHaveTextContent('Recipient was removed.');
+      } else expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+      await act(async () => { finishCurrent({ clear_input: true }); });
+      expect(input).toHaveValue('');
+    });
+  }
 });

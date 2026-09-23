@@ -276,6 +276,7 @@ add_library(cha_lib STATIC
     src/characters/model_context.cpp
     src/providers/api_key_store.cpp
     src/providers/voice_output_config.cpp
+    src/providers/jev.cpp
     src/providers/providers.cpp
     src/providers/provider_client.cpp
     src/providers/openai_oauth.cpp
@@ -459,6 +460,10 @@ if(BUILD_TESTING)
         cha_enable_warnings(cha_lease_test_helper)
     endif()
 
+    add_executable(cha_jev_eval_requests EXCLUDE_FROM_ALL tests/providers/jev_eval_requests.cpp)
+    target_link_libraries(cha_jev_eval_requests PRIVATE cha_lib)
+    cha_enable_warnings(cha_jev_eval_requests)
+
     add_executable(cha_tests ${CHA_TEST_SOURCES})
     # cha_sqlite3 lets the session-database tests inspect the stored schema directly.
     target_link_libraries(
@@ -509,6 +514,7 @@ if(BUILD_TESTING)
         tests/runtime/unit_text_input.cpp
         tests/runtime/unit_text_mention.cpp
         tests/runtime/unit_text_multicast.cpp
+        tests/runtime/unit_jev.cpp
         tests/runtime/unit_live_session.cpp
         tests/support/test_workspace.cpp)
     target_link_libraries(

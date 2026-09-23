@@ -22,6 +22,8 @@ std::optional<CommandSubmitResult> CommandReply::wait_for(
     std::unique_lock lock(mutex_);
     if (!ready_.wait_for(lock, timeout, [this] { return result_.has_value(); })) {
         abandoned_ = true;
+        submission_->cancelled.store(true);
+        if (notifier_) notifier_->wake();
         return std::nullopt;
     }
     return result_;
@@ -48,6 +50,8 @@ void CommandReply::abandon() const {
     std::lock_guard lock(mutex_);
     abandoned_ = true;
     ready_callback_ = {};
+    submission_->cancelled.store(true);
+    if (notifier_) notifier_->wake();
 }
 
 } // namespace cha

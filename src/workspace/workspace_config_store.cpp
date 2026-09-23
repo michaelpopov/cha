@@ -1617,6 +1617,13 @@ WorkspaceConfigEditResult WorkspaceConfigStore::apply_voice_delete(
     });
 }
 
+void WorkspaceConfigStore::apply_jev_update(const std::optional<WorkspaceJev>& settings) {
+    (void)impl_->edit([&](const Workspace&, WorkspaceConfigEditor& editor) {
+        editor.write_jev(settings);
+        return std::vector<std::string>{};
+    });
+}
+
 void WorkspaceConfigStore::apply_voice_input_update(
     const WorkspaceVoiceInput& settings) {
     (void)impl_->edit([&](const Workspace&, WorkspaceConfigEditor& editor) {

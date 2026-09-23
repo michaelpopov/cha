@@ -207,6 +207,50 @@ TEST_F(BridgeRouterTest, InfoBootstrapCreateOpenSubmitStopSnapshotAndClose) {
     ASSERT_TRUE(reply["ok"]);
 }
 
+TEST_F(BridgeRouterTest, RecipientDetectionSettingsApplyToExistingSessionAndMissingKeyFallsBack) {
+    bootstrap_epoch();
+    EXPECT_TRUE(call("jev.get")["result"].is_null());
+    const auto key = call("apiKey.create", {{"display_name", "OpenRouter"}, {"value", "test-secret"}});
+    ASSERT_TRUE(key["ok"]);
+    auto created = call("session.create", {{"forum_id", "lobby"}, {"label", "Jev"}});
+    ASSERT_TRUE(created["ok"]);
+    const auto session_id = created["result"]["id"];
+    ASSERT_TRUE(call("session.open", {{"forum_id", "lobby"}, {"session_id", session_id}})["ok"]);
+    const std::string body = R"({"answers":{"recipient":{"type":"choice","choice":"all_characters"}}})";
+    MockHttpServer server({"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: "
+        + std::to_string(body.size()) + "\r\nConnection: close\r\n\r\n" + body});
+    server.start();
+    nlohmann::json settings{
+        {"url", "http://127.0.0.1:" + std::to_string(server.port()) + "/api/alpha/decisions"},
+        {"model", "typesafe/jev-1.13"}, {"api_key", key["result"]["id"]}};
+    ASSERT_TRUE(call("jev.save", settings)["ok"]);
+    EXPECT_EQ(call("jev.get")["result"], settings);
+    auto invalid = settings; invalid["url"] = "relative";
+    EXPECT_FALSE(call("jev.save", invalid)["ok"]);
+    EXPECT_EQ(call("jev.get")["result"], settings);
+    const auto submitted = call("session.submit", {{"forum_id", "lobby"}, {"session_id", session_id},
+        {"input", {{"text", "Everyone, answer"}}}});
+    ASSERT_TRUE(submitted["ok"]);
+    EXPECT_TRUE(submitted["result"]["clear_input"]);
+    server.join();
+    EXPECT_EQ(server.requests().size(), 1u);
+    auto snapshot = call("session.snapshot", {{"forum_id", "lobby"}, {"session_id", session_id}})["result"];
+    EXPECT_EQ(snapshot["default_character_id"], "*");
+    EXPECT_EQ(snapshot["forum"]["default_character_id"], "guide");
+    ASSERT_TRUE(call("apiKey.delete", {{"api_key_id", key["result"]["id"]}})["ok"]);
+    // Let the deterministic character worker finish before submitting again.
+    const auto deadline = std::chrono::steady_clock::now() + 2s;
+    while (snapshot["generation"]["active"].get<bool>() && std::chrono::steady_clock::now() < deadline)
+        snapshot = call("session.snapshot", {{"forum_id", "lobby"}, {"session_id", session_id}})["result"];
+    const auto fallback = call("session.submit", {{"forum_id", "lobby"}, {"session_id", session_id},
+        {"input", {{"text", "Another question"}}}});
+    ASSERT_TRUE(fallback["ok"]);
+    EXPECT_TRUE(fallback["result"]["clear_input"]);
+    EXPECT_EQ(fallback["result"]["notice"], "Recipient detection failed. Sent to all characters.");
+    ASSERT_TRUE(call("jev.disable")["ok"]);
+    EXPECT_TRUE(call("jev.get")["result"].is_null());
+}
+
 TEST_F(BridgeRouterTest, BootstrapIncludesVersionAndCapabilities) {
     const auto expected = application_->capabilities();
     router_->handle_request(

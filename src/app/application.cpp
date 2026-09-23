@@ -234,7 +234,12 @@ Application::Impl::Impl(
       openai_auth(std::make_unique<OpenAiOAuth>(
           command.config_directory / "openai-auth.json")),
       providers(shared_openai_provider_factory(
-          openai_auth.get(), api_keys.get())) {
+          openai_auth.get(), api_keys.get()), {},
+          [keys = api_keys.get()](const JevRequestInput& input, const std::atomic_bool& cancelled) {
+              auto key = keys->value(input.config.api_key_id);
+              if (cancelled.load()) return JevResult{JevOutcome::cancelled};
+              return classify_jev(input.config, std::move(key), input, cancelled);
+          }) {
     vault_maintenance.publish_vault_names();
     const auto seed = TemporarySessionSeed{
         {std::string(entrance_id), std::string(welcome_id)},
@@ -540,7 +545,8 @@ Application::submit_async(
     std::string_view forum_id,
     std::string_view session_id,
     WebCommand command,
-    std::uint64_t epoch) {
+    std::uint64_t epoch,
+    std::chrono::steady_clock::time_point deadline) {
     const FullSessionId key{std::string(forum_id), std::string(session_id)};
     if (const auto denied = check_context(epoch)) return *denied;
     // The manager checks the epoch and maintenance gate with the lookup.
@@ -548,7 +554,7 @@ Application::submit_async(
     auto session = impl_->live_sessions->lookup(key, epoch);
     if (const auto denied = check_context(epoch)) return *denied;
     if (!session) return ErrorCode::session_not_live;
-    return session->enqueue(std::move(command));
+    return session->enqueue(std::move(command), deadline);
 }
 
 CommandSubmitResult Application::stop(
@@ -1105,6 +1111,24 @@ void Application::delete_voice(std::string_view voice_id, std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
     settings::delete_voice(*impl_->store, voice_id);
+}
+
+std::optional<JevSettings> Application::get_jev_settings(std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    return settings::get_jev_settings(*impl_->store->snapshot());
+}
+
+JevSettings Application::save_jev_settings(JevSettings update, std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    return settings::save_jev_settings(*impl_->store, update);
+}
+
+void Application::disable_jev(std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    settings::disable_jev(*impl_->store);
 }
 
 std::optional<VoiceInputSettings>

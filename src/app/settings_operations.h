@@ -94,6 +94,10 @@ void delete_style(WorkspaceConfigStore& store, std::string_view id);
     const VoiceUpdate& update);
 void delete_voice(WorkspaceConfigStore& store, std::string_view id);
 
+[[nodiscard]] std::optional<JevSettings> get_jev_settings(const Workspace& workspace);
+[[nodiscard]] JevSettings save_jev_settings(WorkspaceConfigStore& store, const JevSettings& update);
+void disable_jev(WorkspaceConfigStore& store);
+
 [[nodiscard]] std::optional<VoiceInputSettings> get_voice_input_settings(
     const Workspace& workspace);
 [[nodiscard]] VoiceInputSettings save_voice_input_settings(

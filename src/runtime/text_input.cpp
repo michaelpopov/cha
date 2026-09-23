@@ -193,9 +193,10 @@ std::string_view multicast_parse_error_message(MulticastParseError error) {
 CommandResult handle_text_input(
     SessionController& controller,
     std::string_view author_id,
-    std::string input) {
+    std::string input,
+    std::shared_ptr<SubmissionState> submission) {
     CommandResult result;
-    if (input.empty()) {
+    if (trim_view(input).empty()) {
         return result;
     }
     if (controller.is_generating()) {
@@ -208,7 +209,7 @@ CommandResult handle_text_input(
         result.session = controller.submit_prompt(
             author_id,
             std::move(prompt.text),
-            std::move(prompt.handle));
+            std::move(prompt.handle), std::move(submission));
         result.clear_input = result.session.input_consumed;
         return result;
     }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "providers/provider_client.h"
+#include "providers/jev.h"
 #include "util/concurrent_queue.h"
 #include "util/wake_notifier.h"
 
@@ -58,7 +59,8 @@ class Providers final {
 public:
     Providers(
         ProviderClientFactory client_factory = {},
-        ProviderThreadLauncher thread_launcher = {});
+        ProviderThreadLauncher thread_launcher = {},
+        JevExecutor jev_executor = {});
     ~Providers();
 
     Providers(const Providers&) = delete;
@@ -67,6 +69,8 @@ public:
     [[nodiscard]] std::shared_ptr<ProviderRequest> make_request(
         ProviderRequestInput input,
         std::shared_ptr<WakeNotifier> notifier);
+    [[nodiscard]] std::shared_ptr<JevRequest> make_jev_request(
+        JevRequestInput input, std::shared_ptr<WakeNotifier> notifier);
     void shutdown() noexcept;
     [[nodiscard]] bool shutdown_until(
         std::chrono::steady_clock::time_point deadline) noexcept;
@@ -74,6 +78,7 @@ public:
 private:
     struct Registry;
 
+    JevExecutor jev_executor_;
     ProviderClientFactory client_factory_;
     ProviderThreadLauncher thread_launcher_;
     std::shared_ptr<Registry> registry_;

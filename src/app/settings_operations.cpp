@@ -255,6 +255,9 @@ ApiKeyDetail api_key_detail(
         && key.id == workspace.voice_output()->api_key_id) {
         used_by.emplace_back("Voice output");
     }
+    if (workspace.jev() && key.id == workspace.jev()->api_key_id) {
+        used_by.emplace_back("Recipient detection");
+    }
     return {
         .id = key.id,
         .display_name = key.display_name,
@@ -615,6 +618,27 @@ void delete_voice(WorkspaceConfigStore& store, std::string_view id) {
         }
         return 0;
     });
+}
+
+std::optional<JevSettings> get_jev_settings(const Workspace& workspace) {
+    if (!workspace.jev()) return std::nullopt;
+    const auto& settings = *workspace.jev();
+    return JevSettings{settings.url, settings.model, settings.api_key_id};
+}
+
+JevSettings save_jev_settings(WorkspaceConfigStore& store, const JevSettings& update) {
+    return with_settings_edit([&] {
+        try {
+            store.apply_jev_update(WorkspaceJev{update.url, update.model, update.api_key});
+        } catch (const std::invalid_argument& error) {
+            fail(ErrorCode::invalid_argument, error.what());
+        }
+        return *get_jev_settings(*store.snapshot());
+    });
+}
+
+void disable_jev(WorkspaceConfigStore& store) {
+    with_settings_edit([&] { store.apply_jev_update(std::nullopt); });
 }
 
 std::optional<VoiceInputSettings> get_voice_input_settings(

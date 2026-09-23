@@ -1,6 +1,8 @@
 #pragma once
 
 #include "runtime/protocol.h"
+#include "session/submission.h"
+#include "util/wake_notifier.h"
 
 #include <chrono>
 #include <condition_variable>
@@ -13,15 +15,25 @@
 
 namespace cha {
 
+struct CommandFailure {
+    ErrorCode code;
+    std::string message;
+};
+
 using CommandSubmitResult = std::variant<
     CommandResult,
     SessionSnapshot,
     SessionLabelResult,
     SubscribeResult,
+    CommandFailure,
     ErrorCode>;
 
 class CommandReply {
 public:
+    explicit CommandReply(std::shared_ptr<SubmissionState> submission = std::make_shared<SubmissionState>(),
+        std::shared_ptr<WakeNotifier> notifier = {})
+        : submission_(std::move(submission)), notifier_(std::move(notifier)) {}
+    std::shared_ptr<SubmissionState> submission() const { return submission_; }
     // Returns false when the sole waiter has already timed out or another
     // result won the reply race.
     [[nodiscard]] bool complete(CommandSubmitResult result);
@@ -34,6 +46,8 @@ public:
     void abandon() const;
 
 private:
+    std::shared_ptr<SubmissionState> submission_;
+    std::shared_ptr<WakeNotifier> notifier_;
     mutable std::mutex mutex_;
     mutable std::condition_variable ready_;
     mutable bool abandoned_{};

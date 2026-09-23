@@ -97,7 +97,7 @@ LiveSession::LiveSession(
 LiveSession::~LiveSession() = default;
 
 std::variant<std::shared_ptr<CommandReply>, ErrorCode> LiveSession::enqueue(
-    WebCommand command) {
+    WebCommand command, std::chrono::steady_clock::time_point deadline) {
     if (state_.load() != LiveSessionState::running || stopping_.load()) {
         return shutdown_reason() == ShutdownReason::server_stopping
             ? ErrorCode::server_stopping
@@ -108,13 +108,13 @@ std::variant<std::shared_ptr<CommandReply>, ErrorCode> LiveSession::enqueue(
         : 0;
     const auto runtime = runtime_.lock();
     if (!runtime) return ErrorCode::session_not_live;
-    return runtime->enqueue(identity_, instance_, std::move(command), ticket);
+    return runtime->enqueue(identity_, instance_, std::move(command), ticket, deadline);
 }
 
 CommandSubmitResult LiveSession::submit(
     WebCommand command,
     std::chrono::milliseconds deadline) {
-    auto outcome = enqueue(std::move(command));
+    auto outcome = enqueue(std::move(command), std::chrono::steady_clock::now() + deadline);
     if (const auto* error = std::get_if<ErrorCode>(&outcome)) return *error;
     auto reply = std::get<std::shared_ptr<CommandReply>>(std::move(outcome));
     if (auto result = reply->wait_for(deadline)) return std::move(*result);
@@ -250,11 +250,11 @@ void LiveSession::execute(OwnerCommand command) {
     }
 
     SessionController& controller = *controller_;
-    CommandResult outcome = std::visit([&controller](auto&& value) -> CommandResult {
+    CommandResult outcome = std::visit([&controller, &command](auto&& value) -> CommandResult {
         using T = std::decay_t<decltype(value)>;
         if constexpr (std::is_same_v<T, RawCommand>) {
             return handle_text_input(
-                controller, controller.view().default_persona_id, std::move(value.text));
+                controller, controller.view().default_persona_id, std::move(value.text), command.reply->submission());
         } else if constexpr (std::is_same_v<T, StopCommand>) {
             return {.session = controller.request_stop()};
         } else if constexpr (std::is_same_v<T, CoverCommand>) {
@@ -267,7 +267,8 @@ void LiveSession::execute(OwnerCommand command) {
             CommandResult result{
                 .session = controller.set_default_character_by_id(value.character_id)};
             if (requires_snapshot(result.session)
-                && controller.view().default_character_id != null_agent_handle) {
+                && controller.view().default_character_id != null_agent_handle
+                && controller.view().default_character_id != all_characters_target) {
                 result.persist_default_character_id =
                     std::string(controller.view().default_character_id);
             }
@@ -299,12 +300,19 @@ void LiveSession::execute(OwnerCommand command) {
     publish_update(std::move(outcome.session.state), presentation_changed);
     mirror_if_changed();
     const bool session_ended = outcome.session.session_ended;
-    (void)command.reply->complete(std::move(outcome));
+    if (std::holds_alternative<RawCommand>(command.command) && controller.classification_pending()
+        && !deferred_submit_) {
+        deferred_submit_ = std::move(command.reply);
+    } else {
+        (void)command.reply->complete(std::move(outcome));
+    }
+    settle_submission();
     if (session_ended) request_shutdown(ShutdownReason::session_closed);
 }
 
 bool LiveSession::receive_events(std::size_t batch_size) {
     ControllerEventBatch events = controller_->receive_events(batch_size);
+    settle_submission();
     generating_.store(controller_->is_generating());
     const bool presentation_changed = apply_notice(events.update.notice);
     publish_update(std::move(events.update.state), presentation_changed);
@@ -312,6 +320,28 @@ bool LiveSession::receive_events(std::size_t batch_size) {
     mirror_if_changed();
     if (events.update.session_ended) request_shutdown(ShutdownReason::session_closed);
     return events.full;
+}
+
+void LiveSession::settle_submission() {
+    auto result = controller_->take_submission_result();
+    if (!result || !deferred_submit_) return;
+    auto reply = std::exchange(deferred_submit_, {});
+    using Outcome = SessionController::SubmissionOutcome;
+    if (result->outcome == Outcome::expired) {
+        (void)reply->complete(ErrorCode::command_timeout);
+    } else if (result->outcome == Outcome::failed) {
+        (void)reply->complete(CommandFailure{ErrorCode::invalid_argument,
+            result->update.notice.value_or("The prompt could not be dispatched.")});
+    } else {
+        (void)reply->complete(CommandResult{
+            .session = std::move(result->update),
+            .clear_input = result->outcome == Outcome::accepted});
+    }
+}
+
+std::chrono::steady_clock::time_point LiveSession::next_deadline() const {
+    return controller_ ? controller_->classification_deadline()
+        : std::chrono::steady_clock::time_point::max();
 }
 
 bool LiveSession::retirement_requested() const noexcept {
@@ -328,6 +358,7 @@ ShutdownReason LiveSession::shutdown_reason() const noexcept {
 
 void LiveSession::fail_current(std::shared_ptr<CommandReply> reply) {
     if (reply) (void)reply->complete(ErrorCode::internal_error);
+    if (deferred_submit_) (void)std::exchange(deferred_submit_, {})->complete(ErrorCode::internal_error);
     raise_shutdown_reason(ShutdownReason::session_failed);
     stopping_.store(true);
     state_.store(LiveSessionState::stopping);
@@ -466,6 +497,7 @@ void LiveSession::finalize(ShutdownReason reason) noexcept {
         (void)run_guarded([&] { output_->publish_snapshot(std::move(*terminal)); });
     }
     output_->close();
+    if (deferred_submit_) (void)std::exchange(deferred_submit_, {})->complete(ErrorCode::operation_cancelled);
     if (controller_) {
         if (!run_guarded([&] { controller_->shutdown(); })) {
             raise_shutdown_reason(ShutdownReason::session_failed);

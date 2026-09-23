@@ -1,6 +1,7 @@
 #pragma once
 
 #include "workspace/workspace.h"
+#include "session/submission.h"
 
 #include "characters/character.h"
 #include "providers/providers.h"
@@ -82,7 +83,8 @@ public:
     [[nodiscard]] ControllerUpdate submit_prompt(
         std::string_view author_id,
         std::string text,
-        std::string handle = {});
+        std::string handle = {},
+        std::shared_ptr<SubmissionState> submission = {});
     [[nodiscard]] ControllerUpdate cover_conversation(
         std::optional<EntryId> through_entry_id = std::nullopt);
     [[nodiscard]] ControllerUpdate uncover_conversation();
@@ -99,6 +101,11 @@ public:
     [[nodiscard]] ControllerUpdate handle_generation_event(GenerationEvent event);
     [[nodiscard]] ControllerEventBatch receive_events(std::size_t max_events);
     void shutdown();
+    [[nodiscard]] bool classification_pending() const noexcept { return pending_classification_.has_value(); }
+    [[nodiscard]] std::chrono::steady_clock::time_point classification_deadline() const noexcept;
+    enum class SubmissionOutcome { accepted, cancelled, expired, failed };
+    struct SubmissionResult { SubmissionOutcome outcome; ControllerUpdate update; };
+    std::optional<SubmissionResult> take_submission_result();
 
 private:
     enum class AnswerTimestampState {
@@ -185,6 +192,19 @@ private:
     TranscriptEntry response_entry(EntryStatus status) const;
     bool matches(RequestId request_id) const;
 
+    ControllerUpdate dispatch_target(std::string_view author, std::string text, std::string_view target);
+    ControllerUpdate finish_classification();
+    struct PendingClassification {
+        std::string author;
+        std::string text;
+        std::string fallback;
+        std::vector<JevOption> options;
+        std::shared_ptr<SubmissionState> submission;
+        std::chrono::steady_clock::time_point deadline;
+        std::shared_ptr<JevRequest> request;
+    };
+    std::optional<PendingClassification> pending_classification_;
+    std::optional<SubmissionResult> submission_result_;
     WorkspaceReader read_workspace_;
     Transcript transcript_;
     SessionJournal journal_;

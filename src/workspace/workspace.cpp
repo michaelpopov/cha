@@ -3,6 +3,7 @@
 
 #include "characters/model_context.h"
 #include "providers/voice_output_config.h"
+#include "util/curl.h"
 #include "util/path_name.h"
 #include "util/logging.h"
 #include "util/public_name.h"
@@ -1213,6 +1214,32 @@ std::optional<WorkspaceVoiceOutput> load_voice_output_settings(
     return result;
 }
 
+std::optional<WorkspaceJev> load_jev_settings(
+    const TextSource& source,
+    const std::filesystem::path& root) {
+    const auto path = root / "system" / "jev" / "config.toml";
+    if (!source.is_regular_file(path)) return std::nullopt;
+    try {
+        const auto table = read_toml(source, path, "recipient detection config");
+        static constexpr std::string_view fields[]{"url", "model", "api_key"};
+        for (const auto& [key, value] : table) {
+            (void)value;
+            if (std::ranges::find(fields, key.str()) == std::end(fields))
+                log_warn("Ignoring unused recipient detection field: " + std::string(key.str()));
+        }
+        WorkspaceJev result{
+            .url = required_string(table, path, "url"),
+            .model = required_string(table, path, "model"),
+            .api_key_id = required_string(table, path, "api_key"),
+        };
+        validate_jev_config(result);
+        return result;
+    } catch (const std::exception& error) {
+        log_warn("Recipient detection configuration is ignored: " + std::string(error.what()));
+        return std::nullopt;
+    }
+}
+
 struct LoadedPersonas {
     std::vector<WorkspacePersona> personas;
     std::unordered_map<std::string, std::filesystem::path> directories;
@@ -1638,6 +1665,22 @@ WorkspaceForum build_entrance(const Workspace& workspace) {
 
 } // namespace
 
+void validate_jev_config(const WorkspaceJev& config) {
+    const auto invalid = [] { throw std::invalid_argument(
+        "Recipient detection requires an absolute HTTP or HTTPS URL."); };
+    std::unique_ptr<CURLU, decltype(&curl_url_cleanup)> url(curl_url(), curl_url_cleanup);
+    if (!url || config.url.find_first_of("\r\n\t ") != std::string::npos
+        || curl_url_set(url.get(), CURLUPART_URL, config.url.c_str(), 0) != CURLUE_OK) invalid();
+    char* raw = nullptr;
+    if (curl_url_get(url.get(), CURLUPART_SCHEME, &raw, 0) != CURLUE_OK) invalid();
+    const std::unique_ptr<char, decltype(&curl_free)> scheme(raw, curl_free);
+    if (std::string_view(raw) != "http" && std::string_view(raw) != "https") invalid();
+    if (trim_view(config.model).empty() || trim_view(config.api_key_id).empty()) {
+        throw std::invalid_argument("Recipient detection requires a model and API key.");
+    }
+}
+
+
 void normalize_unused_voice_input_delay(
     std::string_view provider,
     std::string& delay) {
@@ -1697,6 +1740,7 @@ Workspace Workspace::load(std::filesystem::path root, const TextSource& source) 
         std::span<const WorkspaceVoice>(workspace.voices_),
         workspace.voice_index_, "Voice");
 
+    workspace.jev_ = load_jev_settings(source, workspace.root_);
     workspace.voice_input_ = load_voice_input_settings(source, workspace.root_);
     workspace.voice_output_ = load_voice_output_settings(source, workspace.root_);
 
@@ -2295,6 +2339,23 @@ void WorkspaceConfigEditor::delete_voice(std::string_view voice_id) {
         throw std::invalid_argument("Voice is in use");
     }
     remove_directory(path->second.parent_path());
+}
+
+void WorkspaceConfigEditor::write_jev(const std::optional<WorkspaceJev>& settings) {
+    const auto directory = workspace_.root_ / "system" / "jev";
+    if (!settings) {
+        files_.erase(source_.name(directory / "config.toml"));
+        return;
+    }
+    validate_jev_config(*settings);
+    if (!workspace_.find_api_key(settings->api_key_id)) {
+        throw std::invalid_argument("Select an existing API key for recipient detection.");
+    }
+    toml::table table;
+    table.insert("url", settings->url);
+    table.insert("model", settings->model);
+    table.insert("api_key", settings->api_key_id);
+    write_toml(directory / "config.toml", table);
 }
 
 void WorkspaceConfigEditor::write_voice_input(const WorkspaceVoiceInput& settings) {

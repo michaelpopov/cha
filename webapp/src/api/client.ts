@@ -55,6 +55,7 @@ export type VoiceInputSettings = components['schemas']['VoiceInputSettings'];
 export type NativeVoiceInputRuntime = components['schemas']['VoiceInputRuntime'];
 export type XaiVoiceStartResult = components['schemas']['XaiVoiceStartResult'];
 export type XaiVoicePieces = components['schemas']['XaiVoicePieces'];
+export type JevSettings = components['schemas']['JevSettings'];
 export type VoiceOutputSettings = components['schemas']['VoiceOutputSettings'];
 export type VoiceOutputRuntime = components['schemas']['VoiceOutputRuntime'];
 export type ApiKeyDetail = components['schemas']['ApiKeyDetail'];
@@ -184,6 +185,9 @@ export interface ChaClient {
   getVoiceInputSettings(): Promise<VoiceInputSettings | null>;
   saveVoiceInputSettings(settings: VoiceInputSettings): Promise<VoiceInputSettings>;
   getVoiceInputRuntime(): Promise<NativeVoiceInputRuntime | null>;
+  getJevSettings(): Promise<JevSettings | null>;
+  saveJevSettings(settings: JevSettings): Promise<JevSettings>;
+  disableJev(): Promise<void>;
   getVoiceOutputSettings(): Promise<VoiceOutputSettings | null>;
   saveVoiceOutputSettings(settings: VoiceOutputSettings): Promise<VoiceOutputSettings>;
   getVoiceOutputRuntime(): Promise<VoiceOutputRuntime | null>;
@@ -485,6 +489,12 @@ export function isMediaResource(value: unknown): value is MediaResource {
     && typeof value.mime_type === 'string' && value.mime_type.length > 0
     && Number.isSafeInteger(value.byte_length)
     && (value.byte_length as number) >= 0;
+}
+
+export function isJevSettings(value: unknown): value is JevSettings {
+  return isRecord(value) && typeof value.url === 'string' && value.url.length > 0
+    && typeof value.model === 'string' && value.model.length > 0
+    && typeof value.api_key === 'string' && value.api_key.length > 0;
 }
 
 export function isVoiceOutputSettings(value: unknown): value is VoiceOutputSettings {

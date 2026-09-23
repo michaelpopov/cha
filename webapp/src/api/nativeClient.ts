@@ -25,6 +25,8 @@ import {
   isXaiVoiceStartResult,
   isVoiceOutputRuntime,
   isVoiceOutputSettings,
+  isJevSettings,
+  type JevSettings,
   type ApiKeyDetail,
   type AudioDownloadAcceptance,
   type AudioDownloadBatchAcceptance,
@@ -496,6 +498,10 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient {
         isNullable(value, isNativeVoiceInputRuntime)
       ),
     ),
+    getJevSettings: () => call('jev.get', {},
+      (value): value is JevSettings | null => isNullable(value, isJevSettings)),
+    saveJevSettings: (settings: JevSettings) => call('jev.save', settings, isJevSettings),
+    disableJev: () => call('jev.disable', {}, isRecord).then(() => undefined),
     getVoiceOutputSettings: () => call(
       'voiceOutput.get',
       {},

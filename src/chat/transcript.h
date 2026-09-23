@@ -21,6 +21,7 @@ inline constexpr std::string_view error_display_name = "Error";
 // recorded in the transcript without any model call or reply. No real
 // character may claim it as ID or display name.
 inline constexpr std::string_view null_agent_handle = "-";
+inline constexpr std::string_view all_characters_target = "*";
 inline constexpr std::string_view null_agent_name = "-";
 
 // The stored identity of the party who authored or received a transcript entry.

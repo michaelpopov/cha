@@ -660,6 +660,20 @@ components:
           items:
             type: string
 
+    JevSettings:
+      type: object
+      additionalProperties: false
+      required: [url, model, api_key]
+      properties:
+        url:
+          type: string
+          minLength: 1
+        model:
+          type: string
+          minLength: 1
+        api_key:
+          $ref: "#/components/schemas/Identifier"
+
     VoiceInputSettings:
       type: object
       additionalProperties: false
@@ -1323,7 +1337,10 @@ components:
           items:
             $ref: "#/components/schemas/CharacterSummary"
         default_character_id:
-          $ref: "#/components/schemas/Identifier"
+          oneOf:
+            - $ref: "#/components/schemas/Identifier"
+            - type: string
+              enum: ["*"]
         transcript:
           type: array
           items:

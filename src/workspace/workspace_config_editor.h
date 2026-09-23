@@ -46,6 +46,7 @@ public:
         std::string_view description,
         std::string_view elevenlabs_voice_id);
     void delete_voice(std::string_view voice_id);
+    void write_jev(const std::optional<WorkspaceJev>& settings);
     void write_voice_input(const WorkspaceVoiceInput& settings);
     void write_voice_output(const WorkspaceVoiceOutput& settings);
     void create_api_key(

@@ -120,15 +120,6 @@ function withoutVoiceSendPhrase(text: string, phrase: string): string | null {
     ? `${prompt}?` : prompt;
 }
 
-function multicastSubmission(text: string): string {
-  if (text.startsWith('/')) return text;
-  const firstText = text.search(/\S/);
-  const escaped = firstText >= 0 && text[firstText] === '@'
-    ? `${text.slice(0, firstText)}@${text.slice(firstText)}`
-    : text;
-  return `/mcast ${escaped}`;
-}
-
 // Older stored transcripts can contain a model-echoed UTC metadata line. Entry
 // creation time already has its own UI below the message, so hide that legacy
 // prefix here as well.
@@ -361,7 +352,6 @@ export function ChatScreen({
   onUncoverConversation,
 }: ChatScreenProps) {
   const [draft, setDraft] = useState('');
-  const [sendToAll, setSendToAll] = useState(false);
   const draftRef = useRef('');
 
   function updateDraft(next: string) {
@@ -372,8 +362,14 @@ export function ChatScreen({
   const transliteration = useTransliteration<HTMLTextAreaElement>(draft);
   const [actionError, setActionError] = useState<string | null>(null);
   const [pendingAction, setPendingAction] = useState<
-    'send' | 'stop' | 'target' | 'cover' | 'delete' | null
+    'target' | 'cover' | 'delete' | null
   >(null);
+  const [sendPending, setSendPending] = useState(false);
+  const [stopPending, setStopPending] = useState(false);
+  const sending = useRef(false);
+  const stopping = useRef(false);
+  const composerEpoch = useRef(0);
+  const actionPending = pendingAction !== null || sendPending || stopPending;
   const [voiceInputState, setVoiceInputState] = useState<
     'idle' | 'starting' | 'recording' | 'finishing'
   >('idle');
@@ -423,8 +419,8 @@ export function ChatScreen({
   const character = snapshot?.characters.find(
     ({ id }) => id === state.currentDefaultCharacterId,
   ) ?? state.bootstrap?.characters.find(({ id }) => id === state.currentDefaultCharacterId);
-  const recordingDefault = state.currentDefaultCharacterId === '-';
-  const recordingTarget = recordingDefault && !sendToAll;
+  const recordingTarget = state.currentDefaultCharacterId === '-';
+  const sendToAll = state.currentDefaultCharacterId === allCharactersTarget;
   const ended = snapshot && snapshot.lifecycle !== 'running' ? endedMessage(snapshot) : null;
   const connected = state.streamStatus === 'connected' && snapshot !== null && !ended;
   const generationActive = generation?.active === true;
@@ -438,7 +434,7 @@ export function ChatScreen({
   const speechAttempt = useRef(0);
   const voiceInputActive = voiceInputState !== 'idle';
   const canSend = connected
-    && pendingAction === null
+    && !actionPending
     && voiceInputState !== 'starting'
     && voiceInputState !== 'finishing'
     && (draft.trim().length > 0 || voiceInputState === 'recording');
@@ -492,11 +488,14 @@ export function ChatScreen({
 
   // A different conversation starts with a fresh composer at its own end.
   useEffect(() => {
+    composerEpoch.current += 1;
     followingLatest.current = true;
-    setSendToAll(false);
+    setSendPending(false); setStopPending(false); setPendingAction(null); setActionError(null);
+    sending.current = false; stopping.current = false;
     setTurnToDelete(null);
     setVoiceSendPending(false);
     updateDraft('');
+    return () => { composerEpoch.current += 1; };
   }, [conversationKey]);
 
   // A recording belongs to the conversation in which it started.
@@ -694,7 +693,7 @@ export function ChatScreen({
   }, [downloads.status]);
 
   async function changeCover(throughEntryId?: number) {
-    if (!connected || generationActive || pendingAction) return;
+    if (!connected || generationActive || actionPending) return;
     setPendingAction('cover');
     setActionError(null);
     try {
@@ -708,7 +707,7 @@ export function ChatScreen({
   }
 
   async function deleteTurn(responseEntryId: number) {
-    if (!connected || generationActive || pendingAction) return;
+    if (!connected || generationActive || actionPending) return;
     setPendingAction('delete');
     setActionError(null);
     try {
@@ -811,14 +810,17 @@ export function ChatScreen({
   }
 
   async function send(voiceCommand = false) {
-    if (generationActive || !canSend) return;
+    if (generationActive || !canSend || sending.current || stopping.current) return;
+    const epoch = composerEpoch.current;
+    sending.current = true;
     const wasRecording = voiceInputSession.current !== null;
     setVoiceSendPending(false);
-    setPendingAction('send');
+    setSendPending(true);
     setActionError(null);
     try {
       // A spoken command leaves the microphone on for the next prompt.
       if (!voiceCommand && !await finishVoiceInput()) return;
+      if (composerEpoch.current !== epoch) return;
       const withoutCommand = voiceCommand || wasRecording
         ? withoutVoiceSendPhrase(draftRef.current, voiceSendPhrase.current) : null;
       if (voiceCommand && withoutCommand === null) return;
@@ -827,9 +829,8 @@ export function ChatScreen({
         updateDraft(submitted.trim() ? submitted : '');
       }
       if (!submitted.trim()) return;
-      const result = await onSubmitInput(
-        sendToAll ? multicastSubmission(submitted) : submitted,
-      );
+      const result = await onSubmitInput(submitted);
+      if (composerEpoch.current !== epoch) return;
       if (result.clear_input) {
         // Speech or typing may continue during the send. Clear only its prefix.
         const current = draftRef.current;
@@ -839,10 +840,14 @@ export function ChatScreen({
         setVoiceSendPending(false);
       }
     } catch (failure: unknown) {
+      if (composerEpoch.current !== epoch) return;
       setVoiceSendPending(false);
       setActionError(actionMessage(failure));
     } finally {
-      setPendingAction(null);
+      if (composerEpoch.current === epoch) {
+        sending.current = false;
+        setSendPending(false);
+      }
     }
   }
 
@@ -882,33 +887,30 @@ export function ChatScreen({
   }
 
   async function stop() {
-    if (!generationActive || !sessionAvailable || pendingAction) return;
-    setPendingAction('stop');
+    if (!generationActive || !sessionAvailable || pendingAction || stopping.current) return;
+    const epoch = composerEpoch.current;
+    stopping.current = true;
+    setStopPending(true);
     setActionError(null);
     try {
       await onStopGeneration();
     } catch (failure: unknown) {
-      setActionError(actionMessage(failure));
+      if (composerEpoch.current === epoch) setActionError(actionMessage(failure));
     } finally {
-      setPendingAction(null);
+      if (composerEpoch.current === epoch) {
+        stopping.current = false;
+        setStopPending(false);
+      }
     }
   }
 
   async function chooseTarget(characterId: string) {
-    if (!characterId || pendingAction) return;
-    if (characterId === allCharactersTarget) {
-      setSendToAll(true);
-      return;
-    }
-    if (characterId === state.currentDefaultCharacterId) {
-      setSendToAll(false);
-      return;
-    }
+    if (!characterId || generationActive || actionPending || sending.current || stopping.current) return;
+    if (characterId === state.currentDefaultCharacterId) return;
     setPendingAction('target');
     setActionError(null);
     try {
       await onSetDefaultCharacter(characterId);
-      setSendToAll(false);
     } catch (failure: unknown) {
       setActionError(actionMessage(failure));
     } finally {
@@ -1085,7 +1087,7 @@ export function ChatScreen({
                     : entry.kind === 'character'
                       ? appearances.get(entry.participant_id)
                       : undefined}
-                  actionDisabled={!connected || generationActive || pendingAction !== null}
+                  actionDisabled={!connected || generationActive || actionPending}
                   entry={entry}
                   onCover={entry.id === boundaryEntryId
                     ? undefined
@@ -1114,7 +1116,7 @@ export function ChatScreen({
                 : entry.kind === 'character'
                   ? appearances.get(entry.participant_id)
                   : undefined}
-              actionDisabled={!connected || generationActive || pendingAction !== null}
+              actionDisabled={!connected || generationActive || actionPending}
               entry={entry}
               onCover={(coveredEntry) => changeCover(coveredEntry.id)}
               onToggleSpeech={toggleSpeech}
@@ -1216,9 +1218,9 @@ export function ChatScreen({
               <TargetIcon />
               <select
                 aria-label="Choose message target"
-                disabled={!connected || pendingAction !== null}
+                disabled={!connected || generationActive || actionPending}
                 onChange={(event) => void chooseTarget(event.target.value)}
-                value={sendToAll ? allCharactersTarget : (state.currentDefaultCharacterId ?? '')}
+                value={state.currentDefaultCharacterId ?? ''}
               >
                 <option value={allCharactersTarget}>All characters</option>
                 <option value="-">Self-notes</option>
@@ -1234,7 +1236,7 @@ export function ChatScreen({
                   aria-pressed={voiceInputActive}
                   className={`cha-composer-action cha-voice-input${voiceInputActive ? ' is-active' : ''}`}
                   disabled={!sessionAvailable
-                    || pendingAction !== null
+                    || actionPending
                     || voiceInputState === 'finishing'}
                   onClick={() => void toggleVoiceInput()}
                   title={voiceInputLabel}
@@ -1247,7 +1249,7 @@ export function ChatScreen({
                 aria-label={generationActive ? 'Stop generation' : 'Send message'}
                 className={`cha-composer-action ${generationActive ? 'cha-stop' : 'cha-send'}`}
                 disabled={generationActive
-                  ? pendingAction !== null || !sessionAvailable
+                  ? stopPending || pendingAction !== null || !sessionAvailable
                   : !canSend}
                 onClick={generationActive ? () => void stop() : undefined}
                 type={generationActive ? 'button' : 'submit'}

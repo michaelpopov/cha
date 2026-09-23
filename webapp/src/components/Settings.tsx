@@ -21,6 +21,7 @@ import {
   type VoiceDetail,
   type VoiceInputSettings,
   type VoiceOutputSettings,
+  type JevSettings,
   type VoiceUpdate,
   type VaultDetail,
   type VaultUploadCheck,
@@ -194,6 +195,8 @@ export function SettingsNavigation({ dispatch }: { dispatch: Dispatch<AppAction>
           label="Styles"
           onClick={() => dispatch({ type: 'show-settings-styles' })}
         />
+        <SettingsRow icon={<SettingsIcon />} label="Recipient detection"
+          onClick={() => dispatch({ type: 'show-settings-jev' })} />
         <SettingsRow
           icon={<SpeakerIcon />}
           label="Voices"
@@ -2121,4 +2124,58 @@ export function ApiKeyScreen({ client, dispatch, state }: SettingsScreenProps) {
       )}
     </section>
   );
+}
+
+const defaultJev: JevSettings = {
+  url: 'https://openrouter.ai/api/alpha/decisions', model: 'typesafe/jev-1.13', api_key: '',
+};
+
+export function JevSettingsScreen({ client, dispatch }: SettingsScreenProps) {
+  const [settings, setSettings] = useState<JevSettings>(defaultJev);
+  const [saved, setSaved] = useState<JevSettings | null>(null);
+  const [keys, setKeys] = useState<ApiKeyDetail[] | null>(null);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let current = true;
+    void Promise.all([client.getJevSettings(), client.listApiKeys()]).then(([config, apiKeys]) => {
+      if (!current) return;
+      setSaved(config); setSettings(config ?? defaultJev); setKeys(apiKeys);
+    }, (failure: unknown) => {
+      if (current) setError(publicErrorMessage(failure, 'Recipient detection settings could not be loaded.'));
+    });
+    return () => { current = false; };
+  }, [client]);
+  async function save(event: FormEvent) {
+    event.preventDefault();
+    setPending(true); setError(null);
+    try {
+      const next = await client.saveJevSettings({ ...settings, model: settings.model.trim(), url: settings.url.trim() });
+      setSaved(next); setSettings(next);
+    } catch (failure: unknown) {
+      setError(publicErrorMessage(failure, 'Recipient detection settings could not be saved.'));
+    } finally { setPending(false); }
+  }
+  async function disable() {
+    setPending(true); setError(null);
+    try { await client.disableJev(); setSaved(null); setSettings(defaultJev); }
+    catch (failure: unknown) { setError(publicErrorMessage(failure, 'Recipient detection could not be disabled.')); }
+    finally { setPending(false); }
+  }
+  return <section className="cha-screen cha-navigation" aria-label="Recipient detection">
+    <button className="cha-back-row" onClick={() => dispatch({ type: 'show-settings' })} type="button"><ChevronLeftIcon /><span>Settings</span></button>
+    {error && <p className="cha-error-message" role="alert">{error}</p>}
+    {keys && <form className="cha-settings-form" onSubmit={(event) => void save(event)}>
+      <label>URL<input className="cha-form-control" type="url" required value={settings.url} disabled={pending} onChange={(event) => setSettings({ ...settings, url: event.target.value })} /></label>
+      <label>Model<input className="cha-form-control" required value={settings.model} disabled={pending} onChange={(event) => setSettings({ ...settings, model: event.target.value })} /></label>
+      <label>API key<select className="cha-form-control" required value={settings.api_key} disabled={pending} onChange={(event) => setSettings({ ...settings, api_key: event.target.value })}>
+        <option value="">Select API key</option>
+        {keys.map((key) => <option key={key.id} value={key.id}>{key.display_name}</option>)}
+      </select></label>
+      <div className="cha-settings-form-actions">
+        <button className="cha-button cha-button-ghost" disabled={pending || !saved} onClick={() => void disable()} type="button">Disable</button>
+        <button className="cha-button cha-button-primary" disabled={pending || !settings.url.trim() || !settings.model.trim() || !keys.some((key) => key.id === settings.api_key)} type="submit">Save</button>
+      </div>
+    </form>}
+  </section>;
 }

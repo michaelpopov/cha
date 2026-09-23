@@ -285,6 +285,11 @@ export interface components {
             writable: boolean;
             used_by: string[];
         };
+        JevSettings: {
+            url: string;
+            model: string;
+            api_key: components["schemas"]["Identifier"];
+        };
         VoiceInputSettings: {
             /** @enum {string} */
             provider: "openai" | "xai";
@@ -540,7 +545,7 @@ export interface components {
             session_id: components["schemas"]["Identifier"];
             session_label: string;
             characters: components["schemas"]["CharacterSummary"][];
-            default_character_id: components["schemas"]["Identifier"];
+            default_character_id: components["schemas"]["Identifier"] | "*";
             transcript: components["schemas"]["TranscriptEntry"][];
             covered_until?: components["schemas"]["UnsignedInteger"];
             generation: components["schemas"]["GenerationState"];

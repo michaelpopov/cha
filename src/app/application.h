@@ -154,7 +154,8 @@ public:
         std::string_view forum_id,
         std::string_view session_id,
         WebCommand command,
-        std::uint64_t epoch);
+        std::uint64_t epoch,
+        std::chrono::steady_clock::time_point deadline = std::chrono::steady_clock::time_point::max());
     [[nodiscard]] CommandSubmitResult stop(
         std::string_view forum_id,
         std::string_view session_id,
@@ -322,6 +323,9 @@ public:
         std::uint64_t epoch);
     void delete_voice(std::string_view voice_id, std::uint64_t epoch);
 
+    [[nodiscard]] std::optional<JevSettings> get_jev_settings(std::uint64_t epoch);
+    [[nodiscard]] JevSettings save_jev_settings(JevSettings settings, std::uint64_t epoch);
+    void disable_jev(std::uint64_t epoch);
     [[nodiscard]] std::optional<VoiceInputSettings>
     get_voice_input_settings(std::uint64_t epoch);
     [[nodiscard]] VoiceInputSettings save_voice_input_settings(

@@ -12,6 +12,7 @@
 #include <thread>
 #include <type_traits>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -34,7 +35,8 @@ struct Providers::Registry {
     std::mutex mutex;
     std::condition_variable empty;
     bool admitting{true};
-    std::unordered_map<std::uint64_t, std::shared_ptr<ProviderRequest>> active;
+    using Request = std::variant<std::shared_ptr<ProviderRequest>, std::shared_ptr<JevRequest>>;
+    std::unordered_map<std::uint64_t, Request> active;
     std::size_t diagnostic_tails{};
     std::uint64_t next_token{1};
 };
@@ -173,8 +175,10 @@ void ProviderRequest::execute(
 
 Providers::Providers(
     ProviderClientFactory client_factory,
-    ProviderThreadLauncher thread_launcher)
-    : client_factory_(client_factory ? std::move(client_factory)
+    ProviderThreadLauncher thread_launcher,
+    JevExecutor jev_executor)
+    : jev_executor_(std::move(jev_executor)),
+      client_factory_(client_factory ? std::move(client_factory)
                                     : ProviderClientFactory(default_client_factory)),
       thread_launcher_(thread_launcher ? std::move(thread_launcher)
                                        : ProviderThreadLauncher(default_thread_launcher)),
@@ -266,9 +270,71 @@ std::shared_ptr<ProviderRequest> Providers::make_request(
     return request;
 }
 
+std::shared_ptr<JevRequest> Providers::make_jev_request(
+    JevRequestInput input, std::shared_ptr<WakeNotifier> notifier) {
+    if (!notifier) throw std::invalid_argument("Jev request requires a notifier");
+    input.deadline = std::min(input.deadline,
+        std::chrono::steady_clock::now() + jev_request_timeout);
+    auto request = std::shared_ptr<JevRequest>(new JevRequest(std::move(input), std::move(notifier)));
+    try {
+        validate_jev_config(request->input_.config);
+        if (request->input_.prompt.empty() || request->input_.characters.empty())
+            throw std::invalid_argument("Invalid Jev input");
+        std::unordered_set<std::string> keys, ids;
+        for (const auto& option : request->input_.characters) {
+            if (option.key.empty() || option.key == "undefined" || option.key == "all_characters"
+                || option.character_id.empty() || option.character_id == "*" || option.character_id == "-"
+                || option.display_name.empty() || !keys.insert(option.key).second
+                || !ids.insert(option.character_id).second) {
+                throw std::invalid_argument("Invalid Jev option mapping");
+            }
+        }
+    } catch (...) {
+        request->publish({JevOutcome::failure, {}, "Invalid recipient detection input"});
+        return request;
+    }
+    auto registry = registry_;
+    auto executor = jev_executor_;
+    std::unique_lock lock(registry->mutex);
+    if (!registry->admitting) {
+        lock.unlock();
+        request->publish({JevOutcome::failure, {}, "Provider request admission is closed"});
+        return request;
+    }
+    const auto token = registry->next_token++;
+    registry->active.emplace(token, request);
+    lock.unlock();
+    try {
+        thread_launcher_([registry, request, executor = std::move(executor), token]() mutable {
+            request->execute(executor);
+            executor = nullptr;
+            {
+                std::lock_guard lock(registry->mutex);
+                registry->active.erase(token);
+                ++registry->diagnostic_tails;
+            }
+            log_debug("Recipient detection worker finished token=" + std::to_string(token));
+            {
+                std::lock_guard lock(registry->mutex);
+                --registry->diagnostic_tails;
+            }
+            registry->empty.notify_all();
+        });
+    } catch (...) {
+        executor = nullptr;
+        request->publish({JevOutcome::failure, {}, "Recipient detection worker could not be started"});
+        {
+            std::lock_guard lock(registry->mutex);
+            registry->active.erase(token);
+        }
+        registry->empty.notify_all();
+    }
+    return request;
+}
+
 void Providers::shutdown() noexcept {
     const std::shared_ptr<Registry> registry = registry_;
-    std::vector<std::shared_ptr<ProviderRequest>> active;
+    std::vector<Registry::Request> active;
     {
         std::lock_guard lock(registry->mutex);
         registry->admitting = false;
@@ -277,8 +343,8 @@ void Providers::shutdown() noexcept {
             active.push_back(request);
         }
     }
-    for (const std::shared_ptr<ProviderRequest>& request : active) {
-        request->cancel();
+    for (const auto& request : active) {
+        std::visit([](const auto& value) { value->cancel(); }, request);
     }
 
     std::unique_lock lock(registry->mutex);
@@ -290,7 +356,7 @@ void Providers::shutdown() noexcept {
 bool Providers::shutdown_until(
     std::chrono::steady_clock::time_point deadline) noexcept {
     const std::shared_ptr<Registry> registry = registry_;
-    std::vector<std::shared_ptr<ProviderRequest>> active;
+    std::vector<Registry::Request> active;
     {
         std::lock_guard lock(registry->mutex);
         registry->admitting = false;
@@ -299,8 +365,8 @@ bool Providers::shutdown_until(
             active.push_back(request);
         }
     }
-    for (const std::shared_ptr<ProviderRequest>& request : active) {
-        request->cancel();
+    for (const auto& request : active) {
+        std::visit([](const auto& value) { value->cancel(); }, request);
     }
 
     std::unique_lock lock(registry->mutex);

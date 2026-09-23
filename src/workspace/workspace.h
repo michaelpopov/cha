@@ -75,6 +75,14 @@ void normalize_unused_voice_input_delay(
     std::string_view provider,
     std::string& delay);
 
+struct WorkspaceJev {
+    std::string url{"https://openrouter.ai/api/alpha/decisions"};
+    std::string model{"typesafe/jev-1.13"};
+    std::string api_key_id;
+};
+
+void validate_jev_config(const WorkspaceJev& config);
+
 struct WorkspaceVoiceOutput {
     std::string url;
     std::string model;
@@ -157,6 +165,9 @@ public:
         const noexcept {
         return voice_output_;
     }
+    [[nodiscard]] const std::optional<WorkspaceJev>& jev() const noexcept {
+        return jev_;
+    }
     [[nodiscard]] std::span<const SavedApiKey> api_keys() const noexcept {
         return api_keys_;
     }
@@ -231,6 +242,7 @@ private:
     std::vector<WorkspaceVoice> voices_;
     std::optional<WorkspaceVoiceInput> voice_input_;
     std::optional<WorkspaceVoiceOutput> voice_output_;
+    std::optional<WorkspaceJev> jev_;
     std::vector<SavedApiKey> api_keys_;
     std::optional<R2StorageKey> r2_storage_;
     std::uint64_t next_api_key_id_{1};

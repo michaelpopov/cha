@@ -349,7 +349,7 @@ ControllerView SessionController::view() const noexcept {
 }
 
 bool SessionController::is_generating() const noexcept {
-    return generation_.has_value();
+    return pending_classification_.has_value() || generation_.has_value();
 }
 
 ControllerUpdate SessionController::busy_notice() const {
@@ -374,7 +374,7 @@ void SessionController::record_monologue(
     std::string_view author_id,
     std::string text,
     ControllerUpdate& update) {
-    if (text.empty()) {
+    if (trim_view(text).empty()) {
         update.notice = "Message to @- is empty";
         return;
     }
@@ -399,14 +399,15 @@ void SessionController::record_monologue(
 ControllerUpdate SessionController::submit_prompt(
     std::string_view author_id,
     std::string text,
-    std::string handle) {
+    std::string handle,
+    std::shared_ptr<SubmissionState> submission) {
     if (shutdown_) {
         return {.notice = "Request could not be dispatched"};
     }
     if (is_generating()) {
         return busy_notice();
     }
-    if (text.empty() && handle.empty()) {
+    if (trim_view(text).empty() && handle.empty()) {
         return {};
     }
 
@@ -418,8 +419,24 @@ ControllerUpdate SessionController::submit_prompt(
             record_monologue(author_id, std::move(text), update);
             return update;
         }
-        target = current->find_forum_character(
-            identity_.forum_id, default_character_id_);
+        if (current->jev()) {
+            if (!resolve_author(author_id, update)) return update;
+            if (!submission) submission = std::make_shared<SubmissionState>();
+            if (submission->expired()) return {.notice = "Submission expired"};
+            std::vector<JevOption> options;
+            for (const auto& member : current->find_forum(identity_.forum_id)->members) {
+                const auto* character = current->find_forum_character(identity_.forum_id, member.character_id);
+                options.push_back({"character_" + std::to_string(options.size() + 1), character->id, character->display_name});
+            }
+            const auto deadline = std::min(submission->deadline,
+                std::chrono::steady_clock::now() + jev_request_timeout);
+            auto request = providers_.make_jev_request({*current->jev(), text, options, deadline}, notifier_);
+            pending_classification_ = PendingClassification{
+                std::string(author_id), std::move(text), default_character_id_,
+                std::move(options), std::move(submission), deadline, std::move(request)};
+            return {.state = SnapshotRequired{}, .notice = ""};
+        }
+        return dispatch_target(author_id, std::move(text), default_character_id_);
     } else {
         if (handle == null_agent_handle) {
             record_monologue(author_id, std::move(text), update);
@@ -437,7 +454,7 @@ ControllerUpdate SessionController::submit_prompt(
     if (!target) {
         throw std::logic_error("Default character is not among the forum characters");
     }
-    if (text.empty()) {
+    if (trim_view(text).empty()) {
         update.notice = "Prompt for @" + target->display_name + " is empty";
         return update;
     }
@@ -455,6 +472,85 @@ ControllerUpdate SessionController::submit_prompt(
         std::vector<CharacterMetadata>{*target},
         std::move(history),
         update);
+    return update;
+}
+
+ControllerUpdate SessionController::dispatch_target(
+    std::string_view author, std::string text, std::string_view target_id) {
+    if (target_id == all_characters_target) return start_multicast(author, std::move(text), {});
+    const auto current = workspace();
+    const auto* target = current->find_forum_character(identity_.forum_id, target_id);
+    if (!target) return {.notice = "The selected recipient is no longer in this forum. Choose a target and send again."};
+    return start_resolved_multicast(author, std::move(text), {*target});
+}
+
+std::chrono::steady_clock::time_point SessionController::classification_deadline() const noexcept {
+    return pending_classification_ ? pending_classification_->deadline
+        : std::chrono::steady_clock::time_point::max();
+}
+
+std::optional<SessionController::SubmissionResult> SessionController::take_submission_result() {
+    return std::exchange(submission_result_, std::nullopt);
+}
+
+ControllerUpdate SessionController::finish_classification() {
+    if (!pending_classification_) return {};
+    auto& pending = *pending_classification_;
+    if (pending.submission->expired()) {
+        pending.request->cancel();
+        pending_classification_.reset();
+        ControllerUpdate update{.state = SnapshotRequired{}};
+        submission_result_ = SubmissionResult{SubmissionOutcome::expired, update};
+        return update;
+    }
+    auto result = pending.request->try_receive();
+    if (std::chrono::steady_clock::now() >= pending.deadline) {
+        pending.request->cancel();
+        result = JevResult{JevOutcome::failure, {}, "Recipient detection timed out"};
+    }
+    if (!result) return {};
+    auto input = std::move(pending);
+    pending_classification_.reset();
+    ControllerUpdate update{.state = SnapshotRequired{}};
+    if (result->outcome == JevOutcome::cancelled) {
+        submission_result_ = SubmissionResult{SubmissionOutcome::cancelled, update};
+        return update;
+    }
+    std::string target = input.fallback;
+    bool failed = result->outcome == JevOutcome::failure;
+    if (!failed && result->choice == "all_characters") target = std::string(all_characters_target);
+    else if (!failed && result->choice != "undefined") {
+        const auto selected = std::ranges::find(input.options, result->choice, &JevOption::key);
+        if (selected == input.options.end()
+            || !workspace()->find_forum_character(identity_.forum_id, selected->character_id)) {
+            failed = true;
+            result->message = "Selected recipient is no longer available";
+        } else target = selected->character_id;
+    }
+    if (input.submission->expired()) {
+        submission_result_ = SubmissionResult{SubmissionOutcome::expired, update};
+        return update;
+    }
+    if (failed) log_warn("Recipient detection failed; using captured fallback target: " + result->message);
+    // One owner-thread handoff: no idle publication and no classifier re-entry.
+    const auto previous_target = default_character_id_;
+    if (!failed && result->choice != "undefined") default_character_id_ = target;
+    auto dispatched = dispatch_target(input.author, std::move(input.text), target);
+    if (dispatched.input_consumed) {
+        if (failed) {
+            dispatched.notice = target == all_characters_target
+                ? "Recipient detection failed. Sent to all characters."
+                : "Recipient detection failed. Sent to "
+                    + active_->character_display_name + ".";
+        }
+    } else {
+        default_character_id_ = previous_target;
+    }
+    merge(update, std::move(dispatched));
+    submission_result_ = SubmissionResult{
+        update.input_consumed ? SubmissionOutcome::accepted : SubmissionOutcome::failed, update};
+    // Dispatch errors are delivered through the submission reply.
+    if (!update.input_consumed) update.notice.reset();
     return update;
 }
 
@@ -708,7 +804,7 @@ ControllerUpdate SessionController::start_resolved_multicast(
     std::string_view author_id,
     std::string text,
     std::vector<CharacterMetadata> targets) {
-    if (text.empty()) {
+    if (trim_view(text).empty()) {
         return {.notice = "Multicast prompt is empty"};
     }
     if (targets.empty()) {
@@ -740,6 +836,12 @@ ControllerUpdate SessionController::set_default_character_by_id(std::string_view
     }
     // This typed action submits no editor text, so it never clears a draft.
     ControllerUpdate update;
+    if (id == all_characters_target) {
+        default_character_id_ = std::string(all_characters_target);
+        require_snapshot(update);
+        update.notice = "Target is now All characters.";
+        return update;
+    }
     if (id == null_agent_handle) {
         default_character_id_ = std::string(null_agent_handle);
         require_snapshot(update);
@@ -763,6 +865,16 @@ ControllerUpdate SessionController::set_default_character_by_id(std::string_view
 
 ControllerUpdate SessionController::request_stop() {
     ControllerUpdate update;
+    if (pending_classification_) {
+        const bool expired = pending_classification_->submission->expired();
+        pending_classification_->request->cancel();
+        pending_classification_.reset();
+        update.state = SnapshotRequired{};
+        update.notice = expired ? "Submission expired" : "Generation stopped";
+        submission_result_ = SubmissionResult{
+            expired ? SubmissionOutcome::expired : SubmissionOutcome::cancelled, update};
+        return update;
+    }
     if (!generation_) {
         update.notice = "No generation is active";
         return update;
@@ -1037,7 +1149,12 @@ ControllerEventBatch SessionController::receive_events(std::size_t max_events) {
     if (max_events == 0) {
         throw std::invalid_argument("Generation event batch size must be positive");
     }
-    ControllerUpdate update;
+    const bool was_classifying = pending_classification_.has_value();
+    ControllerUpdate update = finish_classification();
+    if (was_classifying && !pending_classification_) {
+        // Let the runtime settle acceptance before any character events can fail.
+        return {.update = std::move(update), .full = generation_.has_value()};
+    }
     if (shutdown_ && !generation_) {
         update.session_ended = true;
         return {.update = std::move(update)};
@@ -1065,6 +1182,11 @@ void SessionController::shutdown() {
     }
     log_info("Session controller shutting down");
     shutdown_ = true;
+    if (pending_classification_) {
+        pending_classification_->request->cancel();
+        pending_classification_.reset();
+        submission_result_ = SubmissionResult{SubmissionOutcome::cancelled, {}};
+    }
     try {
         if (generation_) {
             generation_->cancellation_requested = true;

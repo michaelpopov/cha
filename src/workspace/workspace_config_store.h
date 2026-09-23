@@ -21,6 +21,7 @@ namespace cha {
 class Workspace;
 struct VoiceSettings;
 struct WorkspaceVoiceInput;
+struct WorkspaceJev;
 struct WorkspaceVoiceOutput;
 
 struct WorkspaceConfigTransfer {
@@ -203,6 +204,7 @@ public:
         std::string_view elevenlabs_voice_id);
     WorkspaceConfigEditResult apply_voice_delete(
         std::string_view voice_id);
+    void apply_jev_update(const std::optional<WorkspaceJev>& settings);
     void apply_voice_input_update(const WorkspaceVoiceInput& settings);
     void apply_voice_output_update(const WorkspaceVoiceOutput& settings);
     void apply_api_key_create(

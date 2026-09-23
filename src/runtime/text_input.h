@@ -1,6 +1,8 @@
 #pragma once
 
 #include "runtime/protocol.h"
+#include "session/submission.h"
+#include <memory>
 
 #include <string>
 #include <string_view>
@@ -57,6 +59,7 @@ using MulticastParseResult =
 [[nodiscard]] CommandResult handle_text_input(
     SessionController& controller,
     std::string_view author_id,
-    std::string input);
+    std::string input,
+    std::shared_ptr<SubmissionState> submission = {});
 
 } // namespace cha

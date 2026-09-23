@@ -1,4 +1,5 @@
 #include "runtime/request_parser.h"
+#include "util/logging.h"
 
 #include "characters/character_config.h"
 
@@ -451,6 +452,17 @@ VoiceUpdate parse_voice_update(const nlohmann::json& json) {
             .speed = settings_nullable_double(json, "speed"),
         },
     };
+}
+
+JevSettings parse_jev_settings(const nlohmann::json& json) {
+    if (!json.is_object()) throw std::invalid_argument("Invalid recipient detection settings");
+    for (const auto& [key, value] : json.items()) {
+        (void)value;
+        if (key != "url" && key != "model" && key != "api_key")
+            log_warn("Ignoring unused recipient detection field: " + key);
+    }
+    return {required_field<std::string>(json, "url"),
+        required_field<std::string>(json, "model"), required_field<std::string>(json, "api_key")};
 }
 
 VoiceInputSettings parse_voice_input_settings(const nlohmann::json& json) {

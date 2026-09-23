@@ -1794,3 +1794,6 @@ select:disabled {
     transition: none;
   }
 }
+
+.cha-submission-error { display: flex; gap: 1rem; align-items: center; padding: .6rem 1rem; border-bottom: 1px solid currentColor; font-size: .875rem; }
+.cha-submission-error span { flex: 1; }

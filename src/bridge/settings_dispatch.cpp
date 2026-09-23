@@ -91,6 +91,17 @@ std::optional<nlohmann::json> dispatch_settings_operation(
             require_identifier(params, "voice_id"), epoch);
         result = nlohmann::json::object();
         break;
+    case Method::jev_get:
+        require_only_keys(params, {});
+        result = encode_optional(application.get_jev_settings(epoch));
+        break;
+    case Method::jev_save:
+        result = application.save_jev_settings(parse_jev_settings(params), epoch);
+        break;
+    case Method::jev_disable:
+        require_only_keys(params, {});
+        application.disable_jev(epoch);
+        break;
     case Method::voice_input_get:
         require_only_keys(params, {});
         result = encode_optional(application.get_voice_input_settings(epoch));

@@ -162,9 +162,12 @@ struct SessionRuntime::Impl {
         const FullSessionId& identity,
         std::uint64_t instance,
         WebCommand command,
-        std::uint64_t subscribe_ticket) {
+        std::uint64_t subscribe_ticket,
+        std::chrono::steady_clock::time_point deadline) {
         if (stopping_requested.load()) return ErrorCode::server_stopping;
-        auto reply = std::make_shared<CommandReply>();
+        auto submission = std::make_shared<SubmissionState>();
+        submission->deadline = std::min(deadline, std::chrono::steady_clock::now() + settings.command_deadline);
+        auto reply = std::make_shared<CommandReply>(std::move(submission), notifier);
         {
             std::lock_guard lock(queue_mutex);
             if (stopping_requested.load()) return ErrorCode::server_stopping;
@@ -388,8 +391,12 @@ struct SessionRuntime::Impl {
                 cleanup_retired();
 
                 if (processed == settings.command_batch_size || more_events) continue;
-                (void)notifier->wait_until(
-                    std::chrono::steady_clock::time_point::max());
+                auto deadline = std::chrono::steady_clock::time_point::max();
+                for (const auto& [identity, session] : sessions) {
+                    (void)identity;
+                    deadline = std::min(deadline, session->next_deadline());
+                }
+                (void)notifier->wait_until(deadline);
             }
         } catch (...) {
             stopping_requested.store(true);
@@ -453,9 +460,10 @@ std::variant<std::shared_ptr<CommandReply>, ErrorCode> SessionRuntime::enqueue(
     const FullSessionId& identity,
     std::uint64_t instance,
     WebCommand command,
-    std::uint64_t subscribe_ticket) {
+    std::uint64_t subscribe_ticket,
+    std::chrono::steady_clock::time_point deadline) {
     return impl_->enqueue_web(
-        identity, instance, std::move(command), subscribe_ticket);
+        identity, instance, std::move(command), subscribe_ticket, deadline);
 }
 
 void SessionRuntime::wake() noexcept {
