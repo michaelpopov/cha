@@ -23,3 +23,5 @@ Keep the browser's xAI unavailable-transport stub. Do not implement AudioWorklet
 - Do not run a packaged AudioWorklet test or add performance instrumentation. Record Windows checks as unrun when there is no Windows host.
 
 Complete this boundary and stop. Commit with subject `voice input: add native xAI streaming (session 3)`. The commit body must list the concrete worker/normalizer files, all four bridge method signatures, typed-client entry points, the fake-server executable and the command that runs it, test commands/results, and any unrun platform checks. Explicitly state that browser capture remains the intentional stub for Session 4. Commit only feature/prerequisite changes, preserving unrelated user work. Session 4 must be able to continue from this commit and the repository documents without this chat.
+
+COMPLETED

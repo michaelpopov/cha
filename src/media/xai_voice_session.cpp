@@ -592,6 +592,18 @@ void XaiVoiceSessions::cancel(
     if (found->second.session) found->second.session->cancel.store(true);
 }
 
+void XaiVoiceSessions::cancel_live(
+    std::string_view connection_id,
+    std::string_view session_id) {
+    std::lock_guard lock(impl_->mu);
+    const auto found = impl_->slots.find(key_for(connection_id, session_id));
+    if (found == impl_->slots.end()
+        || found->second.kind != Impl::Slot::Kind::live) {
+        return;
+    }
+    if (found->second.session) found->second.session->cancel.store(true);
+}
+
 void XaiVoiceSessions::cancel_connection(std::string_view connection_id) {
     std::vector<std::shared_ptr<Session>> live;
     {

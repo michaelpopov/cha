@@ -574,6 +574,44 @@ TEST(XaiVoice, RejectsBadAudioWithoutSendingIt) {
     EXPECT_TRUE(script->binary.empty());
 }
 
+TEST(XaiVoice, BadAudioForAnUnknownSessionDoesNotBlockStart) {
+    OwnedApp owned;
+    auto script = install_script(*owned.application);
+    save_xai(*owned.application, "ws://127.0.0.1:9/v1/stt");
+    const auto epoch = owned.application->context_epoch();
+    try {
+        (void)owned.application->send_xai_voice_audio(
+            "view-1", 1, "dictation-1", "AA==", epoch, 30000ms);
+        FAIL() << "odd PCM must be rejected";
+    } catch (const ApplicationError& error) {
+        EXPECT_EQ(error.code, ErrorCode::invalid_argument);
+    }
+    push_event(*script, created_event());
+    const auto started = owned.application->start_xai_voice_input(
+        "view-1", 2, "dictation-1", {"en"}, epoch, 30000ms);
+    EXPECT_EQ(wait_reply(started)["session_id"], "dictation-1");
+}
+
+TEST(XaiVoice, StaleEpochDoesNotCancelOnBadAudio) {
+    OwnedApp owned;
+    auto script = install_script(*owned.application);
+    save_xai(*owned.application, "ws://127.0.0.1:9/v1/stt");
+    const auto epoch = owned.application->context_epoch();
+    push_event(*script, created_event());
+    (void)wait_reply(owned.application->start_xai_voice_input(
+        "view-1", 1, "dictation-1", {"en"}, epoch, 30000ms));
+    try {
+        (void)owned.application->send_xai_voice_audio(
+            "view-1", 2, "dictation-1", "AA==", epoch + 1, 30000ms);
+        FAIL() << "a stale epoch must be rejected";
+    } catch (const ApplicationError& error) {
+        EXPECT_EQ(error.code, ErrorCode::vault_changed);
+    }
+    const auto audio = owned.application->send_xai_voice_audio(
+        "view-1", 3, "dictation-1", "AAE=", epoch, 30000ms);
+    EXPECT_EQ(wait_reply(audio)["pieces"], nlohmann::json::array());
+}
+
 TEST(XaiCurlSocket, HandshakesSendsOrderedAudioAndReassemblesFrames) {
     nlohmann::json partial = final_event("Hello", 0.1, 0.3);
     XaiFakeServer server({

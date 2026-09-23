@@ -641,7 +641,11 @@ std::shared_ptr<OperationReply> Application::send_xai_voice_audio(
     try {
         pcm = media::decode_pcm_base64(pcm_base64);
     } catch (const std::invalid_argument&) {
-        impl_->xai_voice.cancel(connection_id, session_id);
+        {
+            const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+            impl_->require_admitted(epoch);
+        }
+        impl_->xai_voice.cancel_live(connection_id, session_id);
         throw ApplicationError(
             ErrorCode::invalid_argument, "The request was not valid.");
     }

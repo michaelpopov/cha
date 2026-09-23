@@ -61,6 +61,8 @@ public:
         std::chrono::milliseconds deadline);
 
     void cancel(std::string_view connection_id, std::string_view session_id);
+    // Stops a live dictation only. An absent session is left unchanged.
+    void cancel_live(std::string_view connection_id, std::string_view session_id);
     void cancel_connection(std::string_view connection_id);
     void cancel_all();
     void expire(std::string_view connection_id, std::uint64_t request_id);
