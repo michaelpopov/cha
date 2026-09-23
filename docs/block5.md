@@ -341,3 +341,5 @@ Commit the fixes and documentation with subject `voice input: finish integration
 8. any remaining known limitations.
 
 The final state must meet the concrete acceptance checks so the user can choose OpenAI or xAI and dictate in this personal application. Do not expand this into production infrastructure or unrelated hardening.
+
+COMPLETED
