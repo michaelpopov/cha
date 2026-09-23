@@ -148,3 +148,5 @@ Commit it with subject `voice input: prepare provider selection (session 1)` and
 - validation failures, if any; do not leave provider or transport decisions to later sessions
 
 Do not proceed into the full xAI WebSocket transport implementation in this session.
+
+COMPLETED
