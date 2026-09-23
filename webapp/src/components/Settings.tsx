@@ -50,11 +50,14 @@ import {
   EyeOffIcon,
   FileDownIcon,
   FileUpIcon,
+  ForumsIcon,
   KeyIcon,
+  PersonasIcon,
   PlusIcon,
   SpeakerIcon,
   SettingsIcon,
   StopIcon,
+  TextLinesIcon,
 } from './Icons';
 import { TransliteratingInput } from './TransliterationMode';
 
@@ -81,7 +84,7 @@ function formatBytes(bytes: number): string {
   return `${size.toLocaleString(undefined, { maximumFractionDigits: unit ? 1 : 0 })} ${units[unit]}`;
 }
 
-function BackToSettings({ dispatch }: { dispatch: Dispatch<AppAction> }) {
+export function BackToSettings({ dispatch }: { dispatch: Dispatch<AppAction> }) {
   return (
     <button className="cha-back-row" onClick={() => dispatch({ type: 'show-settings' })} type="button">
       <ChevronLeftIcon />
@@ -163,6 +166,21 @@ export function SettingsNavigation({ dispatch }: { dispatch: Dispatch<AppAction>
     <section className="cha-settings-card" aria-label="Configuration">
       <div className="cha-settings-links">
         <SettingsRow
+          icon={<PersonasIcon />}
+          label="Personas"
+          onClick={() => dispatch({ type: 'show-personas' })}
+        />
+        <SettingsRow
+          icon={<CharacterIcon />}
+          label="Characters"
+          onClick={() => dispatch({ type: 'show-characters' })}
+        />
+        <SettingsRow
+          icon={<ForumsIcon />}
+          label="Forums"
+          onClick={() => dispatch({ type: 'show-forums' })}
+        />
+        <SettingsRow
           icon={<DatabaseIcon />}
           label="Vaults"
           onClick={() => dispatch({ type: 'show-settings-vaults' })}
@@ -173,7 +191,7 @@ export function SettingsNavigation({ dispatch }: { dispatch: Dispatch<AppAction>
           onClick={() => dispatch({ type: 'show-settings-providers' })}
         />
         <SettingsRow
-          icon={<CharacterIcon />}
+          icon={<TextLinesIcon />}
           label="Styles"
           onClick={() => dispatch({ type: 'show-settings-styles' })}
         />

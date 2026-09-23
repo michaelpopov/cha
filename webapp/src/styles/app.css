@@ -116,11 +116,28 @@ select:disabled {
   gap: 0.05rem;
 }
 
-.cha-recents {
+.cha-sidebar-recent-sections {
+  display: grid;
   min-height: 0;
   flex: 1;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.cha-sidebar-recent-section {
+  display: grid;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.cha-sidebar-nav,
+.cha-recents {
+  min-height: 0;
   align-content: start;
   overflow-y: auto;
+}
+
+.cha-sidebar-nav {
+  max-height: 12rem;
 }
 
 .cha-side-action,

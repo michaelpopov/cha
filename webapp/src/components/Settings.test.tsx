@@ -129,17 +129,27 @@ describe('Settings screens', () => {
     expect(load).toHaveBeenCalledTimes(2);
   });
 
-  it('shows Vaults above Providers, Styles, Voices, and API Keys', async () => {
+  it('shows configuration destinations with their existing navigation actions', async () => {
     const dispatch = vi.fn();
     render(<SettingsNavigation dispatch={dispatch} />);
 
     const destinations = screen.getAllByRole('button');
-    expect(destinations[0]).toHaveAccessibleName(/Vaults/);
-    expect(screen.getByRole('button', { name: /Providers/ })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Styles/ })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Voices/ })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: /API Keys/ }));
-    expect(dispatch).toHaveBeenCalledWith({ type: 'show-settings-api-keys' });
+    expect(destinations.map((button) => button.textContent)).toEqual([
+      'Personas', 'Characters', 'Forums', 'Vaults', 'Providers', 'Styles', 'Voices', 'API Keys',
+    ]);
+    for (const [label, type] of [
+      ['Personas', 'show-personas'],
+      ['Characters', 'show-characters'],
+      ['Forums', 'show-forums'],
+      ['Vaults', 'show-settings-vaults'],
+      ['Providers', 'show-settings-providers'],
+      ['Styles', 'show-settings-styles'],
+      ['Voices', 'show-settings-voices'],
+      ['API Keys', 'show-settings-api-keys'],
+    ]) {
+      await userEvent.click(screen.getByRole('button', { name: label }));
+      expect(dispatch).toHaveBeenLastCalledWith({ type });
+    }
   });
 
   it('shows vault status privately and keeps active-vault operations out of the list', async () => {

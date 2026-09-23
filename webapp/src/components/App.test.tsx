@@ -102,9 +102,16 @@ function sessionRow(name: RegExp | string) {
   return within(screen.getByLabelText('Forum sessions navigation')).getByRole('button', { name });
 }
 
+async function openSettingsNavigation() {
+  const settings = within(screen.getByLabelText('Sidebar')).getByRole('button', { name: 'Settings' });
+  await waitFor(() => expect(settings).toBeEnabled());
+  fireEvent.click(settings);
+}
+
 // Recent also carries a Planning row, so the stored-session row is reached
 // through the sessions list itself.
 async function openPlanningFromTheLobby() {
+  await openSettingsNavigation();
   const forums = await screen.findByRole('button', { name: 'Forums' });
   await waitFor(() => expect(forums).toBeEnabled());
   fireEvent.click(forums);
@@ -137,6 +144,7 @@ describe.each([
     const app = container.querySelector('.cha-app');
     expect(app).toHaveAttribute('data-sidebar', 'open');
 
+    await openSettingsNavigation();
     fireEvent.click(await screen.findByRole('button', { name: 'Characters' }));
     expect(screen.getByRole('heading', { name: 'Characters' })).toBeInTheDocument();
     expect(app).toHaveAttribute('data-sidebar', 'open');
@@ -145,11 +153,31 @@ describe.each([
     expect(app).toHaveAttribute('data-sidebar', 'closed');
     expect(screen.getByRole('heading', { name: 'Characters' })).toBeInTheDocument();
 
+    await openSettingsNavigation();
     fireEvent.click(screen.getByRole('button', { name: 'Characters' }));
     expect(screen.getByRole('heading', { name: 'Characters' })).toBeInTheDocument();
     expect(app).toHaveAttribute('data-sidebar', 'closed');
   });
 });
+
+it.each(['Personas', 'Characters', 'Forums'])(
+  'returns from %s to Settings with the sidebar closed', async (name) => {
+    const { container } = renderAt(390);
+    await openSettingsNavigation();
+    fireEvent.click(screen.getByRole('button', { name }));
+    fireEvent.click(screen.getByRole('button', { name: 'Hide sidebar' }));
+
+    const navigation = screen.getByRole('region', { name: `${name} navigation` });
+    const back = within(navigation).getByRole('button', { name: 'Settings' });
+    expect(within(navigation).getAllByRole('button')[0]).toBe(back);
+    expect(within(screen.getByLabelText('Sidebar')).getByRole('button', { name: 'Settings' }))
+      .toHaveAttribute('aria-current', 'page');
+    fireEvent.click(back);
+
+    expect(screen.getByRole('region', { name: 'Configuration' })).toBeInTheDocument();
+    expect(container.querySelector('.cha-app')).toHaveAttribute('data-sidebar', 'closed');
+  },
+);
 
 it('renders bootstrap discovery data and preserves conversation context while navigating', async () => {
   const openSession = vi.fn(async (forumId: string, sessionId: string) => ({
@@ -175,6 +203,7 @@ it('renders bootstrap discovery data and preserves conversation context while na
   expect(openSession).toHaveBeenCalledWith('entrance', 'welcome');
 
   // Attached now, so returning to it is a view change and not a second open.
+  await openSettingsNavigation();
   fireEvent.click(screen.getByRole('button', { name: 'Characters' }));
   fireEvent.click(screen.getByRole('button', { name: 'WelcomeEntrance' }));
   await waitFor(() => expect(screen.getByLabelText('Current chat context')).toBeInTheDocument());
@@ -184,6 +213,7 @@ it('renders bootstrap discovery data and preserves conversation context while na
 it('lists every persona and renders its Markdown', async () => {
   const getPersona = vi.fn(async () => personaDetailFixture);
   render(<App client={fixtureClient({ getPersona })} />);
+  await openSettingsNavigation();
   fireEvent.click(await screen.findByRole('button', { name: 'Personas' }));
 
   // The built-in Guest and the configured personas share the one catalog.
@@ -223,6 +253,7 @@ it('creates a named persona and adds it to the roster immediately', async () => 
     personaId === created.id ? created : personaDetailFixture
   ));
   render(<App client={fixtureClient({ createPersona, getPersona })} />);
+  await openSettingsNavigation();
   await user.click(await screen.findByRole('button', { name: 'Personas' }));
   await user.click(screen.getByRole('button', {
     name: 'New persona',
@@ -262,6 +293,7 @@ it('propagates a persona rename to the roster, forum details, and active chat', 
   await user.click(await screen.findByRole('button', { name: 'PlanningThe Lobby' }));
   await waitFor(() => expect(screen.getByLabelText('Current chat context'))
     .toHaveTextContent('From: Reader'));
+  await openSettingsNavigation();
   fireEvent.click(await screen.findByRole('button', { name: 'Personas' }));
   fireEvent.click(within(screen.getByLabelText('Personas navigation'))
     .getByRole('button', { name: /Reader/ }));
@@ -282,6 +314,7 @@ it('propagates a persona rename to the roster, forum details, and active chat', 
   expect(within(screen.getByLabelText('Personas navigation'))
     .getByRole('button', { name: /Редактор/ })).toBeInTheDocument();
 
+  await openSettingsNavigation();
   await user.click(screen.getByRole('button', { name: 'Forums' }));
   await user.click(screen.getByRole('button', { name: 'The LobbyGuide' }));
   await user.click(within(screen.getByLabelText('Forum sessions navigation'))
@@ -300,6 +333,7 @@ it('replaces persona Markdown from the compact file action', async () => {
     return detail;
   });
   const { container } = render(<App client={fixtureClient({ getPersona, updatePersona })} />);
+  await openSettingsNavigation();
   fireEvent.click(await screen.findByRole('button', { name: 'Personas' }));
   fireEvent.click(within(screen.getByLabelText('Personas navigation'))
     .getByRole('button', { name: /Reader/ }));
@@ -331,6 +365,7 @@ it('edits persona Markdown as pasted text and cancels without saving', async () 
     return detail;
   });
   render(<App client={fixtureClient({ getPersona, updatePersona })} />);
+  await openSettingsNavigation();
   await user.click(await screen.findByRole('button', { name: 'Personas' }));
   await user.click(within(screen.getByLabelText('Personas navigation'))
     .getByRole('button', { name: /Reader/ }));
@@ -368,6 +403,7 @@ it('deletes a persona from the skull action beside upload after confirmation', a
   const user = userEvent.setup();
   const deletePersona = vi.fn(async () => undefined);
   render(<App client={fixtureClient({ deletePersona })} />);
+  await openSettingsNavigation();
   await user.click(await screen.findByRole('button', { name: 'Personas' }));
   await user.click(within(screen.getByLabelText('Personas navigation'))
     .getByRole('button', { name: /Reader/ }));
@@ -391,6 +427,7 @@ it('deletes a persona from the skull action beside upload after confirmation', a
 it('reports a persona with no PERSONA.md rather than an empty screen', async () => {
   const getPersona = vi.fn(async () => ({ ...personaDetailFixture, persona_markdown: '' }));
   render(<App client={fixtureClient({ getPersona })} />);
+  await openSettingsNavigation();
   fireEvent.click(await screen.findByRole('button', { name: 'Personas' }));
   fireEvent.click(within(screen.getByLabelText('Personas navigation'))
     .getByRole('button', { name: /Reader/ }));
@@ -405,6 +442,7 @@ it('retries a failed persona-detail request without exposing implementation deta
     .mockRejectedValueOnce(new ChaError('command_timeout', 'The request timed out.'))
     .mockResolvedValueOnce(personaDetailFixture);
   render(<App client={fixtureClient({ getPersona })} />);
+  await openSettingsNavigation();
   fireEvent.click(await screen.findByRole('button', { name: 'Personas' }));
   fireEvent.click(within(screen.getByLabelText('Personas navigation'))
     .getByRole('button', { name: /Reader/ }));
@@ -420,6 +458,7 @@ it('opens the file list with settings before displaying a selected character fil
     filename, content: characterDetailFixture.editable_markdown, writable: true,
   }));
   render(<App client={fixtureClient({ getCharacterFile })} />);
+  await openSettingsNavigation();
   fireEvent.click(await screen.findByRole('button', { name: 'Characters' }));
   fireEvent.click(screen.getByRole('button', { name: /Guide/ }));
   const file = await screen.findByRole('button', { name: 'CHARACTER.md' });
@@ -452,6 +491,7 @@ it('loads a character editor from the unexpanded editable source', async () => {
     editable_markdown: '# Source\n\n$${character.display_name}',
   }));
   render(<App client={fixtureClient({ getCharacter })} />);
+  await openSettingsNavigation();
   await user.click(await screen.findByRole('button', { name: 'Characters' }));
   await user.click(screen.getByRole('button', { name: /Guide/ }));
   await user.click(await screen.findByRole('button', { name: 'CHARACTER.md' }));
@@ -477,6 +517,7 @@ it('saves the selected character file and returns to its list after deleting an 
   const deleteCharacter = vi.fn();
   render(<App client={fixtureClient({ getCharacter, getCharacterFile,
     updateCharacterFile, deleteCharacterFile, deleteCharacter })} />);
+  await openSettingsNavigation();
   await user.click(await screen.findByRole('button', { name: 'Characters' }));
   await user.click(screen.getByRole('button', { name: /Guide/ }));
   await user.click(await screen.findByRole('button', { name: 'NOTES.md' }));
@@ -506,6 +547,7 @@ it('adds a character file and opens the saved content', async () => {
   });
   const getCharacterFile = vi.fn(async (_id, filename) => ({ filename, content, writable: true }));
   render(<App client={fixtureClient({ createCharacterFile, getCharacterFile })} />);
+  await openSettingsNavigation();
   await user.click(await screen.findByRole('button', { name: 'Characters' }));
   await user.click(screen.getByRole('button', { name: /Guide/ }));
   await user.click(await screen.findByRole('button', { name: 'New file' }));
@@ -520,6 +562,7 @@ it('preserves the basename when adding content from a dotfile', async () => {
   const user = userEvent.setup();
   const createCharacterFile = vi.fn(async (_id, filename, content) => ({ filename, content, writable: true }));
   render(<App client={fixtureClient({ createCharacterFile })} />);
+  await openSettingsNavigation();
   await user.click(await screen.findByRole('button', { name: 'Characters' }));
   await user.click(screen.getByRole('button', { name: /Guide/ }));
   await user.click(await screen.findByRole('button', { name: 'New file' }));
@@ -540,6 +583,7 @@ it('keeps a character on screen and shows the server message when deletion is re
     );
   });
   render(<App client={fixtureClient({ deleteCharacter })} />);
+  await openSettingsNavigation();
   await user.click(await screen.findByRole('button', { name: 'Characters' }));
   await user.click(screen.getByRole('button', { name: /Guide/ }));
   await user.click(await screen.findByRole('button', { name: 'Delete Guide' }));
@@ -567,6 +611,7 @@ it('creates a providerless character draft and adds it to the roster immediately
     characterId === created.id ? created : characterDetailFixture
   ));
   render(<App client={fixtureClient({ createCharacter, getCharacter })} />);
+  await openSettingsNavigation();
   await user.click(await screen.findByRole('button', { name: 'Characters' }));
   await user.click(screen.getByRole('button', {
     name: 'New character',
@@ -604,6 +649,7 @@ it('renames a writable character in place and updates the roster immediately', a
     ...update,
   }));
   render(<App client={fixtureClient({ updateCharacterDefinition })} />);
+  await openSettingsNavigation();
   fireEvent.click(await screen.findByRole('button', { name: 'Characters' }));
   fireEvent.click(screen.getByRole('button', { name: /Guide/ }));
 
@@ -635,6 +681,7 @@ it('replaces only the selected character file from the detail upload action', as
   const { container } = render(<App client={fixtureClient({
     getCharacter, getCharacterFile, updateCharacterFile,
   })} />);
+  await openSettingsNavigation();
   fireEvent.click(await screen.findByRole('button', { name: 'Characters' }));
   fireEvent.click(screen.getByRole('button', { name: /Guide/ }));
   fireEvent.click(await screen.findByRole('button', { name: 'PROFILE.md' }));
@@ -656,6 +703,7 @@ it('retries a failed character-detail request without exposing implementation de
       character_markdown: '# Guide dossier',
     });
   render(<App client={fixtureClient({ getCharacter })} />);
+  await openSettingsNavigation();
   fireEvent.click(await screen.findByRole('button', { name: 'Characters' }));
   fireEvent.click(screen.getByRole('button', { name: /Guide/ }));
 
@@ -680,6 +728,7 @@ it('creates a forum with its selected persona and opens the new forum', async ()
   }));
   render(<App client={fixtureClient({ createForum, getForum: async () => detail })} />);
 
+  await openSettingsNavigation();
   await user.click(await screen.findByRole('button', { name: 'Forums' }));
   await user.click(screen.getByRole('button', {
     name: 'New forum',
@@ -702,6 +751,7 @@ it('prefers a forum’s configured description to its membership on the roster r
   const described = structuredClone(bootstrapFixture);
   described.forums[1].description = 'Where the big questions get argued out';
   render(<App client={fixtureClient({ getBootstrap: async () => described })} />);
+  await openSettingsNavigation();
   fireEvent.click(await screen.findByRole('button', { name: 'Forums' }));
 
   const forums = within(screen.getByLabelText('Forums navigation'));
@@ -715,6 +765,7 @@ it('opens the forum file list with members before displaying a selected file', a
   const getForum = vi.fn(async () => forumDetailFixture);
   const getForumFile = vi.fn(async (_id, filename) => ({ filename, content: forumDetailFixture.forum_markdown, writable: true }));
   render(<App client={fixtureClient({ getForum, getForumFile })} />);
+  await openSettingsNavigation();
   fireEvent.click(await screen.findByRole('button', { name: 'Forums' }));
   fireEvent.click(screen.getByRole('button', { name: 'The LobbyGuide' }));
   const sessions = within(screen.getByLabelText('Forum sessions navigation'));
@@ -743,6 +794,7 @@ it('deletes a forum and removes its sessions from navigation after confirmation'
   const user = userEvent.setup();
   const deleteForum = vi.fn(async () => undefined);
   render(<App client={fixtureClient({ deleteForum })} />);
+  await openSettingsNavigation();
   await user.click(await screen.findByRole('button', { name: 'Forums' }));
   await user.click(screen.getByRole('button', { name: 'The LobbyGuide' }));
   await user.click(within(screen.getByLabelText('Forum sessions navigation'))
@@ -767,6 +819,7 @@ it('renames a writable forum in place and updates its navigation immediately', a
     ...update,
   }));
   render(<App client={fixtureClient({ updateForum })} />);
+  await openSettingsNavigation();
   await user.click(await screen.findByRole('button', { name: 'Forums' }));
   await user.click(screen.getByRole('button', { name: 'The LobbyGuide' }));
   await user.click(within(screen.getByLabelText('Forum sessions navigation'))
@@ -813,6 +866,7 @@ it('edits a forum’s members and persona with one Save action', async () => {
     updateForumMembers,
   })} />);
 
+  await openSettingsNavigation();
   await user.click(await screen.findByRole('button', { name: 'Forums' }));
   await user.click(screen.getByRole('button', { name: 'The LobbyGuide' }));
   await user.click(within(screen.getByLabelText('Forum sessions navigation'))
@@ -861,6 +915,7 @@ it('saves the selected forum file and returns to its list after deleting an opti
   const deleteForum = vi.fn();
   render(<App client={fixtureClient({ getForum, getForumFile,
     updateForumFile, deleteForumFile, deleteForum })} />);
+  await openSettingsNavigation();
   await user.click(await screen.findByRole('button', { name: 'Forums' }));
   await user.click(screen.getByRole('button', { name: 'The LobbyGuide' }));
   await user.click(within(screen.getByLabelText('Forum sessions navigation'))
@@ -892,6 +947,7 @@ it('adds a forum file and opens the saved content', async () => {
   });
   const getForumFile = vi.fn(async (_id, filename) => ({ filename, content, writable: true }));
   render(<App client={fixtureClient({ createForumFile, getForumFile })} />);
+  await openSettingsNavigation();
   await user.click(await screen.findByRole('button', { name: 'Forums' }));
   await user.click(screen.getByRole('button', { name: 'The LobbyGuide' }));
   await user.click(within(screen.getByLabelText('Forum sessions navigation'))
@@ -912,6 +968,7 @@ it('replaces forum Markdown from the detail file action', async () => {
     return { filename, content, writable: true };
   });
   const { container } = render(<App client={fixtureClient({ getForumFile, updateForumFile })} />);
+  await openSettingsNavigation();
   fireEvent.click(await screen.findByRole('button', { name: 'Forums' }));
   fireEvent.click(screen.getByRole('button', { name: 'The LobbyGuide' }));
   fireEvent.click(within(screen.getByLabelText('Forum sessions navigation'))
@@ -937,6 +994,7 @@ it('replaces forum Markdown from the detail file action', async () => {
 it('reports an empty forum file rather than an empty screen', async () => {
   const getForum = vi.fn(async () => ({ ...forumDetailFixture, forum_markdown: '' }));
   render(<App client={fixtureClient({ getForum })} />);
+  await openSettingsNavigation();
   fireEvent.click(await screen.findByRole('button', { name: 'Forums' }));
   fireEvent.click(screen.getByRole('button', { name: 'The LobbyGuide' }));
   fireEvent.click(within(screen.getByLabelText('Forum sessions navigation'))
@@ -953,6 +1011,7 @@ it('retries a failed forum-detail request without exposing implementation detail
     .mockRejectedValueOnce(new ChaError('command_timeout', 'The request timed out.'))
     .mockResolvedValueOnce(forumDetailFixture);
   render(<App client={fixtureClient({ getForum })} />);
+  await openSettingsNavigation();
   fireEvent.click(await screen.findByRole('button', { name: 'Forums' }));
   fireEvent.click(screen.getByRole('button', { name: 'The LobbyGuide' }));
   fireEvent.click(within(screen.getByLabelText('Forum sessions navigation'))
@@ -966,6 +1025,7 @@ it('retries a failed forum-detail request without exposing implementation detail
 
 it('says a forum has no sessions rather than showing an empty panel', async () => {
   render(<App client={fixtureClient({ listSessions: async () => [] })} />);
+  await openSettingsNavigation();
   fireEvent.click(await screen.findByRole('button', { name: 'Forums' }));
   fireEvent.click(screen.getByRole('button', { name: 'The LobbyGuide' }));
 
@@ -975,6 +1035,7 @@ it('says a forum has no sessions rather than showing an empty panel', async () =
 
   // The built-in forum cannot be given new sessions, so it must explain itself
   // without pointing at an action that is not there.
+  await openSettingsNavigation();
   fireEvent.click(screen.getByRole('button', { name: 'Forums' }));
   fireEvent.click(screen.getByRole('button', { name: 'EntranceAssistant' }));
   expect(await screen.findByText('This forum has no sessions.')).toBeInTheDocument();
@@ -998,6 +1059,7 @@ it('lists sessions with compact time metadata and opens a stored session once', 
   });
   render(<App client={client} connectSessionEvents={inertSessionEvents} />);
 
+  await openSettingsNavigation();
   fireEvent.click(await screen.findByRole('button', { name: 'Forums' }));
   fireEvent.click(screen.getByRole('button', { name: 'The LobbyGuide' }));
   const session = await screen.findByRole('button', { name: 'Planning2h' });
@@ -1042,6 +1104,7 @@ it('trims a required name, creates then opens it, and refreshes Recent', async (
   });
   render(<App client={client} connectSessionEvents={connect} />);
 
+  await openSettingsNavigation();
   await user.click(await screen.findByRole('button', { name: 'Forums' }));
   await user.click(screen.getByRole('button', { name: 'The LobbyGuide' }));
   await user.click(await screen.findByRole('button', { name: 'New session' }));
@@ -1079,6 +1142,7 @@ it('transliterates Latin typing to Russian in a human-facing name field', async 
     connectSessionEvents={inertSessionEvents}
   />);
 
+  await openSettingsNavigation();
   await user.click(await screen.findByRole('button', { name: 'Forums' }));
   await user.click(screen.getByRole('button', { name: 'The LobbyGuide' }));
   await user.click(await screen.findByRole('button', { name: 'New session' }));
@@ -1112,6 +1176,7 @@ it('toggles Russian transliteration application-wide with Ctrl+Shift+Y', async (
     name: 'Latin to Russian transliteration',
   })).toHaveAttribute('aria-pressed', 'true'));
 
+  await openSettingsNavigation();
   await user.click(screen.getByRole('button', { name: 'Personas' }));
   await user.click(screen.getByRole('button', { name: 'New persona' }));
   const name = screen.getByRole('textbox', { name: 'Persona name' });
@@ -1158,6 +1223,7 @@ it('refreshes Recent and an open forum catalog after a sidebar rename', async ()
     connectSessionEvents={inertSessionEvents}
   />);
 
+  await openSettingsNavigation();
   await user.click(await screen.findByRole('button', { name: 'Forums' }));
   await user.click(screen.getByRole('button', { name: 'The LobbyGuide' }));
   expect(await within(screen.getByLabelText('Forum sessions navigation'))
@@ -1291,6 +1357,7 @@ it('refreshes Recent when a creation lands after the reader cancelled', async ()
   });
   render(<App client={client} connectSessionEvents={inertSessionEvents} />);
 
+  await openSettingsNavigation();
   await user.click(await screen.findByRole('button', { name: 'Forums' }));
   await user.click(screen.getByRole('button', { name: 'The LobbyGuide' }));
   await user.click(await screen.findByRole('button', { name: 'New session' }));
@@ -1300,6 +1367,7 @@ it('refreshes Recent when a creation lands after the reader cancelled', async ()
   const listedBeforeCancel = getBootstrap.mock.calls.length;
 
   expect(screen.getByRole('status')).toHaveTextContent('Creating session');
+  await openSettingsNavigation();
   await user.click(screen.getByRole('button', { name: 'Characters' }));
   expect(screen.getByLabelText('Characters navigation')).toBeInTheDocument();
   await act(async () => {
@@ -1713,6 +1781,7 @@ it('lets the sidebar navigate during an open, and that open never pulls the user
   await openPlanningFromTheLobby();
   await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Opening session'));
 
+  await openSettingsNavigation();
   const characters = screen.getByRole('button', { name: 'Characters' });
   expect(characters).toBeEnabled();
   fireEvent.click(characters);
@@ -1738,6 +1807,7 @@ it.each(['internal_error', 'session_open_timeout'] as const)(
   });
   render(<App client={client} connectSessionEvents={inertSessionEvents} />);
 
+  await openSettingsNavigation();
   await user.click(await screen.findByRole('button', { name: 'Forums' }));
   await user.click(screen.getByRole('button', { name: 'The LobbyGuide' }));
   await user.click(await screen.findByRole('button', { name: 'New session' }));
@@ -1748,6 +1818,7 @@ it.each(['internal_error', 'session_open_timeout'] as const)(
   expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
   expect(screen.getByRole('heading', { name: 'Session unavailable' })).toBeInTheDocument();
   expect(screen.queryByRole('textbox', { name: 'Session name' })).not.toBeInTheDocument();
+  await openSettingsNavigation();
   await user.click(screen.getByRole('button', { name: 'Forums' }));
   expect(screen.getByLabelText('Forums navigation')).toBeInTheDocument();
   expect(screen.queryByRole('alert')).not.toBeInTheDocument();
@@ -1764,6 +1835,7 @@ it('reports a failed open in chat and allows returning to the sessions list', as
 
   expect(await screen.findByRole('alert')).toHaveTextContent('still stopping');
   expect(screen.getByRole('heading', { name: 'Session unavailable' })).toBeInTheDocument();
+  await openSettingsNavigation();
   fireEvent.click(screen.getByRole('button', { name: 'Forums' }));
   fireEvent.click(screen.getByRole('button', { name: 'The LobbyGuide' }));
   expect(await within(screen.getByLabelText('Forum sessions navigation')).findByRole('button', { name: /^Planning/ })).toBeEnabled();
@@ -1783,6 +1855,7 @@ it('moves from a navigation screen to chat to report a Recent open failure', asy
   render(<App client={client} connectSessionEvents={inertSessionEvents} />);
   await screen.findByLabelText('Current chat context');
 
+  await openSettingsNavigation();
   fireEvent.click(screen.getByRole('button', { name: 'Characters' }));
   const recent = within(screen.getByLabelText('Recent sessions'));
   fireEvent.click(recent.getByRole('button', { name: /^Planning/ }));
@@ -1796,7 +1869,7 @@ it('moves from a navigation screen to chat to report a Recent open failure', asy
 it('shows an invalid session address reached from Settings and lets the reader leave', async () => {
   render(<App client={fixtureClient()} connectSessionEvents={inertSessionEvents} />);
   await screen.findByLabelText('Chat area');
-  fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+  fireEvent.click(within(screen.getByLabelText('Sidebar')).getByRole('button', { name: 'Settings' }));
   expect(await screen.findByRole('region', { name: 'Configuration' })).toBeInTheDocument();
 
   act(() => {
@@ -1805,23 +1878,30 @@ it('shows an invalid session address reached from Settings and lets the reader l
   });
   expect(await screen.findByRole('alert')).toHaveTextContent('This address does not identify a CHA session.');
   expect(screen.getByRole('heading', { name: 'Session unavailable' })).toBeInTheDocument();
+  await openSettingsNavigation();
   fireEvent.click(screen.getByRole('button', { name: 'Personas' }));
   expect(screen.getByLabelText('Personas navigation')).toBeInTheDocument();
   expect(screen.queryByRole('alert')).not.toBeInTheDocument();
 });
 
-it('offers New session for a stored forum but not for the built-in one', async () => {
+it('opens recent forums in Sessions and offers New session only for a stored forum', async () => {
   render(<App client={fixtureClient()} connectSessionEvents={inertSessionEvents} />);
 
-  fireEvent.click(await screen.findByRole('button', { name: 'Forums' }));
-  fireEvent.click(screen.getByRole('button', { name: 'The LobbyGuide' }));
+  const forums = within(screen.getByRole('navigation', { name: 'Recent forums' }));
+  const lobby = await forums.findByRole('button', { name: 'The Lobby' });
+  fireEvent.click(lobby);
   expect(await screen.findByRole('button', { name: 'New session' }))
     .toBeInTheDocument();
+  expect(lobby).toHaveAttribute('aria-current', 'page');
+  expect(within(screen.getByLabelText('Sidebar')).getByRole('button', { name: 'Settings' })).toHaveClass('is-current');
 
+  expect(forums.queryByRole('button', { name: 'Entrance' })).not.toBeInTheDocument();
+  await openSettingsNavigation();
   fireEvent.click(screen.getByRole('button', { name: 'Forums' }));
   fireEvent.click(screen.getByRole('button', { name: 'EntranceAssistant' }));
   await waitFor(() => expect(screen.getByRole('heading', { name: 'Sessions' })).toBeInTheDocument());
   expect(screen.queryByRole('button', { name: /New session/ })).not.toBeInTheDocument();
+  expect(lobby).not.toHaveAttribute('aria-current');
 });
 
 it('replaces a failed stream without reopening the session', async () => {
@@ -1907,9 +1987,9 @@ it('opens Settings from the gear, fetches OpenAI status, and keeps the conversat
 
   expect(screen.getByRole('combobox', { name: 'Choose message target' })).toBeDisabled();
   expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
-  expect(screen.getByRole('button', { name: 'Personas' })).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Personas' })).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'OpenAI' })).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+  fireEvent.click(within(screen.getByLabelText('Sidebar')).getByRole('button', { name: 'Settings' }));
   expect(await screen.findByRole('heading', { name: 'Settings' })).toBeInTheDocument();
   expect(screen.getByRole('heading', { name: 'OpenAI' })).toBeInTheDocument();
   expect(await screen.findByRole('button', { name: 'Connect ChatGPT' })).toBeEnabled();
@@ -1931,7 +2011,7 @@ it('does not let a late OpenAI status replace a view selected after Settings', a
       connectSessionEvents={inertSessionEvents}
     />,
   );
-  fireEvent.click(await screen.findByRole('button', { name: 'Settings' }));
+  fireEvent.click(await within(screen.getByLabelText('Sidebar')).findByRole('button', { name: 'Settings' }));
   expect(await screen.findByText('Loading ChatGPT connection…')).toBeInTheDocument();
 
   fireEvent.click(screen.getByRole('button', { name: 'Characters' }));
@@ -1949,6 +2029,7 @@ it('shows the settings row only after a writable character detail loads', async 
     finish = resolve;
   }));
   render(<App client={fixtureClient({ getCharacter })} />);
+  await openSettingsNavigation();
   fireEvent.click(await screen.findByRole('button', { name: 'Characters' }));
   fireEvent.click(screen.getByRole('button', { name: /Guide/ }));
 
@@ -1971,6 +2052,7 @@ it('omits the settings row for a character that is not writable', async () => {
       ...characterDetailFixture, settings_writable: false, writable: false,
     }),
   })} />);
+  await openSettingsNavigation();
   fireEvent.click(await screen.findByRole('button', { name: 'Characters' }));
   fireEvent.click(screen.getByRole('button', { name: /Guide/ }));
   expect(await screen.findByRole('button', { name: 'CHARACTER.md' })).toBeInTheDocument();
@@ -1996,6 +2078,7 @@ it('keeps a late character detail from lending its settings row to the next char
     });
   });
   render(<App client={fixtureClient({ getCharacter })} />);
+  await openSettingsNavigation();
   fireEvent.click(await screen.findByRole('button', { name: 'Characters' }));
 
   fireEvent.click(screen.getByRole('button', { name: /Guide/ }));
@@ -2037,6 +2120,7 @@ async function openGuideSettingsFromPlanning(
   await waitFor(() => expect(events.connections.some(({ key }) => key === 'lobby/planning')).toBe(true));
   const planning = events.connections.findIndex(({ key }) => key === 'lobby/planning');
   act(() => events.handlers[planning].onSnapshot(snapshot));
+  await openSettingsNavigation();
   fireEvent.click(screen.getByRole('button', { name: 'Characters' }));
   fireEvent.click(screen.getByRole('button', { name: /Guide/ }));
   fireEvent.click(await within(screen.getByLabelText('Character detail navigation'))
@@ -2134,6 +2218,7 @@ it('reopens from a native reload snapshot and retries until the old owner stops'
   await openPlanningFromTheLobby();
   await waitFor(() => expect(subscriptions()).toHaveLength(1));
   act(() => publish(lobbySnapshot(), 0));
+  await openSettingsNavigation();
   fireEvent.click(screen.getByRole('button', { name: 'Characters' }));
   act(() => publish({
     ...lobbySnapshot(), lifecycle: 'stopping', shutdown_reason: 'reloading',

@@ -28,6 +28,7 @@ import {
 } from '../textToSpeech';
 import { type AppAction, type AppState } from '../state/view';
 import { Markdown } from './Markdown';
+import { BackToSettings } from './Settings';
 import { DetailActions, EditableTitle } from './DetailActions';
 import { TransliteratingInput } from './TransliterationMode';
 import { voiceClasses } from './characterAppearance';
@@ -205,6 +206,7 @@ interface RosterDetailProps extends NavigationScreenProps {
 export function PersonasScreen({ state, dispatch }: NavigationScreenProps) {
   return (
     <section className="cha-screen cha-navigation" aria-label="Personas navigation">
+      <BackToSettings dispatch={dispatch} />
       <div className="cha-roster">
         <button
           className="cha-list-action"
@@ -363,6 +365,7 @@ export function PersonaDetailScreen({ state, dispatch, client }: RosterDetailPro
 export function CharactersScreen({ state, dispatch }: NavigationScreenProps) {
   return (
     <section className="cha-screen cha-navigation" aria-label="Characters navigation">
+      <BackToSettings dispatch={dispatch} />
       <div className="cha-roster">
         <button
           className="cha-list-action"
@@ -1238,6 +1241,7 @@ export function forumRosterDescription(forum: ForumSummary): string {
 export function ForumsScreen({ state, dispatch }: NavigationScreenProps) {
   return (
     <section className="cha-screen cha-navigation" aria-label="Forums navigation">
+      <BackToSettings dispatch={dispatch} />
       <div className="cha-roster">
         <button
           className="cha-list-action"

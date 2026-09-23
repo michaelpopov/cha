@@ -1,9 +1,9 @@
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
 import { ChaError } from '../api/client';
-import { appReducer, initialAppState } from '../state/view';
+import { appReducer, initialAppState, type AppAction, type AppState, type MainView } from '../state/view';
 import { bootstrapFixture } from '../test/fixtures';
 import { Sidebar } from './Sidebar';
 
@@ -13,6 +13,180 @@ function readyState() {
     bootstrap: bootstrapFixture,
   });
 }
+
+function renderSidebar(state: AppState = readyState()) {
+  const dispatch = vi.fn<(action: AppAction) => void>();
+  const onOpenSession = vi.fn(async () => true);
+  render(
+    <Sidebar
+      dispatch={dispatch}
+      onClearSessionAudioCache={vi.fn(async () => undefined)}
+      onDeleteSession={vi.fn(async () => undefined)}
+      onDownloadSession={vi.fn(async () => undefined)}
+      onOpenSession={onOpenSession}
+      onRenameSession={vi.fn(async () => undefined)}
+      onSwitchVault={vi.fn(async () => undefined)}
+      state={state}
+    />,
+  );
+  return { dispatch, onOpenSession };
+}
+
+describe('Sidebar navigation', () => {
+  it.each(['loading', 'failed', 'incompatible'] as const)(
+    'does not report empty lists when bootstrap is %s', (bootstrapStatus) => {
+      renderSidebar({ ...initialAppState, bootstrapStatus });
+      expect(screen.queryByText('No recent forums')).not.toBeInTheDocument();
+      expect(screen.queryByText('No recent sessions')).not.toBeInTheDocument();
+      expect(within(screen.getByRole('navigation', { name: 'Recent forums' }))
+        .queryAllByRole('button')).toHaveLength(0);
+      expect(within(screen.getByLabelText('Recent sessions'))
+        .queryAllByRole('button')).toHaveLength(0);
+    },
+  );
+
+  it('reports empty lists after bootstrap loads with no recent sessions', () => {
+    renderSidebar({
+      ...readyState(),
+      bootstrap: { ...bootstrapFixture, recent_sessions: [] },
+    });
+    expect(screen.getByText('No recent forums')).toBeInTheDocument();
+    expect(screen.getByText('No recent sessions')).toBeInTheDocument();
+  });
+
+  it('replaces configuration links with recent forums above recent sessions', async () => {
+    const { dispatch } = renderSidebar();
+    for (const name of ['Personas', 'Characters', 'Forums']) {
+      expect(screen.queryByRole('button', { name })).not.toBeInTheDocument();
+    }
+    const forums = screen.getByRole('navigation', { name: 'Recent forums' });
+    const sessions = screen.getByLabelText('Recent sessions');
+    expect(forums.compareDocumentPosition(sessions) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByText('Recent Forums')).toBeInTheDocument();
+    expect(screen.getByText('Recent Sessions')).toBeInTheDocument();
+    expect(screen.getByLabelText('Vault')).toHaveValue('Personal');
+    await userEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    expect(dispatch).toHaveBeenCalledWith({ type: 'show-settings' });
+  });
+
+  it('excludes Entrance and deduplicates other forums in first session occurrence order', async () => {
+    const [entrance, lobby] = bootstrapFixture.forums;
+    const [welcome, planning] = bootstrapFixture.recent_sessions;
+    const state = {
+      ...readyState(),
+      bootstrap: {
+        ...bootstrapFixture,
+        forums: [
+          entrance,
+          { ...lobby, id: 'studio', display_name: 'Studio' },
+          lobby,
+          { ...lobby, id: 'unused', display_name: 'Unused' },
+        ],
+        recent_sessions: [
+          welcome,
+          { ...planning, forum_id: 'missing', session_id: 'orphan' },
+          planning,
+          { ...planning, session_id: 'second', session_label: 'Second' },
+          { ...planning, forum_id: 'studio', session_id: 'draft', session_label: 'Draft' },
+          { ...welcome, session_id: 'third', session_label: 'Third' },
+        ],
+      },
+    };
+    const { dispatch } = renderSidebar(state);
+    const forums = within(screen.getByRole('navigation', { name: 'Recent forums' }));
+    expect(forums.getAllByRole('button').map((button) => button.textContent)).toEqual([
+      'The Lobby', 'Studio',
+    ]);
+    await userEvent.click(forums.getByRole('button', { name: 'The Lobby' }));
+    expect(dispatch).toHaveBeenCalledExactlyOnceWith({ type: 'select-forum', forumId: 'lobby' });
+    expect(appReducer(state, dispatch.mock.calls[0][0])).toMatchObject({
+      mainView: 'sessions', currentForumId: 'lobby',
+    });
+  });
+
+  it.each([
+    ['empty sessions', { ...readyState(), bootstrap: { ...bootstrapFixture, recent_sessions: [] } }],
+    ['only Entrance sessions', {
+      ...readyState(),
+      bootstrap: { ...bootstrapFixture, recent_sessions: [bootstrapFixture.recent_sessions[0]] },
+    }],
+    ['unresolved forums', { ...readyState(), bootstrap: { ...bootstrapFixture, forums: [] } }],
+  ] satisfies [string, AppState][])('handles %s without showing forum links', (_label, state) => {
+    renderSidebar(state);
+    const forums = within(screen.getByRole('navigation', { name: 'Recent forums' }));
+    expect(forums.queryAllByRole('button')).toHaveLength(0);
+    expect(forums.getByText('No recent forums')).toBeInTheDocument();
+  });
+
+  it('preserves recent session order, selection, and opening behavior', async () => {
+    const state = {
+      ...readyState(),
+      activeConversation: { forumId: 'lobby', sessionId: 'planning' },
+    };
+    const { onOpenSession } = renderSidebar(state);
+    const sessions = within(screen.getByLabelText('Recent sessions'));
+    const buttons = sessions.getAllByRole('button').filter((button) => !button.hasAttribute('aria-haspopup'));
+    expect(buttons.map((button) => button.textContent)).toEqual(['WelcomeEntrance', 'PlanningThe Lobby']);
+    expect(buttons[1]).toHaveAttribute('aria-current', 'page');
+    await userEvent.click(buttons[1]);
+    expect(onOpenSession).toHaveBeenCalledExactlyOnceWith('lobby', 'planning');
+  });
+
+  it.each([
+    'personas', 'new-persona', 'persona-detail', 'persona-settings',
+    'characters', 'new-character', 'character-detail', 'character-file',
+    'new-character-file', 'character-settings', 'forums', 'new-forum',
+    'sessions', 'forum-detail', 'forum-file', 'new-forum-file',
+    'forum-members', 'new-session', 'settings', 'settings-vaults',
+    'settings-provider', 'settings-style', 'settings-voice', 'settings-api-key',
+  ] satisfies MainView[])('keeps Settings current on %s', (mainView) => {
+    renderSidebar({ ...readyState(), mainView });
+    const settings = screen.getByRole('button', { name: 'Settings' });
+    expect(settings).toHaveClass('is-current');
+    expect(settings).toHaveAttribute('aria-current', 'page');
+  });
+
+  it.each([
+    'sessions', 'forum-detail', 'forum-members', 'forum-file', 'new-forum-file', 'new-session',
+  ] satisfies MainView[])('keeps only the selected recent forum current on %s', (mainView) => {
+    const lobby = bootstrapFixture.forums[1];
+    renderSidebar({
+      ...readyState(),
+      mainView,
+      currentForumId: 'lobby',
+      bootstrap: {
+        ...bootstrapFixture,
+        forums: [...bootstrapFixture.forums, { ...lobby, id: 'studio', display_name: 'Studio' }],
+        recent_sessions: [
+          ...bootstrapFixture.recent_sessions,
+          { ...bootstrapFixture.recent_sessions[1], forum_id: 'studio' },
+        ],
+      },
+    });
+    const forums = within(screen.getByRole('navigation', { name: 'Recent forums' }));
+    expect(forums.getByRole('button', { name: 'The Lobby' })).toHaveClass('is-current');
+    expect(forums.getByRole('button', { name: 'The Lobby' })).toHaveAttribute('aria-current', 'page');
+    expect(forums.getByRole('button', { name: 'Studio' })).not.toHaveClass('is-current');
+    expect(forums.getByRole('button', { name: 'Studio' })).not.toHaveAttribute('aria-current');
+  });
+
+  it.each([
+    'chat', 'forums', 'new-forum', 'settings', 'personas', 'characters',
+  ] satisfies MainView[])('does not highlight a recent forum on %s', (mainView) => {
+    renderSidebar({ ...readyState(), mainView, currentForumId: 'lobby' });
+    const forum = within(screen.getByRole('navigation', { name: 'Recent forums' }))
+      .getByRole('button', { name: 'The Lobby' });
+    expect(forum).not.toHaveClass('is-current');
+    expect(forum).not.toHaveAttribute('aria-current');
+  });
+
+  it('does not mark Settings current in chat', () => {
+    renderSidebar({ ...readyState(), mainView: 'chat' });
+    const settings = screen.getByRole('button', { name: 'Settings' });
+    expect(settings).not.toHaveClass('is-current');
+    expect(settings).not.toHaveAttribute('aria-current');
+  });
+});
 
 describe('Sidebar session actions', () => {
   it('reports a vault switch failure and restores the selector', async () => {
@@ -207,7 +381,7 @@ describe('Sidebar session actions', () => {
 
     await user.click(screen.getByLabelText('Actions for Planning'));
     expect(screen.getByRole('menu')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Forums' }));
+    await user.click(screen.getByRole('button', { name: 'Settings' }));
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();
   });
 

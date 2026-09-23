@@ -11,7 +11,7 @@ import { createPortal } from 'react-dom';
 
 import { ChaError, publicErrorMessage } from '../api/client';
 import type { AppAction, AppState, MainView } from '../state/view';
-import { CharacterIcon, ForumsIcon, MoreIcon, PersonasIcon, SettingsIcon } from './Icons';
+import { ForumsIcon, MoreIcon, SettingsIcon } from './Icons';
 import { TransliteratingInput } from './TransliterationMode';
 import { PasswordDialog } from './PasswordDialog';
 
@@ -43,13 +43,29 @@ interface DialogState extends SelectedSession {
   restoreFocus: HTMLElement | null;
 }
 
-const navigation = [
-  { action: 'show-personas' as const, views: ['personas', 'new-persona', 'persona-detail', 'persona-settings'] as MainView[], label: 'Personas', icon: PersonasIcon },
-  { action: 'show-characters' as const, views: ['characters', 'new-character', 'character-detail', 'character-file', 'new-character-file', 'character-settings'] as MainView[], label: 'Characters', icon: CharacterIcon },
-  { action: 'show-forums' as const, views: ['forums', 'new-forum', 'sessions', 'forum-detail', 'forum-file', 'new-forum-file', 'forum-members', 'new-session'] as MainView[], label: 'Forums', icon: ForumsIcon },
+const forumViews: MainView[] = [
+  'sessions',
+  'forum-detail',
+  'forum-file',
+  'new-forum-file',
+  'forum-members',
+  'new-session',
 ];
 
 const settingsViews: MainView[] = [
+  'personas',
+  'new-persona',
+  'persona-detail',
+  'persona-settings',
+  'characters',
+  'new-character',
+  'character-detail',
+  'character-file',
+  'new-character-file',
+  'character-settings',
+  'forums',
+  'new-forum',
+  ...forumViews,
   'settings',
   'settings-vaults',
   'settings-new-vault',
@@ -167,7 +183,13 @@ export function Sidebar({
   onSwitchVault,
 }: SidebarProps) {
   const forums = new Map(state.bootstrap?.forums.map((forum) => [forum.id, forum]));
-  const recents = state.bootstrap?.recent_sessions;
+  const recents = state.bootstrap?.recent_sessions ?? [];
+  const recentForums = [...new Set(recents.map((session) => session.forum_id))]
+    .flatMap((id) => {
+      if (id === state.bootstrap?.initial_forum_id) return [];
+      const forum = forums.get(id);
+      return forum ? [forum] : [];
+    });
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -246,66 +268,78 @@ export function Sidebar({
   return (
     <aside className="cha-sidebar" aria-label="Sidebar">
       <div className="cha-brand">cha</div>
-      <nav className="cha-sidebar-nav" aria-label="Primary">
-        {navigation.map(({ action, views, label, icon: NavigationIcon }) => (
-          <button
-            className={`cha-side-action ${views.includes(state.mainView) ? 'is-current' : ''}`}
-            disabled={state.bootstrapStatus !== 'ready'}
-            key={action}
-            onClick={() => dispatch({ type: action })}
-            type="button"
-          >
-            <NavigationIcon />
-            <span>{label}</span>
-          </button>
-        ))}
-      </nav>
-      <div className="cha-section-label">Recent</div>
-      <div className="cha-recents" aria-label="Recent sessions">
-        {recents?.length === 0 && <p className="cha-empty-list">No recent sessions</p>}
-        {recents?.map((session) => {
-          const current = state.activeConversation?.forumId === session.forum_id
-            && state.activeConversation.sessionId === session.session_id;
-          const mutable = session.forum_id !== state.bootstrap?.initial_forum_id
-            || session.session_id !== state.bootstrap?.initial_session_id;
-          const selected = {
-            forumId: session.forum_id,
-            sessionId: session.session_id,
-            label: session.session_label,
-          };
-          return (
-            <div
-              className={`cha-recent-row ${current ? 'is-current' : ''}`}
-              key={`${session.forum_id}/${session.session_id}`}
-              onContextMenu={mutable ? (event) => openMenu(event, selected, event.currentTarget) : undefined}
-            >
-              <button
-                aria-current={current ? 'page' : undefined}
-                className="cha-recent-open"
-                onClick={() => void onOpenSession(session.forum_id, session.session_id)}
-                type="button"
-              >
-                <span className="cha-primary-line">{session.session_label}</span>
-                <span className="cha-secondary-line">
-                  {forums.get(session.forum_id)?.display_name ?? session.forum_id}
-                </span>
-              </button>
-              {mutable && (
+      <div className="cha-sidebar-recent-sections">
+        <div className="cha-sidebar-recent-section">
+          <div className="cha-section-label">Recent Forums</div>
+          <nav className="cha-sidebar-nav" aria-label="Recent forums">
+            {state.bootstrap && recentForums.length === 0 && <p className="cha-empty-list">No recent forums</p>}
+            {recentForums.map((forum) => {
+              const current = forumViews.includes(state.mainView) && state.currentForumId === forum.id;
+              return (
                 <button
-                  aria-expanded={menu?.forumId === session.forum_id
-                    && menu.sessionId === session.session_id}
-                  aria-haspopup="menu"
-                  aria-label={`Actions for ${session.session_label}`}
-                  className="cha-recent-more"
-                  onClick={(event) => openMenu(event, selected, event.currentTarget)}
+                  aria-current={current ? 'page' : undefined}
+                  className={`cha-side-action ${current ? 'is-current' : ''}`}
+                  disabled={state.bootstrapStatus !== 'ready'}
+                  key={forum.id}
+                  onClick={() => dispatch({ type: 'select-forum', forumId: forum.id })}
                   type="button"
                 >
-                  <MoreIcon />
+                  <ForumsIcon />
+                  <span className="cha-primary-line">{forum.display_name}</span>
                 </button>
-              )}
-            </div>
-          );
-        })}
+              );
+            })}
+          </nav>
+        </div>
+        <div className="cha-sidebar-recent-section">
+          <div className="cha-section-label">Recent Sessions</div>
+          <div className="cha-recents" aria-label="Recent sessions">
+            {state.bootstrap && recents.length === 0 && <p className="cha-empty-list">No recent sessions</p>}
+            {recents.map((session) => {
+              const current = state.activeConversation?.forumId === session.forum_id
+                && state.activeConversation.sessionId === session.session_id;
+              const mutable = session.forum_id !== state.bootstrap?.initial_forum_id
+                || session.session_id !== state.bootstrap?.initial_session_id;
+              const selected = {
+                forumId: session.forum_id,
+                sessionId: session.session_id,
+                label: session.session_label,
+              };
+              return (
+                <div
+                  className={`cha-recent-row ${current ? 'is-current' : ''}`}
+                  key={`${session.forum_id}/${session.session_id}`}
+                  onContextMenu={mutable ? (event) => openMenu(event, selected, event.currentTarget) : undefined}
+                >
+                  <button
+                    aria-current={current ? 'page' : undefined}
+                    className="cha-recent-open"
+                    onClick={() => void onOpenSession(session.forum_id, session.session_id)}
+                    type="button"
+                  >
+                    <span className="cha-primary-line">{session.session_label}</span>
+                    <span className="cha-secondary-line">
+                      {forums.get(session.forum_id)?.display_name ?? session.forum_id}
+                    </span>
+                  </button>
+                  {mutable && (
+                    <button
+                      aria-expanded={menu?.forumId === session.forum_id
+                        && menu.sessionId === session.session_id}
+                      aria-haspopup="menu"
+                      aria-label={`Actions for ${session.session_label}`}
+                      className="cha-recent-more"
+                      onClick={(event) => openMenu(event, selected, event.currentTarget)}
+                      type="button"
+                    >
+                      <MoreIcon />
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
       </div>
       {actionError && <p className="cha-error-message" role="alert">{actionError}</p>}
       {vaultError && !vaultPrompt && <p className="cha-error-message" role="alert">{vaultError}</p>}

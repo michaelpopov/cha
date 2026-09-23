@@ -117,6 +117,7 @@ describe('live chat', () => {
     await attachInitial(events);
     expect(openSession).toHaveBeenCalledWith('entrance', 'welcome');
 
+    fireEvent.click(within(screen.getByLabelText('Sidebar')).getByRole('button', { name: 'Settings' }));
     fireEvent.click(screen.getByRole('button', { name: 'Forums' }));
     fireEvent.click(screen.getByRole('button', { name: 'The LobbyGuide' }));
     fireEvent.click(await screen.findByRole('button', { name: /^Planning/ }));
@@ -1350,6 +1351,7 @@ describe('live chat', () => {
       'entrance', 'welcome', { text: '/mcast @@Guide is part of the question' },
     );
 
+    fireEvent.click(within(screen.getByLabelText('Sidebar')).getByRole('button', { name: 'Settings' }));
     await user.click(screen.getByRole('button', { name: 'Forums' }));
     await user.click(screen.getByRole('button', { name: 'The LobbyGuide' }));
     const sessions = await screen.findByRole('region', { name: 'Forum sessions navigation' });
@@ -2108,6 +2110,8 @@ describe('live session capacity', () => {
       />,
     );
 
+    await waitFor(() => expect(within(screen.getByLabelText('Sidebar')).getByRole('button', { name: 'Settings' })).toBeEnabled());
+    fireEvent.click(within(screen.getByLabelText('Sidebar')).getByRole('button', { name: 'Settings' }));
     await user.click(await screen.findByRole('button', { name: 'Forums' }));
     await user.click(screen.getByRole('button', { name: 'The LobbyGuide' }));
     await user.click(await screen.findByRole('button', { name: /New session/ }));
