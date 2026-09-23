@@ -32,12 +32,12 @@ import {
   useTextToSpeechConfiguration,
 } from '../textToSpeech';
 import {
+  appendPreparedTranscription,
   appendTranscription,
-  unimplementedXaiBridge,
   VoiceInputSession,
-  xaiVoiceInputUnavailable,
   type VoiceInputConfiguration,
   type VoiceInputTransport,
+  type VoiceInputXaiBridge,
 } from '../voiceInput';
 import { ConfirmDialog } from './ConfirmDialog';
 import {
@@ -83,10 +83,18 @@ function voiceInputMessage(failure: unknown): string {
   if (failure instanceof DOMException && failure.name === 'NotAllowedError') {
     return 'Microphone access was denied. Allow it in System Settings and try again.';
   }
-  if (failure instanceof Error && failure.message === xaiVoiceInputUnavailable) {
-    return failure.message;
-  }
   return 'Voice input stopped because transcription failed. Try again.';
+}
+
+function xaiBridgeFromClient(client: ChaClient): VoiceInputXaiBridge {
+  return {
+    start: (sessionId, languages, signal) => client.startXaiVoiceInput(sessionId, languages, signal),
+    audio: (sessionId, pcmBase64, signal) => client.sendXaiVoiceAudio(sessionId, pcmBase64, signal),
+    stop: (sessionId, remainingMs, signal) => (
+      client.stopXaiVoiceInput(sessionId, remainingMs, signal)
+    ),
+    cancel: (sessionId) => client.cancelXaiVoiceInput(sessionId),
+  };
 }
 
 // How close to the end still counts as following the conversation. A few pixels
@@ -925,9 +933,10 @@ export function ChatScreen({
         (text) => {
           if (voiceInputAttempt.current !== attempt) return;
           if (!text) return;
-          updateDraft(receivedVoiceDelta
-            ? draftRef.current + text
-            : appendTranscription(draftRef.current, text));
+          const first = configuration.provider === 'xai'
+            ? appendPreparedTranscription(draftRef.current, text)
+            : appendTranscription(draftRef.current, text);
+          updateDraft(receivedVoiceDelta ? draftRef.current + text : first);
           receivedVoiceDelta = true;
         },
         (failure) => {
@@ -937,7 +946,7 @@ export function ChatScreen({
           setActionError(voiceInputMessage(failure));
         },
         client.connectVoiceInput,
-        unimplementedXaiBridge,
+        xaiBridgeFromClient(client),
         startup.signal,
       );
       if (voiceInputAttempt.current !== attempt) {

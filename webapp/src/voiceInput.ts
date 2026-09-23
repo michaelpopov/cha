@@ -1,6 +1,10 @@
 import { OpenAiVoiceInputSession } from './openAiVoiceInput';
+import { startXaiVoiceInput } from './xaiVoiceInput';
 
-export const xaiVoiceInputUnavailable = 'xAI voice input transport is not implemented';
+export {
+  appendPreparedTranscription,
+  appendTranscription,
+} from './dictationText';
 
 export interface VoiceInputConfiguration {
   provider: 'openai' | 'xai';
@@ -25,7 +29,6 @@ export interface VoiceInputXaiPieces {
   pieces: string[];
 }
 
-// Session 4 calls these methods. This session rejects xAI before using them.
 export interface VoiceInputXaiBridge {
   start(
     sessionId: string,
@@ -45,62 +48,6 @@ export interface VoiceInputXaiBridge {
   cancel(sessionId: string): Promise<void>;
 }
 
-function unavailableXaiCall(): Promise<never> {
-  return Promise.reject(new Error(xaiVoiceInputUnavailable));
-}
-
-export const unimplementedXaiBridge: VoiceInputXaiBridge = {
-  start: unavailableXaiCall,
-  audio: unavailableXaiCall,
-  stop: unavailableXaiCall,
-  cancel: unavailableXaiCall,
-};
-
-export function appendTranscription(current: string, transcription: string): string {
-  const addition = normalizeDictationCommands(transcription).trim();
-  if (!addition) return current;
-  if (!current || /\s$/.test(current) || /^[,.;:!?)}\]]/.test(addition)) {
-    return current + addition;
-  }
-  return `${current} ${addition}`;
-}
-
-const wordEdge = String.raw`[\p{L}\p{N}_]`;
-const punctuation = String.raw`[,.!?;:]`;
-
-const dictationCommands = [
-  {
-    phrase: 'exclamation (?:mark|point|sign)|восклицательный знак|знак восклицания',
-    replacement: '!',
-  },
-  {
-    phrase: 'question mark|вопросительный знак|знак вопроса',
-    replacement: '?',
-  },
-  { phrase: 'comma|запятая', replacement: ',' },
-  { phrase: 'period|full stop|точка', replacement: '.' },
-  { phrase: 'new line|новая строка|с новой строки', replacement: '\n' },
-].map(({ phrase, replacement }) => ({
-  pattern: new RegExp(
-    `(?:${punctuation}[ \\t]*)?[ \\t]*(?<!${wordEdge})(?:${phrase})`
-      + `(?!${wordEdge})(?:[ \\t]*${punctuation})?`,
-    'giu',
-  ),
-  replacement,
-}));
-
-function normalizeDictationCommands(transcription: string): string {
-  let result = transcription;
-  for (const command of dictationCommands) {
-    result = result.replace(command.pattern, (match, offset: number, source: string) => {
-      if (command.replacement === '\n') return '\n';
-      const next = source[offset + match.length];
-      return next && !/\s/.test(next) ? `${command.replacement} ` : command.replacement;
-    });
-  }
-  return result.replace(/[ \t]*\n[ \t]*/g, '\n');
-}
-
 export type VoiceInputConnect = (
   sdp: string,
   languages: string[],
@@ -109,12 +56,6 @@ export type VoiceInputConnect = (
 
 function hasMediaInput(): boolean {
   return typeof navigator.mediaDevices?.getUserMedia === 'function';
-}
-
-// Session 4 replaces this stub and calls xaiBridge. Do not route xAI through OpenAI.
-function startXaiVoiceInput(xaiBridge: VoiceInputXaiBridge): Promise<VoiceInputTransport> {
-  void xaiBridge;
-  return Promise.reject(new Error(xaiVoiceInputUnavailable));
 }
 
 export class VoiceInputSession {
@@ -136,7 +77,12 @@ export class VoiceInputSession {
     if (signal?.aborted) {
       throw new DOMException('The operation was aborted.', 'AbortError');
     }
-    if (configuration.provider === 'xai') return startXaiVoiceInput(xaiBridge);
+    if (configuration.provider === 'xai') {
+      if (!VoiceInputSession.supported('xai')) throw new Error('Voice input is unavailable.');
+      return startXaiVoiceInput(
+        configuration, onTranscription, onFailure, xaiBridge, signal,
+      );
+    }
     if (configuration.provider !== 'openai' || !VoiceInputSession.supported('openai')) {
       throw new Error('Voice input is unavailable.');
     }

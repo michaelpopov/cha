@@ -3,10 +3,16 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { OpenAiVoiceInputSession } from './openAiVoiceInput';
 import {
   appendTranscription,
-  unimplementedXaiBridge,
   VoiceInputSession,
-  xaiVoiceInputUnavailable,
+  type VoiceInputXaiBridge,
 } from './voiceInput';
+
+const unusedXaiBridge: VoiceInputXaiBridge = {
+  async start() { throw new Error('unused'); },
+  async audio() { throw new Error('unused'); },
+  async stop() { throw new Error('unused'); },
+  async cancel() {},
+};
 
 afterEach(() => {
   Reflect.deleteProperty(navigator, 'mediaDevices');
@@ -95,7 +101,7 @@ describe('voice input', () => {
       (text) => received.push(text),
       () => {},
       connect,
-      unimplementedXaiBridge,
+      unusedXaiBridge,
     );
 
     expect(connect).toHaveBeenCalledWith(
@@ -176,7 +182,7 @@ describe('voice input', () => {
       () => {},
       () => {},
       connect,
-      unimplementedXaiBridge,
+      unusedXaiBridge,
     );
     expect(fetcher).not.toHaveBeenCalled();
     expect(connect).toHaveBeenCalledOnce();
@@ -225,7 +231,7 @@ describe('voice input', () => {
       () => {},
       () => {},
       connect,
-      unimplementedXaiBridge,
+      unusedXaiBridge,
       controller.signal,
     );
     await vi.waitFor(() => expect(connect).toHaveBeenCalledOnce());
@@ -254,7 +260,7 @@ describe('voice input', () => {
     expect(VoiceInputSession.supported('xai')).toBe(false);
   });
 
-  it('rejects xAI before the OpenAI WebRTC session starts', async () => {
+  it('does not use the OpenAI WebRTC session when xAI capture is unavailable', async () => {
     const getUserMedia = vi.fn();
     Object.defineProperty(navigator, 'mediaDevices', {
       configurable: true,
@@ -264,8 +270,8 @@ describe('voice input', () => {
     vi.stubGlobal('RTCPeerConnection', class {
       constructor() { throw new Error('OpenAI WebRTC should not start'); }
     });
-    vi.stubGlobal('AudioContext', class {});
-    vi.stubGlobal('AudioWorkletNode', class {});
+    vi.stubGlobal('AudioContext', undefined);
+    vi.stubGlobal('AudioWorkletNode', undefined);
 
     await expect(VoiceInputSession.start(
       {
@@ -277,8 +283,8 @@ describe('voice input', () => {
       () => {},
       () => {},
       vi.fn(),
-      unimplementedXaiBridge,
-    )).rejects.toThrow(xaiVoiceInputUnavailable);
+      unusedXaiBridge,
+    )).rejects.toThrow('Voice input is unavailable.');
     expect(OpenAiStart).not.toHaveBeenCalled();
     expect(getUserMedia).not.toHaveBeenCalled();
   });
