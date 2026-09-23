@@ -63,7 +63,7 @@ export class VoiceInputSession {
 
   static async start(
     configuration: VoiceInputConfiguration,
-    onTranscription: (text: string) => void,
+    onTranscription: (text: string, provisional?: boolean) => void,
     onFailure: (failure: unknown) => void,
     nativeConnect: VoiceInputConnect,
     xaiBridge: VoiceInputXaiBridge,

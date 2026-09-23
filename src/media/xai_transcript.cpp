@@ -65,11 +65,50 @@ XaiTranscriptUpdate XaiTranscriptNormalizer::apply(const nlohmann::json& event) 
             || !event.contains("speech_final") || !event["speech_final"].is_boolean()) {
             throw XaiTranscriptError(std::string(xai_malformed_transcript));
         }
-        if (!event["is_final"].get<bool>()) return {};
+        if (!event["is_final"].get<bool>()) {
+            if (!event.contains("text") || !event["text"].is_string()) {
+                throw XaiTranscriptError(std::string(xai_malformed_transcript));
+            }
+            XaiTranscriptUpdate update;
+            update.interim = true;
+            update.preview = event["text"].get<std::string>();
+            const auto start = event.find("start");
+            const bool has_start = start != event.end() && start->is_number()
+                && std::isfinite(start->get<double>())
+                && start->get<double>() >= 0;
+            if (!utterance_committed_.empty()) {
+                if (!has_start) {
+                    update.preview.clear();
+                } else if (start->get<double>() < last_committed_end_
+                    && update.preview.starts_with(utterance_committed_)) {
+                    update.preview.erase(0, utterance_committed_.size());
+                } else if (start->get<double>() < last_committed_end_) {
+                    // A revised committed prefix cannot be aligned without word timings.
+                    update.preview.clear();
+                }
+            }
+            return update;
+        }
     }
     XaiTranscriptUpdate update;
     update.done = type == "transcript.done";
+    update.final = true;
     update.addition = consume_words(event);
+    if (type == "transcript.partial") {
+        if (event["speech_final"].get<bool>()) {
+            utterance_committed_.clear();
+        } else {
+            const std::string text = event.contains("text") && event["text"].is_string()
+                ? event["text"].get<std::string>()
+                : std::string(trim_view(update.addition));
+            if (text.starts_with(utterance_committed_)) {
+                utterance_committed_ = text;
+            } else if (!text.empty()) {
+                if (!utterance_committed_.empty()) utterance_committed_ += ' ';
+                utterance_committed_ += text;
+            }
+        }
+    }
     return update;
 }
 
@@ -161,7 +200,7 @@ std::string build_xai_stt_url(
     url += "?model=";
     url += escape(model);
     url += "&encoding=pcm&sample_rate=16000&channels=1";
-    url += "&interim_results=false&endpointing=400";
+    url += "&interim_results=true&endpointing=400";
     for (const std::string& language : languages) {
         if (language.empty()) continue;
         url += "&language=";

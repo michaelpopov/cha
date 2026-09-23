@@ -26,7 +26,10 @@ public:
 struct XaiTranscriptUpdate {
     bool created = false;
     bool done = false;
+    bool final = false;
+    bool interim = false;
     std::string addition;
+    std::string preview;
 };
 
 // One cursor for the connection. Words are selected by end time only.
@@ -39,6 +42,7 @@ private:
     [[nodiscard]] std::string consume_words(const nlohmann::json& event);
 
     double last_committed_end_ = -1;
+    std::string utterance_committed_;
     bool emitted_ = false;
     char last_char_ = '\0';
 };

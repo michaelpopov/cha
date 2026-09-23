@@ -57,11 +57,14 @@ TEST(XaiTranscript, ReplaysEveryFixture) {
     }
 }
 
-TEST(XaiTranscript, IgnoresInterimAndKeepsEqualEndTimes) {
+TEST(XaiTranscript, ExposesInterimWithoutCommittingItAndKeepsEqualEndTimes) {
     XaiTranscriptNormalizer normalizer;
     const auto interim = nlohmann::json::parse(
         R"({"type":"transcript.partial","is_final":false,"speech_final":false,"text":"maybe","words":[]})");
-    EXPECT_EQ(normalizer.apply(interim).addition, "");
+    const auto partial = normalizer.apply(interim);
+    EXPECT_TRUE(partial.interim);
+    EXPECT_EQ(partial.preview, "maybe");
+    EXPECT_EQ(partial.addition, "");
     EXPECT_DOUBLE_EQ(normalizer.last_committed_end(), -1);
 
     const auto same_end = nlohmann::json::parse(
@@ -74,6 +77,30 @@ TEST(XaiTranscript, IgnoresInterimAndKeepsEqualEndTimes) {
         R"({"type":"transcript.partial","is_final":true,"speech_final":false,"text":"Hi","words":[{"text":"Hi","start":1.0,"end":1.2}]})");
     EXPECT_EQ(normalizer.apply(again).addition, " Hi");
     EXPECT_NEAR(normalizer.last_committed_end(), 1.2, 1e-9);
+}
+
+TEST(XaiTranscript, KeepsOnlyUncommittedPreviewAndAcceptsNullFinalText) {
+    XaiTranscriptNormalizer normalizer;
+    const auto chunk = nlohmann::json::parse(
+        R"({"type":"transcript.partial","is_final":true,"speech_final":false,"text":"Hello","words":[{"text":"Hello","start":0.1,"end":0.4}]})");
+    EXPECT_EQ(normalizer.apply(chunk).addition, "Hello");
+
+    const auto interim = nlohmann::json::parse(
+        R"({"type":"transcript.partial","is_final":false,"speech_final":false,"start":0.1,"text":"Hello there","words":[]})");
+    EXPECT_EQ(normalizer.apply(interim).preview, " there");
+    auto revised = interim;
+    revised["text"] = "Hallo there";
+    EXPECT_EQ(normalizer.apply(revised).preview, "");
+    revised["start"] = 0.4;
+    EXPECT_EQ(normalizer.apply(revised).preview, "Hallo there");
+    revised["text"] = "Hello";
+    EXPECT_EQ(normalizer.apply(revised).preview, "Hello");
+    revised.erase("start");
+    EXPECT_EQ(normalizer.apply(revised).preview, "");
+
+    const auto null_text = nlohmann::json::parse(
+        R"({"type":"transcript.partial","is_final":true,"speech_final":false,"text":null,"words":[{"text":"world","start":0.5,"end":0.8}]})");
+    EXPECT_EQ(normalizer.apply(null_text).addition, " world");
 }
 
 TEST(XaiTranscript, RejectsMissingAndInvalidTimings) {
@@ -163,19 +190,19 @@ TEST(XaiRequest, BuildsTheFixedQueryAndOmitsAnEmptyLanguage) {
     EXPECT_EQ(
         english,
         base + "?model=grok-voice-transcribe-2.0&encoding=pcm&sample_rate=16000"
-            "&channels=1&interim_results=false&endpointing=400&language=en");
+            "&channels=1&interim_results=true&endpointing=400&language=en");
     EXPECT_EQ(
         build_xai_stt_url(base, "grok-voice-transcribe-2.0", {"ru"}),
         base + "?model=grok-voice-transcribe-2.0&encoding=pcm&sample_rate=16000"
-            "&channels=1&interim_results=false&endpointing=400&language=ru");
+            "&channels=1&interim_results=true&endpointing=400&language=ru");
     EXPECT_EQ(
         build_xai_stt_url(base, "grok-voice-transcribe-2.0", {}),
         base + "?model=grok-voice-transcribe-2.0&encoding=pcm&sample_rate=16000"
-            "&channels=1&interim_results=false&endpointing=400");
+            "&channels=1&interim_results=true&endpointing=400");
     EXPECT_EQ(
         build_xai_stt_url(base + "?dropped=1", "a b", {"", "ru"}),
         base + "?model=a%20b&encoding=pcm&sample_rate=16000&channels=1"
-            "&interim_results=false&endpointing=400&language=ru");
+            "&interim_results=true&endpointing=400&language=ru");
     EXPECT_EQ(english.find("secret"), std::string::npos);
 }
 

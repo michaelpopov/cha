@@ -462,7 +462,8 @@ export function isXaiVoicePieces(value: unknown): value is XaiVoicePieces {
     && typeof value.session_id === 'string'
     && value.session_id.length > 0
     && Array.isArray(value.pieces)
-    && value.pieces.every((piece) => typeof piece === 'string');
+    && value.pieces.every((piece) => typeof piece === 'string')
+    && (value.preview === undefined || typeof value.preview === 'string');
 }
 
 export function isNativeVoiceInputRuntime(value: unknown): value is NativeVoiceInputRuntime {

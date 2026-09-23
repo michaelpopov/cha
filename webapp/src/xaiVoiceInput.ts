@@ -50,6 +50,7 @@ class XaiVoiceInputSession implements VoiceInputTransport {
   private idle: (() => void) | null = null;
   private flushResolve: (() => void) | null = null;
   private lastCharacter = '';
+  private preview = '';
 
   constructor(
     private readonly sessionId: string,
@@ -57,7 +58,7 @@ class XaiVoiceInputSession implements VoiceInputTransport {
     private readonly stream: MediaStream,
     private readonly context: AudioContext,
     private readonly worklet: AudioWorkletNode,
-    private readonly onTranscription: (text: string) => void,
+    private readonly onTranscription: (text: string, provisional?: boolean) => void,
     private readonly onFailure: (failure: unknown) => void,
     private readonly xaiBridge: VoiceInputXaiBridge,
   ) {
@@ -94,6 +95,7 @@ class XaiVoiceInputSession implements VoiceInputTransport {
     this.captureStopped = true;
     this.release();
     void this.xaiBridge.cancel(this.sessionId).catch(() => undefined);
+    this.clearPreview();
     this.notifyIdle();
     this.flushResolve?.();
     this.flushResolve = null;
@@ -142,7 +144,7 @@ class XaiVoiceInputSession implements VoiceInputTransport {
       (reply) => {
         this.sending = false;
         if (!this.cancelled && !this.failed && reply.session_id === this.sessionId) {
-          this.deliver(reply.pieces);
+          this.deliver(reply.pieces, reply.preview ?? '');
         }
         this.sendNext();
         this.notifyIdle();
@@ -158,14 +160,29 @@ class XaiVoiceInputSession implements VoiceInputTransport {
     );
   }
 
-  private deliver(pieces: readonly string[]): void {
+  private clearPreview(): void {
+    if (!this.preview) return;
+    this.preview = '';
+    this.onTranscription('', true);
+  }
+
+  private deliver(pieces: readonly string[], rawPreview: string): void {
     if (this.cancelled || this.failed) return;
+    const incomingPreview = prepareDictationPiece(rawPreview, this.lastCharacter) ?? '';
+    if (this.preview && (this.preview !== incomingPreview || pieces.length > 0)) {
+      this.clearPreview();
+    }
     for (const piece of pieces) {
       if (this.cancelled) return;
       const text = prepareDictationPiece(piece, this.lastCharacter);
       if (!text) continue;
       this.lastCharacter = text[text.length - 1] ?? '';
       this.onTranscription(text);
+    }
+    const preview = prepareDictationPiece(rawPreview, this.lastCharacter) ?? '';
+    if (preview && preview !== this.preview) {
+      this.preview = preview;
+      this.onTranscription(preview, true);
     }
   }
 
@@ -206,7 +223,7 @@ class XaiVoiceInputSession implements VoiceInputTransport {
     }
     const reply = await this.xaiBridge.stop(this.sessionId, remaining, this.live.signal);
     if (this.cancelled || this.failed) return;
-    if (reply.session_id === this.sessionId) this.deliver(reply.pieces);
+    if (reply.session_id === this.sessionId) this.deliver(reply.pieces, reply.preview ?? '');
     await this.release();
   }
 
@@ -258,6 +275,7 @@ class XaiVoiceInputSession implements VoiceInputTransport {
     this.captureStopped = true;
     this.release();
     void this.xaiBridge.cancel(this.sessionId).catch(() => undefined);
+    this.clearPreview();
     this.notifyIdle();
     this.flushResolve?.();
     this.flushResolve = null;
@@ -283,7 +301,7 @@ class XaiVoiceInputSession implements VoiceInputTransport {
 
 export async function startXaiVoiceInput(
   configuration: VoiceInputConfiguration,
-  onTranscription: (text: string) => void,
+  onTranscription: (text: string, provisional?: boolean) => void,
   onFailure: (failure: unknown) => void,
   xaiBridge: VoiceInputXaiBridge,
   signal?: AbortSignal,

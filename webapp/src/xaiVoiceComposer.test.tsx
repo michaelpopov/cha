@@ -170,6 +170,107 @@ async function dictate(piecesForAudio: string[][], stopPieces: string[] = []) {
 }
 
 describe('xAI composer', () => {
+  it('shows interim words and replaces them when xAI revises the transcript', async () => {
+    installCapture();
+    const replies = [
+      { pieces: [], preview: 'I want to build a' },
+      { pieces: [], preview: 'I want to make an app' },
+      { pieces: ['I want to make an app.'], preview: '' },
+    ];
+    const client = fixtureClient({
+      getVoiceInputRuntime: async () => runtime,
+      sendXaiVoiceAudio: async (sessionId) => ({
+        session_id: sessionId, ...replies.shift()!,
+      }),
+    });
+    renderChat(client);
+    const input = screen.getByRole('textbox', { name: 'Message' });
+    fireEvent.change(input, { target: { value: 'Draft' } });
+    fireEvent.click(await screen.findByRole('button', { name: 'Start voice input' }));
+    await screen.findByRole('button', { name: 'Stop voice input' });
+
+    FakeWorklet.latest?.emit(Int16Array.from([1]));
+    await waitFor(() => expect(input).toHaveValue('Draft I want to build a'));
+    FakeWorklet.latest?.emit(Int16Array.from([2]));
+    await waitFor(() => expect(input).toHaveValue('Draft I want to make an app'));
+    FakeWorklet.latest?.emit(Int16Array.from([3]));
+    await waitFor(() => expect(input).toHaveValue('Draft I want to make an app.'));
+  });
+
+  it('keeps edits before the preview without duplicating dictated words', async () => {
+    installCapture();
+    const replies = [
+      { pieces: [], preview: 'I want to build a' },
+      { pieces: [], preview: 'I want to build a small app' },
+      { pieces: ['I want to build a small app.'], preview: '' },
+    ];
+    renderChat(fixtureClient({
+      getVoiceInputRuntime: async () => runtime,
+      sendXaiVoiceAudio: async (sessionId) => ({
+        session_id: sessionId, ...replies.shift()!,
+      }),
+    }));
+    const input = screen.getByRole('textbox', { name: 'Message' });
+    fireEvent.change(input, { target: { value: 'Helo' } });
+    fireEvent.click(await screen.findByRole('button', { name: 'Start voice input' }));
+    await screen.findByRole('button', { name: 'Stop voice input' });
+
+    FakeWorklet.latest?.emit(Int16Array.from([1]));
+    await waitFor(() => expect(input).toHaveValue('Helo I want to build a'));
+    fireEvent.change(input, { target: { value: 'Hello I want to build a' } });
+    FakeWorklet.latest?.emit(Int16Array.from([2]));
+    await waitFor(() => expect(input).toHaveValue('Hello I want to build a small app'));
+    FakeWorklet.latest?.emit(Int16Array.from([3]));
+    await waitFor(() => expect(input).toHaveValue('Hello I want to build a small app.'));
+  });
+
+  it('removes unconfirmed preview text when the vault changes', async () => {
+    installCapture();
+    const view = renderChat(fixtureClient({
+      getVoiceInputRuntime: async () => runtime,
+      sendXaiVoiceAudio: async (sessionId) => ({
+        session_id: sessionId, pieces: [], preview: 'maybe wrong',
+      }),
+    }));
+    const input = screen.getByRole('textbox', { name: 'Message' });
+    fireEvent.change(input, { target: { value: 'Draft' } });
+    fireEvent.click(await screen.findByRole('button', { name: 'Start voice input' }));
+    await screen.findByRole('button', { name: 'Stop voice input' });
+    FakeWorklet.latest?.emit(Int16Array.from([1]));
+    await waitFor(() => expect(input).toHaveValue('Draft maybe wrong'));
+
+    view.rerenderVault('Projects');
+    await waitFor(() => expect(input).toHaveValue('Draft'));
+    expect(screen.getByRole('button', { name: 'Start voice input' })).toBeEnabled();
+  });
+
+  it('removes unconfirmed preview text when transcription fails', async () => {
+    installCapture();
+    let calls = 0;
+    renderChat(fixtureClient({
+      getVoiceInputRuntime: async () => runtime,
+      sendXaiVoiceAudio: async (sessionId) => {
+        calls += 1;
+        if (calls === 1) {
+          return { session_id: sessionId, pieces: [], preview: 'maybe wrong' };
+        }
+        throw new Error('native bridge failed');
+      },
+    }));
+    const input = screen.getByRole('textbox', { name: 'Message' });
+    fireEvent.change(input, { target: { value: 'Draft' } });
+    fireEvent.click(await screen.findByRole('button', { name: 'Start voice input' }));
+    await screen.findByRole('button', { name: 'Stop voice input' });
+    FakeWorklet.latest?.emit(Int16Array.from([1]));
+    await waitFor(() => expect(input).toHaveValue('Draft maybe wrong'));
+    FakeWorklet.latest?.emit(Int16Array.from([2]));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Voice input stopped because transcription failed. Try again.',
+    );
+    expect(input).toHaveValue('Draft');
+  });
+
   it('appends finalized pieces, newlines, and a stop reply to the draft', async () => {
     const harness = await dictate([['Hello', ' new line']], [' world']);
     FakeWorklet.latest?.emit(Int16Array.from([1]));

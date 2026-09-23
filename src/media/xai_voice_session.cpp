@@ -67,10 +67,12 @@ SessionKey key_for(std::string_view connection_id, std::string_view session_id) 
 
 nlohmann::json pieces_json(
     std::string_view session_id,
-    std::vector<std::string> pieces) {
+    std::vector<std::string> pieces,
+    std::string_view preview) {
     nlohmann::json values = nlohmann::json::array();
     for (std::string& piece : pieces) values.push_back(std::move(piece));
-    return {{"session_id", session_id}, {"pieces", std::move(values)}};
+    return {{"session_id", session_id}, {"pieces", std::move(values)},
+            {"preview", preview}};
 }
 
 } // namespace
@@ -126,6 +128,7 @@ void run_worker(
     std::atomic_bool& job_cancel) {
     XaiTranscriptNormalizer normalizer;
     std::vector<std::string> pieces;
+    std::string preview;
     std::size_t pending_bytes = 0;
     bool audio_done_sent = false;
     bool got_done = false;
@@ -139,6 +142,7 @@ void run_worker(
         failed = true;
         log_warn(message);
         pieces.clear();
+        preview.clear();
         pending_bytes = 0;
         std::shared_ptr<app::OperationReply> start_reply;
         std::shared_ptr<app::OperationReply> audio_reply;
@@ -198,6 +202,8 @@ void run_worker(
             throw XaiTranscriptError(std::string(xai_malformed_transcript));
         }
         XaiTranscriptUpdate update = normalizer.apply(event);
+        if (update.interim) preview = std::move(update.preview);
+        else if (update.final) preview.clear();
         append_addition(std::move(update.addition));
         if (update.done) {
             if (!audio_done_sent) {
@@ -281,6 +287,7 @@ void run_worker(
                     stopping);
                 drain();
                 auto delivered = pieces;
+                const std::string delivered_preview = preview;
                 pieces.clear();
                 pending_bytes = 0;
                 {
@@ -290,7 +297,8 @@ void run_worker(
                     session->audio.reset();
                 }
                 if (audio_reply && !audio_reply->complete(
-                        pieces_json(session->session_id, std::move(delivered)))) {
+                        pieces_json(session->session_id, std::move(delivered),
+                                    delivered_preview))) {
                     session->cancel.store(true);
                     throw XaiVoiceFailure(
                         ErrorCode::operation_cancelled,
@@ -339,7 +347,7 @@ void run_worker(
         finish(session, std::nullopt);
         if (stop_reply) {
             (void)stop_reply->complete(
-                pieces_json(session->session_id, std::move(pieces)));
+                pieces_json(session->session_id, std::move(pieces), preview));
         }
     } catch (const XaiVoiceFailure& error) {
         // A bridge deadline cancels the worker. Report it as a timeout.
@@ -541,7 +549,7 @@ std::shared_ptr<app::OperationReply> XaiVoiceSessions::stop(
         const auto found = impl_->slots.find(key_for(connection_id, session_id));
         if (found == impl_->slots.end()
             || found->second.kind == Impl::Slot::Kind::tombstone) {
-            reply->complete(pieces_json(session_id, {}));
+            reply->complete(pieces_json(session_id, {}, {}));
             return reply;
         }
         if (found->second.kind == Impl::Slot::Kind::terminal) {
@@ -562,7 +570,7 @@ std::shared_ptr<app::OperationReply> XaiVoiceSessions::stop(
             return reply;
         }
         if (session->stop || session->finished) {
-            reply->complete(pieces_json(session_id, {}));
+            reply->complete(pieces_json(session_id, {}, {}));
             return reply;
         }
         if (!session->ready || session->cancel.load()) {

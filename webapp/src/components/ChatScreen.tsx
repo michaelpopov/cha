@@ -482,11 +482,11 @@ export function ChatScreen({
 
   // A recording belongs to the conversation in which it started.
   useEffect(() => () => {
+    voiceInputSession.current?.cancel();
+    voiceInputSession.current = null;
     voiceInputAttempt.current += 1;
     voiceInputStartup.current?.abort();
     voiceInputStartup.current = null;
-    voiceInputSession.current?.cancel();
-    voiceInputSession.current = null;
     setVoiceInputState('idle');
   }, [conversationKey, sessionAvailable, state.bootstrap?.vault_name]);
 
@@ -904,6 +904,7 @@ export function ChatScreen({
     const startup = new AbortController();
     voiceInputStartup.current = startup;
     let receivedVoiceDelta = false;
+    let voicePreview = '';
     setVoiceInputState('starting');
     setActionError(null);
     let runtime: NativeVoiceInputRuntime | null;
@@ -934,8 +935,21 @@ export function ChatScreen({
     try {
       session = await VoiceInputSession.start(
         configuration,
-        (text) => {
+        (text, provisional) => {
           if (voiceInputAttempt.current !== attempt) return;
+          if (provisional) {
+            const current = draftRef.current;
+            const at = voicePreview ? current.lastIndexOf(voicePreview) : -1;
+            const base = at < 0 ? current
+              : current.slice(0, at) + current.slice(at + voicePreview.length);
+            voicePreview = '';
+            if (base !== current || text) {
+              const next = appendPreparedTranscription(base, text);
+              voicePreview = next.slice(base.length);
+              updateDraft(next);
+            }
+            return;
+          }
           if (!text) return;
           updateDraft(receivedVoiceDelta
             ? draftRef.current + text

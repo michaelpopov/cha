@@ -311,6 +311,7 @@ export interface components {
         XaiVoicePieces: {
             session_id: string;
             pieces: string[];
+            preview?: string;
         };
         VoiceOutputSettings: {
             url: string;

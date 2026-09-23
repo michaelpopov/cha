@@ -277,7 +277,7 @@ TEST(XaiVoice, KeepsTheKeyOnTheNativeSocketAndFormatsTheRequest) {
     EXPECT_EQ(script->url.find("xai-secret"), std::string::npos);
     EXPECT_EQ(script->url.find("dropped"), std::string::npos);
     EXPECT_NE(script->url.find("language=en"), std::string::npos);
-    EXPECT_NE(script->url.find("interim_results=false"), std::string::npos);
+    EXPECT_NE(script->url.find("interim_results=true"), std::string::npos);
     owned.application->cancel_xai_voice_input("view-1", "dictation-1", epoch);
     wait_closed(*script);
 }
@@ -299,22 +299,32 @@ TEST(XaiVoice, DeliversSeparatePiecesAndSendsAudioBeforeDone) {
         "view-1", 2, "dictation-1", "AAE=", epoch, 30000ms);
     const auto first_result = wait_reply(first);
     EXPECT_EQ(first_result["pieces"], nlohmann::json::array({"Hello", " again"}));
+    EXPECT_EQ(first_result["preview"], "");
 
     push_event(*script, nlohmann::json{
         {"type", "transcript.partial"},
         {"is_final", false},
         {"speech_final", false},
-        {"text", "mutable"},
+        {"start", 0.1},
+        {"text", "Hello again more"},
         {"words", nlohmann::json::array()},
     });
-    push_event(*script, final_event("Hello", 1.0, 1.4));
     const auto second = owned.application->send_xai_voice_audio(
         "view-1", 3, "dictation-1", xai_fake_base64(std::vector<unsigned char>(3200, 1)),
         epoch, 30000ms);
-    EXPECT_EQ(wait_reply(second)["pieces"], nlohmann::json::array({" Hello"}));
+    const auto second_result = wait_reply(second);
+    EXPECT_EQ(second_result["pieces"], nlohmann::json::array());
+    EXPECT_EQ(second_result["preview"], " more");
+
+    push_event(*script, final_event("Hello", 1.0, 1.4));
+    const auto third = owned.application->send_xai_voice_audio(
+        "view-1", 4, "dictation-1", "AAE=", epoch, 30000ms);
+    const auto third_result = wait_reply(third);
+    EXPECT_EQ(third_result["pieces"], nlohmann::json::array({" Hello"}));
+    EXPECT_EQ(third_result["preview"], "");
 
     const auto stopped = owned.application->stop_xai_voice_input(
-        "view-1", 4, "dictation-1", 20000, epoch, 30000ms);
+        "view-1", 5, "dictation-1", 20000, epoch, 30000ms);
     {
         std::unique_lock lock(script->mu);
         ASSERT_TRUE(script->cv.wait_for(lock, 2s, [&] {
@@ -326,9 +336,11 @@ TEST(XaiVoice, DeliversSeparatePiecesAndSendsAudioBeforeDone) {
     });
     const auto stop_result = wait_reply(stopped);
     EXPECT_EQ(stop_result["pieces"], nlohmann::json::array());
-    ASSERT_EQ(script->binary.size(), 2U);
+    EXPECT_EQ(stop_result["preview"], "");
+    ASSERT_EQ(script->binary.size(), 3U);
     EXPECT_EQ(script->binary[0], std::vector<unsigned char>({0, 1}));
     EXPECT_EQ(script->binary[1].size(), 3200U);
+    EXPECT_EQ(script->binary[2], std::vector<unsigned char>({0, 1}));
     ASSERT_EQ(script->text.size(), 1U);
     EXPECT_EQ(script->text[0], "{\"type\":\"audio.done\"}");
 }

@@ -727,6 +727,8 @@ components:
           type: array
           items:
             type: string
+        preview:
+          type: string
 
     VoiceOutputSettings:
       type: object
