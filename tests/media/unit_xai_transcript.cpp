@@ -111,6 +111,51 @@ TEST(XaiTranscript, RejectsMissingAndInvalidTimings) {
     EXPECT_EQ(update.addition, "");
 }
 
+// Constructed events. They are not rows from the recorded fixtures.
+TEST(XaiTranscript, SyntheticEdges) {
+    XaiTranscriptNormalizer equal_ends;
+    const auto same_end = nlohmann::json::parse(
+        R"({"type":"transcript.partial","is_final":true,"speech_final":false,"text":"Hi,","words":[{"text":"Hi","start":0.1,"end":0.2},{"text":",","start":0.2,"end":0.2}]})");
+    EXPECT_EQ(equal_ends.apply(same_end).addition, "Hi,");
+    EXPECT_EQ(equal_ends.apply(same_end).addition, "");
+    EXPECT_NEAR(equal_ends.last_committed_end(), 0.2, 1e-9);
+
+    XaiTranscriptNormalizer missing_times;
+    const auto untimed = nlohmann::json::parse(
+        R"({"type":"transcript.partial","is_final":true,"speech_final":true,"text":"Hello"})");
+    try {
+        (void)missing_times.apply(untimed);
+        FAIL() << "a nonempty final without words must fail";
+    } catch (const XaiTranscriptError& error) {
+        EXPECT_EQ(error.what(), std::string(xai_missing_word_timings));
+    }
+    EXPECT_DOUBLE_EQ(missing_times.last_committed_end(), -1);
+    const auto untimed_done = nlohmann::json::parse(
+        R"({"type":"transcript.done","text":"Hello","words":[]})");
+    EXPECT_THROW((void)missing_times.apply(untimed_done), XaiTranscriptError);
+    const auto bad_time = nlohmann::json::parse(
+        R"({"type":"transcript.partial","is_final":true,"speech_final":true,"text":"A","words":[{"text":"A","start":0.4,"end":0.2}]})");
+    EXPECT_THROW((void)missing_times.apply(bad_time), XaiTranscriptError);
+    EXPECT_DOUBLE_EQ(missing_times.last_committed_end(), -1);
+
+    XaiTranscriptNormalizer done_words;
+    const auto earlier = nlohmann::json::parse(
+        R"({"type":"transcript.partial","is_final":true,"speech_final":false,"text":"Hi","words":[{"text":"Hi","start":0.0,"end":0.2}]})");
+    EXPECT_EQ(done_words.apply(earlier).addition, "Hi");
+    const auto done = nlohmann::json::parse(
+        R"({"type":"transcript.done","text":"Hi there","words":[{"text":"Hi","start":0.0,"end":0.2},{"text":"there","start":0.2,"end":0.4}]})");
+    const auto update = done_words.apply(done);
+    EXPECT_TRUE(update.done);
+    EXPECT_EQ(update.addition, " there");
+    EXPECT_NEAR(done_words.last_committed_end(), 0.4, 1e-9);
+
+    XaiTranscriptNormalizer done_only;
+    const auto first_done = done_only.apply(nlohmann::json::parse(
+        R"({"type":"transcript.done","text":"Hi there","words":[{"text":"Hi","start":0.0,"end":0.2},{"text":"there","start":0.2,"end":0.4}]})"));
+    EXPECT_TRUE(first_done.done);
+    EXPECT_EQ(first_done.addition, "Hi there");
+}
+
 TEST(XaiRequest, BuildsTheFixedQueryAndOmitsAnEmptyLanguage) {
     const std::string base = "ws://127.0.0.1:9/v1/stt";
     const std::string english = build_xai_stt_url(

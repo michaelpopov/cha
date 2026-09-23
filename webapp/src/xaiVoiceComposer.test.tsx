@@ -300,4 +300,40 @@ describe('xAI composer', () => {
     expect(stopTrack).toHaveBeenCalled();
     expect(FakeContext.latest?.closed).toBe(true);
   });
+
+  it('starts a new dictation after failure and does not replay audio', async () => {
+    installCapture();
+    const audio: string[] = [];
+    let cancels = 0;
+    const client = fixtureClient({
+      getVoiceInputRuntime: async () => runtime,
+      sendXaiVoiceAudio: async (sessionId, pcm) => {
+        audio.push(pcm);
+        if (audio.length === 1) throw new Error('native bridge failed');
+        return { session_id: sessionId, pieces: ['Second'] };
+      },
+      cancelXaiVoiceInput: async () => { cancels += 1; },
+    });
+    renderChat(client);
+    const input = screen.getByRole('textbox', { name: 'Message' });
+    fireEvent.click(await screen.findByRole('button', { name: 'Start voice input' }));
+    await screen.findByRole('button', { name: 'Stop voice input' });
+    FakeWorklet.latest?.emit(Int16Array.from([1]));
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Voice input stopped because transcription failed. Try again.',
+    );
+    expect(input).toHaveValue('');
+    expect(audio).toHaveLength(1);
+    expect(cancels).toBe(1);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start voice input' }));
+    await screen.findByRole('button', { name: 'Stop voice input' });
+    expect(audio).toHaveLength(1);
+    FakeWorklet.latest?.emit(Int16Array.from([2, 3]));
+    await waitFor(() => expect(input).toHaveValue('Second'));
+    expect(audio).toHaveLength(2);
+    expect(audio[1]).not.toBe(audio[0]);
+    expect(cancels).toBe(1);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
 });

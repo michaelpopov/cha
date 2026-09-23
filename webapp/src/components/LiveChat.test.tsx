@@ -1496,6 +1496,50 @@ describe('live chat', () => {
     });
   });
 
+  it('uses a fresh OpenAI read after a cached xAI configuration', async () => {
+    vi.spyOn(VoiceInputSession, 'supported').mockReturnValue(true);
+    const voiceSession = {
+      stop: vi.fn(async () => {}),
+      cancel: vi.fn(),
+    } as unknown as VoiceInputTransport;
+    const startVoiceInput = vi.spyOn(VoiceInputSession, 'start')
+      .mockResolvedValue(voiceSession);
+    let calls = 0;
+    const events = drivableEvents();
+    render(<App client={fixtureClient({
+      getVoiceInputRuntime: async () => {
+        calls += 1;
+        if (calls === 1) {
+          return {
+            provider: 'xai',
+            url: 'wss://api.x.ai/v1/stt',
+            model: 'cached-xai',
+            delay: 'low',
+            prompt: 'cached',
+          };
+        }
+        return {
+          provider: 'openai',
+          url: 'https://api.openai.com/v1/realtime/calls',
+          model: 'gpt-live-transcribe',
+          delay: 'medium',
+          prompt: 'fresh openai',
+        };
+      },
+    })} connectSessionEvents={events.connect} />);
+    await attachInitial(events);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start voice input' }));
+    await waitFor(() => expect(startVoiceInput).toHaveBeenCalledOnce());
+    expect(startVoiceInput.mock.calls[0]?.[0]).toMatchObject({
+      provider: 'openai',
+      model: 'gpt-live-transcribe',
+      delay: 'medium',
+      prompt: 'fresh openai',
+      languages: ['en'],
+    });
+  });
+
   it('does not start dictation from the cached provider when the fresh read fails', async () => {
     vi.spyOn(VoiceInputSession, 'supported').mockReturnValue(true);
     const startVoiceInput = vi.spyOn(VoiceInputSession, 'start');

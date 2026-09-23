@@ -166,9 +166,8 @@ password, which is not retained.
 
 The combined workspace is validated before commit. Validation failure keeps
 the old configuration and live sessions; success closes live sessions and
-refreshes the interface for the new application context. If voice endpoint
-origins change or cannot be read, select Reload when offered to apply the merged
-voice settings. A failed voice-settings or discovery refresh does not undo the merge. Identical
+refreshes the interface for the new application context. A failed
+voice-settings or discovery refresh does not undo the merge. Identical
 configuration and already synchronized forums require no destination write.
 Failure to restore or publish the workspace, or synchronize forums after
 commit, makes the application unavailable and requires a restart. Mirror rebuild failures are
@@ -280,6 +279,8 @@ workspace/
     │   └── chatgpt/config.toml               # OAuth subscription provider
     ├── styles/
     │   └── serif-bold/config.toml
+    ├── voice-input/
+    │   └── config.toml                       # optional transcription settings
     ├── voice-output/
     │   └── config.toml                       # optional FishAudio output settings
     └── voices/
@@ -930,6 +931,37 @@ Personas can also select `voice` in `persona.toml` or their Settings screen for
 human-message playback. An unassigned character or persona uses the configured
 default voice. Changing a voice affects future synthesis; an already cached
 clip keeps its original voice until the session's audio cache is cleared.
+
+### Voice input
+
+Voice input is a separate file, `system/voice-input/config.toml`. Saving it
+does not read or write voice output. A file with no `provider` field loads as
+OpenAI. The application writes `provider` on every save. There is no migration.
+
+```toml
+provider = "openai"  # openai | xai; omit to load as openai
+url = "https://api.openai.com/v1/realtime/calls"
+model = "gpt-live-transcribe"
+api_key = "openai"   # saved API-key ID, not the secret
+delay = "low"        # low | medium | high | xhigh; used by OpenAI only
+prompt = ""
+```
+
+Use `provider = "xai"`, `url = "wss://api.x.ai/v1/stt"`, and
+`model = "grok-voice-transcribe-2.0"` for xAI. OpenAI accepts an absolute
+`http://` or `https://` URL. xAI accepts an absolute `ws://` or `wss://` URL.
+Each provider rejects the other scheme. An invalid `delay` on an xAI file
+becomes `low`, and the warning does not include the old value. xAI does not
+send `delay` or `prompt`.
+
+OpenAI dictation uses the browser WebRTC session and a native HTTPS call.
+xAI dictation captures microphone audio in the page and sends it through the
+native WebSocket client. The API key stays in native code. xAI keeps one
+word-time cursor for the dictation and appends a word only when its end time
+is later than that cursor. A final event that has text and no word timings
+fails with `xAI returned a transcript without word timings.` A curl build
+without the `ws` and `wss` protocols rejects xAI at startup and leaves OpenAI
+usable. The macOS build uses bundled curl 8.14.1, which includes `wss`.
 
 ### Stored audio and background downloads
 

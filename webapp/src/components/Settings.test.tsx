@@ -1562,6 +1562,32 @@ describe('Settings screens', () => {
     expect(await screen.findByText('Voice input saved.')).toBeInTheDocument();
     expect(screen.getByLabelText('Input URL endpoint')).toHaveValue('ws://127.0.0.1:9/v1/stt');
     expect(screen.getByRole('button', { name: 'Save voice output' })).toBeDisabled();
+
+    await userEvent.selectOptions(screen.getByLabelText('Input provider'), 'openai');
+    await userEvent.selectOptions(screen.getByLabelText('Input API key name'), 'xai-key');
+    await userEvent.clear(screen.getByLabelText('Input URL endpoint'));
+    await userEvent.type(screen.getByLabelText('Input URL endpoint'), 'http://bad host/v1');
+    await userEvent.click(screen.getByRole('button', { name: 'Save voice input' }));
+    expect(screen.getByText(
+      'OpenAI voice input requires an absolute HTTP or HTTPS URL',
+    )).toBeInTheDocument();
+    expect(saveVoiceInputSettings).toHaveBeenCalledOnce();
+
+    await userEvent.clear(screen.getByLabelText('Input URL endpoint'));
+    await userEvent.type(
+      screen.getByLabelText('Input URL endpoint'),
+      'http://127.0.0.1:9/v1/realtime/calls',
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Save voice input' }));
+    expect(saveVoiceInputSettings).toHaveBeenLastCalledWith({
+      provider: 'openai',
+      url: 'http://127.0.0.1:9/v1/realtime/calls',
+      model: 'gpt-live-transcribe',
+      api_key: 'xai-key',
+      delay: 'low',
+      prompt: '',
+    });
+    expect(saveVoiceOutputSettings).not.toHaveBeenCalled();
   });
 
   it('registers a voice and opens its editor', async () => {

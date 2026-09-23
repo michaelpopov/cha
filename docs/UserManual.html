@@ -966,10 +966,9 @@
         </p>
         <p>
           A successful merge closes live sessions and refreshes the available
-          settings. If CHA offers <strong>Reload</strong>, select it to apply
-          the merged voice settings. A validation error leaves the previous
-          configuration and live sessions in place. If an error says a restart
-          is required, restart CHA before continuing.
+          settings. A validation error leaves the previous configuration and
+          live sessions in place. If an error says a restart is required,
+          restart CHA before continuing.
         </p>
 
         <h3>Download another vault from R2</h3>
@@ -999,6 +998,33 @@
         <p>
           ElevenLabs output is no longer supported. Replace old output settings
           and voice IDs with FishAudio values.
+        </p>
+        <h3>Configure voice input</h3>
+        <p>
+          Voice input is separate from speech output. Open
+          <strong>Settings → Voices → Voice settings</strong>, choose
+          <strong>OpenAI</strong> or <strong>xAI</strong>, and select a saved
+          API key by name. Save that key under <strong>Settings → API
+          Keys</strong> first. You can save voice input when voice output is
+          not configured and no voices are registered.
+        </p>
+        <p>
+          OpenAI starts at
+          <code>https://api.openai.com/v1/realtime/calls</code> with model
+          <code>gpt-live-transcribe</code>. Delay and prompt apply only to
+          OpenAI. xAI starts at <code>wss://api.x.ai/v1/stt</code> with model
+          <code>grok-voice-transcribe-2.0</code>. Changing the provider fills
+          that provider's endpoint and model and clears the selected API key.
+          Delay and prompt remain saved and reappear when you choose OpenAI
+          again.
+        </p>
+        <p>
+          Dictation adds finished text to the message. During a long xAI
+          utterance, the first finished words can take about 27 seconds. You
+          can keep speaking, typing, and scrolling while you wait. A command
+          such as “new line”, “новая строка”, “comma”, or “точка” is applied
+          when the whole command arrives in one finished piece. A command that
+          arrives split across two pieces stays as ordinary words.
         </p>
         <h3>Configure a model connection</h3>
         <p>
