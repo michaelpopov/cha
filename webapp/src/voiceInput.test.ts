@@ -1,6 +1,7 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { OpenAiVoiceInputSession } from './openAiVoiceInput';
+import { beginSpeechPlayback } from './speechPlayback';
 import {
   appendTranscription,
   VoiceInputSession,
@@ -14,7 +15,122 @@ const unusedXaiBridge: VoiceInputXaiBridge = {
   async cancel() {},
 };
 
-afterEach(() => {
+function installRealtimeCapture() {
+  const track = { kind: 'audio', enabled: true, stop: vi.fn() };
+  const sender = { replaceTrack: vi.fn(async (_track: unknown) => {}) };
+  Object.defineProperty(navigator, 'mediaDevices', {
+    configurable: true,
+    value: { getUserMedia: vi.fn(async () => ({
+      getAudioTracks: () => [track], getTracks: () => [track],
+    })) },
+  });
+  const channel = Object.assign(new EventTarget(), {
+    readyState: 'open', send: vi.fn(), close: vi.fn(),
+  });
+  class FakePeerConnection extends EventTarget {
+    connectionState = 'new';
+    addTrack() { return sender; }
+    createDataChannel() { return channel; }
+    async createOffer() { return { type: 'offer', sdp: 'offer' }; }
+    async setLocalDescription() {}
+    async setRemoteDescription() { channel.dispatchEvent(new Event('open')); }
+    close() { this.connectionState = 'closed'; }
+  }
+  vi.stubGlobal('RTCPeerConnection', FakePeerConnection);
+  const failure = vi.fn();
+  const connect = vi.fn(async () => 'answer');
+  const start = () => VoiceInputSession.start(
+    { provider: 'openai', model: 'gpt-4o-transcribe', delay: 'low', prompt: '' },
+    vi.fn(), failure, connect, unusedXaiBridge,
+  );
+  return { track, sender, failure, connect, start };
+}
+
+describe('OpenAI microphone during speech playback', () => {
+  beforeEach(() => { vi.useFakeTimers(); });
+  it('mutes immediately, detaches the sender, and restores it on the same connection', async () => {
+    const { track, sender, connect, start } = installRealtimeCapture();
+    const session = await start();
+    const endPlayback = beginSpeechPlayback();
+    try {
+      expect(track.enabled).toBe(false);
+      await vi.waitFor(() => expect(sender.replaceTrack).toHaveBeenCalledWith(null));
+      endPlayback();
+      await vi.advanceTimersByTimeAsync(400);
+      expect(track.enabled).toBe(true);
+      await vi.waitFor(() => expect(sender.replaceTrack).toHaveBeenLastCalledWith(track));
+      expect(connect).toHaveBeenCalledOnce();
+      expect(track.stop).not.toHaveBeenCalled();
+    } finally {
+      session.cancel();
+      endPlayback();
+    }
+  });
+
+  it('starts muted during playback and stays stopped if cancelled before playback ends', async () => {
+    const { track, sender, start } = installRealtimeCapture();
+    const endPlayback = beginSpeechPlayback();
+    try {
+      const session = await start();
+      expect(track.enabled).toBe(false);
+      await vi.waitFor(() => expect(sender.replaceTrack).toHaveBeenCalledWith(null));
+      session.cancel();
+      endPlayback();
+      await vi.advanceTimersByTimeAsync(400);
+      expect(track.enabled).toBe(false);
+      expect(track.stop).toHaveBeenCalled();
+      expect(sender.replaceTrack).toHaveBeenCalledTimes(1);
+    } finally {
+      endPlayback();
+    }
+  });
+
+  it('keeps input muted between back-to-back clips without reattaching the track', async () => {
+    const { track, sender, start } = installRealtimeCapture();
+    const session = await start();
+    let detached!: () => void;
+    sender.replaceTrack.mockImplementationOnce(() => new Promise((resolve) => { detached = resolve; }));
+    const firstEnded = beginSpeechPlayback();
+    let secondEnded = () => {};
+    try {
+      await vi.waitFor(() => expect(detached).toBeDefined());
+      firstEnded();
+      secondEnded = beginSpeechPlayback();
+      expect(track.enabled).toBe(false);
+      detached();
+      await vi.advanceTimersByTimeAsync(400);
+      expect(sender.replaceTrack.mock.calls.map(([value]) => value)).toEqual([null]);
+      expect(track.enabled).toBe(false);
+      secondEnded();
+      await vi.advanceTimersByTimeAsync(400);
+      await vi.waitFor(() => expect(sender.replaceTrack).toHaveBeenLastCalledWith(track));
+    } finally {
+      session.cancel();
+      firstEnded();
+      secondEnded();
+    }
+  });
+
+  it('releases capture if WebRTC cannot pause sending', async () => {
+    const { track, sender, failure, start } = installRealtimeCapture();
+    const session = await start();
+    sender.replaceTrack.mockRejectedValueOnce(new Error('Cannot detach'));
+    const endPlayback = beginSpeechPlayback();
+    try {
+      await vi.waitFor(() => expect(failure).toHaveBeenCalledOnce());
+      expect(track.stop).toHaveBeenCalled();
+      endPlayback();
+      await vi.advanceTimersByTimeAsync(400);
+      expect(track.enabled).toBe(false);
+    } finally {
+      session.cancel();
+      endPlayback();
+    }
+  });
+});
+
+afterEach(async () => {
+  if (vi.isFakeTimers()) await vi.advanceTimersByTimeAsync(400);
   Reflect.deleteProperty(navigator, 'mediaDevices');
   vi.useRealTimers();
   vi.unstubAllGlobals();

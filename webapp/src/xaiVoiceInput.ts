@@ -1,5 +1,6 @@
 import { ChaError } from './api/client';
 import { prepareDictationPiece } from './dictationText';
+import { onSpeechPlaybackChange } from './speechPlayback';
 import captureUrl from './voiceInputCapture.worklet.js?url&no-inline';
 import type {
   VoiceInputConfiguration,
@@ -51,6 +52,8 @@ class XaiVoiceInputSession implements VoiceInputTransport {
   private flushResolve: (() => void) | null = null;
   private lastCharacter = '';
   private preview = '';
+  private paused = false;
+  private readonly unsubscribePlayback: () => void;
 
   constructor(
     private readonly sessionId: string,
@@ -68,6 +71,13 @@ class XaiVoiceInputSession implements VoiceInputTransport {
       track.addEventListener('ended', this.onCaptureFailure);
     }
     this.worklet.port.start();
+    this.unsubscribePlayback = onSpeechPlaybackChange((playing) => this.setPaused(playing));
+  }
+
+  private setPaused(paused: boolean): void {
+    if (this.captureStopped || this.paused === paused) return;
+    this.paused = paused;
+    for (const track of this.stream.getAudioTracks()) track.enabled = !paused;
   }
 
   attachMicrophone(): void {
@@ -111,7 +121,7 @@ class XaiVoiceInputSession implements VoiceInputTransport {
       return;
     }
     if (data.type !== 'batch' && data.type !== 'flush-batch') return;
-    if (this.captureStopped || this.cancelled || this.failed) return;
+    if (this.captureStopped || this.cancelled || this.failed || this.paused) return;
     if (!('samples' in data) || !(data.samples instanceof Int16Array) || data.samples.length === 0) {
       return;
     }
@@ -136,6 +146,7 @@ class XaiVoiceInputSession implements VoiceInputTransport {
   }
 
   private sendNext(): void {
+    // These batches were accepted before playback; finish sending the user's speech.
     if (this.sending || this.pending.length === 0 || this.cancelled || this.failed) return;
     const samples = this.pending.shift();
     if (!samples) return;
@@ -284,6 +295,7 @@ class XaiVoiceInputSession implements VoiceInputTransport {
 
   private release(): Promise<void> {
     if (this.releasePromise) return this.releasePromise;
+    this.unsubscribePlayback();
     this.captureStopped = true;
     this.worklet.port.removeEventListener('message', this.onWorkletMessage);
     this.worklet.removeEventListener('processorerror', this.onCaptureFailure);

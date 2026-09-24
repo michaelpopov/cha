@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 
 import type { ChaClient, VoiceUpdate } from './api/client';
+import { beginSpeechPlayback } from './speechPlayback';
 
 export function nativeSpeechFromClient(client: ChaClient): NativeSpeech {
   return {
@@ -145,6 +146,8 @@ export class TextToSpeechSession {
   private objectUrl: string | null = null;
   private stopped = false;
   private nativeResourceId: string | null = null;
+  private endPlayback: (() => void) | null = null;
+  private playbackWaitTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(
     _configuration: TextToSpeechConfiguration | null,
@@ -188,13 +191,41 @@ export class TextToSpeechSession {
       this.onDispose?.();
       return;
     }
-    await this.createAudio(this.objectUrl).play();
+    await this.startAudio(this.createAudio(this.objectUrl));
+  }
+
+  private async startAudio(audio: HTMLAudioElement): Promise<void> {
+    if (this.stopped) return;
+    // Mute input before play(), so the first spoken samples cannot enter dictation.
+    this.endPlayback ??= beginSpeechPlayback();
+    try {
+      await audio.play();
+    } catch (error) {
+      this.stop();
+      throw error;
+    }
   }
 
   private createAudio(url: string): HTMLAudioElement {
     const audio = new Audio(url);
     this.audio = audio;
     audio.addEventListener('ended', () => this.finish(true), { once: true });
+    audio.addEventListener('pause', () => {
+      // Media controls can pause the clip without ending it or advancing the queue.
+      this.clearPlaybackWait();
+      this.releaseInput();
+    });
+    audio.addEventListener('play', () => {
+      if (!this.stopped) this.endPlayback ??= beginSpeechPlayback();
+    });
+    audio.addEventListener('playing', () => this.clearPlaybackWait());
+    audio.addEventListener('waiting', () => {
+      if (this.stopped || audio.paused || this.playbackWaitTimer !== undefined) return;
+      this.playbackWaitTimer = setTimeout(() => {
+        this.options?.onError?.(new TextToSpeechError('Audio playback stalled. Try again.'));
+        this.finish();
+      }, 10_000);
+    });
     audio.addEventListener('error', () => {
       if (this.stopped) return;
       this.options?.onError?.(new TextToSpeechError('Audio could not be played.'));
@@ -226,7 +257,7 @@ export class TextToSpeechSession {
       if (this.stopped) return;
       this.onCached?.();
       this.objectUrl = URL.createObjectURL(new Blob(parts, { type: first.value.type }));
-      await this.createAudio(this.objectUrl).play();
+      await this.startAudio(this.createAudio(this.objectUrl));
       return;
     }
     const source = new MediaSource();
@@ -256,18 +287,19 @@ export class TextToSpeechSession {
     await new Promise<void>((resolve, reject) => {
       let started = false;
       void transfer.catch((error: unknown) => {
-        if (!started) { reject(error); return; }
+        if (!started) { this.stop(); reject(error); return; }
         if (this.stopped) return;
         this.options?.onError?.(error instanceof Error ? error : new TextToSpeechError('Audio generation failed.'));
         this.finish(true);
       });
-      void audio.play().then(() => { started = true; resolve(); }, reject);
+      void this.startAudio(audio).then(() => { started = true; resolve(); }, reject);
     });
   }
 
   stop(resetPosition = false): void {
     if (this.stopped) return;
     this.stopped = true;
+    this.clearPlaybackWait();
     this.request.abort();
     this.audio?.pause();
     if (this.playback && this.audio) {
@@ -279,6 +311,7 @@ export class TextToSpeechSession {
     this.audio?.removeAttribute('src');
     this.audio?.load();
     this.audio = null;
+    this.releaseInput();
     this.releaseObjectUrl();
     this.releaseNative();
     this.onDispose?.();
@@ -288,6 +321,17 @@ export class TextToSpeechSession {
     const id = this.nativeResourceId;
     this.nativeResourceId = null;
     if (id && this.nativeSpeech) void this.nativeSpeech.release(id);
+  }
+
+  private releaseInput(): void {
+    this.endPlayback?.();
+    this.endPlayback = null;
+  }
+
+  private clearPlaybackWait(): void {
+    if (this.playbackWaitTimer === undefined) return;
+    clearTimeout(this.playbackWaitTimer);
+    this.playbackWaitTimer = undefined;
   }
 
   private finish(completed = false): void {

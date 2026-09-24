@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ChaClient } from './api/client';
 import { ChatScreen } from './components/ChatScreen';
 import { initialAppState } from './state/view';
+import { TextToSpeechSession } from './textToSpeech';
 import { bootstrapFixture, fixtureClient, snapshotFixture } from './test/fixtures';
 
 class FakePort extends EventTarget {
@@ -171,6 +172,49 @@ async function dictate(piecesForAudio: string[][], stopPieces: string[] = [], se
 }
 
 describe('xAI composer', () => {
+  it.each(['before', 'during'])('blocks echo when dictation starts %s playback and resumes afterward', async (when) => {
+    installCapture();
+    const audio = Object.assign(new EventTarget(), {
+      readyState: 1, currentTime: 0, duration: 30,
+      play: vi.fn(async () => {}), pause: vi.fn(), removeAttribute: vi.fn(), load: vi.fn(),
+    });
+    vi.stubGlobal('Audio', vi.fn(function Audio() { return audio; }));
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:audio');
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('audio'));
+    const sendAudio = vi.fn(async (sessionId: string) => ({ session_id: sessionId, pieces: ['User speech'] }));
+    const client = fixtureClient({
+      getVoiceInputRuntime: async () => runtime,
+      sendXaiVoiceAudio: sendAudio,
+    });
+    const view = renderChat(client);
+    const input = screen.getByRole('textbox', { name: 'Message' });
+    fireEvent.change(input, { target: { value: 'Draft.' } });
+    const startDictation = async () => {
+      fireEvent.click(await screen.findByRole('button', { name: 'Start voice input' }));
+      await screen.findByRole('button', { name: 'Stop voice input' });
+    };
+    const playback = new TextToSpeechSession(null, undefined, '', vi.fn(), undefined, '/media/r1');
+    try {
+      if (when === 'before') await startDictation();
+      await playback.play();
+      if (when === 'during') await startDictation();
+      FakeWorklet.latest!.emit(new Int16Array(1600));
+      expect(sendAudio).not.toHaveBeenCalled();
+      expect(input).toHaveValue('Draft.');
+      expect(screen.getByRole('button', { name: 'Stop voice input' })).toHaveAttribute('aria-pressed', 'true');
+      audio.dispatchEvent(new Event('ended'));
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 450)); });
+      FakeWorklet.latest!.emit(Int16Array.from([1]));
+      await waitFor(() => expect(input).toHaveValue('Draft. User speech'));
+      expect(sendAudio).toHaveBeenCalledOnce();
+      expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalledOnce();
+    } finally {
+      playback.stop();
+      view.unmount();
+    }
+  });
+
   it('uses the configured send phrase instead of the default', async () => {
     const harness = await dictate([
       ['Check the logs, over to you'],

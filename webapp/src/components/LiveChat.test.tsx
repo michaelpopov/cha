@@ -930,6 +930,13 @@ describe('live chat', () => {
     expect(resolveAudioSource.mock.calls.map((call) => call[2])).toEqual([3]);
     act(() => events.handlers[0].onSnapshot({ ...completed, transcript: [...completed.transcript] }));
     expect(audios).toHaveLength(1);
+    // A media-key pause must keep the current reply instead of advancing autoplay.
+    await act(async () => { audios[0].dispatchEvent(new Event('pause')); });
+    expect(audios).toHaveLength(1);
+    expect(audios[0].pause).not.toHaveBeenCalled();
+    expect(resolveAudioSource.mock.calls.map((call) => call[2])).toEqual([3]);
+    await act(async () => { audios[0].dispatchEvent(new Event('play')); });
+    expect(audios).toHaveLength(1);
     act(() => audios[0].dispatchEvent(new Event('ended')));
     await waitFor(() => expect(audios).toHaveLength(2));
     expect(audios[0].pause).toHaveBeenCalledOnce();

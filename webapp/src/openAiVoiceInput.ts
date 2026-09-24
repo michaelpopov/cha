@@ -1,3 +1,4 @@
+import { onSpeechPlaybackChange } from './speechPlayback';
 import type {
   VoiceInputConfiguration,
   VoiceInputConnect,
@@ -33,11 +34,15 @@ export class OpenAiVoiceInputSession {
   private cancelled = false;
   private transcriptCompleted = false;
   private transcript = '';
+  private paused = false;
+  private transmission = Promise.resolve();
+  private readonly unsubscribePlayback: () => void;
 
   private constructor(
     private readonly stream: MediaStream,
     private readonly peer: RTCPeerConnection,
     private readonly events: RTCDataChannel,
+    private readonly senders: Array<{ sender: RTCRtpSender; track: MediaStreamTrack }>,
     private readonly onTranscription: (text: string) => void,
     private readonly onFailure: (failure: unknown) => void,
   ) {
@@ -64,6 +69,22 @@ export class OpenAiVoiceInputSession {
       if (peer.connectionState === 'failed') {
         this.fail(new Error('The realtime transcription connection failed.'));
       }
+    });
+    this.unsubscribePlayback = onSpeechPlaybackChange((playing) => this.setPaused(playing));
+  }
+
+  private setPaused(paused: boolean): void {
+    if (this.stopping || this.paused === paused) return;
+    this.paused = paused;
+    // Mute synchronously while WebRTC detaches the track asynchronously.
+    for (const { track } of this.senders) track.enabled = !paused;
+    this.transmission = this.transmission.then(async () => {
+      if (this.stopping) return;
+      for (const { sender, track } of this.senders) {
+        await sender.replaceTrack(paused ? null : track);
+      }
+    }).catch((failure: unknown) => {
+      if (!this.stopping) this.fail(failure);
     });
   }
 
@@ -101,10 +122,13 @@ export class OpenAiVoiceInputSession {
         throw new DOMException('The operation was aborted.', 'AbortError');
       }
       const peer = new RTCPeerConnection();
-      for (const track of stream.getAudioTracks()) peer.addTrack(track, stream);
+      const senders: Array<{ sender: RTCRtpSender; track: MediaStreamTrack }> = [];
+      for (const track of stream.getAudioTracks()) {
+        senders.push({ sender: peer.addTrack(track, stream), track });
+      }
       const events = peer.createDataChannel('oai-events');
       session = new OpenAiVoiceInputSession(
-        stream, peer, events, onTranscription, onFailure,
+        stream, peer, events, senders, onTranscription, onFailure,
       );
       const previousCancel = session.cancel.bind(session);
       session.cancel = () => {
@@ -205,6 +229,7 @@ export class OpenAiVoiceInputSession {
   }
 
   private stopTracks(): void {
+    this.unsubscribePlayback();
     for (const track of this.stream.getTracks()) track.stop();
   }
 }

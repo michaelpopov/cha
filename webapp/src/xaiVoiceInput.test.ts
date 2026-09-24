@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ChaError, ChaProtocolError } from './api/client';
 import { OpenAiVoiceInputSession } from './openAiVoiceInput';
+import { beginSpeechPlayback } from './speechPlayback';
 import {
   appendPreparedTranscription,
   prepareDictationPiece,
@@ -108,7 +109,7 @@ const xaiConfiguration = {
 
 function installCapture() {
   const stopTrack = vi.fn();
-  const track = Object.assign(new EventTarget(), { kind: 'audio', readyState: 'live', stop: stopTrack });
+  const track = Object.assign(new EventTarget(), { kind: 'audio', readyState: 'live', enabled: true, stop: stopTrack });
   Object.defineProperty(navigator, 'mediaDevices', {
     configurable: true,
     value: {
@@ -139,7 +140,8 @@ function readyBridge(stopBudgetMs = 20000): VoiceInputXaiBridge {
   };
 }
 
-afterEach(() => {
+afterEach(async () => {
+  if (vi.isFakeTimers()) await vi.advanceTimersByTimeAsync(400);
   FakePort.flushSamples = null;
   FakeWorklet.latest = null;
   FakeContext.latest = null;
@@ -186,6 +188,87 @@ describe('dictation piece formatting', () => {
 });
 
 describe('xAI voice capture', () => {
+  it('preserves queued user speech but drops new capture during playback and its echo tail', async () => {
+    vi.useFakeTimers();
+    const { track } = installCapture();
+    const bridge = readyBridge();
+    let finishAudio!: (reply: VoiceInputXaiPieces) => void;
+    vi.mocked(bridge.audio).mockImplementationOnce(() => new Promise((resolve) => { finishAudio = resolve; }));
+    const transcript = vi.fn();
+    const session = await VoiceInputSession.start(xaiConfiguration, transcript, vi.fn(), vi.fn(), bridge);
+    const worklet = FakeWorklet.latest!;
+    worklet.emit(Int16Array.from([1]));
+    worklet.emit(Int16Array.from([2]));
+    const endPlayback = beginSpeechPlayback();
+    try {
+      expect(track.enabled).toBe(false);
+      worklet.emit(Int16Array.from([3]));
+      const sessionId = vi.mocked(bridge.start).mock.calls[0][0];
+      finishAudio(pieces(sessionId, ['Before playback']));
+      await vi.waitFor(() => expect(transcript).toHaveBeenCalledWith('Before playback'));
+      expect(bridge.audio).toHaveBeenCalledTimes(2);
+      endPlayback();
+      worklet.emit(Int16Array.from([4]));
+      expect(bridge.audio).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(400);
+      expect(track.enabled).toBe(true);
+      worklet.emit(Int16Array.from([5]));
+      await vi.waitFor(() => expect(bridge.audio).toHaveBeenCalledTimes(3));
+      expect(vi.mocked(bridge.audio).mock.calls.map((call) => call[1])).toEqual(['AQA=', 'AgA=', 'BQA=']);
+      expect(bridge.start).toHaveBeenCalledOnce();
+    } finally {
+      session.cancel();
+      endPlayback();
+    }
+  });
+
+  it('starts muted during playback and resumes without reopening the microphone', async () => {
+    vi.useFakeTimers();
+    const { track, stopTrack } = installCapture();
+    const bridge = readyBridge();
+    const endPlayback = beginSpeechPlayback();
+    try {
+      const session = await VoiceInputSession.start(xaiConfiguration, vi.fn(), vi.fn(), vi.fn(), bridge);
+      try {
+        expect(track.enabled).toBe(false);
+        FakeWorklet.latest!.emit(new Int16Array(1600));
+        expect(bridge.audio).not.toHaveBeenCalled();
+        endPlayback();
+        await vi.advanceTimersByTimeAsync(400);
+        expect(track.enabled).toBe(true);
+        FakeWorklet.latest!.emit(Int16Array.from([1]));
+        await vi.waitFor(() => expect(bridge.audio).toHaveBeenCalledOnce());
+        expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalledOnce();
+        expect(stopTrack).not.toHaveBeenCalled();
+      } finally {
+        session.cancel();
+      }
+    } finally {
+      endPlayback();
+    }
+  });
+
+  it('can stop during playback without uploading a final audio batch or resuming capture', async () => {
+    vi.useFakeTimers();
+    const { track } = installCapture();
+    const bridge = readyBridge();
+    const session = await VoiceInputSession.start(xaiConfiguration, vi.fn(), vi.fn(), vi.fn(), bridge);
+    const endPlayback = beginSpeechPlayback();
+    try {
+      FakePort.flushSamples = new Int16Array(100).fill(1);
+      await session.stop();
+      expect(bridge.audio).not.toHaveBeenCalled();
+      expect(bridge.stop).toHaveBeenCalledOnce();
+      endPlayback();
+      await vi.advanceTimersByTimeAsync(400);
+      expect(track.enabled).toBe(false);
+      expect(FakeContext.latest?.closed).toBe(true);
+    } finally {
+      session.cancel();
+      endPlayback();
+    }
+  });
+
   it.each(['processorerror', 'ended'])('releases capture after %s', async (event) => {
     const { stopTrack, track } = installCapture();
     const failed = vi.fn();
