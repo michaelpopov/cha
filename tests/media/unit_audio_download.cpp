@@ -4,6 +4,9 @@
 #include "storage/sqlite_storage.h"
 #include "support/test_workspace.h"
 #include "support/test_transcript.h"
+#include "support/test_notifier.h"
+#include "session/session_open.h"
+#include "runtime/text_input.h"
 #include "workspace/workspace_config_store.h"
 #include <gtest/gtest.h>
 #include <future>
@@ -96,6 +99,119 @@ TEST_F(AudioDownloads, InvalidBatchAdmitsNoNewJobs) {
     EXPECT_TRUE(downloads->status(session, "Test").downloads.empty());
     EXPECT_EQ(attempts, 0);
     EXPECT_TRUE(sessions->cached_audio_entries(session).empty());
+}
+
+TEST_F(AudioDownloads, NewBatchRunsBeforeBacklogAndPreservesBatchOrder) {
+    const auto prepared = sessions->prepare(session);
+    SessionJournal journal(path, prepared.session_key);
+    for (EntryId id = 6; id <= 7; ++id)
+        journal.record_entry(test::human_entry(id, {"human", "You"}, {"guide", "Guide"}, std::to_string(id)));
+    std::mutex mutex;
+    std::vector<std::string> started;
+    std::set<std::string> released;
+    std::atomic_bool release_all{};
+    auto downloads = make([&](const auto&, const auto&, const auto& request, const auto& cancel) -> std::optional<EntryAudio> {
+        const auto text = request.body.at("text").template get<std::string>();
+        {
+            std::lock_guard lock(mutex);
+            started.push_back(text);
+        }
+        while (!release_all && !cancel()) {
+            {
+                std::lock_guard lock(mutex);
+                if (released.contains(text)) break;
+            }
+            std::this_thread::sleep_for(2ms);
+        }
+        return cancel() ? std::nullopt : std::optional<EntryAudio>{{text, "audio/mpeg"}};
+    });
+    ReleaseOnExit cleanup{release_all};
+    AudioDownloadBatchRequest old_batch{"Test", {}};
+    for (EntryId id = 1; id <= 5; ++id) old_batch.entries.push_back({id, {.reference_id = "voice"}});
+    downloads->submit_batch(session, old_batch);
+    ASSERT_TRUE(eventually([&] { std::lock_guard lock(mutex); return started.size() == 3; }));
+    const AudioDownloadBatchRequest new_batch{"Test", {
+        {6, {.reference_id = "voice"}}, {7, {.reference_id = "voice"}}, {6, {.reference_id = "voice"}},
+    }};
+    EXPECT_EQ(downloads->submit_batch(session, new_batch).size(), 3);
+    // Free only one worker so dispatch order is observable without thread races.
+    std::string previous = "1";
+    std::size_t expected_count = 3;
+    for (const std::string next : {"6", "7", "4", "5"}) {
+        {
+            std::lock_guard lock(mutex);
+            released.insert(previous);
+        }
+        ++expected_count;
+        ASSERT_TRUE(eventually([&] { std::lock_guard lock(mutex); return started.size() == expected_count; }));
+        {
+            std::lock_guard lock(mutex);
+            EXPECT_EQ(started.back(), next);
+        }
+        previous = next;
+    }
+}
+
+TEST_F(AudioDownloads, MulticastStartsAndCollectsAllModelsWhileAudioWorkersAreBlocked) {
+    std::vector<std::string> characters;
+    for (int index = 0; index < 6; ++index) {
+        const auto id = config->create_character("Speaker " + std::to_string(index), "Test speaker");
+        config->apply_character_settings(id, "test", std::nullopt);
+        characters.push_back(id);
+    }
+    const auto persona = config->snapshot()->find_forum("lobby")->default_persona_id;
+    config->apply_forum_members_and_persona("lobby", characters, persona);
+    std::atomic_int audio_started{}, models_started{};
+    std::atomic_bool release_audio{}, release_models{};
+    auto downloads = make([&](const auto&, const auto&, const auto&, const auto& cancel) -> std::optional<EntryAudio> {
+        ++audio_started;
+        while (!release_audio && !cancel()) std::this_thread::sleep_for(2ms);
+        return cancel() ? std::nullopt : std::optional<EntryAudio>{{"audio", "audio/mpeg"}};
+    });
+    ReleaseOnExit cleanup_audio{release_audio};
+    AudioDownloadBatchRequest batch{"Test", {}};
+    for (EntryId id = 1; id <= 5; ++id) batch.entries.push_back({id, {.reference_id = "voice"}});
+    downloads->submit_batch(session, batch);
+    ASSERT_TRUE(eventually([&] { return audio_started == 3; }));
+
+    class Backend final : public ModelBackend {
+    public:
+        Backend(std::atomic_int& started, std::atomic_bool& release) : started_(started), release_(release) {}
+        RequestPayload prepare(const GenerationRequest& input) override { return {.bytes = input.run.target.id}; }
+        GenerationResult perform(RequestPayload payload, const GenerationDeltaSink& delta,
+            const std::atomic_bool& cancelled) override {
+            ++started_;
+            while (!release_ && !cancelled) std::this_thread::sleep_for(2ms);
+            if (cancelled) return {.outcome = GenerationOutcome::cancelled};
+            delta({GenerationDeltaKind::answer, "Reply from " + payload.bytes});
+            return {};
+        }
+    private:
+        std::atomic_int& started_;
+        std::atomic_bool& release_;
+    };
+    Providers providers([&](SharedCharacterDefinition) {
+        return std::make_unique<Backend>(models_started, release_models);
+    });
+    ReleaseOnExit cleanup_models{release_models};
+    auto opened = open_session(*sessions, session, providers, std::make_shared<test::NoopNotifier>(), *config);
+    auto& controller = *opened.controller;
+    const auto submitted = handle_text_input(controller, persona, "/mcast Question");
+    ASSERT_TRUE(submitted.clear_input);
+    // All six requests must enter perform(), not merely be queued behind three slots.
+    ASSERT_TRUE(eventually([&] { return models_started == 6; }));
+    release_models = true;
+    ASSERT_TRUE(eventually([&] {
+        (void)controller.receive_events(100);
+        return !controller.is_generating();
+    }));
+    const auto entries = controller.view().transcript.entries;
+    ASSERT_EQ(entries.size(), 17); // Five old entries plus six prompt/reply pairs.
+    for (std::size_t index = 0; index < characters.size(); ++index)
+        EXPECT_EQ(entries[6 + index * 2].text, "Reply from " + characters[index]);
+    EXPECT_EQ(audio_started, 3);
+    EXPECT_TRUE(sessions->cached_audio_entries(session).empty());
+    EXPECT_EQ(downloads->status(session, "Test").downloads.size(), 5);
 }
 
 TEST_F(AudioDownloads, ThreeWorkersQueueFourthAndDeduplicate) {

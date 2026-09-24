@@ -684,6 +684,7 @@ export function App({
   const title = navigationTitle(state);
   const ready = state.bootstrapStatus === 'ready';
   const wholeApplication = state.sessionOperation !== 'idle' && state.mainView === 'chat';
+  const chatVisible = ready && !wholeApplication && state.mainView === 'chat';
 
   return (
     <AppErrorBoundary onReload={reload}>
@@ -702,8 +703,8 @@ export function App({
             onSwitchVault={switchVault}
             state={state}
           />
-          <main className="cha-main" data-view={state.mainView}>
-            <TopBar dispatch={navigate} state={state} title={title} />
+          <main className={`cha-main${chatVisible ? ' is-chat' : ''}`} data-view={state.mainView}>
+            {!chatVisible && <TopBar dispatch={navigate} state={state} title={title} />}
             {submissionErrors.map((error) => <div className="cha-submission-error" role="alert" key={error.id}>
               <span>{error.message}</span>
               <button type="button" aria-label="Dismiss message error" onClick={() => setSubmissionErrors((errors) => errors.filter(({ id }) => id !== error.id))}>Dismiss</button>

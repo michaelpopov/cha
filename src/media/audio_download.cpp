@@ -150,6 +150,7 @@ std::vector<AudioAcceptance> AudioDownloadManager::submit_batch(
         }
     }
     std::vector<AudioAcceptance> accepted;
+    std::vector<std::shared_ptr<Job>> new_jobs;
     {
         std::lock_guard lock(mutex_);
         check_generation(session, vault, generation);
@@ -161,11 +162,14 @@ std::vector<AudioAcceptance> AudioDownloadManager::submit_batch(
             } else {
                 if (item.job) {
                     jobs_[identity] = item.job;
-                    queue_.push_back(item.job);
+                    new_jobs.push_back(item.job);
                 }
                 accepted.push_back(std::move(item.acceptance));
             }
         }
+        // New replies should not wait behind an old conversation's cache backlog.
+        // Keep the order within each batch and leave running downloads alone.
+        queue_.insert(queue_.begin(), new_jobs.begin(), new_jobs.end());
         changed_.notify_all();
     }
     return accepted;

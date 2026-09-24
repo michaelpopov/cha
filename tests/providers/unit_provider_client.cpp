@@ -372,6 +372,39 @@ TEST(ProviderClient, LogsTransportMetadataWithoutPayloads) {
     EXPECT_EQ(output.find("private response"), std::string::npos);
 }
 
+TEST(ProviderClient, RequestsFastModeForOpenAiAndOpenRouterEndpoints) {
+    Transcript transcript;
+    const GenerationRequest request = client_request(transcript, 91, "Question");
+    struct Case { const char* host; bool priority; };
+    const Case cases[]{
+        {"api.openai.com", true}, {"API.OPENAI.COM.", true},
+        {"openrouter.ai", true}, {"OPENROUTER.AI.", true},
+        {"api.x.ai", false}, {"api.openai.com.example.test", false},
+        {"openrouter.ai.example.test", false},
+    };
+    for (const ProviderApi api : {ProviderApi::chat_completions, ProviderApi::responses}) {
+        for (const bool stream : {false, true}) {
+            for (const auto& item : cases) {
+                SCOPED_TRACE(item.host);
+                SCOPED_TRACE(to_string(api));
+                SCOPED_TRACE(stream);
+                auto definition = network_definition(443, stream);
+                definition.provider.config.host = item.host;
+                definition.provider.config.https = true;
+                definition.provider.config.api = api;
+                definition.provider.config.cache_retention = CacheRetention::off;
+                ProviderClient client(shared_definition(std::move(definition)));
+                const Json body = Json::parse(client.prepare(request).bytes);
+                if (item.priority) {
+                    EXPECT_EQ(body.at("service_tier"), "priority");
+                } else {
+                    EXPECT_FALSE(body.contains("service_tier"));
+                }
+            }
+        }
+    }
+}
+
 TEST(ProviderClient, AddsCacheMetadataForSupportedHosts) {
     Transcript transcript;
     GenerationRequest request = client_request(transcript, 91, "Question");
@@ -1414,6 +1447,7 @@ TEST(ProviderClient, StreamsSubscriptionRequestWithChaIdentity) {
     EXPECT_TRUE(has_header("User-Agent: cha"));
     const Json body = Json::parse(captured.front().body);
     EXPECT_EQ(body["model"], "gpt-5.6-terra");
+    EXPECT_EQ(body["service_tier"], "priority");
     EXPECT_TRUE(body["stream"]);
     EXPECT_FALSE(body["store"]);
     EXPECT_EQ(body["instructions"], "You are a helpful assistant.");

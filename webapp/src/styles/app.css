@@ -310,6 +310,11 @@ select:disabled {
   box-shadow: -0.35rem 0 1.5rem rgb(0 0 0 / 10%);
 }
 
+.cha-main.is-chat {
+  display: flex;
+  flex-direction: column;
+}
+
 .cha-topbar {
   position: relative;
   display: grid;
@@ -859,6 +864,7 @@ select:disabled {
 }
 
 .cha-chat {
+  flex: 1;
   flex-direction: column;
   min-width: 0;
   padding: 0.2rem 1rem max(1rem, env(safe-area-inset-bottom));
@@ -1282,7 +1288,8 @@ select:disabled {
   margin-right: auto;
 }
 
-.cha-speech-cache-toggle {
+.cha-speech-cache-toggle,
+.cha-sidebar-toggle {
   display: grid;
   width: 1.4rem;
   height: 1.4rem;
@@ -1293,7 +1300,8 @@ select:disabled {
   place-items: center;
 }
 
-.cha-speech-cache-toggle:hover {
+.cha-speech-cache-toggle:hover,
+.cha-sidebar-toggle:hover {
   color: var(--accent-foreground);
   background: var(--accent);
 }

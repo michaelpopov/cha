@@ -108,6 +108,10 @@ std::string build_responses_request_body(
         {"input", std::move(messages)},
     };
     const bool subscription = config.auth == ProviderAuth::openai_subscription;
+    if (subscription || is_direct_openai_host(config.host) || is_openrouter_host(config.host)) {
+        // Use Fast mode for OpenAI, OpenRouter, and ChatGPT subscription requests.
+        body["service_tier"] = "priority";
+    }
     if (subscription && instructions.empty()) {
         instructions = "You are a helpful assistant.";
     }

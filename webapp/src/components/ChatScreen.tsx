@@ -24,6 +24,7 @@ import {
   type SessionSnapshot,
 } from '../api/client';
 import { useAudioDownloads } from '../audioDownloads';
+import { SidebarToggle } from './TopBar';
 import type { AppAction, AppState } from '../state/view';
 import {
   nativeSpeechFromClient,
@@ -387,6 +388,9 @@ export function ChatScreen({
   const [speechCacheEnabled, setSpeechCacheEnabled] = useState(false);
   const [speechCacheSubmitting, setSpeechCacheSubmitting] = useState(false);
   const handledAudioEntries = useRef(new Set<number>());
+  const handledSpeechEntries = useRef(new Set<number>());
+  const automaticSpeech = useRef(false);
+  const missingAudioRetry = useRef<number | null>(null);
   const audioCacheContext = useRef<{ key: string | null; clearCount: number }>({
     key: null, clearCount: state.audioCacheClearCount,
   });
@@ -509,13 +513,16 @@ export function ChatScreen({
     setVoiceInputState('idle');
   }, [conversationKey, sessionAvailable, state.bootstrap?.vault_name]);
 
-  useEffect(() => () => {
+  function stopSpeech() {
     speechAttempt.current += 1;
     textToSpeechSession.current?.stop();
     textToSpeechSession.current = null;
     setSpokenEntry(null);
     speechSelection.current = null;
-  }, [conversationKey, state.audioCacheClearCount]);
+    automaticSpeech.current = false;
+  }
+
+  useEffect(() => stopSpeech, [audioConversationKey, state.audioCacheClearCount]);
 
   const speechRequest = useCallback((entry: SessionSnapshot['transcript'][number]): AudioDownloadBatchEntry => {
     const voice = entry.kind === 'character'
@@ -532,6 +539,7 @@ export function ChatScreen({
     if (context.key !== audioConversationKey || context.clearCount !== state.audioCacheClearCount) {
       audioCacheContext.current = { key: audioConversationKey, clearCount: state.audioCacheClearCount };
       handledAudioEntries.current.clear();
+      handledSpeechEntries.current = new Set(snapshot?.transcript.map((entry) => entry.id));
       setSpeechCacheEnabled(false);
       return;
     }
@@ -560,24 +568,25 @@ export function ChatScreen({
 
   function toggleSpeechCache() {
     setActionError(null);
-    if (!speechCacheEnabled) handledAudioEntries.current.clear();
+    if (!speechCacheEnabled) {
+      handledAudioEntries.current.clear();
+      // Cache old messages too, but only read replies completed after enabling.
+      handledSpeechEntries.current = new Set(snapshot?.transcript
+        .filter((entry) => entry.status !== 'streaming').map((entry) => entry.id));
+      missingAudioRetry.current = null;
+    } else if (automaticSpeech.current) {
+      stopSpeech();
+    }
     setSpeechCacheEnabled(!speechCacheEnabled);
   }
 
   function toggleSpeech(entry: SessionSnapshot['transcript'][number]) {
     if (!snapshot || (!entry.has_cached_audio && !textToSpeechConfiguration)) return;
-    speechAttempt.current += 1;
-    if (speechSelection.current === entry.id && textToSpeechSession.current) {
-      textToSpeechSession.current?.stop();
-      textToSpeechSession.current = null;
-      speechSelection.current = null;
-      setSpokenEntry(null);
-      return;
-    }
-    textToSpeechSession.current?.stop();
-    textToSpeechSession.current = null;
+    const stopping = speechSelection.current === entry.id && textToSpeechSession.current;
+    stopSpeech();
+    if (stopping) return;
+    handledSpeechEntries.current.add(entry.id);
     speechSelection.current = entry.id;
-    setSpokenEntry(null);
     setActionError(null);
     if (entry.has_cached_audio) { playCached(entry); return; }
     if (!textToSpeechConfiguration) return;
@@ -592,6 +601,7 @@ export function ChatScreen({
 
   function playCached(entry: SessionSnapshot['transcript'][number]) {
     if (!snapshot) return;
+    setSpokenEntry({ id: entry.id, state: 'loading' });
     const attempt = speechAttempt.current;
     const playbackKey = JSON.stringify([state.bootstrap?.vault_name, snapshot.forum.id, snapshot.session_id]);
     let positions = playbackPositions.get(playbackKey);
@@ -600,6 +610,21 @@ export function ChatScreen({
       playbackPositions.set(playbackKey, positions);
     }
     const entryPositions = positions;
+    const cacheMissing = () => {
+      const retry = automaticSpeech.current && missingAudioRetry.current !== entry.id;
+      stopSpeech();
+      if (retry) {
+        // Regenerate once, keeping this reply ahead of later automatic replies.
+        missingAudioRetry.current = entry.id;
+        handledAudioEntries.current.delete(entry.id);
+        handledSpeechEntries.current.delete(entry.id);
+      } else {
+        setActionError('Cached audio is no longer available. Generate it again.');
+      }
+      dispatch({ type: 'session-audio-cache', forumId: snapshot.forum.id,
+        sessionId: snapshot.session_id, entryId: entry.id, cached: false });
+      downloads.refresh(entry.id);
+    };
     const begin = (cachedUrl: string, resourceId?: string) => {
       const session = new TextToSpeechSession(
         textToSpeechConfiguration,
@@ -609,9 +634,7 @@ export function ChatScreen({
         visibleEntryText(entry.kind, entry.text),
         () => {
           if (textToSpeechSession.current !== session) return;
-          textToSpeechSession.current = null;
-          setSpokenEntry(null);
-          speechSelection.current = null;
+          stopSpeech();
         },
         {
           position: entryPositions.get(entry.id) ?? 0,
@@ -632,23 +655,17 @@ export function ChatScreen({
       );
       textToSpeechSession.current = session;
       setSpokenEntry({ id: entry.id, state: 'loading' });
-      setActionError(null);
       void session.play().then(() => {
         if (textToSpeechSession.current === session) {
           setSpokenEntry({ id: entry.id, state: 'playing' });
         }
       }).catch((failure: unknown) => {
         if (textToSpeechSession.current !== session) return;
-        session.stop();
-        textToSpeechSession.current = null;
-        setSpokenEntry(null);
-        speechSelection.current = null;
         if (failure instanceof TextToSpeechError && failure.status === 404) {
-          dispatch({ type: 'session-audio-cache', forumId: snapshot.forum.id,
-            sessionId: snapshot.session_id, entryId: entry.id, cached: false });
-          downloads.refresh(entry.id);
+          cacheMissing();
           return;
         }
+        stopSpeech();
         if (!(failure instanceof DOMException && failure.name === 'AbortError')) {
           setActionError(failure instanceof TextToSpeechError
             ? failure.message
@@ -666,15 +683,12 @@ export function ChatScreen({
       begin(resource.url, resource.resource_id);
     }).catch((failure: unknown) => {
       if (speechAttempt.current !== attempt || speechSelection.current !== entry.id) return;
-      speechSelection.current = null;
-      setSpokenEntry(null);
       if ((failure instanceof TextToSpeechError && failure.status === 404)
           || (failure instanceof ChaError && failure.code === 'not_found')) {
-        dispatch({ type: 'session-audio-cache', forumId: snapshot.forum.id,
-          sessionId: snapshot.session_id, entryId: entry.id, cached: false });
-        downloads.refresh(entry.id);
+        cacheMissing();
         return;
       }
+      stopSpeech();
       setActionError(publicErrorMessage(
         failure, 'This message could not be read aloud. Try again.'));
     });
@@ -682,7 +696,7 @@ export function ChatScreen({
 
   useEffect(() => {
     const id = speechSelection.current;
-    if (id === null || textToSpeechSession.current || !downloads.status) return;
+    if (id === null || spokenEntry || textToSpeechSession.current || !downloads.status) return;
     const entry = snapshot?.transcript.find((entry) => entry.id === id);
     if (!entry) { speechSelection.current = null; return; }
     if (cachedAudioIds?.has(id)) playCached(entry);
@@ -691,6 +705,31 @@ export function ChatScreen({
       if (!job || job.state === 'failed') speechSelection.current = null;
     }
   }, [downloads.status]);
+
+  // The shared player also handles manual playback. Wait for it to become idle
+  // and for the first queued reply to be cached, even if later downloads finish first.
+  useEffect(() => {
+    // Download failures disable future playback without interrupting current audio.
+    if (!speechCacheEnabled || downloads.unavailable) return;
+    if (speechSelection.current !== null || textToSpeechSession.current) return;
+    for (const { entry } of transcriptEntries) {
+      const id = entry.id;
+      if (entry.kind !== 'character' || handledSpeechEntries.current.has(id)) continue;
+      if (entry.status === 'failed' || entry.status === 'cancelled' || audioJobs.get(id)?.state === 'failed'
+          || (entry.status === 'complete' && !visibleEntryText(entry.kind, entry.text).trim())) {
+        handledSpeechEntries.current.add(id);
+        continue;
+      }
+      if (!canReadEntry(entry) || !cachedAudioIds?.has(id)) return;
+      handledSpeechEntries.current.add(id);
+      automaticSpeech.current = true;
+      if (missingAudioRetry.current !== id) missingAudioRetry.current = null;
+      speechSelection.current = id;
+      speechAttempt.current += 1;
+      playCached(entry);
+      return;
+    }
+  });
 
   async function changeCover(throughEntryId?: number) {
     if (!connected || generationActive || actionPending) return;
@@ -712,9 +751,7 @@ export function ChatScreen({
     setActionError(null);
     try {
       if (spokenEntry?.id === responseEntryId) {
-        textToSpeechSession.current?.stop();
-        textToSpeechSession.current = null;
-        setSpokenEntry(null);
+        stopSpeech();
       }
       await onDeleteTurn(responseEntryId);
     } catch (failure: unknown) {
@@ -1260,6 +1297,7 @@ export function ChatScreen({
           </div>
         </form>
         <div className="cha-chat-status" aria-label="Current chat context">
+          <SidebarToggle className="cha-sidebar-toggle" dispatch={dispatch} sidebarOpen={state.sidebarOpen} />
           <span>{forum?.display_name ?? 'Unknown forum'}</span>
           <span>From: {forum?.default_persona_display_name ?? 'Unknown persona'}</span>
           <span>To: {sendToAll
@@ -1269,12 +1307,12 @@ export function ChatScreen({
               : (character?.display_name ?? 'Unknown character')}</span>
           {textToSpeechConfiguration && (
             <button
-              aria-label="Cache conversation audio automatically"
+              aria-label="Cache audio and play new responses automatically"
               aria-pressed={speechCacheEnabled}
               className="cha-speech-cache-toggle"
               disabled={!snapshot || !downloads.status || downloads.unavailable !== null}
               onClick={toggleSpeechCache}
-              title={downloads.unavailable ?? "Cache conversation audio automatically"}
+              title={downloads.unavailable ?? "Cache audio and play new responses automatically"}
               type="button"
             >
               <SpeakerIcon />
