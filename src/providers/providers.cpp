@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <exception>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -27,6 +28,21 @@ std::unique_ptr<ModelBackend> default_client_factory(
 
 void default_thread_launcher(std::function<void()> worker) {
     std::thread(std::move(worker)).detach();
+}
+
+std::string token_usage_fields(const GenerationTokenUsage& usage) {
+    const auto count = [](std::optional<std::uint64_t> value) {
+        return value ? std::to_string(*value) : std::string("unreported");
+    };
+    const std::optional<std::uint64_t> total =
+        usage.input_tokens && usage.output_tokens
+            ? std::optional(*usage.input_tokens + *usage.output_tokens)
+            : std::nullopt;
+    return " input_tokens=" + count(usage.input_tokens)
+        + " output_tokens=" + count(usage.output_tokens)
+        + " total_tokens=" + count(total)
+        + " cache_read_tokens=" + count(usage.cache_read_tokens)
+        + " cache_write_tokens=" + count(usage.cache_write_tokens);
 }
 
 } // namespace
@@ -76,6 +92,7 @@ std::string ProviderRequest::log_fields() const {
     const CharacterDefinition& character = *input_.character;
     const RunSpec& run = input_.generation.run;
     return "provider_id=" + character.provider.id
+        + " character_id=" + run.target.id
         + " forum_id=" + run.session.forum_id
         + " session_id=" + run.session.session_id
         + " request_id=" + std::to_string(run.request_id)
@@ -125,6 +142,15 @@ void ProviderRequest::execute(
         }
 
         RequestPayload payload = backend->prepare(input_.generation);
+        fields += " request_payload_bytes=" + std::to_string(payload.bytes.size());
+        if (payload.text_sizes) {
+            fields += " system_prompt_bytes="
+                + std::to_string(payload.text_sizes->system_prompt_bytes)
+                + " conversation_bytes="
+                + std::to_string(payload.text_sizes->conversation_bytes);
+        } else {
+            fields += " system_prompt_bytes=unreported conversation_bytes=unreported";
+        }
         const GenerationResult result = backend->perform(
             std::move(payload),
             [this, request_id](GenerationDelta delta) {
@@ -141,20 +167,24 @@ void ProviderRequest::execute(
             cancellation_);
 
         if (result.outcome == GenerationOutcome::completed) {
-            log_info("Provider request completed: " + fields);
+            log_info("Provider request completed: " + fields
+                + token_usage_fields(result.usage));
             close_with(GenerationCompleted{
                 request_id,
                 result.usage.input_tokens,
                 result.usage.output_tokens,
             });
         } else if (result.outcome == GenerationOutcome::cancelled) {
-            log_info("Provider request cancelled: " + fields);
+            log_info("Provider request cancelled: " + fields
+                + token_usage_fields(result.usage));
             close_with(GenerationCancelled{
                 request_id,
                 result.usage.input_tokens,
                 result.usage.output_tokens,
             });
         } else {
+            log_info("Provider request failed usage: " + fields
+                + token_usage_fields(result.usage));
             log_error("Provider request failed: " + fields);
             fail(result.message);
         }

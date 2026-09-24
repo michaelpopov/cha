@@ -149,13 +149,17 @@ TEST(ResponsesApi, SubscriptionBodyUsesFallbackInstructionsAndOmitsExtras) {
     config.cache_retention = CacheRetention::short_;
     request.run.prompt_cache_key = "cache-key";
 
+    RequestTextSizes text_sizes;
     const Json body = Json::parse(build_responses_request_body(
-        request, config, ""));
+        request, config, "", &text_sizes));
 
     EXPECT_EQ(body["model"], "test-model");
     EXPECT_TRUE(body["stream"]);
     EXPECT_FALSE(body["store"]);
     EXPECT_EQ(body["instructions"], "You are a helpful assistant.");
+    EXPECT_EQ(
+        text_sizes.system_prompt_bytes,
+        std::string("You are a helpful assistant.").size());
     EXPECT_FALSE(body.contains("temperature"));
     EXPECT_FALSE(body.contains("max_output_tokens"));
     EXPECT_FALSE(body.contains("tools"));

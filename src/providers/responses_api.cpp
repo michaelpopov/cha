@@ -85,7 +85,9 @@ bool is_successful_completed_status(std::string_view status) {
 std::string build_responses_request_body(
     const GenerationRequest& input,
     const ModelBackendConfig& config,
-    std::string_view system_prompt) {
+    std::string_view system_prompt,
+    RequestTextSizes* text_sizes) {
+    if (text_sizes) *text_sizes = {};
     Json messages = Json::array();
     std::string instructions;
     for (const ModelMessage& message : project_model_context(input, system_prompt)) {
@@ -95,6 +97,7 @@ std::string build_responses_request_body(
             }
             continue;
         }
+        if (text_sizes) text_sizes->conversation_bytes += message.content.size();
         messages.push_back({
             {"role", input_role_name(message.role)},
             {"content", message.content},
@@ -115,6 +118,7 @@ std::string build_responses_request_body(
     if (subscription && instructions.empty()) {
         instructions = "You are a helpful assistant.";
     }
+    if (text_sizes) text_sizes->system_prompt_bytes = instructions.size();
     if (!instructions.empty()) {
         body["instructions"] = std::move(instructions);
     }

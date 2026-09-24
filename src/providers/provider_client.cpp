@@ -491,25 +491,30 @@ RequestPayload ProviderClient::prepare(const GenerationRequest& input) {
     if (config.mode == Mode::test) {
         return {.bytes = input.run.prompt_text};
     }
+    RequestTextSizes text_sizes;
     switch (config.api) {
     case ProviderApi::chat_completions:
         return {
             .bytes = build_chat_completions_request_body(
                 input,
                 config,
-                definition_->system_prompt),
+                definition_->system_prompt,
+                &text_sizes),
+            .text_sizes = text_sizes,
         };
     case ProviderApi::responses:
         return {
             .bytes = build_responses_request_body(
                 input,
                 config,
-                definition_->system_prompt),
+                definition_->system_prompt,
+                &text_sizes),
             .session_id = !input.run.prompt_cache_key.empty()
                     && config.cache_retention != CacheRetention::off
                     && is_direct_openai_host(config.host)
                 ? std::optional<std::string>(input.run.prompt_cache_key)
                 : std::nullopt,
+            .text_sizes = text_sizes,
         };
     }
     throw std::logic_error("Unknown provider API");

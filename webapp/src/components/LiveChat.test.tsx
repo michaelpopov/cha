@@ -247,7 +247,7 @@ describe('live chat', () => {
 
     const totals = Array.from(document.querySelectorAll('.cha-message-tokens'));
     expect(totals.map((item) => item.textContent)).toEqual(['2K', '54K']);
-    expect(totals[1].getAttribute('title')).toBe('54,000 context tokens');
+    expect(totals[1].getAttribute('title')).toBe('50,000 input + 4,000 output tokens for this response');
   });
 
   it('copies requests and visible response text to the clipboard', async () => {

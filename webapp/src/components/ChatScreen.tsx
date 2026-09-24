@@ -195,7 +195,7 @@ function TranscriptMessage({
   const canRead = canReadEntry(entry);
   const canCopy = (entry.kind === 'human' || entry.kind === 'character')
     && displayedText.length > 0;
-  const contextTokens = entry.kind === 'character'
+  const requestTokens = entry.kind === 'character'
     && entry.input_tokens != null
     && entry.output_tokens != null
     ? entry.input_tokens + entry.output_tokens
@@ -244,7 +244,7 @@ function TranscriptMessage({
       </div>
       {entry.status === 'cancelled' && <div className="cha-entry-status">Stopped</div>}
       {entry.status === 'failed' && <div className="cha-entry-status">Failed</div>}
-      {(entry.created_at !== null || contextTokens !== null || canCopy) && (
+      {(entry.created_at !== null || requestTokens !== null || canCopy) && (
         <div className="cha-message-meta">
           {entry.created_at !== null && (
             <time
@@ -255,12 +255,12 @@ function TranscriptMessage({
               {formatEntryTime(entry.created_at)}
             </time>
           )}
-          {contextTokens !== null && (
+          {requestTokens !== null && (
             <span
               className="cha-message-tokens"
-              title={`${contextTokens.toLocaleString()} context tokens`}
+              title={`${entry.input_tokens!.toLocaleString()} input + ${entry.output_tokens!.toLocaleString()} output tokens for this response`}
             >
-              {formatTokenUsage(contextTokens)}
+              {formatTokenUsage(requestTokens)}
             </span>
           )}
           {canCopy && (

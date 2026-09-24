@@ -5,6 +5,7 @@
 #include "providers/generation_event.h"
 
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <optional>
@@ -45,12 +46,20 @@ struct StreamDecodeResult {
     bool describe_response{};
 };
 
+// Plain text bytes sent as instructions and conversation content.
+struct RequestTextSizes {
+    std::size_t system_prompt_bytes{};
+    // Includes retained history and the current prompt, without request JSON.
+    std::size_t conversation_bytes{};
+};
+
 // The request a backend built for itself, opaque to its caller. Preparation
 // consumes immutable input; performing the slow call is a separate step.
 struct RequestPayload {
     std::string bytes;
     // Optional Responses session_id header; omitted when empty.
     std::optional<std::string> session_id;
+    std::optional<RequestTextSizes> text_sizes;
 };
 
 // Receives one semantic transport fragment without attaching request identity.

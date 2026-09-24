@@ -124,10 +124,18 @@ std::string process_response_object(
 std::string build_chat_completions_request_body(
     const GenerationRequest& input,
     const ModelBackendConfig& config,
-    std::string_view system_prompt) {
+    std::string_view system_prompt,
+    RequestTextSizes* text_sizes) {
+    if (text_sizes) *text_sizes = {};
     Json messages = Json::array();
     for (const ModelMessage& message :
          project_model_context(input, system_prompt)) {
+        if (text_sizes) {
+            auto& size = message.role == ModelRole::system
+                ? text_sizes->system_prompt_bytes
+                : text_sizes->conversation_bytes;
+            size += message.content.size();
+        }
         messages.push_back({
             {"role", role_name(message.role)},
             {"content", message.content},

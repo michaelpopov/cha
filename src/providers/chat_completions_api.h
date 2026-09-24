@@ -13,7 +13,8 @@ namespace cha {
 std::string build_chat_completions_request_body(
     const GenerationRequest& input,
     const ModelBackendConfig& config,
-    std::string_view system_prompt);
+    std::string_view system_prompt,
+    RequestTextSizes* text_sizes = nullptr);
 
 // Decodes one Chat Completions response delivered as server-sent events,
 // reporting reasoning and answer text through the delta sink as it arrives.

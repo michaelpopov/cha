@@ -16,7 +16,8 @@ namespace cha {
 std::string build_responses_request_body(
     const GenerationRequest& input,
     const ModelBackendConfig& config,
-    std::string_view system_prompt);
+    std::string_view system_prompt,
+    RequestTextSizes* text_sizes = nullptr);
 
 // Decodes one Responses API SSE stream into answer/refusal text. Search queries,
 // search lifecycle, annotations, and reasoning events are ignored.

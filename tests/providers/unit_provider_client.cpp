@@ -297,6 +297,40 @@ TEST(ProviderClient, RestrictsOpenRouterTargetsForBothApiFormats) {
     }));
 }
 
+TEST(ProviderClient, ReportsSystemPromptAndConversationTextSizes) {
+    Transcript transcript;
+    const GenerationRequest request = client_request(
+        transcript,
+        93,
+        "Current question",
+        {
+            test::human_entry(
+                1, {"human", "You"}, {"assistant", "Assistant"},
+                "Earlier question", 1),
+            make_character_entry(
+                2, "assistant", "Assistant", "Earlier answer",
+                EntryStatus::complete, 1),
+        });
+    CharacterDefinition definition = network_definition(443, false);
+    definition.system_prompt = "System instructions";
+
+    for (const ProviderApi api : {
+             ProviderApi::chat_completions, ProviderApi::responses}) {
+        definition.provider.config.api = api;
+        ProviderClient client(shared_definition(definition));
+        const RequestPayload payload = client.prepare(request);
+        ASSERT_TRUE(payload.text_sizes);
+        EXPECT_EQ(
+            payload.text_sizes->system_prompt_bytes,
+            definition.system_prompt.size());
+        EXPECT_EQ(
+            payload.text_sizes->conversation_bytes,
+            std::string("from You:\nEarlier question").size()
+                + std::string("Earlier answer").size()
+                + std::string("from You:\nCurrent question").size());
+    }
+}
+
 TEST(ProviderClient, RejectsInvalidUtf8WhenPreparingRequest) {
     ProviderClient client(shared_definition(network_definition(1, false)));
     Transcript transcript;
