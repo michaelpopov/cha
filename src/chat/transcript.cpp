@@ -249,7 +249,8 @@ bool Transcript::can_delete_turn(EntryId response_entry_id) const {
     const auto response = std::ranges::find(
         entries_, response_entry_id, &TranscriptEntry::id);
     if (response == entries_.end()
-        || response->kind != EntryKind::character
+        || (response->kind != EntryKind::character
+            && response->kind != EntryKind::error)
         || !response->request_id) {
         return false;
     }

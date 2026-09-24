@@ -1348,6 +1348,43 @@ describe('live chat', () => {
     expect(screen.queryByText('Answer')).not.toBeInTheDocument();
   });
 
+  it('deletes an error report with the prompt that generated it', async () => {
+    const deleteTurn = vi.fn(async () => ({ clear_input: false }));
+    const events = drivableEvents();
+    render(<App
+      client={fixtureClient({ deleteTurn })}
+      connectSessionEvents={events.connect}
+    />);
+    await attachInitial(events, {
+      ...snapshotFixture,
+      transcript: [
+        {
+          id: 1, kind: 'human', participant_id: 'guest', display_name: 'Guest',
+          addressed_to: 'assistant', addressed_to_name: 'Assistant',
+          text: 'Question', status: 'complete', request_id: 5, created_at: 1_700_000_000,
+        },
+        {
+          id: 2, kind: 'error', participant_id: 'assistant', display_name: 'Error',
+          addressed_to: '', addressed_to_name: '',
+          text: 'Provider rate limit exceeded.', status: 'failed', request_id: 5,
+          created_at: 1_700_000_001,
+        },
+      ],
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete error report and its prompt' }));
+    const dialog = within(await screen.findByRole('dialog'));
+    expect(dialog.getByText(/Delete this error report and the prompt/)).toBeInTheDocument();
+    fireEvent.click(dialog.getByRole('button', { name: 'Delete error report' }));
+    await waitFor(() => expect(deleteTurn).toHaveBeenCalledWith(
+      'entrance', 'welcome', { response_entry_id: 2 },
+    ));
+
+    act(() => events.handlers[0].onSnapshot({ ...snapshotFixture, transcript: [] }));
+    expect(screen.queryByText('Question')).not.toBeInTheDocument();
+    expect(screen.queryByText('Provider rate limit exceeded.')).not.toBeInTheDocument();
+  });
+
   it('keeps a response when deletion is cancelled', async () => {
     const deleteTurn = vi.fn(async () => ({ clear_input: false }));
     const events = drivableEvents();

@@ -190,6 +190,16 @@ TEST(Transcript, DeletesAResponseAndItsPromptAsOneTurn) {
     EXPECT_FALSE(transcript.delete_turn(99));
 }
 
+TEST(Transcript, DeletesAnErrorAndItsPromptAsOneTurn) {
+    Transcript transcript;
+    transcript.add_entry(human(1, "Question", 10));
+    transcript.add_entry(make_error_entry(2, "Unavailable", 10, "reviewer-id"));
+
+    EXPECT_TRUE(transcript.can_delete_turn(2));
+    EXPECT_TRUE(transcript.delete_turn(2));
+    EXPECT_TRUE(transcript.view().entries.empty());
+}
+
 TEST(Transcript, DoesNotDeleteATurnWhileItsResponseIsStreaming) {
     Transcript transcript;
     transcript.add_entry(human(1, "Question", 10));
@@ -546,6 +556,23 @@ TEST(SessionJournal, DeletesACompletedTurnWithoutReusingItsIds) {
     EXPECT_EQ(restored.next_request_id, 8U);
     EXPECT_EQ(restored.next_entry_id, 3U);
     EXPECT_THROW(journal->delete_turn(2), std::invalid_argument);
+    journal.reset();
+    std::filesystem::remove(path);
+}
+
+TEST(SessionJournal, DeletesAFailedTurn) {
+    const auto path = temporary_path("cha_delete_failed_turn_journal_");
+    create_test_database(path);
+    auto journal = std::make_unique<SessionJournal>(path);
+    journal->start_turn(7, human(1, "Question", 7));
+    journal->fail_turn(7, make_error_entry(2, "Unavailable", 7, "reviewer-id"));
+
+    journal->delete_turn(2);
+
+    const SessionRestore restored = load_session_state(path);
+    EXPECT_TRUE(restored.entries.empty());
+    EXPECT_EQ(restored.next_request_id, 8U);
+    EXPECT_EQ(restored.next_entry_id, 3U);
     journal.reset();
     std::filesystem::remove(path);
 }

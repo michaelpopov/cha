@@ -686,7 +686,7 @@ void SessionJournal::delete_turn(EntryId response_entry_id) {
     {
         Statement response = impl_->database.prepare(
             "SELECT request_id FROM entries WHERE session_key = ?1 "
-            "AND entry_id = ?2 AND kind = 1",
+            "AND entry_id = ?2 AND kind IN (1, 3)",
             impl_->session_key,
             sqlite_id(response_entry_id, "Transcript entry ID"));
         if (response.step() && !response.is_null(0)) {

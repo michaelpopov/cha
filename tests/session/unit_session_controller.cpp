@@ -1042,6 +1042,30 @@ TEST(SessionController, ReplacesPartialOutputWithATypedError) {
     EXPECT_EQ(load_transcript_entries(temporary.path), entries);
 }
 
+TEST(SessionController, DeletesAFailedRequestFromMemoryAndStorage) {
+    TemporaryJournal temporary;
+    auto controller = test::from_test_backends(
+        test::one_backend(std::make_unique<ScriptedBackend>(
+            GenerationResult{
+                GenerationOutcome::transport_error,
+                "network unavailable",
+            })),
+        temporary.path,
+        notifier());
+
+    (void)controller->submit_prompt("operator", "Question");
+    receive_until_idle(*controller);
+    ASSERT_EQ(controller->view().transcript.entries.size(), 2U);
+    const TranscriptEntry& error = controller->view().transcript.entries.back();
+    ASSERT_EQ(error.kind, EntryKind::error);
+
+    const ControllerUpdate deleted = controller->delete_turn(error.id);
+
+    EXPECT_TRUE(has_state_update(deleted));
+    EXPECT_TRUE(controller->view().transcript.entries.empty());
+    EXPECT_TRUE(load_transcript_entries(temporary.path).empty());
+}
+
 TEST(SessionController, KeepsCoverMarkersOutOfTheSessionDatabase) {
     TemporaryJournal temporary;
     auto controller = test::from_test_backends(

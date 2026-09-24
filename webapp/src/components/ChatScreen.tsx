@@ -203,7 +203,12 @@ function TranscriptMessage({
   const canCover = entry.kind === 'character'
     && (entry.status === 'complete' || entry.status === 'cancelled')
     && entry.created_at !== null;
-  const canDelete = canCover && entry.request_id !== undefined;
+  const canDelete = (canCover || (entry.kind === 'error'
+    && entry.status === 'failed' && entry.created_at !== null))
+    && entry.request_id !== undefined;
+  const deleteLabel = entry.kind === 'error'
+    ? 'Delete error report and its prompt'
+    : `Delete ${entry.display_name}'s response and its prompt`;
   const spokenItem = entry.kind === 'human'
     ? 'your prompt'
     : `${entry.display_name}'s response`;
@@ -302,11 +307,11 @@ function TranscriptMessage({
           )}
           {canDelete && onDelete && (
             <button
-              aria-label={`Delete ${entry.display_name}'s response and its prompt`}
+              aria-label={deleteLabel}
               className="cha-message-action cha-danger-icon-action"
               disabled={actionDisabled}
               onClick={() => onDelete(entry)}
-              title={`Delete ${entry.display_name}'s response and its prompt`}
+              title={deleteLabel}
               type="button"
             >
               <TrashIcon />
@@ -401,6 +406,7 @@ export function ChatScreen({
   const [turnToDelete, setTurnToDelete] = useState<{
     id: number;
     displayName: string;
+    isError: boolean;
   } | null>(null);
   const composerInput = transliteration.field;
   const chatArea = useRef<HTMLElement | null>(null);
@@ -1133,6 +1139,7 @@ export function ChatScreen({
                   onDelete={(response) => setTurnToDelete({
                     id: response.id,
                     displayName: response.display_name,
+                    isError: response.kind === 'error',
                   })}
                   onUncover={entry.id === boundaryEntryId ? () => changeCover() : undefined}
                   speechState={spokenEntry?.id === entry.id ? spokenEntry.state
@@ -1160,6 +1167,7 @@ export function ChatScreen({
               onDelete={(response) => setTurnToDelete({
                 id: response.id,
                 displayName: response.display_name,
+                isError: response.kind === 'error',
               })}
               speechState={spokenEntry?.id === entry.id ? spokenEntry.state
                 : audioJobs.get(entry.id)?.state ?? 'idle'}
@@ -1326,15 +1334,17 @@ export function ChatScreen({
       </div>
       {turnToDelete && (
         <ConfirmDialog
-          confirmLabel="Delete response"
-          message={`Delete ${turnToDelete.displayName}'s response and the prompt that generated it? This cannot be undone.`}
+          confirmLabel={turnToDelete.isError ? 'Delete error report' : 'Delete response'}
+          message={turnToDelete.isError
+            ? 'Delete this error report and the prompt that generated it? This cannot be undone.'
+            : `Delete ${turnToDelete.displayName}'s response and the prompt that generated it? This cannot be undone.`}
           onCancel={() => setTurnToDelete(null)}
           onConfirm={() => {
             const responseEntryId = turnToDelete.id;
             setTurnToDelete(null);
             void deleteTurn(responseEntryId);
           }}
-          title="Delete response?"
+          title={turnToDelete.isError ? 'Delete error report?' : 'Delete response?'}
         />
       )}
     </section>
