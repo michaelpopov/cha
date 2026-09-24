@@ -226,6 +226,15 @@ std::optional<EntryAudio> AudioDownloadManager::audio(const FullSessionId& sessi
     if (failure) std::rethrow_exception(failure);
     return entry ? std::move(entry->cached) : std::nullopt;
 }
+std::shared_ptr<AudioStream> AudioDownloadManager::stream(
+    const FullSessionId& session, EntryId id, const std::string& vault) {
+    std::lock_guard lock(mutex_);
+    check(session, vault);
+    const auto found = jobs_.find(key(session, id));
+    if (found == jobs_.end() || found->second->state == AudioJobState::failed) return {};
+    return found->second->stream;
+}
+
 void AudioDownloadManager::clear(const FullSessionId& session) {
     {
         std::lock_guard lock(mutex_);
@@ -235,6 +244,7 @@ void AudioDownloadManager::clear(const FullSessionId& session) {
         for (auto it = jobs_.begin(); it != jobs_.end();) {
             if (it->second->entry.identity == session) {
                 it->second->cancelled = true;
+                it->second->stream->fail();
                 it = jobs_.erase(it);
             } else {
                 ++it;
@@ -258,6 +268,7 @@ void AudioDownloadManager::clear(const FullSessionId& session) {
 void AudioDownloadManager::cancel_all() {
     for (auto& [identity, job] : jobs_) {
         job->cancelled = true;
+        job->stream->fail();
     }
     jobs_.clear();
     queue_.clear();
@@ -324,6 +335,11 @@ void AudioDownloadManager::worker() {
     changed_.notify_all();
 }
 void AudioDownloadManager::run(const std::shared_ptr<Job>& job) {
+    struct Finish {
+        AudioStream& stream;
+        bool saved{};
+        ~Finish() { if (saved) stream.finish(); else stream.fail(); }
+    } finish{*job->stream};
     const auto cancelled = [&] { return job->cancelled.load(); };
     for (int attempt = 0; attempt < 4 && !cancelled(); ++attempt) {
         std::optional<EntryAudio> result;
@@ -340,12 +356,16 @@ void AudioDownloadManager::run(const std::shared_ptr<Job>& job) {
             return;
         }
         try {
-            result = transport_(job->output, job->key, job->request, cancelled);
+            result = transport_(job->output, job->key, job->request, cancelled,
+                [&](std::string_view type, std::string_view bytes) {
+                    if (!cancelled()) job->stream->append(type, bytes);
+                });
             if (!result || cancelled()) return;
             if (!valid_entry_audio(*result)) throw std::runtime_error("FishAudio returned invalid audio.");
         } catch (const std::exception&) {
             if (cancelled()) return;
-            if (attempt == 3) throw;
+            // Restarting after publishing audio would repeat words already played.
+            if (attempt == 3 || !job->stream->empty()) throw;
             std::unique_lock lock(mutex_);
             changed_.wait_for(lock, 50ms, cancelled);
             continue;
@@ -353,11 +373,19 @@ void AudioDownloadManager::run(const std::shared_ptr<Job>& job) {
         // Storage failures are terminal, outside the download retry loop.
         try {
             sessions_.save_entry_audio(job->entry, *result, cancelled);
+            const auto saved = sessions_.lookup_entry_audio(job->entry.identity, job->entry.entry_id, false);
+            // A stale/deleted entry can make the conditional cache write a no-op.
+            if (!saved || !saved->has_cached_audio || saved->entry_text != job->entry.entry_text
+                || saved->session_key != job->entry.session_key) return;
         } catch (const SessionNotFoundError&) {
             return;
         } catch (const ForumNotFoundError&) {
             return;
         }
+        if (cancelled()) return;
+        // Also support transports that return a complete clip without callbacks.
+        if (job->stream->empty()) job->stream->append(result->content_type, result->audio);
+        finish.saved = true;
         return;
     }
 }

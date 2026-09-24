@@ -242,4 +242,18 @@ test.describe('WebView2 native host', () => {
     });
     expect(result).toEqual({ status: 404, body: 'not found' });
   });
+
+  test('validates native audio chunk requests', async () => {
+    await waitForApplication(page);
+    const statuses = await page.evaluate(async () => {
+      const results: number[] = [];
+      for (const offset of ['0', '-1', 'invalid']) {
+        const response = await fetch('/media/r999999999999', { cache: 'no-store',
+          headers: { 'X-CHA-Audio-Offset': offset } });
+        results.push(response.status);
+      }
+      return results;
+    });
+    expect(statuses).toEqual([404, 400, 400]);
+  });
 });

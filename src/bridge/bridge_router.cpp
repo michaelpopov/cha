@@ -1270,7 +1270,7 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                 result = app::media_resource_json(
                     resource.resource_id,
                     resource.mime_type,
-                    resource.byte_length);
+                    resource.byte_length, resource.streaming);
                 break;
             }
             case Method::audio_clear_cache: {

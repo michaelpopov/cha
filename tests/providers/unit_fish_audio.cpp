@@ -154,6 +154,7 @@ TEST(FishAudio, IgnoresObsoleteVoiceSettingsWithoutChangingConfiguredModel) {
     EXPECT_EQ(request.body, Json({
         {"text", "Hello"}, {"reference_id", "fish-voice"},
         {"prosody", {{"speed", 0.9}}}, {"format", "mp3"},
+        {"temperature", 0.5}, {"latency", "normal"},
     }));
 }
 
@@ -168,6 +169,7 @@ TEST(FishAudio, PreservesExplicitFishAudioModelAndFormat) {
         EXPECT_EQ(request.model, "s2.1-pro-free");
         EXPECT_EQ(request.body, Json({
             {"text", "Hello"}, {"reference_id", "fish-voice"}, {"format", format},
+            {"temperature", 0.5}, {"latency", "normal"},
         }));
     }
 }
@@ -290,6 +292,23 @@ TEST(FishAudio, ForwardsAuthenticationAndReturnsAudioBytes) {
     ASSERT_TRUE(result);
     EXPECT_EQ(result->audio, "audio");
     EXPECT_EQ(result->content_type, "audio/mpeg");
+}
+
+TEST(FishAudio, NeverStreamsProviderErrorsOrInvalidAudioTypes) {
+    for (const auto& [status, type] : std::vector<std::pair<int, std::string>>{
+             {402, "audio/mpeg"}, {200, "application/json"}, {200, "audio/; codecs=mp3"}}) {
+        MockHttpServer server({"HTTP/1.1 " + std::to_string(status) + " Response\r\nContent-Type: "
+            + type + "\r\nContent-Length: 5\r\nConnection: close\r\n\r\nerror"});
+        server.start();
+        const WorkspaceVoiceOutput output{.url = "http://127.0.0.1:" + std::to_string(server.port()) + "/v1/tts",
+            .model = "s2.1-pro", .output_format = "mp3"};
+        bool emitted = false;
+        EXPECT_THROW(download_fish_audio(output, "secret", make_fish_audio_request(output,
+            {{"text", "Hello"}, {"reference_id", "voice"}}), [] { return false; },
+            [&](auto, auto) { emitted = true; }), std::runtime_error);
+        EXPECT_FALSE(emitted);
+        server.join();
+    }
 }
 
 TEST(FishAudio, BackgroundDownloadAcceptsAudioSubtypesAndParameters) {

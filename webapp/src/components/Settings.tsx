@@ -1774,6 +1774,8 @@ export function VoiceScreen({
       undefined,
       undefined,
       nativeSpeechFromClient(client),
+      undefined,
+      { onError: (failure) => setPreviewError(failure.message) },
     );
     preview.current = session;
     setPreviewing(true);

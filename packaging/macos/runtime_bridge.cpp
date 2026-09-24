@@ -541,6 +541,31 @@ int32_t cha_runtime_read_resource(
     }
 }
 
+int32_t cha_runtime_read_resource_chunk(
+    ChaRuntime* runtime, const char* connection_id, const char* resource_id,
+    uint64_t offset, char** mime_type, void** bytes, uint64_t* size, int32_t* complete) {
+    if (mime_type) *mime_type = nullptr;
+    if (bytes) *bytes = nullptr;
+    if (size) *size = 0;
+    if (complete) *complete = 0;
+    if (!runtime || !runtime->native_application || !connection_id || !resource_id
+        || !mime_type || !bytes || !size || !complete) return 404;
+    try {
+        const auto chunk = runtime->native_application->read_resource_chunk(connection_id, resource_id, offset);
+        if (!chunk) return 404;
+        if (chunk->failed) return 502;
+        if (chunk->body.empty() && !chunk->complete) return 204;
+        auto* copy = std::malloc(chunk->body.empty() ? 1 : chunk->body.size());
+        if (!copy) return 502;
+        std::memcpy(copy, chunk->body.data(), chunk->body.size());
+        *bytes = copy;
+        *size = chunk->body.size();
+        *complete = chunk->complete;
+        set_string(mime_type, chunk->mime_type.c_str());
+        return 200;
+    } catch (...) { return 502; }
+}
+
 void cha_bytes_free(void* value) {
     std::free(value);
 }

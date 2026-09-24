@@ -22,7 +22,7 @@ beforeEach(() => {
       duration: 60,
       readyState: 1,
       play: vi.fn().mockResolvedValue(undefined),
-      pause: vi.fn(),
+      pause: vi.fn(), removeAttribute: vi.fn(), load: vi.fn(),
     });
     audios.push(audio);
     return audio;
@@ -155,6 +155,112 @@ describe('playback position', () => {
     );
     await session.play();
     expect(audios[0].currentTime).toBe(0);
+    session.stop();
+  });
+});
+
+describe('streaming playback', () => {
+  const appended: string[] = [];
+  let source: TestMediaSource;
+  class TestBuffer extends EventTarget {
+    buffered = { length: 0 };
+    appendBuffer(bytes: ArrayBuffer) {
+      appended.push(new TextDecoder().decode(bytes));
+      queueMicrotask(() => this.dispatchEvent(new Event('updateend')));
+    }
+  }
+  class TestMediaSource extends EventTarget {
+    static isTypeSupported = () => true;
+    endOfStream = vi.fn();
+    constructor() {
+      super();
+      source = this;
+      queueMicrotask(() => this.dispatchEvent(new Event('sourceopen')));
+    }
+    addSourceBuffer = vi.fn(() => new TestBuffer());
+  }
+  const response = (body: string, complete = false, type = 'audio/mpeg') => new Response(body, {
+    headers: { 'Content-Type': type, 'X-CHA-Audio-Complete': complete ? '1' : '0' },
+  });
+  const start = (onCached = vi.fn(), onError = vi.fn()) => {
+    const release = vi.fn(async () => undefined);
+    const session = new TextToSpeechSession(null, undefined, 'Hello', vi.fn(),
+      undefined, undefined, onCached,
+      { preview: async () => ({ url: '/media/r1', resource_id: 'r1', streaming: true }), release },
+      undefined, { onError });
+    return { session, release };
+  };
+  beforeEach(() => {
+    appended.length = 0;
+    vi.stubGlobal('MediaSource', TestMediaSource);
+  });
+
+  it('starts before the final bytes and marks the cache only on successful completion', async () => {
+    let finish!: (response: Response) => void;
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(response('first'))
+      .mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const cached = vi.fn();
+    const { session, release } = start(cached);
+    await session.play();
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(appended).toEqual(['first']);
+    expect(audios[0].play).toHaveBeenCalledOnce();
+    expect(cached).not.toHaveBeenCalled();
+    expect(source.endOfStream).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls[1][1]?.headers).toEqual({ 'X-CHA-Audio-Offset': '5' });
+    finish(response('second', true));
+    await vi.waitFor(() => expect(source.endOfStream).toHaveBeenCalledOnce());
+    expect(appended).toEqual(['first', 'second']);
+    expect(cached).toHaveBeenCalledOnce();
+    session.stop();
+    expect(release).toHaveBeenCalledOnce();
+  });
+
+  it('reports a failure after playback starts, releases the preview, and never marks it cached', async () => {
+    let fail!: (response: Response) => void;
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(response('first'))
+      .mockImplementationOnce(() => new Promise((resolve) => { fail = resolve; }));
+    const cached = vi.fn();
+    const error = vi.fn();
+    const { session, release } = start(cached, error);
+    await session.play();
+    await vi.waitFor(() => expect(fail).toBeDefined());
+    fail(new Response('', { status: 502 }));
+    await vi.waitFor(() => expect(error).toHaveBeenCalledOnce());
+    expect(cached).not.toHaveBeenCalled();
+    expect(source.endOfStream).not.toHaveBeenCalled();
+    expect(release).toHaveBeenCalledOnce();
+    expect(audios[0].pause).toHaveBeenCalledOnce();
+  });
+
+  it('aborts waiting for the first bytes and stops polling on disposal', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 204 }));
+    const { session, release } = start();
+    const playing = session.play();
+    const rejection = expect(playing).rejects.toMatchObject({ name: 'AbortError' });
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    session.stop();
+    await rejection;
+    const calls = fetchMock.mock.calls.length;
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(fetchMock).toHaveBeenCalledTimes(calls);
+    expect(release).toHaveBeenCalledOnce();
+    expect(audios).toHaveLength(0);
+  });
+
+  it.each(['audio/wav', 'audio/mpeg'])('collects %s when streaming decoding is unavailable', async (type) => {
+    vi.stubGlobal('MediaSource', undefined);
+    let finish!: (response: Response) => void;
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(response('first', false, type))
+      .mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const { session } = start();
+    const playing = session.play();
+    await vi.waitFor(() => expect(finish).toBeDefined());
+    expect(audios).toHaveLength(0);
+    finish(response('last', true, type));
+    await playing;
+    expect(audios[0].play).toHaveBeenCalledOnce();
+    expect((vi.mocked(URL.createObjectURL).mock.calls[0][0] as Blob).size).toBe(9);
     session.stop();
   });
 });

@@ -1559,7 +1559,7 @@ TEST_F(BridgeRouterTest, SpeechAndAudioMethodsUseOpaqueResources) {
     ASSERT_TRUE(started["ok"]) << started.dump();
     EXPECT_TRUE(started["result"]["url"].get<std::string>().starts_with("/media/"));
     const auto resource_id = started["result"]["resource_id"].get<std::string>();
-    const auto body = application_->read_resource(connection_, resource_id);
+    const auto body = application_->read_resource_chunk(connection_, resource_id, 0);
     ASSERT_TRUE(body);
     EXPECT_EQ(body->body, "AUDIO");
 

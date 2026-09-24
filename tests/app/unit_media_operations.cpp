@@ -69,6 +69,15 @@ nlohmann::json wait_reply(
     throw std::runtime_error("Timed out waiting for media reply");
 }
 
+std::optional<ResourceBytes> wait_resource(Application& application, const std::string& id) {
+    const auto deadline = std::chrono::steady_clock::now() + 2s;
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (auto bytes = application.read_resource("view-1", id)) return bytes;
+        std::this_thread::sleep_for(2ms);
+    }
+    return std::nullopt;
+}
+
 TEST(ApplicationMedia, SynthesizesSpeechIntoARevocableResource) {
     MockHttpServer server({http_response("audio/mpeg", "AUDIO")});
     server.start();
@@ -100,10 +109,10 @@ TEST(ApplicationMedia, SynthesizesSpeechIntoARevocableResource) {
     const auto result = wait_reply(reply);
     EXPECT_EQ(result["url"], "/media/" + result["resource_id"].get<std::string>());
     EXPECT_EQ(result["mime_type"], "audio/mpeg");
-    EXPECT_EQ(result["byte_length"], 5);
+    EXPECT_EQ(result["byte_length"], 0);
+    EXPECT_EQ(result["streaming"], true);
 
-    const auto body = application->read_resource(
-        "view-1", result["resource_id"].get<std::string>());
+    const auto body = wait_resource(*application, result["resource_id"].get<std::string>());
     ASSERT_TRUE(body);
     EXPECT_EQ(body->body, "AUDIO");
     EXPECT_FALSE(application->read_resource(
@@ -153,10 +162,10 @@ TEST(ApplicationMedia, LateCancellationRevokesACompletedSpeechResource) {
     const auto result = wait_reply(reply);
     EXPECT_EQ(result["url"], "/media/" + result["resource_id"].get<std::string>());
     EXPECT_EQ(result["mime_type"], "audio/mpeg");
-    EXPECT_EQ(result["byte_length"], 5);
+    EXPECT_EQ(result["byte_length"], 0);
+    EXPECT_EQ(result["streaming"], true);
 
-    const auto body = application->read_resource(
-        "view-1", result["resource_id"].get<std::string>());
+    const auto body = wait_resource(*application, result["resource_id"].get<std::string>());
     ASSERT_TRUE(body);
     EXPECT_EQ(body->body, "AUDIO");
     EXPECT_FALSE(application->read_resource(
@@ -174,6 +183,7 @@ TEST(ApplicationMedia, LateCancellationRevokesACompletedSpeechResource) {
     const auto abandoned = wait_reply(application->start_speech(
         "view-1", 8, "Hello", {.reference_id = "voice-ref"}, 1));
     const auto resource_id = abandoned["resource_id"].get<std::string>();
+    ASSERT_TRUE(wait_resource(*application, resource_id));
     application->release_request_resources("view-2", 8);
     application->release_request_resources("view-1", 7);
     EXPECT_TRUE(application->read_resource("view-1", resource_id));
@@ -224,6 +234,40 @@ TEST(ApplicationMedia, CancelledSpeechDoesNotRegisterAResource) {
 
     application->request_shutdown();
     (void)application->join_shutdown(2s);
+}
+
+TEST(ApplicationMedia, ReturnsPlayableBytesBeforeUpstreamFinishesAndReleaseCancelsIt) {
+    // No Content-Length: the response stays open until CHA cancels the transfer.
+    MockHttpServer server({"HTTP/1.1 200 OK\r\nContent-Type: audio/mpeg\r\nConnection: close\r\n\r\nFIRST"}, true);
+    server.start();
+    test::TestWorkspace workspace;
+    const auto database = test::import_test_database(workspace.root());
+    auto application = Application::open(make_command(workspace, database));
+    const auto epoch = application->context_epoch();
+    const auto key = application->create_api_key({.display_name = "Fish", .value = "secret"}, epoch);
+    const auto voice = application->create_voice({
+        .display_name = "Narrator", .description = "Test", .elevenlabs_voice_id = "ref",
+    }, epoch);
+    (void)application->save_voice_output_settings({
+        .url = "https://api.fish.audio/v1/tts", .model = "s2.1-pro", .api_key = key.id,
+        .output_format = "mp3", .default_voice = voice.display_name,
+    }, epoch);
+    application->set_speech_url_override("http://127.0.0.1:" + std::to_string(server.port()) + "/v1/tts");
+    const auto result = wait_reply(application->start_speech("view", 1, "Hello", {}, epoch));
+    ASSERT_TRUE(result["streaming"]);
+    const auto id = result["resource_id"].get<std::string>();
+    const auto chunk = application->read_resource_chunk("view", id, 0);
+    ASSERT_TRUE(chunk);
+    EXPECT_EQ(chunk->body, "FIRST");
+    EXPECT_FALSE(chunk->complete);
+    EXPECT_FALSE(chunk->failed);
+    EXPECT_FALSE(application->read_resource("view", id));
+    EXPECT_FALSE(application->read_resource_chunk("other", id, 0));
+    application->release_resource("view", id, epoch);
+    EXPECT_FALSE(application->read_resource_chunk("view", id, 0));
+    server.join(); // Requires release to cancel the still-open provider request.
+    application->request_shutdown();
+    EXPECT_TRUE(application->join_shutdown(2s));
 }
 
 TEST(ApplicationMedia, ConnectsVoiceInputWithoutExposingTheStoredKey) {

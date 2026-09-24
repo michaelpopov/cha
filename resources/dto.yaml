@@ -1606,6 +1606,7 @@ components:
         url: {type: string}
         mime_type: {type: string}
         byte_length: {$ref: "#/components/schemas/NativeSafeInteger"}
+        streaming: {type: boolean}
 
     UnixTimestamp:
       type: integer

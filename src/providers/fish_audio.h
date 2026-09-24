@@ -21,9 +21,12 @@ struct FishAudioRequest {
     nlohmann::json body;
 };
 
+using AudioChunkCallback = std::function<void(std::string_view mime_type, std::string_view bytes)>;
+
 std::optional<EntryAudio> download_fish_audio(
     const WorkspaceVoiceOutput& output, const std::string& key,
-    const FishAudioRequest& request, const std::function<bool()>& cancelled);
+    const FishAudioRequest& request, const std::function<bool()>& cancelled,
+    const AudioChunkCallback& on_audio = {});
 std::string entry_speech_text(const EntryAudioLookup& entry);
 bool valid_entry_audio(const EntryAudio& audio);
 std::string fish_audio_http_error_message(long status);
@@ -54,7 +57,8 @@ public:
     void stop() { stopped_ = true; }
     FishAudioTransfer synthesize(
         const WorkspaceVoiceOutput& output, const std::string& key,
-        const FishAudioRequest& request, const std::function<bool()>& cancelled);
+        const FishAudioRequest& request, const std::function<bool()>& cancelled,
+        const AudioChunkCallback& on_audio = {});
 
 private:
     std::atomic_bool stopped_{false};

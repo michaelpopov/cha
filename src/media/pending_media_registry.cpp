@@ -91,8 +91,10 @@ void PendingMediaRegistry::release_resource(
     {
         std::lock_guard lock(mutex_);
         std::erase_if(pending_, [&](const auto& item) {
-            return item.second->connection_id == connection_id
+            const bool matches = item.second->connection_id == connection_id
                 && item.second->resource_id == resource_id;
+            if (matches) item.second->cancelled->store(true);
+            return matches;
         });
     }
     resources_.release(connection_id, resource_id);

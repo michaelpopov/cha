@@ -82,6 +82,24 @@ func makeFeasibilityWebViewConfiguration(assetRoot: URL) -> (
     handler.readMedia = { id in
         id == "probe-audio" ? (type: "audio/wav", body: chaProbeWavData()) : nil
     }
+    // Valid silent MPEG-1 Layer III frames. Withhold half of the clip so the
+    // probe can prove playback begins before the producer reports completion.
+    let frame = [UInt8](arrayLiteral: 0xff, 0xfb, 0x90, 0xc0) + [UInt8](repeating: 0, count: 413)
+    let first = Data((0..<100).flatMap { _ in frame })
+    let audio = first + first
+    var streamStarted: Date?
+    handler.readMediaChunk = { id, offset in
+        guard id == "probe-stream", offset <= UInt64(audio.count) else {
+            return (404, "text/plain", Data(), false)
+        }
+        if streamStarted == nil { streamStarted = Date() }
+        let finished = Date().timeIntervalSince(streamStarted!) >= 1.0
+        let available = finished ? audio.count : first.count
+        let start = Int(offset)
+        if start > available { return (404, "text/plain", Data(), false) }
+        if start >= available && !finished { return (204, "audio/mpeg", Data(), false) }
+        return (200, "audio/mpeg", audio.subdata(in: start..<available), finished)
+    }
     let receiver = ChaProbeReceiver()
     let bootstrap = WKUserScript(
         source: """

@@ -2,9 +2,11 @@
 
 #include "chat/session_identity.h"
 #include "chat/transcript.h"
+#include "media/audio_stream.h"
 
 #include <cstdint>
 #include <mutex>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -15,16 +17,14 @@ namespace cha::app {
 
 enum class ResourceKind { speech, entry_audio };
 
-struct ResourceBytes {
-    std::string mime_type;
-    std::string body;
-};
+using ResourceBytes = AudioChunk;
 
 struct MediaResource {
     std::string resource_id;
     std::string url;
     std::string mime_type;
     std::uint64_t byte_length{};
+    bool streaming{};
 };
 
 // Connection-scoped in-memory media. Handles are opaque; never path names.
@@ -48,6 +48,14 @@ public:
         std::string_view resource_id,
         std::uint64_t context_epoch) const;
 
+    [[nodiscard]] std::string add_stream(
+        std::string_view connection_id, std::uint64_t context_epoch,
+        ResourceKind kind, std::shared_ptr<AudioStream> stream,
+        std::optional<FullSessionId> session = {}, std::optional<EntryId> entry = {});
+    [[nodiscard]] std::optional<AudioChunk> read_chunk(
+        std::string_view connection_id, std::string_view resource_id,
+        std::uint64_t context_epoch, std::uint64_t offset) const;
+
     bool release(std::string_view connection_id, std::string_view resource_id);
     void revoke_connection(std::string_view connection_id);
     void revoke_session(const FullSessionId& session);
@@ -61,6 +69,7 @@ private:
         ResourceBytes bytes;
         std::optional<FullSessionId> session;
         std::optional<EntryId> entry;
+        std::shared_ptr<AudioStream> stream;
     };
 
     mutable std::mutex mutex_;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "storage/session_repository.h"
+#include "media/audio_stream.h"
 #include "providers/fish_audio.h"
 #include "workspace/workspace.h"
 #include <array>
@@ -56,7 +57,8 @@ public:
 class AudioDownloadManager {
 public:
     using Transport = std::function<std::optional<EntryAudio>(const WorkspaceVoiceOutput&,
-        const std::string&, const FishAudioRequest&, const std::function<bool()>&)>;
+        const std::string&, const FishAudioRequest&, const std::function<bool()>&,
+        const AudioChunkCallback&)>;
     // Reads the active vault's name on each check, so a vault switch is seen
     // without holding a reference to the composition root.
     using ActiveVaultName = std::function<std::string()>;
@@ -68,6 +70,7 @@ public:
     std::vector<AudioAcceptance> submit_batch(const FullSessionId& session, const AudioDownloadBatchRequest& input);
     AudioDownloadStatus status(const FullSessionId& session, const std::string& vault);
     std::optional<EntryAudio> audio(const FullSessionId& session, EntryId id, const std::string& vault);
+    std::shared_ptr<AudioStream> stream(const FullSessionId& session, EntryId id, const std::string& vault);
     void clear(const FullSessionId& session);
     void pause(bool cancel = true);
     void resume();
@@ -83,6 +86,7 @@ private:
         FishAudioRequest request;
         AudioJobState state{AudioJobState::queued};
         std::atomic_bool cancelled{false};
+        std::shared_ptr<AudioStream> stream = std::make_shared<AudioStream>();
     };
     static Key key(const FullSessionId& session, EntryId id);
     void check(const FullSessionId& session, const std::string& vault) const;

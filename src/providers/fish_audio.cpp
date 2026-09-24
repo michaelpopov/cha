@@ -17,11 +17,34 @@ namespace cha {
 namespace {
 using Json = nlohmann::json;
 
+bool valid_audio_type(std::string_view value) {
+    const auto type = trim_view(value.substr(0, value.find(';')));
+    return type.size() > 6 && starts_with_folded(type, "audio/");
+}
+
+struct AudioReceiver {
+    CURL* curl;
+    std::string body;
+    const AudioChunkCallback& on_audio;
+    std::exception_ptr failure;
+};
+
 std::size_t receive_audio(char* data, std::size_t size, std::size_t count, void* user) {
     const std::size_t bytes = size * count;
-    auto& body = *static_cast<std::string*>(user);
+    auto& receiver = *static_cast<AudioReceiver*>(user);
+    auto& body = receiver.body;
     if (bytes > 256 * 1024 * 1024 - body.size()) return 0;
-    try { body.append(data, bytes); } catch (...) { return 0; }
+    try {
+        body.append(data, bytes);
+        long status = 0;
+        char* type = nullptr;
+        curl_easy_getinfo(receiver.curl, CURLINFO_RESPONSE_CODE, &status);
+        curl_easy_getinfo(receiver.curl, CURLINFO_CONTENT_TYPE, &type);
+        // Never pass a provider error body to the audio decoder.
+        if (bytes && receiver.on_audio && status == 200 && type && valid_audio_type(type)) {
+            receiver.on_audio(type, std::string_view(data, bytes));
+        }
+    } catch (...) { receiver.failure = std::current_exception(); return 0; }
     return bytes;
 }
 
@@ -74,7 +97,7 @@ struct FishAudioResult { long status; EntryAudio audio; };
 static std::optional<FishAudioResult> transfer_fish_audio(
     const WorkspaceVoiceOutput& output, const std::string& key,
     const FishAudioRequest& request,
-    const std::function<bool()>& cancelled) {
+    const std::function<bool()>& cancelled, const AudioChunkCallback& on_audio) {
     if (cancelled()) {
         return std::nullopt;
     }
@@ -88,32 +111,36 @@ static std::optional<FishAudioResult> transfer_fish_audio(
     char error_buffer[CURL_ERROR_SIZE]{};
     const auto require = [&](CURLcode result) { require_curl(result, error_buffer); };
     const std::string body = request.body.dump();
-    std::string audio;
+    AudioReceiver receiver{curl.get(), {}, on_audio, {}};
     require(curl_easy_setopt(curl.get(), CURLOPT_ERRORBUFFER, error_buffer));
     require(curl_easy_setopt(curl.get(), CURLOPT_URL, output.url.c_str()));
     require(curl_easy_setopt(curl.get(), CURLOPT_POSTFIELDS, body.c_str()));
     require(curl_easy_setopt(curl.get(), CURLOPT_HTTPHEADER, headers.get()));
     require(curl_easy_setopt(curl.get(), CURLOPT_WRITEFUNCTION, receive_audio));
-    require(curl_easy_setopt(curl.get(), CURLOPT_WRITEDATA, &audio));
+    require(curl_easy_setopt(curl.get(), CURLOPT_WRITEDATA, &receiver));
     require(curl_easy_setopt(curl.get(), CURLOPT_CONNECTTIMEOUT, 10L));
     require(curl_easy_setopt(curl.get(), CURLOPT_TIMEOUT, 180L));
     require(curl_easy_setopt(curl.get(), CURLOPT_NOSIGNAL, 1L));
     // Keep credentials on the configured endpoint, even if it redirects.
     require(curl_easy_setopt(curl.get(), CURLOPT_FOLLOWLOCATION, 0L));
-    if (!perform_transfer(curl.get(), error_buffer, cancelled)) {
-        return std::nullopt;
+    try {
+        if (!perform_transfer(curl.get(), error_buffer, cancelled)) return std::nullopt;
+    } catch (...) {
+        if (receiver.failure) std::rethrow_exception(receiver.failure);
+        throw;
     }
     long status = 0;
     char* content_type = nullptr;
     require(curl_easy_getinfo(curl.get(), CURLINFO_RESPONSE_CODE, &status));
     require(curl_easy_getinfo(curl.get(), CURLINFO_CONTENT_TYPE, &content_type));
-    return FishAudioResult{status, {std::move(audio), content_type ? content_type : ""}};
+    return FishAudioResult{status, {std::move(receiver.body), content_type ? content_type : ""}};
 }
 
 std::optional<EntryAudio> download_fish_audio(
     const WorkspaceVoiceOutput& output, const std::string& key,
-    const FishAudioRequest& request, const std::function<bool()>& cancelled) {
-    auto result = transfer_fish_audio(output, key, request, cancelled);
+    const FishAudioRequest& request, const std::function<bool()>& cancelled,
+    const AudioChunkCallback& on_audio) {
+    auto result = transfer_fish_audio(output, key, request, cancelled, on_audio);
     if (!result) return std::nullopt;
     if (result->status != 200) throw std::runtime_error("FishAudio request failed (HTTP " + std::to_string(result->status) + ").");
     auto& audio = result->audio;
@@ -125,8 +152,7 @@ std::optional<EntryAudio> download_fish_audio(
 bool valid_entry_audio(const EntryAudio& audio) {
     // MIME types are case-insensitive and may include parameters. Opus and
     // other audio subtypes must work alongside MPEG, WAV, and Ogg.
-    const auto type = trim_view(std::string_view(audio.content_type).substr(0, audio.content_type.find(';')));
-    return !audio.audio.empty() && type.size() > 6 && starts_with_folded(type, "audio/");
+    return !audio.audio.empty() && valid_audio_type(audio.content_type);
 }
 
 std::string fish_audio_http_error_message(long status) {
@@ -142,7 +168,8 @@ std::string fish_audio_http_error_message(long status) {
 
 FishAudioTransfer FishAudioProxy::synthesize(
     const WorkspaceVoiceOutput& output, const std::string& key,
-    const FishAudioRequest& request, const std::function<bool()>& cancelled) {
+    const FishAudioRequest& request, const std::function<bool()>& cancelled,
+    const AudioChunkCallback& on_audio) {
     // counting_semaphore::try_acquire may fail spuriously under contention.
     auto available = slots_.load();
     do {
@@ -153,7 +180,7 @@ FishAudioTransfer FishAudioProxy::synthesize(
         ~ReleaseSlot() { slots++; }
     } release{slots_};
     auto result = transfer_fish_audio(
-        output, key, request, [&] { return stopped_ || cancelled(); });
+        output, key, request, [&] { return stopped_ || cancelled(); }, on_audio);
     if (!result) return {.cancelled = true};
     return {
         .status = result->status,
@@ -194,7 +221,8 @@ FishAudioRequest make_fish_audio_request(
     }
     FishAudioRequest request{
         .model = output.model,
-        .body = {{"text", text}, {"reference_id", *synthesis.reference_id}, {"format", output.output_format}},
+        .body = {{"text", text}, {"reference_id", *synthesis.reference_id}, {"format", output.output_format},
+            {"temperature", 0.5}, {"latency", "normal"}},
     };
     if (synthesis.settings.speed) {
         const double speed = *synthesis.settings.speed;

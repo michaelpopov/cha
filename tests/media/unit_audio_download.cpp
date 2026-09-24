@@ -66,7 +66,7 @@ protected:
 TEST_F(AudioDownloads, BatchAcceptanceQueuesThreeWorkersAndDeduplicatesExistingJobs) {
     std::atomic_int started{}, attempts{};
     std::atomic_bool release{};
-    auto downloads = make([&](const auto&, const auto&, const auto&, const auto& cancel) -> std::optional<EntryAudio> {
+    auto downloads = make([&](const auto&, const auto&, const auto&, const auto& cancel, const AudioChunkCallback&) -> std::optional<EntryAudio> {
         ++attempts; ++started;
         while (!release && !cancel()) std::this_thread::sleep_for(2ms);
         return cancel() ? std::nullopt : std::optional<EntryAudio>{{"audio", "audio/mpeg"}};
@@ -89,7 +89,7 @@ TEST_F(AudioDownloads, BatchAcceptanceQueuesThreeWorkersAndDeduplicatesExistingJ
 
 TEST_F(AudioDownloads, InvalidBatchAdmitsNoNewJobs) {
     std::atomic_int attempts{};
-    auto downloads = make([&](const auto&, const auto&, const auto&, const auto&) -> std::optional<EntryAudio> {
+    auto downloads = make([&](const auto&, const auto&, const auto&, const auto&, const AudioChunkCallback&) -> std::optional<EntryAudio> {
         ++attempts; return EntryAudio{"audio", "audio/mpeg"};
     });
     const AudioDownloadBatchRequest batch{"Test", {
@@ -110,7 +110,7 @@ TEST_F(AudioDownloads, NewBatchRunsBeforeBacklogAndPreservesBatchOrder) {
     std::vector<std::string> started;
     std::set<std::string> released;
     std::atomic_bool release_all{};
-    auto downloads = make([&](const auto&, const auto&, const auto& request, const auto& cancel) -> std::optional<EntryAudio> {
+    auto downloads = make([&](const auto&, const auto&, const auto& request, const auto& cancel, const AudioChunkCallback&) -> std::optional<EntryAudio> {
         const auto text = request.body.at("text").template get<std::string>();
         {
             std::lock_guard lock(mutex);
@@ -163,7 +163,7 @@ TEST_F(AudioDownloads, MulticastStartsAndCollectsAllModelsWhileAudioWorkersAreBl
     config->apply_forum_members_and_persona("lobby", characters, persona);
     std::atomic_int audio_started{}, models_started{};
     std::atomic_bool release_audio{}, release_models{};
-    auto downloads = make([&](const auto&, const auto&, const auto&, const auto& cancel) -> std::optional<EntryAudio> {
+    auto downloads = make([&](const auto&, const auto&, const auto&, const auto& cancel, const AudioChunkCallback&) -> std::optional<EntryAudio> {
         ++audio_started;
         while (!release_audio && !cancel()) std::this_thread::sleep_for(2ms);
         return cancel() ? std::nullopt : std::optional<EntryAudio>{{"audio", "audio/mpeg"}};
@@ -219,7 +219,7 @@ TEST_F(AudioDownloads, ThreeWorkersQueueFourthAndDeduplicate) {
     std::condition_variable cv;
     std::set<std::string> started;
     std::set<std::string> released;
-    auto downloads = make([&](const auto&, const auto&, const auto& request, const auto& cancel) -> std::optional<EntryAudio> {
+    auto downloads = make([&](const auto&, const auto&, const auto& request, const auto& cancel, const AudioChunkCallback&) -> std::optional<EntryAudio> {
         const auto text = request.body.at("text").template get<std::string>();
         std::unique_lock lock(mutex);
         started.insert(text); cv.notify_all();
@@ -244,10 +244,69 @@ TEST_F(AudioDownloads, ThreeWorkersQueueFourthAndDeduplicate) {
     ASSERT_TRUE(eventually([&] { return sessions->cached_audio_entries(session).size() == 4; }));
     EXPECT_EQ(downloads->submit(session, 1, input()).kind, AudioAcceptanceKind::cached);
 }
+TEST_F(AudioDownloads, PlaybackSharesTheDownloadBeforeItIsCached) {
+    std::atomic_bool release{}, first_chunk{};
+    std::atomic_int attempts{};
+    auto downloads = make([&](const auto&, const auto&, const auto&, const auto& cancel,
+                             const AudioChunkCallback& emit) -> std::optional<EntryAudio> {
+        ++attempts;
+        emit("audio/mpeg", "first");
+        first_chunk = true;
+        while (!release && !cancel()) std::this_thread::sleep_for(2ms);
+        if (cancel()) return std::nullopt;
+        emit("audio/mpeg", "second");
+        return EntryAudio{"firstsecond", "audio/mpeg"};
+    });
+    ReleaseOnExit cleanup{release};
+    downloads->submit(session, 1, input());
+    ASSERT_TRUE(eventually([&] { return first_chunk.load(); }));
+    auto stream = downloads->stream(session, 1, "Test");
+    ASSERT_TRUE(stream);
+    EXPECT_EQ(stream->read(0)->body, "first");
+    EXPECT_FALSE(stream->read(0)->complete);
+    EXPECT_TRUE(sessions->cached_audio_entries(session).empty());
+    downloads->submit(session, 1, input());
+    EXPECT_EQ(downloads->stream(session, 1, "Test"), stream);
+    release = true;
+    ASSERT_TRUE(eventually([&] { return stream->read(0)->complete; }));
+    EXPECT_EQ(downloads->audio(session, 1, "Test")->audio, "firstsecond");
+    EXPECT_EQ(stream->read(5)->body, "second");
+    EXPECT_EQ(attempts, 1);
+}
+
+TEST_F(AudioDownloads, PartialFailureDoesNotRetryOrCacheAndClearRevokesReaders) {
+    std::atomic_bool release{};
+    std::atomic_int attempts{};
+    auto downloads = make([&](const auto&, const auto&, const auto&, const auto& cancel,
+                             const AudioChunkCallback& emit) -> std::optional<EntryAudio> {
+        ++attempts;
+        emit("audio/mpeg", "partial");
+        while (!release && !cancel()) std::this_thread::sleep_for(2ms);
+        throw std::runtime_error("Connection lost");
+    });
+    ReleaseOnExit cleanup{release};
+    downloads->submit(session, 1, input());
+    auto stream = downloads->stream(session, 1, "Test");
+    ASSERT_TRUE(stream);
+    ASSERT_TRUE(eventually([&] { return !stream->empty(); }));
+    release = true;
+    ASSERT_TRUE(eventually([&] { return stream->read(0)->failed; }));
+    EXPECT_EQ(attempts, 1);
+    EXPECT_TRUE(sessions->cached_audio_entries(session).empty());
+
+    release = false;
+    downloads->submit(session, 2, input());
+    auto second = downloads->stream(session, 2, "Test");
+    ASSERT_TRUE(second);
+    downloads->clear(session);
+    EXPECT_TRUE(second->read(0)->failed);
+    EXPECT_FALSE(downloads->stream(session, 2, "Test"));
+}
+
 TEST_F(AudioDownloads, FourAttemptsWithFiftyMillisecondWaits) {
     std::mutex mutex;
     std::vector<std::chrono::steady_clock::time_point> attempts;
-    auto downloads = make([&](const auto&, const auto&, const auto&, const auto&) -> std::optional<EntryAudio> {
+    auto downloads = make([&](const auto&, const auto&, const auto&, const auto&, const AudioChunkCallback&) -> std::optional<EntryAudio> {
         std::lock_guard lock(mutex);
         attempts.push_back(std::chrono::steady_clock::now());
         throw std::runtime_error("upstream failed");
@@ -264,7 +323,7 @@ TEST_F(AudioDownloads, FourAttemptsWithFiftyMillisecondWaits) {
 TEST_F(AudioDownloads, RetryWaitDoesNotConsumeQueueWakeup) {
     std::atomic_bool first_started{}, second_started{}, release_first{}, fourth_started{};
     std::atomic_int third_attempts{};
-    auto downloads = make([&](const auto&, const auto&, const auto& request, const auto& cancel) -> std::optional<EntryAudio> {
+    auto downloads = make([&](const auto&, const auto&, const auto& request, const auto& cancel, const AudioChunkCallback&) -> std::optional<EntryAudio> {
         const auto text = request.body.at("text").template get<std::string>();
         if (text == "3" && ++third_attempts == 1) throw std::runtime_error("Retry this transfer");
         if (text == "4") { fourth_started = true; return EntryAudio{"fourth", "audio/mpeg"}; }
@@ -292,7 +351,7 @@ TEST_F(AudioDownloads, OpusAudioWithParametersIsSavedWithoutRetry) {
     config->apply_voice_output_update({.url = "https://api.fish.audio/v1/tts", .model = "s2.1-pro",
         .api_key_id = config->snapshot()->voice_output()->api_key_id, .output_format = "opus", .default_voice = "Reader"});
     std::atomic_int attempts{};
-    auto downloads = make([&](const auto&, const auto&, const auto& request, const auto&) -> std::optional<EntryAudio> {
+    auto downloads = make([&](const auto&, const auto&, const auto& request, const auto&, const AudioChunkCallback&) -> std::optional<EntryAudio> {
         ++attempts;
         EXPECT_EQ(request.body.at("format"), "opus");
         return EntryAudio{"opus-audio", "audio/opus; codecs=opus"};
@@ -307,7 +366,7 @@ TEST_F(AudioDownloads, OpusAudioWithParametersIsSavedWithoutRetry) {
 
 TEST_F(AudioDownloads, DeletedKeyReportsNotConfiguredButCachedAudioStillWorks) {
     std::atomic_int transfers{};
-    auto downloads = make([&](const auto&, const auto&, const auto&, const auto&) -> std::optional<EntryAudio> {
+    auto downloads = make([&](const auto&, const auto&, const auto&, const auto&, const AudioChunkCallback&) -> std::optional<EntryAudio> {
         ++transfers;
         return EntryAudio{"audio", "audio/mpeg"};
     });
@@ -341,7 +400,7 @@ TEST_F(AudioDownloads, DeletedQueuedEntryIsDroppedBeforeTransfer) {
     std::mutex mutex;
     std::set<std::string> started;
     std::atomic_bool release{};
-    auto downloads = make([&](const auto&, const auto&, const auto& request, const auto& cancel) -> std::optional<EntryAudio> {
+    auto downloads = make([&](const auto&, const auto&, const auto& request, const auto& cancel, const AudioChunkCallback&) -> std::optional<EntryAudio> {
         {
             std::lock_guard lock(mutex);
             started.insert(request.body.at("text").template get<std::string>());
@@ -364,7 +423,7 @@ TEST_F(AudioDownloads, DeletedQueuedEntryIsDroppedBeforeTransfer) {
 }
 TEST_F(AudioDownloads, FourthAttemptCanSucceed) {
     std::atomic_int attempts{};
-    auto downloads = make([&](const auto&, const auto&, const auto&, const auto&) -> std::optional<EntryAudio> {
+    auto downloads = make([&](const auto&, const auto&, const auto&, const auto&, const AudioChunkCallback&) -> std::optional<EntryAudio> {
         if (++attempts < 4) throw std::runtime_error("upstream failed");
         return EntryAudio{"audio", "audio/mpeg"};
     });
@@ -374,7 +433,7 @@ TEST_F(AudioDownloads, FourthAttemptCanSucceed) {
 }
 TEST_F(AudioDownloads, CancellationStopsStalledTransferAndPreservesNewWork) {
     std::atomic_bool started{}, canceled{};
-    auto downloads = make([&](const auto&, const auto&, const auto& request, const auto& cancel) -> std::optional<EntryAudio> {
+    auto downloads = make([&](const auto&, const auto&, const auto& request, const auto& cancel, const AudioChunkCallback&) -> std::optional<EntryAudio> {
         if (request.body.at("text") == "2") return EntryAudio{"new audio", "audio/mpeg"};
         started = true;
         while (!cancel()) std::this_thread::sleep_for(2ms);
@@ -394,7 +453,7 @@ TEST_F(AudioDownloads, CancellationStopsStalledTransferAndPreservesNewWork) {
 }
 TEST_F(AudioDownloads, CancellationWakesRetryWait) {
     std::atomic_int attempts{};
-    auto downloads = make([&](const auto&, const auto&, const auto&, const auto&) -> std::optional<EntryAudio> {
+    auto downloads = make([&](const auto&, const auto&, const auto&, const auto&, const AudioChunkCallback&) -> std::optional<EntryAudio> {
         ++attempts;
         throw std::runtime_error("upstream failed");
     });
@@ -409,7 +468,7 @@ TEST_F(AudioDownloads, PersistenceFailureDoesNotRepeatTransferOrSave) {
     storage::SqliteDatabase database(path, storage::SqliteDatabase::Mode::read_write);
     database.execute("CREATE TRIGGER reject_audio BEFORE INSERT ON entry_audio BEGIN SELECT RAISE(FAIL, 'save failed'); END");
     std::atomic_int transfers{};
-    auto downloads = make([&](const auto&, const auto&, const auto&, const auto&) -> std::optional<EntryAudio> {
+    auto downloads = make([&](const auto&, const auto&, const auto&, const auto&, const AudioChunkCallback&) -> std::optional<EntryAudio> {
         ++transfers; return EntryAudio{"audio", "audio/mpeg"};
     });
     downloads->submit(session, 1, input());
@@ -428,7 +487,7 @@ TEST_F(AudioDownloads, PersistenceFailureDoesNotRepeatTransferOrSave) {
 TEST_F(AudioDownloads, ClearCancelsOldCompletionWithoutReplacingNewJob) {
     std::atomic_int transfers{};
     std::atomic_bool release{};
-    auto downloads = make([&](const auto&, const auto&, const auto&, const auto&) -> std::optional<EntryAudio> {
+    auto downloads = make([&](const auto&, const auto&, const auto&, const auto&, const AudioChunkCallback&) -> std::optional<EntryAudio> {
         ++transfers;
         while (!release) std::this_thread::sleep_for(2ms);
         return EntryAudio{"audio", "audio/mpeg"}; // Simulate a result racing cancellation.
@@ -446,7 +505,7 @@ TEST_F(AudioDownloads, ClearCancelsOldCompletionWithoutReplacingNewJob) {
 }
 TEST_F(AudioDownloads, DeletedEntryCannotSaveLateAudio) {
     std::atomic_bool started{}, release{};
-    auto downloads = make([&](const auto&, const auto&, const auto&, const auto&) -> std::optional<EntryAudio> {
+    auto downloads = make([&](const auto&, const auto&, const auto&, const auto&, const AudioChunkCallback&) -> std::optional<EntryAudio> {
         started = true;
         while (!release) std::this_thread::sleep_for(2ms);
         return EntryAudio{"audio", "audio/mpeg"};
@@ -454,6 +513,8 @@ TEST_F(AudioDownloads, DeletedEntryCannotSaveLateAudio) {
     ReleaseOnExit cleanup{release};
     downloads->submit(session, 1, input());
     ASSERT_TRUE(eventually([&] { return started.load(); }));
+    const auto stream = downloads->stream(session, 1, "Test");
+    ASSERT_TRUE(stream);
     {
         storage::SqliteDatabase database(path, storage::SqliteDatabase::Mode::read_write);
         database.execute("DELETE FROM entries WHERE entry_id = 1");
@@ -461,10 +522,12 @@ TEST_F(AudioDownloads, DeletedEntryCannotSaveLateAudio) {
     release = true;
     ASSERT_TRUE(eventually([&] { return downloads->status(session, "Test").downloads.empty(); }));
     EXPECT_TRUE(sessions->cached_audio_entries(session).empty());
+    EXPECT_TRUE(stream->read(0)->failed);
+    EXPECT_FALSE(stream->read(0)->complete);
 }
 TEST_F(AudioDownloads, OldVaultCompletionCannotSaveAfterSwitchingAwayAndBack) {
     std::atomic_bool started{}, cancelled{}, release{};
-    auto downloads = make([&](const auto&, const auto&, const auto&, const auto& cancel) -> std::optional<EntryAudio> {
+    auto downloads = make([&](const auto&, const auto&, const auto&, const auto& cancel, const AudioChunkCallback&) -> std::optional<EntryAudio> {
         started = true;
         while (!cancel()) std::this_thread::sleep_for(2ms);
         cancelled = true;
@@ -490,7 +553,7 @@ TEST_F(AudioDownloads, CachedAudioReadRejectsChangedGenerationEvenAfterSwitching
     const auto entry = sessions->lookup_entry_audio(session, 1);
     ASSERT_TRUE(entry);
     sessions->save_entry_audio(*entry, {"saved", "audio/mpeg"});
-    auto downloads = make([](const auto&, const auto&, const auto&, const auto&) -> std::optional<EntryAudio> {
+    auto downloads = make([](const auto&, const auto&, const auto&, const auto&, const AudioChunkCallback&) -> std::optional<EntryAudio> {
         throw std::runtime_error("Cached playback must not synthesize");
     });
     std::future<int> read;

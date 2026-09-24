@@ -18,6 +18,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <charconv>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -970,6 +971,36 @@ private:
             || id.find("..") != std::string::npos
             || runtime_ == nullptr || connection_id_.empty()) {
             return not_found();
+        }
+        ComPtr<ICoreWebView2WebResourceRequest> request;
+        ComPtr<ICoreWebView2HttpRequestHeaders> request_headers;
+        wchar_t* raw_offset = nullptr;
+        if (SUCCEEDED(args->get_Request(&request)) && request
+            && SUCCEEDED(request->get_Headers(&request_headers)) && request_headers
+            && SUCCEEDED(request_headers->GetHeader(L"X-CHA-Audio-Offset", &raw_offset))) {
+            const auto offset_text = cha::utf8_from_wide(take_com_string(raw_offset));
+            uint64_t offset = 0;
+            const auto parsed = std::from_chars(offset_text.data(), offset_text.data() + offset_text.size(), offset);
+            if (offset_text.empty() || parsed.ec != std::errc{}
+                || parsed.ptr != offset_text.data() + offset_text.size()) {
+                return respond_with_bytes(args, 400, L"Bad Request", L"Cache-Control: no-store", "");
+            }
+            char* chunk_mime = nullptr;
+            void* chunk_bytes = nullptr;
+            uint64_t chunk_size = 0;
+            int32_t complete = 0;
+            const auto status = cha_runtime_read_resource_chunk(
+                runtime_, connection_id_.c_str(), id.c_str(), offset,
+                &chunk_mime, &chunk_bytes, &chunk_size, &complete);
+            const std::wstring headers = L"Content-Type: "
+                + wide_from_utf8(chunk_mime ? chunk_mime : "application/octet-stream")
+                + L"\nCache-Control: no-store\nX-CHA-Audio-Complete: " + (complete ? L"1" : L"0");
+            const std::string body = chunk_bytes
+                ? std::string(static_cast<const char*>(chunk_bytes), static_cast<std::size_t>(chunk_size)) : "";
+            cha_string_free(chunk_mime);
+            cha_bytes_free(chunk_bytes);
+            return respond_with_bytes(args, status,
+                status == 200 ? L"OK" : status == 204 ? L"No Content" : L"Audio unavailable", headers, body);
         }
         char* mime = nullptr;
         void* bytes = nullptr;

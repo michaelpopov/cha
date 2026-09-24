@@ -57,7 +57,7 @@ function mockAudioPlayback() {
   vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:audio');
   vi.stubGlobal('Audio', vi.fn(function Audio() {
     const audio = Object.assign(new EventTarget(), {
-      play: vi.fn().mockResolvedValue(undefined), pause: vi.fn(),
+      play: vi.fn().mockResolvedValue(undefined), pause: vi.fn(), removeAttribute: vi.fn(), load: vi.fn(),
     });
     audios.push(audio);
     return audio;
@@ -323,7 +323,7 @@ describe('live chat', () => {
     vi.stubGlobal('Audio', vi.fn(function Audio() {
       const audio = Object.assign(new EventTarget(), {
         currentTime: 0, duration: 60, readyState: 1,
-        pause: vi.fn(), play: vi.fn().mockResolvedValue(undefined),
+        pause: vi.fn(), removeAttribute: vi.fn(), load: vi.fn(), play: vi.fn().mockResolvedValue(undefined),
       });
       audios.push(audio);
       return audio;
@@ -373,7 +373,7 @@ describe('live chat', () => {
     }));
     vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:audio');
     vi.stubGlobal('Audio', vi.fn(function Audio() {
-      return { addEventListener: vi.fn(), pause: vi.fn(), play: vi.fn().mockResolvedValue(undefined) };
+      return { addEventListener: vi.fn(), pause: vi.fn(), removeAttribute: vi.fn(), load: vi.fn(), play: vi.fn().mockResolvedValue(undefined) };
     }));
     const events = drivableEvents();
     render(<App client={fixtureClient({
@@ -472,6 +472,7 @@ describe('live chat', () => {
       getVoiceOutputRuntime: async () => voiceOutputRuntimeFixture,
       getAudioDownloads: async () => ({ cached_entry_ids: [], downloads: [] }),
       startAudioDownload,
+      resolveAudioSource: async () => { throw new ChaError('not_found', 'Audio is no longer available.'); },
     })} connectSessionEvents={events.connect} />);
     await attachInitial(events, { ...snapshotFixture, transcript: [
       { id: 1, kind: 'human', participant_id: 'guest', display_name: 'Guest',
@@ -565,7 +566,7 @@ describe('live chat', () => {
     const fetcher = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('audio'));
     vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:cached');
     vi.stubGlobal('Audio', vi.fn(function Audio() {
-      return { addEventListener: vi.fn(), pause: vi.fn(), play: vi.fn().mockResolvedValue(undefined) };
+      return { addEventListener: vi.fn(), pause: vi.fn(), removeAttribute: vi.fn(), load: vi.fn(), play: vi.fn().mockResolvedValue(undefined) };
     }));
     const startAudioDownload = vi.fn();
     const events = drivableEvents();
@@ -594,7 +595,7 @@ describe('live chat', () => {
     vi.stubGlobal('Audio', vi.fn(function Audio() {
       const audio = Object.assign(new EventTarget(), {
         currentTime: 0, duration: 60, readyState: 1,
-        pause: vi.fn(), play: vi.fn().mockResolvedValue(undefined),
+        pause: vi.fn(), removeAttribute: vi.fn(), load: vi.fn(), play: vi.fn().mockResolvedValue(undefined),
       });
       audios.push(audio);
       return audio;
@@ -648,7 +649,7 @@ describe('live chat', () => {
     vi.stubGlobal('Audio', vi.fn(function Audio() {
       return {
         addEventListener: vi.fn(),
-        pause: vi.fn(),
+        pause: vi.fn(), removeAttribute: vi.fn(), load: vi.fn(),
         play: vi.fn().mockResolvedValue(undefined),
       };
     }));
@@ -772,7 +773,7 @@ describe('live chat', () => {
     }
     expect(jobs.map((job) => job.state)).toEqual(['running', 'running', 'running', 'queued', 'queued', 'queued']);
     expect(screen.getAllByText(/^Reply \d$/)).toHaveLength(6);
-    expect(play).not.toHaveBeenCalled();
+    expect(play).toHaveBeenCalledOnce();
     fireEvent.change(screen.getByRole('textbox', { name: 'Message' }), { target: { value: 'Next question' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
     await waitFor(() => expect(submitInput).toHaveBeenLastCalledWith('entrance', 'welcome', { text: 'Next question' }));
@@ -887,7 +888,7 @@ describe('live chat', () => {
     await waitFor(() => expect(startAudioDownload).toHaveBeenCalledTimes(3));
     act(() => events.handlers[0].onSnapshot({ ...completed, transcript: [...completed.transcript] }));
     expect(startAudioDownload).toHaveBeenCalledTimes(3);
-    expect(play).not.toHaveBeenCalled();
+    await waitFor(() => expect(play).toHaveBeenCalledOnce());
   });
 
   it('plays new character replies once in transcript order even when audio downloads finish out of order', async () => {
@@ -922,7 +923,8 @@ describe('live chat', () => {
       { ...entry, id: 4, participant_id: 'other', display_name: 'Other', text: 'Second reply' }] };
     act(() => events.handlers[0].onSnapshot(completed));
     await screen.findByRole('button', { name: "Play cached audio for Other's response" });
-    expect(resolveAudioSource).not.toHaveBeenCalled();
+    // Start the first reply while its download is still running.
+    expect(resolveAudioSource.mock.calls.map((call) => call[2])).toEqual([3]);
     cached.push(3);
     await waitFor(() => expect(audios).toHaveLength(1), { timeout: 2500 });
     expect(resolveAudioSource.mock.calls.map((call) => call[2])).toEqual([3]);

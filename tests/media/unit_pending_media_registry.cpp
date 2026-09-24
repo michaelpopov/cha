@@ -46,6 +46,7 @@ TEST(PendingMediaRegistry, ReleaseAndConnectionTeardownRemoveTheirAssociations) 
     pending.release_resource("second", id);
     EXPECT_TRUE(resources.read("first", id, 1));
     pending.release_resource("first", id);
+    EXPECT_TRUE(first->cancelled->load());
     EXPECT_FALSE(resources.read("first", id, 1));
     EXPECT_FALSE(pending.set_resource(first, "already-released"));
     pending.cancel_connection("first");

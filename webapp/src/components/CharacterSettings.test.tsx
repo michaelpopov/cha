@@ -108,7 +108,7 @@ describe('character settings screen', () => {
     vi.stubGlobal('Audio', vi.fn(function Audio() {
       return {
         addEventListener: vi.fn(),
-        pause: vi.fn(),
+        pause: vi.fn(), removeAttribute: vi.fn(), load: vi.fn(),
         play: vi.fn().mockResolvedValue(undefined),
       };
     }));

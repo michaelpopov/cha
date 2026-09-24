@@ -674,6 +674,7 @@ export interface components {
             url: string;
             mime_type: string;
             byte_length: components["schemas"]["NativeSafeInteger"];
+            streaming?: boolean;
         };
         /**
          * Format: int64

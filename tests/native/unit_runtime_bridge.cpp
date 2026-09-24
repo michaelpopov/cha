@@ -229,6 +229,19 @@ TEST_F(NativeRuntimeTest, RejectsUnknownAndUnownedMediaResources) {
     cha_bytes_free(bytes);
 }
 
+TEST_F(NativeRuntimeTest, ChunkReadsRejectUnknownResourcesAndInitializeOutputs) {
+    char* mime = nullptr;
+    void* bytes = nullptr;
+    uint64_t size = 123;
+    int32_t complete = 1;
+    EXPECT_EQ(cha_runtime_read_resource_chunk(runtime_, connection_.c_str(), "r999", 0,
+        &mime, &bytes, &size, &complete), 404);
+    EXPECT_EQ(mime, nullptr);
+    EXPECT_EQ(bytes, nullptr);
+    EXPECT_EQ(size, 0U);
+    EXPECT_EQ(complete, 0);
+}
+
 TEST_F(NativeRuntimeTest, StartsWithoutAListenerAndRunsFirstFlow) {
     auto info = call("bridge.info");
     ASSERT_TRUE(info["ok"]);

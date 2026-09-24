@@ -488,7 +488,8 @@ export function isMediaResource(value: unknown): value is MediaResource {
     && typeof value.url === 'string' && value.url.length > 0
     && typeof value.mime_type === 'string' && value.mime_type.length > 0
     && Number.isSafeInteger(value.byte_length)
-    && (value.byte_length as number) >= 0;
+    && (value.byte_length as number) >= 0
+    && (value.streaming === undefined || typeof value.streaming === 'boolean');
 }
 
 export function isJevSettings(value: unknown): value is JevSettings {

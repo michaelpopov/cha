@@ -19,6 +19,7 @@ TEST(MediaResources, IssuesOpaqueHandlesAndRejectsUnknownOrForeignReads) {
     ASSERT_TRUE(body);
     EXPECT_EQ(body->mime_type, "audio/mpeg");
     EXPECT_EQ(body->body, "bytes");
+    EXPECT_FALSE(resources.read_chunk("view-1", id, 3, 0));
     EXPECT_FALSE(resources.read("view-2", id, 3));
     EXPECT_FALSE(resources.read("view-1", id, 4));
     EXPECT_FALSE(resources.read("view-1", "r999", 3));
@@ -46,6 +47,50 @@ TEST(MediaResources, RevokesOnConnectionLossAndSessionClear) {
     EXPECT_TRUE(resources.read("view-2", other, 1));
     resources.revoke_all();
     EXPECT_FALSE(resources.read("view-2", other, 1));
+}
+
+TEST(MediaResources, ActiveClipsExposeBoundedChunksBeforeCompletion) {
+    MediaResources resources;
+    auto stream = std::make_shared<AudioStream>();
+    const auto id = resources.add_stream("view", 1, ResourceKind::speech, stream);
+    EXPECT_FALSE(resources.read_chunk("other", id, 1, 0));
+    EXPECT_FALSE(resources.read_chunk("view", id, 2, 0));
+    EXPECT_FALSE(resources.read_chunk("view", id, 1, 1));
+    const auto pending = resources.read_chunk("view", id, 1, 0);
+    ASSERT_TRUE(pending);
+    EXPECT_TRUE(pending->body.empty());
+    EXPECT_FALSE(pending->complete);
+
+    stream->append("audio/mpeg", std::string(70 * 1024, 'a'));
+    const auto first = resources.read_chunk("view", id, 1, 0);
+    ASSERT_TRUE(first);
+    EXPECT_EQ(first->body.size(), 64 * 1024);
+    EXPECT_EQ(first->mime_type, "audio/mpeg");
+    EXPECT_FALSE(first->complete);
+    EXPECT_FALSE(resources.read("view", id, 1));
+    stream->finish();
+    const auto last = resources.read_chunk("view", id, 1, first->body.size());
+    ASSERT_TRUE(last);
+    EXPECT_EQ(last->body.size(), 6 * 1024);
+    EXPECT_TRUE(last->complete);
+    ASSERT_TRUE(resources.read("view", id, 1));
+    EXPECT_EQ(resources.read("view", id, 1)->body.size(), 70 * 1024);
+    EXPECT_TRUE(resources.release("view", id));
+    EXPECT_FALSE(resources.read_chunk("view", id, 1, 0));
+}
+
+TEST(MediaResources, PartialFailureIsNotSuccessfulEndOfAudio) {
+    MediaResources resources;
+    auto stream = std::make_shared<AudioStream>();
+    const auto id = resources.add_stream("view", 1, ResourceKind::speech, stream);
+    stream->append("audio/mpeg", "partial");
+    stream->fail();
+    const auto chunk = resources.read_chunk("view", id, 1, 0);
+    ASSERT_TRUE(chunk);
+    EXPECT_TRUE(chunk->failed);
+    EXPECT_TRUE(chunk->body.empty());
+    EXPECT_FALSE(chunk->complete);
+    EXPECT_FALSE(resources.read("view", id, 1));
 }
 
 } // namespace

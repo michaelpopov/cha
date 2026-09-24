@@ -594,18 +594,19 @@ export function ChatScreen({
     handledSpeechEntries.current.add(entry.id);
     speechSelection.current = entry.id;
     setActionError(null);
-    if (entry.has_cached_audio) { playCached(entry); return; }
+    if (entry.has_cached_audio) { playAudio(entry); return; }
     if (!textToSpeechConfiguration) return;
     const { entry_id, ...request } = speechRequest(entry);
-    void downloads.submit(entry_id, { vault_name: state.bootstrap!.vault_name, ...request })?.catch((failure: unknown) => {
-      if (speechSelection.current === entry.id) {
-        speechSelection.current = null;
-      }
+    const attempt = speechAttempt.current;
+    void downloads.submit(entry_id, { vault_name: state.bootstrap!.vault_name, ...request })?.then(() => {
+      if (speechAttempt.current === attempt && speechSelection.current === entry.id) playAudio(entry);
+    }).catch((failure: unknown) => {
+      if (speechAttempt.current === attempt && speechSelection.current === entry.id) stopSpeech();
       setActionError(actionMessage(failure));
     });
   }
 
-  function playCached(entry: SessionSnapshot['transcript'][number]) {
+  function playAudio(entry: SessionSnapshot['transcript'][number]) {
     if (!snapshot) return;
     setSpokenEntry({ id: entry.id, state: 'loading' });
     const attempt = speechAttempt.current;
@@ -631,7 +632,7 @@ export function ChatScreen({
         sessionId: snapshot.session_id, entryId: entry.id, cached: false });
       downloads.refresh(entry.id);
     };
-    const begin = (cachedUrl: string, resourceId?: string) => {
+    const begin = (cachedUrl: string, resourceId?: string, streaming = false) => {
       const session = new TextToSpeechSession(
         textToSpeechConfiguration,
         entry.kind === 'character'
@@ -658,6 +659,9 @@ export function ChatScreen({
         resourceId
           ? () => { void client.releaseResource(resourceId); }
           : undefined,
+        { streaming, onError: (failure) => {
+          if (textToSpeechSession.current === session) setActionError(failure.message);
+        } },
       );
       textToSpeechSession.current = session;
       setSpokenEntry({ id: entry.id, state: 'loading' });
@@ -686,7 +690,7 @@ export function ChatScreen({
         void client.releaseResource(resource.resource_id);
         return;
       }
-      begin(resource.url, resource.resource_id);
+      begin(resource.url, resource.resource_id, resource.streaming);
     }).catch((failure: unknown) => {
       if (speechAttempt.current !== attempt || speechSelection.current !== entry.id) return;
       if ((failure instanceof TextToSpeechError && failure.status === 404)
@@ -700,23 +704,10 @@ export function ChatScreen({
     });
   }
 
-  useEffect(() => {
-    const id = speechSelection.current;
-    if (id === null || spokenEntry || textToSpeechSession.current || !downloads.status) return;
-    const entry = snapshot?.transcript.find((entry) => entry.id === id);
-    if (!entry) { speechSelection.current = null; return; }
-    if (cachedAudioIds?.has(id)) playCached(entry);
-    else {
-      const job = audioJobs.get(id);
-      if (!job || job.state === 'failed') speechSelection.current = null;
-    }
-  }, [downloads.status]);
-
-  // The shared player also handles manual playback. Wait for it to become idle
-  // and for the first queued reply to be cached, even if later downloads finish first.
+  // Preserve transcript order while the first reply is still being generated.
   useEffect(() => {
     // Download failures disable future playback without interrupting current audio.
-    if (!speechCacheEnabled || downloads.unavailable) return;
+    if (!speechCacheEnabled || speechCacheSubmitting || downloads.unavailable) return;
     if (speechSelection.current !== null || textToSpeechSession.current) return;
     for (const { entry } of transcriptEntries) {
       const id = entry.id;
@@ -726,13 +717,13 @@ export function ChatScreen({
         handledSpeechEntries.current.add(id);
         continue;
       }
-      if (!canReadEntry(entry) || !cachedAudioIds?.has(id)) return;
+      if (!canReadEntry(entry) || (!cachedAudioIds?.has(id) && !audioJobs.has(id))) return;
       handledSpeechEntries.current.add(id);
       automaticSpeech.current = true;
       if (missingAudioRetry.current !== id) missingAudioRetry.current = null;
       speechSelection.current = id;
       speechAttempt.current += 1;
-      playCached(entry);
+      playAudio(entry);
       return;
     }
   });

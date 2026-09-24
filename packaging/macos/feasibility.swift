@@ -46,6 +46,7 @@ final class ChaAssetSchemeHandler: NSObject, WKURLSchemeHandler {
     private let lock = NSLock()
     private var stopped = Set<ObjectIdentifier>()
     var readMedia: ((String) -> (type: String, body: Data)?)?
+    var readMediaChunk: ((String, UInt64) -> (status: Int, type: String, body: Data, complete: Bool))?
 
     init(root: URL) {
         self.root = chaAssetRootURL(root)
@@ -68,6 +69,18 @@ final class ChaAssetSchemeHandler: NSObject, WKURLSchemeHandler {
                 finish(task: urlSchemeTask, identity: identity, url: requestURL,
                        status: 404, type: "text/plain; charset=utf-8", cache: "no-store",
                        body: Data("not found".utf8), csp: false)
+                return
+            }
+            if let offsetHeader = urlSchemeTask.request.value(forHTTPHeaderField: "X-CHA-Audio-Offset") {
+                guard let offset = UInt64(offsetHeader), let readMediaChunk else {
+                    finish(task: urlSchemeTask, identity: identity, url: requestURL,
+                           status: 400, type: "text/plain", cache: "no-store", body: Data(), csp: false)
+                    return
+                }
+                let chunk = readMediaChunk(id, offset)
+                finish(task: urlSchemeTask, identity: identity, url: requestURL,
+                       status: chunk.status, type: chunk.type, cache: "no-store", body: chunk.body,
+                       csp: false, extraHeaders: ["X-CHA-Audio-Complete": chunk.complete ? "1" : "0"])
                 return
             }
             if let readMedia, let media = readMedia(id) {
@@ -133,7 +146,8 @@ final class ChaAssetSchemeHandler: NSObject, WKURLSchemeHandler {
         type: String,
         cache: String,
         body: Data,
-        csp: Bool
+        csp: Bool,
+        extraHeaders: [String: String] = [:]
     ) {
         lock.lock()
         let cancelled = stopped.contains(identity)
@@ -145,6 +159,7 @@ final class ChaAssetSchemeHandler: NSObject, WKURLSchemeHandler {
             "Content-Length": String(body.count),
             "Cache-Control": cache,
         ]
+        headers.merge(extraHeaders) { _, new in new }
         if csp {
             headers["Content-Security-Policy"] = chaNativeContentSecurityPolicy
         }

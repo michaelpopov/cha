@@ -800,6 +800,8 @@ function VoicePreview({ client, voiceId, appearance }: {
       undefined,
       undefined,
       nativeSpeechFromClient(client),
+      undefined,
+      { onError: (failure) => setError(failure.message) },
     );
     sessionRef.current = session;
     setPlaying(true);

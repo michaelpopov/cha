@@ -97,6 +97,12 @@ int32_t cha_runtime_read_resource(
     void** bytes,
     uint64_t* size,
     char** error);
+// Nonblocking, bounded read of an active or completed stream. Returns an HTTP
+// status: 200 data/EOF, 204 waiting, 404 unavailable, 502 generation failed.
+// complete is true only after the final bytes; buffers use the same free calls.
+int32_t cha_runtime_read_resource_chunk(
+    ChaRuntime* runtime, const char* connection_id, const char* resource_id,
+    uint64_t offset, char** mime_type, void** bytes, uint64_t* size, int32_t* complete);
 void cha_bytes_free(void* value);
 void cha_runtime_request_shutdown(ChaRuntime* runtime);
 // Joins the pump thread and application owners. Do not call from the UI

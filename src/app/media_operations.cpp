@@ -101,13 +101,15 @@ const char* job_state_string(AudioJobState state) {
 nlohmann::json media_resource_json(
     std::string_view resource_id,
     std::string_view mime_type,
-    std::size_t byte_length) {
-    return {
+    std::size_t byte_length, bool streaming) {
+    nlohmann::json resource{
         {"resource_id", resource_id},
         {"url", MediaResources::url_for(resource_id)},
         {"mime_type", mime_type},
         {"byte_length", byte_length},
     };
+    if (streaming) resource["streaming"] = true;
+    return resource;
 }
 
 nlohmann::json audio_acceptance_json(const AudioAcceptance& acceptance) {
@@ -287,65 +289,43 @@ std::shared_ptr<OperationReply> Application::start_speech(
                 const auto cancelled = [&] {
                     return cancel.load() || pending->cancelled->load();
                 };
+                auto stream = std::make_shared<AudioStream>();
                 try {
-                    if (cancelled()) {
-                        reply->fail(
-                            ErrorCode::operation_cancelled,
-                            "The operation was cancelled.");
-                        return;
-                    }
                     const auto transfer = owner->speech_proxy.synthesize(
-                        output, key, request, cancelled);
+                        output, key, request, cancelled,
+                        [&](std::string_view type, std::string_view bytes) {
+                            if (cancelled()) return;
+                            const bool first = stream->empty();
+                            stream->append(type, bytes);
+                            if (!first) return;
+                            std::string id;
+                            {
+                                const std::lock_guard lifecycle(owner->lifecycle_mutex);
+                                if (cancelled()) throw ApplicationError(ErrorCode::operation_cancelled);
+                                if (const auto error = owner->admit_locked(epoch)) throw ApplicationError(*error);
+                                id = owner->media_resources.add_stream(
+                                    pending->connection_id, epoch, ResourceKind::speech, stream);
+                                if (!owner->pending_media.set_resource(pending, id)) {
+                                    (void)owner->media_resources.release(pending->connection_id, id);
+                                    throw ApplicationError(ErrorCode::operation_cancelled);
+                                }
+                            }
+                            if (!reply->complete(media_resource_json(id, type, 0, true))) {
+                                owner->pending_media.cancel(pending->connection_id, pending->request_id);
+                            }
+                        });
                     if (cancelled() || transfer.cancelled) {
-                        reply->fail(
-                            ErrorCode::operation_cancelled,
-                            "The operation was cancelled.");
-                        return;
+                        throw ApplicationError(ErrorCode::operation_cancelled, "The operation was cancelled.");
                     }
                     if (transfer.busy) {
-                        reply->fail(
-                            ErrorCode::speech_busy,
+                        throw ApplicationError(ErrorCode::speech_busy,
                             "Speech generation is busy. Try again shortly.");
-                        return;
                     }
-                    if (transfer.status != 200
-                        || !valid_entry_audio(transfer.audio)) {
-                        throw_speech_provider_error(
-                            transfer.status, transfer.audio.audio);
+                    if (transfer.status != 200 || !valid_entry_audio(transfer.audio)) {
+                        throw_speech_provider_error(transfer.status, transfer.audio.audio);
                     }
-                    std::string id;
-                    {
-                        const std::lock_guard lifecycle(owner->lifecycle_mutex);
-                        if (cancelled()) {
-                            reply->fail(
-                                ErrorCode::operation_cancelled,
-                                "The operation was cancelled.");
-                            return;
-                        }
-                        if (const auto error = owner->admit_locked(epoch)) {
-                            reply->fail(*error, {});
-                            return;
-                        }
-                        id = owner->media_resources.add(
-                            pending->connection_id,
-                            epoch,
-                            ResourceKind::speech,
-                            {transfer.audio.content_type, transfer.audio.audio});
-                        if (!owner->pending_media.set_resource(pending, id)) {
-                            (void)owner->media_resources.release(
-                                pending->connection_id, id);
-                            reply->fail(
-                                ErrorCode::operation_cancelled,
-                                "The operation was cancelled.");
-                            return;
-                        }
-                    }
-                    if (!reply->complete(media_resource_json(
-                        id, transfer.audio.content_type,
-                        transfer.audio.audio.size()))) {
-                        owner->pending_media.cancel(
-                            pending->connection_id, pending->request_id);
-                    }
+                    stream->finish();
+                    return;
                 } catch (const ApplicationError& error) {
                     reply->fail(error.code, error.what());
                 } catch (const std::invalid_argument& error) {
@@ -357,6 +337,7 @@ std::shared_ptr<OperationReply> Application::start_speech(
                 } catch (...) {
                     reply->fail(ErrorCode::internal_error, {});
                 }
+                stream->fail();
             })) {
         impl_->pending_media.forget(pending);
         reply->fail(
@@ -438,6 +419,16 @@ MediaResource Application::audio_source(
     std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
+    const FullSessionId session{std::string(forum_id), std::string(session_id)};
+    try {
+        if (auto stream = impl_->audio_downloads->stream(session, entry_id, std::string(vault_name))) {
+            const auto id = impl_->media_resources.add_stream(
+                connection_id, epoch, ResourceKind::entry_audio, std::move(stream), session, entry_id);
+            return {id, MediaResources::url_for(id), "application/octet-stream", 0, true};
+        }
+    } catch (const AudioDownloadError& error) {
+        throw_audio_error(error);
+    }
     std::optional<EntryAudio> audio;
     try {
         audio = impl_->audio_downloads->audio(
@@ -702,6 +693,16 @@ std::optional<ResourceBytes> Application::read_resource(
     if (impl_->admit_locked(epoch)) return std::nullopt;
     return impl_->media_resources.read(
         connection_id, resource_id, epoch);
+}
+
+std::optional<AudioChunk> Application::read_resource_chunk(
+    std::string_view connection_id, std::string_view resource_id, std::uint64_t offset) const {
+    const std::unique_lock lifecycle(impl_->lifecycle_mutex, std::try_to_lock);
+    // A brief lifecycle operation must not terminate an otherwise valid stream.
+    if (!lifecycle.owns_lock()) return AudioChunk{"application/octet-stream", "", false};
+    const auto epoch = impl_->published_epoch.load();
+    if (impl_->admit_locked(epoch)) return std::nullopt;
+    return impl_->media_resources.read_chunk(connection_id, resource_id, epoch, offset);
 }
 
 void Application::release_request_resources(

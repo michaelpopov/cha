@@ -122,6 +122,9 @@ final class ChaNativeBridgeReceiver: NSObject, WKScriptMessageHandler {
             mediaHandler.readMedia = { [weak self] id in
                 self?.readMedia(id)
             }
+            mediaHandler.readMediaChunk = { [weak self] id, offset in
+                self?.readMediaChunk(id, offset: offset) ?? (404, "text/plain", Data(), false)
+            }
         }
         installDeliveryCallback()
         prepareDocumentReplacement()
@@ -148,6 +151,22 @@ final class ChaNativeBridgeReceiver: NSObject, WKScriptMessageHandler {
         let type = mime.map { String(cString: $0) } ?? "application/octet-stream"
         let body = Data(bytes: bytes, count: Int(size))
         return (type, body)
+    }
+
+    private func readMediaChunk(_ resourceId: String, offset: UInt64) -> (status: Int, type: String, body: Data, complete: Bool) {
+        guard let connectionId else { return (404, "text/plain", Data(), false) }
+        var mime: UnsafeMutablePointer<CChar>?
+        var bytes: UnsafeMutableRawPointer?
+        var size: UInt64 = 0
+        var complete: Int32 = 0
+        let status = connectionId.withCString { connection in
+            resourceId.withCString { resource in
+                cha_runtime_read_resource_chunk(runtime, connection, resource, offset, &mime, &bytes, &size, &complete)
+            }
+        }
+        defer { cha_string_free(mime); cha_bytes_free(bytes) }
+        return (Int(status), mime.map { String(cString: $0) } ?? "application/octet-stream",
+                bytes.map { Data(bytes: $0, count: Int(size)) } ?? Data(), complete != 0)
     }
 
     func detach() {

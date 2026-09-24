@@ -428,6 +428,8 @@ public:
     [[nodiscard]] std::optional<ResourceBytes> read_resource(
         std::string_view connection_id,
         std::string_view resource_id) const;
+    [[nodiscard]] std::optional<AudioChunk> read_resource_chunk(
+        std::string_view connection_id, std::string_view resource_id, std::uint64_t offset) const;
     // Host cleanup after a request or connection is abandoned; valid in any state.
     void release_request_resources(
         std::string_view connection_id,

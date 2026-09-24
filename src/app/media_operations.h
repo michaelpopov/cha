@@ -15,7 +15,7 @@ namespace cha::app {
 [[nodiscard]] nlohmann::json media_resource_json(
     std::string_view resource_id,
     std::string_view mime_type,
-    std::size_t byte_length);
+    std::size_t byte_length, bool streaming = false);
 [[nodiscard]] nlohmann::json audio_acceptance_json(
     const AudioAcceptance& acceptance);
 [[nodiscard]] nlohmann::json audio_status_json(

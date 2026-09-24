@@ -9,6 +9,7 @@ private enum ProbeExpectation: String {
     case timeout
     case audio
     case media
+    case streaming
     case parity
     case flow
     case reload
@@ -33,7 +34,7 @@ private enum HostError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .usage:
-            return "usage: cha_macos_native_test_host --assets <dir> [--config <dir>] [--dev-origin http://127.0.0.1:5173] [--expect pass|fail|timeout|audio|media|parity|flow|reload|renderer-fail|stall|quit] [--timeout-ms N]"
+            return "usage: cha_macos_native_test_host --assets <dir> [--config <dir>] [--dev-origin http://127.0.0.1:5173] [--expect pass|fail|timeout|audio|media|streaming|parity|flow|reload|renderer-fail|stall|quit] [--timeout-ms N]"
         case .probeFailed(let detail):
             return detail
         case .timedOut:
@@ -95,7 +96,7 @@ private func parseOptions() throws -> HostOptions {
 
 private func isProbe(_ expectation: ProbeExpectation) -> Bool {
     switch expectation {
-    case .pass, .fail, .timeout, .audio, .media: return true
+    case .pass, .fail, .timeout, .audio, .media, .streaming: return true
     default: return false
     }
 }
@@ -176,7 +177,7 @@ private final class NativeTestHost: NSObject, WKNavigationDelegate, WKUIDelegate
     }
 
     func start() {
-        if options.devOrigin != nil || options.expectation == .audio || options.expectation == .media {
+        if options.devOrigin != nil || options.expectation == .audio || options.expectation == .media || options.expectation == .streaming {
             let window = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 1040, height: 760),
                 styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -221,6 +222,8 @@ private final class NativeTestHost: NSObject, WKNavigationDelegate, WKUIDelegate
         case .media:
             evaluate(audioProbeSource.replacingOccurrences(
                 of: "const requireCapture = true;", with: "const requireCapture = false;"))
+        case .streaming:
+            evaluate(streamingProbeSource)
         case .parity:
             do {
                 guard let path = ProcessInfo.processInfo.environment["CHA_NATIVE_PARITY_SCRIPT"] else {
@@ -855,3 +858,48 @@ private struct Main {
         }
     }
 }
+
+private let streamingProbeSource = """
+return await (async () => {
+  const started = performance.now();
+  const source = new MediaSource();
+  const opened = new Promise(resolve => source.addEventListener('sourceopen', resolve, {once:true}));
+  const url = URL.createObjectURL(source);
+  const audio = new Audio(url);
+  audio.muted = true;
+  let finished = false, firstPlaybackMs = null, completedMs = null;
+  audio.addEventListener('playing', () => {
+    if (firstPlaybackMs === null) firstPlaybackMs = performance.now() - started;
+  });
+  try {
+    await opened;
+    const buffer = source.addSourceBuffer('audio/mpeg');
+    const playing = audio.play();
+    const ended = new Promise((resolve, reject) => {
+      audio.onended = resolve;
+      audio.onerror = () => reject(new Error('MP3 playback failed'));
+    });
+    let offset = 0;
+    while (!finished) {
+      const response = await fetch('/media/probe-stream', {cache:'no-store',
+        headers:{'X-CHA-Audio-Offset':String(offset)}});
+      if (response.status === 204) { await new Promise(resolve => setTimeout(resolve, 25)); continue; }
+      if (!response.ok) throw new Error('Chunk request failed: ' + response.status);
+      finished = response.headers.get('X-CHA-Audio-Complete') === '1';
+      const bytes = await response.arrayBuffer();
+      offset += bytes.byteLength;
+      await new Promise((resolve, reject) => {
+        buffer.addEventListener('updateend', resolve, {once:true});
+        buffer.addEventListener('error', reject, {once:true});
+        buffer.appendBuffer(bytes);
+      });
+    }
+    completedMs = performance.now() - started;
+    source.endOfStream();
+    await playing;
+    await ended;
+    return {ok:firstPlaybackMs !== null && firstPlaybackMs < completedMs,
+      firstPlaybackMs, completedMs, bytes:offset};
+  } finally { audio.pause(); audio.removeAttribute('src'); audio.load(); URL.revokeObjectURL(url); }
+})();
+"""
