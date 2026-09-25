@@ -168,11 +168,13 @@ private:
         std::string text,
         std::vector<CharacterMetadata> targets,
         SharedModelHistory history,
-        ControllerUpdate& update);
+        ControllerUpdate& update,
+        JevSearch search = JevSearch::none);
     [[nodiscard]] ControllerUpdate start_resolved_multicast(
         std::string_view author_id,
         std::string text,
-        std::vector<CharacterMetadata> targets);
+        std::vector<CharacterMetadata> targets,
+        JevSearch search = JevSearch::none);
     void activate_run(const RunSpec& run, std::size_t foreground_index,
                       ControllerUpdate& update);
     void finish_generation_run(ControllerUpdate& update);
@@ -193,13 +195,15 @@ private:
     TranscriptEntry response_entry(EntryStatus status) const;
     bool matches(RequestId request_id) const;
 
-    ControllerUpdate dispatch_target(std::string_view author, std::string text, std::string_view target);
+    ControllerUpdate dispatch_target(std::string_view author, std::string text, std::string_view target,
+        JevSearch search = JevSearch::none);
     [[nodiscard]] std::vector<CharacterMetadata> forum_characters(const Workspace& current) const;
     ControllerUpdate start_classification(std::string_view author, std::string text,
         std::vector<std::string> fixed_targets,
         std::shared_ptr<SubmissionState> submission);
     ControllerUpdate finish_classification();
-    void start_query_rewrite(std::string_view prompt, SharedModelHistory history);
+    std::shared_ptr<WebSearchContext> make_web_search(
+        JevSearch choice, std::string_view prompt, SharedModelHistory history);
     struct PendingClassification {
         std::string author;
         std::string text;

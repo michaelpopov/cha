@@ -240,6 +240,11 @@ Application::Impl::Impl(
               auto key = keys->value(input.config.api_key_id);
               if (cancelled.load()) return JevResult{JevOutcome::cancelled};
               return classify_jev(input.config, std::move(key), input, cancelled);
+          },
+          [keys = api_keys.get()](const WorkspaceWebSearch& config, std::string_view query,
+              const std::atomic_bool& cancelled) {
+              if (cancelled.load()) return std::string{};
+              return search_brave(query, keys->value(config.api_key_id), cancelled);
           }) {
     vault_maintenance.publish_vault_names();
     const auto seed = TemporarySessionSeed{

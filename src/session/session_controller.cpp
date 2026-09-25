@@ -467,14 +467,14 @@ ControllerUpdate SessionController::submit_prompt(
 }
 
 ControllerUpdate SessionController::dispatch_target(
-    std::string_view author, std::string text, std::string_view target_id) {
+    std::string_view author, std::string text, std::string_view target_id, JevSearch search) {
     const auto current = workspace();
     if (target_id == all_characters_target) {
-        return start_resolved_multicast(author, std::move(text), forum_characters(*current));
+        return start_resolved_multicast(author, std::move(text), forum_characters(*current), search);
     }
     const auto* target = current->find_forum_character(identity_.forum_id, target_id);
     if (!target) return {.notice = "The selected recipient is no longer in this forum. Choose a target and send again."};
-    return start_resolved_multicast(author, std::move(text), {*target});
+    return start_resolved_multicast(author, std::move(text), {*target}, search);
 }
 
 std::vector<CharacterMetadata> SessionController::forum_characters(const Workspace& current) const {
@@ -546,11 +546,8 @@ ControllerUpdate SessionController::finish_classification() {
         submission_result_ = SubmissionResult{SubmissionOutcome::cancelled, update};
         return update;
     }
-    if (result->outcome == JevOutcome::success
-        && result->search_choice == JevSearch::rewrite) {
-        start_query_rewrite(input.text,
-            std::make_shared<const ModelHistory>(transcript_.model_history()));
-    }
+    const auto search = result->outcome == JevOutcome::success
+        ? result->search_choice.value_or(JevSearch::none) : JevSearch::none;
     if (!input.fixed_targets.empty()) {
         if (result->outcome == JevOutcome::failure)
             log_warn("Jev classification failed; using explicit recipients: " + result->message);
@@ -566,7 +563,7 @@ ControllerUpdate SessionController::finish_classification() {
             targets.push_back(*character);
         }
         auto dispatched = start_resolved_multicast(input.author,
-            std::move(input.text), std::move(targets));
+            std::move(input.text), std::move(targets), search);
         merge(update, std::move(dispatched));
         submission_result_ = SubmissionResult{
             update.input_consumed ? SubmissionOutcome::accepted : SubmissionOutcome::failed, update};
@@ -592,7 +589,7 @@ ControllerUpdate SessionController::finish_classification() {
     // One owner-thread handoff: no idle publication and no classifier re-entry.
     const auto previous_target = default_character_id_;
     if (!failed && result->choice != "undefined") default_character_id_ = target;
-    auto dispatched = dispatch_target(input.author, std::move(input.text), target);
+    auto dispatched = dispatch_target(input.author, std::move(input.text), target, search);
     if (dispatched.input_consumed) {
         if (failed) {
             dispatched.notice = target == all_characters_target
@@ -611,39 +608,45 @@ ControllerUpdate SessionController::finish_classification() {
     return update;
 }
 
-void SessionController::start_query_rewrite(
-    std::string_view prompt, SharedModelHistory history) {
+std::shared_ptr<WebSearchContext> SessionController::make_web_search(
+    JevSearch choice, std::string_view prompt, SharedModelHistory history) {
     const auto current = workspace();
     const auto& search = current->web_search();
-    if (!search.enabled) return;
-    const auto* provider = current->find_provider(search.query_provider_id);
-    if (!provider) {
-        log_warn("Web search query provider is unavailable; skipping query rewrite");
-        return;
+    if (!search.enabled || choice == JevSearch::none) return {};
+    if (search.provider != "brave") {
+        log_warn("Web search provider is not implemented; skipping web search");
+        return {};
     }
-
-    auto config = provider->config;
-    config.web_search = WebSearchMode::off;
+    auto context = std::make_shared<WebSearchContext>();
+    context->config = search;
     const CharacterMetadata rewriter{"web-search-query", "Web search query"};
-    auto definition = std::make_shared<const CharacterDefinition>(CharacterDefinition{
-        .character = rewriter,
-        .provider = {provider->id, std::move(config)},
-        .system_prompt = "Convert the user's prompt into one concise, standalone web search query. "
-            "Use the conversation history to resolve references in the prompt. Return only the query string.",
-    });
-    (void)providers_.make_request({
-        .character = std::move(definition),
-        .generation = {
-            .history = std::move(history),
-            .run = {
-                .session = identity_,
-                .target = rewriter,
-                .author = {"", "User"},
-                .prompt_text = std::string(prompt),
-                .created_at = unix_now(),
-            },
+    context->query = {
+        .history = std::move(history),
+        .run = {
+            .session = identity_,
+            .target = rewriter,
+            .author = {"", "User"},
+            .prompt_text = std::string(prompt),
+            .created_at = unix_now(),
         },
-    }, notifier_);
+    };
+    if (choice == JevSearch::rewrite) {
+        const auto* provider = current->find_provider(search.query_provider_id);
+        if (!provider) {
+            log_warn("Web search query provider is unavailable; skipping web search");
+            return {};
+        }
+        auto config = provider->config;
+        config.web_search = WebSearchMode::off;
+        context->rewriter = std::make_shared<const CharacterDefinition>(CharacterDefinition{
+            .character = rewriter,
+            .provider = {provider->id, std::move(config)},
+            .system_prompt = "Convert the user's prompt into one concise, standalone web search query. "
+                "Use the conversation history to resolve references in the prompt. "
+                "Use at most 600 characters and 75 words. Return only the query string.",
+        });
+    }
+    return context;
 }
 
 void SessionController::start_generation(
@@ -651,11 +654,13 @@ void SessionController::start_generation(
     std::string text,
     std::vector<CharacterMetadata> targets,
     SharedModelHistory history,
-    ControllerUpdate& update) {
+    ControllerUpdate& update,
+    JevSearch search) {
     if (!history || targets.empty()) {
         throw std::invalid_argument(
             "Generation requires history and at least one target");
     }
+    auto search_context = make_web_search(search, text, history);
     std::vector<ProviderRequestInput> inputs;
     inputs.reserve(targets.size());
     for (CharacterMetadata& target : targets) {
@@ -678,6 +683,7 @@ void SessionController::start_generation(
                     .created_at = unix_now(),
                 },
             },
+            .web_search = search_context,
         });
     }
 
@@ -891,7 +897,8 @@ ControllerUpdate SessionController::start_multicast(
 ControllerUpdate SessionController::start_resolved_multicast(
     std::string_view author_id,
     std::string text,
-    std::vector<CharacterMetadata> targets) {
+    std::vector<CharacterMetadata> targets,
+    JevSearch search) {
     if (trim_view(text).empty()) {
         return {.notice = "Multicast prompt is empty"};
     }
@@ -914,7 +921,8 @@ ControllerUpdate SessionController::start_resolved_multicast(
         std::move(text),
         std::move(targets),
         std::move(history),
-        update);
+        update,
+        search);
     return update;
 }
 

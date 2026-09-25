@@ -117,7 +117,8 @@ void ProviderRequest::fail(std::string_view message) noexcept {
 }
 
 void ProviderRequest::execute(
-    const ProviderClientFactory& client_factory) noexcept {
+    const ProviderClientFactory& client_factory,
+    const WebSearchExecutor& web_search_executor) noexcept {
     const RequestId request_id = input_.generation.run.request_id;
     const auto started = std::chrono::steady_clock::now();
     std::string fields;
@@ -131,6 +132,15 @@ void ProviderRequest::execute(
         }
 
         log_info("Provider request started: " + fields);
+        auto generation = input_.generation;
+        if (input_.web_search) {
+            generation.web_search_context = input_.web_search->get(
+                client_factory, web_search_executor, cancellation_);
+        }
+        if (cancellation_.load(std::memory_order_acquire)) {
+            close_with(GenerationCancelled{request_id});
+            return;
+        }
         std::unique_ptr<ModelBackend> backend = client_factory(input_.character);
         if (!backend) {
             throw std::runtime_error("Provider client factory returned a null model backend");
@@ -141,7 +151,7 @@ void ProviderRequest::execute(
             return;
         }
 
-        RequestPayload payload = backend->prepare(input_.generation);
+        RequestPayload payload = backend->prepare(generation);
         fields += " request_payload_bytes=" + std::to_string(payload.bytes.size());
         if (payload.text_sizes) {
             fields += " system_prompt_bytes="
@@ -206,8 +216,10 @@ void ProviderRequest::execute(
 Providers::Providers(
     ProviderClientFactory client_factory,
     ProviderThreadLauncher thread_launcher,
-    JevExecutor jev_executor)
+    JevExecutor jev_executor,
+    WebSearchExecutor web_search_executor)
     : jev_executor_(std::move(jev_executor)),
+      web_search_executor_(std::move(web_search_executor)),
       client_factory_(client_factory ? std::move(client_factory)
                                     : ProviderClientFactory(default_client_factory)),
       thread_launcher_(thread_launcher ? std::move(thread_launcher)
@@ -235,6 +247,7 @@ std::shared_ptr<ProviderRequest> Providers::make_request(
 
     const std::shared_ptr<Registry> registry = registry_;
     ProviderClientFactory client_factory = client_factory_;
+    WebSearchExecutor web_search_executor = web_search_executor_;
 
     std::unique_lock lock(registry->mutex);
     if (!registry->admitting) {
@@ -267,12 +280,13 @@ std::shared_ptr<ProviderRequest> Providers::make_request(
         log_info("Provider request admitted: "
             + request->log_fields()
             + " active_count=" + std::to_string(active_count));
-        thread_launcher_([registry, request, client_factory, token]() mutable {
-            request->execute(client_factory);
+        thread_launcher_([registry, request, client_factory, web_search_executor, token]() mutable {
+            request->execute(client_factory, web_search_executor);
             // The closure's factory copy may own test or transport support
             // state. Release it before unregistering so the detached tail
             // contains only its request, registry, and scalar token.
             client_factory = nullptr;
+            web_search_executor = nullptr;
 
             std::size_t active_count;
             {

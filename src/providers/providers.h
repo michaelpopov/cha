@@ -2,6 +2,7 @@
 
 #include "providers/provider_client.h"
 #include "providers/jev.h"
+#include "providers/web_search.h"
 #include "util/concurrent_queue.h"
 #include "util/wake_notifier.h"
 
@@ -19,6 +20,7 @@ namespace cha {
 struct ProviderRequestInput {
     SharedCharacterDefinition character;
     GenerationRequest generation;
+    std::shared_ptr<WebSearchContext> web_search;
 };
 
 // Launches one detached provider worker. Tests can replace this only to make
@@ -42,7 +44,8 @@ private:
     [[nodiscard]] bool has_valid_input() const noexcept;
     [[nodiscard]] std::string log_fields() const;
     void set_token(std::uint64_t token) noexcept;
-    void execute(const ProviderClientFactory& client_factory) noexcept;
+    void execute(const ProviderClientFactory& client_factory,
+        const WebSearchExecutor& web_search_executor) noexcept;
     void fail(std::string_view message) noexcept;
     void close_with(GenerationEvent event) noexcept;
 
@@ -60,7 +63,8 @@ public:
     Providers(
         ProviderClientFactory client_factory = {},
         ProviderThreadLauncher thread_launcher = {},
-        JevExecutor jev_executor = {});
+        JevExecutor jev_executor = {},
+        WebSearchExecutor web_search_executor = {});
     ~Providers();
 
     Providers(const Providers&) = delete;
@@ -79,6 +83,7 @@ private:
     struct Registry;
 
     JevExecutor jev_executor_;
+    WebSearchExecutor web_search_executor_;
     ProviderClientFactory client_factory_;
     ProviderThreadLauncher thread_launcher_;
     std::shared_ptr<Registry> registry_;

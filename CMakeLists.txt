@@ -277,6 +277,7 @@ add_library(cha_lib STATIC
     src/providers/api_key_store.cpp
     src/providers/voice_output_config.cpp
     src/providers/jev.cpp
+    src/providers/web_search.cpp
     src/providers/providers.cpp
     src/providers/provider_client.cpp
     src/providers/openai_oauth.cpp
@@ -515,6 +516,7 @@ if(BUILD_TESTING)
         tests/runtime/unit_text_mention.cpp
         tests/runtime/unit_text_multicast.cpp
         tests/runtime/unit_jev.cpp
+        tests/providers/unit_web_search.cpp
         tests/runtime/unit_live_session.cpp
         tests/support/test_workspace.cpp)
     target_link_libraries(

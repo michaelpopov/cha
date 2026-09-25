@@ -39,6 +39,7 @@ struct RunSpec {
 struct GenerationRequest {
     SharedModelHistory history;
     RunSpec run;
+    std::string web_search_context;
 };
 
 enum class ModelRole {
