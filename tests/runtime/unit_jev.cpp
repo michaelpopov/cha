@@ -194,12 +194,14 @@ protected:
     std::shared_ptr<test::TestNotifier> notifier = std::make_shared<test::TestNotifier>();
     std::vector<std::function<void()>> workers;
     std::vector<JevRequestInput> classified;
+    std::vector<std::string> called_providers;
     JevResult decision{JevOutcome::success, "undefined"};
     std::shared_ptr<Providers> providers;
     std::unique_ptr<SessionController> controller;
     WorkspaceJev config;
     void SetUp() override {
         fixture.add_character("marcus", "Marcus");
+        fixture.write_provider("query", "host = \"query.test\"\nport = 1\nmode = \"test\"\nmodel = \"query-model\"\n");
         const auto member = fixture.root() / "forums/lobby/members/marcus";
         std::filesystem::create_directories(member);
         std::ofstream(member / "character.toml") << "# member\n";
@@ -207,7 +209,11 @@ protected:
         ApiKeyStore keys(*store);
         config.api_key_id = keys.create("OpenRouter", "test-secret").id;
         store->apply_jev_update(config);
-        providers = std::make_shared<Providers>(ProviderClientFactory{},
+        providers = std::make_shared<Providers>(
+            [this](SharedCharacterDefinition definition) {
+                called_providers.push_back(definition->provider.id);
+                return std::make_unique<ProviderClient>(std::move(definition));
+            },
             [this](auto worker) { workers.push_back(std::move(worker)); },
             [this](const auto& input, const auto&) { classified.push_back(input); return decision; });
         controller = make_controller(notifier);
@@ -233,6 +239,136 @@ protected:
     }
     CommandResult send(std::string text) { return handle_text_input(*controller, "reader", std::move(text)); }
 };
+
+TEST_F(JevRouting, RewriteChoiceCallsConfiguredQueryProviderAndDropsItsResult) {
+    struct CapturingBackend final : ModelBackend {
+        CapturingBackend(std::vector<GenerationRequest>& captured, std::string character_id)
+            : captured(captured), character_id(std::move(character_id)) {}
+        RequestPayload prepare(const GenerationRequest& request) override {
+            captured.push_back(request);
+            return {.bytes = request.run.prompt_text};
+        }
+        GenerationResult perform(RequestPayload, const GenerationDeltaSink& on_delta,
+            const std::atomic_bool&) override {
+            on_delta({GenerationDeltaKind::answer,
+                character_id == "web-search-query" ? "rewritten query" : "chat reply"});
+            return {};
+        }
+        std::vector<GenerationRequest>& captured;
+        std::string character_id;
+    };
+
+    controller.reset();
+    providers->shutdown();
+    std::vector<SharedCharacterDefinition> definitions;
+    std::vector<GenerationRequest> requests;
+    providers = std::make_shared<Providers>(
+        [&](SharedCharacterDefinition definition) -> std::unique_ptr<ModelBackend> {
+            const auto character_id = definition->character.id;
+            definitions.push_back(std::move(definition));
+            return std::make_unique<CapturingBackend>(requests, character_id);
+        },
+        [this](auto worker) { workers.push_back(std::move(worker)); },
+        [this](const auto& input, const auto&) { classified.push_back(input); return decision; });
+    controller = make_controller(notifier);
+    store->apply_web_search_update({true, "brave", config.api_key_id, "query"});
+
+    (void)send("Tell me about Python.");
+    finish();
+    definitions.clear();
+    requests.clear();
+
+    decision = {JevOutcome::success, "undefined", {}, JevSearch::rewrite};
+    const std::string prompt = "What is the latest version of it?";
+    const auto started_at = std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    (void)send(prompt);
+    run_workers();
+    (void)controller->receive_events(100);
+    ASSERT_EQ(workers.size(), 2u);
+    run_workers();
+    (void)controller->receive_events(100);
+    ASSERT_EQ(definitions.size(), 2u);
+    ASSERT_EQ(requests.size(), 2u);
+    EXPECT_EQ(definitions.front()->provider.id, "query");
+    EXPECT_EQ(definitions.front()->provider.config.model, "query-model");
+    EXPECT_EQ(definitions.front()->provider.config.web_search, WebSearchMode::off);
+    EXPECT_NE(definitions.front()->system_prompt.find("web search query"), std::string::npos);
+    EXPECT_EQ(requests.front().run.prompt_text, prompt);
+    EXPECT_GE(requests.front().run.created_at, started_at);
+    EXPECT_LE(requests.front().run.created_at, std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count());
+    const auto& history = requests.front().history->entries;
+    ASSERT_EQ(history.size(), 2u);
+    EXPECT_EQ(history.front().text, "Tell me about Python.");
+    EXPECT_EQ(history.back().text, "chat reply");
+    const auto messages = project_model_context(requests.front(), definitions.front()->system_prompt);
+    EXPECT_TRUE(messages.back().content.starts_with("from User at "));
+    EXPECT_TRUE(std::ranges::any_of(messages, [](const auto& message) {
+        return message.content.find("Tell me about Python.") != std::string::npos;
+    }));
+    EXPECT_EQ(std::ranges::count_if(messages, [&](const auto& message) {
+        return message.content.find(prompt) != std::string::npos;
+    }), 1);
+    EXPECT_EQ(controller->view().transcript.entries.size(), 4u);
+    EXPECT_EQ(controller->view().transcript.entries.back().text, "chat reply");
+
+    const auto query_count = [&] {
+        return std::ranges::count_if(definitions, [](const auto& definition) {
+            return definition->provider.id == "query";
+        });
+    };
+    for (const auto choice : {JevSearch::direct, JevSearch::none}) {
+        decision.search_choice = choice;
+        (void)send("Current topic");
+        run_workers();
+        (void)controller->receive_events(100);
+        run_workers();
+        (void)controller->receive_events(100);
+        EXPECT_EQ(query_count(), 1);
+    }
+}
+
+TEST_F(JevRouting, FailedRecipientDecisionDoesNotRewriteEvenWithSearchChoice) {
+    store->apply_web_search_update({true, "brave", config.api_key_id, "query"});
+    decision = {JevOutcome::failure, {}, "Invalid recipient decision", JevSearch::rewrite};
+    (void)send("What happened today?");
+    finish();
+    EXPECT_EQ(called_providers, (std::vector<std::string>{"test"}));
+    EXPECT_FALSE(controller->is_generating());
+    EXPECT_EQ(controller->view().transcript.entries.size(), 2u);
+}
+
+TEST_F(JevRouting, DisabledWebSearchDoesNotRewrite) {
+    store->apply_web_search_update({false, "brave", config.api_key_id, "query"});
+    decision = {JevOutcome::success, "undefined", {}, JevSearch::rewrite};
+    (void)send("What happened today?");
+    finish();
+    EXPECT_EQ(called_providers, (std::vector<std::string>{"test"}));
+    EXPECT_FALSE(controller->is_generating());
+    EXPECT_EQ(controller->view().transcript.entries.size(), 2u);
+}
+
+TEST_F(JevRouting, MissingQueryProviderDoesNotBlockChat) {
+    store->apply_web_search_update({true, "brave", config.api_key_id, "query"});
+    const auto exported = fixture.root() / "missing-query";
+    (void)export_workspace_configuration(
+        store->database_path(), exported, WorkspaceConfigLease::already_held);
+    std::filesystem::remove_all(exported / "system/providers/query");
+    const auto current = std::make_shared<const Workspace>(Workspace::load(exported));
+    ASSERT_TRUE(current->web_search().enabled);
+    ASSERT_EQ(current->find_provider(current->web_search().query_provider_id), nullptr);
+    controller.reset();
+    controller = SessionController::from_workspace_for_testing(
+        [current] { return current; }, "guide", "reader", journal.path(),
+        providers, notifier, {}, {}, {"lobby", "session"});
+    decision = {JevOutcome::success, "undefined", {}, JevSearch::rewrite};
+    (void)send("What happened today?");
+    finish();
+    EXPECT_EQ(called_providers, (std::vector<std::string>{"test"}));
+    EXPECT_FALSE(controller->is_generating());
+    EXPECT_EQ(controller->view().transcript.entries.size(), 2u);
+}
 
 TEST_F(JevRouting, ClassifiesModelPromptsButSkipsEmptyAndSelfNotes) {
     for (const std::string text : {"", " \t\n", "\n"}) {

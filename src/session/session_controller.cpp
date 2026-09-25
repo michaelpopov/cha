@@ -546,6 +546,11 @@ ControllerUpdate SessionController::finish_classification() {
         submission_result_ = SubmissionResult{SubmissionOutcome::cancelled, update};
         return update;
     }
+    if (result->outcome == JevOutcome::success
+        && result->search_choice == JevSearch::rewrite) {
+        start_query_rewrite(input.text,
+            std::make_shared<const ModelHistory>(transcript_.model_history()));
+    }
     if (!input.fixed_targets.empty()) {
         if (result->outcome == JevOutcome::failure)
             log_warn("Jev classification failed; using explicit recipients: " + result->message);
@@ -604,6 +609,41 @@ ControllerUpdate SessionController::finish_classification() {
     // Dispatch errors are delivered through the submission reply.
     if (!update.input_consumed) update.notice.reset();
     return update;
+}
+
+void SessionController::start_query_rewrite(
+    std::string_view prompt, SharedModelHistory history) {
+    const auto current = workspace();
+    const auto& search = current->web_search();
+    if (!search.enabled) return;
+    const auto* provider = current->find_provider(search.query_provider_id);
+    if (!provider) {
+        log_warn("Web search query provider is unavailable; skipping query rewrite");
+        return;
+    }
+
+    auto config = provider->config;
+    config.web_search = WebSearchMode::off;
+    const CharacterMetadata rewriter{"web-search-query", "Web search query"};
+    auto definition = std::make_shared<const CharacterDefinition>(CharacterDefinition{
+        .character = rewriter,
+        .provider = {provider->id, std::move(config)},
+        .system_prompt = "Convert the user's prompt into one concise, standalone web search query. "
+            "Use the conversation history to resolve references in the prompt. Return only the query string.",
+    });
+    (void)providers_.make_request({
+        .character = std::move(definition),
+        .generation = {
+            .history = std::move(history),
+            .run = {
+                .session = identity_,
+                .target = rewriter,
+                .author = {"", "User"},
+                .prompt_text = std::string(prompt),
+                .created_at = unix_now(),
+            },
+        },
+    }, notifier_);
 }
 
 void SessionController::start_generation(

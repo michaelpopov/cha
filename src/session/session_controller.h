@@ -199,6 +199,7 @@ private:
         std::vector<std::string> fixed_targets,
         std::shared_ptr<SubmissionState> submission);
     ControllerUpdate finish_classification();
+    void start_query_rewrite(std::string_view prompt, SharedModelHistory history);
     struct PendingClassification {
         std::string author;
         std::string text;
