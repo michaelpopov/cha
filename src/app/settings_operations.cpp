@@ -34,7 +34,7 @@ auto with_settings_edit(Fn&& fn) {
     }
 }
 
-std::vector<std::string> characters_using_provider(
+std::vector<std::string> provider_uses(
     const Workspace& workspace,
     std::string_view provider_id) {
     std::vector<std::string> result;
@@ -42,6 +42,10 @@ std::vector<std::string> characters_using_provider(
         if (character.provider_id == provider_id) {
             result.push_back(character.character.display_name);
         }
+    }
+    if (workspace.web_search().enabled
+        && workspace.web_search().query_provider_id == provider_id) {
+        result.emplace_back("Search API");
     }
     return result;
 }
@@ -258,6 +262,10 @@ ApiKeyDetail api_key_detail(
     if (workspace.jev() && key.id == workspace.jev()->api_key_id) {
         used_by.emplace_back("Recipient detection");
     }
+    if (workspace.web_search().enabled
+        && key.id == workspace.web_search().api_key_id) {
+        used_by.emplace_back("Search API");
+    }
     return {
         .id = key.id,
         .display_name = key.display_name,
@@ -306,7 +314,7 @@ ProviderDetail get_provider(
     return provider_detail(
         provider,
         workspace.provider_is_writable(id),
-        characters_using_provider(workspace, id),
+        provider_uses(workspace, id),
         api_keys);
 }
 
@@ -329,7 +337,7 @@ ProviderDetail create_provider(
         return provider_detail(
             *created,
             current->provider_is_writable(id),
-            characters_using_provider(*current, id),
+            provider_uses(*current, id),
             api_keys);
     });
 }
@@ -366,7 +374,7 @@ ProviderDetail update_provider(
         return provider_detail(
             *updated,
             current->provider_is_writable(id),
-            characters_using_provider(*current, id),
+            provider_uses(*current, id),
             api_keys);
     });
 }
@@ -374,10 +382,10 @@ ProviderDetail update_provider(
 void delete_provider(WorkspaceConfigStore& store, std::string_view id) {
     const auto workspace = store.snapshot();
     require_provider(*workspace, id, true);
-    if (!characters_using_provider(*workspace, id).empty()) {
+    if (!provider_uses(*workspace, id).empty()) {
         fail(
             ErrorCode::invalid_argument,
-            "This provider is still used by one or more characters.");
+            "This provider is still in use.");
     }
     with_settings_edit([&] {
         try {
@@ -385,7 +393,7 @@ void delete_provider(WorkspaceConfigStore& store, std::string_view id) {
         } catch (const std::invalid_argument&) {
             fail(
                 ErrorCode::invalid_argument,
-                "This provider is still used by one or more characters.");
+                "This provider is still in use.");
         }
         return 0;
     });
@@ -639,6 +647,22 @@ JevSettings save_jev_settings(WorkspaceConfigStore& store, const JevSettings& up
 
 void disable_jev(WorkspaceConfigStore& store) {
     with_settings_edit([&] { store.apply_jev_update(std::nullopt); });
+}
+
+WebSearchSettings get_web_search_settings(const Workspace& workspace) {
+    const auto& settings = workspace.web_search();
+    return {settings.enabled, settings.provider, settings.api_key_id,
+        settings.query_provider_id};
+}
+
+WebSearchSettings save_web_search_settings(
+    WorkspaceConfigStore& store, const WebSearchSettings& update) {
+    return with_settings_edit([&] {
+        store.apply_web_search_update(
+            WorkspaceWebSearch{update.enabled, update.provider, update.api_key,
+                update.query_provider});
+        return get_web_search_settings(*store.snapshot());
+    });
 }
 
 std::optional<VoiceInputSettings> get_voice_input_settings(

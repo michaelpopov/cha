@@ -22,6 +22,7 @@ import {
   type VoiceInputSettings,
   type VoiceOutputSettings,
   type JevSettings,
+  type WebSearchSettings,
   type VoiceUpdate,
   type VaultDetail,
   type VaultUploadCheck,
@@ -197,6 +198,8 @@ export function SettingsNavigation({ dispatch }: { dispatch: Dispatch<AppAction>
         />
         <SettingsRow icon={<SettingsIcon />} label="Recipient detection"
           onClick={() => dispatch({ type: 'show-settings-jev' })} />
+        <SettingsRow icon={<SettingsIcon />} label="Search API"
+          onClick={() => dispatch({ type: 'show-settings-web-search' })} />
         <SettingsRow
           icon={<SpeakerIcon />}
           label="Voices"
@@ -2177,6 +2180,83 @@ export function JevSettingsScreen({ client, dispatch }: SettingsScreenProps) {
       <div className="cha-settings-form-actions">
         <button className="cha-button cha-button-ghost" disabled={pending || !saved} onClick={() => void disable()} type="button">Disable</button>
         <button className="cha-button cha-button-primary" disabled={pending || !settings.url.trim() || !settings.model.trim() || !keys.some((key) => key.id === settings.api_key)} type="submit">Save</button>
+      </div>
+    </form>}
+  </section>;
+}
+
+const defaultWebSearch: WebSearchSettings = {
+  enabled: false, provider: 'brave', api_key: '', query_provider: '',
+};
+
+export function WebSearchSettingsScreen({ client, dispatch }: SettingsScreenProps) {
+  const [settings, setSettings] = useState<WebSearchSettings>(defaultWebSearch);
+  const [keys, setKeys] = useState<ApiKeyDetail[] | null>(null);
+  const [providers, setProviders] = useState<ProviderSummary[] | null>(null);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let current = true;
+    void Promise.all([
+      client.getWebSearchSettings(), client.listApiKeys(), client.listProviders(),
+    ]).then(
+      ([config, apiKeys, modelProviders]) => {
+        if (current) {
+          setSettings(config); setKeys(apiKeys); setProviders(modelProviders);
+        }
+      },
+      (failure: unknown) => {
+        if (current) setError(publicErrorMessage(failure, 'Search API settings could not be loaded.'));
+      },
+    );
+    return () => { current = false; };
+  }, [client]);
+
+  async function save(event: FormEvent) {
+    event.preventDefault();
+    setPending(true); setError(null);
+    try {
+      setSettings(await client.saveWebSearchSettings(settings));
+    } catch (failure: unknown) {
+      setError(publicErrorMessage(failure, 'Search API settings could not be saved.'));
+    } finally { setPending(false); }
+  }
+
+  return <section className="cha-screen cha-navigation" aria-label="Search API">
+    <BackToSettings dispatch={dispatch} />
+    {error && <p className="cha-error-message" role="alert">{error}</p>}
+    {keys && providers && <form className="cha-settings-form" onSubmit={(event) => void save(event)}>
+      <label className="cha-checkbox-row"><input checked={settings.enabled} disabled={pending}
+        onChange={(event) => setSettings({ ...settings, enabled: event.target.checked })}
+        type="checkbox" />Enabled</label>
+      <p className="cha-settings-note">Search API requires recipient detection to be enabled.</p>
+      <label>API provider<select className="cha-form-control" disabled={pending}
+        value={settings.provider}
+        onChange={(event) => setSettings({ ...settings, provider: event.target.value as WebSearchSettings['provider'] })}>
+        <option value="brave">Brave Search API</option>
+        <option value="tavily">Tavily</option>
+      </select></label>
+      <label>Query provider<select className="cha-form-control" disabled={pending}
+        value={settings.query_provider}
+        onChange={(event) => setSettings({ ...settings, query_provider: event.target.value })}>
+        <option value="">Select provider</option>
+        {providers.map((provider) => <option key={provider.id} value={provider.id}>{provider.display_name}</option>)}
+      </select></label>
+      <label>API key<select className="cha-form-control" disabled={pending}
+        value={settings.api_key}
+        onChange={(event) => setSettings({ ...settings, api_key: event.target.value })}>
+        <option value="">Select API key</option>
+        {keys.map((key) => <option key={key.id} value={key.id}>{key.display_name}</option>)}
+      </select></label>
+      <div className="cha-settings-form-actions">
+        <button className="cha-button cha-button-primary" type="submit"
+          disabled={pending || (settings.enabled && (
+            !keys.some((key) => key.id === settings.api_key)
+            || !providers.some((provider) => provider.id === settings.query_provider)
+          ))}>
+          Save
+        </button>
       </div>
     </form>}
   </section>;

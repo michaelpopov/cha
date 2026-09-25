@@ -26,6 +26,7 @@ import {
   VoiceScreen,
   VoiceSettingsScreen,
   JevSettingsScreen,
+  WebSearchSettingsScreen,
   VoicesScreen,
 } from './Settings';
 
@@ -136,7 +137,7 @@ describe('Settings screens', () => {
 
     const destinations = screen.getAllByRole('button');
     expect(destinations.map((button) => button.textContent)).toEqual([
-      'Personas', 'Characters', 'Forums', 'Vaults', 'Providers', 'Styles', 'Recipient detection', 'Voices', 'API Keys',
+      'Personas', 'Characters', 'Forums', 'Vaults', 'Providers', 'Styles', 'Recipient detection', 'Search API', 'Voices', 'API Keys',
     ]);
     for (const [label, type] of [
       ['Personas', 'show-personas'],
@@ -146,6 +147,7 @@ describe('Settings screens', () => {
       ['Providers', 'show-settings-providers'],
       ['Styles', 'show-settings-styles'],
       ['Recipient detection', 'show-settings-jev'],
+      ['Search API', 'show-settings-web-search'],
       ['Voices', 'show-settings-voices'],
       ['API Keys', 'show-settings-api-keys'],
     ]) {
@@ -2003,6 +2005,39 @@ describe('Settings screens', () => {
     expect(renameApiKey).toHaveBeenCalledWith('api_key_1', 'Gemini');
     expect(dispatch).toHaveBeenCalledWith({
       type: 'api-key-updated', apiKeyId: 'api_key_1', apiKeyName: 'Gemini',
+    });
+  });
+});
+
+describe('web search settings', () => {
+  it('saves the query provider and search API settings, and keeps them when disabled', async () => {
+    const user = userEvent.setup();
+    const saveWebSearchSettings = vi.fn(async (settings) => settings);
+    render(<WebSearchSettingsScreen client={fixtureClient({
+      getWebSearchSettings: async () => ({
+        enabled: false, provider: 'brave', api_key: '', query_provider: '',
+      }),
+      listApiKeys: async () => [{ id: 'key-1', display_name: 'Search key', has_value: true, used_by: [] }],
+      listProviders: async () => [{ id: 'model-1', display_name: 'Query model', model: 'model', host: 'localhost' }],
+      saveWebSearchSettings,
+    })} dispatch={vi.fn()} state={initialAppState} />);
+
+    const enabled = await screen.findByRole('checkbox', { name: 'Enabled' });
+    expect(enabled).not.toBeChecked();
+    expect(screen.getByText('Search API requires recipient detection to be enabled.')).toBeInTheDocument();
+    await user.selectOptions(screen.getByLabelText('API provider'), 'tavily');
+    await user.selectOptions(screen.getByLabelText('API key'), 'key-1');
+    await user.click(enabled);
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+    await user.selectOptions(screen.getByLabelText('Query provider'), 'model-1');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(saveWebSearchSettings).toHaveBeenLastCalledWith({
+      enabled: true, provider: 'tavily', api_key: 'key-1', query_provider: 'model-1',
+    });
+    await user.click(enabled);
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(saveWebSearchSettings).toHaveBeenLastCalledWith({
+      enabled: false, provider: 'tavily', api_key: 'key-1', query_provider: 'model-1',
     });
   });
 });

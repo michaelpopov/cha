@@ -10,6 +10,7 @@ int main(int argc, char** argv) {
         auto cases = nlohmann::ordered_json::parse(source);
         for (auto& item : cases) {
             cha::JevRequestInput input;
+            input.ask_web_search = true;
             input.prompt = item.at("prompt").get<std::string>();
             for (const auto& name : item.at("roster")) {
                 const auto key = "character_" + std::to_string(input.characters.size() + 1);

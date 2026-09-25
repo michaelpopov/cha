@@ -300,6 +300,10 @@ export function fixtureClient(overrides: Partial<ChaClient> = {}): ChaClient {
     getJevSettings: async () => null,
     saveJevSettings: async (settings) => settings,
     disableJev: async () => {},
+    getWebSearchSettings: async () => ({
+      enabled: false, provider: 'brave', api_key: '', query_provider: '',
+    }),
+    saveWebSearchSettings: async (settings) => settings,
     getVoiceOutputSettings: async () => null,
     saveVoiceOutputSettings: async (settings) => settings,
     getVoiceOutputRuntime: async () => null,

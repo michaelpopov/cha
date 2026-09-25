@@ -505,7 +505,8 @@ ControllerUpdate SessionController::start_classification(
     }
     const auto deadline = std::min(submission->deadline,
         std::chrono::steady_clock::now() + jev_request_timeout);
-    auto request = providers_.make_jev_request({*current->jev(), text, options, deadline}, notifier_);
+    auto request = providers_.make_jev_request(
+        {*current->jev(), text, options, deadline, current->web_search().enabled}, notifier_);
     pending_classification_ = PendingClassification{
         std::string(author), std::move(text), default_character_id_,
         std::move(options), std::move(fixed_targets), std::move(submission),

@@ -1132,6 +1132,19 @@ void Application::disable_jev(std::uint64_t epoch) {
     settings::disable_jev(*impl_->store);
 }
 
+WebSearchSettings Application::get_web_search_settings(std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    return settings::get_web_search_settings(*impl_->store->snapshot());
+}
+
+WebSearchSettings Application::save_web_search_settings(
+    WebSearchSettings update, std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    return settings::save_web_search_settings(*impl_->store, update);
+}
+
 std::optional<VoiceInputSettings>
 Application::get_voice_input_settings(std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);

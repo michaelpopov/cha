@@ -352,6 +352,55 @@ TEST(Workspace, OmitsAnInvalidUnusedProvider) {
     EXPECT_EQ(workspace.find_provider("unused"), nullptr);
 }
 
+TEST(Workspace, WebSearchSettingsLoadDefaultsAndIgnoreInvalidFiles) {
+    test::TestWorkspace fixture;
+    const auto defaults = Workspace::load(fixture.root()).web_search();
+    EXPECT_FALSE(defaults.enabled);
+    EXPECT_EQ(defaults.provider, "brave");
+
+    const auto path = fixture.root() / "system" / "web-search" / "config.toml";
+    std::filesystem::create_directories(path.parent_path());
+    std::ofstream(path) << "enabled = true\nprovider = 'tavily'\n"
+                           "api_key = 'search-key'\nquery_provider = 'test'\n";
+    const auto configured = Workspace::load(fixture.root()).web_search();
+    EXPECT_TRUE(configured.enabled);
+    EXPECT_EQ(configured.provider, "tavily");
+    EXPECT_EQ(configured.api_key_id, "search-key");
+    EXPECT_EQ(configured.query_provider_id, "test");
+
+    std::ofstream(path) << "enabled = true\nprovider = 'google'\n";
+    const auto unsupported = Workspace::load(fixture.root()).web_search();
+    EXPECT_FALSE(unsupported.enabled);
+    EXPECT_EQ(unsupported.provider, "brave");
+
+    std::ofstream(path) << "enabled = [\n";
+    const auto broken = Workspace::load(fixture.root()).web_search();
+    EXPECT_FALSE(broken.enabled);
+    EXPECT_EQ(broken.provider, "brave");
+}
+
+TEST(Workspace, ActiveSearchApiPreventsDeletingItsQueryProvider) {
+    test::TestWorkspace fixture;
+    fixture.write_provider("query", "host = 'test'\nport = 1\nmode = 'test'\nmodel = 'fake'\n");
+    const auto path = fixture.root() / "system" / "web-search" / "config.toml";
+    std::filesystem::create_directories(path.parent_path());
+    std::ofstream(path) << "enabled = true\nprovider = 'brave'\n"
+                           "api_key = 'search-key'\nquery_provider = 'query'\n";
+    const Workspace active = Workspace::load(fixture.root());
+    ASSERT_NE(active.find_provider("query"), nullptr);
+    EXPECT_THROW(edit_fixture(active, [&](WorkspaceConfigEditor& editor) {
+        editor.delete_provider("query");
+    }), std::invalid_argument);
+
+    std::ofstream(path) << "enabled = false\nprovider = 'brave'\n"
+                           "api_key = 'search-key'\nquery_provider = 'query'\n";
+    const Workspace disabled = Workspace::load(fixture.root());
+    edit_fixture(disabled, [&](WorkspaceConfigEditor& editor) {
+        editor.delete_provider("query");
+    });
+    EXPECT_EQ(Workspace::load(fixture.root()).find_provider("query"), nullptr);
+}
+
 TEST(Workspace, MissingAndEmptyProviderStringsHaveTheSameDiagnostics) {
     for (const std::string field : {"host", "model"}) {
         for (const bool missing : {false, true}) {

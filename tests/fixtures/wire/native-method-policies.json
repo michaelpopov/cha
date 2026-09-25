@@ -69,6 +69,8 @@
   "jev.get": {"requires_context_epoch": true, "changes_context": false},
   "jev.save": {"requires_context_epoch": true, "changes_context": false},
   "jev.disable": {"requires_context_epoch": true, "changes_context": false},
+  "webSearch.get": {"requires_context_epoch": true, "changes_context": false},
+  "webSearch.save": {"requires_context_epoch": true, "changes_context": false},
   "voiceInput.get": {"requires_context_epoch": true, "changes_context": false},
   "voiceInput.save": {"requires_context_epoch": true, "changes_context": false},
   "voiceInput.runtime": {"requires_context_epoch": true, "changes_context": false},

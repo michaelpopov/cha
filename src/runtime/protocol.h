@@ -413,6 +413,13 @@ struct JevSettings {
     std::string api_key;
 };
 
+struct WebSearchSettings {
+    bool enabled{false};
+    std::string provider{"brave"};
+    std::string api_key;
+    std::string query_provider;
+};
+
 struct VoiceInputSettings {
     std::string provider{"openai"};
     std::string url;
@@ -550,6 +557,7 @@ void to_json(nlohmann::json& json, const ProviderDetail& value);
 void to_json(nlohmann::json& json, const StyleDetail& value);
 void to_json(nlohmann::json& json, const VoiceDetail& value);
 void to_json(nlohmann::json& json, const JevSettings& value);
+void to_json(nlohmann::json& json, const WebSearchSettings& value);
 void to_json(nlohmann::json& json, const VoiceInputSettings& value);
 void to_json(nlohmann::json& json, const VoiceInputRuntime& value);
 void to_json(nlohmann::json& json, const VoiceOutputSettings& value);

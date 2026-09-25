@@ -39,6 +39,7 @@ StyleUpdate parse_style_update(const nlohmann::json& json);
 CreateVoiceRequest parse_create_voice_request(const nlohmann::json& json);
 VoiceUpdate parse_voice_update(const nlohmann::json& json);
 JevSettings parse_jev_settings(const nlohmann::json& json);
+WebSearchSettings parse_web_search_settings(const nlohmann::json& json);
 VoiceInputSettings parse_voice_input_settings(const nlohmann::json& json);
 VoiceOutputSettings parse_voice_output_settings(const nlohmann::json& json);
 CreateApiKeyRequest parse_create_api_key_request(const nlohmann::json& json);

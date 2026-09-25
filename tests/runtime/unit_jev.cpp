@@ -20,8 +20,23 @@ namespace {
 using namespace std::chrono_literals;
 
 JevRequestInput jev_input() {
-    return {{.api_key_id = "key-1"}, "Marcus, do you agree with Seneca?",
+    JevRequestInput input{{.api_key_id = "key-1"}, "Marcus, do you agree with Seneca?",
         {{"character_1", "seneca", "Seneca"}, {"character_2", "marcus", "Marcus"}}};
+    input.ask_web_search = true;
+    return input;
+}
+
+TEST(JevProtocol, OmitsSearchQuestionWhenWebSearchIsDisabled) {
+    auto input = jev_input();
+    input.ask_web_search = false;
+    const auto body = make_jev_body(input);
+    EXPECT_EQ(body["questions"].size(), 1u);
+    EXPECT_FALSE(body["questions"].contains("web_search"));
+    const auto result = parse_jev_result({{"answers", {
+        {"recipient", {{"type", "choice"}, {"choice", "character_2"}}},
+        {"web_search", {{"type", "choice"}, {"choice", "search_direct"}}}}}}, input);
+    EXPECT_EQ(result.outcome, JevOutcome::success);
+    EXPECT_FALSE(result.search_choice);
 }
 
 TEST(JevProtocol, SendsOnlyPromptAndOptionsAndValidatesExactChoice) {
@@ -233,17 +248,20 @@ TEST_F(JevRouting, ClassifiesModelPromptsButSkipsEmptyAndSelfNotes) {
     run_workers(); (void)controller->receive_events(100);
     ASSERT_EQ(classified.size(), 1u);
     EXPECT_EQ(classified.back().prompt, "Explicit override");
+    EXPECT_FALSE(classified.back().ask_web_search);
     finish();
     EXPECT_EQ(controller->view().transcript.entries[1].addressed_to, "guide");
     EXPECT_EQ(controller->view().default_character_id, "-");
     (void)controller->set_default_character_by_id("*");
     EXPECT_EQ(controller->view().default_character_id, "*");
     EXPECT_TRUE(send("@- Private note").clear_input);
+    store->apply_web_search_update({true, "brave", config.api_key_id, "test"});
     (void)send("/mcast @Guide only Guide");
     EXPECT_TRUE(controller->classification_pending());
     run_workers(); (void)controller->receive_events(100);
     ASSERT_EQ(classified.size(), 2u);
     EXPECT_EQ(classified.back().prompt, "only Guide");
+    EXPECT_TRUE(classified.back().ask_web_search);
     finish();
     EXPECT_FALSE(send("@unknown Wrong handle").clear_input);
     EXPECT_FALSE(controller->classification_pending());

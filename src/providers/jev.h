@@ -24,6 +24,7 @@ struct JevRequestInput {
     std::vector<JevOption> characters;
     std::chrono::steady_clock::time_point deadline{
         std::chrono::steady_clock::time_point::max()};
+    bool ask_web_search{false};
 };
 enum class JevOutcome { success, cancelled, failure };
 enum class JevSearch { none, direct, rewrite };

@@ -1624,6 +1624,13 @@ void WorkspaceConfigStore::apply_jev_update(const std::optional<WorkspaceJev>& s
     });
 }
 
+void WorkspaceConfigStore::apply_web_search_update(const WorkspaceWebSearch& settings) {
+    (void)impl_->edit([&](const Workspace&, WorkspaceConfigEditor& editor) {
+        editor.write_web_search(settings);
+        return std::vector<std::string>{};
+    });
+}
+
 void WorkspaceConfigStore::apply_voice_input_update(
     const WorkspaceVoiceInput& settings) {
     (void)impl_->edit([&](const Workspace&, WorkspaceConfigEditor& editor) {

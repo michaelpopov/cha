@@ -102,6 +102,14 @@ std::optional<nlohmann::json> dispatch_settings_operation(
         require_only_keys(params, {});
         application.disable_jev(epoch);
         break;
+    case Method::web_search_get:
+        require_only_keys(params, {});
+        result = application.get_web_search_settings(epoch);
+        break;
+    case Method::web_search_save:
+        result = application.save_web_search_settings(
+            parse_web_search_settings(params), epoch);
+        break;
     case Method::voice_input_get:
         require_only_keys(params, {});
         result = encode_optional(application.get_voice_input_settings(epoch));

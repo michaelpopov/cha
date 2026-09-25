@@ -22,6 +22,7 @@ class Workspace;
 struct VoiceSettings;
 struct WorkspaceVoiceInput;
 struct WorkspaceJev;
+struct WorkspaceWebSearch;
 struct WorkspaceVoiceOutput;
 
 struct WorkspaceConfigTransfer {
@@ -205,6 +206,7 @@ public:
     WorkspaceConfigEditResult apply_voice_delete(
         std::string_view voice_id);
     void apply_jev_update(const std::optional<WorkspaceJev>& settings);
+    void apply_web_search_update(const WorkspaceWebSearch& settings);
     void apply_voice_input_update(const WorkspaceVoiceInput& settings);
     void apply_voice_output_update(const WorkspaceVoiceOutput& settings);
     void apply_api_key_create(

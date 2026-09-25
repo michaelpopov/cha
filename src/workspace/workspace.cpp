@@ -1240,6 +1240,38 @@ std::optional<WorkspaceJev> load_jev_settings(
     }
 }
 
+WorkspaceWebSearch load_web_search_settings(
+    const TextSource& source,
+    const std::filesystem::path& root) {
+    const auto path = root / "system" / "web-search" / "config.toml";
+    if (!source.is_regular_file(path)) return {};
+    try {
+        const auto table = read_toml(source, path, "web search config");
+        static constexpr std::string_view fields[]{
+            "enabled", "provider", "api_key", "query_provider"};
+        for (const auto& [key, value] : table) {
+            (void)value;
+            if (std::ranges::find(fields, key.str()) == std::end(fields))
+                log_warn("Ignoring unused web search field: " + std::string(key.str()));
+        }
+        WorkspaceWebSearch result{
+            .enabled = table["enabled"].value_or(false),
+            .provider = table["provider"].value_or(std::string("brave")),
+            .api_key_id = table["api_key"].value_or(std::string{}),
+            .query_provider_id = table["query_provider"].value_or(std::string{}),
+        };
+        if (result.provider != "brave" && result.provider != "tavily") {
+            log_warn("Ignoring unsupported web search provider; using Brave Search API");
+            result.provider = "brave";
+            result.enabled = false;
+        }
+        return result;
+    } catch (const std::exception& error) {
+        log_warn("Web search configuration is ignored: " + std::string(error.what()));
+        return {};
+    }
+}
+
 struct LoadedPersonas {
     std::vector<WorkspacePersona> personas;
     std::unordered_map<std::string, std::filesystem::path> directories;
@@ -1741,6 +1773,7 @@ Workspace Workspace::load(std::filesystem::path root, const TextSource& source) 
         workspace.voice_index_, "Voice");
 
     workspace.jev_ = load_jev_settings(source, workspace.root_);
+    workspace.web_search_ = load_web_search_settings(source, workspace.root_);
     workspace.voice_input_ = load_voice_input_settings(source, workspace.root_);
     workspace.voice_output_ = load_voice_output_settings(source, workspace.root_);
 
@@ -2171,6 +2204,10 @@ void WorkspaceConfigEditor::delete_provider(std::string_view provider_id) {
             throw std::invalid_argument("Provider is in use");
         }
     }
+    if (workspace_.web_search_.enabled
+        && workspace_.web_search_.query_provider_id == provider_id) {
+        throw std::invalid_argument("Provider is in use");
+    }
     remove_directory(path->second.parent_path());
 }
 
@@ -2356,6 +2393,31 @@ void WorkspaceConfigEditor::write_jev(const std::optional<WorkspaceJev>& setting
     table.insert("model", settings->model);
     table.insert("api_key", settings->api_key_id);
     write_toml(directory / "config.toml", table);
+}
+
+void WorkspaceConfigEditor::write_web_search(const WorkspaceWebSearch& settings) {
+    std::string provider = settings.provider;
+    if (provider != "brave" && provider != "tavily") {
+        if (settings.enabled) {
+            throw std::invalid_argument("Select a web search provider.");
+        }
+        log_warn("Ignoring unsupported web search provider; using Brave Search API");
+        provider = "brave";
+    }
+    if (settings.enabled) {
+        if (!workspace_.find_api_key(settings.api_key_id)) {
+            throw std::invalid_argument("Select an existing API key for web search.");
+        }
+        if (!workspace_.find_provider(settings.query_provider_id)) {
+            throw std::invalid_argument("Select a query provider for web search.");
+        }
+    }
+    toml::table table;
+    table.insert("enabled", settings.enabled);
+    table.insert("provider", provider);
+    table.insert("api_key", settings.api_key_id);
+    table.insert("query_provider", settings.query_provider_id);
+    write_toml(workspace_.root_ / "system" / "web-search" / "config.toml", table);
 }
 
 void WorkspaceConfigEditor::write_voice_input(const WorkspaceVoiceInput& settings) {

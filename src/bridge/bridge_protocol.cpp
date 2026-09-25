@@ -79,6 +79,8 @@ const std::pair<Method, std::string_view> kMethods[] = {
     {Method::jev_get, "jev.get"},
     {Method::jev_save, "jev.save"},
     {Method::jev_disable, "jev.disable"},
+    {Method::web_search_get, "webSearch.get"},
+    {Method::web_search_save, "webSearch.save"},
     {Method::voice_input_get, "voiceInput.get"},
     {Method::voice_input_save, "voiceInput.save"},
     {Method::voice_input_runtime, "voiceInput.runtime"},

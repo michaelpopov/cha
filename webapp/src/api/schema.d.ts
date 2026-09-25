@@ -291,6 +291,13 @@ export interface components {
             model: string;
             api_key: components["schemas"]["Identifier"];
         };
+        WebSearchSettings: {
+            enabled: boolean;
+            /** @enum {string} */
+            provider: "brave" | "tavily";
+            api_key: string;
+            query_provider: string;
+        };
         VoiceInputSettings: {
             /** @enum {string} */
             provider: "openai" | "xai";

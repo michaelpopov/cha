@@ -465,6 +465,20 @@ JevSettings parse_jev_settings(const nlohmann::json& json) {
         required_field<std::string>(json, "model"), required_field<std::string>(json, "api_key")};
 }
 
+WebSearchSettings parse_web_search_settings(const nlohmann::json& json) {
+    if (!json.is_object()) throw std::invalid_argument("Invalid web search settings");
+    for (const auto& [key, value] : json.items()) {
+        (void)value;
+        if (key != "enabled" && key != "provider" && key != "api_key"
+            && key != "query_provider")
+            log_warn("Ignoring unused web search field: " + key);
+    }
+    return {required_field<bool>(json, "enabled"),
+        required_field<std::string>(json, "provider"),
+        required_field<std::string>(json, "api_key"),
+        required_field<std::string>(json, "query_provider")};
+}
+
 VoiceInputSettings parse_voice_input_settings(const nlohmann::json& json) {
     if (!json.is_object() || json.size() != 7) {
         throw std::invalid_argument("Invalid voice input settings");

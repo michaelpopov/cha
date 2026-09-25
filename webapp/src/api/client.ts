@@ -56,6 +56,7 @@ export type NativeVoiceInputRuntime = components['schemas']['VoiceInputRuntime']
 export type XaiVoiceStartResult = components['schemas']['XaiVoiceStartResult'];
 export type XaiVoicePieces = components['schemas']['XaiVoicePieces'];
 export type JevSettings = components['schemas']['JevSettings'];
+export type WebSearchSettings = components['schemas']['WebSearchSettings'];
 export type VoiceOutputSettings = components['schemas']['VoiceOutputSettings'];
 export type VoiceOutputRuntime = components['schemas']['VoiceOutputRuntime'];
 export type ApiKeyDetail = components['schemas']['ApiKeyDetail'];
@@ -188,6 +189,8 @@ export interface ChaClient {
   getJevSettings(): Promise<JevSettings | null>;
   saveJevSettings(settings: JevSettings): Promise<JevSettings>;
   disableJev(): Promise<void>;
+  getWebSearchSettings(): Promise<WebSearchSettings>;
+  saveWebSearchSettings(settings: WebSearchSettings): Promise<WebSearchSettings>;
   getVoiceOutputSettings(): Promise<VoiceOutputSettings | null>;
   saveVoiceOutputSettings(settings: VoiceOutputSettings): Promise<VoiceOutputSettings>;
   getVoiceOutputRuntime(): Promise<VoiceOutputRuntime | null>;
@@ -496,6 +499,13 @@ export function isJevSettings(value: unknown): value is JevSettings {
   return isRecord(value) && typeof value.url === 'string' && value.url.length > 0
     && typeof value.model === 'string' && value.model.length > 0
     && typeof value.api_key === 'string' && value.api_key.length > 0;
+}
+
+export function isWebSearchSettings(value: unknown): value is WebSearchSettings {
+  return isRecord(value) && typeof value.enabled === 'boolean'
+    && isOneOf(value.provider, ['brave', 'tavily'])
+    && typeof value.api_key === 'string'
+    && typeof value.query_provider === 'string';
 }
 
 export function isVoiceOutputSettings(value: unknown): value is VoiceOutputSettings {

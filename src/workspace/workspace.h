@@ -83,6 +83,13 @@ struct WorkspaceJev {
 
 void validate_jev_config(const WorkspaceJev& config);
 
+struct WorkspaceWebSearch {
+    bool enabled{false};
+    std::string provider{"brave"};
+    std::string api_key_id;
+    std::string query_provider_id;
+};
+
 struct WorkspaceVoiceOutput {
     std::string url;
     std::string model;
@@ -168,6 +175,9 @@ public:
     [[nodiscard]] const std::optional<WorkspaceJev>& jev() const noexcept {
         return jev_;
     }
+    [[nodiscard]] const WorkspaceWebSearch& web_search() const noexcept {
+        return web_search_;
+    }
     [[nodiscard]] std::span<const SavedApiKey> api_keys() const noexcept {
         return api_keys_;
     }
@@ -243,6 +253,7 @@ private:
     std::optional<WorkspaceVoiceInput> voice_input_;
     std::optional<WorkspaceVoiceOutput> voice_output_;
     std::optional<WorkspaceJev> jev_;
+    WorkspaceWebSearch web_search_;
     std::vector<SavedApiKey> api_keys_;
     std::optional<R2StorageKey> r2_storage_;
     std::uint64_t next_api_key_id_{1};

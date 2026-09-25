@@ -677,6 +677,21 @@ components:
         api_key:
           $ref: "#/components/schemas/Identifier"
 
+    WebSearchSettings:
+      type: object
+      additionalProperties: false
+      required: [enabled, provider, api_key, query_provider]
+      properties:
+        enabled:
+          type: boolean
+        provider:
+          type: string
+          enum: [brave, tavily]
+        api_key:
+          type: string
+        query_provider:
+          type: string
+
     VoiceInputSettings:
       type: object
       additionalProperties: false

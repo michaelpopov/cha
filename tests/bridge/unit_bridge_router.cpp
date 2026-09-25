@@ -9,6 +9,7 @@
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -249,6 +250,58 @@ TEST_F(BridgeRouterTest, RecipientDetectionSettingsApplyToExistingSessionAndMiss
     EXPECT_EQ(fallback["result"]["notice"], "Recipient detection failed. Sent to all characters.");
     ASSERT_TRUE(call("jev.disable")["ok"]);
     EXPECT_TRUE(call("jev.get")["result"].is_null());
+}
+
+TEST_F(BridgeRouterTest, WebSearchSettingsRoundTripAndRequireKeyWhenEnabled) {
+    bootstrap_epoch();
+    const nlohmann::json disabled = {
+        {"enabled", false}, {"provider", "brave"}, {"api_key", ""},
+        {"query_provider", ""}};
+    EXPECT_EQ(call("webSearch.get")["result"], disabled);
+    auto obsolete = disabled;
+    obsolete["provider"] = "google";
+    ASSERT_TRUE(call("webSearch.save", obsolete)["ok"]);
+    EXPECT_EQ(call("webSearch.get")["result"], disabled);
+
+    auto invalid = disabled;
+    invalid["enabled"] = true;
+    EXPECT_FALSE(call("webSearch.save", invalid)["ok"]);
+    EXPECT_EQ(call("webSearch.get")["result"], disabled);
+
+    const auto key = call("apiKey.create", {
+        {"display_name", "Search"}, {"value", "test-secret"}});
+    ASSERT_TRUE(key["ok"]);
+    const std::string key_id = key["result"]["id"];
+    auto missing_provider = invalid;
+    missing_provider["api_key"] = key_id;
+    EXPECT_FALSE(call("webSearch.save", missing_provider)["ok"]);
+    auto unknown_provider = missing_provider;
+    unknown_provider["provider"] = "google";
+    unknown_provider["query_provider"] = "test";
+    EXPECT_FALSE(call("webSearch.save", unknown_provider)["ok"]);
+    const nlohmann::json enabled = {
+        {"enabled", true}, {"provider", "tavily"}, {"api_key", key_id},
+        {"query_provider", "test"}};
+    ASSERT_TRUE(call("webSearch.save", enabled)["ok"]);
+    EXPECT_EQ(call("webSearch.get")["result"], enabled);
+    const auto query_provider = call("provider.get", {{"provider_id", "test"}});
+    ASSERT_TRUE(query_provider["ok"]);
+    EXPECT_NE(std::ranges::find(query_provider["result"]["used_by"], "Search API"),
+        query_provider["result"]["used_by"].end());
+    auto keys = call("apiKey.list")["result"];
+    ASSERT_EQ(keys.size(), 1u);
+    EXPECT_EQ(keys[0]["used_by"], nlohmann::json::array({"Search API"}));
+
+    auto turned_off = enabled;
+    turned_off["enabled"] = false;
+    ASSERT_TRUE(call("webSearch.save", turned_off)["ok"]);
+    EXPECT_EQ(call("webSearch.get")["result"], turned_off);
+    keys = call("apiKey.list")["result"];
+    EXPECT_EQ(keys[0]["used_by"], nlohmann::json::array());
+    const auto unused_provider = call("provider.get", {{"provider_id", "test"}});
+    ASSERT_TRUE(unused_provider["ok"]);
+    EXPECT_EQ(std::ranges::find(unused_provider["result"]["used_by"], "Search API"),
+        unused_provider["result"]["used_by"].end());
 }
 
 TEST_F(BridgeRouterTest, BootstrapIncludesVersionAndCapabilities) {
