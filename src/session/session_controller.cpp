@@ -613,10 +613,6 @@ std::shared_ptr<WebSearchContext> SessionController::make_web_search(
     const auto current = workspace();
     const auto& search = current->web_search();
     if (!search.enabled || choice == JevSearch::none) return {};
-    if (search.provider != "brave") {
-        log_warn("Web search provider is not implemented; skipping web search");
-        return {};
-    }
     auto context = std::make_shared<WebSearchContext>();
     context->config = search;
     const CharacterMetadata rewriter{"web-search-query", "Web search query"};
@@ -643,7 +639,7 @@ std::shared_ptr<WebSearchContext> SessionController::make_web_search(
             .provider = {provider->id, std::move(config)},
             .system_prompt = "Convert the user's prompt into one concise, standalone web search query. "
                 "Use the conversation history to resolve references in the prompt. "
-                "Use at most 600 characters and 75 words. Return only the query string.",
+                "Use at most 400 characters and 75 words. Return only the query string.",
         });
     }
     return context;

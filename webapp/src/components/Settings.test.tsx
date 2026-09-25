@@ -2034,10 +2034,15 @@ describe('web search settings', () => {
     expect(saveWebSearchSettings).toHaveBeenLastCalledWith({
       enabled: true, provider: 'tavily', api_key: 'key-1', query_provider: 'model-1',
     });
+    await user.selectOptions(screen.getByLabelText('API provider'), 'brave');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(saveWebSearchSettings).toHaveBeenLastCalledWith({
+      enabled: true, provider: 'brave', api_key: 'key-1', query_provider: 'model-1',
+    });
     await user.click(enabled);
     await user.click(screen.getByRole('button', { name: 'Save' }));
     expect(saveWebSearchSettings).toHaveBeenLastCalledWith({
-      enabled: false, provider: 'tavily', api_key: 'key-1', query_provider: 'model-1',
+      enabled: false, provider: 'brave', api_key: 'key-1', query_provider: 'model-1',
     });
   });
 });

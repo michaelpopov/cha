@@ -244,7 +244,10 @@ Application::Impl::Impl(
           [keys = api_keys.get()](const WorkspaceWebSearch& config, std::string_view query,
               const std::atomic_bool& cancelled) {
               if (cancelled.load()) return std::string{};
-              return search_brave(query, keys->value(config.api_key_id), cancelled);
+              const auto key = keys->value(config.api_key_id);
+              if (config.provider == "tavily") return search_tavily(query, key, cancelled);
+              if (config.provider == "brave") return search_brave(query, key, cancelled);
+              throw std::runtime_error("Unsupported web search provider");
           }) {
     vault_maintenance.publish_vault_names();
     const auto seed = TemporarySessionSeed{

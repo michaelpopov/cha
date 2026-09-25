@@ -18,6 +18,9 @@ using WebSearchExecutor = std::function<std::string(
 std::string search_brave(std::string_view query, std::string_view key,
     const std::atomic_bool& cancelled,
     std::string_view endpoint = "https://api.search.brave.com/res/v1/web/search");
+std::string search_tavily(std::string_view query, std::string_view key,
+    const std::atomic_bool& cancelled,
+    std::string_view endpoint = "https://api.tavily.com/search");
 
 // Shared by all recipients of one prompt. The first worker prepares the search;
 // the other workers reuse its result before preparing their model requests.

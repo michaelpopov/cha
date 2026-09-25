@@ -149,6 +149,123 @@ TEST(BraveSearch, CancelsAnInFlightTransfer) {
     server.join();
 }
 
+TEST(TavilySearch, PostsQueryAndKeyAndExtractsAtMostFiveSources) {
+    const std::string body = R"json({"results":[
+        {"title":"A source","url":"https://example.org/a","content":"A summary",
+         "score":0.9,"raw_content":"not needed"},
+        {"url":"javascript:alert(1)"}, {"title":"No URL"}, null,
+        {"url":123}, {"url":"http://example.org/b","title":12,"content":null},
+        {"url":"https://example.org/c"}, {"url":"https://example.org/d"},
+        {"url":"https://example.org/e"}, {"url":"https://example.org/f"}]})json";
+    MockHttpServer server({http_response("application/json", body)});
+    server.start();
+    std::atomic_bool cancelled{};
+    const std::string query = "C++ & \"café\"?";
+    const auto result = nlohmann::json::parse(search_tavily(query, "test-secret",
+        cancelled, "http://127.0.0.1:" + std::to_string(server.port()) + "/search"));
+    server.join();
+    ASSERT_EQ(server.requests().size(), 1u);
+    const auto& request = server.requests().front();
+    EXPECT_TRUE(request.starts_with("POST /search HTTP/1.1\r\n"));
+    EXPECT_NE(request.find("Authorization: Bearer test-secret\r\n"), std::string::npos);
+    EXPECT_NE(request.find("Content-Type: application/json\r\n"), std::string::npos);
+    const auto sent = nlohmann::json::parse(request.substr(request.find("\r\n\r\n") + 4));
+    EXPECT_EQ(sent, (nlohmann::json{{"query", query}, {"search_depth", "basic"},
+        {"max_results", 5}, {"include_answer", false}, {"include_raw_content", false}}));
+    EXPECT_EQ(result["query"], query);
+    ASSERT_EQ(result["results"].size(), 5u);
+    EXPECT_EQ(result["results"][0], (nlohmann::json{{"title", "A source"},
+        {"url", "https://example.org/a"}, {"description", "A summary"}}));
+    EXPECT_EQ(result["results"][1], (nlohmann::json{{"url", "http://example.org/b"}}));
+    EXPECT_EQ(result["results"][4]["url"], "https://example.org/e");
+}
+
+TEST(TavilySearch, HandlesEmptyResultsAndLimitsQueriesToWholeWords) {
+    std::atomic_bool cancelled{};
+    for (const auto* word : {"query ", "café "}) {
+        std::string query;
+        for (int i = 0; i < 100; ++i) query += word;
+        MockHttpServer server({http_response("application/json", R"({"results":[]})")});
+        server.start();
+        const auto result = nlohmann::json::parse(search_tavily(query, "key", cancelled,
+            "http://127.0.0.1:" + std::to_string(server.port())));
+        server.join();
+        EXPECT_TRUE(result["results"].empty());
+        // Each word plus its space is six bytes. Only 66 whole words fit.
+        const auto expected = query.substr(0, 66 * 6 - 1);
+        EXPECT_EQ(result["query"], expected);
+        ASSERT_EQ(server.requests().size(), 1u);
+        const auto& request = server.requests().front();
+        const auto sent = nlohmann::json::parse(request.substr(request.find("\r\n\r\n") + 4));
+        EXPECT_EQ(sent["query"], expected);
+        EXPECT_LE(sent["query"].get<std::string>().size(), 400u);
+    }
+    for (const auto& query : {std::string(400, 'x'), std::string(400, 'x') + " more"}) {
+        MockHttpServer server({http_response("application/json", R"({"results":[]})")});
+        server.start();
+        const auto result = nlohmann::json::parse(search_tavily(query, "key", cancelled,
+            "http://127.0.0.1:" + std::to_string(server.port())));
+        server.join();
+        EXPECT_EQ(result["query"], std::string(400, 'x'));
+    }
+    EXPECT_THROW(search_tavily(std::string(401, 'x'), "key", cancelled), std::runtime_error);
+    EXPECT_THROW(search_tavily(" \n", "key", cancelled), std::runtime_error);
+    EXPECT_THROW(search_tavily("query", "", cancelled), std::runtime_error);
+    EXPECT_THROW(search_tavily("query", "key\r\nInjected: true", cancelled), std::runtime_error);
+    cancelled.store(true);
+    EXPECT_TRUE(search_tavily("query", "key", cancelled).empty());
+}
+
+TEST(TavilySearch, RejectsMalformedResponsesAndHttpFailuresWithoutLoggingSecrets) {
+    test::TestWorkspace fixture;
+    const auto path = fixture.root() / "tavily-warnings.log";
+    initialize_diagnostic_logging(path, "warn");
+    std::atomic_bool cancelled{};
+    for (const auto* body : {"private-response-body", "null", "{}",
+        R"({"results":{}})", R"({"error":"private-response-body"})",
+        R"({"detail":{"error":"private-response-body"}})"}) {
+        MockHttpServer server({http_response("application/json", body)});
+        server.start();
+        EXPECT_THROW(search_tavily("private-query", "private-key", cancelled,
+            "http://127.0.0.1:" + std::to_string(server.port())), std::runtime_error);
+        server.join();
+    }
+    for (const int status : {302, 401, 429, 432, 500}) {
+        const std::string body = "private-response-body";
+        MockHttpServer server({"HTTP/1.1 " + std::to_string(status)
+            + " Error\r\nLocation: http://127.0.0.1:1/\r\nContent-Length: "
+            + std::to_string(body.size()) + "\r\nConnection: close\r\n\r\n" + body});
+        server.start();
+        EXPECT_THROW(search_tavily("private-query", "private-key", cancelled,
+            "http://127.0.0.1:" + std::to_string(server.port())), std::runtime_error);
+        server.join();
+    }
+    shutdown_diagnostic_logging();
+    std::ifstream log(path);
+    const std::string warnings{std::istreambuf_iterator<char>(log), {}};
+    for (const auto* reason : {"Web search HTTP 302", "Web search HTTP 401", "Web search HTTP 429",
+        "Web search HTTP 432", "Web search HTTP 500", "Invalid web search response", "Invalid web search results"})
+        EXPECT_NE(warnings.find(std::string("Tavily search failed: ") + reason), std::string::npos);
+    for (const auto* secret : {"private-query", "private-key", "private-response-body"})
+        EXPECT_EQ(warnings.find(secret), std::string::npos);
+}
+
+TEST(TavilySearch, CancelsAnInFlightTransfer) {
+    MockHttpServer server({"HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\n"}, true);
+    server.start();
+    std::atomic_bool cancelled{};
+    auto result = std::async(std::launch::async, [&] {
+        return search_tavily("query", "key", cancelled,
+            "http://127.0.0.1:" + std::to_string(server.port()));
+    });
+    const bool received = server.wait_for_requests(1, 2s);
+    cancelled.store(true);
+    EXPECT_TRUE(received);
+    EXPECT_EQ(result.wait_for(1s), std::future_status::ready);
+    EXPECT_TRUE(result.get().empty());
+    server.join();
+}
+
 TEST(WebSearchContext, ConcurrentRecipientsShareOneSearch) {
     WebSearchContext context;
     context.query.run.prompt_text = "latest news";
