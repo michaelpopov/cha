@@ -87,10 +87,14 @@ TEST(ApplicationSettings, ListsAndUpdatesProvidersWithoutSecrets) {
 
     auto provider = application->get_provider("test", epoch);
     EXPECT_EQ(provider.model, "fake");
+    EXPECT_EQ(provider.reasoning_effort, "none");
     nlohmann::json body = provider_body(provider);
     body["api_key"] = created_key.id;
+    body["reasoning_effort"] = "minimal";
     const auto updated = application->update_provider("test", body, epoch);
     EXPECT_EQ(updated.api_key, created_key.id);
+    EXPECT_EQ(updated.reasoning_effort, "minimal");
+    EXPECT_EQ(application->get_provider("test", epoch).reasoning_effort, "minimal");
     EXPECT_EQ(nlohmann::json(updated).dump().find("private-router-secret"),
         std::string::npos);
 

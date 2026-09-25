@@ -439,6 +439,12 @@ TEST(WebProtocol, ParsesRouteSpecificCommandPayloads) {
     EXPECT_EQ(update.voice, "brian");
     EXPECT_EQ(update.reasoning_effort, "xhigh");
     EXPECT_EQ(update.web_search, WebSearchMode::required);
+    for (const auto* effort : {"none", "minimal"}) {
+        const auto settings = parse_character_settings_update({
+            {"provider", "qwen"}, {"style", nullptr}, {"voice_id", nullptr},
+            {"reasoning_effort", effort}, {"web_search", nullptr}});
+        EXPECT_EQ(settings.reasoning_effort, effort);
+    }
     EXPECT_THROW(
         (void)parse_character_settings_update({
             {"provider", "qwen"},

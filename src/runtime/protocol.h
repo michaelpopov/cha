@@ -349,7 +349,7 @@ struct ProviderDetail {
     int timeout_s{};
     int idle_timeout_s{};
     std::optional<std::string> api_key;
-    std::string reasoning_effort;
+    std::string reasoning_effort{default_reasoning_effort};
     std::string reasoning_format;
     bool https{};
     std::string api;

@@ -181,9 +181,11 @@ Style configs may contain `font`, `style`, `weight`, `size`, and `text_color`;
 omitted fields use the interface defaults. A style reference must resolve during startup.
 
 Provider `reasoning_effort` and `web_search` values are defaults. A character's
-`character.toml` may override them with `reasoning_effort = "low"`, `"medium"`,
-`"high"`, or `"xhigh"`, and `web_search = "off"`, `"auto"`, or `"required"`.
+`character.toml` may override them with `reasoning_effort = "none"`, `"minimal"`,
+`"low"`, `"medium"`, `"high"`, or `"xhigh"`, and `web_search = "off"`, `"auto"`, or `"required"`.
 Omitting either character key inherits the provider value.
+A provider without `reasoning_effort` sends `"none"`. Empty or unknown provider
+effort values produce a warning and also use `"none"`.
 
 `web_search` other than `off` normally requires `api = "responses"`. OpenRouter
 also supports it with `api = "chat_completions"` through its server-side web

@@ -173,7 +173,7 @@ describe('native CHA client', () => {
       timeout_s: 600,
       idle_timeout_s: 60,
       api_key: null,
-      reasoning_effort: '',
+      reasoning_effort: 'none' as const,
       reasoning_format: 'auto' as const,
       https: false,
       api: 'responses' as const,

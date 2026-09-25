@@ -1145,6 +1145,8 @@ export function CharacterSettingsScreen({
             value={reasoningEffort ?? ''}
           >
             <option value="">Provider default</option>
+            <option value="none">None</option>
+            <option value="minimal">Minimal</option>
             <option value="low">Low</option>
             <option value="medium">Medium</option>
             <option value="high">High</option>

@@ -186,7 +186,8 @@ export interface components {
             timeout_s: number;
             idle_timeout_s: number;
             api_key: string | null;
-            reasoning_effort: string;
+            /** @enum {string} */
+            reasoning_effort: "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
             /** @enum {string} */
             reasoning_format: "auto" | "none" | "reasoning_content" | "reasoning";
             https: boolean;
@@ -215,7 +216,8 @@ export interface components {
             timeout_s: number;
             idle_timeout_s: number;
             api_key: string | null;
-            reasoning_effort: string;
+            /** @enum {string} */
+            reasoning_effort: "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
             /** @enum {string} */
             reasoning_format: "auto" | "none" | "reasoning_content" | "reasoning";
             https: boolean;
@@ -396,7 +398,7 @@ export interface components {
             style: string | null;
             voice_id: string | null;
             /** @enum {string|null} */
-            reasoning_effort: "low" | "medium" | "high" | "xhigh" | null;
+            reasoning_effort: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | null;
             /** @enum {string|null} */
             web_search: "off" | "auto" | "required" | null;
             available_providers: components["schemas"]["ProviderOption"][];
@@ -429,7 +431,7 @@ export interface components {
             style: string | null;
             voice_id: string | null;
             /** @enum {string|null} */
-            reasoning_effort: "low" | "medium" | "high" | "xhigh" | null;
+            reasoning_effort: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | null;
             /** @enum {string|null} */
             web_search: "off" | "auto" | "required" | null;
         };

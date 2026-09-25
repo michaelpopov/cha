@@ -153,7 +153,6 @@ CharacterDefinition integration_definition(bool stream) {
         "https = true\n"
         "mode = \"net\"\n"
         "model = \"gpt-5.6-terra\"\n"
-        "reasoning_effort = \"none\"\n"
         "api = \"responses\"\n"
         "web_search = \"off\"\n");
     const Workspace workspace = Workspace::load(fixture.root());

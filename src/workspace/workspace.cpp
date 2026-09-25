@@ -278,8 +278,6 @@ WorkspaceProvider load_provider(
                 table, path, "api_key", "a string").value_or(""),
             .api_key_env = optional_value<std::string>(
                 table, path, "api_key_env", "a string").value_or(""),
-            .reasoning_effort = optional_value<std::string>(
-                table, path, "reasoning_effort", "a string").value_or(""),
             .reasoning_format = choice(
                 table, path, "reasoning_format", parse_reasoning_format,
                 ReasoningFormat::automatic),
@@ -299,6 +297,15 @@ WorkspaceProvider load_provider(
         },
     };
 
+    if (const auto effort = optional_value<std::string>(
+            table, path, "reasoning_effort", "a string")) {
+        if (valid_reasoning_effort(*effort)) {
+            provider.config.reasoning_effort = *effort;
+        } else {
+            log_warn("Ignoring unsupported provider reasoning_effort in "
+                + utf8_path(path) + "; using " + provider.config.reasoning_effort);
+        }
+    }
     const ModelBackendConfig& config = provider.config;
     validate_public_name(provider.label, "Provider name", path);
     if (const auto error = provider_config_error(config)) {
@@ -767,11 +774,6 @@ struct CharacterConfig {
     WorkspacePromptVariables prompt_variables;
 };
 
-bool valid_character_reasoning_effort(std::string_view value) {
-    return value == "low" || value == "medium" || value == "high"
-        || value == "xhigh";
-}
-
 CharacterConfig load_character_config(
     const TextSource& source,
     const std::filesystem::path& path,
@@ -831,7 +833,7 @@ CharacterConfig load_character_config(
         if (result.style_id) require_path_component(*result.style_id, path);
         if (result.voice_id) require_path_component(*result.voice_id, path);
         if (result.reasoning_effort
-            && !valid_character_reasoning_effort(*result.reasoning_effort)) {
+            && !valid_reasoning_effort(*result.reasoning_effort)) {
             throw std::runtime_error(
                 "Character config '" + utf8_path(path)
                 + "' has unsupported reasoning_effort '"
@@ -2120,9 +2122,7 @@ void WorkspaceConfigEditor::write_provider(
     if (!provider.api_key_env.empty()) {
         table.insert("api_key_env", provider.api_key_env);
     }
-    if (!provider.reasoning_effort.empty()) {
-        table.insert("reasoning_effort", provider.reasoning_effort);
-    }
+    table.insert("reasoning_effort", provider.reasoning_effort);
     table.insert("reasoning_format", to_string(provider.reasoning_format));
     table.insert("https", provider.https);
     table.insert("api", to_string(provider.api));
@@ -2879,7 +2879,7 @@ void WorkspaceConfigEditor::write_character_settings(
         throw std::invalid_argument(
             "Voice '" + std::string(*voice_id) + "' does not exist");
     }
-    if (reasoning_effort && !valid_character_reasoning_effort(*reasoning_effort)) {
+    if (reasoning_effort && !valid_reasoning_effort(*reasoning_effort)) {
         throw std::invalid_argument(
             "Reasoning effort '" + std::string(*reasoning_effort)
             + "' is not supported");

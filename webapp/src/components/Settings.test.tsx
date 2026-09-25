@@ -49,7 +49,7 @@ const provider: ProviderDetail = {
   timeout_s: 600,
   idle_timeout_s: 60,
   api_key: null,
-  reasoning_effort: '',
+  reasoning_effort: 'none',
   reasoning_format: 'auto',
   https: true,
   api: 'chat_completions',
@@ -1023,19 +1023,51 @@ describe('Settings screens', () => {
     expect(screen.queryByLabelText('Host')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Port')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Environment variable')).not.toBeInTheDocument();
-    expect(screen.queryByLabelText('Reasoning effort')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Reasoning effort')).toHaveValue('none');
     expect(screen.getByText('Used by')).toBeInTheDocument();
     expect(screen.getByText('Guide')).toBeInTheDocument();
 
     await userEvent.type(screen.getByLabelText('Model'), '-candidate');
+    await userEvent.selectOptions(screen.getByLabelText('Reasoning effort'), 'minimal');
     await userEvent.click(await screen.findByRole('button', { name: 'Test' }));
 
     expect(testProvider).toHaveBeenCalledWith(provider.id, expect.objectContaining({
       model: 'openai/gpt-5-candidate',
-      reasoning_effort: '',
+      reasoning_effort: 'minimal',
     }));
     expect(updateProvider).not.toHaveBeenCalled();
     expect(await screen.findByText('Provider responded successfully.')).toBeInTheDocument();
+  });
+
+  it('saves the provider reasoning effort', async () => {
+    const configured: ProviderDetail = { ...provider, reasoning_effort: 'high' };
+    const updateProvider = vi.fn(async (_id, update) => ({ ...configured, ...update }));
+    render(
+      <ProviderScreen
+        client={fixtureClient({
+          getProvider: async () => configured,
+          listApiKeys: async () => [],
+          updateProvider,
+        })}
+        dispatch={vi.fn()}
+        state={{
+          ...initialAppState,
+          inspectedProvider: { ...initialAppState.inspectedProvider, id: provider.id },
+        }}
+      />,
+    );
+
+    const reasoning = await screen.findByLabelText('Reasoning effort') as HTMLSelectElement;
+    expect(reasoning).toHaveValue('high');
+    expect(Array.from(reasoning.options, (option) => option.value))
+      .toEqual(['none', 'minimal', 'low', 'medium', 'high', 'xhigh']);
+    await userEvent.selectOptions(reasoning, 'none');
+    await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    expect(updateProvider).toHaveBeenCalledWith(provider.id, expect.objectContaining({
+      reasoning_effort: 'none',
+    }));
+    expect(reasoning).toHaveValue('none');
+    expect(screen.getByRole('button', { name: 'Save changes' })).toBeDisabled();
   });
 
   it('preserves the scheme and custom port represented by Base URL', async () => {
@@ -1045,7 +1077,6 @@ describe('Settings screens', () => {
       port: 11434,
       https: false,
       base_path: '/openai',
-      reasoning_effort: 'low',
     };
     const updateProvider = vi.fn(async (_id, update) => ({
       id: localProvider.id, used_by: localProvider.used_by, writable: true, ...update,
@@ -1081,7 +1112,6 @@ describe('Settings screens', () => {
       mode: 'net',
       stream: true,
       web_search: 'off',
-      reasoning_effort: '',
       auth: 'none',
       timeout_s: 600,
       reasoning_format: 'auto',
@@ -2024,7 +2054,12 @@ describe('web search settings', () => {
 
     const enabled = await screen.findByRole('checkbox', { name: 'Enabled' });
     expect(enabled).not.toBeChecked();
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
     expect(screen.getByText('Search API requires recipient detection to be enabled.')).toBeInTheDocument();
+    await user.selectOptions(screen.getByLabelText('API provider'), 'tavily');
+    expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
+    await user.selectOptions(screen.getByLabelText('API provider'), 'brave');
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
     await user.selectOptions(screen.getByLabelText('API provider'), 'tavily');
     await user.selectOptions(screen.getByLabelText('API key'), 'key-1');
     await user.click(enabled);
@@ -2034,16 +2069,38 @@ describe('web search settings', () => {
     expect(saveWebSearchSettings).toHaveBeenLastCalledWith({
       enabled: true, provider: 'tavily', api_key: 'key-1', query_provider: 'model-1',
     });
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
     await user.selectOptions(screen.getByLabelText('API provider'), 'brave');
+    expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
     await user.click(screen.getByRole('button', { name: 'Save' }));
     expect(saveWebSearchSettings).toHaveBeenLastCalledWith({
       enabled: true, provider: 'brave', api_key: 'key-1', query_provider: 'model-1',
     });
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
     await user.click(enabled);
     await user.click(screen.getByRole('button', { name: 'Save' }));
     expect(saveWebSearchSettings).toHaveBeenLastCalledWith({
       enabled: false, provider: 'brave', api_key: 'key-1', query_provider: 'model-1',
     });
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+  });
+
+  it('keeps unsaved changes available for retry after a failed save', async () => {
+    const user = userEvent.setup();
+    render(<WebSearchSettingsScreen client={fixtureClient({
+      getWebSearchSettings: async () => ({
+        enabled: false, provider: 'brave', api_key: '', query_provider: '',
+      }),
+      saveWebSearchSettings: async () => {
+        throw new ChaError('invalid_argument', 'Search settings could not be saved.');
+      },
+    })} dispatch={vi.fn()} state={initialAppState} />);
+
+    await user.selectOptions(await screen.findByLabelText('API provider'), 'tavily');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Search settings could not be saved.');
+    expect(screen.getByLabelText('API provider')).toHaveValue('tavily');
+    expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
   });
 });
 

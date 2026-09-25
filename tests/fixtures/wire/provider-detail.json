@@ -12,7 +12,7 @@
   "timeout_s": 600,
   "idle_timeout_s": 60,
   "api_key": null,
-  "reasoning_effort": "",
+  "reasoning_effort": "none",
   "reasoning_format": "auto",
   "https": false,
   "api": "responses",

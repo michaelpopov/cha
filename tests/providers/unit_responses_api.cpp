@@ -173,7 +173,7 @@ TEST(ResponsesApi, SubscriptionBodyUsesFallbackInstructionsAndOmitsExtras) {
     }));
 }
 
-TEST(ResponsesApi, OmitsEmptyInstructionsAndReasoningAndSearchFields) {
+TEST(ResponsesApi, DefaultsToNoneReasoningAndOmitsEmptyInstructionsAndSearchFields) {
     Transcript transcript;
     const GenerationRequest request = make_request(transcript, "Hi");
     ModelBackendConfig config = responses_config();
@@ -182,7 +182,7 @@ TEST(ResponsesApi, OmitsEmptyInstructionsAndReasoningAndSearchFields) {
         request, config, ""));
 
     EXPECT_FALSE(body.contains("instructions"));
-    EXPECT_FALSE(body.contains("reasoning"));
+    EXPECT_EQ(body["reasoning"]["effort"], "none");
     EXPECT_FALSE(body.contains("temperature"));
     EXPECT_FALSE(body.contains("max_output_tokens"));
     EXPECT_FALSE(body.contains("tools"));

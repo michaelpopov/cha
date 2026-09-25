@@ -127,8 +127,7 @@ std::optional<std::string> nullable_string(
 std::optional<std::string> nullable_reasoning_effort(
     const nlohmann::json& json) {
     std::optional<std::string> value = nullable_string(json, "reasoning_effort");
-    if (value && *value != "low" && *value != "medium"
-        && *value != "high" && *value != "xhigh") {
+    if (value && !valid_reasoning_effort(*value)) {
         throw std::invalid_argument("Invalid web command");
     }
     return value;
@@ -358,6 +357,9 @@ ProviderUpdate parse_provider_update(
         settings_nullable_string(json, "api_key").value_or("");
     result.config.reasoning_effort =
         required_field<std::string>(json, "reasoning_effort");
+    if (!valid_reasoning_effort(result.config.reasoning_effort)) {
+        throw std::invalid_argument("Invalid reasoning effort");
+    }
     result.config.reasoning_format = settings_choice(
         required_field<std::string>(json, "reasoning_format"),
         parse_reasoning_format);

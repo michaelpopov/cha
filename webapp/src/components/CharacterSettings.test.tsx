@@ -46,13 +46,13 @@ function renderSettings(client = fixtureClient()) {
 }
 
 describe('character settings screen', () => {
-  it('renders the pickers, styled preview text, and saves every character setting', async () => {
+  it('renders the pickers and saves character settings with none reasoning', async () => {
     const user = userEvent.setup();
     const updateCharacter = vi.fn(async () => ({
       ...characterDetailFixture,
       style: 'mono-large',
       voice_id: 'brian',
-      reasoning_effort: 'high' as const,
+      reasoning_effort: 'none' as const,
       web_search: 'auto' as const,
     }));
     const dispatch = renderSettings(fixtureClient({ updateCharacter }));
@@ -60,7 +60,10 @@ describe('character settings screen', () => {
     expect(await screen.findByLabelText('Provider')).toHaveValue('terra');
     expect(screen.getByRole('option', { name: 'Select provider' })).toBeDisabled();
     expect(screen.getByRole('option', { name: 'No style' })).toBeInTheDocument();
-    expect(screen.getByLabelText('Reasoning effort')).toHaveValue('');
+    const reasoning = screen.getByLabelText('Reasoning effort') as HTMLSelectElement;
+    expect(reasoning).toHaveValue('');
+    expect(Array.from(reasoning.options, (option) => option.value))
+      .toEqual(['', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh']);
     expect(screen.getByLabelText('Web search')).toHaveValue('');
     expect(screen.getByLabelText('Voice')).toHaveValue('');
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
@@ -69,7 +72,7 @@ describe('character settings screen', () => {
     );
 
     await user.selectOptions(screen.getByLabelText('Style'), 'mono-large');
-    await user.selectOptions(screen.getByLabelText('Reasoning effort'), 'high');
+    await user.selectOptions(screen.getByLabelText('Reasoning effort'), 'none');
     await user.selectOptions(screen.getByLabelText('Web search'), 'auto');
     await user.selectOptions(screen.getByLabelText('Voice'), 'brian');
     expect(screen.getByLabelText('Voice preview text')).toHaveClass(
@@ -87,7 +90,7 @@ describe('character settings screen', () => {
       provider: 'terra',
       style: 'mono-large',
       voice_id: 'brian',
-      reasoning_effort: 'high',
+      reasoning_effort: 'none' as const,
       web_search: 'auto',
     }));
     expect(dispatch).toHaveBeenCalledWith({

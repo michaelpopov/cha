@@ -44,6 +44,9 @@ describe('C++ wire fixtures', () => {
 
     const character = loadFixture('character-detail.json');
     expect(isCharacterDetail(character)).toBe(true);
+    expect(isCharacterDetail({
+      ...character as Record<string, unknown>, reasoning_effort: 'none',
+    })).toBe(true);
 
     const info = loadFixture('bridge-info.json') as { protocol_version: number };
     expect(info.protocol_version).toBe(nativeProtocolVersion);

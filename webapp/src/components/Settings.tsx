@@ -1037,7 +1037,6 @@ export function ProviderScreen({
       stream: true,
       api_key: usesOpenAiOAuth ? null : draft.api_key,
       auth: usesOpenAiOAuth ? 'openai_subscription' : 'none',
-      reasoning_effort: '',
       web_search: 'off',
       temperature: usesOpenAiOAuth ? null : draft.temperature,
       max_tokens: usesOpenAiOAuth ? null : draft.max_tokens,
@@ -1106,6 +1105,7 @@ export function ProviderScreen({
 
   const dirty = detail !== null && draft !== null && (
     draft.model !== detail.model
+    || draft.reasoning_effort !== detail.reasoning_effort
     || draft.api !== detail.api
     || draft.auth !== detail.auth
     || draft.api_key !== (keys.some(({ id: keyId }) => keyId === detail.api_key)
@@ -1153,6 +1153,16 @@ export function ProviderScreen({
         <form className="cha-settings-form" onSubmit={(event) => void save(event)}>
           <fieldset aria-label="Provider details" disabled={saving || testing || deleting || !detail.writable}>
             <label>Model<input className="cha-form-control" onChange={(event) => change('model', event.target.value)} value={draft.model} /></label>
+            <label>Reasoning effort
+              <select className="cha-form-control" onChange={(event) => change('reasoning_effort', event.target.value as ProviderUpdate['reasoning_effort'])} value={draft.reasoning_effort}>
+                <option value="none">None</option>
+                <option value="minimal">Minimal</option>
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+                <option value="xhigh">Extra high</option>
+              </select>
+            </label>
             <label>Base URL<input className="cha-form-control" onChange={(event) => { setBaseUrl(event.target.value); setError(null); setTestSucceeded(false); }} placeholder="https://api.openai.com" type="url" value={baseUrl} /></label>
             <div className="cha-settings-form-grid">
               <label>API format<select className="cha-form-control" onChange={(event) => change('api', event.target.value as ProviderUpdate['api'])} value={draft.api}><option value="responses">Responses</option><option value="chat_completions">Chat completions</option></select></label>
@@ -2191,6 +2201,7 @@ const defaultWebSearch: WebSearchSettings = {
 
 export function WebSearchSettingsScreen({ client, dispatch }: SettingsScreenProps) {
   const [settings, setSettings] = useState<WebSearchSettings>(defaultWebSearch);
+  const [saved, setSaved] = useState<WebSearchSettings | null>(null);
   const [keys, setKeys] = useState<ApiKeyDetail[] | null>(null);
   const [providers, setProviders] = useState<ProviderSummary[] | null>(null);
   const [pending, setPending] = useState(false);
@@ -2203,7 +2214,7 @@ export function WebSearchSettingsScreen({ client, dispatch }: SettingsScreenProp
     ]).then(
       ([config, apiKeys, modelProviders]) => {
         if (current) {
-          setSettings(config); setKeys(apiKeys); setProviders(modelProviders);
+          setSaved(config); setSettings(config); setKeys(apiKeys); setProviders(modelProviders);
         }
       },
       (failure: unknown) => {
@@ -2213,11 +2224,20 @@ export function WebSearchSettingsScreen({ client, dispatch }: SettingsScreenProp
     return () => { current = false; };
   }, [client]);
 
+  const dirty = saved !== null && (
+    settings.enabled !== saved.enabled
+    || settings.provider !== saved.provider
+    || settings.api_key !== saved.api_key
+    || settings.query_provider !== saved.query_provider
+  );
+
   async function save(event: FormEvent) {
     event.preventDefault();
+    if (!dirty || pending) return;
     setPending(true); setError(null);
     try {
-      setSettings(await client.saveWebSearchSettings(settings));
+      const next = await client.saveWebSearchSettings(settings);
+      setSaved(next); setSettings(next);
     } catch (failure: unknown) {
       setError(publicErrorMessage(failure, 'Search API settings could not be saved.'));
     } finally { setPending(false); }
@@ -2251,7 +2271,7 @@ export function WebSearchSettingsScreen({ client, dispatch }: SettingsScreenProp
       </select></label>
       <div className="cha-settings-form-actions">
         <button className="cha-button cha-button-primary" type="submit"
-          disabled={pending || (settings.enabled && (
+          disabled={!dirty || pending || (settings.enabled && (
             !keys.some((key) => key.id === settings.api_key)
             || !providers.some((provider) => provider.id === settings.query_provider)
           ))}>

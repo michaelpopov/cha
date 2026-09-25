@@ -14,10 +14,12 @@ enum class ProviderAuth { none, openai_subscription };
 enum class WebSearchMode { off, automatic, required };
 enum class CacheRetention { off, short_, long_ };
 
+inline constexpr std::string_view default_reasoning_effort = "none";
 inline constexpr ProviderApi default_provider_api = ProviderApi::responses;
 inline constexpr WebSearchMode default_web_search_mode =
     WebSearchMode::off;
 
+bool valid_reasoning_effort(std::string_view value);
 bool is_direct_openai_host(std::string_view host);
 bool is_openrouter_host(std::string_view host);
 std::string_view to_string(Mode value);
@@ -51,7 +53,7 @@ struct ModelBackendConfig {
     // Compatibility name resolved only through saved model keys. Despite the
     // legacy config spelling, the process environment is never consulted.
     std::string api_key_env;
-    std::string reasoning_effort;
+    std::string reasoning_effort{default_reasoning_effort};
     ReasoningFormat reasoning_format{ReasoningFormat::automatic};
     bool https{};
     ProviderApi api{default_provider_api};

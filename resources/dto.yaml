@@ -439,6 +439,7 @@ components:
           type: [string, "null"]
         reasoning_effort:
           type: string
+          enum: [none, minimal, low, medium, high, xhigh]
         reasoning_format:
           type: string
           enum: [auto, none, reasoning_content, reasoning]
@@ -518,6 +519,7 @@ components:
           type: [string, "null"]
         reasoning_effort:
           type: string
+          enum: [none, minimal, low, medium, high, xhigh]
         reasoning_format:
           type: string
           enum: [auto, none, reasoning_content, reasoning]
@@ -949,7 +951,7 @@ components:
           type: [string, "null"]
         reasoning_effort:
           type: [string, "null"]
-          enum: [low, medium, high, xhigh, null]
+          enum: [none, minimal, low, medium, high, xhigh, null]
         web_search:
           type: [string, "null"]
           enum: [off, auto, required, null]
@@ -1026,7 +1028,7 @@ components:
           type: [string, "null"]
         reasoning_effort:
           type: [string, "null"]
-          enum: [low, medium, high, xhigh, null]
+          enum: [none, minimal, low, medium, high, xhigh, null]
         web_search:
           type: [string, "null"]
           enum: [off, auto, required, null]

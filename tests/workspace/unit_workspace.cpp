@@ -587,6 +587,64 @@ TEST(Workspace, ResolvesCompleteProviderAndStyleValues) {
     EXPECT_EQ(provider->config.web_search, WebSearchMode::automatic);
 }
 
+TEST(Workspace, LoadsProviderReasoningDefaultsAndWarnsForUnsupportedValues) {
+    struct Case {
+        const char* setting;
+        const char* expected;
+        bool warning;
+    };
+    const Case cases[]{
+        {"", "none", false},
+        {"reasoning_effort = \"minimal\"\n", "minimal", false},
+        {"reasoning_effort = \"\"\n", "none", true},
+        {"reasoning_effort = \"unknown\"\n", "none", true},
+    };
+    for (const auto& item : cases) {
+        SCOPED_TRACE(item.setting);
+        test::TestWorkspace fixture;
+        fixture.write_provider("test", std::string(
+            "host = \"test\"\nport = 1\nmode = \"test\"\nmodel = \"test\"\n")
+            + item.setting);
+        const auto log_file = fixture.root() / "reasoning-warnings.log";
+        initialize_diagnostic_logging(log_file, "warn");
+        const Workspace workspace = Workspace::load(fixture.root());
+        shutdown_diagnostic_logging();
+
+        EXPECT_EQ(workspace.character_definition("lobby", "guide")
+                      .provider.config.reasoning_effort, item.expected);
+        EXPECT_EQ(file_bytes(log_file).find("Ignoring unsupported provider reasoning_effort")
+                      != std::string::npos, item.warning);
+    }
+}
+
+TEST(Workspace, CharacterReasoningOverridesProviderAndCanReturnToDefault) {
+    test::TestWorkspace fixture;
+    fixture.write_provider(
+        "reasoning", "host = \"test\"\nport = 1\nmode = \"test\"\n"
+                     "model = \"test\"\nreasoning_effort = \"high\"\n");
+    const Workspace workspace = Workspace::load(fixture.root());
+    for (const std::string_view effort : {"none", "minimal", "low", "medium", "high", "xhigh"}) {
+        SCOPED_TRACE(effort);
+        edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) {
+            editor.write_character_settings(
+                "guide", "reasoning", std::nullopt, std::nullopt, effort);
+        });
+        const Workspace reloaded = Workspace::load(fixture.root());
+        EXPECT_EQ(reloaded.find_character("guide")->reasoning_effort, effort);
+        EXPECT_EQ(reloaded.character_definition("lobby", "guide")
+                      .provider.config.reasoning_effort, effort);
+        EXPECT_EQ(reloaded.find_provider("reasoning")->config.reasoning_effort, "high");
+    }
+
+    edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) {
+        editor.write_character_settings("guide", "reasoning", std::nullopt);
+    });
+    const Workspace inherited = Workspace::load(fixture.root());
+    EXPECT_FALSE(inherited.find_character("guide")->reasoning_effort);
+    EXPECT_EQ(inherited.character_definition("lobby", "guide")
+                  .provider.config.reasoning_effort, "high");
+}
+
 TEST(Workspace, LoadsAndWritesOpenRouterTargets) {
     test::TestWorkspace fixture;
     fixture.write_provider(

@@ -7,6 +7,11 @@
 
 namespace cha {
 
+bool valid_reasoning_effort(std::string_view value) {
+    return value == "none" || value == "minimal" || value == "low"
+        || value == "medium" || value == "high" || value == "xhigh";
+}
+
 bool is_direct_openai_host(std::string_view host) {
     if (host.ends_with('.')) host.remove_suffix(1);
     return ascii_iequals(host, "api.openai.com");
@@ -156,6 +161,9 @@ std::optional<std::string_view> provider_config_error(
             || config.base_path.ends_with('/')
             || config.base_path.find_first_of("?# \t\r\n") != std::string::npos)) {
         return "has invalid base_path";
+    }
+    if (!valid_reasoning_effort(config.reasoning_effort)) {
+        return "has invalid reasoning_effort";
     }
     if (!valid_openrouter_targets(config)) {
         return "has invalid OpenRouter inference targets";

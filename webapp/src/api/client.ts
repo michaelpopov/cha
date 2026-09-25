@@ -313,7 +313,7 @@ export function isCharacterDetail(value: unknown): value is CharacterDetail {
     && (value.provider === null || typeof value.provider === 'string')
     && (value.style === null || typeof value.style === 'string')
     && (value.voice_id === null || typeof value.voice_id === 'string')
-    && isOneOf(value.reasoning_effort, ['low', 'medium', 'high', 'xhigh', null])
+    && isOneOf(value.reasoning_effort, ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', null])
     && isOneOf(value.web_search, ['off', 'auto', 'required', null])
     && Array.isArray(value.available_providers)
     && value.available_providers.every((option) => isRecord(option)
@@ -387,7 +387,7 @@ export function isProviderDetail(value: unknown): value is ProviderDetail {
     && typeof value.timeout_s === 'number'
     && typeof value.idle_timeout_s === 'number'
     && (value.api_key === null || typeof value.api_key === 'string')
-    && typeof value.reasoning_effort === 'string'
+    && isOneOf(value.reasoning_effort, ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'])
     && isOneOf(value.reasoning_format, ['auto', 'none', 'reasoning_content', 'reasoning'])
     && typeof value.https === 'boolean'
     && isOneOf(value.api, ['chat_completions', 'responses'])
