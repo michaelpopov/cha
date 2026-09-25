@@ -138,9 +138,9 @@ void validate_transcript_entry(const TranscriptEntry& entry) {
         throw std::invalid_argument("A cancelled character entry requires answer content");
     }
     if (entry.kind != EntryKind::character
-        && (entry.input_tokens || entry.output_tokens)) {
+        && (entry.input_tokens || entry.output_tokens || entry.web_search_used)) {
         throw std::invalid_argument(
-            "Only character entries may carry token usage");
+            "Only character entries may carry token usage or web search metadata");
     }
 }
 

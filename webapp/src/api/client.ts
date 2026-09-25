@@ -585,6 +585,7 @@ function isTranscriptEntry(value: unknown): boolean {
     && isOneOf(value.status, ['complete', 'streaming', 'cancelled', 'failed'])
     && (value.request_id === undefined || isUnsignedInteger(value.request_id))
     && (value.created_at === null || Number.isSafeInteger(value.created_at))
+    && (value.web_search_used === undefined || typeof value.web_search_used === 'boolean')
     && (value.has_cached_audio === undefined || typeof value.has_cached_audio === 'boolean');
 }
 

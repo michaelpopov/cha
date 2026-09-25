@@ -25,6 +25,7 @@ struct GenerationEventDelta {
     RequestId request_id{};
     GenerationDeltaKind kind{GenerationDeltaKind::answer};
     std::string text;
+    bool web_search_used{false};
 };
 
 struct GenerationCompleted {

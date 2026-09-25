@@ -1003,6 +1003,7 @@ void SessionController::apply(const GenerationEventDelta& event, ControllerUpdat
     if (!matches(event.request_id) || event.text.empty()) {
         return;
     }
+    active_->web_search_used = event.web_search_used;
     if (event.kind == GenerationDeltaKind::answer) {
         append_answer_text(
             filter_source_references(filter_answer_timestamp(event.text)),
@@ -1230,6 +1231,7 @@ TranscriptEntry SessionController::response_entry(EntryStatus status) const {
     }
     entry.input_tokens = active_->input_tokens;
     entry.output_tokens = active_->output_tokens;
+    entry.web_search_used = active_->web_search_used;
     return entry;
 }
 

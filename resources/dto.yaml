@@ -1308,6 +1308,9 @@ components:
           description: Provider-reported output tokens for this response; null when unavailable.
           type: [integer, "null"]
           minimum: 0
+        web_search_used:
+          description: Whether this response request included web search data.
+          type: boolean
         has_cached_audio:
           description: Whether saved audio is available for this entry.
           type: boolean

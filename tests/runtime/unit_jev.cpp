@@ -232,10 +232,11 @@ protected:
             });
         controller = make_controller(notifier);
     }
-    std::unique_ptr<SessionController> make_controller(std::shared_ptr<WakeNotifier> wake) {
+    std::unique_ptr<SessionController> make_controller(
+        std::shared_ptr<WakeNotifier> wake, SessionRestore restored = {}) {
         return SessionController::from_workspace_for_testing(
             [this] { return store->snapshot(); }, "guide", "reader", journal.path(),
-            providers, std::move(wake), {}, {}, {"lobby", "session"});
+            providers, std::move(wake), std::move(restored), {}, {"lobby", "session"});
     }
     void run_workers() {
         auto pending = std::exchange(workers, {});
@@ -304,6 +305,9 @@ TEST_F(JevRouting, RewriteChoiceSearchesBeforeChatAndAddsResultsToModelContext) 
     (void)controller->receive_events(100);
     ASSERT_EQ(workers.size(), 1u);
     run_workers();
+    (void)controller->receive_events(1);
+    EXPECT_EQ(controller->view().transcript.entries.back().status, EntryStatus::streaming);
+    EXPECT_TRUE(controller->view().transcript.entries.back().web_search_used);
     (void)controller->receive_events(100);
     ASSERT_EQ(definitions.size(), 2u);
     ASSERT_EQ(requests.size(), 2u);
@@ -333,6 +337,12 @@ TEST_F(JevRouting, RewriteChoiceSearchesBeforeChatAndAddsResultsToModelContext) 
     EXPECT_TRUE(requests.front().web_search_context.empty());
     EXPECT_EQ(requests.back().web_search_context, search_context);
     EXPECT_EQ(requests.back().run.prompt_text, prompt);
+    EXPECT_TRUE(controller->view().transcript.entries.back().web_search_used);
+    controller.reset();
+    controller = make_controller(notifier, load_session_state(journal.path()));
+    ASSERT_EQ(controller->view().transcript.entries.size(), 4u);
+    EXPECT_TRUE(controller->view().transcript.entries.back().web_search_used);
+    EXPECT_FALSE(controller->view().transcript.entries[1].web_search_used);
     const auto chat_messages = project_model_context(requests.back(), definitions.back()->system_prompt);
     ASSERT_GE(chat_messages.size(), 2u);
     EXPECT_NE(chat_messages[chat_messages.size() - 2].content.find(search_context), std::string::npos);
@@ -356,6 +366,8 @@ TEST_F(JevRouting, RewriteChoiceSearchesBeforeChatAndAddsResultsToModelContext) 
         EXPECT_EQ(searched.back(), "Current topic");
         EXPECT_EQ(requests.back().web_search_context,
             choice == JevSearch::direct ? search_context : "");
+        EXPECT_EQ(controller->view().transcript.entries.back().web_search_used,
+            choice == JevSearch::direct);
     }
 
     decision = {JevOutcome::success, "all_characters", {}, JevSearch::rewrite};
@@ -365,6 +377,12 @@ TEST_F(JevRouting, RewriteChoiceSearchesBeforeChatAndAddsResultsToModelContext) 
     EXPECT_EQ(query_count(), 2);
     EXPECT_EQ(requests[requests.size() - 2].web_search_context, search_context);
     EXPECT_EQ(requests.back().web_search_context, search_context);
+    const auto entries = controller->view().transcript.entries;
+    ASSERT_GE(entries.size(), 4u);
+    for (const auto index : {entries.size() - 3, entries.size() - 1}) {
+        EXPECT_EQ(entries[index].kind, EntryKind::character);
+        EXPECT_TRUE(entries[index].web_search_used);
+    }
 
     fail_search = true;
     decision = {JevOutcome::success, "undefined", {}, JevSearch::direct};
@@ -372,7 +390,15 @@ TEST_F(JevRouting, RewriteChoiceSearchesBeforeChatAndAddsResultsToModelContext) 
     finish();
     EXPECT_EQ(searched.size(), 4u);
     EXPECT_TRUE(requests.back().web_search_context.empty());
+    EXPECT_FALSE(controller->view().transcript.entries.back().web_search_used);
     EXPECT_EQ(controller->view().transcript.entries.back().text, "chat reply");
+
+    fail_search = false;
+    search_context.clear();
+    (void)send("Search has no data");
+    finish();
+    EXPECT_TRUE(requests.back().web_search_context.empty());
+    EXPECT_FALSE(controller->view().transcript.entries.back().web_search_used);
 }
 
 TEST_F(JevRouting, FailedRecipientDecisionDoesNotRewriteEvenWithSearchChoice) {

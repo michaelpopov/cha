@@ -79,6 +79,7 @@ struct TranscriptEntry {
     std::int64_t created_at{};
     std::optional<std::uint64_t> input_tokens;
     std::optional<std::uint64_t> output_tokens;
+    bool web_search_used{false};
 
     bool operator==(const TranscriptEntry&) const = default;
 };

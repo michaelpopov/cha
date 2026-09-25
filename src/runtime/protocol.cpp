@@ -42,6 +42,7 @@ nlohmann::json transcript_entry_json(const TranscriptEntry& value) {
         {"addressed_to_name", value.addressed_to_name},
         {"text", value.text},
         {"status", to_string(value.status)},
+        {"web_search_used", value.web_search_used},
     };
     put_optional(json, "request_id", value.request_id);
     json["created_at"] = value.created_at != 0

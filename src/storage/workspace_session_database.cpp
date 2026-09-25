@@ -175,13 +175,16 @@ void create_config_table(Database& database) {
     database.execute(config_table_sql);
 }
 
-void add_token_usage_columns(Database& database) {
+void add_entry_metadata_columns(Database& database) {
     database.execute(
         "ALTER TABLE entries ADD COLUMN input_tokens INTEGER "
         "CHECK (input_tokens IS NULL OR input_tokens >= 0)");
     database.execute(
         "ALTER TABLE entries ADD COLUMN output_tokens INTEGER "
         "CHECK (output_tokens IS NULL OR output_tokens >= 0)");
+    database.execute(
+        "ALTER TABLE entries ADD COLUMN web_search_used INTEGER NOT NULL "
+        "DEFAULT 0 CHECK (web_search_used IN (0, 1))");
 }
 
 void validate_required_session_objects(Database& database) {
@@ -428,6 +431,7 @@ void create_workspace_session_schema(Database& database) {
             created_at INTEGER NOT NULL DEFAULT 0,
             input_tokens INTEGER CHECK (input_tokens IS NULL OR input_tokens >= 0),
             output_tokens INTEGER CHECK (output_tokens IS NULL OR output_tokens >= 0),
+            web_search_used INTEGER NOT NULL DEFAULT 0 CHECK (web_search_used IN (0, 1)),
             PRIMARY KEY (session_key, entry_id),
             FOREIGN KEY (session_key, request_id)
                 REFERENCES turns(session_key, request_id),
@@ -481,16 +485,18 @@ void validate_workspace_session_contents(Database& database) {
     validate_session_row_invariants(database);
 }
 
-void ensure_entry_token_usage_columns(Database& database) {
+void ensure_entry_metadata_columns(Database& database) {
     bool has_input_tokens = false;
     bool has_output_tokens = false;
+    bool has_web_search_used = false;
     Statement columns = database.prepare("PRAGMA table_info(entries)");
     while (columns.step()) {
         const std::string name = columns.text(1);
         has_input_tokens |= name == "input_tokens";
         has_output_tokens |= name == "output_tokens";
+        has_web_search_used |= name == "web_search_used";
     }
-    if (has_input_tokens && has_output_tokens) return;
+    if (has_input_tokens && has_output_tokens && has_web_search_used) return;
 
     storage::SqliteTransaction transaction(database);
     if (!has_input_tokens) {
@@ -502,6 +508,11 @@ void ensure_entry_token_usage_columns(Database& database) {
         database.execute(
             "ALTER TABLE entries ADD COLUMN output_tokens INTEGER "
             "CHECK (output_tokens IS NULL OR output_tokens >= 0)");
+    }
+    if (!has_web_search_used) {
+        database.execute(
+            "ALTER TABLE entries ADD COLUMN web_search_used INTEGER NOT NULL "
+            "DEFAULT 0 CHECK (web_search_used IN (0, 1))");
     }
     transaction.commit();
 }
@@ -639,7 +650,7 @@ void upgrade_workspace_session_database_from_v1(
 
     storage::SqliteTransaction transaction(database);
     create_config_table(database);
-    add_token_usage_columns(database);
+    add_entry_metadata_columns(database);
     insert_config_rows(database, rows);
     database.execute(
         "PRAGMA user_version = "

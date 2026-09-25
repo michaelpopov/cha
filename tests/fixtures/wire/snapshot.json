@@ -50,7 +50,8 @@
       "created_at": 1700000000,
       "input_tokens": null,
       "output_tokens": null,
-      "has_cached_audio": true
+      "has_cached_audio": true,
+      "web_search_used": false
     }
   ],
   "generation": {

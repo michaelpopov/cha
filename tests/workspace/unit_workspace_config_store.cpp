@@ -79,6 +79,7 @@ void make_v1_database(const std::filesystem::path& path) {
     database.execute("DROP TABLE config");
     database.execute("ALTER TABLE entries DROP COLUMN output_tokens");
     database.execute("ALTER TABLE entries DROP COLUMN input_tokens");
+    database.execute("ALTER TABLE entries DROP COLUMN web_search_used");
     database.execute(
         "PRAGMA user_version = "
         + std::to_string(workspace_session_database_version_v1));
@@ -874,11 +875,12 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, OpensPrivateSessionStorageWithoutMateria
     EXPECT_FALSE(std::filesystem::exists(welcome_child));
 }
 
-TEST_F(RuntimeWorkspaceConfigStoreTest, OpensAndAddsMissingTokenUsageColumns) {
+TEST_F(RuntimeWorkspaceConfigStoreTest, OpensAndAddsMissingEntryMetadataColumns) {
     {
         Database handle(database(), Database::Mode::read_write);
         handle.execute("ALTER TABLE entries DROP COLUMN output_tokens");
         handle.execute("ALTER TABLE entries DROP COLUMN input_tokens");
+        handle.execute("ALTER TABLE entries DROP COLUMN web_search_used");
     }
 
     const auto store = open_store();
@@ -889,12 +891,17 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, OpensAndAddsMissingTokenUsageColumns) {
     Statement columns = handle.prepare("PRAGMA table_info(entries)");
     bool found_input_tokens = false;
     bool found_output_tokens = false;
+    bool found_web_search_used = false;
     while (columns.step()) {
         found_input_tokens |= columns.text(1) == "input_tokens";
         found_output_tokens |= columns.text(1) == "output_tokens";
+        found_web_search_used |= columns.text(1) == "web_search_used";
     }
     EXPECT_TRUE(found_input_tokens);
     EXPECT_TRUE(found_output_tokens);
+    EXPECT_TRUE(found_web_search_used);
+    Statement entries = handle.prepare("SELECT web_search_used FROM entries");
+    while (entries.step()) EXPECT_EQ(entries.integer(0), 0);
 }
 
 TEST_F(RuntimeWorkspaceConfigStoreTest, HoldsTheLeaseAgainstRuntimeImportAndExport) {

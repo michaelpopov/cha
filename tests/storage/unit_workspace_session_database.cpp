@@ -48,6 +48,7 @@ void make_v1_database(const std::filesystem::path& path) {
     database.execute("DROP TABLE config");
     database.execute("ALTER TABLE entries DROP COLUMN output_tokens");
     database.execute("ALTER TABLE entries DROP COLUMN input_tokens");
+    database.execute("ALTER TABLE entries DROP COLUMN web_search_used");
     database.execute(
         "PRAGMA user_version = "
         + std::to_string(workspace_session_database_version_v1));
@@ -676,7 +677,21 @@ TEST(WorkspaceSessionDatabase, UpgradesV1WhilePreservingSessions) {
         {"characters/guide/CHARACTER.md", "Guide\n"},
         {"characters/guide/character.toml", "provider = \"test\"\n"},
     };
+    int commits = 0;
+    sqlite3_commit_hook(database.handle(), [](void* count) -> int {
+        ++*static_cast<int*>(count);
+        return 0;
+    }, &commits);
     upgrade_workspace_session_database_from_v1(database, rows);
+    sqlite3_commit_hook(database.handle(), nullptr, nullptr);
+    EXPECT_EQ(commits, 1);
+
+    Statement search_flags = database.prepare("SELECT web_search_used FROM entries");
+    ASSERT_TRUE(search_flags.step());
+    EXPECT_EQ(search_flags.integer(0), 0);
+    ASSERT_TRUE(search_flags.step());
+    EXPECT_EQ(search_flags.integer(0), 0);
+    EXPECT_FALSE(search_flags.step());
 
     EXPECT_EQ(
         database.pragma_integer("user_version"),
@@ -714,6 +729,11 @@ TEST(WorkspaceSessionDatabase, FailedUpgradeLeavesValidV1Unchanged) {
         database.pragma_integer("user_version"),
         workspace_session_database_version_v1);
     expect_seeded_session_rows(database);
+    Statement columns = database.prepare(
+        "SELECT COUNT(*) FROM pragma_table_info('entries') "
+        "WHERE name IN ('input_tokens', 'output_tokens', 'web_search_used')");
+    ASSERT_TRUE(columns.step());
+    EXPECT_EQ(columns.integer(0), 0);
     Statement config = database.prepare(
         "SELECT COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name = 'config'");
     ASSERT_TRUE(config.step());

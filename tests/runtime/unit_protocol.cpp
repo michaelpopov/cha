@@ -236,6 +236,7 @@ TEST(WebProtocol, SerializesSnapshotMailboxPayloadAndTargetAwareAppend) {
             .created_at = 1700000000,
             .input_tokens = 12'000,
             .output_tokens = 500,
+            .web_search_used = true,
         }},
         .covered_until = 7,
         .generation = {
@@ -279,6 +280,7 @@ TEST(WebProtocol, SerializesSnapshotMailboxPayloadAndTargetAwareAppend) {
              {"created_at", 1700000000},
              {"input_tokens", 12000},
              {"output_tokens", 500},
+             {"web_search_used", true},
              {"has_cached_audio", false},
              {"display_name", "Guide"},
              {"id", 7},
@@ -356,7 +358,7 @@ TEST(WebProtocol, EscapesAndOwnsPresentationText) {
         "\"created_at\":null,\"display_name\":\"System\",\"has_cached_audio\":false,\"id\":1,"
         "\"input_tokens\":null,"
         "\"kind\":\"notice\",\"output_tokens\":null,\"participant_id\":\"system\","
-        "\"status\":\"complete\",\"text\":\"quote \\\\\\\" newline\\\\n\"}");
+        "\"status\":\"complete\",\"text\":\"quote \\\\\\\" newline\\\\n\",\"web_search_used\":false}");
 
     std::string presentation = "quote \\\" newline\\n";
     SessionSnapshot snapshot;

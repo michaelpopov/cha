@@ -163,11 +163,13 @@ void ProviderRequest::execute(
         }
         const GenerationResult result = backend->perform(
             std::move(payload),
-            [this, request_id](GenerationDelta delta) {
+            [this, request_id, web_search_used = !generation.web_search_context.empty()]
+            (GenerationDelta delta) {
                 if (!events_.push(GenerationEventDelta{
                         request_id,
                         delta.kind,
                         std::move(delta.text),
+                        web_search_used,
                     })) {
                     throw std::logic_error(
                         "Provider request event queue closed before execution stopped");

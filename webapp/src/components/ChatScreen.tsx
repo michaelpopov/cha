@@ -47,6 +47,7 @@ import {
   CopyIcon,
   EyeIcon,
   EyeOffIcon,
+  GlobeIcon,
   MicrophoneIcon,
   SendIcon,
   SpeakerIcon,
@@ -193,6 +194,7 @@ function TranscriptMessage({
   const [copied, setCopied] = useState(false);
   const displayedText = visibleEntryText(entry.kind, entry.text);
   const canRead = canReadEntry(entry);
+  const usedWebSearch = entry.kind === 'character' && entry.web_search_used;
   const canCopy = (entry.kind === 'human' || entry.kind === 'character')
     && displayedText.length > 0;
   const requestTokens = entry.kind === 'character'
@@ -244,7 +246,7 @@ function TranscriptMessage({
       </div>
       {entry.status === 'cancelled' && <div className="cha-entry-status">Stopped</div>}
       {entry.status === 'failed' && <div className="cha-entry-status">Failed</div>}
-      {(entry.created_at !== null || requestTokens !== null || canCopy) && (
+      {(entry.created_at !== null || requestTokens !== null || usedWebSearch || canCopy) && (
         <div className="cha-message-meta">
           {entry.created_at !== null && (
             <time
@@ -261,6 +263,16 @@ function TranscriptMessage({
               title={`${entry.input_tokens!.toLocaleString()} input + ${entry.output_tokens!.toLocaleString()} output tokens for this response`}
             >
               {formatTokenUsage(requestTokens)}
+            </span>
+          )}
+          {usedWebSearch && (
+            <span
+              aria-label="Request included web search data"
+              className="cha-message-web-search"
+              role="img"
+              title="Request included web search data"
+            >
+              <GlobeIcon />
             </span>
           )}
           {canCopy && (

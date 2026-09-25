@@ -181,6 +181,16 @@ export function TrashIcon(props: IconProps) {
   );
 }
 
+export function GlobeIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="12" cy="12" r="9" {...stroke} />
+      <ellipse cx="12" cy="12" rx="4" ry="9" {...stroke} />
+      <path d="M3 12h18" {...stroke} />
+    </Icon>
+  );
+}
+
 export function CopyIcon(props: IconProps) {
   return (
     <Icon {...props}>

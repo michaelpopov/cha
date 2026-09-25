@@ -976,6 +976,13 @@ select:disabled {
   cursor: pointer;
 }
 
+.cha-message-web-search {
+  display: inline-flex;
+  align-items: center;
+  color: var(--muted-foreground);
+}
+
+.cha-message-web-search svg,
 .cha-message-action svg {
   width: 0.92rem;
   height: 0.92rem;

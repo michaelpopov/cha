@@ -250,6 +250,25 @@ describe('live chat', () => {
     expect(totals[1].getAttribute('title')).toBe('50,000 input + 4,000 output tokens for this response');
   });
 
+  it('marks only responses whose requests included web search data', async () => {
+    const events = drivableEvents();
+    render(<App client={fixtureClient()} connectSessionEvents={events.connect} />);
+    await attachInitial(events, {
+      ...snapshotFixture,
+      transcript: [true, false, undefined].map((web_search_used, index) => ({
+        id: index + 1, kind: 'character', participant_id: 'assistant', display_name: 'Assistant',
+        addressed_to: '', addressed_to_name: '', text: `Answer ${index + 1}`,
+        status: 'complete', created_at: null, web_search_used,
+      })),
+    });
+
+    const indicator = screen.getByRole('img', { name: 'Request included web search data' });
+    expect(indicator).toHaveAttribute('title', 'Request included web search data');
+    expect(indicator.closest('article')).toHaveTextContent('Answer 1');
+    expect(document.querySelectorAll('.cha-message-web-search')).toHaveLength(1);
+    expect(indicator.closest('.cha-message-meta')).not.toBeNull();
+  });
+
   it('copies requests and visible response text to the clipboard', async () => {
     const writeText = vi.fn(async () => undefined);
     vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });

@@ -388,6 +388,21 @@ TEST(TranscriptValidation, IsEnforcedByMemoryAndDatabase) {
     std::filesystem::remove(path);
 }
 
+TEST(TranscriptValidation, WebSearchMetadataRequiresCharacterEntries) {
+    for (auto entry : {
+            human(1, "Question", 1),
+            make_notice_entry(1, "Notice"),
+            make_error_entry(1, "Failure", 1, "reviewer-id"),
+        }) {
+        SCOPED_TRACE(static_cast<int>(entry.kind));
+        ASSERT_NO_THROW(validate_transcript_entry(entry));
+        entry.web_search_used = true;
+        EXPECT_THROW(validate_transcript_entry(entry), std::invalid_argument);
+        Transcript transcript;
+        EXPECT_THROW(transcript.add_entry(entry), std::invalid_argument);
+    }
+}
+
 TEST(SessionDatabase, RoundTripsMetadataAndTypedEntries) {
     const auto path = temporary_path("cha_transcript_");
     create_test_database(path);
@@ -397,6 +412,7 @@ TEST(SessionDatabase, RoundTripsMetadataAndTypedEntries) {
         2, "reviewer-id", "Reviewer", "Hello back", EntryStatus::complete, 1);
     answer.input_tokens = 1'200;
     answer.output_tokens = 300;
+    answer.web_search_used = true;
     ASSERT_NE(prompt.created_at, 0);
     ASSERT_NE(answer.created_at, 0);
     journal->start_turn(1, prompt);

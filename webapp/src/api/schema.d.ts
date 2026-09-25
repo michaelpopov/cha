@@ -536,6 +536,8 @@ export interface components {
             input_tokens?: number | null;
             /** @description Provider-reported output tokens for this response; null when unavailable. */
             output_tokens?: number | null;
+            /** @description Whether this response request included web search data. */
+            web_search_used?: boolean;
             /** @description Whether saved audio is available for this entry. */
             has_cached_audio?: boolean;
         };

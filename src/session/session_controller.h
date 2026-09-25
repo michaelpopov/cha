@@ -131,6 +131,7 @@ private:
         std::int64_t response_created_at{};
         std::optional<std::uint64_t> input_tokens;
         std::optional<std::uint64_t> output_tokens;
+        bool web_search_used{false};
     };
 
     SessionController(

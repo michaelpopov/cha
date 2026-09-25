@@ -327,8 +327,8 @@ void insert_entry(
     Statement statement = database.prepare(
         "INSERT INTO entries (session_key, entry_id, epoch, request_id, kind, "
         "participant_id, display_name, addressed_to, addressed_to_name, text, "
-        "status, created_at, input_tokens, output_tokens) VALUES "
-        "(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+        "status, created_at, input_tokens, output_tokens, web_search_used) VALUES "
+        "(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
         session_key,
         sqlite_id(entry.id, "Transcript entry ID"),
         epoch,
@@ -342,7 +342,8 @@ void insert_entry(
         static_cast<std::int64_t>(entry.status),
         entry.created_at,
         sqlite_token_count(entry.input_tokens, "Input token count"),
-        sqlite_token_count(entry.output_tokens, "Output token count"));
+        sqlite_token_count(entry.output_tokens, "Output token count"),
+        static_cast<std::int64_t>(entry.web_search_used));
     statement.run();
 }
 
@@ -363,6 +364,7 @@ TranscriptEntry read_entry(Statement& statement) {
     }
     entry.input_tokens = read_token_count(statement, 10, "input token count");
     entry.output_tokens = read_token_count(statement, 11, "output token count");
+    entry.web_search_used = statement.integer(12) != 0;
     try {
         require_storable_transcript_entry(entry);
     } catch (const std::invalid_argument& error) {
@@ -381,7 +383,7 @@ std::vector<TranscriptEntry> read_current_entries(
     Statement entries = database.prepare(
         "SELECT entry_id, request_id, kind, participant_id, display_name, "
         "addressed_to, addressed_to_name, text, status, created_at, "
-        "input_tokens, output_tokens "
+        "input_tokens, output_tokens, web_search_used "
         "FROM entries WHERE session_key = ?1 AND epoch = ?2 "
         "ORDER BY entry_id",
         session_key, epoch);
