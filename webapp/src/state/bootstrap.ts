@@ -26,7 +26,7 @@ function hasForumIdentity(
 export function validateBootstrap(value: unknown): Bootstrap {
   if (!isRecord(value)) throw new TypeError('Bootstrap must be an object.');
 
-  const requiredIds = ['initial_forum_id', 'initial_session_id'] as const;
+  const requiredIds = ['initial_forum_id', 'initial_session_id', 'entrance_forum_id'] as const;
   for (const field of requiredIds) {
     if (typeof value[field] !== 'string' || value[field].length === 0) {
       throw new TypeError(`Bootstrap is missing ${field}.`);
@@ -66,6 +66,9 @@ export function validateBootstrap(value: unknown): Bootstrap {
   const bootstrap = value as unknown as Bootstrap;
   if (!bootstrap.forums.some(({ id }) => id === bootstrap.initial_forum_id)) {
     throw new TypeError('Bootstrap initial forum is absent from forums.');
+  }
+  if (!bootstrap.forums.some(({ id }) => id === bootstrap.entrance_forum_id)) {
+    throw new TypeError('Bootstrap Entrance forum is absent from forums.');
   }
   for (const forum of bootstrap.forums) {
     if (!bootstrap.characters.some(({ id }) => id === forum.default_character_id)) {

@@ -39,6 +39,7 @@ TEST(WebWireFixtures, SerializesBootstrapSnapshotCommandsErrorsAndAppends) {
         nlohmann::json(Bootstrap{
             .initial_forum_id = "entrance",
             .initial_session_id = "welcome",
+            .entrance_forum_id = "entrance",
             .personas = {{"guest", "Guest", "The built-in visitor persona"}},
             .characters = {assistant},
             .forums = {entrance},

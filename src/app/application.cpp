@@ -180,7 +180,8 @@ Bootstrap make_bootstrap(
     std::vector<std::string> vaults) {
     Bootstrap bootstrap{
         .initial_forum_id = initial.forum_id,
-        .initial_session_id = initial.session_id};
+        .initial_session_id = initial.session_id,
+        .entrance_forum_id = std::string(entrance_id)};
     for (const WorkspacePersona& persona : workspace.personas()) {
         bootstrap.personas.push_back(persona_summary(workspace, persona));
     }

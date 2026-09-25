@@ -104,6 +104,22 @@ describe('Sidebar navigation', () => {
     });
   });
 
+  it('keeps a selected stored forum and its session actionable', () => {
+    renderSidebar({
+      ...readyState(),
+      bootstrap: {
+        ...bootstrapFixture,
+        initial_forum_id: 'lobby',
+        initial_session_id: 'planning',
+      },
+    });
+
+    expect(within(screen.getByRole('navigation', { name: 'Recent forums' }))
+      .getByRole('button', { name: 'The Lobby' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Actions for Planning')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Actions for Welcome')).not.toBeInTheDocument();
+  });
+
   it.each([
     ['empty sessions', { ...readyState(), bootstrap: { ...bootstrapFixture, recent_sessions: [] } }],
     ['only Entrance sessions', {

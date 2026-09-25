@@ -20,6 +20,7 @@ export const bootstrapFixture: Bootstrap = {
   vaults: ['Personal', 'Projects'],
   initial_forum_id: 'entrance',
   initial_session_id: 'welcome',
+  entrance_forum_id: 'entrance',
   personas: [
     { id: 'guest', display_name: 'Guest', description: 'The built-in visitor persona', appearance: plainVoice },
     { id: 'reader', display_name: 'Reader', description: 'Thoughtful, curious, and concise', appearance: plainVoice },

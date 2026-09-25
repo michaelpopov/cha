@@ -1625,10 +1625,8 @@ export function SessionsScreen({
   const [requestVersion, setRequestVersion] = useState(0);
   const forumId = state.currentForumId;
   const forum = state.bootstrap?.forums.find(({ id }) => id === forumId);
-  // The forum bootstrap starts in is the built-in one, whose single session the
-  // server synthesizes; it stores no forum of its own, so a create there fails
-  // as not-found. Offering the action would only produce that error.
-  const canCreateSessions = forumId !== state.bootstrap?.initial_forum_id;
+  // Entrance has only the server's built-in Welcome session.
+  const canCreateSessions = forumId !== state.bootstrap?.entrance_forum_id;
 
   useEffect(() => {
     if (!forumId) return;

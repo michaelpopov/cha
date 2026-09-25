@@ -150,6 +150,7 @@ export interface components {
             vaults: string[];
             initial_forum_id: components["schemas"]["Identifier"];
             initial_session_id: components["schemas"]["Identifier"];
+            entrance_forum_id: components["schemas"]["Identifier"];
             personas: components["schemas"]["PersonaSummary"][];
             characters: components["schemas"]["CharacterSummary"][];
             forums: components["schemas"]["ForumSummary"][];

@@ -108,7 +108,7 @@ function renderChat(
     onCoverConversation: vi.fn(async () => ({ clear_input: false })),
     onDeleteTurn: vi.fn(async () => ({ clear_input: false })),
     onRetryStream: vi.fn(),
-    onReturnToWelcome: vi.fn(),
+    onReturnToStart: vi.fn(),
     onSetDefaultCharacter: vi.fn(async () => ({ clear_input: false })),
     onStopGeneration: vi.fn(async () => ({ clear_input: false })),
     onSubmitInput: vi.fn(async () => ({ clear_input: true })),

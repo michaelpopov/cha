@@ -94,7 +94,8 @@ public:
     [[nodiscard]] ControllerUpdate start_multicast(
         std::string_view author_id,
         std::string text,
-        std::vector<std::string> handles);
+        std::vector<std::string> handles,
+        std::shared_ptr<SubmissionState> submission = {});
     [[nodiscard]] ControllerUpdate set_default_character_by_id(std::string_view id);
     [[nodiscard]] ControllerUpdate request_stop();
     void rename(std::string_view label);
@@ -193,12 +194,17 @@ private:
     bool matches(RequestId request_id) const;
 
     ControllerUpdate dispatch_target(std::string_view author, std::string text, std::string_view target);
+    [[nodiscard]] std::vector<CharacterMetadata> forum_characters(const Workspace& current) const;
+    ControllerUpdate start_classification(std::string_view author, std::string text,
+        std::vector<std::string> fixed_targets,
+        std::shared_ptr<SubmissionState> submission);
     ControllerUpdate finish_classification();
     struct PendingClassification {
         std::string author;
         std::string text;
         std::string fallback;
         std::vector<JevOption> options;
+        std::vector<std::string> fixed_targets;
         std::shared_ptr<SubmissionState> submission;
         std::chrono::steady_clock::time_point deadline;
         std::shared_ptr<JevRequest> request;

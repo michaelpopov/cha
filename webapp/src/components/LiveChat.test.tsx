@@ -104,7 +104,7 @@ function placeReadingPosition(
 }
 
 describe('live chat', () => {
-  it('opens and attaches the initial conversation on plain startup and Return to Welcome', async () => {
+  it('opens and attaches the initial conversation on plain startup and Return to start', async () => {
     const events = drivableEvents();
     const openSession = vi.fn(async (forumId: string, sessionId: string) => ({
       forum_id: forumId,
@@ -2327,7 +2327,7 @@ describe('live chat', () => {
         onCoverConversation={vi.fn()}
         onDeleteTurn={vi.fn()}
         onRetryStream={vi.fn()}
-        onReturnToWelcome={vi.fn()}
+        onReturnToStart={vi.fn()}
         onSetDefaultCharacter={vi.fn()}
         onStopGeneration={vi.fn()}
         onSubmitInput={vi.fn(async () => ({ clear_input: true }))}
@@ -2463,7 +2463,7 @@ describe('live chat', () => {
       onCoverConversation: vi.fn(),
       onDeleteTurn: vi.fn(),
       onRetryStream: vi.fn(),
-      onReturnToWelcome: vi.fn(),
+      onReturnToStart: vi.fn(),
       onSetDefaultCharacter: vi.fn(),
       onStopGeneration: vi.fn(),
       onSubmitInput: vi.fn(async () => ({ clear_input: true })),
@@ -2746,7 +2746,7 @@ describe('live chat', () => {
 
     expect(screen.getByRole('alert')).toHaveTextContent(message);
     expect(screen.getByRole('textbox', { name: 'Message' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Return to Welcome' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Return to start' })).toBeInTheDocument();
     // The conversation it already has stays readable rather than going blank.
     expect(screen.getByText('Still here')).toBeInTheDocument();
   });
@@ -2766,7 +2766,7 @@ describe('live chat', () => {
     expect(screen.getByRole('status')).toHaveTextContent('Applying settings');
     expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Browse sessions' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Return to Welcome' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Return to start' })).not.toBeInTheDocument();
   });
 
   it('offers recovery actions when a settings reload never reopens', async () => {
@@ -2792,7 +2792,7 @@ describe('live chat', () => {
       'Live updates could not be restored.',
     );
     expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Return to Welcome' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Return to start' })).toBeInTheDocument();
   });
 
   it('keeps Stop visible until authoritative generation state becomes inactive', async () => {
@@ -2967,7 +2967,7 @@ describe('live session capacity', () => {
     expect(openSession).toHaveBeenCalledTimes(3);
   });
 
-  it('offers Retry and Return to Welcome after the session-limit bound is exhausted', async () => {
+  it('offers Retry and Browse sessions after the session-limit bound is exhausted', async () => {
     window.history.replaceState(null, '', '/#/s/lobby/planning/');
     const openSession = vi.fn(async () => { throw capacityError(); });
     const client: ChaClient = fixtureClient({ openSession });
@@ -2976,7 +2976,7 @@ describe('live session capacity', () => {
     expect(await screen.findByRole('heading', { name: 'Session unavailable' })).toBeInTheDocument();
     expect(screen.getByRole('alert')).toHaveTextContent('Another session has not closed yet');
     expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Return to Welcome' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Browse sessions' })).toBeInTheDocument();
     expect(openSession).toHaveBeenCalledTimes(3);
   });
 

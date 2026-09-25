@@ -34,6 +34,9 @@ describe('validateBootstrap', () => {
     ['initial_forum_id', (value: typeof bootstrapFixture) => {
       value.initial_forum_id = 'absent';
     }],
+    ['entrance_forum_id', (value: typeof bootstrapFixture) => {
+      value.entrance_forum_id = 'absent';
+    }],
     ['default character', (value: typeof bootstrapFixture) => {
       value.characters = value.characters.filter(({ id }) => id !== 'assistant');
     }],

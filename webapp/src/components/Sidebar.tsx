@@ -187,7 +187,7 @@ export function Sidebar({
   const recents = state.bootstrap?.recent_sessions ?? [];
   const recentForums = [...new Set(recents.map((session) => session.forum_id))]
     .flatMap((id) => {
-      if (id === state.bootstrap?.initial_forum_id) return [];
+      if (id === state.bootstrap?.entrance_forum_id) return [];
       const forum = forums.get(id);
       return forum ? [forum] : [];
     });
@@ -299,8 +299,7 @@ export function Sidebar({
             {recents.map((session) => {
               const current = state.activeConversation?.forumId === session.forum_id
                 && state.activeConversation.sessionId === session.session_id;
-              const mutable = session.forum_id !== state.bootstrap?.initial_forum_id
-                || session.session_id !== state.bootstrap?.initial_session_id;
+              const mutable = session.forum_id !== state.bootstrap?.entrance_forum_id;
               const selected = {
                 forumId: session.forum_id,
                 sessionId: session.session_id,

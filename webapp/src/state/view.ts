@@ -228,8 +228,8 @@ function idleSessionOperation() {
   };
 }
 
-// The startup conversation and Return to Welcome land on the same place: the
-// initial session named by bootstrap, in the forum that owns it.
+// The startup conversation and Return to start use the initial session named
+// by bootstrap, in the forum that owns it.
 function showInitialConversation(state: AppState, bootstrap: Bootstrap): AppState {
   const initialForum = bootstrap.forums.find(({ id }) => id === bootstrap.initial_forum_id);
   const initialRecent = bootstrap.recent_sessions.find(

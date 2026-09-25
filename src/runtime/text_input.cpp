@@ -32,7 +32,8 @@ MulticastParseResult empty_prompt() {
 CommandResult handle_multicast_input(
     SessionController& controller,
     std::string_view author_id,
-    std::string_view argument) {
+    std::string_view argument,
+    std::shared_ptr<SubmissionState> submission) {
     CommandResult result{.clear_input = true};
     MulticastParseResult parsed = parse_multicast_input(argument);
     if (const auto* error = std::get_if<MulticastParseError>(&parsed)) {
@@ -42,8 +43,8 @@ CommandResult handle_multicast_input(
 
     MulticastInput input = std::get<MulticastInput>(std::move(parsed));
     result.session = controller.start_multicast(
-        author_id,
-        std::move(input.text), std::move(input.handles));
+        author_id, std::move(input.text), std::move(input.handles),
+        std::move(submission));
     result.clear_input = result.clear_input || result.session.input_consumed;
     return result;
 }
@@ -214,7 +215,8 @@ CommandResult handle_text_input(
         return result;
     }
     if (command.kind == CommandKind::mcast) {
-        return handle_multicast_input(controller, author_id, command.argument);
+        return handle_multicast_input(controller, author_id, command.argument,
+            std::move(submission));
     }
     result.clear_input = true;
     result.session.notice = "Unknown command. Commands: " + command_names();

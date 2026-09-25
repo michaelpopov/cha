@@ -216,7 +216,7 @@ TEST_F(BridgeRouterTest, RecipientDetectionSettingsApplyToExistingSessionAndMiss
     ASSERT_TRUE(created["ok"]);
     const auto session_id = created["result"]["id"];
     ASSERT_TRUE(call("session.open", {{"forum_id", "lobby"}, {"session_id", session_id}})["ok"]);
-    const std::string body = R"({"answers":{"recipient":{"type":"choice","choice":"all_characters"}}})";
+    const std::string body = R"({"answers":{"recipient":{"type":"choice","choice":"all_characters"},"web_search":{"type":"choice","choice":"no_search"}}})";
     MockHttpServer server({"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: "
         + std::to_string(body.size()) + "\r\nConnection: close\r\n\r\n" + body});
     server.start();

@@ -518,7 +518,7 @@ export function useLiveSession(
     }
   }, [dispatch, openConversation, state.bootstrapStatus]);
 
-  // Startup and Return to Welcome both adopt the initial IDs without an open
+  // Startup and Return to start both adopt the initial IDs without an open
   // request. A matching snapshot without a connection is also attachable: this
   // matters when React StrictMode replays the unmount cleanup after the
   // snapshot was committed but before the stream can remain attached.

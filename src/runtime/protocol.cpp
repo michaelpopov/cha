@@ -302,7 +302,9 @@ void to_json(nlohmann::json& json, const Bootstrap& value) {
     json = {{"vault_name", value.vault_name},
             {"vaults", value.vaults},
             {"initial_forum_id", value.initial_forum_id},
-            {"initial_session_id", value.initial_session_id}, {"personas", value.personas},
+            {"initial_session_id", value.initial_session_id},
+            {"entrance_forum_id", value.entrance_forum_id},
+            {"personas", value.personas},
             {"characters", value.characters}, {"forums", value.forums},
             {"recent_sessions", value.recent_sessions}};
 }

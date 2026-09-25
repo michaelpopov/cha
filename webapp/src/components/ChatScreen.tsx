@@ -63,7 +63,7 @@ export interface ChatActions {
   onCoverConversation(throughEntryId: number): Promise<CommandResult>;
   onDeleteTurn(responseEntryId: number): Promise<CommandResult>;
   onRetryStream(): void;
-  onReturnToWelcome(): void;
+  onReturnToStart(): void;
   onSetDefaultCharacter(characterId: string): Promise<CommandResult>;
   onStopGeneration(): Promise<CommandResult>;
   onSubmitInput(text: string): Promise<CommandResult>;
@@ -349,7 +349,7 @@ export function ChatScreen({
   state,
   dispatch,
   onRetryStream,
-  onReturnToWelcome,
+  onReturnToStart,
   onCoverConversation,
   onDeleteTurn,
   onSetDefaultCharacter,
@@ -1205,8 +1205,8 @@ export function ChatScreen({
               >
                 Browse sessions
               </button>
-              <button className="cha-button cha-button-ghost" onClick={onReturnToWelcome} type="button">
-                Return to Welcome
+              <button className="cha-button cha-button-ghost" onClick={onReturnToStart} type="button">
+                Return to start
               </button>
             </span>
           )}

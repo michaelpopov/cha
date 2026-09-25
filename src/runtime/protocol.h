@@ -213,6 +213,7 @@ struct RecentSession {
 struct Bootstrap {
     ForumId initial_forum_id;
     SessionId initial_session_id;
+    ForumId entrance_forum_id;
     std::vector<PersonaSummary> personas;
     std::vector<CharacterSummary> characters;
     std::vector<ForumSummary> forums;

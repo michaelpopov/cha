@@ -26,10 +26,12 @@ struct JevRequestInput {
         std::chrono::steady_clock::time_point::max()};
 };
 enum class JevOutcome { success, cancelled, failure };
+enum class JevSearch { none, direct, rewrite };
 struct JevResult {
     JevOutcome outcome{JevOutcome::failure};
     std::string choice;
     std::string message;
+    std::optional<JevSearch> search_choice;
 };
 using JevExecutor = std::function<JevResult(const JevRequestInput&, const std::atomic_bool&)>;
 

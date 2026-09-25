@@ -1326,6 +1326,56 @@ it('deleting the active session replaces its URL and returns to Welcome', async 
   expect(screen.queryByLabelText('Actions for Planning')).not.toBeInTheDocument();
 });
 
+it('refreshes the startup session before returning after deleting it', async () => {
+  const user = userEvent.setup();
+  const events = drivableSessionEvents();
+  const starting = {
+    ...bootstrapFixture,
+    initial_forum_id: 'lobby',
+    initial_session_id: 'planning',
+  };
+  const refreshed = {
+    ...bootstrapFixture,
+    recent_sessions: bootstrapFixture.recent_sessions.filter(
+      ({ session_id }) => session_id !== 'planning',
+    ),
+  };
+  let deleted = false;
+  const openSession = vi.fn(async (forumId: string, sessionId: string) => {
+    if (deleted && forumId === 'lobby' && sessionId === 'planning') {
+      throw new ChaError('not_found', 'The requested session could not be opened.');
+    }
+    return { forum_id: forumId, session_id: sessionId };
+  });
+  const deleteSession = vi.fn(async () => { deleted = true; });
+  render(<App
+    client={storedPlanningClient({
+      getBootstrap: async () => (deleted ? refreshed : starting),
+      openSession,
+      deleteSession,
+    })}
+    connectSessionEvents={events.connect}
+  />);
+
+  await waitFor(() => expect(events.connections[0]?.key).toBe('lobby/planning'));
+  act(() => events.handlers[0].onSnapshot(lobbySnapshot()));
+  await user.click(screen.getByLabelText('Actions for Planning'));
+  await user.click(screen.getByRole('menuitem', { name: 'Delete…' }));
+  await user.click(screen.getByRole('button', { name: 'Delete' }));
+
+  await waitFor(() => expect(deleteSession).toHaveBeenCalledWith('lobby', 'planning'));
+  await waitFor(() => expect(events.connections.some(({ key }) => key === 'entrance/welcome')).toBe(true));
+  const welcome = events.connections.findIndex(({ key }) => key === 'entrance/welcome');
+  act(() => events.handlers[welcome].onSnapshot(snapshotFixture));
+  await waitFor(() => expect(screen.getByLabelText('Current chat context'))
+    .toHaveTextContent('Entrance'));
+  expect(window.location.hash).toBe('#/');
+  expect(openSession.mock.calls.filter(([forumId, sessionId]) => (
+    forumId === 'lobby' && sessionId === 'planning'
+  ))).toHaveLength(1);
+  expect(screen.queryByRole('heading', { name: 'Session unavailable' })).not.toBeInTheDocument();
+});
+
 // Cancelling stops the browser from following the new session, but the server
 // has already written it, so it has to turn up in the lists rather than vanish.
 it('refreshes Recent when a creation lands after the reader cancelled', async () => {
@@ -1370,7 +1420,7 @@ it('refreshes Recent when a creation lands after the reader cancelled', async ()
   await waitFor(() => expect(getBootstrap.mock.calls.length).toBe(listedBeforeCancel + 1));
 });
 
-it('restores a deep link and offers Welcome when the requested session cannot open', async () => {
+it('lets the reader browse forums when a deep-linked session cannot open', async () => {
   window.history.replaceState(null, '', '/#/s/lobby/planning/');
   const client = fixtureClient({
     openSession: async (forumId, sessionId) => {
@@ -1384,9 +1434,28 @@ it('restores a deep link and offers Welcome when the requested session cannot op
 
   expect(await screen.findByRole('heading', { name: 'Session unavailable' })).toBeInTheDocument();
   expect(screen.getByRole('alert')).toHaveTextContent('could not be opened');
-  fireEvent.click(screen.getByRole('button', { name: 'Return to Welcome' }));
-  await waitFor(() => expect(screen.getByLabelText('Current chat context')).toHaveTextContent('Entrance'));
-  expect(window.location.hash).toBe('#/');
+  fireEvent.click(screen.getByRole('button', { name: 'Browse sessions' }));
+  expect(screen.getByLabelText('Forums navigation')).toBeInTheDocument();
+});
+
+it('does not reopen a failed start session when browsing forums', async () => {
+  const bootstrap = {
+    ...bootstrapFixture,
+    initial_forum_id: 'lobby',
+    initial_session_id: 'planning',
+  };
+  const openSession = vi.fn(async () => {
+    throw new ChaError('not_found', 'Planning could not be opened.');
+  });
+  render(<App client={fixtureClient({
+    getBootstrap: async () => bootstrap,
+    openSession,
+  })} />);
+
+  expect(await screen.findByRole('heading', { name: 'Session unavailable' })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Browse sessions' }));
+  expect(screen.getByLabelText('Forums navigation')).toBeInTheDocument();
+  expect(openSession).toHaveBeenCalledTimes(1);
 });
 
 it('opens and snapshots a session-shaped deep link before showing Chat', async () => {
@@ -1853,7 +1922,7 @@ it('moves from a navigation screen to chat to report a Recent open failure', asy
   expect(await screen.findByRole('alert')).toHaveTextContent('Planning is still stopping.');
   expect(screen.queryByLabelText('Characters navigation')).not.toBeInTheDocument();
   expect(screen.getByRole('heading', { name: 'Session unavailable' })).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Return to Welcome' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Browse sessions' })).toBeInTheDocument();
 });
 
 it('shows an invalid session address reached from Settings and lets the reader leave', async () => {
@@ -1892,6 +1961,24 @@ it('opens recent forums in Sessions and offers New session only for a stored for
   await waitFor(() => expect(screen.getByRole('heading', { name: 'Sessions' })).toBeInTheDocument());
   expect(screen.queryByRole('button', { name: /New session/ })).not.toBeInTheDocument();
   expect(lobby).not.toHaveAttribute('aria-current');
+});
+
+it('offers New session when the initial conversation belongs to a stored forum', async () => {
+  const bootstrap = {
+    ...bootstrapFixture,
+    initial_forum_id: 'lobby',
+    initial_session_id: 'planning',
+  };
+  render(<App client={fixtureClient({ getBootstrap: async () => bootstrap })} connectSessionEvents={inertSessionEvents} />);
+
+  const forums = within(screen.getByRole('navigation', { name: 'Recent forums' }));
+  fireEvent.click(await forums.findByRole('button', { name: 'The Lobby' }));
+  expect(await screen.findByRole('button', { name: 'New session' })).toBeInTheDocument();
+
+  await openSettingsNavigation();
+  fireEvent.click(screen.getByRole('button', { name: 'Forums' }));
+  fireEvent.click(screen.getByRole('button', { name: 'EntranceAssistant' }));
+  expect(screen.queryByRole('button', { name: /New session/ })).not.toBeInTheDocument();
 });
 
 it('replaces a failed stream without reopening the session', async () => {

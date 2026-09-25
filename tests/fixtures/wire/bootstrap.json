@@ -3,6 +3,7 @@
   "vaults": ["Personal"],
   "initial_forum_id": "entrance",
   "initial_session_id": "welcome",
+  "entrance_forum_id": "entrance",
   "personas": [
     {
       "id": "guest",

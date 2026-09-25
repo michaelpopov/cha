@@ -420,21 +420,8 @@ ControllerUpdate SessionController::submit_prompt(
             return update;
         }
         if (current->jev()) {
-            if (!resolve_author(author_id, update)) return update;
-            if (!submission) submission = std::make_shared<SubmissionState>();
-            if (submission->expired()) return {.notice = "Submission expired"};
-            std::vector<JevOption> options;
-            for (const auto& member : current->find_forum(identity_.forum_id)->members) {
-                const auto* character = current->find_forum_character(identity_.forum_id, member.character_id);
-                options.push_back({"character_" + std::to_string(options.size() + 1), character->id, character->display_name});
-            }
-            const auto deadline = std::min(submission->deadline,
-                std::chrono::steady_clock::now() + jev_request_timeout);
-            auto request = providers_.make_jev_request({*current->jev(), text, options, deadline}, notifier_);
-            pending_classification_ = PendingClassification{
-                std::string(author_id), std::move(text), default_character_id_,
-                std::move(options), std::move(submission), deadline, std::move(request)};
-            return {.state = SnapshotRequired{}, .notice = ""};
+            return start_classification(author_id, std::move(text),
+                {}, std::move(submission));
         }
         return dispatch_target(author_id, std::move(text), default_character_id_);
     } else {
@@ -459,6 +446,10 @@ ControllerUpdate SessionController::submit_prompt(
         return update;
     }
 
+    if (current->jev()) {
+        return start_classification(author_id, std::move(text),
+            {target->id}, std::move(submission));
+    }
     std::optional<EntryIdentity> author = resolve_author(author_id, update);
     if (!author) return update;
 
@@ -477,11 +468,49 @@ ControllerUpdate SessionController::submit_prompt(
 
 ControllerUpdate SessionController::dispatch_target(
     std::string_view author, std::string text, std::string_view target_id) {
-    if (target_id == all_characters_target) return start_multicast(author, std::move(text), {});
     const auto current = workspace();
+    if (target_id == all_characters_target) {
+        return start_resolved_multicast(author, std::move(text), forum_characters(*current));
+    }
     const auto* target = current->find_forum_character(identity_.forum_id, target_id);
     if (!target) return {.notice = "The selected recipient is no longer in this forum. Choose a target and send again."};
     return start_resolved_multicast(author, std::move(text), {*target});
+}
+
+std::vector<CharacterMetadata> SessionController::forum_characters(const Workspace& current) const {
+    const auto& members = current.find_forum(identity_.forum_id)->members;
+    std::vector<CharacterMetadata> targets;
+    targets.reserve(members.size());
+    for (const auto& member : members) {
+        const auto* character = current.find_forum_character(identity_.forum_id, member.character_id);
+        if (!character) throw std::logic_error("Forum member has no workspace character");
+        targets.push_back(*character);
+    }
+    return targets;
+}
+
+ControllerUpdate SessionController::start_classification(
+    std::string_view author, std::string text,
+    std::vector<std::string> fixed_targets,
+    std::shared_ptr<SubmissionState> submission) {
+    ControllerUpdate update;
+    if (!resolve_author(author, update)) return update;
+    if (!submission) submission = std::make_shared<SubmissionState>();
+    if (submission->expired()) return {.notice = "Submission expired"};
+    const auto current = workspace();
+    std::vector<JevOption> options;
+    for (const auto& character : forum_characters(*current)) {
+        options.push_back({"character_" + std::to_string(options.size() + 1),
+            character.id, character.display_name});
+    }
+    const auto deadline = std::min(submission->deadline,
+        std::chrono::steady_clock::now() + jev_request_timeout);
+    auto request = providers_.make_jev_request({*current->jev(), text, options, deadline}, notifier_);
+    pending_classification_ = PendingClassification{
+        std::string(author), std::move(text), default_character_id_,
+        std::move(options), std::move(fixed_targets), std::move(submission),
+        deadline, std::move(request)};
+    return {.state = SnapshotRequired{}, .notice = ""};
 }
 
 std::chrono::steady_clock::time_point SessionController::classification_deadline() const noexcept {
@@ -514,6 +543,28 @@ ControllerUpdate SessionController::finish_classification() {
     ControllerUpdate update{.state = SnapshotRequired{}};
     if (result->outcome == JevOutcome::cancelled) {
         submission_result_ = SubmissionResult{SubmissionOutcome::cancelled, update};
+        return update;
+    }
+    if (!input.fixed_targets.empty()) {
+        if (result->outcome == JevOutcome::failure)
+            log_warn("Jev classification failed; using explicit recipients: " + result->message);
+        std::vector<CharacterMetadata> targets;
+        const auto current = workspace();
+        for (const auto& id : input.fixed_targets) {
+            const auto* character = current->find_forum_character(identity_.forum_id, id);
+            if (!character) {
+                submission_result_ = SubmissionResult{SubmissionOutcome::failed,
+                    {.notice = "The selected recipient is no longer in this forum. Choose a target and send again."}};
+                return update;
+            }
+            targets.push_back(*character);
+        }
+        auto dispatched = start_resolved_multicast(input.author,
+            std::move(input.text), std::move(targets));
+        merge(update, std::move(dispatched));
+        submission_result_ = SubmissionResult{
+            update.input_consumed ? SubmissionOutcome::accepted : SubmissionOutcome::failed, update};
+        if (!update.input_consumed) update.notice.reset();
         return update;
     }
     std::string target = input.fallback;
@@ -753,7 +804,8 @@ ControllerUpdate SessionController::delete_turn(EntryId response_entry_id) {
 ControllerUpdate SessionController::start_multicast(
     std::string_view author_id,
     std::string text,
-    std::vector<std::string> handles) {
+    std::vector<std::string> handles,
+    std::shared_ptr<SubmissionState> submission) {
     if (shutdown_) {
         return {.notice = "Request could not be dispatched"};
     }
@@ -762,20 +814,9 @@ ControllerUpdate SessionController::start_multicast(
     }
 
     const std::shared_ptr<const Workspace> current = workspace();
-    const WorkspaceForum& forum = *current->find_forum(identity_.forum_id);
     std::vector<CharacterMetadata> targets;
     if (handles.empty()) {
-        targets.reserve(forum.members.size());
-        for (const WorkspaceForumMember& member : forum.members) {
-            const CharacterMetadata* const character =
-                current->find_forum_character(
-                    identity_.forum_id, member.character_id);
-            if (character == nullptr) {
-                throw std::logic_error(
-                    "Forum member has no workspace character");
-            }
-            targets.push_back(*character);
-        }
+        targets = forum_characters(*current);
     } else {
         std::unordered_set<ParticipantId> distinct;
         targets.reserve(handles.size());
@@ -796,6 +837,12 @@ ControllerUpdate SessionController::start_multicast(
             }
             targets.push_back(*resolution.character);
         }
+    }
+    if (current->jev() && !trim_view(text).empty() && !targets.empty()) {
+        std::vector<std::string> ids;
+        for (const auto& target : targets) ids.push_back(target.id);
+        return start_classification(author_id, std::move(text),
+            std::move(ids), std::move(submission));
     }
     return start_resolved_multicast(author_id, std::move(text), std::move(targets));
 }

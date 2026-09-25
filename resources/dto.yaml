@@ -307,6 +307,7 @@ components:
         - vaults
         - initial_forum_id
         - initial_session_id
+        - entrance_forum_id
         - personas
         - characters
         - forums
@@ -324,6 +325,8 @@ components:
         initial_forum_id:
           $ref: "#/components/schemas/Identifier"
         initial_session_id:
+          $ref: "#/components/schemas/Identifier"
+        entrance_forum_id:
           $ref: "#/components/schemas/Identifier"
         personas:
           type: array

@@ -200,6 +200,7 @@ TEST(WebProtocol, SerializesSpecifiedSuccessListingAndErrorBodies) {
     Bootstrap bootstrap;
     bootstrap.initial_forum_id = "entrance";
     bootstrap.initial_session_id = "welcome";
+    bootstrap.entrance_forum_id = "entrance";
     bootstrap.vault_name = "Personal";
     bootstrap.vaults = {"Personal", "Projects"};
     EXPECT_EQ(
@@ -209,6 +210,7 @@ TEST(WebProtocol, SerializesSpecifiedSuccessListingAndErrorBodies) {
             {"vaults", {"Personal", "Projects"}},
             {"initial_forum_id", "entrance"},
             {"initial_session_id", "welcome"},
+            {"entrance_forum_id", "entrance"},
             {"personas", nlohmann::json::array()},
             {"characters", nlohmann::json::array()},
             {"forums", nlohmann::json::array()},

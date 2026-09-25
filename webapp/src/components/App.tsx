@@ -96,7 +96,7 @@ function Screen({
   onCoverConversation,
   onDeleteTurn,
   onRetryStream,
-  onReturnToWelcome,
+  onReturnToStart,
   onSetDefaultCharacter,
   onStopGeneration,
   onSubmitInput,
@@ -113,7 +113,7 @@ function Screen({
         onCoverConversation={onCoverConversation}
         onDeleteTurn={onDeleteTurn}
         onRetryStream={onRetryStream}
-        onReturnToWelcome={onReturnToWelcome}
+        onReturnToStart={onReturnToStart}
         onSetDefaultCharacter={onSetDefaultCharacter}
         onStopGeneration={onStopGeneration}
         onSubmitInput={onSubmitInput}
@@ -341,11 +341,11 @@ function BootstrapState({ state, onRetry }: { state: AppState; onRetry(): void }
 function SessionOperationState({
   state,
   onRetry,
-  onReturnToWelcome,
+  onBrowseSessions,
 }: {
   state: AppState;
   onRetry(): void;
-  onReturnToWelcome(): void;
+  onBrowseSessions(): void;
 }) {
   if (state.sessionOperation === 'pending') {
     return (
@@ -364,8 +364,8 @@ function SessionOperationState({
             Retry
           </button>
         )}
-        <button className="cha-button cha-button-primary" onClick={onReturnToWelcome} type="button">
-          Return to Welcome
+        <button className="cha-button cha-button-primary" onClick={onBrowseSessions} type="button">
+          Browse sessions
         </button>
       </div>
     </div>
@@ -522,10 +522,15 @@ export function App({
     };
   }, [clearVaultContext, client, contextEvents, navigate]);
 
-  const returnToWelcome = useCallback(() => {
+  const returnToStart = useCallback(() => {
     clearLiveSession();
     navigate({ type: 'show-initial-conversation' });
     writeAppRoute('/');
+  }, [clearLiveSession, navigate]);
+
+  const browseSessions = useCallback(() => {
+    clearLiveSession();
+    navigate({ type: 'show-forums' });
   }, [clearLiveSession, navigate]);
 
   const switchVault = useCallback(async (vaultName: string, password?: string) => {
@@ -659,6 +664,7 @@ export function App({
     await runMutation({ forumId, sessionId }, 'catalog', () => (
       client.deleteSession(forumId, sessionId)
     ));
+    await refreshBootstrap();
     const active = state.activeConversation?.forumId === forumId
       && state.activeConversation.sessionId === sessionId;
     if (active) {
@@ -666,7 +672,6 @@ export function App({
       navigate({ type: 'show-initial-conversation' });
       writeAppRoute('/', 'replace');
     }
-    await refreshBootstrap();
     setCatalogRevision((revision) => revision + 1);
   }, [clearLiveSession, client, navigate, refreshBootstrap, runMutation,
     state.activeConversation]);
@@ -712,8 +717,8 @@ export function App({
             {!ready && <BootstrapState onRetry={retryBootstrap} state={state} />}
             {ready && wholeApplication && (
               <SessionOperationState
+                onBrowseSessions={browseSessions}
                 onRetry={retrySessionOpen}
-                onReturnToWelcome={returnToWelcome}
                 state={state}
               />
             )}
@@ -729,7 +734,7 @@ export function App({
                 onCreateSession={createConversation}
                 onOpenSession={openConversation}
                 onRetryStream={retryStream}
-                onReturnToWelcome={returnToWelcome}
+                onReturnToStart={returnToStart}
                 onSetDefaultCharacter={setDefaultCharacter}
                 onStopGeneration={stopGeneration}
                 onSubmitInput={submitInput}

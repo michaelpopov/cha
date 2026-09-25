@@ -31,12 +31,41 @@ TEST(JevProtocol, SendsOnlyPromptAndOptionsAndValidatesExactChoice) {
     EXPECT_EQ(body["state"].size(), 1u);
     EXPECT_EQ(body["state"]["prompt"], input.prompt);
     EXPECT_EQ(body["questions"]["recipient"]["criteria"].size(), 4u);
+    EXPECT_EQ(body["questions"]["web_search"]["type"], "choice");
+    EXPECT_EQ(body["questions"]["web_search"]["criteria"].size(), 3u);
+    const auto response = [](std::string recipient, std::string search = "no_search") {
+        return nlohmann::json{{"answers", {
+            {"recipient", {{"type", "choice"}, {"choice", recipient}}},
+            {"web_search", {{"type", "choice"}, {"choice", search}}}}}};
+    };
     for (const std::string choice : {"character_1", "character_2", "undefined", "all_characters"}) {
-        EXPECT_EQ(parse_jev_result({{"answers", {{"recipient", {{"type", "choice"}, {"choice", choice}}}}}}, input).choice, choice);
+        EXPECT_EQ(parse_jev_result(response(choice), input).choice, choice);
     }
     for (const std::string choice : {"Seneca", " character_1", "character_1 extra", "character_9"}) {
-        EXPECT_EQ(parse_jev_result({{"answers", {{"recipient", {{"type", "choice"}, {"choice", choice}}}}}}, input).outcome, JevOutcome::failure);
+        EXPECT_EQ(parse_jev_result(response(choice), input).outcome, JevOutcome::failure);
     }
+    for (const auto& [search, expected] : {
+        std::pair{"no_search", JevSearch::none},
+        std::pair{"search_direct", JevSearch::direct},
+        std::pair{"search_rewrite", JevSearch::rewrite}}) {
+        const auto result = parse_jev_result(response("character_1", search), input);
+        EXPECT_EQ(result.outcome, JevOutcome::success);
+        EXPECT_EQ(result.search_choice, expected);
+    }
+    for (const auto& missing_search : {
+        response("character_1", "unknown"),
+        nlohmann::json{{"answers", {{"recipient", {{"type", "choice"}, {"choice", "character_1"}}}}}},
+        nlohmann::json{{"answers", {
+            {"recipient", {{"type", "choice"}, {"choice", "character_1"}}},
+            {"web_search", {{"type", "text"}, {"choice", "search_direct"}}}}}}}) {
+        const auto result = parse_jev_result(missing_search, input);
+        EXPECT_EQ(result.outcome, JevOutcome::success);
+        EXPECT_EQ(result.choice, "character_1");
+        EXPECT_FALSE(result.search_choice);
+    }
+    const auto bad_recipient = parse_jev_result(response("character_9", "search_direct"), input);
+    EXPECT_EQ(bad_recipient.outcome, JevOutcome::failure);
+    EXPECT_EQ(bad_recipient.search_choice, JevSearch::direct);
     EXPECT_EQ(parse_jev_result({{"answers", {{"recipient", {{"type", "text"}, {"choice", "character_1"}}}}}}, input).outcome, JevOutcome::failure);
     EXPECT_EQ(parse_jev_result(nullptr, input).outcome, JevOutcome::failure);
     input.characters = {{"character_1", "a", "Undefined"}, {"character_2", "b", "Undefined"}};
@@ -123,7 +152,7 @@ TEST(JevConfiguration, InvalidOptionalConfigurationDoesNotPreventWorkspaceLoad) 
 }
 
 TEST(JevProtocol, DecisionsTransportUsesFullEndpointAndSavedKey) {
-    const std::string body = R"({"answers":{"recipient":{"type":"choice","choice":"character_2"}}})";
+    const std::string body = R"({"answers":{"recipient":{"type":"choice","choice":"character_2"},"web_search":{"type":"choice","choice":"search_direct"}}})";
     MockHttpServer server({"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: "
         + std::to_string(body.size()) + "\r\nConnection: close\r\n\r\n" + body});
     auto input = jev_input();
@@ -135,6 +164,7 @@ TEST(JevProtocol, DecisionsTransportUsesFullEndpointAndSavedKey) {
     server.join();
     EXPECT_EQ(result.outcome, JevOutcome::success);
     EXPECT_EQ(result.choice, "character_2");
+    EXPECT_EQ(result.search_choice, JevSearch::direct);
     ASSERT_EQ(server.requests().size(), 1u);
     EXPECT_NE(server.requests()[0].find("POST /api/alpha/decisions "), std::string::npos);
     EXPECT_NE(server.requests()[0].find("Authorization: Bearer test-secret"), std::string::npos);
@@ -189,7 +219,7 @@ protected:
     CommandResult send(std::string text) { return handle_text_input(*controller, "reader", std::move(text)); }
 };
 
-TEST_F(JevRouting, DisabledEmptyExplicitAndSelfNotesBypassClassification) {
+TEST_F(JevRouting, ClassifiesModelPromptsButSkipsEmptyAndSelfNotes) {
     for (const std::string text : {"", " \t\n", "\n"}) {
         EXPECT_FALSE(send(text).clear_input);
         EXPECT_FALSE(controller->submit_prompt("reader", text).input_consumed);
@@ -199,16 +229,22 @@ TEST_F(JevRouting, DisabledEmptyExplicitAndSelfNotesBypassClassification) {
     (void)controller->set_default_character_by_id("-");
     EXPECT_TRUE(send("Marcus, please answer").clear_input);
     EXPECT_TRUE(workers.empty());
-    EXPECT_TRUE(send("@Guide Explicit override").clear_input);
+    EXPECT_FALSE(send("@Guide Explicit override").clear_input);
+    run_workers(); (void)controller->receive_events(100);
+    ASSERT_EQ(classified.size(), 1u);
+    EXPECT_EQ(classified.back().prompt, "Explicit override");
     finish();
-    EXPECT_TRUE(classified.empty());
+    EXPECT_EQ(controller->view().transcript.entries[1].addressed_to, "guide");
     EXPECT_EQ(controller->view().default_character_id, "-");
     (void)controller->set_default_character_by_id("*");
     EXPECT_EQ(controller->view().default_character_id, "*");
     EXPECT_TRUE(send("@- Private note").clear_input);
-    EXPECT_TRUE(send("/mcast @Guide only Guide").clear_input);
+    (void)send("/mcast @Guide only Guide");
+    EXPECT_TRUE(controller->classification_pending());
+    run_workers(); (void)controller->receive_events(100);
+    ASSERT_EQ(classified.size(), 2u);
+    EXPECT_EQ(classified.back().prompt, "only Guide");
     finish();
-    EXPECT_TRUE(classified.empty());
     EXPECT_FALSE(send("@unknown Wrong handle").clear_input);
     EXPECT_FALSE(controller->classification_pending());
     store->apply_jev_update(std::nullopt);
@@ -219,7 +255,59 @@ TEST_F(JevRouting, DisabledEmptyExplicitAndSelfNotesBypassClassification) {
     (void)controller->set_default_character_by_id("guide");
     EXPECT_TRUE(send("Plain question").clear_input);
     finish();
-    EXPECT_TRUE(classified.empty());
+    EXPECT_EQ(classified.size(), 2u);
+}
+
+TEST_F(JevRouting, ExplicitTargetsIgnoreJevRecipientDecisionsAndFailures) {
+    (void)controller->set_default_character_by_id("marcus");
+    decision = {JevOutcome::success, "all_characters", {}, JevSearch::direct};
+    for (const auto* prompt : {"@Guide question", "/mcast @Guide question"}) {
+        const auto before = controller->view().transcript.entries.size();
+        (void)send(prompt);
+        EXPECT_TRUE(controller->classification_pending());
+        run_workers();
+        (void)controller->receive_events(100);
+        const auto result = controller->take_submission_result();
+        ASSERT_TRUE(result);
+        EXPECT_EQ(result->outcome, SessionController::SubmissionOutcome::accepted);
+        EXPECT_TRUE(result->update.input_consumed);
+        EXPECT_EQ(controller->view().default_character_id, "marcus");
+        EXPECT_EQ(workers.size(), 1u);
+        ASSERT_GT(controller->view().transcript.entries.size(), before);
+        EXPECT_EQ(controller->view().transcript.entries[before].addressed_to, "guide");
+        finish();
+        ASSERT_GT(controller->view().transcript.entries.size(), before + 1);
+        EXPECT_EQ(controller->view().transcript.entries[before + 1].participant_id, "guide");
+    }
+
+    decision = {JevOutcome::failure, {}, "Jev unavailable"};
+    (void)send("@Guide question after failure");
+    run_workers();
+    (void)controller->receive_events(100);
+    const auto failure = controller->take_submission_result();
+    ASSERT_TRUE(failure);
+    EXPECT_EQ(failure->outcome, SessionController::SubmissionOutcome::accepted);
+    EXPECT_TRUE(failure->update.input_consumed);
+    EXPECT_TRUE(!failure->update.notice || failure->update.notice->empty());
+    EXPECT_EQ(controller->view().default_character_id, "marcus");
+    EXPECT_EQ(workers.size(), 1u);
+    EXPECT_EQ(controller->view().transcript.entries.back().addressed_to, "guide");
+    finish();
+
+    decision = {JevOutcome::success, "all_characters", {}, JevSearch::direct};
+    const auto before = controller->view().transcript.entries.size();
+    (void)send("@Guide question after removal");
+    store->apply_forum_members_and_persona("lobby", std::vector<std::string>{"marcus"}, "reader");
+    run_workers();
+    (void)controller->receive_events(100);
+    const auto removed = controller->take_submission_result();
+    ASSERT_TRUE(removed);
+    EXPECT_EQ(removed->outcome, SessionController::SubmissionOutcome::failed);
+    ASSERT_TRUE(removed->update.notice);
+    EXPECT_NE(removed->update.notice->find("no longer in this forum"), std::string::npos);
+    EXPECT_EQ(controller->view().default_character_id, "marcus");
+    EXPECT_EQ(controller->view().transcript.entries.size(), before);
+    EXPECT_TRUE(workers.empty());
 }
 
 TEST_F(JevRouting, SpecificDecisionsUpdateCurrentTargetAndUndefinedKeepsIt) {

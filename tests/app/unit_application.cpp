@@ -86,6 +86,7 @@ TEST(Application, StartsWithoutAListenerAndBootstraps) {
     EXPECT_EQ(boot.state, ApplicationState::running);
     EXPECT_EQ(boot.presentation.initial_forum_id, entrance_id);
     EXPECT_EQ(boot.presentation.initial_session_id, welcome_id);
+    EXPECT_EQ(boot.presentation.entrance_forum_id, entrance_id);
     EXPECT_FALSE(boot.presentation.forums.empty());
     EXPECT_EQ(boot.presentation.vault_name, "Test");
 }
@@ -158,6 +159,10 @@ TEST(Application, CreateOpenSubmitStopSnapshotCloseAndShutdown) {
     const auto opened = application->open_session("lobby", created.id, epoch);
     ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(opened));
     EXPECT_EQ(application->selected_session()->session_id, created.id);
+    const auto boot = application->bootstrap();
+    EXPECT_EQ(boot.presentation.initial_forum_id, "lobby");
+    EXPECT_EQ(boot.presentation.initial_session_id, created.id);
+    EXPECT_EQ(boot.presentation.entrance_forum_id, entrance_id);
 
     const auto submitted = application->submit(
         "lobby", created.id, RawCommand{"Hello"}, epoch);
