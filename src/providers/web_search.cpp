@@ -6,7 +6,10 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <stdexcept>
+#include <unordered_set>
+#include <vector>
 
 namespace cha {
 namespace {
@@ -33,6 +36,37 @@ std::string_view limit_query(std::string_view query, std::size_t byte_limit) {
     // An ASCII whitespace boundary cannot split a UTF-8 character. A first
     // word longer than the byte limit leaves no usable query.
     return query.substr(0, end);
+}
+
+nlohmann::ordered_json prefer_distinct_hosts(nlohmann::ordered_json sources) {
+    auto selected = nlohmann::ordered_json::array();
+    auto skipped = nlohmann::ordered_json::array();
+    std::unordered_set<std::string> hosts;
+    const std::unique_ptr<CURLU, decltype(&curl_url_cleanup)> parsed(curl_url(), curl_url_cleanup);
+    if (!parsed) throw std::runtime_error("Could not parse search result URLs");
+    for (auto& source : sources) {
+        const auto& url = source["url"].get_ref<const std::string&>();
+        if (url.find('\0') != std::string::npos
+            || curl_url_set(parsed.get(), CURLUPART_URL, url.c_str(), 0) != CURLUE_OK) continue;
+        char* raw_host = nullptr;
+        if (curl_url_get(parsed.get(), CURLUPART_HOST, &raw_host, 0) != CURLUE_OK) continue;
+        const std::unique_ptr<char, decltype(&curl_free)> owned_host(raw_host, curl_free);
+        auto host = fold_ascii(raw_host);
+        if (host.ends_with('.')) host.pop_back();
+        if (host.starts_with("www.")) host.erase(0, 4);
+        if (hosts.insert(std::move(host)).second) {
+            selected.push_back(std::move(source));
+            if (selected.size() == 5) break;
+        } else {
+            skipped.push_back(std::move(source));
+        }
+    }
+    // Fill unused slots from repeated hosts, preserving their original ranking.
+    for (auto& source : skipped) {
+        if (selected.size() == 5) break;
+        selected.push_back(std::move(source));
+    }
+    return selected;
 }
 
 nlohmann::json request_search(std::string_view provider, CurlHandle& curl,
@@ -112,8 +146,24 @@ std::string search_brave(std::string_view query, std::string_view key,
     const std::unique_ptr<char, decltype(&curl_free)> encoded(
         curl_easy_escape(curl.get(), query.data(), static_cast<int>(query.size())), curl_free);
     if (!encoded) fail_search("Brave", "Could not encode web search query");
+    constexpr std::string_view reduce_commentary =
+        "/opinion/$discard\n"
+        "/opinions/$discard\n"
+        "/editorial/$discard\n"
+        "/editorials/$discard\n"
+        "/commentary/$discard\n"
+        "/columnists/$discard\n"
+        "/commentisfree/$discard\n"
+        "/op-ed/$discard\n"
+        "/oped/$discard\n"
+        ".gov/$boost=2";
+    const std::unique_ptr<char, decltype(&curl_free)> encoded_goggles(
+        curl_easy_escape(curl.get(), reduce_commentary.data(), static_cast<int>(reduce_commentary.size())),
+        curl_free);
+    if (!encoded_goggles) fail_search("Brave", "Could not encode web search goggles");
     const std::string url = std::string(endpoint) + "?q=" + encoded.get()
-        + "&count=5&result_filter=web&text_decorations=false&extra_snippets=true";
+        + "&count=10&result_filter=web&text_decorations=false&extra_snippets=true"
+        + "&goggles=" + encoded_goggles.get();
     const auto parsed = request_search("Brave", curl, headers, url, {}, cancelled);
     if (parsed.is_null()) return {};
     nlohmann::ordered_json sources = nlohmann::ordered_json::array();
@@ -127,20 +177,27 @@ std::string search_brave(std::string_view query, std::string_view key,
             const auto url = result["url"].get<std::string>();
             if (!url.starts_with("https://") && !url.starts_with("http://")) continue;
             nlohmann::ordered_json source = {{"url", url}};
-            for (const auto* field : {"title", "description"}) {
-                if (result.contains(field) && result[field].is_string()) source[field] = result[field];
-            }
+            if (result.contains("title") && result["title"].is_string()) source["title"] = result["title"];
+            std::vector<std::string> snippets;
+            const auto add_snippet = [&](const nlohmann::json& value) {
+                if (!value.is_string()) return;
+                const auto& text = value.get_ref<const std::string&>();
+                if (!trim_view(text).empty() && std::find(snippets.begin(), snippets.end(), text) == snippets.end())
+                    snippets.push_back(text);
+            };
+            if (result.contains("description")) add_snippet(result["description"]);
+            const auto snippet_limit = snippets.size() + 5;
             if (result.contains("extra_snippets") && result["extra_snippets"].is_array()) {
                 for (const auto& snippet : result["extra_snippets"]) {
-                    if (snippet.is_string()) source["extra_snippets"].push_back(snippet.get<std::string>());
-                    if (source.contains("extra_snippets") && source["extra_snippets"].size() == 5) break;
+                    add_snippet(snippet);
+                    if (snippets.size() == snippet_limit) break;
                 }
             }
+            source["snippets"] = std::move(snippets);
             sources.push_back(std::move(source));
-            if (sources.size() == 5) break;
         }
     }
-    return nlohmann::ordered_json{{"query", query}, {"results", std::move(sources)}}.dump();
+    return nlohmann::ordered_json{{"query", query}, {"results", prefer_distinct_hosts(std::move(sources))}}.dump();
 }
 
 std::string search_tavily(std::string_view query, std::string_view key,
@@ -158,7 +215,7 @@ std::string search_tavily(std::string_view query, std::string_view key,
     headers.append("Content-Type: application/json");
     headers.append("Authorization: Bearer " + std::string(key));
     const auto body = nlohmann::json{{"query", query}, {"search_depth", "basic"},
-        {"max_results", 5}, {"include_answer", false}, {"include_raw_content", false}}.dump();
+        {"max_results", 10}, {"include_answer", false}, {"include_raw_content", false}}.dump();
     const auto parsed = request_search("Tavily", curl, headers, std::string(endpoint), body, cancelled);
     if (parsed.is_null()) return {};
     if (!parsed.contains("results") || !parsed["results"].is_array())
@@ -173,9 +230,8 @@ std::string search_tavily(std::string_view query, std::string_view key,
         if (result.contains("title") && result["title"].is_string()) source["title"] = result["title"];
         if (result.contains("content") && result["content"].is_string()) source["description"] = result["content"];
         sources.push_back(std::move(source));
-        if (sources.size() == 5) break;
     }
-    return nlohmann::ordered_json{{"query", query}, {"results", std::move(sources)}}.dump();
+    return nlohmann::ordered_json{{"query", query}, {"results", prefer_distinct_hosts(std::move(sources))}}.dump();
 }
 
 const std::string& WebSearchContext::get(const ProviderClientFactory& factory,

@@ -639,6 +639,10 @@ std::shared_ptr<WebSearchContext> SessionController::make_web_search(
             .provider = {provider->id, std::move(config)},
             .system_prompt = "Convert the user's prompt into one concise, standalone web search query. "
                 "Use the conversation history to resolve references in the prompt. "
+                "Use neutral, factual words. Do not copy loaded or partisan framing from the prompt; "
+                "preserve identifying names and titles. If the topic has a known original source, "
+                "such as a law, court ruling, official report, dataset, filing, or study, name that "
+                "source in the query. Do not invent source names or citations. "
                 "Use at most 400 characters and 75 words. Return only the query string.",
         });
     }
