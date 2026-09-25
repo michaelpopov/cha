@@ -501,6 +501,7 @@ RequestPayload ProviderClient::prepare(const GenerationRequest& input) {
                 definition_->system_prompt,
                 &text_sizes),
             .text_sizes = text_sizes,
+            .web_search_tool = input.web_search_tool,
         };
     case ProviderApi::responses:
         return {
@@ -515,6 +516,7 @@ RequestPayload ProviderClient::prepare(const GenerationRequest& input) {
                 ? std::optional<std::string>(input.run.prompt_cache_key)
                 : std::nullopt,
             .text_sizes = text_sizes,
+            .web_search_tool = input.web_search_tool,
         };
     }
     throw std::logic_error("Unknown provider API");
@@ -522,6 +524,92 @@ RequestPayload ProviderClient::prepare(const GenerationRequest& input) {
 
 GenerationResult ProviderClient::perform(
     RequestPayload payload,
+    const GenerationDeltaSink& on_delta,
+    const std::atomic_bool& cancellation) {
+    constexpr int max_searches = 4;
+    int attempts = 0;
+    GenerationTokenUsage total;
+    const auto add = [](auto& sum, const auto& count) {
+        if (count) sum = sum.value_or(0) + *count;
+    };
+    const bool responses = definition_->provider.config.api == ProviderApi::responses;
+    bool received_answer = false;
+    Json body;
+    for (;;) {
+        bool round_received_answer = false;
+        auto result = perform_once(payload, [&](GenerationDelta delta) {
+            if (delta.kind == GenerationDeltaKind::answer && !delta.text.empty()) {
+                if (!round_received_answer && received_answer) {
+                    on_delta({GenerationDeltaKind::answer, "\n\n"});
+                }
+                round_received_answer = true;
+                received_answer = true;
+            }
+            on_delta(std::move(delta));
+        }, cancellation);
+        add(total.input_tokens, result.usage.input_tokens);
+        add(total.output_tokens, result.usage.output_tokens);
+        add(total.cache_read_tokens, result.usage.cache_read_tokens);
+        add(total.cache_write_tokens, result.usage.cache_write_tokens);
+        result.usage = total;
+        if (result.outcome != GenerationOutcome::completed || result.tool_calls.empty())
+            return result;
+        if (!payload.web_search_tool) {
+            return {GenerationOutcome::protocol_error,
+                "Model requested a tool when tools were unavailable", total};
+        }
+        if (attempts >= max_searches) {
+            return {GenerationOutcome::protocol_error,
+                "Model kept requesting web search after the search limit", total};
+        }
+        if (body.is_null()) body = Json::parse(payload.bytes);
+        auto& messages = body[responses ? "input" : "messages"];
+        const auto continuation = Json::parse(result.continuation);
+        if (responses) {
+            for (const auto& item : continuation) messages.push_back(item);
+        } else {
+            messages.push_back(continuation);
+        }
+        for (const auto& call : result.tool_calls) {
+            if (cancellation.load()) return {GenerationOutcome::cancelled, {}, total};
+            std::string output;
+            const auto arguments = Json::parse(call.arguments, nullptr, false);
+            if (attempts >= max_searches) {
+                output = R"({"error":"Search limit reached. Answer using the available results."})";
+            } else {
+                ++attempts;
+                if (call.name != "web_search") {
+                    output = R"({"error":"Unknown tool. Use web_search."})";
+                } else if (!arguments.is_object() || arguments.size() != 1
+                    || !arguments.contains("query") || !arguments["query"].is_string()
+                    || trim_view(arguments["query"].get_ref<const std::string&>()).empty()) {
+                    output = R"({"error":"web_search requires one non-empty string argument: query."})";
+                } else {
+                    try {
+                        output = payload.web_search_tool(arguments["query"].get_ref<const std::string&>(), cancellation);
+                    } catch (const std::exception&) {
+                        log_warn("On-demand web search failed");
+                        output = R"({"error":"Web search failed. Continue without it or try another query."})";
+                    }
+                }
+            }
+            if (cancellation.load()) return {GenerationOutcome::cancelled, {}, total};
+            if (responses) {
+                messages.push_back({{"type", "function_call_output"},
+                    {"call_id", call.id}, {"output", output}});
+            } else {
+                messages.push_back({{"role", "tool"},
+                    {"tool_call_id", call.id}, {"content", output}});
+            }
+        }
+        // Required provider-hosted search must not force another search forever.
+        body["tool_choice"] = attempts >= max_searches ? "none" : "auto";
+        payload.bytes = body.dump();
+    }
+}
+
+GenerationResult ProviderClient::perform_once(
+    const RequestPayload& payload,
     const GenerationDeltaSink& on_delta,
     const std::atomic_bool& cancellation) {
     const ModelBackendConfig& config = definition_->provider.config;
@@ -565,15 +653,16 @@ GenerationResult ProviderClient::perform(
     }
 
     const std::string& request_body = payload.bytes;
+    const bool collect_tool_calls = static_cast<bool>(payload.web_search_tool);
     std::unique_ptr<StreamingResponseDecoder> decoder;
     if (config.stream) {
         switch (config.api) {
         case ProviderApi::chat_completions:
             decoder = std::make_unique<ChatCompletionsStreamDecoder>(
-                config.reasoning_format, on_delta);
+                config.reasoning_format, on_delta, collect_tool_calls);
             break;
         case ProviderApi::responses:
-            decoder = std::make_unique<ResponsesStreamDecoder>(on_delta);
+            decoder = std::make_unique<ResponsesStreamDecoder>(on_delta, collect_tool_calls);
             break;
         default:
             throw std::logic_error("Unknown provider API");
@@ -777,10 +866,11 @@ GenerationResult ProviderClient::perform(
         result = decode_chat_completions_response(
             response.body,
             config.reasoning_format,
-            on_delta);
+            on_delta,
+            collect_tool_calls);
         break;
     case ProviderApi::responses:
-        result = decode_responses_response(response.body, on_delta);
+        result = decode_responses_response(response.body, on_delta, collect_tool_calls);
         break;
     default:
         throw std::logic_error("Unknown provider API");

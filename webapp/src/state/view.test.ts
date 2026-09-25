@@ -261,7 +261,7 @@ describe('application navigation reducer', () => {
       style: null,
       voice_id: null,
       reasoning_effort: null,
-      web_search: null,
+      web_search: null, web_search_tool: null,
       available_providers: [],
       available_styles: [],
       available_voices: [],

@@ -682,8 +682,10 @@ components:
     WebSearchSettings:
       type: object
       additionalProperties: false
-      required: [enabled, provider, api_key, query_provider]
+      required: [enabled, provider, api_key, query_provider, tool_enabled]
       properties:
+        tool_enabled:
+          type: boolean
         enabled:
           type: boolean
         provider:
@@ -916,6 +918,7 @@ components:
         - voice_id
         - reasoning_effort
         - web_search
+        - web_search_tool
         - available_providers
         - available_styles
         - available_voices
@@ -955,6 +958,8 @@ components:
         web_search:
           type: [string, "null"]
           enum: [off, auto, required, null]
+        web_search_tool:
+          type: [boolean, "null"]
         available_providers:
           type: array
           items:
@@ -1018,7 +1023,7 @@ components:
     UpdateCharacterRequest:
       type: object
       additionalProperties: false
-      required: [provider, style, voice_id, reasoning_effort, web_search]
+      required: [provider, style, voice_id, reasoning_effort, web_search, web_search_tool]
       properties:
         provider:
           type: string
@@ -1032,6 +1037,8 @@ components:
         web_search:
           type: [string, "null"]
           enum: [off, auto, required, null]
+        web_search_tool:
+          type: [boolean, "null"]
 
     UpdateCharacterDefinitionRequest:
       type: object

@@ -1009,6 +1009,7 @@ export function CharacterSettingsScreen({
   const [reasoningEffort, setReasoningEffort] =
     useState<CharacterDetail['reasoning_effort']>(null);
   const [webSearch, setWebSearch] = useState<CharacterDetail['web_search']>(null);
+  const [webSearchTool, setWebSearchTool] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [requestVersion, setRequestVersion] = useState(0);
@@ -1027,6 +1028,7 @@ export function CharacterSettingsScreen({
         setVoice(loaded.voice_id);
         setReasoningEffort(loaded.reasoning_effort);
         setWebSearch(loaded.web_search);
+        setWebSearchTool(loaded.web_search_tool);
       },
       (failure: unknown) => {
         if (current) {
@@ -1050,7 +1052,8 @@ export function CharacterSettingsScreen({
     if (provider === detail.provider && style === detail.style
       && voice === detail.voice_id
       && reasoningEffort === detail.reasoning_effort
-      && webSearch === detail.web_search) return;
+      && webSearch === detail.web_search
+      && webSearchTool === detail.web_search_tool) return;
     setSaving(true);
     setError(null);
     try {
@@ -1060,6 +1063,7 @@ export function CharacterSettingsScreen({
         voice_id: voice,
         reasoning_effort: reasoningEffort,
         web_search: webSearch,
+        web_search_tool: webSearchTool,
       });
       dispatch({ type: 'character-updated', character: saved });
       setDetail(saved);
@@ -1068,6 +1072,7 @@ export function CharacterSettingsScreen({
       setVoice(saved.voice_id);
       setReasoningEffort(saved.reasoning_effort);
       setWebSearch(saved.web_search);
+      setWebSearchTool(saved.web_search_tool);
     } catch (failure: unknown) {
       setError(publicErrorMessage(failure, 'Character settings could not be saved.'));
     } finally {
@@ -1086,7 +1091,8 @@ export function CharacterSettingsScreen({
     && (provider !== detail.provider || style !== detail.style
       || voice !== detail.voice_id
       || reasoningEffort !== detail.reasoning_effort
-      || webSearch !== detail.web_search);
+      || webSearch !== detail.web_search
+      || webSearchTool !== detail.web_search_tool);
 
   return (
     <section className="cha-screen cha-navigation" aria-label="Character settings">
@@ -1152,7 +1158,7 @@ export function CharacterSettingsScreen({
             <option value="high">High</option>
             <option value="xhigh">Extra high</option>
           </select>
-          <label htmlFor="cha-character-web-search">Web search</label>
+          <label htmlFor="cha-character-web-search">Provider web search</label>
           <select
             className="cha-form-control"
             disabled={saving}
@@ -1168,6 +1174,14 @@ export function CharacterSettingsScreen({
             <option value="off">Off</option>
             <option value="auto">Automatic</option>
             <option value="required">Required</option>
+          </select>
+          <label htmlFor="cha-character-web-search-tool">On-demand web search</label>
+          <select className="cha-form-control" disabled={saving}
+            id="cha-character-web-search-tool" value={webSearchTool === null ? '' : String(webSearchTool)}
+            onChange={(event) => setWebSearchTool(event.target.value === '' ? null : event.target.value === 'true')}>
+            <option value="">Workspace default</option>
+            <option value="true">On</option>
+            <option value="false">Off</option>
           </select>
           <label htmlFor="cha-character-style">Style</label>
           <select

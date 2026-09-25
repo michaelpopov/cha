@@ -315,6 +315,7 @@ export function isCharacterDetail(value: unknown): value is CharacterDetail {
     && (value.voice_id === null || typeof value.voice_id === 'string')
     && isOneOf(value.reasoning_effort, ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', null])
     && isOneOf(value.web_search, ['off', 'auto', 'required', null])
+    && (value.web_search_tool === null || typeof value.web_search_tool === 'boolean')
     && Array.isArray(value.available_providers)
     && value.available_providers.every((option) => isRecord(option)
       && typeof option.id === 'string' && typeof option.label === 'string')
@@ -503,6 +504,7 @@ export function isJevSettings(value: unknown): value is JevSettings {
 
 export function isWebSearchSettings(value: unknown): value is WebSearchSettings {
   return isRecord(value) && typeof value.enabled === 'boolean'
+    && typeof value.tool_enabled === 'boolean'
     && isOneOf(value.provider, ['brave', 'tavily'])
     && typeof value.api_key === 'string'
     && typeof value.query_provider === 'string';

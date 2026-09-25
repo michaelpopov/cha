@@ -241,12 +241,21 @@ Application::Impl::Impl(
               if (cancelled.load()) return JevResult{JevOutcome::cancelled};
               return classify_jev(input.config, std::move(key), input, cancelled);
           },
-          [keys = api_keys.get()](const WorkspaceWebSearch& config, std::string_view query,
+          [this, keys = api_keys.get()](const WorkspaceWebSearch& config, std::string_view query,
               const std::atomic_bool& cancelled) {
               if (cancelled.load()) return std::string{};
               const auto key = keys->value(config.api_key_id);
-              if (config.provider == "tavily") return search_tavily(query, key, cancelled);
-              if (config.provider == "brave") return search_brave(query, key, cancelled);
+              std::string endpoint;
+              {
+                  std::lock_guard lock(web_search_url_mutex);
+                  endpoint = web_search_url_override;
+              }
+              if (config.provider == "tavily") return endpoint.empty()
+                  ? search_tavily(query, key, cancelled)
+                  : search_tavily(query, key, cancelled, endpoint);
+              if (config.provider == "brave") return endpoint.empty()
+                  ? search_brave(query, key, cancelled)
+                  : search_brave(query, key, cancelled, endpoint);
               throw std::runtime_error("Unsupported web search provider");
           }) {
     vault_maintenance.publish_vault_names();
@@ -387,6 +396,11 @@ Application::Impl::~Impl() {
 }
 
 Application::Application(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
+
+void Application::set_web_search_url_override_for_tests(std::string url) {
+    std::lock_guard lock(impl_->web_search_url_mutex);
+    impl_->web_search_url_override = std::move(url);
+}
 
 Application::~Application() {
     if (impl_ && impl_->preserve_on_destroy.load()) {

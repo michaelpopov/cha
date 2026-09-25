@@ -46,6 +46,24 @@ function renderSettings(client = fixtureClient()) {
 }
 
 describe('character settings screen', () => {
+  it('saves on-demand search overrides and restores the workspace default', async () => {
+    const user = userEvent.setup();
+    const updateCharacter = vi.fn(async (_id, update) => ({
+      ...characterDetailFixture, ...update,
+    }));
+    renderSettings(fixtureClient({ updateCharacter }));
+    const search = await screen.findByLabelText('On-demand web search');
+    expect(search).toHaveValue('');
+    for (const [value, expected] of [['true', true], ['false', false], ['', null]] as const) {
+      await user.selectOptions(search, value);
+      await user.click(screen.getByRole('button', { name: 'Save' }));
+      expect(updateCharacter).toHaveBeenLastCalledWith('guide', expect.objectContaining({
+        web_search_tool: expected,
+      }));
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled());
+    }
+  });
+
   it('renders the pickers and saves character settings with none reasoning', async () => {
     const user = userEvent.setup();
     const updateCharacter = vi.fn(async () => ({
@@ -64,7 +82,7 @@ describe('character settings screen', () => {
     expect(reasoning).toHaveValue('');
     expect(Array.from(reasoning.options, (option) => option.value))
       .toEqual(['', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh']);
-    expect(screen.getByLabelText('Web search')).toHaveValue('');
+    expect(screen.getByLabelText('Provider web search')).toHaveValue('');
     expect(screen.getByLabelText('Voice')).toHaveValue('');
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
     expect(screen.getByLabelText('Voice preview text')).toHaveClass(
@@ -73,7 +91,7 @@ describe('character settings screen', () => {
 
     await user.selectOptions(screen.getByLabelText('Style'), 'mono-large');
     await user.selectOptions(screen.getByLabelText('Reasoning effort'), 'none');
-    await user.selectOptions(screen.getByLabelText('Web search'), 'auto');
+    await user.selectOptions(screen.getByLabelText('Provider web search'), 'auto');
     await user.selectOptions(screen.getByLabelText('Voice'), 'brian');
     expect(screen.getByLabelText('Voice preview text')).toHaveClass(
       'cha-font-mono', 'cha-scale-large',
@@ -92,6 +110,7 @@ describe('character settings screen', () => {
       voice_id: 'brian',
       reasoning_effort: 'none' as const,
       web_search: 'auto',
+      web_search_tool: null,
     }));
     expect(dispatch).toHaveBeenCalledWith({
       type: 'character-updated',
@@ -179,7 +198,7 @@ describe('character settings screen', () => {
       style: 'mono-large',
       voice_id: null,
       reasoning_effort: null,
-      web_search: null,
+      web_search: null, web_search_tool: null,
     }));
   });
 

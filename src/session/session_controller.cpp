@@ -668,6 +668,15 @@ void SessionController::start_generation(
         if (!definition) {
             throw std::logic_error("Generation target has no character definition");
         }
+        const auto current = workspace();
+        const auto* character = current->find_character(target.id);
+        const bool tool_requested = character && character->web_search_tool.value_or(
+            current->web_search().tool_enabled);
+        const bool tool_enabled = tool_requested
+            && current->find_api_key(current->web_search().api_key_id) != nullptr;
+        if (tool_requested && !tool_enabled) {
+            log_warn("On-demand web search is unavailable: no search API key is configured");
+        }
         const std::string cache_key = prompt_cache_key(identity_, target.id);
         inputs.push_back({
             .character = std::move(definition),
@@ -684,6 +693,8 @@ void SessionController::start_generation(
                 },
             },
             .web_search = search_context,
+            .web_search_tool = tool_enabled
+                ? std::optional<WorkspaceWebSearch>(current->web_search()) : std::nullopt,
         });
     }
 
@@ -1004,10 +1015,15 @@ ControllerUpdate SessionController::handle_generation_event(GenerationEvent even
 }
 
 void SessionController::apply(const GenerationEventDelta& event, ControllerUpdate& update) {
-    if (!matches(event.request_id) || event.text.empty()) {
-        return;
+    if (!matches(event.request_id)) return;
+    if (event.web_search_used && !active_->web_search_used) {
+        active_->web_search_used = true;
+        if (active_->phase == ResponsePhase::answering) {
+            transcript_.mark_web_search_used(active_->response_entry_id);
+            require_snapshot(update);
+        }
     }
-    active_->web_search_used = event.web_search_used;
+    if (event.text.empty()) return;
     if (event.kind == GenerationDeltaKind::answer) {
         append_answer_text(
             filter_source_references(filter_answer_timestamp(event.text)),

@@ -2236,7 +2236,7 @@ it('refreshes appearance on the existing subscription without leaving settings',
     reasoning_effort: null,
     style: 'mono-large',
     voice_id: null,
-    web_search: null,
+    web_search: null, web_search_tool: null,
   }));
 
   act(() => events.handlers[planning].onSnapshot(next));

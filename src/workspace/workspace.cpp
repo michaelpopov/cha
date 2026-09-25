@@ -770,6 +770,7 @@ struct CharacterConfig {
     std::optional<std::string> voice_id;
     std::optional<std::string> reasoning_effort;
     std::optional<WebSearchMode> web_search;
+    std::optional<bool> web_search_tool;
     std::vector<std::string> tags;
     WorkspacePromptVariables prompt_variables;
 };
@@ -783,7 +784,7 @@ CharacterConfig load_character_config(
     const toml::table table = read_toml(source, path, "character config");
     static constexpr std::string_view definition_fields[]{
         "display_name", "description", "provider", "style", "voice",
-        "reasoning_effort", "web_search", "tags", "prompt"};
+        "reasoning_effort", "web_search", "web_search_tool", "tags", "prompt"};
     static constexpr std::string_view override_fields[]{"provider", "prompt"};
     reject_unknown_fields(
         table, path,
@@ -803,6 +804,7 @@ CharacterConfig load_character_config(
             table, path, "voice", "a string"),
         .reasoning_effort = optional_value<std::string>(
             table, path, "reasoning_effort", "a string"),
+        .web_search_tool = optional_value<bool>(table, path, "web_search_tool", "a boolean"),
         .tags = definition ? load_tags(table, path) : std::vector<std::string>{},
         .prompt_variables = template_scope_from_toml(table, "prompt", utf8_path(path)),
     };
@@ -1250,7 +1252,7 @@ WorkspaceWebSearch load_web_search_settings(
     try {
         const auto table = read_toml(source, path, "web search config");
         static constexpr std::string_view fields[]{
-            "enabled", "provider", "api_key", "query_provider"};
+            "enabled", "provider", "api_key", "query_provider", "tool_enabled"};
         for (const auto& [key, value] : table) {
             (void)value;
             if (std::ranges::find(fields, key.str()) == std::end(fields))
@@ -1261,11 +1263,13 @@ WorkspaceWebSearch load_web_search_settings(
             .provider = table["provider"].value_or(std::string("brave")),
             .api_key_id = table["api_key"].value_or(std::string{}),
             .query_provider_id = table["query_provider"].value_or(std::string{}),
+            .tool_enabled = table["tool_enabled"].value_or(false),
         };
         if (result.provider != "brave" && result.provider != "tavily") {
             log_warn("Ignoring unsupported web search provider; using Brave Search API");
             result.provider = "brave";
             result.enabled = false;
+            result.tool_enabled = false;
         }
         return result;
     } catch (const std::exception& error) {
@@ -1437,6 +1441,7 @@ LoadedCharacters load_characters(
             .voice_id = config.voice_id,
             .reasoning_effort = config.reasoning_effort,
             .web_search = config.web_search,
+            .web_search_tool = config.web_search_tool,
             .prompt_variables = config.prompt_variables,
             .prompt_template = prompt_template,
             .markdown = character_description(
@@ -1471,6 +1476,7 @@ WorkspaceCharacter load_assistant(
         .voice_id = assistant.voice_id,
         .reasoning_effort = assistant.reasoning_effort,
         .web_search = assistant.web_search,
+        .web_search_tool = assistant.web_search_tool,
         .prompt_variables = assistant.prompt_variables,
         .prompt_template = std::string(embedded_application_guide()),
         .markdown = std::string(embedded_application_guide()),
@@ -2398,22 +2404,25 @@ void WorkspaceConfigEditor::write_jev(const std::optional<WorkspaceJev>& setting
 void WorkspaceConfigEditor::write_web_search(const WorkspaceWebSearch& settings) {
     std::string provider = settings.provider;
     if (provider != "brave" && provider != "tavily") {
-        if (settings.enabled) {
+        if (settings.enabled || settings.tool_enabled) {
             throw std::invalid_argument("Select a web search provider.");
         }
         log_warn("Ignoring unsupported web search provider; using Brave Search API");
         provider = "brave";
     }
-    if (settings.enabled) {
+    if (settings.enabled || settings.tool_enabled) {
         if (!workspace_.find_api_key(settings.api_key_id)) {
             throw std::invalid_argument("Select an existing API key for web search.");
         }
+    }
+    if (settings.enabled) {
         if (!workspace_.find_provider(settings.query_provider_id)) {
             throw std::invalid_argument("Select a query provider for web search.");
         }
     }
     toml::table table;
     table.insert("enabled", settings.enabled);
+    table.insert("tool_enabled", settings.tool_enabled);
     table.insert("provider", provider);
     table.insert("api_key", settings.api_key_id);
     table.insert("query_provider", settings.query_provider_id);
@@ -2855,7 +2864,8 @@ void WorkspaceConfigEditor::write_character_settings(
     std::optional<std::string_view> style_id,
     std::optional<std::string_view> voice_id,
     std::optional<std::string_view> reasoning_effort,
-    std::optional<WebSearchMode> web_search) {
+    std::optional<WebSearchMode> web_search,
+    std::optional<bool> web_search_tool) {
     const auto configured = workspace_.character_config_paths_.find(std::string(character_id));
     if (configured == workspace_.character_config_paths_.end()
         && character_id != workspace_assistant_id) {
@@ -2906,6 +2916,8 @@ void WorkspaceConfigEditor::write_character_settings(
         } else {
             table.erase("web_search");
         }
+        if (web_search_tool) table.insert_or_assign("web_search_tool", *web_search_tool);
+        else table.erase("web_search_tool");
     });
 }
 

@@ -65,6 +65,11 @@ public:
         const GenerationDeltaSink& on_delta,
         const std::atomic_bool& cancellation) override;
 private:
+    GenerationResult perform_once(
+        const RequestPayload& payload,
+        const GenerationDeltaSink& on_delta,
+        const std::atomic_bool& cancellation);
+
     class CurlEasyHandle;
 
     SharedCharacterDefinition definition_;

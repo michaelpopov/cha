@@ -337,6 +337,8 @@ void to_json(nlohmann::json& json, const CharacterDetail& value) {
         ? nlohmann::json(*value.voice) : nlohmann::json(nullptr);
     json["reasoning_effort"] = value.reasoning_effort
         ? nlohmann::json(*value.reasoning_effort) : nlohmann::json(nullptr);
+    json["web_search_tool"] = value.web_search_tool
+        ? nlohmann::json(*value.web_search_tool) : nlohmann::json(nullptr);
     json["web_search"] = value.web_search
         ? nlohmann::json(to_string(*value.web_search)) : nlohmann::json(nullptr);
     json["available_providers"] = value.available_providers;
@@ -443,7 +445,8 @@ void to_json(nlohmann::json& json, const JevSettings& value) {
 
 void to_json(nlohmann::json& json, const WebSearchSettings& value) {
     json = {{"enabled", value.enabled}, {"provider", value.provider},
-        {"api_key", value.api_key}, {"query_provider", value.query_provider}};
+        {"api_key", value.api_key}, {"query_provider", value.query_provider},
+        {"tool_enabled", value.tool_enabled}};
 }
 
 void to_json(nlohmann::json& json, const VoiceInputSettings& value) {

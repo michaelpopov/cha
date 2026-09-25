@@ -131,6 +131,8 @@ struct Application::Impl {
     std::shared_ptr<SessionMirror> mirror;
     std::unique_ptr<ApiKeyStore> api_keys;
     std::unique_ptr<OpenAiOAuth> openai_auth;
+    std::mutex web_search_url_mutex;
+    std::string web_search_url_override;
     Providers providers;
     std::unique_ptr<LiveSessionManager> live_sessions;
     std::unique_ptr<AudioDownloadManager> audio_downloads;

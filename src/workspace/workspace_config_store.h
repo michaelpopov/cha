@@ -130,7 +130,8 @@ public:
         std::optional<std::string_view> style_id,
         std::optional<std::string_view> voice_id = std::nullopt,
         std::optional<std::string_view> reasoning_effort = std::nullopt,
-        std::optional<WebSearchMode> web_search = std::nullopt);
+        std::optional<WebSearchMode> web_search = std::nullopt,
+        std::optional<bool> web_search_tool = std::nullopt);
     WorkspaceConfigEditResult apply_character_definition(
         std::string_view character_id,
         std::string_view display_name,

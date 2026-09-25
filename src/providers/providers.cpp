@@ -151,6 +151,25 @@ void ProviderRequest::execute(
             return;
         }
 
+        bool web_search_used = !generation.web_search_context.empty();
+        if (input_.web_search_tool && web_search_executor) {
+            generation.web_search_tool = [&, config = *input_.web_search_tool](
+                std::string_view query, const std::atomic_bool& cancelled) {
+                log_info("Web search initiated: trigger=model_tool query_bytes=" + std::to_string(query.size()));
+                auto results = web_search_executor(config, query, cancelled);
+                if (!cancelled.load()) {
+                    log_info("Web search completed: trigger=model_tool query_bytes=" + std::to_string(query.size())
+                        + " result_bytes=" + std::to_string(results.size()));
+                }
+                if (!cancelled.load() && !web_search_used) {
+                    web_search_used = true;
+                    events_.push(GenerationEventDelta{
+                        request_id, GenerationDeltaKind::answer, {}, true});
+                    notifier_->wake();
+                }
+                return results;
+            };
+        }
         RequestPayload payload = backend->prepare(generation);
         fields += " request_payload_bytes=" + std::to_string(payload.bytes.size());
         if (payload.text_sizes) {
@@ -163,7 +182,7 @@ void ProviderRequest::execute(
         }
         const GenerationResult result = backend->perform(
             std::move(payload),
-            [this, request_id, web_search_used = !generation.web_search_context.empty()]
+            [this, request_id, &web_search_used]
             (GenerationDelta delta) {
                 if (!events_.push(GenerationEventDelta{
                         request_id,

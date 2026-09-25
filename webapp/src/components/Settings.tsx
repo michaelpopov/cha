@@ -2196,7 +2196,7 @@ export function JevSettingsScreen({ client, dispatch }: SettingsScreenProps) {
 }
 
 const defaultWebSearch: WebSearchSettings = {
-  enabled: false, provider: 'brave', api_key: '', query_provider: '',
+  enabled: false, provider: 'brave', api_key: '', query_provider: '', tool_enabled: false,
 };
 
 export function WebSearchSettingsScreen({ client, dispatch }: SettingsScreenProps) {
@@ -2225,7 +2225,8 @@ export function WebSearchSettingsScreen({ client, dispatch }: SettingsScreenProp
   }, [client]);
 
   const dirty = saved !== null && (
-    settings.enabled !== saved.enabled
+    settings.tool_enabled !== saved.tool_enabled
+    || settings.enabled !== saved.enabled
     || settings.provider !== saved.provider
     || settings.api_key !== saved.api_key
     || settings.query_provider !== saved.query_provider
@@ -2249,8 +2250,11 @@ export function WebSearchSettingsScreen({ client, dispatch }: SettingsScreenProp
     {keys && providers && <form className="cha-settings-form" onSubmit={(event) => void save(event)}>
       <label className="cha-checkbox-row"><input checked={settings.enabled} disabled={pending}
         onChange={(event) => setSettings({ ...settings, enabled: event.target.checked })}
-        type="checkbox" />Enabled</label>
-      <p className="cha-settings-note">Search API requires recipient detection to be enabled.</p>
+        type="checkbox" />Search before generation</label>
+      <p className="cha-settings-note">Search before generation requires recipient detection to be enabled.</p>
+      <label className="cha-checkbox-row"><input checked={settings.tool_enabled} disabled={pending}
+        onChange={(event) => setSettings({ ...settings, tool_enabled: event.target.checked })}
+        type="checkbox" />On-demand web search</label>
       <label>API provider<select className="cha-form-control" disabled={pending}
         value={settings.provider}
         onChange={(event) => setSettings({ ...settings, provider: event.target.value as WebSearchSettings['provider'] })}>
@@ -2271,10 +2275,9 @@ export function WebSearchSettingsScreen({ client, dispatch }: SettingsScreenProp
       </select></label>
       <div className="cha-settings-form-actions">
         <button className="cha-button cha-button-primary" type="submit"
-          disabled={!dirty || pending || (settings.enabled && (
-            !keys.some((key) => key.id === settings.api_key)
-            || !providers.some((provider) => provider.id === settings.query_provider)
-          ))}>
+          disabled={!dirty || pending
+            || ((settings.enabled || settings.tool_enabled) && !keys.some((key) => key.id === settings.api_key))
+            || (settings.enabled && !providers.some((provider) => provider.id === settings.query_provider))}>
           Save
         </button>
       </div>

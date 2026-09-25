@@ -102,7 +102,7 @@ export const characterDetailFixture: CharacterDetail = {
   style: 'serif-italic',
   voice_id: null,
   reasoning_effort: null,
-  web_search: null,
+  web_search: null, web_search_tool: null,
   available_providers: [
     { id: 'sol-high', label: 'Sol high' },
     { id: 'terra', label: 'Terra' },
@@ -301,7 +301,7 @@ export function fixtureClient(overrides: Partial<ChaClient> = {}): ChaClient {
     saveJevSettings: async (settings) => settings,
     disableJev: async () => {},
     getWebSearchSettings: async () => ({
-      enabled: false, provider: 'brave', api_key: '', query_provider: '',
+      enabled: false, provider: 'brave', api_key: '', query_provider: '', tool_enabled: false,
     }),
     saveWebSearchSettings: async (settings) => settings,
     getVoiceOutputSettings: async () => null,

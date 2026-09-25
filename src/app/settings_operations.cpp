@@ -262,7 +262,10 @@ ApiKeyDetail api_key_detail(
     if (workspace.jev() && key.id == workspace.jev()->api_key_id) {
         used_by.emplace_back("Recipient detection");
     }
-    if (workspace.web_search().enabled
+    if ((workspace.web_search().enabled || workspace.web_search().tool_enabled
+            || std::ranges::any_of(workspace.characters(), [](const auto& character) {
+                return character.web_search_tool.value_or(false);
+            }))
         && key.id == workspace.web_search().api_key_id) {
         used_by.emplace_back("Search API");
     }
@@ -652,7 +655,7 @@ void disable_jev(WorkspaceConfigStore& store) {
 WebSearchSettings get_web_search_settings(const Workspace& workspace) {
     const auto& settings = workspace.web_search();
     return {settings.enabled, settings.provider, settings.api_key_id,
-        settings.query_provider_id};
+        settings.query_provider_id, settings.tool_enabled};
 }
 
 WebSearchSettings save_web_search_settings(
@@ -660,7 +663,7 @@ WebSearchSettings save_web_search_settings(
     return with_settings_edit([&] {
         store.apply_web_search_update(
             WorkspaceWebSearch{update.enabled, update.provider, update.api_key,
-                update.query_provider});
+                update.query_provider, update.tool_enabled});
         return get_web_search_settings(*store.snapshot());
     });
 }

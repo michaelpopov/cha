@@ -1,6 +1,7 @@
 #include "providers/responses_api.h"
 
 #include "util/json_serialization.h"
+#include "providers/tool_calls.h"
 
 #include <nlohmann/json.hpp>
 
@@ -175,11 +176,13 @@ std::string build_responses_request_body(
         }
     }
 
+    if (input.web_search_tool) add_web_search_tool(body, config.api);
     return dump_json(body, "Model request");
 }
 
-ResponsesStreamDecoder::ResponsesStreamDecoder(const GenerationDeltaSink& on_delta)
-    : on_delta_(&on_delta) {
+ResponsesStreamDecoder::ResponsesStreamDecoder(const GenerationDeltaSink& on_delta,
+    bool collect_tool_calls)
+    : on_delta_(&on_delta), collect_tool_calls_(collect_tool_calls) {
 }
 
 void ResponsesStreamDecoder::consume(std::string_view bytes) {
@@ -210,14 +213,9 @@ StreamDecodeResult ResponsesStreamDecoder::finish() {
             usage_,
         }, true};
     }
-    if (!received_answer_) {
-        return {{
-            GenerationOutcome::protocol_error,
-            "Streaming response completed without answer content",
-            usage_,
-        }, false};
-    }
-    return {{GenerationOutcome::completed, {}, usage_}, false};
+    return {tool_call_result(output_, ProviderApi::responses,
+        received_answer_, usage_, collect_tool_calls_,
+        "Streaming response completed without answer content"), false};
 }
 
 bool ResponsesStreamDecoder::handle_event_json(std::string_view data) {
@@ -259,11 +257,26 @@ bool ResponsesStreamDecoder::handle_event_json(std::string_view data) {
         return true;
     }
 
+    if (type == "response.output_item.done") {
+        if (!collect_tool_calls_) return true;
+        const auto index = value.find("output_index");
+        const auto item = value.find("item");
+        if (index != value.end() && index->is_number_integer()
+            && index->get<int>() >= 0 && item != value.end() && item->is_object()) {
+            output_items_[index->get<int>()] = *item;
+        } else if (protocol_error_.empty()) {
+            protocol_error_ = "Responses stream contained an invalid output item";
+        }
+        return true;
+    }
+
     if (type == "response.completed") {
         done_ = true;
         const auto response = value.find("response");
         if (response != value.end() && response->is_object()) {
             usage_ = responses_token_usage(*response);
+            const auto output = response->find("output");
+            if (collect_tool_calls_ && output != response->end() && output->is_array()) output_ = *output;
             const std::string status = first_string_field(*response, "status");
             if (!is_successful_completed_status(status)) {
                 if (protocol_error_.empty()) {
@@ -281,6 +294,9 @@ bool ResponsesStreamDecoder::handle_event_json(std::string_view data) {
                 }
                 return false;
             }
+        }
+        if (collect_tool_calls_ && output_.empty()) {
+            for (const auto& [index, item] : output_items_) output_.push_back(item);
         }
         if (protocol_error_.empty()) {
             completed_successfully_ = true;
@@ -344,7 +360,7 @@ bool ResponsesStreamDecoder::handle_event_json(std::string_view data) {
         return false;
     }
 
-    // Web-search lifecycle, reasoning, item lifecycle, and other nonterminal
+    // Web-search lifecycle, reasoning deltas, and other nonterminal
     // content events are private implementation details and are ignored.
     return true;
 }
@@ -356,7 +372,8 @@ void ResponsesStreamDecoder::emit_answer(std::string text) {
 
 GenerationResult decode_responses_response(
     std::string_view body,
-    const GenerationDeltaSink& on_delta) {
+    const GenerationDeltaSink& on_delta,
+    bool collect_tool_calls) {
     Json value;
     try {
         value = Json::parse(body);
@@ -485,13 +502,7 @@ GenerationResult decode_responses_response(
         }
     }
 
-    if (!received_answer) {
-        return {
-            GenerationOutcome::protocol_error,
-            "Response completed without answer content",
-        };
-    }
-    return {GenerationOutcome::completed, {}, usage};
+    return tool_call_result(*output, ProviderApi::responses, received_answer, usage, collect_tool_calls);
 }
 
 } // namespace cha

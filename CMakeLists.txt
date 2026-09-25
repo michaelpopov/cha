@@ -277,6 +277,7 @@ add_library(cha_lib STATIC
     src/providers/api_key_store.cpp
     src/providers/voice_output_config.cpp
     src/providers/jev.cpp
+    src/providers/tool_calls.cpp
     src/providers/web_search.cpp
     src/providers/providers.cpp
     src/providers/provider_client.cpp

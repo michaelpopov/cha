@@ -2084,6 +2084,35 @@ TEST(SessionController, ClassifiesSuccessiveReasoningAndAnswerSuffixes) {
         requires_snapshot(controller->handle_generation_event(GenerationCompleted{1})));
 }
 
+TEST(SessionController, ShowsWebSearchOnTheOpenAnswerBeforeCompletion) {
+    for (bool preamble : {false, true}) {
+        TemporaryJournal temporary;
+        auto controller = test::from_test_backends(
+            test::one_backend(std::make_unique<ScriptedBackend>()), temporary.path, notifier());
+        (void)controller->submit_prompt("operator", "Question");
+        if (preamble) {
+            (void)controller->handle_generation_event(GenerationEventDelta{
+                1, GenerationDeltaKind::answer, "I'll search.",
+            });
+            EXPECT_FALSE(controller->view().transcript.entries.back().web_search_used);
+        }
+        const auto update = controller->handle_generation_event(GenerationEventDelta{
+            1, GenerationDeltaKind::answer, "", true,
+        });
+        EXPECT_EQ(requires_snapshot(update), preamble);
+        if (preamble) {
+            EXPECT_TRUE(controller->view().transcript.entries.back().web_search_used);
+            EXPECT_EQ(controller->view().transcript.entries.back().status, EntryStatus::streaming);
+        }
+        (void)controller->handle_generation_event(GenerationEventDelta{
+            1, GenerationDeltaKind::answer, "Result",
+        });
+        EXPECT_TRUE(controller->view().transcript.entries.back().web_search_used);
+        (void)controller->handle_generation_event(GenerationCompleted{1});
+        EXPECT_TRUE(controller->view().transcript.entries.back().web_search_used);
+    }
+}
+
 TEST(SessionController, ClassifiesIgnoredAndAmbiguousDeltasConservatively) {
     TemporaryJournal temporary;
     auto controller = test::from_test_backends(

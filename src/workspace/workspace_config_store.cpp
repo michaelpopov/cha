@@ -1300,13 +1300,14 @@ WorkspaceConfigEditResult WorkspaceConfigStore::apply_character_settings(
     std::optional<std::string_view> style_id,
     std::optional<std::string_view> voice_id,
     std::optional<std::string_view> reasoning_effort,
-    std::optional<WebSearchMode> web_search) {
+    std::optional<WebSearchMode> web_search,
+    std::optional<bool> web_search_tool) {
     return impl_->edit([&](const Workspace& workspace, WorkspaceConfigEditor& editor) {
         std::vector<std::string> affected =
             forums_using_character(workspace, character_id);
         editor.write_character_settings(
             character_id, provider_id, style_id, voice_id,
-            reasoning_effort, web_search);
+            reasoning_effort, web_search, web_search_tool);
         return affected;
     });
 }

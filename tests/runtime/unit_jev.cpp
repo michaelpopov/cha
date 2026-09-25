@@ -255,6 +255,100 @@ protected:
     CommandResult send(std::string text) { return handle_text_input(*controller, "reader", std::move(text)); }
 };
 
+TEST_F(JevRouting, OnDemandSearchUsesWorkspaceDefaultAndCharacterOverrideWithoutRecipientDetection) {
+    struct SearchBackend final : ModelBackend {
+        explicit SearchBackend(bool& offered) : offered(offered) {}
+        RequestPayload prepare(const GenerationRequest& input) override {
+            search = input.web_search_tool;
+            offered = static_cast<bool>(search);
+            return {};
+        }
+        GenerationResult perform(RequestPayload, const GenerationDeltaSink& sink,
+            const std::atomic_bool& cancelled) override {
+            if (search) EXPECT_FALSE(search("model query", cancelled).empty());
+            sink({GenerationDeltaKind::answer, "Answer"});
+            return {};
+        }
+        bool& offered;
+        std::function<std::string(std::string_view, const std::atomic_bool&)> search;
+    };
+    controller.reset();
+    providers->shutdown();
+    store->apply_jev_update(std::nullopt);
+    bool offered = false;
+    providers = std::make_shared<Providers>(
+        [&](SharedCharacterDefinition) { return std::make_unique<SearchBackend>(offered); },
+        [this](auto worker) { workers.push_back(std::move(worker)); }, JevExecutor{},
+        [this](const auto& settings, auto query, const auto& cancelled) {
+            return search(settings, query, cancelled);
+        });
+    controller = make_controller(notifier);
+    for (bool workspace_default : {false, true}) {
+        store->apply_web_search_update({false, "brave", config.api_key_id, "obsolete-query-provider", workspace_default});
+        EXPECT_EQ(store->snapshot()->web_search().tool_enabled, workspace_default);
+        for (std::optional<bool> override : {std::optional<bool>{}, std::optional<bool>{false}, std::optional<bool>{true}}) {
+            store->apply_character_settings("guide", "test", std::nullopt, std::nullopt,
+                std::nullopt, std::nullopt, override);
+            EXPECT_EQ(store->snapshot()->find_character("guide")->web_search_tool, override);
+            const auto count = searched.size();
+            const bool enabled = override.value_or(workspace_default);
+            (void)send("What is current?");
+            finish();
+            EXPECT_EQ(offered, enabled);
+            EXPECT_EQ(searched.size(), count + (enabled ? 1 : 0));
+            EXPECT_EQ(controller->view().transcript.entries.back().web_search_used, enabled);
+            EXPECT_TRUE(classified.empty());
+        }
+    }
+    // A character override must not advertise a tool with an empty or stale key.
+    store->apply_character_settings("guide", "test", std::nullopt, std::nullopt,
+        std::nullopt, std::nullopt, true);
+    for (const std::string key : {"", "missing-key"}) {
+        store->apply_web_search_update({false, "brave", key, "", false});
+        const auto count = searched.size();
+        (void)send("Answer without search");
+        finish();
+        EXPECT_FALSE(offered);
+        EXPECT_EQ(searched.size(), count);
+        EXPECT_EQ(controller->view().transcript.entries.back().status, EntryStatus::complete);
+        EXPECT_EQ(controller->view().transcript.entries.back().text, "Answer");
+    }
+}
+
+TEST_F(JevRouting, OnDemandSearchSupplementsSearchBeforeGeneration) {
+    struct SearchBackend final : ModelBackend {
+        RequestPayload prepare(const GenerationRequest& input) override {
+            EXPECT_FALSE(input.web_search_context.empty());
+            EXPECT_TRUE(input.web_search_tool);
+            search = input.web_search_tool;
+            return {};
+        }
+        GenerationResult perform(RequestPayload, const GenerationDeltaSink& sink,
+            const std::atomic_bool& cancelled) override {
+            if (search) (void)search("follow-up query", cancelled);
+            sink({GenerationDeltaKind::answer, "Answer"});
+            return {};
+        }
+        std::function<std::string(std::string_view, const std::atomic_bool&)> search;
+    };
+    controller.reset();
+    providers->shutdown();
+    providers = std::make_shared<Providers>(
+        [](SharedCharacterDefinition) { return std::make_unique<SearchBackend>(); },
+        [this](auto worker) { workers.push_back(std::move(worker)); },
+        [this](const auto&, const auto&) { return decision; },
+        [this](const auto& settings, auto query, const auto& cancelled) {
+            return search(settings, query, cancelled);
+        });
+    store->apply_web_search_update({true, "brave", config.api_key_id, "query", true});
+    controller = make_controller(notifier);
+    decision = {JevOutcome::success, "undefined", {}, JevSearch::direct};
+    (void)send("Original query");
+    finish();
+    EXPECT_EQ(searched, (std::vector<std::string>{"Original query", "follow-up query"}));
+    EXPECT_TRUE(controller->view().transcript.entries.back().web_search_used);
+}
+
 TEST_F(JevRouting, RewriteChoiceSearchesBeforeChatAndAddsResultsToModelContext) {
     struct CapturingBackend final : ModelBackend {
         CapturingBackend(std::vector<GenerationRequest>& captured, std::string character_id)

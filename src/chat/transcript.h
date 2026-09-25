@@ -153,6 +153,7 @@ public:
     void add_entry(TranscriptEntry entry);
     void begin_entry(TranscriptEntry entry);
     void append_answer(EntryId entry_id, std::string_view text);
+    void mark_web_search_used(EntryId entry_id);
     void finish_entry(
         EntryId entry_id,
         EntryStatus status,

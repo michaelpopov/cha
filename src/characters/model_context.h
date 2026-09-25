@@ -4,6 +4,8 @@
 #include "chat/session_identity.h"
 #include "chat/transcript.h"
 
+#include <atomic>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <span>
@@ -40,6 +42,7 @@ struct GenerationRequest {
     SharedModelHistory history;
     RunSpec run;
     std::string web_search_context;
+    std::function<std::string(std::string_view, const std::atomic_bool&)> web_search_tool;
 };
 
 enum class ModelRole {

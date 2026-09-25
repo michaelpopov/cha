@@ -153,6 +153,7 @@ CharacterDetail character_detail(
         detail.voice = character.voice_id;
         detail.reasoning_effort = character.reasoning_effort;
         detail.web_search = character.web_search;
+        detail.web_search_tool = character.web_search_tool;
     }
     for (const WorkspaceProvider& provider : workspace.providers()) {
         detail.available_providers.push_back({provider.id, provider.label});
@@ -345,7 +346,8 @@ CharacterDetail update_character_settings(
         || update.reasoning_effort != character->reasoning_effort
         || update.web_search != character->web_search;
     const bool changed = restart || update.style != character->style_id
-        || update.voice != character->voice_id;
+        || update.voice != character->voice_id
+        || update.web_search_tool != character->web_search_tool;
     return with_workspace_edit([&] {
         try {
             if (changed) {
@@ -363,7 +365,7 @@ CharacterDetail update_character_settings(
                     live_sessions,
                     store.apply_character_settings(
                         id, update.provider, style, voice,
-                        reasoning_effort, update.web_search), restart);
+                        reasoning_effort, update.web_search, update.web_search_tool), restart);
             }
         } catch (const std::invalid_argument&) {
             fail(ErrorCode::invalid_argument, "Invalid character settings.");

@@ -4,6 +4,7 @@
 #include "providers/model_backend.h"
 #include "providers/sse_framer.h"
 
+#include <nlohmann/json.hpp>
 #include <string>
 #include <string_view>
 
@@ -30,8 +31,9 @@ public:
     // dangle through the transfer.
     ChatCompletionsStreamDecoder(
         ReasoningFormat format,
-        const GenerationDeltaSink& on_delta);
-    ChatCompletionsStreamDecoder(ReasoningFormat, GenerationDeltaSink&&) = delete;
+        const GenerationDeltaSink& on_delta,
+        bool collect_tool_calls = false);
+    ChatCompletionsStreamDecoder(ReasoningFormat, GenerationDeltaSink&&, bool = false) = delete;
 
     ChatCompletionsStreamDecoder(const ChatCompletionsStreamDecoder&) = delete;
     ChatCompletionsStreamDecoder& operator=(
@@ -48,6 +50,8 @@ public:
 private:
     bool handle_event_data(std::string_view data);
     void emit(GenerationDeltaKind kind, std::string text);
+    void accumulate_delta(const nlohmann::json& delta);
+    std::string finish_reason_;
 
     bool received_output() const noexcept {
         return received_reasoning_ || received_answer_;
@@ -55,12 +59,14 @@ private:
 
     ReasoningFormat format_;
     const GenerationDeltaSink* on_delta_;
+    bool collect_tool_calls_;
     SseFramer framer_;
     std::string protocol_error_;
     bool done_{};
     bool received_reasoning_{};
     bool received_answer_{};
     GenerationTokenUsage usage_;
+    nlohmann::json message_{{"role", "assistant"}};
 };
 
 // Decodes one complete non-streaming response body, reporting its reasoning and
@@ -69,6 +75,7 @@ private:
 GenerationResult decode_chat_completions_response(
     std::string_view body,
     ReasoningFormat format,
-    const GenerationDeltaSink& on_delta);
+    const GenerationDeltaSink& on_delta,
+    bool collect_tool_calls = false);
 
 } // namespace cha

@@ -5,6 +5,8 @@
 #include "providers/model_backend.h"
 #include "providers/sse_framer.h"
 
+#include <nlohmann/json.hpp>
+#include <map>
 #include <string>
 #include <string_view>
 
@@ -19,12 +21,13 @@ std::string build_responses_request_body(
     std::string_view system_prompt,
     RequestTextSizes* text_sizes = nullptr);
 
-// Decodes one Responses API SSE stream into answer/refusal text. Search queries,
-// search lifecycle, annotations, and reasoning events are ignored.
+// Decodes answer/refusal text and retains completed output items for tool
+// continuation. Provider-hosted search lifecycle events are ignored.
 class ResponsesStreamDecoder final : public StreamingResponseDecoder {
 public:
-    explicit ResponsesStreamDecoder(const GenerationDeltaSink& on_delta);
-    ResponsesStreamDecoder(GenerationDeltaSink&&) = delete;
+    explicit ResponsesStreamDecoder(const GenerationDeltaSink& on_delta,
+        bool collect_tool_calls = false);
+    ResponsesStreamDecoder(GenerationDeltaSink&&, bool = false) = delete;
 
     ResponsesStreamDecoder(const ResponsesStreamDecoder&) = delete;
     ResponsesStreamDecoder& operator=(const ResponsesStreamDecoder&) = delete;
@@ -37,6 +40,7 @@ private:
     void emit_answer(std::string text);
 
     const GenerationDeltaSink* on_delta_;
+    bool collect_tool_calls_;
     SseFramer framer_;
     std::string protocol_error_;
     bool done_{};
@@ -44,11 +48,14 @@ private:
     bool received_answer_{};
     bool describe_response_{true};
     GenerationTokenUsage usage_;
+    std::map<int, nlohmann::json> output_items_;
+    nlohmann::json output_ = nlohmann::json::array();
 };
 
 // Decodes one complete non-streaming Responses body into answer/refusal text.
 GenerationResult decode_responses_response(
     std::string_view body,
-    const GenerationDeltaSink& on_delta);
+    const GenerationDeltaSink& on_delta,
+    bool collect_tool_calls = false);
 
 } // namespace cha

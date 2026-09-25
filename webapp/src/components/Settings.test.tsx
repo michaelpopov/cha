@@ -2045,17 +2045,17 @@ describe('web search settings', () => {
     const saveWebSearchSettings = vi.fn(async (settings) => settings);
     render(<WebSearchSettingsScreen client={fixtureClient({
       getWebSearchSettings: async () => ({
-        enabled: false, provider: 'brave', api_key: '', query_provider: '',
+        enabled: false, provider: 'brave', api_key: '', query_provider: '', tool_enabled: false,
       }),
       listApiKeys: async () => [{ id: 'key-1', display_name: 'Search key', has_value: true, used_by: [] }],
       listProviders: async () => [{ id: 'model-1', display_name: 'Query model', model: 'model', host: 'localhost' }],
       saveWebSearchSettings,
     })} dispatch={vi.fn()} state={initialAppState} />);
 
-    const enabled = await screen.findByRole('checkbox', { name: 'Enabled' });
+    const enabled = await screen.findByRole('checkbox', { name: 'Search before generation' });
+    expect(screen.getByText('Search before generation requires recipient detection to be enabled.')).toBeInTheDocument();
     expect(enabled).not.toBeChecked();
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
-    expect(screen.getByText('Search API requires recipient detection to be enabled.')).toBeInTheDocument();
     await user.selectOptions(screen.getByLabelText('API provider'), 'tavily');
     expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
     await user.selectOptions(screen.getByLabelText('API provider'), 'brave');
@@ -2067,29 +2067,46 @@ describe('web search settings', () => {
     await user.selectOptions(screen.getByLabelText('Query provider'), 'model-1');
     await user.click(screen.getByRole('button', { name: 'Save' }));
     expect(saveWebSearchSettings).toHaveBeenLastCalledWith({
-      enabled: true, provider: 'tavily', api_key: 'key-1', query_provider: 'model-1',
+      enabled: true, provider: 'tavily', api_key: 'key-1', query_provider: 'model-1', tool_enabled: false,
     });
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
     await user.selectOptions(screen.getByLabelText('API provider'), 'brave');
     expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
     await user.click(screen.getByRole('button', { name: 'Save' }));
     expect(saveWebSearchSettings).toHaveBeenLastCalledWith({
-      enabled: true, provider: 'brave', api_key: 'key-1', query_provider: 'model-1',
+      enabled: true, provider: 'brave', api_key: 'key-1', query_provider: 'model-1', tool_enabled: false,
     });
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
     await user.click(enabled);
     await user.click(screen.getByRole('button', { name: 'Save' }));
     expect(saveWebSearchSettings).toHaveBeenLastCalledWith({
-      enabled: false, provider: 'brave', api_key: 'key-1', query_provider: 'model-1',
+      enabled: false, provider: 'brave', api_key: 'key-1', query_provider: 'model-1', tool_enabled: false,
     });
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+  });
+
+  it('enables on-demand search without a query provider or pre-search', async () => {
+    const user = userEvent.setup();
+    const saveWebSearchSettings = vi.fn(async (settings) => settings);
+    render(<WebSearchSettingsScreen client={fixtureClient({
+      listApiKeys: async () => [{ id: 'key-1', display_name: 'Search key', has_value: true, used_by: [] }],
+      listProviders: async () => [],
+      saveWebSearchSettings,
+    })} dispatch={vi.fn()} state={initialAppState} />);
+    await user.click(await screen.findByLabelText('On-demand web search'));
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+    await user.selectOptions(screen.getByLabelText('API key'), 'key-1');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(saveWebSearchSettings).toHaveBeenCalledWith({
+      enabled: false, tool_enabled: true, provider: 'brave', api_key: 'key-1', query_provider: '',
+    });
   });
 
   it('keeps unsaved changes available for retry after a failed save', async () => {
     const user = userEvent.setup();
     render(<WebSearchSettingsScreen client={fixtureClient({
       getWebSearchSettings: async () => ({
-        enabled: false, provider: 'brave', api_key: '', query_provider: '',
+        enabled: false, provider: 'brave', api_key: '', query_provider: '', tool_enabled: false,
       }),
       saveWebSearchSettings: async () => {
         throw new ChaError('invalid_argument', 'Search settings could not be saved.');

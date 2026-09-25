@@ -145,13 +145,19 @@ std::optional<WebSearchMode> nullable_web_search(
 
 CharacterSettingsUpdate parse_character_settings_update(const nlohmann::json& json) {
     exact_keys(json, {
-        "provider", "style", "voice_id", "reasoning_effort", "web_search"});
+        "provider", "style", "voice_id", "reasoning_effort", "web_search", "web_search_tool"});
+    std::optional<bool> tool;
+    if (!json["web_search_tool"].is_null()) {
+        if (!json["web_search_tool"].is_boolean()) throw std::invalid_argument("Invalid web command");
+        tool = json["web_search_tool"].get<bool>();
+    }
     return {
         .provider = required_string(json, "provider"),
         .style = nullable_string(json, "style"),
         .voice = nullable_string(json, "voice_id"),
         .reasoning_effort = nullable_reasoning_effort(json),
         .web_search = nullable_web_search(json),
+        .web_search_tool = tool,
     };
 }
 
@@ -472,13 +478,14 @@ WebSearchSettings parse_web_search_settings(const nlohmann::json& json) {
     for (const auto& [key, value] : json.items()) {
         (void)value;
         if (key != "enabled" && key != "provider" && key != "api_key"
-            && key != "query_provider")
+            && key != "query_provider" && key != "tool_enabled")
             log_warn("Ignoring unused web search field: " + key);
     }
     return {required_field<bool>(json, "enabled"),
         required_field<std::string>(json, "provider"),
         required_field<std::string>(json, "api_key"),
-        required_field<std::string>(json, "query_provider")};
+        required_field<std::string>(json, "query_provider"),
+        required_field<bool>(json, "tool_enabled")};
 }
 
 VoiceInputSettings parse_voice_input_settings(const nlohmann::json& json) {

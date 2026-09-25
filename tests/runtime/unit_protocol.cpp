@@ -154,6 +154,7 @@ TEST(WebProtocol, SerializesSpecifiedSuccessListingAndErrorBodies) {
             {"voice_id", "brian"},
             {"reasoning_effort", "high"},
             {"web_search", "auto"},
+            {"web_search_tool", nullptr},
             {"available_providers", {{{"id", "terra"}, {"label", "Terra"}}}},
             {"available_styles", {{
                 {"id", "serif-italic"},
@@ -433,7 +434,7 @@ TEST(WebProtocol, ParsesRouteSpecificCommandPayloads) {
          {"style", nullptr},
          {"voice_id", "brian"},
          {"reasoning_effort", "xhigh"},
-         {"web_search", "required"}});
+         {"web_search", "required"}, {"web_search_tool", nullptr}});
     EXPECT_EQ(update.provider, "qwen");
     EXPECT_FALSE(update.style);
     EXPECT_EQ(update.voice, "brian");
@@ -442,7 +443,7 @@ TEST(WebProtocol, ParsesRouteSpecificCommandPayloads) {
     for (const auto* effort : {"none", "minimal"}) {
         const auto settings = parse_character_settings_update({
             {"provider", "qwen"}, {"style", nullptr}, {"voice_id", nullptr},
-            {"reasoning_effort", effort}, {"web_search", nullptr}});
+            {"reasoning_effort", effort}, {"web_search", nullptr}, {"web_search_tool", nullptr}});
         EXPECT_EQ(settings.reasoning_effort, effort);
     }
     EXPECT_THROW(
@@ -544,7 +545,7 @@ TEST(WebProtocol, ParsesRouteSpecificCommandPayloads) {
             {"style", nullptr},
             {"voice_id", nullptr},
             {"reasoning_effort", nullptr},
-            {"web_search", nullptr},
+            {"web_search", nullptr}, {"web_search_tool", nullptr},
         }),
         std::invalid_argument);
 
@@ -597,7 +598,7 @@ TEST(WebProtocol, ParsesRouteSpecificCommandPayloads) {
             {"style", nullptr},
             {"voice_id", nullptr},
             {"reasoning_effort", nullptr},
-            {"web_search", nullptr},
+            {"web_search", nullptr}, {"web_search_tool", nullptr},
         }),
         std::invalid_argument);
     EXPECT_THROW(
@@ -606,7 +607,7 @@ TEST(WebProtocol, ParsesRouteSpecificCommandPayloads) {
             {"style", nullptr},
             {"voice_id", nullptr},
             {"reasoning_effort", "extreme"},
-            {"web_search", nullptr},
+            {"web_search", nullptr}, {"web_search_tool", nullptr},
         }),
         std::invalid_argument);
     EXPECT_THROW(
@@ -615,7 +616,7 @@ TEST(WebProtocol, ParsesRouteSpecificCommandPayloads) {
             {"style", nullptr},
             {"voice_id", nullptr},
             {"reasoning_effort", nullptr},
-            {"web_search", "sometimes"},
+            {"web_search", "sometimes"}, {"web_search_tool", nullptr},
         }),
         std::invalid_argument);
 
@@ -670,6 +671,28 @@ TEST(WebProtocol, ParsesRouteSpecificCommandPayloads) {
     EXPECT_THROW(
         parse_empty_object({{"unexpected", true}}),
         std::invalid_argument);
+}
+
+TEST(WebProtocol, RequiresExplicitToolSettingsOnSave) {
+    nlohmann::json character{{"provider", "test"}, {"style", nullptr}, {"voice_id", nullptr},
+        {"reasoning_effort", nullptr}, {"web_search", nullptr}};
+    EXPECT_THROW((void)parse_character_settings_update(character), std::invalid_argument);
+    for (const auto& value : {nlohmann::json(true), nlohmann::json(false), nlohmann::json(nullptr)}) {
+        character["web_search_tool"] = value;
+        const auto settings = parse_character_settings_update(character);
+        EXPECT_EQ(settings.web_search_tool, value.is_null() ? std::nullopt : std::optional<bool>(value.get<bool>()));
+    }
+    character["web_search_tool"] = "true";
+    EXPECT_THROW((void)parse_character_settings_update(character), std::invalid_argument);
+
+    nlohmann::json search{{"enabled", false}, {"provider", "brave"}, {"api_key", ""}, {"query_provider", ""}};
+    EXPECT_THROW((void)parse_web_search_settings(search), std::invalid_argument);
+    for (bool value : {false, true}) {
+        search["tool_enabled"] = value;
+        EXPECT_EQ(parse_web_search_settings(search).tool_enabled, value);
+    }
+    search["tool_enabled"] = nullptr;
+    EXPECT_THROW((void)parse_web_search_settings(search), std::invalid_argument);
 }
 
 } // namespace

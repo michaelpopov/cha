@@ -257,6 +257,7 @@ struct CharacterSettingsUpdate {
     std::optional<std::string> voice;
     std::optional<std::string> reasoning_effort;
     std::optional<WebSearchMode> web_search;
+    std::optional<bool> web_search_tool;
 };
 
 struct CharacterDefinitionUpdate {
@@ -274,6 +275,7 @@ struct CharacterDetail {
     std::optional<std::string> voice;
     std::optional<std::string> reasoning_effort;
     std::optional<WebSearchMode> web_search;
+    std::optional<bool> web_search_tool;
     std::vector<ProviderOption> available_providers;
     std::vector<StyleOption> available_styles;
     std::vector<VoiceOption> available_voices;
@@ -418,6 +420,7 @@ struct WebSearchSettings {
     std::string provider{"brave"};
     std::string api_key;
     std::string query_provider;
+    bool tool_enabled{false};
 };
 
 struct VoiceInputSettings {

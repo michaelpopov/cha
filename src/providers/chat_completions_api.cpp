@@ -1,6 +1,7 @@
 #include "providers/chat_completions_api.h"
 
 #include "util/json_serialization.h"
+#include "providers/tool_calls.h"
 
 #include <nlohmann/json.hpp>
 
@@ -193,14 +194,17 @@ std::string build_chat_completions_request_body(
         }
     }
 
+    if (input.web_search_tool) add_web_search_tool(body, config.api);
     return dump_json(body, "Model request");
 }
 
 ChatCompletionsStreamDecoder::ChatCompletionsStreamDecoder(
     ReasoningFormat format,
-    const GenerationDeltaSink& on_delta)
+    const GenerationDeltaSink& on_delta,
+    bool collect_tool_calls)
     : format_(format),
-      on_delta_(&on_delta) {
+      on_delta_(&on_delta),
+      collect_tool_calls_(collect_tool_calls) {
 }
 
 void ChatCompletionsStreamDecoder::consume(std::string_view bytes) {
@@ -231,14 +235,59 @@ StreamDecodeResult ChatCompletionsStreamDecoder::finish() {
             usage_,
         }, true};
     }
-    if (!received_answer_) {
-        return {{
-            GenerationOutcome::protocol_error,
-            "Streaming response completed without answer content",
-            usage_,
-        }, false};
+    return {tool_call_result(message_, ProviderApi::chat_completions,
+        received_answer_, usage_, collect_tool_calls_,
+        "Streaming response completed without answer content", finish_reason_), false};
+}
+
+void ChatCompletionsStreamDecoder::accumulate_delta(const Json& delta) {
+    for (const auto field : {"content", "reasoning_content", "reasoning", "reasoning_text"}) {
+        if (delta.contains(field) && delta[field].is_string()) {
+            if (!message_.contains(field)) message_[field] = "";
+            message_[field].get_ref<std::string&>() += delta[field].get<std::string>();
+        }
     }
-    return {{GenerationOutcome::completed, {}, usage_}, false};
+    if (delta.contains("reasoning_details") && delta["reasoning_details"].is_array()) {
+        auto& details = message_["reasoning_details"];
+        if (details.is_null()) details = Json::array();
+        for (const auto& part : delta["reasoning_details"]) {
+            const auto index = part.value("index", 0);
+            if (index < 0 || index >= 32) throw std::invalid_argument("Invalid reasoning index");
+            while (details.size() <= static_cast<std::size_t>(index)) details.push_back(Json::object());
+            auto& target = details[index];
+            for (const auto& [key, item] : part.items()) {
+                if ((key == "text" || key == "data" || key == "signature" || key == "summary")
+                    && item.is_string() && target.contains(key))
+                    target[key].get_ref<std::string&>() += item.get<std::string>();
+                else target[key] = item;
+            }
+        }
+    }
+    if (delta.contains("tool_calls") && !delta["tool_calls"].is_null()) {
+        if (!delta["tool_calls"].is_array()) throw std::invalid_argument("Invalid tool calls");
+        auto& calls = message_["tool_calls"];
+        if (calls.is_null()) calls = Json::array();
+        for (const auto& part : delta["tool_calls"]) {
+            const auto index = part.at("index").get<int>();
+            if (index < 0 || index >= 32) throw std::invalid_argument("Invalid tool index");
+            while (calls.size() <= static_cast<std::size_t>(index)) calls.push_back(Json::object());
+            auto& call = calls[index];
+            for (const auto field : {"id", "type"}) {
+                if (part.contains(field) && !part[field].is_null()) call[field] = part[field];
+            }
+            if (part.contains("function")) {
+                for (const auto field : {"name", "arguments"}) {
+                    const auto& function = part["function"];
+                    if (!function.contains(field) || function[field].is_null()) continue;
+                    auto& text = call["function"][field];
+                    if (text.is_null()) text = "";
+                    text.get_ref<std::string&>() += function[field].get<std::string>();
+                    if (text.get_ref<std::string&>().size() > 16384)
+                        throw std::invalid_argument("Tool arguments too large");
+                }
+            }
+        }
+    }
 }
 
 bool ChatCompletionsStreamDecoder::handle_event_data(std::string_view data) {
@@ -246,36 +295,31 @@ bool ChatCompletionsStreamDecoder::handle_event_data(std::string_view data) {
         done_ = true;
         return false;
     }
+    Json value;
+    const Json::json_pointer delta_pointer("/choices/0/delta");
     try {
-        const Json value = Json::parse(data);
-        if (value.contains("usage")) {
-            usage_ = chat_token_usage(value);
+        value = Json::parse(data);
+        if (value.contains("usage")) usage_ = chat_token_usage(value);
+        if (!value.contains("choices") || !value["choices"].is_array()) {
+            if (protocol_error_.empty()) protocol_error_ = "Streaming event did not contain a choices array";
+            return true;
         }
-        const Json::json_pointer choices_pointer("/choices");
-        const Json::json_pointer delta_pointer("/choices/0/delta");
-        if (!value.contains(choices_pointer)
-            || !value.at(choices_pointer).is_array()) {
-            if (protocol_error_.empty()) {
-                protocol_error_ =
-                    "Streaming event did not contain a choices array";
-            }
-        } else if (value.contains(delta_pointer)
-            && value.at(delta_pointer).is_object()) {
-            std::string error = process_response_object(
-                value.at(delta_pointer),
-                format_,
-                [this](GenerationDeltaKind kind, std::string text) {
-                    emit(kind, std::move(text));
-                });
-            if (protocol_error_.empty()) {
-                protocol_error_ = std::move(error);
-            }
-        }
+        const Json::json_pointer reason_pointer("/choices/0/finish_reason");
+        if (collect_tool_calls_ && value.contains(reason_pointer) && value.at(reason_pointer).is_string())
+            finish_reason_ = value.at(reason_pointer).get<std::string>();
+        if (!value.contains(delta_pointer) || !value.at(delta_pointer).is_object()) return true;
+        if (collect_tool_calls_) accumulate_delta(value.at(delta_pointer));
     } catch (const Json::parse_error&) {
-        if (protocol_error_.empty()) {
-            protocol_error_ = "Streaming event contained malformed JSON";
-        }
+        if (protocol_error_.empty()) protocol_error_ = "Streaming event contained malformed JSON";
+        return true;
+    } catch (const std::exception&) {
+        if (protocol_error_.empty()) protocol_error_ = "Streaming event contained invalid tool data";
+        return true;
     }
+    // Sink exceptions belong to the caller, not to protocol validation.
+    std::string error = process_response_object(value.at(delta_pointer), format_,
+        [this](GenerationDeltaKind kind, std::string text) { emit(kind, std::move(text)); });
+    if (protocol_error_.empty()) protocol_error_ = std::move(error);
     return true;
 }
 
@@ -293,7 +337,8 @@ void ChatCompletionsStreamDecoder::emit(
 GenerationResult decode_chat_completions_response(
     std::string_view body,
     ReasoningFormat format,
-    const GenerationDeltaSink& on_delta) {
+    const GenerationDeltaSink& on_delta,
+    bool collect_tool_calls) {
     Json value;
     try {
         value = Json::parse(body);
@@ -331,13 +376,13 @@ GenerationResult decode_chat_completions_response(
     if (!protocol_error.empty()) {
         return {GenerationOutcome::protocol_error, protocol_error};
     }
-    if (!received_answer) {
-        return {
-            GenerationOutcome::protocol_error,
-            "Response completed without answer content",
-        };
-    }
-    return {GenerationOutcome::completed, {}, usage};
+    const Json::json_pointer reason_pointer("/choices/0/finish_reason");
+    const std::string finish_reason = collect_tool_calls && value.contains(reason_pointer)
+            && value.at(reason_pointer).is_string()
+        ? value.at(reason_pointer).get<std::string>() : std::string{};
+    return tool_call_result(value.at(message_pointer), ProviderApi::chat_completions,
+        received_answer, usage, collect_tool_calls,
+        "Response completed without answer content", finish_reason);
 }
 
 } // namespace cha

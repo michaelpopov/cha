@@ -439,6 +439,7 @@ public:
         std::uint64_t request_id);
     void release_connection_resources(std::string_view connection_id);
     void set_speech_url_override(std::string url);
+    void set_web_search_url_override_for_tests(std::string url);
 
     [[nodiscard]] std::vector<ApiKeyDetail> list_api_keys(
         std::uint64_t epoch);

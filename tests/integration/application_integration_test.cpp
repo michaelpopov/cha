@@ -70,6 +70,37 @@ std::string streamed_reply(
     return http_response("text/event-stream", body);
 }
 
+std::string search_tool_reply(bool responses) {
+    constexpr std::string_view preamble = "I'll check the latest news.";
+    constexpr std::string_view arguments = R"({"query":"latest news"})";
+    const auto event = [](const Json& value) { return "data: " + value.dump() + "\n\n"; };
+    std::string body = answer_delta(responses, preamble);
+    if (responses) {
+        const Json output = Json::array({
+            {{"type", "message"}, {"role", "assistant"},
+             {"content", Json::array({{{"type", "output_text"}, {"text", preamble}}})}},
+            {{"type", "function_call"}, {"id", "search_item"}, {"call_id", "search_call"},
+             {"name", "web_search"}, {"arguments", arguments}}});
+        for (std::size_t index = 0; index < output.size(); ++index) {
+            body += event({{"type", "response.output_item.done"},
+                {"output_index", index}, {"item", output[index]}});
+        }
+        body += event({{"type", "response.completed"}, {"response", {
+            {"status", "completed"}, {"output", output},
+            {"usage", {{"input_tokens", 10}, {"output_tokens", 2}}}}}});
+    } else {
+        body += event({{"choices", Json::array({{{"delta", {
+            {"tool_calls", Json::array({{{"index", 0}, {"id", "search_call"},
+                {"type", "function"}, {"function", {
+                    {"name", "web_search"}, {"arguments", arguments}}}}})}}},
+            {"finish_reason", "tool_calls"}}})}});
+        body += event({{"choices", Json::array()},
+            {"usage", {{"prompt_tokens", 10}, {"completion_tokens", 2}}}});
+        body += "data: [DONE]\n\n";
+    }
+    return http_response("text/event-stream", body);
+}
+
 std::string file_bytes(const std::filesystem::path& path) {
     std::ifstream input(path, std::ios::binary);
     if (!input) throw std::runtime_error("Cannot read integration database");
@@ -162,6 +193,15 @@ protected:
         return identity;
     }
 
+    void enable_search(int port) {
+        application_->set_web_search_url_override_for_tests(
+            "http://127.0.0.1:" + std::to_string(port) + "/search");
+        const auto key = call("apiKey.create",
+            {{"display_name", "Search"}, {"value", "integration-search-key"}});
+        (void)call("webSearch.save", {{"enabled", false}, {"tool_enabled", true},
+            {"provider", "brave"}, {"api_key", key.at("id")}, {"query_provider", ""}});
+    }
+
     void submit(const Json& identity, std::string_view prompt) {
         Json params = identity;
         params["input"] = {{"text", prompt}};
@@ -207,6 +247,112 @@ protected:
 
 class ChatPersistenceIntegration : public ApplicationIntegration,
                                    public ::testing::WithParamInterface<bool> {};
+
+TEST_P(ChatPersistenceIntegration, SearchToolContinuesAndPersistsAnswerUsageAndIndicator) {
+    const bool responses = GetParam();
+    MockHttpServer model({search_tool_reply(responses),
+        streamed_reply(responses, "According to the source, the release is ready.")});
+    model.pause_before_response(2);
+    MockHttpServer search({http_response("application/json", R"({"web":{"results":[{
+        "title":"Release news","url":"https://example.com/release",
+        "description":"The release is ready."
+    }]}})")});
+    model.start();
+    search.start();
+    initialize(model.port(), responses);
+    enable_search(search.port());
+    const Json identity = create_session();
+    submit(identity, "What is the latest news?");
+    ASSERT_TRUE(model.wait_for_requests(2, 3s));
+
+    // The search has finished, but the final model response is still pending.
+    // Pump the bridge until the search marker reaches the open transcript entry.
+    Json streaming;
+    const auto deadline = std::chrono::steady_clock::now() + 3s;
+    do {
+        streaming = call("session.snapshot", identity);
+        const auto& entries = streaming.at("transcript");
+        if (!entries.empty() && entries.back().value("web_search_used", false)) break;
+        router_->wait_for_work(5ms);
+    } while (std::chrono::steady_clock::now() < deadline);
+    ASSERT_EQ(streaming.at("transcript").size(), 2U);
+    EXPECT_TRUE(streaming.at("generation").at("active"));
+    EXPECT_EQ(streaming.at("transcript").back().at("status"), "streaming");
+    EXPECT_EQ(streaming.at("transcript").back().at("text"), "I'll check the latest news.");
+    EXPECT_TRUE(streaming.at("transcript").back().at("web_search_used"));
+    model.resume_responses();
+
+    const Json completed = wait_until_idle(identity);
+    ASSERT_EQ(completed.at("transcript").size(), 2U);
+    const auto& answer = completed.at("transcript").back();
+    EXPECT_EQ(answer.at("status"), "complete");
+    EXPECT_EQ(answer.at("text"),
+        "I'll check the latest news.\n\nAccording to the source, the release is ready.");
+    EXPECT_TRUE(answer.at("web_search_used"));
+    EXPECT_EQ(answer.at("input_tokens"), 1210);
+    EXPECT_EQ(answer.at("output_tokens"), 302);
+
+    model.join();
+    search.join();
+    ASSERT_EQ(search.requests().size(), 1U);
+    EXPECT_TRUE(search.requests().front().starts_with("GET /search?q=latest%20news&"));
+    EXPECT_NE(search.requests().front().find("X-Subscription-Token: integration-search-key"),
+        std::string::npos);
+    ASSERT_EQ(model.requests().size(), 2U);
+    const auto first = Json::parse(request_body(model.requests().front()));
+    ASSERT_EQ(first.at("tools").size(), 1U);
+    EXPECT_EQ(responses ? first.at("tools")[0].at("name")
+                        : first.at("tools")[0].at("function").at("name"), "web_search");
+    const auto continuation = Json::parse(request_body(model.requests().back()));
+    const auto& result = continuation.at(responses ? "input" : "messages").back();
+    EXPECT_EQ(result.at(responses ? "type" : "role"), responses ? "function_call_output" : "tool");
+    EXPECT_EQ(result.at(responses ? "call_id" : "tool_call_id"), "search_call");
+    const auto sources = Json::parse(result.at(responses ? "output" : "content").get<std::string>());
+    EXPECT_EQ(sources.at("query"), "latest news");
+    ASSERT_EQ(sources.at("results").size(), 1U);
+    EXPECT_EQ(sources.at("results")[0].at("url"), "https://example.com/release");
+    EXPECT_EQ(sources.at("results")[0].at("title"), "Release news");
+    EXPECT_EQ(sources.at("results")[0].at("snippets"), Json::array({"The release is ready."}));
+
+    stop();
+    start();
+    (void)call("session.open", identity);
+    EXPECT_EQ(call("session.snapshot", identity).at("transcript"), completed.at("transcript"));
+}
+
+TEST_P(ChatPersistenceIntegration, StopDuringSearchPreventsModelContinuation) {
+    const bool responses = GetParam();
+    MockHttpServer model({search_tool_reply(responses), streamed_reply(responses, "Recovered answer")});
+    // Leave the search body incomplete until cancellation closes the connection.
+    MockHttpServer search({"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+                           "Connection: close\r\n\r\n"}, true);
+    model.start();
+    search.start();
+    initialize(model.port(), responses);
+    enable_search(search.port());
+    const Json identity = create_session();
+    submit(identity, "What is the latest news?");
+    ASSERT_TRUE(search.wait_for_requests(1, 3s));
+    wait_for_partial(identity, "I'll check the latest news.");
+    (void)call("session.stop", identity);
+    const Json stopped = wait_until_idle(identity);
+    ASSERT_EQ(stopped.at("transcript").size(), 2U);
+    EXPECT_EQ(stopped.at("transcript").back().at("status"), "cancelled");
+    EXPECT_EQ(stopped.at("transcript").back().at("text"), "I'll check the latest news.");
+    EXPECT_FALSE(stopped.at("transcript").back().at("web_search_used"));
+    search.join();
+
+    // A fresh prompt must consume the second scripted model response; an
+    // unwanted tool continuation would have consumed it first.
+    EXPECT_EQ(chat(identity, "Continue after stop").at("transcript").back().at("text"),
+        "Recovered answer");
+    model.join();
+    ASSERT_EQ(model.requests().size(), 2U);
+    const auto next = Json::parse(request_body(model.requests().back()));
+    EXPECT_NE(next.at(responses ? "input" : "messages").dump().find("Continue after stop"),
+        std::string::npos);
+    EXPECT_EQ(next.dump().find("search_call"), std::string::npos);
+}
 
 TEST_P(ChatPersistenceIntegration, RestoresTranscriptUsageAndProviderHistoryAfterRestart) {
     const bool responses = GetParam();

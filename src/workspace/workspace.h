@@ -88,6 +88,7 @@ struct WorkspaceWebSearch {
     std::string provider{"brave"};
     std::string api_key_id;
     std::string query_provider_id;
+    bool tool_enabled{false};
 };
 
 struct WorkspaceVoiceOutput {
@@ -111,6 +112,7 @@ struct WorkspaceCharacter {
     std::optional<std::string> voice_id;
     std::optional<std::string> reasoning_effort;
     std::optional<WebSearchMode> web_search;
+    std::optional<bool> web_search_tool;
     WorkspacePromptVariables prompt_variables;
     std::string prompt_template;
     std::string markdown;

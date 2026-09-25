@@ -18,6 +18,7 @@
 #include <exception>
 #include <limits>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -112,6 +113,7 @@ public:
     }
 
     ~MockHttpServer() {
+        resume_responses();
         if (thread_.joinable()) {
             thread_.join();
         }
@@ -134,10 +136,14 @@ public:
                 for (const std::string& response : responses_) {
                     const Socket client = accept_connection();
                     {
-                        std::lock_guard lock(requests_mutex_);
+                        std::unique_lock lock(requests_mutex_);
                         requests_.push_back(read_request(client));
+                        requests_changed_.notify_all();
+                        if (!requests_changed_.wait_for(lock, std::chrono::seconds(5),
+                                [this] { return paused_response_ != requests_.size(); })) {
+                            throw std::runtime_error("Timed out waiting to resume mock response");
+                        }
                     }
-                    requests_changed_.notify_all();
                     send_all(client, response);
                     if (hold_response_open_.count() > 0) {
                         std::this_thread::sleep_for(hold_response_open_);
@@ -161,6 +167,21 @@ public:
         if (error_) {
             std::rethrow_exception(error_);
         }
+    }
+
+    // One-based response number. Configure before start(), then resume after
+    // wait_for_requests() to inspect the application while HTTP is pending.
+    void pause_before_response(std::size_t number) {
+        std::lock_guard lock(requests_mutex_);
+        paused_response_ = number;
+    }
+
+    void resume_responses() {
+        {
+            std::lock_guard lock(requests_mutex_);
+            paused_response_.reset();
+        }
+        requests_changed_.notify_all();
     }
 
     [[nodiscard]] const std::vector<std::string>& requests() const {
@@ -307,6 +328,7 @@ private:
     std::chrono::milliseconds hold_response_open_{};
     std::mutex requests_mutex_;
     std::condition_variable requests_changed_;
+    std::optional<std::size_t> paused_response_;
     std::vector<std::string> requests_;
     std::exception_ptr error_;
     std::thread thread_;

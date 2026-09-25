@@ -190,6 +190,16 @@ void Transcript::append_answer(EntryId entry_id, std::string_view text) {
     ++revision_;
 }
 
+void Transcript::mark_web_search_used(EntryId entry_id) {
+    if (!open_entry_id_ || *open_entry_id_ != entry_id) {
+        throw std::logic_error("The requested transcript entry is not streaming");
+    }
+    if (!entries_.back().web_search_used) {
+        entries_.back().web_search_used = true;
+        ++revision_;
+    }
+}
+
 void Transcript::finish_entry(
     EntryId entry_id,
     EntryStatus status,

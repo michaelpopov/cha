@@ -11,6 +11,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace cha {
 
@@ -31,12 +32,21 @@ struct GenerationTokenUsage {
     std::optional<std::uint64_t> cache_write_tokens;
 };
 
+struct ToolCall {
+    std::string id;
+    std::string name;
+    std::string arguments;
+};
+
 // How one call to ModelBackend::perform() ended. The message explains the failure outcomes
 // and is meant to reach the persona unchanged.
 struct GenerationResult {
     GenerationOutcome outcome{GenerationOutcome::completed};
     std::string message;
     GenerationTokenUsage usage;
+    std::vector<ToolCall> tool_calls;
+    // Protocol-specific assistant message/output items needed for continuation.
+    std::string continuation;
 };
 
 // How one streaming response ended. Failures the stream itself does not explain
@@ -60,6 +70,7 @@ struct RequestPayload {
     // Optional Responses session_id header; omitted when empty.
     std::optional<std::string> session_id;
     std::optional<RequestTextSizes> text_sizes;
+    std::function<std::string(std::string_view, const std::atomic_bool&)> web_search_tool;
 };
 
 // Receives one semantic transport fragment without attaching request identity.

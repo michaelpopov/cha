@@ -294,6 +294,7 @@ export interface components {
             api_key: components["schemas"]["Identifier"];
         };
         WebSearchSettings: {
+            tool_enabled: boolean;
             enabled: boolean;
             /** @enum {string} */
             provider: "brave" | "tavily";
@@ -401,6 +402,7 @@ export interface components {
             reasoning_effort: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | null;
             /** @enum {string|null} */
             web_search: "off" | "auto" | "required" | null;
+            web_search_tool: boolean | null;
             available_providers: components["schemas"]["ProviderOption"][];
             available_styles: components["schemas"]["StyleOption"][];
             available_voices: components["schemas"]["VoiceOption"][];
@@ -434,6 +436,7 @@ export interface components {
             reasoning_effort: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | null;
             /** @enum {string|null} */
             web_search: "off" | "auto" | "required" | null;
+            web_search_tool: boolean | null;
         };
         UpdateCharacterDefinitionRequest: {
             display_name?: string;

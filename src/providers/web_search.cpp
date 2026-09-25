@@ -260,7 +260,14 @@ const std::string& WebSearchContext::get(const ProviderClientFactory& factory,
                     throw std::runtime_error("Web search query rewrite failed");
                 text = trim_view(rewritten);
             }
-            if (!cancelled.load()) context_ = search(config, text, cancelled);
+            if (!cancelled.load()) {
+                log_info("Web search initiated: trigger=jev query_bytes=" + std::to_string(text.size()));
+                context_ = search(config, text, cancelled);
+                if (!cancelled.load()) {
+                    log_info("Web search completed: trigger=jev query_bytes=" + std::to_string(text.size())
+                        + " result_bytes=" + std::to_string(context_.size()));
+                }
+            }
         } catch (...) {
             // Provider errors and credential lookups can contain secrets.
             if (!cancelled.load()) log_warn("Web search failed; continuing without search results");

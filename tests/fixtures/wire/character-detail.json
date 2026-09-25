@@ -15,6 +15,7 @@
   "style": null,
   "voice_id": "brian",
   "reasoning_effort": "high",
+  "web_search_tool": null,
   "web_search": "auto",
   "available_providers": [{"id": "terra", "label": "Terra"}],
   "available_styles": [

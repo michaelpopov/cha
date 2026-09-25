@@ -206,7 +206,7 @@ TEST(Application, SubscribeInstallsInitialSnapshotAtSequenceZero) {
     session->acknowledge_output();
 }
 
-TEST(Application, AppearanceEditsRefreshTheSubscriptionWithoutCancellingGeneration) {
+TEST(Application, AppearanceAndToolEditsRefreshTheSubscriptionWithoutCancellingGeneration) {
     test::TestWorkspace workspace;
     MockHttpServer server({http_response(
         "application/json", R"({"choices":[{"message":{"content":"Finished"}}]})")});
@@ -261,6 +261,13 @@ TEST(Application, AppearanceEditsRefreshTheSubscriptionWithoutCancellingGenerati
     EXPECT_EQ(refreshed->snapshot.characters.front().appearance.font, CharacterFont::serif);
     ASSERT_TRUE(refreshed->snapshot.characters.front().voice);
     EXPECT_EQ(refreshed->snapshot.characters.front().voice->elevenlabs_voice_id, "voice-one");
+
+    for (std::optional<bool> tool : {std::optional<bool>{true}, std::optional<bool>{false}, std::optional<bool>{}}) {
+        const auto saved = application->update_character("guide",
+            {.provider = "test", .style = "serif", .voice = voice.id, .web_search_tool = tool}, epoch);
+        EXPECT_EQ(saved.web_search_tool, tool);
+        ASSERT_TRUE(check_refresh());
+    }
 
     (void)application->update_style("serif",
         {.display_name = "Serif", .appearance = {.font = CharacterFont::mono}}, epoch);
