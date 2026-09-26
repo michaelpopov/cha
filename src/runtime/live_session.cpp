@@ -164,7 +164,7 @@ void LiveSession::cancel_retirement() {
 
 bool LiveSession::idle_for_retirement() const {
     return state_.load() == LiveSessionState::running
-        && !stopping_.load() && !generating_.load();
+        && !stopping_.load() && !generating_.load() && !naming_.load();
 }
 
 std::shared_ptr<const app::SessionOutputItem> LiveSession::take_output() {
@@ -191,6 +191,7 @@ void LiveSession::install(OpenedSession opened) {
     }
     label_ = std::move(opened.label);
     controller_ = std::move(opened.controller);
+    controller_->enable_auto_naming(label_);
     persist_default_character_ = std::move(opened.persist_default_character);
     mirror_ = std::move(opened.mirror);
     cached_audio_entries_ = std::move(opened.cached_audio_entries);
@@ -241,6 +242,7 @@ void LiveSession::execute(OwnerCommand command) {
     }
     if (auto* rename = std::get_if<RenameSessionCommand>(&command.command)) {
         controller_->rename(rename->label);
+        naming_.store(false);
         label_ = std::move(rename->label);
         publish_current_snapshot();
         mirror_if_changed();
@@ -282,6 +284,7 @@ void LiveSession::execute(OwnerCommand command) {
             static_assert(unsupported_web_command<T>);
         }
     }, command.command);
+    naming_.store(controller.is_naming());
 
     if (outcome.persist_default_character_id && persist_default_character_) {
         try {
@@ -312,6 +315,8 @@ void LiveSession::execute(OwnerCommand command) {
 
 bool LiveSession::receive_events(std::size_t batch_size) {
     ControllerEventBatch events = controller_->receive_events(batch_size);
+    naming_.store(controller_->is_naming());
+    if (events.update.session_label) label_ = std::move(*events.update.session_label);
     settle_submission();
     generating_.store(controller_->is_generating());
     const bool presentation_changed = apply_notice(events.update.notice);
@@ -345,7 +350,7 @@ std::chrono::steady_clock::time_point LiveSession::next_deadline() const {
 }
 
 bool LiveSession::retirement_requested() const noexcept {
-    return retire_when_idle_.load() && !generating_.load();
+    return retire_when_idle_.load() && !generating_.load() && !naming_.load();
 }
 
 bool LiveSession::shutdown_requested() const noexcept {

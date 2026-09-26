@@ -437,8 +437,8 @@ export function useLiveSession(
     }
   }, [beginNavigation, dispatch, performOpen]);
 
-  const createConversation = useCallback(async (forumId: string, label: string) => {
-    const target = `${forumId}/new/${label}`;
+  const createConversation = useCallback(async (forumId: string) => {
+    const target = `${forumId}/new`;
     if (pendingTarget.current?.key === target) return false;
     const pending = { key: target };
     pendingTarget.current = pending;
@@ -446,7 +446,7 @@ export function useLiveSession(
     const epoch = beginNavigation();
     dispatch({ type: 'session-operation-started', message: 'Creating session…' });
     try {
-      const created = await client.createSession(forumId, label);
+      const created = await client.createSession(forumId, '');
       // Cancelling does not un-create the session the server already wrote, so
       // it has to appear in Recent rather than becoming a session nobody sees.
       if (navigation.current !== epoch) {

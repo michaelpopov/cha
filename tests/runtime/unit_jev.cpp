@@ -255,6 +255,360 @@ protected:
     CommandResult send(std::string text) { return handle_text_input(*controller, "reader", std::move(text)); }
 };
 
+class SessionNaming : public JevRouting {
+protected:
+    std::string title = "Planning a small garden";
+    GenerationResult title_result;
+    std::vector<GenerationRequest> title_inputs;
+    std::vector<SharedCharacterDefinition> title_definitions;
+    std::shared_future<void> release_title;
+    std::promise<void>* title_started{};
+
+    class NameBackend final : public ModelBackend {
+    public:
+        explicit NameBackend(SessionNaming& test) : test_(test) {}
+        RequestPayload prepare(const GenerationRequest& input) override {
+            test_.title_inputs.push_back(input);
+            return {};
+        }
+        GenerationResult perform(RequestPayload, const GenerationDeltaSink& sink,
+            const std::atomic_bool&) override {
+            if (test_.title_started) test_.title_started->set_value();
+            if (test_.release_title.valid()) test_.release_title.wait();
+            sink({GenerationDeltaKind::reasoning, "This is not the title"});
+            sink({GenerationDeltaKind::answer, test_.title.substr(0, 3)});
+            sink({GenerationDeltaKind::answer, test_.title.substr(3)});
+            return test_.title_result;
+        }
+    private:
+        SessionNaming& test_;
+    };
+
+    ProviderClientFactory naming_factory() {
+        return [this](SharedCharacterDefinition definition) -> std::unique_ptr<ModelBackend> {
+            if (definition->character.id == "session-name") {
+                title_definitions.push_back(definition);
+                return std::make_unique<NameBackend>(*this);
+            }
+            return std::make_unique<ProviderClient>(std::move(definition));
+        };
+    }
+
+    void SetUp() override {
+        JevRouting::SetUp();
+        controller.reset();
+        providers->shutdown();
+        auto naming_provider_config = store->snapshot()->find_provider("query")->config;
+        naming_provider_config.reasoning_effort = "high";
+        naming_provider_config.web_search = WebSearchMode::required;
+        store->apply_provider_update("query", "Query", naming_provider_config);
+        store->apply_character_settings(workspace_assistant_id, "query",
+            std::nullopt, std::nullopt, "high", WebSearchMode::required, true);
+        providers = std::make_shared<Providers>(naming_factory(),
+            [this](auto worker) { workers.push_back(std::move(worker)); },
+            [this](const auto& input, const auto&) { classified.push_back(input); return decision; });
+        controller = make_controller(notifier);
+        controller->rename("temp-ts-cha-1790467200");
+        controller->enable_auto_naming("temp-ts-cha-1790467200");
+    }
+};
+
+TEST_F(SessionNaming, StartsAlongsideReplyOnlyAfterPromptIsCommitted) {
+    (void)send("How should I plan a small garden?");
+    ASSERT_EQ(workers.size(), 1u);
+    EXPECT_FALSE(controller->is_naming());
+    EXPECT_TRUE(controller->view().transcript.entries.empty());
+    EXPECT_TRUE(load_session_state(journal.path()).entries.empty());
+    run_workers();
+    (void)controller->receive_events(100);
+    ASSERT_EQ(workers.size(), 2u);
+    ASSERT_EQ(load_session_state(journal.path()).entries.size(), 1u);
+    EXPECT_EQ(load_session_state(journal.path()).entries[0].text, "How should I plan a small garden?");
+    // Complete the title while the reply is still waiting to run.
+    auto name_worker = std::move(workers.back());
+    workers.pop_back();
+    name_worker();
+    EXPECT_EQ(read_session_database_metadata(journal.path()).label, "temp-ts-cha-1790467200");
+    ASSERT_EQ(title_inputs.size(), 1u);
+    EXPECT_EQ(title_inputs[0].run.prompt_text, "How should I plan a small garden?");
+    EXPECT_TRUE(title_inputs[0].history->entries.empty());
+    EXPECT_FALSE(title_inputs[0].web_search_tool);
+    ASSERT_EQ(title_definitions.size(), 1u);
+    EXPECT_EQ(title_definitions[0]->provider.id, "query");
+    EXPECT_EQ(title_definitions[0]->provider.config.model, "query-model");
+    EXPECT_EQ(title_definitions[0]->provider.config.reasoning_effort, "low");
+    EXPECT_EQ(title_definitions[0]->provider.config.web_search, WebSearchMode::off);
+    EXPECT_EQ(title_definitions[0]->provider.config.timeout_s, 30);
+    EXPECT_TRUE(title_definitions[0]->character_prompt.empty());
+    EXPECT_TRUE(title_definitions[0]->character_description.empty());
+    EXPECT_EQ(store->snapshot()->find_character(workspace_assistant_id)->reasoning_effort, "high");
+    EXPECT_EQ(store->snapshot()->find_provider("query")->config.reasoning_effort, "high");
+    EXPECT_NE(title_definitions[0]->system_prompt.find("at most 6 words"), std::string::npos);
+
+    const auto update = controller->receive_events(100).update;
+    EXPECT_EQ(update.session_label, title);
+    EXPECT_TRUE(requires_snapshot(update));
+    EXPECT_TRUE(controller->is_generating());
+    EXPECT_EQ(read_session_database_metadata(journal.path()).label, title);
+    finish();
+    ASSERT_EQ(controller->view().transcript.entries.size(), 2u);
+    (void)send("And what should I plant?");
+    finish();
+    EXPECT_EQ(title_inputs.size(), 1u);
+}
+
+TEST_F(SessionNaming, WorksWithoutJevAndLimitsTheNameToSixWords) {
+    store->apply_jev_update(std::nullopt);
+    title = "  Один два три четыре пять шесть семь восемь  ";
+    EXPECT_TRUE(send("Помоги спланировать сад").clear_input);
+    ASSERT_EQ(workers.size(), 2u);
+    run_workers();
+    const auto update = controller->receive_events(100).update;
+    EXPECT_EQ(update.session_label, "Один два три четыре пять шесть");
+    EXPECT_EQ(read_session_database_metadata(journal.path()).label, *update.session_label);
+    EXPECT_TRUE(classified.empty());
+    EXPECT_FALSE(controller->is_generating());
+}
+
+TEST_F(SessionNaming, ManualRenameWinsOverACompletedButUndeliveredTitle) {
+    (void)send("Plan a garden");
+    run_workers();
+    (void)controller->receive_events(100);
+    run_workers();
+    controller->rename("My own name");
+    EXPECT_FALSE(controller->receive_events(100).update.session_label);
+    finish();
+    (void)send("Another question");
+    finish();
+    EXPECT_EQ(title_inputs.size(), 1u);
+    EXPECT_EQ(read_session_database_metadata(journal.path()).label, "My own name");
+}
+
+TEST_F(SessionNaming, FailedTitleDoesNotInterruptTheReply) {
+    title_result = {GenerationOutcome::transport_error, "Naming unavailable"};
+    (void)send("Plan a garden");
+    run_workers();
+    EXPECT_FALSE(controller->receive_events(100).update.session_label);
+    finish();
+    EXPECT_EQ(read_session_database_metadata(journal.path()).label, "temp-ts-cha-1790467200");
+    EXPECT_EQ(controller->view().transcript.entries.back().status, EntryStatus::complete);
+}
+
+TEST_F(SessionNaming, EmptyTitleLeavesTheTemporaryName) {
+    title = "   ";
+    (void)send("Plan a garden");
+    run_workers();
+    EXPECT_FALSE(controller->receive_events(100).update.session_label);
+    finish();
+    EXPECT_EQ(read_session_database_metadata(journal.path()).label, "temp-ts-cha-1790467200");
+    EXPECT_EQ(controller->view().transcript.entries.back().status, EntryStatus::complete);
+}
+
+TEST_F(SessionNaming, SkipsUserNamedSessionsAfterReopen) {
+    controller->rename("My session");
+    controller->enable_auto_naming("My session");
+    (void)send("Plan a garden");
+    EXPECT_EQ(workers.size(), 1u);
+    finish();
+    controller.reset();
+    controller = make_controller(notifier, load_session_state(journal.path()));
+    controller->enable_auto_naming(read_session_database_metadata(journal.path()).label);
+    (void)send("A later prompt");
+    finish();
+    EXPECT_TRUE(title_inputs.empty());
+}
+
+class SessionNamingRetry : public SessionNaming, public testing::WithParamInterface<bool> {
+protected:
+    void SetUp() override {
+        SessionNaming::SetUp();
+        if (!GetParam()) store->apply_jev_update(std::nullopt);
+    }
+};
+
+TEST_P(SessionNamingRetry, RetriesOncePerSubmissionUsingTheFirstPromptUntilSuccess) {
+    const std::vector<std::pair<std::string, GenerationResult>> failures{
+        {"Partial title", {GenerationOutcome::transport_error, "Network unavailable"}},
+        {"Partial title", {GenerationOutcome::transport_error, "Request timed out"}},
+        {"Partial title", {GenerationOutcome::cancelled}},
+        {"   ", {}},
+        {std::string(201, 'x'), {}},
+        {std::string(4097, 'x'), {}},
+    };
+    for (std::size_t index = 0; index < failures.size(); ++index) {
+        title = failures[index].first;
+        title_result = failures[index].second;
+        (void)send(index == 0 ? "Plan a garden" : "Yes, continue");
+        finish();
+        ASSERT_EQ(title_inputs.size(), index + 1);
+        EXPECT_EQ(title_inputs.back().run.prompt_text, "Plan a garden");
+        EXPECT_EQ(read_session_database_metadata(journal.path()).label, "temp-ts-cha-1790467200");
+        EXPECT_EQ(controller->view().transcript.entries.back().status, EntryStatus::complete);
+        EXPECT_FALSE(controller->is_naming());
+        (void)controller->receive_events(100);
+        EXPECT_TRUE(workers.empty());
+        // Covering the conversation must not change which prompt names it.
+        if (index == 0) (void)controller->cover_conversation();
+    }
+    title = "Planning a small garden";
+    title_result = {};
+    // Multicast is also a single submission, regardless of recipient count.
+    (void)controller->start_multicast("reader", "Give both opinions", {});
+    finish();
+    ASSERT_EQ(title_inputs.size(), failures.size() + 1);
+    EXPECT_EQ(title_inputs.back().run.prompt_text, "Plan a garden");
+    EXPECT_EQ(read_session_database_metadata(journal.path()).label, title);
+    (void)send("What next?");
+    finish();
+    EXPECT_EQ(title_inputs.size(), failures.size() + 1);
+
+    controller.reset();
+    controller = make_controller(notifier, load_session_state(journal.path()));
+    controller->enable_auto_naming(read_session_database_metadata(journal.path()).label);
+    (void)send("And after reopening?");
+    finish();
+    EXPECT_EQ(title_inputs.size(), failures.size() + 1);
+}
+
+TEST_P(SessionNamingRetry, ReopensAfterInterruptionAndRetriesOnTheNextSubmission) {
+    (void)send("Plan a garden");
+    if (GetParam()) {
+        ASSERT_EQ(workers.size(), 1u);
+        run_workers();
+        (void)controller->receive_events(100);
+    }
+    ASSERT_EQ(workers.size(), 2u);
+    auto name_worker = std::move(workers.back());
+    workers.pop_back();
+    finish();
+    EXPECT_TRUE(controller->is_naming());
+    EXPECT_FALSE(controller->view().transcript.entries.empty());
+    (void)send("Continue while the title is pending");
+    EXPECT_EQ(workers.size(), 1u);
+    finish();
+    EXPECT_TRUE(controller->is_naming());
+    EXPECT_TRUE(title_inputs.empty());
+
+    controller.reset();
+    name_worker();
+    controller = make_controller(notifier, load_session_state(journal.path()));
+    controller->enable_auto_naming(read_session_database_metadata(journal.path()).label);
+    EXPECT_TRUE(workers.empty());
+    (void)send("Yes, continue");
+    finish();
+    ASSERT_EQ(title_inputs.size(), 1u);
+    EXPECT_EQ(title_inputs[0].run.prompt_text, "Plan a garden");
+    EXPECT_EQ(read_session_database_metadata(journal.path()).label, title);
+}
+
+TEST_P(SessionNamingRetry, ManualRenameAfterFailureStopsRetriesIncludingAfterReopen) {
+    title_result = {GenerationOutcome::transport_error, "Network unavailable"};
+    (void)send("Plan a garden");
+    finish();
+    controller->rename("My garden notes");
+    title_result = {};
+    (void)send("Continue");
+    finish();
+    EXPECT_EQ(title_inputs.size(), 1u);
+    controller.reset();
+    controller = make_controller(notifier, load_session_state(journal.path()));
+    controller->enable_auto_naming(read_session_database_metadata(journal.path()).label);
+    (void)send("Continue after reopening");
+    finish();
+    EXPECT_EQ(title_inputs.size(), 1u);
+    EXPECT_EQ(read_session_database_metadata(journal.path()).label, "My garden notes");
+}
+
+TEST_P(SessionNamingRetry, FirstNoteStartsNamingAndLaterNotesCanRetryWithoutReplies) {
+    title_result = {GenerationOutcome::transport_error, "Network unavailable"};
+    EXPECT_TRUE(send("@- Plan a garden").clear_input);
+    EXPECT_FALSE(controller->is_generating());
+    ASSERT_EQ(workers.size(), 1u);
+    run_workers();
+    EXPECT_FALSE(controller->receive_events(100).update.session_label);
+    ASSERT_EQ(title_inputs.size(), 1u);
+    EXPECT_EQ(title_inputs[0].run.prompt_text, "Plan a garden");
+    ASSERT_EQ(controller->view().transcript.entries.size(), 1u);
+    EXPECT_EQ(controller->view().transcript.entries[0].addressed_to, "-");
+
+    controller.reset();
+    controller = make_controller(notifier, load_session_state(journal.path()));
+    controller->enable_auto_naming(read_session_database_metadata(journal.path()).label);
+    (void)controller->set_default_character_by_id("-");
+    title_result = {};
+    EXPECT_TRUE(send("Another note").clear_input);
+    ASSERT_EQ(workers.size(), 1u);
+    run_workers();
+    EXPECT_EQ(controller->receive_events(100).update.session_label, title);
+    ASSERT_EQ(title_inputs.size(), 2u);
+    EXPECT_EQ(title_inputs[1].run.prompt_text, "Plan a garden");
+    EXPECT_EQ(read_session_database_metadata(journal.path()).label, title);
+    EXPECT_EQ(controller->view().transcript.entries.size(), 2u);
+    EXPECT_TRUE(classified.empty());
+    EXPECT_FALSE(controller->is_generating());
+
+    (void)controller->set_default_character_by_id("guide");
+    (void)send("Now answer my question");
+    finish();
+    EXPECT_EQ(title_inputs.size(), 2u);
+}
+
+INSTANTIATE_TEST_SUITE_P(WithAndWithoutJev, SessionNamingRetry, testing::Bool());
+
+TEST_F(SessionNaming, StoppedClassificationDoesNotRenameAnEmptySession) {
+    (void)send("Plan a garden");
+    run_workers();
+    (void)controller->request_stop();
+    EXPECT_FALSE(controller->receive_events(100).update.session_label);
+    EXPECT_FALSE(controller->is_naming());
+    EXPECT_TRUE(controller->view().transcript.entries.empty());
+    EXPECT_EQ(read_session_database_metadata(journal.path()).label, "temp-ts-cha-1790467200");
+    (void)send("A new first prompt");
+    EXPECT_TRUE(title_inputs.empty());
+    EXPECT_EQ(workers.size(), 1u);
+    finish();
+    EXPECT_EQ(read_session_database_metadata(journal.path()).label, title);
+}
+
+TEST_F(SessionNaming, RuntimePublishesAndMirrorsALateTitleWithoutBlockingChat) {
+    controller.reset();
+    providers->shutdown();
+    std::promise<void> started, release;
+    title_started = &started;
+    release_title = release.get_future().share();
+    providers = std::make_shared<Providers>(naming_factory(), ProviderThreadLauncher{},
+        [](const auto&, const auto&) { return JevResult{JevOutcome::success, "undefined"}; });
+    std::string mirrored_label;
+    LiveSessionManager manager({}, [&](const FullSessionId&, auto wake) {
+        return OpenedSession{.label = "temp-ts-cha-1790467200", .controller = make_controller(wake),
+            .mirror = [&](std::string_view label, auto) { mirrored_label = label; }};
+    });
+    ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(manager.open({"lobby", "session"}, 2s)));
+    auto session = manager.lookup({"lobby", "session"});
+    const auto submitted = session->submit(RawCommand{"Plan a garden"}, 2s);
+    EXPECT_TRUE(std::holds_alternative<CommandResult>(submitted));
+    EXPECT_EQ(started.get_future().wait_for(2s), std::future_status::ready);
+    auto snapshot = std::get<SessionSnapshot>(session->snapshot(2s));
+    const auto deadline = std::chrono::steady_clock::now() + 2s;
+    while (snapshot.generation.active && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(1ms);
+        snapshot = std::get<SessionSnapshot>(session->snapshot(2s));
+    }
+    EXPECT_FALSE(snapshot.generation.active);
+    EXPECT_FALSE(session->idle_for_retirement());
+    EXPECT_EQ(snapshot.session_label, "temp-ts-cha-1790467200");
+    release.set_value();
+    while (snapshot.session_label != title && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(1ms);
+        snapshot = std::get<SessionSnapshot>(session->snapshot(2s));
+    }
+    EXPECT_EQ(snapshot.session_label, title);
+    EXPECT_EQ(read_session_database_metadata(journal.path()).label, title);
+    EXPECT_EQ(mirrored_label, title);
+    EXPECT_TRUE(session->idle_for_retirement());
+    ASSERT_EQ(snapshot.transcript.size(), 2u);
+}
+
 TEST_F(JevRouting, OnDemandSearchUsesWorkspaceDefaultAndCharacterOverrideWithoutRecipientDetection) {
     struct SearchBackend final : ModelBackend {
         explicit SearchBackend(bool& offered) : offered(offered) {}

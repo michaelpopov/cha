@@ -356,8 +356,9 @@ StoredSession SessionRepository::create(
          ++suffix) {
         const std::string id = suffix == 1
             ? base_id : base_id + "-" + std::to_string(suffix);
-        const std::string effective_label = label.empty() ? id : label;
         const std::int64_t updated_at = session_timestamp();
+        const std::string effective_label = label.empty()
+            ? std::string(temporary_session_label_prefix) + std::to_string(updated_at) : label;
         Statement insert = database.prepare(
             "INSERT INTO sessions (forum_key, session_id, label, "
             "updated_at, history_epoch, next_entry_id, next_request_id) "

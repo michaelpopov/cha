@@ -18,6 +18,7 @@ import { PasswordDialog } from './PasswordDialog';
 interface SidebarProps {
   state: AppState;
   dispatch: Dispatch<AppAction>;
+  onCreateSession(forumId: string): Promise<boolean>;
   onOpenSession(forumId: string, sessionId: string): Promise<boolean>;
   onDownloadSession(forumId: string, sessionId: string, label: string): Promise<void>;
   onRenameSession(forumId: string, sessionId: string, label: string): Promise<void>;
@@ -32,11 +33,13 @@ interface SelectedSession {
   label: string;
 }
 
-interface MenuState extends SelectedSession {
+type MenuSelection = ({ kind: 'session' } & SelectedSession) | { kind: 'forum'; forumId: string };
+
+type MenuState = MenuSelection & {
   x: number;
   y: number;
   restoreFocus: HTMLElement | null;
-}
+};
 
 interface DialogState extends SelectedSession {
   kind: 'rename' | 'delete';
@@ -49,7 +52,6 @@ const forumViews: MainView[] = [
   'forum-file',
   'new-forum-file',
   'forum-members',
-  'new-session',
 ];
 
 const settingsViews: MainView[] = [
@@ -177,6 +179,7 @@ function SessionDialog({
 export function Sidebar({
   state,
   dispatch,
+  onCreateSession,
   onDownloadSession,
   onOpenSession,
   onRenameSession,
@@ -205,7 +208,7 @@ export function Sidebar({
     setMenu(null);
   }
 
-  function openMenu(event: MouseEvent, session: SelectedSession, anchor: HTMLElement) {
+  function openMenu(event: MouseEvent, selection: MenuSelection, anchor: HTMLElement) {
     event.preventDefault();
     setActionError(null);
     const rect = anchor.getBoundingClientRect();
@@ -213,7 +216,7 @@ export function Sidebar({
     const y = event.type === 'contextmenu' ? event.clientY : rect.bottom;
     const target = event.target as HTMLElement;
     setMenu({
-      ...session,
+      ...selection,
       x,
       y,
       restoreFocus: target.closest<HTMLElement>('button') ?? anchor,
@@ -278,17 +281,33 @@ export function Sidebar({
             {recentForums.map((forum) => {
               const current = forumViews.includes(state.mainView) && state.currentForumId === forum.id;
               return (
-                <button
-                  aria-current={current ? 'page' : undefined}
-                  className={`cha-side-action ${current ? 'is-current' : ''}`}
-                  disabled={state.bootstrapStatus !== 'ready'}
+                <div
+                  className={`cha-recent-row ${current ? 'is-current' : ''}`}
                   key={forum.id}
-                  onClick={() => dispatch({ type: 'select-forum', forumId: forum.id })}
-                  type="button"
+                  onContextMenu={(event) => openMenu(event, { kind: 'forum', forumId: forum.id }, event.currentTarget)}
                 >
-                  <ForumsIcon />
-                  <span className="cha-primary-line">{forum.display_name}</span>
-                </button>
+                  <button
+                    aria-current={current ? 'page' : undefined}
+                    className={`cha-side-action ${current ? 'is-current' : ''}`}
+                    disabled={state.bootstrapStatus !== 'ready'}
+                    onClick={() => dispatch({ type: 'select-forum', forumId: forum.id })}
+                    type="button"
+                  >
+                    <ForumsIcon />
+                    <span className="cha-primary-line">{forum.display_name}</span>
+                  </button>
+                  <button
+                    aria-expanded={menu?.kind === 'forum' && menu.forumId === forum.id}
+                    aria-haspopup="menu"
+                    aria-label={`Actions for forum ${forum.display_name}`}
+                    className="cha-recent-more"
+                    disabled={state.bootstrapStatus !== 'ready'}
+                    onClick={(event) => openMenu(event, { kind: 'forum', forumId: forum.id }, event.currentTarget)}
+                    type="button"
+                  >
+                    <MoreIcon />
+                  </button>
+                </div>
               );
             })}
           </nav>
@@ -302,6 +321,7 @@ export function Sidebar({
                 && state.activeConversation.sessionId === session.session_id;
               const mutable = session.forum_id !== state.bootstrap?.entrance_forum_id;
               const selected = {
+                kind: 'session' as const,
                 forumId: session.forum_id,
                 sessionId: session.session_id,
                 label: session.session_label,
@@ -325,7 +345,7 @@ export function Sidebar({
                   </button>
                   {mutable && (
                     <button
-                      aria-expanded={menu?.forumId === session.forum_id
+                      aria-expanded={menu?.kind === 'session' && menu.forumId === session.forum_id
                         && menu.sessionId === session.session_id}
                       aria-haspopup="menu"
                       aria-label={`Actions for ${session.session_label}`}
@@ -386,44 +406,58 @@ export function Sidebar({
           ref={menuRef}
           role="menu"
           style={{
-            left: Math.max(8, Math.min(menu.x, window.innerWidth - 168)),
-            top: Math.max(8, Math.min(menu.y, window.innerHeight - 180)),
+            width: menu.kind === 'forum' ? '12rem' : undefined,
+            left: Math.max(8, Math.min(menu.x, window.innerWidth - (menu.kind === 'forum' ? 200 : 168))),
+            top: Math.max(8, Math.min(menu.y, window.innerHeight - (menu.kind === 'forum' ? 60 : 180))),
           }}
         >
-          <button
-            onClick={() => {
-              const selected = menu;
-              closeMenu(false);
-              void onDownloadSession(
-                selected.forumId, selected.sessionId, selected.label,
-              ).catch((failure: unknown) => {
-                setActionError(publicErrorMessage(
-                  failure,
-                  'The session could not be downloaded.',
-                ));
-              }).finally(() => {
-                if (selected.restoreFocus?.isConnected) selected.restoreFocus.focus();
-              });
-            }}
-            role="menuitem"
-            type="button"
-          >Download</button>
-          <button
-            onClick={() => {
-              const selected = menu;
-              closeMenu(false);
-              void onClearSessionAudioCache(selected.forumId, selected.sessionId)
-                .catch((failure: unknown) => {
-                  setActionError(publicErrorMessage(failure, 'The audio cache could not be cleared.'));
-                }).finally(() => {
-                  if (selected.restoreFocus?.isConnected) selected.restoreFocus.focus();
-                });
-            }}
-            role="menuitem"
-            type="button"
-          >Clear audio cache</button>
-          <button onClick={() => { setDialog({ kind: 'rename', ...menu }); closeMenu(false); }} role="menuitem" type="button">Rename…</button>
-          <button onClick={() => { setDialog({ kind: 'delete', ...menu }); closeMenu(false); }} role="menuitem" type="button">Delete…</button>
+          {menu.kind === 'forum' ? (
+            <button
+              onClick={() => {
+                closeMenu();
+                void onCreateSession(menu.forumId);
+              }}
+              role="menuitem"
+              type="button"
+            >Create new session</button>
+          ) : (
+            <>
+              <button
+                onClick={() => {
+                  const selected = menu;
+                  closeMenu(false);
+                  void onDownloadSession(
+                    selected.forumId, selected.sessionId, selected.label,
+                  ).catch((failure: unknown) => {
+                    setActionError(publicErrorMessage(
+                      failure,
+                      'The session could not be downloaded.',
+                    ));
+                  }).finally(() => {
+                    if (selected.restoreFocus?.isConnected) selected.restoreFocus.focus();
+                  });
+                }}
+                role="menuitem"
+                type="button"
+              >Download</button>
+              <button
+                onClick={() => {
+                  const selected = menu;
+                  closeMenu(false);
+                  void onClearSessionAudioCache(selected.forumId, selected.sessionId)
+                    .catch((failure: unknown) => {
+                      setActionError(publicErrorMessage(failure, 'The audio cache could not be cleared.'));
+                    }).finally(() => {
+                      if (selected.restoreFocus?.isConnected) selected.restoreFocus.focus();
+                    });
+                }}
+                role="menuitem"
+                type="button"
+              >Clear audio cache</button>
+              <button onClick={() => { setDialog({ ...menu, kind: 'rename' }); closeMenu(false); }} role="menuitem" type="button">Rename…</button>
+              <button onClick={() => { setDialog({ ...menu, kind: 'delete' }); closeMenu(false); }} role="menuitem" type="button">Delete…</button>
+            </>
+          )}
         </div>,
         document.body,
       )}

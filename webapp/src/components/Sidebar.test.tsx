@@ -19,6 +19,7 @@ function renderSidebar(state: AppState = readyState()) {
   const onOpenSession = vi.fn(async () => true);
   render(
     <Sidebar
+      onCreateSession={vi.fn(async () => true)}
       dispatch={dispatch}
       onClearSessionAudioCache={vi.fn(async () => undefined)}
       onDeleteSession={vi.fn(async () => undefined)}
@@ -94,7 +95,7 @@ describe('Sidebar navigation', () => {
     };
     const { dispatch } = renderSidebar(state);
     const forums = within(screen.getByRole('navigation', { name: 'Recent forums' }));
-    expect(forums.getAllByRole('button').map((button) => button.textContent)).toEqual([
+    expect(forums.getAllByRole('button').filter((button) => !button.hasAttribute('aria-haspopup')).map((button) => button.textContent)).toEqual([
       'The Lobby', 'Studio',
     ]);
     await userEvent.click(forums.getByRole('button', { name: 'The Lobby' }));
@@ -153,7 +154,7 @@ describe('Sidebar navigation', () => {
     'characters', 'new-character', 'character-detail', 'character-file',
     'new-character-file', 'character-settings', 'forums', 'new-forum',
     'sessions', 'forum-detail', 'forum-file', 'new-forum-file',
-    'forum-members', 'new-session', 'settings', 'settings-vaults',
+    'forum-members', 'settings', 'settings-vaults',
     'settings-provider', 'settings-style', 'settings-voice', 'settings-api-key',
   ] satisfies MainView[])('keeps Settings current on %s', (mainView) => {
     renderSidebar({ ...readyState(), mainView });
@@ -163,7 +164,7 @@ describe('Sidebar navigation', () => {
   });
 
   it.each([
-    'sessions', 'forum-detail', 'forum-members', 'forum-file', 'new-forum-file', 'new-session',
+    'sessions', 'forum-detail', 'forum-members', 'forum-file', 'new-forum-file',
   ] satisfies MainView[])('keeps only the selected recent forum current on %s', (mainView) => {
     const lobby = bootstrapFixture.forums[1];
     renderSidebar({
@@ -212,6 +213,7 @@ describe('Sidebar session actions', () => {
     });
     render(
       <Sidebar
+        onCreateSession={vi.fn(async () => true)}
         dispatch={vi.fn()}
         onClearSessionAudioCache={vi.fn(async () => undefined)}
         onDeleteSession={vi.fn(async () => undefined)}
@@ -240,6 +242,7 @@ describe('Sidebar session actions', () => {
     });
     render(
       <Sidebar
+        onCreateSession={vi.fn(async () => true)}
         dispatch={vi.fn()}
         onClearSessionAudioCache={vi.fn(async () => undefined)}
         onDeleteSession={vi.fn(async () => undefined)}
@@ -262,6 +265,7 @@ describe('Sidebar session actions', () => {
     const user = userEvent.setup();
     render(
       <Sidebar
+        onCreateSession={vi.fn(async () => true)}
         dispatch={vi.fn()}
         onClearSessionAudioCache={vi.fn(async () => undefined)}
         onDeleteSession={vi.fn(async () => undefined)}
@@ -297,6 +301,7 @@ describe('Sidebar session actions', () => {
       });
       render(
         <Sidebar
+          onCreateSession={vi.fn(async () => true)}
           dispatch={vi.fn()}
           onClearSessionAudioCache={item.action === 'Clear audio cache' ? failingAction : vi.fn(async () => undefined)}
           onDeleteSession={vi.fn(async () => undefined)}
@@ -322,6 +327,7 @@ describe('Sidebar session actions', () => {
     const onDelete = vi.fn(async () => undefined);
     render(
       <Sidebar
+        onCreateSession={vi.fn(async () => true)}
         dispatch={vi.fn()}
         onClearSessionAudioCache={vi.fn(async () => undefined)}
         onDeleteSession={onDelete}
@@ -345,6 +351,7 @@ describe('Sidebar session actions', () => {
     const user = userEvent.setup();
     render(
       <Sidebar
+        onCreateSession={vi.fn(async () => true)}
         dispatch={vi.fn()}
         onClearSessionAudioCache={vi.fn(async () => undefined)}
         onDeleteSession={vi.fn(async () => undefined)}
@@ -384,6 +391,7 @@ describe('Sidebar session actions', () => {
     const user = userEvent.setup();
     render(
       <Sidebar
+        onCreateSession={vi.fn(async () => true)}
         dispatch={vi.fn()}
         onClearSessionAudioCache={vi.fn(async () => undefined)}
         onDeleteSession={vi.fn(async () => undefined)}
@@ -405,6 +413,7 @@ describe('Sidebar session actions', () => {
     const user = userEvent.setup();
     render(
       <Sidebar
+        onCreateSession={vi.fn(async () => true)}
         dispatch={vi.fn()}
         onClearSessionAudioCache={vi.fn(async () => undefined)}
         onDeleteSession={vi.fn(async () => undefined)}
@@ -432,6 +441,7 @@ describe('Sidebar session actions', () => {
     });
     render(
       <Sidebar
+        onCreateSession={vi.fn(async () => true)}
         dispatch={vi.fn()}
         onClearSessionAudioCache={vi.fn(async () => undefined)}
         onDeleteSession={vi.fn(async () => undefined)}
@@ -462,6 +472,7 @@ describe('Sidebar session actions', () => {
     const pending = new Promise<void>((resolve) => { finish = resolve; });
     render(
       <Sidebar
+        onCreateSession={vi.fn(async () => true)}
         dispatch={vi.fn()}
         onClearSessionAudioCache={vi.fn(async () => undefined)}
         onDeleteSession={() => pending}

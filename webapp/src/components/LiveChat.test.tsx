@@ -3044,11 +3044,8 @@ describe('live session capacity', () => {
     await user.click(await screen.findByRole('button', { name: 'Forums' }));
     await user.click(screen.getByRole('button', { name: 'The LobbyGuide' }));
     await user.click(await screen.findByRole('button', { name: /New session/ }));
-    await user.type(screen.getByRole('textbox', { name: 'Session name' }), 'Created once');
-    await user.click(screen.getByRole('button', { name: 'Start session' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Another session has not closed yet');
-    expect(screen.queryByRole('button', { name: 'Start session' })).not.toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Session unavailable' })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Retry' }));
 

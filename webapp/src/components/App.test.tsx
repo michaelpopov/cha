@@ -1064,13 +1064,14 @@ it('lists sessions with compact time metadata and opens a stored session once', 
   expect(screen.getByLabelText('Current chat context')).toHaveTextContent('The Lobby');
 });
 
-it('trims a required name, creates then opens it, and refreshes Recent', async () => {
+it('creates and opens a session from a recent forum menu with a generated name, and refreshes Recent', async () => {
+  const sessionLabel = 'temp-ts-cha-1790467200';
   const user = userEvent.setup();
   const refreshed = structuredClone(bootstrapFixture);
   refreshed.recent_sessions = [{
     forum_id: 'lobby',
     session_id: 'created',
-    session_label: 'Architecture review',
+    session_label: sessionLabel,
     updated_at: 3,
   }, ...refreshed.recent_sessions];
   const getBootstrap = vi.fn()
@@ -1078,7 +1079,7 @@ it('trims a required name, creates then opens it, and refreshes Recent', async (
     .mockResolvedValue(refreshed);
   const createSession = vi.fn(async (_forumId: string, label: string) => ({
     id: 'created',
-    label,
+    label: label || sessionLabel,
   }));
   const openSession = vi.fn(async (forumId: string, sessionId: string) => ({
     forum_id: forumId,
@@ -1090,25 +1091,19 @@ it('trims a required name, creates then opens it, and refreshes Recent', async (
     listSessions: async () => [],
     createSession,
     openSession,
-    getSessionSnapshot: async () => lobbySnapshot('created', 'Architecture review'),
+    getSessionSnapshot: async () => lobbySnapshot('created', sessionLabel),
   });
   render(<App client={client} connectSessionEvents={connect} />);
 
-  await openSettingsNavigation();
-  await user.click(await screen.findByRole('button', { name: 'Forums' }));
-  await user.click(screen.getByRole('button', { name: 'The LobbyGuide' }));
-  await user.click(await screen.findByRole('button', { name: 'New session' }));
+  await user.click(await screen.findByRole('button', { name: 'Actions for forum The Lobby' }));
+  const menu = screen.getByRole('menu');
+  expect(within(menu).getAllByRole('menuitem')).toHaveLength(1);
+  await user.click(within(menu).getByRole('menuitem', { name: 'Create new session' }));
+  expect(screen.queryByRole('menu')).not.toBeInTheDocument();
 
-  const start = screen.getByRole('button', { name: 'Start session' });
-  const name = screen.getByRole('textbox', { name: 'Session name' });
-  expect(start).toBeDisabled();
-  await user.type(name, '   ');
-  expect(start).toBeDisabled();
-  await user.type(name, '  Architecture review  ');
-  expect(start).toBeEnabled();
-  await user.click(start);
-
-  await waitFor(() => expect(createSession).toHaveBeenCalledWith('lobby', 'Architecture review'));
+  expect(screen.queryByRole('textbox', { name: 'Session name' })).not.toBeInTheDocument();
+  await waitFor(() => expect(createSession).toHaveBeenCalledWith('lobby', ''));
+  expect(createSession).toHaveBeenCalledTimes(1);
   expect(openSession).toHaveBeenCalledWith('lobby', 'created');
   await waitFor(() => expect(getBootstrap).toHaveBeenCalledTimes(2));
   expect(connect).toHaveBeenCalledWith('lobby', 'created', expect.any(Object));
@@ -1117,35 +1112,30 @@ it('trims a required name, creates then opens it, and refreshes Recent', async (
   expect(screen.getByLabelText('Current chat context')).toHaveTextContent(
     'The LobbyFrom: ReaderTo: Guide',
   );
-  expect(screen.getByRole('button', { name: 'Architecture reviewThe Lobby' }))
+  expect(screen.getByRole('button', { name: `${sessionLabel}The Lobby` }))
     .toHaveAttribute('aria-current', 'page');
 });
 
-it('transliterates Latin typing to Russian in a human-facing name field', async () => {
+it('transliterates Latin typing to Russian when renaming a session', async () => {
   const user = userEvent.setup();
-  const createSession = vi.fn(async (_forumId: string, label: string) => ({
-    id: 'created',
-    label,
-  }));
+  const renameSession = vi.fn(async (_forumId: string, id: string, label: string) => ({ id, label }));
   render(<App
-    client={fixtureClient({ listSessions: async () => [], createSession })}
+    client={fixtureClient({ renameSession })}
     connectSessionEvents={inertSessionEvents}
   />);
 
-  await openSettingsNavigation();
-  await user.click(await screen.findByRole('button', { name: 'Forums' }));
-  await user.click(screen.getByRole('button', { name: 'The LobbyGuide' }));
-  await user.click(await screen.findByRole('button', { name: 'New session' }));
-
+  await user.click(await screen.findByLabelText('Actions for Planning'));
+  await user.click(screen.getByRole('menuitem', { name: 'Rename…' }));
   const name = screen.getByRole('textbox', { name: 'Session name' });
-  const toggle = screen.getByRole('button', { name: 'Latin to Russian transliteration' });
+  const toggle = within(screen.getByRole('dialog')).getByRole('button', { name: 'Latin to Russian transliteration' });
   await user.click(toggle);
   expect(name).toHaveFocus();
+  await user.clear(name);
   await user.type(name, 'Obzor arhitektury');
-  await user.click(screen.getByRole('button', { name: 'Start session' }));
+  await user.click(screen.getByRole('button', { name: 'Rename' }));
 
-  await waitFor(() => expect(createSession).toHaveBeenCalledWith(
-    'lobby', 'Обзор архитектуры',
+  await waitFor(() => expect(renameSession).toHaveBeenCalledWith(
+    'lobby', 'planning', 'Обзор архитектуры',
   ));
 });
 
@@ -1401,8 +1391,6 @@ it('refreshes Recent when a creation lands after the reader cancelled', async ()
   await user.click(await screen.findByRole('button', { name: 'Forums' }));
   await user.click(screen.getByRole('button', { name: 'The LobbyGuide' }));
   await user.click(await screen.findByRole('button', { name: 'New session' }));
-  await user.type(screen.getByRole('textbox', { name: 'Session name' }), 'Architecture review');
-  await user.click(screen.getByRole('button', { name: 'Start session' }));
   await waitFor(() => expect(createSession).toHaveBeenCalled());
   const listedBeforeCancel = getBootstrap.mock.calls.length;
 
@@ -1677,7 +1665,7 @@ it('clears a live chat and reopens its current vault snapshot after Settings dow
     ...snapshotFixture, session_label: 'Old vault',
   }));
   expect(getSessionSnapshot).toHaveBeenCalledOnce();
-  expect(screen.getByText('Old vault')).toBeInTheDocument();
+  expect(within(screen.getByLabelText('Chat area')).getByText('Old vault')).toBeInTheDocument();
 
   await userEvent.click(screen.getByLabelText('Settings'));
   await userEvent.click(await screen.findByRole('button', { name: /Vaults/ }));
@@ -1870,8 +1858,6 @@ it.each(['internal_error', 'session_open_timeout'] as const)(
   await user.click(await screen.findByRole('button', { name: 'Forums' }));
   await user.click(screen.getByRole('button', { name: 'The LobbyGuide' }));
   await user.click(await screen.findByRole('button', { name: 'New session' }));
-  await user.type(screen.getByRole('textbox', { name: 'Session name' }), 'Architecture review');
-  await user.click(screen.getByRole('button', { name: 'Start session' }));
 
   expect(await screen.findByRole('alert')).toHaveTextContent('The session could not be created.');
   expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();

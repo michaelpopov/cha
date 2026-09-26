@@ -1581,6 +1581,7 @@ export function ForumMembersScreen({
 interface SessionsScreenProps extends NavigationScreenProps {
   client: ChaClient;
   catalogRevision: number;
+  onCreateSession(forumId: string): Promise<boolean>;
   onOpenSession(forumId: string, sessionId: string): Promise<boolean>;
 }
 
@@ -1605,6 +1606,7 @@ export function SessionsScreen({
   dispatch,
   client,
   catalogRevision,
+  onCreateSession,
   onOpenSession,
 }: SessionsScreenProps) {
   const [sessions, setSessions] = useState<SessionListing[] | null>(null);
@@ -1686,7 +1688,7 @@ export function SessionsScreen({
           {canCreateSessions && (
             <button
               className="cha-list-action"
-              onClick={() => dispatch({ type: 'show-new-session' })}
+              onClick={() => void onCreateSession(forumId)}
               type="button"
             >
               <span className="cha-list-icon"><PlusIcon /></span>
@@ -1719,67 +1721,6 @@ export function SessionsScreen({
           })}
         </div>
       )}
-    </section>
-  );
-}
-
-interface NewSessionScreenProps extends NavigationScreenProps {
-  onCreateSession(forumId: string, label: string): Promise<boolean>;
-}
-
-export function NewSessionScreen({
-  state,
-  dispatch,
-  onCreateSession,
-}: NewSessionScreenProps) {
-  const [name, setName] = useState('');
-  const trimmedName = name.trim();
-
-  function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!state.currentForumId || !trimmedName) return;
-    void onCreateSession(state.currentForumId, trimmedName);
-  }
-
-  return (
-    <section className="cha-screen cha-navigation" aria-label="New session navigation">
-      <button
-        className="cha-back-row"
-        onClick={() => dispatch({ type: 'show-sessions' })}
-        type="button"
-      >
-        <ChevronLeftIcon />
-        <span>Sessions</span>
-      </button>
-      <form className="cha-new-session" onSubmit={submit}>
-        <TransliteratingInput
-          autoComplete="off"
-          autoFocus
-          className="cha-form-control"
-          id="cha-session-name"
-          label="Session name"
-          onValueChange={setName}
-          placeholder="e.g. Architecture review"
-          type="text"
-          value={name}
-        />
-        <div className="cha-new-session-actions">
-          <button
-            className="cha-button cha-button-ghost"
-            onClick={() => dispatch({ type: 'show-sessions' })}
-            type="button"
-          >
-            Cancel
-          </button>
-          <button
-            className="cha-button cha-button-primary"
-            disabled={!trimmedName}
-            type="submit"
-          >
-            Start session
-          </button>
-        </div>
-      </form>
     </section>
   );
 }

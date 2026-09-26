@@ -31,6 +31,7 @@ void merge(ControllerUpdate& all, ControllerUpdate one) {
     if (one.notice) {
         all.notice = std::move(one.notice);
     }
+    if (one.session_label) all.session_label = std::move(one.session_label);
 }
 
 } // namespace cha

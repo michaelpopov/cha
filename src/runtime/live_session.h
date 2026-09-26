@@ -178,6 +178,7 @@ private:
     std::shared_ptr<CommandReply> deferred_submit_;
     std::function<std::set<EntryId>()> cached_audio_entries_;
     std::string label_;
+    std::atomic<bool> naming_{};
     std::function<void(std::string_view)> persist_default_character_;
     std::function<void(
         std::string_view,

@@ -36,7 +36,6 @@ describe('application navigation reducer', () => {
       { type: 'show-characters' },
       { type: 'show-forums' },
       { type: 'select-forum', forumId: 'lobby' },
-      { type: 'show-new-session' },
       { type: 'show-settings' },
       { type: 'show-chat' },
     ];
@@ -69,10 +68,41 @@ describe('application navigation reducer', () => {
 
     state = appReducer(state, {
       type: 'session-snapshot',
-      snapshot: { ...lobbySnapshot, default_character_id: 'assistant' },
+      snapshot: { ...lobbySnapshot, default_character_id: 'assistant', session_label: 'Garden planning' },
     });
     expect(state.currentDefaultCharacterId).toBe('assistant');
     expect(state.activeConversation).toEqual({ forumId: 'lobby', sessionId: 'planning' });
+    expect(state.activeConversationLabel).toBe('Garden planning');
+    expect(state.bootstrap?.recent_sessions.find((session) => session.session_id === 'planning')
+      ?.session_label).toBe('Garden planning');
+  });
+
+  it('repairs a stale Recent label even when the active conversation label is current', () => {
+    const temporaryLabel = 'temp-ts-cha-1790467200';
+    const staleBootstrap = {
+      ...bootstrapFixture,
+      recent_sessions: bootstrapFixture.recent_sessions.map((session) => (
+        session.forum_id === 'lobby' && session.session_id === 'planning'
+          ? { ...session, session_label: temporaryLabel }
+          : session
+      )),
+    };
+    const snapshot = {
+      ...snapshotFixture,
+      forum: bootstrapFixture.forums[1],
+      session_id: 'planning',
+      session_label: temporaryLabel,
+    };
+    let state = appReducer(readyState(), { type: 'conversation-opened', snapshot });
+    const namedSnapshot = { ...snapshot, session_label: 'Garden planning' };
+    state = appReducer(state, { type: 'session-snapshot', snapshot: namedSnapshot });
+    state = appReducer(state, { type: 'bootstrap-refreshed', bootstrap: staleBootstrap });
+    expect(state.activeConversationLabel).toBe('Garden planning');
+    expect(state.bootstrap?.recent_sessions[1].session_label).toBe(temporaryLabel);
+
+    state = appReducer(state, { type: 'session-snapshot', snapshot: namedSnapshot });
+    expect(state.bootstrap?.recent_sessions[1].session_label).toBe('Garden planning');
+    expect(state.bootstrap?.recent_sessions[0]).toBe(staleBootstrap.recent_sessions[0]);
   });
 
   it('replaces snapshots and appends entry text', () => {

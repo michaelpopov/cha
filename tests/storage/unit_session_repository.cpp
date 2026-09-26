@@ -449,8 +449,13 @@ TEST_F(SessionRepositoryTest, AppliesLabelPolicyAndSeparatesMissingForums) {
     EXPECT_THROW(
         (void)repository.prepare({"lobby", "absent"}), SessionNotFoundError);
 
+    const std::time_t before = std::time(nullptr);
     const StoredSession created = repository.create("lobby", "");
-    EXPECT_EQ(created.label, created.identity.session_id);
+    const std::time_t after = std::time(nullptr);
+    EXPECT_EQ(created.label, "temp-ts-cha-" + std::to_string(created.updated_at));
+    EXPECT_GE(created.updated_at, before);
+    EXPECT_LE(created.updated_at, after);
+    EXPECT_EQ(repository.prepare(created.identity).label, created.label);
     EXPECT_THROW(
         (void)repository.rename(created.identity, ""), std::invalid_argument);
 }

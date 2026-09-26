@@ -55,6 +55,7 @@ struct ControllerUpdate {
     // nullopt leaves a frontend's current notice unchanged, an empty string
     // clears it, and a non-empty string replaces it.
     std::optional<std::string> notice;
+    std::optional<std::string> session_label;
 
     bool operator==(const ControllerUpdate&) const = default;
 };

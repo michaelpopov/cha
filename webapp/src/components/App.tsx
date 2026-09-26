@@ -45,7 +45,6 @@ import {
   NewPersonaScreen,
   NewCharacterScreen,
   NewForumScreen,
-  NewSessionScreen,
   PersonaDetailScreen,
   PersonaSettingsScreen,
   PersonasScreen,
@@ -83,7 +82,7 @@ interface ScreenProps extends ChatActions {
   dispatch: Dispatch<AppAction>;
   client: ChaClient;
   onDeleteForum(forumId: string): Promise<void>;
-  onCreateSession(forumId: string, label: string): Promise<boolean>;
+  onCreateSession(forumId: string): Promise<boolean>;
   onOpenSession(forumId: string, sessionId: string): Promise<boolean>;
   catalogRevision: number;
 }
@@ -201,6 +200,7 @@ function Screen({
         catalogRevision={catalogRevision}
         client={client}
         dispatch={dispatch}
+        onCreateSession={onCreateSession}
         onOpenSession={onOpenSession}
         state={state}
       />
@@ -231,13 +231,6 @@ function Screen({
       <ForumMembersScreen
         client={client}
         dispatch={dispatch}
-        state={state}
-      />
-    );
-    case 'new-session': return (
-      <NewSessionScreen
-        dispatch={dispatch}
-        onCreateSession={onCreateSession}
         state={state}
       />
     );
@@ -732,6 +725,7 @@ export function App({
           style={{ '--cha-sidebar-width': `${sidebarWidth}px` } as CSSProperties}
         >
           <Sidebar
+            onCreateSession={createConversation}
             onClearSessionAudioCache={clearSessionAudioCache}
             dispatch={navigate}
             onDeleteSession={deleteSession}

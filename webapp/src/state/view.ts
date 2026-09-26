@@ -34,7 +34,6 @@ export type MainView =
   | 'forum-file'
   | 'new-forum-file'
   | 'forum-members'
-  | 'new-session'
   | 'settings'
   | 'settings-vaults'
   | 'settings-new-vault'
@@ -177,7 +176,6 @@ export type AppAction =
   | { type: 'forum-detail-loaded'; forumId: string; writable: boolean }
   | { type: 'forum-updated'; forum: ForumDetail }
   | { type: 'forum-deleted'; forumId: string }
-  | { type: 'show-new-session' }
   | { type: 'show-settings' }
   | { type: 'show-settings-vaults' }
   | { type: 'show-settings-new-vault' }
@@ -567,8 +565,6 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         ...idleSessionOperation(),
       };
     }
-    case 'show-new-session':
-      return { ...state, mainView: 'new-session', ...idleSessionOperation() };
     case 'show-settings':
       return { ...state, mainView: 'settings', ...idleSessionOperation() };
     case 'show-settings-vaults':
@@ -805,6 +801,21 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       }
       return {
         ...state,
+        bootstrap: state.bootstrap && state.bootstrap.recent_sessions.some((session) => (
+          session.forum_id === action.snapshot.forum.id
+            && session.session_id === action.snapshot.session_id
+            && session.session_label !== action.snapshot.session_label
+        ))
+          ? {
+            ...state.bootstrap,
+            recent_sessions: state.bootstrap.recent_sessions.map((session) => (
+              session.forum_id === action.snapshot.forum.id
+                && session.session_id === action.snapshot.session_id
+                ? { ...session, session_label: action.snapshot.session_label }
+                : session
+            )),
+          }
+          : state.bootstrap,
         activeConversationLabel: action.snapshot.session_label,
         currentDefaultCharacterId: action.snapshot.default_character_id,
         sessionSnapshot: action.snapshot,
@@ -865,7 +876,6 @@ export function navigationTitle(state: AppState): string | null {
     case 'forum-file': return state.inspectedForum.file ?? 'File';
     case 'new-forum-file': return 'New file';
     case 'forum-members': return 'Members';
-    case 'new-session': return 'New session';
     case 'settings': return 'Settings';
     case 'settings-vaults': return 'Vaults';
     case 'settings-new-vault': return 'New vault';

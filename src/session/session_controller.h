@@ -99,6 +99,8 @@ public:
     [[nodiscard]] ControllerUpdate set_default_character_by_id(std::string_view id);
     [[nodiscard]] ControllerUpdate request_stop();
     void rename(std::string_view label);
+    void enable_auto_naming(std::string_view label);
+    [[nodiscard]] bool is_naming() const noexcept { return name_request_ != nullptr; }
     [[nodiscard]] ControllerUpdate handle_generation_event(GenerationEvent event);
     [[nodiscard]] ControllerEventBatch receive_events(std::size_t max_events);
     void shutdown();
@@ -158,8 +160,8 @@ private:
         std::string_view author_id,
         ControllerUpdate& update) const;
     // Records one human message addressed to the reserved null target `-`:
-    // persisted and shown like any other message, but no model is called and
-    // no reply is produced.
+    // persisted and shown like any other message, with no character reply.
+    // It can still supply the prompt for automatic session naming.
     void record_monologue(
         std::string_view author_id,
         std::string text,
@@ -203,6 +205,9 @@ private:
         std::vector<std::string> fixed_targets,
         std::shared_ptr<SubmissionState> submission);
     ControllerUpdate finish_classification();
+    void start_session_name();
+    bool receive_session_name(ControllerUpdate& update, std::size_t max_events);
+    void cancel_session_name() noexcept;
     std::shared_ptr<WebSearchContext> make_web_search(
         JevSearch choice, std::string_view prompt, SharedModelHistory history);
     struct PendingClassification {
@@ -217,6 +222,9 @@ private:
     };
     std::optional<PendingClassification> pending_classification_;
     std::optional<SubmissionResult> submission_result_;
+    bool auto_name_{};
+    std::shared_ptr<ProviderRequest> name_request_;
+    std::string name_text_;
     WorkspaceReader read_workspace_;
     Transcript transcript_;
     SessionJournal journal_;
