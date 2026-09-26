@@ -134,7 +134,7 @@ TEST(Workspace, EagerlyLoadsOwnedResolvedData) {
     const WorkspacePersona* const persona = workspace.find_persona("reader");
     ASSERT_NE(persona, nullptr);
     EXPECT_EQ(persona->style_id, "serif");
-    EXPECT_EQ(persona->voice_id, "warm-narrator");
+    EXPECT_FALSE(persona->voice_id);
     EXPECT_EQ(persona->appearance.font, CharacterFont::serif);
     EXPECT_EQ(persona->appearance.weight, CharacterWeight::bold);
     ASSERT_NE(workspace.find_character("guide"), nullptr);
@@ -265,6 +265,25 @@ TEST(Workspace, IgnoresObsoleteVoiceSettingsAndDropsThemOnSave) {
         EXPECT_EQ(saved.find(obsolete), std::string::npos);
     }
     EXPECT_EQ(Workspace::load(fixture.root()).find_voice("reader")->settings.speed, 0.95);
+}
+
+TEST(Workspace, IgnoresObsoletePersonaVoiceAndDropsItOnSave) {
+    test::TestWorkspace fixture;
+    const auto path = fixture.root() / "personas" / "reader" / "persona.toml";
+    const auto log_file = fixture.root() / "persona-voice-warnings.log";
+    initialize_diagnostic_logging(log_file, "warn");
+    for (const auto* voice : {"'missing'", "'../invalid'", "42"}) {
+        std::ofstream(path) << "display_name = 'Reader'\nvoice = " << voice << "\n";
+        const Workspace workspace = Workspace::load(fixture.root());
+        EXPECT_FALSE(workspace.find_persona("reader")->voice_id);
+        edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) {
+            editor.write_persona("reader", "Reader", "Updated persona", std::nullopt, "missing");
+        });
+        EXPECT_EQ(file_bytes(path).find("voice"), std::string::npos);
+        EXPECT_EQ(Workspace::load(fixture.root()).find_persona("reader")->prompt, "Updated persona");
+    }
+    shutdown_diagnostic_logging();
+    EXPECT_NE(file_bytes(log_file).find("Ignoring obsolete persona voice setting"), std::string::npos);
 }
 
 TEST(Workspace, IgnoresElevenLabsOutputConfigurationAndRejectsSavingIt) {
@@ -1900,20 +1919,30 @@ TEST(Workspace, RejectsOpenAiSubscriptionWebSearchOverrides) {
                "web_search = \"required\"\n";
         EXPECT_THROW((void)Workspace::load(fixture.root()), std::runtime_error);
     }
-    {
-        test::TestWorkspace fixture;
-        fixture.write_provider("chatgpt", subscription_provider_toml());
-        fixture.write_character_config(
-            "display_name = \"Guide\"\nprovider = \"chatgpt\"\n");
-        const Workspace workspace = Workspace::load(fixture.root());
-        EXPECT_THROW(
-            edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) {
-                editor.write_character_settings(
-                    "guide", "chatgpt", std::nullopt, std::nullopt, std::nullopt,
-                    WebSearchMode::automatic);
-            }),
-            std::invalid_argument);
+}
+
+TEST(Workspace, SavingOpenAiSubscriptionIgnoresUnsupportedWebSearchOverrides) {
+    test::TestWorkspace fixture;
+    fixture.write_provider("chatgpt", subscription_provider_toml());
+    fixture.write_character_config(
+        "display_name = \"Guide\"\nprovider = \"chatgpt\"\n");
+    const Workspace workspace = Workspace::load(fixture.root());
+    const auto log_file = fixture.root() / "web-search-warnings.log";
+    initialize_diagnostic_logging(log_file, "warn");
+    for (const auto mode : {WebSearchMode::automatic, WebSearchMode::required}) {
+        EXPECT_NO_THROW(edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) {
+            editor.write_character_settings(
+                "guide", "chatgpt", std::nullopt, std::nullopt, std::nullopt, mode);
+        }));
+        const Workspace reloaded = Workspace::load(fixture.root());
+        EXPECT_EQ(reloaded.find_character("guide")->provider_id, "chatgpt");
+        EXPECT_FALSE(reloaded.find_character("guide")->web_search);
+        EXPECT_EQ(file_bytes(fixture.root() / "characters/guide/character.toml").find("web_search"),
+            std::string::npos);
     }
+    shutdown_diagnostic_logging();
+    EXPECT_NE(file_bytes(log_file).find("Ignoring unsupported provider web search for character 'guide'"),
+        std::string::npos);
 }
 
 } // namespace

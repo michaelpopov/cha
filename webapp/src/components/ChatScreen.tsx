@@ -165,7 +165,7 @@ function visibleTranscriptEntries(entries: SessionSnapshot['transcript']) {
 }
 
 function canReadEntry(entry: SessionSnapshot['transcript'][number]): boolean {
-  return (entry.kind === 'human' || entry.kind === 'character')
+  return entry.kind === 'character'
     && entry.status === 'complete' && entry.created_at !== null;
 }
 
@@ -544,13 +544,12 @@ export function ChatScreen({
   useEffect(() => stopSpeech, [audioConversationKey, state.audioCacheClearCount]);
 
   const speechRequest = useCallback((entry: SessionSnapshot['transcript'][number]): AudioDownloadBatchEntry => {
-    const voice = entry.kind === 'character'
-      ? speechVoices.get(entry.participant_id) : personas.get(entry.participant_id)?.voice;
+    const voice = speechVoices.get(entry.participant_id);
     return { entry_id: entry.id,
       reference_id: voice?.elevenlabs_voice_id ?? textToSpeechConfiguration!.voiceId,
       settings: voice?.settings ?? {},
     };
-  }, [speechVoices, personas, textToSpeechConfiguration]);
+  }, [speechVoices, textToSpeechConfiguration]);
 
   useEffect(() => {
     // Reset once when this observer changes sessions/vaults or clears audio.
@@ -600,7 +599,7 @@ export function ChatScreen({
   }
 
   function toggleSpeech(entry: SessionSnapshot['transcript'][number]) {
-    if (!snapshot || (!entry.has_cached_audio && !textToSpeechConfiguration)) return;
+    if (!snapshot || !canReadEntry(entry) || (!entry.has_cached_audio && !textToSpeechConfiguration)) return;
     const stopping = speechSelection.current === entry.id && textToSpeechSession.current;
     stopSpeech();
     if (stopping) return;
@@ -648,9 +647,7 @@ export function ChatScreen({
     const begin = (cachedUrl: string, resourceId?: string, streaming = false) => {
       const session = new TextToSpeechSession(
         textToSpeechConfiguration,
-        entry.kind === 'character'
-          ? speechVoices.get(entry.participant_id)
-          : personas.get(entry.participant_id)?.voice,
+        speechVoices.get(entry.participant_id),
         visibleEntryText(entry.kind, entry.text),
         () => {
           if (textToSpeechSession.current !== session) return;

@@ -15,9 +15,7 @@ namespace {
 SharedCharacterDefinition voice_instrumenter(
     const Workspace& workspace, const WorkspaceVoiceOutput& output,
     const EntryAudioLookup& entry, std::string_view text) {
-    if (entry.entry_kind != EntryKind::character) return {};
     const auto& provider_id = output.instrumentation_provider_id;
-    if (provider_id.empty()) return {};
     const auto* provider = workspace.find_provider(provider_id);
     const auto* character = workspace.find_character(entry.participant_id);
     if (!provider || !character) {
@@ -194,6 +192,9 @@ AudioAcceptance AudioDownloadManager::submit(const FullSessionId& session, Entry
 
 std::shared_ptr<AudioDownloadManager::Job> AudioDownloadManager::prepare_job(
     const EntryAudioLookup& entry, const FishAudioSynthesis& synthesis) {
+    if (entry.entry_kind != EntryKind::character) {
+        throw std::invalid_argument("Voice output is only available for character replies.");
+    }
     auto job = std::make_shared<Job>();
     const auto workspace = sessions_.workspace();
     if (!workspace || !workspace->voice_output()) {

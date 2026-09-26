@@ -63,7 +63,7 @@ protected:
         const auto prepared = sessions->prepare(session);
         SessionJournal journal(path, prepared.session_key);
         for (EntryId id = 1; id <= 5; ++id)
-            journal.record_entry(test::human_entry(id, {"human", "You"}, {"guide", "Guide"}, std::to_string(id)));
+            journal.record_entry(make_character_entry(id, "guide", "Guide", std::to_string(id), EntryStatus::complete));
         vault = std::make_unique<CurrentVault>(VaultDefinition{.name = "Test", .data = path});
     }
     AudioDownloadRequest input() { return {"Test", {.reference_id = "voice"}}; }
@@ -311,20 +311,28 @@ TEST_F(AudioDownloads, MissingInstrumentationProviderOrCharacterUsesOriginalText
     }
 }
 
-TEST_F(AudioDownloads, HumanEntriesSkipInstrumentationWithAConfiguredProvider) {
+TEST_F(AudioDownloads, HumanEntriesCannotGenerateAudio) {
     configure_instrumentation();
+    const auto prepared = sessions->prepare(session);
+    SessionJournal journal(path, prepared.session_key);
+    journal.record_entry(test::human_entry(6, {"human", "You"}, {"guide", "Guide"}, "Question"));
     auto downloads = make(
-        [](const auto&, const auto&, const auto& request, const auto&,
+        [](const auto&, const auto&, const auto&, const auto&,
             const AudioChunkCallback&) -> std::optional<EntryAudio> {
-            EXPECT_EQ(request.body.at("text"), "1");
-            return EntryAudio{"audio", "audio/mpeg"};
+            ADD_FAILURE() << "Human entries must not call FishAudio";
+            return std::nullopt;
         },
         [](SharedCharacterDefinition) -> std::unique_ptr<ModelBackend> {
             ADD_FAILURE() << "Human entries must not call the instrumentation model";
             return {};
         });
-    downloads->submit(session, 1, input());
-    ASSERT_TRUE(eventually([&] { return sessions->cached_audio_entries(session).contains(1); }));
+    EXPECT_THROW(downloads->submit(session, 6, input()), std::invalid_argument);
+    const AudioDownloadBatchRequest batch{"Test", {
+        {1, {.reference_id = "voice"}}, {6, {.reference_id = "voice"}},
+    }};
+    EXPECT_THROW(downloads->submit_batch(session, batch), std::invalid_argument);
+    EXPECT_TRUE(downloads->status(session, "Test").downloads.empty());
+    EXPECT_TRUE(sessions->cached_audio_entries(session).empty());
 }
 
 TEST_F(AudioDownloads, InstrumentationEffortOverridesOnlyTheSelectedCall) {
@@ -362,25 +370,30 @@ TEST_F(AudioDownloads, InstrumentationEffortOverridesOnlyTheSelectedCall) {
     }
 }
 
-TEST_F(AudioDownloads, NonS2ModelsSkipInstrumentationWithAConfiguredProvider) {
+TEST_F(AudioDownloads, AnyModelUsesInstrumentationWithAConfiguredProvider) {
     configure_instrumentation();
     add_reply();
-    auto output = *config->snapshot()->voice_output();
-    output.model = "s1";
-    config->apply_voice_output_update(output);
-    auto downloads = make(
-        [](const auto&, const auto&, const auto& request, const auto&,
-            const AudioChunkCallback&) -> std::optional<EntryAudio> {
-            EXPECT_EQ(request.model, "s1");
-            EXPECT_EQ(request.body.at("text"), "Hello.");
-            return EntryAudio{"audio", "audio/mpeg"};
-        },
-        [](SharedCharacterDefinition) -> std::unique_ptr<ModelBackend> {
-            ADD_FAILURE() << "Non-S2 models must not use S2 instrumentation";
-            return {};
-        });
-    downloads->submit(session, 6, input());
-    ASSERT_TRUE(eventually([&] { return sessions->cached_audio_entries(session).contains(6); }));
+    for (const auto* model : {"s1", "drama-3-preview", "future-model"}) {
+        auto output = *config->snapshot()->voice_output();
+        output.model = model;
+        config->apply_voice_output_update(output);
+        auto downloads = make(
+            [&](const auto&, const auto&, const auto& request, const auto&,
+                const AudioChunkCallback&) -> std::optional<EntryAudio> {
+                EXPECT_EQ(request.model, model);
+                EXPECT_EQ(request.body.at("text"), "[calm] Hello.");
+                return EntryAudio{"audio", "audio/mpeg"};
+            },
+            [](SharedCharacterDefinition) -> std::unique_ptr<ModelBackend> {
+                return std::make_unique<VoiceBackend>([](const auto& delta, const auto&) {
+                    delta({GenerationDeltaKind::answer, "[calm] Hello."});
+                    return GenerationResult{};
+                });
+            });
+        downloads->submit(session, 6, input());
+        ASSERT_TRUE(eventually([&] { return sessions->cached_audio_entries(session).contains(6); }));
+        downloads->clear(session);
+    }
 }
 
 TEST_F(AudioDownloads, CancellingInstrumentationStopsBeforeFishAudioAndCacheWrite) {
@@ -496,7 +509,7 @@ TEST_F(AudioDownloads, NewBatchRunsBeforeBacklogAndPreservesBatchOrder) {
     const auto prepared = sessions->prepare(session);
     SessionJournal journal(path, prepared.session_key);
     for (EntryId id = 6; id <= 7; ++id)
-        journal.record_entry(test::human_entry(id, {"human", "You"}, {"guide", "Guide"}, std::to_string(id)));
+        journal.record_entry(make_character_entry(id, "guide", "Guide", std::to_string(id), EntryStatus::complete));
     std::mutex mutex;
     std::vector<std::string> started;
     std::set<std::string> released;

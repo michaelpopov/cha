@@ -168,15 +168,12 @@ CharacterDetail character_detail(
     return detail;
 }
 
-PersonaSummary persona_summary(
-    const Workspace& workspace,
-    const WorkspacePersona& persona) {
+PersonaSummary persona_summary(const WorkspacePersona& persona) {
     return {
         .id = persona.id,
         .display_name = persona.display_name,
         .description = persona.description,
         .appearance = persona.appearance,
-        .voice = resolve_speech_voice(workspace, persona),
     };
 }
 
@@ -184,18 +181,14 @@ PersonaDetail persona_detail(
     const Workspace& workspace,
     const WorkspacePersona& persona) {
     PersonaDetail detail{
-        .summary = persona_summary(workspace, persona),
+        .summary = persona_summary(persona),
         .persona_markdown = persona.prompt,
         .style = persona.style_id,
-        .voice = persona.voice_id,
         .writable = workspace.persona_is_writable(persona.id),
     };
     for (const WorkspaceStyle& style : workspace.styles()) {
         detail.available_styles.push_back(
             {style.id, style.label, style.appearance});
-    }
-    for (const WorkspaceVoice& voice : workspace.voices()) {
-        detail.available_voices.push_back({voice.id, voice.label});
     }
     return detail;
 }

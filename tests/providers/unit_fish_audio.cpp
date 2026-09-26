@@ -278,7 +278,8 @@ TEST(FishAudio, ForwardsAuthenticationAndReturnsAudioBytes) {
         .model = "custom/model", .output_format = "mp3",
     };
     const auto request = make_fish_audio_request(output, {
-        {"text", "Hello"}, {"reference_id", "voice"},
+        {"text", "Hello\n\nWorld\nSingle line\n\n\nThree\n\n\n\nFour\r\n\r\nCRLF\n \n[soft] Goodbye"},
+        {"reference_id", "voice"},
     });
     const auto result = download_fish_audio(
         output, "fish-secret", request, [] { return false; });
@@ -288,7 +289,9 @@ TEST(FishAudio, ForwardsAuthenticationAndReturnsAudioBytes) {
     EXPECT_NE(sent.find("POST /v1/tts "), std::string::npos);
     EXPECT_NE(sent.find("Authorization: Bearer fish-secret"), std::string::npos);
     EXPECT_NE(sent.find("model: custom/model"), std::string::npos);
-    EXPECT_NE(sent.find(request.body.dump()), std::string::npos);
+    auto expected_body = request.body;
+    expected_body["text"] = "Hello [pause] World\nSingle line [pause] Three [pause] Four [pause] CRLF [pause] [soft] Goodbye";
+    EXPECT_NE(sent.find(expected_body.dump()), std::string::npos);
     ASSERT_TRUE(result);
     EXPECT_EQ(result->audio, "audio");
     EXPECT_EQ(result->content_type, "audio/mpeg");
@@ -417,8 +420,7 @@ TEST(FishAudio, EntrySpeechTextOmitsEmptyAndMetadataOnlyEntries) {
             "history_epoch, next_entry_id, next_request_id) VALUES (1, 'audio', 'Audio', 1, 1, 4, 1)");
         database.execute("INSERT INTO entries (session_key, entry_id, epoch, kind, participant_id, "
             "display_name, addressed_to, addressed_to_name, text, status) VALUES "
-            "(1, 1, 1, 0, 'human', 'You', '-', '-', '', 0), "
-            "(1, 2, 1, 0, 'human', 'You', '-', '-', 'Stored transcript', 0), "
+            "(1, 2, 1, 1, 'guide', 'Guide', '', '', 'Stored transcript', 0), "
             "(1, 3, 1, 1, 'guide', 'Guide', '', '', "
             "'  [2026-09-16T12:00:00.123Z] ([source](https://example.com))', 0)");
     }
@@ -426,9 +428,7 @@ TEST(FishAudio, EntrySpeechTextOmitsEmptyAndMetadataOnlyEntries) {
     const SessionRepository sessions(
             [&config] { return config->snapshot(); }, path, config->workspace_path(), config->welcome_path(),
         {{"temporary-forum", "temporary-session"}, "Welcome"});
-    const auto empty = sessions.lookup_entry_audio({"lobby", "audio"}, 1);
-    ASSERT_TRUE(empty);
-    EXPECT_TRUE(entry_speech_text(*empty).empty());
+    EXPECT_TRUE(entry_speech_text({}).empty());
     const auto stored = sessions.lookup_entry_audio({"lobby", "audio"}, 2);
     ASSERT_TRUE(stored);
     EXPECT_EQ(entry_speech_text(*stored), "Stored transcript");

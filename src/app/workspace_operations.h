@@ -29,9 +29,7 @@ namespace cha::app::workspace {
 [[nodiscard]] CharacterDetail character_detail(
     const Workspace& workspace,
     const WorkspaceCharacter& character);
-[[nodiscard]] PersonaSummary persona_summary(
-    const Workspace& workspace,
-    const WorkspacePersona& persona);
+[[nodiscard]] PersonaSummary persona_summary(const WorkspacePersona& persona);
 [[nodiscard]] PersonaDetail persona_detail(
     const Workspace& workspace,
     const WorkspacePersona& persona);

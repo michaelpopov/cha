@@ -125,15 +125,12 @@ CharacterSummary character_summary(
     };
 }
 
-PersonaSummary persona_summary(
-    const Workspace& workspace,
-    const WorkspacePersona& persona) {
+PersonaSummary persona_summary(const WorkspacePersona& persona) {
     return {
         .id = persona.id,
         .display_name = persona.display_name,
         .description = persona.description,
         .appearance = persona.appearance,
-        .voice = resolve_speech_voice(workspace, persona),
     };
 }
 
@@ -183,7 +180,7 @@ Bootstrap make_bootstrap(
         .initial_session_id = initial.session_id,
         .entrance_forum_id = std::string(entrance_id)};
     for (const WorkspacePersona& persona : workspace.personas()) {
-        bootstrap.personas.push_back(persona_summary(workspace, persona));
+        bootstrap.personas.push_back(persona_summary(persona));
     }
     for (const WorkspaceCharacter& character : workspace.characters()) {
         bootstrap.characters.push_back(character_summary(workspace, character));

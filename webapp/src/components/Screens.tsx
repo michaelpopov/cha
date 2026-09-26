@@ -849,7 +849,6 @@ export function PersonaSettingsScreen({
   const persona = state.bootstrap?.personas.find(({ id }) => id === personaId);
   const [detail, setDetail] = useState<PersonaDetail | null>(null);
   const [style, setStyle] = useState<string | null>(null);
-  const [voice, setVoice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [requestVersion, setRequestVersion] = useState(0);
@@ -864,7 +863,6 @@ export function PersonaSettingsScreen({
         if (!current) return;
         setDetail(loaded);
         setStyle(loaded.style);
-        setVoice(loaded.voice_id);
       },
       (failure: unknown) => {
         if (current) {
@@ -885,18 +883,16 @@ export function PersonaSettingsScreen({
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!personaId || !detail || saving) return;
-    if (style === detail.style && voice === detail.voice_id) return;
+    if (style === detail.style) return;
     setSaving(true);
     setError(null);
     try {
       const saved = await client.updatePersona(personaId, {
         style,
-        voice_id: voice,
       });
       dispatch({ type: 'persona-updated', persona: saved });
       setDetail(saved);
       setStyle(saved.style);
-      setVoice(saved.voice_id);
     } catch (failure: unknown) {
       setError(publicErrorMessage(failure, 'Persona settings could not be saved.'));
     } finally {
@@ -904,11 +900,8 @@ export function PersonaSettingsScreen({
     }
   }
 
-  const selectedStyle = detail?.available_styles.find(({ id }) => id === style);
   const unresolvedStyle = detail && unresolvedOption(detail.available_styles, detail.style);
-  const unresolvedVoice = detail && unresolvedOption(detail.available_voices, detail.voice_id);
-  const dirty = detail !== null
-    && (style !== detail.style || voice !== detail.voice_id);
+  const dirty = detail !== null && style !== detail.style;
 
   return (
     <section className="cha-screen cha-navigation" aria-label="Persona settings">
@@ -952,27 +945,6 @@ export function PersonaSettingsScreen({
               <option value={unresolvedStyle.id}>{unresolvedStyle.label}</option>
             )}
           </select>
-          <label htmlFor="cha-persona-voice">Voice</label>
-          <select
-            className="cha-form-control"
-            disabled={saving}
-            id="cha-persona-voice"
-            onChange={(event) => setVoice(event.target.value === '' ? null : event.target.value)}
-            value={voice ?? ''}
-          >
-            <option value="">Application default</option>
-            {detail.available_voices.map((option) => (
-              <option key={option.id} value={option.id}>{option.label}</option>
-            ))}
-            {unresolvedVoice && (
-              <option value={unresolvedVoice.id}>{unresolvedVoice.label}</option>
-            )}
-          </select>
-          <VoicePreview
-            appearance={selectedStyle?.appearance}
-            client={client}
-            voiceId={voice}
-          />
           <div className="cha-new-session-actions">
             <button
               className="cha-button cha-button-ghost"

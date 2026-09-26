@@ -17,6 +17,11 @@ namespace cha {
 namespace {
 using Json = nlohmann::json;
 
+std::string replace_paragraph_breaks(const std::string& text) {
+    static const std::regex paragraph_break(R"(\s*\n\s*\n\s*)");
+    return std::regex_replace(text, paragraph_break, " [pause] ");
+}
+
 bool valid_audio_type(std::string_view value) {
     const auto type = trim_view(value.substr(0, value.find(';')));
     return type.size() > 6 && starts_with_folded(type, "audio/");
@@ -85,7 +90,6 @@ bool perform_transfer(CURL* curl, const char* error_buffer, const std::function<
 } // namespace
 
 std::string entry_speech_text(const EntryAudioLookup& entry) {
-    if (entry.entry_kind != EntryKind::character) return entry.entry_text;
     // Match the text shown in chat, including legacy echoed timestamps.
     static const std::regex timestamp_prefix(
         R"(^\s*\[[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?Z\]\s*)");
@@ -110,7 +114,10 @@ static std::optional<FishAudioResult> transfer_fish_audio(
     }
     char error_buffer[CURL_ERROR_SIZE]{};
     const auto require = [&](CURLcode result) { require_curl(result, error_buffer); };
-    const std::string body = request.body.dump();
+    auto payload = request.body;
+    auto& text = payload.at("text").get_ref<std::string&>();
+    text = replace_paragraph_breaks(text);
+    const std::string body = payload.dump();
     AudioReceiver receiver{curl.get(), {}, on_audio, {}};
     require(curl_easy_setopt(curl.get(), CURLOPT_ERRORBUFFER, error_buffer));
     require(curl_easy_setopt(curl.get(), CURLOPT_URL, output.url.c_str()));

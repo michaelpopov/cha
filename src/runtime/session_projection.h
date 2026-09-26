@@ -11,7 +11,6 @@
 namespace cha {
 class Workspace;
 struct WorkspaceCharacter;
-struct Persona;
 
 // Web-owned presentation data combined with core state only at the protocol
 // boundary. It deliberately excludes controller, transcript, and identity
@@ -27,9 +26,6 @@ struct WebPresentationState {
 [[nodiscard]] std::optional<SpeechVoice> resolve_speech_voice(
     const Workspace& workspace,
     const WorkspaceCharacter& character);
-[[nodiscard]] std::optional<SpeechVoice> resolve_speech_voice(
-    const Workspace& workspace,
-    const Persona& persona);
 
 // Copies a borrowed controller view into an owning protocol snapshot, adding
 // web-only identity, lifecycle, and notice fields. Borrowing ends here: the

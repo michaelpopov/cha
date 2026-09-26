@@ -74,6 +74,8 @@ TEST(RuntimeSettings, DefaultsHavePositiveBatchSizes) {
 
 TEST(Application, StartsWithoutAListenerAndBootstraps) {
     test::TestWorkspace workspace;
+    std::ofstream(workspace.root() / "personas" / "reader" / "persona.toml", std::ios::app)
+        << "voice = 'obsolete-voice'\n";
     const std::filesystem::path database =
         test::import_test_database(workspace.root());
     auto application = Application::open(make_command(workspace, database));
@@ -89,6 +91,13 @@ TEST(Application, StartsWithoutAListenerAndBootstraps) {
     EXPECT_EQ(boot.presentation.entrance_forum_id, entrance_id);
     EXPECT_FALSE(boot.presentation.forums.empty());
     EXPECT_EQ(boot.presentation.vault_name, "Test");
+    for (const auto& persona : boot.presentation.personas) {
+        EXPECT_FALSE(nlohmann::json(persona).contains("voice"));
+    }
+    const auto persona = application->get_persona("reader", application->context_epoch());
+    EXPECT_FALSE(nlohmann::json(persona).contains("voice"));
+    EXPECT_FALSE(persona.voice);
+    EXPECT_TRUE(persona.available_voices.empty());
 }
 
 TEST(Application, IndependentOwnersKeepWorkspaceSessionsAndCredentialsIsolated) {

@@ -34,8 +34,7 @@ std::string_view embedded_character_voice();
 std::string_view embedded_new_character_template();
 
 bool uses_voice_instrumentation(const WorkspaceVoiceOutput& output) {
-    return trim_view(output.model).starts_with("s2")
-        && !output.instrumentation_provider_id.empty();
+    return !output.instrumentation_provider_id.empty();
 }
 
 namespace {
@@ -713,10 +712,10 @@ WorkspacePersona load_persona(
     if (description) validate_description(*description, "Persona", config_path);
     const std::optional<std::string> style_id = optional_value<std::string>(
         table, config_path, "style", "a string");
-    const std::optional<std::string> voice_id = optional_value<std::string>(
-        table, config_path, "voice", "a string");
+    if (table.contains("voice")) {
+        log_warn("Ignoring obsolete persona voice setting: " + utf8_path(config_path));
+    }
     if (style_id) require_path_component(*style_id, config_path);
-    if (voice_id) require_path_component(*voice_id, config_path);
     const std::filesystem::path prompt_path = directory / "PERSONA.md";
     std::string prompt;
     if (source.exists(prompt_path)) {
@@ -733,7 +732,6 @@ WorkspacePersona load_persona(
         .prompt = std::move(prompt),
         .description = description,
         .style_id = style_id,
-        .voice_id = voice_id,
     };
 }
 
@@ -2741,16 +2739,14 @@ void WorkspaceConfigEditor::write_persona(
         throw std::invalid_argument(
             "Style '" + std::string(*style_id) + "' does not exist");
     }
-    if (voice_id && workspace_.find_voice(*voice_id) == nullptr) {
-        throw std::invalid_argument(
-            "Voice '" + std::string(*voice_id) + "' does not exist");
+    if (voice_id) {
+        log_warn("Ignoring obsolete persona voice setting: " + utf8_path(config_path));
     }
     rewrite_toml(config_path, [&](toml::table& table) {
         table.insert_or_assign("display_name", std::string(display_name));
         if (style_id) table.insert_or_assign("style", std::string(*style_id));
         else table.erase("style");
-        if (voice_id) table.insert_or_assign("voice", std::string(*voice_id));
-        else table.erase("voice");
+        table.erase("voice");
     });
     write_file(directory->second / "PERSONA.md", markdown);
 }

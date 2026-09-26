@@ -36,12 +36,6 @@ std::optional<SpeechVoice> resolve_speech_voice(
     return resolve_speech_voice_id(workspace, character.voice_id);
 }
 
-std::optional<SpeechVoice> resolve_speech_voice(
-    const Workspace& workspace,
-    const Persona& persona) {
-    return resolve_speech_voice_id(workspace, persona.voice_id);
-}
-
 SessionSnapshot to_snapshot(
     const Workspace& workspace,
     const FullSessionId& identity,

@@ -289,7 +289,7 @@ workspace/
 
 The loader requires `personas/`, `characters/`, `forums/`, and
 `system/providers/` directories. `system/styles/` and `system/voices/` are
-optional, but every style or voice referenced by a character or persona must exist.
+optional, but referenced character styles and voices, and persona styles, must exist.
 `system/assistant/character.toml` and at least one usable provider are
 effectively required because the built-in Assistant must select a provider.
 
@@ -367,13 +367,12 @@ A directory containing either `persona.toml` or `PERSONA.md` is treated as a
 persona definition directory. Do not leave a stray `PERSONA.md` without its
 `persona.toml`.
 
-`persona.toml` accepts exactly these fields:
+`persona.toml` supports these fields:
 
 ```toml
 display_name = "Michael"                         # required
 description = "A programmer living in Redmond." # optional, one line
 style = "serif"                                # optional style ID
-voice = "warm-narrator"                         # optional voice ID
 ```
 
 Unknown fields are rejected. `PERSONA.md`, when present, describes the user to
@@ -381,9 +380,9 @@ the forum's characters. It can contain substantial first-person context and
 communication preferences. If it is absent, the persona still exists but has
 no prompt body.
 
-`style` controls the appearance of human messages; `voice` selects their
-FishAudio voice. Both reference existing definitions under `system/`. Without
-an assigned voice, speech uses the configured output default.
+`style` controls the appearance of human messages and references a definition
+under `system/styles/`. Human messages do not support voice output. Legacy
+`voice` settings are ignored with a warning and removed when the persona is saved.
 
 Every forum chooses its active starting persona with `default_persona` in the
 forum's `config.toml`. If omitted, CHA uses the built-in `guest` persona. A user
@@ -927,10 +926,10 @@ To add or tune a voice through exported files:
 4. Validate the complete exported workspace.
 5. Import the directory back into the vault.
 
-Personas can also select `voice` in `persona.toml` or their Settings screen for
-human-message playback. An unassigned character or persona uses the configured
-default voice. Changing a voice affects future synthesis; an already cached
-clip keeps its original voice until the session's audio cache is cleared.
+Voice output is available only for character replies. An unassigned character
+uses the configured default voice. Changing a voice affects future synthesis;
+an already cached clip keeps its original voice until the session's audio cache
+is cleared.
 
 ### Voice input
 

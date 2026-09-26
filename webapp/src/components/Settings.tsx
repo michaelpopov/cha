@@ -1549,7 +1549,6 @@ export function VoiceSettingsScreen({ client, dispatch }: SettingsScreenProps) {
     output.url.trim() && output.model.trim() && output.api_key
     && output.output_format.trim() && output.default_voice,
   );
-  const supportsInstrumentation = output.model.trim().startsWith('s2');
 
   function chooseInputProvider(provider: VoiceInputSettings['provider']) {
     const defaults = provider === 'xai' ? xaiVoiceInputDefaults : openAiVoiceInputDefaults;
@@ -1656,14 +1655,14 @@ export function VoiceSettingsScreen({ client, dispatch }: SettingsScreenProps) {
             <label>Output format<input className="cha-form-control" onChange={(event) => setOutput({ ...output, output_format: event.target.value })} value={output.output_format} /></label>
             <label>Default voice<select className="cha-form-control" onChange={(event) => setOutput({ ...output, default_voice: event.target.value })} value={output.default_voice}><option value="">Select a voice</option>{voices.map((voice) => <option key={voice.id} value={voice.display_name}>{voice.display_name}</option>)}</select></label>
             <label>Instrumentation provider
-              <select className="cha-form-control" disabled={savingOutput || !supportsInstrumentation} onChange={(event) => setOutput({ ...output, instrumentation_provider: event.target.value })} value={output.instrumentation_provider}>
+              <select className="cha-form-control" disabled={savingOutput} onChange={(event) => setOutput({ ...output, instrumentation_provider: event.target.value })} value={output.instrumentation_provider}>
                 <option value="">Off</option>
                 {output.instrumentation_provider && !providers.some((provider) => provider.id === output.instrumentation_provider) && <option value={output.instrumentation_provider}>Unavailable provider</option>}
                 {providers.map((provider) => <option key={provider.id} value={provider.id}>{provider.display_name}</option>)}
               </select>
             </label>
             <label>Instrumentation reasoning effort
-              <select className="cha-form-control" disabled={savingOutput || !supportsInstrumentation || !output.instrumentation_provider} onChange={(event) => setOutput({ ...output, instrumentation_reasoning_effort: event.target.value === '' ? null : event.target.value as VoiceOutputSettings['instrumentation_reasoning_effort'] })} value={output.instrumentation_reasoning_effort ?? ''}>
+              <select className="cha-form-control" disabled={savingOutput || !output.instrumentation_provider} onChange={(event) => setOutput({ ...output, instrumentation_reasoning_effort: event.target.value === '' ? null : event.target.value as VoiceOutputSettings['instrumentation_reasoning_effort'] })} value={output.instrumentation_reasoning_effort ?? ''}>
                 <option value="">Provider default</option>
                 <option value="none">None</option>
                 <option value="low">Low</option>

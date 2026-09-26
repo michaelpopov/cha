@@ -1594,6 +1594,44 @@ TEST_F(BridgeRouterTest, SlowProviderTestDoesNotStarveStop) {
     ack_delivery(*router_, connection_, *batch);
 }
 
+TEST_F(BridgeRouterTest, HumanAudioRequestsReturnInvalidArgument) {
+    bootstrap_epoch();
+    const auto created = call("session.create", {{"forum_id", "lobby"}, {"label", "Audio"}});
+    ASSERT_TRUE(created["ok"]);
+    const auto session_id = created["result"]["id"];
+    const nlohmann::json session{{"forum_id", "lobby"}, {"session_id", session_id}};
+    ASSERT_TRUE(call("session.open", session)["ok"]);
+    auto submission = session;
+    submission["input"] = {{"text", "Hello"}};
+    ASSERT_TRUE(call("session.submit", submission)["ok"]);
+    ASSERT_TRUE(call("session.stop", session)["ok"]);
+    const auto snapshot = call("session.snapshot", session);
+    ASSERT_TRUE(snapshot["ok"]);
+    const auto& entries = snapshot["result"]["transcript"];
+    const auto human = std::find_if(entries.begin(), entries.end(), [](const auto& entry) {
+        return entry["kind"] == "human";
+    });
+    ASSERT_NE(human, entries.end());
+
+    for (const auto* method : {"audio.start", "audio.startBatch"}) {
+        auto params = session;
+        params["vault_name"] = "Test";
+        if (std::string_view(method) == "audio.start") {
+            params["entry_id"] = (*human)["id"];
+            params["reference_id"] = "voice-ref";
+        } else {
+            params["entries"] = nlohmann::json::array({
+                {{"entry_id", (*human)["id"]}, {"reference_id", "voice-ref"}},
+            });
+        }
+        const auto reply = call(method, std::move(params));
+        EXPECT_FALSE(reply["ok"]) << method;
+        EXPECT_EQ(reply["error"]["code"], "invalid_argument") << method;
+        EXPECT_EQ(reply["error"]["message"],
+            "Voice output is only available for character replies.") << method;
+    }
+}
+
 TEST_F(BridgeRouterTest, SpeechAndAudioMethodsUseOpaqueResources) {
     MockHttpServer server({http_response("audio/mpeg", "AUDIO")});
     server.start();

@@ -1410,12 +1410,14 @@ describe('Settings screens', () => {
     expect(Array.from((screen.getByLabelText('Instrumentation reasoning effort') as HTMLSelectElement).options,
       (option) => option.value)).toEqual(['', 'none', 'low', 'medium', 'high', 'xhigh']);
     const outputModel = screen.getByLabelText('Output model name');
-    await userEvent.clear(outputModel);
-    await userEvent.type(outputModel, 's1');
-    expect(screen.getByLabelText('Instrumentation provider')).toBeDisabled();
-    expect(screen.getByLabelText('Instrumentation reasoning effort')).toBeDisabled();
-    expect(screen.getByLabelText('Instrumentation provider')).toHaveValue(provider.id);
-    expect(screen.getByLabelText('Instrumentation reasoning effort')).toHaveValue('low');
+    for (const modelName of ['s1', 'drama-3-preview', 'future-model']) {
+      await userEvent.clear(outputModel);
+      await userEvent.type(outputModel, modelName);
+      expect(screen.getByLabelText('Instrumentation provider')).toBeEnabled();
+      expect(screen.getByLabelText('Instrumentation reasoning effort')).toBeEnabled();
+      expect(screen.getByLabelText('Instrumentation provider')).toHaveValue(provider.id);
+      expect(screen.getByLabelText('Instrumentation reasoning effort')).toHaveValue('low');
+    }
     await userEvent.clear(outputModel);
     await userEvent.type(outputModel, 's2.1-pro');
     expect(screen.getByLabelText('Instrumentation provider')).toBeEnabled();
