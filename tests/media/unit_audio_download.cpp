@@ -81,6 +81,7 @@ protected:
             std::move(text), EntryStatus::complete));
     }
     void configure_instrumentation() {
+        config->apply_character_file("guide", "VOICE.md", "A calm, measured voice.", true);
         auto output = *config->snapshot()->voice_output();
         output.instrumentation_provider_id = "test";
         config->apply_voice_output_update(output);
@@ -96,10 +97,11 @@ protected:
     FullSessionId session;
 };
 
-TEST_F(AudioDownloads, InstrumentsProfileAndReplyBeforeStreamingAndCachesWithoutRepeatingModelCall) {
+TEST_F(AudioDownloads, InstrumentsVoiceFileAndReplyBeforeStreamingAndCachesWithoutRepeatingModelCall) {
     configure_instrumentation();
     config->apply_character_definition("guide", "Guide",
-        "General character instructions.\n<character_profile>Measured speaker; {{TEXT}}</character_profile>");
+        "General character instructions.\n<character_profile>Full character biography.</character_profile>");
+    config->apply_character_file("guide", "VOICE.md", "Measured speaker; {{TEXT}}");
     const std::string original = "Hello. {{CHARACTER_DESCRIPTION}} {{TEXT}}";
     add_reply(original);
     std::atomic_int models{}, transfers{};
@@ -121,6 +123,7 @@ TEST_F(AudioDownloads, InstrumentsProfileAndReplyBeforeStreamingAndCachesWithout
             EXPECT_EQ(definition->provider.config.web_search, WebSearchMode::off);
             EXPECT_NE(definition->system_prompt.find("Measured speaker; {{TEXT}}"), std::string::npos);
             EXPECT_EQ(definition->system_prompt.find("General character instructions."), std::string::npos);
+            EXPECT_EQ(definition->system_prompt.find("Full character biography."), std::string::npos);
             EXPECT_NE(definition->system_prompt.find("<text>\n" + original + "\n</text>"), std::string::npos);
             return std::make_unique<VoiceBackend>([&](const auto& delta, const auto& cancelled) {
                 ++models;
@@ -238,6 +241,27 @@ TEST_F(AudioDownloads, InstrumentationAcceptsBracketedActionsAndMarkdownRemoval)
     EXPECT_EQ(downloads->audio(session, 6, "Test")->audio, instrumented);
     EXPECT_EQ(sessions->lookup_entry_audio(session, 6)->entry_text, original);
     EXPECT_EQ(models, 1);
+}
+
+TEST_F(AudioDownloads, MissingVoiceFileSkipsInstrumentationAndCachesOriginalSpeech) {
+    configure_instrumentation();
+    config->apply_character_file("guide", "VOICE.md", std::nullopt);
+    add_reply();
+    auto downloads = make(
+        [](const auto&, const auto&, const auto& request, const auto&,
+            const AudioChunkCallback& emit) -> std::optional<EntryAudio> {
+            EXPECT_EQ(request.body.at("text"), "Hello.");
+            emit("audio/mpeg", "original speech");
+            return EntryAudio{"original speech", "audio/mpeg"};
+        },
+        [](SharedCharacterDefinition) -> std::unique_ptr<ModelBackend> {
+            ADD_FAILURE() << "A character without VOICE.md must not call the instrumentation model";
+            return {};
+        });
+    downloads->submit(session, 6, input());
+    ASSERT_TRUE(eventually([&] { return sessions->cached_audio_entries(session).contains(6); }));
+    EXPECT_EQ(downloads->audio(session, 6, "Test")->audio, "original speech");
+    EXPECT_EQ(sessions->lookup_entry_audio(session, 6)->entry_text, "Hello.");
 }
 
 TEST_F(AudioDownloads, MissingInstrumentationProviderOrCharacterUsesOriginalText) {

@@ -24,6 +24,8 @@ SharedCharacterDefinition voice_instrumenter(
         log_warn("Voice instrumentation provider or character is unavailable; using original text");
         return {};
     }
+    const auto voice = character->markdown_files.find("VOICE.md");
+    if (voice == character->markdown_files.end()) return {};
     auto config = provider->config;
     config.web_search = WebSearchMode::off;
     if (output.instrumentation_reasoning_effort) {
@@ -41,7 +43,7 @@ SharedCharacterDefinition voice_instrumenter(
     }
     // Replace from the end, so placeholder-like text in either input stays literal.
     prompt.replace(text_position, text_marker.size(), text);
-    prompt.replace(character_position, character_marker.size(), character->markdown);
+    prompt.replace(character_position, character_marker.size(), voice->second);
     return std::make_shared<const CharacterDefinition>(CharacterDefinition{
         .character = {"voice-instrumentation", "Voice instrumentation"},
         .provider = {provider->id, std::move(config)},

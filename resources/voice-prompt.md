@@ -29,7 +29,8 @@ You can chain up to three markers: [sigh] [sad] I don't know what else I can do.
 
 # The speaker
 
-<character> contains the dossier of the character who speaks the text. It was written for a model that plays this character in a chat. Ignore its instructions about how to answer, research or write. Use it only to decide how this character sounds: baseline energy, pace, register, restraint, and which emotions the character shows or hides.
+<character> contains the voice description of the character who speaks the text. Use it only to decide how this character sounds: baseline energy, pace, register, restraint, and which emotions the character shows or hides.
+Its typical directions are examples, not a closed list.
 
 The character sets the baseline. The text sets the changes from moment to moment. When the text pushes the character away from the baseline, follow the text but keep the character's manner. The same line for three different characters:
 
@@ -37,7 +38,7 @@ Restrained, authoritative: [low voice, controlled anger] You knew exactly what y
 Impulsive, expressive: [furious] [loud voice] You knew exactly what you were doing!
 Tired, cynical: [quiet, bitter, exhausted] You knew exactly what you were doing.
 
-Never put anything from the dossier into the spoken text.
+Never put anything from the voice description into the spoken text.
 
 # Preserve the text
 

@@ -111,6 +111,49 @@ TEST(ApplicationSettings, ListsAndUpdatesProvidersWithoutSecrets) {
     application->delete_provider(copied.id, epoch);
 }
 
+TEST(ApplicationSettings, SavesCharacterWhenNewProviderCannotUseSearchOverride) {
+    test::TestWorkspace workspace;
+    workspace.write_provider("fireworks",
+        "host = \"api.fireworks.ai\"\nport = 443\nmodel = \"qwen\"\n"
+        "api = \"chat_completions\"\nmode = \"test\"\n");
+    workspace.write_style("sans-bold", "font = \"sans\"\nweight = \"bold\"\n");
+    const auto database = test::import_test_database(workspace.root());
+    auto application = Application::open(make_command(workspace, database));
+    auto epoch = application->context_epoch();
+    const auto voice = application->create_voice(
+        {.display_name = "Muller", .elevenlabs_voice_id = "muller"}, epoch);
+    ASSERT_NO_THROW((void)application->get_provider("fireworks", epoch));
+
+    for (const auto search : {WebSearchMode::automatic, WebSearchMode::required}) {
+        // Switching providers keeps the previous search selection in the form.
+        const auto original = application->update_character("guide",
+            {.provider = "test", .web_search = search}, epoch);
+        EXPECT_EQ(original.web_search, search);
+        const auto saved = application->update_character("guide", {
+            .provider = "fireworks", .style = "sans-bold", .voice = voice.id,
+            .reasoning_effort = "medium", .web_search = search,
+            .web_search_tool = true,
+        }, epoch);
+        EXPECT_EQ(saved.provider, "fireworks");
+        EXPECT_EQ(saved.style, "sans-bold");
+        EXPECT_EQ(saved.voice, voice.id);
+        EXPECT_EQ(saved.reasoning_effort, "medium");
+        EXPECT_EQ(saved.web_search, std::nullopt);
+        EXPECT_EQ(saved.web_search_tool, true);
+    }
+
+    application.reset();
+    application = Application::open(make_command(workspace, database));
+    epoch = application->context_epoch();
+    const auto reloaded = application->get_character("guide", epoch);
+    EXPECT_EQ(reloaded.provider, "fireworks");
+    EXPECT_EQ(reloaded.style, "sans-bold");
+    EXPECT_EQ(reloaded.voice, voice.id);
+    EXPECT_EQ(reloaded.reasoning_effort, "medium");
+    EXPECT_EQ(reloaded.web_search, std::nullopt);
+    EXPECT_EQ(reloaded.web_search_tool, true);
+}
+
 TEST(ApplicationSettings, PersistsIndependentVoiceInstrumentationProviderAndEffort) {
     test::TestWorkspace workspace;
     const auto database = test::import_test_database(workspace.root());

@@ -2938,8 +2938,10 @@ void WorkspaceConfigEditor::write_character_settings(
     }
     if (web_search && *web_search != WebSearchMode::off
         && !provider_supports_web_search(provider->config)) {
-        throw std::invalid_argument(
-            "The selected provider does not support web search");
+        log_warn("Ignoring unsupported provider web search for character '"
+            + std::string(character_id) + "' with provider '"
+            + std::string(provider_id) + "'");
+        web_search.reset();
     }
     rewrite_toml(config, [&](toml::table& table) {
         table.insert_or_assign("provider", std::string(provider_id));
