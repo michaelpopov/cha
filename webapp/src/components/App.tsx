@@ -5,7 +5,9 @@ import {
   useReducer,
   useRef,
   useState,
+  type CSSProperties,
   type Dispatch,
+  type PointerEvent,
 } from 'react';
 
 import {
@@ -378,6 +380,16 @@ function defaultReload() {
   reloadApplication();
 }
 
+const minimumSidebarWidth = 192;
+
+function maximumSidebarWidth() {
+  return Math.max(minimumSidebarWidth, window.innerWidth - 320);
+}
+
+function clampSidebarWidth(width: number) {
+  return Math.min(maximumSidebarWidth(), Math.max(minimumSidebarWidth, width));
+}
+
 interface AppProps {
   client: ChaClient;
   contextEvents?: Pick<NativeBridge, 'on'>;
@@ -396,6 +408,24 @@ export function App({
   const [state, dispatch] = useReducer(appReducer, initialAppState);
   const [bootstrapAttempt, setBootstrapAttempt] = useState(0);
   const [catalogRevision, setCatalogRevision] = useState(0);
+  const [sidebarWidth, setSidebarWidth] = useState(() => clampSidebarWidth(264));
+  const [resizingSidebar, setResizingSidebar] = useState(false);
+  const sidebarResize = useRef<{ pointerId: number; startX: number; startWidth: number } | null>(null);
+
+  useEffect(() => {
+    const resize = () => setSidebarWidth((width) => clampSidebarWidth(width));
+    window.addEventListener('resize', resize);
+    return () => window.removeEventListener('resize', resize);
+  }, []);
+
+  function finishSidebarResize(event: PointerEvent<HTMLDivElement>) {
+    if (sidebarResize.current?.pointerId !== event.pointerId) return;
+    sidebarResize.current = null;
+    setResizingSidebar(false);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  }
   const request = useRef<{ client: ChaClient; promise: Promise<Bootstrap> } | null>(null);
   const playbackPositions = useRef(new Map<string, Map<number, number>>());
   const pendingMutations = useRef(new Set<string>());
@@ -697,8 +727,9 @@ export function App({
     <AppErrorBoundary onReload={reload}>
       <TransliterationProvider>
         <div
-          className={`cha-app ${state.sidebarOpen ? 'is-sidebar-open' : ''}`}
+          className={`cha-app ${state.sidebarOpen ? 'is-sidebar-open' : ''}${resizingSidebar ? ' is-resizing-sidebar' : ''}`}
           data-sidebar={state.sidebarOpen ? 'open' : 'closed'}
+          style={{ '--cha-sidebar-width': `${sidebarWidth}px` } as CSSProperties}
         >
           <Sidebar
             onClearSessionAudioCache={clearSessionAudioCache}
@@ -710,6 +741,38 @@ export function App({
             onSwitchVault={switchVault}
             state={state}
           />
+          {state.sidebarOpen && (
+            <div
+              aria-label="Resize sidebar"
+              aria-orientation="vertical"
+              aria-valuemax={maximumSidebarWidth()}
+              aria-valuemin={minimumSidebarWidth}
+              aria-valuenow={sidebarWidth}
+              className="cha-sidebar-resize"
+              onKeyDown={(event) => {
+                if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+                event.preventDefault();
+                setSidebarWidth((width) => clampSidebarWidth(width + (event.key === 'ArrowRight' ? 16 : -16)));
+              }}
+              onLostPointerCapture={finishSidebarResize}
+              onPointerCancel={finishSidebarResize}
+              onPointerDown={(event) => {
+                if (event.button !== 0) return;
+                event.preventDefault();
+                event.currentTarget.setPointerCapture(event.pointerId);
+                sidebarResize.current = { pointerId: event.pointerId, startX: event.clientX, startWidth: sidebarWidth };
+                setResizingSidebar(true);
+              }}
+              onPointerMove={(event) => {
+                const resize = sidebarResize.current;
+                if (resize?.pointerId !== event.pointerId) return;
+                setSidebarWidth(clampSidebarWidth(resize.startWidth + event.clientX - resize.startX));
+              }}
+              onPointerUp={finishSidebarResize}
+              role="separator"
+              tabIndex={0}
+            />
+          )}
           <main className={`cha-main${chatVisible ? ' is-chat' : ''}`} data-view={state.mainView}>
             {!chatVisible && <TopBar dispatch={navigate} state={state} title={title} />}
             {submissionErrors.map((error) => <div className="cha-submission-error" role="alert" key={error.id}>

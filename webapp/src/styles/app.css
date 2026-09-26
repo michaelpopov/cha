@@ -107,6 +107,36 @@ select:disabled {
   letter-spacing: -0.025em;
 }
 
+.cha-sidebar-resize {
+  position: absolute;
+  z-index: 3;
+  inset: 0 auto 0 calc(var(--cha-sidebar-width) - 4px);
+  width: 8px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.cha-sidebar-resize:hover,
+.cha-sidebar-resize:focus-visible,
+.is-resizing-sidebar .cha-sidebar-resize {
+  background: var(--border);
+}
+
+.cha-sidebar-resize:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+
+.cha-app.is-resizing-sidebar,
+.cha-app.is-resizing-sidebar * {
+  cursor: col-resize;
+  user-select: none;
+}
+
+.cha-app.is-resizing-sidebar .cha-main {
+  transition: none;
+}
+
 /* The sidebar is a scan list, not a set of buttons: rows sit close enough that
    the group reads as one column, and the hover surface stays just wide enough
    to stay legible around the label. */
@@ -1807,6 +1837,10 @@ select:disabled {
 
   .cha-sidebar {
     width: calc(100% - 3.5rem);
+  }
+
+  .cha-sidebar-resize {
+    display: none;
   }
 
   .cha-app.is-sidebar-open .cha-main {
