@@ -42,6 +42,7 @@ import {
   type VoiceInputXaiBridge,
 } from '../voiceInput';
 import { ConfirmDialog } from './ConfirmDialog';
+import { Markdown } from './Markdown';
 import {
   CheckIcon,
   CopyIcon,
@@ -242,7 +243,7 @@ function TranscriptMessage({
           entry.kind === 'human' || entry.kind === 'character' ? appearance : undefined,
         )}`}
       >
-        {displayedText}
+        {entry.kind === 'character' ? <Markdown source={displayedText} /> : displayedText}
       </div>
       {entry.status === 'cancelled' && <div className="cha-entry-status">Stopped</div>}
       {entry.status === 'failed' && <div className="cha-entry-status">Failed</div>}

@@ -34,7 +34,7 @@ function parse(html: string): Document {
 const allowed = new Set([
   'HTML', 'HEAD', 'BODY',
   'H1', 'H2', 'H3', 'H4', 'H5', 'H6',
-  'P', 'STRONG', 'EM', 'UL', 'OL', 'LI', 'CODE', 'PRE', 'BR',
+  'P', 'STRONG', 'EM', 'UL', 'OL', 'LI', 'CODE', 'PRE', 'BR', 'HR', 'BLOCKQUOTE',
 ]);
 
 it.each(attacks)('neutralizes %s', (_name, source) => {

@@ -121,7 +121,7 @@ TEST_F(AudioDownloads, InstrumentsProfileAndReplyBeforeStreamingAndCachesWithout
             EXPECT_EQ(definition->provider.config.web_search, WebSearchMode::off);
             EXPECT_NE(definition->system_prompt.find("Measured speaker; {{TEXT}}"), std::string::npos);
             EXPECT_EQ(definition->system_prompt.find("General character instructions."), std::string::npos);
-            EXPECT_NE(definition->system_prompt.find("# TEXT TO INSTRUMENT\n\n" + original), std::string::npos);
+            EXPECT_NE(definition->system_prompt.find("<text>\n" + original + "\n</text>"), std::string::npos);
             return std::make_unique<VoiceBackend>([&](const auto& delta, const auto& cancelled) {
                 ++models;
                 while (!release_model && !cancelled) std::this_thread::sleep_for(2ms);

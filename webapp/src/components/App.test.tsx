@@ -2247,7 +2247,7 @@ it('refreshes appearance on the existing subscription without leaving settings',
   expect(openSession.mock.calls.filter(([, sessionId]) => sessionId === 'planning')).toHaveLength(1);
 
   fireEvent.click(screen.getByRole('button', { name: /^Planning/ }));
-  expect(screen.getByText('A considered answer')).toHaveClass(
+  expect(screen.getByText('A considered answer').closest('.cha-message-text')).toHaveClass(
     'cha-message-text', 'cha-font-mono', 'cha-scale-large',
   );
 });

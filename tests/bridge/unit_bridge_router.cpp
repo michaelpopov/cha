@@ -1208,7 +1208,7 @@ TEST_F(BridgeRouterTest, MaintenanceUploadConflictExplainsHowToRetry) {
         std::string::npos);
 }
 
-TEST_F(BridgeRouterTest, MaintenanceFilesystemFailureHidesPrivatePath) {
+TEST_F(BridgeRouterTest, ExportReplacesExistingDestinationContents) {
     router_->shutdown();
     application_->request_shutdown();
     ASSERT_TRUE(application_->join_shutdown(2s));
@@ -1227,11 +1227,10 @@ TEST_F(BridgeRouterTest, MaintenanceFilesystemFailureHidesPrivatePath) {
     std::filesystem::create_directories(modify);
     std::ofstream(modify / "private-note.txt") << "not a CHA workspace";
     const auto reply = call("vault.export");
-    ASSERT_FALSE(reply["ok"]);
-    EXPECT_EQ(reply["error"]["code"], "internal_error");
-    EXPECT_EQ(reply["error"]["message"], "The request could not be completed.");
-    EXPECT_EQ(reply["error"]["message"].get<std::string>().find(
-        workspace_.root().string()), std::string::npos);
+    ASSERT_TRUE(reply["ok"]);
+    EXPECT_GT(reply["result"]["file_count"].get<std::size_t>(), 0U);
+    EXPECT_FALSE(std::filesystem::exists(modify / "private-note.txt"));
+    EXPECT_TRUE(std::filesystem::exists(modify / "system/providers/test/config.toml"));
     EXPECT_GT(reply["context_epoch"].get<std::uint64_t>(), epoch_);
 }
 

@@ -1020,6 +1020,38 @@ select:disabled {
   white-space: pre-wrap;
 }
 
+.cha-message-text > .cha-markdown {
+  padding-bottom: 0;
+  overflow: visible;
+  white-space: normal;
+}
+
+.cha-message-text > .cha-markdown p {
+  white-space: pre-line;
+}
+
+.cha-message-text > .cha-markdown :is(h1, h2, h3, h4, h5, h6) {
+  font-size: 1em;
+  font-weight: bolder;
+}
+
+.cha-message-text > .cha-markdown h1 { font-size: 1.18em; }
+.cha-message-text > .cha-markdown h2 { font-size: 1.08em; }
+
+.cha-message-text > .cha-markdown blockquote {
+  margin: 0.45rem 0;
+  padding-left: 0.75rem;
+  border-left: 2px solid var(--border);
+}
+
+.cha-message-text > .cha-markdown > :first-child {
+  margin-top: 0;
+}
+
+.cha-message-text > .cha-markdown > :last-child {
+  margin-bottom: 0;
+}
+
 /* One character's voice. Only a message body or its settings preview wears
    these: speaker names, the composer and every other control stay in the
    interface font, which keeps a distinctive character from turning the page

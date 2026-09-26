@@ -29,7 +29,7 @@ const markdown = new Marked({
 
 const allowedTags = [
   'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
-  'p', 'strong', 'em', 'ul', 'ol', 'li', 'code', 'pre', 'br',
+  'p', 'strong', 'em', 'ul', 'ol', 'li', 'code', 'pre', 'br', 'hr', 'blockquote',
 ];
 
 export function renderRestrictedMarkdown(source: string): string {
@@ -43,6 +43,6 @@ export function renderRestrictedMarkdown(source: string): string {
 }
 
 export function Markdown({ source }: { source: string }) {
-  const html = useMemo(() => renderRestrictedMarkdown(source), [source]);
-  return <article className="cha-markdown" dangerouslySetInnerHTML={{ __html: html }} />;
+  const html = useMemo(() => ({ __html: renderRestrictedMarkdown(source) }), [source]);
+  return <div className="cha-markdown" dangerouslySetInnerHTML={html} />;
 }

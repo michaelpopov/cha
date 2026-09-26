@@ -3,8 +3,15 @@ import { expect, it } from 'vitest';
 
 import { Markdown, renderRestrictedMarkdown } from './Markdown';
 
+it('preserves rendered nodes when the source has not changed', () => {
+  const { rerender } = render(<Markdown source="A **stable** response" />);
+  const emphasis = screen.getByText('stable');
+  rerender(<Markdown source="A **stable** response" />);
+  expect(screen.getByText('stable')).toBe(emphasis);
+});
+
 it('renders the supported Markdown subset', () => {
-  const { container } = render(<Markdown source={'# Dossier\n\nA **bold** and *careful* note.\n\n- one\n- `two`\n\n```txt\nthree\n```\n\n```\n<script>alert(1)</script>\n```'} />);
+  const { container } = render(<Markdown source={'# Dossier\n\nA **bold** and *careful* note.\n\n- one\n- `two`\n\n```txt\nthree\n```\n\n```\n<script>alert(1)</script>\n```\n\n---\n\n> Quoted line\n> Next line'} />);
   expect(screen.getByRole('heading', { name: 'Dossier' })).toBeInTheDocument();
   expect(screen.getByText('bold').tagName).toBe('STRONG');
   expect(screen.getByText('careful').tagName).toBe('EM');
@@ -12,6 +19,9 @@ it('renders the supported Markdown subset', () => {
   expect(screen.getByText('three').tagName).toBe('CODE');
   expect(screen.getByText('<script>alert(1)</script>').tagName).toBe('CODE');
   expect(container.querySelector('script')).not.toBeInTheDocument();
+  expect(screen.getByRole('separator')).toBeInTheDocument();
+  expect(container.querySelector('blockquote p')?.textContent).toBe('Quoted line\nNext line');
+  expect(screen.queryByRole('article')).not.toBeInTheDocument();
 });
 
 it('strips scripts, image fetches, raw HTML, and link interactivity', () => {

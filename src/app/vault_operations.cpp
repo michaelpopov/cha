@@ -121,15 +121,6 @@ void require_available_database_path(const std::filesystem::path& data) {
 }
 
 void clear_existing_export(const std::filesystem::path& destination) {
-    if (!std::filesystem::is_directory(destination)
-        || std::filesystem::is_empty(destination)) {
-        return;
-    }
-    if (!is_workspace_directory(destination)) {
-        throw std::runtime_error(
-            "Export destination '" + utf8_path(destination)
-            + "' is not a valid CHA workspace; refusing to replace it");
-    }
     std::filesystem::remove_all(destination);
 }
 

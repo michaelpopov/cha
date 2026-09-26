@@ -285,7 +285,7 @@ describe('live chat', () => {
         {
           id: 2, kind: 'character', participant_id: 'assistant', display_name: 'Assistant',
           addressed_to: '', addressed_to_name: '',
-          text: '[2026-01-02T03:04:05Z] Answer', status: 'complete', created_at: 1_700_000_001,
+          text: '[2026-01-02T03:04:05Z] **Answer**', status: 'complete', created_at: 1_700_000_001,
         },
       ],
     });
@@ -293,7 +293,7 @@ describe('live chat', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Copy your prompt' }));
     await waitFor(() => expect(writeText).toHaveBeenCalledWith('Question'));
     fireEvent.click(screen.getByRole('button', { name: "Copy Assistant's response" }));
-    await waitFor(() => expect(writeText).toHaveBeenCalledWith('Answer'));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('**Answer**'));
     expect(await screen.findAllByRole('button', { name: 'Copied to clipboard' }))
       .toHaveLength(2);
   });
@@ -1500,7 +1500,7 @@ describe('live chat', () => {
       covered_until: 7,
     }));
     expect(screen.getAllByRole('button', { name: 'Uncover transcript' })).toHaveLength(1);
-    const boundaryResponse = screen.getByText('Partial answer').closest('article');
+    const boundaryResponse = screen.getByText('Partial answer').closest<HTMLElement>('.cha-message');
     if (!boundaryResponse) throw new Error('Expected the boundary response article');
     expect(within(boundaryResponse).getByRole('button', { name: 'Uncover transcript' }))
       .toBeInTheDocument();
@@ -1653,8 +1653,41 @@ describe('live chat', () => {
       }],
     });
 
-    expect(document.querySelector('.cha-message-text')?.textContent)
-      .toBe('First paragraph\n\nSecond paragraph');
+    expect(Array.from(document.querySelectorAll('.cha-message-text p'), (p) => p.textContent))
+      .toEqual(['First paragraph', 'Second paragraph']);
+  });
+
+  it('renders model Markdown as safe HTML and updates it while streaming', async () => {
+    const events = drivableEvents();
+    const snapshot = transcriptSnapshot();
+    const entry = { ...snapshot.transcript[0], text: '# Answer\n\nA **partial' };
+    render(<App client={fixtureClient()} connectSessionEvents={events.connect} />);
+    await attachInitial(events, {
+      ...snapshot,
+      transcript: [
+        { ...entry, id: 3, kind: 'human', text: '**Keep my prompt literal**', status: 'complete' },
+        entry,
+      ],
+    });
+
+    expect(screen.getByRole('heading', { name: 'Answer' })).toBeInTheDocument();
+    expect(screen.getByText('A **partial')).toBeInTheDocument();
+    expect(screen.getByText('**Keep my prompt literal**')).toBeInTheDocument();
+
+    act(() => events.handlers[0].onSnapshot({
+      ...snapshot,
+      transcript: [{
+        ...entry,
+        text: '# Answer\n\nA **complete** answer.\n\n- One\n- Two\n\n```js\nconst x = 1;\n```\n\n'
+          + '<img src="https://example.test/tracker" onerror="alert(1)">',
+      }],
+    }));
+
+    expect(screen.getByText('complete').tagName).toBe('STRONG');
+    expect(screen.getAllByRole('listitem').map((item) => item.textContent)).toEqual(['One', 'Two']);
+    expect(screen.getByText('const x = 1;').parentElement?.tagName).toBe('PRE');
+    expect(document.querySelector('.cha-message-text img')).toBeNull();
+    expect(document.querySelector('.cha-message-text [onerror]')).toBeNull();
   });
 
   it('submits with the forum persona, clears accepted input, and preserves a failed draft', async () => {
@@ -2628,12 +2661,12 @@ describe('live chat', () => {
       ],
     });
 
-    expect(screen.getByText('A considered answer')).toHaveClass(
+    expect(screen.getByText('A considered answer').closest('.cha-message-text')).toHaveClass(
       'cha-message-text', 'cha-font-serif', 'cha-slant-italic', 'cha-weight-semibold',
       'cha-scale-large', 'cha-color-accent',
     );
-    expect(screen.getByText('A considered answer')).not.toHaveClass('cha-weight-bold');
-    expect(screen.getByText('A plain answer').className).toBe('cha-message-text');
+    expect(screen.getByText('A considered answer').closest('.cha-message-text')).not.toHaveClass('cha-weight-bold');
+    expect(screen.getByText('A plain answer').closest('.cha-message-text')?.className).toBe('cha-message-text');
     // The reader's own words are never in costume.
     expect(screen.getByText('A question').className).toBe('cha-message-text');
     expect(screen.getByText('The response failed.').className).toBe('cha-message-text');

@@ -1,4 +1,5 @@
 #include "app/application.h"
+#include "app/vault_operations.h"
 
 #include "storage/session_repository.h"
 #include "support/test_workspace.h"
@@ -80,6 +81,46 @@ struct TwoVaults {
     std::filesystem::path database_b;
     ApplicationCommand command;
 };
+
+TEST(ApplicationVault, ExportReplacesPreviousContentsAndCanBeRepeated) {
+    TwoVaults pair;
+    const auto destination = pair.workspace_a.root() / "export";
+    pair.command.vault.modify = destination;
+    pair.command.vaults.front().modify = destination;
+    auto application = Application::open(pair.command);
+    std::filesystem::create_directories(destination / "system/providers/old-provider");
+    std::filesystem::create_directories(destination / "characters/old-character");
+    std::filesystem::create_directories(destination / "forums/old-forum/members/old-character");
+    std::ofstream(destination / "system/providers/old-provider/config.toml") << "invalid old config";
+    std::ofstream(destination / ".old-export") << "stale file";
+
+    const auto exported = application->export_configuration(application->context_epoch());
+    EXPECT_GT(exported.file_count, 0U);
+    EXPECT_FALSE(std::filesystem::exists(destination / "characters/old-character"));
+    EXPECT_FALSE(std::filesystem::exists(destination / "system/providers/old-provider"));
+    EXPECT_FALSE(std::filesystem::exists(destination / ".old-export"));
+    EXPECT_TRUE(Workspace::load(destination).find_persona("alpha"));
+    EXPECT_EQ(application->export_configuration(application->context_epoch()).file_count,
+        exported.file_count);
+}
+
+TEST(ApplicationVault, ExportRemovesSymlinksWithoutRemovingTheirTargets) {
+    test::TestWorkspace workspace;
+    const auto destination = workspace.root() / "export";
+    const auto outside = workspace.root() / "outside";
+    std::filesystem::create_directories(destination / "system/providers/old-provider");
+    std::filesystem::create_directories(outside);
+    std::ofstream(outside / "keep.txt") << "outside the export";
+    std::error_code error;
+    std::filesystem::create_directory_symlink(outside, destination / "link", error);
+    if (error) {
+        GTEST_SKIP() << "symlinks are not supported: " << error.message();
+    }
+
+    EXPECT_NO_THROW(vault::clear_existing_export(destination));
+    EXPECT_FALSE(std::filesystem::exists(destination));
+    EXPECT_TRUE(std::filesystem::exists(outside / "keep.txt"));
+}
 
 TEST(ApplicationVault, SwitchAwayAndBackRestoresStoredSessions) {
     TwoVaults pair;
