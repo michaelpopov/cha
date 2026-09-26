@@ -187,7 +187,7 @@ export interface components {
             idle_timeout_s: number;
             api_key: string | null;
             /** @enum {string} */
-            reasoning_effort: "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
+            reasoning_effort: "none" | "low" | "medium" | "high" | "xhigh";
             /** @enum {string} */
             reasoning_format: "auto" | "none" | "reasoning_content" | "reasoning";
             https: boolean;
@@ -217,7 +217,7 @@ export interface components {
             idle_timeout_s: number;
             api_key: string | null;
             /** @enum {string} */
-            reasoning_effort: "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
+            reasoning_effort: "none" | "low" | "medium" | "high" | "xhigh";
             /** @enum {string} */
             reasoning_format: "auto" | "none" | "reasoning_content" | "reasoning";
             https: boolean;
@@ -337,6 +337,9 @@ export interface components {
             api_key: components["schemas"]["Identifier"];
             output_format: string;
             default_voice: string;
+            instrumentation_provider: string;
+            /** @enum {string|null} */
+            instrumentation_reasoning_effort: "none" | "low" | "medium" | "high" | "xhigh" | null;
         };
         VoiceOutputRuntime: {
             url: string;
@@ -399,7 +402,7 @@ export interface components {
             style: string | null;
             voice_id: string | null;
             /** @enum {string|null} */
-            reasoning_effort: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | null;
+            reasoning_effort: "none" | "low" | "medium" | "high" | "xhigh" | null;
             /** @enum {string|null} */
             web_search: "off" | "auto" | "required" | null;
             web_search_tool: boolean | null;
@@ -433,7 +436,7 @@ export interface components {
             style: string | null;
             voice_id: string | null;
             /** @enum {string|null} */
-            reasoning_effort: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | null;
+            reasoning_effort: "none" | "low" | "medium" | "high" | "xhigh" | null;
             /** @enum {string|null} */
             web_search: "off" | "auto" | "required" | null;
             web_search_tool: boolean | null;

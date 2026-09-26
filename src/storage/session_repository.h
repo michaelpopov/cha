@@ -33,6 +33,7 @@ struct EntryAudioLookup {
     FullSessionId identity;
     std::string entry_text;
     EntryKind entry_kind{};
+    std::string participant_id;
     std::optional<EntryAudio> cached;
     bool has_cached_audio{};
 };

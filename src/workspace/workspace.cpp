@@ -33,9 +33,21 @@ std::string_view embedded_application_guide();
 std::string_view embedded_character_voice();
 std::string_view embedded_new_character_template();
 
+bool uses_voice_instrumentation(const WorkspaceVoiceOutput& output) {
+    return trim_view(output.model).starts_with("s2")
+        && !output.instrumentation_provider_id.empty();
+}
+
 namespace {
 
 using Json = nlohmann::ordered_json;
+
+void normalize_legacy_reasoning_effort(std::string& value, const std::filesystem::path& path) {
+    if (value == "minimal") {
+        log_warn("Using low instead of obsolete minimal reasoning effort in " + utf8_path(path));
+        value = "low";
+    }
+}
 
 std::string_view trim_handle_punctuation(std::string_view handle) {
     while (!handle.empty()
@@ -297,8 +309,9 @@ WorkspaceProvider load_provider(
         },
     };
 
-    if (const auto effort = optional_value<std::string>(
+    if (auto effort = optional_value<std::string>(
             table, path, "reasoning_effort", "a string")) {
+        normalize_legacy_reasoning_effort(*effort, path);
         if (valid_reasoning_effort(*effort)) {
             provider.config.reasoning_effort = *effort;
         } else {
@@ -400,7 +413,8 @@ WorkspaceVoiceOutput load_voice_output(
     const std::filesystem::path& path) {
     const toml::table table = read_toml(source, path, "voice output config");
     static constexpr std::string_view fields[]{
-        "url", "model", "api_key", "output_format", "default_voice"};
+        "url", "model", "api_key", "output_format", "default_voice",
+        "instrumentation_provider", "instrumentation_reasoning_effort"};
     reject_unknown_fields(table, path, fields, "Voice output config");
     WorkspaceVoiceOutput result{
         .url = required_string(table, path, "url"),
@@ -408,7 +422,16 @@ WorkspaceVoiceOutput load_voice_output(
         .api_key_id = required_string(table, path, "api_key"),
         .output_format = required_string(table, path, "output_format"),
         .default_voice = required_string(table, path, "default_voice"),
+        .instrumentation_provider_id = table["instrumentation_provider"].value_or(std::string{}),
+        .instrumentation_reasoning_effort = table["instrumentation_reasoning_effort"].value<std::string>(),
     };
+    if (result.instrumentation_reasoning_effort) {
+        normalize_legacy_reasoning_effort(*result.instrumentation_reasoning_effort, path);
+        if (!valid_reasoning_effort(*result.instrumentation_reasoning_effort)) {
+            log_warn("Ignoring unsupported voice instrumentation reasoning effort; using provider default");
+            result.instrumentation_reasoning_effort.reset();
+        }
+    }
     result.url = parse_voice_output_endpoint(result.url);
     result.model = normalize_voice_output_model(result.model);
     try {
@@ -808,6 +831,9 @@ CharacterConfig load_character_config(
         .tags = definition ? load_tags(table, path) : std::vector<std::string>{},
         .prompt_variables = template_scope_from_toml(table, "prompt", utf8_path(path)),
     };
+    if (result.reasoning_effort) {
+        normalize_legacy_reasoning_effort(*result.reasoning_effort, path);
+    }
     if (table.contains("web_search")) {
         result.web_search = choice(
             table, path, "web_search", parse_web_search_mode, WebSearchMode::off);
@@ -2214,6 +2240,10 @@ void WorkspaceConfigEditor::delete_provider(std::string_view provider_id) {
         && workspace_.web_search_.query_provider_id == provider_id) {
         throw std::invalid_argument("Provider is in use");
     }
+    if (workspace_.voice_output_ && uses_voice_instrumentation(*workspace_.voice_output_)
+        && workspace_.voice_output_->instrumentation_provider_id == provider_id) {
+        throw std::invalid_argument("Provider is in use");
+    }
     remove_directory(path->second.parent_path());
 }
 
@@ -2466,12 +2496,24 @@ void WorkspaceConfigEditor::write_voice_output(const WorkspaceVoiceOutput& setti
     if (settings.api_key_id.empty() || settings.default_voice.empty()) {
         throw std::invalid_argument("Invalid voice output settings");
     }
+    if (uses_voice_instrumentation(settings)
+        && !workspace_.find_provider(settings.instrumentation_provider_id)) {
+        throw std::invalid_argument("Select an existing provider for voice instrumentation.");
+    }
+    if (settings.instrumentation_reasoning_effort
+        && !valid_reasoning_effort(*settings.instrumentation_reasoning_effort)) {
+        throw std::invalid_argument("Invalid voice instrumentation reasoning effort.");
+    }
     toml::table table;
     table.insert("url", url);
     table.insert("model", model);
     table.insert("api_key", settings.api_key_id);
     table.insert("output_format", format);
     table.insert("default_voice", settings.default_voice);
+    table.insert("instrumentation_provider", settings.instrumentation_provider_id);
+    if (settings.instrumentation_reasoning_effort) {
+        table.insert("instrumentation_reasoning_effort", *settings.instrumentation_reasoning_effort);
+    }
     write_toml(path, table);
 }
 

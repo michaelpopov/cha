@@ -313,7 +313,7 @@ export function isCharacterDetail(value: unknown): value is CharacterDetail {
     && (value.provider === null || typeof value.provider === 'string')
     && (value.style === null || typeof value.style === 'string')
     && (value.voice_id === null || typeof value.voice_id === 'string')
-    && isOneOf(value.reasoning_effort, ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', null])
+    && isOneOf(value.reasoning_effort, ['none', 'low', 'medium', 'high', 'xhigh', null])
     && isOneOf(value.web_search, ['off', 'auto', 'required', null])
     && (value.web_search_tool === null || typeof value.web_search_tool === 'boolean')
     && Array.isArray(value.available_providers)
@@ -388,7 +388,7 @@ export function isProviderDetail(value: unknown): value is ProviderDetail {
     && typeof value.timeout_s === 'number'
     && typeof value.idle_timeout_s === 'number'
     && (value.api_key === null || typeof value.api_key === 'string')
-    && isOneOf(value.reasoning_effort, ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'])
+    && isOneOf(value.reasoning_effort, ['none', 'low', 'medium', 'high', 'xhigh'])
     && isOneOf(value.reasoning_format, ['auto', 'none', 'reasoning_content', 'reasoning'])
     && typeof value.https === 'boolean'
     && isOneOf(value.api, ['chat_completions', 'responses'])
@@ -516,7 +516,9 @@ export function isVoiceOutputSettings(value: unknown): value is VoiceOutputSetti
     && typeof value.model === 'string' && value.model.length > 0
     && typeof value.api_key === 'string' && value.api_key.length > 0
     && typeof value.output_format === 'string' && value.output_format.length > 0
-    && typeof value.default_voice === 'string' && value.default_voice.length > 0;
+    && typeof value.default_voice === 'string' && value.default_voice.length > 0
+    && typeof value.instrumentation_provider === 'string'
+    && isOneOf(value.instrumentation_reasoning_effort, ['none', 'low', 'medium', 'high', 'xhigh', null]);
 }
 
 export function isVoiceOutputRuntime(value: unknown): value is VoiceOutputRuntime {

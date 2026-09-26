@@ -258,6 +258,7 @@ target_link_libraries(cha_sqlite3 PUBLIC OpenSSL::Crypto)
 add_library(cha_lib STATIC
     ${CMAKE_CURRENT_BINARY_DIR}/generated/application_guide.cpp
     ${CMAKE_CURRENT_BINARY_DIR}/generated/character_voice.cpp
+    ${CMAKE_CURRENT_BINARY_DIR}/generated/voice_prompt.cpp
     ${CMAKE_CURRENT_BINARY_DIR}/generated/new_character_template.cpp
     src/util/crypto.cpp
     src/util/curl.cpp
@@ -341,6 +342,13 @@ add_custom_command(
     COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/generated
     COMMAND ${CMAKE_COMMAND} -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/resources/characters/character-voice.md -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/generated/character_voice.cpp -DSYMBOL=embedded_character_voice -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_text.cmake
     DEPENDS resources/characters/character-voice.md cmake/embed_text.cmake
+    VERBATIM)
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/generated/voice_prompt.cpp
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/generated
+    COMMAND ${CMAKE_COMMAND} -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/resources/voice-prompt.md -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/generated/voice_prompt.cpp -DSYMBOL=embedded_voice_prompt -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_text.cmake
+    DEPENDS resources/voice-prompt.md cmake/embed_text.cmake
     VERBATIM)
 
 add_custom_command(

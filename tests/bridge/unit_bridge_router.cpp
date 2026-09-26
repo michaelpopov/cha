@@ -1615,6 +1615,8 @@ TEST_F(BridgeRouterTest, SpeechAndAudioMethodsUseOpaqueResources) {
         {"api_key", key["result"]["id"]},
         {"output_format", "mp3"},
         {"default_voice", "Narrator"},
+        {"instrumentation_provider", ""},
+        {"instrumentation_reasoning_effort", nullptr},
     });
     ASSERT_TRUE(saved["ok"]);
     application_->set_speech_url_override(

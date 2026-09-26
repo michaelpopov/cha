@@ -449,6 +449,8 @@ struct VoiceOutputSettings {
     std::string api_key;
     std::string output_format;
     std::string default_voice;
+    std::string instrumentation_provider;
+    std::optional<std::string> instrumentation_reasoning_effort;
 };
 
 struct VoiceOutputRuntime {

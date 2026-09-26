@@ -439,7 +439,7 @@ components:
           type: [string, "null"]
         reasoning_effort:
           type: string
-          enum: [none, minimal, low, medium, high, xhigh]
+          enum: [none, low, medium, high, xhigh]
         reasoning_format:
           type: string
           enum: [auto, none, reasoning_content, reasoning]
@@ -519,7 +519,7 @@ components:
           type: [string, "null"]
         reasoning_effort:
           type: string
-          enum: [none, minimal, low, medium, high, xhigh]
+          enum: [none, low, medium, high, xhigh]
         reasoning_format:
           type: string
           enum: [auto, none, reasoning_content, reasoning]
@@ -773,7 +773,7 @@ components:
     VoiceOutputSettings:
       type: object
       additionalProperties: false
-      required: [url, model, api_key, output_format, default_voice]
+      required: [url, model, api_key, output_format, default_voice, instrumentation_provider, instrumentation_reasoning_effort]
       properties:
         url:
           type: string
@@ -789,6 +789,11 @@ components:
         default_voice:
           type: string
           minLength: 1
+        instrumentation_provider:
+          type: string
+        instrumentation_reasoning_effort:
+          type: [string, "null"]
+          enum: [none, low, medium, high, xhigh, null]
 
     VoiceOutputRuntime:
       type: object
@@ -954,7 +959,7 @@ components:
           type: [string, "null"]
         reasoning_effort:
           type: [string, "null"]
-          enum: [none, minimal, low, medium, high, xhigh, null]
+          enum: [none, low, medium, high, xhigh, null]
         web_search:
           type: [string, "null"]
           enum: [off, auto, required, null]
@@ -1033,7 +1038,7 @@ components:
           type: [string, "null"]
         reasoning_effort:
           type: [string, "null"]
-          enum: [none, minimal, low, medium, high, xhigh, null]
+          enum: [none, low, medium, high, xhigh, null]
         web_search:
           type: [string, "null"]
           enum: [off, auto, required, null]

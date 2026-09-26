@@ -4,6 +4,7 @@
 #include "characters/model_context.h"
 #include "support/test_workspace.h"
 #include "util/logging.h"
+#include "util/path_name.h"
 
 #include <gtest/gtest.h>
 
@@ -595,7 +596,7 @@ TEST(Workspace, LoadsProviderReasoningDefaultsAndWarnsForUnsupportedValues) {
     };
     const Case cases[]{
         {"", "none", false},
-        {"reasoning_effort = \"minimal\"\n", "minimal", false},
+        {"reasoning_effort = \"minimal\"\n", "low", false},
         {"reasoning_effort = \"\"\n", "none", true},
         {"reasoning_effort = \"unknown\"\n", "none", true},
     };
@@ -617,13 +618,42 @@ TEST(Workspace, LoadsProviderReasoningDefaultsAndWarnsForUnsupportedValues) {
     }
 }
 
+TEST(Workspace, LoadsLegacyMinimalReasoningAsLowAndNamesAffectedFiles) {
+    test::TestWorkspace fixture;
+    fixture.write_provider("test",
+        "host = 'test'\nport = 1\nmode = 'test'\nmodel = 'test'\nreasoning_effort = 'minimal'\n");
+    fixture.write_character_config(
+        "display_name = 'Guide'\nprovider = 'test'\nreasoning_effort = 'minimal'\n");
+    const auto directory = fixture.root() / "system" / "voice-output";
+    std::filesystem::create_directories(directory);
+    std::ofstream(directory / "config.toml")
+        << "url = 'https://api.fish.audio/v1/tts'\nmodel = 's2.1-pro'\n"
+           "api_key = 'api_key_1'\noutput_format = 'mp3'\ndefault_voice = 'Reader'\n"
+           "instrumentation_provider = 'test'\ninstrumentation_reasoning_effort = 'minimal'\n";
+    const auto log_file = fixture.root() / "legacy-reasoning.log";
+    initialize_diagnostic_logging(log_file, "warn");
+    struct StopLogging { ~StopLogging() { shutdown_diagnostic_logging(); } } stop;
+    const auto workspace = Workspace::load(fixture.root());
+    EXPECT_EQ(workspace.find_provider("test")->config.reasoning_effort, "low");
+    EXPECT_EQ(workspace.find_character("guide")->reasoning_effort, "low");
+    EXPECT_EQ(workspace.character_definition("lobby", "guide").provider.config.reasoning_effort, "low");
+    ASSERT_TRUE(workspace.voice_output());
+    EXPECT_EQ(workspace.voice_output()->instrumentation_reasoning_effort, "low");
+    const auto warnings = file_bytes(log_file);
+    for (const auto* name : {"system/providers/test/config.toml", "characters/guide/character.toml",
+            "system/voice-output/config.toml"}) {
+        EXPECT_NE(warnings.find("Using low instead of obsolete minimal reasoning effort in "
+            + utf8_path(fixture.root() / name)), std::string::npos);
+    }
+}
+
 TEST(Workspace, CharacterReasoningOverridesProviderAndCanReturnToDefault) {
     test::TestWorkspace fixture;
     fixture.write_provider(
         "reasoning", "host = \"test\"\nport = 1\nmode = \"test\"\n"
                      "model = \"test\"\nreasoning_effort = \"high\"\n");
     const Workspace workspace = Workspace::load(fixture.root());
-    for (const std::string_view effort : {"none", "minimal", "low", "medium", "high", "xhigh"}) {
+    for (const std::string_view effort : {"none", "low", "medium", "high", "xhigh"}) {
         SCOPED_TRACE(effort);
         edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) {
             editor.write_character_settings(
@@ -1562,6 +1592,18 @@ TEST(Workspace, PersistsAndValidatesVoiceOutputSettings) {
     EXPECT_EQ(
         reloaded.find_voice_by_name("Default Reader")->elevenlabs_voice_id,
         "eleven-default");
+
+    for (const auto* effort : {"", "minimal", "invalid"}) {
+        auto settings = *reloaded.voice_output();
+        settings.instrumentation_provider_id = "test";
+        settings.instrumentation_reasoning_effort = effort;
+        EXPECT_THROW(
+            edit_fixture(reloaded, [&](WorkspaceConfigEditor& editor) {
+                editor.write_voice_output(settings);
+            }),
+            std::invalid_argument);
+        EXPECT_EQ(file_bytes(path), before);
+    }
 
     EXPECT_THROW(
         edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) {

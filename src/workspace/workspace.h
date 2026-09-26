@@ -97,7 +97,11 @@ struct WorkspaceVoiceOutput {
     std::string api_key_id;
     std::string output_format;
     std::string default_voice;
+    std::string instrumentation_provider_id;
+    std::optional<std::string> instrumentation_reasoning_effort;
 };
+
+bool uses_voice_instrumentation(const WorkspaceVoiceOutput& output);
 
 using WorkspacePersona = Persona;
 

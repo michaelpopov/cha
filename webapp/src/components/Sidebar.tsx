@@ -259,10 +259,10 @@ export function Sidebar({
           && failure.code === 'vault_password_required') {
         setVaultPrompt(name);
         setVaultError(password ? failure.message : null);
-        setVaultPending(false);
         return;
       }
       setVaultError(publicErrorMessage(failure, 'The vault could not be switched.'));
+    } finally {
       setVaultPending(false);
     }
   }

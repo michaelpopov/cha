@@ -47,6 +47,10 @@ std::vector<std::string> provider_uses(
         && workspace.web_search().query_provider_id == provider_id) {
         result.emplace_back("Search API");
     }
+    if (workspace.voice_output() && uses_voice_instrumentation(*workspace.voice_output())
+        && workspace.voice_output()->instrumentation_provider_id == provider_id) {
+        result.emplace_back("Voice instrumentation");
+    }
     return result;
 }
 
@@ -164,6 +168,8 @@ VoiceOutputSettings voice_output_settings(
         .api_key = settings.api_key_id,
         .output_format = settings.output_format,
         .default_voice = settings.default_voice,
+        .instrumentation_provider = settings.instrumentation_provider_id,
+        .instrumentation_reasoning_effort = settings.instrumentation_reasoning_effort,
     };
 }
 
@@ -757,6 +763,8 @@ VoiceOutputSettings save_voice_output_settings(
         .api_key_id = update.api_key,
         .output_format = update.output_format,
         .default_voice = update.default_voice,
+        .instrumentation_provider_id = update.instrumentation_provider,
+        .instrumentation_reasoning_effort = update.instrumentation_reasoning_effort,
     };
     return with_settings_edit([&] {
         try {

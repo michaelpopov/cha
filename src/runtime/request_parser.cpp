@@ -508,8 +508,11 @@ VoiceInputSettings parse_voice_input_settings(const nlohmann::json& json) {
 }
 
 VoiceOutputSettings parse_voice_output_settings(const nlohmann::json& json) {
-    if (!json.is_object() || json.size() != 5) {
-        throw std::invalid_argument("Invalid voice output settings");
+    exact_keys(json, {"url", "model", "api_key", "output_format", "default_voice",
+        "instrumentation_provider", "instrumentation_reasoning_effort"});
+    auto effort = nullable_string(json, "instrumentation_reasoning_effort");
+    if (effort && !valid_reasoning_effort(*effort)) {
+        throw std::invalid_argument("Invalid instrumentation reasoning effort");
     }
     return {
         .url = required_field<std::string>(json, "url"),
@@ -517,6 +520,8 @@ VoiceOutputSettings parse_voice_output_settings(const nlohmann::json& json) {
         .api_key = required_field<std::string>(json, "api_key"),
         .output_format = required_field<std::string>(json, "output_format"),
         .default_voice = required_field<std::string>(json, "default_voice"),
+        .instrumentation_provider = required_field<std::string>(json, "instrumentation_provider"),
+        .instrumentation_reasoning_effort = std::move(effort),
     };
 }
 

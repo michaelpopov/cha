@@ -81,7 +81,7 @@ describe('character settings screen', () => {
     const reasoning = screen.getByLabelText('Reasoning effort') as HTMLSelectElement;
     expect(reasoning).toHaveValue('');
     expect(Array.from(reasoning.options, (option) => option.value))
-      .toEqual(['', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh']);
+      .toEqual(['', 'none', 'low', 'medium', 'high', 'xhigh']);
     expect(screen.getByLabelText('Provider web search')).toHaveValue('');
     expect(screen.getByLabelText('Voice')).toHaveValue('');
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();

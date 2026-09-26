@@ -438,7 +438,7 @@ description = "Physicist."        # optional, one line
 provider = "sol"                  # required provider ID
 style = "serif"                   # optional style ID
 voice = "warm-narrator"           # optional voice ID
-reasoning_effort = "high"         # optional: low | medium | high | xhigh
+reasoning_effort = "high"         # optional: none | low | medium | high | xhigh
 web_search = "auto"               # optional: off | auto | required
 tags = ["science", "historical"] # optional; unique case-insensitively
 
@@ -630,7 +630,7 @@ stable provider ID does not change.
 | `idle_timeout_s` | `60` | Positive timeout after response bytes stop arriving |
 | `api_key` | `""` | ID of a model key stored under `system/keys/` in this vault |
 | `api_key_env` | `""` | Legacy field spelling; its value is resolved as an exact display name among this vault's model keys, never as an environment variable |
-| `reasoning_effort` | `""` | Provider default forwarded to the backend |
+| `reasoning_effort` | `"none"` | Provider default forwarded to the backend |
 | `reasoning_format` | `"auto"` | `auto`, `none`, `reasoning_content`, or `reasoning` |
 | `api` | `"responses"` | `responses` or `chat_completions` |
 | `auth` | no special auth | Only special value is `openai_subscription` |

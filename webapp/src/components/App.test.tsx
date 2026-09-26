@@ -2341,7 +2341,7 @@ it('clears the conversation route before reloading after a vault switch', async 
   expect(reload).toHaveBeenCalledOnce();
 });
 
-it('refreshes a switched vault without reloading the native document', async () => {
+it('allows repeated vault switches without reloading the native document', async () => {
   const requests: NativeRequest[] = [];
   const bridge = createEnvelopeNativeBridge({
     connectionId: 'view-test',
@@ -2350,17 +2350,14 @@ it('refreshes a switched vault without reloading the native document', async () 
     },
   });
   bridge.setContextEpoch(1);
-  let switched = false;
-  const getBootstrap = vi.fn(async () => switched
-    ? { ...bootstrapFixture, vault_name: 'Projects' }
-    : bootstrapFixture);
+  let vaultName = 'Personal';
+  const getBootstrap = vi.fn(async () => ({ ...bootstrapFixture, vault_name: vaultName }));
   const reload = vi.fn();
   render(
     <App
       client={fixtureClient({
         getBootstrap,
         switchVault: async (name) => {
-          expect(name).toBe('Projects');
           await bridge.invoke('vault.switch', { vault_name: name });
         },
       })}
@@ -2372,21 +2369,30 @@ it('refreshes a switched vault without reloading the native document', async () 
 
   const vault = await screen.findByLabelText('Vault');
   window.history.replaceState(null, '', '/#/s/entrance/welcome/');
-  await userEvent.selectOptions(vault, 'Projects');
-  await waitFor(() => expect(requests.some(({ method }) => method === 'vault.switch')).toBe(true));
-  const request = requests.find(({ method }) => method === 'vault.switch')!;
-  switched = true;
-  act(() => bridge.receive({
-    connection_id: 'view-test', delivery_id: 1,
-    messages: [
-      { connection_id: 'view-test', event: 'app.contextChanged', context_epoch: 2,
-        state: 'running', causing_request_id: request.id },
-      { connection_id: 'view-test', id: request.id, context_epoch: 2, ok: true,
-        result: { state: 'running', context_epoch: 2 } },
-    ],
-  }));
+  for (const [index, name] of ['Projects', 'Personal'].entries()) {
+    await userEvent.selectOptions(vault, name);
+    await waitFor(() => expect(requests.filter(({ method }) => method === 'vault.switch'))
+      .toHaveLength(index + 1));
+    expect(vault).toBeDisabled();
+    const request = requests.filter(({ method }) => method === 'vault.switch')[index];
+    expect(request.params).toEqual({ vault_name: name });
+    vaultName = name;
+    const contextEpoch = index + 2;
+    act(() => bridge.receive({
+      connection_id: 'view-test', delivery_id: index + 1,
+      messages: [
+        { connection_id: 'view-test', event: 'app.contextChanged', context_epoch: contextEpoch,
+          state: 'running', causing_request_id: request.id },
+        { connection_id: 'view-test', id: request.id, context_epoch: contextEpoch, ok: true,
+          result: { state: 'running', context_epoch: contextEpoch } },
+      ],
+    }));
 
-  await waitFor(() => expect(screen.getByLabelText('Vault')).toHaveValue('Projects'));
+    await waitFor(() => {
+      expect(vault).toHaveValue(name);
+      expect(vault).toBeEnabled();
+    });
+  }
   expect(window.location.hash).toBe('#/');
   expect(reload).not.toHaveBeenCalled();
   expect(getBootstrap.mock.calls.length).toBeGreaterThan(1);

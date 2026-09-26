@@ -486,7 +486,7 @@ std::optional<EntryAudioLookup> SessionRepository::lookup_entry_audio(
         identity == temporary_identity_ ? std::string_view{} : database_password_);
     validate_workspace_session_database_identity(database);
     auto entry = database.prepare(
-        "SELECT e.session_key, e.text, e.kind FROM entries e "
+        "SELECT e.session_key, e.text, e.kind, e.participant_id FROM entries e "
         "JOIN sessions s ON s.session_key = e.session_key "
         "JOIN forums f ON f.forum_key = s.forum_key "
         "WHERE f.forum_id = ?1 AND s.session_id = ?2 "
@@ -501,6 +501,7 @@ std::optional<EntryAudioLookup> SessionRepository::lookup_entry_audio(
         .identity = identity,
         .entry_text = entry.text(1),
         .entry_kind = static_cast<EntryKind>(entry.integer(2)),
+        .participant_id = entry.text(3),
         .cached = std::nullopt,
     };
     try {

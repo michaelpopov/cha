@@ -2,10 +2,99 @@
 #include "storage/not_found_error.h"
 #include "util/logging.h"
 #include "util/path_name.h"
+#include "util/text.h"
+
+#include <algorithm>
+#include <regex>
 
 namespace cha {
+std::string_view embedded_voice_prompt();
+
 using namespace std::chrono_literals;
 namespace {
+SharedCharacterDefinition voice_instrumenter(
+    const Workspace& workspace, const WorkspaceVoiceOutput& output,
+    const EntryAudioLookup& entry, std::string_view text) {
+    if (entry.entry_kind != EntryKind::character) return {};
+    const auto& provider_id = output.instrumentation_provider_id;
+    if (provider_id.empty()) return {};
+    const auto* provider = workspace.find_provider(provider_id);
+    const auto* character = workspace.find_character(entry.participant_id);
+    if (!provider || !character) {
+        log_warn("Voice instrumentation provider or character is unavailable; using original text");
+        return {};
+    }
+    auto config = provider->config;
+    config.web_search = WebSearchMode::off;
+    if (output.instrumentation_reasoning_effort) {
+        config.reasoning_effort = *output.instrumentation_reasoning_effort;
+    }
+    std::string prompt(embedded_voice_prompt());
+    constexpr std::string_view character_marker = "{{CHARACTER_DESCRIPTION}}";
+    constexpr std::string_view text_marker = "{{TEXT}}";
+    const auto character_position = prompt.find(character_marker);
+    const auto text_position = prompt.find(text_marker);
+    if (character_position == std::string::npos || text_position == std::string::npos
+        || character_position > text_position) {
+        log_warn("Voice instrumentation template has missing or reordered placeholders; using original text");
+        return {};
+    }
+    // Replace from the end, so placeholder-like text in either input stays literal.
+    prompt.replace(text_position, text_marker.size(), text);
+    prompt.replace(character_position, character_marker.size(), character->markdown);
+    return std::make_shared<const CharacterDefinition>(CharacterDefinition{
+        .character = {"voice-instrumentation", "Voice instrumentation"},
+        .provider = {provider->id, std::move(config)},
+        .system_prompt = std::move(prompt),
+    });
+}
+
+bool instrument_voice(FishAudioRequest& request, SharedCharacterDefinition definition,
+    const ProviderClientFactory& factory, const std::atomic_bool& cancelled) {
+    if (cancelled.load()) return false;
+    if (!definition) return true;
+    try {
+        auto backend = factory(definition);
+        if (!backend) throw std::runtime_error("Voice instrumentation provider is unavailable");
+        const GenerationRequest input{
+            .history = std::make_shared<const ModelHistory>(),
+            .run = {
+                .target = definition->character,
+                .author = {"", "User"},
+                .prompt_text = "Return only the instrumented source text.",
+            },
+        };
+        std::string text;
+        const auto result = backend->perform(backend->prepare(input),
+            [&](GenerationDelta delta) {
+                if (delta.kind == GenerationDeltaKind::answer) text += delta.text;
+            }, cancelled);
+        if (cancelled.load() || result.outcome == GenerationOutcome::cancelled) return false;
+        if (result.outcome != GenerationOutcome::completed || trim_view(text).empty()) {
+            throw std::runtime_error("Voice instrumentation failed");
+        }
+        // A provider can report completion even when its answer hit a token limit.
+        const auto spoken_size = [](const std::string& value) {
+            static const std::regex voice_marker(R"(\[[^\]]*\])");
+            const std::string spoken = std::regex_replace(value, voice_marker, "");
+            // Ignore markers and Markdown punctuation equally on both sides.
+            return std::count_if(spoken.begin(), spoken.end(), [](unsigned char c) {
+                return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+                    || (c >= '0' && c <= '9') || c >= 128;
+            });
+        };
+        const auto original_size = spoken_size(request.body.at("text").get_ref<const std::string&>());
+        if (spoken_size(text) < original_size - original_size / 10) {
+            throw std::runtime_error("Voice instrumentation shortened the source text");
+        }
+        request.body["text"] = trim_view(text);
+    } catch (...) {
+        // Provider errors may contain credentials or private source text.
+        if (!cancelled.load()) log_warn("Voice instrumentation failed; using original text");
+    }
+    return !cancelled.load();
+}
+
 AudioAcceptance active_acceptance(EntryId id, AudioJobState state) {
     switch (state) {
     case AudioJobState::queued: return {id, AudioAcceptanceKind::queued};
@@ -21,9 +110,14 @@ AudioDownloadManager::Key AudioDownloadManager::key(const FullSessionId& session
 }
 
 AudioDownloadManager::AudioDownloadManager(const SessionRepository& sessions,
-    ActiveVaultName active_vault_name, bool enabled, Transport transport)
+    ActiveVaultName active_vault_name, bool enabled, Transport transport,
+    ProviderClientFactory provider_factory)
     : sessions_(sessions), active_vault_name_(std::move(active_vault_name)),
-      enabled_(enabled), transport_(std::move(transport)) {
+      enabled_(enabled), transport_(std::move(transport)),
+      provider_factory_(provider_factory ? std::move(provider_factory)
+          : ProviderClientFactory{[](SharedCharacterDefinition definition) {
+                return std::make_unique<ProviderClient>(std::move(definition));
+            }}) {
     try {
         for (auto& thread : workers_) {
             thread = std::thread([this] { worker(); });
@@ -111,6 +205,10 @@ std::shared_ptr<AudioDownloadManager::Job> AudioDownloadManager::prepare_job(
     }
     job->key = credential->value;
     job->request = make_fish_audio_request(job->output, entry_speech_text(entry), synthesis);
+    if (uses_voice_instrumentation(job->output)) {
+        job->instrumenter = voice_instrumenter(
+            *workspace, job->output, entry, job->request.body.at("text").get_ref<const std::string&>());
+    }
     return job;
 }
 
@@ -341,6 +439,7 @@ void AudioDownloadManager::run(const std::shared_ptr<Job>& job) {
         ~Finish() { if (saved) stream.finish(); else stream.fail(); }
     } finish{*job->stream};
     const auto cancelled = [&] { return job->cancelled.load(); };
+    if (!instrument_voice(job->request, job->instrumenter, provider_factory_, job->cancelled)) return;
     for (int attempt = 0; attempt < 4 && !cancelled(); ++attempt) {
         std::optional<EntryAudio> result;
         std::optional<EntryAudioLookup> entry;

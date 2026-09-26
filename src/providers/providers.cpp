@@ -163,7 +163,7 @@ void ProviderRequest::execute(
                 }
                 if (!cancelled.load() && !web_search_used) {
                     web_search_used = true;
-                    events_.push(GenerationEventDelta{
+                    (void)events_.push(GenerationEventDelta{
                         request_id, GenerationDeltaKind::answer, {}, true});
                     notifier_->wake();
                 }

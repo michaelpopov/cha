@@ -8,7 +8,9 @@
 #include "session/session_open.h"
 #include "runtime/text_input.h"
 #include "workspace/workspace_config_store.h"
+#include "util/logging.h"
 #include <gtest/gtest.h>
+#include <fstream>
 #include <future>
 
 namespace cha {
@@ -26,6 +28,23 @@ bool eventually(const std::function<bool()>& ready) {
 struct ReleaseOnExit {
     std::atomic_bool& release;
     ~ReleaseOnExit() { release = true; }
+};
+class VoiceBackend final : public ModelBackend {
+public:
+    using Perform = std::function<GenerationResult(const GenerationDeltaSink&, const std::atomic_bool&)>;
+    explicit VoiceBackend(Perform perform) : perform_(std::move(perform)) {}
+    RequestPayload prepare(const GenerationRequest& input) override {
+        EXPECT_TRUE(input.history && input.history->entries.empty());
+        EXPECT_FALSE(input.web_search_tool);
+        EXPECT_TRUE(input.web_search_context.empty());
+        return {};
+    }
+    GenerationResult perform(RequestPayload, const GenerationDeltaSink& delta,
+        const std::atomic_bool& cancelled) override {
+        return perform_(delta, cancelled);
+    }
+private:
+    Perform perform_;
 };
 class AudioDownloads : public ::testing::Test {
 protected:
@@ -49,10 +68,24 @@ protected:
     }
     AudioDownloadRequest input() { return {"Test", {.reference_id = "voice"}}; }
     Json http_input() { return {{"vault_name", "Test"}, {"reference_id", "voice"}}; }
-    std::unique_ptr<AudioDownloadManager> make(AudioDownloadManager::Transport transfer) {
+    std::unique_ptr<AudioDownloadManager> make(AudioDownloadManager::Transport transfer,
+        ProviderClientFactory factory = {}) {
         return std::make_unique<AudioDownloadManager>(
             *sessions, [this] { return vault->get().name; }, true,
-            std::move(transfer));
+            std::move(transfer), std::move(factory));
+    }
+    void add_reply(std::string text = "Hello.", std::string character = "guide") {
+        const auto prepared = sessions->prepare(session);
+        SessionJournal journal(path, prepared.session_key);
+        journal.record_entry(make_character_entry(6, std::move(character), "Guide",
+            std::move(text), EntryStatus::complete));
+    }
+    void configure_instrumentation() {
+        auto output = *config->snapshot()->voice_output();
+        output.instrumentation_provider_id = "test";
+        config->apply_voice_output_update(output);
+        // Instrumentation must not depend on the web-search query provider.
+        config->apply_web_search_update({.query_provider_id = "unavailable-search-provider"});
     }
     test::TestWorkspace workspace;
     std::filesystem::path path;
@@ -62,6 +95,335 @@ protected:
     std::unique_ptr<CurrentVault> vault;
     FullSessionId session;
 };
+
+TEST_F(AudioDownloads, InstrumentsProfileAndReplyBeforeStreamingAndCachesWithoutRepeatingModelCall) {
+    configure_instrumentation();
+    config->apply_character_definition("guide", "Guide",
+        "General character instructions.\n<character_profile>Measured speaker; {{TEXT}}</character_profile>");
+    const std::string original = "Hello. {{CHARACTER_DESCRIPTION}} {{TEXT}}";
+    add_reply(original);
+    std::atomic_int models{}, transfers{};
+    std::atomic_bool release_model{}, release_audio{}, first_chunk{};
+    auto downloads = make(
+        [&](const auto&, const auto&, const auto& request, const auto& cancel,
+            const AudioChunkCallback& emit) -> std::optional<EntryAudio> {
+            EXPECT_EQ(request.body.at("text"), "[calm] " + original);
+            if (++transfers == 1) throw std::runtime_error("Retry FishAudio only");
+            emit("audio/mpeg", "first");
+            first_chunk = true;
+            while (!release_audio && !cancel()) std::this_thread::sleep_for(2ms);
+            if (cancel()) return std::nullopt;
+            emit("audio/mpeg", "second");
+            return EntryAudio{"firstsecond", "audio/mpeg"};
+        },
+        [&](SharedCharacterDefinition definition) {
+            EXPECT_EQ(definition->provider.id, "test");
+            EXPECT_EQ(definition->provider.config.web_search, WebSearchMode::off);
+            EXPECT_NE(definition->system_prompt.find("Measured speaker; {{TEXT}}"), std::string::npos);
+            EXPECT_EQ(definition->system_prompt.find("General character instructions."), std::string::npos);
+            EXPECT_NE(definition->system_prompt.find("# TEXT TO INSTRUMENT\n\n" + original), std::string::npos);
+            return std::make_unique<VoiceBackend>([&](const auto& delta, const auto& cancelled) {
+                ++models;
+                while (!release_model && !cancelled) std::this_thread::sleep_for(2ms);
+                if (cancelled) return GenerationResult{.outcome = GenerationOutcome::cancelled};
+                delta({GenerationDeltaKind::reasoning, "Internal analysis"});
+                delta({GenerationDeltaKind::answer, "  [calm] "});
+                delta({GenerationDeltaKind::answer, original + "\n"});
+                return GenerationResult{};
+            });
+        });
+    ReleaseOnExit model_cleanup{release_model}, audio_cleanup{release_audio};
+    downloads->submit(session, 6, input());
+    ASSERT_TRUE(eventually([&] { return models == 1; }));
+    EXPECT_EQ(transfers, 0);
+    release_model = true;
+    ASSERT_TRUE(eventually([&] { return first_chunk.load(); }));
+    const auto stream = downloads->stream(session, 6, "Test");
+    ASSERT_TRUE(stream);
+    EXPECT_EQ(stream->read(0)->body, "first");
+    EXPECT_FALSE(sessions->cached_audio_entries(session).contains(6));
+    release_audio = true;
+    ASSERT_TRUE(eventually([&] { return sessions->cached_audio_entries(session).contains(6); }));
+    EXPECT_EQ(downloads->audio(session, 6, "Test")->audio, "firstsecond");
+    EXPECT_EQ(sessions->lookup_entry_audio(session, 6)->entry_text, original);
+    EXPECT_EQ(downloads->submit(session, 6, input()).kind, AudioAcceptanceKind::cached);
+    EXPECT_EQ(models, 1);
+    EXPECT_EQ(transfers, 2);
+}
+
+TEST_F(AudioDownloads, InstrumentationFailuresUseOriginalTextAndDiscardPartialOutput) {
+    configure_instrumentation();
+    add_reply();
+    for (int failure = 0; failure < 4; ++failure) {
+        SCOPED_TRACE(failure);
+        std::atomic_int models{};
+        auto downloads = make(
+            [&](const auto&, const auto&, const auto& request, const auto&,
+                const AudioChunkCallback&) -> std::optional<EntryAudio> {
+                EXPECT_EQ(request.body.at("text"), "Hello.");
+                return EntryAudio{"audio", "audio/mpeg"};
+            },
+            [&](SharedCharacterDefinition) -> std::unique_ptr<ModelBackend> {
+                ++models;
+                if (failure == 0) throw std::runtime_error("Credential unavailable");
+                if (failure == 1) return {};
+                return std::make_unique<VoiceBackend>([&](const auto& delta, const auto&) {
+                    delta({GenerationDeltaKind::answer, failure == 2 ? "[calm] Partial" : " \n"});
+                    return GenerationResult{.outcome = failure == 2
+                        ? GenerationOutcome::transport_error : GenerationOutcome::completed};
+                });
+            });
+        downloads->submit(session, 6, input());
+        ASSERT_TRUE(eventually([&] { return sessions->cached_audio_entries(session).contains(6); }));
+        EXPECT_EQ(models, 1);
+        downloads->clear(session);
+    }
+}
+
+TEST_F(AudioDownloads, ShortCompletedInstrumentationFallsBackWithoutCountingVoiceMarkers) {
+    configure_instrumentation();
+    const std::string original(100, 'x');
+    add_reply(original);
+    for (const std::size_t retained : {20, 89, 90, 100}) {
+        SCOPED_TRACE(retained);
+        // Markers alone are longer than the source, but are not spoken text.
+        const std::string instrumented = "[calm] [" + std::string(150, 'a') + "] "
+            + original.substr(0, retained);
+        const std::string expected = retained < 90 ? original : instrumented;
+        std::atomic_int models{};
+        auto downloads = make(
+            [&](const auto&, const auto&, const auto& request, const auto&,
+                const AudioChunkCallback&) -> std::optional<EntryAudio> {
+                const auto text = request.body.at("text").template get<std::string>();
+                EXPECT_EQ(text, expected);
+                return EntryAudio{text, "audio/mpeg"};
+            },
+            [&](SharedCharacterDefinition) {
+                return std::make_unique<VoiceBackend>([&](const auto& delta, const auto&) {
+                    ++models;
+                    delta({GenerationDeltaKind::answer, instrumented});
+                    return GenerationResult{.outcome = GenerationOutcome::completed};
+                });
+            });
+        downloads->submit(session, 6, input());
+        ASSERT_TRUE(eventually([&] { return sessions->cached_audio_entries(session).contains(6); }));
+        EXPECT_EQ(downloads->audio(session, 6, "Test")->audio, expected);
+        EXPECT_EQ(models, 1);
+        downloads->clear(session);
+    }
+}
+
+TEST_F(AudioDownloads, InstrumentationAcceptsBracketedActionsAndMarkdownRemoval) {
+    configure_instrumentation();
+    const std::string original = "**Hello** [smiles] **there.**";
+    const std::string instrumented = "[warm] Hello [smiles] there.";
+    add_reply(original);
+    std::atomic_int models{};
+    auto downloads = make(
+        [&](const auto&, const auto&, const auto& request, const auto&,
+            const AudioChunkCallback&) -> std::optional<EntryAudio> {
+            const auto text = request.body.at("text").template get<std::string>();
+            EXPECT_EQ(text, instrumented);
+            return EntryAudio{text, "audio/mpeg"};
+        },
+        [&](SharedCharacterDefinition) {
+            return std::make_unique<VoiceBackend>([&](const auto& delta, const auto&) {
+                ++models;
+                delta({GenerationDeltaKind::answer, instrumented});
+                return GenerationResult{.outcome = GenerationOutcome::completed};
+            });
+        });
+    downloads->submit(session, 6, input());
+    ASSERT_TRUE(eventually([&] { return sessions->cached_audio_entries(session).contains(6); }));
+    EXPECT_EQ(downloads->audio(session, 6, "Test")->audio, instrumented);
+    EXPECT_EQ(sessions->lookup_entry_audio(session, 6)->entry_text, original);
+    EXPECT_EQ(models, 1);
+}
+
+TEST_F(AudioDownloads, MissingInstrumentationProviderOrCharacterUsesOriginalText) {
+    add_reply();
+    config->apply_web_search_update({.query_provider_id = "test"});
+    for (const std::string provider : {"", "missing", "test"}) {
+        SCOPED_TRACE(provider);
+        auto output = *config->snapshot()->voice_output();
+        output.instrumentation_provider_id = provider == "missing"
+            ? config->create_provider("Removed provider", "test") : provider;
+        config->apply_voice_output_update(output);
+        if (provider == "missing") {
+            // Simulate importing settings that reference a removed provider.
+            auto maintenance = config->reserve_maintenance();
+            maintenance.close();
+            {
+                storage::SqliteDatabase database(path, storage::SqliteDatabase::Mode::read_write);
+                database.prepare("DELETE FROM config WHERE name = ?1",
+                    "system/providers/" + output.instrumentation_provider_id + "/config.toml").run();
+            }
+            maintenance.reopen();
+        }
+        if (provider == "test") {
+            storage::SqliteDatabase database(path, storage::SqliteDatabase::Mode::read_write);
+            database.execute("UPDATE entries SET participant_id = 'deleted-character' WHERE entry_id = 6");
+        }
+        const auto log_file = workspace.root() / ("voice-" + provider + ".log");
+        initialize_diagnostic_logging(log_file, "warn");
+        struct StopLogging { ~StopLogging() { shutdown_diagnostic_logging(); } } stop;
+        auto downloads = make(
+            [](const auto&, const auto&, const auto& request, const auto&,
+                const AudioChunkCallback&) -> std::optional<EntryAudio> {
+                EXPECT_EQ(request.body.at("text"), "Hello.");
+                return EntryAudio{"audio", "audio/mpeg"};
+            },
+            [](SharedCharacterDefinition) -> std::unique_ptr<ModelBackend> {
+                ADD_FAILURE() << "Unavailable instrumentation must not call a model";
+                return {};
+            });
+        downloads->submit(session, 6, input());
+        ASSERT_TRUE(eventually([&] { return sessions->cached_audio_entries(session).contains(6); }));
+        std::ifstream log(log_file);
+        const std::string contents{std::istreambuf_iterator<char>(log), std::istreambuf_iterator<char>()};
+        EXPECT_EQ(contents.find("Voice instrumentation provider or character is unavailable")
+            != std::string::npos, !provider.empty());
+        downloads->clear(session);
+    }
+}
+
+TEST_F(AudioDownloads, HumanEntriesSkipInstrumentationWithAConfiguredProvider) {
+    configure_instrumentation();
+    auto downloads = make(
+        [](const auto&, const auto&, const auto& request, const auto&,
+            const AudioChunkCallback&) -> std::optional<EntryAudio> {
+            EXPECT_EQ(request.body.at("text"), "1");
+            return EntryAudio{"audio", "audio/mpeg"};
+        },
+        [](SharedCharacterDefinition) -> std::unique_ptr<ModelBackend> {
+            ADD_FAILURE() << "Human entries must not call the instrumentation model";
+            return {};
+        });
+    downloads->submit(session, 1, input());
+    ASSERT_TRUE(eventually([&] { return sessions->cached_audio_entries(session).contains(1); }));
+}
+
+TEST_F(AudioDownloads, InstrumentationEffortOverridesOnlyTheSelectedCall) {
+    configure_instrumentation();
+    add_reply();
+    auto provider = *config->snapshot()->find_provider("test");
+    provider.config.reasoning_effort = "medium";
+    config->apply_provider_update(provider.id, provider.label, provider.config);
+    for (const std::optional<std::string>& effort : {std::optional<std::string>{},
+            std::optional<std::string>{"none"}, std::optional<std::string>{"high"}}) {
+        auto output = *config->snapshot()->voice_output();
+        output.instrumentation_reasoning_effort = effort;
+        config->apply_voice_output_update(output);
+        std::atomic_int models{};
+        auto downloads = make(
+            [](const auto&, const auto&, const auto& request, const auto&,
+                const AudioChunkCallback&) -> std::optional<EntryAudio> {
+                EXPECT_EQ(request.body.at("text"), "[calm] Hello.");
+                return EntryAudio{"audio", "audio/mpeg"};
+            },
+            [&](SharedCharacterDefinition definition) {
+                ++models;
+                EXPECT_EQ(definition->provider.id, "test");
+                EXPECT_EQ(definition->provider.config.reasoning_effort, effort.value_or("medium"));
+                return std::make_unique<VoiceBackend>([](const auto& delta, const auto&) {
+                    delta({GenerationDeltaKind::answer, "[calm] Hello."});
+                    return GenerationResult{};
+                });
+            });
+        downloads->submit(session, 6, input());
+        ASSERT_TRUE(eventually([&] { return sessions->cached_audio_entries(session).contains(6); }));
+        EXPECT_EQ(models, 1);
+        EXPECT_EQ(config->snapshot()->find_provider("test")->config.reasoning_effort, "medium");
+        downloads->clear(session);
+    }
+}
+
+TEST_F(AudioDownloads, NonS2ModelsSkipInstrumentationWithAConfiguredProvider) {
+    configure_instrumentation();
+    add_reply();
+    auto output = *config->snapshot()->voice_output();
+    output.model = "s1";
+    config->apply_voice_output_update(output);
+    auto downloads = make(
+        [](const auto&, const auto&, const auto& request, const auto&,
+            const AudioChunkCallback&) -> std::optional<EntryAudio> {
+            EXPECT_EQ(request.model, "s1");
+            EXPECT_EQ(request.body.at("text"), "Hello.");
+            return EntryAudio{"audio", "audio/mpeg"};
+        },
+        [](SharedCharacterDefinition) -> std::unique_ptr<ModelBackend> {
+            ADD_FAILURE() << "Non-S2 models must not use S2 instrumentation";
+            return {};
+        });
+    downloads->submit(session, 6, input());
+    ASSERT_TRUE(eventually([&] { return sessions->cached_audio_entries(session).contains(6); }));
+}
+
+TEST_F(AudioDownloads, CancellingInstrumentationStopsBeforeFishAudioAndCacheWrite) {
+    configure_instrumentation();
+    add_reply();
+    std::atomic_bool started{}, cancelled{};
+    std::atomic_int transfers{};
+    auto downloads = make(
+        [&](const auto&, const auto&, const auto&, const auto&,
+            const AudioChunkCallback&) -> std::optional<EntryAudio> {
+            ++transfers;
+            return EntryAudio{"audio", "audio/mpeg"};
+        },
+        [&](SharedCharacterDefinition) {
+            return std::make_unique<VoiceBackend>([&](const auto& delta, const auto& cancel) {
+                started = true;
+                while (!cancel) std::this_thread::sleep_for(2ms);
+                cancelled = true;
+                delta({GenerationDeltaKind::answer, "[calm] Late reply"});
+                return GenerationResult{};
+            });
+        });
+    downloads->submit(session, 6, input());
+    ASSERT_TRUE(eventually([&] { return started.load(); }));
+    downloads->request_stop();
+    ASSERT_TRUE(downloads->join_until(std::chrono::steady_clock::now() + 2s));
+    EXPECT_TRUE(cancelled);
+    EXPECT_EQ(transfers, 0);
+    EXPECT_TRUE(sessions->cached_audio_entries(session).empty());
+}
+
+TEST_F(AudioDownloads, ReplyDeletedDuringInstrumentationIsDroppedBeforeFishAudio) {
+    configure_instrumentation();
+    add_reply();
+    std::atomic_bool started{}, release{};
+    std::atomic_int transfers{};
+    auto downloads = make(
+        [&](const auto&, const auto&, const auto&, const auto&,
+            const AudioChunkCallback& emit) -> std::optional<EntryAudio> {
+            ++transfers;
+            emit("audio/mpeg", "audio");
+            return EntryAudio{"audio", "audio/mpeg"};
+        },
+        [&](SharedCharacterDefinition) {
+            return std::make_unique<VoiceBackend>([&](const auto& delta, const auto& cancel) {
+                started = true;
+                while (!release && !cancel) std::this_thread::sleep_for(2ms);
+                delta({GenerationDeltaKind::answer, "[calm] Hello."});
+                return GenerationResult{};
+            });
+        });
+    ReleaseOnExit cleanup{release};
+    downloads->submit(session, 6, input());
+    ASSERT_TRUE(eventually([&] { return started.load(); }));
+    const auto stream = downloads->stream(session, 6, "Test");
+    ASSERT_TRUE(stream);
+    {
+        storage::SqliteDatabase database(path, storage::SqliteDatabase::Mode::read_write);
+        database.execute("DELETE FROM entries WHERE entry_id = 6");
+    }
+    release = true;
+    ASSERT_TRUE(eventually([&] { return downloads->status(session, "Test").downloads.empty(); }));
+    EXPECT_EQ(transfers, 0);
+    EXPECT_TRUE(stream->empty());
+    EXPECT_TRUE(stream->read(0)->failed);
+    EXPECT_TRUE(sessions->cached_audio_entries(session).empty());
+}
 
 TEST_F(AudioDownloads, BatchAcceptanceQueuesThreeWorkersAndDeduplicatesExistingJobs) {
     std::atomic_int started{}, attempts{};
@@ -83,8 +445,13 @@ TEST_F(AudioDownloads, BatchAcceptanceQueuesThreeWorkersAndDeduplicatesExistingJ
     release = true;
     ASSERT_TRUE(eventually([&] { return sessions->cached_audio_entries(session).size() == 4; }));
     EXPECT_EQ(attempts, 4);
-    const auto cached = downloads->submit_batch(session, batch);
-    for (const auto& item : cached) EXPECT_EQ(item.kind, AudioAcceptanceKind::cached);
+    // The cache write becomes visible before workers remove their active jobs.
+    ASSERT_TRUE(eventually([&] {
+        const auto cached = downloads->submit_batch(session, batch);
+        return std::all_of(cached.begin(), cached.end(), [](const auto& item) {
+            return item.kind == AudioAcceptanceKind::cached;
+        });
+    }));
 }
 
 TEST_F(AudioDownloads, InvalidBatchAdmitsNoNewJobs) {

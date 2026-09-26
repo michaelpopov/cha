@@ -297,7 +297,8 @@ Application::Impl::Impl(
     live_sessions = std::make_unique<LiveSessionManager>(
         settings, opener);
     audio_downloads = std::make_unique<AudioDownloadManager>(
-        *sessions, [this] { return current_vault_.get().name; }, true);
+        *sessions, [this] { return current_vault_.get().name; }, true,
+        download_fish_audio, shared_openai_provider_factory(openai_auth.get(), api_keys.get()));
     publish_capabilities_locked();
     running = true;
     notified_epoch = live_sessions->context_epoch();

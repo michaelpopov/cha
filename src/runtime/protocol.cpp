@@ -479,6 +479,9 @@ void to_json(nlohmann::json& json, const VoiceOutputSettings& value) {
         {"api_key", value.api_key},
         {"output_format", value.output_format},
         {"default_voice", value.default_voice},
+        {"instrumentation_provider", value.instrumentation_provider},
+        {"instrumentation_reasoning_effort", value.instrumentation_reasoning_effort
+            ? nlohmann::json(*value.instrumentation_reasoning_effort) : nlohmann::json(nullptr)},
     };
 }
 

@@ -3,6 +3,7 @@
 #include "storage/session_repository.h"
 #include "media/audio_stream.h"
 #include "providers/fish_audio.h"
+#include "providers/provider_client.h"
 #include "workspace/workspace.h"
 #include <array>
 #include <atomic>
@@ -64,7 +65,8 @@ public:
     using ActiveVaultName = std::function<std::string()>;
     AudioDownloadManager(const SessionRepository& sessions,
         ActiveVaultName active_vault_name, bool enabled,
-        Transport transport = download_fish_audio);
+        Transport transport = download_fish_audio,
+        ProviderClientFactory provider_factory = {});
     ~AudioDownloadManager();
     AudioAcceptance submit(const FullSessionId& session, EntryId id, const AudioDownloadRequest& input);
     std::vector<AudioAcceptance> submit_batch(const FullSessionId& session, const AudioDownloadBatchRequest& input);
@@ -84,6 +86,7 @@ private:
         WorkspaceVoiceOutput output;
         std::string key;
         FishAudioRequest request;
+        SharedCharacterDefinition instrumenter;
         AudioJobState state{AudioJobState::queued};
         std::atomic_bool cancelled{false};
         std::shared_ptr<AudioStream> stream = std::make_shared<AudioStream>();
@@ -99,6 +102,7 @@ private:
     ActiveVaultName active_vault_name_;
     bool enabled_;
     Transport transport_;
+    ProviderClientFactory provider_factory_;
     std::mutex mutex_;
     std::condition_variable changed_;
     std::map<Key, std::shared_ptr<Job>> jobs_;

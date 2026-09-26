@@ -8,7 +8,7 @@
 namespace cha {
 
 bool valid_reasoning_effort(std::string_view value) {
-    return value == "none" || value == "minimal" || value == "low"
+    return value == "none" || value == "low"
         || value == "medium" || value == "high" || value == "xhigh";
 }
 
