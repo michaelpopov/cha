@@ -25,7 +25,7 @@ import {
   VaultsScreen,
   VoiceScreen,
   VoiceSettingsScreen,
-  JevSettingsScreen,
+  SessionSettingsScreen,
   WebSearchSettingsScreen,
   VoicesScreen,
 } from './Settings';
@@ -137,7 +137,7 @@ describe('Settings screens', () => {
 
     const destinations = screen.getAllByRole('button');
     expect(destinations.map((button) => button.textContent)).toEqual([
-      'Personas', 'Characters', 'Forums', 'Vaults', 'Providers', 'Styles', 'Recipient detection', 'Search API', 'Voices', 'API Keys',
+      'Personas', 'Characters', 'Forums', 'Vaults', 'Providers', 'Styles', 'Session settings', 'Search API', 'Voices', 'API Keys',
     ]);
     for (const [label, type] of [
       ['Personas', 'show-personas'],
@@ -146,7 +146,7 @@ describe('Settings screens', () => {
       ['Vaults', 'show-settings-vaults'],
       ['Providers', 'show-settings-providers'],
       ['Styles', 'show-settings-styles'],
-      ['Recipient detection', 'show-settings-jev'],
+      ['Session settings', 'show-settings-jev'],
       ['Search API', 'show-settings-web-search'],
       ['Voices', 'show-settings-voices'],
       ['API Keys', 'show-settings-api-keys'],
@@ -2128,43 +2128,88 @@ describe('web search settings', () => {
   });
 });
 
-describe('recipient detection settings', () => {
+describe('session settings', () => {
+  it('keeps recipient detection available if session naming fails to load', async () => {
+    render(<SessionSettingsScreen client={fixtureClient({
+      getSessionNamingSettings: async () => { throw new ChaError('internal_error', 'Session naming settings could not be loaded.'); },
+      listApiKeys: async () => [],
+    })} dispatch={vi.fn()} state={initialAppState} />);
+    expect(await screen.findByLabelText('URL')).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent('Session naming settings could not be loaded.');
+    expect(screen.queryByLabelText('Provider')).not.toBeInTheDocument();
+  });
+
+  it('keeps session naming available if recipient detection fails to load', async () => {
+    render(<SessionSettingsScreen client={fixtureClient({
+      getJevSettings: async () => { throw new ChaError('internal_error', 'Recipient detection settings could not be loaded.'); },
+      getSessionNamingSettings: async () => ({ provider: 'test', reasoning_effort: 'low' }),
+      listProviders: async () => [{ id: 'test', display_name: 'Test', model: 'fake', host: 'localhost' }],
+    })} dispatch={vi.fn()} state={initialAppState} />);
+    expect(await screen.findByLabelText('Provider')).toHaveValue('test');
+    expect(screen.getByRole('alert')).toHaveTextContent('Recipient detection settings could not be loaded.');
+    expect(screen.queryByLabelText('URL')).not.toBeInTheDocument();
+  });
+
+  it('saves the session naming provider and effort', async () => {
+    const user = userEvent.setup();
+    const saveSessionNamingSettings = vi.fn(async (settings) => settings);
+    render(<SessionSettingsScreen client={fixtureClient({
+      getSessionNamingSettings: async () => ({ provider: 'assistant', reasoning_effort: 'low' }),
+      saveSessionNamingSettings,
+      listProviders: async () => [
+        { id: 'assistant', display_name: 'Assistant model', model: 'a', host: 'localhost' },
+        { id: 'fast', display_name: 'Fast model', model: 'b', host: 'localhost' },
+      ],
+    })} dispatch={vi.fn()} state={initialAppState} />);
+    expect(await screen.findByLabelText('Provider')).toHaveValue('assistant');
+    await user.click(screen.getByRole('button', { name: 'Save session naming' }));
+    expect(saveSessionNamingSettings).toHaveBeenCalledWith({
+      provider: 'assistant', reasoning_effort: 'low',
+    });
+    await user.selectOptions(screen.getByLabelText('Provider'), 'fast');
+    await user.selectOptions(screen.getByLabelText('Effort'), 'medium');
+    await user.click(screen.getByRole('button', { name: 'Save session naming' }));
+    expect(saveSessionNamingSettings).toHaveBeenCalledWith({
+      provider: 'fast', reasoning_effort: 'medium',
+    });
+  });
+
   it('starts disabled with pinned defaults and saves or disables only its configuration', async () => {
     const user = userEvent.setup();
     const saveJevSettings = vi.fn(async (settings) => settings);
     const disableJev = vi.fn(async () => {});
     const deleteApiKey = vi.fn(async () => {});
-    render(<JevSettingsScreen client={fixtureClient({
+    render(<SessionSettingsScreen client={fixtureClient({
       getJevSettings: async () => null,
       listApiKeys: async () => [{ id: 'key-1', display_name: 'OpenRouter', has_value: true, used_by: [] }],
       saveJevSettings, disableJev, deleteApiKey,
     })} dispatch={vi.fn()} state={initialAppState} />);
     expect(await screen.findByLabelText('URL')).toHaveValue('https://openrouter.ai/api/alpha/decisions');
     expect(screen.getByLabelText('Model')).toHaveValue('typesafe/jev-1.13');
-    expect(screen.getByRole('button', { name: 'Disable' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Disable recipient detection' })).toBeDisabled();
     await user.selectOptions(screen.getByLabelText('API key'), 'key-1');
-    await user.click(screen.getByRole('button', { name: 'Save' }));
+    await user.click(screen.getByRole('button', { name: 'Save recipient detection' }));
     expect(saveJevSettings).toHaveBeenCalledWith({
       url: 'https://openrouter.ai/api/alpha/decisions', model: 'typesafe/jev-1.13', api_key: 'key-1',
     });
-    await user.click(screen.getByRole('button', { name: 'Disable' }));
+    await user.click(screen.getByRole('button', { name: 'Disable recipient detection' }));
     expect(disableJev).toHaveBeenCalledOnce();
     expect(deleteApiKey).not.toHaveBeenCalled();
-    expect(screen.getByRole('button', { name: 'Disable' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Disable recipient detection' })).toBeDisabled();
   });
 
   it('keeps the working configuration enabled after a rejected edit', async () => {
     const user = userEvent.setup();
-    render(<JevSettingsScreen client={fixtureClient({
+    render(<SessionSettingsScreen client={fixtureClient({
       getJevSettings: async () => ({ url: 'https://openrouter.ai/api/alpha/decisions', model: 'typesafe/jev-1.13', api_key: 'key-1' }),
       listApiKeys: async () => [{ id: 'key-1', display_name: 'OpenRouter', has_value: true, used_by: [] }],
       saveJevSettings: async () => { throw new ChaError('invalid_argument', 'Invalid URL'); },
     })} dispatch={vi.fn()} state={initialAppState} />);
     const url = await screen.findByLabelText('URL');
     await user.clear(url); await user.type(url, 'ftp://host');
-    await user.click(screen.getByRole('button', { name: 'Save' }));
+    await user.click(screen.getByRole('button', { name: 'Save recipient detection' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Invalid URL');
-    expect(screen.getByRole('button', { name: 'Disable' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Disable recipient detection' })).toBeEnabled();
     expect(url).toHaveValue('ftp://host');
   });
 });

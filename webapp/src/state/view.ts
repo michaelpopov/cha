@@ -908,7 +908,7 @@ export function navigationTitle(state: AppState): string | null {
     case 'settings-styles': return 'Styles';
     case 'settings-new-style': return 'New style';
     case 'settings-voices': return 'Voices';
-    case 'settings-jev': return 'Recipient detection';
+    case 'settings-jev': return 'Session settings';
     case 'settings-web-search': return 'Search API';
     case 'settings-voice-input': return 'Voice settings';
     case 'settings-new-voice': return 'New voice';

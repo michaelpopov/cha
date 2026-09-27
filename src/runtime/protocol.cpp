@@ -445,6 +445,10 @@ void to_json(nlohmann::json& json, const JevSettings& value) {
     json = {{"url", value.url}, {"model", value.model}, {"api_key", value.api_key}};
 }
 
+void to_json(nlohmann::json& json, const SessionNamingSettings& value) {
+    json = {{"provider", value.provider}, {"reasoning_effort", value.reasoning_effort}};
+}
+
 void to_json(nlohmann::json& json, const WebSearchSettings& value) {
     json = {{"enabled", value.enabled}, {"provider", value.provider},
         {"api_key", value.api_key}, {"query_provider", value.query_provider},

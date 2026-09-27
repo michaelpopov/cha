@@ -473,6 +473,17 @@ JevSettings parse_jev_settings(const nlohmann::json& json) {
         required_field<std::string>(json, "model"), required_field<std::string>(json, "api_key")};
 }
 
+SessionNamingSettings parse_session_naming_settings(const nlohmann::json& json) {
+    if (!json.is_object()) throw std::invalid_argument("Invalid session naming settings");
+    for (const auto& [key, value] : json.items()) {
+        (void)value;
+        if (key != "provider" && key != "reasoning_effort")
+            log_warn("Ignoring unused session naming field: " + key);
+    }
+    return {required_field<std::string>(json, "provider"),
+        required_field<std::string>(json, "reasoning_effort")};
+}
+
 WebSearchSettings parse_web_search_settings(const nlohmann::json& json) {
     if (!json.is_object()) throw std::invalid_argument("Invalid web search settings");
     for (const auto& [key, value] : json.items()) {

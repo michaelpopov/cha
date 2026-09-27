@@ -69,7 +69,7 @@ import {
   StylesScreen,
   VoiceScreen,
   VoiceSettingsScreen,
-  JevSettingsScreen,
+  SessionSettingsScreen,
   WebSearchSettingsScreen,
   VoicesScreen,
   VaultScreen,
@@ -285,7 +285,7 @@ function Screen({
     case 'settings-voices': return (
       <VoicesScreen client={client} dispatch={dispatch} state={state} />
     );
-    case 'settings-jev': return <JevSettingsScreen client={client} dispatch={dispatch} state={state} />;
+    case 'settings-jev': return <SessionSettingsScreen client={client} dispatch={dispatch} state={state} />;
     case 'settings-web-search': return <WebSearchSettingsScreen client={client} dispatch={dispatch} state={state} />;
     case 'settings-voice-input': return (
       <VoiceSettingsScreen client={client} dispatch={dispatch} state={state} />

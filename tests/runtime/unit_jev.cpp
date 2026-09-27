@@ -329,6 +329,8 @@ protected:
     }
 
     void SetUp() override {
+        fixture.write_provider("naming",
+            "host = \"naming.test\"\nport = 1\nmode = \"test\"\nmodel = \"naming-model\"\n");
         JevRouting::SetUp();
         controller.reset();
         providers->shutdown();
@@ -399,6 +401,18 @@ TEST_F(SessionNaming, StartsAlongsideReplyOnlyAfterPromptIsCommitted) {
     (void)send("And what should I plant?");
     finish();
     EXPECT_EQ(title_inputs.size(), 1u);
+}
+
+TEST_F(SessionNaming, UsesConfiguredProviderAndEffort) {
+    ASSERT_EQ(store->snapshot()->find_character(workspace_assistant_id)->provider_id, "query");
+    store->apply_session_naming_update({"naming", "high"});
+    (void)send("Plan a garden");
+    run_workers();
+    (void)controller->receive_events(100);
+    run_workers();
+    ASSERT_EQ(title_definitions.size(), 1u);
+    EXPECT_EQ(title_definitions[0]->provider.id, "naming");
+    EXPECT_EQ(title_definitions[0]->provider.config.reasoning_effort, "high");
 }
 
 TEST_F(SessionNaming, WorksWithoutJevAndLimitsTheNameToSixWords) {

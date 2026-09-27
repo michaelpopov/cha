@@ -81,6 +81,11 @@ struct WorkspaceJev {
     std::string api_key_id;
 };
 
+struct WorkspaceSessionNaming {
+    std::string provider_id;
+    std::string reasoning_effort{"low"};
+};
+
 void validate_jev_config(const WorkspaceJev& config);
 
 struct WorkspaceWebSearch {
@@ -177,6 +182,9 @@ public:
     [[nodiscard]] const std::optional<WorkspaceJev>& jev() const noexcept {
         return jev_;
     }
+    [[nodiscard]] const WorkspaceSessionNaming& session_naming() const noexcept {
+        return session_naming_;
+    }
     [[nodiscard]] const WorkspaceWebSearch& web_search() const noexcept {
         return web_search_;
     }
@@ -255,6 +263,7 @@ private:
     std::optional<WorkspaceVoiceInput> voice_input_;
     std::optional<WorkspaceVoiceOutput> voice_output_;
     std::optional<WorkspaceJev> jev_;
+    WorkspaceSessionNaming session_naming_;
     WorkspaceWebSearch web_search_;
     std::vector<SavedApiKey> api_keys_;
     std::optional<R2StorageKey> r2_storage_;

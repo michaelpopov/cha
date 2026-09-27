@@ -293,6 +293,11 @@ export interface components {
             model: string;
             api_key: components["schemas"]["Identifier"];
         };
+        SessionNamingSettings: {
+            provider: string;
+            /** @enum {string} */
+            reasoning_effort: "none" | "low" | "medium" | "high" | "xhigh";
+        };
         WebSearchSettings: {
             tool_enabled: boolean;
             enabled: boolean;

@@ -1165,6 +1165,19 @@ void Application::disable_jev(std::uint64_t epoch) {
     settings::disable_jev(*impl_->store);
 }
 
+SessionNamingSettings Application::get_session_naming_settings(std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    return settings::get_session_naming_settings(*impl_->store->snapshot());
+}
+
+SessionNamingSettings Application::save_session_naming_settings(
+    SessionNamingSettings update, std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    return settings::save_session_naming_settings(*impl_->store, update);
+}
+
 WebSearchSettings Application::get_web_search_settings(std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);

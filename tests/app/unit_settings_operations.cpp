@@ -111,6 +111,33 @@ TEST(ApplicationSettings, ListsAndUpdatesProvidersWithoutSecrets) {
     application->delete_provider(copied.id, epoch);
 }
 
+TEST(ApplicationSettings, SavesSessionNamingProviderAndEffort) {
+    test::TestWorkspace workspace;
+    const auto database = test::import_test_database(workspace.root());
+    auto application = Application::open(make_command(workspace, database));
+    const auto epoch = application->context_epoch();
+    const auto initial = application->get_session_naming_settings(epoch);
+    EXPECT_EQ(initial.provider, "test");
+    EXPECT_EQ(initial.reasoning_effort, "low");
+
+    const auto saved = application->save_session_naming_settings(
+        {"test", "high"}, epoch);
+    EXPECT_EQ(saved.provider, "test");
+    EXPECT_EQ(saved.reasoning_effort, "high");
+    EXPECT_EQ(application->get_session_naming_settings(epoch).provider, "test");
+    EXPECT_THROW((void)application->save_session_naming_settings(
+        {"missing", "low"}, epoch), ApplicationError);
+    EXPECT_THROW((void)application->save_session_naming_settings(
+        {"test", "minimal"}, epoch), ApplicationError);
+    EXPECT_EQ(application->get_session_naming_settings(epoch).reasoning_effort, "high");
+
+    application.reset();
+    application = Application::open(make_command(workspace, database));
+    const auto reopened = application->get_session_naming_settings(application->context_epoch());
+    EXPECT_EQ(reopened.provider, "test");
+    EXPECT_EQ(reopened.reasoning_effort, "high");
+}
+
 TEST(ApplicationSettings, SavesCharacterWhenNewProviderCannotUseSearchOverride) {
     test::TestWorkspace workspace;
     workspace.write_provider("fireworks",

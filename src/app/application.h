@@ -327,6 +327,9 @@ public:
     [[nodiscard]] std::optional<JevSettings> get_jev_settings(std::uint64_t epoch);
     [[nodiscard]] JevSettings save_jev_settings(JevSettings settings, std::uint64_t epoch);
     void disable_jev(std::uint64_t epoch);
+    [[nodiscard]] SessionNamingSettings get_session_naming_settings(std::uint64_t epoch);
+    [[nodiscard]] SessionNamingSettings save_session_naming_settings(
+        SessionNamingSettings settings, std::uint64_t epoch);
     [[nodiscard]] WebSearchSettings get_web_search_settings(std::uint64_t epoch);
     [[nodiscard]] WebSearchSettings save_web_search_settings(
         WebSearchSettings settings, std::uint64_t epoch);

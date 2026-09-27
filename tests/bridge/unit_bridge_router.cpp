@@ -252,6 +252,20 @@ TEST_F(BridgeRouterTest, RecipientDetectionSettingsApplyToExistingSessionAndMiss
     EXPECT_TRUE(call("jev.get")["result"].is_null());
 }
 
+TEST_F(BridgeRouterTest, SavesSessionNamingSettings) {
+    bootstrap_epoch();
+    const auto initial = call("sessionNaming.get");
+    ASSERT_TRUE(initial["ok"]);
+    EXPECT_EQ(initial["result"]["reasoning_effort"], "low");
+    const nlohmann::json settings{{"provider", "test"}, {"reasoning_effort", "high"}};
+    ASSERT_TRUE(call("sessionNaming.save", settings)["ok"]);
+    EXPECT_EQ(call("sessionNaming.get")["result"], settings);
+    auto invalid = settings;
+    invalid["provider"] = "missing";
+    EXPECT_FALSE(call("sessionNaming.save", invalid)["ok"]);
+    EXPECT_EQ(call("sessionNaming.get")["result"], settings);
+}
+
 TEST_F(BridgeRouterTest, WebSearchSettingsRoundTripAndRequireKeyWhenEnabled) {
     bootstrap_epoch();
     const nlohmann::json disabled = {

@@ -47,6 +47,9 @@ std::vector<std::string> provider_uses(
         && workspace.web_search().query_provider_id == provider_id) {
         result.emplace_back("Search API");
     }
+    if (workspace.session_naming().provider_id == provider_id) {
+        result.emplace_back("Session naming");
+    }
     return result;
 }
 
@@ -650,6 +653,28 @@ JevSettings save_jev_settings(WorkspaceConfigStore& store, const JevSettings& up
 
 void disable_jev(WorkspaceConfigStore& store) {
     with_settings_edit([&] { store.apply_jev_update(std::nullopt); });
+}
+
+SessionNamingSettings get_session_naming_settings(const Workspace& workspace) {
+    const auto& settings = workspace.session_naming();
+    std::string provider = settings.provider_id;
+    if (provider.empty()) {
+        const auto* assistant = workspace.find_character(workspace_assistant_id);
+        if (assistant && assistant->provider_id) provider = *assistant->provider_id;
+    }
+    return {provider, settings.reasoning_effort};
+}
+
+SessionNamingSettings save_session_naming_settings(
+    WorkspaceConfigStore& store, const SessionNamingSettings& update) {
+    return with_settings_edit([&] {
+        try {
+            store.apply_session_naming_update({update.provider, update.reasoning_effort});
+        } catch (const std::invalid_argument& error) {
+            fail(ErrorCode::invalid_argument, error.what());
+        }
+        return get_session_naming_settings(*store.snapshot());
+    });
 }
 
 WebSearchSettings get_web_search_settings(const Workspace& workspace) {

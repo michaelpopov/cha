@@ -1055,16 +1055,20 @@ void SessionController::start_session_name(ControllerUpdate& update) {
         const auto first_prompt = std::ranges::find(entries, EntryKind::human, &TranscriptEntry::kind);
         if (first_prompt == entries.end()) return;
         const auto current = workspace();
+        const auto& naming = current->session_naming();
         const auto* assistant = current->find_character(workspace_assistant_id);
-        const auto* provider = assistant && assistant->provider_id
-            ? current->find_provider(*assistant->provider_id) : nullptr;
+        std::string provider_id = naming.provider_id;
+        if (provider_id.empty() && assistant && assistant->provider_id) {
+            provider_id = *assistant->provider_id;
+        }
+        const auto* provider = current->find_provider(provider_id);
         if (!provider) {
             log_warn("Session name provider is unavailable; skipping session naming");
             publish_recent(update);
             return;
         }
         auto config = provider->config;
-        config.reasoning_effort = "low";
+        config.reasoning_effort = naming.reasoning_effort;
         config.web_search = WebSearchMode::off;
         config.timeout_s = std::min(config.timeout_s, 30);
         const CharacterMetadata target{"session-name", "Session name"};

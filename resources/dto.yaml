@@ -679,6 +679,17 @@ components:
         api_key:
           $ref: "#/components/schemas/Identifier"
 
+    SessionNamingSettings:
+      type: object
+      additionalProperties: false
+      required: [provider, reasoning_effort]
+      properties:
+        provider:
+          type: string
+        reasoning_effort:
+          type: string
+          enum: [none, low, medium, high, xhigh]
+
     WebSearchSettings:
       type: object
       additionalProperties: false

@@ -22,6 +22,7 @@ import {
   type VoiceInputSettings,
   type VoiceOutputSettings,
   type JevSettings,
+  type SessionNamingSettings,
   type WebSearchSettings,
   type VoiceUpdate,
   type VaultDetail,
@@ -196,7 +197,7 @@ export function SettingsNavigation({ dispatch }: { dispatch: Dispatch<AppAction>
           label="Styles"
           onClick={() => dispatch({ type: 'show-settings-styles' })}
         />
-        <SettingsRow icon={<SettingsIcon />} label="Recipient detection"
+        <SettingsRow icon={<SettingsIcon />} label="Session settings"
           onClick={() => dispatch({ type: 'show-settings-jev' })} />
         <SettingsRow icon={<SettingsIcon />} label="Search API"
           onClick={() => dispatch({ type: 'show-settings-web-search' })} />
@@ -2144,11 +2145,14 @@ const defaultJev: JevSettings = {
   url: 'https://openrouter.ai/api/alpha/decisions', model: 'typesafe/jev-1.13', api_key: '',
 };
 
-export function JevSettingsScreen({ client, dispatch }: SettingsScreenProps) {
+export function SessionSettingsScreen({ client, dispatch }: SettingsScreenProps) {
   const [settings, setSettings] = useState<JevSettings>(defaultJev);
   const [saved, setSaved] = useState<JevSettings | null>(null);
+  const [naming, setNaming] = useState<SessionNamingSettings | null>(null);
+  const [providers, setProviders] = useState<ProviderSummary[] | null>(null);
   const [keys, setKeys] = useState<ApiKeyDetail[] | null>(null);
   const [pending, setPending] = useState(false);
+  const [namingPending, setNamingPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     let current = true;
@@ -2157,6 +2161,12 @@ export function JevSettingsScreen({ client, dispatch }: SettingsScreenProps) {
       setSaved(config); setSettings(config ?? defaultJev); setKeys(apiKeys);
     }, (failure: unknown) => {
       if (current) setError(publicErrorMessage(failure, 'Recipient detection settings could not be loaded.'));
+    });
+    void Promise.all([client.getSessionNamingSettings(), client.listProviders()]).then(([config, modelProviders]) => {
+      if (!current) return;
+      setNaming(config); setProviders(modelProviders);
+    }, (failure: unknown) => {
+      if (current) setError(publicErrorMessage(failure, 'Session naming settings could not be loaded.'));
     });
     return () => { current = false; };
   }, [client]);
@@ -2176,10 +2186,38 @@ export function JevSettingsScreen({ client, dispatch }: SettingsScreenProps) {
     catch (failure: unknown) { setError(publicErrorMessage(failure, 'Recipient detection could not be disabled.')); }
     finally { setPending(false); }
   }
-  return <section className="cha-screen cha-navigation" aria-label="Recipient detection">
+  async function saveNaming(event: FormEvent) {
+    event.preventDefault();
+    if (!naming) return;
+    setNamingPending(true); setError(null);
+    try {
+      const next = await client.saveSessionNamingSettings(naming);
+      setNaming(next);
+    } catch (failure: unknown) {
+      setError(publicErrorMessage(failure, 'Session naming settings could not be saved.'));
+    } finally { setNamingPending(false); }
+  }
+  return <section className="cha-screen cha-navigation" aria-label="Session settings">
     <button className="cha-back-row" onClick={() => dispatch({ type: 'show-settings' })} type="button"><ChevronLeftIcon /><span>Settings</span></button>
     {error && <p className="cha-error-message" role="alert">{error}</p>}
+    {naming && providers && <form className="cha-settings-form" onSubmit={(event) => void saveNaming(event)}>
+      <h2 className="cha-settings-section-title">Session naming</h2>
+      <label>Provider<select className="cha-form-control" disabled={namingPending}
+        value={naming.provider} onChange={(event) => setNaming({ ...naming, provider: event.target.value })}>
+        <option value="">Select provider</option>
+        {providers.map((provider) => <option key={provider.id} value={provider.id}>{provider.display_name}</option>)}
+      </select></label>
+      <label>Effort<select className="cha-form-control" disabled={namingPending}
+        value={naming.reasoning_effort} onChange={(event) => setNaming({ ...naming, reasoning_effort: event.target.value as SessionNamingSettings['reasoning_effort'] })}>
+        <option value="none">None</option><option value="low">Low</option><option value="medium">Medium</option>
+        <option value="high">High</option><option value="xhigh">Extra high</option>
+      </select></label>
+      <div className="cha-settings-form-actions"><button className="cha-button cha-button-primary"
+        disabled={namingPending || !providers.some((provider) => provider.id === naming.provider)}
+        type="submit">Save session naming</button></div>
+    </form>}
     {keys && <form className="cha-settings-form" onSubmit={(event) => void save(event)}>
+      <h2 className="cha-settings-section-title">Recipient detection</h2>
       <label>URL<input className="cha-form-control" type="url" required value={settings.url} disabled={pending} onChange={(event) => setSettings({ ...settings, url: event.target.value })} /></label>
       <label>Model<input className="cha-form-control" required value={settings.model} disabled={pending} onChange={(event) => setSettings({ ...settings, model: event.target.value })} /></label>
       <label>API key<select className="cha-form-control" required value={settings.api_key} disabled={pending} onChange={(event) => setSettings({ ...settings, api_key: event.target.value })}>
@@ -2187,8 +2225,8 @@ export function JevSettingsScreen({ client, dispatch }: SettingsScreenProps) {
         {keys.map((key) => <option key={key.id} value={key.id}>{key.display_name}</option>)}
       </select></label>
       <div className="cha-settings-form-actions">
-        <button className="cha-button cha-button-ghost" disabled={pending || !saved} onClick={() => void disable()} type="button">Disable</button>
-        <button className="cha-button cha-button-primary" disabled={pending || !settings.url.trim() || !settings.model.trim() || !keys.some((key) => key.id === settings.api_key)} type="submit">Save</button>
+        <button className="cha-button cha-button-ghost" disabled={pending || !saved} onClick={() => void disable()} type="button">Disable recipient detection</button>
+        <button className="cha-button cha-button-primary" disabled={pending || !settings.url.trim() || !settings.model.trim() || !keys.some((key) => key.id === settings.api_key)} type="submit">Save recipient detection</button>
       </div>
     </form>}
   </section>;

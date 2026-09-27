@@ -1261,6 +1261,39 @@ std::optional<WorkspaceJev> load_jev_settings(
     }
 }
 
+WorkspaceSessionNaming load_session_naming_settings(
+    const TextSource& source,
+    const Workspace& workspace) {
+    const auto path = workspace.root() / "system" / "session" / "config.toml";
+    if (!source.is_regular_file(path)) return {};
+    try {
+        const auto table = read_toml(source, path, "session config");
+        for (const auto& [key, value] : table) {
+            (void)value;
+            if (key.str() != "naming_provider" && key.str() != "naming_reasoning_effort")
+                log_warn("Ignoring unused session setting: " + std::string(key.str()));
+        }
+        WorkspaceSessionNaming settings{
+            .provider_id = table["naming_provider"].value_or(std::string{}),
+            .reasoning_effort = table["naming_reasoning_effort"].value_or(std::string("low")),
+        };
+        normalize_legacy_reasoning_effort(settings.reasoning_effort, path);
+        if (!valid_reasoning_effort(settings.reasoning_effort)) {
+            log_warn("Ignoring unsupported session naming effort; using low");
+            settings.reasoning_effort = "low";
+        }
+        if (!settings.provider_id.empty() && !workspace.find_provider(settings.provider_id)) {
+            log_warn("Session naming provider '" + settings.provider_id
+                + "' is unavailable; using Assistant");
+            settings.provider_id.clear();
+        }
+        return settings;
+    } catch (const std::exception& error) {
+        log_warn("Session settings are ignored: " + std::string(error.what()));
+        return {};
+    }
+}
+
 WorkspaceWebSearch load_web_search_settings(
     const TextSource& source,
     const std::filesystem::path& root) {
@@ -1798,6 +1831,7 @@ Workspace Workspace::load(std::filesystem::path root, const TextSource& source) 
         workspace.voice_index_, "Voice");
 
     workspace.jev_ = load_jev_settings(source, workspace.root_);
+    workspace.session_naming_ = load_session_naming_settings(source, workspace);
     workspace.web_search_ = load_web_search_settings(source, workspace.root_);
     workspace.voice_input_ = load_voice_input_settings(source, workspace.root_);
     workspace.voice_output_ = load_voice_output_settings(source, workspace.root_);
@@ -2231,6 +2265,9 @@ void WorkspaceConfigEditor::delete_provider(std::string_view provider_id) {
         && workspace_.web_search_.query_provider_id == provider_id) {
         throw std::invalid_argument("Provider is in use");
     }
+    if (workspace_.session_naming_.provider_id == provider_id) {
+        throw std::invalid_argument("Provider is in use");
+    }
     remove_directory(path->second.parent_path());
 }
 
@@ -2416,6 +2453,19 @@ void WorkspaceConfigEditor::write_jev(const std::optional<WorkspaceJev>& setting
     table.insert("model", settings->model);
     table.insert("api_key", settings->api_key_id);
     write_toml(directory / "config.toml", table);
+}
+
+void WorkspaceConfigEditor::write_session_naming(const WorkspaceSessionNaming& settings) {
+    if (!workspace_.find_provider(settings.provider_id)) {
+        throw std::invalid_argument("Select an existing provider for session naming.");
+    }
+    if (!valid_reasoning_effort(settings.reasoning_effort)) {
+        throw std::invalid_argument("Select a valid effort for session naming.");
+    }
+    toml::table table;
+    table.insert("naming_provider", settings.provider_id);
+    table.insert("naming_reasoning_effort", settings.reasoning_effort);
+    write_toml(workspace_.root_ / "system" / "session" / "config.toml", table);
 }
 
 void WorkspaceConfigEditor::write_web_search(const WorkspaceWebSearch& settings) {

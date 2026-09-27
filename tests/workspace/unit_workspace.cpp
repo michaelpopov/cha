@@ -399,6 +399,17 @@ TEST(Workspace, WebSearchSettingsLoadDefaultsAndIgnoreInvalidFiles) {
     EXPECT_EQ(broken.provider, "brave");
 }
 
+TEST(Workspace, MissingSessionNamingProviderFallsBackToAssistant) {
+    test::TestWorkspace fixture;
+    const auto config = fixture.root() / "system" / "session" / "config.toml";
+    std::filesystem::create_directories(config.parent_path());
+    std::ofstream(config) << "naming_provider = \"missing\"\n"
+                            << "naming_reasoning_effort = \"high\"\n";
+    const auto workspace = Workspace::load(fixture.root());
+    EXPECT_TRUE(workspace.session_naming().provider_id.empty());
+    EXPECT_EQ(workspace.session_naming().reasoning_effort, "high");
+}
+
 TEST(Workspace, ActiveSearchApiPreventsDeletingItsQueryProvider) {
     test::TestWorkspace fixture;
     fixture.write_provider("query", "host = 'test'\nport = 1\nmode = 'test'\nmodel = 'fake'\n");

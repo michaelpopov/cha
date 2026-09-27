@@ -98,6 +98,10 @@ void delete_voice(WorkspaceConfigStore& store, std::string_view id);
 [[nodiscard]] JevSettings save_jev_settings(WorkspaceConfigStore& store, const JevSettings& update);
 void disable_jev(WorkspaceConfigStore& store);
 
+[[nodiscard]] SessionNamingSettings get_session_naming_settings(const Workspace& workspace);
+[[nodiscard]] SessionNamingSettings save_session_naming_settings(
+    WorkspaceConfigStore& store, const SessionNamingSettings& update);
+
 [[nodiscard]] WebSearchSettings get_web_search_settings(const Workspace& workspace);
 [[nodiscard]] WebSearchSettings save_web_search_settings(
     WorkspaceConfigStore& store, const WebSearchSettings& update);

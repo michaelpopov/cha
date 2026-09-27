@@ -26,8 +26,10 @@ import {
   isVoiceOutputRuntime,
   isVoiceOutputSettings,
   isJevSettings,
+  isSessionNamingSettings,
   isWebSearchSettings,
   type JevSettings,
+  type SessionNamingSettings,
   type WebSearchSettings,
   type ApiKeyDetail,
   type AudioDownloadAcceptance,
@@ -511,6 +513,9 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient {
       (value): value is JevSettings | null => isNullable(value, isJevSettings)),
     saveJevSettings: (settings: JevSettings) => call('jev.save', settings, isJevSettings),
     disableJev: () => call('jev.disable', {}, isRecord).then(() => undefined),
+    getSessionNamingSettings: () => call('sessionNaming.get', {}, isSessionNamingSettings),
+    saveSessionNamingSettings: (settings: SessionNamingSettings) => call(
+      'sessionNaming.save', settings, isSessionNamingSettings),
     getWebSearchSettings: () => call('webSearch.get', {}, isWebSearchSettings),
     saveWebSearchSettings: (settings: WebSearchSettings) => call(
       'webSearch.save', settings, isWebSearchSettings),

@@ -93,6 +93,8 @@ enum class Method {
     jev_get,
     jev_save,
     jev_disable,
+    session_naming_get,
+    session_naming_save,
     web_search_get,
     web_search_save,
     voice_input_get,
