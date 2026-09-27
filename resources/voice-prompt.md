@@ -14,7 +14,7 @@ The vocabulary is open. Write any concise direction that you would give to a hum
 Sounds: [sigh] [inhale] [exhale] [gasp] [clears throat] [chuckling] [laughing] [crying] [sobbing] [groan] [panting]
 Pauses: [short pause] [pause] [long pause]
 
-Use [short pause] for a beat before an important word or for a small hesitation. Use [long pause] only for a major turn of thought or a realization, not between ordinary paragraphs.
+Use [short pause] for a beat before an important word or for a small hesitation. Use [long pause] for a major turn of thought or a realization. Preserve paragraph breaks without adding pause markers beside them; a long pause is inserted automatically between paragraphs.
 
 You can chain up to three markers: [sigh] [sad] I don't know what else I can do. But one precise marker is usually better than a stack: prefer [quiet, restrained anger] to [angry] [calm] [soft] [low voice].
 

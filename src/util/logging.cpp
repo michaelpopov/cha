@@ -4,6 +4,7 @@
 
 #include <spdlog/sinks/rotating_file_sink.h>
 #include <spdlog/spdlog.h>
+#include <nlohmann/json.hpp>
 
 #include <filesystem>
 #include <memory>
@@ -122,6 +123,34 @@ void log_trace(std::string_view message) noexcept {
 
 void log_debug(std::string_view message) noexcept {
     write_log(spdlog::level::debug, message);
+}
+
+bool debug_logging_enabled() noexcept {
+    try {
+        std::lock_guard lock(diagnostic_logger_mutex);
+        return diagnostic_logger && diagnostic_logger->should_log(spdlog::level::debug);
+    } catch (...) {
+        return false;
+    }
+}
+
+void log_debug_payload(std::string_view event, std::string_view payload,
+    std::string_view credential) noexcept {
+    if (payload.empty() || !debug_logging_enabled()) return;
+    try {
+        std::string text(payload);
+        if (!credential.empty()) {
+            std::size_t offset = 0;
+            while ((offset = text.find(credential, offset)) != std::string::npos) {
+                text.replace(offset, credential.size(), "[REDACTED]");
+                offset += std::string_view("[REDACTED]").size();
+            }
+        }
+        log_debug(std::string(event) + " data=" + nlohmann::json(text).dump(
+            -1, ' ', false, nlohmann::json::error_handler_t::replace));
+    } catch (...) {
+        // Payload diagnostics must not affect the request, even for invalid UTF-8.
+    }
 }
 
 void log_info(std::string_view message) noexcept {

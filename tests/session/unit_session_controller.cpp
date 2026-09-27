@@ -910,7 +910,7 @@ TEST(SessionController, RemovesStreamedSourceReferencesBeforeTranscriptStorage) 
     const std::vector<TranscriptEntry> live =
         copy_entries(controller->view().transcript);
     ASSERT_EQ(live.size(), 2U);
-    EXPECT_EQ(live.back().text, "The quote. ");
+    EXPECT_EQ(live.back().text, "The quote.");
     EXPECT_EQ(load_transcript_entries(temporary.path), live);
 }
 

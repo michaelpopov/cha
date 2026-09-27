@@ -295,7 +295,7 @@ TEST_P(ChatPersistenceIntegration, SearchToolContinuesAndPersistsAnswerUsageAndI
     model.join();
     search.join();
     ASSERT_EQ(search.requests().size(), 1U);
-    EXPECT_TRUE(search.requests().front().starts_with("GET /search?q=latest%20news&"));
+    EXPECT_TRUE(search.requests().front().starts_with("GET /search?q=latest%20news&count=10&extra_snippets=true&text_decorations=false&result_filter=web,news,discussions,faq,infobox,query HTTP/1.1\r\n"));
     EXPECT_NE(search.requests().front().find("X-Subscription-Token: integration-search-key"),
         std::string::npos);
     ASSERT_EQ(model.requests().size(), 2U);
@@ -308,11 +308,10 @@ TEST_P(ChatPersistenceIntegration, SearchToolContinuesAndPersistsAnswerUsageAndI
     EXPECT_EQ(result.at(responses ? "type" : "role"), responses ? "function_call_output" : "tool");
     EXPECT_EQ(result.at(responses ? "call_id" : "tool_call_id"), "search_call");
     const auto sources = Json::parse(result.at(responses ? "output" : "content").get<std::string>());
-    EXPECT_EQ(sources.at("query"), "latest news");
-    ASSERT_EQ(sources.at("results").size(), 1U);
-    EXPECT_EQ(sources.at("results")[0].at("url"), "https://example.com/release");
-    EXPECT_EQ(sources.at("results")[0].at("title"), "Release news");
-    EXPECT_EQ(sources.at("results")[0].at("snippets"), Json::array({"The release is ready."}));
+    ASSERT_EQ(sources.at("web").at("results").size(), 1U);
+    EXPECT_EQ(sources.at("web").at("results")[0].at("url"), "https://example.com/release");
+    EXPECT_EQ(sources.at("web").at("results")[0].at("title"), "Release news");
+    EXPECT_EQ(sources.at("web").at("results")[0].at("description"), "The release is ready.");
 
     stop();
     start();

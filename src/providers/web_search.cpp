@@ -6,10 +6,7 @@
 
 #include <nlohmann/json.hpp>
 
-#include <algorithm>
 #include <stdexcept>
-#include <unordered_set>
-#include <vector>
 
 namespace cha {
 namespace {
@@ -38,40 +35,71 @@ std::string_view limit_query(std::string_view query, std::size_t byte_limit) {
     return query.substr(0, end);
 }
 
-nlohmann::ordered_json prefer_distinct_hosts(nlohmann::ordered_json sources) {
-    auto selected = nlohmann::ordered_json::array();
-    auto skipped = nlohmann::ordered_json::array();
-    std::unordered_set<std::string> hosts;
-    const std::unique_ptr<CURLU, decltype(&curl_url_cleanup)> parsed(curl_url(), curl_url_cleanup);
-    if (!parsed) throw std::runtime_error("Could not parse search result URLs");
-    for (auto& source : sources) {
-        const auto& url = source["url"].get_ref<const std::string&>();
-        if (url.find('\0') != std::string::npos
-            || curl_url_set(parsed.get(), CURLUPART_URL, url.c_str(), 0) != CURLUE_OK) continue;
-        char* raw_host = nullptr;
-        if (curl_url_get(parsed.get(), CURLUPART_HOST, &raw_host, 0) != CURLUE_OK) continue;
-        const std::unique_ptr<char, decltype(&curl_free)> owned_host(raw_host, curl_free);
-        auto host = fold_ascii(raw_host);
-        if (host.ends_with('.')) host.pop_back();
-        if (host.starts_with("www.")) host.erase(0, 4);
-        if (hosts.insert(std::move(host)).second) {
-            selected.push_back(std::move(source));
-            if (selected.size() == 5) break;
-        } else {
-            skipped.push_back(std::move(source));
-        }
+void remove_search_media(nlohmann::ordered_json& value) {
+    if (value.is_object()) {
+        for (const auto* field : {"image", "images", "img", "video", "videos", "audio",
+                 "thumbnail", "thumbnails", "favicon", "logo", "icons", "pictures", "schemas"})
+            value.erase(field);
     }
-    // Fill unused slots from repeated hosts, preserving their original ranking.
-    for (auto& source : skipped) {
-        if (selected.size() == 5) break;
-        selected.push_back(std::move(source));
+    if (value.is_object() || value.is_array()) {
+        for (auto& child : value) remove_search_media(child);
     }
-    return selected;
 }
 
-nlohmann::json request_search(std::string_view provider, CurlHandle& curl,
+std::string bounded_search_output(std::string_view provider, nlohmann::ordered_json response) {
+    constexpr std::size_t byte_limit = 32 * 1024;
+    // Web results can still carry thumbnails and other media metadata.
+    remove_search_media(response);
+    std::string output = response.dump();
+    if (output.size() <= byte_limit) return output;
+    const auto original_bytes = output.size();
+    response["truncated"] = true;
+    response["truncation_reason"] = "Search output size limit; oversized or lower-ranked results were omitted.";
+    do {
+        nlohmann::ordered_json* largest = nullptr;
+        std::size_t largest_bytes = 0;
+        const auto consider = [&](nlohmann::ordered_json& category) {
+            if (!category.is_object() || !category.contains("results")) return;
+            auto& results = category["results"];
+            if (!results.is_array() || results.empty()) return;
+            // An entry that cannot fit on its own must not displace smaller results.
+            for (auto it = results.begin(); it != results.end();) {
+                if (it->dump().size() > byte_limit) it = results.erase(it);
+                else ++it;
+            }
+            if (results.empty()) return;
+            const auto bytes = results.dump().size();
+            if (bytes > largest_bytes) {
+                largest = &results;
+                largest_bytes = bytes;
+            }
+        };
+        consider(response); // Tavily's top-level results.
+        for (auto& category : response) consider(category); // Brave's categories.
+        output = response.dump();
+        if (output.size() <= byte_limit) break;
+        if (!largest) {
+            // Metadata alone can exceed the limit. Do not pass broken JSON or
+            // silently present an empty result set as a successful search.
+            response = {{"truncated", true}, {"error",
+                "Search response exceeded the output size limit. Try a more specific query."}};
+        } else {
+            largest->erase(largest->end() - 1);
+        }
+        output = response.dump();
+    } while (output.size() > byte_limit);
+    log_debug(std::string(provider) + " search output truncated: original_bytes="
+        + std::to_string(original_bytes) + " output_bytes=" + std::to_string(output.size())
+        + " byte_limit=" + std::to_string(byte_limit));
+    return output;
+}
+
+nlohmann::ordered_json request_search(std::string_view provider, CurlHandle& curl,
     const CurlHeaders& headers, const std::string& url, const std::string& body,
-    const std::atomic_bool& cancelled) {
+    const std::atomic_bool& cancelled, std::string_view key) {
+    const auto started = std::chrono::steady_clock::now();
+    log_debug_payload(std::string(provider) + " search request URL", url, key);
+    log_debug_payload(std::string(provider) + " search request body", body, key);
     std::string response;
     const auto require = [provider](CURLcode code) {
         if (code != CURLE_OK) fail_search(provider, "Could not configure web search transport");
@@ -115,14 +143,26 @@ nlohmann::json request_search(std::string_view provider, CurlHandle& curl,
     const auto* completed = curl_multi_info_read(multi.get(), &messages);
     if (!completed || completed->msg != CURLMSG_DONE)
         fail_search(provider, "Web search transfer returned no result");
-    if (completed->data.result != CURLE_OK)
-        fail_search(provider, "Web search connection failed: " + std::string(curl_easy_strerror(completed->data.result)));
     long status{};
     require(curl_easy_getinfo(curl.get(), CURLINFO_RESPONSE_CODE, &status));
+    log_debug(std::string(provider) + " search response: status=" + std::to_string(status)
+        + " curl_code=" + std::to_string(completed->data.result)
+        + " duration_ms=" + std::to_string(std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - started).count())
+        + " response_bytes=" + std::to_string(response.size()));
+    log_debug_payload(std::string(provider) + " search raw response", response, key);
+    if (completed->data.result != CURLE_OK)
+        fail_search(provider, "Web search connection failed: " + std::string(curl_easy_strerror(completed->data.result)));
     if (status != 200)
         fail_search(provider, "Web search HTTP " + std::to_string(status));
 
-    const auto parsed = nlohmann::json::parse(response, nullptr, false);
+    // Bound depth while parsing, before recursive cleanup and serialization.
+    const auto check_depth = [provider](int depth, nlohmann::ordered_json::parse_event_t,
+        nlohmann::ordered_json&) {
+        if (depth > 64) fail_search(provider, "Web search response nesting limit exceeded");
+        return true;
+    };
+    const auto parsed = nlohmann::ordered_json::parse(response, check_depth, false);
     if (!parsed.is_object() || parsed.contains("error"))
         fail_search(provider, "Invalid web search response");
     return parsed;
@@ -133,6 +173,7 @@ nlohmann::json request_search(std::string_view provider, CurlHandle& curl,
 std::string search_brave(std::string_view query, std::string_view key,
     const std::atomic_bool& cancelled, std::string_view endpoint) {
     if (cancelled.load()) return {};
+    log_debug_payload("Brave search original query", query, key);
     query = limit_query(query, 600);
     if (query.empty())
         fail_search("Brave", "Web search query is empty after the length limit");
@@ -146,63 +187,23 @@ std::string search_brave(std::string_view query, std::string_view key,
     const std::unique_ptr<char, decltype(&curl_free)> encoded(
         curl_easy_escape(curl.get(), query.data(), static_cast<int>(query.size())), curl_free);
     if (!encoded) fail_search("Brave", "Could not encode web search query");
-    constexpr std::string_view reduce_commentary =
-        "/opinion/$discard\n"
-        "/opinions/$discard\n"
-        "/editorial/$discard\n"
-        "/editorials/$discard\n"
-        "/commentary/$discard\n"
-        "/columnists/$discard\n"
-        "/commentisfree/$discard\n"
-        "/op-ed/$discard\n"
-        "/oped/$discard\n"
-        ".gov/$boost=2";
-    const std::unique_ptr<char, decltype(&curl_free)> encoded_goggles(
-        curl_easy_escape(curl.get(), reduce_commentary.data(), static_cast<int>(reduce_commentary.size())),
-        curl_free);
-    if (!encoded_goggles) fail_search("Brave", "Could not encode web search goggles");
     const std::string url = std::string(endpoint) + "?q=" + encoded.get()
-        + "&count=10&result_filter=web&text_decorations=false&extra_snippets=true"
-        + "&goggles=" + encoded_goggles.get();
-    const auto parsed = request_search("Brave", curl, headers, url, {}, cancelled);
+        + "&count=10&extra_snippets=true&text_decorations=false&result_filter=web,news,discussions,faq,infobox,query";
+    log_debug_payload("Brave search effective query", query, key);
+    const auto parsed = request_search("Brave", curl, headers, url, {}, cancelled, key);
     if (parsed.is_null()) return {};
-    nlohmann::ordered_json sources = nlohmann::ordered_json::array();
     if (parsed.contains("web")) {
         const auto& web = parsed.at("web");
         if (!web.is_object() || !web.contains("results") || !web.at("results").is_array())
             fail_search("Brave", "Invalid web search results");
-        const auto& results = web.at("results");
-        for (const auto& result : results) {
-            if (!result.is_object() || !result.contains("url") || !result["url"].is_string()) continue;
-            const auto url = result["url"].get<std::string>();
-            if (!url.starts_with("https://") && !url.starts_with("http://")) continue;
-            nlohmann::ordered_json source = {{"url", url}};
-            if (result.contains("title") && result["title"].is_string()) source["title"] = result["title"];
-            std::vector<std::string> snippets;
-            const auto add_snippet = [&](const nlohmann::json& value) {
-                if (!value.is_string()) return;
-                const auto& text = value.get_ref<const std::string&>();
-                if (!trim_view(text).empty() && std::find(snippets.begin(), snippets.end(), text) == snippets.end())
-                    snippets.push_back(text);
-            };
-            if (result.contains("description")) add_snippet(result["description"]);
-            const auto snippet_limit = snippets.size() + 5;
-            if (result.contains("extra_snippets") && result["extra_snippets"].is_array()) {
-                for (const auto& snippet : result["extra_snippets"]) {
-                    add_snippet(snippet);
-                    if (snippets.size() == snippet_limit) break;
-                }
-            }
-            source["snippets"] = std::move(snippets);
-            sources.push_back(std::move(source));
-        }
     }
-    return nlohmann::ordered_json{{"query", query}, {"results", prefer_distinct_hosts(std::move(sources))}}.dump();
+    return bounded_search_output("Brave", parsed);
 }
 
 std::string search_tavily(std::string_view query, std::string_view key,
     const std::atomic_bool& cancelled, std::string_view endpoint) {
     if (cancelled.load()) return {};
+    log_debug_payload("Tavily search original query", query, key);
     query = limit_query(query, 400);
     if (query.empty())
         fail_search("Tavily", "Web search query is empty after the length limit");
@@ -214,24 +215,15 @@ std::string search_tavily(std::string_view query, std::string_view key,
     headers.append("Accept: application/json");
     headers.append("Content-Type: application/json");
     headers.append("Authorization: Bearer " + std::string(key));
-    const auto body = nlohmann::json{{"query", query}, {"search_depth", "basic"},
-        {"max_results", 10}, {"include_answer", false}, {"include_raw_content", false}}.dump();
-    const auto parsed = request_search("Tavily", curl, headers, std::string(endpoint), body, cancelled);
+    const auto body = nlohmann::json{{"query", query}, {"max_results", 10},
+        {"include_images", false}, {"include_image_descriptions", false},
+        {"include_favicon", false}}.dump();
+    const auto parsed = request_search("Tavily", curl, headers, std::string(endpoint), body, cancelled, key);
     if (parsed.is_null()) return {};
     if (!parsed.contains("results") || !parsed["results"].is_array())
         fail_search("Tavily", "Invalid web search results");
 
-    nlohmann::ordered_json sources = nlohmann::ordered_json::array();
-    for (const auto& result : parsed["results"]) {
-        if (!result.is_object() || !result.contains("url") || !result["url"].is_string()) continue;
-        const auto url = result["url"].get<std::string>();
-        if (!url.starts_with("https://") && !url.starts_with("http://")) continue;
-        nlohmann::ordered_json source = {{"url", url}};
-        if (result.contains("title") && result["title"].is_string()) source["title"] = result["title"];
-        if (result.contains("content") && result["content"].is_string()) source["description"] = result["content"];
-        sources.push_back(std::move(source));
-    }
-    return nlohmann::ordered_json{{"query", query}, {"results", prefer_distinct_hosts(std::move(sources))}}.dump();
+    return bounded_search_output("Tavily", parsed);
 }
 
 const std::string& WebSearchContext::get(const ProviderClientFactory& factory,
@@ -241,6 +233,9 @@ const std::string& WebSearchContext::get(const ProviderClientFactory& factory,
             if (cancelled.load()) return;
             if (!search) throw std::runtime_error("Web search executor unavailable");
             std::string text = query.run.prompt_text;
+            log_debug("Jev search preparation: forum_id=" + query.run.session.forum_id
+                + " session_id=" + query.run.session.session_id
+                + " rewrite=" + (rewriter ? "true" : "false"));
             if (rewriter) {
                 auto backend = factory(rewriter);
                 if (!backend) throw std::runtime_error("Query provider unavailable");

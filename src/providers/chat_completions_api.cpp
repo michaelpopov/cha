@@ -268,11 +268,14 @@ void ChatCompletionsStreamDecoder::accumulate_delta(const Json& delta) {
         auto& calls = message_["tool_calls"];
         if (calls.is_null()) calls = Json::array();
         for (const auto& part : delta["tool_calls"]) {
-            const auto index = part.at("index").get<int>();
+            // Gemini sends complete tool calls without an index, including
+            // separate events for parallel calls. Append each as a new call.
+            const auto index = part.value("index", static_cast<int>(calls.size()));
             if (index < 0 || index >= 32) throw std::invalid_argument("Invalid tool index");
             while (calls.size() <= static_cast<std::size_t>(index)) calls.push_back(Json::object());
             auto& call = calls[index];
-            for (const auto field : {"id", "type"}) {
+            // Keep Gemini's thought signature for the tool-result continuation.
+            for (const auto field : {"id", "type", "extra_content"}) {
                 if (part.contains(field) && !part[field].is_null()) call[field] = part[field];
             }
             if (part.contains("function")) {

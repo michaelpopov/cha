@@ -12,6 +12,7 @@
 #include "storage/session_database.h"
 #include "chat/session_identity.h"
 #include "chat/transcript.h"
+#include "util/text.h"
 #include "util/wake_notifier.h"
 
 #include <cstddef>
@@ -130,7 +131,7 @@ private:
         AnswerTimestampState answer_timestamp_state{
             AnswerTimestampState::checking};
         std::string pending_answer_text;
-        std::string pending_source_reference;
+        UrlReferenceFilter url_filter;
         // The stamp of the live streaming entry, captured when it opens so the
         // record later handed to the journal carries the same created_at.
         std::int64_t response_created_at{};
@@ -191,7 +192,6 @@ private:
     void apply(const GenerationFailed& event, ControllerUpdate& update);
     void append_answer_text(std::string text, ControllerUpdate& update);
     [[nodiscard]] std::string filter_answer_timestamp(std::string_view text);
-    [[nodiscard]] std::string filter_source_references(std::string_view text);
     void flush_pending_answer_text(ControllerUpdate& update);
     void fail_active_response(
         std::string message,

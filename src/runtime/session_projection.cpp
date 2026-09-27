@@ -80,7 +80,7 @@ SessionSnapshot to_snapshot(
     };
     for (TranscriptEntry& entry : snapshot.transcript) {
         if (entry.kind == EntryKind::character) {
-            entry.text = remove_source_references(entry.text);
+            entry.text = remove_url_references(entry.text);
         }
     }
     snapshot.characters.reserve(workspace_forum->members.size());

@@ -10,19 +10,15 @@
 namespace cha {
 namespace {
 
-std::string filter_source_references_in_chunks(
+std::string filter_url_references_in_chunks(
     std::string_view input,
     std::size_t chunk_size) {
-    std::string pending;
+    UrlReferenceFilter filter;
     std::string result;
     for (std::size_t position = 0; position < input.size(); position += chunk_size) {
-        pending.append(input.substr(position, chunk_size));
-        const std::size_t safe = complete_source_reference_prefix(pending);
-        result += remove_source_references(
-            std::string_view(pending).substr(0, safe));
-        pending.erase(0, safe);
+        result += filter.push(input.substr(position, chunk_size));
     }
-    return result + remove_source_references(pending);
+    return result + filter.finish();
 }
 
 TEST(Text, TrimsAllStandardWhitespaceWithoutCopying) {
@@ -45,55 +41,87 @@ TEST(Text, FoldsOnlyAsciiLetters) {
         "\xD0\x98\xD0\xB2\xD0\xB0\xD0\xBD");
 }
 
-TEST(Text, RemovesModelSourceReferences) {
-    EXPECT_EQ(
-        remove_source_references(
-            "Quote ([example.com](https://example.com/source)) done"),
-        "Quote  done");
-    EXPECT_EQ(
-        remove_source_references(
-            "Quote ([gutenberg.org](https://www.gutenberg.org/files/3600/"
-            "3600-h/3600-h?utm_source=openai)) done"),
-        "Quote  done");
-    EXPECT_EQ(
-        remove_source_references("Keep **([this text))** intact"),
-        "Keep **([this text))** intact");
-    EXPECT_EQ(
-        remove_source_references(
-            "Values **([a, b])** matter. Read more "
-            "([example.com](https://example.com/source))"),
-        "Values **([a, b])** matter. Read more ");
-}
+struct UrlCase {
+    std::string input;
+    std::string expected;
+};
 
-TEST(Text, HoldsBackOnlyPlausibleIncompleteSourceReferences) {
-    EXPECT_EQ(complete_source_reference_prefix("Intro (["), 6U);
-    constexpr std::string_view normal_parenthetical =
-        "Intro **([a, b])** continues";
-    EXPECT_EQ(
-        complete_source_reference_prefix(normal_parenthetical),
-        normal_parenthetical.size());
-
-    const std::string long_literal = "Intro ([" + std::string(600, 'x');
-    EXPECT_EQ(
-        complete_source_reference_prefix(long_literal),
-        long_literal.size());
-}
-
-TEST(Text, StreamingAndWholeSourceReferenceFilteringAgree) {
-    const std::vector<std::string> inputs{
-        "Quote ([example.com](https://example.com/source)) done",
-        "Values **([a, b])** matter. Read more "
+const std::vector<UrlCase>& url_cases() {
+    static const std::vector<UrlCase> cases{
+        {"Quote ([example.com](https://example.com/source)) done", "Quote done"},
+        {"Quote ([gutenberg.org](https://www.gutenberg.org/files/3600/"
+            "3600-h/3600-h?utm_source=openai)) done", "Quote done"},
+        {"Keep **([this text))** intact", "Keep **([this text))** intact"},
+        {"Values **([a, b])** matter. Read more "
             "([example.com](https://example.com/source))",
-        "Quote ([gutenberg.org](https://www.gutenberg.org/files/3600/"
-            "3600-h/3600-h?utm_source=openai)) done",
-        "Intro ([unterminated",
-        "Intro ([" + std::string(600, 'x'),
+            "Values **([a, b])** matter. Read more"},
+        {"Both ([cnn.com](https://cnn.com/a), [bbc.com](https://bbc.com/b)) agree.",
+            "Both agree."},
+        // A descriptive label is text; a label that only names the site is a citation.
+        {"Read [the full report](https://example.com/report) today.",
+            "Read the full report today."},
+        {"Rates rose [cnn.com](https://edition.cnn.com/a).", "Rates rose."},
+        {"Rates fell [1](https://example.com/1).", "Rates fell."},
+        {"See ![chart](https://example.com/chart.png) below", "See below"},
+        {"Wiki (https://en.wikipedia.org/wiki/Foo_(bar)) says", "Wiki says"},
+        {"Visit <https://example.com> now", "Visit now"},
+        {"Try **www.example.net** and `https://example.org` now", "Try and now"},
+        {"Source https://example.com/a?b=1.", "Source."},
+        {"Keep [a note](#part), [x], and f(y)", "Keep [a note](#part), [x], and f(y)"},
+        // Lines that only held links disappear; other lines keep their text.
+        {"Intro\n- [cnn.com](https://cnn.com/a)\n  * https://bbc.com/b\n"
+            "[1]: https://example.com/1\n1. <https://example.com/2>\n"
+            "> [bbc.com](https://www.bbc.com/news) \n"
+            "https://example.com/3 is here\n**Source:** https://example.com/4\nEnd",
+            "Intro\nis here\n**Source:**\nEnd"},
+        {"Mixed\r\n- https://example.com/a\r\n12 apples https://example.com/b\r\nDone",
+            "Mixed\r\n12 apples\r\nDone"},
+        {"Intro ([unterminated", "Intro ([unterminated"},
+        {"Intro ([" + std::string(600, 'x'), "Intro ([" + std::string(600, 'x')},
     };
+    return cases;
+}
+
+TEST(Text, RemovesUrlReferences) {
+    for (const UrlCase& test : url_cases()) {
+        EXPECT_EQ(remove_url_references(test.input), test.expected) << test.input;
+    }
+}
+
+TEST(Text, StreamingUrlFilterReleasesPlainTextAndHoldsPossibleLinks) {
+    UrlReferenceFilter filter;
+    EXPECT_EQ(filter.push("Hello wor"), "Hello wor");
+    // A last word that can still grow into a link waits for more text.
+    EXPECT_EQ(filter.push("ld. See h"), "ld. See");
+    // A possible link holds the rest of its line until the line ends.
+    EXPECT_EQ(filter.push("ttps://example.com/a and more"), "");
+    EXPECT_EQ(filter.push(" text\nNext line"), " and more text\nNext line");
+    // A list marker waits for its line, so a line of links disappears whole.
+    EXPECT_EQ(filter.push("\n- "), "\n");
+    EXPECT_EQ(filter.push("[example.com](https://example.com)\n"), "");
+    EXPECT_EQ(filter.push("(see ab"), "");
+    EXPECT_EQ(filter.finish(), "(see ab");
+}
+
+TEST(Text, StreamingAndWholeUrlFilteringAgree) {
+    std::vector<std::string> inputs;
+    for (const UrlCase& test : url_cases()) inputs.push_back(test.input);
+    inputs.insert(inputs.end(), {
+        "* **https://example.com/a**\n- text https://example.com/c\n",
+        "abc" "www.example.com and !" "[alt](https://example.com/a.png) done",
+        "1. https://example.com/a\n-- https://example.com/b\nEnd",
+        // Cases that once differed: digits that join a later "." or ")" into
+        // a list marker, and a mark that did not directly wrap the URL.
+        "12  www.\n12 https://example.com/a)\nEnd",
+        "word* https://example.com/a <https://example.com/b>*",
+        "\" <https://example.com/a>www.example.com\"x",
+    });
     for (const std::string& input : inputs) {
         for (std::size_t chunk_size = 1; chunk_size <= 12; ++chunk_size) {
             EXPECT_EQ(
-                filter_source_references_in_chunks(input, chunk_size),
-                remove_source_references(input));
+                filter_url_references_in_chunks(input, chunk_size),
+                remove_url_references(input))
+                << input << " in chunks of " << chunk_size;
         }
     }
 }

@@ -10,11 +10,25 @@ bool is_space(char character);
 std::size_t find_whitespace(std::string_view value);
 std::string_view trim_view(std::string_view value);
 std::string fold_ascii(std::string_view value);
-// Returns the prefix that can be filtered without exposing a source reference
-// that may be split across later streaming chunks.
-std::size_t complete_source_reference_prefix(std::string_view value);
-// Removes complete model-emitted parenthesized Markdown source links.
-std::string remove_source_references(std::string_view value);
+// Removes links and URLs from model text. A Markdown link with a descriptive
+// label keeps its label. Citations, images, bare URLs, and reference
+// definitions disappear together with the space before them, and a line
+// that holds nothing else disappears completely.
+std::string remove_url_references(std::string_view value);
+
+// Removes URL references from streamed model text. It holds back only text
+// that can still become part of a link: trailing spaces, a last word that can
+// grow into a link, and the rest of a line from a possible link start until
+// the line ends.
+class UrlReferenceFilter {
+public:
+    std::string push(std::string_view text);
+    std::string finish();
+
+private:
+    std::string pending_;
+    bool at_line_start_{true};
+};
 
 // Case-insensitive handle matching, shared by the character and persona
 // resolvers so both spell "same name" the same way. These compare in place

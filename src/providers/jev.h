@@ -28,6 +28,7 @@ struct JevRequestInput {
 };
 enum class JevOutcome { success, cancelled, failure };
 enum class JevSearch { none, direct, rewrite };
+const char* jev_search_name(JevSearch search) noexcept;
 struct JevResult {
     JevOutcome outcome{JevOutcome::failure};
     std::string choice;

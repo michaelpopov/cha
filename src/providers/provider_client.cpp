@@ -106,6 +106,8 @@ struct ResponseContext {
     StreamingResponseDecoder* decoder{};
     std::size_t received_bytes{};
     std::string body;
+    bool capture_debug{debug_logging_enabled()};
+    std::string debug_body;
     long status{};
     std::string request_id;
     std::size_t request_id_priority{std::numeric_limits<std::size_t>::max()};
@@ -229,7 +231,16 @@ std::size_t receive_response(
         : size * count;
     auto& context = *static_cast<ResponseContext*>(persona_data);
 
+    if (context.capture_debug) {
+        try {
+            context.debug_body.append(data, bytes);
+        } catch (...) {
+            context.capture_debug = false;
+            log_debug("HTTP debug response capture stopped: allocation failed");
+        }
+    }
     try {
+        if (!context.last_activity) log_debug("HTTP response first body bytes received");
         context.last_activity = std::chrono::steady_clock::now();
         if (bytes > std::numeric_limits<std::size_t>::max() - context.received_bytes) {
             context.received_bytes = std::numeric_limits<std::size_t>::max();
@@ -241,7 +252,7 @@ std::size_t receive_response(
         const bool successful = context.status == 0
             || (context.status >= 200 && context.status < 300);
         if (successful && context.decoder) {
-            // A successful stream is model output, so nothing is retained.
+            // Normal logging does not retain successful streaming bodies.
             context.decoder->consume({data, bytes});
         } else if (successful) {
             context.body.append(data, bytes);
@@ -528,6 +539,7 @@ GenerationResult ProviderClient::perform(
     const std::atomic_bool& cancellation) {
     constexpr int max_searches = 4;
     int attempts = 0;
+    int round = 0;
     GenerationTokenUsage total;
     const auto add = [](auto& sum, const auto& count) {
         if (count) sum = sum.value_or(0) + *count;
@@ -536,6 +548,10 @@ GenerationResult ProviderClient::perform(
     bool received_answer = false;
     Json body;
     for (;;) {
+        log_debug("Model round started: provider_id=" + definition_->provider.id
+            + " round=" + std::to_string(++round)
+            + " searches_used=" + std::to_string(attempts)
+            + " search_limit=" + std::to_string(max_searches));
         bool round_received_answer = false;
         auto result = perform_once(payload, [&](GenerationDelta delta) {
             if (delta.kind == GenerationDeltaKind::answer && !delta.text.empty()) {
@@ -552,6 +568,9 @@ GenerationResult ProviderClient::perform(
         add(total.cache_read_tokens, result.usage.cache_read_tokens);
         add(total.cache_write_tokens, result.usage.cache_write_tokens);
         result.usage = total;
+        log_debug("Model round finished: round=" + std::to_string(round)
+            + " tool_calls=" + std::to_string(result.tool_calls.size())
+            + " received_answer=" + (round_received_answer ? "true" : "false"));
         if (result.outcome != GenerationOutcome::completed || result.tool_calls.empty())
             return result;
         if (!payload.web_search_tool) {
@@ -603,7 +622,18 @@ GenerationResult ProviderClient::perform(
             }
         }
         // Required provider-hosted search must not force another search forever.
-        body["tool_choice"] = attempts >= max_searches ? "none" : "auto";
+        body["tool_choice"] = "auto";
+        if (attempts >= max_searches) {
+            // Some providers still request calls when tool definitions remain.
+            log_debug("Web search limit reached: requesting final answer without tools");
+            body.erase("tools");
+            body.erase("tool_choice");
+            messages.push_back({{"role", "user"}, {"content",
+                "Web search is now unavailable because the search limit was reached. "
+                "Answer the original request using the results already collected. "
+                "State clearly if those results are insufficient to verify any requested information. "
+                "Do not invent missing facts or request more tools."}});
+        }
         payload.bytes = body.dump();
     }
 }
@@ -678,14 +708,18 @@ GenerationResult ProviderClient::perform_once(
     };
 
     const std::string url = provider_endpoint(config);
+    const std::string_view credential = subscription_credentials
+        ? std::string_view(subscription_credentials->access_token) : std::string_view(api_key_);
     const auto started_at = std::chrono::steady_clock::now();
     log_debug(
         "HTTP request started: endpoint=" + url
         + " request_bytes=" + std::to_string(request_body.size()));
-    const auto complete = [&response, &url, &request_body, started_at](
+    log_debug_payload("HTTP model request body", request_body, credential);
+    const auto complete = [&response, &url, &request_body, started_at, credential](
                               GenerationResult result,
                               long status,
                               std::string_view content_type) {
+        log_debug_payload("HTTP model result diagnostic", result.message, credential);
         const std::string message = http_event(
             result.outcome == GenerationOutcome::completed
                 ? "request completed"
@@ -737,6 +771,7 @@ GenerationResult ProviderClient::perform_once(
             http = transport_(
                 ProviderHttpRequest{url, header_lines, request_body},
                 cancellation);
+            log_debug_payload("HTTP model raw response", http.body, credential);
         } catch (const std::exception& error) {
             return complete({
                 GenerationOutcome::transport_error,
@@ -792,6 +827,9 @@ GenerationResult ProviderClient::perform_once(
         curl_->set(CURLOPT_HTTPHEADER, headers.get(), "Failed to configure HTTP headers");
 
         const CURLcode perform_result = curl_->perform();
+        log_debug_payload("HTTP model raw response", response.debug_body, credential);
+        log_debug("HTTP transfer finished: curl_code=" + std::to_string(perform_result)
+            + " status=" + std::to_string(response.status));
         if (response.error) {
             log_error(http_event(
                 "response processing failed",
@@ -849,8 +887,7 @@ GenerationResult ProviderClient::perform_once(
                 content_type,
                 response.received_bytes);
         }
-        // The decoder's own message is the only provider text here; a
-        // successful stream body is model output and is not retained.
+        // Error classification uses the decoder's diagnostic, not model text.
         return complete(
             classify_success_response_error(
                 std::move(decoded.result),

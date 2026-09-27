@@ -48,9 +48,12 @@ call repeatedly.
 ## Diagnostics
 
 Provider lifecycle logs contain provider ID, session and request IDs, internal
-registry token, configured model, active count, and duration. They never
-contain a credential, complete configuration, prompt, transcript content, or
-response body.
+registry token, configured model, active count, and duration. At normal log levels,
+they omit prompts, transcript content, and response bodies. Debug logging also
+records Jev requests and decisions, search queries, raw search responses,
+and full model request and response bodies (including SSE). Payloads are quoted
+onto single lines; authorization headers are omitted and the active request
+credential is redacted. Debug logs therefore contain conversation content.
 
 ## Tests
 

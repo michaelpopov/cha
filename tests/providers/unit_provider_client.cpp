@@ -119,14 +119,14 @@ std::string status_response(
 
 class DiagnosticLogFile {
 public:
-    DiagnosticLogFile()
+    explicit DiagnosticLogFile(std::string_view level = "info")
         : directory_(std::filesystem::temp_directory_path()
             / ("cha_generation_logging_"
                + std::to_string(
                    std::chrono::steady_clock::now().time_since_epoch().count()))),
           path_(directory_ / "cha.log") {
         shutdown_diagnostic_logging();
-        initialize_diagnostic_logging(path_, "info");
+        initialize_diagnostic_logging(path_, level);
     }
 
     ~DiagnosticLogFile() {
@@ -394,6 +394,46 @@ TEST(ProviderClient, HandlesNonStreamingProviderResponse) {
     mock.join();
 }
 
+TEST(ProviderClient, DebugLogsSuccessfulRequestsAndResponsesButRedactsTheActiveApiKey) {
+    test::TestWorkspace workspace;
+    auto config = WorkspaceConfigStore::open(test::import_test_database(workspace.root()));
+    ApiKeyStore keys(*config);
+    const auto key = keys.create("Test", "secret-model-key");
+    for (bool stream : {false, true}) {
+        SCOPED_TRACE(stream);
+        const std::string body = stream
+            ? "data: {\"choices\":[{\"delta\":{\"content\":\"debug answer secret-model-key\"}}]}\n\n"
+                "data: [DONE]\n\n"
+            : R"({"choices":[{"message":{"content":"debug answer secret-model-key"}}]})";
+        MockHttpServer mock({http_response(stream ? "text/event-stream" : "application/json", body)});
+        mock.start();
+        DiagnosticLogFile log("debug");
+        auto definition = network_definition(mock.port(), stream);
+        definition.system_prompt = "debug system instructions";
+        definition.provider.config.api_key_id = key.id;
+        ProviderClient client(shared_definition(definition), nullptr, &keys);
+        Transcript transcript;
+        const auto result = complete(client, client_request(transcript, 77, "debug user prompt secret-model-key"),
+            transcript, [](GenerationDelta) {}, std::atomic_bool{false});
+        mock.join();
+        ASSERT_EQ(mock.requests().size(), 1u);
+        EXPECT_NE(mock.requests().front().find("Authorization: Bearer secret-model-key\r\n"),
+            std::string::npos);
+        EXPECT_EQ(result.outcome, GenerationOutcome::completed);
+        const auto output = log.contents();
+        EXPECT_NE(output.find("HTTP model request body"), std::string::npos);
+        EXPECT_NE(output.find("debug system instructions"), std::string::npos);
+        EXPECT_NE(output.find("debug user prompt [REDACTED]"), std::string::npos);
+        EXPECT_NE(output.find("HTTP model raw response"), std::string::npos);
+        EXPECT_NE(output.find("debug answer [REDACTED]"), std::string::npos);
+        EXPECT_EQ(output.find("secret-model-key"), std::string::npos);
+        EXPECT_EQ(output.find("HTTP model result diagnostic"), std::string::npos);
+        EXPECT_EQ(output.find("data=\"\""), std::string::npos);
+        if (stream) EXPECT_NE(output.find("[DONE]"), std::string::npos);
+        EXPECT_EQ(output.find("Authorization:"), std::string::npos);
+    }
+}
+
 TEST(ProviderClient, LogsTransportMetadataWithoutPayloads) {
     const std::string response_body =
         R"({"choices":[{"message":{"content":"private response"}}],"usage":{"prompt_tokens":12,"completion_tokens":5,"prompt_tokens_details":{"cached_tokens":9,"cache_write_tokens":7}}})";
@@ -430,6 +470,29 @@ TEST(ProviderClient, LogsTransportMetadataWithoutPayloads) {
     EXPECT_NE(output.find("cache_write_tokens=7"), std::string::npos);
     EXPECT_EQ(output.find("private prompt"), std::string::npos);
     EXPECT_EQ(output.find("private response"), std::string::npos);
+}
+
+TEST(ProviderClient, DebugLogsFullHttpErrorsButRedactsTheActiveApiKey) {
+    test::TestWorkspace workspace;
+    auto config = WorkspaceConfigStore::open(test::import_test_database(workspace.root()));
+    ApiKeyStore keys(*config);
+    const auto key = keys.create("Test", "secret-model-key");
+    const std::string body = std::string(5000, 'x') + " diagnostic-tail secret-model-key";
+    MockHttpServer mock({status_response(500, "Error", "text/plain", body)});
+    mock.start();
+    DiagnosticLogFile log("debug");
+    auto definition = network_definition(mock.port(), true);
+    definition.provider.config.api_key_id = key.id;
+    ProviderClient client(shared_definition(definition), nullptr, &keys);
+    Transcript transcript;
+    const auto result = complete(client, client_request(transcript, 78, "Test failure"),
+        transcript, [](GenerationDelta) {}, std::atomic_bool{false});
+    mock.join();
+    EXPECT_EQ(result.outcome, GenerationOutcome::protocol_error);
+    const auto output = log.contents();
+    EXPECT_NE(output.find("diagnostic-tail [REDACTED]"), std::string::npos);
+    EXPECT_EQ(output.find("secret-model-key"), std::string::npos);
+    EXPECT_EQ(output.find("Authorization:"), std::string::npos);
 }
 
 TEST(ProviderClient, RequestsFastModeForOpenAiAndOpenRouterEndpoints) {
@@ -2006,7 +2069,7 @@ TEST(ProviderClientTools, CapsSearchesThenAllowsAFinalAnswer) {
             [&](const ProviderHttpRequest& request, const std::atomic_bool&) {
                 ++requests;
                 if (requests <= 4) return tool_reply(api, true, Json::array({search_call(api, "call" + std::to_string(requests))}));
-                EXPECT_EQ(Json::parse(request.body)["tool_choice"], "none");
+                EXPECT_FALSE(Json::parse(request.body).contains("tool_choice"));
                 return tool_reply(api, true, Json::array(), "Done.");
             });
         Transcript transcript;
@@ -2018,6 +2081,53 @@ TEST(ProviderClientTools, CapsSearchesThenAllowsAFinalAnswer) {
         EXPECT_EQ(searches, 4);
         EXPECT_EQ(requests, 5);
         EXPECT_EQ(result.usage.input_tokens, 50u);
+    }
+}
+
+TEST(ProviderClientTools, RemovesToolsAndRequestsAnAnswerWhenSearchLimitIsReached) {
+    for (auto api : {ProviderApi::chat_completions, ProviderApi::responses}) {
+        for (bool stream : {false, true}) {
+            auto definition = network_definition(80, stream);
+            definition.provider.config.api = api;
+            int requests = 0;
+            ProviderClient client(shared_definition(definition), nullptr,
+                [&](const ProviderHttpRequest& request, const std::atomic_bool&) {
+                    ++requests;
+                    const auto body = Json::parse(request.body);
+                    if (requests <= 2) {
+                        EXPECT_TRUE(body.contains("tools"));
+                        return tool_reply(api, stream, Json::array({
+                            search_call(api, "first" + std::to_string(requests)),
+                            search_call(api, "second" + std::to_string(requests))}));
+                    }
+                    // Some models keep calling tools while definitions are present,
+                    // even when tool_choice is none.
+                    EXPECT_FALSE(body.contains("tools"));
+                    if (body.contains("tools"))
+                        return tool_reply(api, stream, Json::array({search_call(api, "again")}));
+                    EXPECT_FALSE(body.contains("tool_choice"));
+                    const auto& messages = body[api == ProviderApi::responses ? "input" : "messages"];
+                    EXPECT_EQ(messages.back()["role"], "user");
+                    EXPECT_NE(messages.back()["content"].get<std::string>().find("Answer"), std::string::npos);
+                    const auto& output = messages[messages.size() - 2];
+                    EXPECT_EQ(output[api == ProviderApi::responses ? "call_id" : "tool_call_id"], "second2");
+                    EXPECT_EQ(output[api == ProviderApi::responses ? "output" : "content"], "Search results");
+                    return tool_reply(api, stream, Json::array(), "Here is what I could verify.");
+                });
+            Transcript transcript;
+            auto input = client_request(transcript, 1, "Find five news articles");
+            int searches = 0;
+            input.web_search_tool = [&](auto, const auto&) { ++searches; return "Search results"; };
+            std::string answer;
+            const auto result = client.perform(client.prepare(input), [&](GenerationDelta delta) {
+                if (delta.kind == GenerationDeltaKind::answer) answer += delta.text;
+            }, std::atomic_bool{false});
+            EXPECT_EQ(result.outcome, GenerationOutcome::completed) << result.message;
+            EXPECT_EQ(searches, 4);
+            EXPECT_EQ(requests, 3);
+            EXPECT_EQ(answer, "Here is what I could verify.");
+            EXPECT_EQ(result.usage.input_tokens, 30u);
+        }
     }
 }
 
@@ -2093,15 +2203,17 @@ TEST(ProviderClientTools, ReturnsAnOutputForEveryCallWhenBatchExceedsSearchLimit
                     return tool_reply(api, false, calls);
                 }
                 const auto body = Json::parse(request.body);
-                EXPECT_EQ(body["tool_choice"], "none");
+                EXPECT_FALSE(body.contains("tool_choice"));
                 const auto& messages = body[api == ProviderApi::responses ? "input" : "messages"];
+                EXPECT_FALSE(body.contains("tools"));
+                EXPECT_EQ(messages.back()["role"], "user");
                 for (int i = 0; i < 6; ++i) {
-                    const auto& output = messages[messages.size() - 6 + i];
+                    const auto& output = messages[messages.size() - 7 + i];
                     EXPECT_EQ(output[api == ProviderApi::responses ? "call_id" : "tool_call_id"],
                         "call" + std::to_string(i));
                     if (i >= 4) EXPECT_NE(output.dump().find("Search limit reached"), std::string::npos);
                 }
-                // A provider that ignores tool_choice must not create an endless loop.
+                // A provider that still requests tools must not create an endless loop.
                 return tool_reply(api, false, Json::array({search_call(api, "one_more")}));
             });
         Transcript transcript;
@@ -2213,6 +2325,62 @@ TEST(ProviderClientTools, PreparedPayloadOwnsItsSearchFunction) {
         EXPECT_EQ(first_searches, 1);
         EXPECT_EQ(second_searches, 1);
         EXPECT_EQ(requests, 5);
+    }
+}
+
+TEST(ProviderClientTools, PreservesGeminiToolCallsAndSignaturesWhenContinuingAfterSearch) {
+    for (bool stream : {false, true}) {
+        for (bool indexed : {false, true}) {
+            for (bool separate_events : {false, true}) {
+                SCOPED_TRACE(stream);
+                SCOPED_TRACE(indexed);
+                SCOPED_TRACE(separate_events);
+                auto calls = Json::array({search_call(ProviderApi::chat_completions, "first"),
+                    search_call(ProviderApi::chat_completions, "second")});
+                calls[0]["extra_content"] = {{"google", {{"thought_signature", "opaque signature"}}}};
+                int requests = 0;
+                ProviderClient client(shared_definition(network_definition(80, stream)), nullptr,
+                    [&](const ProviderHttpRequest& request, const std::atomic_bool&) {
+                        if (++requests == 1) {
+                            if (!stream) return tool_reply(ProviderApi::chat_completions, false, calls);
+                            auto parts = calls;
+                            if (indexed) {
+                                for (std::size_t i = 0; i < parts.size(); ++i) parts[i]["index"] = i;
+                            }
+                            const auto event = [](const Json& parts) {
+                                return "data: " + Json{{"choices", Json::array({Json{{"delta",
+                                    {{"role", "assistant"}, {"tool_calls", parts}}}}})}}.dump() + "\n\n";
+                            };
+                            std::string body;
+                            if (separate_events) {
+                                for (const auto& part : parts) body += event(Json::array({part}));
+                            } else body = event(parts);
+                            return ProviderHttpResponse{200, "text/event-stream", body + "data: [DONE]\n\n"};
+                        }
+                        const auto messages = Json::parse(request.body)["messages"];
+                        EXPECT_EQ(messages[messages.size() - 3]["tool_calls"], calls);
+                        EXPECT_EQ(messages[messages.size() - 2]["tool_call_id"], "first");
+                        EXPECT_EQ(messages[messages.size() - 1]["tool_call_id"], "second");
+                        return tool_reply(ProviderApi::chat_completions, stream, Json::array(), "Done");
+                    });
+                Transcript transcript;
+                auto input = client_request(transcript, 1, "Search");
+                int searches = 0;
+                input.web_search_tool = [&](std::string_view query, const auto&) {
+                    EXPECT_EQ(query, "current release");
+                    ++searches;
+                    return "[]";
+                };
+                std::string answer;
+                const auto result = client.perform(client.prepare(input), [&](GenerationDelta delta) {
+                    if (delta.kind == GenerationDeltaKind::answer) answer += delta.text;
+                }, std::atomic_bool{false});
+                EXPECT_EQ(result.outcome, GenerationOutcome::completed) << result.message;
+                EXPECT_EQ(requests, 2);
+                EXPECT_EQ(searches, 2);
+                EXPECT_EQ(answer, "Done");
+            }
+        }
     }
 }
 

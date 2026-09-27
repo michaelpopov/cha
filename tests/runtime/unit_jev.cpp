@@ -187,6 +187,39 @@ TEST(JevProtocol, DecisionsTransportUsesFullEndpointAndSavedKey) {
     EXPECT_NE(server.requests()[0].find("typesafe/jev-1.13"), std::string::npos);
 }
 
+TEST(JevProtocol, DebugLogsQuestionsAndRawDecisionsWithoutCredentials) {
+    for (const auto* level : {"debug", "info"}) {
+        test::TestWorkspace fixture;
+        const auto path = fixture.root() / "jev-debug.log";
+        initialize_diagnostic_logging(path, level);
+        const std::string body = R"({"echo":"secret-jev-key","answers":{"recipient":{"type":"choice","choice":"character_2"},"web_search":{"type":"choice","choice":"search_rewrite"}}})";
+        MockHttpServer server({http_response("application/json", body)});
+        auto input = jev_input();
+        input.config.url = "http://127.0.0.1:" + std::to_string(server.port()) + "/decisions";
+        input.deadline = std::chrono::steady_clock::now() + 2s;
+        server.start();
+        const auto result = classify_jev(input.config, "secret-jev-key", input, std::atomic_bool{false});
+        server.join();
+        shutdown_diagnostic_logging();
+        EXPECT_EQ(result.search_choice, JevSearch::rewrite);
+        std::ifstream file(path);
+        const std::string output{std::istreambuf_iterator<char>(file), {}};
+        EXPECT_EQ(output.find("secret-jev-key"), std::string::npos);
+        EXPECT_EQ(output.find("Authorization:"), std::string::npos);
+        if (std::string_view(level) == "debug") {
+            EXPECT_NE(output.find(input.prompt), std::string::npos);
+            EXPECT_NE(output.find("Jev request body"), std::string::npos);
+            EXPECT_NE(output.find("Jev raw response"), std::string::npos);
+            EXPECT_NE(output.find("search_rewrite"), std::string::npos);
+            EXPECT_NE(output.find("[REDACTED]"), std::string::npos);
+            EXPECT_NE(output.find("duration_ms="), std::string::npos);
+        } else {
+            EXPECT_EQ(output.find(input.prompt), std::string::npos);
+            EXPECT_EQ(output.find("search_rewrite"), std::string::npos);
+        }
+    }
+}
+
 class JevRouting : public ::testing::Test {
 protected:
     test::TestWorkspace fixture;

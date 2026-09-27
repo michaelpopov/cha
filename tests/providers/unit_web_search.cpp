@@ -15,7 +15,7 @@ namespace cha {
 namespace {
 using namespace std::chrono_literals;
 
-TEST(BraveSearch, SendsEncodedQueryAndCommentaryGogglesAndKeyAndExtractsSourceData) {
+TEST(BraveSearch, RequestsExtraPlainTextSnippetsAndPreservesTheResponse) {
     const std::string body = R"json({"web":{"results":[
         {"title":"A source","url":"https://example.org/a","description":"A summary",
          "extra_snippets":["", " \t\n", "A summary", "More context",123,null,"More context"],"unused":"not needed"},
@@ -30,44 +30,27 @@ TEST(BraveSearch, SendsEncodedQueryAndCommentaryGogglesAndKeyAndExtractsSourceDa
     ASSERT_EQ(server.requests().size(), 1u);
     const auto& request = server.requests().front();
     EXPECT_TRUE(request.starts_with(
-        "GET /res/v1/web/search?q=C%2B%2B%20%26%20caf%C3%A9%3F"
-        "&count=10&result_filter=web&text_decorations=false&extra_snippets=true"
-        "&goggles=%2Fopinion%2F%24discard%0A%2Fopinions%2F%24discard%0A"
-        "%2Feditorial%2F%24discard%0A%2Feditorials%2F%24discard%0A"
-        "%2Fcommentary%2F%24discard%0A%2Fcolumnists%2F%24discard%0A"
-        "%2Fcommentisfree%2F%24discard%0A%2Fop-ed%2F%24discard%0A"
-        "%2Foped%2F%24discard%0A.gov%2F%24boost%3D2 HTTP/1.1\r\n"));
+        "GET /res/v1/web/search?q=C%2B%2B%20%26%20caf%C3%A9%3F&count=10&extra_snippets=true&text_decorations=false&result_filter=web,news,discussions,faq,infobox,query HTTP/1.1\r\n"));
     EXPECT_NE(request.find("X-Subscription-Token: test-secret\r\n"), std::string::npos);
-    EXPECT_EQ(result["query"], "C++ & café?");
-    ASSERT_EQ(result["results"].size(), 2u);
-    EXPECT_EQ(result["results"][0]["title"], "A source");
-    EXPECT_EQ(result["results"][0]["url"], "https://example.org/a");
-    EXPECT_EQ(result["results"][0]["snippets"], nlohmann::json::array({"A summary", "More context"}));
-    EXPECT_FALSE(result["results"][0].contains("description"));
-    EXPECT_FALSE(result["results"][0].contains("extra_snippets"));
-    EXPECT_FALSE(result["results"][0].contains("unused"));
-    EXPECT_EQ(result["results"][1]["snippets"], nlohmann::json::array());
+    EXPECT_EQ(result, nlohmann::json::parse(body));
 }
 
-TEST(BraveSearch, KeepsFiveDistinctExtraSnippetsPerSource) {
-    MockHttpServer server({http_response("application/json", R"json({"web":{"results":[
-        {"url":"https://example.org/a","description":"Main excerpt",
-         "extra_snippets":["Main excerpt","One","One","Two","Three","Four","Five","Six"]},
-        {"url":"https://example.org/b","description":123,
-         "extra_snippets":["One","Two","Three","Four","Five","Six"]},
-        {"url":"https://example.org/c","description":" \n\t","extra_snippets":null}
-    ]}})json")});
+TEST(BraveSearch, KeepsAllResultsInProviderOrderWithMetadataAndOtherCategories) {
+    auto rows = nlohmann::json::array();
+    for (int i = 0; i < 20; ++i) {
+        rows.push_back({{"url", "https://cnn.com/article" + std::to_string(i)},
+            {"title", "Headline " + std::to_string(i)}, {"age", "2 hours ago"},
+            {"page_age", "2026-09-26"}, {"description", "Original excerpt"},
+            {"extra_snippets", {"One", "Two", "Three", "Four", "Five", "Six"}}});
+    }
+    const nlohmann::json body{{"web", {{"results", rows}}},
+        {"news", {{"results", {{{"title", "News result"}, {"url", "https://cnn.com/news"}}}}}}};
+    MockHttpServer server({http_response("application/json", body.dump())});
     server.start();
-    std::atomic_bool cancelled{};
-    const auto result = nlohmann::json::parse(search_brave("query", "key", cancelled,
+    const auto result = nlohmann::json::parse(search_brave("CNN today", "key", std::atomic_bool{false},
         "http://127.0.0.1:" + std::to_string(server.port())));
     server.join();
-    ASSERT_EQ(result["results"].size(), 3u);
-    EXPECT_EQ(result["results"][0]["snippets"],
-        nlohmann::json::array({"Main excerpt", "One", "Two", "Three", "Four", "Five"}));
-    EXPECT_EQ(result["results"][1]["snippets"],
-        nlohmann::json::array({"One", "Two", "Three", "Four", "Five"}));
-    EXPECT_EQ(result["results"][2]["snippets"], nlohmann::json::array());
+    EXPECT_EQ(result, body);
 }
 
 TEST(BraveSearch, HandlesEmptyResultsAndRejectsMalformedAndHttpFailures) {
@@ -78,7 +61,7 @@ TEST(BraveSearch, HandlesEmptyResultsAndRejectsMalformedAndHttpFailures) {
         const auto result = nlohmann::json::parse(search_brave("query", "key", cancelled,
             "http://127.0.0.1:" + std::to_string(server.port())));
         server.join();
-        EXPECT_TRUE(result["results"].empty());
+        EXPECT_EQ(result, nlohmann::json::parse(body));
     }
     for (const auto& response : {
         http_response("application/json", "broken"),
@@ -100,11 +83,9 @@ TEST(BraveSearch, LimitsLongQueriesToWholeWordsWithinBothLimits) {
     for (const auto& word : {std::string("word"), utf8_word}) {
         std::string query;
         const int retained_words = word == "word" ? 75 : 2;
-        std::string expected;
         for (int i = 0; i < 100; ++i) {
             if (i > 0) query += ' ';
             query += word;
-            if (i < retained_words) expected = query;
         }
         MockHttpServer server({http_response("application/json", R"({"web":{"results":[]}})")});
         server.start();
@@ -112,19 +93,65 @@ TEST(BraveSearch, LimitsLongQueriesToWholeWordsWithinBothLimits) {
         const auto result = nlohmann::json::parse(search_brave(query, "key", cancelled,
             "http://127.0.0.1:" + std::to_string(server.port())));
         server.join();
-        EXPECT_EQ(result["query"], expected);
-        EXPECT_LE(result["query"].get<std::string>().size(), 600u);
+        EXPECT_TRUE(result["web"]["results"].empty());
         std::string encoded;
         for (int i = 0; i < retained_words; ++i) {
             if (i > 0) encoded += "%20";
             encoded += word == "word" ? "word" : std::string(198, 'x') + "%C3%A9";
         }
         ASSERT_EQ(server.requests().size(), 1u);
-        EXPECT_TRUE(server.requests().front().starts_with("GET /?q=" + encoded + "&count=10"));
+        EXPECT_TRUE(server.requests().front().starts_with("GET /?q=" + encoded
+            + "&count=10&extra_snippets=true&text_decorations=false&result_filter=web,news,discussions,faq,infobox,query HTTP/1.1\r\n"));
     }
     std::atomic_bool cancelled{};
     EXPECT_THROW(search_brave(std::string(601, 'x'), "key", cancelled,
         "http://127.0.0.1:1"), std::runtime_error);
+}
+
+TEST(BraveSearch, DebugLogsRawResultsOnceAndSkipsEmptyPayloadsForBothProviders) {
+    for (bool brave : {true, false}) {
+        for (const auto* level : {"debug", "info"}) {
+            test::TestWorkspace fixture;
+            const auto path = fixture.root() / "search-debug.log";
+            initialize_diagnostic_logging(path, level);
+            nlohmann::json rows = nlohmann::json::array();
+            for (int i = 0; i < 6; ++i)
+                rows.push_back({{"url", "https://cnn.com/article" + std::to_string(i)},
+                    {"title", "headline" + std::to_string(i)}, {"age", "old-date"},
+                    {"description", "snippet"}, {"content", "snippet"}});
+            nlohmann::json body{{"results", rows}, {"echo", "secret-search-key"}};
+            if (brave) body = nlohmann::json{{"web", body}};
+            MockHttpServer server({http_response("application/json", body.dump())});
+            server.start();
+            const auto endpoint = "http://127.0.0.1:" + std::to_string(server.port());
+            const auto results = brave
+                ? search_brave("CNN today", "secret-search-key", std::atomic_bool{false}, endpoint)
+                : search_tavily("CNN today", "secret-search-key", std::atomic_bool{false}, endpoint);
+            server.join();
+            shutdown_diagnostic_logging();
+            std::ifstream file(path);
+            const std::string output{std::istreambuf_iterator<char>(file), {}};
+            EXPECT_EQ(output.find("secret-search-key"), std::string::npos);
+            EXPECT_EQ(output.find("Authorization:"), std::string::npos);
+            EXPECT_EQ(output.find("search results passed to model"), std::string::npos);
+            EXPECT_EQ(output.find("data=\"\""), std::string::npos);
+            if (std::string_view(level) == "debug") {
+                EXPECT_NE(output.find("CNN today"), std::string::npos);
+                EXPECT_NE(output.find("old-date"), std::string::npos);
+                EXPECT_NE(output.find("headline5"), std::string::npos);
+                EXPECT_NE(output.find("[REDACTED]"), std::string::npos);
+                const auto raw_response = output.find("search raw response");
+                ASSERT_NE(raw_response, std::string::npos);
+                EXPECT_EQ(output.find("search raw response", raw_response + 1), std::string::npos);
+                EXPECT_EQ(output.find("headline5", output.find("headline5") + 1), std::string::npos);
+                EXPECT_EQ(output.find("search request body") != std::string::npos, !brave);
+            } else {
+                EXPECT_EQ(output.find("CNN today"), std::string::npos);
+                EXPECT_EQ(output.find("headline5"), std::string::npos);
+            }
+            EXPECT_NE(results.find("headline5"), std::string::npos);
+        }
+    }
 }
 
 TEST(BraveSearch, LogsSafeFailureReasonsWithoutSecrets) {
@@ -180,8 +207,9 @@ TEST(BraveSearch, CancelsAnInFlightTransfer) {
     server.join();
 }
 
-TEST(TavilySearch, PostsQueryAndKeyAndExtractsAtMostFiveSources) {
-    const std::string body = R"json({"results":[
+TEST(TavilySearch, RequestsTenResultsAndPreservesTheResponse) {
+    const std::string body = R"json({"query":"provider query","answer":"Provider answer",
+        "response_time":0.42,"request_id":"search-123","images":["https://example.org/image.png"],"results":[
         {"title":"A source","url":"https://example.org/a","content":"A summary",
          "score":0.9,"raw_content":"not needed"},
         {"url":"javascript:alert(1)"}, {"title":"No URL"}, null,
@@ -201,57 +229,253 @@ TEST(TavilySearch, PostsQueryAndKeyAndExtractsAtMostFiveSources) {
     EXPECT_NE(request.find("Authorization: Bearer test-secret\r\n"), std::string::npos);
     EXPECT_NE(request.find("Content-Type: application/json\r\n"), std::string::npos);
     const auto sent = nlohmann::json::parse(request.substr(request.find("\r\n\r\n") + 4));
-    EXPECT_EQ(sent, (nlohmann::json{{"query", query}, {"search_depth", "basic"},
-        {"max_results", 10}, {"include_answer", false}, {"include_raw_content", false}}));
-    EXPECT_EQ(result["query"], query);
-    ASSERT_EQ(result["results"].size(), 5u);
-    EXPECT_EQ(result["results"][0], (nlohmann::json{{"title", "A source"},
-        {"url", "https://example.org/a"}, {"description", "A summary"}}));
-    EXPECT_EQ(result["results"][1], (nlohmann::json{{"url", "http://example.org/b"}}));
-    EXPECT_EQ(result["results"][4]["url"], "https://example.org/e");
+    EXPECT_EQ(sent, (nlohmann::json{{"query", query}, {"max_results", 10},
+        {"include_images", false}, {"include_image_descriptions", false},
+        {"include_favicon", false}}));
+    auto expected = nlohmann::json::parse(body);
+    expected.erase("images");
+    EXPECT_EQ(result, expected);
 }
 
-TEST(WebSearchResults, PrefersDistinctHostsAndFillsFromOriginalRankingForBothProviders) {
-    struct Case {
-        std::vector<std::string> urls;
-        std::vector<std::size_t> selected;
-    };
-    const std::vector<Case> cases{
-        {{"https://example.org/first", "https://www.example.org/second",
-          "http://EXAMPLE.ORG:8080/third", "https://research.example.org/paper",
-          "https://other.org/first", "https://example.org/fourth",
-          "https://third.org/first", "https://fourth.org/first",
-          "https://fifth.org/first", "https://sixth.org/first"}, {0, 3, 4, 6, 7}},
-        {{"https://example.org/first", "https://www.example.org/second",
-          "https://other.org/first", "https://EXAMPLE.ORG.:443/third",
-          "https://other.org/second", "https://example.org/fourth"}, {0, 2, 1, 3, 4}},
-        {{"https://example.org/first", "https://example.org/second",
-          "https://example.org/third"}, {0, 1, 2}},
-        {{"https://[broken", "https://bad host.org/page",
-          std::string("https://hidden.example/") + '\0' + "suffix",
-          "https://example.org/valid", "https://other.org/valid"}, {3, 4}},
-    };
+TEST(WebSearchResults, PreservesAllResultsAndProviderRankingForBothProviders) {
     for (const bool brave : {true, false}) {
         SCOPED_TRACE(brave ? "Brave" : "Tavily");
-        for (std::size_t index = 0; index < cases.size(); ++index) {
-            SCOPED_TRACE(index);
-            const auto& test = cases[index];
-            auto rows = nlohmann::json::array();
-            for (const auto& url : test.urls) rows.push_back({{"url", url}, {"title", url}});
-            nlohmann::json body{{"results", rows}};
-            if (brave) body = nlohmann::json{{"web", body}};
+        auto rows = nlohmann::json::array();
+        for (int i = 0; i < 20; ++i)
+            rows.push_back({{"url", "https://cnn.com/article" + std::to_string(i)},
+                {"title", "Headline " + std::to_string(i)}, {"score", 1.0 - i * 0.01},
+                {"content", "Original excerpt"}, {"raw_content", "Full article"},
+                {"published_date", "2026-09-26"}});
+        nlohmann::json body{{"results", rows}};
+        if (brave) body = nlohmann::json{{"web", body}};
+        MockHttpServer server({http_response("application/json", body.dump())});
+        server.start();
+        std::atomic_bool cancelled{};
+        const auto endpoint = "http://127.0.0.1:" + std::to_string(server.port());
+        const auto result = nlohmann::json::parse(brave
+            ? search_brave("query", "key", cancelled, endpoint)
+            : search_tavily("query", "key", cancelled, endpoint));
+        server.join();
+        EXPECT_EQ(result, body);
+    }
+}
+
+TEST(WebSearchResults, RemovesMediaBeforeApplyingTheSizeLimit) {
+    for (bool brave : {true, false}) {
+        SCOPED_TRACE(brave);
+        const nlohmann::ordered_json article{{"title", "Text article"},
+            {"url", "https://cnn.com/article"}, {"description", "Article excerpt"},
+            {"extra_snippets", {"More source text"}},
+            {"profile", {{"name", "CNN"}}}, {"meta_url", {{"hostname", "cnn.com"}}},
+            {"location", {{"name", "Newsroom"}}}};
+        auto source = article;
+        source["thumbnail"] = {{"src", std::string(40000, 'x')}};
+        source["images"] = {"https://cnn.com/photo.jpg"};
+        source["favicon"] = "https://cnn.com/favicon.ico";
+        source["profile"]["img"] = "https://cnn.com/profile.png";
+        source["meta_url"]["favicon"] = "https://cnn.com/favicon.ico";
+        source["icons"] = {"https://cnn.com/icon.png"};
+        source["location"]["pictures"] = {{{"url", "https://cnn.com/newsroom.jpg"}}};
+        source["schemas"] = {{{"@type", "VideoObject"},
+            {"thumbnailUrl", "https://cnn.com/thumbnail.jpg"},
+            {"contentUrl", "https://cnn.com/movie.mp4"},
+            {"embedUrl", "https://cnn.com/player"},
+            {"description", std::string(40000, 'x')}}};
+        nlohmann::ordered_json body{{"results", {source}}};
+        nlohmann::ordered_json expected{{"results", {article}}};
+        if (brave) {
+            body = {{"web", body}, {"news", body}};
+            expected = {{"web", expected}, {"news", expected}};
+        }
+        body["images"] = {"https://example.org/image.png"};
+        body["videos"] = {{"results", {{{"url", "https://example.org/movie.mp4"}}}}};
+        body["audio"] = {{"url", "https://example.org/podcast.mp3"}};
+        MockHttpServer server({http_response("application/json", body.dump())});
+        server.start();
+        const auto endpoint = "http://127.0.0.1:" + std::to_string(server.port());
+        const auto output = brave
+            ? search_brave("query", "key", std::atomic_bool{false}, endpoint)
+            : search_tavily("query", "key", std::atomic_bool{false}, endpoint);
+        server.join();
+        EXPECT_EQ(output, expected.dump());
+    }
+}
+
+TEST(WebSearchResults, PreservesSerializedKeyOrderBeforeAndAfterTruncation) {
+    for (bool brave : {true, false}) {
+        for (bool oversized : {false, true}) {
+            SCOPED_TRACE(brave);
+            SCOPED_TRACE(oversized);
+            auto rows = nlohmann::ordered_json::array();
+            for (int i = 0; i < (oversized ? 20 : 1); ++i)
+                rows.push_back({{"title", "Headline " + std::to_string(i)},
+                    {"url", "https://cnn.com/article" + std::to_string(i)},
+                    {"description", std::string(2000, 'x')}});
+            nlohmann::ordered_json body{{"results", rows}, {"query", "CNN today"}};
+            if (brave) body = {{"web", {{"results", rows}}},
+                {"news", {{"results", rows}}}, {"query", "CNN today"}};
             MockHttpServer server({http_response("application/json", body.dump())});
             server.start();
-            std::atomic_bool cancelled{};
             const auto endpoint = "http://127.0.0.1:" + std::to_string(server.port());
-            const auto result = nlohmann::json::parse(brave
-                ? search_brave("query", "key", cancelled, endpoint)
-                : search_tavily("query", "key", cancelled, endpoint));
+            const auto output = brave
+                ? search_brave("CNN today", "key", std::atomic_bool{false}, endpoint)
+                : search_tavily("CNN today", "key", std::atomic_bool{false}, endpoint);
             server.join();
-            ASSERT_EQ(result["results"].size(), test.selected.size());
-            for (std::size_t i = 0; i < test.selected.size(); ++i) {
-                EXPECT_EQ(result["results"][i]["url"], test.urls[test.selected[i]]);
-                EXPECT_EQ(result["results"][i]["title"], test.urls[test.selected[i]]);
+            if (!oversized) EXPECT_EQ(output, body.dump());
+            EXPECT_TRUE(output.starts_with(brave ? "{\"web\":" : "{\"results\":"));
+            EXPECT_LT(output.find("\"title\":"), output.find("\"url\":"));
+            EXPECT_LT(output.find("\"url\":"), output.find("\"description\":"));
+            if (brave) EXPECT_LT(output.find("\"news\":"), output.find("\"query\":"));
+            if (oversized) {
+                EXPECT_LE(output.size(), 32u * 1024);
+                EXPECT_TRUE(nlohmann::json::parse(output).at("truncated").get<bool>());
+            }
+        }
+    }
+}
+
+TEST(WebSearchResults, BoundsLargeOutputsAndKeepsWholeRankedResults) {
+    for (bool brave : {true, false}) {
+        SCOPED_TRACE(brave);
+        test::TestWorkspace fixture;
+        const auto path = fixture.root() / "search-limit.log";
+        initialize_diagnostic_logging(path, "debug");
+        auto rows = nlohmann::json::array();
+        for (int i = 0; i < 20; ++i)
+            rows.push_back({{"url", "https://cnn.com/article" + std::to_string(i)},
+                {"title", "Café \"headline\" " + std::to_string(i)},
+                {"content", std::string(1500, '\n') + "é — 完整"}, {"score", 0.9}});
+        nlohmann::json body{{"results", rows}, {"query", "CNN today"}};
+        if (brave) body = {{"web", {{"results", rows}}},
+            {"news", {{"results", rows}}}, {"query", {{"original", "CNN today"}}}};
+        MockHttpServer server({http_response("application/json", body.dump())});
+        server.start();
+        const auto endpoint = "http://127.0.0.1:" + std::to_string(server.port());
+        const auto output = brave
+            ? search_brave("CNN today", "key", std::atomic_bool{false}, endpoint)
+            : search_tavily("CNN today", "key", std::atomic_bool{false}, endpoint);
+        server.join();
+        shutdown_diagnostic_logging();
+        EXPECT_LE(output.size(), 32u * 1024);
+        const auto result = nlohmann::json::parse(output);
+        EXPECT_EQ(result["truncated"], true);
+        EXPECT_TRUE(result.contains("truncation_reason"));
+        EXPECT_EQ(result["query"], body["query"]);
+        const auto check_prefix = [&](const nlohmann::json& kept) {
+            EXPECT_FALSE(kept.empty());
+            EXPECT_LT(kept.size(), rows.size());
+            for (std::size_t i = 0; i < kept.size(); ++i) EXPECT_EQ(kept[i], rows[i]);
+        };
+        if (brave) {
+            check_prefix(result["web"]["results"]);
+            check_prefix(result["news"]["results"]);
+        } else {
+            check_prefix(result["results"]);
+        }
+        std::ifstream log(path);
+        const std::string diagnostics{std::istreambuf_iterator<char>(log), {}};
+        EXPECT_NE(diagnostics.find("[debug] " + std::string(brave ? "Brave" : "Tavily")
+            + " search output truncated: original_bytes="), std::string::npos);
+        EXPECT_EQ(diagnostics.find("[warning]"), std::string::npos);
+        EXPECT_NE(diagnostics.find("byte_limit=32768"), std::string::npos);
+        EXPECT_NE(diagnostics.find("article19"), std::string::npos); // Full raw response remains logged.
+    }
+}
+
+TEST(WebSearchResults, DropsOversizedEntriesBeforeTrimmingSmallerResults) {
+    for (bool brave : {true, false}) {
+        SCOPED_TRACE(brave);
+        auto small = nlohmann::json::array();
+        for (int i = 0; i < 15; ++i)
+            small.push_back({{"title", "Article " + std::to_string(i)},
+                {"url", "https://example.org/" + std::to_string(i)},
+                {"content", std::string(1000, 'x')}});
+        auto rows = small;
+        rows.insert(rows.begin(), nlohmann::json{{"title", "Oversized first result"},
+            {"url", "https://example.org/huge"}, {"content", std::string(40000, 'x')}});
+        // A second oversized entry must also be removed before trimming by rank.
+        rows.insert(rows.begin() + 8, nlohmann::json{{"title", "Oversized middle result"},
+            {"url", "https://example.org/huge2"}, {"content", std::string(40000, 'y')}});
+        nlohmann::json body{{"results", rows}};
+        if (brave) body = {{"web", body}, {"news", {{"results", {small[0]}}}}};
+        MockHttpServer server({http_response("application/json", body.dump())});
+        server.start();
+        const auto endpoint = "http://127.0.0.1:" + std::to_string(server.port());
+        const auto output = brave
+            ? search_brave("query", "key", std::atomic_bool{false}, endpoint)
+            : search_tavily("query", "key", std::atomic_bool{false}, endpoint);
+        server.join();
+        EXPECT_LE(output.size(), 32u * 1024);
+        const auto result = nlohmann::json::parse(output);
+        EXPECT_EQ(result.at("truncated"), true);
+        EXPECT_EQ(brave ? result.at("web").at("results") : result.at("results"), small);
+        if (brave) EXPECT_EQ(result.at("news"), body.at("news"));
+    }
+}
+
+TEST(WebSearchResults, EnforcesExactByteBoundaryAndBoundsOversizedMetadata) {
+    for (bool brave : {true, false}) {
+        for (std::size_t size : {32u * 1024, 32u * 1024 + 1}) {
+            SCOPED_TRACE(brave);
+            SCOPED_TRACE(size);
+            nlohmann::json body{{"results", nlohmann::json::array()}};
+            if (brave) body = {{"web", body}};
+            body["metadata"] = "";
+            body["metadata"] = std::string(size - body.dump().size(), 'x');
+            ASSERT_EQ(body.dump().size(), size);
+            MockHttpServer server({http_response("application/json", body.dump())});
+            server.start();
+            const auto endpoint = "http://127.0.0.1:" + std::to_string(server.port());
+            const auto output = brave
+                ? search_brave("query", "key", std::atomic_bool{false}, endpoint)
+                : search_tavily("query", "key", std::atomic_bool{false}, endpoint);
+            server.join();
+            EXPECT_LE(output.size(), 32u * 1024);
+            const auto result = nlohmann::json::parse(output);
+            if (size == 32u * 1024) {
+                EXPECT_EQ(result, body);
+            } else {
+                EXPECT_EQ(result["truncated"], true);
+                EXPECT_TRUE(result.contains("error"));
+            }
+        }
+    }
+}
+
+TEST(WebSearchResults, RejectsExcessiveNestingBeforeCleanupOrSerialization) {
+    for (bool brave : {true, false}) {
+        for (bool arrays : {true, false}) {
+            for (int depth : {63, 64, 100000}) {
+                SCOPED_TRACE(brave);
+                SCOPED_TRACE(arrays);
+                SCOPED_TRACE(depth);
+                std::string body = brave
+                    ? R"({"web":{"results":[]},"metadata":)"
+                    : R"({"results":[],"metadata":)";
+                for (int i = 0; i < depth; ++i) body += arrays ? "[" : R"({"x":)";
+                body += "0";
+                body.append(depth, arrays ? ']' : '}');
+                body += '}';
+                ASSERT_LT(body.size(), 1024u * 1024);
+                MockHttpServer server({http_response("application/json", body)});
+                server.start();
+                const auto endpoint = "http://127.0.0.1:" + std::to_string(server.port());
+                const auto search = [&] {
+                    return brave
+                        ? search_brave("query", "key", std::atomic_bool{false}, endpoint)
+                        : search_tavily("query", "key", std::atomic_bool{false}, endpoint);
+                };
+                if (depth == 63) {
+                    EXPECT_EQ(search(), body);
+                } else {
+                    try {
+                        search();
+                        ADD_FAILURE() << "Expected the nesting limit to reject this response";
+                    } catch (const std::runtime_error& error) {
+                        EXPECT_STREQ(error.what(), "Web search response nesting limit exceeded");
+                    }
+                }
+                server.join();
             }
         }
     }
@@ -270,7 +494,6 @@ TEST(TavilySearch, HandlesEmptyResultsAndLimitsQueriesToWholeWords) {
         EXPECT_TRUE(result["results"].empty());
         // Each word plus its space is six bytes. Only 66 whole words fit.
         const auto expected = query.substr(0, 66 * 6 - 1);
-        EXPECT_EQ(result["query"], expected);
         ASSERT_EQ(server.requests().size(), 1u);
         const auto& request = server.requests().front();
         const auto sent = nlohmann::json::parse(request.substr(request.find("\r\n\r\n") + 4));
@@ -283,7 +506,7 @@ TEST(TavilySearch, HandlesEmptyResultsAndLimitsQueriesToWholeWords) {
         const auto result = nlohmann::json::parse(search_tavily(query, "key", cancelled,
             "http://127.0.0.1:" + std::to_string(server.port())));
         server.join();
-        EXPECT_EQ(result["query"], std::string(400, 'x'));
+        EXPECT_TRUE(result["results"].empty());
         ASSERT_EQ(server.requests().size(), 1u);
         const auto& request = server.requests().front();
         const auto sent = nlohmann::json::parse(request.substr(request.find("\r\n\r\n") + 4));
@@ -431,13 +654,15 @@ TEST(WebSearchContext, LongStreamedRewriteStillSearchesWithWholeWords) {
         }, cancelled);
     server.join();
     ASSERT_FALSE(result.empty());
-    std::string expected;
+    std::string encoded;
     for (int i = 0; i < 75; ++i) {
-        if (i > 0) expected += "  ";
-        expected += "café";
+        if (i > 0) encoded += "%20%20";
+        encoded += "caf%C3%A9";
     }
-    EXPECT_EQ(nlohmann::json::parse(result)["query"], expected);
-    EXPECT_EQ(server.requests().size(), 1u);
+    EXPECT_EQ(nlohmann::json::parse(result), nlohmann::json::parse(R"({"web":{"results":[]}})"));
+    ASSERT_EQ(server.requests().size(), 1u);
+    EXPECT_TRUE(server.requests().front().starts_with("GET /?q=" + encoded
+            + "&count=10&extra_snippets=true&text_decorations=false&result_filter=web,news,discussions,faq,infobox,query HTTP/1.1\r\n"));
 }
 
 } // namespace

@@ -509,6 +509,9 @@ ControllerUpdate SessionController::start_classification(
     }
     const auto deadline = std::min(submission->deadline,
         std::chrono::steady_clock::now() + jev_request_timeout);
+    log_debug("Jev classification started: forum_id=" + identity_.forum_id
+        + " session_id=" + identity_.session_id
+        + " ask_web_search=" + (current->web_search().enabled ? "true" : "false"));
     auto request = providers_.make_jev_request(
         {*current->jev(), text, options, deadline, current->web_search().enabled}, notifier_);
     pending_classification_ = PendingClassification{
@@ -552,6 +555,14 @@ ControllerUpdate SessionController::finish_classification() {
     }
     const auto search = result->outcome == JevOutcome::success
         ? result->search_choice.value_or(JevSearch::none) : JevSearch::none;
+    log_debug("Jev classification finished: forum_id=" + identity_.forum_id
+        + " session_id=" + identity_.session_id
+        + " success=" + (result->outcome == JevOutcome::success ? "true" : "false")
+        + " search_decision=" + (result->search_choice
+            ? jev_search_name(*result->search_choice) : "unreported")
+        + " effective_search=" + jev_search_name(search));
+    log_debug_payload("Jev recipient decision", result->choice);
+    log_debug_payload("Jev classification diagnostic", result->message);
     if (!input.fixed_targets.empty()) {
         if (result->outcome == JevOutcome::failure)
             log_warn("Jev classification failed; using explicit recipients: " + result->message);
@@ -1143,7 +1154,7 @@ void SessionController::apply(const GenerationEventDelta& event, ControllerUpdat
     if (event.text.empty()) return;
     if (event.kind == GenerationDeltaKind::answer) {
         append_answer_text(
-            filter_source_references(filter_answer_timestamp(event.text)),
+            active_->url_filter.push(filter_answer_timestamp(event.text)),
             update);
         return;
     }
@@ -1291,27 +1302,16 @@ std::string SessionController::filter_answer_timestamp(std::string_view text) {
     return std::exchange(active_->pending_answer_text, {});
 }
 
-std::string SessionController::filter_source_references(std::string_view text) {
-    std::string& pending = active_->pending_source_reference;
-    pending.append(text);
-    const std::size_t safe = complete_source_reference_prefix(pending);
-    std::string result = remove_source_references(
-        std::string_view(pending).substr(0, safe));
-    pending.erase(0, safe);
-    return result;
-}
-
 void SessionController::flush_pending_answer_text(ControllerUpdate& update) {
     if (active_->answer_timestamp_state == AnswerTimestampState::checking
         && !active_->pending_answer_text.empty()) {
         active_->answer_timestamp_state = AnswerTimestampState::passthrough;
         append_answer_text(
-            filter_source_references(
+            active_->url_filter.push(
                 std::exchange(active_->pending_answer_text, {})),
             update);
     }
-    append_answer_text(
-        std::exchange(active_->pending_source_reference, {}), update);
+    append_answer_text(active_->url_filter.finish(), update);
 }
 
 void SessionController::fail_active_response(

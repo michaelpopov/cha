@@ -290,7 +290,7 @@ TEST(FishAudio, ForwardsAuthenticationAndReturnsAudioBytes) {
     EXPECT_NE(sent.find("Authorization: Bearer fish-secret"), std::string::npos);
     EXPECT_NE(sent.find("model: custom/model"), std::string::npos);
     auto expected_body = request.body;
-    expected_body["text"] = "Hello [pause] World\nSingle line [pause] Three [pause] Four [pause] CRLF [pause] [soft] Goodbye";
+    expected_body["text"] = "Hello [long pause] World\nSingle line [long pause] Three [long pause] Four [long pause] CRLF [long pause] [soft] Goodbye";
     EXPECT_NE(sent.find(expected_body.dump()), std::string::npos);
     ASSERT_TRUE(result);
     EXPECT_EQ(result->audio, "audio");
@@ -420,7 +420,7 @@ TEST(FishAudio, EntrySpeechTextOmitsEmptyAndMetadataOnlyEntries) {
             "history_epoch, next_entry_id, next_request_id) VALUES (1, 'audio', 'Audio', 1, 1, 4, 1)");
         database.execute("INSERT INTO entries (session_key, entry_id, epoch, kind, participant_id, "
             "display_name, addressed_to, addressed_to_name, text, status) VALUES "
-            "(1, 2, 1, 1, 'guide', 'Guide', '', '', 'Stored transcript', 0), "
+            "(1, 2, 1, 1, 'guide', 'Guide', '', '', 'Stored transcript https://example.com/a', 0), "
             "(1, 3, 1, 1, 'guide', 'Guide', '', '', "
             "'  [2026-09-16T12:00:00.123Z] ([source](https://example.com))', 0)");
     }

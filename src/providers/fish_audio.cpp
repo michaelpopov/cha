@@ -19,7 +19,7 @@ using Json = nlohmann::json;
 
 std::string replace_paragraph_breaks(const std::string& text) {
     static const std::regex paragraph_break(R"(\s*\n\s*\n\s*)");
-    return std::regex_replace(text, paragraph_break, " [pause] ");
+    return std::regex_replace(text, paragraph_break, " [long pause] ");
 }
 
 bool valid_audio_type(std::string_view value) {
@@ -93,7 +93,7 @@ std::string entry_speech_text(const EntryAudioLookup& entry) {
     // Match the text shown in chat, including legacy echoed timestamps.
     static const std::regex timestamp_prefix(
         R"(^\s*\[[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?Z\]\s*)");
-    return std::regex_replace(remove_source_references(entry.entry_text), timestamp_prefix, "");
+    return std::regex_replace(remove_url_references(entry.entry_text), timestamp_prefix, "");
 }
 
 struct FishAudioResult { long status; EntryAudio audio; };

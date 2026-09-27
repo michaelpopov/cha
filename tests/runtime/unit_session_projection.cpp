@@ -186,7 +186,7 @@ TEST(SessionProjection, RemovesSourceReferencesFromHistoricalEntries) {
         to_snapshot(*workspace, test_identity, "Label", state.view(), {});
 
     EXPECT_EQ(snapshot.transcript[0].text, state.transcript[0].text);
-    EXPECT_EQ(snapshot.transcript[1].text, "Quote ");
+    EXPECT_EQ(snapshot.transcript[1].text, "Quote");
     EXPECT_NE(state.transcript[1].text.find("gutenberg.org"), std::string::npos);
 }
 

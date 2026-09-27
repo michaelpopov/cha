@@ -95,6 +95,25 @@ TEST_F(LoggingTest, RejectsUnsupportedLevel) {
         std::runtime_error);
 }
 
+TEST_F(LoggingTest, DebugPayloadsAreEscapedAndCredentialsAreRedacted) {
+    initialize_diagnostic_logging(log_file(), "debug");
+    EXPECT_TRUE(debug_logging_enabled());
+    log_debug_payload("empty payload", "");
+    log_debug_payload("response", "first\n[error] forged credential-123 credential-123", "credential-123");
+    const auto output = contents(log_file());
+    EXPECT_EQ(output.find("empty payload"), std::string::npos);
+    EXPECT_NE(output.find("first\\n[error] forged [REDACTED] [REDACTED]"), std::string::npos);
+    EXPECT_EQ(output.find("\n[error] forged"), std::string::npos);
+    EXPECT_EQ(output.find("credential-123"), std::string::npos);
+}
+
+TEST_F(LoggingTest, InfoLoggingDoesNotWriteDebugPayloads) {
+    initialize_diagnostic_logging(log_file(), "info");
+    EXPECT_FALSE(debug_logging_enabled());
+    log_debug_payload("request", "private prompt");
+    EXPECT_EQ(contents(log_file()).find("private prompt"), std::string::npos);
+}
+
 TEST_F(LoggingTest, IgnoresRepeatedInitialization) {
     const std::filesystem::path first = log_file("first.log");
     const std::filesystem::path second = log_file("second.log");
