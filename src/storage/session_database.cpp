@@ -113,11 +113,13 @@ struct DurableState {
     std::int64_t epoch{};
     EntryId next_entry_id{};
     RequestId next_request_id{};
+    bool recent_pending{};
+    bool discardable{};
 };
 
 DurableState read_state(Database& database, SessionKey session_key) {
     Statement state = database.prepare(
-        "SELECT history_epoch, next_entry_id, next_request_id "
+        "SELECT history_epoch, next_entry_id, next_request_id, recent_pending, discardable "
         "FROM sessions WHERE session_key = ?1 AND archived_at IS NULL",
         session_key);
     if (!state.step()) {
@@ -129,6 +131,8 @@ DurableState read_state(Database& database, SessionKey session_key) {
         state.integer(0),
         unsigned_id(state.integer(1), "next transcript entry ID"),
         unsigned_id(state.integer(2), "next request ID"),
+        state.integer(3) != 0,
+        state.integer(4) != 0,
     };
 }
 
@@ -397,6 +401,8 @@ SessionRestore build_restore(Database& database, SessionKey session_key) {
         .entries = read_current_entries(database, session_key, state.epoch),
         .next_request_id = state.next_request_id,
         .next_entry_id = state.next_entry_id,
+        .recent_pending = state.recent_pending,
+        .discardable = state.discardable,
     };
     Statement interrupted = database.prepare(
         "SELECT t.request_id, e.addressed_to FROM turns AS t "
@@ -722,7 +728,7 @@ void SessionJournal::delete_turn(EntryId response_entry_id) {
 void SessionJournal::rename(std::string_view label) {
     Transaction transaction(impl_->database);
     Statement update = impl_->database.prepare(
-        "UPDATE sessions SET label = ?1, updated_at = ?2 "
+        "UPDATE sessions SET label = ?1, updated_at = ?2, recent_pending = 0, discardable = 0 "
         "WHERE session_key = ?3 AND archived_at IS NULL",
         label, session_timestamp(), impl_->session_key);
     update.run();
@@ -730,6 +736,23 @@ void SessionJournal::rename(std::string_view label) {
         throw std::runtime_error("Failed to rename live session");
     }
     transaction.commit();
+}
+
+void SessionJournal::publish_recent() {
+    auto update = impl_->database.prepare(
+        "UPDATE sessions SET recent_pending = 0 WHERE session_key = ?1",
+        impl_->session_key);
+    update.run();
+}
+
+void SessionJournal::retain() {
+    auto update = impl_->database.prepare(
+        "UPDATE sessions SET discardable = 0 WHERE session_key = ?1 AND archived_at IS NULL",
+        impl_->session_key);
+    update.run();
+    if (impl_->database.changes() != 1) {
+        throw std::runtime_error("Session was removed before submission");
+    }
 }
 
 } // namespace cha

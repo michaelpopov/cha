@@ -562,6 +562,8 @@ export interface components {
             forum: components["schemas"]["ForumSummary"];
             session_id: components["schemas"]["Identifier"];
             session_label: string;
+            recent_pending?: boolean;
+            discardable?: boolean;
             characters: components["schemas"]["CharacterSummary"][];
             default_character_id: components["schemas"]["Identifier"] | "*";
             transcript: components["schemas"]["TranscriptEntry"][];

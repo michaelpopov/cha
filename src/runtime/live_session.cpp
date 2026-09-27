@@ -377,6 +377,8 @@ SessionSnapshot LiveSession::make_snapshot() {
         label_,
         controller_->view(),
         presentation(SessionLifecycle::running));
+    snapshot.recent_pending = controller_->recent_pending();
+    snapshot.discardable = controller_->discardable();
     if (cached_audio_entries_) {
         try {
             snapshot.cached_audio_entries = cached_audio_entries_();

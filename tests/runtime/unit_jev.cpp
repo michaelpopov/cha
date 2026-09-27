@@ -3,6 +3,7 @@
 #include "providers/api_key_store.h"
 #include "runtime/live_session_manager.h"
 #include "runtime/text_input.h"
+#include "storage/sqlite_storage.h"
 #include "support/test_live_session.h"
 #include "support/test_notifier.h"
 #include "support/mock_http_server.h"
@@ -307,14 +308,20 @@ protected:
         providers = std::make_shared<Providers>(naming_factory(),
             [this](auto worker) { workers.push_back(std::move(worker)); },
             [this](const auto& input, const auto&) { classified.push_back(input); return decision; });
-        controller = make_controller(notifier);
-        controller->rename("temp-ts-cha-1790467200");
-        controller->enable_auto_naming("temp-ts-cha-1790467200");
+        {
+            storage::SqliteDatabase database(journal.path(), storage::SqliteDatabase::Mode::read_write);
+            database.execute("UPDATE sessions SET label = 'New session', recent_pending = 1, discardable = 1");
+        }
+        controller = make_controller(notifier, load_session_state(journal.path()));
+        controller->enable_auto_naming("New session");
     }
 };
 
 TEST_F(SessionNaming, StartsAlongsideReplyOnlyAfterPromptIsCommitted) {
+    EXPECT_TRUE(controller->recent_pending());
+    EXPECT_TRUE(load_session_state(journal.path()).discardable);
     (void)send("How should I plan a small garden?");
+    EXPECT_FALSE(load_session_state(journal.path()).discardable);
     ASSERT_EQ(workers.size(), 1u);
     EXPECT_FALSE(controller->is_naming());
     EXPECT_TRUE(controller->view().transcript.entries.empty());
@@ -328,7 +335,9 @@ TEST_F(SessionNaming, StartsAlongsideReplyOnlyAfterPromptIsCommitted) {
     auto name_worker = std::move(workers.back());
     workers.pop_back();
     name_worker();
-    EXPECT_EQ(read_session_database_metadata(journal.path()).label, "temp-ts-cha-1790467200");
+    EXPECT_TRUE(controller->recent_pending());
+    EXPECT_TRUE(load_session_state(journal.path()).recent_pending);
+    EXPECT_EQ(read_session_database_metadata(journal.path()).label, "New session");
     ASSERT_EQ(title_inputs.size(), 1u);
     EXPECT_EQ(title_inputs[0].run.prompt_text, "How should I plan a small garden?");
     EXPECT_TRUE(title_inputs[0].history->entries.empty());
@@ -347,6 +356,8 @@ TEST_F(SessionNaming, StartsAlongsideReplyOnlyAfterPromptIsCommitted) {
 
     const auto update = controller->receive_events(100).update;
     EXPECT_EQ(update.session_label, title);
+    EXPECT_FALSE(controller->recent_pending());
+    EXPECT_FALSE(load_session_state(journal.path()).recent_pending);
     EXPECT_TRUE(requires_snapshot(update));
     EXPECT_TRUE(controller->is_generating());
     EXPECT_EQ(read_session_database_metadata(journal.path()).label, title);
@@ -390,7 +401,37 @@ TEST_F(SessionNaming, FailedTitleDoesNotInterruptTheReply) {
     run_workers();
     EXPECT_FALSE(controller->receive_events(100).update.session_label);
     finish();
-    EXPECT_EQ(read_session_database_metadata(journal.path()).label, "temp-ts-cha-1790467200");
+    EXPECT_FALSE(controller->recent_pending());
+    EXPECT_FALSE(load_session_state(journal.path()).recent_pending);
+    EXPECT_EQ(read_session_database_metadata(journal.path()).label, "New session");
+    EXPECT_EQ(controller->view().transcript.entries.back().status, EntryStatus::complete);
+}
+
+TEST_F(SessionNaming, FailedVisibilityWriteDoesNotInterruptTheReply) {
+    {
+        storage::SqliteDatabase database(journal.path(), storage::SqliteDatabase::Mode::read_write);
+        database.execute(
+            "CREATE TRIGGER reject_visibility BEFORE UPDATE OF recent_pending ON sessions "
+            "BEGIN SELECT RAISE(ABORT, 'visibility write failed'); END");
+    }
+    title_result = {GenerationOutcome::transport_error, "Naming unavailable"};
+    (void)send("Plan a garden");
+    ASSERT_NO_THROW(finish());
+    EXPECT_TRUE(controller->recent_pending());
+    const auto restored = load_session_state(journal.path());
+    EXPECT_TRUE(restored.recent_pending);
+    ASSERT_EQ(restored.entries.size(), 2u);
+    EXPECT_EQ(restored.entries.back().status, EntryStatus::complete);
+
+    {
+        storage::SqliteDatabase database(journal.path(), storage::SqliteDatabase::Mode::read_write);
+        database.execute("DROP TRIGGER reject_visibility");
+    }
+    (void)send("What should I plant?");
+    ASSERT_NO_THROW(finish());
+    EXPECT_FALSE(controller->recent_pending());
+    EXPECT_FALSE(load_session_state(journal.path()).recent_pending);
+    ASSERT_EQ(controller->view().transcript.entries.size(), 4u);
     EXPECT_EQ(controller->view().transcript.entries.back().status, EntryStatus::complete);
 }
 
@@ -400,7 +441,9 @@ TEST_F(SessionNaming, EmptyTitleLeavesTheTemporaryName) {
     run_workers();
     EXPECT_FALSE(controller->receive_events(100).update.session_label);
     finish();
-    EXPECT_EQ(read_session_database_metadata(journal.path()).label, "temp-ts-cha-1790467200");
+    EXPECT_FALSE(controller->recent_pending());
+    EXPECT_FALSE(load_session_state(journal.path()).recent_pending);
+    EXPECT_EQ(read_session_database_metadata(journal.path()).label, "New session");
     EXPECT_EQ(controller->view().transcript.entries.back().status, EntryStatus::complete);
 }
 
@@ -442,9 +485,10 @@ TEST_P(SessionNamingRetry, RetriesOncePerSubmissionUsingTheFirstPromptUntilSucce
         finish();
         ASSERT_EQ(title_inputs.size(), index + 1);
         EXPECT_EQ(title_inputs.back().run.prompt_text, "Plan a garden");
-        EXPECT_EQ(read_session_database_metadata(journal.path()).label, "temp-ts-cha-1790467200");
+        EXPECT_EQ(read_session_database_metadata(journal.path()).label, "New session");
         EXPECT_EQ(controller->view().transcript.entries.back().status, EntryStatus::complete);
         EXPECT_FALSE(controller->is_naming());
+        EXPECT_FALSE(controller->recent_pending());
         (void)controller->receive_events(100);
         EXPECT_TRUE(workers.empty());
         // Covering the conversation must not change which prompt names it.
@@ -562,7 +606,7 @@ TEST_F(SessionNaming, StoppedClassificationDoesNotRenameAnEmptySession) {
     EXPECT_FALSE(controller->receive_events(100).update.session_label);
     EXPECT_FALSE(controller->is_naming());
     EXPECT_TRUE(controller->view().transcript.entries.empty());
-    EXPECT_EQ(read_session_database_metadata(journal.path()).label, "temp-ts-cha-1790467200");
+    EXPECT_EQ(read_session_database_metadata(journal.path()).label, "New session");
     (void)send("A new first prompt");
     EXPECT_TRUE(title_inputs.empty());
     EXPECT_EQ(workers.size(), 1u);
@@ -570,7 +614,28 @@ TEST_F(SessionNaming, StoppedClassificationDoesNotRenameAnEmptySession) {
     EXPECT_EQ(read_session_database_metadata(journal.path()).label, title);
 }
 
-TEST_F(SessionNaming, RuntimePublishesAndMirrorsALateTitleWithoutBlockingChat) {
+TEST_F(SessionNaming, SnapshotReportsRetentionEvenWithoutEntries) {
+    controller.reset();
+    LiveSessionManager manager({}, [&](const FullSessionId&, auto wake) {
+        return OpenedSession{.label = "New session",
+            .controller = make_controller(wake, load_session_state(journal.path()))};
+    });
+    ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(manager.open({"lobby", "session"}, 2s)));
+    auto session = manager.lookup({"lobby", "session"});
+    EXPECT_TRUE(std::get<SessionSnapshot>(session->snapshot(2s)).discardable);
+
+    EXPECT_TRUE(std::holds_alternative<CommandResult>(session->submit(RawCommand{"/foo"}, 2s)));
+    const auto snapshot = std::get<SessionSnapshot>(session->snapshot(2s));
+    EXPECT_FALSE(snapshot.discardable);
+    EXPECT_TRUE(snapshot.recent_pending);
+    EXPECT_TRUE(snapshot.transcript.empty());
+}
+
+class SessionNamingRuntime : public SessionNaming, public testing::WithParamInterface<bool> {};
+
+TEST_P(SessionNamingRuntime, PublishesALateNamingResultWithoutBlockingChat) {
+    if (GetParam()) title_result = {GenerationOutcome::transport_error, "Naming unavailable"};
+    const std::string expected_label = GetParam() ? "New session" : title;
     controller.reset();
     providers->shutdown();
     std::promise<void> started, release;
@@ -580,7 +645,8 @@ TEST_F(SessionNaming, RuntimePublishesAndMirrorsALateTitleWithoutBlockingChat) {
         [](const auto&, const auto&) { return JevResult{JevOutcome::success, "undefined"}; });
     std::string mirrored_label;
     LiveSessionManager manager({}, [&](const FullSessionId&, auto wake) {
-        return OpenedSession{.label = "temp-ts-cha-1790467200", .controller = make_controller(wake),
+        return OpenedSession{.label = "New session",
+            .controller = make_controller(wake, load_session_state(journal.path())),
             .mirror = [&](std::string_view label, auto) { mirrored_label = label; }};
     });
     ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(manager.open({"lobby", "session"}, 2s)));
@@ -596,18 +662,22 @@ TEST_F(SessionNaming, RuntimePublishesAndMirrorsALateTitleWithoutBlockingChat) {
     }
     EXPECT_FALSE(snapshot.generation.active);
     EXPECT_FALSE(session->idle_for_retirement());
-    EXPECT_EQ(snapshot.session_label, "temp-ts-cha-1790467200");
+    EXPECT_EQ(snapshot.session_label, "New session");
+    EXPECT_TRUE(snapshot.recent_pending);
     release.set_value();
-    while (snapshot.session_label != title && std::chrono::steady_clock::now() < deadline) {
+    while (snapshot.recent_pending && std::chrono::steady_clock::now() < deadline) {
         std::this_thread::sleep_for(1ms);
         snapshot = std::get<SessionSnapshot>(session->snapshot(2s));
     }
-    EXPECT_EQ(snapshot.session_label, title);
-    EXPECT_EQ(read_session_database_metadata(journal.path()).label, title);
-    EXPECT_EQ(mirrored_label, title);
+    EXPECT_EQ(snapshot.session_label, expected_label);
+    EXPECT_FALSE(snapshot.recent_pending);
+    EXPECT_EQ(read_session_database_metadata(journal.path()).label, expected_label);
+    EXPECT_EQ(mirrored_label, expected_label);
     EXPECT_TRUE(session->idle_for_retirement());
     ASSERT_EQ(snapshot.transcript.size(), 2u);
 }
+
+INSTANTIATE_TEST_SUITE_P(SuccessAndFailure, SessionNamingRuntime, testing::Bool());
 
 TEST_F(JevRouting, OnDemandSearchUsesWorkspaceDefaultAndCharacterOverrideWithoutRecipientDetection) {
     struct SearchBackend final : ModelBackend {

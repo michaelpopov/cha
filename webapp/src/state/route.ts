@@ -1,3 +1,6 @@
+// Matches welcome_id in src/workspace/builtins.h.
+export const welcomeSessionId = 'builtin-welcome';
+
 export type AppRoute =
   | { kind: 'root' }
   | { kind: 'session'; forumId: string; sessionId: string }

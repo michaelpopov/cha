@@ -1367,6 +1367,10 @@ components:
           $ref: "#/components/schemas/Identifier"
         session_label:
           type: string
+        recent_pending:
+          type: boolean
+        discardable:
+          type: boolean
         characters:
           type: array
           items:

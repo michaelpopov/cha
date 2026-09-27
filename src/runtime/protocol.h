@@ -114,6 +114,8 @@ struct SessionSnapshot {
     SessionLifecycle lifecycle{SessionLifecycle::starting};
     std::optional<ShutdownReason> shutdown_reason;
     std::set<EntryId> cached_audio_entries;
+    bool recent_pending{};
+    bool discardable{};
     bool operator==(const SessionSnapshot&) const = default;
 };
 

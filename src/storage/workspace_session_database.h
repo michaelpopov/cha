@@ -42,6 +42,7 @@ void validate_workspace_session_database_identity(
 void validate_workspace_session_contents(storage::SqliteDatabase& database);
 // Adds response metadata columns to databases created by older schema-2 builds.
 void ensure_entry_metadata_columns(storage::SqliteDatabase& database);
+void ensure_session_lifecycle_columns(storage::SqliteDatabase& database);
 
 [[nodiscard]] WorkspaceDatabaseState inspect_workspace_session_database(
     const std::filesystem::path& path,

@@ -4,12 +4,15 @@
 
 namespace cha {
 
-inline constexpr std::string_view temporary_session_label_prefix = "temp-ts-cha-";
+inline constexpr std::string_view temporary_session_label = "New session";
 
 inline bool is_temporary_session_label(std::string_view label) {
-    return label.starts_with(temporary_session_label_prefix)
-        && label.size() > temporary_session_label_prefix.size()
-        && label.substr(temporary_session_label_prefix.size()).find_first_not_of("0123456789")
+    if (label == temporary_session_label) return true;
+    // Sessions saved by older versions can still receive an automatic name.
+    constexpr std::string_view legacy_prefix = "temp-ts-cha-";
+    return label.starts_with(legacy_prefix)
+        && label.size() > legacy_prefix.size()
+        && label.substr(legacy_prefix.size()).find_first_not_of("0123456789")
             == std::string_view::npos;
 }
 

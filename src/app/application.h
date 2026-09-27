@@ -181,7 +181,8 @@ public:
     [[nodiscard]] std::optional<ErrorCode> delete_session(
         std::string_view forum_id,
         std::string_view session_id,
-        std::uint64_t epoch);
+        std::uint64_t epoch,
+        bool only_if_unused = false);
     [[nodiscard]] std::vector<SessionListing> list_sessions(
         std::string_view forum_id,
         std::uint64_t epoch);

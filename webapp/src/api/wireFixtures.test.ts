@@ -94,6 +94,9 @@ describe('snapshot validation', () => {
     ['missing forum identity', { forum: { default_persona_id: 'guest', default_persona_display_name: 'Guest' } }],
     ['empty session identity', { session_id: '' }],
     ['missing session label', { session_label: undefined }],
+    ['string discardable flag', { discardable: 'false' }],
+    ['numeric discardable flag', { discardable: 1 }],
+    ['null discardable flag', { discardable: null }],
     ['malformed character', { characters: [{}] }],
     ['empty default character', { default_character_id: '' }],
     ['empty transcript entry', { transcript: [{}] }],
@@ -104,6 +107,10 @@ describe('snapshot validation', () => {
     ['unknown shutdown reason', { shutdown_reason: 'unknown' }],
   ])('rejects %s', (_name, patch) => {
     expect(isSessionSnapshot({ ...snapshot(), ...patch })).toBe(false);
+  });
+
+  it.each([undefined, false, true])('accepts discardable: %s', (discardable) => {
+    expect(isSessionSnapshot({ ...snapshot(), discardable })).toBe(true);
   });
 
   it.each([

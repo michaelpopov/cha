@@ -88,14 +88,6 @@ std::vector<StoredSession> list_forum(
     return result;
 }
 
-void delete_archived_sessions(
-    const std::filesystem::path& path,
-    std::string_view password) {
-    Database database(path, Database::Mode::read_write, password);
-    validate_workspace_session_database_identity(database);
-    database.execute("DELETE FROM sessions WHERE archived_at IS NOT NULL");
-}
-
 std::atomic<bool> forced_forum_sync_failure{false};
 
 } // namespace
@@ -117,6 +109,24 @@ void SessionRepository::MaintenanceGuard::checkpoint() const {
 void SessionRepository::MaintenanceGuard::synchronize_forums(
     const Workspace& workspace) const {
     repository_->synchronize_forums_unlocked(workspace);
+}
+
+void SessionRepository::MaintenanceGuard::recover_sessions() const {
+    repository_->recover_sessions();
+}
+
+void SessionRepository::recover_sessions() const {
+    Database database(database_path_, Database::Mode::read_write, database_password_);
+    validate_workspace_session_database_identity(database);
+    // Call only at startup or after draining live sessions. A rejected submission may
+    // have cleared discardable without saving any entries.
+    database.execute(
+        "DELETE FROM sessions WHERE archived_at IS NOT NULL OR (recent_pending = 1 "
+        "AND NOT EXISTS (SELECT 1 FROM entries e WHERE e.session_key = sessions.session_key))");
+    // Interrupted naming must not hide a conversation that already has content.
+    database.execute(
+        "UPDATE sessions SET recent_pending = 0 WHERE recent_pending = 1 "
+        "AND EXISTS (SELECT 1 FROM entries e WHERE e.session_key = sessions.session_key)");
 }
 
 void SessionRepository::MaintenanceGuard::retarget(
@@ -167,7 +177,7 @@ SessionRepository::SessionRepository(
             "Welcome directory '" + utf8_path(welcome_directory)
             + "' is not a directory");
     }
-    delete_archived_sessions(database_path_, database_password_);
+    recover_sessions();
     synchronize_forums();
 
     temporary_database_path_ = welcome_directory / "sessions.sqlite3";
@@ -292,7 +302,7 @@ std::vector<StoredSession> SessionRepository::recent() const {
     Statement statement = database.prepare(
         "SELECT f.forum_id, s.session_id, s.label, s.updated_at "
         "FROM sessions AS s JOIN forums AS f USING (forum_key) "
-        "WHERE s.archived_at IS NULL "
+        "WHERE s.archived_at IS NULL AND s.recent_pending = 0 "
         "ORDER BY s.updated_at DESC, f.forum_id, s.session_id");
     std::vector<StoredSession> result;
     while (statement.step()) {
@@ -358,15 +368,16 @@ StoredSession SessionRepository::create(
             ? base_id : base_id + "-" + std::to_string(suffix);
         const std::int64_t updated_at = session_timestamp();
         const std::string effective_label = label.empty()
-            ? std::string(temporary_session_label_prefix) + std::to_string(updated_at) : label;
+            ? std::string(temporary_session_label) : label;
         Statement insert = database.prepare(
             "INSERT INTO sessions (forum_key, session_id, label, "
-            "updated_at, history_epoch, next_entry_id, next_request_id) "
-            "VALUES (?1, ?2, ?3, ?4, 1, 1, 1)",
+            "updated_at, history_epoch, next_entry_id, next_request_id, recent_pending, discardable) "
+            "VALUES (?1, ?2, ?3, ?4, 1, 1, 1, ?5, ?5)",
             forum_key,
             std::string_view(id),
             std::string_view(effective_label),
-            updated_at);
+            updated_at,
+            static_cast<std::int64_t>(label.empty()));
         try {
             insert.run();
         } catch (const std::runtime_error&) {
@@ -409,7 +420,7 @@ StoredSession SessionRepository::rename(
     Transaction transaction(database);
     const std::int64_t updated_at = session_timestamp();
     Statement update = database.prepare(
-        "UPDATE sessions SET label = ?1, updated_at = ?2 "
+        "UPDATE sessions SET label = ?1, updated_at = ?2, recent_pending = 0, discardable = 0 "
         "WHERE session_key = (SELECT s.session_key FROM sessions AS s "
         "JOIN forums AS f USING (forum_key) WHERE f.forum_id = ?3 "
         "AND s.session_id = ?4) AND archived_at IS NULL",
@@ -427,6 +438,21 @@ StoredSession SessionRepository::rename(
         .label = std::move(label),
         .updated_at = updated_at,
     };
+}
+
+bool SessionRepository::discard_unused(const FullSessionId& identity) const {
+    const std::shared_lock operation(operation_mutex_);
+    require_persistent_forum(identity.forum_id);
+    Database database(database_path_, Database::Mode::read_write, database_password_);
+    validate_workspace_session_database_identity(database);
+    auto remove = database.prepare(
+        "DELETE FROM sessions WHERE discardable = 1 AND archived_at IS NULL "
+        "AND session_key = (SELECT s.session_key FROM sessions s JOIN forums f USING (forum_key) "
+        "WHERE f.forum_id = ?1 AND s.session_id = ?2) "
+        "AND NOT EXISTS (SELECT 1 FROM entries e WHERE e.session_key = sessions.session_key)",
+        std::string_view(identity.forum_id), std::string_view(identity.session_id));
+    remove.run();
+    return database.changes() == 1;
 }
 
 void SessionRepository::delete_session(const FullSessionId& identity) const {

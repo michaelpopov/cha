@@ -480,16 +480,24 @@ export function App({
     setBootstrapAttempt((attempt) => attempt + 1);
   }, []);
 
+  const bootstrapRefresh = useRef(0);
+  const appliedBootstrapRefresh = useRef(0);
   const refreshBootstrap = useCallback(async () => {
+    const refresh = ++bootstrapRefresh.current;
     try {
+      const bootstrap = validateBootstrap(await client.getBootstrap());
+      if (refresh < appliedBootstrapRefresh.current) return;
+      appliedBootstrapRefresh.current = refresh;
       dispatch({
         type: 'bootstrap-refreshed',
-        bootstrap: validateBootstrap(await client.getBootstrap()),
+        bootstrap,
       });
     } catch {
       // The live snapshot remains usable. Discovery refresh is non-critical.
     }
   }, [client]);
+
+  const sessionDiscarded = useCallback(() => setCatalogRevision((revision) => revision + 1), []);
 
   const {
     navigate,
@@ -499,10 +507,13 @@ export function App({
     retryStream,
     clearLiveSession,
     clearVaultContext,
+    retainSession,
+    abandonUnusedSession,
   } = useLiveSession(client, state, dispatch, {
     connectSessionEvents,
     retryDelays,
     refreshBootstrap,
+    onSessionDiscarded: sessionDiscarded,
   });
 
   useEffect(() => {
@@ -559,10 +570,11 @@ export function App({
   }, [clearLiveSession, navigate]);
 
   const switchVault = useCallback(async (vaultName: string, password?: string) => {
+    await abandonUnusedSession({ refresh: false });
     await client.switchVault(vaultName, password);
     writeAppRoute('/', 'replace');
     if (!contextEvents) reload();
-  }, [client, contextEvents, reload]);
+  }, [abandonUnusedSession, client, contextEvents, reload]);
 
   // Keyed by conversation as well as action: the server gives a mutation up to
   // its command deadline, and a request left behind in one conversation must
@@ -587,6 +599,7 @@ export function App({
   const submitInput = useCallback(async (text: string) => {
     const active = state.activeConversation;
     if (!active) throw new Error('No live conversation is selected.');
+    if (text.trim()) retainSession(active.forumId, active.sessionId);
     const visit = composerVisit.current;
     const forumName = state.sessionSnapshot?.forum.display_name
       ?? state.bootstrap?.forums.find((forum) => forum.id === active.forumId)?.display_name
@@ -604,7 +617,7 @@ export function App({
       }
       throw failure;
     }
-  }, [client, runMutation, state.activeConversation, state.activeConversationLabel, state.sessionSnapshot, state.bootstrap]);
+  }, [client, retainSession, runMutation, state.activeConversation, state.activeConversationLabel, state.sessionSnapshot, state.bootstrap]);
 
   const coverConversation = useCallback((throughEntryId: number) => {
     const active = state.activeConversation;

@@ -7,6 +7,7 @@ import type {
   VaultDetail,
 } from '../api/client';
 import type { AppendEvent } from '../api/events';
+import { welcomeSessionId } from './route';
 import {
   applyCharacterUpdate,
   applyForumUpdate,
@@ -215,6 +216,7 @@ export type AppAction =
   | { type: 'session-operation-failed'; message: string; retryable?: boolean }
   | { type: 'conversation-opened'; snapshot: SessionSnapshot }
   | { type: 'session-snapshot'; snapshot: SessionSnapshot }
+  | { type: 'session-discarded'; forumId: string; sessionId: string }
   | { type: 'session-audio-cache'; forumId: string; sessionId: string; entryId?: number; cached: boolean }
   | { type: 'session-append'; forumId: string; sessionId: string; event: AppendEvent }
   | { type: 'show-initial-conversation' }
@@ -777,6 +779,26 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         sessionOperationMessage: action.message,
         sessionOperationRetryable: action.retryable ?? false,
       };
+    case 'session-discarded': {
+      if (state.activeConversation?.forumId !== action.forumId
+          || state.activeConversation.sessionId !== action.sessionId) return state;
+      return {
+        ...state,
+        bootstrap: state.bootstrap
+            && state.bootstrap.initial_forum_id === action.forumId
+            && state.bootstrap.initial_session_id === action.sessionId
+          ? {
+            ...state.bootstrap,
+            initial_forum_id: state.bootstrap.entrance_forum_id,
+            initial_session_id: welcomeSessionId,
+          }
+          : state.bootstrap,
+        activeConversation: null,
+        activeConversationLabel: null,
+        sessionSnapshot: null,
+        ...idleSessionOperation(),
+      };
+    }
     case 'conversation-opened':
       return {
         ...state,

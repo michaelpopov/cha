@@ -213,6 +213,10 @@ std::string provider_endpoint(const ModelBackendConfig& config) {
         + host + ':' + std::to_string(config.port) + config.base_path;
     switch (config.api) {
     case ProviderApi::chat_completions:
+        // Gemini's OpenAI-compatible base path already contains its API version.
+        if (config.base_path == "/v1beta/openai") {
+            return base_url + "/chat/completions";
+        }
         return base_url + "/v1/chat/completions";
     case ProviderApi::responses:
         return base_url + "/v1/responses";

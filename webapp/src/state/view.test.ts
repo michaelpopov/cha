@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { bootstrapFixture, snapshotFixture } from '../test/fixtures';
+import { welcomeSessionId } from './route';
 import {
   appReducer,
   initialAppState,
@@ -14,6 +15,26 @@ function readyState(): AppState {
 }
 
 describe('application navigation reducer', () => {
+  it.each([
+    { name: 'empty', recent: [] },
+    { name: 'populated', recent: [...bootstrapFixture.recent_sessions].reverse() },
+  ])(
+    'returns to Welcome after discarding the initial session with $name Recent', ({ recent }) => {
+      const bootstrap = {
+        ...bootstrapFixture,
+        initial_forum_id: 'lobby',
+        initial_session_id: 'unused',
+        recent_sessions: recent,
+      };
+      let state = appReducer(initialAppState, { type: 'bootstrap-loaded', bootstrap });
+      state = appReducer(state, { type: 'session-discarded', forumId: 'lobby', sessionId: 'unused' });
+      expect(state.bootstrap?.initial_forum_id).toBe(bootstrap.entrance_forum_id);
+      expect(state.bootstrap?.initial_session_id).toBe(welcomeSessionId);
+      state = appReducer(state, { type: 'show-initial-conversation' });
+      expect(state.activeConversation).toEqual({ forumId: bootstrap.entrance_forum_id, sessionId: welcomeSessionId });
+    },
+  );
+
   it('notifies an already-uncached active conversation when its session cache is cleared', () => {
     const state = { ...readyState(), sessionSnapshot: snapshotFixture };
     const clear: AppAction = { type: 'session-audio-cache', forumId: 'entrance', sessionId: 'welcome', cached: false };
@@ -78,7 +99,7 @@ describe('application navigation reducer', () => {
   });
 
   it('repairs a stale Recent label even when the active conversation label is current', () => {
-    const temporaryLabel = 'temp-ts-cha-1790467200';
+    const temporaryLabel = 'New session';
     const staleBootstrap = {
       ...bootstrapFixture,
       recent_sessions: bootstrapFixture.recent_sessions.map((session) => (

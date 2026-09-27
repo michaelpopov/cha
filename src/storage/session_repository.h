@@ -67,6 +67,7 @@ public:
 
         void checkpoint() const;
         void synchronize_forums(const Workspace& workspace) const;
+        void recover_sessions() const;
         void retarget(
             std::filesystem::path database_path,
             std::string database_password = {});
@@ -102,6 +103,7 @@ public:
         const FullSessionId& identity,
         std::string label) const;
     void delete_session(const FullSessionId& identity) const;
+    [[nodiscard]] bool discard_unused(const FullSessionId& identity) const;
     [[nodiscard]] PreparedSession prepare(
         const FullSessionId& identity) const;
     [[nodiscard]] std::vector<TranscriptEntry> history(
@@ -128,6 +130,7 @@ private:
         const FullSessionId& identity) const;
     void require_persistent_forum(std::string_view forum_id) const;
     void synchronize_forums_unlocked(const Workspace& workspace) const;
+    void recover_sessions() const;
 
     WorkspaceReader read_workspace_;
     mutable std::shared_mutex operation_mutex_;

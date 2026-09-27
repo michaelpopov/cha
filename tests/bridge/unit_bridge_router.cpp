@@ -406,6 +406,28 @@ TEST_F(BridgeRouterTest, ListsRenamesExportsAndEditsWorkspaceOverTheBridge) {
     ASSERT_TRUE(reply["ok"]);
 }
 
+TEST_F(BridgeRouterTest, ConditionalSessionDeletePreservesUsedAndNamedSessions) {
+    bootstrap_epoch();
+    const auto created = call("session.create", {{"forum_id", "lobby"}, {"label", ""}});
+    ASSERT_TRUE(created["ok"]);
+    const std::string id = created["result"]["id"];
+    const auto discarded = call("session.delete",
+        {{"forum_id", "lobby"}, {"session_id", id}, {"only_if_unused", true}});
+    ASSERT_TRUE(discarded["ok"]);
+    const auto opened = call("session.open", {{"forum_id", "lobby"}, {"session_id", id}});
+    EXPECT_FALSE(opened["ok"]);
+    EXPECT_EQ(opened["error"]["code"], "not_found");
+
+    const auto named = call("session.create", {{"forum_id", "lobby"}, {"label", "Keep"}});
+    ASSERT_TRUE(named["ok"]);
+    const std::string named_id = named["result"]["id"];
+    EXPECT_TRUE(call("session.delete", {{"forum_id", "lobby"}, {"session_id", named_id},
+        {"only_if_unused", true}})["ok"]);
+    EXPECT_TRUE(call("session.open", {{"forum_id", "lobby"}, {"session_id", named_id}})["ok"]);
+    EXPECT_FALSE(call("session.delete", {{"forum_id", "lobby"}, {"session_id", named_id},
+        {"only_if_unused", "yes"}})["ok"]);
+}
+
 TEST_F(BridgeRouterTest, RejectsMalformedUnknownStaleDuplicateAndUnavailableMethods) {
     bootstrap_epoch();
     const auto before = application_->live_session_count();

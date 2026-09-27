@@ -31,6 +31,9 @@ struct SessionRestore {
     RequestId next_request_id{1};
     EntryId next_entry_id{1};
     std::vector<InterruptedTurn> interrupted_turns;
+    bool recent_pending{};
+    // New automatic sessions become permanent before their first submission.
+    bool discardable{};
 };
 
 struct LoadedSessionDatabase {
@@ -86,6 +89,8 @@ public:
     void fail_turn(RequestId request_id, const TranscriptEntry& error);
     void delete_turn(EntryId response_entry_id);
     void rename(std::string_view label);
+    void publish_recent();
+    void retain();
 
 private:
     class Impl;

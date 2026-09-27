@@ -137,6 +137,7 @@ export interface ChaClient {
   createSession(forumId: string, label: string): Promise<CreateSessionResult>;
   renameSession(forumId: string, sessionId: string, label: string): Promise<SessionLabelResult>;
   deleteSession(forumId: string, sessionId: string): Promise<void>;
+  discardUnusedSession(forumId: string, sessionId: string): Promise<void>;
   clearSessionAudioCache(forumId: string, sessionId: string): Promise<void>;
   downloadSession(forumId: string, sessionId: string): Promise<string>;
   openSession(forumId: string, sessionId: string): Promise<OpenSessionResult>;
@@ -612,6 +613,8 @@ export function isSessionSnapshot(value: unknown): value is SessionSnapshot {
     && value.forum.default_persona_display_name.length > 0
     && typeof value.session_id === 'string' && value.session_id.length > 0
     && typeof value.session_label === 'string'
+    && (value.recent_pending === undefined || typeof value.recent_pending === 'boolean')
+    && (value.discardable === undefined || typeof value.discardable === 'boolean')
     && Array.isArray(value.characters)
     && value.characters.every(isRosterSummary)
     && typeof value.default_character_id === 'string' && value.default_character_id.length > 0

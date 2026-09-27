@@ -98,9 +98,12 @@ public:
         std::shared_ptr<SubmissionState> submission = {});
     [[nodiscard]] ControllerUpdate set_default_character_by_id(std::string_view id);
     [[nodiscard]] ControllerUpdate request_stop();
+    void retain();
     void rename(std::string_view label);
     void enable_auto_naming(std::string_view label);
     [[nodiscard]] bool is_naming() const noexcept { return name_request_ != nullptr; }
+    [[nodiscard]] bool recent_pending() const noexcept { return recent_pending_; }
+    [[nodiscard]] bool discardable() const noexcept { return discardable_; }
     [[nodiscard]] ControllerUpdate handle_generation_event(GenerationEvent event);
     [[nodiscard]] ControllerEventBatch receive_events(std::size_t max_events);
     void shutdown();
@@ -205,7 +208,8 @@ private:
         std::vector<std::string> fixed_targets,
         std::shared_ptr<SubmissionState> submission);
     ControllerUpdate finish_classification();
-    void start_session_name();
+    void start_session_name(ControllerUpdate& update);
+    void publish_recent(ControllerUpdate& update);
     bool receive_session_name(ControllerUpdate& update, std::size_t max_events);
     void cancel_session_name() noexcept;
     std::shared_ptr<WebSearchContext> make_web_search(
@@ -223,6 +227,8 @@ private:
     std::optional<PendingClassification> pending_classification_;
     std::optional<SubmissionResult> submission_result_;
     bool auto_name_{};
+    bool recent_pending_{};
+    bool discardable_{};
     std::shared_ptr<ProviderRequest> name_request_;
     std::string name_text_;
     WorkspaceReader read_workspace_;

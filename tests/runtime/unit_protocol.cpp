@@ -219,6 +219,13 @@ TEST(WebProtocol, SerializesSpecifiedSuccessListingAndErrorBodies) {
         }));
 }
 
+TEST(WebProtocol, SerializesDiscardableSessionState) {
+    SessionSnapshot snapshot;
+    EXPECT_FALSE(nlohmann::json(snapshot).contains("discardable"));
+    snapshot.discardable = true;
+    EXPECT_EQ(nlohmann::json(snapshot)["discardable"], true);
+}
+
 TEST(WebProtocol, SerializesSnapshotMailboxPayloadAndTargetAwareAppend) {
     SessionSnapshot snapshot{
         .forum = {"forum", "Forum"},

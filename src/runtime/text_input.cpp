@@ -200,6 +200,7 @@ CommandResult handle_text_input(
     if (trim_view(input).empty()) {
         return result;
     }
+    controller.retain();
     if (controller.is_generating()) {
         result.session.notice = std::string(generation_in_progress_notice);
         return result;

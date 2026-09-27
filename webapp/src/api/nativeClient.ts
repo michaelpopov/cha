@@ -344,6 +344,13 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient {
         isRecord,
       );
     },
+    discardUnusedSession: async (forumId, sessionId) => {
+      await call(
+        'session.delete',
+        { forum_id: forumId, session_id: sessionId, only_if_unused: true },
+        isRecord,
+      );
+    },
     clearSessionAudioCache: async (forumId, sessionId) => {
       await call(
         'audio.clearCache',

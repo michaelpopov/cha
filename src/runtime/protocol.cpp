@@ -268,6 +268,8 @@ void to_json(nlohmann::json& json, const SessionSnapshot& value) {
         {"lifecycle", to_string(value.lifecycle)},
     };
     put_optional(json, "covered_until", value.covered_until);
+    if (value.recent_pending) json["recent_pending"] = true;
+    if (value.discardable) json["discardable"] = true;
     put_optional(json, "notice", value.notice);
     if (value.shutdown_reason) {
         json["shutdown_reason"] = to_string(*value.shutdown_reason);

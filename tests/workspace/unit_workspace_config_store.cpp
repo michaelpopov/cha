@@ -904,6 +904,21 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, OpensAndAddsMissingEntryMetadataColumns)
     while (entries.step()) EXPECT_EQ(entries.integer(0), 0);
 }
 
+TEST_F(RuntimeWorkspaceConfigStoreTest, AddsRecentVisibilityWithoutHidingExistingSessions) {
+    {
+        Database handle(database(), Database::Mode::read_write);
+        handle.execute("ALTER TABLE sessions DROP COLUMN recent_pending");
+        handle.execute("ALTER TABLE sessions DROP COLUMN discardable");
+    }
+    const auto store = open_store();
+    Database handle(database(), Database::Mode::read_only);
+    Statement sessions = handle.prepare("SELECT recent_pending, discardable FROM sessions");
+    while (sessions.step()) {
+        EXPECT_EQ(sessions.integer(0), 0);
+        EXPECT_EQ(sessions.integer(1), 0);
+    }
+}
+
 TEST_F(RuntimeWorkspaceConfigStoreTest, HoldsTheLeaseAgainstRuntimeImportAndExport) {
     const auto store = open_store();
     EXPECT_THROW(

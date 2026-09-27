@@ -299,6 +299,7 @@ void Application::Impl::VaultMaintenance::reopen(
     try {
         database.reopen();
         repository.synchronize_forums(*app.store->snapshot());
+        repository.recover_sessions();
     } catch (...) {
         app.unusable = true;
         throw;

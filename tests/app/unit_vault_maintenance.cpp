@@ -2,6 +2,8 @@
 #include "app/vault_operations.h"
 
 #include "storage/session_repository.h"
+#include "storage/sqlite_storage.h"
+#include "support/test_transcript.h"
 #include "support/test_workspace.h"
 #include "util/toml_file.h"
 #include "app/current_vault.h"
@@ -11,6 +13,7 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <algorithm>
 #include <condition_variable>
 #include <filesystem>
 #include <fstream>
@@ -158,6 +161,50 @@ TEST(ApplicationVault, SwitchAwayAndBackRestoresStoredSessions) {
     const auto table = read_toml_file(
         pair.command.config_directory / "app.toml", "config file");
     EXPECT_EQ(table["vault"].value<std::string>(), "A");
+}
+
+TEST(ApplicationVault, SwitchBackRecoversPendingSessions) {
+    TwoVaults pair;
+    auto application = Application::open(pair.command);
+    const auto unused = application->create_session("lobby", "", application->context_epoch());
+    const auto rejected = application->create_session("lobby", "", application->context_epoch());
+    const auto used = application->create_session("lobby", "", application->context_epoch());
+    const auto named = application->create_session("lobby", "Named empty session", application->context_epoch());
+    // Seed the durable states left by a rejected prompt and interrupted naming.
+    for (const auto& id : {rejected.id, used.id}) {
+        storage::SqliteDatabase database(pair.database_a, storage::SqliteDatabase::Mode::read_write);
+        auto row = database.prepare("SELECT session_key FROM sessions WHERE session_id = ?1", id);
+        ASSERT_TRUE(row.step());
+        const auto key = row.integer(0);
+        ASSERT_FALSE(row.step());
+        SessionJournal journal(pair.database_a, key);
+        journal.retain();
+        if (id == used.id) {
+            journal.record_entry(test::human_entry(1, {"human", "You"}, {"-", "Notes"}, "Keep me"));
+        }
+    }
+    const auto before = application->bootstrap().presentation.recent_sessions;
+    EXPECT_TRUE(std::ranges::none_of(before, [&](const auto& row) { return row.session_id == used.id; }));
+
+    ASSERT_EQ(application->switch_vault("B", {}, application->context_epoch()).state, ApplicationState::running);
+    ASSERT_EQ(application->switch_vault("A", {}, application->context_epoch()).state, ApplicationState::running);
+
+    const auto listed = application->list_sessions("lobby", application->context_epoch());
+    EXPECT_TRUE(std::ranges::none_of(listed, [&](const auto& row) {
+        return row.id == unused.id || row.id == rejected.id;
+    }));
+    EXPECT_TRUE(std::ranges::any_of(listed, [&](const auto& row) { return row.id == named.id; }));
+    const auto recent = application->bootstrap().presentation.recent_sessions;
+    EXPECT_TRUE(std::ranges::any_of(recent, [&](const auto& row) {
+        return row.session_id == used.id && row.session_label == "New session";
+    }));
+    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(
+        application->open_session("lobby", used.id, application->context_epoch())));
+    const auto snapshot = std::get<SessionSnapshot>(
+        application->snapshot("lobby", used.id, application->context_epoch()));
+    EXPECT_FALSE(snapshot.recent_pending);
+    ASSERT_EQ(snapshot.transcript.size(), 1u);
+    EXPECT_EQ(snapshot.transcript.front().text, "Keep me");
 }
 
 TEST(ApplicationVault, SwitchMigratesLegacyKeysWithoutHoldingTheStoreLock) {

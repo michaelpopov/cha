@@ -840,9 +840,18 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                 break;
             }
             case Method::session_delete: {
-                const auto identity = parse_session_identity(params);
+                if (params.contains("only_if_unused")) {
+                    require_only_keys(params, {"forum_id", "session_id", "only_if_unused"});
+                } else {
+                    require_only_keys(params, {"forum_id", "session_id"});
+                }
+                if (params.contains("only_if_unused") && !params["only_if_unused"].is_boolean()) {
+                    throw std::invalid_argument("The request was not valid.");
+                }
                 if (const auto error = application.delete_session(
-                        identity.forum_id, identity.session_id, epoch)) {
+                        require_identifier(params, "forum_id"),
+                        require_identifier(params, "session_id"), epoch,
+                        params.value("only_if_unused", false))) {
                     fail(*error);
                     return;
                 }

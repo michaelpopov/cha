@@ -26,6 +26,7 @@ import {
   waitingAuth,
 } from '../test/fixtures';
 import { App } from './App';
+import { welcomeSessionId } from '../state/route';
 
 beforeEach(() => {
   window.history.replaceState(null, '', '/');
@@ -1064,18 +1065,23 @@ it('lists sessions with compact time metadata and opens a stored session once', 
   expect(screen.getByLabelText('Current chat context')).toHaveTextContent('The Lobby');
 });
 
-it('creates and opens a session from a recent forum menu with a generated name, and refreshes Recent', async () => {
-  const sessionLabel = 'temp-ts-cha-1790467200';
+it.each(['Garden planning', 'New session'])(
+  'keeps a new session out of Recent until naming finishes with %s', async (finalLabel) => {
+  const sessionLabel = 'New session';
   const user = userEvent.setup();
   const refreshed = structuredClone(bootstrapFixture);
   refreshed.recent_sessions = [{
     forum_id: 'lobby',
     session_id: 'created',
-    session_label: sessionLabel,
+    session_label: finalLabel,
     updated_at: 3,
   }, ...refreshed.recent_sessions];
+  let finishPendingRefresh: (bootstrap: Bootstrap) => void = () => undefined;
   const getBootstrap = vi.fn()
     .mockResolvedValueOnce(bootstrapFixture)
+    .mockImplementationOnce(() => new Promise<Bootstrap>((resolve) => {
+      finishPendingRefresh = resolve;
+    }))
     .mockResolvedValue(refreshed);
   const createSession = vi.fn(async (_forumId: string, label: string) => ({
     id: 'created',
@@ -1085,13 +1091,15 @@ it('creates and opens a session from a recent forum menu with a generated name, 
     forum_id: forumId,
     session_id: sessionId,
   }));
-  const connect = vi.fn((_forumId: string, _sessionId: string) => inertSessionEvents());
+  const events = drivableSessionEvents();
+  const connect = vi.fn(events.connect);
   const client = fixtureClient({
     getBootstrap,
     listSessions: async () => [],
     createSession,
     openSession,
-    getSessionSnapshot: async () => lobbySnapshot('created', sessionLabel),
+    getSessionSnapshot: async (_forumId, sessionId) => sessionId === 'welcome'
+      ? snapshotFixture : { ...lobbySnapshot('created', sessionLabel), recent_pending: true },
   });
   render(<App client={client} connectSessionEvents={connect} />);
 
@@ -1112,8 +1120,74 @@ it('creates and opens a session from a recent forum menu with a generated name, 
   expect(screen.getByLabelText('Current chat context')).toHaveTextContent(
     'The LobbyFrom: ReaderTo: Guide',
   );
-  expect(screen.getByRole('button', { name: `${sessionLabel}The Lobby` }))
+  expect(screen.queryByRole('button', { name: `${sessionLabel}The Lobby` }))
+    .not.toBeInTheDocument();
+  const stream = events.handlers[events.connections.findIndex(({ key }) => key === 'lobby/created')];
+  act(() => stream.onSnapshot({
+    ...lobbySnapshot('created', sessionLabel), recent_pending: true,
+  }));
+  expect(getBootstrap).toHaveBeenCalledTimes(2);
+  getBootstrap.mockResolvedValue(refreshed);
+  act(() => stream.onSnapshot(lobbySnapshot('created', finalLabel)));
+  expect(await screen.findByRole('button', { name: `${finalLabel}The Lobby` }))
     .toHaveAttribute('aria-current', 'page');
+  await act(async () => finishPendingRefresh(bootstrapFixture));
+  expect(screen.getByRole('button', { name: `${finalLabel}The Lobby` }))
+    .toHaveAttribute('aria-current', 'page');
+});
+
+it.each([false, true])('keeps a successful refresh when a newer refresh fails (older finishes first: %s)', async (olderFirst) => {
+  window.history.replaceState(null, '', '/#/s/lobby/planning/');
+  const older = deferred();
+  const newer = deferred();
+  const refreshed = structuredClone(bootstrapFixture);
+  refreshed.recent_sessions = [{
+    forum_id: 'lobby', session_id: 'planning', session_label: 'Updated planning', updated_at: 3,
+  }];
+  const getBootstrap = vi.fn()
+    .mockResolvedValueOnce(bootstrapFixture)
+    .mockImplementationOnce(async () => { await older.promise; return refreshed; })
+    .mockImplementationOnce(async () => { await newer.promise; throw new Error('Refresh failed'); });
+  const events = drivableSessionEvents();
+  render(<App client={fixtureClient({
+    getBootstrap,
+    getSessionSnapshot: async () => ({ ...lobbySnapshot(), recent_pending: true }),
+  })} connectSessionEvents={events.connect} />);
+  await waitFor(() => expect(getBootstrap).toHaveBeenCalledTimes(2));
+  act(() => events.handlers[0].onSnapshot(lobbySnapshot()));
+  expect(getBootstrap).toHaveBeenCalledTimes(3);
+
+  await act(async () => (olderFirst ? older : newer).settle());
+  await act(async () => (olderFirst ? newer : older).settle());
+  expect(await screen.findByRole('button', { name: 'Updated planningThe Lobby' }))
+    .toHaveAttribute('aria-current', 'page');
+});
+
+it.each([false, true])('leaving a new session preserves only submitted input (submitted: %s)', async (submitted) => {
+  const user = userEvent.setup();
+  const events = drivableSessionEvents();
+  const discardUnusedSession = vi.fn(async () => undefined);
+  const submitInput = vi.fn(() => new Promise<never>(() => undefined));
+  render(<App client={fixtureClient({
+    createSession: async () => ({ id: 'unused', label: 'New session' }),
+    getSessionSnapshot: async (_forumId, sessionId) => sessionId === 'welcome'
+      ? snapshotFixture : { ...lobbySnapshot('unused', 'New session'), recent_pending: true, discardable: true },
+    discardUnusedSession,
+    submitInput,
+  })} connectSessionEvents={events.connect} />);
+  await user.click(await screen.findByRole('button', { name: 'Actions for forum The Lobby' }));
+  await user.click(screen.getByRole('menuitem', { name: 'Create new session' }));
+  await waitFor(() => expect(window.location.hash).toBe('#/s/lobby/unused/'));
+  act(() => events.handlers[events.connections.findIndex(({ key }) => key === 'lobby/unused')]
+    .onSnapshot({ ...lobbySnapshot('unused', 'New session'), recent_pending: true, discardable: true }));
+  await user.type(screen.getByRole('textbox', { name: 'Message' }), 'Keep this only if submitted');
+  if (submitted) {
+    await user.click(screen.getByRole('button', { name: 'Send message' }));
+    await waitFor(() => expect(submitInput).toHaveBeenCalled());
+  }
+  await user.click(screen.getByRole('button', { name: 'Settings' }));
+  if (submitted) expect(discardUnusedSession).not.toHaveBeenCalled();
+  else await waitFor(() => expect(discardUnusedSession).toHaveBeenCalledWith('lobby', 'unused'));
 });
 
 it('transliterates Latin typing to Russian when renaming a session', async () => {
@@ -1366,15 +1440,50 @@ it('refreshes the startup session before returning after deleting it', async () 
   expect(screen.queryByRole('heading', { name: 'Session unavailable' })).not.toBeInTheDocument();
 });
 
-// Cancelling stops the browser from following the new session, but the server
-// has already written it, so it has to turn up in the lists rather than vanish.
-it('refreshes Recent when a creation lands after the reader cancelled', async () => {
+it('returns to Welcome while an empty selected session is still being discarded', async () => {
+  const user = userEvent.setup();
+  const events = drivableSessionEvents();
+  const cleanup = deferred();
+  let selected = { forumId: 'lobby', sessionId: 'unused' };
+  const unusedSnapshot = { ...lobbySnapshot('unused', 'New session'), recent_pending: true, discardable: true };
+  const welcomeSnapshot = { ...snapshotFixture, session_id: welcomeSessionId };
+  const discardUnusedSession = vi.fn(() => cleanup.promise);
+  const openSession = vi.fn(async (forumId: string, sessionId: string) => {
+    selected = { forumId, sessionId };
+    return { forum_id: forumId, session_id: sessionId };
+  });
+  render(<App client={fixtureClient({
+    getBootstrap: async () => ({
+      ...bootstrapFixture,
+      initial_forum_id: selected.forumId,
+      initial_session_id: selected.sessionId,
+      recent_sessions: [],
+    }),
+    getSessionSnapshot: async (_forumId, sessionId) => sessionId === 'unused' ? unusedSnapshot : welcomeSnapshot,
+    openSession,
+    discardUnusedSession,
+  })} connectSessionEvents={events.connect} />);
+  await waitFor(() => expect(events.connections[0]?.key).toBe('lobby/unused'));
+  act(() => events.handlers[0].onSnapshot({
+    ...unusedSnapshot, lifecycle: 'stopping', shutdown_reason: 'session_closed',
+  }));
+  await user.click(await screen.findByRole('button', { name: 'Return to start' }));
+  await waitFor(() => expect(events.connections.some(({ key }) => key === `entrance/${welcomeSessionId}`)).toBe(true));
+  expect(discardUnusedSession).toHaveBeenCalledWith('lobby', 'unused');
+  expect(openSession.mock.calls.filter(([, id]) => id === 'unused')).toHaveLength(1);
+  expect(selected).toEqual({ forumId: 'entrance', sessionId: welcomeSessionId });
+  await act(async () => cleanup.settle());
+  expect(openSession.mock.calls.filter(([, id]) => id === 'unused')).toHaveLength(1);
+});
+
+it('discards a creation that finishes after the reader leaves', async () => {
   const user = userEvent.setup();
   let finishCreate: (created: { id: string; label: string }) => void = () => {};
   const createSession = vi.fn(() => new Promise<{ id: string; label: string }>((resolve) => {
     finishCreate = resolve;
   }));
   const getBootstrap = vi.fn().mockResolvedValue(bootstrapFixture);
+  const discardUnusedSession = vi.fn(async () => undefined);
   const openSession = vi.fn(async (forumId: string, sessionId: string) => ({
     forum_id: forumId,
     session_id: sessionId,
@@ -1383,6 +1492,7 @@ it('refreshes Recent when a creation lands after the reader cancelled', async ()
     getBootstrap,
     listSessions: async () => [],
     createSession,
+    discardUnusedSession,
     openSession,
   });
   render(<App client={client} connectSessionEvents={inertSessionEvents} />);
@@ -1392,7 +1502,6 @@ it('refreshes Recent when a creation lands after the reader cancelled', async ()
   await user.click(screen.getByRole('button', { name: 'The LobbyGuide' }));
   await user.click(await screen.findByRole('button', { name: 'New session' }));
   await waitFor(() => expect(createSession).toHaveBeenCalled());
-  const listedBeforeCancel = getBootstrap.mock.calls.length;
 
   expect(screen.getByRole('status')).toHaveTextContent('Creating session');
   await openSettingsNavigation();
@@ -1405,7 +1514,7 @@ it('refreshes Recent when a creation lands after the reader cancelled', async ()
   expect(openSession).not.toHaveBeenCalledWith('lobby', 'created');
   expect(screen.getByLabelText('Characters navigation')).toBeInTheDocument();
   expect(screen.queryByText('Creating session…')).not.toBeInTheDocument();
-  await waitFor(() => expect(getBootstrap.mock.calls.length).toBe(listedBeforeCancel + 1));
+  await waitFor(() => expect(discardUnusedSession).toHaveBeenCalledWith('lobby', 'created'));
 });
 
 it('lets the reader browse forums when a deep-linked session cannot open', async () => {
@@ -2324,6 +2433,32 @@ it('clears the conversation route before reloading after a vault switch', async 
   await user.selectOptions(vault, 'Projects');
   await waitFor(() => expect(switchVault).toHaveBeenCalledWith('Projects', undefined));
   expect(window.location.hash).toBe('#/');
+  expect(reload).toHaveBeenCalledOnce();
+});
+
+it('waits for unused-session discard without refreshing the outgoing vault', async () => {
+  const cleanup = deferred();
+  const discardUnusedSession = vi.fn(() => cleanup.promise);
+  const getBootstrap = vi.fn(async () => bootstrapFixture);
+  const switchVault = vi.fn(async () => undefined);
+  const reload = vi.fn();
+  const events = drivableSessionEvents();
+  render(<App client={fixtureClient({
+    getBootstrap,
+    discardUnusedSession,
+    switchVault,
+    getSessionSnapshot: async () => ({ ...snapshotFixture, recent_pending: true, discardable: true }),
+  })} connectSessionEvents={events.connect} reload={reload} />);
+  await waitFor(() => expect(events.connections).toHaveLength(1));
+  const refreshCount = getBootstrap.mock.calls.length;
+
+  await userEvent.selectOptions(screen.getByLabelText('Vault'), 'Projects');
+  expect(discardUnusedSession).toHaveBeenCalledWith('entrance', 'welcome');
+  expect(switchVault).not.toHaveBeenCalled();
+  await act(async () => cleanup.settle());
+
+  expect(switchVault).toHaveBeenCalledWith('Projects', undefined);
+  expect(getBootstrap).toHaveBeenCalledTimes(refreshCount);
   expect(reload).toHaveBeenCalledOnce();
 });
 

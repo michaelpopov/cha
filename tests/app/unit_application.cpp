@@ -192,6 +192,32 @@ TEST(Application, CreateOpenSubmitStopSnapshotCloseAndShutdown) {
     EXPECT_FALSE(application->running());
 }
 
+TEST(Application, DiscardsOnlyUnusedTemporarySessions) {
+    test::TestWorkspace workspace;
+    auto application = Application::open(make_command(workspace, test::import_test_database(workspace.root())));
+    const auto epoch = application->context_epoch();
+    const auto unopened = application->create_session("lobby", "", epoch);
+    EXPECT_FALSE(application->delete_session("lobby", unopened.id, epoch, true));
+    EXPECT_EQ(std::get<ErrorCode>(application->open_session("lobby", unopened.id, epoch)), ErrorCode::not_found);
+
+    const auto empty = application->create_session("lobby", "", epoch);
+    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(application->open_session("lobby", empty.id, epoch)));
+    EXPECT_FALSE(application->delete_session("lobby", empty.id, epoch, true));
+    EXPECT_TRUE(application->list_sessions("lobby", epoch).empty());
+    EXPECT_FALSE(application->delete_session("lobby", empty.id, epoch, true));
+
+    for (const auto* text : {"@- Keep this note", "Hello"}) {
+        const auto used = application->create_session("lobby", "", epoch);
+        ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(application->open_session("lobby", used.id, epoch)));
+        (void)application->submit("lobby", used.id, RawCommand{text}, epoch);
+        EXPECT_FALSE(application->delete_session("lobby", used.id, epoch, true));
+        EXPECT_TRUE(std::holds_alternative<SessionSnapshot>(application->snapshot("lobby", used.id, epoch)));
+    }
+    const auto named = application->create_session("lobby", "Intentionally empty", epoch);
+    EXPECT_FALSE(application->delete_session("lobby", named.id, epoch, true));
+    EXPECT_EQ(application->list_sessions("lobby", epoch).size(), 3u);
+}
+
 TEST(Application, SubscribeInstallsInitialSnapshotAtSequenceZero) {
     test::TestWorkspace workspace;
     const std::filesystem::path database =

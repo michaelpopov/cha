@@ -1207,6 +1207,7 @@ void WorkspaceConfigStore::MaintenanceGuard::reopen() {
             store.database_password);
         validate_workspace_session_database_identity(*store.database);
         ensure_entry_metadata_columns(*store.database);
+        ensure_session_lifecycle_columns(*store.database);
         validate_workspace_session_contents(*store.database);
         store.database->execute("PRAGMA journal_mode = WAL");
         secure_workspace_session_database_files(store.database_path);
@@ -1249,6 +1250,7 @@ std::unique_ptr<WorkspaceConfigStore> WorkspaceConfigStore::open(
         impl->database_password);
     validate_workspace_session_database_identity(*impl->database);
     ensure_entry_metadata_columns(*impl->database);
+    ensure_session_lifecycle_columns(*impl->database);
     validate_workspace_session_contents(*impl->database);
     impl->database->execute("PRAGMA journal_mode = WAL");
     secure_workspace_session_database_files(impl->database_path);

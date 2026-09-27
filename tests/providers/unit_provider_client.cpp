@@ -185,6 +185,32 @@ TEST(ProviderClient, RejectsAnAlreadyCancelledRequestBeforeDispatch) {
     EXPECT_FALSE(received_delta);
 }
 
+TEST(ProviderClient, BuildsEndpointsForConfiguredProviderBasePaths) {
+    struct Case {
+        const char* host;
+        const char* base_path;
+        const char* expected;
+    };
+    const Case cases[]{
+        {"generativelanguage.googleapis.com", "/v1beta/openai",
+            "https://generativelanguage.googleapis.com:443/v1beta/openai/chat/completions"},
+        {"openrouter.ai", "/api", "https://openrouter.ai:443/api/v1/chat/completions"},
+        {"api.fireworks.ai", "/inference",
+            "https://api.fireworks.ai:443/inference/v1/chat/completions"},
+        {"api.cerebras.ai", "", "https://api.cerebras.ai:443/v1/chat/completions"},
+    };
+    for (const auto& item : cases) {
+        SCOPED_TRACE(item.host);
+        ModelBackendConfig config;
+        config.host = item.host;
+        config.port = 443;
+        config.https = true;
+        config.base_path = item.base_path;
+        config.api = ProviderApi::chat_completions;
+        EXPECT_EQ(provider_endpoint(config), item.expected);
+    }
+}
+
 TEST(ProviderClient, StreamsDeltasAndBuildsTheProviderRequest) {
     const std::string stream =
         "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\n"

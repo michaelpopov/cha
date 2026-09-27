@@ -2,6 +2,7 @@
 #include "session/session_controller.h"
 #include "runtime/text_input.h"
 #include "storage/session_database.h"
+#include "storage/sqlite_storage.h"
 #include "support/test_backends.h"
 #include "support/test_controller.h"
 #include "support/test_notifier.h"
@@ -109,6 +110,31 @@ public:
 private:
     std::string id_{"guide-id"};
 };
+
+TEST(TextInput, RetainsNonBlankInputEvenWhenItAddsNoEntries) {
+    for (const std::string input : {"", " \t\n", "/foo", "@Guide", "/mcast", "@Unknown hi"}) {
+        SCOPED_TRACE(input);
+        TemporaryTextSession temporary;
+        {
+            storage::SqliteDatabase database(temporary.path, storage::SqliteDatabase::Mode::read_write);
+            database.execute("UPDATE sessions SET recent_pending = 1, discardable = 1");
+        }
+        auto controller = test::from_test_workspace(
+            std::vector<CharacterDefinition>{definition()},
+            temporary.path,
+            notifier(),
+            load_session_state(temporary.path));
+
+        (void)handle_text_input(*controller, "operator", input);
+
+        const auto restored = load_session_state(temporary.path);
+        EXPECT_EQ(restored.discardable, input.empty() || input == " \t\n");
+        EXPECT_TRUE(restored.entries.empty());
+        EXPECT_TRUE(controller->recent_pending());
+        EXPECT_FALSE(controller->is_generating());
+        EXPECT_FALSE(controller->is_naming());
+    }
+}
 
 TEST(TextInput, DispatchesTheRemainingSlashCommands) {
     TemporaryTextSession temporary;

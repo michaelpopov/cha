@@ -1,6 +1,7 @@
 #include "providers/responses_api.h"
 
 #include "util/json_serialization.h"
+#include "util/logging.h"
 #include "providers/tool_calls.h"
 
 #include <nlohmann/json.hpp>
@@ -124,7 +125,13 @@ std::string build_responses_request_body(
         body["instructions"] = std::move(instructions);
     }
     if (!config.reasoning_effort.empty()) {
-        body["reasoning"] = Json{{"effort", config.reasoning_effort}};
+        if (is_direct_openai_host(config.host)
+            && (config.model == "gpt-4o" || config.model.starts_with("gpt-4o-"))) {
+            log_warn("Ignoring reasoning_effort for non-reasoning OpenAI model "
+                + config.model);
+        } else {
+            body["reasoning"] = Json{{"effort", config.reasoning_effort}};
+        }
     }
     if (!config.openrouter_targets.empty()) {
         if (!valid_openrouter_targets(config)) {

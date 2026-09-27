@@ -1,5 +1,5 @@
 import { useReducer } from 'react';
-import { act, renderHook } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, expect, it, vi } from 'vitest';
 
 import type { ChaClient, OpenSessionResult } from './api/client';
@@ -34,17 +34,18 @@ function harness(overrides: Partial<ChaClient> = {}) {
   const events = drivableSessionEvents();
   const client = fixtureClient(overrides);
   const reducer = vi.fn(appReducer);
+  const refreshBootstrap = vi.fn(async () => undefined);
   const view = renderHook(() => {
     const [state, dispatch] = useReducer(reducer, initialAppState);
     return {
       state,
       live: useLiveSession(client, state, dispatch, {
         connectSessionEvents: events.connect,
-        refreshBootstrap: async () => undefined,
+        refreshBootstrap,
       }),
     };
   });
-  return { events, view, reducer };
+  return { events, view, reducer, refreshBootstrap };
 }
 
 // Holds openSession open so a test can navigate while the open is in flight.
@@ -58,6 +59,112 @@ function haltedOpen() {
     release: () => release({ forum_id: 'entrance', session_id: 'welcome' }),
   };
 }
+
+it('discards an unused session when leaving for Settings, but not on an in-place action', async () => {
+  const discardUnusedSession = vi.fn(async () => undefined);
+  const { events, view } = harness({
+    discardUnusedSession,
+    getSessionSnapshot: async () => ({ ...snapshotFixture, recent_pending: true, discardable: true }),
+  });
+  await act(async () => { await view.result.current.live.openConversation('entrance', 'welcome'); });
+  act(() => view.result.current.live.navigate({ type: 'toggle-sidebar' }));
+  expect(discardUnusedSession).not.toHaveBeenCalled();
+  act(() => view.result.current.live.navigate({ type: 'show-settings' }));
+  expect(discardUnusedSession).toHaveBeenCalledWith('entrance', 'welcome');
+  expect(events.closes[0]).toHaveBeenCalled();
+  expect(view.result.current.state.activeConversation).toBeNull();
+  expect(view.result.current.state.mainView).toBe('settings');
+  expect(window.location.hash).toBe('#/');
+});
+
+it('keeps a submitted session when leaving before the first snapshot arrives', async () => {
+  const discardUnusedSession = vi.fn(async () => undefined);
+  const { view } = harness({
+    discardUnusedSession,
+    getSessionSnapshot: async () => ({ ...snapshotFixture, recent_pending: true, discardable: true }),
+  });
+  await act(async () => { await view.result.current.live.openConversation('entrance', 'welcome'); });
+  act(() => {
+    view.result.current.live.retainSession('entrance', 'welcome');
+    view.result.current.live.navigate({ type: 'show-settings' });
+  });
+  expect(discardUnusedSession).not.toHaveBeenCalled();
+});
+
+it.each(['open', 'stream'])(
+  'keeps a retained empty session reported by the %s snapshot', async (source) => {
+    const discardUnusedSession = vi.fn(async () => undefined);
+    const retained = { ...snapshotFixture, recent_pending: true, discardable: false };
+    const { events, view, reducer } = harness({
+      discardUnusedSession,
+      getSessionSnapshot: async () => ({ ...retained, discardable: source === 'stream' }),
+    });
+    await act(async () => { await view.result.current.live.openConversation('entrance', 'welcome'); });
+    if (source === 'stream') act(() => events.handlers[0].onSnapshot(retained));
+    act(() => view.result.current.live.navigate({ type: 'show-settings' }));
+    expect(discardUnusedSession).not.toHaveBeenCalled();
+    expect(reducer.mock.calls.some(([, action]) => action.type === 'session-discarded')).toBe(false);
+    expect(window.location.hash).toBe('#/s/entrance/welcome/');
+  },
+);
+
+it('discards a session whose creation finishes after navigating away', async () => {
+  let finishCreate: (created: { id: string; label: string }) => void = () => undefined;
+  const discardUnusedSession = vi.fn(async () => undefined);
+  const { view } = harness({
+    discardUnusedSession,
+    createSession: () => new Promise((resolve) => { finishCreate = resolve; }),
+  });
+  let created: Promise<boolean> | undefined;
+  act(() => { created = view.result.current.live.createConversation('lobby'); });
+  act(() => view.result.current.live.navigate({ type: 'show-settings' }));
+  await act(async () => {
+    finishCreate({ id: 'unused', label: 'New session' });
+    expect(await created).toBe(false);
+  });
+  expect(discardUnusedSession).toHaveBeenCalledWith('lobby', 'unused');
+});
+
+it('keeps the same unused session when retrying a failed open', async () => {
+  const discardUnusedSession = vi.fn(async () => undefined);
+  let opens = 0;
+  const { view } = harness({
+    discardUnusedSession,
+    createSession: async () => ({ id: 'unused', label: 'New session' }),
+    openSession: async (forumId, sessionId) => {
+      if (++opens === 1) throw new Error('Try again');
+      return { forum_id: forumId, session_id: sessionId };
+    },
+    getSessionSnapshot: async () => ({ ...snapshotFixture, session_id: 'unused', recent_pending: true, discardable: true }),
+  });
+  await act(async () => { await view.result.current.live.createConversation('lobby'); });
+  act(() => view.result.current.live.retrySessionOpen());
+  await waitFor(() => expect(opens).toBe(2));
+  expect(discardUnusedSession).not.toHaveBeenCalled();
+});
+
+it.each(['Garden planning', 'New session'])(
+  'refreshes Recent only after naming settles with %s', async (label) => {
+    const pending = { ...snapshotFixture, recent_pending: true };
+    const { events, view, refreshBootstrap } = harness({
+      getSessionSnapshot: async () => pending,
+    });
+    await act(async () => {
+      await view.result.current.live.openConversation('entrance', 'welcome');
+    });
+    refreshBootstrap.mockClear();
+    act(() => events.handlers[0].onSnapshot(pending));
+    expect(refreshBootstrap).not.toHaveBeenCalled();
+    act(() => events.handlers[0].onSnapshot({
+      ...snapshotFixture, session_label: label,
+    }));
+    expect(refreshBootstrap).toHaveBeenCalledTimes(1);
+    act(() => events.handlers[0].onSnapshot({
+      ...snapshotFixture, session_label: label,
+    }));
+    expect(refreshBootstrap).toHaveBeenCalledTimes(1);
+  },
+);
 
 it('keeps an in-flight open alive across an in-place action', async () => {
   const halted = haltedOpen();

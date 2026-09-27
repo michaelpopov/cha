@@ -87,6 +87,7 @@ interface LiveSessionOptions {
   connectSessionEvents?: SessionEventsConnector;
   retryDelays?: readonly number[];
   refreshBootstrap(): Promise<void>;
+  onSessionDiscarded?(): void;
 }
 
 export function useLiveSession(
@@ -97,6 +98,7 @@ export function useLiveSession(
     connectSessionEvents = noSessionEvents,
     retryDelays = liveRetryDelays,
     refreshBootstrap,
+    onSessionDiscarded,
   }: LiveSessionOptions,
 ) {
   // The epoch this render was built from. The ref below is what asynchronous
@@ -113,6 +115,7 @@ export function useLiveSession(
   const pendingTarget = useRef<{ key: string } | null>(null);
   const retryTarget = useRef<SessionTarget | null>(null);
   const connection = useRef<AttachedStream | null>(null);
+  const pendingRecentSessions = useRef(new Set<string>());
   const recovery = useRef<RecoveryRun | null>(null);
   const retryTimerCancellation = useRef<(() => void) | null>(null);
   // Connection resets invalidate recovery without changing navigation intent.
@@ -127,19 +130,6 @@ export function useLiveSession(
     generation: number,
     reopen?: boolean,
   ) => void>(() => undefined);
-
-  // Every navigation intent goes through here so the ref and the rendered copy
-  // of the epoch can never disagree.
-  const beginNavigation = useCallback(() => {
-    navigation.current += 1;
-    setRenderedEpoch(navigation.current);
-    return navigation.current;
-  }, []);
-
-  const navigate = useCallback((action: AppAction) => {
-    if (!inPlaceActions.has(action.type)) beginNavigation();
-    dispatch(action);
-  }, [beginNavigation, dispatch]);
 
   const cancelRetryTimer = useCallback(() => {
     retryTimerCancellation.current?.();
@@ -177,6 +167,54 @@ export function useLiveSession(
     return liveGeneration.current;
   }, [cancelRetryTimer]);
 
+  const unusedSession = useRef<{ forumId: string; sessionId: string } | null>(null);
+  const vaultContext = useRef(0);
+
+  const retainSession = useCallback((forumId: string, sessionId: string) => {
+    if (unusedSession.current?.forumId === forumId && unusedSession.current.sessionId === sessionId) {
+      unusedSession.current = null;
+    }
+  }, []);
+
+  const abandonUnusedSession = useCallback(({ refresh = true }: { refresh?: boolean } = {}) => {
+    const unused = unusedSession.current;
+    if (!unused) return Promise.resolve();
+    unusedSession.current = null;
+    const key = `${unused.forumId}/${unused.sessionId}`;
+    const context = vaultContext.current;
+    pendingRecentSessions.current.delete(key);
+    if (connection.current?.key === key) resetLiveSession();
+    if (retryTarget.current?.forumId === unused.forumId
+        && retryTarget.current.sessionId === unused.sessionId) retryTarget.current = null;
+    dispatch({ type: 'session-discarded', ...unused });
+    const route = currentAppRoute();
+    if (route.kind === 'session' && route.forumId === unused.forumId && route.sessionId === unused.sessionId) {
+      writeAppRoute('/', 'replace');
+    }
+    return client.discardUnusedSession(unused.forumId, unused.sessionId).then(() => {
+      if (!refresh || vaultContext.current !== context) return;
+      onSessionDiscarded?.();
+      return refreshBootstrap();
+    }).catch((failure: unknown) => {
+      console.warn('Unused session cleanup failed.', failure);
+    });
+  }, [client, dispatch, onSessionDiscarded, refreshBootstrap, resetLiveSession]);
+
+  // Every navigation intent goes through here so the ref and the rendered copy
+  // of the epoch can never disagree.
+  const beginNavigation = useCallback((preserve?: { forumId: string; sessionId: string }) => {
+    if (!preserve || unusedSession.current?.forumId !== preserve.forumId
+        || unusedSession.current.sessionId !== preserve.sessionId) abandonUnusedSession();
+    navigation.current += 1;
+    setRenderedEpoch(navigation.current);
+    return navigation.current;
+  }, [abandonUnusedSession]);
+
+  const navigate = useCallback((action: AppAction) => {
+    if (!inPlaceActions.has(action.type)) beginNavigation();
+    dispatch(action);
+  }, [beginNavigation, dispatch]);
+
   // Welcome and deletion also discard the last open target.
   const clearLiveSession = useCallback(() => {
     resetLiveSession();
@@ -184,8 +222,11 @@ export function useLiveSession(
   }, [resetLiveSession]);
 
   const clearVaultContext = useCallback(() => {
+    vaultContext.current += 1;
+    unusedSession.current = null;
     clearLiveSession();
     pendingTarget.current = null;
+    pendingRecentSessions.current.clear();
   }, [clearLiveSession]);
 
   // `onSettled` belongs to a replacement attempt, which needs to know whether
@@ -212,6 +253,9 @@ export function useLiveSession(
         onSnapshot: (snapshot) => {
           if (!events || connection.current?.events !== events) return;
           dispatch({ type: 'session-snapshot', snapshot });
+          if (!snapshot.discardable) retainSession(forumId, sessionId);
+          if (snapshot.recent_pending) pendingRecentSessions.current.add(key);
+          else if (pendingRecentSessions.current.delete(key)) void refreshBootstrap();
           if (snapshot.lifecycle !== 'running' && snapshot.shutdown_reason === 'reloading') {
             detachStream(events);
             recoveryStarter.current(forumId, sessionId, generation, true);
@@ -260,7 +304,7 @@ export function useLiveSession(
       if (events) detachStream(events);
       failed();
     }
-  }, [cancelRetryTimer, connectSessionEvents, detachStream, dispatch]);
+  }, [cancelRetryTimer, connectSessionEvents, detachStream, dispatch, refreshBootstrap, retainSession]);
 
   // One replacement attach: resolves true when the new stream delivers its
   // first snapshot, false when it fails first. A failure after that belongs to
@@ -380,6 +424,9 @@ export function useLiveSession(
       if (liveGeneration.current !== generation) continue;
 
       dispatch({ type: 'conversation-opened', snapshot });
+      unusedSession.current = snapshot.discardable
+        ? { forumId, sessionId } : null;
+      if (snapshot.recent_pending) pendingRecentSessions.current.add(`${forumId}/${sessionId}`);
       if (updateHistory) {
         writeAppRoute(sessionRoute(snapshot.forum.id, snapshot.session_id));
       }
@@ -405,7 +452,7 @@ export function useLiveSession(
     if (pendingTarget.current?.key === target) return false;
     const pending = { key: target };
     pendingTarget.current = pending;
-    const epoch = beginNavigation();
+    const epoch = beginNavigation({ forumId, sessionId });
     dispatch({ type: 'session-operation-started', message: 'Opening session…' });
     try {
       const opened = await performOpen(
@@ -444,15 +491,17 @@ export function useLiveSession(
     pendingTarget.current = pending;
     retryTarget.current = null;
     const epoch = beginNavigation();
+    const context = vaultContext.current;
     dispatch({ type: 'session-operation-started', message: 'Creating session…' });
     try {
       const created = await client.createSession(forumId, '');
-      // Cancelling does not un-create the session the server already wrote, so
-      // it has to appear in Recent rather than becoming a session nobody sees.
+      if (vaultContext.current !== context) return false;
       if (navigation.current !== epoch) {
-        void refreshBootstrap();
+        await client.discardUnusedSession(forumId, created.id);
+        if (vaultContext.current === context) onSessionDiscarded?.();
         return false;
       }
+      unusedSession.current = { forumId, sessionId: created.id };
       retryTarget.current = { forumId, sessionId: created.id, updateHistory: true };
       dispatch({ type: 'session-operation-started', message: 'Opening session…' });
       const opened = await performOpen(epoch, forumId, created.id, true, true);
@@ -480,7 +529,7 @@ export function useLiveSession(
     } finally {
       if (pendingTarget.current === pending) pendingTarget.current = null;
     }
-  }, [beginNavigation, client, dispatch, performOpen, refreshBootstrap]);
+  }, [beginNavigation, client, dispatch, onSessionDiscarded, performOpen]);
 
   const retrySessionOpen = useCallback(() => {
     const target = retryTarget.current;
@@ -586,5 +635,7 @@ export function useLiveSession(
     retryStream,
     clearLiveSession,
     clearVaultContext,
+    retainSession,
+    abandonUnusedSession,
   };
 }

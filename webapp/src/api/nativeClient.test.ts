@@ -18,6 +18,15 @@ function loadFixture(name: string): unknown {
 }
 
 describe('native CHA client', () => {
+  it('uses a guarded deletion when discarding an unused session', async () => {
+    let received: unknown;
+    const client = createNativeChaClient(createFakeNativeBridge({
+      'session.delete': (params) => { received = params; return {}; },
+    }));
+    await client.discardUnusedSession('lobby', 'unused');
+    expect(received).toEqual({ forum_id: 'lobby', session_id: 'unused', only_if_unused: true });
+  });
+
   it('rejects a malformed snapshot before returning it to the application', async () => {
     const snapshot = loadFixture('snapshot.json') as SessionSnapshot;
     const bridge = createFakeNativeBridge({

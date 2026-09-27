@@ -487,7 +487,7 @@ CreateSessionSuccess Application::create_session(
         if (!label.empty()) validate_session_label(label);
         const StoredSession created =
             impl_->sessions->create(forum_id, std::move(label));
-        if (impl_->mirror) impl_->mirror->add(created);
+        if (impl_->mirror && !is_temporary_session_label(created.label)) impl_->mirror->add(created);
         return {created.identity.session_id, created.label};
     } catch (const std::invalid_argument&) {
         throw ApplicationError(
@@ -650,12 +650,26 @@ void Application::close_session(
 std::optional<ErrorCode> Application::delete_session(
     std::string_view forum_id,
     std::string_view session_id,
-    std::uint64_t epoch) {
+    std::uint64_t epoch,
+    bool only_if_unused) {
     const FullSessionId key{std::string(forum_id), std::string(session_id)};
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     if (const auto error = impl_->admit_locked(epoch)) return *error;
     if (workspace::is_welcome_session(key.forum_id, key.session_id)) {
         return ErrorCode::not_found;
+    }
+    if (only_if_unused) {
+        try {
+            // Submission clears discardable before starting any processing.
+            // The conditional delete and that write are serialized by SQLite.
+            if (impl_->sessions->discard_unused(key)) {
+                impl_->live_sessions->close_session(key, epoch);
+                impl_->media_resources.revoke_session(key);
+            }
+        } catch (const ForumNotFoundError&) {
+            // A forum removed during navigation has already discarded its sessions.
+        }
+        return std::nullopt;
     }
     MaintenanceReservationResult reserved =
         impl_->live_sessions->reserve_for_deletion(

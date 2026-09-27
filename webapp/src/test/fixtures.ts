@@ -260,6 +260,7 @@ export function fixtureClient(overrides: Partial<ChaClient> = {}): ChaClient {
     createSession: async (_forumId, label) => ({ id: 'created', label }),
     renameSession: async (_forumId, sessionId, label) => ({ id: sessionId, label }),
     deleteSession: async () => undefined,
+    discardUnusedSession: async () => undefined,
     clearSessionAudioCache: async (forum, session) => { audioCache.delete(`${forum}/${session}`); },
     downloadSession: async () => '# Session\n',
     openSession: async (forumId, sessionId) => ({ forum_id: forumId, session_id: sessionId }),

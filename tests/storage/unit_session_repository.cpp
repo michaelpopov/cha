@@ -378,6 +378,102 @@ TEST_F(SessionRepositoryTest, CreatesInNewlyPublishedUnsynchronizedForum) {
         "SELECT COUNT(*) FROM forums WHERE forum_id = 'second'"), 1);
 }
 
+TEST_F(SessionRepositoryTest, KeepsUnnamedSessionsOutOfRecentUntilNamingSettles) {
+    const SessionRepository repository = make_repository();
+    const auto created = repository.create("lobby", "");
+    const auto appears = [&] {
+        const auto recent = repository.recent();
+        return std::ranges::find(recent, created.identity, &StoredSession::identity) != recent.end();
+    };
+    EXPECT_FALSE(appears());
+    const auto prepared = repository.prepare(created.identity);
+    EXPECT_TRUE(prepared.restore.recent_pending);
+    EXPECT_EQ(repository.list("lobby"), (std::vector<StoredSession>{created}));
+    SessionJournal journal(prepared.database_path, prepared.session_key);
+    journal.publish_recent();
+    EXPECT_TRUE(appears());
+    EXPECT_EQ(repository.prepare(created.identity).label, created.label);
+    EXPECT_FALSE(repository.prepare(created.identity).restore.recent_pending);
+
+    const auto named = repository.create("lobby", "");
+    (void)repository.rename(named.identity, "Garden planning");
+    EXPECT_FALSE(repository.prepare(named.identity).restore.recent_pending);
+    const auto recent = repository.recent();
+    const auto found = std::ranges::find(recent, named.identity, &StoredSession::identity);
+    ASSERT_NE(found, recent.end());
+    EXPECT_EQ(found->label, "Garden planning");
+}
+
+TEST_F(SessionRepositoryTest, DiscardCannotRemoveRetainedOrSavedSessions) {
+    const auto repository = make_repository();
+    const auto unused = repository.create("lobby", "");
+    const auto unused_prepared = repository.prepare(unused.identity);
+    SessionJournal unused_journal(unused_prepared.database_path, unused_prepared.session_key);
+    EXPECT_TRUE(repository.discard_unused(unused.identity));
+    EXPECT_THROW(unused_journal.retain(), std::runtime_error);
+    EXPECT_FALSE(repository.discard_unused(unused.identity));
+    EXPECT_FALSE(repository.discard_unused(repository.create("lobby", "Named").identity));
+
+    const auto retained = repository.create("lobby", "");
+    const auto prepared = repository.prepare(retained.identity);
+    SessionJournal journal(prepared.database_path, prepared.session_key);
+    journal.retain();
+    EXPECT_FALSE(repository.discard_unused(retained.identity));
+    EXPECT_FALSE(repository.prepare(retained.identity).restore.discardable);
+
+    const auto note = repository.create("lobby", "");
+    const auto note_session = repository.prepare(note.identity);
+    SessionJournal notes(note_session.database_path, note_session.session_key);
+    notes.record_entry(test::human_entry(1, {"human", "You"}, {"-", "Notes"}, "Keep me"));
+    EXPECT_FALSE(repository.discard_unused(note.identity));
+}
+
+TEST_F(SessionRepositoryTest, RecoversPendingSessionsOnStartupByWhetherTheyHaveEntries) {
+    FullSessionId unused, retained, recorded, named, visible;
+    {
+        const auto repository = make_repository();
+        unused = repository.create("lobby", "").identity;
+        retained = repository.create("lobby", "").identity;
+        const auto prepared = repository.prepare(retained);
+        SessionJournal journal(prepared.database_path, prepared.session_key);
+        journal.retain();
+        EXPECT_TRUE(repository.prepare(retained).restore.recent_pending);
+        EXPECT_FALSE(repository.prepare(retained).restore.discardable);
+
+        recorded = repository.create("lobby", "").identity;
+        const auto with_entry = repository.prepare(recorded);
+        SessionJournal saved(with_entry.database_path, with_entry.session_key);
+        saved.retain();
+        saved.record_entry(test::human_entry(1, {"human", "You"}, {"-", "Notes"}, "Keep me"));
+        EXPECT_TRUE(repository.prepare(recorded).restore.recent_pending);
+        const auto recent = repository.recent();
+        EXPECT_EQ(std::ranges::find(recent, recorded, &StoredSession::identity), recent.end());
+
+        named = repository.create("lobby", "Named empty session").identity;
+        visible = repository.create("lobby", "").identity;
+        const auto published = repository.prepare(visible);
+        SessionJournal settled(published.database_path, published.session_key);
+        settled.publish_recent();
+    }
+    const auto restarted_welcome = fixture_.root() / "restarted-welcome";
+    create_private_directory(restarted_welcome);
+    const SessionRepository repository([this] { return workspace_; }, database_path(),
+        fixture_.root(), restarted_welcome, {temporary_identity(), "Welcome"});
+    EXPECT_THROW(repository.validate(unused), SessionNotFoundError);
+    EXPECT_THROW(repository.validate(retained), SessionNotFoundError);
+    EXPECT_NO_THROW(repository.validate(recorded));
+    const auto history = repository.history(recorded);
+    ASSERT_EQ(history.size(), 1u);
+    EXPECT_EQ(history.front().text, "Keep me");
+    EXPECT_FALSE(repository.prepare(recorded).restore.recent_pending);
+    const auto recent = repository.recent();
+    const auto recovered = std::ranges::find(recent, recorded, &StoredSession::identity);
+    ASSERT_NE(recovered, recent.end());
+    EXPECT_EQ(recovered->label, "New session");
+    EXPECT_NO_THROW(repository.validate(named));
+    EXPECT_NO_THROW(repository.validate(visible));
+}
+
 TEST_F(SessionRepositoryTest, CreatesRenamesAndDeletesRowsTransactionally) {
     const SessionRepository repository = make_repository();
     const StoredSession created = repository.create("lobby", "Before");
@@ -452,7 +548,7 @@ TEST_F(SessionRepositoryTest, AppliesLabelPolicyAndSeparatesMissingForums) {
     const std::time_t before = std::time(nullptr);
     const StoredSession created = repository.create("lobby", "");
     const std::time_t after = std::time(nullptr);
-    EXPECT_EQ(created.label, "temp-ts-cha-" + std::to_string(created.updated_at));
+    EXPECT_EQ(created.label, "New session");
     EXPECT_GE(created.updated_at, before);
     EXPECT_LE(created.updated_at, after);
     EXPECT_EQ(repository.prepare(created.identity).label, created.label);

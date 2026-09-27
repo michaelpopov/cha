@@ -390,6 +390,8 @@ void create_workspace_session_schema(Database& database) {
             forum_key INTEGER NOT NULL REFERENCES forums(forum_key),
             session_id TEXT NOT NULL CHECK (session_id <> ''),
             label TEXT NOT NULL CHECK (label <> ''),
+            recent_pending INTEGER NOT NULL DEFAULT 0 CHECK (recent_pending IN (0, 1)),
+            discardable INTEGER NOT NULL DEFAULT 0 CHECK (discardable IN (0, 1)),
             updated_at INTEGER NOT NULL CHECK (updated_at >= 0),
             archived_at INTEGER CHECK (archived_at IS NULL OR archived_at >= 0),
             history_epoch INTEGER NOT NULL CHECK (history_epoch > 0),
@@ -483,6 +485,22 @@ void validate_workspace_session_contents(Database& database) {
     validate_required_config_object(database);
     validate_integrity(database);
     validate_session_row_invariants(database);
+}
+
+void ensure_session_lifecycle_columns(Database& database) {
+    bool has_recent_pending = false;
+    bool has_discardable = false;
+    Statement columns = database.prepare("PRAGMA table_info(sessions)");
+    while (columns.step()) {
+        has_recent_pending |= columns.text(1) == "recent_pending";
+        has_discardable |= columns.text(1) == "discardable";
+    }
+    if (!has_recent_pending) database.execute(
+        "ALTER TABLE sessions ADD COLUMN recent_pending INTEGER NOT NULL "
+        "DEFAULT 0 CHECK (recent_pending IN (0, 1))");
+    if (!has_discardable) database.execute(
+        "ALTER TABLE sessions ADD COLUMN discardable INTEGER NOT NULL "
+        "DEFAULT 0 CHECK (discardable IN (0, 1))");
 }
 
 void ensure_entry_metadata_columns(Database& database) {

@@ -192,6 +192,30 @@ TEST(ResponsesApi, DefaultsToNoneReasoningAndOmitsEmptyInstructionsAndSearchFiel
     EXPECT_EQ(body["input"][0]["content"], "from You:\nHi");
 }
 
+TEST(ResponsesApi, OmitsUnsupportedReasoningForDirectOpenAiGpt4o) {
+    Transcript transcript;
+    const GenerationRequest request = make_request(transcript, "Hi");
+    ModelBackendConfig config = responses_config();
+    config.host = "API.OPENAI.COM.";
+    for (const char* model : {"gpt-4o", "gpt-4o-2024-08-06", "gpt-4o-mini"}) {
+        SCOPED_TRACE(model);
+        config.model = model;
+        for (const char* effort : {"none", "high"}) {
+            SCOPED_TRACE(effort);
+            config.reasoning_effort = effort;
+            const Json body = Json::parse(build_responses_request_body(
+                request, config, ""));
+            EXPECT_EQ(body["model"], model);
+            EXPECT_FALSE(body.contains("reasoning"));
+        }
+    }
+
+    config.model = "gpt-6-astra";
+    const Json body = Json::parse(build_responses_request_body(
+        request, config, ""));
+    EXPECT_EQ(body["reasoning"]["effort"], "high");
+}
+
 TEST(ResponsesApi, RejectsInvalidUtf8InRequestBody) {
     Transcript transcript;
     const GenerationRequest request = make_request(

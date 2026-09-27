@@ -271,6 +271,8 @@ void SessionController::initialize(
         default_persona_id_ = found->id;
     }
     transcript_.replace_entries(std::move(restored.entries));
+    recent_pending_ = restored.recent_pending;
+    discardable_ = restored.discardable;
     next_request_id_ = restored.next_request_id;
     next_entry_id_ = restored.next_entry_id;
     for (const InterruptedTurn& turn : restored.interrupted_turns) {
@@ -392,7 +394,7 @@ void SessionController::record_monologue(
         "record a message addressed to @-",
         [this, &entry] { journal_.record_entry(entry); });
     transcript_.add_entry(entry);
-    start_session_name();
+    start_session_name(update);
     update.input_consumed = true;
     update.notice = "";
     require_snapshot(update);
@@ -716,7 +718,7 @@ void SessionController::start_generation(
             providers_.make_request(std::move(input), notifier_));
     }
     // Start alongside the reply, after the prompt was committed.
-    start_session_name();
+    start_session_name(update);
 }
 
 void SessionController::activate_run(
@@ -1008,6 +1010,8 @@ ControllerUpdate SessionController::request_stop() {
 void SessionController::rename(std::string_view label) {
     validate_session_label(label);
     persist("rename session", [this, label] { journal_.rename(label); });
+    recent_pending_ = false;
+    discardable_ = false;
     auto_name_ = false;
     cancel_session_name();
 }
@@ -1016,7 +1020,24 @@ void SessionController::enable_auto_naming(std::string_view label) {
     auto_name_ = is_temporary_session_label(label);
 }
 
-void SessionController::start_session_name() {
+void SessionController::retain() {
+    if (!discardable_) return;
+    persist("retain submitted session", [this] { journal_.retain(); });
+    discardable_ = false;
+}
+
+void SessionController::publish_recent(ControllerUpdate& update) {
+    if (!recent_pending_) return;
+    try {
+        persist("publish recent session", [this] { journal_.publish_recent(); });
+        recent_pending_ = false;
+        require_snapshot(update);
+    } catch (const std::exception& error) {
+        log_warn("Session visibility was not saved: " + std::string(error.what()));
+    }
+}
+
+void SessionController::start_session_name(ControllerUpdate& update) {
     if (!auto_name_ || name_request_) return;
     try {
         const auto entries = transcript_.view().entries;
@@ -1028,6 +1049,7 @@ void SessionController::start_session_name() {
             ? current->find_provider(*assistant->provider_id) : nullptr;
         if (!provider) {
             log_warn("Session name provider is unavailable; skipping session naming");
+            publish_recent(update);
             return;
         }
         auto config = provider->config;
@@ -1058,6 +1080,7 @@ void SessionController::start_session_name() {
     } catch (const std::exception& error) {
         log_warn("Session name generation could not start: " + std::string(error.what()));
     }
+    if (!name_request_) publish_recent(update);
 }
 
 void SessionController::cancel_session_name() noexcept {
@@ -1094,6 +1117,7 @@ bool SessionController::receive_session_name(ControllerUpdate& update, std::size
             log_warn("Session name generation failed: " + failure->message);
         }
         cancel_session_name();
+        publish_recent(update);
         return false;
     }
     return true;
