@@ -517,9 +517,7 @@ export function isVoiceOutputSettings(value: unknown): value is VoiceOutputSetti
     && typeof value.model === 'string' && value.model.length > 0
     && typeof value.api_key === 'string' && value.api_key.length > 0
     && typeof value.output_format === 'string' && value.output_format.length > 0
-    && typeof value.default_voice === 'string' && value.default_voice.length > 0
-    && typeof value.instrumentation_provider === 'string'
-    && isOneOf(value.instrumentation_reasoning_effort, ['none', 'low', 'medium', 'high', 'xhigh', null]);
+    && typeof value.default_voice === 'string' && value.default_voice.length > 0;
 }
 
 export function isVoiceOutputRuntime(value: unknown): value is VoiceOutputRuntime {

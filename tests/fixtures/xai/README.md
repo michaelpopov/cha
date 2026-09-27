@@ -31,8 +31,8 @@ SHA-256 hashes, language, interim setting, and event counts.
 [Expected results](expected.json) lists one expected raw native delta per
 JSONL row, final text, and final end-time cursor. Empty additions are included.
 Native bridge replies collect the nonempty additions as ordered `pieces`;
-they must not merge their boundaries. Session 4 separately applies dictation
-commands and editor spacing to each piece. These saved expectations cover
+they must not merge their boundaries. The frontend separately applies
+dictation commands and editor spacing to each piece. These saved expectations cover
 timestamp deduplication before that frontend formatting, not command behavior.
 The concatenated result was independently compared with the disjoint
 chunk-final `text` fields in these recordings; repeated word spans in the
@@ -60,9 +60,10 @@ utterance finals were checked for identical times and text.
   or text-based deduplication.
 - Process final partials before completion. An empty `transcript.done` is
   normal; it is not evidence that no speech was recognized.
-- Keep interim results disabled and append only locked words. This preserves
-  append-only editing, with a real latency cost during continuous speech.
-  Do not promise subsecond or three-second committed-text updates.
+- Append only locked words to committed text. The initial implementation kept
+  interim results disabled; current production requests `interim_results=true`
+  for a replaceable composer preview. The word-time normalizer still ignores
+  interims. Do not promise subsecond or three-second committed-text updates.
 - All nonempty final events in these captures contain word timings. A
   nonempty final without timings is an unsupported response: fail explicitly.
   Do not invent a text-prefix fallback. Missing-timing tests must be labeled
@@ -103,7 +104,9 @@ provider events, not regenerated TTS recognition, are the regression oracle.
   `cha://app`, and production CSP. A same-origin AudioWorklet loaded and
   received nonzero synthetic audio at 16 kHz through an AudioContext requested
   at that rate. No CSP relaxation or custom resampler was needed.
-- Windows execution and the future feature's actual packaged microphone path
-  were not exercised here. Session 4 owns macOS capture acceptance; Session 5
-  reuses that evidence and covers remaining available platforms. They do not
-  need to select a transport or infer semantics.
+- Windows execution and the packaged microphone path were not exercised by
+  these original capture probes. Current native transport tests live in
+  `tests/media/unit_xai_voice.cpp`, with frontend capture and preview coverage
+  in `webapp/src/xaiVoiceInput.test.ts` and `xaiVoiceComposer.test.tsx`. The
+  fixture capture settings above remain a historical record, not a claim that
+  every current UI path was exercised in that capture.

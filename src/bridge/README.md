@@ -17,5 +17,11 @@ workspace, or persistence implementation.
 The bridge depends on `app/` and the DTOs needed to cross the native boundary.
 Nothing below the application boundary depends on `bridge/`.
 
+Voice input uses `voiceInput.xai.start`, `voiceInput.xai.audio`,
+`voiceInput.xai.stop`, and `voiceInput.xai.cancel`, with scoped transcript
+events. Audio append acknowledgements bound capture traffic. Session discard
+and error-entry deletion also cross this boundary; stale context requests
+cannot affect a newly selected vault.
+
 Tests live in `tests/bridge/`. Native C API ownership and host integration are
 tested separately under `tests/native/`.

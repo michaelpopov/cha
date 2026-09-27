@@ -43,7 +43,27 @@ call repeatedly.
 | `openai_oauth.*` | OpenAI subscription login, refresh, persistence, and cancellation. |
 | `api_key_store.*` / `credentials.h` | Vault-backed model and R2 credential values and lifecycle. |
 | `voice_output_config.*` | FishAudio output endpoint and format validation. |
-| `fish_audio.*` | FishAudio request decoding, transport, admission, and audio validation. |
+| `fish_audio.*` | FishAudio request construction, streaming transport, and audio validation. |
+| `jev.*` | Cancellable recipient/search classification with a five-second deadline. |
+| `web_search.*` | Brave/Tavily requests, bounded result JSON, and shared pre-generation search. |
+| `tool_calls.*` | Search function schemas and validated tool-call continuation values. |
+
+## Search and auxiliary requests
+
+Jev runs before generation when configured. Explicit recipients remain fixed;
+otherwise its decision selects one character, all characters, or the captured
+fallback target. Classification failure falls back without losing the prompt.
+Pre-generation search is shared across multicast recipients and can use a
+separate provider to rewrite the query. Search failure logs a warning and
+continues without retrieved context.
+
+The independent on-demand `web_search` function works with both protocol
+encoders, including subscription Responses. `ProviderClient::perform()` runs
+the continuation loop, aggregates token usage, and limits tool attempts to
+four. At the limit it removes tools and requests a final answer. Intermediate
+tool-round text stays out of the answer stream. Search results are untrusted
+context, stripped of media metadata, and capped at 32 KiB of valid JSON.
+Provider-hosted `web_search` settings remain a separate option.
 
 ## Diagnostics
 

@@ -12,7 +12,7 @@ depend on it.
 | `application_config.*` | External application and vault configuration loading and validation. |
 | `current_vault.h` | Immutable active-vault identity and paths. |
 | `background_jobs.*` | Cancellation and bounded shutdown for application-owned background work. |
-| `settings_operations.*` | Provider, credential, voice, and appearance settings operations. |
+| `settings_operations.*` | Provider, credential, voice, appearance, Jev, and Search API settings operations. |
 | `workspace_operations.*` | Workspace, character, forum, session-list, and configuration-file operations. |
 | `vault_operations.*` | Vault lifecycle, maintenance, switching, merge, protection, and backup coordination. |
 | `media_operations.*` | Application-facing speech, voice-input, and media-resource operations. |
@@ -20,6 +20,10 @@ depend on it.
 
 The application may depend on every domain directory. `bridge/` and native
 hosts call into it; domain directories must not include application internals.
+
+Vault uploads check the saved R2 ETag and upload the database before its
+portable companion definition. Media operations expose cached or growing audio
+resources and keep xAI sessions scoped to their connection and context.
 
 Tests live in `tests/app/`, with lower-level media, runtime, and provider tests
 kept beside their corresponding source areas.

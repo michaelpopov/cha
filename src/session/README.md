@@ -34,6 +34,21 @@ the cancelled workers to unregister. Controller destruction similarly cancels
 and releases handles without waiting; it synchronously closes the current
 durable turn using existing partial-response rules.
 
+## Submission and session naming
+
+A configured Jev request classifies recipients before a turn is committed. Its
+five-second deadline and `SubmissionState` preserve cancellation and expiry;
+explicit mentions and multicast targets cannot be changed by classification.
+Self-notes bypass classification. Optional pre-generation search is shared by
+all targets, while each target may have its own on-demand search tool.
+
+A new `New session` starts with durable `recent_pending` and `discardable`
+flags. An accepted submission retains it. Its first human entry starts a
+separate title request using Assistant's provider (low effort, no search,
+30-second maximum). Naming success or failure publishes it in Recent. Manual
+rename cancels naming and retains the session. Error reports can be deleted
+while idle together with the human prompt and other entries in their turn.
+
 ## Source map
 
 | Source | Responsibility |

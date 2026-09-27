@@ -337,9 +337,6 @@ export interface components {
             api_key: components["schemas"]["Identifier"];
             output_format: string;
             default_voice: string;
-            instrumentation_provider: string;
-            /** @enum {string|null} */
-            instrumentation_reasoning_effort: "none" | "low" | "medium" | "high" | "xhigh" | null;
         };
         VoiceOutputRuntime: {
             url: string;

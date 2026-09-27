@@ -26,6 +26,13 @@ connections, while each live controller owns a separate journal connection.
 | `session_timestamp.h` | Unix-time helper used by storage writes. |
 | `not_found_error.h` | Stable forum/session absence errors exposed by storage operations. |
 
+Schema-v2 databases gain compatible columns for token usage, web-search use,
+and the session `recent_pending`/`discardable` flags. Recent listings exclude
+pending sessions. Discard removes only a still-discardable session; submission
+or rename retains it, and startup prunes abandoned sessions. Error deletion
+removes the failed turn, including its human prompt. Entry audio remains
+one cached BLOB per entry and is removed with its entry.
+
 This directory may depend on `chat/`, `workspace/`, and `util/`. It contains no
 application, bridge, runtime, or external-service policy.
 

@@ -154,61 +154,38 @@ TEST(ApplicationSettings, SavesCharacterWhenNewProviderCannotUseSearchOverride) 
     EXPECT_EQ(reloaded.web_search_tool, true);
 }
 
-TEST(ApplicationSettings, PersistsIndependentVoiceInstrumentationProviderAndEffort) {
+TEST(ApplicationSettings, VoiceOutputSettingsExcludeObsoleteInstrumentation) {
     test::TestWorkspace workspace;
     const auto database = test::import_test_database(workspace.root());
     auto application = Application::open(make_command(workspace, database));
-    auto epoch = application->context_epoch();
+    const auto epoch = application->context_epoch();
     const auto key = application->create_api_key({.display_name = "Fish", .value = "secret"}, epoch);
     const auto voice = application->create_voice(
         {.display_name = "Reader", .description = "Voice", .elevenlabs_voice_id = "voice"}, epoch);
     const auto provider = application->create_provider(
-        {.display_name = "Instrumentation", .copy_from = "test"}, epoch);
-    (void)application->save_web_search_settings({.query_provider = "test"}, epoch);
-    auto saved = application->save_voice_output_settings({
-        .url = "https://api.fish.audio/v1/tts", .model = "s2.1-pro", .api_key = key.id,
-        .output_format = "mp3", .default_voice = voice.display_name,
-        .instrumentation_provider = provider.id, .instrumentation_reasoning_effort = "high",
-    }, epoch);
-    EXPECT_EQ(saved.instrumentation_provider, provider.id);
-    EXPECT_EQ(saved.instrumentation_reasoning_effort, "high");
-    EXPECT_EQ(application->get_provider(provider.id, epoch).reasoning_effort, "none");
-    EXPECT_EQ(application->get_provider(provider.id, epoch).used_by,
-        (std::vector<std::string>{"Voice instrumentation"}));
-    EXPECT_THROW(application->delete_provider(provider.id, epoch), ApplicationError);
-
-    nlohmann::json body = saved;
-    EXPECT_EQ(body["instrumentation_provider"], provider.id);
-    EXPECT_EQ(parse_voice_output_settings(body).instrumentation_reasoning_effort, "high");
-    body["instrumentation_reasoning_effort"] = "invalid";
-    EXPECT_THROW(parse_voice_output_settings(body), std::invalid_argument);
-    body["instrumentation_reasoning_effort"] = "minimal";
-    EXPECT_THROW(parse_voice_output_settings(body), std::invalid_argument);
-    body["instrumentation_reasoning_effort"] = nullptr;
-    EXPECT_FALSE(parse_voice_output_settings(body).instrumentation_reasoning_effort);
-    auto invalid = saved;
-    invalid.instrumentation_provider = "missing";
-    EXPECT_THROW((void)application->save_voice_output_settings(invalid, epoch), ApplicationError);
+        {.display_name = "Unused", .copy_from = "test"}, epoch);
+    nlohmann::json body = {
+        {"url", "https://api.fish.audio/v1/tts"}, {"model", "s2.1-pro"}, {"api_key", key.id},
+        {"output_format", "mp3"}, {"default_voice", voice.display_name},
+    };
+    const auto saved = application->save_voice_output_settings(parse_voice_output_settings(body), epoch);
+    const nlohmann::json serialized = saved;
+    EXPECT_FALSE(serialized.contains("instrumentation_provider"));
+    EXPECT_FALSE(serialized.contains("instrumentation_reasoning_effort"));
+    EXPECT_TRUE(application->get_provider(provider.id, epoch).used_by.empty());
+    EXPECT_NO_THROW(application->delete_provider(provider.id, epoch));
+    for (const auto* field : {"instrumentation_provider", "instrumentation_reasoning_effort"}) {
+        body[field] = "obsolete";
+        EXPECT_THROW(parse_voice_output_settings(body), std::invalid_argument);
+        body.erase(field);
+    }
 
     application.reset();
     application = Application::open(make_command(workspace, database));
-    epoch = application->context_epoch();
-    const auto reloaded = application->get_voice_output_settings(epoch);
+    const auto reloaded = application->get_voice_output_settings(application->context_epoch());
     ASSERT_TRUE(reloaded);
-    EXPECT_EQ(reloaded->instrumentation_provider, provider.id);
-    EXPECT_EQ(reloaded->instrumentation_reasoning_effort, "high");
-    EXPECT_EQ(application->get_web_search_settings(epoch).query_provider, "test");
-
-    saved.instrumentation_provider.clear();
-    saved.instrumentation_reasoning_effort.reset();
-    (void)application->save_voice_output_settings(saved, epoch);
-    application->delete_provider(provider.id, epoch);
-    application.reset();
-    application = Application::open(make_command(workspace, database));
-    const auto disabled = application->get_voice_output_settings(application->context_epoch());
-    ASSERT_TRUE(disabled);
-    EXPECT_TRUE(disabled->instrumentation_provider.empty());
-    EXPECT_FALSE(disabled->instrumentation_reasoning_effort);
+    EXPECT_EQ(reloaded->model, "s2.1-pro");
+    EXPECT_EQ(reloaded->default_voice, voice.display_name);
 }
 
 TEST(ApplicationSettings, TestsProvidersOnBackgroundWork) {

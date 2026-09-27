@@ -41,6 +41,22 @@ the selector switches back to a character. Recorded messages are
 durable and reach a later character as shared conversation history, never as a
 message addressed to it.
 
+## Sessions and voice
+
+**New session** opens a conversation immediately. After its first message, CHA
+uses the built-in Assistant's provider to generate a short title. The session
+appears in Recent after naming finishes, even if naming fails. Navigating away
+from an unused new session discards it; submitting or renaming keeps it.
+Press **Enter** to send and **Ctrl+Enter** to insert a line break. The sidebar
+and composer dividers can be resized with the mouse or arrow keys.
+
+Settings → Voices → Voice settings configures OpenAI or xAI dictation and
+FishAudio output separately. The hands-free send phrase defaults to
+`over to you`; saying it sends the draft and keeps dictation active. Microphone
+capture pauses during speech playback. Message controls copy text, show token
+usage, play audio, and remove completed errors or turns. See the
+[user manual](docs/UserManual.html) for controls and audio caching.
+
 ## Configuration
 
 A configuration import directory contains `characters/`, `forums/`,
@@ -77,6 +93,8 @@ cha-config/
 ```toml
 # app.toml
 vault = "Personal"
+mirror = "mirror"
+modify = "modify"
 
 [logging]
 file = "logs/cha.log"
@@ -87,12 +105,13 @@ level = "info"
 # personal.toml
 vault_name = "Personal"
 data = "/var/lib/cha/workspace.sqlite3"
-mirror = "/home/user/cha-mirror"
+protected = false
 ```
 
-The optional `mirror` setting continuously writes each persistent session as
-Markdown under a display-named forum directory; omit it to disable mirroring.
-The root directory must already exist, sessions are refreshed after terminal
+The optional `app.toml` `mirror` setting names a base directory. CHA appends
+the vault name and writes persistent sessions as Markdown under display-named
+forum directories; omit it to disable mirroring. Protected vaults never mirror.
+The base directory must already exist. Sessions are refreshed after terminal
 responses and context-boundary changes, renamed with their sessions, and
 retained after deletion.
 This copies transcripts out of the SQLite workspace into plain files. CHA
@@ -152,17 +171,20 @@ Each character selects exactly one of those configs in its own `character.toml`
 with `provider = "<id>"`. Provider keys in workspace, forum-default, and member
 configuration are ignored; there is no provider inheritance or override chain.
 A missing character provider or provider config stops startup. Provider config
-files are loaded when the committed configuration is materialized. To change
-their host, model, prompt, or other hand-edited settings, use the offline
-export/edit/import workflow below and restart CHA.
+files are loaded when the committed configuration is materialized. Change
+connection and model settings in Settings → Providers, or use the
+export/edit/import workflow below for filesystem edits. Import reloads the
+workspace in the running application.
 
 A character's chosen provider, reasoning effort, web search mode, and style can
-be changed from the browser:
+be changed in the desktop interface:
 Characters → the character → the row naming it above the description → Settings. Save writes
 those settings in the character's `character.toml` (under `characters/`, including
-through any grouping directories) and restarts live sessions containing that
-character. The built-in Assistant reads `system/assistant/character.toml` but
-has no settings screen.
+through any grouping directories). Provider, reasoning, and search changes
+reload affected live sessions; style and voice changes refresh presentation
+without stopping generation. The built-in Assistant reads
+`system/assistant/character.toml` and
+has its own character Settings screen.
 
 Character appearance is selected in the character definition with
 `style = "<id>"`. The matching config lives at
@@ -184,8 +206,10 @@ Provider `reasoning_effort` and `web_search` values are defaults. A character's
 `character.toml` may override them with `reasoning_effort = "none"`,
 `"low"`, `"medium"`, `"high"`, or `"xhigh"`, and `web_search = "off"`, `"auto"`, or `"required"`.
 Omitting either character key inherits the provider value.
-A provider without `reasoning_effort` sends `"none"`. Empty or unknown provider
-effort values produce a warning and also use `"none"`.
+A provider without `reasoning_effort` uses `"none"`. The legacy `"minimal"`
+value normalizes to `"low"`; unsupported provider values warn and use the
+default. Direct OpenAI Responses requests omit reasoning settings for models
+that do not support reasoning.
 
 `web_search` other than `off` normally requires `api = "responses"`. OpenRouter
 also supports it with `api = "chat_completions"` through its server-side web
@@ -194,9 +218,21 @@ and turn warrant it; `required` forces a search tool call on every generation.
 Other Chat Completions hosts cannot be selected by a character that enables
 web search.
 
-Search queries, progress, retrieved pages, annotations, and tool-call details
-stay inside the provider interaction. Only the character's synthesized answer
-text enters the transcript.
+These provider-hosted settings are separate from Settings → **Search API**:
+
+- **Search before generation** uses **Recipient detection** (Jev) to decide
+  whether to search with Brave or Tavily before answering. A selected query
+  provider rewrites conversational questions when needed. Multicast recipients
+  share the search result.
+- **On-demand web search** lets the answering model call CHA's `web_search`
+  function through Responses or Chat Completions. It does not require Jev.
+  Characters can override the workspace default with `web_search_tool = true`
+  or `false`. Each answer allows up to four tool-call attempts.
+
+Save the search service key in API Keys, then select it in Search API. Raw
+search results and tool calls stay outside transcript history; replies show a
+web-search indicator. See the [maintainer guide](docs/MaintainerGuide.md#recipient-detection-and-search-api)
+for exported settings and failure behavior.
 
 Provider secrets are managed on the Settings > API Keys screen and stored in
 the active vault database under `system/keys/api_key_N/config.toml`. Provider
@@ -206,10 +242,11 @@ included as plaintext TOML in workspace exports. OpenAI subscription
 credentials live in `openai-auth.json` in the application configuration
 directory.
 
-Native hosts load packaged frontend assets themselves. Relative `data` and
-`logging.file` paths resolve against the configuration directory; `mirror` and
-`modify` must be absolute. Template includes resolve beneath the private
-materialized workspace.
+Native hosts load packaged frontend assets themselves. Relative `data`,
+`logging.file`, and application-level `mirror` and `modify` bases resolve
+against the configuration directory. CHA appends the vault name to mirror/modify
+bases; obsolete per-vault values are ignored with warnings. Template includes
+resolve beneath the private materialized workspace.
 
 ### Command line and configuration maintenance
 
@@ -222,11 +259,11 @@ CHA --config=CONFIG_DIR
 `--config` is mandatory and names the configuration directory. Launch opens the
 vault selected by `app.toml`. Import, export, upload, and download are
 maintenance operations performed inside the running application and act on the
-active vault; import and export additionally require that vault's `modify`
-directory to be configured. The vault's `data` setting names the SQLite file
-containing sessions and workspace metadata. Normal startup requires a valid
-schema-v2 database; a missing database is created only by a successful
-import.
+active vault from Settings → Vaults → the active vault. Import and export
+require the application-level `modify` base to be configured. The vault's
+`data` setting names the SQLite file containing sessions and workspace
+metadata. The runtime requires a valid schema-v2 database; native first-run
+setup and New vault create one before opening it.
 
 Import stores every regular workspace `.toml` and `.md` file, but explicitly
 excludes `.env`, legacy root `app.toml`, and `workspace.toml`.
@@ -234,7 +271,7 @@ It follows no symlinks and stores no other file type. An included file must
 therefore be in this set:
 `$$(snippet.txt)` fails validation, while an appropriate stored
 `$$(snippet.md)` can work. The `config` table contains only `(name, content)`;
-one SQLite transaction replaces the complete small table, with no generation,
+one SQLite transaction commits the configuration changes, with no generation,
 type, control, or revision metadata.
 
 Each of these operations runs as global vault maintenance: the application
@@ -258,25 +295,19 @@ CHA enforces this for files it manages. Naively copying a live WAL database is
 unsafe; the R2 commands acquire the database lease, and upload checkpoints the
 WAL before transferring the main database file.
 
-R2 transfer credentials are configured per vault under Settings > API Keys >
-R2 storage. They are stored with the other vault keys and therefore travel in
-exports and in the uploaded database. For migration, an empty vault can import
-the following inherited or configuration-directory `.env` values once:
-
-```text
-CHA_R2_URL=https://ACCOUNT_ID.r2.cloudflarestorage.com/BUCKET
-CHA_R2_ACCESS_KEY_ID=ACCESS_KEY_ID
-CHA_R2_SECRET_ACCESS_KEY=SECRET_ACCESS_KEY
-```
-
-The bucket URL may optionally end with `/`.
+R2 transfer credentials are configured per vault under Settings → API Keys →
+R2 storage: bucket URL, access-key ID, and secret key. They travel in exports
+and uploaded databases. R2 credentials are not read from `.env` or the process
+environment. The bucket URL may optionally end with `/`.
 
 R2 uses two object keys derived from the configured database filename. For
 example, `data = "/var/lib/cha/workspace.sqlite3"` uses `workspace.sqlite3`
 and `workspace.sqlite3.toml` in the configured bucket. Upload validates the
-schema-v2 database and its vault definition, then overwrites the vault object
-followed by the database object. R2 cannot atomically replace the pair; retry a
-failed upload before downloading. Download fetches and validates both files
+schema-v2 database and its vault definition, then writes the database object
+followed by its companion TOML. The companion uses a portable database filename.
+CHA records the returned R2 ETag and checks the remote version before later
+uploads; an unknown or changed version requires overwrite confirmation.
+R2 cannot atomically replace the pair; retry a failed upload before downloading. Download fetches and validates both files
 before replacing either, and keeps their previous versions with `.bac`
 appended. Buckets written by an older database-only upload require a current
 upload before they can be downloaded. R2 requests use its S3-compatible API
@@ -299,79 +330,19 @@ migration-capable CHA build first. If the target exists, verify that migration
 and remove the legacy copies from the disposable/source tree. This build never
 migrates those old files itself.
 
-### Operator cutover from schema v1
+### Native setup and older installations
 
-Always rehearse this procedure on recoverable copies before changing an
-installation:
+Packaged macOS and Windows hosts initialize their configuration directory with
+an empty Default vault and the shared seed configuration. Connect ChatGPT in
+Settings → OpenAI, or add model credentials in Settings → API Keys and choose
+them in a provider. Later launches reuse the existing database.
 
-1. Stop the old service. Make safe offline backups of both its configuration
-   directory and v1 `workspace.sqlite3`; retain them after the new release is
-   accepted until the operator chooses a retention date.
-2. Inspect `forums/*/sessions/` and `forums/*/sessions/deleted/`. If either
-   contains regular `.sqlite3` files, first use the archived migration-capable
-   build on a disposable copy, verify the unified v1 database, and finish legacy
-   cleanup there. The new import intentionally refuses both incomplete states.
-3. Create one configuration directory. Put `vault` and `[logging]`
-   in `app.toml`, and put `vault_name` plus `data` in a vault TOML file.
-4. Run the import and inspect its file-count summary:
-
-   ```sh
-   CHA --config=/absolute/path/cha-config --vault=Personal \
-          --import /absolute/path/workspace
-   ```
-
-5. Verify schema version 2, session counts/content, required config rows, and
-   owner-only database, lock, and sidecar permissions.
-6. Export to a new directory, then compare every accepted file byte-for-byte
-   with the source:
-
-   ```sh
-   CHA --config=/absolute/path/cha-config --vault=Personal \
-          --export /absolute/path/exported-workspace
-   ```
-
-7. Move the original configuration directory aside and start only with:
-
-   ```sh
-   CHA --config=/absolute/path/cha-config
-   ```
-
-   Open and resume a session, exercise the three narrow settings, restart, and
-   export again.
-8. While runtime holds the lease, confirm both import and export are rejected.
-   After stopping it, import a second valid configuration and confirm all
-   sessions remain unchanged.
-
-Do not delete the old backup as part of the cutover. Backup retention and
-eventual removal are operator decisions.
-
-Shared seed and example configuration live under `packaging/shared/`. Copy
-`cha-config.example` to a configuration directory outside the application
-bundle and import `import-seed` into the selected vault before first launch.
-
-There is no automatic migration from a single `cha.toml`. To move an existing
-installation:
-
-1. Create a configuration directory. Put selection and web/logging settings in
-   `app.toml`; put data, mirror, and modify paths in a vault TOML file.
-2. Adjust relative paths for the new base directory. For a root database this
-   commonly changes `data = "cha.sqlite3"` to `data = "../cha.sqlite3"`; the
-   database itself does not move.
-3. Move `.env` and `api-keys.json` to the configuration directory when they
-   contain legacy credentials. Each empty vault imports them the first time it
-   is opened; the legacy files are left unchanged.
-4. Move `<database>.openai-auth.json` to
-   `<config-directory>/openai-auth.json`, preserving private permissions, or
-   sign in again.
-
-R2 object keys still come from database filenames; the companion vault object
-adds `.toml`.
-
-`CHA.app` performs its own setup. On first launch it creates an empty Default
-vault. Add model credentials from Settings > API Keys and select one in the
-provider's Credentials field. Later launches reuse the conversations and
-settings already on that Mac, so replacing `CHA.app` upgrades the application
-without removing them.
+The seed and example configuration live under `packaging/shared/`. Existing
+schema-v1 and legacy per-session databases need a separately planned migration;
+the desktop executable accepts only `--config`, not old `--import`, `--export`,
+or `--vault` maintenance flags. Use the running application's vault actions for
+current configuration changes. See the [maintainer guide](docs/MaintainerGuide.md)
+for path layout, import validation, and legacy migration constraints.
 
 `CHA` loads discovery — the roster, descriptions, and Markdown shown in
 Personas, Characters, and Forums — from the database as one validated immutable
@@ -380,20 +351,22 @@ reopen the materialized files.
 
 Startup validates every configured forum, not only the ones in use. A forum with
 an invalid default character, member override, or prompt therefore prevents the
-server from starting; the reported error names that forum and its source.
+application from starting; the reported error names that forum and its source.
 
 ## Build and test
 
-Native configuration uses Windows CNG on Windows and requires OpenSSL
-development headers and libraries on other platforms. The Ninja preset fetches
-the other vendored dependencies when needed.
+Native configuration requires OpenSSL development headers and libraries on all
+platforms. Windows needs static OpenSSL built for the matching MSVC runtime;
+the package uses the static CRT. macOS uses bundled curl 8.14.1 with WebSocket
+support; other platforms use curl 8.14 or newer, or the bundled fallback.
+CMake fetches other vendored dependencies when needed.
 
 ```sh
 cmake --preset ninja
 cmake --build --preset ninja
 ctest --test-dir build/ninja -j8 --output-on-failure
 make web-check
-make web-e2e
+make itest-local
 # Requires configured live-provider and R2 credentials:
 make itest
 ```
@@ -408,9 +381,8 @@ build/ninja/itest --gtest_filter=R2Integration.*
 
 Browser development is documented in
 [webapp/README.md](webapp/README.md). Build a validated release with
-`make package-linux VERSION=<version>` or
-`make package-macos VERSION=<version>`. The Linux command writes an application
-directory and `.tar.gz` archive under `packages/`; the macOS command writes
+`make package-macos VERSION=<version>` on macOS or
+`make package-windows VERSION=<version>` on Windows. The macOS command writes
 `packages/CHA.app` and `packages/CHA-macos-<version>.tar.gz`. The macOS archive
 contains only `CHA.app`; the app creates its configuration and database on first
 launch. Packaging requires

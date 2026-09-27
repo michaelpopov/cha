@@ -529,11 +529,11 @@
           <li>Click the message box at the bottom of the chat.</li>
           <li>Type your message.</li>
           <li>
-            Press <kbd>Ctrl</kbd>+<kbd>Enter</kbd>, or select the Send button.
+            Press <kbd>Enter</kbd>, or select the Send button.
           </li>
         </ol>
         <p>
-          Pressing <kbd>Enter</kbd> by itself adds a new line. This makes it easy
+          Pressing <kbd>Ctrl</kbd>+<kbd>Enter</kbd> adds a new line. This makes it easy
           to write a message with several paragraphs before sending it.
         </p>
 
@@ -543,6 +543,13 @@
           use up to 80% of the chat height. When the divider has keyboard focus,
           use the Up and Down arrow keys to resize it. Press <kbd>Home</kbd> or
           double-click the divider to return to the automatic size.
+        </p>
+
+        <h3>Resize the sidebar</h3>
+        <p>
+          Drag its right edge, or focus the divider and use Left/Right arrows.
+          The sidebar is at least 192 pixels wide and leaves 320 pixels for
+          the main view when the window has enough room.
         </p>
 
         <h3>Open and quit CHA</h3>
@@ -677,8 +684,16 @@
           <li>Open <strong>Forums</strong> in the sidebar.</li>
           <li>Select the forum you want to use.</li>
           <li>Select <strong>New session</strong>.</li>
-          <li>Enter a title when requested, then begin the conversation.</li>
+          <li>Begin typing in the session that opens immediately.</li>
         </ol>
+
+        <p>
+          The initial title is <strong>New session</strong>. After your first
+          message, CHA uses the Assistant's provider to generate a short title.
+          It appears in Recent when naming finishes, including if naming fails.
+          Rename it yourself at any time. Leaving an unused new session discards
+          it; sending a message or renaming keeps it.
+        </p>
 
         <h3>Open an earlier session</h3>
         <p>
@@ -726,6 +741,17 @@
           two at signs: <code>@@example</code> becomes <code>@example</code>.
         </p>
 
+        <h3>Detect the recipient from your words</h3>
+        <p>
+          Settings → <strong>Recipient detection</strong> can use Jev to select
+          the character you address, or all characters. Save an OpenRouter API
+          key, then select it with the endpoint and model in that screen.
+          If the decision is unclear, CHA keeps the selected target. A failed
+          decision also uses that target and shows a notice. Explicit
+          <code>@Name</code> and <code>/mcast</code> recipients take precedence;
+          Self-notes never call recipient detection.
+        </p>
+
         <h3>Ask several characters</h3>
         <p>
           Choose <strong>All characters</strong> in the target menu to ask every
@@ -762,10 +788,12 @@
 
         <h3>Use message controls</h3>
         <p>
-          Small controls appear beside the timestamp below each AI response. When
-          voice output is configured, speaker buttons read completed human messages
-          and AI responses aloud. A message without audio is downloaded in the
-          background, saved, and then played. The button shows whether audio is
+          Copy controls appear on human messages and AI responses. Replies show
+          a token total when the provider reports both input and output usage;
+          hover over it for the breakdown. A search indicator marks replies that
+          used web search. Internal reasoning text is not displayed. When
+          voice output is configured, speaker buttons read completed AI responses aloud. A message without audio is downloaded in the
+          background and saved. Supported MP3 playback can start during the download. The button shows whether audio is
           queued, being generated, or ready; select a failed button to retry.
           During playback it becomes a Stop button. Stopping preserves your place
           so the next playback resumes there; finishing resets it to the beginning.
@@ -779,9 +807,9 @@
         <p>
           A second speaker button appears below the message box, immediately to the
           left of the <strong>Rus</strong> switch. Select it to cache audio for all
-          completed human messages and AI responses shown in the current session,
+          completed AI responses shown in the current session,
           including covered messages, and for later messages as they complete.
-          Repeated multicast prompts are skipped. CHA downloads up to three clips
+ CHA downloads up to three clips
           at once in the background. The pressed button shows that automatic
           caching remains enabled. Select it again to stop submitting new work.
           Switching sessions also turns it off. Accepted downloads continue even
@@ -805,9 +833,10 @@
           boundary backward and exposes the responses after it.
         </p>
         <p>
-          Delete is offered only for a saved AI response that has its matching prompt;
-          it does not apply to Self-notes, failed turns, or prompts stopped before an
-          answer was recorded. Cover and delete controls are unavailable while CHA is
+          Delete is offered for a saved AI response or error report with a matching
+          prompt. It removes that entire turn, including the prompt, after
+          confirmation. It does not apply to Self-notes or a stopped prompt with
+          no response or error report. Cover and delete controls are unavailable while CHA is
           generating a reply. A cover boundary is cleared when the session is reopened,
           or when deleting a turn leaves no covered conversation beneath it.
         </p>
@@ -852,7 +881,7 @@
         <p>
           Open <strong>Characters</strong>, select a character, and then open
           <strong>Settings</strong>. The Settings option appears only for characters
-          that can be changed. The built-in Assistant does not have this screen.
+          that can be changed. The built-in Assistant also has configurable settings.
         </p>
         <div class="table-wrap">
           <table>
@@ -873,8 +902,12 @@
                 <td>How much internal work the model may do before answering. Higher settings can take longer and may cost more.</td>
               </tr>
               <tr>
-                <td>Web search</td>
-                <td>Whether the character may search the web, must search it, or must not search it.</td>
+                <td>Provider web search</td>
+                <td>The provider's own search: inherit its default, Off, Automatic, or Required. The provider must support it.</td>
+              </tr>
+              <tr>
+                <td>On-demand web search</td>
+                <td>Let the model call the service configured under Search API: inherit the workspace default, On, or Off.</td>
               </tr>
               <tr>
                 <td>Style</td>
@@ -1019,13 +1052,42 @@
           again.
         </p>
         <p>
-          Dictation adds finished text to the message. During a long xAI
+          Dictation adds finished text to the message. xAI also shows a replaceable
+          preview while you speak. During a long xAI
           utterance, the first finished words can take about 27 seconds. You
           can keep speaking, typing, and scrolling while you wait. A command
           such as “new line”, “новая строка”, “comma”, or “точка” is applied
           when the whole command arrives in one finished piece. A command that
           arrives split across two pieces stays as ordinary words.
         </p>
+        <h3>Hands-free conversation</h3>
+        <p>
+          Start the microphone and end your draft with the configured
+          <strong>Hands-free send phrase</strong> (initially “over to you”).
+          CHA removes the phrase and sends after a short pause once the current
+          reply is finished. The microphone stays active for your next message.
+          Clear the phrase in Voice settings to disable this behavior. Manual
+          Send finishes dictation first. Microphone capture pauses while CHA
+          plays speech so the application does not transcribe its own output.
+        </p>
+
+        <h3>Configure Search API</h3>
+        <p>
+          Open Settings → <strong>Search API</strong>, choose Brave Search API
+          or Tavily, and select a key saved in API Keys.
+          <strong>Search before generation</strong> requires Recipient detection
+          and a <strong>Query provider</strong> to rewrite questions when needed.
+          Jev decides whether each prompt needs retrieval. Search failure lets
+          the reply continue without those results.
+        </p>
+        <p>
+          <strong>On-demand web search</strong> lets the answering model request
+          searches while preparing its answer. It does not require Recipient
+          detection or a Query provider. Each character can override this
+          workspace default, and each answer allows up to four tool attempts.
+          These choices are separate from the character's Provider web search.
+        </p>
+
         <h3>Configure a model connection</h3>
         <p>
           A provider tells CHA which model endpoint to use and how to authenticate
@@ -1199,7 +1261,9 @@
         <ul>
           <li>
             <strong>Upload</strong> in the active vault's settings validates and uploads the current
-            vault definition and database. The bucket receives two objects:
+            database and then its vault definition. CHA checks the remote version
+            before upload and asks before overwriting an unknown or changed copy.
+            The bucket receives two objects:
             the database filename and that filename followed by
             <code>.toml</code>.
           </li>
@@ -1334,7 +1398,7 @@ Then choose one small act and do it completely.</code></pre>
               </tr>
               <tr>
                 <td>Typing Enter sends nothing.</td>
-                <td>This is expected. <kbd>Enter</kbd> adds a new line; use <kbd>Ctrl</kbd>+<kbd>Enter</kbd> or the Send button.</td>
+                <td><kbd>Enter</kbd> sends a nonempty message when the session is ready. Wait for or stop an active reply, and resolve any connection error. Use <kbd>Ctrl</kbd>+<kbd>Enter</kbd> for a new line.</td>
               </tr>
               <tr>
                 <td>Import and Export are disabled.</td>

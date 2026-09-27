@@ -773,7 +773,7 @@ components:
     VoiceOutputSettings:
       type: object
       additionalProperties: false
-      required: [url, model, api_key, output_format, default_voice, instrumentation_provider, instrumentation_reasoning_effort]
+      required: [url, model, api_key, output_format, default_voice]
       properties:
         url:
           type: string
@@ -789,11 +789,6 @@ components:
         default_voice:
           type: string
           minLength: 1
-        instrumentation_provider:
-          type: string
-        instrumentation_reasoning_effort:
-          type: [string, "null"]
-          enum: [none, low, medium, high, xhigh, null]
 
     VoiceOutputRuntime:
       type: object

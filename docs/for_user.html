@@ -835,7 +835,7 @@
             <article class="card">
               <div class="number">02</div>
               <h3>Open or create a session</h3>
-              <p>Select the forum, then open an existing session or choose <strong>New session</strong>. Give it a useful name such as “Launch decision” or “Chapter 3”.</p>
+              <p>Select the forum, then open an existing session or choose <strong>New session</strong>. It opens as <strong>New session</strong>. Your first message starts automatic naming; rename it later if needed. It appears in Recent after naming finishes. Leaving an unused new session discards it.</p>
             </article>
             <article class="card">
               <div class="number">03</div>
@@ -960,7 +960,7 @@ most, explain why, and wait for the author's response.</code></pre>
 
           <div class="warning">
             <strong>Saving character settings restarts affected sessions</strong>
-            <p>If a character is answering, that answer can be lost. Finish or stop the current reply before changing the character’s provider, reasoning, search, or style settings.</p>
+            <p>If a character is answering, that answer can be lost. Finish or stop the current reply before changing the character’s provider, reasoning, or search settings. Style and voice changes do not stop generation.</p>
           </div>
         </section>
 
@@ -1142,19 +1142,20 @@ the choice, the reason, the main risk, and the next check.</code></pre>
           <details>
             <summary>A little more about providers</summary>
             <div>
-              <p>Most users only need to pick an existing provider on a character’s Settings screen. Reasoning effort and web search can inherit the provider default or be overridden for that character. Web search must be supported by the selected provider.</p>
+              <p>Most users only need to pick an existing provider on a character’s Settings screen. Reasoning effort and web search can inherit the provider default or be overridden for that character. Provider web search must be supported by the selected provider. On-demand web search instead uses Brave or Tavily configured under Settings → Search API, and can inherit the workspace default or be set On or Off. Search before generation additionally requires Recipient detection and a query provider.</p>
             </div>
           </details>
           <details>
             <summary>A little more about vaults</summary>
             <div>
-              <p>Settings → Vaults → the active vault → Merge copies another vault's configuration into the active vault after confirmation. Source files overwrite matching paths, including saved model/R2 keys; destination-only files remain. Source conversations are not copied, and the source vault stays unchanged. Enter the source password if asked. Live sessions close after success; select Reload if offered for the merged voice settings.</p>
+              <p>Settings → Vaults → the active vault → Merge copies another vault's configuration into the active vault after confirmation. Source files overwrite matching paths, including saved model/R2 keys; destination-only files remain. Source conversations are not copied, and the source vault stays unchanged. Enter the source password if asked. Live sessions close after success and the interface refreshes for the new configuration.</p>
               <p>Creating a vault can start empty or copy an existing vault; creating it does not automatically switch to it. A vault can also be password-protected, which encrypts its database. CHA cannot recover a forgotten password. Password-protected vaults are never automatically mirrored to Markdown. Enabling protection stops future mirror writes but leaves existing copies on disk; existing copies, exports, and downloaded conversations remain plaintext.</p>
             </div>
           </details>
           <details>
             <summary>A little more about speech</summary>
             <div>
+              <p>Voice input uses OpenAI or xAI, configured separately under Voice settings. End dictation with the hands-free send phrase (initially “over to you”) to send and keep listening. Capture pauses during speech playback.</p>
               <p>The native application uses FishAudio for speech output. Save its key under <strong>Settings → API Keys</strong>, add voices with FishAudio reference IDs under <strong>Settings → Voices</strong>, and choose the output endpoint, model, key, format, and default voice under <strong>Voice settings</strong>. Characters and personas can select their own voice in Settings. ElevenLabs output is no longer supported.</p>
               <p>Saved-session audio survives application restarts and replays without another FishAudio request. Voice changes apply when new audio is generated; clear the session's audio cache to replace existing clips. Welcome audio and pending downloads do not survive an application restart. Turning automatic caching off stops future submissions; switching vaults cancels pending downloads.</p>
             </div>

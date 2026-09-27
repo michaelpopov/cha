@@ -1470,8 +1470,6 @@ function defaultVoiceOutput(voices: VoiceDetail[]): VoiceOutputSettings {
     api_key: '',
     output_format: 'mp3',
     default_voice: voices[0]?.display_name ?? '',
-    instrumentation_provider: '',
-    instrumentation_reasoning_effort: null,
   };
 }
 
@@ -1482,7 +1480,6 @@ export function VoiceSettingsScreen({ client, dispatch }: SettingsScreenProps) {
   const [savedOutput, setSavedOutput] =
     useState<VoiceOutputSettings | null | undefined>(undefined);
   const [output, setOutput] = useState<VoiceOutputSettings>(defaultVoiceOutput([]));
-  const [providers, setProviders] = useState<ProviderSummary[] | null>(null);
   const [keys, setKeys] = useState<ApiKeyDetail[] | null>(null);
   const [voices, setVoices] = useState<VoiceDetail[] | null>(null);
   const [savingInput, setSavingInput] = useState(false);
@@ -1498,7 +1495,6 @@ export function VoiceSettingsScreen({ client, dispatch }: SettingsScreenProps) {
     let current = true;
     setSavedInput(undefined);
     setSavedOutput(undefined);
-    setProviders(null);
     setKeys(null);
     setVoices(null);
     setLoadError(null);
@@ -1507,9 +1503,8 @@ export function VoiceSettingsScreen({ client, dispatch }: SettingsScreenProps) {
       client.getVoiceOutputSettings(),
       client.listApiKeys(),
       client.listVoices(),
-      client.listProviders(),
     ]).then(
-      ([inputSettings, outputSettings, loadedKeys, loadedVoices, loadedProviders]) => {
+      ([inputSettings, outputSettings, loadedKeys, loadedVoices]) => {
         if (!current) return;
         setSavedInput(inputSettings);
         setInput(inputSettings ?? defaultVoiceInput);
@@ -1517,7 +1512,6 @@ export function VoiceSettingsScreen({ client, dispatch }: SettingsScreenProps) {
         setOutput(outputSettings ?? defaultVoiceOutput(loadedVoices));
         setKeys(loadedKeys);
         setVoices(loadedVoices);
-        setProviders(loadedProviders);
       },
       (failure: unknown) => {
         if (current) setLoadError(publicErrorMessage(
@@ -1541,9 +1535,7 @@ export function VoiceSettingsScreen({ client, dispatch }: SettingsScreenProps) {
     || output.model !== outputBaseline.model
     || output.api_key !== outputBaseline.api_key
     || output.output_format !== outputBaseline.output_format
-    || output.default_voice !== outputBaseline.default_voice
-    || output.instrumentation_provider !== outputBaseline.instrumentation_provider
-    || output.instrumentation_reasoning_effort !== outputBaseline.instrumentation_reasoning_effort;
+    || output.default_voice !== outputBaseline.default_voice;
   const inputReady = Boolean(input.url.trim() && input.model.trim() && input.api_key);
   const outputReady = Boolean(
     output.url.trim() && output.model.trim() && output.api_key
@@ -1611,8 +1603,6 @@ export function VoiceSettingsScreen({ client, dispatch }: SettingsScreenProps) {
         api_key: output.api_key,
         output_format: output.output_format.trim(),
         default_voice: output.default_voice,
-        instrumentation_provider: output.instrumentation_provider,
-        instrumentation_reasoning_effort: output.instrumentation_reasoning_effort,
       });
       setSavedOutput(updatedOutput);
       setOutput(updatedOutput);
@@ -1629,7 +1619,7 @@ export function VoiceSettingsScreen({ client, dispatch }: SettingsScreenProps) {
       <button className="cha-back-row" onClick={() => dispatch({ type: 'show-settings-voices' })} type="button"><ChevronLeftIcon /><span>Voices</span></button>
       {(savedInput === undefined || savedOutput === undefined) && !loadError && <p className="cha-state-message" role="status">Loading voice settings…</p>}
       {loadError && (savedInput === undefined || savedOutput === undefined) && <LoadFailure message={loadError} retry={() => setRevision((value) => value + 1)} />}
-      {savedInput !== undefined && savedOutput !== undefined && keys && voices && providers && (
+      {savedInput !== undefined && savedOutput !== undefined && keys && voices && (
         <>
           {keys.length === 0 && <p className="cha-error-message" role="alert">Add an API key before configuring voice.</p>}
           <form className="cha-settings-form" onSubmit={(event) => void saveInput(event)}>
@@ -1654,23 +1644,6 @@ export function VoiceSettingsScreen({ client, dispatch }: SettingsScreenProps) {
             <label>Output API key name<select className="cha-form-control" onChange={(event) => setOutput({ ...output, api_key: event.target.value })} value={output.api_key}><option value="">Select an API key</option>{keys.map((key) => <option key={key.id} value={key.id}>{key.display_name}</option>)}</select></label>
             <label>Output format<input className="cha-form-control" onChange={(event) => setOutput({ ...output, output_format: event.target.value })} value={output.output_format} /></label>
             <label>Default voice<select className="cha-form-control" onChange={(event) => setOutput({ ...output, default_voice: event.target.value })} value={output.default_voice}><option value="">Select a voice</option>{voices.map((voice) => <option key={voice.id} value={voice.display_name}>{voice.display_name}</option>)}</select></label>
-            <label>Instrumentation provider
-              <select className="cha-form-control" disabled={savingOutput} onChange={(event) => setOutput({ ...output, instrumentation_provider: event.target.value })} value={output.instrumentation_provider}>
-                <option value="">Off</option>
-                {output.instrumentation_provider && !providers.some((provider) => provider.id === output.instrumentation_provider) && <option value={output.instrumentation_provider}>Unavailable provider</option>}
-                {providers.map((provider) => <option key={provider.id} value={provider.id}>{provider.display_name}</option>)}
-              </select>
-            </label>
-            <label>Instrumentation reasoning effort
-              <select className="cha-form-control" disabled={savingOutput || !output.instrumentation_provider} onChange={(event) => setOutput({ ...output, instrumentation_reasoning_effort: event.target.value === '' ? null : event.target.value as VoiceOutputSettings['instrumentation_reasoning_effort'] })} value={output.instrumentation_reasoning_effort ?? ''}>
-                <option value="">Provider default</option>
-                <option value="none">None</option>
-                <option value="low">Low</option>
-                <option value="medium">Medium</option>
-                <option value="high">High</option>
-                <option value="xhigh">Extra high</option>
-              </select>
-            </label>
             {voices.length === 0 && <p className="cha-error-message" role="alert">Add a voice before configuring voice output.</p>}
             {outputMessage && <p className="cha-state-message" role="status">{outputMessage}</p>}
             {outputError && <p className="cha-error-message" role="alert">{outputError}</p>}

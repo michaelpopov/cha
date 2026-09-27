@@ -388,7 +388,7 @@ includes must therefore be part of the accepted row set.
 An ordinary configuration mutation edits the private tree, loads a complete
 candidate, collects rows, commits them in one SQLite transaction, and only then
 publishes the candidate. Failure before commit retains the old workspace.
-Runtime entity editors and explicit Database Import use this storage boundary;
+Runtime entity editors and the active vault's Import action use this storage boundary;
 editing an exported directory alone changes nothing in the running application.
 
 ### 8.3 Provider selection
@@ -525,6 +525,13 @@ Welcome uses a private temporary database with the same journal and restore
 machinery as persistent sessions. It disappears with the application's private
 runtime tree. Markdown mirroring excludes it.
 
+New sessions start as `New session` with `recent_pending` and `discardable`
+flags. Recent listings exclude pending sessions. Nonempty submission clears
+`discardable` before parsing; manual rename clears both flags. The frontend
+asks storage to discard only still-unused sessions when navigating away.
+Recovery at startup/maintenance removes empty pending sessions and publishes
+those with entries, so interrupted naming cannot hide a conversation.
+
 ### 9.4 Constructing the controller
 
 `open_session()` takes the repository, identity, provider supervisor, wake
@@ -656,6 +663,49 @@ Checkpoint: describe what happens if a streaming response contains reasoning
 but no answer, and identify which layer detects it and which layer converts it
 into a transcript error.
 
+### 10.5 Recipient detection and web search
+
+[providers/jev.cpp](../src/providers/jev.cpp) owns the Jev request and parser.
+The controller holds a pending classification with a five-second deadline and
+shared submission cancellation state. It does not commit a human turn until
+dispatch. A successful decision can select one recipient or all characters;
+undefined/failure uses the captured target. Explicit mention and multicast
+recipients stay fixed, while Self-notes bypass classification.
+
+With Search API pre-generation search enabled, Jev also chooses no search,
+direct search, or query rewriting. [providers/web_search.cpp](../src/providers/web_search.cpp)
+creates a shared, once-prepared context for all multicast recipients. An
+optional query provider resolves conversational references before Brave or
+Tavily retrieval. Failure logs a warning and allows generation without results.
+
+The independent on-demand path passes a search callback into generation input.
+`tool_calls.*` encodes a `web_search` function for both APIs and validates the
+returned calls. `ProviderClient::perform()` runs tool continuations and sums
+usage across model rounds. Responses continuations preserve reasoning items;
+Chat Completions preserves assistant tool-call messages. After four attempts,
+CHA removes tools and asks for a final answer. Interim tool-round text is held
+back, so only the answer reaches the normal transcript stream. Retrieved JSON
+is capped at 32 KiB and stripped of media metadata; neither raw results nor
+function-call bookkeeping enter persistent model history.
+
+Provider-hosted `web_search` remains separate. Read the
+[maintainer guide](MaintainerGuide.md#recipient-detection-and-search-api) for
+settings, defaults, and their different compatibility rules.
+
+### 10.6 Automatic session names and request diagnostics
+
+The first stored human message starts a separate naming request through
+Assistant's provider, with low effort, no web search, and a 30-second maximum.
+It runs alongside the reply. A successful name is limited to six words; both
+success and failure make the session visible in Recent. Manual rename cancels
+the naming request. Naming failure never fails the conversation itself.
+
+Provider diagnostics report usage, request IDs, and system-prompt size. Debug
+logging additionally records model, Jev, search, and speech payloads with the
+active credential redacted. These logs contain conversation content. Reported
+input/output usage and `web_search_used` persist on character entries and are
+projected to the UI; absent token counts remain absent rather than estimated.
+
 ## 11. Sixth reading pass: `SessionController`
 
 The controller is the heart of the application. Read
@@ -740,7 +790,9 @@ state.
 - Completion, cancellation, failure, target changes, and notices require a
   snapshot.
 
-Reasoning is never written to the transcript or SQLite journal.
+Reasoning is never written to the transcript or SQLite journal. The frontend
+also discards reasoning appends and does not render reasoning text. These
+phases describe internal progress, not a visible chain-of-thought panel.
 
 ### 11.4 Terminal outcomes
 
@@ -953,6 +1005,12 @@ view so their progress or error is visible.
 native document. After maintenance requires a reload, `reloadApplication()`
 reloads the document; changing only its hash would leave the old bridge alive.
 
+[useLiveSession.ts](../webapp/src/useLiveSession.ts) owns selection, subscription
+recovery, navigation epochs, and unused-session cleanup. The sidebar divider
+supports pointer and keyboard resizing. The composer sends with Enter and
+inserts a newline with Ctrl+Enter. Message controls copy displayed text, expose
+usage/search indicators, and delete completed errors and their whole turns.
+
 ### 12.7 Markdown, audio, and native resources
 
 `session_markdown()` renders both explicit session exports and continuous
@@ -984,6 +1042,32 @@ serve native resource handles to the WebView; the frontend releases handles
 when done. Model and speech credentials stay in native code rather than being
 returned to the frontend.
 
+Fresh audio resources can grow while FishAudio synthesis is in progress.
+`audio_stream.h` shares bytes with native resource readers, and
+`textToSpeech.ts` uses MediaSource for fresh MP3 playback when available;
+other formats and resumed clips wait for complete data. Completed audio still
+gets validated and cached. Text derived from the stored entry goes directly
+to FishAudio; obsolete voice instrumentation settings are ignored with warnings
+and removed when output settings are saved.
+
+### 12.8 Dictation and hands-free input
+
+[voiceInput.ts](../webapp/src/voiceInput.ts) selects OpenAI WebRTC or xAI.
+OpenAI connection setup makes its authenticated call in native code. xAI uses
+an AudioWorklet to capture 16 kHz mono PCM16, then bounded audio messages cross
+the bridge to a native libcurl WebSocket. `media/xai_voice_session.*` owns its
+worker, cancellation, deadline, and connection-scoped replies. The API key
+never enters the renderer.
+
+`media/xai_transcript.*` deduplicates finalized words by end timestamp across
+the whole connection. Interim events supply replaceable previews, not committed
+words. [the xAI fixture README](../tests/fixtures/xai/README.md) separates the
+recorded provider evidence from current preview behavior. `dictationText.ts`
+applies spoken punctuation to finalized pieces. The composer recognizes a
+configurable trailing send phrase, waits one second and until generation is
+idle, removes the phrase, and sends while retaining the microphone session.
+`speechPlayback.ts` pauses capture during speech output to prevent feedback.
+
 ## 13. End-to-end workflow traces
 
 ### 13.1 Opening and submitting to a session
@@ -1013,6 +1097,11 @@ affected live sessions. Changes requiring new generation configuration stop
 all affected live controllers with `reloading`, including background sessions.
 Existing provider requests retain their captured inputs until cancellation;
 they are not mutated in place.
+
+R2 upload checks the saved `r2_etag` before replacement. Unknown or changed
+remote versions require confirmation; an unchanged version uses a conditional
+write. The database uploads first, then a portable companion TOML using the
+bare database filename. A partial pair still requires an upload retry.
 
 ### 13.3 Switching or maintaining a vault
 
@@ -1142,9 +1231,9 @@ Schema v2 uses these `STRICT` tables:
 | --- | --- |
 | `config` | Complete durable configuration as only `(name, content)` rows |
 | `forums` | Durable forum IDs referenced by session rows; published database configuration supplies names, members, prompts, and defaults |
-| `sessions` | `session_key`, owning forum, public session ID, label, `updated_at`, `archived_at`, history epoch, and next ID counters |
+| `sessions` | `session_key`, owning forum, public session ID, label, `updated_at`, `archived_at`, history epoch, next ID counters, `recent_pending`, and `discardable` |
 | `turns` | Request ID, epoch, and started/completed/cancelled/failed state |
-| `entries` | Typed prompt/response/error records linked to turns |
+| `entries` | Typed prompt/response/error records linked to turns, plus reported input/output usage and search-use markers |
 | `entry_audio` | Cached audio bytes and content type for a session entry |
 
 The counters and history epoch are columns on the session row rather than a
@@ -1170,7 +1259,8 @@ What is durable:
 - completed and partially cancelled character answers;
 - generation error entries;
 - turn state and ID counters;
-- history epoch, label, `updated_at`, and `archived_at`;
+- history epoch, label, timestamps, and new-session visibility/discard flags;
+- reported answer token usage and web-search markers;
 - cached audio bytes and content type for saved entries.
 
 What is deliberately not durable:

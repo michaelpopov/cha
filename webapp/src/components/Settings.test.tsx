@@ -1384,10 +1384,7 @@ describe('Settings screens', () => {
             api_key: 'api_key_2',
             output_format: 'mp3',
             default_voice: 'Brian',
-            instrumentation_provider: provider.id,
-            instrumentation_reasoning_effort: 'low',
           }),
-          listProviders: async () => [provider],
           saveVoiceInputSettings,
           saveVoiceOutputSettings,
         })}
@@ -1405,23 +1402,8 @@ describe('Settings screens', () => {
     expect(screen.getByLabelText('Hands-free send phrase')).toHaveValue('over to you');
     expect(screen.getByLabelText('Output API key name')).toHaveDisplayValue('FishAudio');
     expect(screen.getByLabelText('Default voice')).toHaveDisplayValue('Brian');
-    expect(screen.getByLabelText('Instrumentation provider')).toHaveDisplayValue('OpenRouter');
-    expect(screen.getByLabelText('Instrumentation reasoning effort')).toHaveValue('low');
-    expect(Array.from((screen.getByLabelText('Instrumentation reasoning effort') as HTMLSelectElement).options,
-      (option) => option.value)).toEqual(['', 'none', 'low', 'medium', 'high', 'xhigh']);
-    const outputModel = screen.getByLabelText('Output model name');
-    for (const modelName of ['s1', 'drama-3-preview', 'future-model']) {
-      await userEvent.clear(outputModel);
-      await userEvent.type(outputModel, modelName);
-      expect(screen.getByLabelText('Instrumentation provider')).toBeEnabled();
-      expect(screen.getByLabelText('Instrumentation reasoning effort')).toBeEnabled();
-      expect(screen.getByLabelText('Instrumentation provider')).toHaveValue(provider.id);
-      expect(screen.getByLabelText('Instrumentation reasoning effort')).toHaveValue('low');
-    }
-    await userEvent.clear(outputModel);
-    await userEvent.type(outputModel, 's2.1-pro');
-    expect(screen.getByLabelText('Instrumentation provider')).toBeEnabled();
-    expect(screen.getByLabelText('Instrumentation reasoning effort')).toBeEnabled();
+    expect(screen.queryByLabelText('Instrumentation provider')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Instrumentation reasoning effort')).not.toBeInTheDocument();
     const model = screen.getByLabelText('Input model name');
     await userEvent.clear(model);
     await userEvent.type(model, 'next-transcribe-model');
@@ -1446,7 +1428,6 @@ describe('Settings screens', () => {
 
     await userEvent.clear(screen.getByLabelText('Output format'));
     await userEvent.type(screen.getByLabelText('Output format'), 'opus');
-    await userEvent.selectOptions(screen.getByLabelText('Instrumentation reasoning effort'), 'high');
     await userEvent.click(screen.getByRole('button', { name: 'Save voice output' }));
     expect(saveVoiceOutputSettings).toHaveBeenCalledWith({
       url: 'https://api.fish.audio/v1/tts',
@@ -1454,27 +1435,14 @@ describe('Settings screens', () => {
       api_key: 'api_key_2',
       output_format: 'opus',
       default_voice: 'Brian',
-      instrumentation_provider: provider.id,
-      instrumentation_reasoning_effort: 'high',
     });
     expect(saveVoiceInputSettings).toHaveBeenCalledOnce();
     expect(await screen.findByText('Voice output saved.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Save voice output' })).toBeDisabled();
-    await userEvent.selectOptions(screen.getByLabelText('Instrumentation provider'), '');
-    expect(screen.getByLabelText('Instrumentation reasoning effort')).toBeDisabled();
+    await userEvent.clear(screen.getByLabelText('Output format'));
+    await userEvent.type(screen.getByLabelText('Output format'), 'wav');
     await userEvent.click(screen.getByRole('button', { name: 'Reset voice output' }));
-    expect(screen.getByLabelText('Instrumentation provider')).toHaveValue(provider.id);
-    expect(screen.getByLabelText('Instrumentation reasoning effort')).toHaveValue('high');
-    await userEvent.selectOptions(screen.getByLabelText('Instrumentation reasoning effort'), '');
-    await userEvent.click(screen.getByRole('button', { name: 'Save voice output' }));
-    expect(saveVoiceOutputSettings).toHaveBeenLastCalledWith(expect.objectContaining({
-      instrumentation_provider: provider.id, instrumentation_reasoning_effort: null,
-    }));
-    await userEvent.selectOptions(screen.getByLabelText('Instrumentation provider'), '');
-    await userEvent.click(screen.getByRole('button', { name: 'Save voice output' }));
-    expect(saveVoiceOutputSettings).toHaveBeenLastCalledWith(expect.objectContaining({
-      instrumentation_provider: '', instrumentation_reasoning_effort: null,
-    }));
+    expect(screen.getByLabelText('Output format')).toHaveValue('opus');
   });
 
   it('uses the server-normalized settings and server URL errors', async () => {
@@ -1497,7 +1465,6 @@ describe('Settings screens', () => {
         getVoiceOutputSettings: async () => ({
           url: 'https://api.fish.audio/v1/tts', model: 's2.1-pro-free',
           api_key: 'key', output_format: 'mp3', default_voice: voiceDetailFixture.display_name,
-          instrumentation_provider: '', instrumentation_reasoning_effort: null,
         }),
         saveVoiceInputSettings, saveVoiceOutputSettings,
       })}

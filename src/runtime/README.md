@@ -98,6 +98,13 @@ queue before bridge locks are taken, avoiding a cycle between bridge and
 runtime waits. Stale acknowledgements and unsubscribe commands are checked
 against subscription identity and output generation.
 
+Jev submission replies wait for classification and dispatch, without blocking
+the runtime thread. Pending classification has a deadline and counts as busy.
+Snapshots expose `recent_pending` and `discardable` so the frontend can manage
+new-session visibility and abandon unused sessions safely. Token usage and
+search-use markers accompany transcript entries. Reasoning remains internal;
+the frontend ignores reasoning append events.
+
 ## Maintenance and shutdown
 
 Deletion reserves one identity before releasing its live controller and keeps

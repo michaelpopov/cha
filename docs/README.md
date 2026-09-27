@@ -1,6 +1,7 @@
 # CHA documentation
 
-- [User manual](UserManual.html): macOS installation, everyday use, settings, and vaults.
+- [User manual](UserManual.html): macOS installation, sessions, recipient detection,
+  search, voice, settings, and vaults.
 - [Conversation guide](for_user.html): personas, characters, forums, and sessions.
 - [Workspace maintainer guide](MaintainerGuide.md): configuration files,
   validation, native import/export, and database maintenance.

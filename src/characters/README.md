@@ -16,6 +16,11 @@ configuration publication cannot change work already in flight.
 | `character.*` | Request-owned character definition, runtime reporting, and identity validation. |
 | `model_context.*` | Owning model-history projection and request input. |
 
+Generation input can carry retrieved web context and an on-demand search
+callback. These are request-local additions; tool calls and search result JSON
+are not persisted as conversation entries. Legacy `minimal` effort is
+normalized to `low` during workspace loading.
+
 Tests for workspace parsing and resolution live in
 `tests/workspace/unit_workspace.cpp`; model-history tests live in
 `tests/agents/unit_model_context.cpp`.

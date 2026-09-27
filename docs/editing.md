@@ -14,7 +14,11 @@ When a workflow resembles an existing one, reuse its interaction shape:
 3. Create the entity, insert the returned summary, and select its detail screen.
 
 Keep entity-specific behavior explicit. Session creation opens a live
-conversation; persona creation only creates configuration. Use control labels,
+conversation immediately as `New session`, without a naming form; persona
+creation only creates configuration. `useLiveSession.ts` tracks unused-session
+discard and waits for `recent_pending` to clear before refreshing Recent.
+Submission or manual rename retains the session; automatic naming is separate
+from the answering request. Use control labels,
 actionable errors, and validation without explanatory text that repeats the
 obvious operation.
 
@@ -38,7 +42,7 @@ edit path:
 1. Modify the materialized private tree through a small workspace write method.
 2. Load a candidate to validate the complete result.
 3. Collect its configuration rows.
-4. Replace the rows in one transaction.
+4. Insert, update, or delete changed rows in one transaction.
 5. Publish the candidate only after commit.
 
 This gives creations and edits the same rollback and restart-required behavior.
@@ -53,6 +57,11 @@ configuration use `invalidate_affected_sessions`, which requests `reloading`
 for every affected live controller, including background sessions. Provider
 requests retain their original inputs until cancellation. All controller work
 belongs on the shared `SessionRuntime` thread, never on the editor's caller.
+
+Optional service settings follow the same store path. Validate enabled
+features, but ignore unused or obsolete settings with warning logs. Keep
+provider-hosted `web_search`, Search API `enabled`/`tool_enabled`, and character
+`web_search_tool` overrides distinct. Voice input and output save independently.
 
 ## Keep the native contract synchronized
 

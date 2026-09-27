@@ -36,7 +36,7 @@ diagnostic logging remains available until teardown finishes.
 | Directory | Responsibility |
 | --- | --- |
 | `app/` | Application composition root, domain operations, configuration, and R2 database transfer. |
-| `media/` | Audio downloads, transient media resources, and cleanup. |
+| `media/` | Audio downloads and streams, xAI dictation, transient media resources, and cleanup. |
 | `bridge/` | Native request envelopes and the operation dispatcher. |
 | `runtime/` | Live-session runtime, chat-input grammar, wire DTOs, and projection. |
 | `workspace/` | The loaded workspace model and built-ins. |
@@ -91,12 +91,11 @@ the store's materialized physical root. Published values eagerly own their
 parsed data; normal reads do not reopen materialized files. Process settings,
 including diagnostic logging, come from the external application config.
 
-The three narrow runtime mutations are serialized by the store. Each edits the
-materialized candidate, validates it, replaces the complete small `config`
-table in one SQLite transaction, and publishes only after commit. Other
-configuration changes use offline export/edit/import and a process restart.
-Session listings are read from SQLite per request, so newly created sessions
-appear immediately.
+Runtime entity, credential, voice, recipient-detection, and search edits are
+serialized by the store. Each validates a candidate, commits changed `config`
+rows in one SQLite transaction, and publishes after commit. Filesystem edits
+use Export/Edit/Import in the active vault's settings. Session listings come
+from SQLite; new unnamed sessions remain out of Recent until naming finishes.
 
 ## Build and test map
 

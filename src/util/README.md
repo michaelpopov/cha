@@ -5,7 +5,7 @@ agents, sessions, or UI policy.
 
 | Source | Responsibility |
 | --- | --- |
-| `text.*` | Byte-oriented whitespace, trimming, and ASCII case folding. |
+| `text.*` | Whitespace, ASCII case folding, and Markdown-to-speech text conversion. |
 | `text_source.*` | Immutable text-file maps and filesystem-backed text reads. |
 | `text_template.*` | Prompt includes, variables, scopes, containment, and resource limits. |
 | `path_name.*` | UTF-8 path conversion, safe path-component, and URL-identifier validation. |
@@ -14,7 +14,7 @@ agents, sessions, or UI policy.
 | `private_filesystem.*` | Owner-private directories/files and validated regular-file replacement for databases, secrets, and materialization. |
 | `crypto.*` | SHA-256 and HMAC-SHA256 helpers. |
 | `curl.*` | RAII wrappers for curl handles and header lists. |
-| `logging.*` | Synchronous rotating diagnostic-file logging. |
+| `logging.*` | Synchronous rotating diagnostic logs and escaped, credential-redacted debug payloads. |
 | `toml_file.*` | Read and atomic mutation helpers for TOML files. |
 | `concurrent_queue.h` | Portable typed thread-safe queue with reserved final delivery. |
 | `wake_notifier.h` | Narrow producer-to-owner wake interface. |

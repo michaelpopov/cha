@@ -31,6 +31,7 @@ separates four things that are easy to conflate:
 | `participant_id`, `display_name` | Who produced it — stable identity versus the label shown. |
 | `addressed_to`, `addressed_to_name` | Who a human prompt was sent to. Only human entries carry this. |
 | `text` | Persona text, character answer text, or system/error text. |
+| `input_tokens`, `output_tokens`, `web_search_used` | Optional reported usage and a durable search-use marker on character replies. |
 | `created_at` | Unix-seconds wall-clock creation time, stamped by the factories; `0` means unknown and is what rows stored before the timestamp schema read back as. |
 
 Four kinds and four statuses combine only in these ways:
@@ -43,7 +44,9 @@ Four kinds and four statuses combine only in these ways:
 | `error` | `failed` | May carry the participant it concerns and the request it ends. |
 
 Provider reasoning is not transcript content. The session layer holds it only
-while a response is active and clears it when the turn ends.
+while a response is active and clears it when the turn ends. The frontend does
+not display it. Deleting an error report removes its entire turn, including
+the human prompt.
 
 Entries are built through factories — `make_human_entry`, `make_character_entry`,
 `make_notice_entry`, `make_error_entry`. `make_notice_entry` and

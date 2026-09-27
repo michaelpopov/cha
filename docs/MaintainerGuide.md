@@ -230,9 +230,15 @@ workspace loads, the macOS main window title is `CHA: <Vault name>`.
 
 The active vault's R2 record under `system/keys/` enables Upload and Download
 under Settings → Vaults → the active vault. Upload validates the vault
-definition and schema-v2 database, then writes `<database-filename>.toml`
-followed by `<database-filename>` at the bucket root. Because R2 cannot replace
-the pair atomically, retry any failed upload before relying on Download.
+definition and schema-v2 database, then writes `<database-filename>` followed
+by `<database-filename>.toml` at the bucket root. The companion uses the bare
+database filename so its path is portable. The local vault definition records
+`r2_etag` after the database upload, even if companion upload subsequently fails.
+Before uploading, CHA checks the remote ETag. A missing local version, missing
+remote object, or mismatch asks the user before replacement; a matching version
+uses a conditional upload to reject a concurrent remote change. Because R2
+cannot replace the pair atomically, retry any failed upload before relying on
+Download.
 
 Download stages and validates both objects before changing local state. It
 keeps the previous definition and database beside them with `.bac` suffixes;
@@ -279,6 +285,10 @@ workspace/
     │   └── chatgpt/config.toml               # OAuth subscription provider
     ├── styles/
     │   └── serif-bold/config.toml
+    ├── jev/
+    │   └── config.toml                       # optional recipient detection
+    ├── web-search/
+    │   └── config.toml                       # Brave/Tavily search settings
     ├── voice-input/
     │   └── config.toml                       # optional transcription settings
     ├── voice-output/
@@ -438,7 +448,8 @@ provider = "sol"                  # required provider ID
 style = "serif"                   # optional style ID
 voice = "warm-narrator"           # optional voice ID
 reasoning_effort = "high"         # optional: none | low | medium | high | xhigh
-web_search = "auto"               # optional: off | auto | required
+web_search = "auto"               # optional: provider-hosted off | auto | required
+web_search_tool = true            # optional: override workspace on-demand search
 tags = ["science", "historical"] # optional; unique case-insensitively
 
 [prompt]                           # optional template variables
@@ -629,7 +640,7 @@ stable provider ID does not change.
 | `idle_timeout_s` | `60` | Positive timeout after response bytes stop arriving |
 | `api_key` | `""` | ID of a model key stored under `system/keys/` in this vault |
 | `api_key_env` | `""` | Legacy field spelling; its value is resolved as an exact display name among this vault's model keys, never as an environment variable |
-| `reasoning_effort` | `"none"` | Provider default forwarded to the backend |
+| `reasoning_effort` | `"none"` | `none`, `low`, `medium`, `high`, or `xhigh`; legacy `minimal` becomes `low` |
 | `reasoning_format` | `"auto"` | `auto`, `none`, `reasoning_content`, or `reasoning` |
 | `api` | `"responses"` | `responses` or `chat_completions` |
 | `auth` | no special auth | Only special value is `openai_subscription` |
@@ -639,6 +650,14 @@ stable provider ID does not change.
 Unknown fields are rejected. A malformed unused provider is logged and omitted;
 if any character selects it, workspace loading fails with the provider error.
 Do not leave knowingly malformed unused provider directories behind.
+
+Direct OpenAI Responses requests omit reasoning settings for non-reasoning
+models, with a warning. Reasoning content is not shown in chat or stored in the
+transcript. Completed character entries retain reported input/output token
+counts; the UI shows a total when both are available. Diagnostic logs also
+report cache usage and system-prompt size. Debug logs include conversation
+payloads, Jev decisions, search queries/results, and FishAudio text with active
+credentials redacted; use debug logging only where that content can be stored.
 
 ### Provider editor
 
@@ -672,8 +691,8 @@ transcript. The bridge returns success or a typed operation error; provider and
 authentication failures are shown in the form. The probe can consume a
 small amount of provider usage.
 
-`Delete provider` succeeds only when no character or built-in Assistant uses
-the provider.
+`Delete provider` succeeds only when no character, built-in Assistant, or
+enabled query rewriter uses the provider.
 
 For ordinary providers, CHA constructs endpoints as follows:
 
@@ -799,6 +818,59 @@ requires API format `Responses` and Base URL
 
 It is rejected for other Chat Completions hosts. This check applies to both a
 provider default and a character override.
+
+### Recipient detection and Search API
+
+Settings → Recipient detection configures Jev. Its exported file is
+`system/jev/config.toml`:
+
+```toml
+url = "https://openrouter.ai/api/alpha/decisions"
+model = "typesafe/jev-1.13"
+api_key = "api_key_1"
+```
+
+The saved key ID must identify an API key in this vault. Disable removes this
+file. Invalid saved configuration is ignored with a warning. Jev classifies
+the prompt's intended recipient, not which character is best qualified to
+answer. It can choose one member or all characters; an undefined decision
+keeps the current target. Failure or the five-second timeout also uses the
+captured target and reports a notice. Explicit mentions and `/mcast` recipients
+stay fixed; Self-notes bypass classification.
+
+Settings → Search API is separate from provider-hosted `web_search`. Its file
+is `system/web-search/config.toml`:
+
+```toml
+enabled = true                   # Search before generation; requires Jev
+provider = "brave"                # brave | tavily
+api_key = "api_key_2"             # saved search-service key
+query_provider = "query-model"   # existing model provider for query rewriting
+tool_enabled = true              # workspace default for on-demand search
+```
+
+Search before generation asks Jev whether to skip search, send the prompt
+directly, or rewrite it into a standalone query using conversation history.
+Enabling it requires a saved search key and an existing query provider.
+Multicast recipients share one retrieved context. A failed search or rewrite
+logs a warning and continues without search context.
+
+On-demand search exposes CHA's `web_search` function to the answering model.
+It needs a search key but not Jev or a query provider. It works through both
+Responses and Chat Completions, including subscription Responses, subject to
+the model supporting function calls. A character's optional
+`web_search_tool = true` or `false` overrides `tool_enabled`; omission inherits
+it. This does not relax the separate provider-hosted search restrictions above.
+An unavailable saved search key disables the tool with a warning.
+
+The model can make up to four tool attempts per answer. Search errors return
+tool error JSON so the model can continue. At the limit CHA removes tools and
+asks for a final answer. Intermediate tool-round content is not shown as the
+answer. Brave/Tavily result JSON is stripped of media metadata and capped at
+32 KiB. Raw results and tool calls do not become transcript entries; replies
+retain a search-use marker and aggregate model token usage across rounds.
+Unknown service fields warn; disabled services do not require usable unused
+key or query-provider settings.
 
 ### Add a provider
 
@@ -926,10 +998,14 @@ To add or tune a voice through exported files:
 4. Validate the complete exported workspace.
 5. Import the directory back into the vault.
 
-Voice output is available only for character replies. An unassigned character
-uses the configured default voice. Changing a voice affects future synthesis;
+Voice output is available for completed character replies. Characters can
+select a voice; unassigned characters use the configured default voice. Changing a voice affects future synthesis;
 an already cached clip keeps its original voice until the session's audio cache
 is cleared.
+
+Obsolete `instrumentation_provider` and `instrumentation_reasoning_effort`
+fields are ignored with warnings and removed on save. Speech text goes directly
+to FishAudio without an intermediate model request.
 
 ### Voice input
 
@@ -944,6 +1020,7 @@ model = "gpt-live-transcribe"
 api_key = "openai"   # saved API-key ID, not the secret
 delay = "low"        # low | medium | high | xhigh; used by OpenAI only
 prompt = ""
+send_phrase = "over to you"  # empty disables hands-free sending
 ```
 
 Use `provider = "xai"`, `url = "wss://api.x.ai/v1/stt"`, and
@@ -962,6 +1039,12 @@ fails with `xAI returned a transcript without word timings.` A curl build
 without the `ws` and `wss` protocols rejects xAI at startup and leaves OpenAI
 usable. The macOS build uses bundled curl 8.14.1, which includes `wss`.
 
+The composer removes a trailing send phrase and submits after a one-second
+pause once generation is idle, keeping the microphone active. An empty phrase
+disables hands-free sending. Manual Send finishes dictation first. Microphone
+capture pauses during speech playback and resumes afterward. xAI interim text
+is a replaceable preview; only finalized word-timed text is committed.
+
 ### Stored audio and background downloads
 
 Audio is stored in SQLite's `entry_audio` table as one audio BLOB and MIME type
@@ -971,21 +1054,24 @@ Welcome uses its temporary session database, so its audio is not durable across
 application restarts. Cached clips can be played without a working synthesis
 configuration; playback obtains a native resource handle for the stored bytes.
 
-Selecting a completed human message or character response's speaker control
+Selecting a completed character response's speaker control
 submits a short download request if audio is missing. `AudioDownloadManager`
 owns the queue and three worker threads; repeated requests for the same entry
 share the existing job. It captures output settings, the key, and voice at
 acceptance, derives text from the stored entry, and retries transport failures
 up to four attempts. Storage failures are terminal. The frontend polls status
-while jobs are pending and plays the selected clip when it becomes available.
+while jobs are pending. A selected growing MP3 resource can begin playback
+before the download finishes when MediaSource is supported; other formats
+and resumed clips use complete-clip playback. Native resources handle partial
+reads and keep the connection/context lifetime checks.
 Failed entries expose a retry control. Stopping playback preserves its position
 in document memory; replay resumes there until the clip finishes or the page reloads.
 
 The speaker toggle before `Rus` enables automatic conversation caching. It
-submits one batch for uncached, nonempty completed human messages and character
-responses in the displayed transcript, including covered entries but excluding
-duplicate multicast prompts. Later completed entries are submitted while the
-toggle remains enabled. A batch is fully validated before new jobs are admitted.
+submits one batch for uncached, nonempty completed character responses in
+the displayed transcript, including covered entries. Later completed entries
+are submitted while the toggle remains enabled. A batch is fully validated
+before new jobs are admitted.
 
 Disabling the toggle stops future submissions. Changing sessions also turns it
 off, but accepted jobs continue independently of the displayed screen or document connection.
@@ -1317,6 +1403,18 @@ Before reporting completion, verify the relevant subset:
 When a real provider change is applied, configuration validation is not a
 connectivity test. Run `Test` against the candidate before saving when the user
 asks for connectivity verification.
+
+### Session creation and naming
+
+New session opens immediately under the label `New session`, without a naming
+form. It is initially absent from Recent and can be discarded on navigation.
+A nonempty submission retains it, including a submission rejected before a
+turn is stored. Its first stored human message starts a title request using
+Assistant's provider, low effort, no search, and at most 30 seconds. The reply
+and naming request run independently. Naming publishes the session in Recent
+whether it succeeds or fails. Manual rename cancels naming and keeps the
+session. Startup/maintenance recovery removes empty pending sessions and
+publishes pending sessions that already have entries.
 
 ## 14. Troubleshooting map
 
