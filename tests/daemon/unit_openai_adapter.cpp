@@ -130,8 +130,8 @@ TEST_F(OpenAiAdapterTest, ListsForumsAndOmitsEntrance) {
         EXPECT_EQ(model.at("created"), 0);
         ids.push_back(model.at("id").get<std::string>());
     }
-    EXPECT_NE(std::find(ids.begin(), ids.end(), "lobby"), ids.end());
-    EXPECT_NE(std::find(ids.begin(), ids.end(), "stoics"), ids.end());
+    EXPECT_NE(std::find(ids.begin(), ids.end(), "The Lobby"), ids.end());
+    EXPECT_NE(std::find(ids.begin(), ids.end(), "Stoics"), ids.end());
     EXPECT_EQ(
         std::find(ids.begin(), ids.end(), std::string(entrance_id)),
         ids.end());
@@ -161,7 +161,7 @@ TEST_F(OpenAiAdapterTest, ReturnsOpenAiErrorEnvelopes) {
 TEST_F(OpenAiAdapterTest, AcceptsContentArraysAndIgnoresUnusedOptions) {
     const auto parsed = parse_chat_request(
         chat_body(
-            "lobby",
+            "The Lobby",
             nlohmann::json::array({
                 {{"role", "system"}, {"content", "ignore"}},
                 {{"role", "user"},
@@ -180,16 +180,29 @@ TEST_F(OpenAiAdapterTest, AcceptsContentArraysAndIgnoresUnusedOptions) {
     const auto* request = std::get_if<ParsedChatRequest>(&parsed);
     ASSERT_NE(request, nullptr);
     EXPECT_EQ(request->model, "lobby");
+    EXPECT_EQ(request->model_name, "The Lobby");
     EXPECT_EQ(request->user_text, "hello");
     EXPECT_FALSE(request->stream);
     EXPECT_FALSE(request->tag);
+}
+
+TEST_F(OpenAiAdapterTest, AcceptsPreviousForumIds) {
+    const auto parsed = parse_chat_request(
+        chat_body("lobby", nlohmann::json::array({
+            {{"role", "user"}, {"content", "hello"}},
+        })).dump(),
+        *application_);
+    const auto* request = std::get_if<ParsedChatRequest>(&parsed);
+    ASSERT_NE(request, nullptr);
+    EXPECT_EQ(request->model, "lobby");
+    EXPECT_EQ(request->model_name, "lobby");
 }
 
 TEST_F(OpenAiAdapterTest, RejectsPromptSizeBoundaryAndUnknownModels) {
     const std::size_t limit = application_->settings().prompt_limit;
     const auto allowed = parse_chat_request(
         chat_body(
-            "lobby",
+            "The Lobby",
             nlohmann::json::array({
                 {{"role", "user"}, {"content", std::string(limit, 'a')}},
             }))
@@ -199,7 +212,7 @@ TEST_F(OpenAiAdapterTest, RejectsPromptSizeBoundaryAndUnknownModels) {
 
     const auto too_large = parse_chat_request(
         chat_body(
-            "lobby",
+            "The Lobby",
             nlohmann::json::array({
                 {{"role", "user"},
                  {"content", std::string(limit + 1, 'a')}},
@@ -236,7 +249,7 @@ TEST_F(OpenAiAdapterTest, RejectsPromptSizeBoundaryAndUnknownModels) {
 TEST_F(OpenAiAdapterTest, SelectsTagsAndReportsForumMismatch) {
     const auto continued = parse_chat_request(
         chat_body(
-            "lobby",
+            "The Lobby",
             nlohmann::json::array({
                 {{"role", "user"}, {"content", "hi"}},
                 {{"role", "assistant"},
@@ -248,12 +261,14 @@ TEST_F(OpenAiAdapterTest, SelectsTagsAndReportsForumMismatch) {
         *application_);
     const auto* tagged = std::get_if<ParsedChatRequest>(&continued);
     ASSERT_NE(tagged, nullptr);
+    EXPECT_EQ(tagged->model, "lobby");
+    EXPECT_EQ(tagged->model_name, "The Lobby");
     ASSERT_TRUE(tagged->tag);
     EXPECT_EQ(tagged->tag->session_id, "old");
 
     const auto mismatch = parse_chat_request(
         chat_body(
-            "lobby",
+            "The Lobby",
             nlohmann::json::array({
                 {{"role", "assistant"},
                  {"content", "[//]: # (cha lobby/old)"}},
@@ -269,7 +284,7 @@ TEST_F(OpenAiAdapterTest, SelectsTagsAndReportsForumMismatch) {
 
     const auto missing = parse_chat_request(
         chat_body(
-            "lobby",
+            "The Lobby",
             nlohmann::json::array({
                 {{"role", "assistant"}, {"content", "no tag"}},
                 {{"role", "user"}, {"content", "hello"}},
@@ -290,7 +305,7 @@ TEST_F(OpenAiAdapterTest, InvalidChatDoesNotCreateASession) {
         {.method = "POST",
          .document_uri = "/v1/chat/completions",
          .body = chat_body(
-                     "lobby",
+                     "The Lobby",
                      nlohmann::json::array({
                          {{"role", "assistant"}, {"content", "no tag"}},
                          {{"role", "user"}, {"content", "hello"}},

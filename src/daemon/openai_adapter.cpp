@@ -76,16 +76,6 @@ bool write_json(
     return write_cgi(fd, status, "application/json", body.dump(), stop);
 }
 
-bool model_is_exposed(
-    app::Application& application, std::string_view model) {
-    if (model == entrance_id) return false;
-    for (const ForumSummary& forum :
-         application.bootstrap().presentation.forums) {
-        if (forum.id == model) return true;
-    }
-    return false;
-}
-
 std::uint64_t next_number() {
     static std::atomic<std::uint64_t> next{1};
     return next.fetch_add(1);
@@ -141,7 +131,7 @@ nlohmann::json chunk(
         {"id", chat.id},
         {"object", "chat.completion.chunk"},
         {"created", chat.created},
-        {"model", chat.request.model},
+        {"model", chat.request.model_name},
         {"choices", nlohmann::json::array({std::move(choice)})},
     };
 }
@@ -379,7 +369,7 @@ void finish_turn(Chat& chat, TurnEnd end, const Turn& turn) {
                 {"id", chat.id},
                 {"object", "chat.completion"},
                 {"created", chat.created},
-                {"model", chat.request.model},
+                {"model", chat.request.model_name},
                 {"choices", nlohmann::json::array({std::move(choice)})},
             },
             chat.stop);
@@ -577,7 +567,7 @@ nlohmann::json models_list(app::Application& application) {
          application.bootstrap().presentation.forums) {
         if (forum.id == entrance_id) continue;
         data.push_back({
-            {"id", forum.id},
+            {"id", forum.display_name},
             {"object", "model"},
             {"created", 0},
             {"owned_by", "cha"},
@@ -626,11 +616,20 @@ std::variant<ParsedChatRequest, ApiError> parse_chat_request(
         return bad_request("The input exceeds the prompt limit");
     }
 
-    std::string model = request["model"].get<std::string>();
-    if (!model_is_exposed(application, model)) {
+    std::string model_name = request["model"].get<std::string>();
+    std::string model;
+    std::string legacy_model;
+    for (const ForumSummary& forum :
+         application.bootstrap().presentation.forums) {
+        if (forum.id == entrance_id) continue;
+        if (forum.display_name == model_name) model = forum.id;
+        if (forum.id == model_name) legacy_model = forum.id;
+    }
+    if (model.empty()) model = std::move(legacy_model);
+    if (model.empty()) {
         return ApiError{
             .status = 404,
-            .message = "The model '" + model + "' does not exist",
+            .message = "The model '" + model_name + "' does not exist",
             .code = "model_not_found",
         };
     }
@@ -644,6 +643,7 @@ std::variant<ParsedChatRequest, ApiError> parse_chat_request(
     }
     return ParsedChatRequest{
         .model = std::move(model),
+        .model_name = std::move(model_name),
         .user_text = std::move(user_text),
         .stream = stream,
         .tag = scan.status == SessionTagScan::found

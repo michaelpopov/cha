@@ -4,8 +4,8 @@ Requires=cha@%i.socket
 After=cha@%i.socket
 
 [Service]
-ExecStart=/usr/local/bin/cha-daemon --config /var/lib/cha/%i/config
-User=cha-%i
+ExecStart=@CHA_DEPLOY_PATH@/cha-daemon --config @CHA_DATA_PATH@/%i/config
+User=@CHA_INSTALL_USER@
 PrivateTmp=yes
 # Submit can block for the 30s command deadline before stop is observed.
 # The application shutdown then waits up to the 10s shutdown grace.

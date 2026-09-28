@@ -1,8 +1,16 @@
-.PHONY: build package-macos package-windows web-check web-stage test itest itest-local itest-daemon run-native-dev clean-san
+.PHONY: build package-linux package-macos package-windows web-check web-stage test itest itest-local itest-daemon run-native-dev clean-san
+
+ifeq ($(package),linux)
+.DEFAULT_GOAL := package-linux
+endif
 
 build:
 	cmake --preset ninja
 	cmake --build --preset ninja
+
+package-linux:
+	$(if $(strip $(VERSION)),,$(error usage: make package-linux VERSION=<version>))
+	./packaging/linux/package.sh "$(VERSION)"
 
 ifeq ($(OS),Windows_NT)
 package-macos:

@@ -382,7 +382,10 @@ build/ninja/itest --gtest_filter=R2Integration.*
 Browser development is documented in
 [webapp/README.md](webapp/README.md). Build a validated release with
 `make package-macos VERSION=<version>` on macOS or
-`make package-windows VERSION=<version>` on Windows. The macOS command writes
+`make package-windows VERSION=<version>` on Windows. On Linux,
+`make package-linux VERSION=<version>` (or `make package=linux VERSION=<version>`)
+creates `packages/cha-linux-<version>.tar.gz` with `cha-daemon`, an example
+vault, and deployment scripts for nginx and systemd. The macOS command writes
 `packages/CHA.app` and `packages/CHA-macos-<version>.tar.gz`. The macOS archive
 contains only `CHA.app`; the app creates its configuration and database on first
 launch. Packaging requires

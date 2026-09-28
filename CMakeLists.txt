@@ -396,6 +396,14 @@ if(NOT WIN32)
     install(TARGETS cha-daemon RUNTIME DESTINATION bin)
 endif()
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_executable(
+        cha_prepare_linux_config EXCLUDE_FROM_ALL
+        packaging/linux/prepare_config.cpp)
+    target_link_libraries(cha_prepare_linux_config PRIVATE cha_lib)
+    cha_enable_warnings(cha_prepare_linux_config)
+endif()
+
 # The instrumented Windows host uses this helper for its actual WebView2
 # workflow even in packaging builds, where the full GoogleTest suite is off.
 if(WIN32 AND NOT BUILD_TESTING)

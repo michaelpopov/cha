@@ -17,7 +17,8 @@
 namespace cha::daemon {
 
 struct ParsedChatRequest {
-    std::string model;
+    std::string model;  // Stable forum ID for CHA sessions.
+    std::string model_name;  // Client-facing model string.
     std::string user_text;
     bool stream{};
     std::optional<SessionTag> tag;

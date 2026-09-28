@@ -39,7 +39,7 @@ def user(text):
     return {"role": "user", "content": text}
 
 
-def chat(messages, stream=False, model="lobby", **fields):
+def chat(messages, stream=False, model="The Lobby", **fields):
     return dict(model=model, messages=messages, stream=stream, **fields)
 
 
@@ -169,14 +169,14 @@ class DaemonIntegration(unittest.TestCase):
         self.nginx_socket = str(self.directory / "nginx.sock")
 
         # Exercise the shipped routing configuration, changing only deployment
-        # paths, credentials and the TLS listener for an unprivileged local run.
+        # paths, credentials and the listener for an unprivileged local run.
         routing = (ROOT / "packaging/linux/nginx.conf.example").read_text()
         for old, new in (
             ("<alice-key>", "a" * 64),
             ("<bob-key>", "b" * 64),
             ('default               "";',
              f'"{MISSING_KEY}" missing;\n    "{PROBE_KEY}" probe;\n    default "";'),
-            ("listen 443 ssl;", f"listen unix:{self.nginx_socket};"),
+            ("listen 127.0.0.1:8086;", f"listen unix:{self.nginx_socket};"),
             ("/run/cha/", f"{self.directory}/"),
         ):
             self.assertIn(old, routing, f"nginx.conf.example no longer contains {old!r}")
@@ -331,7 +331,7 @@ class DaemonIntegration(unittest.TestCase):
     def completion(self, messages, **fields):
         result = self.post(chat(messages, **fields))
         self.assertEqual(result["object"], "chat.completion")
-        self.assertEqual(result["model"], "lobby")
+        self.assertEqual(result["model"], "The Lobby")
         choice = result["choices"][0]
         self.assertEqual(choice["finish_reason"], "stop")
         self.assertEqual(choice["message"]["role"], "assistant")
@@ -350,7 +350,7 @@ class DaemonIntegration(unittest.TestCase):
         self.assertIn("application/json", content_type)
         models = json.loads(body)
         self.assertEqual(models["object"], "list")
-        self.assertEqual([model["id"] for model in models["data"]], ["lobby"])
+        self.assertEqual([model["id"] for model in models["data"]], ["The Lobby"])
         self.assertEqual(models["data"][0]["object"], "model")
         self.assertEqual(models["data"][0]["owned_by"], "cha")
         self.assertEqual(self.request("GET", "/v1/models", key=MISSING_KEY)[0], 502)
@@ -431,7 +431,7 @@ class DaemonIntegration(unittest.TestCase):
         for chunk in chunks:
             self.assertEqual(chunk["object"], "chat.completion.chunk")
             self.assertEqual(chunk["id"], chunks[0]["id"])
-            self.assertEqual(chunk["model"], "lobby")
+            self.assertEqual(chunk["model"], "The Lobby")
             content += chunk["choices"][0]["delta"].get("content", "")
         tag = self.tag(content)
         self.assertEqual(content, tag + "\n\n**Guide:** Stream me")
