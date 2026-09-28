@@ -643,6 +643,7 @@ if(BUILD_TESTING)
             tests/daemon/unit_scgi.cpp
             tests/daemon/unit_session_tag.cpp
             tests/daemon/unit_openai_adapter.cpp
+            tests/daemon/unit_openai_turns.cpp
             tests/daemon/unit_daemon_process.cpp
             tests/support/test_workspace.cpp
             src/daemon/scgi.cpp

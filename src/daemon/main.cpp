@@ -7,6 +7,7 @@
 
 #include <atomic>
 #include <cerrno>
+#include <chrono>
 #include <csignal>
 #include <cstdlib>
 #include <cstring>
@@ -239,9 +240,11 @@ void install_stop_handlers() {
     }
 }
 
-void run_accept_loop(app::Application& application) {
+std::chrono::milliseconds run_accept_loop(app::Application& application) {
+    daemon::DaemonShutdown shutdown{
+        stop_requested, application.settings().shutdown_grace};
     using daemon::ScgiReadStatus;
-    while (!stop_requested.load(std::memory_order_relaxed)) {
+    while (!shutdown.requested()) {
         daemon::UniqueFd client =
             daemon::accept_connection(listen_fd, stop_requested);
         if (!client) continue;
@@ -276,8 +279,10 @@ void run_accept_loop(app::Application& application) {
         }
         if (daemon::peer_closed(client.get())) continue;
         daemon::handle_request(
-            application, result.request, client.get(), stop_requested);
+            application, result.request, client.get(), shutdown);
     }
+    if (!shutdown.armed) shutdown.request_stop();
+    return shutdown.remaining();
 }
 
 void report_error(std::string_view message, bool logging_ready) {
@@ -307,9 +312,9 @@ int main(int argc, char** argv) {
 
         auto application = cha::app::Application::open(
             command, std::move(password));
-        cha::run_accept_loop(*application);
+        const auto shutdown_budget = cha::run_accept_loop(*application);
         application->request_shutdown();
-        if (!application->join_shutdown(application->settings().shutdown_grace)) {
+        if (!application->join_shutdown(shutdown_budget)) {
             cha::report_error("CHA application shutdown timed out", true);
             _exit(EXIT_FAILURE);
         }

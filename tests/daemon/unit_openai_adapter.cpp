@@ -81,7 +81,8 @@ CgiResponse exchange(
     UniqueFd server(fds[0]);
     UniqueFd client(fds[1]);
     std::atomic<bool> stop{false};
-    handle_request(application, request, server.get(), stop);
+    DaemonShutdown shutdown{stop};
+    handle_request(application, request, server.get(), shutdown);
     server.close();
     std::string raw;
     char buffer[4096];
@@ -283,28 +284,8 @@ TEST_F(OpenAiAdapterTest, SelectsTagsAndReportsForumMismatch) {
         absent->message, "This chat has no CHA session. Start a new chat.");
 }
 
-TEST_F(OpenAiAdapterTest, PreflightDoesNotCreateASession) {
-    const CgiResponse created = exchange(
-        *application_,
-        {.method = "POST",
-         .document_uri = "/v1/chat/completions",
-         .body = chat_body(
-                     "lobby",
-                     nlohmann::json::array({
-                         {{"role", "user"},
-                          {"content", "[//]: # (cha lobby/pasted)"}},
-                     }),
-                     {{"stream", true}})
-                     .dump()});
-    EXPECT_EQ(created.status, 501);
-    EXPECT_EQ(
-        created.json.at("error").at("message"),
-        "Chat completion is not implemented");
-    EXPECT_EQ(created.json.at("error").at("type"), "server_error");
+TEST_F(OpenAiAdapterTest, InvalidChatDoesNotCreateASession) {
     const auto epoch = application_->context_epoch();
-    EXPECT_TRUE(application_->list_sessions("lobby", epoch).empty());
-    EXPECT_TRUE(application_->list_sessions("stoics", epoch).empty());
-
     const CgiResponse invalid = exchange(
         *application_,
         {.method = "POST",

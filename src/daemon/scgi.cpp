@@ -218,8 +218,6 @@ std::string_view reason_phrase(int status) {
         return "Content Too Large";
     case 500:
         return "Internal Server Error";
-    case 501:
-        return "Not Implemented";
     case 502:
         return "Bad Gateway";
     default:

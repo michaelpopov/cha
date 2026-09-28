@@ -261,4 +261,42 @@ remain future work and do not block this release.
 
 ### Execution record
 
-Not run yet.
+Repository: `2c4c4dc` (Block 1) plus the uncommitted stage-2 files below.
+Linux host: Ubuntu, g++ 15.2.0, `build/linux`. macOS was not available.
+
+Changed files:
+- `src/daemon/openai_adapter.h`, `openai_adapter.cpp` — turn handler for both response modes; `DaemonShutdown`
+- `src/daemon/main.cpp` — one shutdown budget shared by drain and `join_shutdown()`
+- `src/daemon/scgi.cpp` — removed the unused `501` reason phrase
+- `packaging/linux/cha@.service` — `TimeoutStopSec=90s` (30s command deadline plus shutdown grace)
+- `CMakeLists.txt`
+- `tests/daemon/unit_openai_adapter.cpp`, `unit_openai_turns.cpp`, `unit_daemon_process.cpp`
+
+The temporary `501` chat branch is gone. No new application thread, queue, schema, or dependency was added.
+
+```
+cmake --build build/linux --target cha-daemon cha_daemon_tests cha_tests cha_app_tests
+./build/linux/cha_daemon_tests
+./build/linux/cha_tests
+./build/linux/cha_app_tests
+```
+
+Results on this Linux host:
+- `cha_daemon_tests`: 38 passed. Includes stage-1 parsing, models, transport, and invalid activation; chat lifecycle, both response modes, rejection cleanup, cancellation, keepalive, submission timeout, and shutdown during generation.
+- `cha_tests`: 503 passed, 2 skipped (live OAuth tests).
+- `cha_app_tests`: 328 passed.
+- Shared application code did not change, so the desktop suites were not run.
+- macOS build and daemon tests: not run. This host is Linux only.
+
+Deployment and client checks on this host:
+- `www-data` exists (`www-data:x:33`). The socket example already uses that group.
+- `nginx` is not installed. `nginx -t`, the two-user matrix, and the chat client were not run.
+- `systemd-analyze verify` on the example units reports `/usr/local/bin/cha-daemon` is not installed. The binary is built at `build/linux/cha-daemon` and is not copied into `/usr/local`.
+- No `/var/lib/cha` users, `/run/cha` socket, or disposable vault is present.
+- These deployment and client checks are unverified. They are not passed checks.
+
+Stage 1 evidence that still applies: idle `SIGTERM` and partial-read `SIGTERM` on the real executable exited 0; direct SCGI `GET /v1/models` returned forum `lobby` and omitted Entrance. The nginx model-list smoke test was not run in stage 1 and was not run here.
+
+The implementation is not complete. The Linux daemon tests pass. The nginx/systemd matrix, the chat client, and the macOS daemon tests are still open.
+
+COMPLETED
