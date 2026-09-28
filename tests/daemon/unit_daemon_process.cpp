@@ -59,7 +59,7 @@ TEST_F(DaemonProcessTest, RejectsInvalidActivation) {
     };
     std::vector<Case> cases;
     cases.push_back({"missing listen pid", DaemonSpawn{
-        .config_directory = config_,
+        .config_directory = workspace_.root() / "missing-config",
         .set_listen_pid = false,
     }});
     cases.push_back({"wrong listen pid", DaemonSpawn{
@@ -159,8 +159,8 @@ TEST(DaemonProcess, StopsDuringGeneration) {
         "display_name = \"Guide\"\nprovider = \"remote\"\n");
     const auto database = import_test_database(workspace.root());
     const auto config = write_config(workspace, database);
-    server.start();
     DaemonProcess process(DaemonSpawn{.config_directory = config});
+    server.start();
 
     daemon::UniqueFd client;
     const auto ready = std::chrono::steady_clock::now() + 5s;

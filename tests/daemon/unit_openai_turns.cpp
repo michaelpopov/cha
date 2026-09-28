@@ -448,6 +448,30 @@ protected:
     std::unique_ptr<Application> application_;
 };
 
+TEST_F(TurnTest, DisconnectBeforeSubmissionLeavesNoSession) {
+    open_application();
+    int fds[2]{};
+    ASSERT_EQ(::socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
+    UniqueFd server(fds[0]);
+    UniqueFd client(fds[1]);
+    client.close();
+    std::atomic<bool> stop{false};
+    DaemonShutdown shutdown{stop};
+    handle_request(
+        *application_,
+        {.method = "POST",
+         .document_uri = "/v1/chat/completions",
+         .body = chat_body(
+                     "lobby",
+                     nlohmann::json::array({user_message("Hello")}))
+                     .dump()},
+        server.get(),
+        shutdown);
+
+    EXPECT_TRUE(application_->list_sessions(
+        "lobby", application_->context_epoch()).empty());
+}
+
 TEST_F(TurnTest, NewChatStoresTheTurnWithoutTheTagOrClientHistory) {
     open_application();
     const auto response = post(nlohmann::json::array({
@@ -997,6 +1021,15 @@ TEST_F(TurnTest, KeepaliveUsesTheTestClock) {
             shutdown,
             clock);
     });
+    struct ResumeAndJoin {
+        MockHttpServer& server;
+        std::thread& worker;
+        ~ResumeAndJoin() {
+            if (!worker.joinable()) return;
+            server.resume_responses();
+            worker.join();
+        }
+    } resume_and_join{server, worker};
     std::string raw;
     auto read_until = [&](std::string_view needle) {
         const auto deadline = std::chrono::steady_clock::now() + 5s;

@@ -51,7 +51,10 @@ std::string message_text(const nlohmann::json& message) {
     std::string text;
     for (const nlohmann::json& part : content) {
         if (!part.is_object()) continue;
-        if (part.contains("type") && part["type"] != "text") continue;
+        if (!part.contains("type") || !part["type"].is_string()
+            || part["type"] != "text") {
+            continue;
+        }
         if (!part.contains("text") || !part["text"].is_string()) continue;
         text += part["text"].get<std::string>();
     }

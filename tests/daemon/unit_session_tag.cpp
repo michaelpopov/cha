@@ -40,6 +40,7 @@ TEST(SessionTag, ExtractsOrderedTextPartsAndIgnoresNonText) {
         {"content",
          nlohmann::json::array(
              {{{"type", "image_url"}, {"image_url", {{"url", "x"}}}},
+              {{"text", "ignored malformed"}},
               {{"type", "text"}, {"text", "  "}},
               {{"type", "text"}, {"text", "[//]: # (cha lobby/p1)"}},
               "ignored"})},

@@ -152,6 +152,61 @@ std::string provider_failure_message(const std::vector<Reply>& replies) {
     return "The provider failed.";
 }
 
+std::chrono::steady_clock::time_point cleanup_deadline(
+    app::Application& application, const DaemonShutdown& shutdown) {
+    if (shutdown.armed) return shutdown.deadline;
+    return std::chrono::steady_clock::now()
+        + application.settings().command_deadline;
+}
+
+std::optional<ErrorCode> enqueue_cleanup_command(
+    app::Application& application,
+    std::string_view forum,
+    std::string_view session_id,
+    WebCommand command,
+    std::uint64_t epoch,
+    const DaemonShutdown& shutdown) {
+    const auto queued = application.submit_async(
+        forum,
+        session_id,
+        std::move(command),
+        epoch,
+        cleanup_deadline(application, shutdown));
+    if (const auto* error = std::get_if<ErrorCode>(&queued)) return *error;
+    return std::nullopt;
+}
+
+bool harmless_cleanup_error(ErrorCode code) {
+    return code == ErrorCode::session_not_live
+        || code == ErrorCode::session_stopping
+        || code == ErrorCode::not_found
+        || code == ErrorCode::server_stopping
+        || code == ErrorCode::application_unavailable;
+}
+
+struct CreatedSessionCleanup {
+    app::Application& application;
+    std::string forum;
+    std::string session_id;
+    std::uint64_t epoch{};
+    DaemonShutdown& shutdown;
+    bool remove{false};
+
+    ~CreatedSessionCleanup() {
+        if (!remove || shutdown.requested()) return;
+        try {
+            const auto error = application.delete_session(
+                forum, session_id, epoch, false);
+            if (error && *error != ErrorCode::not_found) {
+                shutdown.request_stop();
+            }
+        } catch (const std::exception& error) {
+            log_error(error.what());
+            shutdown.request_stop();
+        }
+    }
+};
+
 struct SubscriptionCleanup {
     app::Application& application;
     std::string forum;
@@ -159,9 +214,11 @@ struct SubscriptionCleanup {
     std::string connection_id;
     std::string subscription_id;
     std::uint64_t epoch{};
+    DaemonShutdown& shutdown;
     std::shared_ptr<LiveSession> session;
     bool subscribed{false};
-    bool delete_rejected{false};
+    bool disarm_after_cleanup{false};
+    int uncaught_on_entry{std::uncaught_exceptions()};
 
     SubscriptionCleanup(
         app::Application& application_in,
@@ -169,32 +226,41 @@ struct SubscriptionCleanup {
         std::string session_in,
         std::string connection_in,
         std::string subscription_in,
-        std::uint64_t epoch_in)
+        std::uint64_t epoch_in,
+        DaemonShutdown& shutdown_in)
         : application(application_in),
           forum(std::move(forum_in)),
           session_id(std::move(session_in)),
           connection_id(std::move(connection_in)),
           subscription_id(std::move(subscription_in)),
-          epoch(epoch_in) {}
+          epoch(epoch_in),
+          shutdown(shutdown_in) {}
 
     ~SubscriptionCleanup() {
+        if (std::uncaught_exceptions() > uncaught_on_entry) {
+            shutdown.request_stop();
+        }
         try {
             if (subscribed) {
-                (void)application.unsubscribe(
+                const auto error = enqueue_cleanup_command(
+                    application,
                     forum,
                     session_id,
                     UnsubscribeCommand{
                         connection_id, epoch, subscription_id},
-                    epoch);
-                subscribed = false;
+                    epoch,
+                    shutdown);
+                if (error && !harmless_cleanup_error(*error)) {
+                    shutdown.request_stop();
+                }
             }
-            session.reset();
-            if (delete_rejected) {
-                (void)application.delete_session(
-                    forum, session_id, epoch, false);
-            }
-        } catch (const std::exception&) {
+        } catch (const std::exception& error) {
+            log_error(error.what());
+            shutdown.request_stop();
         }
+        subscribed = false;
+        session.reset();
+        if (disarm_after_cleanup) shutdown.disarm_if_idle();
     }
 };
 
@@ -213,6 +279,12 @@ void serve_chat(
     const TurnClock& clock) {
     bool headers_sent = false;
     try {
+        if (shutdown.requested()) {
+            shutdown.request_stop();
+            return;
+        }
+        if (peer_closed(fd)) return;
+
         const std::uint64_t epoch = application.context_epoch();
         if (epoch == 0) {
             write_error(
@@ -226,6 +298,8 @@ void serve_chat(
             return;
         }
 
+        CreatedSessionCleanup created_cleanup{
+            application, parsed.model, {}, epoch, shutdown};
         bool created = false;
         std::string session_id;
         if (!parsed.tag) {
@@ -233,6 +307,8 @@ void serve_chat(
                 application.create_session(parsed.model, "", epoch);
             session_id = created_session.id;
             created = true;
+            created_cleanup.session_id = session_id;
+            created_cleanup.remove = true;
         } else {
             session_id = parsed.tag->session_id;
         }
@@ -262,6 +338,7 @@ void serve_chat(
             "daemon-" + std::to_string(subscription_number),
             "sub-" + std::to_string(subscription_number),
             epoch,
+            shutdown,
         };
         const auto subscribed = application.subscribe(
             parsed.model,
@@ -276,6 +353,12 @@ void serve_chat(
             const ErrorCode code = std::holds_alternative<ErrorCode>(subscribed)
                 ? std::get<ErrorCode>(subscribed)
                 : ErrorCode::internal_error;
+            if (code == ErrorCode::command_timeout
+                || code == ErrorCode::application_unavailable
+                || code == ErrorCode::server_stopping
+                || !std::holds_alternative<ErrorCode>(subscribed)) {
+                shutdown.request_stop();
+            }
             write_error(
                 fd,
                 make_error(
@@ -344,6 +427,9 @@ void serve_chat(
         }
         if (peer_closed(fd)) return;
 
+        // Once submit starts, an exception or timeout leaves acceptance
+        // uncertain. Keep the session until the process has safely drained.
+        if (created) created_cleanup.remove = false;
         const CommandSubmitResult submitted = application.submit(
             parsed.model, session_id, RawCommand{parsed.user_text}, epoch);
         if (shutdown.requested()) shutdown.request_stop();
@@ -361,6 +447,7 @@ void serve_chat(
                     shutdown.stop);
                 shutdown.request_stop();
             } else {
+                if (created) created_cleanup.remove = true;
                 const int status =
                     *code == ErrorCode::not_found ? 404 : 500;
                 write_error(
@@ -379,8 +466,8 @@ void serve_chat(
             }
         } else if (const auto* failure =
                        std::get_if<CommandFailure>(&submitted)) {
+            if (created) created_cleanup.remove = true;
             if (failure->code == ErrorCode::invalid_argument) {
-                if (created) cleanup.delete_rejected = true;
                 const std::string message = failure->message.empty()
                     ? "The input was rejected."
                     : failure->message;
@@ -403,7 +490,7 @@ void serve_chat(
         } else if (const auto* result =
                        std::get_if<CommandResult>(&submitted)) {
             if (!result->session.input_consumed) {
-                if (created) cleanup.delete_rejected = true;
+                if (created) created_cleanup.remove = true;
                 const std::string message =
                     result->session.notice && !result->session.notice->empty()
                     ? *result->session.notice
@@ -419,6 +506,7 @@ void serve_chat(
                 return;
             }
         } else {
+            shutdown.request_stop();
             fail(500, "The request could not be completed.",
                 "internal_error");
             return;
@@ -480,12 +568,15 @@ void serve_chat(
             outcome = TurnOutcome::disconnected;
             if (cancel_sent) return;
             cancel_sent = true;
-            const CommandSubmitResult stopped =
-                application.stop(parsed.model, session_id, epoch);
-            if (const auto* code = std::get_if<ErrorCode>(&stopped)) {
-                if (*code == ErrorCode::command_timeout) {
-                    shutdown.request_stop();
-                }
+            const auto error = enqueue_cleanup_command(
+                application,
+                parsed.model,
+                session_id,
+                StopCommand{},
+                epoch,
+                shutdown);
+            if (error && !harmless_cleanup_error(*error)) {
+                shutdown.request_stop();
             }
         };
         if (draining) start_drain(shutdown.requested() || !accepted);
@@ -503,7 +594,6 @@ void serve_chat(
                 start_drain(false);
             } else {
                 headers_sent = true;
-                last_output = steady_now(clock);
             }
         }
 
@@ -593,6 +683,15 @@ void serve_chat(
                 outcome = TurnOutcome::internal_failure;
                 break;
             }
+            if (parsed.stream && headers_sent && !draining
+                && steady_now(clock) - last_output >= keepalive_interval) {
+                if (!write_bytes(
+                        fd, ": keepalive\n\n", shutdown.stop)) {
+                    start_drain(false);
+                    continue;
+                }
+                last_output = steady_now(clock);
+            }
 
             auto item = cleanup.session->take_output();
             if (!item) {
@@ -603,21 +702,13 @@ void serve_chat(
                         == LiveSessionState::stopping;
                 if (closed) {
                     if (draining) {
-                        if (!shutdown.requested()) shutdown.disarm_if_idle();
+                        if (!shutdown.requested()) {
+                            cleanup.disarm_after_cleanup = true;
+                        }
                     } else {
                         outcome = TurnOutcome::internal_failure;
                     }
                     break;
-                }
-                if (parsed.stream && headers_sent && !draining
-                    && steady_now(clock) - last_output
-                        >= keepalive_interval) {
-                    if (!write_bytes(
-                            fd, ": keepalive\n\n", shutdown.stop)) {
-                        start_drain(false);
-                        continue;
-                    }
-                    last_output = steady_now(clock);
                 }
                 std::this_thread::sleep_for(poll_interval);
                 continue;
@@ -650,7 +741,9 @@ void serve_chat(
                     return entry.id > baseline;
                 });
             if (draining && (idle || terminal)) {
-                if (!shutdown.requested()) shutdown.disarm_if_idle();
+                if (!shutdown.requested()) {
+                    cleanup.disarm_after_cleanup = true;
+                }
                 break;
             }
             if (terminal) {
@@ -717,17 +810,21 @@ void serve_chat(
             },
             shutdown.stop);
     } catch (const std::exception& error) {
+        log_error(error.what());
+        constexpr std::string_view message =
+            "The request could not be completed.";
         if (headers_sent) {
             const std::string body = openai_error(
-                error.what(), "server_error", "internal_error").dump();
+                message, "server_error", "internal_error").dump();
             (void)write_bytes(fd, "data: " + body + "\n\n", shutdown.stop);
-            return;
+        } else {
+            write_error(
+                fd,
+                make_error(
+                    500, std::string(message), "server_error", "internal_error"),
+                shutdown.stop);
         }
-        write_error(
-            fd,
-            make_error(
-                500, error.what(), "server_error", "internal_error"),
-            shutdown.stop);
+        shutdown.request_stop();
     }
 }
 
@@ -912,6 +1009,10 @@ void handle_request(
     DaemonShutdown& shutdown,
     const TurnClock& clock) {
     try {
+        if (shutdown.requested()) {
+            shutdown.request_stop();
+            return;
+        }
         if (request.method == "GET" && request.document_uri == models_path) {
             write_json(fd, 200, models_list(application), shutdown.stop);
             return;
@@ -939,11 +1040,12 @@ void handle_request(
                 "not_found"),
             shutdown.stop);
     } catch (const std::exception& error) {
+        log_error(error.what());
         write_error(
             fd,
             make_error(
                 500,
-                error.what(),
+                "The request could not be completed.",
                 "server_error",
                 "internal_error"),
             shutdown.stop);

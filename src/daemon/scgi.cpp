@@ -41,6 +41,9 @@ WaitStatus wait_socket(
             return WaitStatus::failed;
         }
         if (result == 0) continue;
+        if (stop.load(std::memory_order_relaxed)) {
+            return WaitStatus::stopped;
+        }
         if ((item.revents & (POLLERR | POLLNVAL)) != 0) {
             return WaitStatus::failed;
         }
@@ -72,6 +75,9 @@ RecvStatus recv_bytes(
     const std::atomic<bool>& stop) {
     received = 0;
     while (received < size) {
+        if (stop.load(std::memory_order_relaxed)) {
+            return RecvStatus::stopped;
+        }
         const ssize_t count = ::recv(
             fd, destination + received, size - received, 0);
         if (count > 0) {
@@ -345,6 +351,20 @@ ScgiReadResult read_scgi(int fd, const std::atomic<bool>& stop) {
             return incomplete_result();
         }
     }
+
+    // SCGI uses one request per connection. Bytes beyond CONTENT_LENGTH are
+    // not another request; accepting them would also make peer_closed() see a
+    // permanently readable socket and miss an abandoned request.
+    while (true) {
+        char extra = 0;
+        const ssize_t count =
+            ::recv(fd, &extra, 1, MSG_PEEK | MSG_DONTWAIT);
+        if (count > 0) return status_result(ScgiReadStatus::bad_request);
+        if (count == 0) break;
+        if (errno == EINTR) continue;
+        if (would_block(errno)) break;
+        return incomplete_result();
+    }
     result.status = ScgiReadStatus::ok;
     return result;
 }
@@ -354,7 +374,9 @@ bool peer_closed(int fd) {
         char byte = 0;
         const ssize_t count = ::recv(fd, &byte, 1, MSG_PEEK | MSG_DONTWAIT);
         if (count == 0) return true;
-        if (count > 0) return false;
+        // No input is valid after the one SCGI request body. Treat trailing
+        // bytes like a disconnect so they cannot mask peer closure forever.
+        if (count > 0) return true;
         if (errno == EINTR) continue;
         if (would_block(errno)) return false;
         return true;

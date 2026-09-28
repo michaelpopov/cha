@@ -34,6 +34,7 @@ constexpr const char daemon_usage[] =
     "  cha-daemon --config=CONFIG_DIR\n";
 
 std::atomic<bool> stop_requested{false};
+static_assert(std::atomic<bool>::is_always_lock_free);
 
 void handle_stop(int) {
     stop_requested.store(true, std::memory_order_relaxed);
@@ -248,8 +249,16 @@ std::chrono::milliseconds run_accept_loop(app::Application& application) {
         daemon::UniqueFd client =
             daemon::accept_connection(listen_fd, stop_requested);
         if (!client) continue;
+        if (shutdown.requested()) {
+            shutdown.request_stop();
+            break;
+        }
         const daemon::ScgiReadResult result =
             daemon::read_scgi(client.get(), stop_requested);
+        if (shutdown.requested()) {
+            shutdown.request_stop();
+            break;
+        }
         if (result.status == ScgiReadStatus::incomplete) continue;
         if (result.status == ScgiReadStatus::bad_request) {
             daemon::write_cgi(
@@ -278,6 +287,10 @@ std::chrono::milliseconds run_accept_loop(app::Application& application) {
             continue;
         }
         if (daemon::peer_closed(client.get())) continue;
+        if (shutdown.requested()) {
+            shutdown.request_stop();
+            break;
+        }
         daemon::handle_request(
             application, result.request, client.get(), shutdown);
     }
@@ -298,9 +311,9 @@ int main(int argc, char** argv) {
     try {
         const std::filesystem::path config_directory =
             cha::parse_config_directory(argc, argv);
+        cha::require_activation();
         cha::ApplicationCommand command =
             cha::load_daemon_command(config_directory);
-        cha::require_activation();
         cha::initialize_diagnostic_logging(command.log_file, command.log_level);
         logging_ready = true;
         cha::install_stop_handlers();

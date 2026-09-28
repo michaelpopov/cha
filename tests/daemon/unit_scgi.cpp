@@ -138,6 +138,8 @@ TEST(Scgi, RejectsMalformedFraming) {
               {"DOCUMENT_URI", "/v1/models"}},
              "")},
         {"missing comma", "4:abcdx"},
+        {"bytes after body",
+         scgi_request("POST", "/v1/chat/completions", "{}") + "x"},
     };
     for (const auto& item : cases) {
         SCOPED_TRACE(item.name);
@@ -194,6 +196,16 @@ TEST(Scgi, DropsPrematureEndOfFile) {
     EXPECT_EQ(result.status, ScgiReadStatus::incomplete);
 }
 
+TEST(Scgi, StopInterruptsABufferedRequest) {
+    auto sockets = make_pair();
+    send_all(
+        sockets.peer.get(),
+        scgi_request("POST", "/v1/chat/completions", "{}"));
+    std::atomic<bool> stop{true};
+    const ScgiReadResult result = read_scgi(sockets.local.get(), stop);
+    EXPECT_EQ(result.status, ScgiReadStatus::incomplete);
+}
+
 TEST(Scgi, DetectsACompleteAbandonedRequest) {
     auto sockets = make_pair();
     const std::string request = scgi_request("GET", "/v1/models", "");
@@ -207,13 +219,21 @@ TEST(Scgi, DetectsACompleteAbandonedRequest) {
 
 TEST(Scgi, WritesCgiThroughPartialSends) {
     auto sockets = make_pair();
+    const int send_buffer = 1024;
+    ASSERT_EQ(::setsockopt(
+        sockets.local.get(), SOL_SOCKET, SO_SNDBUF,
+        &send_buffer, sizeof(send_buffer)), 0);
     const std::string body(200000, 'a');
     std::atomic<bool> stop{false};
+    std::atomic<bool> finished{false};
     std::thread writer([&] {
         EXPECT_TRUE(write_cgi(
             sockets.local.get(), 200, "application/json", body, stop));
+        finished = true;
         sockets.local.close();
     });
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    EXPECT_FALSE(finished.load());
     std::string received;
     char buffer[64];
     while (true) {
