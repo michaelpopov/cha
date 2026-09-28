@@ -7,7 +7,6 @@
 
 #include <atomic>
 #include <cerrno>
-#include <chrono>
 #include <csignal>
 #include <cstdlib>
 #include <cstring>
@@ -241,61 +240,36 @@ void install_stop_handlers() {
     }
 }
 
-std::chrono::milliseconds run_accept_loop(app::Application& application) {
-    daemon::DaemonShutdown shutdown{
-        stop_requested, application.settings().shutdown_grace};
+// Serves one connection at a time. New connections wait in the socket
+// backlog until the current one is closed.
+void run_accept_loop(app::Application& application) {
     using daemon::ScgiReadStatus;
-    while (!shutdown.requested()) {
-        daemon::UniqueFd client =
+    while (!stop_requested.load()) {
+        const daemon::UniqueFd client =
             daemon::accept_connection(listen_fd, stop_requested);
         if (!client) continue;
-        if (shutdown.requested()) {
-            shutdown.request_stop();
-            break;
-        }
         const daemon::ScgiReadResult result =
             daemon::read_scgi(client.get(), stop_requested);
-        if (shutdown.requested()) {
-            shutdown.request_stop();
-            break;
-        }
-        if (result.status == ScgiReadStatus::incomplete) continue;
         if (result.status == ScgiReadStatus::bad_request) {
-            daemon::write_cgi(
+            daemon::write_error(
                 client.get(),
-                400,
-                "application/json",
-                daemon::openai_error(
-                    "Malformed SCGI request",
-                    "invalid_request_error",
-                    "invalid_request")
-                    .dump(),
+                {.status = 400,
+                 .message = "Malformed SCGI request",
+                 .code = "invalid_request"},
                 stop_requested);
-            continue;
-        }
-        if (result.status == ScgiReadStatus::too_large) {
-            daemon::write_cgi(
+        } else if (result.status == ScgiReadStatus::too_large) {
+            daemon::write_error(
                 client.get(),
-                413,
-                "application/json",
-                daemon::openai_error(
-                    "The request is too large",
-                    "invalid_request_error",
-                    "body_too_large")
-                    .dump(),
+                {.status = 413,
+                 .message = "The request is too large",
+                 .code = "body_too_large"},
                 stop_requested);
-            continue;
+        } else if (result.status == ScgiReadStatus::ok
+            && !stop_requested.load() && !daemon::peer_closed(client.get())) {
+            daemon::handle_request(
+                application, result.request, client.get(), stop_requested);
         }
-        if (daemon::peer_closed(client.get())) continue;
-        if (shutdown.requested()) {
-            shutdown.request_stop();
-            break;
-        }
-        daemon::handle_request(
-            application, result.request, client.get(), shutdown);
     }
-    if (!shutdown.armed) shutdown.request_stop();
-    return shutdown.remaining();
 }
 
 void report_error(std::string_view message, bool logging_ready) {
@@ -325,9 +299,11 @@ int main(int argc, char** argv) {
 
         auto application = cha::app::Application::open(
             command, std::move(password));
-        const auto shutdown_budget = cha::run_accept_loop(*application);
+        cha::run_accept_loop(*application);
+        // This also cancels a turn that was running when SIGTERM came.
         application->request_shutdown();
-        if (!application->join_shutdown(shutdown_budget)) {
+        const auto grace = application->settings().shutdown_grace;
+        if (!application->join_shutdown(grace)) {
             cha::report_error("CHA application shutdown timed out", true);
             _exit(EXIT_FAILURE);
         }

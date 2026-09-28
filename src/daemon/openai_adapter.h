@@ -23,53 +23,33 @@ struct ParsedChatRequest {
     std::optional<SessionTag> tag;
 };
 
-struct ChatParseError {
+// Sent as `{"error": {"message", "type", "code"}}`. The type follows from
+// the status.
+struct ApiError {
     int status{};
     std::string message;
-    std::string type;
     std::string code;
 };
 
-[[nodiscard]] nlohmann::json openai_error(
-    std::string_view message,
-    std::string_view type,
-    std::string_view code);
+[[nodiscard]] nlohmann::json openai_error(const ApiError& error);
+bool write_error(
+    int fd, const ApiError& error, const std::atomic<bool>& stop);
 
-[[nodiscard]] std::variant<ParsedChatRequest, ChatParseError>
-parse_chat_request(
+[[nodiscard]] std::variant<ParsedChatRequest, ApiError> parse_chat_request(
     std::string_view body, app::Application& application);
 
 [[nodiscard]] nlohmann::json models_list(app::Application& application);
 
-// The signal handler only stores `stop`. Budget timing stays on the
-// request thread so one shutdown grace covers drain and join.
-struct DaemonShutdown {
-    explicit DaemonShutdown(
-        std::atomic<bool>& stop_flag,
-        std::chrono::milliseconds shutdown_grace =
-            std::chrono::milliseconds{10000});
-
-    void arm_budget();
-    void request_stop();
-    void disarm_if_idle();
-    [[nodiscard]] bool requested() const;
-    [[nodiscard]] bool expired() const;
-    [[nodiscard]] std::chrono::milliseconds remaining() const;
-
-    std::atomic<bool>& stop;
-    std::chrono::milliseconds grace;
-    std::chrono::steady_clock::time_point deadline{
-        std::chrono::steady_clock::time_point::max()};
-    bool armed{false};
-};
-
+// Tests replace the clock that times SSE keepalives.
 using TurnClock = std::function<std::chrono::steady_clock::time_point()>;
 
+// Serves one request. The signal handler sets `stop`; this function also
+// sets it when the daemon must not serve more requests.
 void handle_request(
     app::Application& application,
     const ScgiRequest& request,
     int fd,
-    DaemonShutdown& shutdown,
+    std::atomic<bool>& stop,
     const TurnClock& clock = {});
 
 } // namespace cha::daemon

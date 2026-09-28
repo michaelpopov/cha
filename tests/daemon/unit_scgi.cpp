@@ -158,7 +158,7 @@ TEST(Scgi, RejectsIntegerOverflowInNetstringLength) {
     sockets.peer.close();
     std::atomic<bool> stop{false};
     const ScgiReadResult result = read_scgi(sockets.local.get(), stop);
-    EXPECT_EQ(result.status, ScgiReadStatus::bad_request);
+    EXPECT_EQ(result.status, ScgiReadStatus::too_large);
 }
 
 TEST(Scgi, RejectsHeaderAndBodySizeLimits) {

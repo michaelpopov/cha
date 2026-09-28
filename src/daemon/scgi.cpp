@@ -2,11 +2,8 @@
 
 #include <cerrno>
 #include <charconv>
-#include <cstdint>
 #include <optional>
 #include <system_error>
-#include <utility>
-#include <vector>
 
 #include <fcntl.h>
 #include <poll.h>
@@ -21,118 +18,60 @@ namespace cha::daemon {
 namespace {
 
 constexpr int poll_timeout_ms = 50;
-constexpr std::size_t max_length_digits = 20;
-
-enum class WaitStatus {
-    ready,
-    stopped,
-    failed,
-};
-
-WaitStatus wait_socket(
-    int fd, short events, const std::atomic<bool>& stop) {
-    while (!stop.load(std::memory_order_relaxed)) {
-        pollfd item{};
-        item.fd = fd;
-        item.events = events;
-        const int result = ::poll(&item, 1, poll_timeout_ms);
-        if (result < 0) {
-            if (errno == EINTR) continue;
-            return WaitStatus::failed;
-        }
-        if (result == 0) continue;
-        if (stop.load(std::memory_order_relaxed)) {
-            return WaitStatus::stopped;
-        }
-        if ((item.revents & (POLLERR | POLLNVAL)) != 0) {
-            return WaitStatus::failed;
-        }
-        if ((item.revents & events) != 0) return WaitStatus::ready;
-        if ((item.revents & POLLHUP) != 0) {
-            if ((events & POLLIN) != 0) return WaitStatus::ready;
-            return WaitStatus::failed;
-        }
-    }
-    return WaitStatus::stopped;
-}
 
 bool would_block(int error) {
     return error == EAGAIN || error == EWOULDBLOCK;
 }
 
-enum class RecvStatus {
-    data,
-    eof,
-    stopped,
-    failed,
-};
+// Waits until the socket is ready for `events`. The short poll lets the
+// caller see `stop`. Returns false on a socket error or when `stop` is set.
+bool wait_socket(int fd, short events, const std::atomic<bool>& stop) {
+    while (!stop.load()) {
+        pollfd item{};
+        item.fd = fd;
+        item.events = events;
+        const int result = ::poll(&item, 1, poll_timeout_ms);
+        if (result < 0 && errno != EINTR) return false;
+        if (result <= 0) continue;
+        if ((item.revents & events) != 0) return true;
+        // After a hang-up, recv() still reads the end of the stream.
+        return (item.revents & POLLHUP) != 0 && (events & POLLIN) != 0;
+    }
+    return false;
+}
 
-RecvStatus recv_bytes(
+// Reads exactly `size` bytes. Returns false at the end of the stream, on a
+// socket error or when `stop` is set.
+bool recv_all(
     int fd,
     char* destination,
     std::size_t size,
-    std::size_t& received,
     const std::atomic<bool>& stop) {
-    received = 0;
+    std::size_t received = 0;
     while (received < size) {
-        if (stop.load(std::memory_order_relaxed)) {
-            return RecvStatus::stopped;
-        }
-        const ssize_t count = ::recv(
-            fd, destination + received, size - received, 0);
+        if (stop.load()) return false;
+        const ssize_t count =
+            ::recv(fd, destination + received, size - received, 0);
         if (count > 0) {
             received += static_cast<std::size_t>(count);
-            continue;
+        } else if (count == 0) {
+            return false;
+        } else if (errno != EINTR
+            && (!would_block(errno) || !wait_socket(fd, POLLIN, stop))) {
+            return false;
         }
-        if (count == 0) return RecvStatus::eof;
-        if (errno == EINTR) continue;
-        if (would_block(errno)) {
-            switch (wait_socket(fd, POLLIN, stop)) {
-            case WaitStatus::ready:
-                continue;
-            case WaitStatus::stopped:
-                return RecvStatus::stopped;
-            case WaitStatus::failed:
-                return RecvStatus::failed;
-            }
-        }
-        return RecvStatus::failed;
     }
-    return RecvStatus::data;
-}
-
-RecvStatus recv_one(
-    int fd, char& byte, const std::atomic<bool>& stop) {
-    std::size_t received = 0;
-    return recv_bytes(fd, &byte, 1, received, stop);
-}
-
-ScgiReadResult incomplete_result() {
-    return {ScgiReadStatus::incomplete, {}};
-}
-
-ScgiReadResult status_result(ScgiReadStatus status) {
-    return {status, {}};
+    return true;
 }
 
 bool parse_size(std::string_view text, std::size_t& value) {
-    if (text.empty()) return false;
-    for (const char character : text) {
-        if (character < '0' || character > '9') return false;
-    }
-    std::size_t parsed = 0;
-    const auto result = std::from_chars(
-        text.data(), text.data() + text.size(), parsed);
-    if (result.ec != std::errc() || result.ptr != text.data() + text.size()) {
-        return false;
-    }
-    value = parsed;
-    return true;
+    const char* const end = text.data() + text.size();
+    const auto [stop, error] = std::from_chars(text.data(), end, value);
+    return !text.empty() && error == std::errc() && stop == end;
 }
 
 std::optional<std::string_view> next_token(
     std::string_view block, std::size_t& offset) {
-    if (offset >= block.size()) return std::nullopt;
     const std::size_t end = block.find('\0', offset);
     if (end == std::string_view::npos) return std::nullopt;
     const std::string_view token = block.substr(offset, end - offset);
@@ -140,82 +79,44 @@ std::optional<std::string_view> next_token(
     return token;
 }
 
-bool parse_headers(
-    std::string_view block,
-    ScgiRequest& request,
-    std::size_t& body_size,
-    ScgiReadStatus& status) {
-    std::size_t offset = 0;
-    bool first = true;
+// Reads the NUL-separated name/value pairs. CONTENT_LENGTH must come first.
+// Variables other than the four that the daemon uses are ignored.
+ScgiReadStatus parse_headers(
+    std::string_view block, ScgiRequest& request, std::size_t& body_size) {
     std::optional<std::string_view> content_length;
     std::optional<std::string_view> scgi;
     std::optional<std::string_view> method;
     std::optional<std::string_view> uri;
+    std::size_t offset = 0;
     while (offset < block.size()) {
         const auto name = next_token(block, offset);
         const auto value = next_token(block, offset);
-        if (!name || !value) {
-            status = ScgiReadStatus::bad_request;
-            return false;
+        if (!name || !value) return ScgiReadStatus::bad_request;
+        if (!content_length && *name != "CONTENT_LENGTH") {
+            return ScgiReadStatus::bad_request;
         }
-        if (first) {
-            if (*name != "CONTENT_LENGTH") {
-                status = ScgiReadStatus::bad_request;
-                return false;
-            }
-            first = false;
-        }
-        if (*name == "CONTENT_LENGTH") {
-            if (content_length) {
-                status = ScgiReadStatus::bad_request;
-                return false;
-            }
-            content_length = *value;
-        } else if (*name == "SCGI") {
-            if (scgi) {
-                status = ScgiReadStatus::bad_request;
-                return false;
-            }
-            scgi = *value;
-        } else if (*name == "REQUEST_METHOD") {
-            if (method) {
-                status = ScgiReadStatus::bad_request;
-                return false;
-            }
-            method = *value;
-        } else if (*name == "DOCUMENT_URI") {
-            if (uri) {
-                status = ScgiReadStatus::bad_request;
-                return false;
-            }
-            uri = *value;
-        }
+        std::optional<std::string_view>* field = nullptr;
+        if (*name == "CONTENT_LENGTH") field = &content_length;
+        else if (*name == "SCGI") field = &scgi;
+        else if (*name == "REQUEST_METHOD") field = &method;
+        else if (*name == "DOCUMENT_URI") field = &uri;
+        if (field == nullptr) continue;
+        if (*field) return ScgiReadStatus::bad_request;
+        *field = *value;
     }
-    if (!content_length || !scgi || !method || !uri) {
-        status = ScgiReadStatus::bad_request;
-        return false;
+    if (!content_length || !method || !uri || scgi != "1"
+        || method->empty() || uri->empty()
+        || !parse_size(*content_length, body_size)) {
+        return ScgiReadStatus::bad_request;
     }
-    if (*scgi != "1" || method->empty() || uri->empty()) {
-        status = ScgiReadStatus::bad_request;
-        return false;
-    }
-    if (!parse_size(*content_length, body_size)) {
-        status = ScgiReadStatus::bad_request;
-        return false;
-    }
-    if (body_size > scgi_body_limit) {
-        status = ScgiReadStatus::too_large;
-        return false;
-    }
+    if (body_size > scgi_body_limit) return ScgiReadStatus::too_large;
     request.method = std::string(*method);
     request.document_uri = std::string(*uri);
-    return true;
+    return ScgiReadStatus::ok;
 }
 
 std::string_view reason_phrase(int status) {
     switch (status) {
-    case 200:
-        return "OK";
     case 400:
         return "Bad Request";
     case 404:
@@ -253,103 +154,39 @@ bool configure_socket(int fd) noexcept {
 }
 
 UniqueFd accept_connection(int listen_fd, const std::atomic<bool>& stop) {
-    switch (wait_socket(listen_fd, POLLIN, stop)) {
-    case WaitStatus::ready:
-        break;
-    case WaitStatus::stopped:
-    case WaitStatus::failed:
-        return {};
-    }
-    const int fd = ::accept(listen_fd, nullptr, nullptr);
-    if (fd < 0) return {};
-    UniqueFd client(fd);
-    if (!configure_socket(client.get())) return {};
+    if (!wait_socket(listen_fd, POLLIN, stop)) return {};
+    UniqueFd client(::accept(listen_fd, nullptr, nullptr));
+    if (!client || !configure_socket(client.get())) return {};
     return client;
 }
 
 ScgiReadResult read_scgi(int fd, const std::atomic<bool>& stop) {
-    std::string digits;
-    digits.reserve(max_length_digits);
-    while (digits.size() < max_length_digits) {
-        char byte = 0;
-        switch (recv_one(fd, byte, stop)) {
-        case RecvStatus::data:
-            break;
-        case RecvStatus::eof:
-        case RecvStatus::stopped:
-        case RecvStatus::failed:
-            return incomplete_result();
-        }
-        if (byte == ':') break;
-        if (byte < '0' || byte > '9') {
-            return status_result(ScgiReadStatus::bad_request);
-        }
-        digits.push_back(byte);
-    }
-    if (digits.empty() || digits.size() == max_length_digits) {
-        char byte = 0;
-        if (digits.size() == max_length_digits) {
-            switch (recv_one(fd, byte, stop)) {
-            case RecvStatus::data:
-                if (byte != ':') {
-                    return status_result(ScgiReadStatus::bad_request);
-                }
-                break;
-            default:
-                return incomplete_result();
-            }
-        } else {
-            return status_result(ScgiReadStatus::bad_request);
-        }
-    }
-
+    // The netstring length ends at ':'. The check against the limit after
+    // each digit also prevents overflow.
     std::size_t header_size = 0;
-    if (!parse_size(digits, header_size)) {
-        return status_result(ScgiReadStatus::bad_request);
-    }
-    if (header_size > scgi_header_limit) {
-        return status_result(ScgiReadStatus::too_large);
+    for (std::size_t digits = 0;; ++digits) {
+        char byte = 0;
+        if (!recv_all(fd, &byte, 1, stop)) return {ScgiReadStatus::incomplete};
+        if (byte == ':' && digits > 0) break;
+        if (byte < '0' || byte > '9') return {ScgiReadStatus::bad_request};
+        header_size = header_size * 10 + static_cast<std::size_t>(byte - '0');
+        if (header_size > scgi_header_limit) return {ScgiReadStatus::too_large};
     }
 
-    std::string header(header_size + 1, '\0');
-    std::size_t received = 0;
-    switch (recv_bytes(
-        fd, header.data(), header.size(), received, stop)) {
-    case RecvStatus::data:
-        break;
-    case RecvStatus::eof:
-    case RecvStatus::stopped:
-    case RecvStatus::failed:
-        return incomplete_result();
+    std::string header(header_size + 1, '\0');  // with the ',' after it
+    if (!recv_all(fd, header.data(), header.size(), stop)) {
+        return {ScgiReadStatus::incomplete};
     }
-    if (header.back() != ',') {
-        return status_result(ScgiReadStatus::bad_request);
-    }
+    if (header.back() != ',') return {ScgiReadStatus::bad_request};
     header.pop_back();
 
     ScgiReadResult result;
     std::size_t body_size = 0;
-    if (!parse_headers(
-            header, result.request, body_size, result.status)) {
-        return result;
-    }
-
+    result.status = parse_headers(header, result.request, body_size);
+    if (result.status != ScgiReadStatus::ok) return {result.status};
     result.request.body.resize(body_size);
-    if (body_size != 0) {
-        std::size_t body_received = 0;
-        switch (recv_bytes(
-            fd,
-            result.request.body.data(),
-            body_size,
-            body_received,
-            stop)) {
-        case RecvStatus::data:
-            break;
-        case RecvStatus::eof:
-        case RecvStatus::stopped:
-        case RecvStatus::failed:
-            return incomplete_result();
-        }
+    if (!recv_all(fd, result.request.body.data(), body_size, stop)) {
+        return {ScgiReadStatus::incomplete};
     }
 
     // SCGI uses one request per connection. Bytes beyond CONTENT_LENGTH are
@@ -359,13 +196,12 @@ ScgiReadResult read_scgi(int fd, const std::atomic<bool>& stop) {
         char extra = 0;
         const ssize_t count =
             ::recv(fd, &extra, 1, MSG_PEEK | MSG_DONTWAIT);
-        if (count > 0) return status_result(ScgiReadStatus::bad_request);
+        if (count > 0) return {ScgiReadStatus::bad_request};
         if (count == 0) break;
         if (errno == EINTR) continue;
         if (would_block(errno)) break;
-        return incomplete_result();
+        return {ScgiReadStatus::incomplete};
     }
-    result.status = ScgiReadStatus::ok;
     return result;
 }
 
@@ -388,26 +224,15 @@ bool write_bytes(
     std::size_t sent = 0;
     while (sent < data.size()) {
         const ssize_t count = ::send(
-            fd,
-            data.data() + sent,
-            data.size() - sent,
-            MSG_NOSIGNAL);
+            fd, data.data() + sent, data.size() - sent, MSG_NOSIGNAL);
         if (count > 0) {
             sent += static_cast<std::size_t>(count);
-            continue;
+        } else if (count == 0) {
+            return false;
+        } else if (errno != EINTR
+            && (!would_block(errno) || !wait_socket(fd, POLLOUT, stop))) {
+            return false;
         }
-        if (count == 0) return false;
-        if (errno == EINTR) continue;
-        if (would_block(errno)) {
-            switch (wait_socket(fd, POLLOUT, stop)) {
-            case WaitStatus::ready:
-                continue;
-            case WaitStatus::stopped:
-            case WaitStatus::failed:
-                return false;
-            }
-        }
-        return false;
     }
     return true;
 }
@@ -425,8 +250,7 @@ bool write_cgi(
     head += "\r\nContent-Type: ";
     head += content_type;
     head += "\r\n\r\n";
-    if (!write_bytes(fd, head, stop)) return false;
-    return write_bytes(fd, body, stop);
+    return write_bytes(fd, head, stop) && write_bytes(fd, body, stop);
 }
 
 } // namespace cha::daemon

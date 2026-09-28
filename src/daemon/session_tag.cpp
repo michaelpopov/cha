@@ -12,21 +12,15 @@ namespace {
 
 constexpr std::string_view tag_prefix = "[//]: # (cha ";
 
+// The first line after all leading whitespace, including blank lines.
 std::string_view first_line_after_whitespace(std::string_view text) {
-    const std::size_t end = text.find('\n');
-    std::string_view line =
-        end == std::string_view::npos ? text : text.substr(0, end);
-    if (!line.empty() && line.back() == '\r') {
-        line.remove_suffix(1);
+    while (!text.empty()
+        && std::isspace(static_cast<unsigned char>(text.front())) != 0) {
+        text.remove_prefix(1);
     }
-    std::size_t index = 0;
-    while (index < line.size()) {
-        const unsigned char character =
-            static_cast<unsigned char>(line[index]);
-        if (std::isspace(character) == 0) break;
-        ++index;
-    }
-    return line.substr(index);
+    std::string_view line = text.substr(0, text.find('\n'));
+    if (line.ends_with('\r')) line.remove_suffix(1);
+    return line;
 }
 
 } // namespace

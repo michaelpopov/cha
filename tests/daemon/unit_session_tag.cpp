@@ -18,6 +18,11 @@ TEST(SessionTag, ReadsTheFirstLineAfterLeadingWhitespace) {
     ASSERT_TRUE(tag);
     EXPECT_EQ(tag->forum_id, "lobby");
     EXPECT_EQ(tag->session_id, "session-1");
+
+    const auto after_blank_lines = parse_session_tag_text(
+        "\n \r\n\t[//]: # (cha lobby/session-2)\r\nbody\n");
+    ASSERT_TRUE(after_blank_lines);
+    EXPECT_EQ(after_blank_lines->session_id, "session-2");
 }
 
 TEST(SessionTag, RejectsMalformedLines) {
@@ -30,8 +35,8 @@ TEST(SessionTag, RejectsMalformedLines) {
     EXPECT_FALSE(parse_session_tag_text("x[//]: # (cha lobby/session)"));
     EXPECT_FALSE(parse_session_tag_text(
         "body\n[//]: # (cha lobby/session)\n"));
-    EXPECT_FALSE(parse_session_tag_text(
-        "\n[//]: # (cha lobby/session)\n"));
+    EXPECT_FALSE(parse_session_tag_text(""));
+    EXPECT_FALSE(parse_session_tag_text(" \n\n"));
 }
 
 TEST(SessionTag, ExtractsOrderedTextPartsAndIgnoresNonText) {

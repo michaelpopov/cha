@@ -8,5 +8,5 @@ ExecStart=/usr/local/bin/cha-daemon --config /var/lib/cha/%i/config
 User=cha-%i
 PrivateTmp=yes
 # Submit can block for the 30s command deadline before stop is observed.
-# Join then uses the remaining part of the 10s shutdown grace.
+# The application shutdown then waits up to the 10s shutdown grace.
 TimeoutStopSec=90s

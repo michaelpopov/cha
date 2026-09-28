@@ -125,7 +125,7 @@ struct RawResponse {
 RawResponse exchange(
     Application& application,
     const ScgiRequest& request,
-    DaemonShutdown& shutdown,
+    std::atomic<bool>& stop,
     const TurnClock& clock = {}) {
     int fds[2]{};
     if (::socketpair(AF_UNIX, SOCK_STREAM, 0, fds) != 0) {
@@ -133,7 +133,7 @@ RawResponse exchange(
     }
     UniqueFd server(fds[0]);
     UniqueFd client(fds[1]);
-    handle_request(application, request, server.get(), shutdown, clock);
+    handle_request(application, request, server.get(), stop, clock);
     server.close();
     RawResponse response;
     char buffer[4096];
@@ -430,16 +430,15 @@ protected:
     RawResponse post(
         nlohmann::json messages,
         bool stream = false,
-        DaemonShutdown* shutdown = nullptr,
+        std::atomic<bool>* stop = nullptr,
         const TurnClock& clock = {}) {
         std::atomic<bool> local_stop{false};
-        DaemonShutdown local_shutdown{local_stop};
         return exchange(
             *application_,
             {.method = "POST",
              .document_uri = "/v1/chat/completions",
              .body = chat_body("lobby", std::move(messages), stream).dump()},
-            shutdown == nullptr ? local_shutdown : *shutdown,
+            stop == nullptr ? local_stop : *stop,
             clock);
     }
 
@@ -456,7 +455,6 @@ TEST_F(TurnTest, DisconnectBeforeSubmissionLeavesNoSession) {
     UniqueFd client(fds[1]);
     client.close();
     std::atomic<bool> stop{false};
-    DaemonShutdown shutdown{stop};
     handle_request(
         *application_,
         {.method = "POST",
@@ -466,7 +464,7 @@ TEST_F(TurnTest, DisconnectBeforeSubmissionLeavesNoSession) {
                      nlohmann::json::array({user_message("Hello")}))
                      .dump()},
         server.get(),
-        shutdown);
+        stop);
 
     EXPECT_TRUE(application_->list_sessions(
         "lobby", application_->context_epoch()).empty());
@@ -697,7 +695,6 @@ TEST_F(TurnTest, JevAcceptanceKeepsTheForumDefaultAndRejectionUsesTheFallback) {
         "api_key_1");
     failure.start();
     std::atomic<bool> stop{false};
-    DaemonShutdown shutdown{stop};
     const auto rejected = exchange(
         *failed_app,
         {.method = "POST",
@@ -706,7 +703,7 @@ TEST_F(TurnTest, JevAcceptanceKeepsTheForumDefaultAndRejectionUsesTheFallback) {
                      "lobby",
                      nlohmann::json::array({user_message("Hello")}))
                      .dump()},
-        shutdown);
+        stop);
     ASSERT_EQ(rejected.status, 200) << rejected.raw;
     EXPECT_EQ(body_after_tag(message_content(rejected.json)), "**Guide:** Hello");
     EXPECT_FALSE(rejected.json.contains("error"));
@@ -755,7 +752,6 @@ TEST_F(TurnTest, StreamAgreesWithTheFinalTextAndOmitsReasoning) {
         make_command(reasoning_workspace, database));
     server.start();
     std::atomic<bool> stop{false};
-    DaemonShutdown shutdown{stop};
     const auto response = exchange(
         *application,
         {.method = "POST",
@@ -765,7 +761,7 @@ TEST_F(TurnTest, StreamAgreesWithTheFinalTextAndOmitsReasoning) {
                      nlohmann::json::array({user_message("Hello")}),
                      true)
                      .dump()},
-        shutdown);
+        stop);
     server.join();
     EXPECT_EQ(response.status, 200) << response.raw;
     EXPECT_NE(streamed_text(response.raw).find("Visible answer"), std::string::npos)
@@ -788,7 +784,6 @@ TEST_F(TurnTest, PrefixMismatchStopsThatReply) {
     UniqueFd server(fds[0]);
     UniqueFd client(fds[1]);
     std::atomic<bool> stop{false};
-    DaemonShutdown shutdown{stop, 2s};
     const ScgiRequest request{
         .method = "POST",
         .document_uri = "/v1/chat/completions",
@@ -800,7 +795,7 @@ TEST_F(TurnTest, PrefixMismatchStopsThatReply) {
     };
     std::thread worker([&] {
         handle_request(
-            *application_, request, server.get(), shutdown);
+            *application_, request, server.get(), stop);
     });
     struct JoinWorker {
         HoldingHttp& http;
@@ -878,7 +873,6 @@ TEST_F(TurnTest, DisconnectAndShutdownLeaveTheNextRequestAbleToRun) {
     UniqueFd server_fd(fds[0]);
     UniqueFd client(fds[1]);
     std::atomic<bool> stop{false};
-    DaemonShutdown shutdown{stop, 2s};
     std::thread worker([&] {
         handle_request(
             *application_,
@@ -890,7 +884,7 @@ TEST_F(TurnTest, DisconnectAndShutdownLeaveTheNextRequestAbleToRun) {
                          true)
                          .dump()},
             server_fd.get(),
-            shutdown);
+            stop);
     });
     struct JoinWorker {
         HoldingHttp& http;
@@ -965,7 +959,6 @@ TEST_F(TurnTest, ClosedSessionDoesNotWaitForever) {
     UniqueFd server_fd(fds[0]);
     UniqueFd client(fds[1]);
     std::atomic<bool> stop{false};
-    DaemonShutdown shutdown{stop, 2s};
     std::thread worker([&] {
         handle_request(
             *application_,
@@ -976,7 +969,7 @@ TEST_F(TurnTest, ClosedSessionDoesNotWaitForever) {
                         nlohmann::json::array({user_message("Hello")}))
                         .dump()},
             server_fd.get(),
-            shutdown);
+            stop);
     });
     ASSERT_TRUE(server.wait_for_requests(1, 5s));
     application_->request_shutdown();
@@ -1006,7 +999,6 @@ TEST_F(TurnTest, KeepaliveUsesTheTestClock) {
     UniqueFd server_fd(fds[0]);
     UniqueFd client(fds[1]);
     std::atomic<bool> stop{false};
-    DaemonShutdown shutdown{stop, 2s};
     std::thread worker([&] {
         handle_request(
             *application_,
@@ -1018,7 +1010,7 @@ TEST_F(TurnTest, KeepaliveUsesTheTestClock) {
                          true)
                          .dump()},
             server_fd.get(),
-            shutdown,
+            stop,
             clock);
     });
     struct ResumeAndJoin {
@@ -1078,9 +1070,8 @@ TEST_F(TurnTest, SubmissionTimeoutStopsTheDaemon) {
         "api_key_1");
     server.start();
     std::atomic<bool> stop{false};
-    DaemonShutdown shutdown{stop, 1s};
     const auto response = post(
-        nlohmann::json::array({user_message("Hello")}), false, &shutdown);
+        nlohmann::json::array({user_message("Hello")}), false, &stop);
     EXPECT_EQ(response.status, 500) << response.raw;
     EXPECT_EQ(response.json.at("error").at("code"), "command_timeout");
     EXPECT_TRUE(stop.load());
@@ -1143,6 +1134,51 @@ TEST_F(TurnTest, AlternatesSessionsAndAppendsEdits) {
         transcript_of(*application_, solo_tag->session_id), "only once"));
     EXPECT_FALSE(transcript_contains(
         transcript_of(*application_, solo_tag->session_id), "replacement"));
+}
+
+TEST_F(TurnTest, DisconnectDuringTheFinalWriteKeepsTheDaemonRunning) {
+    disable_naming(workspace_);
+    // One non-streamed reply arrives in the final snapshot. It is larger
+    // than the socket buffer, so its write blocks until the client leaves.
+    const std::string reply(1024 * 1024, 'x');
+    MockHttpServer server({http_response(
+        "application/json",
+        nlohmann::json{
+            {"choices", {{{"message", {{"content", reply}}}}}}}
+            .dump())});
+    use_net_provider(workspace_, server.port(), false);
+    open_application();
+    server.start();
+
+    int fds[2]{};
+    ASSERT_EQ(::socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
+    UniqueFd server_fd(fds[0]);
+    UniqueFd client(fds[1]);
+    std::atomic<bool> stop{false};
+    std::atomic<bool> done{false};
+    std::thread worker([&] {
+        handle_request(
+            *application_,
+            {.method = "POST",
+             .document_uri = "/v1/chat/completions",
+             .body = chat_body(
+                         "lobby",
+                         nlohmann::json::array({user_message("Hello")}),
+                         true)
+                         .dump()},
+            server_fd.get(),
+            stop);
+        done.store(true);
+    });
+    ASSERT_TRUE(server.wait_for_requests(1, 5s));
+    std::this_thread::sleep_for(500ms);
+    ASSERT_FALSE(done.load());
+    const auto closed_at = std::chrono::steady_clock::now();
+    client.close();
+    worker.join();
+    server.join();
+    EXPECT_LT(std::chrono::steady_clock::now() - closed_at, 1s);
+    EXPECT_FALSE(stop.load());
 }
 
 } // namespace

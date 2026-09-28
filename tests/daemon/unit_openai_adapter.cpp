@@ -81,8 +81,7 @@ CgiResponse exchange(
     UniqueFd server(fds[0]);
     UniqueFd client(fds[1]);
     std::atomic<bool> stop{false};
-    DaemonShutdown shutdown{stop};
-    handle_request(application, request, server.get(), shutdown);
+    handle_request(application, request, server.get(), stop);
     server.close();
     std::string raw;
     char buffer[4096];
@@ -207,7 +206,7 @@ TEST_F(OpenAiAdapterTest, RejectsPromptSizeBoundaryAndUnknownModels) {
             }))
             .dump(),
         *application_);
-    const auto* error = std::get_if<ChatParseError>(&too_large);
+    const auto* error = std::get_if<ApiError>(&too_large);
     ASSERT_NE(error, nullptr);
     EXPECT_EQ(error->status, 400);
 
@@ -218,7 +217,7 @@ TEST_F(OpenAiAdapterTest, RejectsPromptSizeBoundaryAndUnknownModels) {
                 {{{"role", "user"}, {"content", "hello"}}}))
             .dump(),
         *application_);
-    const auto* hidden = std::get_if<ChatParseError>(&entrance);
+    const auto* hidden = std::get_if<ApiError>(&entrance);
     ASSERT_NE(hidden, nullptr);
     EXPECT_EQ(hidden->status, 404);
 
@@ -229,7 +228,7 @@ TEST_F(OpenAiAdapterTest, RejectsPromptSizeBoundaryAndUnknownModels) {
                 {{{"role", "user"}, {"content", "hello"}}}))
             .dump(),
         *application_);
-    const auto* absent = std::get_if<ChatParseError>(&unknown);
+    const auto* absent = std::get_if<ApiError>(&unknown);
     ASSERT_NE(absent, nullptr);
     EXPECT_EQ(absent->status, 404);
 }
@@ -264,7 +263,7 @@ TEST_F(OpenAiAdapterTest, SelectsTagsAndReportsForumMismatch) {
             }))
             .dump(),
         *application_);
-    const auto* wrong = std::get_if<ChatParseError>(&mismatch);
+    const auto* wrong = std::get_if<ApiError>(&mismatch);
     ASSERT_NE(wrong, nullptr);
     EXPECT_EQ(wrong->status, 400);
 
@@ -277,7 +276,7 @@ TEST_F(OpenAiAdapterTest, SelectsTagsAndReportsForumMismatch) {
             }))
             .dump(),
         *application_);
-    const auto* absent = std::get_if<ChatParseError>(&missing);
+    const auto* absent = std::get_if<ApiError>(&missing);
     ASSERT_NE(absent, nullptr);
     EXPECT_EQ(absent->status, 400);
     EXPECT_EQ(
