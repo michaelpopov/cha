@@ -374,8 +374,10 @@ TEST(Application, FatalConfigurationEditsCloseAdmissionAndStopLiveSessions) {
         application.reset();
         auto reopened = Application::open(make_command(workspace, database));
         EXPECT_TRUE(reopened->running());
-        if (!settings_edit) EXPECT_EQ(reopened->get_character("guide", reopened->context_epoch()).summary.display_name,
-            "Committed guide");
+        if (!settings_edit) {
+            EXPECT_EQ(reopened->get_character("guide", reopened->context_epoch()).summary.display_name,
+                "Committed guide");
+        }
     }
 }
 

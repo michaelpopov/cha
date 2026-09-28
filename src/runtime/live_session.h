@@ -166,11 +166,8 @@ private:
     std::atomic<bool> generating_{};
     std::atomic<bool> retire_when_idle_{};
     std::atomic<bool> stopping_{};
-    struct ShutdownState {
-        ShutdownReason reason{ShutdownReason::session_closed};
-        bool finalized{};
-    };
-    std::atomic<ShutdownState> shutdown_{};
+    // Store the reason and finalized flag in one atomic value.
+    std::atomic<unsigned> shutdown_{static_cast<unsigned>(ShutdownReason::session_closed)};
     std::atomic<std::uint64_t> subscribe_ticket_{};
 
     // Runtime-thread only.

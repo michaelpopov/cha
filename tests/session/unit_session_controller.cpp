@@ -1056,7 +1056,7 @@ TEST(SessionController, DeletesAFailedRequestFromMemoryAndStorage) {
     (void)controller->submit_prompt("operator", "Question");
     receive_until_idle(*controller);
     ASSERT_EQ(controller->view().transcript.entries.size(), 2U);
-    const TranscriptEntry& error = controller->view().transcript.entries.back();
+    const auto error = controller->view().transcript.entries.back();
     ASSERT_EQ(error.kind, EntryKind::error);
 
     const ControllerUpdate deleted = controller->delete_turn(error.id);

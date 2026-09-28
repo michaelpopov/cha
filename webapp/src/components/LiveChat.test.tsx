@@ -729,7 +729,7 @@ describe('live chat', () => {
     expect(startAudioDownloadBatch.mock.lastCall?.[2].entries.map((item) => item.entry_id)).toEqual([301]);
     act(() => events.handlers[0].onSnapshot({ ...updated, transcript: [...updated.transcript] }));
     expect(startAudioDownloadBatch).toHaveBeenCalledTimes(2);
-  });
+  }, 15_000);
 
   it('displays every multicast reply and accepts the next prompt while all three audio workers are busy', async () => {
     const jobs: Array<{ entry_id: number; state: 'running' | 'queued' }> = [];

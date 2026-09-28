@@ -1,6 +1,8 @@
 # Example nginx routing for cha-daemon. Replace the map values with
 # lowercase hex API keys from `openssl rand -hex 32`.
 
+map_hash_bucket_size 128;
+
 map $http_authorization $cha_user {
     "Bearer <alice-key>"  alice;
     "Bearer <bob-key>"    bob;

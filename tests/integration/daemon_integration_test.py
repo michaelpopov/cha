@@ -394,8 +394,8 @@ class DaemonIntegration(unittest.TestCase):
         self.assertEqual(values["SCGI"], "1")
         self.assertEqual(values["REQUEST_METHOD"], "POST")
         self.assertEqual(values["DOCUMENT_URI"], "/v1/chat/completions")
-        # nginx always adds HTTP_HOST; no other request header may pass.
-        self.assertEqual([name for name in names if name.startswith("HTTP_")], ["HTTP_HOST"])
+        # scgi_pass_request_headers off keeps client headers out of SCGI.
+        self.assertEqual([name for name in names if name.startswith("HTTP_")], [])
         self.assertNotIn(PROBE_KEY.split()[1].encode(), block)
         self.assertEqual(json.loads(body), payload)
 

@@ -35,6 +35,10 @@ int shutdown_reason_priority(ShutdownReason reason) {
     return 0;
 }
 
+constexpr unsigned shutdown_finalized = 1u << 8;
+constexpr unsigned shutdown_reason_mask = shutdown_finalized - 1;
+static_assert(static_cast<unsigned>(ShutdownReason::retired) < shutdown_finalized);
+
 template<typename Operation>
 bool run_guarded(Operation&& operation) noexcept {
     try {
@@ -139,10 +143,11 @@ CommandSubmitResult LiveSession::unsubscribe(
 }
 
 void LiveSession::raise_shutdown_reason(ShutdownReason reason) noexcept {
-    ShutdownState current = shutdown_.load();
-    while (!current.finalized
-        && shutdown_reason_priority(reason) > shutdown_reason_priority(current.reason)
-        && !shutdown_.compare_exchange_weak(current, {reason, false})) {}
+    unsigned current = shutdown_.load();
+    while (!(current & shutdown_finalized)
+        && shutdown_reason_priority(reason) > shutdown_reason_priority(
+            static_cast<ShutdownReason>(current & shutdown_reason_mask))
+        && !shutdown_.compare_exchange_weak(current, static_cast<unsigned>(reason))) {}
 }
 
 void LiveSession::request_shutdown(ShutdownReason reason) {
@@ -358,7 +363,7 @@ bool LiveSession::shutdown_requested() const noexcept {
 }
 
 ShutdownReason LiveSession::shutdown_reason() const noexcept {
-    return shutdown_.load().reason;
+    return static_cast<ShutdownReason>(shutdown_.load() & shutdown_reason_mask);
 }
 
 void LiveSession::fail_current(std::shared_ptr<CommandReply> reply) {
@@ -494,9 +499,9 @@ void LiveSession::finalize(ShutdownReason reason) noexcept {
     }
     // Snapshot construction can block. Accept stronger reasons until the
     // owning payload is ready, then freeze its reason before publication.
-    ShutdownState shutdown = shutdown_.load();
-    while (!shutdown_.compare_exchange_weak(shutdown, {shutdown.reason, true})) {}
-    reason = shutdown.reason;
+    unsigned shutdown = shutdown_.load();
+    while (!shutdown_.compare_exchange_weak(shutdown, shutdown | shutdown_finalized)) {}
+    reason = static_cast<ShutdownReason>(shutdown & shutdown_reason_mask);
     log_event("runtime_stopping reason=" + std::string(to_string(reason)));
     if (terminal) {
         terminal->lifecycle = SessionLifecycle::stopping;

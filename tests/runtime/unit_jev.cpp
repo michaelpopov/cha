@@ -736,7 +736,9 @@ TEST_F(JevRouting, OnDemandSearchUsesWorkspaceDefaultAndCharacterOverrideWithout
         }
         GenerationResult perform(RequestPayload, const GenerationDeltaSink& sink,
             const std::atomic_bool& cancelled) override {
-            if (search) EXPECT_FALSE(search("model query", cancelled).empty());
+            if (search) {
+                EXPECT_FALSE(search("model query", cancelled).empty());
+            }
             sink({GenerationDeltaKind::answer, "Answer"});
             return {};
         }
@@ -1347,7 +1349,9 @@ TEST_F(JevRouting, RuntimeExpiryAndAbandonmentCancelWithoutFallback) {
         const auto snapshot = std::get<SessionSnapshot>(session->snapshot(2s));
         EXPECT_TRUE(snapshot.transcript.empty());
         EXPECT_EQ(snapshot.default_character_id, "guide");
-        if (abandon) EXPECT_FALSE(reply->peek());
+        if (abandon) {
+            EXPECT_FALSE(reply->peek());
+        }
     }
 }
 

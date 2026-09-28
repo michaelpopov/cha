@@ -73,6 +73,10 @@ if(APPLE OR NOT CURL_FOUND)
     set(HTTP_ONLY ON CACHE BOOL "" FORCE)
     set(CURL_DISABLE_WEBSOCKETS OFF CACHE BOOL "" FORCE)
     set(CURL_USE_LIBPSL OFF CACHE BOOL "" FORCE)
+    # CHA does not need HTTP/2, international domain names, or SSH transfers.
+    set(USE_NGHTTP2 OFF CACHE BOOL "" FORCE)
+    set(USE_LIBIDN2 OFF CACHE BOOL "" FORCE)
+    set(CURL_USE_LIBSSH2 OFF CACHE BOOL "" FORCE)
     if(WIN32)
         set(CURL_USE_SCHANNEL ON CACHE BOOL "" FORCE)
     elseif(APPLE)
@@ -80,8 +84,6 @@ if(APPLE OR NOT CURL_FOUND)
         # 8.15 or later requires choosing another TLS backend.
         set(CURL_USE_SECTRANSP ON CACHE BOOL "" FORCE)
         set(CURL_USE_OPENSSL OFF CACHE BOOL "" FORCE)
-        # Do not pick up a Homebrew nghttp2 dylib in the portable app bundle.
-        set(USE_NGHTTP2 OFF CACHE BOOL "" FORCE)
         # curl 8.14.1's symbol check detects pipe2 in newer SDKs even when
         # deploying to macOS versions before its introduction in macOS 27.
         set(HAVE_PIPE2 0 CACHE INTERNAL "Use curl's portable pipe fallback" FORCE)

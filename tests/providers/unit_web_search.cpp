@@ -321,11 +321,15 @@ TEST(WebSearchResults, PreservesSerializedKeyOrderBeforeAndAfterTruncation) {
                 ? search_brave("CNN today", "key", std::atomic_bool{false}, endpoint)
                 : search_tavily("CNN today", "key", std::atomic_bool{false}, endpoint);
             server.join();
-            if (!oversized) EXPECT_EQ(output, body.dump());
+            if (!oversized) {
+                EXPECT_EQ(output, body.dump());
+            }
             EXPECT_TRUE(output.starts_with(brave ? "{\"web\":" : "{\"results\":"));
             EXPECT_LT(output.find("\"title\":"), output.find("\"url\":"));
             EXPECT_LT(output.find("\"url\":"), output.find("\"description\":"));
-            if (brave) EXPECT_LT(output.find("\"news\":"), output.find("\"query\":"));
+            if (brave) {
+                EXPECT_LT(output.find("\"news\":"), output.find("\"query\":"));
+            }
             if (oversized) {
                 EXPECT_LE(output.size(), 32u * 1024);
                 EXPECT_TRUE(nlohmann::json::parse(output).at("truncated").get<bool>());
@@ -409,7 +413,9 @@ TEST(WebSearchResults, DropsOversizedEntriesBeforeTrimmingSmallerResults) {
         const auto result = nlohmann::json::parse(output);
         EXPECT_EQ(result.at("truncated"), true);
         EXPECT_EQ(brave ? result.at("web").at("results") : result.at("results"), small);
-        if (brave) EXPECT_EQ(result.at("news"), body.at("news"));
+        if (brave) {
+            EXPECT_EQ(result.at("news"), body.at("news"));
+        }
     }
 }
 

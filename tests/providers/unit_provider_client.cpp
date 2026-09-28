@@ -429,7 +429,9 @@ TEST(ProviderClient, DebugLogsSuccessfulRequestsAndResponsesButRedactsTheActiveA
         EXPECT_EQ(output.find("secret-model-key"), std::string::npos);
         EXPECT_EQ(output.find("HTTP model result diagnostic"), std::string::npos);
         EXPECT_EQ(output.find("data=\"\""), std::string::npos);
-        if (stream) EXPECT_NE(output.find("[DONE]"), std::string::npos);
+        if (stream) {
+            EXPECT_NE(output.find("[DONE]"), std::string::npos);
+        }
         EXPECT_EQ(output.find("Authorization:"), std::string::npos);
     }
 }
@@ -1981,7 +1983,9 @@ TEST(ProviderClientTools, SeparatesAnswerTextAcrossToolRounds) {
                 std::string answer;
                 input.web_search_tool = [&](auto, const auto&) {
                     // The preamble remains visible while the search runs.
-                    if (requests == 1) EXPECT_EQ(answer, rounds.front());
+                    if (requests == 1) {
+                        EXPECT_EQ(answer, rounds.front());
+                    }
                     return "[]";
                 };
                 const auto result = client.perform(client.prepare(input), [&](GenerationDelta delta) {
@@ -2211,7 +2215,9 @@ TEST(ProviderClientTools, ReturnsAnOutputForEveryCallWhenBatchExceedsSearchLimit
                     const auto& output = messages[messages.size() - 7 + i];
                     EXPECT_EQ(output[api == ProviderApi::responses ? "call_id" : "tool_call_id"],
                         "call" + std::to_string(i));
-                    if (i >= 4) EXPECT_NE(output.dump().find("Search limit reached"), std::string::npos);
+                    if (i >= 4) {
+                        EXPECT_NE(output.dump().find("Search limit reached"), std::string::npos);
+                    }
                 }
                 // A provider that still requests tools must not create an endless loop.
                 return tool_reply(api, false, Json::array({search_call(api, "one_more")}));
@@ -2289,7 +2295,9 @@ TEST(ProviderClientTools, ValidatesToolDataOnlyWhenOnDemandSearchWasOffered) {
             }, std::atomic_bool{false});
             EXPECT_EQ(result.outcome, enabled ? GenerationOutcome::protocol_error : GenerationOutcome::completed)
                 << result.message;
-            if (!enabled) EXPECT_EQ(answer, "Answer");
+            if (!enabled) {
+                EXPECT_EQ(answer, "Answer");
+            }
             EXPECT_EQ(searches, 0);
             EXPECT_EQ(requests, 1);
         }
