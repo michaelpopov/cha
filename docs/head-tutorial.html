@@ -1104,13 +1104,21 @@ data: [DONE]</code></pre>
 <tr><td><code>unit_session_tag.cpp</code></td><td>Tag format, leading whitespace, malformed lines, content arrays, newest match, a newer malformed tag does not hide an older valid one.</td></tr>
 <tr><td><code>unit_openai_adapter.cpp</code></td><td>Model list without Entrance, error envelopes, content arrays, prompt limit boundary, unknown models, tag/forum mismatch, invalid chats create no session.</td></tr>
 <tr><td><code>unit_openai_turns.cpp</code></td><td>Full turns against a real <code>Application</code>: new and continued chats, plain / <code>@Name</code> / <code>/mcast</code> / <code>@-</code>, Jev, reasoning is not streamed, prefix mismatch, provider failure, disconnects, shutdown, keepalive with a test clock, submit timeout stops the daemon, alternating sessions.</td></tr>
-<tr><td><code>unit_daemon_process.cpp</code> + <code>daemon_process.h</code></td><td>Spawns the real <code>cha-daemon</code> binary with a listening socket on fd 3 and <code>LISTEN_*</code> variables. Checks invalid activation, serving <code>/v1/models</code>, and <code>SIGTERM</code> during generation.</td></tr>
+<tr><td><code>unit_daemon_process.cpp</code> + <code>daemon_process.h</code></td><td>Spawns the real <code>cha-daemon</code> binary with a listening socket on fd 3 and <code>LISTEN_*</code> variables. Checks invalid activation, serving <code>/v1/models</code>, the <code>password</code> file rules of a protected vault, and <code>SIGTERM</code> during generation.</td></tr>
+<tr><td><code>tests/integration/daemon_integration_test.py</code></td><td>The whole chain: real nginx with the shipped <code>nginx.conf.example</code> and nginx's own <code>scgi_params</code>, <code>run_daemon.py</code>, <code>cha-daemon</code> and a fake provider. Checks API keys, routing and vault isolation, turns and restarts, streaming without buffering, waiting behind a running turn, client disconnects, provider failures, startup failures, size limits, and that no API key reaches the daemon.</td></tr>
 </table></div>
 
 <p>Build and run the daemon tests:</p>
 <pre><code>cmake --build --preset ninja --target cha-daemon cha_daemon_tests
 ctest --test-dir build/ninja --output-on-failure \
   -R "DaemonProcess|Scgi|SessionTag|OpenAiAdapterTest|TurnTest"</code></pre>
+
+<p>The integration tests are not part of <code>make test</code>, because they need nginx. Run them on Linux or macOS with:</p>
+<pre><code>make itest-daemon</code></pre>
+<p>The tests start their own nginx on a Unix socket in a temporary directory. They never touch an installed nginx service or a live provider. The test finds nginx's <code>scgi_params</code> file from <code>nginx -V</code>. If it cannot, pass the paths yourself:</p>
+<pre><code>python3 tests/integration/daemon_integration_test.py --build-dir build/ninja \
+  --nginx /path/to/nginx --scgi-params /path/to/scgi_params</code></pre>
+<p>A fake provider controls time in these tests. When the newest user message contains <code>HOLD-PROVIDER</code>, the provider holds its reply until the test releases it. <code>FAIL-PROVIDER</code> makes it return HTTP 500. <code>cha_prepare_test_vault --provider-port PORT</code> makes a test vault whose Guide character uses that provider.</p>
 
 <div class="callout key">
   <span class="label">Tip: the test clock</span>

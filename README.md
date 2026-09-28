@@ -11,7 +11,7 @@ Vite serving only frontend assets:
 
 ```sh
 make package-macos VERSION=0.0.0-dev
-make run-native-dev CONFIG="$PWD/cha-config"
+make run-native-dev CONFIG=/path/to/cha-config
 ```
 
 CHA starts in the process-local **Entrance / Welcome** conversation as **Guest**
