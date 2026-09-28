@@ -381,6 +381,19 @@ cha_enable_warnings(cha_lib)
 target_compile_definitions(
     cha_lib PRIVATE CHA_PACKAGE_VERSION="${CHA_PACKAGE_VERSION}")
 
+if(NOT WIN32)
+    add_executable(
+        cha-daemon
+        src/daemon/main.cpp
+        src/daemon/scgi.cpp
+        src/daemon/session_tag.cpp
+        src/daemon/openai_adapter.cpp)
+    target_compile_features(cha-daemon PUBLIC cxx_std_20)
+    target_link_libraries(cha-daemon PRIVATE cha_lib)
+    cha_enable_warnings(cha-daemon)
+    install(TARGETS cha-daemon RUNTIME DESTINATION bin)
+endif()
+
 # The instrumented Windows host uses this helper for its actual WebView2
 # workflow even in packaging builds, where the full GoogleTest suite is off.
 if(WIN32 AND NOT BUILD_TESTING)
@@ -624,6 +637,31 @@ if(BUILD_TESTING)
             CHA_INTERRUPTED_APP_HELPER="$<TARGET_FILE:cha_interrupted_app_helper>")
         add_dependencies(itest cha_interrupted_app_helper)
         cha_enable_warnings(itest)
+
+        add_executable(
+            cha_daemon_tests
+            tests/daemon/unit_scgi.cpp
+            tests/daemon/unit_session_tag.cpp
+            tests/daemon/unit_openai_adapter.cpp
+            tests/daemon/unit_daemon_process.cpp
+            tests/support/test_workspace.cpp
+            src/daemon/scgi.cpp
+            src/daemon/session_tag.cpp
+            src/daemon/openai_adapter.cpp)
+        target_link_libraries(
+            cha_daemon_tests
+            PRIVATE
+                cha_lib
+                cha_sqlite3
+                GTest::gtest_main)
+        target_include_directories(
+            cha_daemon_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+        target_compile_definitions(
+            cha_daemon_tests
+            PRIVATE
+                CHA_DAEMON_EXECUTABLE="$<TARGET_FILE:cha-daemon>")
+        add_dependencies(cha_daemon_tests cha-daemon)
+        cha_enable_warnings(cha_daemon_tests)
     endif()
 
     # Every test binary carries the sanitizer suppression list. The file is
@@ -635,7 +673,8 @@ if(BUILD_TESTING)
             cha_app_tests
             cha_bridge_tests
             cha_native_runtime_tests
-            itest)
+            itest
+            cha_daemon_tests)
         if(TARGET ${cha_test_target})
             target_sources(
                 ${cha_test_target}
@@ -648,6 +687,9 @@ if(BUILD_TESTING)
     gtest_discover_tests(cha_app_tests PROPERTIES TIMEOUT 60)
     gtest_discover_tests(cha_bridge_tests)
     gtest_discover_tests(cha_native_runtime_tests)
+    if(TARGET cha_daemon_tests)
+        gtest_discover_tests(cha_daemon_tests PROPERTIES TIMEOUT 60)
+    endif()
 endif()
 
 if(APPLE)

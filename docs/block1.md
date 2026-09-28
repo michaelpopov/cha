@@ -241,4 +241,40 @@ working startup/SCGI/model implementation and complete chat handling in place.
 
 ### Execution record
 
-Not run yet.
+Repository: working tree on `77c47ec` (main) plus the stage-1 daemon files below.
+
+Changed files:
+- `CMakeLists.txt`, `src/README.md`
+- `src/workspace/workspace.cpp` (`#include <mutex>` for libstdc++ on Linux)
+- `src/daemon/scgi.h`, `scgi.cpp`, `session_tag.h`, `session_tag.cpp`, `openai_adapter.h`, `openai_adapter.cpp`, `main.cpp`
+- `tests/daemon/unit_scgi.cpp`, `unit_session_tag.cpp`, `unit_openai_adapter.cpp`, `unit_daemon_process.cpp`, `daemon_process.h`
+- `packaging/linux/cha@.socket`, `cha@.service`, `nginx.conf.example`
+
+Public daemon helpers:
+- `cha::daemon::UniqueFd`, `read_scgi`, `write_cgi`, `write_bytes`, `peer_closed`, `accept_connection`, `configure_socket`
+- `format_session_tag`, `parse_session_tag_text`, `find_session_tag`, `message_text`
+- `openai_error`, `parse_chat_request`, `models_list`, `handle_request`
+- Temporary `501` branch in `handle_request` after successful chat preflight (`Chat completion is not implemented`). No session is created.
+- Process launcher: `tests/daemon/daemon_process.h` (`DaemonProcess`)
+
+Linux host: Ubuntu 25.10 aarch64, g++ 15.2.0, cmake 3.31.6, ninja 1.12.1, OpenSSL 3.5.3, `build-essential`, `libssl-dev`. Build dir `build/linux`.
+
+```
+cmake -S . -B build/linux -G Ninja -DBUILD_TESTING=ON
+cmake --build build/linux --target cha_lib cha_tests cha_app_tests cha-daemon cha_daemon_tests
+./build/linux/cha_tests
+./build/linux/cha_app_tests
+./build/linux/cha_daemon_tests
+```
+
+Results:
+- `cha-daemon` and `cha_daemon_tests` built on Linux. macOS was not available on this host.
+- `cha_tests`: 503 passed, 2 skipped.
+- `cha_app_tests`: 328 passed.
+- `cha_daemon_tests`: 24 passed (SCGI, tags, adapter preflight, invalid activation, model list through the real binary).
+- Idle `SIGTERM` and partial-read `SIGTERM` on the real executable both exited 0.
+- Direct SCGI `GET /v1/models` through socket activation returned `200` with forum `lobby` and without `builtin-entrance`.
+
+nginx/systemd smoke test did not run. Missing prerequisites: `nginx` is not installed; no disposable `/var/lib/cha/<user>` vault, `cha-<user>` account, or `/run/cha` socket unit. `systemd-analyze verify` on the example units reports `/usr/local/bin/cha-daemon` is not installed yet. Do not treat this stage as complete until that server test runs.
+
+COMPLETED

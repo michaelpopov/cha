@@ -20,6 +20,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <limits>
+#include <mutex>
 #include <ranges>
 #include <sstream>
 #include <stdexcept>

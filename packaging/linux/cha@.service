@@ -1,0 +1,9 @@
+[Unit]
+Description=CHA daemon for %i
+Requires=cha@%i.socket
+After=cha@%i.socket
+
+[Service]
+ExecStart=/usr/local/bin/cha-daemon --config /var/lib/cha/%i/config
+User=cha-%i
+PrivateTmp=yes

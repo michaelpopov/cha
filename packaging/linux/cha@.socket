@@ -1,0 +1,11 @@
+[Unit]
+Description=CHA socket for %i
+
+[Socket]
+ListenStream=/run/cha/%i.sock
+SocketGroup=www-data
+SocketMode=0660
+Accept=no
+
+[Install]
+WantedBy=sockets.target
