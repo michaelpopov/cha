@@ -173,6 +173,7 @@ details > :last-child { margin-bottom: 0; }
     <li><a href="#example">Worked example</a></li>
     <li><a href="#ops">Operations</a></li>
     <li><a href="#tests">Build and tests</a></li>
+    <li><a href="#macos">Running on macOS</a></li>
     <li><a href="#limits">Limitations</a></li>
     <li><a href="#check">Check yourself</a></li>
     <li><a href="#glossary">Glossary</a></li>
@@ -187,7 +188,7 @@ details > :last-child { margin-bottom: 0; }
 
 <div class="callout key">
   <span class="label">How to read this document</span>
-  <p>Read sections 1–3 first. They give you the full model in ten minutes. Sections 4–5 are about deployment. Sections 6–11 follow one request through the code. Section 12 explains the threads. Use sections 18–19 to check what you learned.</p>
+  <p>Read sections 1–3 first. They give you the full model in ten minutes. Sections 4–5 are about deployment. Sections 6–11 follow one request through the code. Section 12 explains the threads. Section 17 shows how to run the daemon on a Mac. Use sections 19–20 to check what you learned.</p>
 </div>
 
 <!-- ============================================================ -->
@@ -425,7 +426,7 @@ TimeoutStopSec=90s</code></pre></td></tr>
       <li><code>configure_socket(3)</code> sets <code>FD_CLOEXEC</code> and <code>O_NONBLOCK</code>.</li>
       <li>It removes <code>LISTEN_PID</code>, <code>LISTEN_FDS</code> and <code>LISTEN_FDNAMES</code> from the environment, so child processes do not inherit them.</li>
     </ul>
-    This check comes before the configuration load. A daemon that is started by hand fails at once with a clear message.</li>
+    This check comes before the configuration load. A daemon that is started by hand fails at once with a clear message. (To run it without systemd, see <a href="#macos">Running on macOS</a>.)</li>
   <li><b><code>load_daemon_command()</code></b> reads the configuration directory, finds the vault that <code>app.toml</code> names, and checks that the SQLite file exists. It builds the same <code>ApplicationCommand</code> that the desktop host builds.</li>
   <li><b>Logging</b> starts. From now on, errors also go to the log file.</li>
   <li><b><code>install_stop_handlers()</code></b> installs one handler for <code>SIGTERM</code> and <code>SIGINT</code>.</li>
@@ -1095,7 +1096,7 @@ data: [DONE]</code></pre>
 <!-- ============================================================ -->
 <h2 id="tests">Build and tests</h2>
 
-<p><code>cha-daemon</code> is a CMake target for POSIX systems. It is deployed on Linux but also builds and runs its tests on macOS, so you can develop on a Mac.</p>
+<p><code>cha-daemon</code> is a CMake target for POSIX systems. It is deployed on Linux but also builds and runs its tests on macOS, so you can develop on a Mac. <code>make</code> builds it together with the other default targets.</p>
 
 <div class="table-wrap"><table>
 <tr><th>Test file</th><th>What it proves</th></tr>
@@ -1114,6 +1115,68 @@ ctest --test-dir build/ninja --output-on-failure \
 <div class="callout key">
   <span class="label">Tip: the test clock</span>
   <p><code>handle_request()</code> takes an optional <code>TurnClock</code>. Tests inject a fake clock to trigger the 15 s keepalive without waiting 15 s. This is the only seam that exists for tests; everything else runs the real code.</p>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="macos">Running on macOS</h2>
+
+<p>You can run <code>cha-daemon</code> on a Mac for development. The code is the same as on Linux. The difference is how the process starts, because macOS has no systemd.</p>
+
+<div class="callout why">
+  <span class="label">Why you need a launcher</span>
+  <p>The daemon always expects systemd socket activation: a listening Unix socket on fd 3, <code>LISTEN_FDS=1</code>, and <code>LISTEN_PID</code> equal to its own process ID. A direct start fails with <code>systemd socket activation is invalid</code>. launchd uses a different activation API, so it cannot start the daemon either. <code>scripts/run_daemon.py</code> does the systemd part: it binds the socket, moves it to fd 3, sets the two variables and then <code>exec</code>s the daemon. <code>exec</code> keeps the process ID, so <code>LISTEN_PID</code> matches.</p>
+</div>
+
+<h3>Start the daemon</h3>
+<ol class="steps">
+  <li>Build the daemon:
+<pre><code>cmake --build --preset ninja --target cha-daemon</code></pre></li>
+  <li>Prepare a configuration directory. It has the same format as on Linux: <code>app.toml</code>, the vault TOML file, and <code>password</code> for a protected vault. For a quick test, make one with the test vault (one forum, <code>lobby</code>):
+<pre><code>cmake --build --preset ninja --target cha_prepare_test_vault
+build/ninja/cha_prepare_test_vault /tmp/cha-dev</code></pre>
+    For real chats, use a <b>copy</b> of a desktop vault whose providers use API keys.</li>
+  <li>Start the daemon in the foreground:
+<pre><code>python3 scripts/run_daemon.py /tmp/cha.sock build/ninja/cha-daemon --config /tmp/cha-dev</code></pre></li>
+  <li>Stop it with <code>Ctrl-C</code> (<code>SIGINT</code>) or <code>kill -TERM</code>. Both use the normal clean shutdown.</li>
+</ol>
+
+<h3>Connect a client through nginx</h3>
+<p>The daemon speaks only SCGI. To use <code>curl</code> or a chat client, put nginx in front of it. Homebrew's nginx includes every file in <code>/opt/homebrew/etc/nginx/servers/</code>. Its default server already uses port 8080, so this example uses 8081:</p>
+<p class="file">/opt/homebrew/etc/nginx/servers/cha.conf</p>
+<pre><code>server {
+    listen 127.0.0.1:8081;                   <span class="c"># local only: no API key check</span>
+
+    location /v1/ {
+        include                   scgi_params;
+        scgi_pass                 unix:/tmp/cha.sock;
+        scgi_pass_request_headers off;
+        scgi_buffering            off;
+        scgi_read_timeout         3600s;
+        scgi_send_timeout         3600s;
+    }
+}</code></pre>
+<pre><code>brew services start nginx          <span class="c"># or: nginx -s reload</span>
+curl http://127.0.0.1:8081/v1/models</code></pre>
+<p>A chat client uses the base URL <code>http://127.0.0.1:8081/v1</code> with any API key. The key is not checked, because this configuration has no <code>map</code>. So listen only on <code>127.0.0.1</code>.</p>
+
+<h3>Differences from the Linux deployment</h3>
+<div class="table-wrap"><table>
+<tr><th>Topic</th><th>Linux with systemd</th><th>macOS with <code>run_daemon.py</code></th></tr>
+<tr><td>Start</td><td>On the first connection</td><td>When you run the script</td></tr>
+<tr><td>After a crash or a stop</td><td>The next connection starts a new daemon</td><td>Nothing restarts it. nginx returns 502 until you run the script again.</td></tr>
+<tr><td>Temporary workspace files with provider keys</td><td><code>PrivateTmp=yes</code> removes them when the service stops</td><td>A crash can leave them in the temporary directory</td></tr>
+<tr><td>User isolation</td><td>One system account per user</td><td>Runs as you</td></tr>
+<tr><td>API key check</td><td>nginx <code>map</code></td><td>None in the example above</td></tr>
+<tr><td>fd 3 check</td><td>Checks <code>SO_ACCEPTCONN</code></td><td>Skips it, because macOS returns <code>ENOPROTOOPT</code> for it. The other checks stay.</td></tr>
+</table></div>
+
+<div class="callout warn">
+  <span class="label">Watch out</span>
+  <ul>
+    <li><b>Socket path length.</b> macOS allows at most 104 bytes in a Unix socket path. A long path fails at <code>bind</code>. Use a short path such as <code>/tmp/cha.sock</code>.</li>
+    <li><b>Open vaults.</b> The SQLite lease lets only one process open a vault. Do not point the daemon at the vault that the desktop app has open.</li>
+    <li><b>Subscription providers.</b> As on Linux, ChatGPT subscription providers do not work. Use providers with API keys.</li>
+  </ul>
 </div>
 
 <!-- ============================================================ -->

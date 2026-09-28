@@ -9,6 +9,9 @@
   ownership, storage, generation, native bridge, frontend state, and tests.
 - [Editing workspace entities](editing.md): implementing an editing workflow
   across the store, application, bridge, and frontend.
+- [Headless daemon design](headless.md) and [tutorial](head-tutorial.html):
+  `cha-daemon`, an OpenAI-compatible SCGI server behind nginx, with systemd on
+  Linux and `scripts/run_daemon.py` on macOS.
 
 CHA is a native desktop application. Older HTTP/SSE server instructions and the
 removed `chaweb` executable are not part of the current operating workflow.

@@ -347,6 +347,8 @@ After step 2, the server copy is the only home of the API sessions. Do not copy 
 
 **Logs.** Each daemon writes its own log file under its config directory, as set in `app.toml`. systemd records start, stop and crash events in the journal for `cha@<user>.service`.
 
+**Development on macOS.** The daemon builds and runs on macOS, which has no systemd. `scripts/run_daemon.py` does the socket activation: it binds the Unix socket, passes it as file descriptor 3 with `LISTEN_FDS` and `LISTEN_PID`, and starts the daemon. A local nginx can forward requests to that socket. macOS returns `ENOPROTOOPT` for `SO_ACCEPTCONN`, so the daemon skips that one check there. Nothing restarts the daemon after it exits, and a crash can leave the temporary workspace files. See [Running on macOS](head-tutorial.html#macos).
+
 ## Limitations and open questions
 
 The design trades throughput and flexibility for a daemon with no concurrency and no HTTP code.
