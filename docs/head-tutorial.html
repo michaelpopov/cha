@@ -1,0 +1,1193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CHA Headless Tutorial</title>
+<style>
+:root {
+  --bg: #fbfaf7;
+  --surface: #ffffff;
+  --fg: #1d1f23;
+  --muted: #5d636e;
+  --border: #dcdad3;
+  --accent: #2a5db0;
+  --accent-soft: #e6eefb;
+  --code-bg: #f2f0ea;
+  --code-fg: #1d1f23;
+  --key-bg: #e8f3ea;   --key-bd: #3e8a52;
+  --why-bg: #f0ebfa;   --why-bd: #7651c2;
+  --warn-bg: #fdf1e3;  --warn-bd: #c77a1c;
+  --svg-box: #ffffff;
+  --svg-line: #5d636e;
+  --svg-a: #e6eefb;  --svg-a-bd: #2a5db0;
+  --svg-b: #e8f3ea;  --svg-b-bd: #3e8a52;
+  --svg-c: #fdf1e3;  --svg-c-bd: #c77a1c;
+  --svg-d: #f0ebfa;  --svg-d-bd: #7651c2;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #16181c; --surface: #1e2126; --fg: #e6e4df; --muted: #a2a7b0;
+    --border: #353941; --accent: #7fa8ee; --accent-soft: #22324d;
+    --code-bg: #24272d; --code-fg: #e6e4df;
+    --key-bg: #1d2b21; --key-bd: #5fb275;
+    --why-bg: #261f35; --why-bd: #a488e0;
+    --warn-bg: #33261a; --warn-bd: #e0a050;
+    --svg-box: #1e2126; --svg-line: #a2a7b0;
+    --svg-a: #22324d; --svg-a-bd: #7fa8ee;
+    --svg-b: #1d2b21; --svg-b-bd: #5fb275;
+    --svg-c: #33261a; --svg-c-bd: #e0a050;
+    --svg-d: #261f35; --svg-d-bd: #a488e0;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #16181c; --surface: #1e2126; --fg: #e6e4df; --muted: #a2a7b0;
+  --border: #353941; --accent: #7fa8ee; --accent-soft: #22324d;
+  --code-bg: #24272d; --code-fg: #e6e4df;
+  --key-bg: #1d2b21; --key-bd: #5fb275;
+  --why-bg: #261f35; --why-bd: #a488e0;
+  --warn-bg: #33261a; --warn-bd: #e0a050;
+  --svg-box: #1e2126; --svg-line: #a2a7b0;
+  --svg-a: #22324d; --svg-a-bd: #7fa8ee;
+  --svg-b: #1d2b21; --svg-b-bd: #5fb275;
+  --svg-c: #33261a; --svg-c-bd: #e0a050;
+  --svg-d: #261f35; --svg-d-bd: #a488e0;
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; scroll-padding-top: 16px; }
+body {
+  margin: 0; background: var(--bg); color: var(--fg);
+  font: 16px/1.62 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+.layout { display: flex; max-width: 1240px; margin: 0 auto; gap: 40px; padding: 0 16px; }
+nav.toc {
+  flex: 0 0 250px; position: sticky; top: 0; align-self: flex-start;
+  max-height: 100vh; overflow-y: auto; padding: 28px 0; font-size: 14px;
+}
+nav.toc h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 10px; border: 0; padding: 0; }
+nav.toc ol { list-style: none; margin: 0; padding: 0; counter-reset: toc; }
+nav.toc li { counter-increment: toc; margin: 0; }
+nav.toc a { display: block; padding: 4px 8px; border-radius: 6px; color: var(--muted); text-decoration: none; }
+nav.toc a::before { content: counter(toc) ". "; color: var(--muted); opacity: .7; }
+nav.toc a:hover { background: var(--accent-soft); color: var(--fg); }
+main { flex: 1 1 auto; min-width: 0; max-width: 860px; padding: 28px 0 80px; }
+@media (max-width: 960px) {
+  .layout { display: block; }
+  nav.toc { position: static; max-height: none; padding: 16px 0 0; }
+  nav.toc ol { columns: 2; column-gap: 16px; }
+}
+@media (max-width: 520px) { nav.toc ol { columns: 1; } }
+
+h1 { font-size: 2.1rem; line-height: 1.2; margin: .2em 0 .3em; letter-spacing: -.01em; }
+main h2 { font-size: 1.55rem; margin: 2.4em 0 .6em; padding-top: .6em; border-top: 1px solid var(--border); counter-increment: sec; }
+main h2::before { content: counter(sec) ". "; color: var(--accent); }
+main { counter-reset: sec; }
+h3 { font-size: 1.15rem; margin: 1.8em 0 .5em; }
+h4 { font-size: 1rem; margin: 1.4em 0 .4em; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+p, ul, ol, table, pre, .callout, figure { margin: 0 0 1em; }
+ul, ol { padding-left: 1.4em; }
+li { margin: .25em 0; }
+a { color: var(--accent); }
+.lede { font-size: 1.12rem; color: var(--muted); }
+.meta { font-size: .9rem; color: var(--muted); }
+
+code { font: .88em/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: var(--code-bg); color: var(--code-fg); padding: .08em .35em; border-radius: 4px; overflow-wrap: anywhere; }
+pre { background: var(--code-bg); color: var(--code-fg); padding: 14px 16px; border-radius: 8px; overflow-x: auto; border: 1px solid var(--border); }
+pre code { background: none; padding: 0; font-size: .85rem; overflow-wrap: normal; }
+pre .c { color: var(--muted); }
+pre .h { color: var(--accent); font-weight: 600; }
+.file { font-size: .8rem; color: var(--muted); margin: -.6em 0 .3em; font-family: ui-monospace, Menlo, monospace; }
+
+.table-wrap { overflow-x: auto; margin: 0 0 1em; }
+table { border-collapse: collapse; width: 100%; font-size: .93rem; background: var(--surface); }
+th, td { border: 1px solid var(--border); padding: 7px 10px; text-align: left; vertical-align: top; }
+th { background: var(--code-bg); font-weight: 600; }
+.table-wrap table { margin: 0; }
+
+.callout { border-left: 4px solid; border-radius: 0 8px 8px 0; padding: 12px 16px; }
+.callout > :last-child { margin-bottom: 0; }
+.callout .label { display: block; font-weight: 700; font-size: .78rem; text-transform: uppercase; letter-spacing: .07em; margin-bottom: 4px; }
+.key  { background: var(--key-bg);  border-color: var(--key-bd); }
+.key .label { color: var(--key-bd); }
+.why  { background: var(--why-bg);  border-color: var(--why-bd); }
+.why .label { color: var(--why-bd); }
+.warn { background: var(--warn-bg); border-color: var(--warn-bd); }
+.warn .label { color: var(--warn-bd); }
+
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin: 0 0 1.2em; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+.card b { display: block; margin-bottom: 4px; }
+.card p { margin: 0; font-size: .93rem; color: var(--muted); }
+
+figure { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
+figure { overflow-x: auto; }
+figure svg { display: block; width: 100%; min-width: 640px; height: auto; }
+figcaption { font-size: .88rem; color: var(--muted); margin-top: 8px; }
+svg text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; fill: var(--fg); }
+svg .small { font-size: 12px; fill: var(--muted); }
+svg .mono { font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+svg .line { stroke: var(--svg-line); stroke-width: 1.5; fill: none; }
+svg .dash { stroke: var(--svg-line); stroke-width: 1; stroke-dasharray: 4 4; fill: none; }
+svg .box { fill: var(--svg-box); stroke: var(--svg-line); stroke-width: 1.2; }
+svg .ba { fill: var(--svg-a); stroke: var(--svg-a-bd); stroke-width: 1.4; }
+svg .bb { fill: var(--svg-b); stroke: var(--svg-b-bd); stroke-width: 1.4; }
+svg .bc { fill: var(--svg-c); stroke: var(--svg-c-bd); stroke-width: 1.4; }
+svg .bd { fill: var(--svg-d); stroke: var(--svg-d-bd); stroke-width: 1.4; }
+svg .arrow { fill: var(--svg-line); }
+
+details { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; margin: 0 0 10px; }
+details summary { cursor: pointer; font-weight: 600; }
+details[open] summary { margin-bottom: 8px; }
+details > :last-child { margin-bottom: 0; }
+
+.steps { counter-reset: step; list-style: none; padding-left: 0; }
+.steps > li { counter-increment: step; position: relative; padding-left: 2.4em; margin: .7em 0; }
+.steps > li::before {
+  content: counter(step); position: absolute; left: 0; top: .05em;
+  width: 1.7em; height: 1.7em; border-radius: 50%; background: var(--accent); color: var(--bg);
+  font-size: .85em; font-weight: 700; display: flex; align-items: center; justify-content: center;
+}
+.tag { display: inline-block; font-size: .75rem; font-weight: 600; padding: 1px 7px; border-radius: 10px; background: var(--accent-soft); color: var(--accent); vertical-align: middle; }
+</style>
+</head>
+<body>
+<div class="layout">
+
+<nav class="toc" aria-label="Contents">
+  <h2>Contents</h2>
+  <ol>
+    <li><a href="#picture">The big picture</a></li>
+    <li><a href="#rules">Five design rules</a></li>
+    <li><a href="#map">Source map</a></li>
+    <li><a href="#config">Configuration</a></li>
+    <li><a href="#startup">Startup and shutdown</a></li>
+    <li><a href="#protocols">The protocol stack</a></li>
+    <li><a href="#scgi">SCGI layer in C++</a></li>
+    <li><a href="#loop">The accept loop</a></li>
+    <li><a href="#adapter">The OpenAI adapter</a></li>
+    <li><a href="#tag">Session matching</a></li>
+    <li><a href="#turn">One turn, step by step</a></li>
+    <li><a href="#threads">Threads and concurrency</a></li>
+    <li><a href="#errors">Errors and disconnects</a></li>
+    <li><a href="#example">Worked example</a></li>
+    <li><a href="#ops">Operations</a></li>
+    <li><a href="#tests">Build and tests</a></li>
+    <li><a href="#limits">Limitations</a></li>
+    <li><a href="#check">Check yourself</a></li>
+    <li><a href="#glossary">Glossary</a></li>
+  </ol>
+</nav>
+
+<main>
+
+<h1>CHA in headless mode</h1>
+<p class="lede">How <code>cha-daemon</code> works: from an HTTPS request at nginx, over SCGI and a Unix socket, into the CHA core, and back as a stream of OpenAI chunks.</p>
+<p class="meta">Audience: an experienced C++ developer who is new to this part of CHA. Design source: <a href="headless.md">docs/headless.md</a>. Code: <code>src/daemon/</code>, <code>packaging/linux/</code>, <code>tests/daemon/</code>.</p>
+
+<div class="callout key">
+  <span class="label">How to read this document</span>
+  <p>Read sections 1–3 first. They give you the full model in ten minutes. Sections 4–5 are about deployment. Sections 6–11 follow one request through the code. Section 12 explains the threads. Use sections 18–19 to check what you learned.</p>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="picture">The big picture</h2>
+
+<p>In headless mode, CHA has no window and no WebView. It runs as a Linux service. Any chat client that can talk to the OpenAI Chat Completions API can use it as a "model provider". Each CHA <b>forum</b> appears to the client as one <b>model</b>.</p>
+
+<figure>
+<svg viewBox="0 0 900 420" role="img" aria-label="Deployment diagram: client to nginx to Unix socket to cha-daemon to LLM providers">
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" class="arrow"/>
+    </marker>
+  </defs>
+  <!-- client -->
+  <rect x="10" y="60" width="140" height="90" rx="10" class="box"/>
+  <text x="80" y="95" text-anchor="middle" font-weight="600">Chat client</text>
+  <text x="80" y="115" text-anchor="middle" class="small">Open WebUI, curl,</text>
+  <text x="80" y="131" text-anchor="middle" class="small">any OpenAI client</text>
+
+  <line x1="150" y1="105" x2="205" y2="105" class="line" marker-end="url(#ah)"/>
+  <text x="178" y="92" text-anchor="middle" class="small">HTTPS</text>
+
+  <!-- nginx -->
+  <rect x="208" y="40" width="160" height="130" rx="10" class="ba"/>
+  <text x="288" y="68" text-anchor="middle" font-weight="600">nginx</text>
+  <text x="288" y="90" text-anchor="middle" class="small">TLS</text>
+  <text x="288" y="107" text-anchor="middle" class="small">API key → user name</text>
+  <text x="288" y="124" text-anchor="middle" class="small">401 / 413 / 502</text>
+  <text x="288" y="141" text-anchor="middle" class="small">buffers request body</text>
+
+  <line x1="368" y1="105" x2="428" y2="105" class="line" marker-end="url(#ah)"/>
+  <text x="398" y="92" text-anchor="middle" class="small">SCGI</text>
+
+  <!-- socket -->
+  <rect x="430" y="50" width="130" height="110" rx="10" class="bc"/>
+  <text x="495" y="78" text-anchor="middle" font-weight="600">Unix socket</text>
+  <text x="495" y="98" text-anchor="middle" class="mono">/run/cha/</text>
+  <text x="495" y="114" text-anchor="middle" class="mono">alice.sock</text>
+  <text x="495" y="138" text-anchor="middle" class="small">owned by systemd</text>
+
+  <line x1="560" y1="105" x2="600" y2="105" class="line" marker-end="url(#ah)"/>
+  <text x="580" y="92" text-anchor="middle" class="small">fd 3</text>
+
+  <!-- daemon -->
+  <rect x="603" y="20" width="200" height="250" rx="10" class="bb"/>
+  <text x="703" y="44" text-anchor="middle" font-weight="600">cha-daemon</text>
+  <text x="703" y="60" text-anchor="middle" class="small">user cha-alice</text>
+  <rect x="618" y="72" width="170" height="52" rx="6" class="box"/>
+  <text x="703" y="93" text-anchor="middle" font-size="13">main thread</text>
+  <text x="703" y="110" text-anchor="middle" class="small">accept · SCGI · adapter</text>
+  <rect x="618" y="134" width="170" height="52" rx="6" class="box"/>
+  <text x="703" y="155" text-anchor="middle" font-size="13">SessionRuntime thread</text>
+  <text x="703" y="172" text-anchor="middle" class="small">owns all live sessions</text>
+  <rect x="618" y="196" width="170" height="52" rx="6" class="box"/>
+  <text x="703" y="217" text-anchor="middle" font-size="13">provider workers</text>
+  <text x="703" y="234" text-anchor="middle" class="small">one per model request</text>
+
+  <!-- providers -->
+  <line x1="803" y1="222" x2="840" y2="222" class="line" marker-end="url(#ah)"/>
+  <rect x="842" y="180" width="54" height="84" rx="8" class="bd"/>
+  <text x="869" y="212" text-anchor="middle" font-size="12">LLM</text>
+  <text x="869" y="228" text-anchor="middle" font-size="12">APIs</text>
+  <text x="869" y="246" text-anchor="middle" class="small">curl</text>
+
+  <!-- vault -->
+  <line x1="703" y1="270" x2="703" y2="300" class="line" marker-end="url(#ah)"/>
+  <rect x="618" y="302" width="170" height="44" rx="6" class="box"/>
+  <text x="703" y="322" text-anchor="middle" font-size="13">workspace.sqlite3</text>
+  <text x="703" y="338" text-anchor="middle" class="small">the user's vault</text>
+
+  <!-- second user -->
+  <rect x="430" y="300" width="130" height="50" rx="10" class="bc" opacity=".55"/>
+  <text x="495" y="330" text-anchor="middle" class="mono" opacity=".8">bob.sock</text>
+  <line x1="368" y1="150" x2="428" y2="320" class="dash" marker-end="url(#ah)"/>
+  <text x="495" y="380" text-anchor="middle" class="small">Bob has his own socket,</text>
+  <text x="495" y="396" text-anchor="middle" class="small">daemon, account and vault</text>
+</svg>
+<figcaption>One nginx. One socket, one daemon process, one system account and one vault per user.</figcaption>
+</figure>
+
+<p>Read the diagram from left to right:</p>
+<ol class="steps">
+  <li>The client sends <code>POST /v1/chat/completions</code> with <code>Authorization: Bearer &lt;key&gt;</code>.</li>
+  <li><b>nginx</b> terminates TLS and maps the key to a user name, for example <code>alice</code>. It reads the full request body.</li>
+  <li>nginx connects to <code>/run/cha/alice.sock</code> and sends the request in the <b>SCGI</b> format.</li>
+  <li><b>systemd</b> owns that socket. If Alice's daemon is not running, systemd starts it and gives it the listening socket as file descriptor 3.</li>
+  <li><b>cha-daemon</b> accepts the connection, parses SCGI and the OpenAI JSON, and runs one CHA turn through the normal <code>Application</code> API.</li>
+  <li>The daemon writes the answer back on the same connection as Server-Sent Events (SSE), then closes it. nginx relays the bytes to the client.</li>
+</ol>
+
+<div class="callout key">
+  <span class="label">Key idea</span>
+  <p>Only about 1,100 lines of C++ are new: <code>src/daemon/</code>. Everything else is the same CHA core that the desktop app uses. The daemon is simply another "host" for <code>Application</code>, like the macOS and Windows hosts.</p>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="rules">Five design rules</h2>
+
+<p>Almost every detail in the code follows from these five rules. Keep them in mind while you read.</p>
+
+<div class="cards">
+  <div class="card"><b>1. No HTTP in CHA</b><p>nginx does HTTP, TLS and API keys. The daemon speaks only SCGI, which is tiny and needs no library.</p></div>
+  <div class="card"><b>2. One user, one process</b><p>Each user gets a separate daemon, Unix account and vault. Isolation comes from the OS, not from C++ code.</p></div>
+  <div class="card"><b>3. One request at a time</b><p>The daemon accepts, serves and closes one connection, then accepts the next. There is no request concurrency to lock.</p></div>
+  <div class="card"><b>4. No server-side chat mapping</b><p>Each reply starts with a hidden session tag. The client sends it back in its history, so the daemon knows the session without extra storage.</p></div>
+  <div class="card"><b>5. Core stays unchanged</b><p>The daemon uses the public <code>Application</code> API. The runtime thread, providers and storage keep their existing threading model.</p></div>
+</div>
+
+<div class="callout why">
+  <span class="label">Why so strict?</span>
+  <p>CHA is a personal application. The project rule is "prefer the plain, obvious solution". A one-request-at-a-time server with OS-level isolation is much easier to reason about than a multi-user HTTP server with locks and per-user state. The trade-off is throughput: a second chat from the same user must wait. For a few personal users this is acceptable.</p>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="map">Source map</h2>
+
+<div class="table-wrap"><table>
+<tr><th>File</th><th>Lines</th><th>What it does</th></tr>
+<tr><td><code>src/daemon/main.cpp</code></td><td>~320</td><td>Entry point. Parses <code>--config</code>, checks systemd socket activation, loads the vault configuration, reads the vault password, installs signal handlers, opens <code>Application</code>, runs the accept loop, shuts down.</td></tr>
+<tr><td><code>src/daemon/scgi.h/.cpp</code></td><td>~340</td><td>Low-level socket code. <code>UniqueFd</code> RAII wrapper, non-blocking <code>accept</code>, SCGI netstring parser, <code>peer_closed()</code>, safe writes, CGI response header.</td></tr>
+<tr><td><code>src/daemon/openai_adapter.h/.cpp</code></td><td>~750</td><td>The protocol bridge. Routes the two endpoints, validates the JSON, finds or creates the session, submits input, polls session output, produces SSE chunks or one JSON response.</td></tr>
+<tr><td><code>src/daemon/session_tag.h/.cpp</code></td><td>~140</td><td>Formats the session tag line and finds the newest tag in the <code>assistant</code> messages.</td></tr>
+<tr><td><code>packaging/linux/cha@.socket</code></td><td>11</td><td>systemd socket template. One socket per user.</td></tr>
+<tr><td><code>packaging/linux/cha@.service</code></td><td>12</td><td>systemd service template. Runs the daemon as <code>cha-%i</code>.</td></tr>
+<tr><td><code>packaging/linux/nginx.conf.example</code></td><td>25</td><td>nginx routing from API key to socket.</td></tr>
+<tr><td><code>tests/daemon/*</code></td><td>~2,000</td><td>Unit tests for SCGI, tags, request parsing, full turns, and a real daemon process.</td></tr>
+</table></div>
+
+<p>Dependencies point in one direction:</p>
+<pre><code>main.cpp ──► openai_adapter ──► session_tag
+    │              │
+    └──► scgi ◄────┘
+                   └──► app::Application  (cha_lib, unchanged)</code></pre>
+
+<p>The <code>cha-daemon</code> CMake target links <code>cha_lib</code> as it is. The linker drops the unused <code>bridge/</code> objects. The media code stays because <code>Application</code> creates the audio download manager, but its three workers stay idle.</p>
+
+<!-- ============================================================ -->
+<h2 id="config">Configuration</h2>
+
+<p>Three layers of configuration exist: nginx, systemd, and the CHA configuration directory of each user.</p>
+
+<h3>nginx: from API key to socket</h3>
+<p class="file">packaging/linux/nginx.conf.example</p>
+<pre><code><span class="h">map $http_authorization $cha_user {</span>
+    "Bearer &lt;alice-key&gt;"  alice;       <span class="c"># full header value → user name</span>
+    "Bearer &lt;bob-key&gt;"    bob;
+    default               "";
+<span class="h">}</span>
+
+server {
+    listen 443 ssl;
+
+    location /v1/ {
+        if ($cha_user = "") { return 401; }            <span class="c"># unknown key</span>
+        client_max_body_size      16m;                <span class="c"># long histories, base64 images</span>
+        include                   scgi_params;
+        scgi_pass                 unix:/run/cha/$cha_user.sock;
+        scgi_pass_request_headers off;                <span class="c"># daemon never sees the key</span>
+        scgi_buffering            off;                <span class="c"># send SSE chunks at once</span>
+        scgi_read_timeout         3600s;              <span class="c"># may wait behind another turn</span>
+        scgi_send_timeout         3600s;
+    }
+}</code></pre>
+
+<div class="table-wrap"><table>
+<tr><th>Directive</th><th>Why it is there</th></tr>
+<tr><td><code>map</code></td><td>The only authentication. The socket path comes only from this map, never from request data. A client cannot pick another user's socket.</td></tr>
+<tr><td><code>scgi_pass_request_headers off</code></td><td>HTTP headers, including <code>Authorization</code>, are not sent to the daemon. The daemon needs only <code>REQUEST_METHOD</code>, <code>DOCUMENT_URI</code> and <code>CONTENT_LENGTH</code> from <code>scgi_params</code>.</td></tr>
+<tr><td><code>scgi_buffering off</code></td><td>Without it, nginx would collect the SSE stream and the client would see the answer only at the end.</td></tr>
+<tr><td><code>scgi_request_buffering</code> (default <code>on</code>)</td><td>nginx reads the full body first. So the daemon gets a complete request in one go.</td></tr>
+<tr><td>3600 s timeouts</td><td>While the daemon serves another request, the new connection waits in the kernel backlog. nginx must not give up during a long turn.</td></tr>
+<tr><td><code>client_max_body_size 16m</code></td><td>Same limit as <code>scgi_body_limit</code> in the daemon.</td></tr>
+</table></div>
+
+<div class="callout warn">
+  <span class="label">Watch out</span>
+  <p>nginx compares <code>map</code> strings without case. The API keys must be lowercase hex (<code>openssl rand -hex 32</code>), so case has no effect on security.</p>
+</div>
+
+<h3>systemd: socket activation</h3>
+<div class="table-wrap"><table>
+<tr><th><code>cha@.socket</code></th><th><code>cha@.service</code></th></tr>
+<tr><td><pre><code>[Socket]
+ListenStream=/run/cha/%i.sock
+SocketGroup=www-data
+SocketMode=0660
+Accept=no
+
+[Install]
+WantedBy=sockets.target</code></pre></td>
+<td><pre><code>[Unit]
+Requires=cha@%i.socket
+After=cha@%i.socket
+
+[Service]
+ExecStart=/usr/local/bin/cha-daemon \
+  --config /var/lib/cha/%i/config
+User=cha-%i
+PrivateTmp=yes
+TimeoutStopSec=90s</code></pre></td></tr>
+</table></div>
+
+<p><code>%i</code> is the instance name, which is the user name. So <code>cha@alice.socket</code> creates <code>/run/cha/alice.sock</code> and starts <code>cha@alice.service</code>.</p>
+
+<ul>
+  <li><b><code>Accept=no</code></b>: systemd passes <i>one listening socket</i> to <i>one</i> service instance. The daemon calls <code>accept()</code> itself. (With <code>Accept=yes</code>, systemd would start one process per connection. That is not what we want.)</li>
+  <li><b><code>SocketGroup=www-data</code>, <code>0660</code></b>: only nginx (group <code>www-data</code>) can connect.</li>
+  <li><b><code>User=cha-%i</code></b>: each daemon has its own account. It can read only <code>/var/lib/cha/&lt;user&gt;/</code>.</li>
+  <li><b><code>PrivateTmp=yes</code></b>: CHA writes the materialized workspace, which contains provider API keys as TOML, into the temp directory. Each instance gets its own <code>/tmp</code>, and systemd deletes it when the instance stops. A crash leaves no key files.</li>
+  <li><b><code>TimeoutStopSec=90s</code></b>: a <code>submit()</code> can block for the 30 s command deadline before the daemon sees the stop flag, and the application shutdown can then take up to the 10 s grace. 90 s leaves room for both.</li>
+</ul>
+
+<h3>CHA configuration directory</h3>
+<pre><code>/var/lib/cha/alice/              <span class="c"># owner cha-alice, mode 0700</span>
+├── config/                      <span class="c"># the --config directory</span>
+│   ├── app.toml                 <span class="c"># vault = "Alice", [logging]</span>
+│   ├── alice.toml               <span class="c"># vault_name = "Alice", data = "/var/lib/cha/alice/workspace.sqlite3"</span>
+│   └── password                 <span class="c"># only for a protected vault, mode 0600</span>
+└── workspace.sqlite3            <span class="c"># the vault: sessions, forums, characters, provider keys</span></code></pre>
+
+<p>This is the same configuration format that the desktop app uses. <code>app.toml</code> names the startup vault. The vault TOML file points to the SQLite file. The daemon <b>never writes</b> configuration. To change characters or forums, you edit a copy of the vault in the desktop app (see <a href="#ops">Operations</a>).</p>
+
+<!-- ============================================================ -->
+<h2 id="startup">Startup and shutdown</h2>
+
+<h3>What <code>main()</code> does, in order</h3>
+<p class="file">src/daemon/main.cpp</p>
+<ol class="steps">
+  <li><b><code>parse_config_directory()</code></b> accepts exactly one <code>--config DIR</code> or <code>--config=DIR</code>. Anything else is an error with the usage text.</li>
+  <li><b><code>require_activation()</code></b> checks that systemd started the process correctly:
+    <ul>
+      <li><code>LISTEN_PID</code> equals <code>getpid()</code> and <code>LISTEN_FDS</code> is exactly <code>"1"</code>.</li>
+      <li>fd 3 is a socket (<code>fstat</code>), of type <code>SOCK_STREAM</code>, in listening state (<code>SO_ACCEPTCONN</code>, skipped on macOS where it returns <code>ENOPROTOOPT</code>), with family <code>AF_UNIX</code>.</li>
+      <li><code>configure_socket(3)</code> sets <code>FD_CLOEXEC</code> and <code>O_NONBLOCK</code>.</li>
+      <li>It removes <code>LISTEN_PID</code>, <code>LISTEN_FDS</code> and <code>LISTEN_FDNAMES</code> from the environment, so child processes do not inherit them.</li>
+    </ul>
+    This check comes before the configuration load. A daemon that is started by hand fails at once with a clear message.</li>
+  <li><b><code>load_daemon_command()</code></b> reads the configuration directory, finds the vault that <code>app.toml</code> names, and checks that the SQLite file exists. It builds the same <code>ApplicationCommand</code> that the desktop host builds.</li>
+  <li><b>Logging</b> starts. From now on, errors also go to the log file.</li>
+  <li><b><code>install_stop_handlers()</code></b> installs one handler for <code>SIGTERM</code> and <code>SIGINT</code>.</li>
+  <li><b><code>read_vault_password()</code></b> runs only when the vault is protected (SQLCipher). The file must be a regular file (<code>O_NOFOLLOW</code>), mode exactly <code>0600</code>, at most 4096 bytes and not empty. One trailing <code>\n</code> or <code>\r\n</code> is removed.</li>
+  <li><b><code>Application::open(command, password)</code></b> opens the vault, takes the SQLite database lease, materializes the workspace into <code>/tmp</code>, validates the forums and starts the <code>SessionRuntime</code> thread.</li>
+  <li><b><code>run_accept_loop()</code></b> serves requests until the stop flag is set.</li>
+  <li><b>Shutdown:</b> <code>request_shutdown()</code> (this cancels a turn that was running), then <code>join_shutdown(shutdown_grace)</code>. If the join times out, the process calls <code>_exit(EXIT_FAILURE)</code> and does not run destructors, because threads can still use the objects.</li>
+</ol>
+
+<h3>The signal handler</h3>
+<pre><code>std::atomic&lt;bool&gt; stop_requested{false};
+static_assert(std::atomic&lt;bool&gt;::is_always_lock_free);
+
+void handle_stop(int) {
+    stop_requested.store(true, std::memory_order_relaxed);
+}</code></pre>
+<p>The handler only stores to a lock-free atomic. This is one of the few operations that is safe in a signal handler. The <code>static_assert</code> proves at compile time that the atomic has no hidden lock. The same flag is passed by reference to every blocking function in <code>scgi.cpp</code> and the adapter, so all of them can see a stop.</p>
+
+<div class="callout key">
+  <span class="label">Key idea: the stop flag has two writers</span>
+  <p>The signal handler sets it on <code>SIGTERM</code>. The <b>adapter also sets it</b> when the daemon is in a state it cannot trust (see <a href="#errors">section 13</a>). The process then exits cleanly, and systemd starts a fresh daemon on the next connection. "Exit and let systemd restart" is the recovery strategy for every unknown state.</p>
+</div>
+
+<h3>Process lifecycle rules</h3>
+<ul>
+  <li><b>First start:</b> on the first connection to the socket. The connection waits in the backlog while the daemon starts.</li>
+  <li><b>No idle exit:</b> the daemon keeps running. A start is expensive (open vault, write workspace, validate forums), and idle daemons use little memory.</li>
+  <li><b>Crash:</b> the socket stays open in systemd. The next connection starts a new daemon.</li>
+  <li><b>One daemon per vault:</b> the existing SQLite database lease stops a second process from opening the same file.</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2 id="protocols">The protocol stack</h2>
+
+<p>Four protocols are stacked. It helps to see which component speaks which one.</p>
+
+<div class="table-wrap"><table>
+<tr><th>Layer</th><th>Between</th><th>Who parses it</th></tr>
+<tr><td>HTTPS / HTTP 1.1</td><td>client ↔ nginx</td><td>nginx only</td></tr>
+<tr><td>SCGI request, CGI-style response</td><td>nginx ↔ daemon, over a Unix socket</td><td><code>scgi.cpp</code></td></tr>
+<tr><td>Server-Sent Events (SSE)</td><td>framing of the streaming body</td><td>written by <code>openai_adapter.cpp</code></td></tr>
+<tr><td>OpenAI Chat Completions JSON</td><td>content of the request and of each event</td><td><code>openai_adapter.cpp</code>, <code>session_tag.cpp</code></td></tr>
+</table></div>
+
+<h3>SCGI request</h3>
+<p>SCGI is a very small protocol. One request uses one connection. The request is a <b>netstring</b> of headers, followed by the body:</p>
+<pre><code><span class="h">&lt;length&gt;:</span>&lt;header block&gt;<span class="h">,</span>&lt;body of CONTENT_LENGTH bytes&gt;</code></pre>
+<ul>
+  <li>The header block is a list of <code>NAME\0VALUE\0</code> pairs.</li>
+  <li><code>CONTENT_LENGTH</code> must be the first pair. <code>SCGI</code> must be <code>1</code>.</li>
+  <li>The daemon uses four names: <code>CONTENT_LENGTH</code>, <code>SCGI</code>, <code>REQUEST_METHOD</code>, <code>DOCUMENT_URI</code>. It ignores all other names that <code>scgi_params</code> sends.</li>
+</ul>
+<p>A real example, with <code>\0</code> shown as <code>␀</code>:</p>
+<pre><code>79:CONTENT_LENGTH␀80␀SCGI␀1␀REQUEST_METHOD␀POST␀DOCUMENT_URI␀/v1/chat/completions␀,
+{"model":"writers","messages":[{"role":"user","content":"Hello"}],"stream":true}</code></pre>
+<p>(79 is the byte count of the header block, 80 is the byte count of the JSON body. The line break after the comma is only for display.)</p>
+
+<h3>CGI-style response</h3>
+<p>The daemon answers with CGI headers, a blank line and the body. nginx converts <code>Status:</code> into the HTTP status line. <b>Closing the socket ends the response.</b> There is no <code>Content-Length</code> and no chunked encoding.</p>
+<pre><code>Status: 200 OK\r\n
+Content-Type: text/event-stream\r\n
+\r\n
+data: {...chunk...}\n\n
+: keepalive\n\n
+data: {...chunk...}\n\n
+data: [DONE]\n\n</code></pre>
+
+<h3>SSE and OpenAI chunks</h3>
+<p>Each SSE event is <code>data: &lt;json&gt;</code> plus a blank line. A line that starts with <code>:</code> is a comment, which clients ignore. The daemon sends <code>: keepalive</code> after 15 seconds with no output, so client idle timers do not fire during long reasoning or web search.</p>
+
+<div class="table-wrap"><table>
+<tr><th>Event</th><th>Content</th></tr>
+<tr><td>First chunk</td><td><code>delta = {"role":"assistant", "content":"[//]: # (cha writers/k3j9x2)\n\n"}</code> — the session tag. Sent as soon as CHA accepts the input.</td></tr>
+<tr><td>Content chunks</td><td><code>delta = {"content":"**Ada:** Hel"}</code>, <code>{"content":"lo!"}</code> …</td></tr>
+<tr><td>Last chunk</td><td><code>delta = {}</code>, <code>finish_reason = "stop"</code></td></tr>
+<tr><td>End marker</td><td><code>data: [DONE]</code></td></tr>
+<tr><td>Error after start</td><td><code>data: {"error":{"message":…,"type":"server_error","code":"provider_error"}}</code>, then close. No <code>[DONE]</code>.</td></tr>
+</table></div>
+
+<p>All chunks of one response share the same <code>id</code> (<code>chatcmpl-N</code>, from a process-wide atomic counter), <code>created</code> time and <code>model</code>.</p>
+
+<h3>The two endpoints</h3>
+<div class="table-wrap"><table>
+<tr><th>Endpoint</th><th>Result</th></tr>
+<tr><td><code>GET /v1/models</code></td><td>One model per forum: <code>{"id": forum_id, "object": "model", "created": 0, "owned_by": "cha"}</code>. The built-in Entrance forum is hidden.</td></tr>
+<tr><td><code>POST /v1/chat/completions</code></td><td>One CHA turn. SSE when <code>stream</code> is <code>true</code>, else one <code>chat.completion</code> object.</td></tr>
+<tr><td>anything else</td><td><code>404</code> with <code>code = "not_found"</code></td></tr>
+</table></div>
+<p>The daemon ignores <code>temperature</code>, <code>max_tokens</code>, <code>top_p</code>, <code>tools</code> and similar fields. The character configuration in the vault decides provider settings.</p>
+
+<!-- ============================================================ -->
+<h2 id="scgi">The SCGI layer in C++</h2>
+<p class="file">src/daemon/scgi.h, src/daemon/scgi.cpp</p>
+
+<p>This file is plain POSIX. It has no library dependency. The important techniques are listed below.</p>
+
+<h3>RAII for file descriptors</h3>
+<p><code>UniqueFd</code> is a move-only owner of one fd, like <code>std::unique_ptr</code> for descriptors. The accept loop holds the client connection in a <code>const UniqueFd</code>. At the end of each loop iteration the destructor closes it. This close is what ends the HTTP response for nginx.</p>
+
+<h3>Non-blocking sockets with a short poll</h3>
+<p>Both the listening socket and every client socket are <code>O_NONBLOCK</code>. All waits go through one helper:</p>
+<pre><code>// Waits until the socket is ready for `events`. The short poll lets the
+// caller see `stop`.
+bool wait_socket(int fd, short events, const std::atomic&lt;bool&gt;&amp; stop) {
+    while (!stop.load()) {
+        pollfd item{fd, events, 0};
+        const int result = ::poll(&amp;item, 1, poll_timeout_ms);   <span class="c">// 50 ms</span>
+        if (result &lt; 0 &amp;&amp; errno != EINTR) return false;
+        if (result &lt;= 0) continue;
+        if ((item.revents &amp; events) != 0) return true;
+        return (item.revents &amp; POLLHUP) != 0 &amp;&amp; (events &amp; POLLIN) != 0;
+    }
+    return false;
+}</code></pre>
+
+<div class="callout why">
+  <span class="label">Why poll with a timeout, not a blocking call?</span>
+  <p>A blocking <code>accept()</code> or <code>recv()</code> can wait forever. With <code>SA_RESTART</code>, the kernel may restart it after <code>SIGTERM</code>, so the daemon would not notice the stop. A 50 ms <code>poll()</code> loop checks the atomic flag 20 times per second. This gives a fast, reliable stop without a self-pipe or <code>signalfd</code>. It is simple and portable to macOS.</p>
+</div>
+
+<h3>Reading a request: <code>read_scgi()</code></h3>
+<ol>
+  <li>Read the netstring length <b>one byte at a time</b> until <code>:</code>. After each digit, compare with <code>scgi_header_limit</code> (64 KiB). This also prevents integer overflow.</li>
+  <li>Read the header block plus the trailing <code>,</code> with <code>recv_all()</code>.</li>
+  <li><code>parse_headers()</code> splits the pairs, checks that <code>CONTENT_LENGTH</code> is first and that no name repeats, and parses the number with <code>std::from_chars</code>.</li>
+  <li>If <code>CONTENT_LENGTH</code> &gt; 16 MiB, return <code>too_large</code> <b>before</b> allocating the body.</li>
+  <li>Read exactly <code>CONTENT_LENGTH</code> body bytes.</li>
+  <li>Peek once more with <code>MSG_PEEK | MSG_DONTWAIT</code>. Extra bytes after the body mean a bad request.</li>
+</ol>
+<p>The result is a <code>ScgiReadResult</code> with a status: <code>ok</code>, <code>incomplete</code> (peer closed early or stop), <code>bad_request</code> (reply 400) or <code>too_large</code> (reply 413).</p>
+
+<div class="callout key">
+  <span class="label">Key idea: why step 6 matters</span>
+  <p>The daemon uses <code>peer_closed()</code> to find clients that left. That function peeks one byte: <code>0</code> means end of stream. If extra bytes were in the buffer, the socket would stay "readable" forever and the daemon could never see the close. So trailing bytes are rejected, and <code>peer_closed()</code> also treats any readable byte as a disconnect.</p>
+</div>
+
+<h3>Detecting a closed peer: <code>peer_closed()</code></h3>
+<pre><code>bool peer_closed(int fd) {
+    while (true) {
+        char byte = 0;
+        const ssize_t count = ::recv(fd, &amp;byte, 1, MSG_PEEK | MSG_DONTWAIT);
+        if (count == 0) return true;          <span class="c">// orderly close by nginx</span>
+        if (count &gt; 0) return true;           <span class="c">// no input is valid after the body</span>
+        if (errno == EINTR) continue;
+        if (would_block(errno)) return false; <span class="c">// still connected, nothing to read</span>
+        return true;                          <span class="c">// socket error</span>
+    }
+}</code></pre>
+<p>When a browser tab closes, nginx closes the upstream socket (<code>scgi_ignore_client_abort</code> is <code>off</code> by default). This function sees that close without consuming data.</p>
+
+<h3>Writing without <code>SIGPIPE</code></h3>
+<p>A write to a closed socket normally raises <code>SIGPIPE</code>, which kills the process. The daemon avoids it in two ways: <code>send(..., MSG_NOSIGNAL)</code> on Linux, and <code>SO_NOSIGPIPE</code> on macOS (set in <code>configure_socket()</code>). A failed write then returns <code>EPIPE</code>, and <code>write_bytes()</code> returns <code>false</code>. <code>write_bytes()</code> also handles partial sends and waits for <code>POLLOUT</code> when the socket buffer is full.</p>
+
+<!-- ============================================================ -->
+<h2 id="loop">The accept loop: serialization without locks</h2>
+<p class="file">src/daemon/main.cpp — run_accept_loop()</p>
+
+<pre><code>// Serves one connection at a time. New connections wait in the socket
+// backlog until the current one is closed.
+void run_accept_loop(app::Application&amp; application) {
+    while (!stop_requested.load()) {
+        const daemon::UniqueFd client =
+            daemon::accept_connection(listen_fd, stop_requested);
+        if (!client) continue;
+        const auto result = daemon::read_scgi(client.get(), stop_requested);
+        if (result.status == ScgiReadStatus::bad_request) {
+            write_error(client.get(), {400, "Malformed SCGI request", ...});
+        } else if (result.status == ScgiReadStatus::too_large) {
+            write_error(client.get(), {413, "The request is too large", ...});
+        } else if (result.status == ScgiReadStatus::ok
+            &amp;&amp; !stop_requested.load() &amp;&amp; !daemon::peer_closed(client.get())) {
+            daemon::handle_request(application, result.request,
+                                   client.get(), stop_requested);
+        }
+    }   <span class="c">// ← UniqueFd closes the connection here</span>
+}</code></pre>
+
+<p>This loop is the whole concurrency model for requests. While <code>handle_request()</code> runs, nobody calls <code>accept()</code>. New connections from nginx wait in the <b>kernel listen backlog</b>. nginx waits with them, which is why its timeouts are one hour.</p>
+
+<div class="callout why">
+  <span class="label">Why not let nginx queue?</span>
+  <p>Open-source nginx cannot hold requests in a queue. <code>max_conns=1</code> without the commercial <code>queue</code> directive returns <code>502</code> instead of waiting. The kernel backlog is a free, reliable queue.</p>
+</div>
+
+<h3>The "client left while queued" case</h3>
+<p>nginx writes the complete request into the socket before it waits. A typical request fits into the socket buffer. So if the client gives up while the request is queued, the daemon can still read a <i>complete</i> request later. The check <code>!peer_closed(client)</code> after <code>read_scgi()</code> finds this. The daemon then closes the connection and does not start a turn that nobody will read.</p>
+
+<!-- ============================================================ -->
+<h2 id="adapter">The OpenAI adapter</h2>
+<p class="file">src/daemon/openai_adapter.cpp</p>
+
+<p>The adapter converts one SCGI request into calls to <code>app::Application</code>. Its call tree is:</p>
+
+<pre><code>handle_request()                       <span class="c">route by method + URI; top-level catch → 500</span>
+├── models_list()                      <span class="c">GET /v1/models</span>
+└── parse_chat_request()               <span class="c">POST /v1/chat/completions: validate JSON</span>
+    └── serve_chat()                   <span class="c">capture epoch, create session if new</span>
+        └── run_in_session()           <span class="c">open_session + subscribe … unsubscribe</span>
+            └── run_subscribed()
+                ├── wait_for_baseline() <span class="c">first snapshot → highest entry ID</span>
+                ├── submit_input()      <span class="c">submit(RawCommand{text}) and judge result</span>
+                ├── run_turn()          <span class="c">poll loop: output → SSE, disconnect → stop</span>
+                └── finish_turn()       <span class="c">final chunk / JSON / error</span></code></pre>
+
+<h3>Validation in <code>parse_chat_request()</code></h3>
+<p>The checks run in this order. The first failure returns an <code>ApiError</code> and no session is created.</p>
+<div class="table-wrap"><table>
+<tr><th>#</th><th>Check</th><th>Failure</th></tr>
+<tr><td>1</td><td>Body is valid JSON and a JSON object</td><td>400</td></tr>
+<tr><td>2</td><td><code>model</code> is a string</td><td>400</td></tr>
+<tr><td>3</td><td><code>messages</code> is a non-empty array</td><td>400</td></tr>
+<tr><td>4</td><td><code>stream</code>, if present, is a boolean</td><td>400</td></tr>
+<tr><td>5</td><td>The last message has <code>role = "user"</code></td><td>400</td></tr>
+<tr><td>6</td><td>Its text is not empty (string content, or joined <code>text</code> parts)</td><td>400</td></tr>
+<tr><td>7</td><td>Text size ≤ <code>prompt_limit</code> (32 KiB)</td><td>400</td></tr>
+<tr><td>8</td><td><code>model</code> is a forum ID and not <code>builtin-entrance</code></td><td>404 <code>model_not_found</code></td></tr>
+<tr><td>9</td><td>Session tag scan: <code>assistant</code> messages exist but none has a tag</td><td>400 "This chat has no CHA session. Start a new chat."</td></tr>
+<tr><td>10</td><td>Tag forum equals <code>model</code></td><td>400</td></tr>
+</table></div>
+<p>The output is a small value type:</p>
+<pre><code>struct ParsedChatRequest {
+    std::string model;                 <span class="c">// forum ID</span>
+    std::string user_text;             <span class="c">// last user message only</span>
+    bool stream{};
+    std::optional&lt;SessionTag&gt; tag;     <span class="c">// empty → new session</span>
+};</code></pre>
+
+<div class="callout key">
+  <span class="label">Key idea: only the last user message matters</span>
+  <p>The client sends the full chat history every time. The daemon uses only two things from it: the <b>last user message</b> (the new input) and the <b>newest session tag</b> (which session). CHA builds the model context from its own stored transcript, not from the client history.</p>
+</div>
+
+<h3>The <code>Chat</code> struct</h3>
+<p><code>serve_chat()</code> collects all per-request state into one aggregate that it passes by reference:</p>
+<pre><code>struct Chat {
+    app::Application&amp; application;
+    const ParsedChatRequest&amp; request;
+    int fd{};                        <span class="c">// the client socket</span>
+    std::atomic&lt;bool&gt;&amp; stop;         <span class="c">// shared stop flag</span>
+    const TurnClock&amp; clock;          <span class="c">// replaceable in tests (keepalive timing)</span>
+    std::uint64_t epoch{};           <span class="c">// Application context epoch</span>
+    std::string session_id;
+    std::string id{"chatcmpl-" + ...};
+    std::int64_t created{unix_now()};
+    bool streaming{};                <span class="c">// SSE headers were sent</span>
+    Clock::time_point last_write{};  <span class="c">// for keepalive</span>
+};</code></pre>
+<p><code>streaming</code> decides how an error is reported. Before the SSE headers, an error is a normal HTTP status with a JSON body. After them, the status is already <code>200</code>, so the error becomes the last SSE event (<code>send_error()</code>).</p>
+
+<h3>The context epoch</h3>
+<p>Every context-bound <code>Application</code> call takes an <code>epoch</code>. <code>serve_chat()</code> reads it once with <code>application.context_epoch()</code>. If vault maintenance happened in between, the calls fail instead of acting on a different vault state. An epoch of 0 means the application is unavailable, and the daemon returns 500.</p>
+
+<!-- ============================================================ -->
+<h2 id="tag">Session matching with the session tag</h2>
+<p class="file">src/daemon/session_tag.cpp</p>
+
+<p>OpenAI chat clients are stateless. They send the full history each time and have no "session ID" field. The daemon must still know which CHA session a request belongs to. The solution is a hidden first line in every assistant reply:</p>
+
+<pre><code>[//]: # (cha writers/k3j9x2)
+
+**Ada:** Hello! How can I help?</code></pre>
+
+<ul>
+  <li><code>[//]: # (...)</code> is a Markdown <b>link reference definition</b>. Markdown renderers do not show it, so the user does not see it.</li>
+  <li>The format is <code>(cha &lt;forum_id&gt;/&lt;session_id&gt;)</code>. Both IDs are URL-safe identifiers (letters, digits, <code>- . _ ~</code>), so no escaping is needed.</li>
+  <li>The tag exists only in the API output. CHA does not store it in the transcript, and it costs no model tokens.</li>
+  <li>The adapter sends it in the <b>first</b> SSE chunk. So even a reply that is stopped or fails still carries the tag, and the client can continue the chat.</li>
+</ul>
+
+<h3>How <code>find_session_tag()</code> scans</h3>
+<p>It walks <code>messages</code> from newest to oldest. It looks only at <code>role = "assistant"</code>. For each, it takes the first line after leading whitespace and tries to parse it. The first valid tag wins. A newer malformed tag does not hide an older valid one.</p>
+
+<div class="table-wrap"><table>
+<tr><th>Situation</th><th>Scan result</th><th>Action</th></tr>
+<tr><td>No <code>assistant</code> message</td><td><code>no_assistant</code></td><td>Create a new session</td></tr>
+<tr><td><code>assistant</code> messages, no tag</td><td><code>missing</code></td><td>400: start a new chat</td></tr>
+<tr><td>Tag forum ≠ <code>model</code></td><td><code>found</code></td><td>400: the user changed the model mid-chat</td></tr>
+<tr><td>Tag found, session does not exist</td><td><code>found</code></td><td>404 from <code>open_session()</code></td></tr>
+<tr><td>Tag found, session exists</td><td><code>found</code></td><td>Continue that session</td></tr>
+</table></div>
+
+<div class="callout warn">
+  <span class="label">Watch out: side requests</span>
+  <p>Some clients send extra requests to generate a title or follow-up questions. They paste the chat into one <b>user</b> message. Tags in user messages are ignored on purpose, so these requests cannot reach an existing session. But each one creates a new, unused session. Turn these client features off.</p>
+</div>
+
+<p><b>Regenerate and edit.</b> The client resends its history up to the changed message. The newest remaining assistant message still has the tag. So the daemon continues the same session and adds a <i>new</i> turn. The old reply stays in the CHA transcript. The daemon cannot delete or roll back turns.</p>
+
+<!-- ============================================================ -->
+<h2 id="turn">One turn, step by step</h2>
+
+<p>This is the heart of the daemon. Read it with <code>openai_adapter.cpp</code> open next to you.</p>
+
+<figure>
+<svg viewBox="0 0 860 660" role="img" aria-label="Sequence diagram of one streaming turn">
+  <defs>
+    <marker id="as" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" class="arrow"/>
+    </marker>
+  </defs>
+  <rect x="20"  y="10" width="140" height="40" rx="8" class="ba"/><text x="90"  y="35" text-anchor="middle" font-weight="600">nginx</text>
+  <rect x="230" y="10" width="170" height="40" rx="8" class="bb"/><text x="315" y="35" text-anchor="middle" font-weight="600">main thread</text>
+  <rect x="470" y="10" width="170" height="40" rx="8" class="bc"/><text x="555" y="35" text-anchor="middle" font-weight="600">runtime thread</text>
+  <rect x="700" y="10" width="140" height="40" rx="8" class="bd"/><text x="770" y="35" text-anchor="middle" font-weight="600">provider worker</text>
+  <line x1="90"  y1="50" x2="90"  y2="650" class="dash"/>
+  <line x1="315" y1="50" x2="315" y2="650" class="dash"/>
+  <line x1="555" y1="50" x2="555" y2="650" class="dash"/>
+  <line x1="770" y1="50" x2="770" y2="650" class="dash"/>
+
+  <g font-size="12.5">
+  <line x1="90" y1="80" x2="313" y2="80" class="line" marker-end="url(#as)"/>
+  <text x="200" y="73" text-anchor="middle">① SCGI request (accept, read_scgi)</text>
+
+  <line x1="315" y1="118" x2="553" y2="118" class="line" marker-end="url(#as)"/>
+  <text x="435" y="111" text-anchor="middle">② create_session? · open_session</text>
+  <line x1="315" y1="150" x2="553" y2="150" class="line" marker-end="url(#as)"/>
+  <text x="435" y="143" text-anchor="middle">③ subscribe</text>
+  <line x1="553" y1="182" x2="317" y2="182" class="line" marker-end="url(#as)"/>
+  <text x="435" y="175" text-anchor="middle">④ first snapshot → baseline</text>
+
+  <line x1="315" y1="220" x2="553" y2="220" class="line" marker-end="url(#as)"/>
+  <text x="435" y="213" text-anchor="middle">⑤ submit(RawCommand) — waits</text>
+  <line x1="555" y1="248" x2="768" y2="248" class="line" marker-end="url(#as)"/>
+  <text x="662" y="241" text-anchor="middle">start request</text>
+  <line x1="553" y1="276" x2="317" y2="276" class="line" marker-end="url(#as)"/>
+  <text x="435" y="269" text-anchor="middle">⑥ CommandResult (input_consumed)</text>
+
+  <line x1="313" y1="312" x2="92" y2="312" class="line" marker-end="url(#as)"/>
+  <text x="200" y="305" text-anchor="middle">⑦ Status 200 + tag chunk</text>
+
+  <line x1="768" y1="348" x2="557" y2="348" class="line" marker-end="url(#as)"/>
+  <text x="662" y="341" text-anchor="middle">text events + wake</text>
+  <line x1="553" y1="380" x2="317" y2="380" class="line" marker-end="url(#as)"/>
+  <text x="435" y="373" text-anchor="middle">⑧ SessionOutput append</text>
+  <text x="315" y="400" text-anchor="middle" class="small">take_output every 25 ms</text>
+  <line x1="313" y1="424" x2="92" y2="424" class="line" marker-end="url(#as)"/>
+  <text x="200" y="417" text-anchor="middle">⑨ content chunks</text>
+  <text x="200" y="444" text-anchor="middle" class="small">(repeat ⑧–⑨; keepalive after 15 s)</text>
+
+  <line x1="768" y1="478" x2="557" y2="478" class="line" marker-end="url(#as)"/>
+  <text x="662" y="471" text-anchor="middle">done</text>
+  <line x1="553" y1="512" x2="317" y2="512" class="line" marker-end="url(#as)"/>
+  <text x="435" y="505" text-anchor="middle">⑩ snapshot, generation.active=false</text>
+  <line x1="313" y1="548" x2="92" y2="548" class="line" marker-end="url(#as)"/>
+  <text x="200" y="541" text-anchor="middle">⑪ finish chunk + [DONE]</text>
+  <line x1="315" y1="584" x2="553" y2="584" class="line" marker-end="url(#as)"/>
+  <text x="435" y="577" text-anchor="middle">⑫ unsubscribe (async, no wait)</text>
+  <line x1="313" y1="620" x2="92" y2="620" class="line" marker-end="url(#as)"/>
+  <text x="200" y="613" text-anchor="middle">⑬ close(fd) → accept next</text>
+  </g>
+</svg>
+<figcaption>One streaming turn. Arrows to and from the runtime thread cross a thread boundary through a queue.</figcaption>
+</figure>
+
+<h3>① → ③ Open and subscribe</h3>
+<ul>
+  <li><b>New chat</b> (no tag): <code>create_session(model, "", epoch)</code>. The empty label lets CHA name the session automatically later.</li>
+  <li><code>open_session()</code> loads the session into the runtime and <b>selects</b> it. When a later request selects another session, the runtime retires this one once it is idle. So the last-used session stays live and its next turn is fast.</li>
+  <li><code>subscribe()</code> attaches the adapter as the output consumer. It returns the <code>LiveSession</code> handle. The subscription IDs are <code>daemon-N</code> / <code>sub-N</code>.</li>
+</ul>
+
+<h3>④ The baseline</h3>
+<p><code>wait_for_baseline()</code> waits (up to <code>command_deadline</code>, 30 s) for the first snapshot and records the <b>highest transcript entry ID</b>. Every entry with a larger ID belongs to this turn. This is how the adapter separates "new text" from the stored history.</p>
+<p>Just before submit, the adapter checks <code>peer_closed()</code> again. If the client already left, nothing is submitted, and a session that this request created is deleted.</p>
+
+<h3>⑤ → ⑥ Submit and judge acceptance</h3>
+<p><code>submit(RawCommand{user_text})</code> sends the text through the <b>same input parser as the GUI</b>. So <code>@Name</code>, <code>/mcast</code> and <code>@-</code> work. The call blocks up to 30 s for the runtime's reply (with Jev, it waits for classification too).</p>
+
+<div class="table-wrap"><table>
+<tr><th>Result of <code>submit()</code></th><th>Meaning</th><th>Response</th></tr>
+<tr><td><code>CommandResult</code> with <code>session.input_consumed</code></td><td>A turn started</td><td>continue</td></tr>
+<tr><td><code>CommandResult</code> without it</td><td>Rejected (unknown <code>/</code> command, bad <code>@Name</code> …)</td><td>400 with <code>session.notice</code></td></tr>
+<tr><td><code>CommandFailure</code></td><td>Failed</td><td>400 if <code>invalid_argument</code>, else 500</td></tr>
+<tr><td><code>ErrorCode</code> (not timeout)</td><td>Failed</td><td>404 for <code>not_found</code>, else 500</td></tr>
+<tr><td><code>ErrorCode::command_timeout</code></td><td><b>Unknown</b>: the command may still run</td><td>500, <b>and set the stop flag</b></td></tr>
+</table></div>
+
+<div class="callout warn">
+  <span class="label">Watch out: <code>clear_input</code> is not acceptance</span>
+  <p>The GUI clears the input box when <code>clear_input</code> is set. But an unknown <code>/</code> command and a failed <code>/mcast</code> also set it, and no turn starts. The daemon must check <code>input_consumed</code>. The comment in <code>submit_input()</code> records this.</p>
+</div>
+
+<h3>⑦ Start the stream</h3>
+<p>Only after acceptance does <code>run_turn()</code> call <code>start_stream()</code>: CGI headers plus the first chunk with the role and the session tag. Non-streaming requests send nothing yet.</p>
+
+<h3>⑧ → ⑩ The poll loop: <code>run_turn()</code></h3>
+<p>Each pass of the loop does this:</p>
+<ol>
+  <li>If <code>stop</code> is set → return <code>failed</code> at once. Application shutdown will cancel the generation.</li>
+  <li>If <code>peer_closed(fd)</code> → <code>cancel()</code>: send <code>StopCommand</code> with <code>submit_async</code> (no wait) and start a drain deadline of <code>shutdown_grace</code> (10 s).</li>
+  <li>If the drain deadline passed → log, set <code>stop</code>, return <code>failed</code>. The daemon exits.</li>
+  <li>If streaming and 15 s passed since the last write → send <code>: keepalive</code>.</li>
+  <li><code>take_output()</code>. If nothing is there: if the session output is closed → return; else sleep 25 ms and loop.</li>
+  <li>Apply the item: a <b>snapshot</b> rebuilds the reply list (<code>apply_snapshot()</code>); an <b>append</b> to an <code>EntryTextTarget</code> extends one reply's text. Reasoning appends have another target type and are ignored.</li>
+  <li><code>acknowledge_output()</code>. This lets the runtime publish the next item.</li>
+  <li>If streaming → <code>stream_replies()</code> sends only the new text.</li>
+  <li>On a snapshot, check the end: the turn is <b>complete</b> when <code>generation.active == false</code> and at least one new entry exists. <code>generation.active</code> stays true through Jev and through all <code>/mcast</code> targets.</li>
+</ol>
+
+<h4>The Reply model</h4>
+<pre><code>struct Reply {                <span class="c">// one transcript entry of this turn</span>
+    EntryId id{};
+    EntryKind kind{};         <span class="c">// human, character, error, notice …</span>
+    std::string name;         <span class="c">// speaker display name</span>
+    std::string text;         <span class="c">// current full text</span>
+    std::string sent;         <span class="c">// what was already streamed (without the label)</span>
+    bool stopped{};           <span class="c">// a snapshot rewrote sent text → send no more</span>
+};</code></pre>
+
+<p><code>SessionOutput</code> usually delivers appends, but it can fall back to a full snapshot. A snapshot can in theory change text that was already streamed. SSE cannot take text back. So <code>apply_snapshot()</code> checks that the new text still starts with <code>sent</code>. If not, it logs a warning and marks the reply <code>stopped</code>: no more text for that reply.</p>
+
+<h4>Rendering speakers</h4>
+<p>Every character reply gets a label: <code>**Ada:** </code>. Several replies (from <code>/mcast</code> or Jev choosing all characters) are separated by a blank line. <code>stream_replies()</code> adds the label and the separator the first time it sends text for a reply. <code>render()</code> builds the same text in one piece for non-streaming responses.</p>
+
+<div class="table-wrap"><table>
+<tr><th>Input</th><th>Returned assistant message (after the tag line)</th></tr>
+<tr><td><code>Hello</code></td><td><code>**Ada:** Hi!</code> (current target character, or Jev's choice)</td></tr>
+<tr><td><code>@Bob Hello</code></td><td><code>**Bob:** Hi!</code></td></tr>
+<tr><td><code>/mcast Hello</code></td><td><code>**Ada:** …</code> blank line <code>**Bob:** …</code>, streamed in order</td></tr>
+<tr><td><code>@- a note</code></td><td><code>(recorded)</code> — no model call. Not empty on purpose, because the tag line is hidden.</td></tr>
+</table></div>
+
+<h3>⑪ Finish: <code>finish_turn()</code></h3>
+<div class="table-wrap"><table>
+<tr><th>How the turn ended</th><th>Streaming</th><th>Non-streaming</th></tr>
+<tr><td>Complete, no error entry</td><td>Remaining text (if none was streamed), finish chunk, <code>[DONE]</code></td><td><code>chat.completion</code> with tag + text</td></tr>
+<tr><td>Complete, has an <code>error</code> entry</td><td>SSE error event (<code>provider_error</code>)</td><td>502</td></tr>
+<tr><td>Failed (stop, terminal session, no text)</td><td>SSE error event</td><td>500 "The turn did not finish."</td></tr>
+<tr><td>Cancelled (client left)</td><td colspan="2">Nothing. The client is gone.</td></tr>
+</table></div>
+
+<h3>⑫ Clean up</h3>
+<p><code>run_in_session()</code> sends <code>UnsubscribeCommand</code> with <code>submit_async</code> and does not wait. A failed unsubscribe is harmless: the next subscribe replaces it. If this request created the session and the input did not reach it, <code>serve_chat()</code> deletes that session. (CHA stores a new session before it parses the input, so startup pruning would not remove it.)</p>
+
+<!-- ============================================================ -->
+<h2 id="threads">Threads and concurrency</h2>
+
+<p>The daemon adds <b>no new threads</b>. It uses the process main thread and the threads that the CHA core already has.</p>
+
+<div class="table-wrap"><table>
+<tr><th>Thread</th><th>Created by</th><th>Job in the daemon</th></tr>
+<tr><td><b>Main thread</b></td><td><code>main()</code></td><td>Accept loop, SCGI I/O, JSON, the adapter's 25 ms poll loop. The <b>only</b> thread that touches the client socket.</td></tr>
+<tr><td><b>SessionRuntime thread</b></td><td><code>LiveSessionManager</code></td><td>Owns every live <code>SessionController</code>, its transcript and journal. Runs commands, drains provider events, publishes output.</td></tr>
+<tr><td><b>Provider workers</b></td><td><code>Providers</code>, one detached thread per request</td><td>HTTP/SSE to the LLM API with curl: character replies, Jev classification, automatic session naming.</td></tr>
+<tr><td>Audio download workers (3)</td><td><code>AudioDownloadManager</code></td><td>Idle. Downloads start only from explicit <code>start_audio</code> calls, which the daemon never makes.</td></tr>
+<tr><td>Signal handler</td><td>kernel (not a thread)</td><td>Sets the atomic stop flag.</td></tr>
+</table></div>
+
+<figure>
+<svg viewBox="0 0 860 330" role="img" aria-label="Thread handoff diagram">
+  <defs>
+    <marker id="at" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" class="arrow"/>
+    </marker>
+  </defs>
+  <rect x="20" y="120" width="180" height="90" rx="10" class="bb"/>
+  <text x="110" y="155" text-anchor="middle" font-weight="600">main thread</text>
+  <text x="110" y="175" text-anchor="middle" class="small">adapter + socket</text>
+
+  <rect x="620" y="120" width="220" height="90" rx="10" class="bc"/>
+  <text x="730" y="155" text-anchor="middle" font-weight="600">SessionRuntime thread</text>
+  <text x="730" y="175" text-anchor="middle" class="small">owns controllers</text>
+
+  <rect x="20" y="10" width="180" height="50" rx="10" class="box"/>
+  <text x="110" y="40" text-anchor="middle">signal handler</text>
+  <line x1="110" y1="60" x2="110" y2="118" class="line" marker-end="url(#at)"/>
+  <text x="120" y="84" class="mono">atomic&lt;bool&gt; stop</text>
+
+  <rect x="620" y="260" width="220" height="50" rx="10" class="bd"/>
+  <text x="730" y="290" text-anchor="middle">provider workers</text>
+  <line x1="730" y1="258" x2="730" y2="212" class="line" marker-end="url(#at)"/>
+  <text x="740" y="232" class="small">event queue</text>
+  <text x="740" y="247" class="small">+ WakeNotifier</text>
+
+  <!-- command queue -->
+  <rect x="290" y="112" width="240" height="40" rx="6" class="ba"/>
+  <text x="410" y="137" text-anchor="middle" font-size="13">bounded command queue (64)</text>
+  <line x1="200" y1="140" x2="288" y2="132" class="line" marker-end="url(#at)"/>
+  <line x1="530" y1="132" x2="618" y2="140" class="line" marker-end="url(#at)"/>
+  <text x="410" y="104" text-anchor="middle" class="small">submit / submit_async → CommandReply (mutex + condvar)</text>
+
+  <!-- session output -->
+  <rect x="290" y="184" width="240" height="40" rx="6" class="ba"/>
+  <text x="410" y="209" text-anchor="middle" font-size="13">SessionOutput</text>
+  <line x1="618" y1="192" x2="532" y2="204" class="line" marker-end="url(#at)"/>
+  <line x1="288" y1="204" x2="202" y2="192" class="line" marker-end="url(#at)"/>
+  <text x="410" y="244" text-anchor="middle" class="small">1 in-flight + 1 pending item, mutex; take / acknowledge</text>
+</svg>
+<figcaption>Every arrow that crosses between threads goes through a synchronized object. No thread reads another thread's private state.</figcaption>
+</figure>
+
+<h3>The four handoff points</h3>
+<ol>
+  <li><b>Main → runtime: the command queue.</b> <code>Application::submit()</code> calls <code>LiveSession::submit()</code>, which puts the command into the runtime's bounded queue and waits on a <code>CommandReply</code> (a mutex and condition variable) for up to <code>command_deadline</code>. <code>submit_async()</code> returns the reply at once; the adapter uses it for <code>StopCommand</code> and <code>UnsubscribeCommand</code>, where it does not need the result.</li>
+  <li><b>Runtime → main: <code>SessionOutput</code>.</b> A mutex-protected mailbox with <b>at most one in-flight item and one pending item</b>. The runtime merges compatible text appends into the pending item, or replaces it with a snapshot. <code>take()</code> returns nothing while an item is in flight. The consumer must call <code>acknowledge()</code> before it can take the next item. <code>LiveSession::acknowledge_output()</code> also wakes the runtime thread.</li>
+  <li><b>Provider → runtime: event queue + <code>WakeNotifier</code>.</b> Each provider request has its own event queue and wakes the shared notifier. The runtime drains bounded batches. The daemon does not see this directly.</li>
+  <li><b>Signal → main: <code>std::atomic&lt;bool&gt;</code>.</b> Read by every loop in the daemon.</li>
+</ol>
+
+<div class="callout key">
+  <span class="label">Key idea: back-pressure for free</span>
+  <p>Because <code>SessionOutput</code> holds only one in-flight item, a slow client cannot make memory grow. If the daemon writes slowly, the runtime keeps merging appends into the single pending item. When the daemon finally takes it, it gets all the new text at once.</p>
+</div>
+
+<h3>Why polling and not a condition variable?</h3>
+<p><code>SessionOutput</code> has no blocking wait API. The desktop host also polls it (with a 50 ms wait). The adapter polls every 25 ms. It must wake up regularly anyway to check <code>peer_closed()</code>, the stop flag and the keepalive timer, so a blocking wait would not make the code simpler. The cost is at most 40 cheap checks per second while a turn runs, and none while idle.</p>
+
+<h3>Serialization at three levels</h3>
+<div class="table-wrap"><table>
+<tr><th>Level</th><th>What makes it serial</th></tr>
+<tr><td>Requests of one user</td><td>The accept loop serves one connection at a time. Others wait in the kernel backlog.</td></tr>
+<tr><td>Session state</td><td>Only the <code>SessionRuntime</code> thread touches controllers. All other threads send commands.</td></tr>
+<tr><td>Vault file</td><td>The SQLite database lease allows one process per vault. <code>Accept=no</code> gives one listening socket to one service instance.</td></tr>
+</table></div>
+
+<p>Because of the first level, the adapter has <b>no shared mutable state</b> between requests, except the <code>next_number()</code> atomic counter. There are no locks in <code>src/daemon/</code>.</p>
+
+<h3>Why the adapter waits after a disconnect</h3>
+<p>When the client leaves, the adapter sends <code>StopCommand</code> but keeps reading output until the turn is idle. If it returned at once, the <b>next</b> request might find the session still generating, and its submit would fail. Waiting keeps the invariant: <i>when a request ends, the session is idle.</i> The existing partial-response rules store the partial reply.</p>
+
+<h3>Timing constants</h3>
+<div class="table-wrap"><table>
+<tr><th>Value</th><th>Where</th><th>Purpose</th></tr>
+<tr><td>25 ms</td><td><code>poll_interval</code>, adapter</td><td>Output poll and disconnect check during a turn</td></tr>
+<tr><td>50 ms</td><td><code>poll_timeout_ms</code>, scgi</td><td>Maximum delay before a socket wait sees <code>stop</code></td></tr>
+<tr><td>15 s</td><td><code>keepalive_interval</code></td><td>SSE comment when no text was written</td></tr>
+<tr><td>30 s</td><td><code>RuntimeSettings::command_deadline</code></td><td>Wait for <code>submit()</code> and for the first snapshot</td></tr>
+<tr><td>10 s</td><td><code>RuntimeSettings::shutdown_grace</code></td><td>Drain after cancel; application join at shutdown</td></tr>
+<tr><td>90 s</td><td><code>TimeoutStopSec</code></td><td>systemd waits this long before <code>SIGKILL</code></td></tr>
+<tr><td>3600 s</td><td>nginx <code>scgi_*_timeout</code></td><td>nginx waits while queued behind a long turn</td></tr>
+</table></div>
+
+<div class="table-wrap"><table>
+<tr><th>Size limit</th><th>Value</th></tr>
+<tr><td>SCGI header block</td><td>64 KiB</td></tr>
+<tr><td>Request body (daemon and nginx)</td><td>16 MiB</td></tr>
+<tr><td>User input (<code>prompt_limit</code>)</td><td>32 KiB</td></tr>
+<tr><td>Password file</td><td>4096 bytes</td></tr>
+</table></div>
+
+<!-- ============================================================ -->
+<h2 id="errors">Errors and disconnects</h2>
+
+<p>Errors use the OpenAI envelope: <code>{"error": {"message", "type", "code"}}</code>. <code>type</code> is <code>invalid_request_error</code> for status &lt; 500 and <code>server_error</code> otherwise.</p>
+
+<div class="table-wrap"><table>
+<tr><th>Condition</th><th>Who answers</th><th>Response</th></tr>
+<tr><td>Missing or unknown API key</td><td>nginx</td><td>401</td></tr>
+<tr><td>Body &gt; 16 MiB</td><td>nginx (and daemon)</td><td>413</td></tr>
+<tr><td>No socket, or daemon fails to start</td><td>nginx</td><td>502</td></tr>
+<tr><td>Malformed SCGI</td><td>daemon</td><td>400</td></tr>
+<tr><td>Unknown path</td><td>daemon</td><td>404</td></tr>
+<tr><td>Bad JSON, no messages, last not user, empty text, text &gt; 32 KiB</td><td>daemon</td><td>400</td></tr>
+<tr><td>Unknown forum or <code>builtin-entrance</code></td><td>daemon</td><td>404</td></tr>
+<tr><td>History without tag; tag for another forum</td><td>daemon</td><td>400</td></tr>
+<tr><td>Tagged session does not exist</td><td>daemon</td><td>404</td></tr>
+<tr><td>CHA rejects the input</td><td>daemon</td><td>400 with the CHA notice</td></tr>
+<tr><td>Provider fails</td><td>daemon</td><td>502, or an SSE error event when streaming</td></tr>
+<tr><td>Storage or unexpected failure</td><td>daemon</td><td>500</td></tr>
+</table></div>
+
+<h3>When the daemon decides to exit</h3>
+<p>In these cases the adapter sets the stop flag. The daemon finishes the response, shuts down, and systemd starts a clean process for the next request.</p>
+<div class="table-wrap"><table>
+<tr><th>Case</th><th>Why exit</th></tr>
+<tr><td><code>submit()</code> returns <code>command_timeout</code></td><td>The command can still run later. A new request next to it could see a busy or changed session.</td></tr>
+<tr><td><code>subscribe()</code> fails after <code>open_session()</code> succeeded</td><td>The session state is not known.</td></tr>
+<tr><td>A cancelled turn does not end within 10 s</td><td>The session would stay busy for the next request.</td></tr>
+<tr><td>An exception escapes inside <code>serve_chat()</code></td><td>The session state is not known after an unexpected failure.</td></tr>
+</table></div>
+
+<div class="callout why">
+  <span class="label">Why restart instead of recover?</span>
+  <p>Recovery code for rare, unclear states is hard to write and hard to test. A process restart is a simple, well-tested path: <code>Application</code> shutdown, then a fresh open. systemd socket activation makes it automatic, and no request is lost, because the next connection waits in the backlog.</p>
+</div>
+
+<h3>Three kinds of disconnect</h3>
+<ul>
+  <li><b>While queued:</b> the request is complete in the buffer, but nginx has closed. <code>peer_closed()</code> after <code>read_scgi()</code> finds it. No turn.</li>
+  <li><b>Before submit:</b> the check in <code>run_subscribed()</code> finds it. No input is sent. A new session is deleted.</li>
+  <li><b>While generating:</b> <code>peer_closed()</code> in the loop or a failed write (<code>EPIPE</code>) finds it. The adapter stops the generation like the GUI Stop button, waits until idle, and sends nothing more. The client's partial reply already has the tag, so the chat can continue.</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2 id="example">Worked example: two requests</h2>
+
+<h3>Request 1: a new chat</h3>
+<pre><code>curl -N https://cha.example.org/v1/chat/completions \
+  -H "Authorization: Bearer $ALICE_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"writers","stream":true,
+       "messages":[{"role":"user","content":"Hello"}]}'</code></pre>
+
+<p>What happens:</p>
+<ol>
+  <li>nginx maps the key to <code>alice</code> and connects to <code>/run/cha/alice.sock</code>.</li>
+  <li>The daemon parses the request. There is no <code>assistant</code> message, so <code>tag</code> is empty.</li>
+  <li><code>create_session("writers", "")</code> returns a new ID, for example <code>k3j9x2</code> (example value).</li>
+  <li>Open, subscribe, baseline, submit "Hello". The forum's default character, Ada, replies.</li>
+</ol>
+
+<p>Response bytes (some JSON fields left out):</p>
+<pre><code>Status: 200 OK
+Content-Type: text/event-stream
+
+data: {"id":"chatcmpl-7","object":"chat.completion.chunk","model":"writers",
+       "choices":[{"index":0,"delta":{"role":"assistant",
+       "content":"[//]: # (cha writers/k3j9x2)\n\n"},"finish_reason":null}]}
+
+data: {..."delta":{"content":"**Ada:** Hel"}...}
+
+data: {..."delta":{"content":"lo! What shall we write?"}...}
+
+data: {..."delta":{},"finish_reason":"stop"}
+
+data: [DONE]</code></pre>
+
+<h3>Request 2: the next message</h3>
+<pre><code>{"model":"writers","stream":true,"messages":[
+  {"role":"user","content":"Hello"},
+  {"role":"assistant","content":"[//]: # (cha writers/k3j9x2)\n\n**Ada:** Hello! What shall we write?"},
+  {"role":"user","content":"@Bob a poem about rain"}
+]}</code></pre>
+<ol>
+  <li><code>find_session_tag()</code> finds <code>writers/k3j9x2</code> in the assistant message.</li>
+  <li>The forum matches <code>model</code>, so the daemon opens <code>k3j9x2</code>. It is already live and selected, so this is fast.</li>
+  <li>The input <code>@Bob a poem about rain</code> goes through the CHA parser. Bob replies. The answer starts again with the same tag line, then <code>**Bob:** …</code>.</li>
+  <li>The first message "Hello" in the history is <b>not</b> used. CHA already has it in its own transcript.</li>
+</ol>
+
+<!-- ============================================================ -->
+<h2 id="ops">Operations</h2>
+
+<h3>Add a user</h3>
+<ol class="steps">
+  <li><code>useradd --system --shell /usr/sbin/nologin cha-&lt;user&gt;</code></li>
+  <li>Create <code>/var/lib/cha/&lt;user&gt;/</code> with the layout from <a href="#config">section 4</a>, copy the vault in, then <code>chown -R cha-&lt;user&gt;: …</code> and <code>chmod 700 …</code>.</li>
+  <li>Generate a key: <code>openssl rand -hex 32</code>.</li>
+  <li>Add <code>"Bearer &lt;key&gt;" &lt;user&gt;;</code> to the nginx <code>map</code>, then <code>nginx -s reload</code>.</li>
+  <li><code>systemctl enable --now cha@&lt;user&gt;.socket</code></li>
+</ol>
+<p>No unit file is written per user. The templates serve all users.</p>
+
+<div class="callout warn">
+  <span class="label">Watch out: the server copy is the master</span>
+  <p>After you copy the vault to the server, the API sessions live only there. Do not copy a newer desktop vault over it. That deletes all API sessions.</p>
+</div>
+
+<h3>Change configuration</h3>
+<ol>
+  <li><code>systemctl stop cha@&lt;user&gt;.socket cha@&lt;user&gt;.service</code> — stop the socket too, or the next connection starts the service again.</li>
+  <li>Copy <code>workspace.sqlite3</code> (and its <code>-wal</code> file, if present) to a desktop.</li>
+  <li>Open it in the desktop app as a separate vault, edit, close.</li>
+  <li>Copy the main file back, delete <code>-wal</code> and <code>-shm</code> on the server, fix ownership, <code>systemctl start cha@&lt;user&gt;.socket</code>.</li>
+</ol>
+<p>Backups use the same stop-copy-start steps. A copy of a live WAL database is not safe.</p>
+
+<h3>Provider access</h3>
+<p>Server vaults must use providers with API keys, including the provider that names new sessions. ChatGPT subscription providers need <code>openai-auth.json</code> and a device login flow, which the daemon does not have. Do not copy <code>openai-auth.json</code> from a desktop: refresh tokens rotate, and the two copies would break each other.</p>
+
+<h3>Startup failures and logs</h3>
+<ul>
+  <li>A daemon that fails at startup (wrong password, bad config) is started again by each new request. After a few failures, systemd hits its start limit and stops the socket; nginx returns 502. After the fix: <code>systemctl reset-failed cha@&lt;user&gt;.socket cha@&lt;user&gt;.service</code>, then start the socket.</li>
+  <li>Each daemon writes its own log file, as <code>app.toml</code> sets. systemd records start, stop and crash events in the journal for <code>cha@&lt;user&gt;.service</code>. Startup errors before logging is ready go to stderr, which is also in the journal.</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2 id="tests">Build and tests</h2>
+
+<p><code>cha-daemon</code> is a CMake target for POSIX systems. It is deployed on Linux but also builds and runs its tests on macOS, so you can develop on a Mac.</p>
+
+<div class="table-wrap"><table>
+<tr><th>Test file</th><th>What it proves</th></tr>
+<tr><td><code>unit_scgi.cpp</code></td><td>Fragmented reads, malformed framing, netstring overflow, size limits, early EOF, stop during a read, abandoned complete requests, partial sends, no <code>SIGPIPE</code>, ignored variables.</td></tr>
+<tr><td><code>unit_session_tag.cpp</code></td><td>Tag format, leading whitespace, malformed lines, content arrays, newest match, a newer malformed tag does not hide an older valid one.</td></tr>
+<tr><td><code>unit_openai_adapter.cpp</code></td><td>Model list without Entrance, error envelopes, content arrays, prompt limit boundary, unknown models, tag/forum mismatch, invalid chats create no session.</td></tr>
+<tr><td><code>unit_openai_turns.cpp</code></td><td>Full turns against a real <code>Application</code>: new and continued chats, plain / <code>@Name</code> / <code>/mcast</code> / <code>@-</code>, Jev, reasoning is not streamed, prefix mismatch, provider failure, disconnects, shutdown, keepalive with a test clock, submit timeout stops the daemon, alternating sessions.</td></tr>
+<tr><td><code>unit_daemon_process.cpp</code> + <code>daemon_process.h</code></td><td>Spawns the real <code>cha-daemon</code> binary with a listening socket on fd 3 and <code>LISTEN_*</code> variables. Checks invalid activation, serving <code>/v1/models</code>, and <code>SIGTERM</code> during generation.</td></tr>
+</table></div>
+
+<p>Build and run the daemon tests:</p>
+<pre><code>cmake --build --preset ninja --target cha-daemon cha_daemon_tests
+ctest --test-dir build/ninja --output-on-failure \
+  -R "DaemonProcess|Scgi|SessionTag|OpenAiAdapterTest|TurnTest"</code></pre>
+
+<div class="callout key">
+  <span class="label">Tip: the test clock</span>
+  <p><code>handle_request()</code> takes an optional <code>TurnClock</code>. Tests inject a fake clock to trigger the 15 s keepalive without waiting 15 s. This is the only seam that exists for tests; everything else runs the real code.</p>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="limits">Limitations</h2>
+<ul>
+  <li>One request at a time per user. A second chat waits until the first turn ends. <code>GET /v1/models</code> waits too.</li>
+  <li>Sessions created in the desktop app have no tag in any client chat, so clients cannot continue them.</li>
+  <li>A client that removes the tag, or does not render Markdown, breaks continuation or shows the tag line.</li>
+  <li>Clients must disable automatic title, tag and follow-up requests.</li>
+  <li>Regenerate and edit add a new turn. The daemon cannot delete or roll back turns.</li>
+  <li>ChatGPT subscription providers do not work on the server.</li>
+  <li>Sampling fields in requests have no effect. Clients cannot choose a persona.</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2 id="check">Check yourself</h2>
+<p>Try to answer each question before you open it.</p>
+
+<details><summary>Where is the API key checked, and can the daemon see it?</summary>
+<p>Only in nginx, by the <code>map</code>. <code>scgi_pass_request_headers off</code> keeps all HTTP headers, including <code>Authorization</code>, out of the daemon.</p></details>
+
+<details><summary>Two browser tabs of the same user send a request at the same time. What happens?</summary>
+<p>The daemon accepts one. The other connection waits in the kernel listen backlog, and nginx waits up to 3600 s. When the first response ends and the fd closes, the loop accepts the second.</p></details>
+
+<details><summary>Why does the daemon use <code>poll()</code> with a 50 ms timeout instead of blocking <code>accept()</code>?</summary>
+<p>So that every wait sees the atomic stop flag within 50 ms. A blocking call may be restarted after the signal (<code>SA_RESTART</code>) and never notice <code>SIGTERM</code>.</p></details>
+
+<details><summary>How does the daemon know which session a request belongs to?</summary>
+<p>From the hidden tag line <code>[//]: # (cha forum/session)</code> at the start of the newest <code>assistant</code> message in the history. No server-side mapping exists.</p></details>
+
+<details><summary>What is the "baseline", and why is it needed?</summary>
+<p>The highest transcript entry ID in the first snapshot after subscribe. Entries with larger IDs belong to the current turn. Without it, the adapter could not tell new text from stored history in a snapshot.</p></details>
+
+<details><summary>Why is <code>clear_input</code> not enough to know that a turn started?</summary>
+<p>An unknown <code>/</code> command and a failed <code>/mcast</code> also set it. Only <code>session.input_consumed == true</code> means a turn started.</p></details>
+
+<details><summary>The client closes the tab in the middle of a reply. What does the daemon do, and why does it not just return?</summary>
+<p>It sends <code>StopCommand</code>, then keeps draining output until the turn is idle (up to 10 s). Returning at once could leave the session generating, and the next request would find it busy. If the drain takes more than 10 s, the daemon exits.</p></details>
+
+<details><summary>Which threads can touch a <code>SessionController</code>?</summary>
+<p>Only the <code>SessionRuntime</code> thread. The main thread sends commands through the queue and reads results through <code>SessionOutput</code>.</p></details>
+
+<details><summary>Why can a slow client not make the daemon use a lot of memory?</summary>
+<p><code>SessionOutput</code> keeps one in-flight and one pending item. The runtime merges new appends into the pending item until the daemon takes it.</p></details>
+
+<details><summary><code>submit()</code> returns <code>command_timeout</code>. Why does the daemon exit?</summary>
+<p>The command may still run later. The session state is unknown. A fresh process is the simplest safe state, and systemd starts it on the next connection.</p></details>
+
+<details><summary>Why does the first SSE chunk carry the tag, not the last one?</summary>
+<p>So that a reply that is stopped or fails still has the tag. The client can then continue the chat.</p></details>
+
+<!-- ============================================================ -->
+<h2 id="glossary">Glossary</h2>
+<div class="table-wrap"><table>
+<tr><th>Term</th><th>Meaning</th></tr>
+<tr><td>Vault</td><td>One SQLite (optionally SQLCipher) file with the workspace configuration and all sessions.</td></tr>
+<tr><td>Forum</td><td>A CHA room with characters and a default character. Exposed as one OpenAI "model".</td></tr>
+<tr><td>Session</td><td>One stored conversation in a forum, addressed by <code>(forum_id, session_id)</code>.</td></tr>
+<tr><td>Turn</td><td>One user input and all replies it causes (several with <code>/mcast</code>).</td></tr>
+<tr><td>Jev</td><td>The optional recipient classifier. It can choose which character answers.</td></tr>
+<tr><td>Session tag</td><td>The hidden Markdown line <code>[//]: # (cha f/s)</code> at the start of every reply.</td></tr>
+<tr><td>SCGI</td><td>Simple Common Gateway Interface. A netstring of headers plus a body, one request per connection.</td></tr>
+<tr><td>Netstring</td><td><code>&lt;length&gt;:&lt;bytes&gt;,</code></td></tr>
+<tr><td>SSE</td><td>Server-Sent Events. <code>data: …\n\n</code> lines in a <code>text/event-stream</code> body.</td></tr>
+<tr><td>Socket activation</td><td>systemd creates the listening socket and starts the service on the first connection, passing the socket as fd 3.</td></tr>
+<tr><td>Context epoch</td><td>A number that changes when the vault context changes. Calls with an old epoch fail.</td></tr>
+<tr><td>Baseline</td><td>The highest entry ID before the turn. Newer entries belong to the turn.</td></tr>
+<tr><td><code>SessionOutput</code></td><td>The thread-safe mailbox from the runtime thread to the consumer: snapshots and text appends.</td></tr>
+<tr><td><code>SessionRuntime</code></td><td>The single thread that owns all live sessions.</td></tr>
+</table></div>
+
+<p class="meta" style="margin-top:3em">Based on the code at commit <code>cc207da0</code> ("Fixes 2") and <a href="headless.md">docs/headless.md</a>. When the code and this tutorial disagree, the code is correct.</p>
+
+</main>
+</div>
+</body>
+</html>

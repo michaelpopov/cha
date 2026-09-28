@@ -918,7 +918,8 @@ describe('live chat', () => {
     act(() => events.handlers[0].onSnapshot(completed));
     await screen.findByRole('button', { name: "Play cached audio for Other's response" });
     // Start the first reply while its download is still running.
-    expect(resolveAudioSource.mock.calls.map((call) => call[2])).toEqual([3]);
+    await waitFor(() => expect(resolveAudioSource.mock.calls.map((call) => call[2])).toEqual([3]),
+      { timeout: 2500 });
     cached.push(3);
     await waitFor(() => expect(audios).toHaveLength(1), { timeout: 2500 });
     expect(resolveAudioSource.mock.calls.map((call) => call[2])).toEqual([3]);

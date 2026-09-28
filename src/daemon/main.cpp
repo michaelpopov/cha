@@ -149,6 +149,8 @@ void require_activation() {
             "systemd socket activation is invalid: file descriptor 3 is not a "
             "listening Unix stream socket.");
     }
+    // macOS defines SO_ACCEPTCONN but getsockopt returns ENOPROTOOPT for it.
+#ifndef __APPLE__
     int accepting = 0;
     socklen_t accepting_size = sizeof(accepting);
     if (::getsockopt(
@@ -159,6 +161,7 @@ void require_activation() {
             "systemd socket activation is invalid: file descriptor 3 is not a "
             "listening Unix stream socket.");
     }
+#endif
     sockaddr_storage address {};
     socklen_t address_size = sizeof(address);
     if (::getsockname(
