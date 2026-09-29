@@ -1,280 +1,231 @@
-# Stage 1 of 2: Runnable daemon, SCGI and model discovery
+# Block 1: ChaWeb daemon API
 
-## Assignment
+Status: implementation instructions; the work is not yet complete.
+This block implements steps 2–4 of the ChaWeb plan. It delivers the complete
+text API and its daemon tests. nginx integration is block 2, the browser is
+blocks 3–4, and packaging is block 5. No earlier implementation block is needed.
 
-Implement this stage as the first of two sequential Grok coding-agent runs.
-Use a fresh context for each stage and continue from the same repository state.
-The next assignment is [block2.md](block2.md).
+This document contains the requirements for this block. The broader context is
+in [chaweb.md](chaweb.md) and [chaweb-plan.md](chaweb-plan.md).
 
-The result of this stage is a POSIX `cha-daemon` that opens an existing vault,
-serves `GET /v1/models` through SCGI, validates chat request envelopes and
-session tags, and passes the early Linux/nginx smoke test. Chat generation is
-implemented in stage 2.
+## Result and boundaries
 
-Read [headless.md](headless.md) and the revised
-[head-plan.md](head-plan.md). They define the behavior; these stage files group
-the work and define handoff points. Preserve the revised decisions, including
-macOS development support and blocking `Application::submit()` in stage 2.
-Do not restore the earlier Linux-only or asynchronous-submission plan.
+Add a small adapter under `/api/cha/v1/` to the existing `cha-daemon`. It calls
+public `app::Application` operations for existing forums and stored sessions.
+It returns finite JSON responses or an empty success response. Runtime/provider
+workers continue accepted generation between requests.
 
-The two stages cover the full implementation plan:
+Keep the existing serial accept/read/handle/write/close loop. Preserve the
+OpenAI adapter, its `/v1/` protocol, and its disconnect-cancels-turn behavior.
+ChaWeb requests must not acquire output subscriptions or cancel accepted work
+when their connection closes. Concurrent OpenAI and ChaWeb use for one user is
+outside stage 1; a long OpenAI request can delay all ChaWeb requests.
 
-| Stage | Implementation-plan coverage | Result |
-| --- | --- | --- |
-| 1 | Steps 1–3; startup, activation and basic shutdown from step 6; deployment examples and early smoke test from step 7 | A running server with model discovery and tested request parsing |
-| 2 | Steps 4–5; active-request shutdown and remaining checks from step 6; final deployment and client validation from step 7 | Complete Chat Completions support and release validation |
+Do not add threads, SSE, WebSockets, runtime commands, configuration writes,
+session renaming, media endpoints, context headers, API-version wrappers, or
+schema changes. Use the existing DTOs and error codes. Unused voice settings
+must not block valid text operations; retain warning logging where applicable.
 
-This is the smallest useful split around the plan's required server smoke
-test before turn implementation. Keep lifecycle, streaming and cancellation
-together in stage 2 because they share the same request loop.
+## Files and preparation
 
-## Context budget and starting checks
-
-This stage is scoped for one 500K context window. Aim to use less than 100K for
-initial reading and retain at least 200K for implementation, test failures and
-review. These are planning budgets, not exact tokenizer measurements. Read
-relevant files and functions; do not ingest the entire repository or repeated
-build logs.
-
-Start by reading `AGENTS.md`, checking `git status`, and inspecting the files
-below. Preserve existing user changes. No daemon implementation existed when
-this assignment was written; check the current tree before creating files.
-
-| Read first | Purpose |
+| File | Work |
 | --- | --- |
-| `CMakeLists.txt`, `CMakePresets.json`, `src/README.md` | Build conventions and target documentation |
-| `src/app/application_config.h` and `.cpp` | Existing config loading, vault selection and desktop bootstrap behavior |
-| `src/app/application.h`; relevant construction, bootstrap and shutdown functions in `.cpp` | Application ownership and model listing |
-| `src/runtime/protocol.h`, `src/runtime/runtime_settings.h` | Forum summaries, errors and limits |
-| `src/util/path_name.h`, `src/util/logging.h`, `src/workspace/builtins.h` | Identifier validation, logging and Entrance identity |
-| `tests/support/test_workspace.*`, relevant `tests/app/unit_application_config.cpp` tests | Temporary vault and configuration fixtures |
-| Existing POSIX socket fixtures under `tests/support/` | Test conventions, without adding a transport framework |
+| `src/daemon/chaweb_adapter.h` and `.cpp` | Add the route handler, validation, and application-to-HTTP mapping. |
+| `src/daemon/main.cpp` | Dispatch ChaWeb paths before the existing OpenAI handler. |
+| `src/daemon/scgi.h` and `.cpp` | Capture `CONTENT_TYPE` and support the required CGI statuses. |
+| `CMakeLists.txt` | Compile the adapter into the daemon and daemon test targets. |
+| `tests/daemon/unit_chaweb_adapter.cpp` | Add adapter tests using existing application fixtures. |
+| `tests/daemon/unit_scgi.cpp` | Extend framing/header/status coverage. |
+| `tests/daemon/unit_daemon_process.cpp` | Verify real-process routing and shutdown. |
 
-Use the existing core as a library. Do not add application threads, queues,
-database tables, an HTTP server, a new dependency or a second configuration
-system. Keep unused settings harmless, with warnings where appropriate.
+Read `src/app/application.h`, `src/runtime/protocol.h` and `.cpp`, and
+`src/daemon/openai_adapter.cpp` for existing operations and result handling.
+Reuse the workspace setup in `tests/daemon/unit_openai_adapter.cpp` and
+`tests/support/test_workspace.h`; keep OpenAI tests intact. Use
+`resources/dto.yaml` and the existing wire fixtures as the JSON contract.
 
-## Work sequence
+Use the repository's normal Linux C++ build prerequisites, CMake, and Ninja.
+Install nginx and Python 3 for the next block. Use Node/npm versions pinned in
+`webapp/package.json` for the baseline frontend checks. From the repository root:
 
-### 1. Check the Linux baseline and add build targets
-
-Run implementation-plan step 1 on the supplied Linux test host: configure the
-existing CMake project, build `cha_lib`, `cha_tests` and `cha_app_tests`, and run
-both test binaries. Record the distribution, compiler and required packages.
-Fix only demonstrated portability problems.
-
-The Linux check need not prevent local macOS work in this stage, but it must
-pass before the server smoke test. A supplied Linux test host, access to
-nginx/systemd, and a disposable configured vault are prerequisites for that
-test. If they are unavailable, finish independent local work and report the
-specific missing prerequisite; do not declare the stage complete or replace
-the Linux test with a macOS result.
-
-Add `cha-daemon` and `cha_daemon_tests` under `if(NOT WIN32)`, with the test
-target also under `BUILD_TESTING`. Link the existing `cha_lib` and use its
-warning conventions. Compile daemon implementation sources directly into the
-test target, excluding `main.cpp`; do not create a new library for this.
-Register the tests with the existing CTest/GoogleTest mechanism. Add both
-targets to the build-and-test table in `src/README.md`.
-
-### 2. Implement SCGI framing and socket helpers
-
-Create `src/daemon/scgi.h` and `.cpp` as described in plan step 2:
-
-- Parse exactly one netstring header block and its declared body per socket.
-  Require `CONTENT_LENGTH` first, `SCGI=1`, `REQUEST_METHOD` and `DOCUMENT_URI`.
-  Reject malformed pairs, duplicate required fields, malformed lengths and
-  integer overflow. Ignore unrelated variables.
-- Bound headers separately, using the plan's suggested 64 KiB cap, and enforce
-  the 16 MiB body limit before allocation. Use `400` or `413` where a response
-  is possible; drop truncated requests without application calls.
-- Handle partial reads/writes, `EINTR` and would-block results. After the full
-  request is read, detect a closed peer before dispatch.
-- Write CGI status/headers and body bytes, without HTTP chunk framing. Use
-  `MSG_NOSIGNAL` as specified in the revised plan and verify compilation on
-  both target platforms. A failed write is a disconnect.
-- Use `accept()` and `fcntl()` for nonblocking and close-on-exec flags. Do not
-  use `accept4()` or socket-type flags. Short `poll()` waits must let the main
-  loop notice shutdown during a partial read or blocked write.
-- Give each accepted descriptor a scope-bound owner. Keep helpers local and
-  small; do not introduce an event framework or request worker.
-
-### 3. Implement model listing, request parsing and tags
-
-Create `src/daemon/openai_adapter.h` and `.cpp`, and
-`src/daemon/session_tag.h` and `.cpp`.
-
-Implement `GET /v1/models` using `bootstrap().presentation.forums`, filtering
-out `builtin-entrance`. Return the list envelope and each model's `id`,
-`object = "model"`, `owned_by = "cha"` and `created = 0`. Dispatch by
-`DOCUMENT_URI`; unknown paths and unsupported methods return `404`.
-
-Implement the chat validation and tag selection from plan step 3 as reusable
-functions within these files:
-
-- Require an object, string model, nonempty message array and final user
-  message. An omitted `stream` means false; a supplied value must be boolean.
-- Accept string content or ordered text parts. Ignore non-text parts. Reject
-  unusable user text and input exceeding `settings().prompt_limit` before
-  anything can create a session. Preserve accepted input bytes.
-- Reject unknown models and Entrance with `404`. Ignore sampling fields,
-  client tool definitions and other unused request options.
-- Format `[//]: # (cha <forum_id>/<session_id>)` followed by a blank line.
-  Find tags only on the first text line, after leading whitespace, in
-  assistant messages scanned newest first. Validate IDs with
-  `is_url_safe_identifier()`.
-- Distinguish no assistant messages (new session) from assistant messages
-  with no valid tag (`400`, exactly
-  `This chat has no CHA session. Start a new chat.`). A newer untagged assistant
-  message does not hide an older valid tag. A selected tag for another forum
-  returns `400`; do not fall back to an older tag.
-- Return a small parsed value containing model, user text, streaming choice
-  and optional tagged identity. Do not replay history into the application.
-  Checking a tagged session's existence belongs to `open_session()` in stage 2.
-- Use one OpenAI error-envelope helper shared by transport-facing handlers.
-
-Keep the executable honest about this intermediate state: after successful
-chat preflight, return `501` with a clear OpenAI-style “chat completion is not
-implemented” error. Do not create/open a session, submit input or fabricate a
-reply. This one temporary branch is removed in stage 2; no feature flag or
-permanent configuration is needed. Invalid preflight requests return their
-normal validation errors now.
-
-### 4. Make the daemon runnable and stoppable
-
-Implement startup and basic shutdown in `src/daemon/main.cpp` now, so the
-early server test uses the real executable:
-
-1. Accept both forms of `--config`. Require an existing configuration and
-   database. Use `load_configuration_directory()` and `find_vault()` to build
-   `ApplicationCommand`; do not invoke the desktop parser's empty-directory
-   bootstrap or create a default vault.
-2. Validate activation before `Application::open()` starts threads:
-   `LISTEN_PID` equals this PID, `LISTEN_FDS=1`, and fd 3 is a listening Unix
-   stream socket. Set close-on-exec and clear the activation environment at
-   this point, before concurrent environment readers can exist. There is no
-   fallback listener and no `libsystemd` dependency.
-3. Initialize diagnostics before opening the application. For a protected
-   vault, read the private mode-`0600` `CONFIG_DIR/password` file, stripping
-   only one optional terminal line ending. Preserve other whitespace and
-   never log the password. An unprotected vault does not require the file.
-   Send useful startup errors to stderr and the log when available.
-4. Install signal-safe `SIGTERM`/`SIGINT` flag handling with `SA_RESTART`.
-   Handlers only set the flag. Check it in the serial accept/read/write loop.
-   Application methods run only in ordinary control flow.
-5. Process and close one request before accepting another. Keep running when
-   idle. On shutdown, call `request_shutdown()` and `join_shutdown()` within
-   the existing bounded grace; call `_exit(EXIT_FAILURE)` if joining fails.
-   Destroy normally and shut down logging after a successful join.
-
-Keep a simple way for the adapter to observe the stop flag and request process
-shutdown in stage 2. Do not build unused lifecycle abstractions in anticipation
-of that work.
-
-Add the small test launcher that supplies a listening Unix socket as fd 3,
-sets activation variables in the child before exec, and launches the real
-binary. Add the invalid-activation executable test now. Reuse this launcher
-for the shutdown-during-generation test in stage 2; these are the only two
-automated executable-level cases requested by the revised plan.
-
-### 5. Add deployment examples and pass the server smoke test
-
-Create `packaging/linux/cha@.socket`, `cha@.service` and
-`nginx.conf.example` using the design. Make the binary installable at the
-service's configured path. Keep the files as editable examples.
-
-Preserve `Accept=no`, the per-user socket/account/config paths, socket mode
-`0660`, nginx's group and `PrivateTmp=yes`. nginx must keep request buffering
-on, response buffering off, incoming request headers out of SCGI, the 16 MiB
-body limit and long SCGI read/send timeouts. Use the literal key-to-user map;
-the daemon must never authenticate client keys.
-
-On the supplied disposable Linux setup, check unit validity and run
-`nginx -t`. Start with the socket active and service stopped. Request
-`GET /v1/models` through nginx and confirm activation and correct model JSON.
-Check socket group/mode, account permissions on `/var/lib/cha/<user>`, the
-private temporary workspace and database lease. The characters and Assistant
-in the test vault must use providers with API keys. Do not copy desktop OAuth
-tokens or replace a live user vault for this test.
-
-## Validation and exit criteria
-
-Add focused tests under `tests/daemon/`, reusing temporary workspaces and the
-existing GoogleTest conventions. Test behaviors rather than helper layout.
-
-- [ ] `cha-daemon` and `cha_daemon_tests` build on macOS and Linux.
-- [ ] Linux `cha_tests` and `cha_app_tests` pass.
-- [ ] SCGI tests cover fragmented input, malformed headers and lengths,
-  integer overflow, both size limits, premature EOF, complete abandoned
-  requests, partial writes and closed output peers without process death.
-- [ ] Request/tag tests cover content arrays, ignored roles/options, leading
-  whitespace, malformed tags, missing tags, newest-match selection, forum
-  mismatch and prompt-size boundaries.
-- [ ] Models and error envelopes decode correctly; Entrance is absent;
-  preflight never submits input or creates a stored session.
-- [ ] The real executable rejects invalid activation; local manual checks
-  confirm idle and partial-read shutdown.
-- [ ] A model-list request passes through real nginx/systemd on Linux after
-  the baseline tests pass. Record this evidence before stage 2 starts.
-- [ ] Changed code has been reviewed for ownership, error paths, accidental
-  extra threads and unintended desktop changes. Required tests pass.
-
-Use `cmake --preset ninja`, a targeted build and `cha_daemon_tests` on macOS;
-use the plan's separate `build/linux` directory on Linux. Run existing desktop
-tests if shared code changed. Save concise failure summaries rather than
-repeated full logs. Do not add live-provider requirements to unit tests.
-
-## Handoff to stage 2
-
-At completion, add a short execution record below and include it in the final
-report. This record is the only change to this stage document needed during
-implementation. Do not rewrite the design or main plan.
-
-Record the repository revision or exact working-tree state, changed files,
-public daemon helper interfaces, test commands and results on both platforms,
-Linux smoke-test result and any unresolved failures. Record nonsecret setup
-details needed to repeat the server test. Identify the temporary `501` branch
-and the process-launch helper. Never include keys or passwords.
-
-Stage 2 starts only after the required checks above pass. It should reuse the
-working startup/SCGI/model implementation and complete chat handling in place.
-
-### Execution record
-
-Repository: working tree on `77c47ec` (main) plus the stage-1 daemon files below.
-
-Changed files:
-- `CMakeLists.txt`, `src/README.md`
-- `src/workspace/workspace.cpp` (`#include <mutex>` for libstdc++ on Linux)
-- `src/daemon/scgi.h`, `scgi.cpp`, `session_tag.h`, `session_tag.cpp`, `openai_adapter.h`, `openai_adapter.cpp`, `main.cpp`
-- `tests/daemon/unit_scgi.cpp`, `unit_session_tag.cpp`, `unit_openai_adapter.cpp`, `unit_daemon_process.cpp`, `daemon_process.h`
-- `packaging/linux/cha@.socket`, `cha@.service`, `nginx.conf.example`
-
-Public daemon helpers:
-- `cha::daemon::UniqueFd`, `read_scgi`, `write_cgi`, `write_bytes`, `peer_closed`, `accept_connection`, `configure_socket`
-- `format_session_tag`, `parse_session_tag_text`, `find_session_tag`, `message_text`
-- `openai_error`, `parse_chat_request`, `models_list`, `handle_request`
-- Temporary `501` branch in `handle_request` after successful chat preflight (`Chat completion is not implemented`). No session is created.
-- Process launcher: `tests/daemon/daemon_process.h` (`DaemonProcess`)
-
-Linux host: Ubuntu 25.10 aarch64, g++ 15.2.0, cmake 3.31.6, ninja 1.12.1, OpenSSL 3.5.3, `build-essential`, `libssl-dev`. Build dir `build/linux`.
-
-```
-cmake -S . -B build/linux -G Ninja -DBUILD_TESTING=ON
-cmake --build build/linux --target cha_lib cha_tests cha_app_tests cha-daemon cha_daemon_tests
-./build/linux/cha_tests
-./build/linux/cha_app_tests
-./build/linux/cha_daemon_tests
+```sh
+npm --prefix webapp ci
+cmake --preset ninja
+cmake --build --preset ninja --target cha-daemon cha_daemon_tests cha_prepare_test_vault
+make test
+make web-check
 ```
 
-Results:
-- `cha-daemon` and `cha_daemon_tests` built on Linux. macOS was not available on this host.
-- `cha_tests`: 503 passed, 2 skipped.
-- `cha_app_tests`: 328 passed.
-- `cha_daemon_tests`: 24 passed (SCGI, tags, adapter preflight, invalid activation, model list through the real binary).
-- Idle `SIGTERM` and partial-read `SIGTERM` on the real executable both exited 0.
-- Direct SCGI `GET /v1/models` through socket activation returned `200` with forum `lobby` and without `builtin-entrance`.
+Record baseline failures separately. All new tests use temporary vaults and
+local/fake providers, never personal data or paid provider requests.
 
-nginx/systemd smoke test did not run. Missing prerequisites: `nginx` is not installed; no disposable `/var/lib/cha/<user>` vault, `cha-<user>` account, or `/run/cha` socket unit. `systemd-analyze verify` on the example units reports `/usr/local/bin/cha-daemon` is not installed yet. Do not treat this stage as complete until that server test runs.
+## Wire contract
 
-COMPLETED
+Base path: `/api/cha/v1`. In the table, `S` is
+`/forums/{forum_id}/sessions/{session_id}` below that base.
+
+| Request | Body | Success |
+| --- | --- | --- |
+| `GET /bootstrap` | None | `200`, existing `Bootstrap` directly. |
+| `GET /forums/{forum_id}/sessions` | None | `200`, existing `SessionListing[]`. |
+| `POST /forums/{forum_id}/sessions` | `{ "text": "..." }` | `201`, existing `CreateSessionResult`: `{ "id": "...", "label": "..." }`. |
+| `GET S` | None | `200`, existing `SessionSnapshot`. |
+| `POST S/input` | `{ "text": "..." }` | `204`, no body. |
+| `POST S/stop` | `{}` | `204`, no body. |
+
+Match complete method/path pairs. Unsupported pairs, including `OPTIONS`, return
+`404`, with no `Allow` or CORS permission headers. Reject malformed identifiers;
+use IDs as opaque values, never as filesystem paths. Verify forum existence and
+session membership through the application boundary. A missing resource or a
+session outside the requested forum returns `404`. Match the route prefix at
+its boundary so unrelated paths do not enter the adapter.
+
+For every supported POST, require `Content-Type: application/json` before JSON
+parsing or any application operation. Compare the media type case-insensitively,
+allow surrounding whitespace and parameters such as `charset=utf-8`, and reject
+prefix/substring lookalikes. A missing or unsupported type returns `415` with
+`invalid_argument`. This prevents simple cross-origin POSTs from other websites;
+do not approve their preflight requests. GET and OpenAI requests keep their
+existing content-type behavior.
+
+Require a JSON object, a string `text` for creation/input, and no unknown fields.
+Stop accepts an empty object. Malformed JSON or invalid shape returns `400`.
+Check decoded input size in UTF-8 bytes against
+`application.settings().prompt_limit` before creation or submission. Its current
+default is 32768 bytes; use the setting, not a second hard-coded limit. Leave
+CHA's command parsing and semantic input acceptance to the raw input path.
+
+Return UTF-8 JSON with its JSON content type. Error bodies use the existing
+C++ `Error` serializer and `ErrorResponse` shape:
+
+```json
+{"error":{"code":"invalid_argument","message":"The input was rejected."}}
+```
+
+| HTTP status | Use |
+| --- | --- |
+| `400` | Invalid request or oversized prompt; preserve the applicable existing error code. |
+| `404` | Unknown method/path or missing forum/session. |
+| `415` | Missing/unsupported POST media type; `invalid_argument`. |
+| `422` | Definitively rejected input; `invalid_argument` and CHA's safe notice. |
+| `500` | Other application failures, including command timeout and cleanup failure. |
+| `503` | Daemon/application stopping. |
+
+Use safe messages and existing error codes; log unexpected exception details
+instead of returning them. Do not copy the OpenAI error envelope. The global
+SCGI size-limit response remains `413` outside this mapping. nginx can later
+produce non-JSON `413`, `502`, or `504` errors. Cache headers belong in nginx,
+not in the shared CGI writer.
+
+## Application operations
+
+Capture `application.context_epoch()` once per request and use that value for
+all operations, including cleanup. Keep application admission checks; the epoch
+is internal and never supplied by the browser. Handle both returned failure
+variants and `app::ApplicationError` without leaking exception text.
+
+For bootstrap, obtain `application.bootstrap()`, check its application state,
+and serialize only `.presentation`. Keep all existing bootstrap metadata,
+including Entrance, initial IDs, vault names, and character voice metadata.
+Filtering displayed navigation belongs in the browser. Do not serialize the
+native envelope, application capabilities, or context epoch.
+
+For listing, validate the forum and call `list_sessions(forum_id, epoch)`.
+Serialize the existing vector. An unknown forum must not look like an empty
+valid forum.
+
+Every named-session request first calls
+`open_session(forum_id, session_id, epoch)`, then its operation. Reuse a live
+controller or load a retired session. Return an opening or operation error
+directly, without an internal retry or a replacement session.
+
+- Snapshot: call `snapshot()` and serialize its owning `SessionSnapshot` value.
+  Preserve all existing fields, including reasoning, cached-audio flags,
+  `recent_pending`, and `discardable`. No web projection is needed.
+- Input: call `submit(..., RawCommand{text}, epoch)`. Preserve raw text,
+  `@Name`, `/mcast`, `@-`, Jev, saved defaults, and self-notes.
+- Stop: call `stop()`. Loading a retired session is intentional. Successful
+  Stop, including an already idle session, returns `204`; the next snapshot
+  supplies its state and notice. Unknown sessions return `404` from opening.
+
+Input is accepted only when `CommandResult.session.input_consumed` is true.
+`clear_input` is not an acceptance flag: parser rejection can set it. Accepted
+self-notes also succeed, even without a character reply. Rejection returns
+`422 invalid_argument` with the nonempty safe notice, or the fallback message
+`The input was rejected.` Classify other operation failures by the table above.
+
+Creation follows this sequence:
+
+1. Validate content type, JSON, forum, and input size before storing a session.
+2. Call `create_session(forum_id, "", epoch)` and retain its result and ID.
+3. Open that session, then submit its raw first input.
+4. On acceptance, return the existing creation result with `201` immediately.
+   Existing classification/naming can delay acceptance, but add no wait for a
+   complete character reply or final title.
+5. On definitive input rejection, delete the new session using normal
+   `delete_session(..., epoch)` before returning `422`. Do not use
+   `only_if_unused`: raw input can retain a session before rejecting it.
+6. Also clean up a definitive failure before submission. Treat `not_found`
+   during cleanup as success. Log any other cleanup failure and return `500`,
+   because the session may remain.
+7. Retain the session if submission timed out or its outcome is unknown.
+   Retain it after acceptance, even if the response write or later generation
+   fails. A lost response is neither rollback nor permission to resubmit.
+
+Do not call `subscribe()`, `take_output()`, or `acknowledge_output()`. Do not
+close sessions, stop generation, or stop the daemon merely because a ChaWeb
+caller disconnects or an acknowledgement is lost. Keep these rules separate
+from the OpenAI adapter's existing disconnect handling.
+
+## SCGI and lifecycle
+
+Add a `content_type` string to `ScgiRequest`, populated from `CONTENT_TYPE`.
+Absence is valid framing; only the ChaWeb POST handler requires it. Reject
+duplicate recognized fields, including this one, while ignoring unrelated SCGI
+environment variables. Keep framing/content-length validation, the 64 KiB
+header bound, and the 16 MiB body bound. No query parameters or arbitrary
+request-header transport are needed.
+
+Add CGI reason phrases for `201`, `204`, `415`, `422`, and `503`; preserve
+existing phrases and OpenAI statuses. `204` has no body. Write CGI headers and
+body bytes, not HTTP chunk framing. Closing the socket finishes the response.
+Keep `write_cgi()`'s header interface unchanged.
+
+Keep current socket cancellation, open/command deadlines, and shutdown grace
+and forced-exit behavior. Add no daemon I/O deadlines or connection workers.
+The serial handler waits for acceptance, so queued Stop cannot interrupt its
+Jev/naming work. Current defaults include a 10-second open deadline and a
+30-second command deadline; use existing settings. Provider generation runs
+outside the request loop and remains observable by subsequent snapshots.
+
+## Verification and completion
+
+Add meaningful tests at the affected boundary:
+
+- SCGI: split/malformed framing, absent/present/duplicate `CONTENT_TYPE`, body
+  limit, CGI status phrases, bodyless `204`, and existing shutdown cancellation.
+- Adapter: all six operations; unknown routes/methods; malformed requests;
+  unknown fields; forum/session mismatch; prompt-byte limits before creation.
+- Media type: all three POST routes reject missing and unsupported types before
+  mutation; accept case/whitespace/charset variants; reject lookalikes; malformed
+  JSON with a valid type returns `400`.
+- DTOs: direct bootstrap/list/create/snapshot JSON matches existing serializers;
+  no runtime snapshot, schema, enum, generated-type, or native-client changes.
+- Lifecycle: self-note acceptance, parser rejection despite `clear_input`,
+  rejection cleanup, cleanup failure, unknown submission outcome, retired-session
+  loading, unknown/idle Stop, and no automatic operation retry.
+- Process: dispatch through real SCGI, finite responses while generation remains
+  active, persistence after request closure, and bounded existing shutdown.
+  Use existing controlled provider fixtures for timing-sensitive cases.
+
+Run the focused daemon test binary while developing, then:
+
+```sh
+make test
+make web-check
+```
+
+Completion requires passing new tests and existing OpenAI/DTO checks, with any
+baseline failures reported separately. The handoff is the six-operation API in
+the real serial daemon. nginx end-to-end tests belong to block 2; frontend
+assets and their build dependency must not be required yet.

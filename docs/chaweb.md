@@ -88,7 +88,7 @@ processing after the input acknowledgement is sent.
 | `src/runtime/` | Serialized session commands, owning snapshots, generation lifecycle, and retirement. |
 | `src/runtime/protocol.cpp` | Existing JSON serializers for bootstrap, snapshots, session listings, creation results, and errors. |
 | `src/session/` and `src/storage/` | Character behavior, transcript storage, automatic naming, and startup recovery. |
-| `src/daemon/scgi.*` | Existing SCGI framing, request fields, socket I/O, and shutdown cancellation. |
+| `src/daemon/scgi.*` | Existing SCGI framing, socket I/O, and shutdown cancellation; capture `CONTENT_TYPE` for ChaWeb POST validation. |
 | `webapp/src/components/Markdown.tsx` and character appearance code | Existing sanitized message rendering and speaker presentation. |
 | `webapp/src/api/`, `webapp/src/state/bootstrap.ts`, and `resources/dto.yaml` | Existing DTOs, generated types, snapshot/list guards, and bootstrap validation. |
 | `webapp/src/useLiveSession.ts` | Reference for navigation epochs, draft preservation, and recovery; reuse only transport-independent parts. |
@@ -328,20 +328,34 @@ responses from its old navigation state and refreshes when it regains focus.
 
 Base path: `/api/cha/v1`.
 
-- JSON request and response bodies use UTF-8. Body-bearing stage 1 requests use
-  `Content-Type: application/json`. The adapter parses bodies as JSON without
-  inspecting the request content type; malformed JSON returns `400`.
-- Requests use the page's origin and send no API key or authorization header.
+- JSON request and response bodies use UTF-8. All three ChaWeb POST endpoints,
+  including Stop, require `Content-Type: application/json`. Before parsing JSON
+  or performing an application operation, reject a missing or unsupported
+  content type with `415`. Match the media type case-insensitively, allowing
+  surrounding whitespace and parameters such as `charset=utf-8`; do not use
+  a prefix or substring match. With an accepted content type, malformed JSON
+  returns `400`. GET requests need no content type.
+- Requests use the page's origin. The application adds no API key or bearer
+  authorization header; browser-managed HTTP authentication can be sent.
   nginx selects the daemon from its configured listening port, not request data.
 - Forum and session IDs are opaque, URL-safe identifiers. Validate them as
   identifiers, and verify the session belongs to the forum. Never interpret
   an ID as a filesystem path.
-- API responses use `Cache-Control: no-store`. The browser sends API requests
-  only to its own origin; the API provides no CORS support.
+- nginx adds `Cache-Control: no-store` to all ChaWeb API responses, including
+  errors. The browser sends API requests only to its own origin; the API
+  provides no CORS support.
 - Keep response bodies specific to the operation. Do not add a generic RPC
   envelope, arbitrary method dispatch, or a general job API.
 - Reject unknown request fields so misspelled commands do not appear to work.
   Clients tolerate additional response fields and validate the fields they use.
+
+The content-type requirement prevents other websites from submitting a simple
+cross-origin POST that starts a turn. A `text/plain` request can reach a private
+server even when its response cannot be read. A cross-origin request with
+`application/json` requires a successful CORS preflight. Keep `OPTIONS` an
+unsupported method returning `404`, without CORS permission headers. Same-origin
+ChaWeb requests need no preflight. See the [CORS request rules](https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/CORS).
+This rule applies to ChaWeb; the OpenAI adapter keeps its current behavior.
 
 ### Endpoint summary
 
@@ -406,7 +420,7 @@ or a final title; existing Jev classification can wait for naming as part of
 input acceptance.
 
 If CHA definitively rejects the first input, delete the newly created session
-before returning `422 input_rejected`. Use normal `delete_session()`, not
+before returning `422 invalid_argument`. Use normal `delete_session()`, not
 conditional unused-session deletion: raw input can retain the session before
 rejecting it. If an earlier operation definitively fails without submitting
 input, also delete the new session before returning that operation's error.
@@ -433,7 +447,7 @@ Return `204` with no body when the application accepted the input, including
 a self-note that creates no character reply. Determine this from
 `CommandResult.session.input_consumed`, not from `clear_input`. Existing parser
 errors can set `clear_input` without accepting a turn. For rejected input,
-return `422 input_rejected` with the safe notice and preserve the draft.
+return `422 invalid_argument` with the safe notice and preserve the draft.
 
 After `204`, fetch a snapshot for the current notice and conversation state.
 The snapshot holds the latest notice; later activity may replace or clear it.
@@ -468,17 +482,26 @@ complete. This delay is an accepted stage 1 tradeoff.
 
 ### Failure and retry rules
 
-Daemon JSON errors reuse `ErrorResponse` from `resources/dto.yaml`. Extend its
-code enum with `input_rejected`; the body keeps the existing shape:
+Daemon JSON errors reuse `ErrorResponse` from `resources/dto.yaml` and the
+existing C++ `Error` serializer. Rejected input uses `invalid_argument` with
+status `422` and CHA's safe notice. No schema, enum, or generated-type change
+is needed; the body keeps the existing shape:
 
 ```json
 {
   "error": {
-    "code": "input_rejected",
+    "code": "invalid_argument",
     "message": "A safe, actionable description."
   }
 }
 ```
+
+The ChaWeb adapter uses six error statuses: `400` for invalid requests and
+oversized prompts, `404` for unknown routes or resources, `415` for unsupported
+content types, `422` for rejected input, `503` while the daemon is stopping,
+and `500` for other application failures. Keep existing error codes and safe
+messages in the body. A command timeout returned as `500` still has an unknown
+input outcome; it is not evidence that a write failed without side effects.
 
 | Status | Browser behavior |
 | --- | --- |
@@ -486,11 +509,17 @@ code enum with `input_rejected`; the body keeps the existing shape:
 | `422` | Show CHA's safe notice and keep the draft. |
 | Any other error | Show the safe error message and keep the draft. |
 
-nginx may return non-JSON errors, including `502` or `504`. Check status and
-response content type before parsing. Use a generic failure message when no
-safe JSON message is available; never render an HTML proxy error as conversation
-content or expose raw exception text. The table defines error presentation;
-the read-retry and uncertain-write rules still apply.
+For `415`, use the existing `invalid_argument` error code with a safe message
+that the request must use `application/json`. It follows the ordinary error
+display behavior above and needs no new error-code enum value.
+
+The existing SCGI 16 MiB body-limit response stays `413`; it is outside the
+adapter's status mapping. nginx can also return `413`, `502`, or `504`, with
+non-JSON bodies. Check status and response content type before parsing. Use a
+generic failure message when no safe JSON message is available; never render
+an HTML proxy error as conversation content or expose raw exception text. The
+table defines error presentation; the read-retry and uncertain-write rules
+still apply.
 
 Automatically retry safe reads with backoff. Do not replay creation with first
 input or later input requests after a network error or timeout. A lost response
@@ -704,8 +733,11 @@ in their separate configuration; the new ChaWeb listeners expose only the
 static application and `/api/cha/v1/`.
 
 Use the same origin for static files and the API, including the assigned port.
-Use `credentials: "omit"` and reject redirects for API `fetch` requests. Do not
-send an authorization header or add permissive CORS headers.
+Use the default `fetch` credentials mode, `same-origin`, and reject redirects
+for API requests. This permits browser-managed Basic authentication if the
+operator later enables it in nginx, without adding a ChaWeb login screen.
+The application adds no bearer header. Do not add permissive CORS headers or
+approve cross-origin preflights.
 
 Preserve the existing exclusive vault lease: a separate native CHA process
 cannot open the same database while the daemon owns it. Configuration editing
@@ -744,6 +776,7 @@ server {
     }
 
     location /api/cha/v1/ {
+        add_header Cache-Control "no-store" always;
         client_max_body_size      256k;
         include                   scgi_params;
         scgi_pass                 unix:/run/cha/alice.sock;
@@ -777,20 +810,30 @@ header. If an outer proxy adds `Via`, also configure `gzip_proxied` for that
 deployment, since it can otherwise suppress compression. See the
 [nginx gzip module](https://nginx.org/en/docs/http/ngx_http_gzip_module.html).
 
-Keep private API responses uncached in nginx and any outer proxy. Verify that
-the deployed path compresses snapshots and returns current data on each poll.
-Buffered responses need no application keepalives.
+Keep private API responses uncached in nginx and any outer proxy. Set
+`add_header Cache-Control "no-store" always` in the ChaWeb API location so
+successes and errors receive the header. Keep this policy out of the shared
+`write_cgi()` helper. See the [nginx header directive](https://nginx.org/en/docs/http/ngx_http_headers_module.html#add_header).
+Verify that the deployed path compresses snapshots and returns current data on
+each poll. Buffered responses need no application keepalives.
 
 ### SCGI request and response support
 
-Keep one SCGI request per Unix connection and the existing `ScgiRequest` fields:
-method, document URI, and body. No new request metadata is needed.
+Keep one SCGI request per Unix connection. Add `content_type` to `ScgiRequest`
+alongside method, document URI, and body, and populate it from `CONTENT_TYPE`.
+The standard nginx `scgi_params` include already supplies this parameter even
+with `scgi_pass_request_headers off`; no new nginx parameter is needed. See
+the [nginx parameter file](https://github.com/nginx/nginx/blob/master/conf/scgi_params).
+Permit a missing value in SCGI parsing; the ChaWeb POST handler enforces the
+requirement. GET and OpenAI requests keep their existing content-type behavior.
 
 Stage 1 does not need query-string parameters or arbitrary request headers.
 Ignore unrelated SCGI environment variables. Validate duplicated recognized
-fields, netstring framing, content length, and the existing global body limit.
-Add proper CGI status phrases and response headers for all statuses used by the
-new API, including `201`, `204`, `409`, `422`, `503`, and `504`.
+fields, including `CONTENT_TYPE`, netstring framing, content length, and the
+existing global body limit.
+Add proper CGI status phrases for `201`, `204`, `415`, `422`, and `503`.
+Retain existing statuses used by SCGI and OpenAI. Cache headers are set in
+nginx; no extension to `write_cgi()` for extra headers is needed.
 
 Do not send HTTP chunk framing from the daemon. It writes CGI headers and body
 bytes; a `204` contains no body. nginx handles the browser-facing HTTP transport.
@@ -798,10 +841,13 @@ Closing the SCGI connection ends that response, not the stored chat session.
 
 ### Packaging and development
 
-Use the existing React/TypeScript/Vite toolchain and pinned dependencies. Add a
-separate browser entry under `webapp/chaweb/` and a ChaWeb Vite configuration
-that builds to `webapp/dist-chaweb/`. Share suitable source modules inside the
-existing frontend project; do not create a package monorepo just for reuse.
+Use the existing React/TypeScript/Vite toolchain and pinned dependencies. Put
+the browser source, unit tests, and HTML entry under `webapp/src/chaweb/`. Add
+`webapp/vite.chaweb.config.ts` with that directory as its root and output in
+`webapp/dist-chaweb/`. The existing TypeScript include and Vitest test pattern
+already cover these sources and tests; keep their configurations unchanged.
+Share suitable source modules inside the existing frontend project; do not
+create a package monorepo just for reuse.
 
 The ChaWeb build must not inject `__cha-bootstrap.js`, load bootstrap through a
 native host, depend on host globals, or use native resource URLs. Add a narrow
@@ -817,11 +863,11 @@ of feature flags.
 
 Use `resources/dto.yaml` as the single schema source. Reuse `Bootstrap`,
 `SessionSnapshot`, `SessionListing`, `CreateSessionResult`, `InputRequest`, and
-`ErrorResponse`. Add `input_rejected` to the error-code enum. No new success
-response types or runtime snapshot fields are needed. Keep HTTP paths and
-behavior in this document.
+`ErrorResponse`, including its existing `invalid_argument` code for rejected
+input. Stage 1 needs no schema, error-enum, generated-type, or runtime snapshot
+changes. Keep HTTP paths and behavior in this document.
 
-Regenerate browser types with the existing tooling. Reuse `validateBootstrap()`,
+Reuse the checked-in browser types and `validateBootstrap()`,
 `isSessionSnapshot()`, `isSessionListingArray()`, and `isSessionLabelResult()`
 for the existing `{ id, label }` creation result. Check JSON responses against
 the reused guards. No separate schema or serializer layer is needed.
@@ -846,8 +892,12 @@ a service worker in stage 1.
 For frontend development, run a separate Vite configuration with an API proxy
 to the chosen user's local nginx port. Browser requests stay relative to the
 frontend origin. The proxy forwards JSON requests unchanged, without an API
-key. The final integration test uses nginx serving the production build, with
-the real SCGI path and isolated test vaults for the configured users.
+key. Extend `tests/integration/daemon_integration_test.py` for ChaWeb API and
+static-file checks, using one daemon, one isolated vault, and the harness's
+single nginx Unix-socket HTTP listener for the new cases. Run them through
+`make itest-daemon`. Test browser state with Vitest, fake fetch, and fake timers.
+Check the real browser flow and second user's port manually during deployment;
+stage 1 adds no Playwright suite or separate integration target.
 
 ## 8. Stage 2: adding voice
 
@@ -866,10 +916,11 @@ Stage 1 makes these decisions now:
 
 ## 9. Implementation order
 
-1. **Contract and daemon routing.** Add the input-rejection error code to the
-   shared DTO schema, route the six endpoints through the existing serial loop,
-   and reuse existing SCGI I/O and shutdown cancellation. Preserve the OpenAI
-   adapter.
+1. **Contract and daemon routing.** Reuse the existing DTOs and error codes;
+   route the six endpoints through the existing serial loop,
+   capture SCGI `CONTENT_TYPE`, and enforce JSON content types on ChaWeb POSTs
+   before application operations. Reuse existing SCGI I/O and shutdown
+   cancellation. Preserve the OpenAI adapter.
 2. **Text API.** Reuse existing serializers for bootstrap, lists, and snapshots.
    Implement creation with first input and cleanup on rejection, later input,
    and Stop. Use `open_session()` followed by the operation for every named
@@ -886,8 +937,9 @@ Stage 1 makes these decisions now:
    and dictation protection, Stop for stored sessions, scrolling, and recovery
    from failed reads and uncertain writes.
 5. **Deployment and end-to-end validation.** Package assets, add per-user nginx
-   listeners with fixed daemon sockets, test production assets over nginx/SCGI,
-   and verify preserved OpenAI-only behavior.
+   listeners with fixed daemon sockets, extend the existing nginx/SCGI tests
+   for the API and static files, and check the browser flow on an iPhone.
+   Verify preserved OpenAI-only behavior.
 
 Stage 1 is complete only when the full browser-to-nginx-to-daemon path works.
 A frontend backed solely by mocks or a direct development HTTP server is not
@@ -901,11 +953,11 @@ should not need paid provider calls.
 
 | Area | Required checks |
 | --- | --- |
-| SCGI | Split and malformed frames; existing global body limit; correct CGI responses, including bodyless `204`; existing read/write cancellation on shutdown. |
+| SCGI | Split and malformed frames; capture `CONTENT_TYPE`, allow it to be absent, and reject duplicates; existing global body limit; correct CGI responses, including bodyless `204` and the `415` status phrase; existing read/write cancellation on shutdown. |
 | Serial handling | Input returns after acceptance; generation continues between requests; Stop waits behind pending classification/naming, then reaches the runtime; existing application deadlines and shutdown still work. |
 | Session lifecycle | Every named-session request opens before its operation; live controllers are reused and retired sessions are loaded; Stop follows the same rule; unknown sessions return `404` from opening; snapshot failures return without an internal retry; no ChaWeb output subscription is attached. |
-| API | Forum/session mismatch rejected; unsupported method/path pairs return `404`; malformed JSON and oversized prompts rejected; no configuration writes; accepted self-notes and rejected parser commands distinguished correctly; later accepted input and successful Stop return `204`, rejected input returns `422` with a notice. |
-| Shared DTOs | Existing bootstrap, snapshot, list, and create JSON passes the reused guards; bootstrap is returned directly; unused snapshot fields remain present without enabling UI features; no runtime snapshot or native-client changes are required. |
+| API | Forum/session mismatch rejected; unsupported method/path pairs, including `OPTIONS`, return `404` without CORS permission headers; all three POST endpoints reject missing or unsupported content types with `415` before application operations, accept `application/json` with optional charset parameters, and reject malformed JSON with `400`; oversized prompts rejected; no configuration writes; accepted self-notes and rejected parser commands distinguished correctly; later accepted input and successful Stop return `204`, rejected input returns `422` with a notice. |
+| Shared DTOs | Existing bootstrap, snapshot, list, and create JSON passes the reused guards; bootstrap is returned directly; unused snapshot fields remain present without enabling UI features; rejected input uses `422 invalid_argument`; no schema, enum, generated-type, runtime snapshot, or native-client changes are required. |
 | First Send | Validate before creation; accepted input returns `201` with a usable session ID without waiting for generation to finish; definitive rejection is cleaned up before `422`; cleanup failure returns `500`; timeout or unknown outcome does not delete or replay; a later generation failure keeps the session. |
 | Polling | Refresh after navigation/actions/focus on a visible conversation; one outstanding snapshot request; the next routine read starts one second after completion; routine polling continues while generation is active and the conversation view and page are visible, including during pending commands; naming alone does not keep polling active; later ordinary refreshes update titles; slow or failed requests do not accumulate polls. |
 | Persistence and recovery | Refresh and reopen an existing session; leave during generation and return; reconnect after a daemon restart using the same forum/session IDs; no automatic creation/input replay after an uncertain acknowledgement; an uncertain first Send is recovered through the session list. |
@@ -914,17 +966,22 @@ should not need paid provider calls.
 | Editor sizing | A native button toggles compact and expanded sizes with touch, mouse, and Enter/Space; its accessible name describes the action; text stays clear of controls; draft, selection, and reading position survive toggling; tapping while editing keeps the keyboard open; the size mode survives Send, snapshots, and navigation, while its height adapts to the visible area. |
 | Viewport layout | App height and top track visual viewport height and offset on initial load, resize, and scroll; the body stays unscrollable; transcript, list, and editor scroll internally; safe-area padding fits within the measured height; on an actual iPhone, controls remain visible through keyboard opening/dismissal, rotation, and Safari browser controls changing size. |
 | Composer keys and dictation | Desktop Enter sends and Ctrl+Enter inserts a newline; touch Enter inserts a newline and the Send icon submits; IME composition and dictation never send automatically; iPhone keyboard dictation enters editable draft text and survives polling without losing focus or caret position; no application microphone or audio endpoint is needed. |
-| Deployment | Each nginx listening port reaches only its configured user's socket, regardless of request headers or body; each port serves the same frontend with API calls to that origin; startup loads bootstrap without key entry or credential storage; nginx's 256 KiB ChaWeb body limit; non-JSON gateway errors; production asset loading; JSON snapshots compressed and uncached; matching daemon/frontend deployment; no native host bootstrap dependency. |
+| Deployment | Automated checks use one daemon and one nginx Unix-socket HTTP listener for ChaWeb; `/` and generated assets return `200` with correct MIME types; nginx adds `no-store` to API successes and errors; nginx's 256 KiB body limit, gateway errors, and JSON compression work. Manual deployment checks confirm each user's port serves the frontend and its assigned daemon; startup needs no key entry, credential storage, or native host; daemon/frontend versions match. |
 | Compatibility | Existing OpenAI listener and API-key routing remain unchanged, with `/v1/` absent from the new ChaWeb listeners; existing OpenAI tests pass unchanged; a long OpenAI request queues ChaWeb requests; queued or timed-out writes are never automatically replayed. |
+
+Add an nginx/SCGI integration regression that posts otherwise valid creation
+JSON as `text/plain` and verifies `415`, no new session, and no provider call.
+Use focused adapter tests for the content-type gate on all three POST routes,
+including missing types, case/charset handling, and rejection of lookalike media
+types. Browser requests send JSON and retain default same-origin credentials.
 
 The acceptance scenario is:
 
 1. Open ChaWeb at a user's assigned nginx port and see that user's configured
-   forums without entering a key. Open a second user's port and verify that it
-   reaches the second daemon and vault; supplying a header or body field cannot
-   change the daemon assigned to either port. Validate the existing bootstrap
-   JSON and hide Entrance, Welcome, and vault controls while keeping their
-   metadata unchanged.
+   forums without entering a key. During deployment, open a second user's port
+   once and verify that it reaches the second daemon and vault. Validate the
+   existing bootstrap JSON and hide Entrance, Welcome, and vault controls while
+   keeping their metadata unchanged.
    Choose a forum in the combobox and see its sessions below with titles and
    dates. Verify that no sidebar, drawer, or Done button is present.
 2. Choose New Session and verify that no session is stored or polled and any

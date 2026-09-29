@@ -1,302 +1,220 @@
-# Stage 2 of 2: Chat turns, output and final validation
+# Block 2: ChaWeb nginx integration
 
-## Assignment
+Status: implementation instructions; the work is not yet complete.
+This block implements plan step 5 and the API integration portion of step 9.
+It requires the six-operation daemon API from block 1, described below. It does
+not require a browser build. Block 3 later adds production-asset checks and the
+frontend dependency to `make itest-daemon`.
 
-Implement this stage in a fresh Grok coding-agent context after
-[block1.md](block1.md) passes its exit criteria. Continue from its repository
-state and execution record. Complete the daemon described by
-[headless.md](headless.md) and the revised [head-plan.md](head-plan.md).
+This document contains the requirements for this block. Background:
+[chaweb.md](chaweb.md) and [chaweb-plan.md](chaweb-plan.md).
 
-This stage covers plan steps 4–5, active-request shutdown and remaining checks
-from step 6, and final deployment/client validation from step 7. It delivers
-both streaming and non-streaming Chat Completions, session continuation,
-correct error handling and cancellation, and the final Linux deployment.
-No third implementation stage is planned.
+## Result and files
 
-The revised plan is deliberate: use blocking `Application::submit()`, shut
-down the daemon on `command_timeout`, delete a newly created session after a
-definitively rejected first input, and retain macOS build/test support. Do not
-replace these decisions with the superseded asynchronous submission plan.
+Deliver a shipped nginx example and automated tests proving that the text API
+works through nginx, SCGI, and a Unix daemon socket. Each production user gets
+one private HTTPS listening port and a fixed daemon socket. All ports serve the
+same static application. Port selection is routing, not authentication: anyone
+who can reach a user's port can use that user's conversations.
 
-## Context budget and starting checks
-
-This stage is scoped for one 500K window. Aim to keep initial reading below
-150K and reserve at least 200K for edits, tests, debugging and review. These
-are planning budgets, not exact tokenizer measurements. The existing
-application/turn code and focused test references inspected during staging
-totaled about 380 KiB; selective reads plus the small stage-1 implementation
-leave substantial room for the work.
-
-Read `AGENTS.md`, both design/plan documents and stage 1's execution record.
-Inspect `git status` and the current daemon files before changing them. Verify
-that the Linux baseline and nginx model-list smoke test passed. If required
-evidence is missing, resolve that prerequisite before implementing turns, as
-the main plan requires. Do not repeat a passed server setup exercise without
-a relevant change or failure.
-
-| Read first | Purpose |
+| File | Work |
 | --- | --- |
-| `src/daemon/*`, `tests/daemon/*`, daemon CMake wiring and `packaging/linux/*` | Continue the existing implementation and remove its temporary chat response |
-| `src/app/application.h`; session, subscription and shutdown methods in `.cpp` | Public calls, epoch handling and error variants |
-| `src/runtime/protocol.h`, `live_session.h` and relevant `.cpp` functions | Result types, subscription endpoint, output acknowledgement and terminal states |
-| `src/runtime/session_output.*`, `runtime_settings.h` | Coalescing, snapshots, limits and shutdown grace |
-| `src/runtime/text_input.cpp`, relevant `src/session/session_controller.cpp` functions | Rejection, Jev, multicast, stop and session retention semantics |
-| `src/chat/transcript.h`, `src/session/controller_update.h`, `src/runtime/session_projection.cpp` | Entry types, appends and presentation rewrites |
-| Focused tests in `tests/app/unit_application.cpp`, `tests/runtime/unit_session_output.cpp`, `unit_live_session.cpp`, `unit_jev.cpp` and `tests/app/unit_session_retirement.cpp` | Existing fixtures and lifecycle behavior |
+| `packaging/linux/nginx-chaweb.conf.example` | Add the separate ChaWeb server block. |
+| `tests/integration/daemon_integration_test.py` | Add a ChaWeb fixture and API cases using the existing harness. |
+| `tests/native/prepare_test_vault.cpp` | Reuse the `cha_prepare_test_vault` helper; extend only if a required fixture needs it. |
+| `scripts/run_daemon.py` | Reuse for local inherited-socket activation; no new launcher. |
 
-Read deeper into storage/providers only to answer a concrete implementation or
-test question. Keep production changes in the daemon unless a demonstrated
-portability fix is required. No new application threads, persistent API state,
-database schema, general transport framework or external dependency is needed.
+Keep existing `nginx.conf.example`, `nginx.conf.install`, bearer-key maps, and
+OpenAI integration cases unchanged. Do not add a second test runner, TCP port
+allocator, Playwright suite, or `itest-chaweb` target.
 
-## Work sequence
+## API available from block 1
 
-### 1. Implement the complete turn lifecycle
+Base: `/api/cha/v1`. `S` below means
+`/forums/{forum_id}/sessions/{session_id}` under that base.
 
-Replace stage 1's temporary `501` branch with a single request-local turn
-handler in `openai_adapter.cpp`. Reuse its parsed request, tag helpers and
-transport. Keep state local to the current request.
+| Request | Body | Success |
+| --- | --- | --- |
+| `GET /bootstrap` | None | `200`, existing `Bootstrap` directly. |
+| `GET /forums/{forum_id}/sessions` | None | `200`, `SessionListing[]`. |
+| `POST /forums/{forum_id}/sessions` | `{ "text": "..." }` | `201`, `{ "id": "...", "label": "..." }`. |
+| `GET S` | None | `200`, existing `SessionSnapshot`. |
+| `POST S/input` | `{ "text": "..." }` | `204`, empty body. |
+| `POST S/stop` | `{}` | `204`, empty body. |
 
-1. Capture the application's nonzero context epoch. If no assistant message
-   was supplied, create a session with an empty label. Otherwise use the
-   selected tag. Call `open_session()` for either case. Return `404` for a
-   missing tagged session, without falling back to another tag or creating
-   a replacement session.
-2. Subscribe with request-specific connection/subscription IDs and the epoch.
-   Retain `SubscribeResult::session`. Consume the first snapshot, record its
-   highest entry ID (zero if empty), and acknowledge it before submitting.
-   Do not access a controller or runtime internals directly.
-3. Submit the final user text unchanged in `RawCommand` using blocking
-   `Application::submit()`. The existing deadline governs the wait. Check
-   peer closure and the signal stop flag immediately after it returns.
-   Do not send SSE headers before acceptance.
-4. Acceptance requires a `CommandResult` with
-   `session.input_consumed == true`; `clear_input` alone is insufficient.
-   Rejections return `400` with the CHA notice or failure message. Keep
-   operational errors distinct from invalid input. A `command_timeout` means
-   the command may still execute: request bounded process shutdown and do not
-   accept another connection.
-5. After acceptance, poll connection state, the stop flag and `take_output()`
-   every 25 ms. Track entries with IDs greater than the baseline. Snapshots
-   replace tracked entry state; `EntryTextTarget` appends extend the matching
-   entry. Ignore reasoning appends. Acknowledge every consumed output item,
-   including ignored items and output drained after disconnect.
-6. A normal turn finishes only on a snapshot with
-   `generation.active == false` and at least one new entry. Jev and all
-   multicast recipients belong to the same turn. Naming updates and notices
-   are not assistant replies. A new error entry means a provider failure at
-   turn end. Terminal lifecycle snapshots and closed output need explicit
-   handling so storage/session failures cannot leave the loop waiting forever.
-7. On disconnect or failed write, call `stop()` once and drain without writes
-   until the session is idle or terminal. Cancellation before a new entry is
-   committed must not wait forever for a new entry. If idle/terminal state
-   cannot be established, shut down the process instead of admitting more
-   work against unresolved state.
-8. Unsubscribe on all paths after a successful subscription, with the same
-   IDs and epoch. After unsubscribe, delete a session created by this request
-   if CHA definitively rejected its first input. The parser retains sessions
-   before validating input, so startup pruning is insufficient. Do not use
-   only-if-unused deletion if that retention would make it a no-op. Never
-   delete an existing session, an accepted partial turn or a session whose
-   acceptance is uncertain after a timeout.
+All POSTs require `Content-Type: application/json`; missing/unsupported types
+return `415` before application operations. Unknown method/path pairs, including
+`OPTIONS`, return `404` without CORS grants. Creation validates before storing,
+accepts raw first input, and deletes the new session on definitive rejection.
+Every named-session operation opens the session first, including Stop.
 
-Use small scope-bound cleanup helpers, not a general state-machine framework.
-Keep normal idle sessions selected between requests. `open_session()` already
-uses selection and retirement; do not use `LiveSessionManager::open()` or
-maintain a separate cache of live sessions. Preserve the existing forum persona
-and Jev target behavior. Do not save a new forum default from API input.
+Errors use `{"error":{"code":"...","message":"..."}}`. Adapter statuses
+are `400` invalid request/prompt size, `404` unknown route/resource, `415` media
+type, `422 invalid_argument` rejected input, `500` other failure, and `503`
+shutdown. The global SCGI 16 MiB bound can return `413`. A timeout or lost write
+response has an unknown outcome and must not cause automatic input replay.
 
-### 2. Add both response modes to the same turn handler
+The daemon handles requests serially. Input returns after acceptance; existing
+workers continue generation. Snapshots return the full transcript and
+`generation.active`; there is no subscription. Request closure must not stop
+accepted ChaWeb generation. A stored session and its IDs survive daemon restart.
 
-Keep collection and rendering shared between modes. It is reasonable to get
-non-streaming working first internally, then add SSE before this stage ends.
-Never create separate lifecycle/cancellation implementations for the modes.
+## nginx example
 
-Render character entries in transcript order as `**Name:** text`, separated
-by blank lines. Use entry display names. If the completed turn contains only
-its human entry, use `(recorded)`. Suppress reasoning and ordinary notices.
-Prepend the tag plus a blank line only in API output, never in storage.
+Ship this server-block structure for inclusion in the nginx `http` context.
+The enclosing configuration must include nginx's `mime.types`. Replace private
+address, hostname, static root, and TLS paths during deployment. Duplicate the
+block with another port and a literal different socket for another user.
 
-For non-streaming, monitor disconnects throughout collection. Return one
-`chat.completion`, one choice at index zero, assistant role, the complete
-tagged text and `finish_reason = "stop"`. Do not emit success headers until
-the outcome is known. Return `502` for provider failure and `500` for
-storage/internal failure. Do not invent aggregate token usage.
+```nginx
+server {
+    listen 192.168.1.10:8443 ssl;
+    server_name cha.example.test;
+    # Set ssl_certificate and ssl_certificate_key for this deployment.
+    root /srv/cha/chaweb;
 
-For streaming:
-
-- Immediately after acceptance, send CGI SSE headers and a first
-  `chat.completion.chunk` containing assistant role and the tag. Use one
-  completion ID, timestamp and model for the whole response.
-- Emit text through `choices[0].delta.content`. Track emitted text separately
-  for each reply, excluding the tag. Send appends once. On a full snapshot,
-  emit only the suffix after the already-sent prefix.
-- If a snapshot rewrites that prefix, log once and stop sending that reply.
-  Continue acknowledgements and later multicast replies. SSE cannot retract
-  content; never resend a full snapshot as a new answer. The non-streaming
-  result can use the final snapshot's complete text.
-- Send `: keepalive\n\n` after 15 seconds without text and repeat during quiet
-  generation. Use a monotonic clock. Keepalive timing starts only after SSE
-  headers; the blocking acceptance wait can still return a JSON error.
-- On success, send an empty delta with `finish_reason = "stop"`, then
-  `data: [DONE]\n\n`. After headers, report provider/internal errors as one
-  final SSE error event and close without a success chunk or `[DONE]`.
-
-Use the existing OpenAI error helper for all error envelopes. Keep malformed
-requests/rejected input (`400`), absence (`404`), provider failure (`502`) and
-storage/internal failure (`500`) separate. Remove the intermediate `501`
-branch completely. Do not log credentials or complete request bodies.
-
-### 3. Finish shutdown and failure integration
-
-Extend stage 1's signal flag and shutdown path to active chat requests. Keep
-`SA_RESTART`; never call the application from a signal handler. Check the
-flag during output polling and after blocking submission returns.
-
-Use one bounded shutdown budget for cancellation, draining and
-`request_shutdown()`/`join_shutdown()`. Do not grant each cleanup step a fresh
-full grace period or wait indefinitely for a turn-ending snapshot. Preserve
-the revised plan's `_exit(EXIT_FAILURE)` fallback when joining fails. The
-blocking submission can delay observation of the stop flag; preserve the
-existing command deadline and account for it in the service stop timeout.
-
-No request may be accepted after a submission timeout or unrecoverable cleanup
-failure. A normal client disconnect must allow subsequent requests once its
-turn is idle or terminal. Preserve partial responses according to the core's
-existing rules.
-
-Reuse the executable launcher from stage 1 to automate shutdown during
-generation. Together with invalid activation, this completes the two requested
-executable-level tests. Keep the other deployment/startup scenarios manual,
-as the revised plan specifies.
-
-### 4. Add focused behavioral tests
-
-Extend `tests/daemon/` using temporary databases, the deterministic test
-provider and existing mock provider facilities. Do not require paid provider
-calls for automated tests. Cover these groups:
-
-| Group | Required cases |
-| --- | --- |
-| Identity and storage | New chat, tagged continuation, missing tagged session, pasted user-side tag creates a separate session, no client-history replay, no stored API tag |
-| Input behavior | Plain text, `@Name`, `/mcast`, `@-`, empty/invalid mentions, unknown slash commands, failed multicast, Jev acceptance/rejection |
-| Rejection cleanup | Rejected first input leaves no session; rejection in an existing session preserves its history; `clear_input=true` without consumption never starts a response |
-| Output | Immediate completion, ordered multicast labels, snapshot coalescing, duplicate snapshots, prefix mismatch followed by another reply, ignored reasoning, `(recorded)` |
-| Response protocol | Decode JSON/SSE, consistent completion metadata, streamed/non-streamed text agreement where snapshots remain append-only, finish/error framing, keepalives |
-| Failure and cancellation | Provider failure in both modes, terminal/closed output, disconnect in both modes, next request after cancellation, submission timeout causes daemon shutdown |
-| Session lifecycle | Alternate among more than eight stored sessions, continue after partial output/reopen, regenerate/edit appends rather than deletes, no forum-default writes |
-
-Use a controllable time value for keepalive testing instead of a 15-second
-sleep. Test timeout behavior at the adapter level using the existing runtime
-settings/test seams; do not add a third executable-level scenario or a new
-production configuration option just for tests. Exercise meaningful failure
-paths without adding a general fake application framework.
-
-### 5. Complete deployment and client validation
-
-Finish the existing `packaging/linux/` examples in place. Preserve stage 1's
-socket activation, authentication boundary and serial request handling. Check
-the actual nginx group, SCGI parameters, socket permissions and service stop
-timeout. Do not introduce a provisioning framework.
-
-Run `nginx -t`, verify the units, and exercise the full step-7 matrix from
-`head-plan.md` with two disposable users. The following must have recorded
-results, including checks that can now reuse stage 1 evidence:
-
-- First-connection activation, correct model listing and both response modes.
-- A second chat and model-list request wait behind a slow turn; queued clients
-  that disconnect with small or large bodies create no turn.
-- Active disconnect cancels and permits the next request; partial output can
-  be continued using the preserved tag.
-- Missing/unknown keys return nginx `401`; missing socket/startup failure
-  returns nginx `502`; oversized bodies get `413`; authorization headers
-  never reach the daemon.
-- A user cannot reach another user's vault through a session tag.
-- Protected/unprotected startup, missing/wrong password errors, and rejection
-  of a second process opening the same vault.
-- Clean stop while idle or reading a partial request, stop during generation,
-  crash/restart recovery, lease release, private workspace cleanup and stored
-  session continuation after restart.
-- Provider errors yield the correct non-streaming status or SSE error event.
-
-Use one intended OpenAI-compatible client with automatic titles, tags and
-follow-up requests disabled. Confirm that it preserves assistant tags,
-displays speaker labels, tolerates SSE comments and continues after a stopped
-reply. Regenerate/edit appends a turn; it does not remove prior stored turns.
-With no remaining assistant tag, editing the first turn creates a new session.
-
-Run daemon tests on macOS and Linux and the Linux core/application tests. Run
-the relevant desktop suites if shared code changed. Confirm that the daemon
-adds no application threads or queues and starts no media downloads. Treat
-unavailable host/client access as an explicit unverified check, never as a
-passed check; complete independent work before reporting that limitation.
-
-## Exit criteria
-
-- [ ] Stage 1's parsing, models and transport tests still pass.
-- [ ] All lifecycle, output and failure test groups above pass.
-- [ ] The executable shutdown-during-generation test passes; invalid activation
-  still passes. No intermediate chat placeholder remains.
-- [ ] Daemon tests pass on macOS and Linux; required existing suites pass.
-- [ ] The full nginx/systemd matrix passes with two users, with evidence for
-  queueing, cancellation, isolation and recovery.
-- [ ] The intended chat client passes the tag, streaming and continuation checks.
-- [ ] Only the two API endpoints are exposed. No storage/threading redesign,
-  login flow, rollback, media endpoint or configuration API has been added.
-- [ ] Review confirms no leaked subscriptions/descriptors, no abandoned busy
-  session accepted by the next request, and bounded failure shutdown.
-
-## Completion report
-
-Add a short execution record below and include it in the final report. Record
-the repository revision or exact working-tree state, changed files, commands
-and results by platform, deployment/client results and any remaining failures
-or unverified requirements. Include no secrets. This record is the only change
-to this stage document needed during implementation; leave the design and main
-plan intact.
-
-Declare the implementation complete only when all required exit criteria pass.
-The open questions about login, configuration import/export and branching
-remain future work and do not block this release.
-
-### Execution record
-
-Repository: `2c4c4dc` (Block 1) plus the uncommitted stage-2 files below.
-Linux host: Ubuntu, g++ 15.2.0, `build/linux`. macOS was not available.
-
-Changed files:
-- `src/daemon/openai_adapter.h`, `openai_adapter.cpp` — turn handler for both response modes; `DaemonShutdown`
-- `src/daemon/main.cpp` — one shutdown budget shared by drain and `join_shutdown()`
-- `src/daemon/scgi.cpp` — removed the unused `501` reason phrase
-- `packaging/linux/cha@.service` — `TimeoutStopSec=90s` (30s command deadline plus shutdown grace)
-- `CMakeLists.txt`
-- `tests/daemon/unit_openai_adapter.cpp`, `unit_openai_turns.cpp`, `unit_daemon_process.cpp`
-
-The temporary `501` chat branch is gone. No new application thread, queue, schema, or dependency was added.
-
-```
-cmake --build build/linux --target cha-daemon cha_daemon_tests cha_tests cha_app_tests
-./build/linux/cha_daemon_tests
-./build/linux/cha_tests
-./build/linux/cha_app_tests
+    location = / {
+        add_header Cache-Control "no-cache";
+        try_files /index.html =404;
+    }
+    location = /index.html {
+        add_header Cache-Control "no-cache";
+    }
+    location /assets/ {
+        add_header Cache-Control "public, max-age=31536000, immutable";
+        try_files $uri =404;
+    }
+    location /api/cha/v1/ {
+        add_header Cache-Control "no-store" always;
+        client_max_body_size      256k;
+        include                   scgi_params;
+        scgi_pass                 unix:/run/cha/alice.sock;
+        scgi_pass_request_headers off;
+        scgi_request_buffering    on;
+        scgi_buffering            on;
+        scgi_cache                off;
+        scgi_ignore_client_abort  off;
+        scgi_read_timeout         75s;
+        scgi_send_timeout         30s;
+        gzip                      on;
+        gzip_types                application/json;
+        gzip_vary                 on;
+    }
+    location / {
+        try_files $uri =404;
+    }
+}
 ```
 
-Results on this Linux host:
-- `cha_daemon_tests`: 38 passed. Includes stage-1 parsing, models, transport, and invalid activation; chat lifecycle, both response modes, rejection cleanup, cancellation, keepalive, submission timeout, and shutdown during generation.
-- `cha_tests`: 503 passed, 2 skipped (live OAuth tests).
-- `cha_app_tests`: 328 passed.
-- Shared application code did not change, so the desktop suites were not run.
-- macOS build and daemon tests: not run. This host is Linux only.
+The standard `scgi_params` already sends `CONTENT_TYPE`, even with request-header
+forwarding disabled. Do not add `CHA_CONTEXT`, user IDs, bearer routing, or
+custom header plumbing. Do not grant CORS or special-case `OPTIONS` in nginx.
+Let the daemon return its finite API error. `/v1/` is absent on these listeners.
 
-Deployment and client checks on this host:
-- `www-data` exists (`www-data:x:33`). The socket example already uses that group.
-- `nginx` is not installed. `nginx -t`, the two-user matrix, and the chat client were not run.
-- `systemd-analyze verify` on the example units reports `/usr/local/bin/cha-daemon` is not installed. The binary is built at `build/linux/cha-daemon` and is not copied into `/usr/local`.
-- No `/var/lib/cha` users, `/run/cha` socket, or disposable vault is present.
-- These deployment and client checks are unverified. They are not passed checks.
+Keep both buffering directions enabled. nginx's timeouts also bound time spent
+waiting behind another daemon request; they do not require daemon I/O deadlines.
+JSON is explicitly included for gzip; test with `Accept-Encoding: gzip`. If a
+deployment has an outer proxy adding `Via`, document the need to configure
+`gzip_proxied` there. API cache headers apply to successes and errors, and stay
+out of shared `write_cgi()` and OpenAI responses.
 
-Stage 1 evidence that still applies: idle `SIGTERM` and partial-read `SIGTERM` on the real executable exited 0; direct SCGI `GET /v1/models` returned forum `lobby` and omitted Entrance. The nginx model-list smoke test was not run in stage 1 and was not run here.
+## Extend the existing harness
 
-The implementation is not complete. The Linux daemon tests pass. The nginx/systemd matrix, the chat client, and the macOS daemon tests are still open.
+Use `tests/integration/daemon_integration_test.py`, which already supplies
+`UnixHTTPConnection`, `FakeProvider`, temporary paths, process logs, cleanup,
+test-vault creation, and `scripts/run_daemon.py`. Reuse these small helpers
+without turning the test file into a general test framework.
 
-COMPLETED
+Each new ChaWeb fixture runs one daemon, one isolated vault, and one nginx
+HTTP listener on a Unix socket. The fake provider can continue using its
+existing localhost TCP socket. Keep existing OpenAI fixtures and their
+multi-user coverage intact; no new two-user routing fixture is needed.
+
+Render the actual shipped ChaWeb example with test substitutions for the
+listener, daemon socket, root, and TLS. Replace the HTTPS listener with a Unix
+HTTP listener and use a temporary static directory, which can remain empty in
+this block. Include real nginx `scgi_params` and `mime.types`; locate the latter
+beside the nginx configuration or accept an explicit path if necessary. Keep
+all nginx PID, log, body, and SCGI temporary paths inside the test directory.
+Validate the rendered configuration with `nginx -t` before starting it.
+
+Use bootstrap for readiness and derive forum/session IDs from responses. Send
+no bearer key in ChaWeb requests. Extend request helpers only as needed to
+control media types and inspect status, headers, and raw bodies. Do not force
+JSON parsing for `204`, gzip bytes, or nginx error pages.
+
+`FakeProvider` records prompts and supports holding/releasing replies and
+provider failures. Use its synchronization to test active generation and Stop;
+avoid timing assertions based on a fast provider or arbitrary long sleeps.
+Ensure cleanup releases held replies and stops every child process after
+failures. Keep readiness and completion waits bounded and report process logs.
+
+## Required integration cases
+
+| Case | Evidence |
+| --- | --- |
+| Complete API path | Bootstrap/list/create/snapshot/input/Stop work through the shipped nginx configuration and real SCGI daemon; later input and Stop have bodyless `204` responses. |
+| First-input lifecycle | Creation returns `201` after acceptance while a held reply remains active; rejected first input returns `422` and leaves no stored row; self-notes keep their sessions. |
+| Continuation and Stop | Snapshots show progress and final state; Stop cancels a held reply; loading an older/retired session works; idle Stop succeeds and unknown Stop returns `404`. |
+| Request lifetime | An accepted turn survives completion or loss of its ChaWeb request; the next read finds it. Do not retry a mutation to recover a lost response. |
+| Persistence | Restart the daemon with the same test vault, then reopen the same session ID with its history. |
+| Content-type regression | Send valid creation JSON as `text/plain`; assert `415`, unchanged session list, and no provider request. Include missing type and unsupported preflight coverage. |
+| Validation | Malformed JSON, unknown fields, invalid method/path pairs, missing/mismatched identities, and oversized prompts return the documented statuses without unwanted mutations. |
+| nginx behavior | API successes and errors have `Cache-Control: no-store`; the 256 KiB bound returns `413`; an unavailable socket gives a gateway error; sufficiently large JSON is gzip-compressed and decompresses to a valid snapshot. |
+
+Focused media-type variations and unusual cleanup failures remain covered by
+block 1's unit tests. Browser stale responses and automatic-replay prevention
+belong to block 4. Real static-file status/MIME/cache checks are added in block
+3, once production assets exist. Do not fake assets to declare those checks done.
+
+## Local browser-development handoff
+
+Provide a usable local HTTP nginx listener for the next block's Vite proxy.
+Use the shipped example with `listen 127.0.0.1:8087` without `ssl`, an absolute
+path to `webapp/dist-chaweb` as root, and a fixed development daemon socket.
+The root can be absent until block 3. Use an isolated nginx prefix/configuration
+and process, not changes to an installed personal service.
+
+A development daemon can be started in a terminal with:
+
+```sh
+cmake --preset ninja
+cmake --build --preset ninja --target cha-daemon cha_prepare_test_vault
+build/ninja/cha_prepare_test_vault /tmp/chaweb-dev-config
+python3 scripts/run_daemon.py /tmp/chaweb-dev.sock build/ninja/cha-daemon --config /tmp/chaweb-dev-config
+```
+
+Choose unused temporary paths. Set the local nginx upstream to
+`unix:/tmp/chaweb-dev.sock`. Put the server block inside a complete nginx
+configuration with `events {}` and `http {}`, absolute include paths, and
+writable PID/log/temp paths. Check and run it with:
+
+```sh
+nginx -t -p /absolute/dev-nginx/ -c /absolute/dev-nginx/nginx.conf
+nginx -p /absolute/dev-nginx/ -c /absolute/dev-nginx/nginx.conf -g 'daemon off;'
+```
+
+The prepared vault is enough for navigation and self-notes. For real replies,
+use an isolated vault with working provider settings or the existing fake
+provider configured through `cha_prepare_test_vault --provider-port PORT`.
+Do not open a vault simultaneously in the native app and daemon.
+
+## Verification and completion
+
+Prerequisites are the normal C++ build tools, Python 3, and nginx on PATH with
+its parameter/MIME files. Run from the repository root:
+
+```sh
+make test
+make itest-daemon
+```
+
+For a nonstandard nginx installation, use the existing Python arguments
+`--nginx` and `--scgi-params` after building the targets. Keep
+`make itest-daemon` free of a ChaWeb frontend-build dependency until block 3.
+
+Completion requires passing new ChaWeb API cases and existing OpenAI cases,
+plus a working local listener for browser development. Record its URL and
+configuration/socket paths for the next block. Check another user's production
+port manually during deployment; do not automate nginx's fixed-port routing
+with extra daemons or request-header/body redirection tests.
