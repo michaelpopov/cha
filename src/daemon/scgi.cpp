@@ -87,6 +87,7 @@ ScgiReadStatus parse_headers(
     std::optional<std::string_view> scgi;
     std::optional<std::string_view> method;
     std::optional<std::string_view> uri;
+    std::optional<std::string_view> content_type;
     std::size_t offset = 0;
     while (offset < block.size()) {
         const auto name = next_token(block, offset);
@@ -100,6 +101,7 @@ ScgiReadStatus parse_headers(
         else if (*name == "SCGI") field = &scgi;
         else if (*name == "REQUEST_METHOD") field = &method;
         else if (*name == "DOCUMENT_URI") field = &uri;
+        else if (*name == "CONTENT_TYPE") field = &content_type;
         if (field == nullptr) continue;
         if (*field) return ScgiReadStatus::bad_request;
         *field = *value;
@@ -112,21 +114,32 @@ ScgiReadStatus parse_headers(
     if (body_size > scgi_body_limit) return ScgiReadStatus::too_large;
     request.method = std::string(*method);
     request.document_uri = std::string(*uri);
+    if (content_type) request.content_type = std::string(*content_type);
     return ScgiReadStatus::ok;
 }
 
 std::string_view reason_phrase(int status) {
     switch (status) {
+    case 201:
+        return "Created";
+    case 204:
+        return "No Content";
     case 400:
         return "Bad Request";
     case 404:
         return "Not Found";
     case 413:
         return "Content Too Large";
+    case 415:
+        return "Unsupported Media Type";
+    case 422:
+        return "Unprocessable Entity";
     case 500:
         return "Internal Server Error";
     case 502:
         return "Bad Gateway";
+    case 503:
+        return "Service Unavailable";
     default:
         return "OK";
     }
@@ -247,9 +260,14 @@ bool write_cgi(
     head += std::to_string(status);
     head += ' ';
     head += reason_phrase(status);
-    head += "\r\nContent-Type: ";
-    head += content_type;
-    head += "\r\n\r\n";
+    head += "\r\n";
+    if (status != 204) {
+        head += "Content-Type: ";
+        head += content_type;
+        head += "\r\n";
+    }
+    head += "\r\n";
+    if (status == 204) return write_bytes(fd, head, stop);
     return write_bytes(fd, head, stop) && write_bytes(fd, body, stop);
 }
 

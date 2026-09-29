@@ -89,6 +89,7 @@ TEST(Scgi, ReadsFragmentedHeadersAndBody) {
     EXPECT_EQ(result.request.method, "POST");
     EXPECT_EQ(result.request.document_uri, "/v1/chat/completions");
     EXPECT_EQ(result.request.body, "{\"model\":\"lobby\"}");
+    EXPECT_TRUE(result.request.content_type.empty());
     EXPECT_FALSE(peer_closed(sockets.local.get()));
 }
 
@@ -116,6 +117,15 @@ TEST(Scgi, RejectsMalformedFraming) {
               {"REQUEST_METHOD", "GET"},
               {"DOCUMENT_URI", "/v1/models"},
               {"REQUEST_METHOD", "POST"}},
+             "")},
+        {"duplicate content type",
+         scgi_block(
+             {{"CONTENT_LENGTH", "0"},
+              {"SCGI", "1"},
+              {"REQUEST_METHOD", "POST"},
+              {"DOCUMENT_URI", "/api/cha/v1/bootstrap"},
+              {"CONTENT_TYPE", "application/json"},
+              {"CONTENT_TYPE", "text/plain"}},
              "")},
         {"missing scgi",
          scgi_block(
@@ -277,6 +287,73 @@ TEST(Scgi, IgnoresUnrelatedVariables) {
     ASSERT_EQ(result.status, ScgiReadStatus::ok);
     EXPECT_EQ(result.request.method, "GET");
     EXPECT_EQ(result.request.document_uri, "/v1/models");
+    EXPECT_TRUE(result.request.content_type.empty());
+}
+
+TEST(Scgi, CapturesContentType) {
+    auto sockets = make_pair();
+    const std::string request = scgi_request(
+        "POST",
+        "/api/cha/v1/forums/lobby/sessions",
+        "{}",
+        {{"CONTENT_TYPE", "application/json; charset=utf-8"}});
+    send_all(sockets.peer.get(), request);
+    std::atomic<bool> stop{false};
+    const ScgiReadResult result = read_scgi(sockets.local.get(), stop);
+    ASSERT_EQ(result.status, ScgiReadStatus::ok);
+    EXPECT_EQ(result.request.content_type, "application/json; charset=utf-8");
+    EXPECT_EQ(result.request.body, "{}");
+}
+
+TEST(Scgi, WritesAddedStatusPhrasesAndBodylessNoContent) {
+    struct Case {
+        int status;
+        std::string_view phrase;
+        bool bodyless;
+    };
+    const Case cases[]{
+        {201, "Created", false},
+        {204, "No Content", true},
+        {415, "Unsupported Media Type", false},
+        {422, "Unprocessable Entity", false},
+        {503, "Service Unavailable", false},
+    };
+    for (const auto& item : cases) {
+        SCOPED_TRACE(item.status);
+        auto sockets = make_pair();
+        std::atomic<bool> stop{false};
+        ASSERT_TRUE(write_cgi(
+            sockets.local.get(),
+            item.status,
+            "application/json",
+            "{}",
+            stop));
+        sockets.local.close();
+        std::string raw;
+        char buffer[256];
+        while (true) {
+            const ssize_t count =
+                ::recv(sockets.peer.get(), buffer, sizeof(buffer), 0);
+            if (count == 0) break;
+            if (count < 0) {
+                if (errno == EINTR) continue;
+                break;
+            }
+            raw.append(buffer, static_cast<std::size_t>(count));
+        }
+        EXPECT_NE(
+            raw.find(
+                "Status: " + std::to_string(item.status) + " "
+                + std::string(item.phrase) + "\r\n"),
+            std::string::npos)
+            << raw;
+        if (item.bodyless) {
+            EXPECT_EQ(raw, "Status: 204 No Content\r\n\r\n");
+        } else {
+            EXPECT_TRUE(raw.ends_with("{}"));
+            EXPECT_NE(raw.find("Content-Type: application/json\r\n"), std::string::npos);
+        }
+    }
 }
 
 } // namespace

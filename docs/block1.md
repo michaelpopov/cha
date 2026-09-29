@@ -229,3 +229,5 @@ Completion requires passing new tests and existing OpenAI/DTO checks, with any
 baseline failures reported separately. The handoff is the six-operation API in
 the real serial daemon. nginx end-to-end tests belong to block 2; frontend
 assets and their build dependency must not be required yet.
+
+COMPLETED

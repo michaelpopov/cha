@@ -52,6 +52,7 @@ struct ScgiRequest {
     std::string method;
     std::string document_uri;
     std::string body;
+    std::string content_type;
 };
 
 enum class ScgiReadStatus {

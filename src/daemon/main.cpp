@@ -1,5 +1,6 @@
 #include "app/application.h"
 #include "app/application_config.h"
+#include "daemon/chaweb_adapter.h"
 #include "daemon/openai_adapter.h"
 #include "daemon/scgi.h"
 #include "util/logging.h"
@@ -269,8 +270,13 @@ void run_accept_loop(app::Application& application) {
                 stop_requested);
         } else if (result.status == ScgiReadStatus::ok
             && !stop_requested.load() && !daemon::peer_closed(client.get())) {
-            daemon::handle_request(
-                application, result.request, client.get(), stop_requested);
+            if (daemon::is_chaweb_request(result.request.document_uri)) {
+                daemon::handle_chaweb_request(
+                    application, result.request, client.get(), stop_requested);
+            } else {
+                daemon::handle_request(
+                    application, result.request, client.get(), stop_requested);
+            }
         }
     }
 }

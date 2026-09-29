@@ -5,6 +5,7 @@
 #include "support/test_workspace.h"
 
 #include <gtest/gtest.h>
+#include <nlohmann/json.hpp>
 
 #include <atomic>
 #include <cerrno>
@@ -45,8 +46,7 @@ std::filesystem::path write_config(
     return config;
 }
 
-// Sends GET /v1/models to a starting daemon and returns the raw response.
-std::string request_models(DaemonProcess& process) {
+daemon::UniqueFd connect_ready(DaemonProcess& process) {
     daemon::UniqueFd client;
     const auto deadline = std::chrono::steady_clock::now() + 5s;
     while (std::chrono::steady_clock::now() < deadline) {
@@ -57,27 +57,17 @@ std::string request_models(DaemonProcess& process) {
             std::this_thread::sleep_for(20ms);
         }
     }
-    EXPECT_TRUE(client);
-    if (!client) return {};
-    const std::string headers =
-        std::string("CONTENT_LENGTH") + '\0' + "0" + '\0'
-        + "SCGI" + '\0' + "1" + '\0'
-        + "REQUEST_METHOD" + '\0' + "GET" + '\0'
-        + "DOCUMENT_URI" + '\0' + "/v1/models" + '\0';
-    const std::string request =
-        std::to_string(headers.size()) + ":" + headers + ",";
-    std::atomic<bool> stop{false};
-    EXPECT_TRUE(daemon::write_bytes(client.get(), request, stop));
+    return client;
+}
+
+std::string read_until_close(
+    int fd, std::chrono::steady_clock::time_point deadline) {
     std::string raw;
     char buffer[4096];
     while (std::chrono::steady_clock::now() < deadline) {
-        const ssize_t count = ::recv(client.get(), buffer, sizeof(buffer), 0);
+        const ssize_t count = ::recv(fd, buffer, sizeof(buffer), 0);
         if (count > 0) {
             raw.append(buffer, static_cast<std::size_t>(count));
-            if (raw.find("\r\n\r\n") != std::string::npos
-                && raw.find('}') != std::string::npos) {
-                break;
-            }
             continue;
         }
         if (count == 0) break;
@@ -89,6 +79,45 @@ std::string request_models(DaemonProcess& process) {
         break;
     }
     return raw;
+}
+
+std::string exchange_scgi(
+    DaemonProcess& process,
+    std::string_view method,
+    std::string_view uri,
+    std::string_view body = {},
+    std::string_view content_type = {}) {
+    daemon::UniqueFd client = connect_ready(process);
+    EXPECT_TRUE(client);
+    if (!client) return {};
+    std::string headers =
+        std::string("CONTENT_LENGTH") + '\0' + std::to_string(body.size()) + '\0'
+        + "SCGI" + '\0' + "1" + '\0'
+        + "REQUEST_METHOD" + '\0' + std::string(method) + '\0'
+        + "DOCUMENT_URI" + '\0' + std::string(uri) + '\0';
+    if (!content_type.empty()) {
+        headers +=
+            std::string("CONTENT_TYPE") + '\0' + std::string(content_type) + '\0';
+    }
+    const std::string request =
+        std::to_string(headers.size()) + ":" + headers + "," + std::string(body);
+    std::atomic<bool> stop{false};
+    EXPECT_TRUE(daemon::write_bytes(client.get(), request, stop));
+    return read_until_close(
+        client.get(), std::chrono::steady_clock::now() + 15s);
+}
+
+// Sends GET /v1/models to a starting daemon and returns the raw response.
+std::string request_models(DaemonProcess& process) {
+    return exchange_scgi(process, "GET", "/v1/models");
+}
+
+nlohmann::json cgi_json(std::string_view raw) {
+    const auto body_at = raw.find("\r\n\r\n");
+    if (body_at == std::string_view::npos) return {};
+    const auto body = raw.substr(body_at + 4);
+    if (body.empty()) return {};
+    return nlohmann::json::parse(std::string(body));
 }
 
 class DaemonProcessTest : public testing::Test {
@@ -263,6 +292,102 @@ TEST(DaemonProcess, StopsDuringGeneration) {
     }
     ASSERT_NE(raw.find("text/event-stream"), std::string::npos) << raw;
     ASSERT_TRUE(server.wait_for_requests(1, 5s));
+    process.send_signal(SIGTERM);
+    server.resume_responses();
+    EXPECT_EQ(process.wait_for_exit(15s), 0);
+    server.join();
+}
+
+TEST_F(DaemonProcessTest, ServesChaWebAndKeepsOpenAiRoutes) {
+    DaemonProcess process(DaemonSpawn{.config_directory = config_});
+    const std::string bootstrap =
+        exchange_scgi(process, "GET", "/api/cha/v1/bootstrap");
+    EXPECT_NE(bootstrap.find("Status: 200 OK"), std::string::npos) << bootstrap;
+    EXPECT_NE(bootstrap.find("\"entrance_forum_id\""), std::string::npos)
+        << bootstrap;
+    EXPECT_EQ(bootstrap.find("Access-Control"), std::string::npos);
+    const auto body = cgi_json(bootstrap);
+    EXPECT_FALSE(body.contains("type"));
+
+    const std::string models = request_models(process);
+    EXPECT_NE(models.find("Status: 200 OK"), std::string::npos) << models;
+    EXPECT_NE(models.find("\"id\":\"The Lobby\""), std::string::npos) << models;
+
+    const std::string other =
+        exchange_scgi(process, "GET", "/api/cha/v1foo");
+    EXPECT_NE(other.find("Status: 404 Not Found"), std::string::npos) << other;
+    EXPECT_NE(other.find("invalid_request_error"), std::string::npos) << other;
+
+    process.send_signal(SIGTERM);
+    EXPECT_EQ(process.wait_for_exit(5s), 0);
+}
+
+TEST_F(DaemonProcessTest, ChaWebSessionSurvivesRequestClose) {
+    DaemonProcess process(DaemonSpawn{.config_directory = config_});
+    const std::string created = exchange_scgi(
+        process,
+        "POST",
+        "/api/cha/v1/forums/lobby/sessions",
+        R"({"text":"Hello"})",
+        "application/json");
+    EXPECT_NE(created.find("Status: 201 Created"), std::string::npos) << created;
+    const std::string id = cgi_json(created).at("id").get<std::string>();
+
+    const std::string listed = exchange_scgi(
+        process, "GET", "/api/cha/v1/forums/lobby/sessions");
+    EXPECT_NE(listed.find("Status: 200 OK"), std::string::npos) << listed;
+    EXPECT_NE(listed.find(id), std::string::npos) << listed;
+
+    const std::string snapshot = exchange_scgi(
+        process,
+        "GET",
+        "/api/cha/v1/forums/lobby/sessions/" + id);
+    EXPECT_NE(snapshot.find("Status: 200 OK"), std::string::npos) << snapshot;
+    EXPECT_EQ(cgi_json(snapshot).at("session_id"), id);
+
+    process.send_signal(SIGTERM);
+    EXPECT_EQ(process.wait_for_exit(5s), 0);
+}
+
+TEST(DaemonProcess, ChaWebReturnsWhileGenerationContinues) {
+    TestWorkspace workspace;
+    const auto session_dir = workspace.root() / "system/session";
+    std::filesystem::create_directories(session_dir);
+    std::ofstream(session_dir / "config.toml")
+        << "naming_provider = \"absent\"\n";
+    const std::string body =
+        R"({"choices":[{"message":{"content":"Finished"}}]})";
+    MockHttpServer server({http_response("application/json", body)});
+    server.pause_before_response(1);
+    workspace.write_provider(
+        "remote",
+        "host = \"127.0.0.1\"\nport = " + std::to_string(server.port())
+            + "\nhttps = false\nmode = \"net\"\nmodel = \"fake\"\n"
+              "api = \"chat_completions\"\nstream = false\ntimeout_s = 20\n");
+    workspace.write_character_config(
+        "display_name = \"Guide\"\nprovider = \"remote\"\n");
+    const auto database = import_test_database(workspace.root());
+    const auto config = write_config(workspace, database);
+    DaemonProcess process(DaemonSpawn{.config_directory = config});
+    server.start();
+
+    const std::string created = exchange_scgi(
+        process,
+        "POST",
+        "/api/cha/v1/forums/lobby/sessions",
+        R"({"text":"Hello"})",
+        "application/json");
+    EXPECT_NE(created.find("Status: 201 Created"), std::string::npos) << created;
+    ASSERT_TRUE(server.wait_for_requests(1, 5s));
+    const std::string id = cgi_json(created).at("id").get<std::string>();
+    const std::string snapshot = exchange_scgi(
+        process,
+        "GET",
+        "/api/cha/v1/forums/lobby/sessions/" + id);
+    EXPECT_NE(snapshot.find("Status: 200 OK"), std::string::npos) << snapshot;
+    EXPECT_TRUE(cgi_json(snapshot).at("generation").at("active").get<bool>())
+        << snapshot;
+
     process.send_signal(SIGTERM);
     server.resume_responses();
     EXPECT_EQ(process.wait_for_exit(15s), 0);
