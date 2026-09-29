@@ -184,6 +184,7 @@ TEST_F(OpenAiAdapterTest, AcceptsContentArraysAndIgnoresUnusedOptions) {
     EXPECT_EQ(request->user_text, "hello");
     EXPECT_FALSE(request->stream);
     EXPECT_FALSE(request->tag);
+    EXPECT_FALSE(request->title);
 }
 
 TEST_F(OpenAiAdapterTest, AcceptsPreviousForumIds) {
@@ -282,15 +283,24 @@ TEST_F(OpenAiAdapterTest, SelectsTagsAndReportsForumMismatch) {
     ASSERT_NE(wrong, nullptr);
     EXPECT_EQ(wrong->status, 400);
 
-    const auto missing = parse_chat_request(
+    const auto titled = parse_chat_request(
         chat_body(
             "The Lobby",
             nlohmann::json::array({
-                {{"role", "assistant"}, {"content", "no tag"}},
+                {{"role", "assistant"}, {"content", "A Session Title\n\nHello"}},
                 {{"role", "user"}, {"content", "hello"}},
             }))
             .dump(),
         *application_);
+    const auto* by_title = std::get_if<ParsedChatRequest>(&titled);
+    ASSERT_NE(by_title, nullptr);
+    EXPECT_EQ(by_title->title, "A Session Title");
+
+    const auto missing = parse_chat_request(
+        chat_body("The Lobby", nlohmann::json::array({
+            {{"role", "assistant"}, {"content", " \n\n"}},
+            {{"role", "user"}, {"content", "hello"}},
+        })).dump(), *application_);
     const auto* absent = std::get_if<ApiError>(&missing);
     ASSERT_NE(absent, nullptr);
     EXPECT_EQ(absent->status, 400);
@@ -307,7 +317,7 @@ TEST_F(OpenAiAdapterTest, InvalidChatDoesNotCreateASession) {
          .body = chat_body(
                      "The Lobby",
                      nlohmann::json::array({
-                         {{"role", "assistant"}, {"content", "no tag"}},
+                         {{"role", "assistant"}, {"content", " \n\n"}},
                          {{"role", "user"}, {"content", "hello"}},
                      }))
                      .dump()});

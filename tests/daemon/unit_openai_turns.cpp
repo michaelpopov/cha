@@ -9,6 +9,7 @@
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <atomic>
 #include <cerrno>
 #include <chrono>
@@ -197,10 +198,28 @@ std::string streamed_text(std::string_view raw) {
     return text;
 }
 
-std::string body_after_tag(std::string_view content) {
+std::string title_line(std::string_view content) {
+    const auto end = content.find('\n');
+    return std::string(content.substr(0, end));
+}
+
+std::string reply_body(std::string_view content) {
+    if (content.starts_with("**") || content.starts_with('(')) {
+        return std::string(content);
+    }
     const auto split = content.find("\n\n");
     if (split == std::string_view::npos) return std::string(content);
     return std::string(content.substr(split + 2));
+}
+
+std::optional<SessionTag> session_for(
+    Application& application, std::string_view content) {
+    const std::string title = title_line(content);
+    for (const auto& session : application.list_sessions(
+             "lobby", application.context_epoch())) {
+        if (session.label == title) return SessionTag{"lobby", session.id};
+    }
+    return std::nullopt;
 }
 
 SessionSnapshot transcript_of(
@@ -470,7 +489,7 @@ TEST_F(TurnTest, DisconnectBeforeSubmissionLeavesNoSession) {
         "lobby", application_->context_epoch()).empty());
 }
 
-TEST_F(TurnTest, NewChatStoresTheTurnWithoutTheTagOrClientHistory) {
+TEST_F(TurnTest, NewChatStoresTheTurnWithoutTheTitleOrClientHistory) {
     open_application();
     const auto response = post(nlohmann::json::array({
         user_message("earlier history that CHA must ignore"),
@@ -485,15 +504,17 @@ TEST_F(TurnTest, NewChatStoresTheTurnWithoutTheTagOrClientHistory) {
     EXPECT_EQ(choice.at("finish_reason"), "stop");
     EXPECT_EQ(choice.at("message").at("role"), "assistant");
     const std::string content = message_content(response.json);
-    const auto tag = parse_session_tag_text(content);
+    const auto tag = session_for(*application_, content);
     ASSERT_TRUE(tag);
-    EXPECT_EQ(tag->forum_id, "lobby");
-    EXPECT_EQ(body_after_tag(content), "**Guide:** Hello");
+    EXPECT_EQ(title_line(content), "Hello");
+    EXPECT_FALSE(content.starts_with("[//]: # (cha"));
+    EXPECT_EQ(reply_body(content), "**Guide:** Hello");
 
     const auto epoch = application_->context_epoch();
     const auto sessions = application_->list_sessions("lobby", epoch);
     ASSERT_EQ(sessions.size(), 1u);
     EXPECT_EQ(sessions.front().id, tag->session_id);
+    EXPECT_EQ(sessions.front().label, title_line(content));
     const auto snapshot = transcript_of(*application_, tag->session_id);
     EXPECT_FALSE(transcript_contains(snapshot, "[//]: # (cha"));
     EXPECT_FALSE(transcript_contains(
@@ -504,12 +525,12 @@ TEST_F(TurnTest, NewChatStoresTheTurnWithoutTheTagOrClientHistory) {
         "guide");
 }
 
-TEST_F(TurnTest, ContinuesATaggedSessionAndRejectsAMissingTag) {
+TEST_F(TurnTest, ContinuesATitledSessionAndRejectsAMissingTitle) {
     open_application();
     const auto first = post(nlohmann::json::array({user_message("Hello")}));
     ASSERT_EQ(first.status, 200) << first.raw;
     const std::string first_content = message_content(first.json);
-    const auto tag = parse_session_tag_text(first_content);
+    const auto tag = session_for(*application_, first_content);
     ASSERT_TRUE(tag);
 
     const auto second = post(nlohmann::json::array({
@@ -518,10 +539,7 @@ TEST_F(TurnTest, ContinuesATaggedSessionAndRejectsAMissingTag) {
         user_message("Again"),
     }));
     ASSERT_EQ(second.status, 200) << second.raw;
-    const auto continued = parse_session_tag_text(message_content(second.json));
-    ASSERT_TRUE(continued);
-    EXPECT_EQ(continued->session_id, tag->session_id);
-    EXPECT_EQ(body_after_tag(message_content(second.json)), "**Guide:** Again");
+    EXPECT_EQ(message_content(second.json), "**Guide:** Again");
     const auto snapshot = transcript_of(*application_, tag->session_id);
     EXPECT_TRUE(transcript_contains(snapshot, "Hello"));
     EXPECT_TRUE(transcript_contains(snapshot, "Again"));
@@ -529,9 +547,17 @@ TEST_F(TurnTest, ContinuesATaggedSessionAndRejectsAMissingTag) {
                   .size(),
         1u);
 
+    const auto ordinary = post(nlohmann::json::array({
+        {{"role", "assistant"}, {"content", "Hello"}},
+        user_message("Not this session"),
+    }));
+    EXPECT_EQ(ordinary.status, 400);
+    EXPECT_FALSE(transcript_contains(
+        transcript_of(*application_, tag->session_id), "Not this session"));
+
     const auto missing = post(nlohmann::json::array({
         {{"role", "assistant"},
-         {"content", "[//]: # (cha lobby/missing-session)\n\n**Guide:** no"}},
+         {"content", "Missing title\n\n**Guide:** no"}},
         user_message("Hello"),
     }));
     EXPECT_EQ(missing.status, 404);
@@ -540,18 +566,69 @@ TEST_F(TurnTest, ContinuesATaggedSessionAndRejectsAMissingTag) {
         1u);
 }
 
+TEST_F(TurnTest, DuplicateTitlesChooseAnExistingSession) {
+    open_application();
+    const auto first = post(nlohmann::json::array({user_message("Hello")}));
+    const auto second = post(nlohmann::json::array({user_message("Hello")}));
+    ASSERT_EQ(first.status, 200) << first.raw;
+    ASSERT_EQ(second.status, 200) << second.raw;
+    EXPECT_EQ(title_line(message_content(first.json)), "Hello");
+    EXPECT_EQ(title_line(message_content(second.json)), "Hello");
+    const auto initial = application_->list_sessions(
+        "lobby", application_->context_epoch());
+    ASSERT_EQ(initial.size(), 2u);
+    const auto selected = std::max_element(
+        initial.begin(), initial.end(), [](const auto& a, const auto& b) {
+            if (a.updated_at != b.updated_at)
+                return a.updated_at < b.updated_at;
+            return a.id < b.id;
+        });
+
+    const auto continued = post(nlohmann::json::array({
+        user_message("Hello"),
+        {{"role", "assistant"}, {"content", message_content(first.json)}},
+        user_message("Continue"),
+    }));
+    ASSERT_EQ(continued.status, 200) << continued.raw;
+    EXPECT_EQ(message_content(continued.json), "**Guide:** Continue");
+    const auto sessions = application_->list_sessions(
+        "lobby", application_->context_epoch());
+    ASSERT_EQ(sessions.size(), 2u);
+    for (const auto& session : sessions) {
+        EXPECT_EQ(
+            transcript_contains(transcript_of(*application_, session.id), "Continue"),
+            session.id == selected->id);
+    }
+}
+
+TEST_F(TurnTest, OldSessionMarkersStillResumeAChat) {
+    open_application();
+    const auto first = post(nlohmann::json::array({user_message("Hello")}));
+    ASSERT_EQ(first.status, 200) << first.raw;
+    const auto session = session_for(*application_, message_content(first.json));
+    ASSERT_TRUE(session);
+    const auto continued = post(nlohmann::json::array({
+        {{"role", "assistant"},
+         {"content", format_session_tag(session->forum_id, session->session_id)
+              + "\n\n**Guide:** Hello"}},
+        user_message("Legacy follow-up"),
+    }));
+    ASSERT_EQ(continued.status, 200) << continued.raw;
+    EXPECT_EQ(message_content(continued.json), "**Guide:** Legacy follow-up");
+    EXPECT_EQ(application_->list_sessions("lobby", application_->context_epoch()).size(), 1u);
+}
+
 TEST_F(TurnTest, PastedUserTagCreatesASeparateSession) {
     open_application();
     const auto first = post(nlohmann::json::array({user_message("Hello")}));
     ASSERT_EQ(first.status, 200);
-    const auto tag = parse_session_tag_text(message_content(first.json));
+    const auto tag = session_for(*application_, message_content(first.json));
     ASSERT_TRUE(tag);
     const auto pasted = post(nlohmann::json::array({
         user_message(format_session_tag(tag->forum_id, tag->session_id)),
     }));
     ASSERT_EQ(pasted.status, 200) << pasted.raw;
-    const auto other =
-        parse_session_tag_text(message_content(pasted.json));
+    const auto other = session_for(*application_, message_content(pasted.json));
     ASSERT_TRUE(other);
     EXPECT_NE(other->session_id, tag->session_id);
     EXPECT_EQ(application_->list_sessions("lobby", application_->context_epoch())
@@ -572,8 +649,8 @@ TEST_F(TurnTest, RendersPlainMentionMulticastRecordedAndRejections) {
 
     const auto plain = post(nlohmann::json::array({user_message("Hello")}));
     ASSERT_EQ(plain.status, 200) << plain.raw;
-    EXPECT_EQ(body_after_tag(message_content(plain.json)), "**Guide:** Hello");
-    const auto tag = parse_session_tag_text(message_content(plain.json));
+    EXPECT_EQ(reply_body(message_content(plain.json)), "**Guide:** Hello");
+    const auto tag = session_for(*application_, message_content(plain.json));
     ASSERT_TRUE(tag);
 
     const auto mentioned = post(nlohmann::json::array({
@@ -583,7 +660,7 @@ TEST_F(TurnTest, RendersPlainMentionMulticastRecordedAndRejections) {
     }));
     ASSERT_EQ(mentioned.status, 200) << mentioned.raw;
     EXPECT_EQ(
-        body_after_tag(message_content(mentioned.json)), "**Sage:** hello");
+        reply_body(message_content(mentioned.json)), "**Sage:** hello");
     EXPECT_EQ(
         application_->get_forum("lobby", epoch).summary.default_character_id,
         "guide");
@@ -594,7 +671,7 @@ TEST_F(TurnTest, RendersPlainMentionMulticastRecordedAndRejections) {
         user_message("@- keep this note"),
     }));
     ASSERT_EQ(recorded.status, 200) << recorded.raw;
-    EXPECT_EQ(body_after_tag(message_content(recorded.json)), "(recorded)");
+    EXPECT_EQ(reply_body(message_content(recorded.json)), "(recorded)");
     const auto after_note = transcript_of(*application_, tag->session_id);
     EXPECT_TRUE(transcript_contains(after_note, "keep this note"));
 
@@ -602,7 +679,7 @@ TEST_F(TurnTest, RendersPlainMentionMulticastRecordedAndRejections) {
         {user_message("/mcast @Guide, @Sage. Question")}));
     ASSERT_EQ(multicast.status, 200) << multicast.raw;
     EXPECT_EQ(
-        body_after_tag(message_content(multicast.json)),
+        reply_body(message_content(multicast.json)),
         "**Guide:** Question\n\n**Sage:** Question");
 
     const auto before = transcript_of(*application_, tag->session_id).transcript.size();
@@ -655,12 +732,12 @@ TEST_F(TurnTest, JevAcceptanceKeepsTheForumDefaultAndRejectionUsesTheFallback) {
     const auto accepted = post(nlohmann::json::array({user_message("Hello")}));
     ASSERT_EQ(accepted.status, 200) << accepted.raw;
     EXPECT_EQ(
-        body_after_tag(message_content(accepted.json)),
+        reply_body(message_content(accepted.json)),
         "**Guide:** Hello\n\n**Sage:** Hello");
     EXPECT_EQ(
         application_->get_forum("lobby", epoch).summary.default_character_id,
         "guide");
-    const auto tag = parse_session_tag_text(message_content(accepted.json));
+    const auto tag = session_for(*application_, message_content(accepted.json));
     ASSERT_TRUE(tag);
     const auto follow = post(nlohmann::json::array({
         user_message("Hello"),
@@ -669,7 +746,7 @@ TEST_F(TurnTest, JevAcceptanceKeepsTheForumDefaultAndRejectionUsesTheFallback) {
     }));
     ASSERT_EQ(follow.status, 200) << follow.raw;
     EXPECT_EQ(
-        body_after_tag(message_content(follow.json)),
+        reply_body(message_content(follow.json)),
         "**Guide:** Next\n\n**Sage:** Next");
     success.join();
 
@@ -705,7 +782,7 @@ TEST_F(TurnTest, JevAcceptanceKeepsTheForumDefaultAndRejectionUsesTheFallback) {
                      .dump()},
         stop);
     ASSERT_EQ(rejected.status, 200) << rejected.raw;
-    EXPECT_EQ(body_after_tag(message_content(rejected.json)), "**Guide:** Hello");
+    EXPECT_EQ(reply_body(message_content(rejected.json)), "**Guide:** Hello");
     EXPECT_FALSE(rejected.json.contains("error"));
     failure.join();
 }
@@ -719,8 +796,11 @@ TEST_F(TurnTest, StreamAgreesWithTheFinalTextAndOmitsReasoning) {
     EXPECT_EQ(streamed.status, 200) << streamed.raw;
     EXPECT_NE(streamed.raw.find("text/event-stream"), std::string::npos);
     EXPECT_EQ(
-        body_after_tag(message_content(complete.json)),
-        body_after_tag(streamed_text(streamed.raw)));
+        reply_body(message_content(complete.json)),
+        reply_body(streamed_text(streamed.raw)));
+    EXPECT_EQ(
+        title_line(message_content(complete.json)),
+        title_line(streamed_text(streamed.raw)));
     EXPECT_EQ(streamed_text(streamed.raw).find("HelloHello"), std::string::npos);
     EXPECT_NE(streamed.raw.find("data: [DONE]"), std::string::npos);
     const auto events = sse_events(streamed.raw);
@@ -899,7 +979,7 @@ TEST_F(TurnTest, DisconnectAndShutdownLeaveTheNextRequestAbleToRun) {
     ASSERT_TRUE(http.wait_for_request(5s));
     std::string raw;
     const auto deadline = std::chrono::steady_clock::now() + 5s;
-    while (raw.find("text/event-stream") == std::string::npos
+    while (raw.find("Hello\\n\\n") == std::string::npos
         && std::chrono::steady_clock::now() < deadline) {
         char buffer[1024];
         const ssize_t count =
@@ -908,7 +988,7 @@ TEST_F(TurnTest, DisconnectAndShutdownLeaveTheNextRequestAbleToRun) {
         else std::this_thread::sleep_for(10ms);
     }
     ASSERT_NE(raw.find("text/event-stream"), std::string::npos) << raw;
-    const auto tag = parse_session_tag_text(streamed_text(raw));
+    const auto tag = session_for(*application_, streamed_text(raw));
     ASSERT_TRUE(tag) << raw;
     client.close();
     http.finish();
@@ -927,17 +1007,14 @@ TEST_F(TurnTest, DisconnectAndShutdownLeaveTheNextRequestAbleToRun) {
     });
     const auto next = post(nlohmann::json::array({
         {{"role", "assistant"},
-         {"content", format_session_tag(tag->forum_id, tag->session_id)
-              + "\n\n"}},
+         {"content", title_line(streamed_text(raw)) + "\n\n"}},
         user_message("Again"),
     }));
     serve.store(false);
     responder.join();
     ASSERT_EQ(next.status, 200) << next.raw;
-    EXPECT_EQ(
-        parse_session_tag_text(message_content(next.json))->session_id,
-        tag->session_id);
-    EXPECT_EQ(body_after_tag(message_content(next.json)), "**Guide:** Finished");
+    EXPECT_EQ(application_->list_sessions("lobby", application_->context_epoch()).size(), 1u);
+    EXPECT_EQ(reply_body(message_content(next.json)), "**Guide:** Finished");
     EXPECT_TRUE(transcript_contains(
         transcript_of(*application_, tag->session_id), "Hello"));
     EXPECT_TRUE(transcript_contains(
@@ -1041,9 +1118,16 @@ TEST_F(TurnTest, KeepaliveUsesTheTestClock) {
     const auto first = raw.find(": keepalive");
     ASSERT_NE(first, std::string::npos) << raw;
     offset = 30000;
-    read_until(": keepalive\n\n: keepalive");
-    EXPECT_NE(raw.find(": keepalive\n\n: keepalive"), std::string::npos)
-        << raw;
+    const auto deadline = std::chrono::steady_clock::now() + 5s;
+    while (raw.find(": keepalive", first + 1) == std::string::npos
+        && std::chrono::steady_clock::now() < deadline) {
+        char buffer[1024];
+        const ssize_t count =
+            ::recv(client.get(), buffer, sizeof(buffer), MSG_DONTWAIT);
+        if (count > 0) raw.append(buffer, static_cast<std::size_t>(count));
+        else std::this_thread::sleep_for(10ms);
+    }
+    EXPECT_NE(raw.find(": keepalive", first + 1), std::string::npos) << raw;
     server.resume_responses();
     worker.join();
     server.join();
@@ -1092,7 +1176,7 @@ TEST_F(TurnTest, AlternatesSessionsAndAppendsEdits) {
         application_->list_sessions("lobby", application_->context_epoch())
             .size(),
         9u);
-    const auto first_tag = parse_session_tag_text(contents.front());
+    const auto first_tag = session_for(*application_, contents.front());
     ASSERT_TRUE(first_tag);
     const auto continued = post(nlohmann::json::array({
         user_message("Session 0"),
@@ -1100,9 +1184,7 @@ TEST_F(TurnTest, AlternatesSessionsAndAppendsEdits) {
         user_message("continued"),
     }));
     ASSERT_EQ(continued.status, 200) << continued.raw;
-    EXPECT_EQ(
-        parse_session_tag_text(message_content(continued.json))->session_id,
-        first_tag->session_id);
+    EXPECT_EQ(message_content(continued.json), "**Guide:** continued");
     EXPECT_TRUE(transcript_contains(
         transcript_of(*application_, first_tag->session_id), "Session 0"));
     EXPECT_TRUE(transcript_contains(
@@ -1121,13 +1203,12 @@ TEST_F(TurnTest, AlternatesSessionsAndAppendsEdits) {
 
     const auto solo = post(nlohmann::json::array({user_message("only once")}));
     ASSERT_EQ(solo.status, 200);
-    const auto solo_tag = parse_session_tag_text(message_content(solo.json));
+    const auto solo_tag = session_for(*application_, message_content(solo.json));
     ASSERT_TRUE(solo_tag);
     const auto replaced =
         post(nlohmann::json::array({user_message("replacement")}));
     ASSERT_EQ(replaced.status, 200);
-    const auto replaced_tag =
-        parse_session_tag_text(message_content(replaced.json));
+    const auto replaced_tag = session_for(*application_, message_content(replaced.json));
     ASSERT_TRUE(replaced_tag);
     EXPECT_NE(replaced_tag->session_id, solo_tag->session_id);
     EXPECT_TRUE(transcript_contains(

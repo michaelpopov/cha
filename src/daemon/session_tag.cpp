@@ -103,4 +103,29 @@ SessionTagScanResult find_session_tag(const nlohmann::json& messages) {
     return result;
 }
 
+std::optional<std::string> first_assistant_title(const nlohmann::json& messages) {
+    if (!messages.is_array()) return std::nullopt;
+    for (const auto& message : messages) {
+        if (!message.is_object() || !message.contains("role")
+            || message["role"] != "assistant") {
+            continue;
+        }
+        const std::string content = message_text(message);
+        const auto end = content.find('\n');
+        if (end == std::string::npos) return std::nullopt;
+        std::string_view line(content.data(), end);
+        if (line.ends_with('\r')) line.remove_suffix(1);
+        const std::string_view rest(content.data() + end + 1,
+                                    content.size() - end - 1);
+        if (line.empty() || line.starts_with(tag_prefix)
+            || std::isspace(static_cast<unsigned char>(line.front())) != 0
+            || std::isspace(static_cast<unsigned char>(line.back())) != 0
+            || (!rest.starts_with('\n') && !rest.starts_with("\r\n"))) {
+            return std::nullopt;
+        }
+        return std::string(line);
+    }
+    return std::nullopt;
+}
+
 } // namespace cha::daemon

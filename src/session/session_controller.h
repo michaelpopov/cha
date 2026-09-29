@@ -109,7 +109,7 @@ public:
     [[nodiscard]] ControllerEventBatch receive_events(std::size_t max_events);
     void shutdown();
     [[nodiscard]] bool classification_pending() const noexcept { return pending_classification_.has_value(); }
-    [[nodiscard]] std::chrono::steady_clock::time_point classification_deadline() const noexcept;
+    [[nodiscard]] std::chrono::steady_clock::time_point next_deadline() const noexcept;
     enum class SubmissionOutcome { accepted, cancelled, expired, failed };
     struct SubmissionResult { SubmissionOutcome outcome; ControllerUpdate update; };
     std::optional<SubmissionResult> take_submission_result();
@@ -208,7 +208,8 @@ private:
         std::vector<std::string> fixed_targets,
         std::shared_ptr<SubmissionState> submission);
     ControllerUpdate finish_classification();
-    void start_session_name(ControllerUpdate& update);
+    void start_session_name(ControllerUpdate& update, std::string_view prompt = {});
+    void accept_session_name(std::string title, ControllerUpdate& update);
     void publish_recent(ControllerUpdate& update);
     bool receive_session_name(ControllerUpdate& update, std::size_t max_events);
     void cancel_session_name() noexcept;
@@ -223,6 +224,7 @@ private:
         std::shared_ptr<SubmissionState> submission;
         std::chrono::steady_clock::time_point deadline;
         std::shared_ptr<JevRequest> request;
+        std::optional<JevResult> result;
     };
     std::optional<PendingClassification> pending_classification_;
     std::optional<SubmissionResult> submission_result_;
@@ -231,6 +233,8 @@ private:
     bool discardable_{};
     std::shared_ptr<ProviderRequest> name_request_;
     std::string name_text_;
+    std::optional<std::chrono::steady_clock::time_point> name_deadline_;
+    std::optional<std::string> ready_name_;
     WorkspaceReader read_workspace_;
     Transcript transcript_;
     SessionJournal journal_;

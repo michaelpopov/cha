@@ -1,5 +1,7 @@
 #pragma once
 
+#include <ctime>
+#include <string>
 #include <string_view>
 
 namespace cha {
@@ -19,5 +21,8 @@ inline bool is_temporary_session_label(std::string_view label) {
 // Session labels are user-authored, single-line display text. Validation does
 // not normalize or otherwise alter their spelling.
 void validate_session_label(std::string_view label);
+
+// Local timestamp shared by generated session labels and session IDs.
+[[nodiscard]] std::string session_timestamp_name(std::time_t now);
 
 } // namespace cha

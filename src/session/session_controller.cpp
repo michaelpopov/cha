@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <ctime>
 #include <exception>
 #include <limits>
 #include <sstream>
@@ -21,6 +22,7 @@ namespace cha {
 namespace {
 
 constexpr std::string_view generation_stopped_notice = "Generation stopped";
+constexpr auto session_naming_timeout = std::chrono::seconds{10};
 
 enum class TimestampPrefixResult {
     incomplete,
@@ -518,12 +520,19 @@ ControllerUpdate SessionController::start_classification(
         std::string(author), std::move(text), default_character_id_,
         std::move(options), std::move(fixed_targets), std::move(submission),
         deadline, std::move(request)};
-    return {.state = SnapshotRequired{}, .notice = ""};
+    update.state = SnapshotRequired{};
+    update.notice = "";
+    start_session_name(update, pending_classification_->text);
+    return update;
 }
 
-std::chrono::steady_clock::time_point SessionController::classification_deadline() const noexcept {
-    return pending_classification_ ? pending_classification_->deadline
-        : std::chrono::steady_clock::time_point::max();
+std::chrono::steady_clock::time_point SessionController::next_deadline() const noexcept {
+    auto deadline = std::chrono::steady_clock::time_point::max();
+    if (pending_classification_ && !pending_classification_->result) {
+        deadline = pending_classification_->deadline;
+    }
+    if (name_deadline_) deadline = std::min(deadline, *name_deadline_);
+    return deadline;
 }
 
 std::optional<SessionController::SubmissionResult> SessionController::take_submission_result() {
@@ -536,41 +545,56 @@ ControllerUpdate SessionController::finish_classification() {
     if (pending.submission->expired()) {
         pending.request->cancel();
         pending_classification_.reset();
+        cancel_session_name();
+        ready_name_.reset();
         ControllerUpdate update{.state = SnapshotRequired{}};
         submission_result_ = SubmissionResult{SubmissionOutcome::expired, update};
         return update;
     }
-    auto result = pending.request->try_receive();
-    if (std::chrono::steady_clock::now() >= pending.deadline) {
-        pending.request->cancel();
-        result = JevResult{JevOutcome::failure, {}, "Recipient detection timed out"};
+    if (!pending.result) {
+        pending.result = pending.request->try_receive();
+        if (!pending.result && std::chrono::steady_clock::now() >= pending.deadline) {
+            pending.request->cancel();
+            pending.result = JevResult{JevOutcome::failure, {}, "Recipient detection timed out"};
+        }
     }
-    if (!result) return {};
+    if (!pending.result || name_request_) return {};
     auto input = std::move(pending);
     pending_classification_.reset();
+    JevResult result = std::move(*input.result);
     ControllerUpdate update{.state = SnapshotRequired{}};
-    if (result->outcome == JevOutcome::cancelled) {
+    const auto save_name_after_acceptance = [&] {
+        auto name = std::exchange(ready_name_, std::nullopt);
+        if (update.input_consumed && name) {
+            accept_session_name(std::move(*name), update);
+        } else if (update.input_consumed) {
+            publish_recent(update);
+        }
+    };
+    if (result.outcome == JevOutcome::cancelled) {
+        ready_name_.reset();
         submission_result_ = SubmissionResult{SubmissionOutcome::cancelled, update};
         return update;
     }
-    const auto search = result->outcome == JevOutcome::success
-        ? result->search_choice.value_or(JevSearch::none) : JevSearch::none;
+    const auto search = result.outcome == JevOutcome::success
+        ? result.search_choice.value_or(JevSearch::none) : JevSearch::none;
     log_debug("Jev classification finished: forum_id=" + identity_.forum_id
         + " session_id=" + identity_.session_id
-        + " success=" + (result->outcome == JevOutcome::success ? "true" : "false")
-        + " search_decision=" + (result->search_choice
-            ? jev_search_name(*result->search_choice) : "unreported")
+        + " success=" + (result.outcome == JevOutcome::success ? "true" : "false")
+        + " search_decision=" + (result.search_choice
+            ? jev_search_name(*result.search_choice) : "unreported")
         + " effective_search=" + jev_search_name(search));
-    log_debug_payload("Jev recipient decision", result->choice);
-    log_debug_payload("Jev classification diagnostic", result->message);
+    log_debug_payload("Jev recipient decision", result.choice);
+    log_debug_payload("Jev classification diagnostic", result.message);
     if (!input.fixed_targets.empty()) {
-        if (result->outcome == JevOutcome::failure)
-            log_warn("Jev classification failed; using explicit recipients: " + result->message);
+        if (result.outcome == JevOutcome::failure)
+            log_warn("Jev classification failed; using explicit recipients: " + result.message);
         std::vector<CharacterMetadata> targets;
         const auto current = workspace();
         for (const auto& id : input.fixed_targets) {
             const auto* character = current->find_forum_character(identity_.forum_id, id);
             if (!character) {
+                ready_name_.reset();
                 submission_result_ = SubmissionResult{SubmissionOutcome::failed,
                     {.notice = "The selected recipient is no longer in this forum. Choose a target and send again."}};
                 return update;
@@ -580,30 +604,32 @@ ControllerUpdate SessionController::finish_classification() {
         auto dispatched = start_resolved_multicast(input.author,
             std::move(input.text), std::move(targets), search);
         merge(update, std::move(dispatched));
+        save_name_after_acceptance();
         submission_result_ = SubmissionResult{
             update.input_consumed ? SubmissionOutcome::accepted : SubmissionOutcome::failed, update};
         if (!update.input_consumed) update.notice.reset();
         return update;
     }
     std::string target = input.fallback;
-    bool failed = result->outcome == JevOutcome::failure;
-    if (!failed && result->choice == "all_characters") target = std::string(all_characters_target);
-    else if (!failed && result->choice != "undefined") {
-        const auto selected = std::ranges::find(input.options, result->choice, &JevOption::key);
+    bool failed = result.outcome == JevOutcome::failure;
+    if (!failed && result.choice == "all_characters") target = std::string(all_characters_target);
+    else if (!failed && result.choice != "undefined") {
+        const auto selected = std::ranges::find(input.options, result.choice, &JevOption::key);
         if (selected == input.options.end()
             || !workspace()->find_forum_character(identity_.forum_id, selected->character_id)) {
             failed = true;
-            result->message = "Selected recipient is no longer available";
+            result.message = "Selected recipient is no longer available";
         } else target = selected->character_id;
     }
     if (input.submission->expired()) {
+        ready_name_.reset();
         submission_result_ = SubmissionResult{SubmissionOutcome::expired, update};
         return update;
     }
-    if (failed) log_warn("Recipient detection failed; using captured fallback target: " + result->message);
+    if (failed) log_warn("Recipient detection failed; using captured fallback target: " + result.message);
     // One owner-thread handoff: no idle publication and no classifier re-entry.
     const auto previous_target = default_character_id_;
-    if (!failed && result->choice != "undefined") default_character_id_ = target;
+    if (!failed && result.choice != "undefined") default_character_id_ = target;
     auto dispatched = dispatch_target(input.author, std::move(input.text), target, search);
     if (dispatched.input_consumed) {
         if (failed) {
@@ -616,6 +642,7 @@ ControllerUpdate SessionController::finish_classification() {
         default_character_id_ = previous_target;
     }
     merge(update, std::move(dispatched));
+    save_name_after_acceptance();
     submission_result_ = SubmissionResult{
         update.input_consumed ? SubmissionOutcome::accepted : SubmissionOutcome::failed, update};
     // Dispatch errors are delivered through the submission reply.
@@ -728,7 +755,7 @@ void SessionController::start_generation(
         generation_->requests.push_back(
             providers_.make_request(std::move(input), notifier_));
     }
-    // Start alongside the reply, after the prompt was committed.
+    // Sessions without Jev start naming alongside the reply.
     start_session_name(update);
 }
 
@@ -993,6 +1020,8 @@ ControllerUpdate SessionController::request_stop() {
         const bool expired = pending_classification_->submission->expired();
         pending_classification_->request->cancel();
         pending_classification_.reset();
+        cancel_session_name();
+        ready_name_.reset();
         update.state = SnapshotRequired{};
         update.notice = expired ? "Submission expired" : "Generation stopped";
         submission_result_ = SubmissionResult{
@@ -1048,12 +1077,14 @@ void SessionController::publish_recent(ControllerUpdate& update) {
     }
 }
 
-void SessionController::start_session_name(ControllerUpdate& update) {
-    if (!auto_name_ || name_request_) return;
+void SessionController::start_session_name(ControllerUpdate& update, std::string_view prompt) {
+    if (!auto_name_ || name_request_ || ready_name_) return;
     try {
         const auto entries = transcript_.view().entries;
-        const auto first_prompt = std::ranges::find(entries, EntryKind::human, &TranscriptEntry::kind);
-        if (first_prompt == entries.end()) return;
+        const auto first_prompt = std::ranges::find(
+            entries, EntryKind::human, &TranscriptEntry::kind);
+        if (first_prompt != entries.end()) prompt = first_prompt->text;
+        if (prompt.empty()) return;
         const auto current = workspace();
         const auto& naming = current->session_naming();
         const auto* assistant = current->find_character(workspace_assistant_id);
@@ -1063,14 +1094,14 @@ void SessionController::start_session_name(ControllerUpdate& update) {
         }
         const auto* provider = current->find_provider(provider_id);
         if (!provider) {
-            log_warn("Session name provider is unavailable; skipping session naming");
-            publish_recent(update);
+            log_warn("Session name provider is unavailable; using a timestamp");
+            accept_session_name({}, update);
             return;
         }
         auto config = provider->config;
         config.reasoning_effort = naming.reasoning_effort;
         config.web_search = WebSearchMode::off;
-        config.timeout_s = std::min(config.timeout_s, 30);
+        config.timeout_s = std::min(config.timeout_s, 10);
         const CharacterMetadata target{"session-name", "Session name"};
         name_request_ = providers_.make_request({
             .character = std::make_shared<const CharacterDefinition>(CharacterDefinition{
@@ -1088,51 +1119,89 @@ void SessionController::start_session_name(ControllerUpdate& update) {
                     .session = identity_,
                     .target = target,
                     .author = {"", "User"},
-                    .prompt_text = first_prompt->text,
+                    .prompt_text = std::string(prompt),
                 },
             },
         }, notifier_);
+        name_deadline_ = std::chrono::steady_clock::now() + session_naming_timeout;
     } catch (const std::exception& error) {
         log_warn("Session name generation could not start: " + std::string(error.what()));
+        accept_session_name({}, update);
     }
-    if (!name_request_) publish_recent(update);
+}
+
+void SessionController::accept_session_name(std::string title, ControllerUpdate& update) {
+    if (!title.empty()) {
+        try {
+            validate_session_label(title);
+        } catch (const std::exception& error) {
+            log_warn("Generated session name is invalid; using a timestamp: "
+                + std::string(error.what()));
+            title.clear();
+        }
+    }
+    if (title.empty()) {
+        try {
+            title = session_timestamp_name(std::time(nullptr));
+        } catch (const std::exception& error) {
+            log_warn("Session timestamp could not be generated: "
+                + std::string(error.what()));
+            if (!pending_classification_) publish_recent(update);
+            return;
+        }
+    }
+    if (pending_classification_) {
+        ready_name_ = std::move(title);
+        return;
+    }
+    try {
+        rename(title);
+        update.session_label = std::move(title);
+        require_snapshot(update);
+    } catch (const std::exception& error) {
+        log_warn("Session name was not saved: " + std::string(error.what()));
+        publish_recent(update);
+    }
 }
 
 void SessionController::cancel_session_name() noexcept {
     if (name_request_) name_request_->cancel();
     name_request_.reset();
     name_text_.clear();
+    name_deadline_.reset();
 }
 
 bool SessionController::receive_session_name(ControllerUpdate& update, std::size_t max_events) {
     if (!name_request_) return false;
     GenerationEvent event;
     for (std::size_t count = 0; count < max_events; ++count) {
+        if (name_deadline_ && std::chrono::steady_clock::now() >= *name_deadline_) {
+            log_warn("Session name generation timed out; using a timestamp");
+            cancel_session_name();
+            accept_session_name({}, update);
+            return false;
+        }
         if (name_request_->try_receive(event) != ChannelReadStatus::value) return false;
         if (const auto* delta = std::get_if<GenerationEventDelta>(&event)) {
             if (delta->kind == GenerationDeltaKind::answer) name_text_ += delta->text;
             if (name_text_.size() <= 4096) continue;
             log_warn("Session name generation returned too much text");
         } else if (std::holds_alternative<GenerationCompleted>(event)) {
-            try {
-                std::string title;
-                std::string word;
-                std::istringstream words{std::string(trim_view(name_text_))};
-                for (int word_count = 0; word_count < 6 && words >> word; ++word_count) {
-                    if (!title.empty()) title += ' ';
-                    title += word;
-                }
-                rename(title);
-                update.session_label = std::move(title);
-                require_snapshot(update);
-            } catch (const std::exception& error) {
-                log_warn("Generated session name was not saved: " + std::string(error.what()));
+            std::string title;
+            std::string word;
+            std::istringstream words{std::string(trim_view(name_text_))};
+            for (int word_count = 0; word_count < 6 && words >> word; ++word_count) {
+                if (!title.empty()) title += ' ';
+                title += word;
             }
+            cancel_session_name();
+            accept_session_name(std::move(title), update);
+            return false;
         } else if (const auto* failure = std::get_if<GenerationFailed>(&event)) {
             log_warn("Session name generation failed: " + failure->message);
         }
         cancel_session_name();
-        publish_recent(update);
+        accept_session_name({}, update);
         return false;
     }
     return true;
@@ -1385,8 +1454,9 @@ ControllerEventBatch SessionController::receive_events(std::size_t max_events) {
         throw std::invalid_argument("Generation event batch size must be positive");
     }
     const bool was_classifying = pending_classification_.has_value();
-    ControllerUpdate update = finish_classification();
+    ControllerUpdate update;
     const bool name_batch_full = receive_session_name(update, max_events);
+    merge(update, finish_classification());
     if (was_classifying && !pending_classification_) {
         // Let the runtime settle acceptance before any character events can fail.
         return {.update = std::move(update), .full = generation_.has_value() || name_batch_full};
@@ -1419,6 +1489,7 @@ void SessionController::shutdown() {
     log_info("Session controller shutting down");
     shutdown_ = true;
     cancel_session_name();
+    ready_name_.reset();
     if (pending_classification_) {
         pending_classification_->request->cancel();
         pending_classification_.reset();

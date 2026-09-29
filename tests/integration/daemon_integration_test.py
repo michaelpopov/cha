@@ -337,9 +337,20 @@ class DaemonIntegration(unittest.TestCase):
         self.assertEqual(choice["message"]["role"], "assistant")
         return choice["message"]["content"]
 
-    def tag(self, content):
-        self.assertRegex(content, r"^\[//\]: # \(cha lobby/[^\s/()]+\)\n\n")
-        return content.split("\n\n", 1)[0]
+    def title(self, content):
+        title, separator, _ = content.partition("\n\n")
+        self.assertEqual(separator, "\n\n", content)
+        self.assertTrue(title)
+        self.assertFalse(title.startswith("[//]: # (cha "))
+        return title
+
+    @staticmethod
+    def next_content(events):
+        for event in events:
+            delta = json.loads(event)["choices"][0]["delta"]
+            if delta.get("content"):
+                return delta["content"]
+        raise AssertionError("The stream ended before content arrived")
 
     def test_authentication_models_and_missing_backend(self):
         for key in (None, "Bearer wrong", "Basic " + "a" * 64):
@@ -401,20 +412,20 @@ class DaemonIntegration(unittest.TestCase):
 
     def test_turns_continue_and_survive_restart(self):
         first = self.completion([user("Hello — 世界")], temperature=0, tools=[])
-        tag = self.tag(first)
-        self.assertEqual(first, tag + "\n\n**Guide:** Hello — 世界")
+        title = self.title(first)
+        self.assertEqual(first, "Hello — 世界\n\n**Guide:** Hello — 世界")
         history = [user("Hello — 世界"), {"role": "assistant", "content": first}]
         recorded = self.completion(history + [user("@- A private note")])
-        self.assertEqual(recorded, tag + "\n\n(recorded)")
+        self.assertEqual(recorded, "(recorded)")
         self.stop(self.daemon)
         self.assertEqual(self.daemon.returncode, 0)
         self.daemon = self.start_daemon("alice")
         self.wait_ready()
         history += [user("@- A private note"), {"role": "assistant", "content": recorded}]
         continued = self.completion(history + [user("@Guide After restart")])
-        self.assertEqual(continued, tag + "\n\n**Guide:** After restart")
+        self.assertEqual(continued, "**Guide:** After restart")
         fresh = self.completion([user("A separate chat")])
-        self.assertNotEqual(self.tag(fresh), tag)
+        self.assertNotEqual(self.title(fresh), title)
 
     def test_streaming_and_session_continuation(self):
         status, content_type, body = self.request(
@@ -433,28 +444,28 @@ class DaemonIntegration(unittest.TestCase):
             self.assertEqual(chunk["id"], chunks[0]["id"])
             self.assertEqual(chunk["model"], "The Lobby")
             content += chunk["choices"][0]["delta"].get("content", "")
-        tag = self.tag(content)
-        self.assertEqual(content, tag + "\n\n**Guide:** Stream me")
+        self.assertEqual(content, "Stream me\n\n**Guide:** Stream me")
         next_reply = self.completion([
             user("Stream me"), {"role": "assistant", "content": content}, user("Next")])
-        self.assertEqual(next_reply, tag + "\n\n**Guide:** Next")
+        self.assertEqual(next_reply, "**Guide:** Next")
 
-    def test_stream_sends_the_tag_before_the_reply(self):
+    def test_stream_sends_the_title_before_the_reply(self):
         self.use_provider()
         _, response = self.open_stream(chat([user(HOLD + " stream")], stream=True))
         events = self.events(response)
-        # The provider still holds its reply, so this chunk proves that nginx
-        # does not buffer the stream and that the tag comes first.
+        # The provider still holds its reply, so these events prove that nginx
+        # does not buffer the stream and that the title comes first.
         first = json.loads(next(events))
         delta = first["choices"][0]["delta"]
         self.assertEqual(delta["role"], "assistant")
-        tag = self.tag(delta["content"])
+        title_content = self.next_content(events)
+        self.assertEqual(title_content, HOLD + " stream\n\n")
         self.provider.released.set()
         rest = list(events)
         self.assertEqual(rest[-1], "[DONE]")
-        content = delta["content"] + "".join(
+        content = title_content + "".join(
             json.loads(event)["choices"][0]["delta"].get("content", "") for event in rest[:-1])
-        self.assertEqual(content, tag + "\n\n**Guide:** " + PROVIDER_REPLY)
+        self.assertEqual(content, HOLD + " stream\n\n**Guide:** " + PROVIDER_REPLY)
 
     def test_requests_of_one_user_wait_for_the_running_turn(self):
         self.use_provider()
@@ -482,14 +493,15 @@ class DaemonIntegration(unittest.TestCase):
         self.use_provider()
         prompt = HOLD + " then leave"
         connection, response = self.open_stream(chat([user(prompt)], stream=True))
-        content = json.loads(next(self.events(response)))["choices"][0]["delta"]["content"]
+        content = self.next_content(self.events(response))
+        self.assertEqual(content, prompt + "\n\n")
         response.close()
         connection.close()
         # The provider never answers the held request. Unless the daemon
         # stops that turn, this request waits behind it and times out.
         reply = self.completion([
             user(prompt), {"role": "assistant", "content": content}, user("after leaving")])
-        self.assertEqual(reply, self.tag(content) + "\n\n**Guide:** " + PROVIDER_REPLY)
+        self.assertEqual(reply, "**Guide:** " + PROVIDER_REPLY)
 
     def test_request_abandoned_while_queued_never_runs(self):
         self.use_provider()
@@ -519,7 +531,11 @@ class DaemonIntegration(unittest.TestCase):
         self.assertIn("text/event-stream", content_type)
         data = [line[6:] for line in body.decode().splitlines() if line.startswith("data: ")]
         self.assertNotIn("[DONE]", data)
-        self.tag(json.loads(data[0])["choices"][0]["delta"]["content"])
+        self.assertEqual(json.loads(data[0])["choices"][0]["delta"]["role"], "assistant")
+        self.assertEqual(
+            "".join(json.loads(event)["choices"][0]["delta"].get("content", "")
+                    for event in data[:-1]),
+            FAIL + " stream\n\n")
         self.assertIn("error", json.loads(data[-1]))
 
     def test_api_keys_isolate_vaults(self):
@@ -531,9 +547,8 @@ class DaemonIntegration(unittest.TestCase):
         self.post(payload, expected=404, key=BOB_KEY)
         bob = self.post(chat([user("Bob's chat")]), key=BOB_KEY)
         bob_content = bob["choices"][0]["message"]["content"]
-        # Session IDs are local to a vault and can match across users.
-        self.assertEqual(bob_content, self.tag(bob_content) + "\n\n**Guide:** Bob's chat")
-        self.assertEqual(self.tag(self.completion(payload["messages"])), self.tag(alice))
+        self.assertEqual(bob_content, "Bob's chat\n\n**Guide:** Bob's chat")
+        self.assertEqual(self.completion(payload["messages"]), "**Guide:** Try another vault")
 
     def test_invalid_requests_leave_daemon_usable(self):
         cases = [
@@ -541,7 +556,9 @@ class DaemonIntegration(unittest.TestCase):
             (chat([user("Hello")], model="missing"), 404),
             (chat([user("Hello")], model="builtin-entrance"), 404),
             (chat([]), 400), (chat([{"role": "assistant", "content": "No user"}]), 400),
-            (chat([{"role": "assistant", "content": "No tag"}, user("Hello")]), 400),
+            (chat([{"role": "assistant", "content": " \n"}, user("Hello")]), 400),
+            (chat([{"role": "assistant", "content": "No such title"}, user("Hello")]), 400),
+            (chat([{"role": "assistant", "content": "No such title\n\nReply"}, user("Hello")]), 404),
             (chat([{"role": "assistant", "content": "[//]: # (cha other/session)"}, user("Hello")]), 400),
             (chat([{"role": "assistant", "content": "[//]: # (cha lobby/missing)"}, user("Hello")]), 404),
         ]

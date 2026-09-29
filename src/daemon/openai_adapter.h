@@ -22,6 +22,7 @@ struct ParsedChatRequest {
     std::string user_text;
     bool stream{};
     std::optional<SessionTag> tag;
+    std::optional<std::string> title;
 };
 
 // Sent as `{"error": {"message", "type", "code"}}`. The type follows from

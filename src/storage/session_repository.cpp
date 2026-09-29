@@ -13,11 +13,8 @@
 #include <atomic>
 #include <ctime>
 #include <filesystem>
-#include <iomanip>
-#include <mutex>
 #include <limits>
 #include <set>
-#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -32,25 +29,6 @@ using Statement = storage::SqliteStatement;
 using Transaction = storage::SqliteTransaction;
 
 constexpr std::size_t max_session_id_attempts = 100;
-
-bool local_time(std::time_t now, std::tm& result) {
-    static std::mutex mutex;
-    const std::lock_guard lock(mutex);
-    const std::tm* const local = std::localtime(&now);
-    if (local == nullptr) return false;
-    result = *local;
-    return true;
-}
-
-std::string timestamp_name(std::time_t now) {
-    std::tm local{};
-    if (!local_time(now, local)) {
-        throw std::runtime_error("Failed to read local time for session name");
-    }
-    std::ostringstream result;
-    result << std::put_time(&local, "%Y-%m-%d-%H-%M-%S") << "-session";
-    return result.str();
-}
 
 void require_active(
     Database& database,
@@ -344,7 +322,7 @@ StoredSession SessionRepository::create(
     const std::shared_lock operation(operation_mutex_);
     require_persistent_forum(forum_id);
     if (!label.empty()) validate_session_label(label);
-    const std::string base_id = timestamp_name(std::time(nullptr));
+    const std::string base_id = session_timestamp_name(std::time(nullptr)) + "-session";
     Database database(
         database_path_, Database::Mode::read_write, database_password_);
     validate_workspace_session_database_identity(database);

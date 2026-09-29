@@ -100,5 +100,23 @@ TEST(SessionTag, ReportsNoAssistantAndMissingTags) {
     EXPECT_EQ(find_session_tag(missing).status, SessionTagScan::missing);
 }
 
+TEST(SessionTag, ReadsTheFirstAssistantTitle) {
+    const nlohmann::json messages = nlohmann::json::array({
+        {{"role", "user"}, {"content", "Pasted Title"}},
+        {{"role", "assistant"}, {"content", "A session title\r\n\r\nFirst reply"}},
+        {{"role", "assistant"}, {"content", "Later reply"}},
+    });
+    EXPECT_EQ(first_assistant_title(messages), "A session title");
+    EXPECT_FALSE(first_assistant_title(nlohmann::json::array({
+        {{"role", "assistant"}, {"content", " \n\n"}},
+    })));
+    EXPECT_FALSE(first_assistant_title(nlohmann::json::array({
+        {{"role", "assistant"}, {"content", "Ordinary assistant reply"}},
+    })));
+    EXPECT_FALSE(first_assistant_title(nlohmann::json::array({
+        {{"role", "assistant"}, {"content", "Title\nReply without blank line"}},
+    })));
+}
+
 } // namespace
 } // namespace cha::daemon

@@ -57,6 +57,8 @@ install -m 755 "$source_dir/cha-daemon" "$CHA_DEPLOY_PATH/cha-daemon"
 install -m 755 "$source_dir/add_user.sh" "$CHA_DEPLOY_PATH/add_user.sh"
 mkdir -p -- "$CHA_DEPLOY_PATH/cha-config.example"
 cp -R "$source_dir/cha-config.example/." "$CHA_DEPLOY_PATH/cha-config.example/"
+chown -R "$install_user:" "$CHA_DEPLOY_PATH"
+chown "$install_user:" "$CHA_DATA_PATH"
 
 temporary=$(mktemp -d)
 trap 'rm -rf -- "$temporary"' EXIT HUP INT TERM

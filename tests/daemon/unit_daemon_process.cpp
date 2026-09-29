@@ -146,7 +146,7 @@ TEST_F(DaemonProcessTest, ServesModelsAfterActivation) {
     DaemonProcess process(DaemonSpawn{.config_directory = config_});
     const std::string raw = request_models(process);
     EXPECT_NE(raw.find("Status: 200 OK"), std::string::npos);
-    EXPECT_NE(raw.find("\"id\":\"lobby\""), std::string::npos);
+    EXPECT_NE(raw.find("\"id\":\"The Lobby\""), std::string::npos);
     EXPECT_EQ(raw.find("builtin-entrance"), std::string::npos);
     process.send_signal(SIGTERM);
     EXPECT_EQ(process.wait_for_exit(5s), 0);
@@ -202,7 +202,7 @@ TEST_F(DaemonProcessTest, ProtectedVaultReadsThePasswordFile) {
     DaemonProcess process(DaemonSpawn{.config_directory = config_});
     const std::string raw = request_models(process);
     EXPECT_NE(raw.find("Status: 200 OK"), std::string::npos) << raw;
-    EXPECT_NE(raw.find("\"id\":\"lobby\""), std::string::npos) << raw;
+    EXPECT_NE(raw.find("\"id\":\"The Lobby\""), std::string::npos) << raw;
     process.send_signal(SIGTERM);
     EXPECT_EQ(process.wait_for_exit(5s), 0);
 }

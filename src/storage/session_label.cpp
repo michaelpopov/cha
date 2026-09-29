@@ -1,5 +1,8 @@
 #include "storage/session_label.h"
 
+#include <iomanip>
+#include <mutex>
+#include <sstream>
 #include <stdexcept>
 
 namespace cha {
@@ -59,6 +62,15 @@ bool control(char32_t value) {
         || value == 0x2028 || value == 0x2029;
 }
 
+bool local_time(std::time_t now, std::tm& result) {
+    static std::mutex mutex;
+    const std::lock_guard lock(mutex);
+    const std::tm* const local = std::localtime(&now);
+    if (local == nullptr) return false;
+    result = *local;
+    return true;
+}
+
 } // namespace
 
 void validate_session_label(std::string_view label) {
@@ -87,6 +99,16 @@ void validate_session_label(std::string_view label) {
         throw std::invalid_argument(
             "Session label cannot start or end with whitespace");
     }
+}
+
+std::string session_timestamp_name(std::time_t now) {
+    std::tm local{};
+    if (!local_time(now, local)) {
+        throw std::runtime_error("Failed to read local time for session name");
+    }
+    std::ostringstream result;
+    result << std::put_time(&local, "%Y-%m-%d-%H-%M-%S");
+    return result.str();
 }
 
 } // namespace cha

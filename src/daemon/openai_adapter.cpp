@@ -96,6 +96,9 @@ struct Chat {
     const TurnClock& clock;
     std::uint64_t epoch{};
     std::string session_id;
+    bool new_session{};
+    std::string title;
+    bool title_sent{};
     std::string id{"chatcmpl-" + std::to_string(next_number())};
     std::int64_t created{unix_now()};
     bool streaming{};  // SSE headers were sent
@@ -103,9 +106,6 @@ struct Chat {
 
     [[nodiscard]] Clock::time_point now() const {
         return clock ? clock() : Clock::now();
-    }
-    [[nodiscard]] std::string tag() const {
-        return format_session_tag(request.model, session_id);
     }
 };
 
@@ -152,9 +152,20 @@ bool start_stream(Chat& chat) {
         "Status: 200 OK\r\nContent-Type: text/event-stream\r\n\r\n";
     if (!send(chat, headers)) return false;
     chat.streaming = true;
-    return send_event(
-        chat,
-        chunk(chat, {{"role", "assistant"}, {"content", chat.tag() + "\n\n"}}));
+    return send_event(chat, chunk(chat, {{"role", "assistant"}}));
+}
+
+bool title_ready(Chat& chat, const LiveSession& session) {
+    if (!chat.new_session || !chat.title.empty()) return true;
+    if (session.naming()) return false;
+    for (const SessionListing& listed :
+         chat.application.list_sessions(chat.request.model, chat.epoch)) {
+        if (listed.id == chat.session_id) {
+            chat.title = listed.label;
+            return true;
+        }
+    }
+    return false;
 }
 
 // A transcript entry added by the current turn.
@@ -322,14 +333,22 @@ TurnEnd run_turn(Chat& chat, LiveSession& session, Turn& turn) {
             }
         }
         session.acknowledge_output();
-        if (stream && !cancelled && !stream_replies(chat, turn)) cancel();
+        if (!cancelled && title_ready(chat, session)) {
+            if (stream && chat.new_session && !chat.title.empty()
+                && !chat.title_sent) {
+                if (!send_text(chat, chat.title + "\n\n")) cancel();
+                else chat.title_sent = true;
+            }
+            if (stream && !cancelled && !stream_replies(chat, turn)) cancel();
+        }
 
         if (!snapshot) continue;
         if (cancelled && (turn.idle || turn.terminal)) {
             return TurnEnd::cancelled;
         }
         if (turn.terminal) return TurnEnd::failed;
-        if (turn.idle && !turn.replies.empty()) return TurnEnd::complete;
+        if (turn.idle && !turn.replies.empty()
+            && title_ready(chat, session)) return TurnEnd::complete;
     }
 }
 
@@ -359,7 +378,8 @@ void finish_turn(Chat& chat, TurnEnd end, const Turn& turn) {
         nlohmann::json choice{
             {"index", 0},
             {"message",
-             {{"role", "assistant"}, {"content", chat.tag() + "\n\n" + text}}},
+             {{"role", "assistant"},
+              {"content", (chat.new_session ? chat.title + "\n\n" : "") + text}}},
             {"finish_reason", "stop"},
         };
         (void)write_json(
@@ -523,10 +543,30 @@ void serve_chat(
             send_error(chat, server_error("The application is unavailable."));
             return;
         }
-        const bool created = !request.tag;
-        chat.session_id = created
-            ? application.create_session(request.model, "", chat.epoch).id
-            : request.tag->session_id;
+        const bool created = !request.tag && !request.title;
+        chat.new_session = created;
+        if (created) {
+            chat.session_id =
+                application.create_session(request.model, "", chat.epoch).id;
+        } else if (request.tag) {
+            chat.session_id = request.tag->session_id;
+        } else {
+            const auto sessions = application.list_sessions(request.model, chat.epoch);
+            const SessionListing* selected = nullptr;
+            for (const SessionListing& candidate : sessions) {
+                if (candidate.label != *request.title) continue;
+                if (!selected || candidate.updated_at > selected->updated_at
+                    || (candidate.updated_at == selected->updated_at
+                        && candidate.id > selected->id)) {
+                    selected = &candidate;
+                }
+            }
+            if (!selected) {
+                send_error(chat, error_for(ErrorCode::not_found));
+                return;
+            }
+            chat.session_id = selected->id;
+        }
         if (run_in_session(chat) || !created) return;
         // CHA keeps a new session before it parses the input, so startup
         // pruning does not remove a session whose first input was rejected.
@@ -635,7 +675,9 @@ std::variant<ParsedChatRequest, ApiError> parse_chat_request(
     }
 
     const SessionTagScanResult scan = find_session_tag(messages);
-    if (scan.status == SessionTagScan::missing) {
+    const auto title = scan.status == SessionTagScan::found
+        ? std::nullopt : first_assistant_title(messages);
+    if (scan.status == SessionTagScan::missing && !title) {
         return bad_request("This chat has no CHA session. Start a new chat.");
     }
     if (scan.status == SessionTagScan::found && scan.tag.forum_id != model) {
@@ -649,6 +691,7 @@ std::variant<ParsedChatRequest, ApiError> parse_chat_request(
         .tag = scan.status == SessionTagScan::found
             ? std::optional<SessionTag>(scan.tag)
             : std::nullopt,
+        .title = title,
     };
 }
 

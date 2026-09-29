@@ -32,5 +32,7 @@ struct SessionTagScanResult {
     std::string_view text);
 [[nodiscard]] SessionTagScanResult find_session_tag(
     const nlohmann::json& messages);
+[[nodiscard]] std::optional<std::string> first_assistant_title(
+    const nlohmann::json& messages);
 
 } // namespace cha::daemon

@@ -350,7 +350,7 @@ void LiveSession::settle_submission() {
 }
 
 std::chrono::steady_clock::time_point LiveSession::next_deadline() const {
-    return controller_ ? controller_->classification_deadline()
+    return controller_ ? controller_->next_deadline()
         : std::chrono::steady_clock::time_point::max();
 }
 
