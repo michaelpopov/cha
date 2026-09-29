@@ -55,6 +55,7 @@ itest-local: build
 itest-daemon:
 	cmake --preset ninja
 	cmake --build --preset ninja --target cha-daemon cha_prepare_test_vault
+	npm --prefix webapp run build:chaweb
 	python3 tests/integration/daemon_integration_test.py --build-dir build/ninja
 
 run-native-dev: build

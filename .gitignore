@@ -14,6 +14,7 @@
 # Browser build and test output
 /webapp/node_modules/
 /webapp/dist/
+/webapp/dist-chaweb/
 /webapp/test-results/
 /webapp/playwright-report/
 /tests/native/windows/test-results/

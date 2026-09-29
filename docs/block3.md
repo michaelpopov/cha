@@ -275,3 +275,5 @@ block 4. Desktop emulation is useful but does not satisfy this completion check.
 If a physical device is unavailable, report the check as outstanding; do not
 claim the layout block complete. Completion also requires passing builds,
 Vitest/native frontend checks, and production-asset integration tests.
+
+COMPLETED

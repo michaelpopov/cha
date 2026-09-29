@@ -1,6 +1,6 @@
 # Block 2: ChaWeb nginx integration
 
-Status: implementation instructions; the work is not yet complete.
+Status: complete. See "Handoff to block 3" at the end.
 This block implements plan step 5 and the API integration portion of step 9.
 It requires the six-operation daemon API from block 1, described below. It does
 not require a browser build. Block 3 later adds production-asset checks and the
@@ -218,3 +218,19 @@ plus a working local listener for browser development. Record its URL and
 configuration/socket paths for the next block. Check another user's production
 port manually during deployment; do not automate nginx's fixed-port routing
 with extra daemons or request-header/body redirection tests.
+
+## Handoff to block 3
+
+The nginx example and ChaWeb integration cases are done. `make test` and
+`make itest-daemon` pass. The local development listener was checked by hand:
+
+- URL: `http://127.0.0.1:8087` (API at `/api/cha/v1/`; `/v1/` returns `404`).
+- nginx prefix and configuration: `/tmp/chaweb-dev-nginx/nginx.conf`.
+  It is the shipped example with `listen 127.0.0.1:8087;`, root
+  `/Users/mpopov/projects/cha/webapp/dist-chaweb` and upstream
+  `unix:/tmp/chaweb-dev.sock`.
+- Daemon socket: `/tmp/chaweb-dev.sock`. Vault: `/tmp/chaweb-dev-config`.
+- Both `/tmp` paths are temporary; make them again with the commands above
+  if they are lost.
+
+COMPLETED

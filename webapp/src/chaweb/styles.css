@@ -1,0 +1,342 @@
+:root {
+  color-scheme: light dark;
+  --background: light-dark(rgb(255 255 255), rgb(24 24 24));
+  --foreground: light-dark(rgb(26 28 31), rgb(245 245 245));
+  --secondary: light-dark(rgb(255 255 255 / 96%), rgb(54 54 54 / 96%));
+  --muted-foreground: light-dark(rgb(26 28 31 / 52%), rgb(255 255 255 / 52%));
+  --accent-foreground: light-dark(rgb(30 113 190), rgb(131 195 255));
+  --border: light-dark(rgb(26 28 31 / 9%), rgb(255 255 255 / 9%));
+  --ring: light-dark(rgb(51 156 255), rgb(131 195 255 / 76%));
+  --font-sans: -apple-system, system-ui, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --font-serif: Georgia, "Times New Roman", Times, serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+button:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+button:disabled {
+  opacity: 0.4;
+}
+
+.chaweb-app {
+  position: fixed;
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-sizing: border-box;
+  padding:
+    env(safe-area-inset-top, 0px)
+    env(safe-area-inset-right, 0px)
+    env(safe-area-inset-bottom, 0px)
+    env(safe-area-inset-left, 0px);
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.4;
+}
+
+.chaweb-sessions,
+.chaweb-conversation {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.chaweb-forum {
+  width: 100%;
+  min-height: 44px;
+  flex: none;
+  padding: 0 0.75rem;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: inherit;
+  font-size: 16px;
+}
+
+.chaweb-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.chaweb-session,
+.chaweb-new-session {
+  width: 100%;
+  min-height: 44px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+.chaweb-session {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.55rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+}
+
+.chaweb-session-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.chaweb-session-time,
+.chaweb-entry-time,
+.chaweb-speaker,
+.chaweb-entry-status {
+  color: var(--muted-foreground);
+  font-size: 0.78rem;
+}
+
+.chaweb-session svg {
+  width: 18px;
+  height: 18px;
+  flex: none;
+}
+
+.chaweb-new-session {
+  flex: none;
+  border-top: 1px solid var(--border);
+}
+
+.chaweb-transcript {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 0.75rem;
+}
+
+.chaweb-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  margin-bottom: 0.9rem;
+}
+
+.chaweb-entry-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.chaweb-entry[data-status='failed'] .chaweb-entry-status,
+.chaweb-entry.is-error {
+  color: light-dark(rgb(174 45 36), rgb(255 145 136));
+}
+
+.chaweb-alert,
+.chaweb-status {
+  flex: none;
+  margin: 0;
+  padding: 0.6rem 0.75rem;
+}
+
+.chaweb-alert {
+  color: light-dark(rgb(174 45 36), rgb(255 145 136));
+}
+
+.chaweb-composer {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+}
+
+.chaweb-size-row,
+.chaweb-controls {
+  display: flex;
+  flex: none;
+  align-items: center;
+}
+
+.chaweb-size-row {
+  justify-content: center;
+}
+
+.chaweb-controls {
+  justify-content: space-between;
+}
+
+.chaweb-icon-button {
+  display: inline-grid;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+}
+
+.chaweb-icon-button svg {
+  width: 20px;
+  height: 20px;
+}
+
+.chaweb-editor {
+  width: 100%;
+  flex: none;
+  margin: 0;
+  padding: 6px 8px;
+  border: 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: inherit;
+  font-size: 16px;
+  line-height: 22px;
+  overflow: auto;
+  resize: none;
+}
+
+.cha-markdown {
+  white-space: normal;
+}
+
+.cha-markdown h1,
+.cha-markdown h2,
+.cha-markdown h3,
+.cha-markdown h4,
+.cha-markdown h5,
+.cha-markdown h6 {
+  margin: 0.7rem 0 0.35rem;
+  font-weight: 520;
+}
+
+.cha-markdown h1 { font-size: 1.18rem; }
+.cha-markdown h2 { font-size: 1.08rem; }
+
+.cha-markdown h3,
+.cha-markdown h4,
+.cha-markdown h5,
+.cha-markdown h6 {
+  font-size: 1rem;
+}
+
+.cha-markdown p {
+  margin: 0.4rem 0;
+}
+
+.cha-markdown ul,
+.cha-markdown ol {
+  margin: 0.45rem 0;
+  padding-left: 1.35rem;
+}
+
+.cha-markdown code {
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+}
+
+.cha-markdown :not(pre) > code {
+  padding: 0.08rem 0.25rem;
+  border-radius: 0.3rem;
+  background: var(--secondary);
+}
+
+.cha-markdown pre {
+  max-width: 100%;
+  padding: 0.75rem;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 0.7rem;
+  background: var(--secondary);
+  white-space: pre-wrap;
+}
+
+.chaweb-entry-text > .cha-markdown {
+  overflow: visible;
+}
+
+.chaweb-entry-text > .cha-markdown p {
+  white-space: pre-line;
+}
+
+.chaweb-entry-text > .cha-markdown :is(h1, h2, h3, h4, h5, h6) {
+  font-size: 1em;
+  font-weight: bolder;
+}
+
+.chaweb-entry-text > .cha-markdown h1 { font-size: 1.18em; }
+.chaweb-entry-text > .cha-markdown h2 { font-size: 1.08em; }
+
+.chaweb-entry-text > .cha-markdown blockquote {
+  margin: 0.45rem 0;
+  padding-left: 0.75rem;
+  border-left: 2px solid var(--border);
+}
+
+.chaweb-entry-text > .cha-markdown > :first-child {
+  margin-top: 0;
+}
+
+.chaweb-entry-text > .cha-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.chaweb-entry-text.cha-font-serif {
+  font-size: 1.04em;
+  font-family: var(--font-serif);
+}
+
+.chaweb-entry-text.cha-font-mono {
+  font-size: 0.94em;
+  font-family: var(--font-mono);
+}
+
+.chaweb-entry-text.cha-slant-italic {
+  font-style: italic;
+}
+
+.chaweb-entry-text.cha-weight-light { font-weight: 300; }
+.chaweb-entry-text.cha-weight-medium { font-weight: 500; }
+.chaweb-entry-text.cha-weight-semibold { font-weight: 600; }
+.chaweb-entry-text.cha-weight-bold { font-weight: 700; }
+.chaweb-entry-text.cha-scale-small { font-size: 0.9em; }
+.chaweb-entry-text.cha-scale-large { font-size: 1.14em; }
+.chaweb-entry-text.cha-color-muted { color: var(--muted-foreground); }
+.chaweb-entry-text.cha-color-accent { color: var(--accent-foreground); }
+.chaweb-entry-text.cha-font-serif.cha-scale-small { font-size: 0.94em; }
+.chaweb-entry-text.cha-font-serif.cha-scale-large { font-size: 1.18em; }
+.chaweb-entry-text.cha-font-mono.cha-scale-small { font-size: 0.84em; }
+.chaweb-entry-text.cha-font-mono.cha-scale-large { font-size: 1.06em; }
