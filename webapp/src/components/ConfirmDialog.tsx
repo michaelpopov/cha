@@ -11,25 +11,36 @@ export function ConfirmDialog({
   onCancel,
   onConfirm,
   title,
+  className = 'cha-dialog',
+  initialFocus = 'confirm',
 }: {
   confirmLabel: string;
   message: string;
   onCancel(): void;
   onConfirm(): void;
   title: string;
+  className?: string;
+  initialFocus?: 'cancel' | 'confirm';
 }) {
   const dialog = useRef<HTMLDialogElement | null>(null);
 
   useEffect(() => {
-    if (typeof dialog.current?.showModal === 'function') dialog.current.showModal();
-    else dialog.current?.setAttribute('open', '');
+    const element = dialog.current;
+    if (!element) return;
+    const previousFocus = document.activeElement;
+    if (typeof element.showModal === 'function') element.showModal();
+    else element.setAttribute('open', '');
+    element.querySelector<HTMLButtonElement>(
+      initialFocus === 'cancel' ? '.cha-button-ghost' : '.cha-button-danger',
+    )?.focus();
     return () => {
-      if (typeof dialog.current?.close === 'function') dialog.current.close();
+      if (typeof element.close === 'function') element.close();
+      if (previousFocus instanceof HTMLElement && previousFocus.isConnected) previousFocus.focus();
     };
-  }, []);
+  }, [initialFocus]);
 
   return createPortal(
-    <dialog className="cha-dialog" onCancel={onCancel} ref={dialog}>
+    <dialog aria-label={title} className={className} onCancel={onCancel} ref={dialog}>
       <h2>{title}</h2>
       <p>{message}</p>
       <div className="cha-dialog-actions">
@@ -37,7 +48,6 @@ export function ConfirmDialog({
           Cancel
         </button>
         <button
-          autoFocus
           className="cha-button cha-button-danger"
           onClick={onConfirm}
           type="button"

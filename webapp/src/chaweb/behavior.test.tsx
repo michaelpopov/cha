@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 
@@ -100,6 +100,7 @@ function client(overrides: Partial<ChaWebClient> = {}): ChaWebClient {
     })),
     submitInput: vi.fn(),
     stopSession: vi.fn(),
+    deleteSession: vi.fn(),
     ...overrides,
   };
 }
@@ -117,6 +118,169 @@ async function openPlanning(api = client()) {
   await screen.findByText('First note');
   return api;
 }
+
+it('confirms the named session, focuses Cancel, and preserves the conversation on cancellation', async () => {
+  const user = userEvent.setup();
+  const api = await openPlanning();
+  const box = screen.getByRole('textbox', { name: 'Message' });
+  await user.type(box, 'Unsent note');
+  const controls = screen.getByRole('button', { name: 'Delete session' }).parentElement!;
+  expect(within(controls).getAllByRole('button').map((button) => button.getAttribute('aria-label')))
+    .toEqual(['Sessions', 'Delete session', 'Send']);
+  await user.click(screen.getByRole('button', { name: 'Delete session' }));
+  const dialog = screen.getByRole('dialog', { name: 'Delete session “planning”?' });
+  expect(dialog).toHaveTextContent('The unsent prompt will also be discarded.');
+  expect(within(dialog).getByRole('button', { name: 'Cancel' })).toHaveFocus();
+  await user.keyboard('{Enter}');
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Delete session' })).toHaveFocus();
+  expect(api.deleteSession).not.toHaveBeenCalled();
+  expect(box).toHaveValue('Unsent note');
+  expect(window.location.hash).toContain('/planning');
+});
+
+it('returns to the same forum after deletion, clears its URL and draft, and keeps other drafts', async () => {
+  const user = userEvent.setup();
+  const deleted = deferred<void>();
+  let removed = false;
+  const api = await showList(client({
+    deleteSession: vi.fn(() => deleted.promise.then(() => { removed = true; })),
+    listSessions: vi.fn(async () => removed ? [lobbySessions[0]!] : lobbySessions),
+  }));
+  await user.click(screen.getByRole('button', { name: 'New Session' }));
+  await user.type(screen.getByRole('textbox'), 'Separate new draft');
+  await user.click(screen.getByRole('button', { name: 'Sessions' }));
+  await user.click(await screen.findByRole('button', { name: /Planning/ }));
+  await screen.findByText('First note');
+  await user.type(screen.getByRole('textbox'), 'Deleted draft');
+  await user.click(screen.getByRole('button', { name: 'Delete session' }));
+  await user.click(screen.getByRole('button', { name: 'Delete' }));
+  expect(api.deleteSession).toHaveBeenCalledExactlyOnceWith('lobby', 'planning');
+  expect(screen.getByRole('status')).toHaveTextContent('Deleting');
+  expect(screen.getByRole('button', { name: 'Sessions' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Delete session' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
+  await act(async () => deleted.resolve());
+  expect(await screen.findByRole('combobox', { name: 'Forum' })).toHaveValue('lobby');
+  await screen.findByRole('button', { name: /Older/ });
+  expect(screen.queryByRole('button', { name: /Planning/ })).not.toBeInTheDocument();
+  expect(window.location.hash).toBe('');
+  await user.click(screen.getByRole('button', { name: 'New Session' }));
+  expect(screen.getByRole('textbox')).toHaveValue('Separate new draft');
+  // Even an old history entry cannot restore the deleted session's draft.
+  await settleHistory(() => {
+    window.history.pushState(null, '', '/#/forums/lobby/sessions/planning');
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  });
+  await screen.findByText('First note');
+  expect(screen.getByRole('textbox')).toHaveValue('');
+});
+
+it('keeps the session and draft when deletion fails and permits an explicit retry', async () => {
+  const user = userEvent.setup();
+  const api = await openPlanning(client({
+    deleteSession: vi.fn(async () => { throw new ChaWebError(500, 'Try again.', 'session_stopping'); }),
+  }));
+  await user.type(screen.getByRole('textbox'), 'Keep this');
+  await user.click(screen.getByRole('button', { name: 'Delete session' }));
+  await user.click(screen.getByRole('button', { name: 'Delete' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Try again.');
+  expect(screen.getByRole('textbox')).toHaveValue('Keep this');
+  expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+  expect(window.location.hash).toContain('/planning');
+  expect(screen.getByRole('button', { name: 'Delete session' })).toBeEnabled();
+  expect(api.deleteSession).toHaveBeenCalledTimes(1);
+});
+
+it('disables deletion for unsent sessions and while input or Stop is pending', async () => {
+  const user = userEvent.setup();
+  const input = deferred<void>();
+  const stopped = deferred<void>();
+  const api = await showList(client({
+    submitInput: vi.fn(() => input.promise),
+    stopSession: vi.fn(() => stopped.promise),
+  }));
+  await user.click(screen.getByRole('button', { name: 'New Session' }));
+  expect(screen.getByRole('button', { name: 'Delete session' })).toBeDisabled();
+  await user.click(screen.getByRole('button', { name: 'Sessions' }));
+  await user.click(await screen.findByRole('button', { name: /Planning/ }));
+  await screen.findByText('First note');
+  await user.type(screen.getByRole('textbox'), 'Hello');
+  await user.click(screen.getByRole('button', { name: 'Send' }));
+  expect(screen.getByRole('button', { name: 'Delete session' })).toBeDisabled();
+  await user.click(screen.getByRole('button', { name: 'Stop' }));
+  expect(screen.getByRole('button', { name: 'Delete session' })).toBeDisabled();
+  expect(api.deleteSession).not.toHaveBeenCalled();
+});
+
+it('warns about stopping an active reply and ignores an in-flight snapshot during deletion', async () => {
+  vi.useFakeTimers();
+  const late = deferred<SessionSnapshot>();
+  const deleted = deferred<void>();
+  const api = client({
+    getSession: vi.fn()
+      .mockResolvedValueOnce(snapshot('planning', { generation: generation(true) }))
+      .mockImplementationOnce(() => late.promise),
+    deleteSession: vi.fn(() => deleted.promise),
+  });
+  window.history.replaceState(null, '', '/#/forums/lobby/sessions/planning');
+  render(<App client={api} />);
+  await act(() => vi.advanceTimersByTimeAsync(0));
+  await act(() => vi.advanceTimersByTimeAsync(1000));
+  expect(api.getSession).toHaveBeenCalledTimes(2);
+  fireEvent.click(screen.getByRole('button', { name: 'Delete session' }));
+  expect(screen.getByRole('dialog')).toHaveTextContent('The current reply will be stopped.');
+  fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+  expect(screen.getByRole('button', { name: 'Stop' })).toBeDisabled();
+  await act(async () => {
+    late.resolve(snapshot('planning', { session_label: 'Late title' }));
+    await vi.advanceTimersByTimeAsync(0);
+  });
+  expect(screen.getByRole('status')).toHaveTextContent('Deleting');
+  expect(api.getSession).toHaveBeenCalledTimes(2);
+  await act(async () => {
+    deleted.resolve();
+    await vi.advanceTimersByTimeAsync(0);
+  });
+  expect(screen.getByRole('combobox', { name: 'Forum' })).toHaveValue('lobby');
+  expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+});
+
+it('does not leave another conversation when deletion finishes after browser navigation', async () => {
+  const user = userEvent.setup();
+  const deleted = deferred<void>();
+  await openPlanning(client({ deleteSession: vi.fn(() => deleted.promise) }));
+  await user.click(screen.getByRole('button', { name: 'Delete session' }));
+  await user.click(screen.getByRole('button', { name: 'Delete' }));
+  await settleHistory(() => {
+    window.history.pushState(null, '', '/#/forums/lobby/sessions/older');
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  });
+  await user.type(screen.getByRole('textbox'), 'Other session draft');
+  await act(async () => deleted.resolve());
+  expect(screen.getByRole('textbox')).toHaveValue('Other session draft');
+  expect(window.location.hash).toContain('/older');
+  expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+});
+
+it('treats a session already deleted elsewhere as deleted and closes stale confirmations on navigation', async () => {
+  const user = userEvent.setup();
+  const api = await openPlanning(client({
+    deleteSession: vi.fn(async () => { throw new ChaWebError(404, 'Not found.', 'not_found'); }),
+  }));
+  await user.click(screen.getByRole('button', { name: 'Delete session' }));
+  await settleHistory(() => {
+    window.history.pushState(null, '', '/#/forums/lobby/sessions/older');
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  });
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(api.deleteSession).not.toHaveBeenCalled();
+  await user.click(screen.getByRole('button', { name: 'Delete session' }));
+  await user.click(screen.getByRole('button', { name: 'Delete' }));
+  await screen.findByRole('combobox', { name: 'Forum' });
+  expect(api.deleteSession).toHaveBeenCalledExactlyOnceWith('lobby', 'older');
+  expect(window.location.hash).toBe('');
+});
 
 it('keeps one new draft per forum and does not create a session', async () => {
   const user = userEvent.setup();

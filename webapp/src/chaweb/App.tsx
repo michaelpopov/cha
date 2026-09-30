@@ -1,4 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+
+import { ConfirmDialog } from '../components/ConfirmDialog';
 
 import { useVisualViewport } from './viewport';
 import { visibleForums } from './route';
@@ -13,6 +15,12 @@ export function App({ client }: { client: ChaWebClient }) {
   const viewport = useVisualViewport();
   const model = useChaweb(client);
   const [expanded, setExpanded] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState<{
+    key: string; title: string; message: string;
+  } | null>(null);
+  useEffect(() => {
+    setConfirmDelete(null);
+  }, [model.screen, model.sessionKey]);
   const frame = {
     top: viewport.offsetTop,
     height: viewport.height,
@@ -62,12 +70,26 @@ export function App({ client }: { client: ChaWebClient }) {
         <Conversation
           characters={model.snapshot?.characters ?? []}
           commandDisabled={model.commandDisabled}
+          deleteDisabled={model.deleteDisabled}
+          deleting={model.deleting}
           draft={model.draft}
           entries={model.snapshot?.transcript ?? emptyTranscript}
           expanded={expanded}
           mode={model.mode}
           notice={model.notice}
           onDraft={model.onDraft}
+          onDelete={() => {
+            if (model.deleteDisabled || !model.snapshot) return;
+            setConfirmDelete({
+              key: model.sessionKey,
+              title: `Delete session “${model.snapshot.session_label}”?`,
+              message: [
+                'This cannot be undone.',
+                model.snapshot.generation.active ? 'The current reply will be stopped.' : '',
+                model.draft ? 'The unsent prompt will also be discarded.' : '',
+              ].filter(Boolean).join(' '),
+            });
+          }}
           onExpanded={setExpanded}
           onRetry={model.retryConversation ?? undefined}
           onAllowSend={model.allowSend ?? undefined}
@@ -79,6 +101,21 @@ export function App({ client }: { client: ChaWebClient }) {
           sessionKey={model.sessionKey}
           showSending={model.showSending}
           viewportHeight={viewport.height}
+        />
+      )}
+      {confirmDelete && model.screen === 'conversation'
+        && confirmDelete.key === model.sessionKey && (
+        <ConfirmDialog
+          className="chaweb-delete-dialog"
+          confirmLabel="Delete"
+          initialFocus="cancel"
+          message={confirmDelete.message}
+          onCancel={() => setConfirmDelete(null)}
+          onConfirm={() => {
+            model.deleteSession(confirmDelete.key);
+            setConfirmDelete(null);
+          }}
+          title={confirmDelete.title}
         />
       )}
     </div>

@@ -88,6 +88,7 @@ function client(overrides: Partial<ChaWebClient> = {}): ChaWebClient {
     getSession: vi.fn(async (_forumId: string, sessionId: string) => snapshot(sessionId)),
     submitInput: vi.fn(),
     stopSession: vi.fn(),
+    deleteSession: vi.fn(),
     ...overrides,
   };
 }

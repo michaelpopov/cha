@@ -40,6 +40,7 @@ export interface ChaWebClient {
   getSession(forumId: string, sessionId: string): Promise<SessionSnapshot>;
   submitInput(forumId: string, sessionId: string, text: string): Promise<void>;
   stopSession(forumId: string, sessionId: string): Promise<void>;
+  deleteSession(forumId: string, sessionId: string): Promise<void>;
 }
 
 function segment(id: string): string {
@@ -98,7 +99,7 @@ async function readJson(response: Response): Promise<unknown> {
 }
 
 async function exchange<T>(
-  method: 'GET' | 'POST',
+  method: 'GET' | 'POST' | 'DELETE',
   path: string,
   expected: number,
   consume: (response: Response) => Promise<T>,
@@ -176,6 +177,11 @@ export function createChaWebClient(): ChaWebClient {
     async stopSession(forumId, sessionId) {
       await exchange('POST', `${sessionPath(forumId, sessionId)}/stop`, 204,
         async () => undefined, {});
+    },
+
+    async deleteSession(forumId, sessionId) {
+      await exchange('DELETE', sessionPath(forumId, sessionId), 204,
+        async () => undefined);
     },
   };
 }

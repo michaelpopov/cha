@@ -48,6 +48,7 @@ interface Status {
   creating: Record<string, boolean | undefined>;
   inputs: Record<string, boolean | undefined>;
   stops: Record<string, boolean | undefined>;
+  deletes: Record<string, boolean | undefined>;
   stopping: Record<string, true>;
   holds: Record<string, { inspected: boolean }>;
 }
@@ -69,6 +70,7 @@ const emptyStatus: Status = {
   creating: {},
   inputs: {},
   stops: {},
+  deletes: {},
   stopping: {},
   holds: {},
 };
@@ -239,6 +241,8 @@ export function useChaweb(client: ChaWebClient) {
 
   function requestRead() {
     if (!mounted.current || !selectedSession() || !pageVisible()) return;
+    const key = currentDraftKey();
+    if (key && statusRef.current.deletes[key]) return;
     const loop = readLoop.current;
     clearReadTimer();
     if (loop.recovering || loop.inflight) {
@@ -662,6 +666,7 @@ export function useChaweb(client: ChaWebClient) {
   }
 
   function send() {
+    if (statusRef.current.deletes[currentDraftKey() ?? '']) return;
     const control = commandControl(buildCommand(
       statusRef.current,
       conversationRef.current,
@@ -706,6 +711,7 @@ export function useChaweb(client: ChaWebClient) {
   }
 
   function stop() {
+    if (statusRef.current.deletes[currentDraftKey() ?? '']) return;
     const control = commandControl(buildCommand(
       statusRef.current,
       conversationRef.current,
@@ -729,6 +735,87 @@ export function useChaweb(client: ChaWebClient) {
       () => stopOk(key),
       (error: unknown) => stopFail(forum, key, error),
     );
+  }
+
+  function canDelete() {
+    const command = buildCommand(
+      statusRef.current, conversationRef.current, screenRef.current,
+      draftsRef.current, snapshotRef.current, bootstrapRef.current,
+    );
+    return screenRef.current === 'conversation'
+      && command.kind === 'session' && command.snapshotReady
+      && !command.inputPending && !command.stopPending && !command.stopping
+      && !command.stateUnknown && !command.sendBlocked
+      && !statusRef.current.deletes[currentDraftKey() ?? ''];
+  }
+
+  function deleteSession(confirmedKey: string) {
+    const current = conversationRef.current;
+    if (!current || current.kind !== 'session'
+        || conversationKey(current) !== confirmedKey || !canDelete()) return;
+    const { forumId: forum, sessionId: session } = current;
+    const key = confirmedKey;
+    clearReadTimer();
+    // Ignore any snapshot that was requested before deletion began.
+    readLoop.current.gen += 1;
+    readLoop.current.queued = false;
+    patchStatus((state) => ({
+      ...state,
+      deletes: { ...state.deletes, [key]: true },
+      notices: { ...state.notices, [key]: 'Deleting' },
+    }));
+    void clientRef.current.deleteSession(forum, session).then(
+      () => deletedOk(forum, session, key),
+      (error: unknown) => {
+        if (!mounted.current) return;
+        if (classifyWriteFailure(error) === 'missing') {
+          deletedOk(forum, session, key);
+          return;
+        }
+        patchStatus((state) => ({
+          ...state,
+          deletes: { ...state.deletes, [key]: false },
+          notices: { ...state.notices, [key]: chaWebMessage(error, 'The session could not be deleted.') },
+        }));
+        if (currentDraftKey() === key) requestRead();
+      },
+    );
+  }
+
+  function deletedOk(forum: string, session: string, key: string) {
+    if (!mounted.current) return;
+    updateDrafts((state) => {
+      const next = { ...state };
+      delete next[key];
+      return next;
+    });
+    patchStatus((state) => {
+      const deletes = { ...state.deletes };
+      const notices = { ...state.notices };
+      delete deletes[key];
+      delete notices[key];
+      return { ...state, deletes, notices };
+    });
+    setSessions((rows) => forumRef.current === forum
+      ? rows.filter((row) => row.id !== session) : rows);
+    if (sameChawebPlace(window.location.hash, sessionHash(forum, session))) {
+      appliedHash.current = '';
+      window.history.replaceState(null, '', locationUrl());
+    }
+    const selected = conversationRef.current;
+    if (selected && conversationKey(selected) === key) {
+      conversationRef.current = null;
+      snapshotRef.current = null;
+      forumRef.current = forum;
+      setConversation(null);
+      setSnapshot(null);
+      setForumId(forum);
+      setListError(null);
+      showList();
+      setListKick((count) => count + 1);
+    } else {
+      refreshList(forum);
+    }
   }
 
   function createdOk(forum: string, revision: number, text: string, created: CreateSessionResult) {
@@ -1060,6 +1147,7 @@ export function useChaweb(client: ChaWebClient) {
     || (activeKey && status.inputs[activeKey]),
   );
   const pendingText = status.pendingText[activeKey] ?? null;
+  const deleting = Boolean(status.deletes[activeKey]);
 
   return {
     bootstrap,
@@ -1079,7 +1167,10 @@ export function useChaweb(client: ChaWebClient) {
     showSending,
     pendingText,
     mode: control.mode,
-    commandDisabled: control.disabled,
+    commandDisabled: control.disabled || deleting,
+    deleting,
+    deleteDisabled: !canDelete(),
+    deleteSession,
     allowSend: status.holds[activeKey]?.inspected ? allowSend : null,
     retryConversation: status.blockedKey === activeKey && !status.reconnecting ? retryRead : null,
     sessionKey: activeKey || 'none',

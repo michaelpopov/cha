@@ -31,6 +31,8 @@ std::string_view safe_message(ErrorCode code) noexcept {
         return "Prompt is too large.";
     case ErrorCode::command_timeout:
         return "The command outcome is unknown.";
+    case ErrorCode::session_stopping:
+        return "The session is still stopping. Try deleting it again.";
     case ErrorCode::server_stopping:
         return "The server is shutting down.";
     case ErrorCode::application_unavailable:
@@ -357,6 +359,20 @@ void serve_snapshot(
     write_failed(fd, classify_submit(result), stop);
 }
 
+void serve_delete(
+    app::Application& application,
+    const ParsedRoute& route,
+    int fd,
+    const std::atomic<bool>& stop) {
+    const auto error = application.delete_session(
+        route.forum_id, route.session_id, application.context_epoch());
+    if (error) {
+        write_code(fd, *error, stop);
+        return;
+    }
+    write_cgi(fd, 204, {}, {}, stop);
+}
+
 void serve_input(
     app::Application& application,
     const ScgiRequest& request,
@@ -511,6 +527,10 @@ void handle_chaweb_request(
         }
         if (request.method == "GET" && route.route == Route::session) {
             serve_snapshot(application, route, fd, stop);
+            return;
+        }
+        if (request.method == "DELETE" && route.route == Route::session) {
+            serve_delete(application, route, fd, stop);
             return;
         }
         if (request.method == "POST" && route.route == Route::input) {

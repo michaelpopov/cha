@@ -875,6 +875,32 @@ class ChaWebIntegration(DaemonHarness):
         self.assertTrue(any("keep this note" in text for text in self.texts(kept)))
         self.assertEqual(self.prompt_count(), prompts)
 
+    def test_delete_session_through_nginx(self):
+        kept = self.create("@- keep this session")
+        removed = self.create("@- delete this session")
+        status, headers, raw = self.exchange("DELETE", self.session_path(removed["id"]))
+        self.assertEqual(status, 204, raw)
+        self.assertEqual(raw, b"")
+        self.assertIn("no-store", headers.get("cache-control", ""))
+        self.assertEqual(self.session_ids(), [kept["id"]])
+        status, _, raw = self.exchange("GET", self.session_path(removed["id"]))
+        self.assert_api_error(status, raw, 404, "not_found")
+        status, _, raw = self.exchange("DELETE", self.session_path(removed["id"]))
+        self.assert_api_error(status, raw, 404, "not_found")
+
+    def test_delete_active_session_through_nginx(self):
+        self.use_provider()
+        active = self.create(HOLD + " delete-me")
+        self.provider.wait_for("delete-me")
+        self.assertTrue(self.snapshot(active["id"])["generation"]["active"])
+        status, _, raw = self.exchange("DELETE", self.session_path(active["id"]))
+        self.assertEqual(status, 204, raw)
+        self.assertEqual(raw, b"")
+        self.assertNotIn(active["id"], self.session_ids())
+        self.provider.released.set()
+        status, _, raw = self.exchange("GET", self.session_path(active["id"]))
+        self.assert_api_error(status, raw, 404, "not_found")
+
     def test_continuation_and_stop(self):
         self.use_provider()
         older = self.create("@- older note")

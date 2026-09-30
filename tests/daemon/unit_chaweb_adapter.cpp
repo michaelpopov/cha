@@ -303,6 +303,60 @@ TEST_F(ChaWebAdapterTest, UnknownRoutesAndMethodsAreNotFoundWithoutCors) {
     }
 }
 
+TEST_F(ChaWebAdapterTest, DeletesOnlyTheNamedSession) {
+    const std::string removed = create_session();
+    const std::string kept = create_session();
+    const CgiResponse response = exchange(
+        *application_,
+        {.method = "DELETE", .document_uri = session_path("lobby", removed)});
+    EXPECT_EQ(response.status, 204) << response.raw;
+    EXPECT_EQ(response.raw, "Status: 204 No Content\r\n\r\n");
+    const auto rows = listed();
+    ASSERT_EQ(rows.size(), 1u);
+    EXPECT_EQ(rows.front().id, kept);
+    EXPECT_EQ(get(session_path("lobby", removed)).status, 404);
+    EXPECT_EQ(get(session_path("lobby", kept)).status, 200);
+    EXPECT_EQ(exchange(
+        *application_,
+        {.method = "DELETE", .document_uri = session_path("lobby", removed)}).status, 404);
+}
+
+TEST_F(ChaWebAdapterTest, DeleteRejectsMismatchedForumsAndWelcome) {
+    workspace_.add_forum("stoics", "Stoics", "guide");
+    application_.reset();
+    open_application();
+    const std::string id = create_session();
+    for (const auto& path : {
+            session_path("stoics", id),
+            session_path("missing", id),
+            session_path("builtin-entrance", "builtin-welcome"),
+            sessions_path("lobby"),
+            session_path("lobby", id) + "/input"}) {
+        const CgiResponse response = exchange(
+            *application_, {.method = "DELETE", .document_uri = path});
+        EXPECT_EQ(response.status, 404) << response.raw;
+        EXPECT_EQ(response.json.at("error").at("code"), "not_found");
+    }
+    ASSERT_EQ(listed().size(), 1u);
+    EXPECT_EQ(listed().front().id, id);
+}
+
+TEST_F(ChaWebAdapterTest, DeleteTimeoutKeepsTheStoredSessionAndReturnsAnError) {
+    RuntimeSettings settings;
+    settings.delete_deadline = 0ms;
+    application_.reset();
+    open_application(settings);
+    const std::string id = create_session();
+    const CgiResponse response = exchange(
+        *application_, {.method = "DELETE", .document_uri = session_path("lobby", id)});
+    EXPECT_EQ(response.status, 500) << response.raw;
+    EXPECT_EQ(response.json.at("error").at("code"), "session_stopping");
+    EXPECT_EQ(response.json.at("error").at("message"),
+        "The session is still stopping. Try deleting it again.");
+    ASSERT_EQ(listed().size(), 1u);
+    EXPECT_EQ(listed().front().id, id);
+}
+
 TEST_F(ChaWebAdapterTest, RejectsMalformedBodiesAndUnknownFields) {
     const std::string id = create_session();
     const struct Case {
@@ -596,6 +650,34 @@ TEST(ChaWebAdapter, InputReturnsWhileGenerationContinues) {
     EXPECT_TRUE(snapshot.json.at("generation").at("active").get<bool>());
     server.resume_responses();
     server.join();
+}
+
+TEST(ChaWebAdapter, DeleteStopsGenerationAndPreventsTheSessionFromReturning) {
+    test::TestWorkspace workspace;
+    disable_naming(workspace);
+    MockHttpServer server({http_json(
+        R"({"choices":[{"message":{"content":"Later"}}]})")});
+    server.pause_before_response(1);
+    use_net_provider(workspace, server.port());
+    auto application = Application::open(
+        make_command(workspace, test::import_test_database(workspace.root())));
+    server.start();
+    const CgiResponse created = exchange(
+        *application,
+        post_request(sessions_path("lobby"), text_body("Hello").dump()));
+    ASSERT_EQ(created.status, 201) << created.raw;
+    ASSERT_TRUE(server.wait_for_requests(1, 5s));
+    const std::string id = created.json.at("id").get<std::string>();
+    const CgiResponse snapshot = exchange(
+        *application, get_request(session_path("lobby", id)));
+    EXPECT_TRUE(snapshot.json.at("generation").at("active").get<bool>());
+    const CgiResponse deleted = exchange(
+        *application, {.method = "DELETE", .document_uri = session_path("lobby", id)});
+    EXPECT_EQ(deleted.status, 204) << deleted.raw;
+    EXPECT_TRUE(application->list_sessions("lobby", application->context_epoch()).empty());
+    server.resume_responses();
+    server.join();
+    EXPECT_EQ(exchange(*application, get_request(session_path("lobby", id))).status, 404);
 }
 
 } // namespace

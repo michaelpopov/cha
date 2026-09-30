@@ -13,6 +13,9 @@ export function Conversation({
   viewportHeight,
   sessionKey,
   onSessions,
+  onDelete,
+  deleteDisabled,
+  deleting,
   mode,
   commandDisabled,
   onSend,
@@ -33,6 +36,9 @@ export function Conversation({
   viewportHeight: number;
   sessionKey: string;
   onSessions(): void;
+  onDelete(): void;
+  deleteDisabled: boolean;
+  deleting: boolean;
   mode: 'send' | 'stop';
   commandDisabled: boolean;
   onSend(): void;
@@ -52,7 +58,7 @@ export function Conversation({
         personas={personas}
         sessionKey={sessionKey}
       />
-      {notice && <p className="chaweb-alert" role="alert">{notice}</p>}
+      {notice && <p className={deleting ? 'chaweb-status' : 'chaweb-alert'} role={deleting ? 'status' : 'alert'}>{notice}</p>}
       {onRetry && (
         <button className="chaweb-new-session" onClick={onRetry} type="button">Retry</button>
       )}
@@ -69,9 +75,12 @@ export function Conversation({
       )}
       <Composer
         commandDisabled={commandDisabled}
+        deleteDisabled={deleteDisabled}
+        deleting={deleting}
         expanded={expanded}
         mode={mode}
         onChange={onDraft}
+        onDelete={onDelete}
         onExpanded={onExpanded}
         onSend={onSend}
         onSessions={onSessions}

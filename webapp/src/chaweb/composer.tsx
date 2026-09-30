@@ -1,6 +1,6 @@
 import { useRef, type KeyboardEvent, type PointerEvent } from 'react';
 
-import { ForumsIcon, SendIcon, StopIcon } from '../components/Icons';
+import { ForumsIcon, SendIcon, StopIcon, TrashIcon } from '../components/Icons';
 
 const compactHeight = 56;
 
@@ -38,6 +38,9 @@ export function Composer({
   onExpanded,
   viewportHeight,
   onSessions,
+  onDelete,
+  deleteDisabled,
+  deleting,
   mode,
   commandDisabled,
   onSend,
@@ -49,6 +52,9 @@ export function Composer({
   onExpanded(expanded: boolean): void;
   viewportHeight: number;
   onSessions(): void;
+  onDelete(): void;
+  deleteDisabled: boolean;
+  deleting: boolean;
   mode: 'send' | 'stop';
   commandDisabled: boolean;
   onSend(): void;
@@ -143,8 +149,17 @@ export function Composer({
         value={value}
       />
       <div className="chaweb-controls">
-        <button aria-label="Sessions" className="chaweb-icon-button" onClick={showSessions} type="button">
+        <button aria-label="Sessions" className="chaweb-icon-button" disabled={deleting} onClick={showSessions} type="button">
           <ForumsIcon />
+        </button>
+        <button
+          aria-label="Delete session"
+          className="chaweb-icon-button"
+          disabled={deleteDisabled}
+          onClick={onDelete}
+          type="button"
+        >
+          <TrashIcon />
         </button>
         <button
           aria-label={commandLabel}

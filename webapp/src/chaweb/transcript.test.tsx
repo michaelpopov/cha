@@ -76,6 +76,73 @@ it('renders stored replies, sanitizes Markdown, and keeps a name the roster no l
   expect(screen.queryByText('complete')).not.toBeInTheDocument();
 });
 
+it('shows a multicast prompt once and keeps all four replies across snapshot updates', () => {
+  const entries = Object.freeze(['one', 'two', 'three', 'four'].flatMap((character, index) => [
+    entry({
+      id: index * 2 + 1, kind: 'human', participant_id: 'reader', display_name: 'Reader',
+      addressed_to: character, addressed_to_name: character,
+      text: 'Shared question', request_id: index + 10, created_at: 100,
+    }),
+    entry({
+      id: index * 2 + 2, participant_id: character, display_name: character,
+      text: `${character} answer`, request_id: index + 10, created_at: 101 + index,
+      status: index === 3 ? 'streaming' : 'complete',
+    }),
+  ]));
+  const props = { characters: [], personas: [], layoutKey: 'compact:700', sessionKey: 'lobby/planning' };
+  const { rerender } = render(<Transcript {...props} entries={entries} />);
+  expect(screen.getAllByText('Shared question')).toHaveLength(1);
+  expect(screen.getAllByText('Reader')).toHaveLength(1);
+  for (const character of ['one', 'two', 'three', 'four']) {
+    expect(screen.getByText(`${character} answer`)).toBeInTheDocument();
+  }
+  expect(screen.getAllByRole('article')).toHaveLength(5);
+  expect(screen.getByText('Streaming')).toBeInTheDocument();
+  expect(entries).toHaveLength(8);
+
+  rerender(<Transcript {...props} entries={entries.map((item) => item.id === 8
+    ? { ...item, text: 'four finished answer', status: 'complete' } : item)} />);
+  expect(screen.getAllByText('Shared question')).toHaveLength(1);
+  expect(screen.getByText('four finished answer')).toBeInTheDocument();
+  expect(screen.queryByText('Streaming')).not.toBeInTheDocument();
+  expect(screen.getAllByRole('article')).toHaveLength(5);
+});
+
+it('keeps changed prompts, different authors, and repeated character replies', () => {
+  render(
+    <Transcript
+      characters={[]}
+      entries={[
+        entry({ id: 1, kind: 'human', participant_id: 'reader', text: 'First question' }),
+        entry({ id: 2, text: 'Repeated answer' }),
+        entry({ id: 3, kind: 'human', participant_id: 'reader', text: 'First question' }),
+        entry({ id: 4, text: 'Repeated answer' }),
+        entry({ id: 5, kind: 'human', participant_id: 'another', text: 'First question' }),
+        entry({ id: 6, text: 'Another answer' }),
+        entry({ id: 7, kind: 'human', participant_id: 'reader', text: 'First question' }),
+        entry({ id: 8, kind: 'human', participant_id: 'reader', text: 'Second question' }),
+        entry({ id: 9, kind: 'human', participant_id: 'reader', text: 'First question' }),
+      ]}
+      layoutKey="compact:700"
+      personas={[]}
+      sessionKey="lobby/planning"
+    />,
+  );
+  expect(screen.getAllByText('First question')).toHaveLength(4);
+  expect(screen.getByText('Second question')).toBeInTheDocument();
+  expect(screen.getAllByText('Repeated answer')).toHaveLength(2);
+  expect(screen.getByText('Another answer')).toBeInTheDocument();
+  expect(screen.getAllByRole('article')).toHaveLength(8);
+});
+
+it('starts the prompt comparison again when switching sessions', () => {
+  const entries = [entry({ kind: 'human', text: 'Same question' })];
+  const props = { characters: [], personas: [], layoutKey: 'compact:700' };
+  const { rerender } = render(<Transcript {...props} entries={entries} sessionKey="lobby/first" />);
+  rerender(<Transcript {...props} entries={entries} sessionKey="lobby/second" />);
+  expect(screen.getByText('Same question')).toBeInTheDocument();
+});
+
 it('follows the end until the reader scrolls away, including a layout change', () => {
   const first = [entry({ text: 'One' })];
   const { rerender } = render(
@@ -125,6 +192,9 @@ it('keeps the editor mounted, focused, and unchanged when the transcript is repl
       <Conversation
         characters={[]}
         commandDisabled={false}
+        deleteDisabled
+        deleting={false}
+        onDelete={() => {}}
         draft={draft}
         entries={entries}
         expanded={false}

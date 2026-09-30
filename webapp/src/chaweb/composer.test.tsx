@@ -36,9 +36,12 @@ function Editor({
   return (
     <Composer
       commandDisabled={commandDisabled}
+      deleteDisabled
+      deleting={false}
       expanded={expanded}
       mode={mode}
       onChange={setValue}
+      onDelete={() => {}}
       onExpanded={setExpanded}
       onSend={onSend}
       onSessions={onSessions}

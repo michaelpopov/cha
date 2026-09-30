@@ -57,6 +57,17 @@ export function Transcript({
     following.current = node.scrollHeight - node.scrollTop - node.clientHeight <= followSlack;
   }
 
+  // Multicast stores a copy of the prompt for each character. Match the desktop
+  // display: replies do not reset the comparison with the previous user prompt.
+  let lastPrompt: TranscriptEntry | undefined;
+  const visibleEntries = entries.filter((entry) => {
+    if (entry.kind !== 'human') return true;
+    const repeated = lastPrompt?.participant_id === entry.participant_id
+      && lastPrompt.text === entry.text;
+    lastPrompt = entry;
+    return !repeated;
+  });
+
   return (
     <div
       aria-label="Conversation transcript"
@@ -64,7 +75,7 @@ export function Transcript({
       onScroll={notePosition}
       ref={scroller}
     >
-      {entries.map((entry) => {
+      {visibleEntries.map((entry) => {
         const label = statusLabel[entry.status];
         const appearance = appearanceFor(entry, characters, personas);
         return (

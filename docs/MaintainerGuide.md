@@ -10,7 +10,8 @@ session that has been asked to perform changes such as:
 - add or remove a character from a forum;
 - change a forum's default character or persona;
 - add a model provider and assign characters to it;
-- add a visual style and assign it to characters.
+- add a visual style and assign it to characters;
+- deploy or upgrade ChaWeb on Linux.
 
 An exported workspace is the starting point for filesystem edits. The smaller
 repository-owned example is `packaging/shared/import-seed/`; it is not the
@@ -112,7 +113,9 @@ single path components because they become directory and default database
 names. Obsolete extra fields in vault TOML, including old per-vault `mirror`
 and `modify` values, are ignored with warnings instead of blocking startup.
 
-CHA runs inside its native desktop host and has no application HTTP listener.
+The native CHA application runs inside its desktop host and has no application
+HTTP listener. ChaWeb uses nginx to serve browser files and forward requests
+to `cha-daemon` over a Unix socket; see [ChaWeb deployment](#16-chaweb-deployment-on-linux).
 An obsolete `[web]` table is ignored with a warning, including unused invalid
 listener values. Session runtime limits and deadlines are internal
 `cha::RuntimeSettings`, not listener configuration.
@@ -1480,3 +1483,219 @@ For adding an editor, see [editing workspace entities](editing.md).
 
 The directory `~/var/modify/` is a useful content example, but the source and
 tests above are authoritative when the example and code disagree.
+
+## 16. ChaWeb deployment on Linux
+
+Deploy the daemon and browser files from the same Linux package. nginx serves
+`chaweb/` and forwards `/api/cha/v1/` to a user's systemd socket. There is no
+Node.js server. The deployment machine needs nginx and systemd; Node.js is
+needed only to build the package. The packaging reference is
+[CHA daemon on Linux](../packaging/linux/README.md).
+
+### Current installation
+
+The installation on ThinkStation uses these paths and addresses. Confirm them
+before deploying to another machine.
+
+| Setting | Value |
+| --- | --- |
+| Application owner and service account | `mpopov` |
+| Application directory | `/home/mpopov/opt/cha` |
+| Static root | `/home/mpopov/opt/cha/chaweb` |
+| User configuration and data | `/home/mpopov/var/cha/<user>/config` |
+| nginx site | `/etc/nginx/conf.d/chaweb.conf` |
+| Tailscale hostname | `thinkstation.tailb1b984.ts.net` |
+| Tailscale address | `100.93.184.7` |
+| LAN address | `192.168.86.39` |
+| Michael's port and socket | `8443`, `/run/cha/michael.sock` |
+| Annushka's port and socket | `8444`, `/run/cha/annushka.sock` |
+
+Both users share the static files but have separate daemons and vaults. The
+port selects the user's socket. ChaWeb has no login or API key, so bind its
+listeners only to the intended private networks. The current text interface
+works over HTTP. HTTPS is used on the Tailscale address and localhost; HTTP is
+used on the LAN address, with the same port assignments.
+
+### Build, back up, and install
+
+Run these commands as `mpopov` from the repository root. Select the release
+version; `0.2.3.1` is the package used for the initial ChaWeb deployment.
+
+```sh
+cha_version=0.2.3.1
+make package-linux VERSION="$cha_version"
+```
+
+This produces `packages/cha-linux-$cha_version.tar.gz`, including the daemon,
+the typechecked ChaWeb build, and installation scripts. If that package is
+already built, use it directly instead of rebuilding.
+
+Before an upgrade, finish or stop active conversations and copy any unsent
+browser drafts. Stop both sockets and services before copying the databases;
+an active socket can start a stopped daemon again. Back up the application,
+data, nginx configuration, OpenAI key map, and systemd units:
+
+```sh
+export CHA_DEPLOY_PATH=/home/mpopov/opt/cha
+export CHA_DATA_PATH=/home/mpopov/var/cha
+backup_dir="$HOME/var/cha-deployment-backups/$(date -u +%Y%m%dT%H%M%SZ)"
+mkdir -p "$backup_dir"
+chmod 700 "$backup_dir"
+sudo cp -a /etc/nginx/conf.d "$backup_dir/nginx-conf.d"
+sudo cp -a /etc/nginx/cha-users.map "$backup_dir/cha-users.map"
+sudo cp -a /etc/systemd/system/cha@.service \
+  /etc/systemd/system/cha@.socket "$backup_dir/"
+sudo systemctl stop cha@michael.socket cha@annushka.socket \
+  cha@michael.service cha@annushka.service
+sudo tar -czf "$backup_dir/application-and-data.tar.gz" \
+  -C /home/mpopov opt/cha var/cha
+sudo chown -R mpopov:mpopov "$backup_dir"
+```
+
+Extract and install the package. `install.sh` invokes sudo for system changes;
+start it as the regular user so it selects the correct application owner.
+
+```sh
+stage_dir=$(mktemp -d "$HOME/var/cha-deploy.XXXXXX")
+tar -xzf "packages/cha-linux-$cha_version.tar.gz" -C "$stage_dir"
+"$stage_dir/cha-linux-$cha_version/install.sh"
+sudo chown -R mpopov:mpopov "$CHA_DEPLOY_PATH" "$CHA_DATA_PATH"
+```
+
+The installer replaces the daemon, static files, example vault, and helper
+scripts. It preserves existing systemd units, nginx sites, OpenAI API-key
+maps, and user vaults. It installs a ChaWeb nginx example but does not create
+the per-user listeners. Keep data and TLS keys outside the static root.
+
+For existing users, start their sockets after installation:
+
+```sh
+sudo systemctl start cha@michael.socket cha@annushka.socket
+```
+
+Their next API request starts the new daemon. If installing without stopping
+the services first, run `sudo systemctl try-restart 'cha@*.service'` to load
+the new binary. Check that `/etc/systemd/system/cha@.service` uses `User=mpopov`
+and these deployment/data paths; existing units are not rewritten.
+
+For a new user, prepare its existing configuration directory and database,
+then run `"$CHA_DEPLOY_PATH/add_user.sh" USER` with the same exported paths.
+The script enables the socket and prints an OpenAI API key; that key is not
+used by ChaWeb. Configure working server provider credentials in the vault.
+ChatGPT subscription providers are not supported by the daemon. For a
+protected vault, supply `config/password`, owned by `mpopov`, with mode `0600`.
+
+### nginx access and listeners
+
+The nginx worker is `www-data`. It needs read access to the static files and
+search permission on every parent directory. For the current paths:
+
+```sh
+sudo setfacl -m u:www-data:--x /home/mpopov
+sudo -u www-data test -r "$CHA_DEPLOY_PATH/chaweb/index.html"
+```
+
+Grant search permission on other parent directories only if needed. Keep
+vault directories private. The systemd socket template uses group `www-data`,
+mode `0660`, and `Accept=no`; nginx needs access to that socket group.
+
+On first setup, copy `nginx-chaweb.conf.example` from the installed package
+to `/etc/nginx/conf.d/chaweb.conf`. On upgrades, compare the new example with
+the existing site and apply only the required changes. Use one server block
+per user, retaining the template's locations and SCGI settings. Before enabling
+HTTPS, obtain the certificate as described under
+[TLS certificate setup and renewal](#tls-certificate-setup-and-renewal).
+Michael's server-level settings are:
+
+```nginx
+listen 100.93.184.7:8443 ssl;
+listen 127.0.0.1:8443 ssl;
+listen 192.168.86.39:8443;
+server_name thinkstation.tailb1b984.ts.net;
+ssl_certificate /home/mpopov/opt/cha/tls/thinkstation.tailb1b984.ts.net.crt;
+ssl_certificate_key /home/mpopov/opt/cha/tls/thinkstation.tailb1b984.ts.net.key;
+ssl_protocols TLSv1.2 TLSv1.3;
+root /home/mpopov/opt/cha/chaweb;
+```
+
+In its `/api/cha/v1/` location, use
+`scgi_pass unix:/run/cha/michael.sock;`. Duplicate the server block for
+Annushka, replacing all three ports with `8444` and the socket with
+`unix:/run/cha/annushka.sock`.
+
+The LAN `listen` line intentionally omits `ssl`. A plain HTTP request to an
+SSL listener fails even when the IP and port are correct. The same server
+block can serve HTTP and HTTPS on different local addresses. For an HTTP-only
+installation, omit the SSL listeners and TLS directives.
+
+Keep the template's 256 KiB request limit, buffered SCGI responses, JSON gzip,
+and `Cache-Control: no-store` on API successes and errors. The entry document
+uses `no-cache`; content-hashed assets use the immutable cache header. Include
+nginx's `mime.types` and standard `scgi_params`, which forwards `CONTENT_TYPE`.
+Keep `/etc/nginx/conf.d/cha.conf` and `/etc/nginx/cha-users.map` for the existing
+OpenAI listener; ChaWeb routes directly to fixed sockets.
+
+Validate before reloading:
+
+```sh
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+### TLS certificate setup and renewal
+
+The current HTTPS listeners use a Tailscale certificate copied into
+`$CHA_DEPLOY_PATH/tls/`. Obtain or renew it with:
+
+```sh
+install -d -m 700 "$CHA_DEPLOY_PATH/tls"
+sudo tailscale cert \
+  --cert-file="$CHA_DEPLOY_PATH/tls/thinkstation.tailb1b984.ts.net.crt" \
+  --key-file="$CHA_DEPLOY_PATH/tls/thinkstation.tailb1b984.ts.net.key" \
+  thinkstation.tailb1b984.ts.net
+sudo chown -R mpopov:mpopov "$CHA_DEPLOY_PATH/tls"
+chmod 644 "$CHA_DEPLOY_PATH/tls/thinkstation.tailb1b984.ts.net.crt"
+chmod 600 "$CHA_DEPLOY_PATH/tls/thinkstation.tailb1b984.ts.net.key"
+openssl x509 -in "$CHA_DEPLOY_PATH/tls/thinkstation.tailb1b984.ts.net.crt" \
+  -noout -dates
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+Renewal is currently manual. The certificate installed on September 30, 2026
+expires on December 27, 2026. Refresh it before expiry and reload nginx;
+Tailscale Serve renewing its own certificate does not update these copied files.
+
+### Verify the deployment
+
+Check both users through nginx, not by connecting directly to the daemon:
+
+```sh
+systemctl status cha@michael.socket cha@annushka.socket
+curl --fail --silent --show-error -I http://192.168.86.39:8443/
+curl --fail --silent --show-error http://192.168.86.39:8443/api/cha/v1/bootstrap
+curl --fail --silent --show-error http://192.168.86.39:8444/api/cha/v1/bootstrap
+curl --fail --silent --show-error https://thinkstation.tailb1b984.ts.net:8443/api/cha/v1/bootstrap
+curl --fail --silent --show-error https://thinkstation.tailb1b984.ts.net:8444/api/cha/v1/bootstrap
+sudo find "$CHA_DEPLOY_PATH" "$CHA_DATA_PATH" \! -user mpopov -print
+```
+
+The page must return `200`, `text/html`, and `Cache-Control: no-cache`.
+Request the JavaScript and CSS paths from `index.html` and check their MIME
+types and immutable cache header. Bootstrap and session responses must be JSON
+with `no-store`; request a snapshot with `Accept-Encoding: gzip` to verify
+compression. Confirm each port reaches its own vault, using session lists if
+both vaults have the same forum names. The ownership check must print nothing.
+
+Open each user's page in a browser. Send a short test message, wait for a
+complete reply, reload, and verify the saved conversation. Restart that user's
+service and reopen the same session to check persistence. Check the existing
+OpenAI `/v1/models` route with its saved key without printing the key. On an
+iPhone, check keyboard opening and dismissal, editor resizing, rotation, and
+keyboard dictation while replies are polled.
+
+After a successful check, remove the extracted staging directory and keep the
+backup. Reload browser tabs after upgrades; unsent drafts do not survive reload.
+For `403`/`404` static-file errors, check nginx's parent-directory permissions
+and static root. For `502` API errors, check the socket, service, and
+`journalctl -u cha@USER.service`, then inspect nginx's error log.

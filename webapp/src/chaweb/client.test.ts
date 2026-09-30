@@ -26,6 +26,25 @@ function installFetch(handler: (url: string, init?: RequestInit) => Promise<Resp
 }
 
 describe('ChaWeb HTTP client', () => {
+  it('deletes the specified session without a body and reports failures without retrying', async () => {
+    const calls = installFetch(() => new Response(null, { status: 204 }));
+    const client = createChaWebClient();
+    await expect(client.deleteSession('a/b', 'c d')).resolves.toBeUndefined();
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      url: '/api/cha/v1/forums/a%2Fb/sessions/c%20d',
+      init: { method: 'DELETE', redirect: 'error' },
+    });
+    expect(calls[0]?.init?.body).toBeUndefined();
+    const failed = installFetch(() => jsonResponse({
+      error: { code: 'session_stopping', message: 'The session is still stopping.' },
+    }, 500));
+    await expect(client.deleteSession('lobby', 'planning')).rejects.toMatchObject({
+      status: 500, code: 'session_stopping', message: 'The session is still stopping.',
+    });
+    expect(failed).toHaveLength(1);
+  });
+
   it('loads bootstrap from a relative URL and keeps extra fields', async () => {
     const calls = installFetch(() => jsonResponse({ ...bootstrapFixture, future: true }));
     const bootstrap = await createChaWebClient().getBootstrap();
