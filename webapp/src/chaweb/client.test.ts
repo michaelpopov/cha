@@ -176,6 +176,31 @@ describe('ChaWeb HTTP client', () => {
     await createChaWebClient().getBootstrap();
     expect(vi.getTimerCount()).toBe(0);
   });
+
+  it('keeps the timeout active while reading a response body', async () => {
+    vi.useFakeTimers();
+    installFetch((_url, init) => new Response(new ReadableStream({
+      start(controller) {
+        init?.signal?.addEventListener('abort', () => {
+          controller.error(new DOMException('Aborted', 'AbortError'));
+        });
+      },
+    }), { status: 201, headers: { 'Content-Type': 'application/json' } }));
+    const request = createChaWebClient().createSession('lobby', 'Only once');
+    const rejected = expect(request).rejects.toMatchObject({ status: 0, message: 'The request timed out.' });
+    await vi.advanceTimersByTimeAsync(60_000);
+    await rejected;
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('treats a disconnected response body as a transport failure', async () => {
+    installFetch(() => new Response(new ReadableStream({
+      start(controller) { controller.error(new TypeError('Connection lost')); },
+    }), { headers: { 'Content-Type': 'application/json' } }));
+    await expect(createChaWebClient().getBootstrap()).rejects.toMatchObject({
+      status: 0, message: 'The request failed.',
+    });
+  });
 });
 
 function clientSubmit() {

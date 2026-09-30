@@ -384,8 +384,9 @@ Browser development is documented in
 `make package-macos VERSION=<version>` on macOS or
 `make package-windows VERSION=<version>` on Windows. On Linux,
 `make package-linux VERSION=<version>` (or `make package=linux VERSION=<version>`)
-creates `packages/cha-linux-<version>.tar.gz` with `cha-daemon`, an example
-vault, and deployment scripts for nginx and systemd. The macOS command writes
+creates `packages/cha-linux-<version>.tar.gz` with `cha-daemon`, the ChaWeb
+browser files, an example vault, and deployment scripts for nginx and systemd
+(see [packaging/linux/README.md](packaging/linux/README.md)). The macOS command writes
 `packages/CHA.app` and `packages/CHA-macos-<version>.tar.gz`. The macOS archive
 contains only `CHA.app`; the app creates its configuration and database on first
 launch. Packaging requires

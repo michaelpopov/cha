@@ -1,6 +1,7 @@
 # Block 5: ChaWeb packaging and deployment handoff
 
-Status: implementation instructions; the work is not yet complete.
+Status: implemented. The Linux package build and the isolated systemd
+install/upgrade checks are outstanding; see "Results" at the end.
 This block implements plan step 10. It requires passing daemon/nginx tests,
 production browser builds, and conversation/iPhone checks from blocks 1–4.
 It delivers an installable Linux package and tested upgrade instructions.
@@ -280,3 +281,37 @@ follow-up. Stage 1 is complete only when the packaged app passes this real
 browser-to-nginx-to-daemon acceptance. Preserve stable session/entry IDs,
 additive response fields, and room below the editor for future voice controls;
 do not implement microphone, playback, or media APIs as part of this work.
+
+## Results
+
+Changed: `package.sh` runs `npm ci` and `build:chaweb` before the native build,
+checks that `index.html` and every `/assets/` file it names exist, and stages
+`chaweb/` and `nginx-chaweb.conf.example`. `install.sh` checks for these
+files, refuses a `CHA_DATA_PATH` at or under `$CHA_DEPLOY_PATH/chaweb`,
+replaces the static root with readable files, installs the example, and warns
+when the nginx worker user cannot read `index.html`. `add_user.sh` names its
+key as the OpenAI key and prints the ChaWeb listener step. The Linux README is
+rewritten; the root README mentions the ChaWeb files.
+
+Automated checks pass on macOS: `make test` (960 tests; the two live OpenAI
+tests are skipped without credentials), `make web-check` (925 tests),
+`make itest-local` (24 tests) and `make itest-daemon` (22 tests, including
+static files, MIME types and cache headers through the shipped ChaWeb block).
+
+`package.sh` ran on macOS with `uname`, `cmake` and `readelf` replaced by
+stand-ins, so the npm install, ChaWeb build, output check, staging and tar
+steps were real. The archive had the layout above, `index.html` named only
+files in the archive, and it contained no `node_modules` or personal files.
+Without npm the script stops with exit status 2. A missing asset stops the
+output check. No temporary directory remained after either failure.
+
+Outstanding, because no Linux machine or isolated systemd environment was
+available:
+
+- `make package-linux` on Linux with the real Release daemon and runtime-library
+  check.
+- Clean install without Node, the nginx read check, socket activation and the
+  `www-data` group check, and requests through an installed listener.
+- Upgrade over stored history and edited nginx/systemd configuration.
+- The operator deployment and installed-app acceptance above (plan steps 11
+  and 12).

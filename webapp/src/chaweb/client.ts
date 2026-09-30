@@ -79,7 +79,8 @@ async function rejectResponse(response: Response): Promise<never> {
     throw errorFromPayload(response.status, await response.json());
   } catch (error) {
     if (error instanceof ChaWebError) throw error;
-    throw new ChaWebError(response.status, FAILED);
+    if (error instanceof SyntaxError) throw new ChaWebError(response.status, FAILED);
+    throw error;
   }
 }
 
@@ -91,44 +92,42 @@ async function readJson(response: Response): Promise<unknown> {
     return await response.json();
   } catch (error) {
     if (error instanceof ChaWebError) throw error;
-    throw new ChaWebError(response.status, FAILED);
+    if (error instanceof SyntaxError) throw new ChaWebError(response.status, FAILED);
+    throw error;
   }
 }
 
-async function send(method: 'GET' | 'POST', path: string, body?: unknown): Promise<Response> {
+async function exchange<T>(
+  method: 'GET' | 'POST',
+  path: string,
+  expected: number,
+  consume: (response: Response) => Promise<T>,
+  body?: unknown,
+): Promise<T> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   try {
-    return await fetch(path, {
+    const response = await fetch(path, {
       method,
       redirect: 'error',
       signal: controller.signal,
       headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
+    if (response.status !== expected) {
+      if (response.ok) throw protocolError(response.status);
+      await rejectResponse(response);
+    }
+    return await consume(response);
   } catch (error) {
-    if (error instanceof ChaWebError) throw error;
-    if (error instanceof DOMException && error.name === 'AbortError') {
+    if (controller.signal.aborted || (error instanceof DOMException && error.name === 'AbortError')) {
       throw new ChaWebError(0, TIMED_OUT);
     }
+    if (error instanceof ChaWebError) throw error;
     throw new ChaWebError(0, FAILED);
   } finally {
     clearTimeout(timer);
   }
-}
-
-async function exchange(
-  method: 'GET' | 'POST',
-  path: string,
-  expected: number,
-  body?: unknown,
-): Promise<Response> {
-  const response = await send(method, path, body);
-  if (response.status !== expected) {
-    if (response.ok) throw protocolError(response.status);
-    await rejectResponse(response);
-  }
-  return response;
 }
 
 async function readGuarded<T>(
@@ -143,38 +142,40 @@ async function readGuarded<T>(
 export function createChaWebClient(): ChaWebClient {
   return {
     async getBootstrap() {
-      const response = await exchange('GET', `${API}/bootstrap`, 200);
-      const payload = await readJson(response);
-      try {
-        return validateBootstrap(payload);
-      } catch (error) {
-        if (error instanceof ChaWebError) throw error;
-        throw protocolError(response.status);
-      }
+      return exchange('GET', `${API}/bootstrap`, 200, async (response) => {
+        const payload = await readJson(response);
+        try {
+          return validateBootstrap(payload);
+        } catch (error) {
+          if (error instanceof ChaWebError) throw error;
+          throw protocolError(response.status);
+        }
+      });
     },
 
     async listSessions(forumId) {
-      const response = await exchange('GET', sessionsPath(forumId), 200);
-      return readGuarded(response, isSessionListingArray);
+      return exchange('GET', sessionsPath(forumId), 200,
+        (response) => readGuarded(response, isSessionListingArray));
     },
 
     async createSession(forumId, text) {
-      const response = await exchange('POST', sessionsPath(forumId), 201, { text });
-      const created = await readGuarded(response, isSessionLabelResult);
-      return created;
+      return exchange('POST', sessionsPath(forumId), 201,
+        (response) => readGuarded(response, isSessionLabelResult), { text });
     },
 
     async getSession(forumId, sessionId) {
-      const response = await exchange('GET', sessionPath(forumId, sessionId), 200);
-      return readGuarded(response, isSessionSnapshot);
+      return exchange('GET', sessionPath(forumId, sessionId), 200,
+        (response) => readGuarded(response, isSessionSnapshot));
     },
 
     async submitInput(forumId, sessionId, text) {
-      await exchange('POST', `${sessionPath(forumId, sessionId)}/input`, 204, { text });
+      await exchange('POST', `${sessionPath(forumId, sessionId)}/input`, 204,
+        async () => undefined, { text });
     },
 
     async stopSession(forumId, sessionId) {
-      await exchange('POST', `${sessionPath(forumId, sessionId)}/stop`, 204, {});
+      await exchange('POST', `${sessionPath(forumId, sessionId)}/stop`, 204,
+        async () => undefined, {});
     },
   };
 }

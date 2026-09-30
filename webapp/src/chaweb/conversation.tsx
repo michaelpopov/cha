@@ -18,6 +18,10 @@ export function Conversation({
   onSend,
   onStop,
   notice,
+  showSending = false,
+  pendingText = null,
+  onRetry,
+  onAllowSend,
 }: {
   entries: readonly TranscriptEntry[];
   characters: ReadonlyArray<{ id: string; appearance: CharacterAppearance }>;
@@ -34,6 +38,10 @@ export function Conversation({
   onSend(): void;
   onStop(): void;
   notice: string | null;
+  showSending?: boolean;
+  pendingText?: string | null;
+  onRetry?(): void;
+  onAllowSend?(): void;
 }) {
   return (
     <div className="chaweb-conversation">
@@ -45,6 +53,20 @@ export function Conversation({
         sessionKey={sessionKey}
       />
       {notice && <p className="chaweb-alert" role="alert">{notice}</p>}
+      {onRetry && (
+        <button className="chaweb-new-session" onClick={onRetry} type="button">Retry</button>
+      )}
+      {onAllowSend && (
+        <button className="chaweb-new-session" onClick={onAllowSend} type="button">
+          Allow another Send
+        </button>
+      )}
+      {(showSending || pendingText) && (
+        <div className="chaweb-pending" role="status">
+          <div className="chaweb-entry-status">Sending</div>
+          {pendingText && <div>{pendingText}</div>}
+        </div>
+      )}
       <Composer
         commandDisabled={commandDisabled}
         expanded={expanded}

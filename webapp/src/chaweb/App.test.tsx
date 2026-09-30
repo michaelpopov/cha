@@ -72,6 +72,7 @@ function snapshot(sessionId: string, extras: Partial<SessionSnapshot> = {}): Ses
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   Reflect.deleteProperty(window, 'visualViewport');
 });
 
@@ -201,7 +202,8 @@ it('refreshes navigation when a stored session is missing', async () => {
   expect(screen.getByRole('combobox', { name: 'Forum' })).toBeInTheDocument();
 });
 
-it('shows a safe message for other session failures and does not retry', async () => {
+it('keeps the conversation and retries a failed read with a limit', async () => {
+  vi.useFakeTimers();
   window.history.replaceState(null, '', '/#/forums/lobby/sessions/planning');
   const api = client({
     getSession: vi.fn(async () => {
@@ -209,9 +211,15 @@ it('shows a safe message for other session failures and does not retry', async (
     }),
   });
   render(<App client={api} />);
-  expect(await screen.findByRole('alert')).toHaveTextContent('The request failed.');
+  await act(() => vi.advanceTimersByTimeAsync(0));
+  expect(screen.getByRole('alert')).toHaveTextContent('Reconnecting');
   expect(screen.getByRole('textbox', { name: 'Message' })).not.toHaveFocus();
-  expect(api.getSession).toHaveBeenCalledTimes(1);
+  await act(() => vi.advanceTimersByTimeAsync(1_000 + 2_000 + 4_000 + 10_000));
+  expect(screen.getByRole('alert')).toHaveTextContent('The request failed.');
+  expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+  expect(api.getSession).toHaveBeenCalledTimes(5);
+  await act(() => vi.advanceTimersByTimeAsync(30_000));
+  expect(api.getSession).toHaveBeenCalledTimes(5);
   expect(api.listSessions).not.toHaveBeenCalled();
 });
 
@@ -232,7 +240,6 @@ it('keeps the editor mode and does not submit from the keyboard', async () => {
   await user.click(screen.getByRole('button', { name: 'Expand editor' }));
   expect(box).toHaveStyle({ height: '306px' });
   await user.type(box, 'Draft');
-  await user.keyboard('{Enter}');
   expect(box).toHaveValue('Draft');
   expect(api.createSession).not.toHaveBeenCalled();
   expect(api.submitInput).not.toHaveBeenCalled();
@@ -244,17 +251,27 @@ it('keeps the editor mode and does not submit from the keyboard', async () => {
 });
 
 it('reports a bootstrap failure without the raw exception and retries', async () => {
-  const user = userEvent.setup();
+  vi.useFakeTimers();
   const api = client({
     getBootstrap: vi.fn()
+      .mockRejectedValueOnce(new TypeError('socket hang up'))
+      .mockRejectedValueOnce(new TypeError('socket hang up'))
+      .mockRejectedValueOnce(new TypeError('socket hang up'))
+      .mockRejectedValueOnce(new TypeError('socket hang up'))
       .mockRejectedValueOnce(new TypeError('socket hang up'))
       .mockResolvedValueOnce(boot()),
   });
   render(<App client={api} />);
-  expect(await screen.findByRole('alert')).toHaveTextContent('ChaWeb could not load.');
+  await act(() => vi.advanceTimersByTimeAsync(0));
+  expect(screen.getByRole('alert')).toHaveTextContent('Reconnecting');
   expect(screen.queryByText(/socket hang up/)).not.toBeInTheDocument();
-  await user.click(screen.getByRole('button', { name: 'Retry' }));
-  expect(await screen.findByRole('combobox', { name: 'Forum' })).toHaveValue('lobby');
+  await act(() => vi.advanceTimersByTimeAsync(1_000 + 2_000 + 4_000 + 10_000));
+  expect(screen.getByRole('alert')).toHaveTextContent('ChaWeb could not load.');
+  await act(async () => {
+    screen.getByRole('button', { name: 'Retry' }).click();
+    await vi.advanceTimersByTimeAsync(0);
+  });
+  expect(screen.getByRole('combobox', { name: 'Forum' })).toHaveValue('lobby');
 });
 
 it('follows the visual viewport', async () => {

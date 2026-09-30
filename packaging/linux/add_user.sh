@@ -63,5 +63,7 @@ if systemctl is-active --quiet nginx; then
     systemctl reload nginx
 fi
 systemctl enable --now "cha@$name.socket"
-echo "API key for $name: $key"
+echo "OpenAI API key for $name: $key"
 echo "Ready: cha@$name.socket"
+echo "For ChaWeb, add a server block with a private port for /run/cha/$name.sock" \
+    "from $CHA_DEPLOY_PATH/nginx-chaweb.conf.example"

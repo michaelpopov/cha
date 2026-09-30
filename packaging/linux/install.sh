@@ -43,20 +43,32 @@ if [ -f /etc/systemd/system/cha@.service ] && \
 fi
 
 source_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-for file in cha-daemon add_user.sh cha@.service cha@.socket; do
+for file in cha-daemon add_user.sh cha@.service cha@.socket \
+    nginx-chaweb.conf.example chaweb/index.html; do
     [ -f "$source_dir/$file" ] || fail "missing $file from the extracted package"
 done
 [ -d "$source_dir/cha-config.example/config" ] || fail "missing example vault"
+[ -d "$source_dir/chaweb/assets" ] || fail "missing chaweb/assets from the extracted package"
 if [ "$need_site" -eq 1 ]; then
     [ -f "$source_dir/nginx.conf.install" ] || fail "missing nginx.conf.install"
 fi
 command -v nginx >/dev/null 2>&1 || fail "nginx is required"
 
 mkdir -p -- "$CHA_DEPLOY_PATH" "$CHA_DATA_PATH"
+# nginx serves everything under the static root, and the installer replaces it.
+static="$(cd -- "$CHA_DEPLOY_PATH" && pwd -P)/chaweb"
+case "$(cd -- "$CHA_DATA_PATH" && pwd -P)/" in
+    "$static"/*) fail "CHA_DATA_PATH must be outside $static" ;;
+esac
 install -m 755 "$source_dir/cha-daemon" "$CHA_DEPLOY_PATH/cha-daemon"
 install -m 755 "$source_dir/add_user.sh" "$CHA_DEPLOY_PATH/add_user.sh"
+install -m 644 "$source_dir/nginx-chaweb.conf.example" \
+    "$CHA_DEPLOY_PATH/nginx-chaweb.conf.example"
 mkdir -p -- "$CHA_DEPLOY_PATH/cha-config.example"
 cp -R "$source_dir/cha-config.example/." "$CHA_DEPLOY_PATH/cha-config.example/"
+rm -rf -- "$static"
+cp -R "$source_dir/chaweb" "$static"
+chmod -R u=rwX,go=rX "$static"
 chown -R "$install_user:" "$CHA_DEPLOY_PATH"
 chown "$install_user:" "$CHA_DATA_PATH"
 
@@ -101,4 +113,19 @@ nginx -t
 if systemctl is-active --quiet nginx; then
     systemctl reload nginx
 fi
+
+# nginx workers need search permission on every parent of the static root.
+nginx_user=$(nginx -T 2>/dev/null |
+    sed -n 's/^[[:space:]]*user[[:space:]][[:space:]]*\([^[:space:];]*\).*/\1/p' |
+    head -n 1)
+nginx_user=${nginx_user:-nobody}
+if ! runuser -u "$nginx_user" -- test -r "$static/index.html"; then
+    echo "Warning: nginx user $nginx_user cannot read $static/index.html." >&2
+    echo "Give it search permission on each parent directory, for example:" >&2
+    echo "  sudo setfacl -m u:$nginx_user:x DIRECTORY" >&2
+fi
+
 echo "Installed CHA. Run CHA_DEPLOY_PATH=$CHA_DEPLOY_PATH CHA_DATA_PATH=$CHA_DATA_PATH $CHA_DEPLOY_PATH/add_user.sh USER"
+echo "ChaWeb files: $static"
+echo "ChaWeb needs one nginx server block per user: adapt $CHA_DEPLOY_PATH/nginx-chaweb.conf.example"
+echo "After an upgrade, restart running daemons: sudo systemctl try-restart 'cha@*.service'"

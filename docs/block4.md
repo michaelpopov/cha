@@ -1,6 +1,7 @@
 # Block 4: ChaWeb conversation behavior
 
-Status: implementation instructions; the work is not yet complete.
+Status: implemented and checked in the iOS Simulator. The real iPhone checks
+in "Results" at the end are outstanding.
 This block implements plan step 8 and its browser tests from step 9. It requires
 the daemon API, nginx path, HTTP client, and two browser views from blocks 1–3.
 The real iPhone layout, keyboard, size-toggle, and dictation checks must have
@@ -270,3 +271,44 @@ checks above. Record results and outstanding environmental limitations plainly.
 The handoff is a working browser-to-nginx-to-daemon text application ready to
 package, with stable IDs and additive response handling left available for
 future voice work.
+
+## Results
+
+Automated checks pass: `make test` (960 tests; the two live OpenAI tests are
+skipped without credentials), `make web-check` (902 tests), `make itest-local`
+and `make itest-daemon`. The temporary transcript-update fixture is removed.
+
+Manual check in the iOS Simulator (iPhone 17, iOS 27 Safari) through Vite, a
+local nginx listener and the daemon on a test vault. A fake Chat Completions
+provider answered after 3 seconds, or after 15 seconds for a long reply.
+These cases behaved as specified, verified in the nginx access log:
+
+- New Session makes no request. First Send gets `201`, then one list refresh
+  and one snapshot; Stop stays disabled until the ID is known.
+- Later Send gets `204`; the draft clears only after acceptance. Polling runs
+  one read at a time, one second after the previous read, and stops when
+  generation ends; the list then refreshes.
+- Stop during a long reply gets `204`; reads continue until a snapshot shows
+  generation inactive.
+- Leaving during generation stops reads; returning fetches the finished reply
+  and keeps the draft typed while pending. Back and Forward make one request
+  each. Opening a session does not open the keyboard.
+- Rejected first input (`/not-a-command`) shows CHA's notice, keeps the draft
+  and leaves no session row. A first self-note is stored and finishes without
+  a reply. An oversized prompt shows "Prompt is too large." and keeps the draft.
+- Daemon restart: Reconnecting, retries after 1, 2, 4 and 10 seconds, then
+  bootstrap and snapshot with the same session ID.
+- Safari in the background: no reads while hidden; one refresh on return.
+- Lost input response (daemon paused past the 60-second timeout): "Send status
+  unknown" shows, the draft stays, no replay. Send is available again only
+  after a fresh snapshot.
+- Expanded editor: the mode survives Send; typing, caret, open keyboard and a
+  scrolled-up reading position survive arriving snapshots.
+
+Decisions: Send closes the keyboard, and sending while scrolled up does not
+jump to the end. Both are kept as they are.
+
+Outstanding, because they need a real iPhone: the LAN check with
+`dev:chaweb -- --host 0.0.0.0`, keyboard dictation with the real microphone
+and IME composition, rotation, and real network loss. The simulator types text
+directly and cannot rotate from the test tools.

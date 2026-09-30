@@ -18,6 +18,7 @@ export function SessionsView({
   onForum,
   onOpen,
   onNewSession,
+  onRetry,
 }: {
   forums: Array<{ id: string; display_name: string }>;
   forumId: string;
@@ -27,6 +28,7 @@ export function SessionsView({
   onForum(forumId: string): void;
   onOpen(sessionId: string): void;
   onNewSession(): void;
+  onRetry?(): void;
 }) {
   const rows = sessionsForNavigation(sessions);
   return (
@@ -42,6 +44,9 @@ export function SessionsView({
         ))}
       </select>
       {error && <p className="chaweb-alert" role="alert">{error}</p>}
+      {onRetry && (
+        <button className="chaweb-new-session" onClick={onRetry} type="button">Retry</button>
+      )}
       <ul aria-label="Sessions" className="chaweb-list">
         {rows.map((session) => {
           const current = session.id === currentSessionId;

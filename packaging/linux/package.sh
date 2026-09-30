@@ -26,6 +26,27 @@ mkdir -p "$output"
 temporary=$(mktemp -d "$output/.cha-linux.XXXXXX")
 trap 'rm -rf -- "$temporary"' EXIT HUP INT TERM
 
+if ! command -v npm >/dev/null 2>&1; then
+    node_version=$(tr -d '[:space:]' < "$repository/webapp/.node-version")
+    echo "package-linux: Node.js $node_version with npm is required" >&2
+    exit 2
+fi
+npm --prefix "$repository/webapp" ci --no-audit
+npm --prefix "$repository/webapp" run build:chaweb
+
+# index.html names content-hashed files; each one must be in the build.
+chaweb="$repository/webapp/dist-chaweb"
+if [ ! -f "$chaweb/index.html" ] || [ ! -d "$chaweb/assets" ]; then
+    echo "The ChaWeb build did not create index.html and assets/" >&2
+    exit 1
+fi
+for asset in $(grep -o '"/assets/[^"]*"' "$chaweb/index.html" | tr -d '"'); do
+    if [ ! -f "$chaweb$asset" ]; then
+        echo "index.html refers to a missing file: $asset" >&2
+        exit 1
+    fi
+done
+
 cmake -S "$repository" -B "$build" -G Ninja \
     -UOPENSSL_CRYPTO_LIBRARY -UOPENSSL_SSL_LIBRARY \
     -DCMAKE_BUILD_TYPE=Release \
@@ -56,6 +77,9 @@ cp "$build/cha-daemon" "$stage/cha-daemon"
     "$repository/packaging/shared/cha-config.example" \
     "$stage/cha-config.example/config"
 rm -f -- "$stage/cha-config.example/config/cha.sqlite3.cha-lock"
+mkdir "$stage/chaweb"
+cp -R "$chaweb/." "$stage/chaweb/"
+cp "$repository/packaging/linux/nginx-chaweb.conf.example" "$stage/"
 cp "$repository/packaging/linux/cha@.service" "$stage/"
 cp "$repository/packaging/linux/cha@.socket" "$stage/"
 cp "$repository/packaging/linux/nginx.conf.example" "$stage/"

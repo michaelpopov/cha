@@ -165,10 +165,18 @@ button:disabled {
 }
 
 .chaweb-alert,
-.chaweb-status {
+.chaweb-status,
+.chaweb-pending {
   flex: none;
   margin: 0;
   padding: 0.6rem 0.75rem;
+}
+
+.chaweb-pending {
+  max-height: 20%;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .chaweb-alert {

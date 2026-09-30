@@ -1,50 +1,253 @@
 # CHA daemon on Linux
 
 The tarball is built on a compatible Linux machine, then copied to the server.
-It contains the daemon, a seeded example vault, and deployment scripts. The
-server needs systemd and nginx.
+It contains the daemon, the ChaWeb browser application, a seeded example vault,
+and deployment scripts. The server needs systemd and nginx. It does not need
+Node.js, npm, or a JavaScript server.
 
-On the server, extract the archive and run `install.sh` from the extracted
-directory:
+## Building the package
+
+On the Linux build machine, install the repository's C++ build prerequisites
+(CMake, Ninja, a C++ compiler, and static OpenSSL) and the Node.js/npm versions
+pinned in `webapp/package.json` (see also `webapp/.node-version`). Then run, in
+the repository directory:
 
 ```sh
-export CHA_DEPLOY_PATH=/home/YOUR_USER/opt/cha
-export CHA_DATA_PATH=/home/YOUR_USER/var/cha
+make package-linux VERSION=<version>
+```
+
+The script installs the locked browser dependencies with `npm ci`, typechecks
+and builds ChaWeb, builds the daemon, and writes
+`packages/cha-linux-<version>.tar.gz`. It stops if one of these steps fails.
+The archive contains:
+
+```text
+cha-linux-<version>/
+  cha-daemon                  the daemon
+  chaweb/                     static ChaWeb files: index.html and assets/
+  nginx-chaweb.conf.example   per-user ChaWeb server block
+  nginx.conf.example          OpenAI listener example
+  nginx.conf.install          OpenAI listener that install.sh creates
+  cha@.service, cha@.socket   systemd unit templates
+  install.sh, add_user.sh     installation scripts
+  cha-config.example/         example vault
+  README.md                   this file
+```
+
+## Installing
+
+On the server, extract the archive and run `install.sh` from the extracted
+directory as a regular user, not as root:
+
+```sh
+export CHA_DEPLOY_PATH=/srv/cha
+export CHA_DATA_PATH=/srv/cha-data
 ./install.sh
 ```
 
-Both paths must be absolute and must contain no spaces. The installer copies
-`cha-daemon`, `add_user.sh`, and the example vault to `CHA_DEPLOY_PATH`. It
-installs the systemd unit templates only if absent, creates a dedicated nginx
-site and an empty API-key map only if absent, then reloads systemd and nginx.
-It invokes `sudo` for system changes when run as a regular user. The daemon
-runs as the user who installs the package. Existing unit
-files and nginx configuration are preserved; check their paths if you change
-the deployment directories later. The nginx site listens on
-`127.0.0.1:8086` by default. Set `CHA_LISTEN` before the first install if you
-need another address. The socket template uses group `www-data`; if
-nginx runs under another group, change `SocketGroup` in the installed
-`cha@.socket` and run `systemctl daemon-reload` before adding a user.
+Both paths must be absolute and must contain no spaces. `CHA_DATA_PATH` must
+be outside `$CHA_DEPLOY_PATH/chaweb`. The installer invokes `sudo` for system
+changes. The daemon runs as the user who installs the package, and that user
+owns both directories.
 
-You can now remove the extracted archive directory. To add a user later, export
-`CHA_DEPLOY_PATH` and `CHA_DATA_PATH` again, then run:
+The installer:
+
+- copies `cha-daemon`, `add_user.sh`, `nginx-chaweb.conf.example`, and the
+  example vault to `CHA_DEPLOY_PATH`;
+- replaces `$CHA_DEPLOY_PATH/chaweb` with the packaged ChaWeb files, readable
+  by all users;
+- installs the systemd unit templates only if they are absent;
+- creates the OpenAI nginx site `/etc/nginx/conf.d/cha.conf` and the empty
+  API-key map `/etc/nginx/cha-users.map` only if they are absent;
+- reloads systemd, runs `nginx -t`, and reloads nginx.
+
+It does not create ChaWeb listeners. You add them by hand (see below). After
+the installation, you can remove the extracted archive directory.
+
+The OpenAI site listens on `127.0.0.1:8086` by default. Set `CHA_LISTEN`
+before the first install if you need another address. Existing unit files and
+nginx configuration are kept; check their paths if you change the deployment
+directories later.
+
+### Socket group
+
+Each user's socket is `/run/cha/<user>.sock` with mode `0660`, group
+`www-data`, and `Accept=no`. nginx workers must be in that group. The nginx
+worker user is the non-root user in `ps -o user= -C nginx`, or the `user`
+directive in `/etc/nginx/nginx.conf`. If nginx does not run as `www-data`,
+change `SocketGroup` in `/etc/systemd/system/cha@.socket`, then run
+`sudo systemctl daemon-reload` before you add a user. Keep the mode `0660`
+and the service user.
+
+### Static file access
+
+nginx workers must read the files in `$CHA_DEPLOY_PATH/chaweb` and search
+(`x` permission) each parent directory. The installer makes the ChaWeb files
+readable and tests access as the nginx worker user. If it prints a warning,
+the usual cause is a private home directory. Prefer a path such as `/srv/cha`,
+or give the nginx user search permission only on each parent directory:
+
+```sh
+sudo setfacl -m u:www-data:x /home/YOUR_USER /home/YOUR_USER/opt
+```
+
+Do not make the vault directories in `CHA_DATA_PATH` readable to nginx.
+
+### Why the asset names contain hashes
+
+The build names each JavaScript and CSS file after a hash of its content, for
+example `assets/index-Y8z9LPoS.js`, and `index.html` refers to these names. The
+ChaWeb example sends `index.html` with `Cache-Control: no-cache`, so the
+browser checks it on each load. The hashed files use
+`Cache-Control: public, max-age=31536000, immutable`, because a changed file
+gets a new name. API responses use `Cache-Control: no-store`.
+
+## Adding users
+
+Export `CHA_DEPLOY_PATH` and `CHA_DATA_PATH` again, then run:
 
 ```sh
 "$CHA_DEPLOY_PATH/add_user.sh" alice
 ```
 
 This copies the example vault to `$CHA_DATA_PATH/alice/config`, owned by the
-installing user, adds a randomly generated API key to nginx, and enables
-`cha@alice.socket`. Save the printed API key. Repeating the command keeps an
-existing user configuration and key. Each user's daemon starts on its first
-request through nginx. To reach the default localhost listener from another
-machine, use an SSH tunnel such as `ssh -L 8086:127.0.0.1:8086 SERVER`.
-Bearer API keys travel in plain text over HTTP, so use a trusted connection.
+installing user, adds a randomly generated OpenAI API key to nginx, and
+enables `cha@alice.socket`. The key is only for the OpenAI listener; ChaWeb
+does not use it. Save the printed key. Repeating the command keeps an existing
+user configuration and key. Each user's daemon starts on its first request
+through nginx.
 
-The example vault contains the bundled characters and forum. Configure a
-provider with working credentials before sending chat requests. You can use an
-existing CHA configuration and vault in place of the example; the daemon
-requires its database to exist before startup.
+To use an existing CHA vault, put its configuration directory at
+`$CHA_DATA_PATH/<user>/config` before you run `add_user.sh`. The daemon
+requires its database to exist before startup. The vault's providers, forums,
+characters, and provider API keys must already work in CHA. Server providers
+need API keys; ChatGPT subscription providers do not work on the server. The
+example vault contains the bundled characters and forum; configure a provider
+with working credentials before sending chat requests.
+
+For a protected vault, put its password in
+`$CHA_DATA_PATH/<user>/config/password`. The file must be
+a regular file owned by the installing user with mode `0600`.
+
+ChaWeb and the daemon have no settings editor. To change the configuration
+with the native CHA application, the daemon must release the vault. Stop both
+units first, because the socket starts a stopped service again:
+
+```sh
+sudo systemctl stop cha@alice.socket cha@alice.service
+# edit the vault, then:
+sudo systemctl start cha@alice.socket
+```
+
+## ChaWeb listeners
+
+Each user gets one private HTTPS port. The port selects the user's daemon
+socket; it does not authenticate. Anyone who can reach the port can use that
+user's data, so listen only on a trusted private network. There is no ChaWeb
+login or API key.
+
+Copy `$CHA_DEPLOY_PATH/nginx-chaweb.conf.example` into the nginx `http`
+context, for example as `/etc/nginx/conf.d/chaweb.conf`. For each user, make
+one server block and replace:
+
+- the private address and port in `listen`, for example `8443` for Alice and
+  `8444` for Bob;
+- `server_name` with the hostname the iPhone resolves;
+- the TLS certificate: add `ssl_certificate` and `ssl_certificate_key` lines;
+  nginx does not accept an `ssl` listener without them;
+- `root` with `$CHA_DEPLOY_PATH/chaweb` as a literal path, the same for all
+  users;
+- the literal socket in `scgi_pass`, for example `unix:/run/cha/alice.sock`
+  for Alice and `unix:/run/cha/bob.sock` for Bob.
+
+Keep the buffered SCGI settings, the 256 KiB body limit, JSON gzip, and
+`Cache-Control: no-store` in the API location. Do not add CORS headers or
+bearer-key routing to ChaWeb listeners. Keep the OpenAI listener separate.
+
+The enclosing `http` block must include `mime.types`, and nginx must have the
+standard `scgi_params` file; the default Debian and Fedora `nginx.conf` do
+both. The `scgi_params` file forwards `CONTENT_TYPE`, which ChaWeb POST
+requests need.
+
+The iPhone must resolve the hostname, reach the port, and trust the
+certificate. Validate before you reload:
+
+```sh
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+## Checks
+
+Check that the socket is active and that the service uses the right vault:
+
+```sh
+systemctl status cha@alice.socket
+systemctl cat cha@alice.service
+ls -l /run/cha/alice.sock
+```
+
+Then request the application and the API through the user's port. Use `-k`
+only if this machine does not trust the certificate:
+
+```sh
+curl -sI https://cha.example.test:8443/
+curl -s https://cha.example.test:8443/api/cha/v1/bootstrap
+```
+
+The first response must be `200` with `Content-Type: text/html` and
+`Cache-Control: no-cache`. Load a file named in `index.html` from `/assets/`;
+it must have the JavaScript or CSS content type and the immutable cache header.
+The bootstrap response must be JSON with this user's forums. At first setup,
+check the second user's port once for its own forums and sessions. Then open
+the address in Safari, send a short message, and reload the page to see the
+stored session.
+
+## Upgrading
+
+Install the daemon and ChaWeb from the same package, because the browser files
+must match the daemon API. Extract the new archive and run `install.sh` with
+the same `CHA_DEPLOY_PATH` and `CHA_DATA_PATH`. The installer replaces the
+daemon, `add_user.sh`, the example vault, the ChaWeb files, and the ChaWeb
+example. It keeps the systemd units, nginx configuration, ChaWeb server
+blocks, TLS setup, OpenAI key map, port assignments, and user vaults. Then
+restart the running daemons, so that they use the new binary:
+
+```sh
+sudo systemctl try-restart 'cha@*.service'
+```
+
+Stopped daemons start with the new binary on their next request. Compare the
+new `nginx-chaweb.conf.example` with your server blocks and copy the changes
+you need. Reload browser tabs that were open during the upgrade. A reload
+loses unsent drafts, so finish or copy them first. Check bootstrap and a
+conversation after the upgrade.
+
+## OpenAI listener
+
+The OpenAI listener is unchanged. To reach the default localhost listener from
+another machine, use an SSH tunnel such as
+`ssh -L 8086:127.0.0.1:8086 SERVER`. Bearer API keys travel in plain text over
+HTTP, so use a trusted connection. A long OpenAI turn occupies the user's
+daemon, so ChaWeb requests for the same user wait until it ends.
+
+## Troubleshooting
+
+- nginx errors: `sudo tail /var/log/nginx/error.log` and `sudo nginx -t`.
+- `403` or `404` for `/` or `/assets/`: check the `root` path and the static
+  file access above, for example
+  `sudo -u www-data test -r /srv/cha/chaweb/index.html`.
+- `502` from the API: check the socket group and nginx worker group, then
+  `systemctl status cha@alice.socket cha@alice.service` and
+  `journalctl -u cha@alice.service`.
+- The daemon log is `$CHA_DATA_PATH/alice/config/logs/cha.log`, as set in
+  `app.toml`.
+- After repeated startup failures, systemd stops the socket too. After the
+  repair, run
+  `sudo systemctl reset-failed cha@alice.socket cha@alice.service` and
+  `sudo systemctl start cha@alice.socket`.
+
+## Migrating from `cha-<user>` accounts
 
 If an earlier package created `cha-alice`, migrate that installation before
 running this package's `install.sh`:
