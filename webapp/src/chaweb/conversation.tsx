@@ -29,7 +29,6 @@ export function Conversation({
   showSending = false,
   pendingText = null,
   onRetry,
-  onAllowSend,
   speech,
   voice,
 }: {
@@ -54,7 +53,6 @@ export function Conversation({
   showSending?: boolean;
   pendingText?: string | null;
   onRetry?(): void;
-  onAllowSend?(): void;
   speech?: ReadAloud;
   voice?: VoiceInput;
 }) {
@@ -99,31 +97,28 @@ export function Conversation({
         deleting={deleting}
         characters={characters}
         entries={entries}
-        layoutKey={`${expanded}:${viewportHeight}`}
+        layoutKey={`${expanded}:${viewportHeight}:${notice}:${showSending}:${pendingText}`}
         personas={personas}
         sessionKey={sessionKey}
       />
-      {speech?.error && <p className="chaweb-alert" role="alert">{speech.error}</p>}
-      {voice?.error && <p className="chaweb-alert" role="alert">{voice.error}</p>}
-      {notice && <p className={deleting ? 'chaweb-status' : 'chaweb-alert'} role={deleting ? 'status' : 'alert'}>{notice}</p>}
-      {copyStatus === 'copied' && <p className="chaweb-status" role="status">Copied to clipboard</p>}
-      {copyStatus === 'failed' && (
-        <p className="chaweb-alert" role="alert">Could not copy the conversation. Try again.</p>
-      )}
-      {onRetry && (
-        <button className="chaweb-new-session" onClick={onRetry} type="button">Retry</button>
-      )}
-      {onAllowSend && (
-        <button className="chaweb-new-session" onClick={onAllowSend} type="button">
-          Allow another Send
-        </button>
-      )}
-      {(showSending || pendingText) && (
-        <div className="chaweb-pending" role="status">
-          <div className="chaweb-entry-status">Sending</div>
-          {pendingText && <div>{pendingText}</div>}
-        </div>
-      )}
+      <div className="chaweb-feedback">
+        {speech?.error && <p className="chaweb-alert" role="alert">{speech.error}</p>}
+        {voice?.error && <p className="chaweb-alert" role="alert">{voice.error}</p>}
+        {notice && <p className={deleting ? 'chaweb-status' : 'chaweb-alert'} role={deleting ? 'status' : 'alert'}>{notice}</p>}
+        {copyStatus === 'copied' && <p className="chaweb-status" role="status">Copied to clipboard</p>}
+        {copyStatus === 'failed' && (
+          <p className="chaweb-alert" role="alert">Could not copy the conversation. Try again.</p>
+        )}
+        {onRetry && (
+          <button className="chaweb-new-session" onClick={onRetry} type="button">Retry</button>
+        )}
+        {(showSending || pendingText) && (
+          <div className="chaweb-pending" role="status">
+            <div className="chaweb-entry-status">Sending</div>
+            {pendingText && <div>{pendingText}</div>}
+          </div>
+        )}
+      </div>
       <Composer
         voice={voice}
         commandDisabled={commandDisabled || Boolean(voice?.finishing)}

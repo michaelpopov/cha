@@ -81,6 +81,7 @@ export function Composer({
 }) {
   const editorRef = useRef<HTMLTextAreaElement | null>(null);
   const composing = useRef(false);
+  const pressed = useRef(false);
   const toggledByPointer = useRef(false);
   const height = editorPixelHeight(expanded, viewportHeight);
 
@@ -118,12 +119,19 @@ export function Composer({
     if (event.button !== 0) return;
     // A pointer press would move focus and dismiss the iPhone keyboard.
     event.preventDefault();
+    pressed.current = true;
   }
 
+  // Toggle only for a press that started on this button. Its click follows.
   function onSizePointerUp(event: PointerEvent<HTMLButtonElement>) {
-    if (event.button !== 0) return;
+    if (event.button !== 0 || !pressed.current) return;
+    pressed.current = false;
     toggledByPointer.current = true;
     toggleExpanded();
+  }
+
+  function onSizePointerEnd() {
+    pressed.current = false;
   }
 
   function onSizeClick() {
@@ -148,7 +156,9 @@ export function Composer({
           aria-label={expanded ? 'Shrink editor' : 'Expand editor'}
           className="chaweb-icon-button"
           onClick={onSizeClick}
+          onPointerCancel={onSizePointerEnd}
           onPointerDown={onSizePointerDown}
+          onPointerLeave={onSizePointerEnd}
           onPointerUp={onSizePointerUp}
           type="button"
         >

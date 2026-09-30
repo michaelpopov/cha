@@ -38,19 +38,26 @@ type ConversationRef =
   | { kind: 'draft'; forumId: string }
   | { kind: 'session'; forumId: string; sessionId: string };
 
+// Request state of one new draft or stored session, keyed by its draft key.
+interface ConversationStatus {
+  notice?: string;
+  // Accepted input that no snapshot has shown yet.
+  pendingText?: string;
+  // Creation for a draft, or input for a stored session.
+  sending?: boolean;
+  stopPending?: boolean;
+  stopping?: boolean;
+  deleting?: boolean;
+  deleteError?: string;
+  // A write had an unknown result. Send waits until the user sees fresh state.
+  unverified?: boolean;
+}
+
 interface Status {
   awaitingKey: string | null;
-  reconnecting: boolean;
   reconnectingKey: string | null;
   blockedKey: string | null;
-  notices: Record<string, string>;
-  pendingText: Record<string, string | undefined>;
-  creating: Record<string, boolean | undefined>;
-  inputs: Record<string, boolean | undefined>;
-  stops: Record<string, boolean | undefined>;
-  deletes: Record<string, boolean | undefined>;
-  stopping: Record<string, true>;
-  holds: Record<string, { inspected: boolean }>;
+  conversations: Record<string, ConversationStatus>;
 }
 
 interface ReadJob {
@@ -62,18 +69,21 @@ interface ReadJob {
 
 const emptyStatus: Status = {
   awaitingKey: null,
-  reconnecting: false,
   reconnectingKey: null,
   blockedKey: null,
-  notices: {},
-  pendingText: {},
-  creating: {},
-  inputs: {},
-  stops: {},
-  deletes: {},
-  stopping: {},
-  holds: {},
+  conversations: {},
 };
+
+// An undefined value in `change` clears that field.
+function withConversation(status: Status, key: string, change: ConversationStatus): Status {
+  return {
+    ...status,
+    conversations: {
+      ...status.conversations,
+      [key]: { ...status.conversations[key], ...change },
+    },
+  };
+}
 
 function locationUrl(hash = ''): string {
   return `${window.location.pathname}${window.location.search}${hash}`;
@@ -111,23 +121,22 @@ function buildCommand(
     && snapshot !== null
     && snapshot.forum.id === conversation.forumId
     && snapshot.session_id === conversation.sessionId;
-  const hold = key ? status.holds[key] : undefined;
+  const current = key ? status.conversations[key] : undefined;
   return {
     kind,
     forumValid: forumIsValid(bootstrap, forumId),
     text: drafts[key]?.text ?? '',
-    createPending: kind === 'draft' && Boolean(status.creating[forumId]),
-    inputPending: Boolean(status.inputs[key]),
-    stopPending: Boolean(status.stops[key]),
-    stopping: Boolean(status.stopping[key]),
+    sending: Boolean(current?.sending),
+    stopPending: Boolean(current?.stopPending),
+    stopping: Boolean(current?.stopping),
     generationActive: Boolean(snapshotReady && snapshot?.generation.active),
     snapshotReady,
     stateUnknown: kind === 'session' && (
-      !snapshotReady || status.reconnecting || status.blockedKey === key
+      !snapshotReady || status.reconnectingKey !== null || status.blockedKey === key
       || status.awaitingKey === key
-      || status.pendingText[key] !== undefined
+      || current?.pendingText !== undefined
     ),
-    sendBlocked: Boolean(hold),
+    sendBlocked: Boolean(current?.unverified),
   };
 }
 
@@ -218,9 +227,7 @@ export function useChaweb(client: ChaWebClient) {
     loop.queued = false;
     clearReadTimer();
     patchStatus((current) => (
-      current.reconnecting || current.reconnectingKey
-        ? { ...current, reconnecting: false, reconnectingKey: null }
-        : current
+      current.reconnectingKey ? { ...current, reconnectingKey: null } : current
     ));
   }
 
@@ -243,7 +250,7 @@ export function useChaweb(client: ChaWebClient) {
   function requestRead() {
     if (!mounted.current || !selectedSession() || !pageVisible()) return;
     const key = currentDraftKey();
-    if (key && statusRef.current.deletes[key]) return;
+    if (key && statusRef.current.conversations[key]?.deleting) return;
     const loop = readLoop.current;
     clearReadTimer();
     if (loop.recovering || loop.inflight) {
@@ -299,38 +306,29 @@ export function useChaweb(client: ChaWebClient) {
     setSnapshot(loaded);
     const key = sessionDraftKey(loaded.forum.id, loaded.session_id);
     patchStatus((current) => {
-      const holds = proves && current.holds[key] && !current.holds[key].inspected
-        ? { ...current.holds, [key]: { inspected: true } }
-        : current.holds;
-      const pendingText = { ...current.pendingText };
-      const stopping = { ...current.stopping };
-      let notices = current.notices;
+      const next = { ...current.conversations[key] };
+      if (current.blockedKey === key) delete next.notice;
       if (proves) {
-        delete pendingText[key];
+        delete next.pendingText;
+        // Fresh state is visible. Send is allowed again; the warning stays.
+        if (next.unverified) {
+          delete next.unverified;
+          next.notice = unknownSendNotice;
+        }
+        // An idle snapshot settles earlier local notices, such as Stop
+        // requested or a Stop failure. Its own notice shows instead.
         if (!loaded.generation.active) {
-          delete stopping[key];
-          if (!current.stops[key] && notices[key] === stopRequestedNotice) {
-            notices = { ...notices };
-            if (holds[key]) notices[key] = unknownSendNotice;
-            else delete notices[key];
+          delete next.stopping;
+          if (!next.sending && !next.stopPending && next.notice !== unknownSendNotice) {
+            delete next.notice;
           }
         }
       }
-      if (current.blockedKey === key) {
-        notices = { ...current.notices };
-        delete notices[key];
-      }
-      if (holds[key] && !notices[key]) notices = { ...notices, [key]: unknownSendNotice };
       return {
-        ...current,
         awaitingKey: current.awaitingKey === key ? null : current.awaitingKey,
-        holds,
-        pendingText,
-        stopping,
-        notices,
-        reconnecting: false,
         reconnectingKey: null,
         blockedKey: current.blockedKey === key ? null : current.blockedKey,
+        conversations: { ...current.conversations, [key]: next },
       };
     });
     const same = previous !== null
@@ -355,11 +353,7 @@ export function useChaweb(client: ChaWebClient) {
       if (!pageVisible()) return;
       loop.recovering = true;
       const key = sessionDraftKey(job.forumId, job.sessionId);
-      patchStatus((current) => ({
-        ...current,
-        reconnecting: true,
-        reconnectingKey: key,
-      }));
+      patchStatus((current) => ({ ...current, reconnectingKey: key }));
       void reloadBootstrap().then(
         () => {
           loop.recovering = false;
@@ -401,7 +395,6 @@ export function useChaweb(client: ChaWebClient) {
       readLoop.current.failures += 1;
       patchStatus((current) => ({
         ...current,
-        reconnecting: true,
         reconnectingKey: key,
         blockedKey: current.blockedKey === key ? null : current.blockedKey,
       }));
@@ -413,16 +406,11 @@ export function useChaweb(client: ChaWebClient) {
       return;
     }
     readLoop.current.queued = false;
-    patchStatus((current) => ({
-      ...current,
-      reconnecting: false,
-      reconnectingKey: null,
-      blockedKey: key,
-      notices: {
-        ...current.notices,
-        [key]: chaWebMessage(error, 'The conversation could not be loaded.'),
-      },
-    }));
+    patchStatus((current) => withConversation(
+      { ...current, reconnectingKey: null, blockedKey: key },
+      key,
+      { notice: chaWebMessage(error, 'The conversation could not be loaded.') },
+    ));
   }
 
   function pumpList() {
@@ -498,11 +486,11 @@ export function useChaweb(client: ChaWebClient) {
   function inspectNewDraft(forum: string) {
     if (screenRef.current !== 'list' || forumRef.current !== forum) return;
     const key = newDraftKey(forum);
-    patchStatus((current) => {
-      const hold = current.holds[key];
-      if (!hold || hold.inspected) return current;
-      return { ...current, holds: { ...current.holds, [key]: { inspected: true } } };
-    });
+    patchStatus((current) => (
+      current.conversations[key]?.unverified
+        ? withConversation(current, key, { unverified: undefined })
+        : current
+    ));
   }
 
   function refreshList(forum: string) {
@@ -559,10 +547,7 @@ export function useChaweb(client: ChaWebClient) {
   }
 
   function writeMissing(key: string, forum: string, message: string) {
-    patchStatus((current) => ({
-      ...current,
-      notices: { ...current.notices, [key]: message },
-    }));
+    patchStatus((current) => withConversation(current, key, { notice: message }));
     refreshList(forum);
     void reloadBootstrap().catch(() => undefined);
     if (currentDraftKey() === key) missingSession(message);
@@ -670,7 +655,7 @@ export function useChaweb(client: ChaWebClient) {
 
   function send(submittedText?: string) {
     if (submittedText !== undefined) onDraft(submittedText);
-    if (statusRef.current.deletes[currentDraftKey() ?? '']) return;
+    if (statusRef.current.conversations[currentDraftKey() ?? '']?.deleting) return;
     const control = commandControl(buildCommand(
       statusRef.current,
       conversationRef.current,
@@ -687,11 +672,7 @@ export function useChaweb(client: ChaWebClient) {
       const draft = draftsRef.current[key] ?? { text: '', revision: 0 };
       const forum = current.forumId;
       const { text, revision } = draft;
-      patchStatus((state) => {
-        const notices = { ...state.notices };
-        delete notices[key];
-        return { ...state, creating: { ...state.creating, [forum]: true }, notices };
-      });
+      patchStatus((state) => withConversation(state, key, { sending: true, notice: undefined, deleteError: undefined }));
       void clientRef.current.createSession(forum, text).then(
         (created) => createdOk(forum, revision, text, created),
         (error: unknown) => createdFail(forum, error),
@@ -703,11 +684,7 @@ export function useChaweb(client: ChaWebClient) {
     const forum = current.forumId;
     const session = current.sessionId;
     const { text, revision } = draft;
-    patchStatus((state) => {
-      const notices = { ...state.notices };
-      delete notices[key];
-      return { ...state, inputs: { ...state.inputs, [key]: true }, notices };
-    });
+    patchStatus((state) => withConversation(state, key, { sending: true, notice: undefined, deleteError: undefined }));
     void clientRef.current.submitInput(forum, session, text).then(
       () => inputOk(forum, key, revision, text),
       (error: unknown) => inputFail(forum, key, error),
@@ -715,7 +692,7 @@ export function useChaweb(client: ChaWebClient) {
   }
 
   function stop() {
-    if (statusRef.current.deletes[currentDraftKey() ?? '']) return;
+    if (statusRef.current.conversations[currentDraftKey() ?? '']?.deleting) return;
     const control = commandControl(buildCommand(
       statusRef.current,
       conversationRef.current,
@@ -730,11 +707,9 @@ export function useChaweb(client: ChaWebClient) {
     const forum = current.forumId;
     const session = current.sessionId;
     const key = sessionDraftKey(forum, session);
-    patchStatus((state) => ({
-      ...state,
-      stops: { ...state.stops, [key]: true },
-      notices: { ...state.notices, [key]: stopRequestedNotice },
-    }));
+    patchStatus((state) => withConversation(
+      state, key, { stopPending: true, notice: stopRequestedNotice, deleteError: undefined },
+    ));
     void clientRef.current.stopSession(forum, session).then(
       () => stopOk(key),
       (error: unknown) => stopFail(forum, key, error),
@@ -748,9 +723,9 @@ export function useChaweb(client: ChaWebClient) {
     );
     return screenRef.current === 'conversation'
       && command.kind === 'session' && command.snapshotReady
-      && !command.inputPending && !command.stopPending && !command.stopping
+      && !command.sending && !command.stopPending && !command.stopping
       && !command.stateUnknown && !command.sendBlocked
-      && !statusRef.current.deletes[currentDraftKey() ?? ''];
+      && !statusRef.current.conversations[currentDraftKey() ?? '']?.deleting;
   }
 
   function deleteSession(confirmedKey: string) {
@@ -763,11 +738,7 @@ export function useChaweb(client: ChaWebClient) {
     // Ignore any snapshot that was requested before deletion began.
     readLoop.current.gen += 1;
     readLoop.current.queued = false;
-    patchStatus((state) => ({
-      ...state,
-      deletes: { ...state.deletes, [key]: true },
-      notices: { ...state.notices, [key]: 'Deleting' },
-    }));
+    patchStatus((state) => withConversation(state, key, { deleting: true, deleteError: undefined, notice: 'Deleting' }));
     void clientRef.current.deleteSession(forum, session).then(
       () => deletedOk(forum, session, key),
       (error: unknown) => {
@@ -776,10 +747,10 @@ export function useChaweb(client: ChaWebClient) {
           deletedOk(forum, session, key);
           return;
         }
-        patchStatus((state) => ({
-          ...state,
-          deletes: { ...state.deletes, [key]: false },
-          notices: { ...state.notices, [key]: chaWebMessage(error, 'The session could not be deleted.') },
+        patchStatus((state) => withConversation(state, key, {
+          deleting: undefined,
+          notice: undefined,
+          deleteError: chaWebMessage(error, 'The session could not be deleted.'),
         }));
         if (currentDraftKey() === key) requestRead();
       },
@@ -794,11 +765,9 @@ export function useChaweb(client: ChaWebClient) {
       return next;
     });
     patchStatus((state) => {
-      const deletes = { ...state.deletes };
-      const notices = { ...state.notices };
-      delete deletes[key];
-      delete notices[key];
-      return { ...state, deletes, notices };
+      const conversations = { ...state.conversations };
+      delete conversations[key];
+      return { ...state, conversations };
     });
     setSessions((rows) => forumRef.current === forum
       ? rows.filter((row) => row.id !== session) : rows);
@@ -827,11 +796,11 @@ export function useChaweb(client: ChaWebClient) {
     const from = newDraftKey(forum);
     const key = sessionDraftKey(forum, created.id);
     updateDrafts((current) => applyAcknowledgement(current, from, revision, key));
-    patchStatus((state) => ({
-      ...state,
-      creating: { ...state.creating, [forum]: false },
-      pendingText: { ...state.pendingText, [key]: text },
-    }));
+    patchStatus((state) => withConversation(
+      withConversation(state, from, { sending: undefined }),
+      key,
+      { pendingText: text },
+    ));
     refreshList(forum);
     if (!viewingDraft(forum)) {
       noteAck(key);
@@ -857,112 +826,75 @@ export function useChaweb(client: ChaWebClient) {
   function createdFail(forum: string, error: unknown) {
     if (!mounted.current) return;
     const key = newDraftKey(forum);
-    patchStatus((state) => ({
-      ...state,
-      creating: { ...state.creating, [forum]: false },
-    }));
+    patchStatus((state) => withConversation(state, key, { sending: undefined }));
     const failure = classifyWriteFailure(error);
     if (failure === 'rejected') {
-      patchStatus((state) => ({
-        ...state,
-        notices: { ...state.notices, [key]: chaWebMessage(error, 'The request failed.') },
-      }));
+      patchStatus((state) => withConversation(
+        state, key, { notice: chaWebMessage(error, 'The request failed.') },
+      ));
       return;
     }
     if (failure === 'missing') {
       writeMissing(key, forum, chaWebMessage(error, 'The request failed.'));
       return;
     }
-    patchStatus((state) => ({
-      ...state,
-      holds: { ...state.holds, [key]: { inspected: false } },
-      notices: { ...state.notices, [key]: unknownSendNotice },
-    }));
+    patchStatus((state) => withConversation(
+      state, key, { unverified: true, notice: unknownSendNotice },
+    ));
     refreshList(forum);
   }
 
   function inputOk(forum: string, key: string, revision: number, text: string) {
     if (!mounted.current) return;
     updateDrafts((current) => applyAcknowledgement(current, key, revision));
-    patchStatus((state) => ({
-      ...state,
-      inputs: { ...state.inputs, [key]: false },
-      pendingText: { ...state.pendingText, [key]: text },
-    }));
+    patchStatus((state) => withConversation(
+      state, key, { sending: undefined, pendingText: text },
+    ));
     refreshList(forum);
     noteAck(key);
   }
 
   function inputFail(forum: string, key: string, error: unknown) {
     if (!mounted.current) return;
-    patchStatus((state) => ({
-      ...state,
-      inputs: { ...state.inputs, [key]: false },
-    }));
+    patchStatus((state) => withConversation(state, key, { sending: undefined }));
     const failure = classifyWriteFailure(error);
     if (failure === 'rejected') {
-      patchStatus((state) => ({
-        ...state,
-        notices: { ...state.notices, [key]: chaWebMessage(error, 'The request failed.') },
-      }));
+      patchStatus((state) => withConversation(
+        state, key, { notice: chaWebMessage(error, 'The request failed.') },
+      ));
       return;
     }
     if (failure === 'missing') {
       writeMissing(key, forum, chaWebMessage(error, 'The request failed.'));
       return;
     }
-    patchStatus((state) => ({
-      ...state,
-      holds: { ...state.holds, [key]: { inspected: false } },
-      notices: { ...state.notices, [key]: unknownSendNotice },
-    }));
+    patchStatus((state) => withConversation(
+      state, key, { unverified: true, notice: unknownSendNotice },
+    ));
     noteAck(key);
   }
 
   function stopOk(key: string) {
     if (!mounted.current) return;
-    patchStatus((state) => {
-      return {
-        ...state,
-        stops: { ...state.stops, [key]: false },
-        stopping: { ...state.stopping, [key]: true },
-      };
-    });
+    patchStatus((state) => withConversation(
+      state, key, { stopPending: undefined, stopping: true },
+    ));
     noteAck(key);
   }
 
   function stopFail(forum: string, key: string, error: unknown) {
     if (!mounted.current) return;
-    patchStatus((state) => ({
-      ...state,
-      stops: { ...state.stops, [key]: false },
-    }));
+    patchStatus((state) => withConversation(state, key, { stopPending: undefined }));
     const failure = classifyWriteFailure(error);
     if (failure === 'missing') {
       writeMissing(key, forum, chaWebMessage(error, 'The request failed.'));
       return;
     }
-    patchStatus((state) => ({
-      ...state,
-      stopping: failure === 'unknown' ? { ...state.stopping, [key]: true } : state.stopping,
-      notices: {
-        ...state.notices,
-        [key]: chaWebMessage(error, 'The request failed.'),
-      },
+    patchStatus((state) => withConversation(state, key, {
+      ...(failure === 'unknown' ? { stopping: true } : {}),
+      notice: chaWebMessage(error, 'The request failed.'),
     }));
     noteAck(key);
-  }
-
-  function allowSend() {
-    const key = currentDraftKey();
-    if (!key || !statusRef.current.holds[key]?.inspected) return;
-    patchStatus((state) => {
-      const holds = { ...state.holds };
-      const notices = { ...state.notices };
-      delete holds[key];
-      if (notices[key] === unknownSendNotice) delete notices[key];
-      return { ...state, holds, notices };
-    });
   }
 
   function retryRead() {
@@ -970,17 +902,11 @@ export function useChaweb(client: ChaWebClient) {
     if (!selected) return;
     const key = sessionDraftKey(selected.forumId, selected.sessionId);
     readLoop.current.failures = 0;
-    patchStatus((state) => {
-      const notices = { ...state.notices };
-      delete notices[key];
-      return {
-        ...state,
-        notices,
-        blockedKey: null,
-        reconnecting: true,
-        reconnectingKey: key,
-      };
-    });
+    patchStatus((state) => withConversation(
+      { ...state, blockedKey: null, reconnectingKey: key },
+      key,
+      { notice: undefined },
+    ));
     requestRead();
   }
 
@@ -1141,18 +1067,16 @@ export function useChaweb(client: ChaWebClient) {
     && snapshot !== null
     && snapshot.forum.id === active.forumId
     && snapshot.session_id === active.sessionId;
+  const activeStatus = activeKey ? status.conversations[activeKey] : undefined;
   const notice = activeKey
-    ? (status.reconnecting && status.reconnectingKey === activeKey
+    ? (status.reconnectingKey === activeKey
       ? reconnectingNotice
-      : status.notices[activeKey]
+      : activeStatus?.deleteError ?? activeStatus?.notice
         ?? (snapshotReady ? snapshot?.notice ?? null : null))
     : null;
-  const showSending = Boolean(
-    (active?.kind === 'draft' && status.creating[active.forumId])
-    || (activeKey && status.inputs[activeKey]),
-  );
-  const pendingText = status.pendingText[activeKey] ?? null;
-  const deleting = Boolean(status.deletes[activeKey]);
+  const showSending = Boolean(activeStatus?.sending);
+  const pendingText = activeStatus?.pendingText ?? null;
+  const deleting = Boolean(activeStatus?.deleting);
 
   return {
     bootstrap,
@@ -1172,15 +1096,16 @@ export function useChaweb(client: ChaWebClient) {
     showSending,
     pendingText,
     voiceBlocked: !active || deleting || command.generationActive
-      || command.createPending || command.inputPending || command.stopPending
+      || command.sending || command.stopPending
       || command.stopping || command.stateUnknown || command.sendBlocked,
     mode: control.mode,
     commandDisabled: control.disabled || deleting,
     deleting,
     deleteDisabled: !canDelete(),
     deleteSession,
-    allowSend: status.holds[activeKey]?.inspected ? allowSend : null,
-    retryConversation: status.blockedKey === activeKey && !status.reconnecting ? retryRead : null,
+    retryConversation: status.blockedKey === activeKey && status.reconnectingKey === null
+      ? retryRead
+      : null,
     sessionKey: activeKey || 'none',
     // A new draft keeps its audio selection when its first Send creates the session.
     audioKey: active ? audioKey : '',

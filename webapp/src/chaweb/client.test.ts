@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { ChaProtocolError } from '../api/client';
 import { bootstrapFixture, snapshotFixture, voiceOutputRuntimeFixture } from '../test/fixtures';
 import { audioUrl, createChaWebClient } from './client';
 
@@ -59,7 +60,7 @@ describe('ChaWeb HTTP client', () => {
     installFetch(() => jsonResponse({ session_id: 'other', pieces: [] }));
     const controller = new AbortController();
     await expect(createChaWebClient().sendXaiVoiceAudio('one', 'AAAA', controller.signal))
-      .rejects.toMatchObject({ status: 200 });
+      .rejects.toBeInstanceOf(ChaProtocolError);
     installFetch((_url, init) => new Promise((_resolve, reject) => {
       init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
     }));
@@ -77,7 +78,7 @@ describe('ChaWeb HTTP client', () => {
     });
     for (const entries of [[], [...accepted.entries].reverse(), [{ entry_id: 7, cached: false, state: 'failed' }, accepted.entries[1]]]) {
       installFetch(() => jsonResponse({ entries }));
-      await expect(createChaWebClient().startAudioBatch('lobby', 'planning', [7, 8], 'Personal')).rejects.toMatchObject({ status: 200 });
+      await expect(createChaWebClient().startAudioBatch('lobby', 'planning', [7, 8], 'Personal')).rejects.toBeInstanceOf(ChaProtocolError);
     }
   });
 
@@ -119,9 +120,9 @@ describe('ChaWeb HTTP client', () => {
     await expect(createChaWebClient().getVoiceOutputRuntime()).resolves.toBeNull();
     installFetch(() => jsonResponse({ entry_id: 8, cached: true }));
     await expect(createChaWebClient().startAudio('lobby', 'planning', 7, 'Personal'))
-      .rejects.toMatchObject({ status: 200 });
+      .rejects.toBeInstanceOf(ChaProtocolError);
     installFetch(() => jsonResponse({ cached_entry_ids: [], downloads: [{ entry_id: 7, state: 'unknown' }] }));
-    await expect(createChaWebClient().getAudioStatus('lobby', 'planning')).rejects.toMatchObject({ status: 200 });
+    await expect(createChaWebClient().getAudioStatus('lobby', 'planning')).rejects.toBeInstanceOf(ChaProtocolError);
   });
 
   it('deletes the specified session without a body and reports failures without retrying', async () => {
@@ -260,9 +261,7 @@ describe('ChaWeb HTTP client', () => {
     });
 
     installFetch(() => jsonResponse({ nope: true }));
-    await expect(createChaWebClient().listSessions('lobby')).rejects.toMatchObject({
-      message: expect.stringContaining('incompatible'),
-    });
+    await expect(createChaWebClient().listSessions('lobby')).rejects.toBeInstanceOf(ChaProtocolError);
   });
 
   it('times out once and clears the timer', async () => {

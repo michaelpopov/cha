@@ -145,6 +145,18 @@ it('toggles with Enter and Space and keeps the editor focused for a pointer pres
   expect(box).toHaveValue('Hello');
 });
 
+it('ignores a release that did not start on the size button', async () => {
+  const user = userEvent.setup();
+  render(<Editor />);
+  const expand = screen.getByRole('button', { name: 'Expand editor' });
+  fireEvent.pointerUp(expand, { button: 0, pointerType: 'mouse' });
+  expect(screen.getByRole('button', { name: 'Expand editor' })).toBeInTheDocument();
+
+  expand.focus();
+  await user.keyboard('{Enter}');
+  expect(screen.getByRole('button', { name: 'Shrink editor' })).toBeInTheDocument();
+});
+
 it('dismisses the keyboard from Sessions and does not grow with the draft', async () => {
   const user = userEvent.setup();
   const onSessions = vi.fn();

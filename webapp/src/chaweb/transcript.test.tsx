@@ -226,6 +226,40 @@ it('follows the end until the reader scrolls away, including a layout change', (
   expect(metrics.scrollTop).toBe(0);
 });
 
+it('keeps following the end when the pending area changes size', () => {
+  const entries = [entry()];
+  function View({ pendingText }: { pendingText: string | null }) {
+    return (
+      <Conversation
+        characters={[]}
+        commandDisabled={false}
+        deleteDisabled
+        deleting={false}
+        onDelete={() => {}}
+        draft=""
+        entries={entries}
+        expanded={false}
+        mode="stop"
+        notice={null}
+        onDraft={() => {}}
+        onExpanded={() => {}}
+        onSend={() => {}}
+        onSessions={() => {}}
+        onStop={() => {}}
+        pendingText={pendingText}
+        personas={[]}
+        sessionKey="lobby/planning"
+        viewportHeight={700}
+      />
+    );
+  }
+
+  const { rerender } = render(<View pendingText={null} />);
+  const metrics = mockScroll(screen.getByLabelText('Conversation transcript'), 1000, 100);
+  rerender(<View pendingText="A long message" />);
+  expect(metrics.scrollTop).toBe(1000);
+});
+
 it('keeps the editor mounted, focused, and unchanged when the transcript is replaced', () => {
   function Harness({ count }: { count: number }) {
     const [draft, setDraft] = useState('Dictated');

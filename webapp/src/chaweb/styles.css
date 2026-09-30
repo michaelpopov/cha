@@ -266,7 +266,7 @@ button:disabled {
 }
 
 .chaweb-transcript {
-  flex: 1 1 auto;
+  flex: 1 1 0;
   min-height: 0;
   overflow: auto;
   padding: 0.75rem;
@@ -304,9 +304,14 @@ button:disabled {
   padding: 0.6rem 0.75rem;
 }
 
-.chaweb-pending {
-  max-height: 20%;
+.chaweb-feedback {
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: 30%;
   overflow: auto;
+}
+
+.chaweb-pending {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -316,7 +321,9 @@ button:disabled {
 }
 
 .chaweb-composer {
-  flex: none;
+  flex: 0 1 auto;
+  /* Keep both controls and one line of editable text above the keyboard. */
+  min-height: 124px;
   display: flex;
   flex-direction: column;
 }
@@ -407,7 +414,8 @@ button:disabled {
 
 .chaweb-editor {
   width: 100%;
-  flex: none;
+  flex: 0 1 auto;
+  min-height: 36px;
   margin: 0;
   padding: 6px 8px;
   border: 0;
@@ -491,6 +499,12 @@ button:disabled {
 
 .chaweb-entry-text > .cha-markdown h1 { font-size: 1.18em; }
 .chaweb-entry-text > .cha-markdown h2 { font-size: 1.08em; }
+
+/* Long messages wrap; code blocks keep their lines and scroll. */
+.chaweb-entry-text .cha-markdown pre {
+  white-space: pre;
+  overflow-wrap: normal;
+}
 
 .chaweb-entry-text > .cha-markdown blockquote {
   margin: 0.45rem 0;

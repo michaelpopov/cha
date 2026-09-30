@@ -107,7 +107,6 @@ export function App({ client }: { client: ChaWebClient }) {
           }}
           onExpanded={setExpanded}
           onRetry={model.retryConversation ?? undefined}
-          onAllowSend={model.allowSend ?? undefined}
           onSend={voice.send}
           onSessions={model.showSessions}
           onStop={model.stop}

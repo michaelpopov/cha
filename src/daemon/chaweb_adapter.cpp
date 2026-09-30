@@ -2,6 +2,7 @@
 
 #include "app/current_vault.h"
 #include "app/media_operations.h"
+#include "bridge/bridge_protocol.h"
 #include "util/logging.h"
 #include "util/path_name.h"
 #include "util/text.h"
@@ -25,29 +26,6 @@ constexpr std::string_view json_type = "application/json";
 constexpr std::string_view base_path = "/api/cha/v1";
 constexpr std::string_view base_prefix = "/api/cha/v1/";
 constexpr std::string_view rejected_input = "The input was rejected.";
-constexpr std::string_view generic_failure =
-    "The application operation failed";
-
-std::string_view safe_message(ErrorCode code) noexcept {
-    switch (code) {
-    case ErrorCode::not_found:
-        return "That forum or session was not found.";
-    case ErrorCode::invalid_argument:
-        return "The request was not valid.";
-    case ErrorCode::prompt_too_large:
-        return "Prompt is too large.";
-    case ErrorCode::command_timeout:
-        return "The command outcome is unknown.";
-    case ErrorCode::session_stopping:
-        return "The session is still stopping. Try deleting it again.";
-    case ErrorCode::server_stopping:
-        return "The server is shutting down.";
-    case ErrorCode::application_unavailable:
-        return "The application is unavailable.";
-    default:
-        return "The request could not be completed.";
-    }
-}
 
 int status_for(ErrorCode code) noexcept {
     switch (code) {
@@ -69,14 +47,15 @@ int status_for(ErrorCode code) noexcept {
 }
 
 Error error_body(ErrorCode code, std::string message = {}) {
-    if (message.empty() || message == generic_failure) {
-        message = std::string(safe_message(code));
+    if (message.empty()) {
+        message = std::string(bridge::public_error_message(code));
     }
     return {code, std::move(message)};
 }
 
+// Exception text is not shown to the browser.
 Error from_application(const app::ApplicationError& error) {
-    return error_body(error.code, error.what());
+    return error_body(error.code);
 }
 
 bool write_json(
@@ -314,7 +293,7 @@ bool write_cleanup_failure(int fd, const std::atomic<bool>& stop) {
     return write_code(fd, ErrorCode::internal_error, stop);
 }
 
-enum class InputOutcome { accepted, rejected, unknown, failed };
+enum class InputOutcome { accepted, rejected, failed };
 
 struct SubmitView {
     InputOutcome outcome{InputOutcome::failed};
@@ -341,16 +320,12 @@ SubmitView classify_submit(const CommandSubmitResult& result) {
                 ? InputOutcome::rejected
                 : InputOutcome::failed,
             .code = failure->code,
-            .message = failure->message.empty()
-                ? std::string(safe_message(failure->code))
-                : failure->message,
+            .message = failure->message,
         };
     }
     if (const auto* code = std::get_if<ErrorCode>(&result)) {
         return {
-            .outcome = *code == ErrorCode::command_timeout
-                ? InputOutcome::unknown
-                : InputOutcome::failed,
+            .outcome = InputOutcome::failed,
             .code = *code,
         };
     }
@@ -610,7 +585,8 @@ void serve_delete(
     const auto error = application.delete_session(
         route.forum_id, route.session_id, application.context_epoch());
     if (error) {
-        write_code(fd, *error, stop);
+        write_code(fd, *error, stop, *error == ErrorCode::session_stopping
+            ? "The session is still stopping. Try deleting it again." : "");
         return;
     }
     write_cgi(fd, 204, {}, {}, stop);
@@ -674,7 +650,8 @@ void serve_create(
     const ParsedRoute& route,
     int fd,
     const std::atomic<bool>& stop,
-    ChaWebDeleteSession delete_session) {
+    ChaWebDeleteSession delete_session,
+    ChaWebSubmitInput submit_input) {
     if (!require_json_body(request, fd, stop)) return;
     const auto text = parse_text_object(request.body, fd, stop);
     if (!text) return;
@@ -696,35 +673,19 @@ void serve_create(
         write_error(fd, status, error, stop);
     };
 
+    CreateSessionSuccess created;
     try {
-        const CreateSessionSuccess created =
-            application.create_session(route.forum_id, "", epoch);
+        created = application.create_session(route.forum_id, "", epoch);
         session_id = created.id;
         if (const auto error =
                 open_named(application, route.forum_id, session_id, epoch)) {
             fail_created(status_for(*error), error_body(*error));
             return;
         }
-        const SubmitView view = classify_submit(application.submit(
-            route.forum_id, session_id, RawCommand{*text}, epoch));
-        if (view.outcome == InputOutcome::accepted) {
-            write_json(fd, 201, created, stop);
-            return;
-        }
-        if (view.outcome == InputOutcome::unknown) {
-            write_failed(fd, view, stop);
-            return;
-        }
-        if (view.outcome == InputOutcome::rejected) {
-            fail_created(
-                422,
-                error_body(ErrorCode::invalid_argument, view.message));
-            return;
-        }
-        fail_created(status_for(view.code), error_body(view.code, view.message));
     } catch (const app::ApplicationError& error) {
         if (session_id.empty()) throw;
         fail_created(status_for(error.code), from_application(error));
+        return;
     } catch (const std::exception&) {
         if (!session_id.empty()
             && !cleanup_created(
@@ -738,6 +699,19 @@ void serve_create(
         }
         throw;
     }
+
+    // Once submission starts, errors (including exceptions) can follow stored
+    // input. Only a definitive rejection permits deleting the session.
+    const SubmitView view = classify_submit(submit_input
+        ? submit_input(application, route.forum_id, session_id, RawCommand{*text}, epoch)
+        : application.submit(route.forum_id, session_id, RawCommand{*text}, epoch));
+    if (view.outcome == InputOutcome::accepted) {
+        write_json(fd, 201, created, stop);
+    } else if (view.outcome == InputOutcome::rejected) {
+        fail_created(422, error_body(ErrorCode::invalid_argument, view.message));
+    } else {
+        write_failed(fd, view, stop);
+    }
 }
 
 } // namespace
@@ -747,7 +721,8 @@ void handle_chaweb_request(
     const ScgiRequest& request,
     int fd,
     std::atomic<bool>& stop,
-    ChaWebDeleteSession delete_session) {
+    ChaWebDeleteSession delete_session,
+    ChaWebSubmitInput submit_input) {
     try {
         if (stop.load()) return;
         const ParsedRoute route = parse_route(request.document_uri);
@@ -786,7 +761,7 @@ void handle_chaweb_request(
         }
         if (request.method == "POST" && route.route == Route::sessions) {
             serve_create(
-                application, request, route, fd, stop, delete_session);
+                application, request, route, fd, stop, delete_session, submit_input);
             return;
         }
         if (request.method == "GET" && route.route == Route::session) {

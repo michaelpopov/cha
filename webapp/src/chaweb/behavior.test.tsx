@@ -836,6 +836,28 @@ it('polls once, one second after completion, and coalesces a Stop acknowledgemen
   expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
 });
 
+it('replaces a Stop failure notice when a fresh snapshot shows the session idle', async () => {
+  vi.useFakeTimers();
+  const api = client({
+    getSession: vi.fn()
+      .mockResolvedValueOnce(snapshot('planning', { generation: generation(true) }))
+      .mockResolvedValueOnce(snapshot('planning', { generation: generation(true) }))
+      .mockResolvedValue(snapshot('planning', { notice: 'Reply stopped.' })),
+    stopSession: vi.fn(async () => {
+      throw new ChaWebError(0, 'The request timed out.');
+    }),
+  });
+  window.history.replaceState(null, '', '/#/forums/lobby/sessions/planning');
+  render(<App client={api} />);
+  await act(() => vi.advanceTimersByTimeAsync(0));
+  fireEvent.click(screen.getByRole('button', { name: 'Stop' }));
+  await act(() => vi.advanceTimersByTimeAsync(0));
+  expect(screen.getByRole('alert')).toHaveTextContent('The request timed out.');
+  await act(() => vi.advanceTimersByTimeAsync(1_000));
+  expect(screen.getByRole('alert')).toHaveTextContent('Reply stopped.');
+  expect(api.stopSession).toHaveBeenCalledTimes(1);
+});
+
 it('does not poll a hidden page, the session list, or a new draft', async () => {
   vi.useFakeTimers();
   let visible = true;
@@ -1016,8 +1038,7 @@ it('does not replay a lost first send when the list has no new row', async () =>
   await act(() => vi.advanceTimersByTimeAsync(0));
   expect(screen.queryByRole('button', { name: /fresh/i })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'New Session' }));
-  expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
-  fireEvent.click(screen.getByRole('button', { name: 'Allow another Send' }));
+  expect(screen.getByRole('alert')).toHaveTextContent(unknownSendNotice);
   expect(screen.getByRole('button', { name: 'Send' })).toBeEnabled();
   expect(api.createSession).toHaveBeenCalledTimes(1);
   fireEvent.click(screen.getByRole('button', { name: 'Send' }));
@@ -1199,7 +1220,7 @@ it('keeps input and Stop pending independently across sessions', async () => {
   expect(api.stopSession).toHaveBeenCalledTimes(2);
 });
 
-it('requires a fresh snapshot and a deliberate decision after an uncertain input', async () => {
+it('waits for a fresh snapshot before Send after an uncertain input', async () => {
   vi.useFakeTimers();
   const oldRead = deferred<SessionSnapshot>();
   const freshRead = deferred<SessionSnapshot>();
@@ -1218,12 +1239,11 @@ it('requires a fresh snapshot and a deliberate decision after an uncertain input
   fireEvent(document, new Event('visibilitychange'));
   await act(async () => input.reject(new ChaWebError(500, 'Unknown', 'command_timeout')));
   await act(async () => oldRead.resolve(snapshot('planning')));
-  expect(screen.queryByRole('button', { name: 'Allow another Send' })).not.toBeInTheDocument();
-  await act(async () => freshRead.resolve(snapshot('planning')));
   expect(screen.queryByRole('button', { name: 'Send' })).not.toBeInTheDocument();
   fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Enter' });
   expect(api.submitInput).toHaveBeenCalledTimes(1);
-  fireEvent.click(screen.getByRole('button', { name: 'Allow another Send' }));
+  await act(async () => freshRead.resolve(snapshot('planning')));
+  expect(screen.getByRole('alert')).toHaveTextContent(unknownSendNotice);
   expect(screen.getByRole('button', { name: 'Send' })).toBeEnabled();
   expect(api.submitInput).toHaveBeenCalledTimes(1);
   expect(screen.getByRole('textbox')).toHaveValue('Maybe accepted');
@@ -1246,7 +1266,6 @@ it('does not count a failed list as inspection after an uncertain creation', asy
   await act(() => vi.advanceTimersByTimeAsync(0));
   fireEvent.click(screen.getByRole('button', { name: 'New Session' }));
   expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
-  expect(screen.queryByRole('button', { name: 'Allow another Send' })).not.toBeInTheDocument();
 });
 
 it('bounds recovery when snapshots succeed but bootstrap keeps failing', async () => {

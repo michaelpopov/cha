@@ -222,6 +222,8 @@ std::string_view public_error_message(ErrorCode code) noexcept {
         return "The vault context has changed.";
     case ErrorCode::application_unavailable:
         return "The application is unavailable.";
+    case ErrorCode::server_stopping:
+        return "The server is shutting down.";
     default:
         return "The request could not be completed.";
     }

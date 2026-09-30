@@ -11,6 +11,7 @@
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <atomic>
 #include <cerrno>
 #include <chrono>
@@ -113,7 +114,8 @@ struct CgiResponse {
 CgiResponse exchange(
     Application& application,
     const ScgiRequest& request,
-    ChaWebDeleteSession delete_session = nullptr) {
+    ChaWebDeleteSession delete_session = nullptr,
+    ChaWebSubmitInput submit_input = nullptr) {
     int fds[2]{};
     if (::socketpair(AF_UNIX, SOCK_STREAM, 0, fds) != 0) {
         throw std::runtime_error("socketpair failed");
@@ -122,7 +124,7 @@ CgiResponse exchange(
     UniqueFd client(fds[1]);
     std::atomic<bool> stop{false};
     handle_chaweb_request(
-        application, request, server.get(), stop, delete_session);
+        application, request, server.get(), stop, delete_session, submit_input);
     server.close();
     CgiResponse response;
     char buffer[4096];
@@ -813,6 +815,82 @@ TEST_F(ChaWebAdapterTest, CleanupFailureReturns500AndUnknownDeleteIsSuccess) {
     EXPECT_EQ(listed().size(), before);
 }
 
+TEST_F(ChaWebAdapterTest, KeepsStoredInputAfterSubmissionFailures) {
+    const ChaWebSubmitInput failures[]{
+        [](Application& application, std::string_view forum,
+           std::string_view session, RawCommand command,
+           std::uint64_t epoch) -> CommandSubmitResult {
+            (void)application.submit(forum, session, std::move(command), epoch);
+            return ErrorCode::internal_error;
+        },
+        [](Application& application, std::string_view forum,
+           std::string_view session, RawCommand command,
+           std::uint64_t epoch) -> CommandSubmitResult {
+            (void)application.submit(forum, session, std::move(command), epoch);
+            throw app::ApplicationError(ErrorCode::internal_error);
+        },
+        [](Application& application, std::string_view forum,
+           std::string_view session, RawCommand command,
+           std::uint64_t epoch) -> CommandSubmitResult {
+            (void)application.submit(forum, session, std::move(command), epoch);
+            throw std::runtime_error("Injected failure after storing input");
+        },
+    };
+    for (const auto fail : failures) {
+        const auto before = listed();
+        const CgiResponse response = exchange(
+            *application_,
+            post_request(sessions_path("lobby"), text_body("@- keep this note").dump()),
+            nullptr, fail);
+        EXPECT_EQ(response.status, 500) << response.raw;
+        EXPECT_EQ(response.json.at("error").at("code"), "internal_error");
+        const auto after = listed();
+        ASSERT_EQ(after.size(), before.size() + 1);
+        const auto created = std::find_if(after.begin(), after.end(), [&](const auto& row) {
+            return std::none_of(before.begin(), before.end(), [&](const auto& old) {
+                return row.id == old.id;
+            });
+        });
+        ASSERT_NE(created, after.end());
+        const CgiResponse snapshot = get(session_path("lobby", created->id));
+        ASSERT_EQ(snapshot.status, 200) << snapshot.raw;
+        const auto& transcript = snapshot.json.at("transcript");
+        EXPECT_TRUE(std::any_of(transcript.begin(), transcript.end(), [](const auto& entry) {
+            return entry.at("text") == "keep this note";
+        }));
+    }
+}
+
+TEST_F(ChaWebAdapterTest, ErrorsUseTheSharedSafeMessages) {
+    const CgiResponse limited = exchange(
+        *application_,
+        post_request(sessions_path("lobby"), text_body("Hello").dump()),
+        nullptr,
+        [](Application&, std::string_view, std::string_view, RawCommand,
+           std::uint64_t) -> CommandSubmitResult {
+            return ErrorCode::session_limit_reached;
+        });
+    EXPECT_EQ(limited.status, 500) << limited.raw;
+    EXPECT_EQ(limited.json.at("error").at("code"), "session_limit_reached");
+    EXPECT_EQ(
+        limited.json.at("error").at("message"),
+        "Another session has not closed yet.");
+
+    const CgiResponse thrown = exchange(
+        *application_,
+        post_request(sessions_path("lobby"), text_body("Hello").dump()),
+        nullptr,
+        [](Application&, std::string_view, std::string_view, RawCommand,
+           std::uint64_t) -> CommandSubmitResult {
+            throw app::ApplicationError(
+                ErrorCode::internal_error, "sqlite detail");
+        });
+    EXPECT_EQ(thrown.status, 500) << thrown.raw;
+    EXPECT_EQ(
+        thrown.json.at("error").at("message"),
+        "The request could not be completed.");
+}
+
 TEST_F(ChaWebAdapterTest, LoadsARetiredSessionAndDoesNotRetryUnknownOnes) {
     const std::string id = create_session();
     const auto epoch = application_->context_epoch();
@@ -841,6 +919,9 @@ TEST_F(ChaWebAdapterTest, UnavailableApplicationReturns503) {
     EXPECT_EQ(response.status, 503);
     EXPECT_EQ(
         response.json.at("error").at("code"), "application_unavailable");
+    EXPECT_EQ(
+        response.json.at("error").at("message"),
+        "The application is unavailable.");
 }
 
 TEST(ChaWebAdapter, UnknownSubmissionOutcomeKeepsTheSession) {

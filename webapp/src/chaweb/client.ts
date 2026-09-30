@@ -88,29 +88,12 @@ function isJsonContentType(header: string | null): boolean {
   return header.split(';', 1)[0]?.trim().toLowerCase() === 'application/json';
 }
 
-function protocolError(status: number): ChaWebError {
-  return new ChaWebError(status, new ChaProtocolError().message);
-}
-
 function errorFromPayload(status: number, payload: unknown): ChaWebError {
   if (!isRecord(payload) || !isRecord(payload.error)) return new ChaWebError(status, FAILED);
   const raw = payload.error.message;
   const code = typeof payload.error.code === 'string' ? payload.error.code : undefined;
   if (typeof raw === 'string' && raw.trim() !== '') return new ChaWebError(status, raw, code);
   return new ChaWebError(status, FAILED, code);
-}
-
-async function rejectResponse(response: Response): Promise<never> {
-  if (!isJsonContentType(response.headers.get('content-type'))) {
-    throw new ChaWebError(response.status, FAILED);
-  }
-  try {
-    throw errorFromPayload(response.status, await response.json());
-  } catch (error) {
-    if (error instanceof ChaWebError) throw error;
-    if (error instanceof SyntaxError) throw new ChaWebError(response.status, FAILED);
-    throw error;
-  }
 }
 
 async function readJson(response: Response): Promise<unknown> {
@@ -120,7 +103,6 @@ async function readJson(response: Response): Promise<unknown> {
   try {
     return await response.json();
   } catch (error) {
-    if (error instanceof ChaWebError) throw error;
     if (error instanceof SyntaxError) throw new ChaWebError(response.status, FAILED);
     throw error;
   }
@@ -148,8 +130,8 @@ async function exchange<T>(
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     if (response.status !== expected) {
-      if (response.ok) throw protocolError(response.status);
-      await rejectResponse(response);
+      if (response.ok) throw new ChaProtocolError();
+      throw errorFromPayload(response.status, await readJson(response));
     }
     return await consume(response);
   } catch (error) {
@@ -157,7 +139,7 @@ async function exchange<T>(
     if (controller.signal.aborted || (error instanceof DOMException && error.name === 'AbortError')) {
       throw new ChaWebError(0, TIMED_OUT);
     }
-    if (error instanceof ChaWebError) throw error;
+    if (error instanceof ChaWebError || error instanceof ChaProtocolError) throw error;
     throw new ChaWebError(0, FAILED);
   } finally {
     clearTimeout(timer);
@@ -170,7 +152,7 @@ async function readGuarded<T>(
   guard: (value: unknown) => value is T,
 ): Promise<T> {
   const payload = await readJson(response);
-  if (!guard(payload)) throw protocolError(response.status);
+  if (!guard(payload)) throw new ChaProtocolError();
   return payload;
 }
 
@@ -252,9 +234,8 @@ export function createChaWebClient(): ChaWebClient {
         const payload = await readJson(response);
         try {
           return validateBootstrap(payload);
-        } catch (error) {
-          if (error instanceof ChaWebError) throw error;
-          throw protocolError(response.status);
+        } catch {
+          throw new ChaProtocolError();
         }
       });
     },

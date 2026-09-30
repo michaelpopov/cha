@@ -65,7 +65,6 @@ export function classifyReadFailure(error: unknown): ReadKind {
   if (error instanceof ChaProtocolError) return 'terminal';
   if (error instanceof ChaWebError) {
     if (error.status === 404 || error.code === 'not_found') return 'missing';
-    if (error.message.includes('incompatible response')) return 'terminal';
     if (error.status === 0 || error.status === 408 || error.status === 429
         || error.status === 500 || error.status === 502
         || error.status === 503 || error.status === 504) {
@@ -93,8 +92,8 @@ export interface CommandInput {
   kind: 'draft' | 'session';
   forumValid: boolean;
   text: string;
-  createPending: boolean;
-  inputPending: boolean;
+  // Creation for a draft, or input for a stored session.
+  sending: boolean;
   stopPending: boolean;
   stopping: boolean;
   generationActive: boolean;
@@ -108,10 +107,10 @@ export function commandControl(input: CommandInput): { mode: 'send' | 'stop'; di
   if (input.kind === 'draft') {
     return {
       mode: 'send',
-      disabled: !input.forumValid || !textReady || input.createPending || input.sendBlocked,
+      disabled: !input.forumValid || !textReady || input.sending || input.sendBlocked,
     };
   }
-  const showStop = input.inputPending
+  const showStop = input.sending
     || input.stopPending
     || input.stopping
     || input.generationActive
