@@ -126,7 +126,7 @@ it('confirms the named session, focuses Cancel, and preserves the conversation o
   await user.type(box, 'Unsent note');
   const controls = screen.getByRole('button', { name: 'Delete session' }).parentElement!;
   expect(within(controls).getAllByRole('button').map((button) => button.getAttribute('aria-label')))
-    .toEqual(['Sessions', 'Delete session', 'Send']);
+    .toEqual(['Sessions', 'Delete session', 'Copy conversation', 'Send']);
   await user.click(screen.getByRole('button', { name: 'Delete session' }));
   const dialog = screen.getByRole('dialog', { name: 'Delete session “planning”?' });
   expect(dialog).toHaveTextContent('The unsent prompt will also be discarded.');

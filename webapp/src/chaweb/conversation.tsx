@@ -1,4 +1,7 @@
+import { useEffect, useRef, useState } from 'react';
+
 import type { CharacterAppearance } from '../api/client';
+import { copyText } from './clipboard';
 import { Composer } from './composer';
 import { Transcript, type TranscriptEntry } from './transcript';
 
@@ -49,8 +52,42 @@ export function Conversation({
   onRetry?(): void;
   onAllowSend?(): void;
 }) {
+  const root = useRef<HTMLDivElement>(null);
+  const currentSession = useRef(sessionKey);
+  currentSession.current = sessionKey;
+  const [copyState, setCopyState] = useState<{
+    key: string; status: 'copying' | 'copied' | 'failed';
+  } | null>(null);
+  const copyStatus = copyState?.key === sessionKey ? copyState.status : null;
+
+  useEffect(() => {
+    if (copyState?.status !== 'copied') return;
+    const timer = window.setTimeout(() => setCopyState(null), 2_000);
+    return () => window.clearTimeout(timer);
+  }, [copyState]);
+
+  function copyConversation() {
+    const transcript = root.current?.querySelector<HTMLElement>('.chaweb-transcript');
+    const text = Array.from(transcript?.querySelectorAll<HTMLElement>('.chaweb-entry') ?? [])
+      .map((entry) => Array.from(entry.querySelectorAll<HTMLElement>(
+        '.chaweb-speaker, .chaweb-entry-text, .chaweb-entry-status',
+      )).map((part) => part.innerText).join('\n'))
+      .join('\n\n');
+    if (!text.trim() || copyStatus === 'copying') return;
+    const key = sessionKey;
+    setCopyState({ key, status: 'copying' });
+    void copyText(text).then(
+      () => {
+        if (root.current && currentSession.current === key) setCopyState({ key, status: 'copied' });
+      },
+      () => {
+        if (root.current && currentSession.current === key) setCopyState({ key, status: 'failed' });
+      },
+    );
+  }
+
   return (
-    <div className="chaweb-conversation">
+    <div className="chaweb-conversation" ref={root}>
       <Transcript
         characters={characters}
         entries={entries}
@@ -59,6 +96,10 @@ export function Conversation({
         sessionKey={sessionKey}
       />
       {notice && <p className={deleting ? 'chaweb-status' : 'chaweb-alert'} role={deleting ? 'status' : 'alert'}>{notice}</p>}
+      {copyStatus === 'copied' && <p className="chaweb-status" role="status">Copied to clipboard</p>}
+      {copyStatus === 'failed' && (
+        <p className="chaweb-alert" role="alert">Could not copy the conversation. Try again.</p>
+      )}
       {onRetry && (
         <button className="chaweb-new-session" onClick={onRetry} type="button">Retry</button>
       )}
@@ -75,11 +116,14 @@ export function Conversation({
       )}
       <Composer
         commandDisabled={commandDisabled}
+        copied={copyStatus === 'copied'}
+        copyDisabled={entries.length === 0 || deleting || copyStatus === 'copying'}
         deleteDisabled={deleteDisabled}
         deleting={deleting}
         expanded={expanded}
         mode={mode}
         onChange={onDraft}
+        onCopy={copyConversation}
         onDelete={onDelete}
         onExpanded={onExpanded}
         onSend={onSend}

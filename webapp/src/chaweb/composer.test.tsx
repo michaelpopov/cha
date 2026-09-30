@@ -36,6 +36,9 @@ function Editor({
   return (
     <Composer
       commandDisabled={commandDisabled}
+      copied={false}
+      copyDisabled
+      onCopy={() => {}}
       deleteDisabled
       deleting={false}
       expanded={expanded}

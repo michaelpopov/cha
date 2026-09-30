@@ -1,6 +1,6 @@
 import { useRef, type KeyboardEvent, type PointerEvent } from 'react';
 
-import { ForumsIcon, SendIcon, StopIcon, TrashIcon } from '../components/Icons';
+import { CheckIcon, CopyIcon, ForumsIcon, SendIcon, StopIcon, TrashIcon } from '../components/Icons';
 
 const compactHeight = 56;
 
@@ -39,6 +39,9 @@ export function Composer({
   viewportHeight,
   onSessions,
   onDelete,
+  onCopy,
+  copyDisabled,
+  copied,
   deleteDisabled,
   deleting,
   mode,
@@ -53,6 +56,9 @@ export function Composer({
   viewportHeight: number;
   onSessions(): void;
   onDelete(): void;
+  onCopy(): void;
+  copyDisabled: boolean;
+  copied: boolean;
   deleteDisabled: boolean;
   deleting: boolean;
   mode: 'send' | 'stop';
@@ -160,6 +166,15 @@ export function Composer({
           type="button"
         >
           <TrashIcon />
+        </button>
+        <button
+          aria-label={copied ? 'Copied conversation' : 'Copy conversation'}
+          className="chaweb-icon-button"
+          disabled={copyDisabled}
+          onClick={onCopy}
+          type="button"
+        >
+          {copied ? <CheckIcon /> : <CopyIcon />}
         </button>
         <button
           aria-label={commandLabel}
