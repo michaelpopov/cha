@@ -26,6 +26,20 @@ function installFetch(handler: (url: string, init?: RequestInit) => Promise<Resp
 }
 
 describe('ChaWeb HTTP client', () => {
+  it('admits a session audio batch and validates each returned entry in order', async () => {
+    const accepted = { entries: [{ entry_id: 7, cached: false, state: 'queued' }, { entry_id: 8, cached: true }] };
+    const calls = installFetch(() => jsonResponse(accepted));
+    await expect(createChaWebClient().startAudioBatch('a/b', 'c d', [7, 8], 'Personal')).resolves.toEqual(accepted);
+    expect(calls[0]).toMatchObject({
+      url: '/api/cha/v1/forums/a%2Fb/sessions/c%20d/audio',
+      init: { method: 'POST', body: JSON.stringify({ vault_name: 'Personal', entry_ids: [7, 8] }) },
+    });
+    for (const entries of [[], [...accepted.entries].reverse(), [{ entry_id: 7, cached: false, state: 'failed' }, accepted.entries[1]]]) {
+      installFetch(() => jsonResponse({ entries }));
+      await expect(createChaWebClient().startAudioBatch('lobby', 'planning', [7, 8], 'Personal')).rejects.toMatchObject({ status: 200 });
+    }
+  });
+
   it('clears audio only for the named session and vault without retrying a failure', async () => {
     const calls = installFetch(() => new Response(null, { status: 204 }));
     await expect(createChaWebClient().clearAudio('a/b', 'c d', 'Personal')).resolves.toBeUndefined();

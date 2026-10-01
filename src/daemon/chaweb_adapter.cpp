@@ -9,6 +9,7 @@
 #include <charconv>
 #include <limits>
 #include <optional>
+#include <set>
 #include <string>
 #include <utility>
 #include <variant>
@@ -385,6 +386,32 @@ void serve_audio(
         if (!require_json_body(request, fd, stop)) return;
         const auto body = parse_object(request.body, fd, stop);
         if (!body) return;
+        if (request.method == "POST" && route.route == Route::audio_status) {
+            if (body->size() != 2 || !body->contains("vault_name")
+                || !body->at("vault_name").is_string() || !body->contains("entry_ids")
+                || !body->at("entry_ids").is_array() || body->at("entry_ids").empty()) {
+                write_code(fd, ErrorCode::invalid_argument, stop);
+                return;
+            }
+            AudioDownloadBatchRequest batch{body->at("vault_name").get<std::string>(), {}};
+            std::set<EntryId> ids;
+            for (const auto& value : body->at("entry_ids")) {
+                if (!value.is_number_unsigned() || value.get<std::uint64_t>() == 0
+                    || value.get<std::uint64_t>() > 9007199254740991ULL
+                    || !ids.insert(value.get<EntryId>()).second) {
+                    write_code(fd, ErrorCode::invalid_argument, stop);
+                    return;
+                }
+                batch.entries.push_back({value.get<EntryId>(), {}});
+            }
+            auto entries = nlohmann::json::array();
+            for (const auto& accepted : application.start_audio_batch(
+                     route.forum_id, route.session_id, std::move(batch), epoch)) {
+                entries.push_back(app::audio_acceptance_json(accepted));
+            }
+            write_json(fd, 200, {{"entries", std::move(entries)}}, stop);
+            return;
+        }
         if (body->size() != 1 || !body->contains("vault_name")
             || !body->at("vault_name").is_string()) {
             write_code(fd, ErrorCode::invalid_argument, stop);
@@ -627,7 +654,8 @@ void handle_chaweb_request(
         }
         if ((request.method == "GET"
                 && (route.route == Route::audio_status || route.route == Route::entry_audio))
-            || (request.method == "POST" && route.route == Route::entry_audio)
+            || (request.method == "POST"
+                && (route.route == Route::entry_audio || route.route == Route::audio_status))
             || (request.method == "DELETE" && route.route == Route::audio_status)) {
             serve_audio(application, request, route, fd, stop);
             return;

@@ -213,6 +213,24 @@ describe('playback position', () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response('audio'));
   });
 
+  it('reuses a browser-unlocked audio element and removes the previous reply listeners', async () => {
+    const audio = new Audio();
+    const firstEnded = vi.fn();
+    const secondEnded = vi.fn();
+    const first = new TextToSpeechSession(null, undefined, '', firstEnded,
+      undefined, '/media/first', undefined, undefined, undefined, { audio });
+    await first.play();
+    first.stop();
+    const second = new TextToSpeechSession(null, undefined, '', secondEnded,
+      undefined, '/media/second', undefined, undefined, undefined, { audio });
+    await second.play();
+    expect(audios).toHaveLength(1);
+    expect(audios[0].play).toHaveBeenCalledTimes(2);
+    audio.dispatchEvent(new Event('ended'));
+    expect(firstEnded).not.toHaveBeenCalled();
+    expect(secondEnded).toHaveBeenCalledOnce();
+  });
+
   it('saves the stop position, resumes, and resets after ending', async () => {
     let position = 0;
     const ended = vi.fn();

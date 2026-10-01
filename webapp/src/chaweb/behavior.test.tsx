@@ -4,7 +4,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 
 import type { SessionListing, SessionSnapshot } from '../api/client';
 import { ChaProtocolError } from '../api/client';
-import { bootstrapFixture, plainVoice, snapshotFixture } from '../test/fixtures';
+import { bootstrapFixture, plainVoice, snapshotFixture, voiceOutputRuntimeFixture } from '../test/fixtures';
 import { App } from './App';
 import { ChaWebError, type ChaWebClient } from './client';
 import { unknownSendNotice } from './outcome';
@@ -90,7 +90,8 @@ function client(overrides: Partial<ChaWebClient> = {}): ChaWebClient {
   return {
     getVoiceOutputRuntime: vi.fn(async () => null),
     startAudio: vi.fn(),
-    getAudioStatus: vi.fn(),
+    startAudioBatch: vi.fn(),
+    getAudioStatus: vi.fn(async () => ({ cached_entry_ids: [], downloads: [] })),
     clearAudio: vi.fn(async () => undefined),
     getBootstrap: vi.fn(async () => boot()),
     listSessions: vi.fn(async (forumId: string) => (
@@ -148,6 +149,24 @@ it('clears recordings from the bottom icon button without deleting the session o
   expect(window.location.hash).toContain('/planning');
 });
 
+it('toggles automatic audio from the speaker icon and turns it off when clearing recordings', async () => {
+  vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined);
+  vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
+  const api = await openPlanning(client({ getVoiceOutputRuntime: vi.fn(async () => voiceOutputRuntimeFixture) }));
+  const toggle = screen.getByRole('button', { name: 'Cache audio and play new responses automatically' });
+  expect(toggle.querySelector('svg')).not.toBeNull();
+  expect(toggle).toHaveAttribute('aria-pressed', 'false');
+  fireEvent.click(toggle);
+  expect(toggle).toHaveAttribute('aria-pressed', 'true');
+  fireEvent.click(toggle);
+  expect(toggle).toHaveAttribute('aria-pressed', 'false');
+  fireEvent.click(toggle);
+  fireEvent.click(screen.getByRole('button', { name: 'Clear audio recordings' }));
+  await act(async () => {});
+  expect(toggle).toHaveAttribute('aria-pressed', 'false');
+  expect(api.clearAudio).toHaveBeenCalledExactlyOnceWith('lobby', 'planning', 'Personal');
+});
+
 it('confirms the named session, focuses Cancel, and preserves the conversation on cancellation', async () => {
   const user = userEvent.setup();
   const api = await openPlanning();
@@ -155,7 +174,8 @@ it('confirms the named session, focuses Cancel, and preserves the conversation o
   await user.type(box, 'Unsent note');
   const controls = screen.getByRole('button', { name: 'Delete session' }).parentElement!;
   expect(within(controls).getAllByRole('button').map((button) => button.getAttribute('aria-label')))
-    .toEqual(['Sessions', 'Delete session', 'Clear audio recordings', 'Copy conversation', 'Send']);
+    .toEqual(['Sessions', 'Delete session', 'Clear audio recordings',
+      'Cache audio and play new responses automatically', 'Copy conversation', 'Send']);
   await user.click(screen.getByRole('button', { name: 'Delete session' }));
   const dialog = screen.getByRole('dialog', { name: 'Delete session “planning”?' });
   expect(dialog).toHaveTextContent('The unsent prompt will also be discarded.');

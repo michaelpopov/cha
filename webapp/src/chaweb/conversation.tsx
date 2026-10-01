@@ -132,6 +132,9 @@ export function Conversation({
         onCopy={copyConversation}
         onClearAudio={speech?.clear}
         clearAudioDisabled={!speech || speech.clearDisabled}
+        onAutomaticAudio={speech?.toggleAutomatic}
+        automaticAudio={speech?.automatic}
+        automaticAudioDisabled={!speech || speech.automaticDisabled}
         onDelete={onDelete}
         onExpanded={onExpanded}
         onSend={onSend}

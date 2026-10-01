@@ -328,6 +328,11 @@ button:disabled {
   color: inherit;
 }
 
+.chaweb-icon-button[aria-pressed="true"] {
+  background: light-dark(rgb(30 113 190 / 12%), rgb(131 195 255 / 16%));
+  color: var(--accent-foreground);
+}
+
 .chaweb-delete-dialog {
   width: min(24rem, calc(100% - 2rem));
   max-height: calc(100% - 2rem);

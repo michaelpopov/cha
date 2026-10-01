@@ -164,7 +164,7 @@ export class TextToSpeechSession {
     private readonly onCached?: () => void,
     private readonly nativeSpeech?: NativeSpeech,
     private readonly onDispose?: () => void,
-    private readonly options?: { streaming?: boolean; onError?(error: Error): void },
+    private readonly options?: { streaming?: boolean; onError?(error: Error): void; audio?: HTMLAudioElement },
   ) {}
 
   async play(): Promise<void> {
@@ -209,33 +209,34 @@ export class TextToSpeechSession {
   }
 
   private createAudio(url: string, managed = false): HTMLAudioElement {
-    const audio = new Audio();
+    const audio = this.options?.audio ?? new Audio();
     // Safari needs this before attaching a ManagedMediaSource without an AirPlay URL.
     if (managed) audio.disableRemotePlayback = true;
     audio.src = url;
     this.audio = audio;
-    audio.addEventListener('ended', () => this.finish(true), { once: true });
+    const signal = this.request.signal;
+    audio.addEventListener('ended', () => this.finish(true), { once: true, signal });
     audio.addEventListener('pause', () => {
       // Media controls can pause the clip without ending it or advancing the queue.
       this.clearPlaybackWait();
       this.releaseInput();
-    });
+    }, { signal });
     audio.addEventListener('play', () => {
       if (!this.stopped) this.endPlayback ??= beginSpeechPlayback();
-    });
-    audio.addEventListener('playing', () => this.clearPlaybackWait());
+    }, { signal });
+    audio.addEventListener('playing', () => this.clearPlaybackWait(), { signal });
     audio.addEventListener('waiting', () => {
       if (this.stopped || audio.paused || this.playbackWaitTimer !== undefined) return;
       this.playbackWaitTimer = setTimeout(() => {
         this.options?.onError?.(new TextToSpeechError('Audio playback stalled. Try again.'));
         this.finish();
       }, 10_000);
-    });
+    }, { signal });
     audio.addEventListener('error', () => {
       if (this.stopped) return;
       this.options?.onError?.(new TextToSpeechError('Audio could not be played.'));
       this.finish(true);
-    }, { once: true });
+    }, { once: true, signal });
     if (this.playback && this.playback.position > 0) {
       const position = this.playback.position;
       const resume = () => {
@@ -243,7 +244,7 @@ export class TextToSpeechSession {
         audio.currentTime = Number.isFinite(audio.duration) && position >= audio.duration ? 0 : position;
       };
       if (audio.readyState >= 1) resume();
-      else audio.addEventListener('loadedmetadata', resume, { once: true });
+      else audio.addEventListener('loadedmetadata', resume, { once: true, signal });
     }
     return audio;
   }

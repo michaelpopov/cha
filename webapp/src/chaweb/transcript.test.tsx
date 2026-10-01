@@ -43,6 +43,7 @@ function mockScroll(element: HTMLElement, scrollHeight: number, clientHeight: nu
 it('offers Read aloud only for completed character replies and keeps cached audio playable', () => {
   const toggle = vi.fn();
   const speech = { available: true, entryId: null, state: 'loading' as const, error: null, toggle,
+    automatic: false, automaticDisabled: false, toggleAutomatic: vi.fn(),
     isCached: (entry: TranscriptEntry) => Boolean(entry.has_cached_audio),
     clearing: false, clearDisabled: false, clear: vi.fn(async () => undefined) };
   const props = {

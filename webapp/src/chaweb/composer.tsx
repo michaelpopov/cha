@@ -1,6 +1,6 @@
 import { useRef, type KeyboardEvent, type PointerEvent } from 'react';
 
-import { CheckIcon, ClearAudioIcon, CopyIcon, ForumsIcon, PaperPlaneIcon, StopIcon, TrashIcon } from '../components/Icons';
+import { CheckIcon, ClearAudioIcon, CopyIcon, ForumsIcon, PaperPlaneIcon, SpeakerIcon, StopIcon, TrashIcon } from '../components/Icons';
 
 const compactHeight = 56;
 
@@ -42,6 +42,9 @@ export function Composer({
   onCopy,
   onClearAudio,
   clearAudioDisabled,
+  onAutomaticAudio,
+  automaticAudio = false,
+  automaticAudioDisabled,
   copyDisabled,
   copied,
   deleteDisabled,
@@ -61,6 +64,9 @@ export function Composer({
   onCopy(): void;
   onClearAudio?(): void;
   clearAudioDisabled?: boolean;
+  onAutomaticAudio?(): void;
+  automaticAudio?: boolean;
+  automaticAudioDisabled?: boolean;
   copyDisabled: boolean;
   copied: boolean;
   deleteDisabled: boolean;
@@ -180,6 +186,17 @@ export function Composer({
           type="button"
         >
           <ClearAudioIcon />
+        </button>
+        <button
+          aria-label="Cache audio and play new responses automatically"
+          aria-pressed={automaticAudio}
+          title="Cache audio and play new responses automatically"
+          className="chaweb-icon-button"
+          disabled={deleting || automaticAudioDisabled || !onAutomaticAudio}
+          onClick={onAutomaticAudio}
+          type="button"
+        >
+          <SpeakerIcon />
         </button>
         <button
           aria-label={copied ? 'Copied conversation' : 'Copy conversation'}

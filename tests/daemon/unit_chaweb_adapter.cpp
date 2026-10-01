@@ -293,6 +293,27 @@ TEST_F(ChaWebAdapterTest, ReadsAudioChunksAndValidatesOffsets) {
     }
 }
 
+TEST_F(ChaWebAdapterTest, AdmitsAudioBatchesAndRejectsInvalidRequestsWithoutChangingCachedAudio) {
+    const auto path = session_path("lobby", add_audio_entry(EntryStatus::complete, true, 2)) + "/audio";
+    const auto accepted = post(path, {{"vault_name", "Test"}, {"entry_ids", {2, 1}}});
+    ASSERT_EQ(accepted.status, 200);
+    EXPECT_EQ(accepted.json, (nlohmann::json{{"entries", {
+        {{"entry_id", 2}, {"cached", true}}, {{"entry_id", 1}, {"cached", true}}}}}));
+    EXPECT_EQ(post(path, {{"vault_name", "Other"}, {"entry_ids", {1, 2}}}).status, 409);
+    EXPECT_EQ(post(path, {{"vault_name", "Test"}, {"entry_ids", {1, 3}}}).status, 404);
+    for (const auto& ids : std::vector<nlohmann::json>{
+             nlohmann::json::array(), {1, 1}, {0}, {-1}, {1.5}, {"1"}, {9007199254740992ULL}, 1}) {
+        EXPECT_EQ(post(path, {{"vault_name", "Test"}, {"entry_ids", ids}}).status, 400) << ids;
+    }
+    EXPECT_EQ(post(path, {{"vault_name", "Test"}}).status, 400);
+    EXPECT_EQ(post(path, {{"vault_name", "Test"}, {"entry_ids", {1}}, {"extra", true}}).status, 400);
+    auto request = post_request(path, "{\"vault_name\":\"Test\",\"entry_ids\":[1]}", "text/plain");
+    EXPECT_EQ(exchange(*application_, request).status, 415);
+    const auto status = get(path);
+    EXPECT_EQ(status.json.at("cached_entry_ids"), nlohmann::json::array({1, 2}));
+    EXPECT_TRUE(status.json.at("downloads").empty());
+}
+
 TEST_F(ChaWebAdapterTest, ClearsAllSessionAudioWithoutVoiceConfigurationOrChangingOtherSessions) {
     const auto path = session_path("lobby", add_audio_entry(EntryStatus::complete, true, 2));
     const auto other = session_path("lobby", add_audio_entry(EntryStatus::complete, true));

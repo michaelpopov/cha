@@ -4,6 +4,7 @@ import {
   isAudioStatus,
   isVoiceOutputRuntime,
   type AudioDownloadAcceptance,
+  type AudioDownloadBatchAcceptance,
   type AudioDownloadStatus,
   type VoiceOutputRuntime,
   isSessionLabelResult,
@@ -42,6 +43,7 @@ export function chaWebMessage(failure: unknown, fallback: string): string {
 export interface ChaWebClient {
   getVoiceOutputRuntime(): Promise<VoiceOutputRuntime | null>;
   startAudio(forumId: string, sessionId: string, entryId: number, vaultName: string): Promise<AudioDownloadAcceptance>;
+  startAudioBatch(forumId: string, sessionId: string, entryIds: number[], vaultName: string): Promise<AudioDownloadBatchAcceptance>;
   getAudioStatus(forumId: string, sessionId: string): Promise<AudioDownloadStatus>;
   clearAudio(forumId: string, sessionId: string, vaultName: string): Promise<void>;
   getBootstrap(): Promise<Bootstrap>;
@@ -172,6 +174,15 @@ export function createChaWebClient(): ChaWebClient {
     async getAudioStatus(forumId, sessionId) {
       return exchange('GET', `${sessionPath(forumId, sessionId)}/audio`, 200,
         (response) => readGuarded(response, isAudioStatus));
+    },
+
+    async startAudioBatch(forumId, sessionId, entryIds, vaultName) {
+      return exchange('POST', `${sessionPath(forumId, sessionId)}/audio`, 200,
+        (response) => readGuarded(response,
+          (value): value is AudioDownloadBatchAcceptance => isRecord(value)
+            && Array.isArray(value.entries) && value.entries.length === entryIds.length
+            && value.entries.every((item, index) => isAudioAcceptance(item) && item.entry_id === entryIds[index])),
+        { vault_name: vaultName, entry_ids: entryIds });
     },
 
     async clearAudio(forumId, sessionId, vaultName) {

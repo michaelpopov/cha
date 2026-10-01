@@ -2,7 +2,7 @@ import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 import { bootstrapFixture, snapshotFixture as baseSnapshot, voiceOutputRuntimeFixture } from '../test/fixtures';
-import type { SessionSnapshot } from '../api/client';
+import type { AudioDownloadAcceptance, AudioDownloadStatus, SessionSnapshot } from '../api/client';
 import { TextToSpeechError, TextToSpeechSession } from '../textToSpeech';
 import { ChaWebError, type ChaWebClient } from './client';
 import { useReadAloud } from './useReadAloud';
@@ -23,12 +23,17 @@ const entry: TranscriptEntry = {
 };
 
 function client(overrides: Partial<ChaWebClient> = {}): ChaWebClient {
+  const startAudio = overrides.startAudio
+    ?? vi.fn(async (_forum: string, _session: string, id: number) => ({ entry_id: id, cached: false, state: 'queued' as const }));
   return {
     getBootstrap: vi.fn(), listSessions: vi.fn(), createSession: vi.fn(), getSession: vi.fn(),
     submitInput: vi.fn(), stopSession: vi.fn(), deleteSession: vi.fn(),
     getVoiceOutputRuntime: vi.fn(async () => voiceOutputRuntimeFixture),
-    startAudio: vi.fn(async () => ({ entry_id: 7, cached: false, state: 'queued' as const })),
-    getAudioStatus: vi.fn(async () => ({ cached_entry_ids: [7], downloads: [] })),
+    startAudio,
+    startAudioBatch: vi.fn(async (forum: string, session: string, ids: number[], vault: string) => ({
+      entries: await Promise.all(ids.map((id) => startAudio(forum, session, id, vault))),
+    })),
+    getAudioStatus: vi.fn(async () => ({ cached_entry_ids: [], downloads: [] })),
     clearAudio: vi.fn(async () => undefined),
     ...overrides,
   };
@@ -36,6 +41,11 @@ function client(overrides: Partial<ChaWebClient> = {}): ChaWebClient {
 
 beforeEach(() => {
   vi.useFakeTimers();
+  vi.stubGlobal('Audio', class {
+    src = '';
+    play = vi.fn(async () => undefined);
+    pause = vi.fn();
+  });
   play.mockReset().mockResolvedValue(undefined);
   stop.mockReset();
   vi.mocked(TextToSpeechSession).mockReset().mockImplementation(function (
@@ -45,7 +55,7 @@ beforeEach(() => {
     return { play, stop } as unknown as TextToSpeechSession;
   });
 });
-afterEach(() => vi.useRealTimers());
+afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 it('starts streaming immediately after acceptance without waiting for the cached clip', async () => {
   let started!: () => void;
@@ -56,7 +66,7 @@ it('starts streaming immediately after acceptance without waiting for the cached
   expect(api.startAudio).toHaveBeenCalledExactlyOnceWith('lobby', 'planning', 7, 'Personal');
   expect(result.current).toMatchObject({ entryId: 7, state: 'loading' });
   expect(play).toHaveBeenCalledOnce();
-  expect(api.getAudioStatus).not.toHaveBeenCalled();
+  expect(api.getAudioStatus).toHaveBeenCalledWith('lobby', 'planning');
   expect(TextToSpeechSession).toHaveBeenCalledWith(
     null, undefined, 'Hello', expect.any(Function),
     { position: 0, onPositionChange: expect.any(Function) },
@@ -77,15 +87,15 @@ it('plays cached audio without voice configuration or a generation request', asy
   expect(result.current.available).toBe(false);
   expect(result.current.state).toBe('playing');
   expect(api.startAudio).not.toHaveBeenCalled();
-  expect(api.getAudioStatus).not.toHaveBeenCalled();
+  expect(api.getAudioStatus).toHaveBeenCalledOnce();
 });
 
-it('uses cached acceptance immediately without polling', async () => {
+it('plays cached acceptance without waiting for a status refresh', async () => {
   const api = client({ startAudio: vi.fn(async () => ({ entry_id: 7, cached: true })) });
   const { result } = renderHook(() => useReadAloud(api, snapshotFixture, 'Personal', false));
   await act(async () => result.current.toggle(entry));
   expect(play).toHaveBeenCalledOnce();
-  expect(api.getAudioStatus).not.toHaveBeenCalled();
+  expect(api.getAudioStatus).toHaveBeenCalledWith('lobby', 'planning');
   expect(vi.mocked(TextToSpeechSession).mock.calls[0][9]?.streaming).toBe(false);
   expect(result.current.isCached(entry)).toBe(true);
 });
@@ -200,7 +210,7 @@ it.each(['stop', 'switch', 'delete', 'unmount'])('ignores a late generation resu
   else unmount();
   await act(async () => resolve({ entry_id: 7, cached: true }));
   expect(play).not.toHaveBeenCalled();
-  expect(api.getAudioStatus).not.toHaveBeenCalled();
+  expect(api.getAudioStatus).toHaveBeenCalledTimes(action === 'switch' ? 2 : 1);
 });
 
 it('stops active playback on navigation', async () => {
@@ -302,4 +312,177 @@ it('reports a clear failure and allows retry without requiring voice configurati
   expect(result.current.clearDisabled).toBe(true);
   await act(async () => result.current.clear());
   expect(api.clearAudio).toHaveBeenCalledTimes(2);
+});
+
+it('submits existing replies as one batch without reading them and observes their completed downloads', async () => {
+  const accepted = new Map<number, (value: AudioDownloadAcceptance) => void>();
+  const audio: AudioDownloadStatus = { cached_entry_ids: [1], downloads: [] };
+  const api = client({
+    getAudioStatus: vi.fn(async () => ({ ...audio, downloads: [...audio.downloads] })),
+    startAudio: vi.fn((_forum, _session, id) => new Promise<AudioDownloadAcceptance>((resolve) => {
+      accepted.set(id, resolve);
+    })),
+  });
+  const saved = { ...snapshotFixture, transcript: [
+    { ...entry, id: 1, has_cached_audio: true }, entry, { ...entry, id: 8 }, { ...entry, id: 9 },
+    { ...entry, id: 10, kind: 'human' as const }, { ...entry, id: 11, status: 'failed' as const },
+    { ...entry, id: 12, text: ' ' },
+  ] };
+  const { result, rerender } = renderHook(({ snapshot }) => useReadAloud(api, snapshot, 'Personal', false),
+    { initialProps: { snapshot: saved } });
+  await act(async () => {});
+  await act(async () => result.current.toggleAutomatic());
+  expect(api.startAudioBatch).toHaveBeenCalledExactlyOnceWith('lobby', 'planning', [7, 8, 9], 'Personal');
+  expect([...accepted.keys()]).toEqual([7, 8, 9]);
+  expect(vi.mocked(api.startAudio).mock.calls.map((call) => call.slice(0, 2))).toEqual([
+    ['lobby', 'planning'], ['lobby', 'planning'], ['lobby', 'planning'],
+  ]);
+  expect(play).not.toHaveBeenCalled();
+  expect(result.current.automatic).toBe(true);
+  await act(async () => {
+    for (const [id, resolve] of accepted) {
+      audio.downloads.push({ entry_id: id, state: 'running' });
+      resolve({ entry_id: id, cached: false, state: 'running' });
+    }
+  });
+  audio.cached_entry_ids = [1, 7, 8, 9];
+  audio.downloads = [];
+  await act(async () => vi.advanceTimersByTimeAsync(1000));
+  expect(result.current.isCached(entry)).toBe(true);
+  rerender({ snapshot: { ...saved, transcript: [...saved.transcript] } });
+  expect(api.startAudio).toHaveBeenCalledTimes(3);
+  expect(play).not.toHaveBeenCalled();
+});
+
+it('streams new replies once in transcript order, including a reply in progress when enabled', async () => {
+  const audio: AudioDownloadStatus = { cached_entry_ids: [7], downloads: [] };
+  const api = client({
+    getAudioStatus: vi.fn(async () => ({ ...audio, downloads: [...audio.downloads] })),
+    startAudio: vi.fn(async (_forum, _session, id) => {
+      if (id === 9) { audio.cached_entry_ids.push(id); return { entry_id: id, cached: true }; }
+      audio.downloads.push({ entry_id: id, state: 'running' });
+      return { entry_id: id, cached: false, state: 'running' as const };
+    }),
+  });
+  const saved: SessionSnapshot = { ...snapshotFixture,
+    transcript: [entry, { ...entry, id: 8, status: 'streaming' }] };
+  const { result, rerender } = renderHook(({ snapshot }) => useReadAloud(api, snapshot, 'Personal', false),
+    { initialProps: { snapshot: saved } });
+  await act(async () => {});
+  await act(async () => result.current.toggleAutomatic());
+  await act(async () => rerender({ snapshot: { ...saved,
+    transcript: [...saved.transcript, { ...entry, id: 9 }] } }));
+  expect(api.startAudio).toHaveBeenCalledExactlyOnceWith('lobby', 'planning', 9, 'Personal');
+  expect(play).not.toHaveBeenCalled();
+  const complete: SessionSnapshot = { ...saved, transcript: [entry, { ...entry, id: 8 },
+    { ...entry, id: 9 }, { ...entry, id: 10, kind: 'human' }] };
+  await act(async () => rerender({ snapshot: complete }));
+  expect(result.current).toMatchObject({ entryId: 8, state: 'playing' });
+  expect(vi.mocked(TextToSpeechSession).mock.calls[0][9]).toMatchObject({ streaming: true });
+  const audioElement = vi.mocked(TextToSpeechSession).mock.calls[0][9]?.audio;
+  expect(audioElement).toBeDefined();
+  await act(async () => ended());
+  expect(result.current.entryId).toBe(9);
+  expect(vi.mocked(TextToSpeechSession).mock.calls[1][9]).toMatchObject({ streaming: false, audio: audioElement });
+  await act(async () => ended());
+  rerender({ snapshot: { ...complete, transcript: [...complete.transcript] } });
+  expect(play).toHaveBeenCalledTimes(2);
+  expect(vi.mocked(api.startAudio).mock.calls.map((call) => call[2])).toEqual([9, 8]);
+});
+
+it('turns automatic playback off without cancelling accepted downloads or replaying old replies', async () => {
+  const audio: AudioDownloadStatus = { cached_entry_ids: [], downloads: [] };
+  const api = client({
+    getAudioStatus: vi.fn(async () => ({ ...audio, downloads: [...audio.downloads] })),
+    startAudio: vi.fn(async (_forum, _session, id) => {
+      audio.downloads.push({ entry_id: id, state: 'running' });
+      return { entry_id: id, cached: false, state: 'running' as const };
+    }),
+  });
+  const saved = { ...snapshotFixture, transcript: [] as TranscriptEntry[] };
+  const { result, rerender } = renderHook(({ snapshot }) => useReadAloud(api, snapshot, 'Personal', false),
+    { initialProps: { snapshot: saved } });
+  await act(async () => {});
+  await act(async () => result.current.toggleAutomatic());
+  await act(async () => rerender({ snapshot: { ...saved, transcript: [entry, { ...entry, id: 8 }] } }));
+  expect(play).toHaveBeenCalledOnce();
+  await act(async () => result.current.toggleAutomatic());
+  expect(result.current).toMatchObject({ automatic: false, entryId: null });
+  expect(stop).toHaveBeenCalledOnce();
+  expect(api.clearAudio).not.toHaveBeenCalled();
+  audio.cached_entry_ids = [7, 8]; audio.downloads = [];
+  await act(async () => vi.advanceTimersByTimeAsync(1000));
+  expect(result.current.isCached(entry)).toBe(true);
+  await act(async () => result.current.toggleAutomatic());
+  expect(play).toHaveBeenCalledOnce();
+  expect(api.startAudio).toHaveBeenCalledTimes(2);
+});
+
+it('clearing recordings disables automatic mode and waits for pending batch admission', async () => {
+  const accepted: Array<() => void> = [];
+  const api = client({ startAudio: vi.fn((_forum, _session, id) =>
+    new Promise<AudioDownloadAcceptance>((resolve) => accepted.push(() =>
+      resolve({ entry_id: id, cached: false, state: 'queued' })))) });
+  const saved = { ...snapshotFixture, transcript: [entry, { ...entry, id: 8 }, { ...entry, id: 9 }] };
+  const { result } = renderHook(() => useReadAloud(api, saved, 'Personal', false));
+  await act(async () => {});
+  await act(async () => result.current.toggleAutomatic());
+  expect(accepted).toHaveLength(3);
+  let clear!: Promise<void>;
+  act(() => { clear = result.current.clear(); });
+  expect(result.current).toMatchObject({ automatic: false, clearing: true });
+  await act(async () => { accepted[0]!(); accepted[1]!(); });
+  expect(api.clearAudio).not.toHaveBeenCalled();
+  await act(async () => { accepted[2]!(); await clear; });
+  expect(api.clearAudio).toHaveBeenCalledOnce();
+  expect(play).not.toHaveBeenCalled();
+  expect(result.current.automatic).toBe(false);
+  expect(api.startAudio).toHaveBeenCalledTimes(3);
+});
+
+it.each(['disable', 'navigation'])('ignores a late automatic admission failure after %s', async (action) => {
+  let reject!: (failure: unknown) => void;
+  const api = client({ startAudio: vi.fn(() => new Promise<AudioDownloadAcceptance>((_resolve, failed) => { reject = failed; })) });
+  const saved = { ...snapshotFixture, transcript: [entry] };
+  const { result, rerender } = renderHook(({ snapshot }) => useReadAloud(api, snapshot, 'Personal', false),
+    { initialProps: { snapshot: saved } });
+  await act(async () => {});
+  await act(async () => result.current.toggleAutomatic());
+  if (action === 'disable') act(() => result.current.toggleAutomatic());
+  else rerender({ snapshot: { ...saved, session_id: 'other' } });
+  await act(async () => reject(new ChaWebError(503, 'Old admission failed.')));
+  expect(result.current).toMatchObject({ automatic: false, error: null });
+  expect(play).not.toHaveBeenCalled();
+});
+
+it('reports automatic admission errors and allows an explicit retry', async () => {
+  const api = client({ startAudio: vi.fn().mockRejectedValueOnce(new ChaWebError(503, 'Try again.'))
+    .mockResolvedValue({ entry_id: 7, cached: true }) });
+  const { result } = renderHook(() => useReadAloud(api, { ...snapshotFixture, transcript: [entry] }, 'Personal', false));
+  await act(async () => {});
+  await act(async () => result.current.toggleAutomatic());
+  expect(result.current).toMatchObject({ automatic: false, error: 'Try again.' });
+  await act(async () => result.current.toggleAutomatic());
+  expect(result.current).toMatchObject({ automatic: true, error: null });
+  expect(api.startAudio).toHaveBeenCalledTimes(2);
+  expect(play).not.toHaveBeenCalled();
+});
+
+it('disables automatic playback when the browser blocks it and retains manual playback', async () => {
+  const cached: number[] = [];
+  const api = client({
+    getAudioStatus: vi.fn(async () => ({ cached_entry_ids: [...cached], downloads: [] })),
+    startAudio: vi.fn(async (_forum, _session, id) => { cached.push(id); return { entry_id: id, cached: true }; }),
+  });
+  const saved = { ...snapshotFixture, transcript: [] as TranscriptEntry[] };
+  const { result, rerender } = renderHook(({ snapshot }) => useReadAloud(api, snapshot, 'Personal', false),
+    { initialProps: { snapshot: saved } });
+  await act(async () => {});
+  await act(async () => result.current.toggleAutomatic());
+  play.mockRejectedValueOnce(new DOMException('Blocked', 'NotAllowedError'));
+  await act(async () => rerender({ snapshot: { ...saved, transcript: [entry] } }));
+  expect(result.current).toMatchObject({ automatic: false, entryId: null,
+    error: 'Playback was blocked. Click Read aloud to try again.' });
+  await act(async () => result.current.toggle(entry));
+  expect(result.current).toMatchObject({ state: 'playing', entryId: 7, error: null });
 });

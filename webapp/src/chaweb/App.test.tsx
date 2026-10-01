@@ -1,4 +1,4 @@
-import { act, render, screen, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 
@@ -84,7 +84,8 @@ function client(overrides: Partial<ChaWebClient> = {}): ChaWebClient {
   return {
     getVoiceOutputRuntime: vi.fn(async () => null),
     startAudio: vi.fn(),
-    getAudioStatus: vi.fn(),
+    startAudioBatch: vi.fn(),
+    getAudioStatus: vi.fn(async () => ({ cached_entry_ids: [], downloads: [] })),
     clearAudio: vi.fn(async () => undefined),
     getBootstrap: vi.fn(async () => boot()),
     listSessions: vi.fn(async (forumId: string) => (
@@ -207,7 +208,7 @@ it('shows an error for an unknown route and refreshes the session list', async (
   render(<App client={api} />);
   expect(await screen.findByRole('alert')).toHaveTextContent('That conversation is not available.');
   expect(api.getSession).not.toHaveBeenCalled();
-  expect(api.listSessions).toHaveBeenCalledWith('lobby');
+  await waitFor(() => expect(api.listSessions).toHaveBeenCalledWith('lobby'));
 });
 
 it('refreshes navigation when a stored session is missing', async () => {

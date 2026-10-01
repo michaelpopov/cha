@@ -12,7 +12,8 @@ function sameStatus(left: AudioDownloadStatus | null, right: AudioDownloadStatus
 }
 
 // Stopping a screen observer never stops core jobs.
-export function useAudioDownloads(client: ChaClient, forum: string | undefined,
+export function useAudioDownloads(client: Pick<ChaClient,
+  'getAudioDownloads' | 'startAudioDownload' | 'startAudioDownloadBatch'>, forum: string | undefined,
   session: string | undefined, vault: string | undefined, clearCount: number) {
   const [status, setStatus] = useState<AudioDownloadStatus | null>(null);
   const [unavailable, setUnavailable] = useState<string | null>(null);
